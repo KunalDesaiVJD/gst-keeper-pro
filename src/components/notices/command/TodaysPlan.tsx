@@ -2,7 +2,8 @@
 // U-12-2): open notices ranked by deadline × exposure × readiness, one button
 // per row that does the next step in place (assign, chase the client, log the
 // reply) or opens the notice where it is done. The same rows, in full, are the
-// Work queue page.
+// Work queue page. Like every dashboard count, the plan holds only the notice
+// types shown on the dashboard, and its link opens the queue with dash=1.
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -23,6 +24,7 @@ import { assignOwner, docEmailOutcome, emailDocumentRequests } from '@/lib/notic
 import { AssignPopover } from '../AssignPopover';
 import { OwnerChip } from '../OwnerChip';
 import { StageBadge } from '../StageBadge';
+import { ResponseNeedChip } from '../types/ResponseNeedChip';
 import { LogReplyDialog } from '../actions/LogReplyDialog';
 import type { NoticeRef } from '../actions/NoticeContext';
 import { cn } from '@/lib/utils';
@@ -49,7 +51,9 @@ export function readinessText(r: NoticePlanRow): string {
 
 export function dueCell(r: NoticePlanRow) {
   const d = r.days_to_plan_due;
-  if (d === null || d === undefined || !r.plan_due) return <span className="text-muted-foreground">no date</span>;
+  if (d === null || d === undefined || !r.plan_due) {
+    return <span className="text-muted-foreground">{r.response_need === 'none' ? 'no reply needed' : 'no date'}</span>;
+  }
   return (
     <span className="leading-tight">
       <span className={cn('block font-semibold tabular-nums', d < 0 ? 'text-destructive-strong' : d <= 3 ? 'text-warning-foreground' : '')}>
@@ -133,7 +137,8 @@ export const PlanRows: React.FC<{ rows: NoticePlanRow[]; onChanged: () => void }
           </div>
           <div className="mt-2 flex items-center gap-2">
             <StageBadge stage={r.stage} since={r.stage_changed_at} by={r.stage_changed_by} />
-            <span className="truncate text-[11px] text-muted-foreground">{readinessText(r)}</span>
+            <ResponseNeedChip need={r.response_need} compact />
+            <span className="min-w-0 truncate text-[11px] text-muted-foreground">{readinessText(r)}</span>
             <OwnerChip name={r.assign_to} className="ml-auto" />
           </div>
           <div className="mt-2"><NextActionButton row={r} onChanged={onChanged} compact /></div>
@@ -163,6 +168,7 @@ export const PlanRows: React.FC<{ rows: NoticePlanRow[]; onChanged: () => void }
                 <Link to={`/notices/${r.id}`} className="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   {noticeTitle(r)}{r.amount_of_demand ? ` · ${fmtInrShort(r.amount_of_demand)}` : ''}
                 </Link>
+                <ResponseNeedChip need={r.response_need} className="ml-1.5 align-middle" />
                 <div className="line-clamp-1 text-xs text-muted-foreground" title={r.description ?? ''}>
                   {r.reference_number || r.case_id ? <span className="font-mono">{r.reference_number || r.case_id}</span> : null}
                   {r.description ? ` · ${sentenceCase(r.description)}` : ''}
@@ -236,7 +242,7 @@ export const TodaysPlan: React.FC<{ cc: CommandCentre | undefined }> = ({ cc }) 
         <span>Showing {rows.length} of {total.toLocaleString('en-IN')}
           {cc && cc.health.auto_closed_today > 0 && <> · {cc.health.auto_closed_today} closed automatically today — <Link to="/notices-all?filter=auto_closed" className="text-primary hover:underline">see why</Link></>}
         </span>
-        <Link to={queueHref(tab)} className="font-medium text-primary hover:underline">Open the work queue ({total.toLocaleString('en-IN')}) →</Link>
+        <Link to={queueHref(tab, { dash: '1' })} className="font-medium text-primary hover:underline">Open the work queue ({total.toLocaleString('en-IN')}) →</Link>
       </div>
     </SectionCard>
   );

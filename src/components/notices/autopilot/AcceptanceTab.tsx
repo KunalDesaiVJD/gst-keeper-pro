@@ -3,15 +3,17 @@
 // failure reason (≥ 95%), human time on fetching (≤ 20 min a day: the minutes
 // the CAPTCHAs were on screen in front of someone), and portal notices in the
 // app within 24 h (within 4 h for short-clock forms a portal e-mail announced)
-// — and how many of the last 10 working days met each. The attentive wall time
-// is shown beside the human time.
+// — and how many of the last 10 working days met each. With the office agent the
+// attentive wall time is shown beside the human time; with the scheduled Chrome
+// the CAPTCHA extension fills the CAPTCHAs, so the human time is what people
+// still typed (a person's own syncs).
 import React from 'react';
 import { Check, X } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR } from '@/components/workspace/theme';
 import { istToday } from '@/lib/noticeFacts';
-import { useAutopilotMetrics, type MetricsRow } from '@/lib/autopilot';
+import { useAutopilotMetrics, type MetricsRow, type RunnerMode } from '@/lib/autopilot';
 import { fmtDay } from '@/lib/noticeFormat';
 import { LoadError } from './parts';
 import { cn } from '@/lib/utils';
@@ -27,7 +29,8 @@ const Mark: React.FC<{ ok: boolean; label: string }> = ({ ok, label }) => ok
   ? <><Check className="ml-1 inline h-3.5 w-3.5 text-success-strong" aria-hidden /><span className="sr-only"> meets {label}</span></>
   : <><X className="ml-1 inline h-3.5 w-3.5 text-destructive-strong" aria-hidden /><span className="sr-only"> misses {label}</span></>;
 
-export const AcceptanceTab: React.FC = () => {
+export const AcceptanceTab: React.FC<{ runner: RunnerMode }> = ({ runner }) => {
+  const wall = runner === 'office_agent';
   const q = useAutopilotMetrics(14);
   if (q.error) return <LoadError what="the acceptance numbers" error={q.error} onRetry={() => q.refetch()} />;
   if (q.isLoading || !q.data) return <Skeleton className="h-96 w-full" />;
@@ -45,7 +48,7 @@ export const AcceptanceTab: React.FC = () => {
         <KpiTile label="GSTINs fresh or with a named reason ≥ 95%" value={`${a} of ${days.length} days`} tone={tone(a)}
           hint="fresh = a good notices pull in the last 24 h" />
         <KpiTile label={`Time at the CAPTCHAs ≤ ${HUMAN_TARGET} min a day`} value={`${b} of ${days.length} days`} tone={tone(b)}
-          hint="minutes CAPTCHAs were on screen, everyone together" />
+          hint={wall ? 'minutes CAPTCHAs were on screen, everyone together' : 'the CAPTCHA extension fills them in the scheduled Chrome'} />
         <KpiTile label="Notices in the app within 24 h (4 h after an e-mail)" value={`${c} of ${days.length} days`} tone={tone(c)}
           hint="every new portal notice; short-clock forms from their e-mail" />
       </div>
@@ -63,7 +66,7 @@ export const AcceptanceTab: React.FC = () => {
               <th scope="col" className={WS_TH}>Day</th>
               <th scope="col" className={cn(WS_TH, 'text-right')}>Fresh or named</th>
               <th scope="col" className={cn(WS_TH, 'text-right')}>Time at the CAPTCHAs, min</th>
-              <th scope="col" className={cn(WS_TH, 'text-right')}>Wall open (attentive), min</th>
+              {wall && <th scope="col" className={cn(WS_TH, 'text-right')}>Wall open (attentive), min</th>}
               <th scope="col" className={cn(WS_TH, 'text-right')}>CAPTCHAs typed</th>
               <th scope="col" className={cn(WS_TH, 'text-right')}>Notices · within 24 h</th>
               <th scope="col" className={cn(WS_TH, 'text-right')}>Short-clock e-mails · within 4 h</th>
@@ -84,7 +87,7 @@ export const AcceptanceTab: React.FC = () => {
                   <span className="block text-[11px] text-muted-foreground">{r.fresh} fresh + {r.named} named of {r.eligible}</span>
                 </td>
                 <td className={WS_TD_NUM}>{Number(r.typing_minutes).toFixed(1)}{r.working && <Mark ok={humanOk(r)} label="the 20-minute target" />}</td>
-                <td className={WS_TD_NUM}>{Number(r.wall_minutes).toFixed(1)}</td>
+                {wall && <td className={WS_TD_NUM}>{Number(r.wall_minutes).toFixed(1)}</td>}
                 <td className={WS_TD_NUM}>{r.captchas}</td>
                 <td className={WS_TD_NUM}>
                   {r.notices_captured} · {r.captured_within_24h}

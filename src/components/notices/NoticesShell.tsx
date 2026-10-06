@@ -4,6 +4,8 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { WS_PAGE } from '@/components/workspace/theme';
 import { NoticesTopNav } from './NoticesTopNav';
 import { SearchButton } from './SearchPalette';
+import { useAuth } from '@/contexts/AuthContext';
+import { useAutoEvidence } from '@/lib/reply/autoBuild';
 import { cn } from '@/lib/utils';
 
 /**
@@ -20,19 +22,24 @@ export const NoticesShell: React.FC<{
   hideNav?: boolean;
   className?: string;
   children: React.ReactNode;
-}> = ({ section, actions, status, hideNav, className, children }) => (
-  <div className={cn(WS_PAGE, className)}>
-    <PageHeader
-      compact
-      title="Notices & Litigation"
-      subtitle={section}
-      icon={<Scale />}
-      actions={<><SearchButton />{actions}</>}
-    />
-    {status}
-    {!hideNav && <NoticesTopNav />}
-    {children}
-  </div>
-);
+}> = ({ section, actions, status, hideNav, className, children }) => {
+  const { isStaffRole } = useAuth();
+  // Evidence nobody has built yet, in the background (saved as Auto).
+  useAutoEvidence(isStaffRole());
+  return (
+    <div className={cn(WS_PAGE, className)}>
+      <PageHeader
+        compact
+        title="Notices & Litigation"
+        subtitle={section}
+        icon={<Scale />}
+        actions={<><SearchButton />{actions}</>}
+      />
+      {status}
+      {!hideNav && <NoticesTopNav />}
+      {children}
+    </div>
+  );
+};
 
 export default NoticesShell;

@@ -21,7 +21,7 @@ Write-Host "  GST Keeper portal agent - installer" -ForegroundColor Cyan
 Write-Host "==============================================" -ForegroundColor Cyan
 Write-Host ""
 
-# 1) Node.js 20 or later.
+# 1) Node.js 20.16 or later (the PDF reader needs it).
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
   Write-Host "Node.js is not installed on this PC." -ForegroundColor Red
@@ -29,8 +29,10 @@ if (-not $node) {
   Read-Host "Press Enter to exit"
   exit 1
 }
-$nodeMajor = [int]((node -v).TrimStart('v').Split('.')[0])
-if ($nodeMajor -lt 20) {
+$nodeParts = (node -v).TrimStart('v').Split('.')
+$nodeMajor = [int]$nodeParts[0]
+$nodeMinor = [int]$nodeParts[1]
+if ($nodeMajor -lt 20 -or ($nodeMajor -eq 20 -and $nodeMinor -lt 16)) {
   Write-Host ("Node.js " + (node -v) + " is too old; install the current LTS from https://nodejs.org/ .") -ForegroundColor Red
   Read-Host "Press Enter to exit"
   exit 1
@@ -60,6 +62,8 @@ AGENT_SESSION_KEY=$sessionKey
 # IMAP_HOST=imap.gmail.com
 # IMAP_USER=notices@yourfirm.com
 # IMAP_PASSWORD=app-password
+# Reading notices with the Claude API (optional; see README.md, "Reading notices"):
+# ANTHROPIC_API_KEY=
 "@
   Set-Content -Path $envPath -Value $envText -Encoding UTF8
   Write-Host (".env created (agent id " + $agentId + ").") -ForegroundColor Green

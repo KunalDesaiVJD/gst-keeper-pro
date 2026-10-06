@@ -2,7 +2,7 @@
   // Same value as MIN_EXTENSION_VERSION / RECOMMENDED_EXTENSION_VERSION in
   // src/lib/extensionVersion.ts; keep them in step when the app raises them.
   const MIN_VERSION = '0.4.0';
-  const RECOMMENDED_VERSION = '0.5.1';
+  const RECOMMENDED_VERSION = '0.7.0';
   const APP_URL = 'https://gst.vjdesai.com';
   const DASHBOARD_URL = APP_URL + '/notices-dashboard';
   const LOGIN_URL = 'https://services.gst.gov.in/services/login';
@@ -14,9 +14,11 @@
   const VERSION = chrome.runtime.getManifest().version;
 
   const REASONS = {
-    login_failed: 'login failed', captcha_timeout: 'CAPTCHA not typed', session_mismatch: 'wrong GSTIN session',
+    login_failed: 'login failed', captcha_timeout: 'CAPTCHA not filled in time', session_mismatch: 'wrong GSTIN session',
     portal_error: 'portal error', timeout: 'timed out', save_failed: 'save failed', stalled: 'stalled',
     guard_held: 'held back', partial: 'partial pull', empty: 'empty pull', other: 'other',
+    agent_error: 'sync error', agent_offline: 'sync PC offline', not_reached: 'not reached today',
+    skipped_at_wall: 'skipped on the CAPTCHA wall', cancelled: 'cancelled',
   };
   const STEPS = {
     login: 'Logging in', logout: 'Logging out', notices: 'Reading notices & orders',
@@ -141,23 +143,37 @@
   // ── Running job (gstk_active_job, advanced by content.js) ────────────────
   function renderJob() {
     const card = $('jobCard');
+    const scheduled = !!(job && job.runner);
+    $('takeoverHint').hidden = !scheduled;
     if (!job) { card.hidden = true; $('formCard').hidden = !loaded; $('otherCard').hidden = !loaded; return; }
     card.hidden = false;
-    $('formCard').hidden = true;
+    // A person's sync still starts while a scheduled client runs: it takes over (runner.js gives the client back).
+    $('formCard').hidden = !(scheduled && loaded);
     $('otherCard').hidden = true;
     const list = job.clients || [];
     const idx = Math.min(job.idx || 0, Math.max(list.length - 1, 0));
     const cur = list[idx];
     const name = (cur && cur.creds && cur.creds.name) || 'client';
     const step = STEPS[job.step] || job.step || 'Starting';
-    $('jobProgress').textContent = 'Client ' + (idx + 1) + ' of ' + list.length + ' · ' + name + ' · ' + step;
+    $('jobHead').textContent = scheduled ? 'Scheduled sync running' : 'Sync running';
+    $('jobProgress').textContent = scheduled ? name + ' · ' + step : 'Client ' + (idx + 1) + ' of ' + list.length + ' · ' + name + ' · ' + step;
     $('jobBar').style.width = (list.length ? Math.round((idx / list.length) * 100) : 0) + '%';
     $('jobMode').textContent = (job.mode ? (MODES[job.mode] || job.mode) : 'Ledger pull') + (job.period && !job.runId ? ' · ' + job.period : '')
       + (job.startedAt ? ' · started ' + fmtWhen(new Date(job.startedAt).toISOString()) : '');
     const atLogin = job.step === 'login';
     $('captchaMsg').hidden = !atLogin;
-    if (atLogin) $('captchaText').textContent = 'Type the CAPTCHA for ' + name + ' in the GST portal tab. A run moves on from a CAPTCHA nobody types after 10 minutes.';
+    $('captchaMsg').className = 'msg ' + (scheduled ? 'info' : 'warn');
+    $('captchaMsg').querySelector('strong').textContent = scheduled ? 'Waiting for the CAPTCHA' : 'CAPTCHA waiting';
+    $('openTab').textContent = scheduled ? 'Show the portal window' : 'Open the portal tab';
+    if (atLogin) {
+      $('captchaText').textContent = scheduled
+        ? 'The CAPTCHA extension in this Chrome fills the CAPTCHA for ' + name + '. If it is not filled within '
+          + runnerWaitSecs(job) + ' seconds, the client is tried again later.'
+        : 'Type the CAPTCHA for ' + name + ' in the GST portal tab. A run moves on from a CAPTCHA nobody types after 10 minutes.';
+    }
+    $('stop').textContent = scheduled ? 'Pause scheduled syncs in this Chrome' : 'Stop this sync';
   }
+  const runnerWaitSecs = (j) => Math.min(900, Math.max(30, Number(j && j.runner && j.runner.captchaWaitSecs) || 120));
 
   $('openTab').onclick = async () => {
     if (!job || job.tabId == null) { msgBox($('flash'), 'warn', 'No portal tab is recorded for this sync.', ''); return; }
@@ -173,6 +189,17 @@
     const btn = $('stop');
     btn.disabled = true;
     const active = await store.get('gstk_active_job');
+    if (active && active.runner) {
+      // A scheduled client goes back to the queue and this Chrome stops taking clients until switched on again.
+      try {
+        await withTimeout(GSTKdb.runnerSet({ enabled: false }), 8000);
+        msgBox($('flash'), 'ok', 'Scheduled syncs paused in this Chrome.', 'The client that was running went back to the queue. Tick "Run scheduled syncs in this Chrome" to start again.');
+      } catch (e) {
+        msgBox($('flash'), 'bad', 'Could not pause scheduled syncs.', (e && e.message) || String(e));
+      }
+      btn.disabled = false;
+      return;
+    }
     if (!active) { job = null; renderJob(); msgBox($('flash'), 'info', 'No sync was running.', ''); btn.disabled = false; return; }
     const list = active.clients || [];
     const idx = active.idx || 0;
@@ -256,13 +283,20 @@
 
   // ── The office agent (0.6.0): queue the same clients on it instead ──────
   let agentOn = false;
+  let chromeMode = true;
   async function loadAgent() {
     try {
-      const a = await withTimeout(GSTKdb.getAutopilot(), 8000);
+      const [a, mode] = await withTimeout(Promise.all([GSTKdb.getAutopilot(), GSTKdb.getRunnerMode().catch(() => null)]), 8000);
       agentOn = !!(a && a.enabled && a.agent_online);
+      chromeMode = !(mode && mode.runner === 'office_agent');
     } catch (e) { agentOn = false; /* database without the autopilot: hide it */ }
     $('agentStart').hidden = !agentOn;
     $('agentHint').hidden = !agentOn;
+    // 0.7.0: without the wall, the queue goes to the Chrome that runs scheduled syncs.
+    $('agentStart').textContent = chromeMode ? 'Queue for the scheduled Chrome' : 'Send to the office agent';
+    $('agentHint').textContent = chromeMode
+      ? 'The Chrome that runs scheduled syncs takes these clients one at a time; the CAPTCHA extension there fills each CAPTCHA.'
+      : 'The office agent logs these clients in on its own PC; their CAPTCHAs come to the CAPTCHA wall in GST Keeper (Notices → Autopilot) for anyone to type.';
   }
   $('agentStart').onclick = async () => {
     const ids = targetIds();
@@ -272,10 +306,12 @@
       const res = await GSTKdb.queueOnAgent(scope() === 'all' ? null : ids);
       const n = (res && res.queued) || 0;
       const already = (res && res.already) || 0;
-      msgBox($('flash'), 'ok', n ? 'Queued ' + plural(n, 'client') + ' on the office agent.' : 'Already queued on the office agent.',
-        (already && n ? already + ' were already queued. ' : '') + 'Open the CAPTCHA wall in GST Keeper (Notices → Autopilot) and type their CAPTCHAs there.');
+      const who = chromeMode ? 'the scheduled Chrome' : 'the office agent';
+      msgBox($('flash'), 'ok', n ? 'Queued ' + plural(n, 'client') + ' for ' + who + '.' : 'Already queued for ' + who + '.',
+        (already && n ? already + ' were already queued. ' : '')
+        + (chromeMode ? 'They run one at a time; Notices → Autopilot shows the queue.' : 'Open the CAPTCHA wall in GST Keeper (Notices → Autopilot) and type their CAPTCHAs there.'));
     } catch (e) {
-      msgBox($('flash'), 'bad', 'Could not queue on the office agent.', (e && e.message) || String(e));
+      msgBox($('flash'), 'bad', 'Could not queue the clients.', (e && e.message) || String(e));
     } finally {
       $('agentStart').disabled = false;
     }
@@ -298,7 +334,7 @@
     };
     const tab = await chrome.tabs.create({ url: LOGIN_URL });
     legacy.tabId = tab.id;
-    await store.set({ gstk_active_job: legacy });
+    try { await GSTKdb.putActiveJob(legacy); } catch (e) { await store.set({ gstk_active_job: legacy }); }
     window.close();
   };
   function renderLegacy() {
@@ -312,6 +348,109 @@
     }
     $('legGo').disabled = !sel.options.length;
   }
+
+  // ── Scheduled syncs in this Chrome (0.7.0, runner.js) ───────────────────
+  // The switch and the name live in chrome.storage (background runnerSet);
+  // what the runner is doing comes from its own state, kept live by storage events.
+  let runner = { config: {}, state: {}, job: null };
+  const WHY = {
+    offline: ['Database not answering', 'GST Keeper\'s database is not answering; this Chrome tries again every minute.'],
+    old_database: ['Database not updated', 'GST Keeper\'s database does not know scheduled syncs in Chrome yet. Ask for the update of 8 October 2026.'],
+    office_agent: ['Not this Chrome\'s turn', 'The autopilot is set to the office agent, so this Chrome takes no clients.'],
+    autopilot_off: ['Waiting: autopilot off', 'The autopilot is switched off in GST Keeper (Notices → Autopilot → Settings). Nothing runs until it is on.'],
+    paused: ['Waiting: autopilot paused', 'The autopilot is paused in GST Keeper.'],
+    window_closed: ['Waiting a moment', 'The scheduled sync window was closed before its client finished; it starts again in a couple of minutes.'],
+    person_sync: ['Waiting: a person\'s sync', 'A sync started by a person is running in this Chrome; scheduled syncs wait for it to finish.'],
+    portal_in_use: ['Waiting: portal in use', 'A GST portal tab is open while someone uses this PC; scheduled syncs wait so that portal session is not changed. Close the tab, or they start after 5 minutes without use.'],
+  };
+  const OUTCOME = { succeeded: 'done', retry: 'tried again later', failed: 'failed', released: 'back in the queue', none: 'stopped in GST Keeper' };
+  const istClock = () => new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false });
+  const hm = (t) => (t ? String(t).slice(0, 5) : '');
+  function nextSlot(sch) {
+    if (!sch || !sch.enabled) return 'Schedule off in GST Keeper';
+    const slots = [{ at: sch.morning_at, what: 'every active client' }];
+    if (sch.afternoon_scope && sch.afternoon_scope !== 'off') slots.push({ at: sch.afternoon_at, what: sch.afternoon_scope === 'all' ? 'every active client' : 'clients that need it' });
+    const list = slots.filter((x) => x.at).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    if (!list.length) return '–';
+    const now = istClock();
+    const next = list.find((x) => String(x.at) > now);
+    return next ? 'Today ' + hm(next.at) + ' (' + next.what + ')' : 'Tomorrow ' + hm(list[0].at) + ' (' + list[0].what + ')';
+  }
+  function renderRunner() {
+    const c = runner.config || {};
+    const st = runner.state || {};
+    const b = st.beat || null;
+    const on = !!c.enabled;
+    $('runnerOn').checked = on;
+    if (document.activeElement !== $('runnerLabel')) $('runnerLabel').value = c.label || '';
+    $('runnerRows').hidden = !on;
+    $('rnOff').hidden = on;
+    const secs = Math.min(900, Math.max(30, Number(b && b.captcha_wait_secs) || 120));
+    $('rnCaptcha').textContent = 'The CAPTCHA is filled by the CAPTCHA extension in this Chrome. If it is not filled within '
+      + secs + ' seconds, the client is tried again later.';
+    let why = null;
+    if (on) {
+      $('rnApp').textContent = !b ? 'Checking…' : !b.ok ? 'Not answering'
+        : b.runner === 'office_agent' ? 'Set to the office agent' : !b.enabled ? 'Off' : b.paused ? 'Paused' : 'On';
+      $('rnApp').className = b && b.ok && b.enabled && !b.paused && b.runner === 'chrome' ? 'ok' : (b && !b.ok ? 'bad' : '');
+      const fresh = b && b.ok && b.at && Date.now() - b.at < 150000;
+      $('rnOnline').textContent = !b ? 'Starting…' : fresh ? 'Online · ' + fmtWhen(new Date(b.at).toISOString())
+        : 'Not reporting' + (b.at ? ' since ' + fmtWhen(new Date(b.at).toISOString()) : '');
+      $('rnOnline').className = fresh ? 'ok' : 'bad';
+      const aj = runner.job && runner.job.runner && st.job && runner.job.runner.jobId === st.job.id ? runner.job : null;
+      if (st.job) {
+        const step = aj ? (aj.step === 'login' ? 'logging in, waiting for the CAPTCHA' : (STEPS[aj.step] || aj.step || 'starting').toLowerCase()) : 'starting';
+        $('rnNow').textContent = (st.job.client_name || 'Client') + ' · ' + step;
+      } else if (st.why && WHY[st.why]) {
+        $('rnNow').textContent = WHY[st.why][0];
+        why = WHY[st.why][1];
+      } else {
+        $('rnNow').textContent = 'Idle · ready for the next client';
+      }
+      $('rnNext').textContent = b && b.schedule ? nextSlot(b.schedule) : '–';
+      const l = st.last;
+      $('rnLast').textContent = l
+        ? (l.client_name || 'Client') + ' · ' + (l.outcome === 'retry' && l.status === 'failed' ? 'failed' : OUTCOME[l.outcome] || l.outcome)
+          + (l.reason && l.outcome !== 'succeeded' ? ' (' + (REASONS[l.reason] || l.reason) + ')' : '') + ' · ' + fmtWhen(l.at)
+        : 'None yet';
+      $('rnLast').className = l && l.outcome === 'succeeded' ? 'ok' : l && (l.outcome === 'failed' || l.status === 'failed') ? 'bad' : '';
+      if (st.error) why = (why ? why + ' ' : '') + st.error;
+    }
+    $('rnWhy').hidden = !why;
+    $('rnWhy').textContent = why || '';
+  }
+  async function loadRunner() {
+    try { runner = { ...runner, ...(await withTimeout(GSTKdb.runnerGet(), 8000)) }; } catch (e) { /* the error panel covers a silent background */ }
+    renderRunner();
+  }
+  $('runnerOn').onchange = async () => {
+    const want = $('runnerOn').checked;
+    $('runnerOn').disabled = true;
+    try {
+      const res = await withTimeout(GSTKdb.runnerSet({ enabled: want, label: $('runnerLabel').value }), 8000);
+      runner.config = (res && res.config) || runner.config;
+      msgBox($('flash'), want ? 'ok' : 'info', want ? 'Scheduled syncs are on in this Chrome.' : 'Scheduled syncs are off in this Chrome.',
+        want ? 'Keep this PC and Chrome on at the scheduled times. Clients waiting in the queue start now if the autopilot is on.'
+          : 'A client that was running went back to the queue.');
+    } catch (e) {
+      $('runnerOn').checked = !want;
+      msgBox($('flash'), 'bad', 'Could not change scheduled syncs.', (e && e.message) || String(e));
+    }
+    $('runnerOn').disabled = false;
+    renderRunner();
+  };
+  $('runnerLabelSave').onclick = async () => {
+    try {
+      const res = await withTimeout(GSTKdb.runnerSet({ label: $('runnerLabel').value }), 8000);
+      runner.config = (res && res.config) || runner.config;
+      msgBox($('flash'), 'ok', 'Saved: GST Keeper shows this PC as "' + ((runner.config && runner.config.label) || 'Chrome') + '".', '');
+    } catch (e) {
+      msgBox($('flash'), 'bad', 'Could not save the name.', (e && e.message) || String(e));
+    }
+    renderRunner();
+  };
+  $('runnerLabel').onkeydown = (e) => { if (e.key === 'Enter') $('runnerLabelSave').click(); };
+  loadRunner();
 
   // ── Load (one automatic retry, then the error panel) ─────────────────────
   async function fetchAll() {
@@ -377,14 +516,19 @@
 
   try {
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area !== 'local' || !changes.gstk_active_job) return;
+      if (area !== 'local') return;
+      if (changes.gstk_runner) { runner.config = changes.gstk_runner.newValue || {}; renderRunner(); }
+      if (changes.gstk_runner_state) { runner.state = changes.gstk_runner_state.newValue || {}; renderRunner(); }
+      if (!changes.gstk_active_job) return;
       const wasRunning = !!job;
       job = changes.gstk_active_job.newValue || null;
+      runner.job = job;
       renderJob();
+      renderRunner();
       if (wasRunning && !job && loaded) load();
     });
   } catch (e) { /* storage events unavailable */ }
 
-  store.get('gstk_active_job').then((j) => { job = j || null; renderJob(); });
+  store.get('gstk_active_job').then((j) => { job = j || null; runner.job = job; renderJob(); renderRunner(); });
   load(false);
 })();

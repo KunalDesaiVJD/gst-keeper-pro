@@ -1,16 +1,24 @@
 // The office agent as its heartbeat reports it (roadmap Phase 3; audit S-23:
 // the agent is visible in the app, not orphaned): which PC, which versions,
 // since when, and what each of its browsers is doing. Every field is optional.
+// With the scheduled Chrome running the queue (the default since 6 Oct 2026),
+// an office agent may still read notice PDFs and portal e-mails; the card shows
+// only when one has reported. Chrome runners are on the Scheduled Chrome tab.
 import React from 'react';
 import { SectionCard } from '@/components/gstr9/ui';
-import { fmtWhen, workerWords, type AutopilotStatus } from '@/lib/autopilot';
+import { fmtWhen, runnerMode, workerWords, type AutopilotStatus } from '@/lib/autopilot';
 import { fmtAgo } from '@/lib/noticeFormat';
 import { ToneBadge } from './parts';
 
 export const AgentCard: React.FC<{ status: AutopilotStatus | undefined }> = ({ status }) => {
-  const agents = status?.agents ?? [];
+  const agents = (status?.agents ?? []).filter((a) => !a.agent_id.startsWith('chrome:'));
+  const chrome = runnerMode(status) === 'chrome';
+  if (chrome && agents.length === 0) return null;
   return (
-    <SectionCard title="Office agent" description="The PC that logs in to the portal for the autopilot, as it last reported">
+    <SectionCard title="Office agent"
+      description={chrome
+        ? 'The office PC that reads notice PDFs and portal e-mails, as it last reported. Portal syncs run in the scheduled Chrome.'
+        : 'The PC that logs in to the portal for the autopilot, as it last reported'}>
       {agents.length === 0 ? (
         <p className="text-xs text-muted-foreground">No office agent has reported yet. It is installed on the office PC from the agent folder (agent/README.md).</p>
       ) : (
@@ -33,7 +41,7 @@ export const AgentCard: React.FC<{ status: AutopilotStatus | undefined }> = ({ s
                     i.headful !== undefined && (i.headful ? 'browsers shown on screen' : 'browsers in the background'),
                   ].filter(Boolean).join(' · ')}
                 </p>
-                {a.online && (i.workers ?? []).length > 0 && (
+                {!chrome && a.online && (i.workers ?? []).length > 0 && (
                   <ul className="list-disc space-y-0.5 pl-4">
                     {(i.workers ?? []).map((w, n) => <li key={w.n ?? n}>Browser {w.n ?? n + 1}: {workerWords(w)}{w.since ? ` (since ${fmtWhen(w.since)})` : ''}</li>)}
                   </ul>

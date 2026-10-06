@@ -2,8 +2,14 @@
 
 How the Portal Autopilot (roadmap Phase 3) reaches the GST portal, what it
 will and will not do, and how its numbers are measured. Read this before
-changing anything in `agent/`, the agent hooks in `extension/`, or the
-autopilot migrations (`supabase/migrations/20261007120000`–`123000`).
+changing anything in `agent/`, the agent hooks or the scheduled-sync runner in
+`extension/`, or the autopilot migrations
+(`supabase/migrations/20261007120000`–`123000`, `20261008170000`).
+
+**Since 6 October 2026 the scheduled syncs run in the firm's own Chrome and
+there is no CAPTCHA wall (§1a, the firm's decision).** §1 to §3 describe the
+office agent, which stays available behind `autopilot_settings.runner =
+'office_agent'`.
 
 **These positions were written by engineering from the roadmap and the
 mission audit. The partner has not signed them off yet.** The autopilot ships
@@ -38,6 +44,64 @@ posture", "Agent host", "Portal e-mail inbox").
   the extension up to three times, as for a person.
 - CAPTCHA images are deleted from the database (`portal_jobs.human_prompt`)
   the moment they are answered.
+
+## 1a. The firm's decision of 6 October 2026: scheduled syncs in the firm's own Chrome, no CAPTCHA wall
+
+The partner wrote: "there is no captcha wall. Since I have the extension in
+chrome which will solve captcha on its own. You just need to sync client as
+per the agreed timing and rest will be done by extension."
+(`supabase/migrations/20261008170000_autopilot_chrome_runner.sql`, GST Keeper
+extension 0.7.0.)
+
+- **Who runs the queue.** `autopilot_settings.runner = 'chrome'` (the default).
+  The jobs the schedule queues (05:30 IST every client with credentials, 13:00
+  the priority clients, each slot within three hours of its time, so a Chrome
+  opened later still runs it), "Sync now" sent to the autopilot, portal e-mails
+  and "Fetch missing data" are claimed one at a time by GST Keeper 0.7.0 in a
+  Chrome where "Run scheduled syncs in this Chrome" is ticked, as agent
+  `chrome:<id>`. Each job runs exactly like a person's sync: the same pages,
+  the same `sync_ingest`, the same run ledger. More than one Chrome may be
+  ticked; the queue never gives the same job to two.
+- **The CAPTCHA.** It is filled by a CAPTCHA extension that the firm chose and
+  installed in that Chrome. GST Keeper does not solve, read, copy or send the
+  CAPTCHA anywhere, and no solver, OCR model or solving service is part of this
+  app: it waits up to `captcha_wait_secs` (120 s) for the CAPTCHA box to be
+  filled in one step, then logs in through the same auto-submit path a scripted
+  fill has always used. A CAPTCHA not filled in time fails that client with
+  `captcha_timeout`; the queue retries it later (`max_attempts`). A wrong
+  CAPTCHA is retried up to three times and a wrong password never, as before.
+- **No wall.** In this mode there is no CAPTCHA wall, no CAPTCHA badge and no
+  09:00 CAPTCHA nudge; `portal_job_claim` never hands a Chrome a job parked
+  for a typed CAPTCHA (the tick puts such a job back in the queue), and the
+  office agent gets no portal jobs (its notice reader and portal e-mail poller
+  still work).
+- **A person comes first.** The runner starts a client only when this Chrome
+  is idle: a person's own sync in it always wins, and a client the runner holds
+  is given back to the queue (no try counted) when a person starts a sync,
+  opens a GST portal tab, or comes back to the PC while one is open (the
+  portal keeps one login per browser profile). It waits while a portal tab is
+  open and someone has used the PC in the last five minutes.
+- **Its own window.** Each client runs in a window of its own, never
+  minimised, focused only when nobody has used the PC for five minutes (so it
+  comes to the front at 05:30 and never takes the keyboard at 13:00), and
+  closed after the client. Chrome slows timers in hidden tabs; every deadline
+  (CAPTCHA wait plus 45 s, three minutes for the login page, 40 minutes a
+  client) is kept by the extension's background worker, so a slowed page can
+  delay one client but not hold the queue. A locked screen or a display that is
+  off also counts as hidden on Windows: keep that PC's display on, or have IT
+  turn off Chrome's `IntensiveWakeUpThrottlingEnabled` policy.
+- **What the firm should keep in mind.**
+  - Automated CAPTCHA filling may not be what the GST portal's terms of use
+    expect. The firm uses its own tool at its own discretion, for clients whose
+    portal access it is authorised to use (§5).
+  - A CAPTCHA extension can read every page open in its Chrome profile. Use a
+    Chrome profile kept only for portal syncs (GST Keeper plus the CAPTCHA
+    extension, nothing else signed in), and keep the PC and that Chrome on at
+    05:30 and 13:00.
+  - Repeated wrong CAPTCHAs count against the portal's login attempts; the
+    three-try stop and the queue's back-off limit that.
+- **Going back.** `UPDATE autopilot_settings SET runner = 'office_agent'` brings
+  back §1 to §3: the office agent, the wall and the nudge.
 
 ## 2. What the agent is
 

@@ -1,6 +1,12 @@
+// The notice's documents (audit R-11, R-25, U-41-*; roadmap Phase 4 "Client
+// document requests"): what the client was asked for — from the issue codes'
+// lists or typed, the issue each serves, age, reminders and what the client
+// uploaded in the client portal — the notice and its case folder, and files
+// uploaded here.
 import React, { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink, FileText, FolderOpen, Loader2, Mail, Paperclip, Upload } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { ExternalLink, FileText, FolderOpen, ListChecks, Loader2, Mail, Paperclip, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { SectionCard } from '@/components/gstr9/ui';
 import { Badge } from '@/components/gstr9/badge';
@@ -10,9 +16,11 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  docEmailOutcome, documentUrl, emailDocumentRequests, resolveRequest, uploadDocument, type FolderItem, type Workspace,
+  catalogueFor, catalogueWhyNot, clientEmailSettingsQuery, docEmailOutcome, documentUrl, emailDocumentRequests, generateDocRequests,
+  issueTypesQuery, reminderNote, resolveRequest, uploadDocument, type DocRequest, type FolderItem, type GenerateResult, type Workspace,
 } from '@/lib/noticeWorkspace';
-import { fmtDate, fmtDateTime } from '@/lib/noticeFormat';
+import { daysBetween, istToday } from '@/lib/noticeFacts';
+import { fmtAgo, fmtDate, fmtDateTime, plural } from '@/lib/noticeFormat';
 
 const SECTION: Record<string, string> = {
   INTIM: 'Intimations', NOTCE: 'Notices', REPLY: 'Replies', ORDRS: 'Orders', CLSR: 'Closure', CLOSR: 'Closure', CLOSURE: 'Closure',
@@ -64,13 +72,94 @@ const KINDS = [
   { key: 'other', label: 'Other' },
 ];
 
+/** The IST calendar date of a timestamp. */
+const istDate = (ts: string) => new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+const LINK = 'inline-flex items-center gap-0.5 font-medium text-primary underline underline-offset-2';
+
+/** One request: the issue it serves, where it came from, its age and reminders, and what the client uploaded. */
+const RequestRow: React.FC<{
+  r: DocRequest;
+  ws: Workspace;
+  canEdit: boolean;
+  busy: boolean;
+  onResolve: (status: 'received' | 'waived' | 'requested', note?: string, documentId?: string | null) => void;
+}> = ({ r, ws, canEdit, busy, onResolve }) => {
+  const seq = ws.issues.findIndex((i) => i.id === r.issue_id);
+  const issue = seq >= 0 ? ws.issues[seq] : null;
+  const doc = r.document_id ? ws.documents.find((d) => d.id === r.document_id) : null;
+  const url = doc ? documentUrl(doc.storage_path) : null;
+  const open = r.status === 'requested';
+  const age = daysBetween(istDate(r.requested_at), istToday());
+  const meta = [
+    `asked ${fmtDate(istDate(r.requested_at))}${r.requested_by_name ? ` by ${r.requested_by_name}` : ''}`,
+    r.due_date ? `needed by ${fmtDate(r.due_date)}` : '',
+    open ? `open ${age} d` : '',
+    r.reminders_sent ? `${plural(r.reminders_sent, 'reminder')}${r.last_reminded_at ? `, last ${fmtAgo(r.last_reminded_at)}` : ''}` : '',
+    !open && r.resolved_by_name && !r.client_uploaded_at ? `${r.status === 'waived' ? 'waived' : 'received'} by ${r.resolved_by_name}` : '',
+    r.note ?? '',
+  ].filter(Boolean).join(' · ');
+  return (
+    <li className="flex flex-wrap items-start gap-2 py-2 text-sm">
+      <div className="min-w-0 flex-[1_1_14rem] space-y-0.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="break-words font-medium">{r.item}</span>
+          <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal" title={r.source === 'catalogue' ? 'From the issue type\'s list of documents' : 'Typed or picked by staff'}>
+            {r.source === 'catalogue' ? 'Catalogue' : 'Typed'}
+          </Badge>
+        </div>
+        {issue && <p className="break-words text-xs text-muted-foreground">For issue {seq + 1} · {issue.title}</p>}
+        <p className="break-words text-xs text-muted-foreground">{meta}</p>
+        {r.client_uploaded_at && (
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            <Badge variant="success" className="px-1.5 py-0 text-[10px]">Uploaded by the client</Badge>
+            <span>{fmtDateTime(r.client_uploaded_at)}</span>
+            {r.client_note && <span className="break-words">· “{r.client_note}”</span>}
+          </div>
+        )}
+        {url && <a href={url} target="_blank" rel="noreferrer" className={`${LINK} text-xs`}>{doc?.title ?? 'Open the file'} <ExternalLink className="h-3 w-3" aria-hidden /></a>}
+      </div>
+      <Badge variant={r.status === 'received' ? 'success' : r.status === 'waived' ? 'secondary' : 'warning'} className="text-[11px]">
+        {r.status === 'received' ? 'Received' : r.status === 'waived' ? 'Waived' : 'Pending'}
+      </Badge>
+      {canEdit && (open ? (
+        <span className="flex gap-1">
+          <Popover>
+            <PopoverTrigger asChild><Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy}>Received<span className="sr-only">: {r.item}</span></Button></PopoverTrigger>
+            <PopoverContent className="w-72 space-y-2 text-xs">
+              <div className="font-medium">Mark "{r.item}" received</div>
+              {ws.documents.length > 0 && (
+                <Select onValueChange={(v) => onResolve('received', undefined, v === 'none' ? null : v)}>
+                  <SelectTrigger className="h-8 text-xs" aria-label="Link an uploaded file"><SelectValue placeholder="Link an uploaded file (optional)" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none" className="text-xs">No file to link</SelectItem>
+                    {ws.documents.map((d) => <SelectItem key={d.id} value={d.id} className="text-xs">{d.title}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+              <Button size="sm" className="h-7 w-full text-xs" onClick={() => onResolve('received')}>Mark received</Button>
+            </PopoverContent>
+          </Popover>
+          <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={() => onResolve('waived', 'Not needed')}>Waive<span className="sr-only">: {r.item}</span></Button>
+        </span>
+      ) : (
+        <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={() => onResolve('requested')}>Re-open<span className="sr-only">: {r.item}</span></Button>
+      ))}
+    </li>
+  );
+};
+
 export const DocumentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged: () => void; onAskClient: () => void }> = ({ ws, canEdit, onChanged, onAskClient }) => {
   const { user } = useAuth();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [kind, setKind] = useState('evidence');
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [gen, setGen] = useState<(GenerateResult & { why?: string }) | null>(null);
+  const types = useQuery(issueTypesQuery);
+  const mail = useQuery(clientEmailSettingsQuery);
   const n = ws.notice;
+  const waiting = catalogueFor(ws.issues, types.data ?? [], ws.requests.map((r) => r.item)).length;
 
   const sections = new Map<string, FolderItem[]>();
   ws.folder.forEach((it) => {
@@ -113,7 +202,34 @@ export const DocumentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged
     finally { setBusy(null); }
   };
 
+  const generate = async () => {
+    if (!user) return;
+    setBusy('generate');
+    try {
+      const why = catalogueWhyNot(ws.issues, types.data ?? []);
+      const r = await generateDocRequests(n.id, user);
+      if (r.error) throw new Error(r.error === 'gone' ? 'This notice is no longer on record.' : r.error);
+      setGen(r.added ? r : { ...r, why });
+      if (r.added) toast.success(`${plural(r.added, 'document')} asked of the client, needed by ${fmtDate(r.dueDate)}.`);
+      if (r.added) onChanged();
+    } catch (e) { toast.error(`Couldn't ask for the documents: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { setBusy(null); }
+  };
+
+  const emailNow = async () => {
+    if (!user) return;
+    setBusy('email');
+    try {
+      const o = docEmailOutcome(await emailDocumentRequests(n.id, user), 'request');
+      toast[o.tone](o.text);
+      setGen(null);
+      onChanged();
+    } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  };
+
   const open = ws.requests.filter((r) => r.status === 'requested');
+  const reminderLine = ws.requests.length ? reminderNote(mail.data) : null;
 
   return (
     <div className="space-y-3">
@@ -124,51 +240,38 @@ export const DocumentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged
               {busy === 'remind' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />} Remind client ({open.length})
             </Button>
           )}
+          <Button size="sm" variant="outline" className="h-8 gap-1 text-xs" disabled={busy === 'generate'} onClick={generate}>
+            {busy === 'generate' ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <ListChecks className="h-3.5 w-3.5" aria-hidden />}
+            Ask for what the issues need{waiting ? ` (${waiting})` : ''}
+          </Button>
           <Button size="sm" className="h-8 text-xs" onClick={onAskClient}>Ask the client</Button>
         </>}>
-        {ws.requests.length === 0 ? null : (
+        {gen && (
+          <div role="status" className="flex flex-wrap items-start gap-2 rounded-md border border-info/40 bg-info/5 px-2.5 py-1.5 text-xs">
+            <p className="min-w-0 flex-[1_1_14rem] break-words">
+              {gen.added
+                ? <>Asked for {plural(gen.added, 'document')}, needed by {fmtDate(gen.dueDate)}: {gen.items.join('; ')}. They are listed below; nothing was e-mailed yet{ws.client?.email ? '.' : ' — the client has no e-mail on file (add it in Edit Client).'}</>
+                : <>Nothing added. {gen.why}</>}
+            </p>
+            <span className="flex items-center gap-1">
+              {gen.added > 0 && ws.client?.email && (
+                <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={busy === 'email'} onClick={emailNow}>
+                  {busy === 'email' ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Mail className="h-3.5 w-3.5" aria-hidden />} E-mail the client
+                </Button>
+              )}
+              <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Dismiss" onClick={() => setGen(null)}><X className="h-3.5 w-3.5" /></Button>
+            </span>
+          </div>
+        )}
+        {ws.requests.length > 0 && (
           <ul className="divide-y">
             {ws.requests.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-center gap-2 py-1.5 text-sm">
-                <span className="min-w-0 flex-1">
-                  <span className="font-medium">{r.item}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    asked {fmtDate(r.requested_at.slice(0, 10))}{r.requested_by_name ? ` by ${r.requested_by_name}` : ''}
-                    {r.due_date ? ` · needed by ${fmtDate(r.due_date)}` : ''}
-                    {r.reminders_sent ? ` · ${r.reminders_sent} reminder${r.reminders_sent === 1 ? '' : 's'}` : ''}
-                    {r.note ? ` · ${r.note}` : ''}
-                  </span>
-                </span>
-                <Badge variant={r.status === 'received' ? 'success' : r.status === 'waived' ? 'secondary' : 'warning'} className="text-[11px]">
-                  {r.status === 'received' ? 'Received' : r.status === 'waived' ? 'Waived' : 'Pending'}
-                </Badge>
-                {canEdit && (r.status === 'requested' ? (
-                  <span className="flex gap-1">
-                    <Popover>
-                      <PopoverTrigger asChild><Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy === r.id}>Received</Button></PopoverTrigger>
-                      <PopoverContent className="w-72 space-y-2 text-xs">
-                        <div className="font-medium">Mark "{r.item}" received</div>
-                        {ws.documents.length > 0 && (
-                          <Select onValueChange={(v) => resolve(r.id, 'received', undefined, v === 'none' ? null : v)}>
-                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Link an uploaded file (optional)" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none" className="text-xs">No file to link</SelectItem>
-                              {ws.documents.map((d) => <SelectItem key={d.id} value={d.id} className="text-xs">{d.title}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        )}
-                        <Button size="sm" className="h-7 w-full text-xs" onClick={() => resolve(r.id, 'received')}>Mark received</Button>
-                      </PopoverContent>
-                    </Popover>
-                    <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy === r.id} onClick={() => resolve(r.id, 'waived', 'Not needed')}>Waive</Button>
-                  </span>
-                ) : (
-                  <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy === r.id} onClick={() => resolve(r.id, 'requested')}>Re-open</Button>
-                ))}
-              </li>
+              <RequestRow key={r.id} r={r} ws={ws} canEdit={canEdit} busy={busy === r.id}
+                onResolve={(status, note, documentId) => resolve(r.id, status, note, documentId)} />
             ))}
           </ul>
         )}
+        {reminderLine && <p className="text-xs text-muted-foreground">{reminderLine}</p>}
       </SectionCard>
 
       <SectionCard title="Notice and case folder" description={n.case_id ? `Case ${n.case_id} · as on the portal` : 'This notice has no case folder on the portal'}

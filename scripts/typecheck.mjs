@@ -19,8 +19,10 @@ const PROTECTED = [
   /^src\/components\/notices\//,
   /^src\/components\/litigation\//,
   /^src\/components\/reports\/views\/(NoticeWorkflowListView|EvidenceEventListView)\.tsx$/,
-  /^src\/pages\/(NoticesDashboardPage|CompanyListPage|CompanyProfilePage|NoticeSummaryReportPage|GstinWiseNoticeCountPage|AdditionalNoticeFolderPage|AllClientsNoticesPage|AllClientsRefundsPage|AllClientsDrc03Page|NoticeWorkspacePage|NoticeQueuePage|NoticesHearingsPage|NoticesCalendarPage|NoticesAutopilotPage|Litigation\w*)\.tsx$/,
-  /^src\/lib\/(notice\w*|litigationData|fetchAllRows|autopilot)\.ts$/,
+  /^src\/pages\/(NoticesDashboardPage|CompanyListPage|CompanyProfilePage|NoticeSummaryReportPage|GstinWiseNoticeCountPage|AdditionalNoticeFolderPage|AllClientsNoticesPage|AllClientsRefundsPage|AllClientsDrc03Page|NoticeWorkspacePage|NoticeQueuePage|NoticesHearingsPage|NoticesCalendarPage|NoticesAutopilotPage|NoticesReplyFactoryPage|ClientDocumentsPage|Litigation\w*)\.tsx$/,
+  /^src\/lib\/(notice\w*|litigationData|fetchAllRows|autopilot|replyFactory)\.ts$/,
+  /^src\/lib\/reply\//,
+  /^src\/components\/client\//,
   /^src\/hooks\/(useExtensionBridge|useStaffList)\.ts$/,
   /^src\/utils\/(notice\w*|litigationPdfExport)\.ts$/,
 ];

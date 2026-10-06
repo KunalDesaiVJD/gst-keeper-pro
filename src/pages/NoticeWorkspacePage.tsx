@@ -2,10 +2,14 @@
 // docs/notices-mission-audit/mocks/target-notice.png; findings R-18, R-19,
 // R-28, L-19, U-27-1, U-40-*, U-41-*). One page per notice, reachable by URL
 // from every e-mail, the bell, search and every list: header facts, the stage
-// rail, the four figures, and tabs for Issues · Draft · Documents · Activity ·
-// Payments · Hearings · Deadlines. The next step can be done from here without
-// leaving the page. Replaces the read-only drawer.
-import React, { useMemo, useState } from 'react';
+// rail, the four figures, what the notice says (Phase 4: read from the portal
+// and the PDF, each value with its source, verified in one click; R-08), and
+// tabs for Issues · Evidence · Draft · Documents · Activity · Payments ·
+// Hearings · Deadlines. The next step can be done from here without leaving
+// the page. Replaces the read-only drawer. Phase 4b: how much the notice type
+// needs a reply (Critical / Optional / Info only), reply options on the Draft
+// tab, and "Read and close" for types that need no reply.
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -30,7 +34,6 @@ import { StagePicker } from '@/components/notices/StagePicker';
 import { OwnerChip } from '@/components/notices/OwnerChip';
 import { LogReplyDialog } from '@/components/notices/actions/LogReplyDialog';
 import { LogOrderDialog } from '@/components/notices/actions/LogOrderDialog';
-import { RequestDocumentsDialog } from '@/components/notices/actions/RequestDocumentsDialog';
 import { HearingDialog } from '@/components/notices/actions/HearingDialog';
 import { ExtensionDialog } from '@/components/notices/actions/ExtensionDialog';
 import { MatterDialog } from '@/components/notices/actions/MatterDialog';
@@ -38,6 +41,11 @@ import type { NoticeRef } from '@/components/notices/actions/NoticeContext';
 import { StageRail } from '@/components/notices/workspace/StageRail';
 import { FactTiles } from '@/components/notices/workspace/FactTiles';
 import { IssuesTab } from '@/components/notices/workspace/IssuesTab';
+import { EvidenceTab } from '@/components/notices/workspace/EvidenceTab';
+import { AskClientDialog } from '@/components/notices/workspace/AskClientDialog';
+import { ReadCloseDialog } from '@/components/notices/workspace/ReadCloseDialog';
+import { NoticeReadCard } from '@/components/notices/reply/read/NoticeReadCard';
+import { aiDetail, isActiveRead, loadReading } from '@/lib/noticeReading';
 import { DraftTab } from '@/components/notices/workspace/DraftTab';
 import { DocumentsTab, portalReplyFrom } from '@/components/notices/workspace/DocumentsTab';
 import { ActivityTab } from '@/components/notices/workspace/ActivityTab';
@@ -49,6 +57,7 @@ import { cn } from '@/lib/utils';
 
 const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: 'issues', label: 'Issues' },
+  { key: 'evidence', label: 'Evidence' },
   { key: 'draft', label: 'Draft reply' },
   { key: 'documents', label: 'Documents' },
   { key: 'activity', label: 'Activity' },
@@ -57,7 +66,20 @@ const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: 'deadlines', label: 'Deadlines' },
 ];
 
-type DialogKey = 'reply' | 'order' | 'docs' | 'hearing' | 'extension' | 'matter' | null;
+type DialogKey = 'reply' | 'order' | 'docs' | 'hearing' | 'extension' | 'matter' | 'close' | null;
+
+/** How much the notice type needs a reply (notice_type_settings.response_need via notice_facts). */
+const NEED: Record<string, { label: string; title: string; tone: 'destructive' | 'warning' | 'secondary' }> = {
+  critical: { label: 'Critical', title: 'Reply required', tone: 'destructive' },
+  optional: { label: 'Optional', title: 'Reply optional', tone: 'warning' },
+  none: { label: 'Info only', title: 'No reply needed', tone: 'secondary' },
+};
+
+function ResponseNeedChip({ need }: { need: string | null | undefined }) {
+  const d = need ? NEED[need] : undefined;
+  if (!d) return null;
+  return <Badge variant={d.tone} className="text-[11px]" title={d.title}>{d.label}<span className="sr-only">: {d.title.toLowerCase()}</span></Badge>;
+}
 
 function toRef(ws: Workspace): NoticeRef {
   const f = ws.fact;
@@ -100,6 +122,8 @@ function DueChip({ ws }: { ws: Workspace }) {
   const f = ws.fact;
   if (f.stage === 'closed') return <Badge variant="secondary" className="text-[11px]">Closed{ws.notice.close_reason ? ` · ${closeReasonText(ws.notice.close_reason).replace('Closed automatically: ', 'auto: ')}` : ''}</Badge>;
   if (f.reply_date) return <Badge variant="success" className="text-[11px]">Replied {fmtDate(f.reply_date)}</Badge>;
+  // A type that needs no reply runs on no reply clock (contract A): no due chip.
+  if (f.response_need === 'none') return null;
   if (!f.effective_due) return <Badge variant="secondary" className="text-[11px]">No due date</Badge>;
   const d = f.days_to_due ?? 0;
   return (
@@ -119,6 +143,21 @@ const NoticeWorkspacePage: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const q = useQuery({ queryKey: ['notice-workspace', id], queryFn: () => loadWorkspace(id), enabled: !!id, retry: (n, e) => !(e instanceof NoticeNotFound) && n < 2 });
   const ws = q.data;
+  const clientId = ws?.notice.client_id;
+  // What the readers found; polled while a PDF read is queued or running.
+  const rq = useQuery({
+    queryKey: ['notice-reading', id],
+    queryFn: () => loadReading(id, clientId as string),
+    enabled: !!clientId,
+    refetchInterval: (query) => (isActiveRead(query.state.data?.ai) ? 20_000 : false),
+  });
+  const wasReading = useRef(false);
+  useEffect(() => {
+    const active = isActiveRead(rq.data?.ai);
+    // A read that just finished filled fields and issues: load the notice again.
+    if (wasReading.current && !active) qc.invalidateQueries({ queryKey: ['notice-workspace', id] });
+    wasReading.current = active;
+  }, [rq.data, id, qc]);
   const tab = (TABS.some((t) => t.key === sp.get('tab')) ? sp.get('tab') : 'issues') as WorkspaceTab;
   const setTab = (t: string) => { const next = new URLSearchParams(sp); next.set('tab', t); setSp(next, { replace: true }); };
   const ref = useMemo(() => (ws ? toRef(ws) : null), [ws]);
@@ -129,6 +168,8 @@ const NoticeWorkspacePage: React.FC = () => {
 
   const reload = () => {
     qc.invalidateQueries({ queryKey: ['notice-workspace', id] });
+    qc.invalidateQueries({ queryKey: ['notice-reading', id] });
+    qc.invalidateQueries({ queryKey: ['notice-reply-options', id] });
     qc.invalidateQueries({ queryKey: ['notices-command-centre'] });
     qc.invalidateQueries({ queryKey: ['notice-plan-top'] });
   };
@@ -205,7 +246,12 @@ const NoticeWorkspacePage: React.FC = () => {
         return <AssignPopover currentOwnerId={n.assign_to_user_id} suggestedName={ws.client?.assigned_accountant} onAssign={assign}>
           <Button size="sm" className={WS_BTN}><UserPlus className="h-3.5 w-3.5" /> Assign</Button></AssignPopover>;
       case 'triage': return <Button size="sm" className={WS_BTN} onClick={() => changeStage('triaged')}>Mark triaged</Button>;
-      case 'start_work': case 'build_evidence':
+      case 'read_close': return <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('close')}>{def.label}</Button>;
+      case 'build_evidence':
+        return ws.issues.length
+          ? <Button size="sm" className={WS_BTN} onClick={() => setTab('evidence')}>Build evidence</Button>
+          : <Button size="sm" className={WS_BTN} onClick={() => setTab('issues')}>List the issues</Button>;
+      case 'start_work':
         return ws.issues.length
           ? <Button size="sm" className={WS_BTN} onClick={() => setTab('draft')}>Write the draft</Button>
           : <Button size="sm" className={WS_BTN} onClick={() => setTab('issues')}>List the issues</Button>;
@@ -236,6 +282,7 @@ const NoticeWorkspacePage: React.FC = () => {
           <p className="text-xs text-muted-foreground">
             {n.reference_number && <>Ref <span className="font-mono">{n.reference_number}</span> · </>}
             {n.case_id && <>Case <span className="font-mono">{n.case_id}</span> · </>}
+            {n.din && <>DIN <span className="font-mono">{n.din}</span> · </>}
             {n.issue_date ? `issued ${fmtDate(n.issue_date)}` : 'issue date not known'}{n.issued_by ? ` by ${n.issued_by}` : ''}
             {' · '}{n.portal_key?.startsWith('manual:') ? 'typed in' : 'captured by the portal sync'} {fmtDateTime(n.first_seen_at)}
             {n.pdf_url && <> · <a href={n.pdf_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-primary hover:underline">PDF <ExternalLink className="h-3 w-3" /></a></>}
@@ -243,6 +290,7 @@ const NoticeWorkspacePage: React.FC = () => {
           {n.description && <p className="line-clamp-2 text-sm" title={n.description}>{sentenceCase(n.description)}</p>}
           <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
             <DueChip ws={ws} />
+            <ResponseNeedChip need={f.response_need} />
             {canEdit ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -302,28 +350,32 @@ const NoticeWorkspacePage: React.FC = () => {
       <FactTiles ws={ws} onAskClient={canEdit && !closed ? () => setDialog('docs') : undefined} />
 
       <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <Tabs value={tab} onValueChange={setTab} className="min-w-0 space-y-2">
-          <TabsList className={cn(TAB_LIST_CLASS, 'w-full sm:w-auto')}>
-            {TABS.map((t) => {
-              const count = t.key === 'documents' ? ws.documents.length + ws.folder.length + (n.pdf_url ? 1 : 0)
-                : t.key === 'issues' ? ws.issues.length : t.key === 'deadlines' ? ws.deadlines.filter((d) => !d.is_met).length : 0;
-              return (
-                <TabsTrigger key={t.key} value={t.key} className={cn(TAB_TRIGGER_CLASS, 'h-8 px-3')}>
-                  {t.label}{count > 0 && <span className="rounded-full bg-card/30 px-1.5 text-[10px] font-semibold tabular-nums">{count}</span>}
-                </TabsTrigger>
-              );
-            })}
-          </TabsList>
-          <div className="rounded-lg border bg-card p-3">
-            <TabsContent value="issues" className="mt-0"><IssuesTab noticeId={n.id} issues={ws.issues} canEdit={canEdit} onChanged={reload} /></TabsContent>
-            <TabsContent value="draft" className="mt-0"><DraftTab ws={ws} canEdit={canEdit} canApprove={canApproveNoticeReplies()} onChanged={reload} /></TabsContent>
-            <TabsContent value="documents" className="mt-0"><DocumentsTab ws={ws} canEdit={canEdit} onChanged={reload} onAskClient={() => setDialog('docs')} /></TabsContent>
-            <TabsContent value="activity" className="mt-0"><ActivityTab notice={n} events={ws.events} canEdit={canEdit} onChanged={reload} /></TabsContent>
-            <TabsContent value="payments" className="mt-0"><PaymentsTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
-            <TabsContent value="hearings" className="mt-0"><HearingsTab ws={ws} canEdit={canEdit} onFix={() => setDialog('hearing')} /></TabsContent>
-            <TabsContent value="deadlines" className="mt-0"><DeadlinesTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
-          </div>
-        </Tabs>
+        <div className="min-w-0 space-y-3">
+          <NoticeReadCard ws={ws} reading={rq.data} loading={rq.isLoading} error={rq.error} canEdit={canEdit} onChanged={reload} />
+          <Tabs value={tab} onValueChange={setTab} className="min-w-0 space-y-2">
+            <TabsList className={cn(TAB_LIST_CLASS, 'w-full sm:w-auto')}>
+              {TABS.map((t) => {
+                const count = t.key === 'documents' ? ws.documents.length + ws.folder.length + (n.pdf_url ? 1 : 0)
+                  : t.key === 'issues' ? ws.issues.length : t.key === 'deadlines' ? ws.deadlines.filter((d) => !d.is_met).length : 0;
+                return (
+                  <TabsTrigger key={t.key} value={t.key} className={cn(TAB_TRIGGER_CLASS, 'h-8 px-3')}>
+                    {t.label}{count > 0 && <span className="rounded-full bg-card/30 px-1.5 text-[10px] font-semibold tabular-nums">{count}</span>}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+            <div className="rounded-lg border bg-card p-3">
+              <TabsContent value="issues" className="mt-0"><IssuesTab noticeId={n.id} issues={ws.issues} canEdit={canEdit} onChanged={reload} /></TabsContent>
+              <TabsContent value="evidence" className="mt-0"><EvidenceTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
+              <TabsContent value="draft" className="mt-0"><DraftTab ws={ws} canEdit={canEdit} canApprove={canApproveNoticeReplies()} onChanged={reload} /></TabsContent>
+              <TabsContent value="documents" className="mt-0"><DocumentsTab ws={ws} canEdit={canEdit} onChanged={reload} onAskClient={() => setDialog('docs')} /></TabsContent>
+              <TabsContent value="activity" className="mt-0"><ActivityTab notice={n} events={ws.events} canEdit={canEdit} onChanged={reload} /></TabsContent>
+              <TabsContent value="payments" className="mt-0"><PaymentsTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
+              <TabsContent value="hearings" className="mt-0"><HearingsTab ws={ws} canEdit={canEdit} onFix={() => setDialog('hearing')} /></TabsContent>
+              <TabsContent value="deadlines" className="mt-0"><DeadlinesTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
+            </div>
+          </Tabs>
+        </div>
         <aside className="space-y-3" aria-label="Next step and key facts">
           <NextStepCard ws={ws} action={primary ?? <span className="text-xs text-muted-foreground">{dueWords(f.days_to_due)}</span>} />
           <KeyFacts ws={ws} />
@@ -332,10 +384,12 @@ const NoticeWorkspacePage: React.FC = () => {
 
       <LogReplyDialog notice={ref} open={dialog === 'reply'} onOpenChange={(o) => setDialog(o ? 'reply' : null)} onDone={reload} portalReply={portalReply} />
       <LogOrderDialog notice={ref} open={dialog === 'order'} onOpenChange={(o) => setDialog(o ? 'order' : null)} onDone={reload} />
-      <RequestDocumentsDialog notice={ref} clientEmail={ws.client?.email ?? null} open={dialog === 'docs'} onOpenChange={(o) => setDialog(o ? 'docs' : null)} onDone={reload} />
+      <AskClientDialog notice={ref} clientEmail={ws.client?.email ?? null} issues={ws.issues} requests={ws.requests} noticeAsks={aiDetail(rq.data?.aiDone).documentsAsked}
+        open={dialog === 'docs'} onOpenChange={(o) => setDialog(o ? 'docs' : null)} onDone={reload} />
       <HearingDialog notice={ref} open={dialog === 'hearing'} onOpenChange={(o) => setDialog(o ? 'hearing' : null)} onDone={reload} />
       <ExtensionDialog notice={ref} open={dialog === 'extension'} onOpenChange={(o) => setDialog(o ? 'extension' : null)} onDone={reload} />
       <MatterDialog notice={{ ...ref, stage: f.stage }} open={dialog === 'matter'} onOpenChange={(o) => setDialog(o ? 'matter' : null)} onDone={reload} />
+      <ReadCloseDialog open={dialog === 'close'} onOpenChange={(o) => setDialog(o ? 'close' : null)} onClose={(reason) => changeStage('closed', reason)} />
     </div>
   );
 };

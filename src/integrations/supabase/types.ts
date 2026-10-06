@@ -39,6 +39,113 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_audit_log: {
+        Row: {
+          agent_id: string | null
+          at: string
+          client_id: string | null
+          cost_usd: number | null
+          document_sha256: string | null
+          duration_ms: number | null
+          error: string | null
+          extraction_id: string | null
+          id: number
+          input_tokens: number | null
+          model: string | null
+          notice_id: string | null
+          output_tokens: number | null
+          purpose: string
+          request_id: string | null
+          requested_by_name: string | null
+          status: string
+        }
+        Insert: {
+          agent_id?: string | null
+          at?: string
+          client_id?: string | null
+          cost_usd?: number | null
+          document_sha256?: string | null
+          duration_ms?: number | null
+          error?: string | null
+          extraction_id?: string | null
+          id?: number
+          input_tokens?: number | null
+          model?: string | null
+          notice_id?: string | null
+          output_tokens?: number | null
+          purpose: string
+          request_id?: string | null
+          requested_by_name?: string | null
+          status: string
+        }
+        Update: {
+          agent_id?: string | null
+          at?: string
+          client_id?: string | null
+          cost_usd?: number | null
+          document_sha256?: string | null
+          duration_ms?: number | null
+          error?: string | null
+          extraction_id?: string | null
+          id?: number
+          input_tokens?: number | null
+          model?: string | null
+          notice_id?: string | null
+          output_tokens?: number | null
+          purpose?: string
+          request_id?: string | null
+          requested_by_name?: string | null
+          status?: string
+        }
+        Relationships: [
+        ]
+      }
+      ai_settings: {
+        Row: {
+          auto_read_new: boolean
+          daily_cap_usd: number
+          effort: string
+          id: boolean
+          max_pages: number
+          model: string
+          price_in_per_mtok: number
+          price_out_per_mtok: number
+          read_enabled: boolean
+          updated_at: string
+          updated_by_name: string | null
+          usd_inr: number
+        }
+        Insert: {
+          auto_read_new?: boolean
+          daily_cap_usd?: number
+          effort?: string
+          id?: boolean
+          max_pages?: number
+          model?: string
+          price_in_per_mtok?: number
+          price_out_per_mtok?: number
+          read_enabled?: boolean
+          updated_at?: string
+          updated_by_name?: string | null
+          usd_inr?: number
+        }
+        Update: {
+          auto_read_new?: boolean
+          daily_cap_usd?: number
+          effort?: string
+          id?: boolean
+          max_pages?: number
+          model?: string
+          price_in_per_mtok?: number
+          price_out_per_mtok?: number
+          read_enabled?: boolean
+          updated_at?: string
+          updated_by_name?: string | null
+          usd_inr?: number
+        }
+        Relationships: [
+        ]
+      }
       autopilot_presence: {
         Row: {
           last_seen: string
@@ -63,6 +170,7 @@ export type Database = {
           afternoon_at: string
           afternoon_scope: string
           captcha_refresh_secs: number
+          captcha_wait_secs: number
           close_at: string
           concurrency: number
           email_trigger: boolean
@@ -76,6 +184,7 @@ export type Database = {
           morning_at: string
           nudge_at: string
           paused_until: string | null
+          runner: string
           schedule_enabled: boolean
           updated_at: string
           updated_by_name: string | null
@@ -84,6 +193,7 @@ export type Database = {
           afternoon_at?: string
           afternoon_scope?: string
           captcha_refresh_secs?: number
+          captcha_wait_secs?: number
           close_at?: string
           concurrency?: number
           email_trigger?: boolean
@@ -97,6 +207,7 @@ export type Database = {
           morning_at?: string
           nudge_at?: string
           paused_until?: string | null
+          runner?: string
           schedule_enabled?: boolean
           updated_at?: string
           updated_by_name?: string | null
@@ -105,6 +216,7 @@ export type Database = {
           afternoon_at?: string
           afternoon_scope?: string
           captcha_refresh_secs?: number
+          captcha_wait_secs?: number
           close_at?: string
           concurrency?: number
           email_trigger?: boolean
@@ -118,6 +230,7 @@ export type Database = {
           morning_at?: string
           nudge_at?: string
           paused_until?: string | null
+          runner?: string
           schedule_enabled?: boolean
           updated_at?: string
           updated_by_name?: string | null
@@ -4042,6 +4155,9 @@ export type Database = {
           target_date_group1: number | null
           target_date_group2: number | null
           updated_at: string | null
+          ai_consent_at: string | null
+          ai_consent_note: string | null
+          ai_opt_out: boolean
         }
         Insert: {
           assigned_accountant?: string | null
@@ -4073,6 +4189,9 @@ export type Database = {
           target_date_group1?: number | null
           target_date_group2?: number | null
           updated_at?: string | null
+          ai_consent_at?: string | null
+          ai_consent_note?: string | null
+          ai_opt_out?: boolean
         }
         Update: {
           assigned_accountant?: string | null
@@ -4104,6 +4223,9 @@ export type Database = {
           target_date_group1?: number | null
           target_date_group2?: number | null
           updated_at?: string | null
+          ai_consent_at?: string | null
+          ai_consent_note?: string | null
+          ai_opt_out?: boolean
         }
         Relationships: []
       }
@@ -5100,6 +5222,13 @@ export type Database = {
           stage_changed_by: string | null
           hearing_note: string | null
           portal_detail: Json | null
+          section_of_law: string | null
+          period_from: string | null
+          period_to: string | null
+          din: string | null
+          demand: Json | null
+          demand_total: number | null
+          read_fields: Json
         }
         Insert: {
           amount_of_demand?: number | null
@@ -5150,6 +5279,13 @@ export type Database = {
           stage_changed_by?: string | null
           hearing_note?: string | null
           portal_detail?: Json | null
+          section_of_law?: string | null
+          period_from?: string | null
+          period_to?: string | null
+          din?: string | null
+          demand?: Json | null
+          demand_total?: number | null
+          read_fields?: Json
         }
         Update: {
           amount_of_demand?: number | null
@@ -5200,6 +5336,13 @@ export type Database = {
           stage_changed_by?: string | null
           hearing_note?: string | null
           portal_detail?: Json | null
+          section_of_law?: string | null
+          period_from?: string | null
+          period_to?: string | null
+          din?: string | null
+          demand?: Json | null
+          demand_total?: number | null
+          read_fields?: Json
         }
         Relationships: [
           {
@@ -7042,6 +7185,221 @@ export type Database = {
         }
         Relationships: []
       }
+      notice_extractions: {
+        Row: {
+          agent_id: string | null
+          attempts: number
+          checks: Json | null
+          claimed_at: string | null
+          client_id: string
+          created_at: string
+          detail: Json | null
+          document_label: string | null
+          document_sha256: string | null
+          document_url: string | null
+          error: string | null
+          fields: Json | null
+          finished_at: string | null
+          id: string
+          issues: Json | null
+          model: string | null
+          not_before: string | null
+          notice_id: string
+          outcome: string | null
+          pages: number | null
+          priority: number
+          reason_class: string | null
+          requested_by: string | null
+          requested_by_name: string | null
+          source: string
+          status: string
+          text_layer: boolean | null
+          updated_at: string
+          usage: Json | null
+        }
+        Insert: {
+          agent_id?: string | null
+          attempts?: number
+          checks?: Json | null
+          claimed_at?: string | null
+          client_id: string
+          created_at?: string
+          detail?: Json | null
+          document_label?: string | null
+          document_sha256?: string | null
+          document_url?: string | null
+          error?: string | null
+          fields?: Json | null
+          finished_at?: string | null
+          id?: string
+          issues?: Json | null
+          model?: string | null
+          not_before?: string | null
+          notice_id: string
+          outcome?: string | null
+          pages?: number | null
+          priority?: number
+          reason_class?: string | null
+          requested_by?: string | null
+          requested_by_name?: string | null
+          source: string
+          status?: string
+          text_layer?: boolean | null
+          updated_at?: string
+          usage?: Json | null
+        }
+        Update: {
+          agent_id?: string | null
+          attempts?: number
+          checks?: Json | null
+          claimed_at?: string | null
+          client_id?: string
+          created_at?: string
+          detail?: Json | null
+          document_label?: string | null
+          document_sha256?: string | null
+          document_url?: string | null
+          error?: string | null
+          fields?: Json | null
+          finished_at?: string | null
+          id?: string
+          issues?: Json | null
+          model?: string | null
+          not_before?: string | null
+          notice_id?: string
+          outcome?: string | null
+          pages?: number | null
+          priority?: number
+          reason_class?: string | null
+          requested_by?: string | null
+          requested_by_name?: string | null
+          source?: string
+          status?: string
+          text_layer?: boolean | null
+          updated_at?: string
+          usage?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notice_extractions_notice_id_fkey"
+            columns: ["notice_id"]
+            isOneToOne: false
+            referencedRelation: "gst_notices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notice_reply_options: {
+        Row: {
+          body: string
+          id: string
+          inputs: Json
+          inputs_hash: string
+          notice_id: string
+          rendered_at: string
+          sort: number
+          stance: string
+          status: string
+          summary: string
+          template_key: string
+          template_version: number
+          title: string
+          used_at: string | null
+          used_by_name: string | null
+          used_draft_id: string | null
+        }
+        Insert: {
+          body: string
+          id?: string
+          inputs?: Json
+          inputs_hash: string
+          notice_id: string
+          rendered_at?: string
+          sort?: number
+          stance: string
+          status?: string
+          summary?: string
+          template_key: string
+          template_version: number
+          title: string
+          used_at?: string | null
+          used_by_name?: string | null
+          used_draft_id?: string | null
+        }
+        Update: {
+          body?: string
+          id?: string
+          inputs?: Json
+          inputs_hash?: string
+          notice_id?: string
+          rendered_at?: string
+          sort?: number
+          stance?: string
+          status?: string
+          summary?: string
+          template_key?: string
+          template_version?: number
+          title?: string
+          used_at?: string | null
+          used_by_name?: string | null
+          used_draft_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notice_reply_options_notice_id_fkey"
+            columns: ["notice_id"]
+            isOneToOne: false
+            referencedRelation: "gst_notices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notice_reply_options_template_key_fkey"
+            columns: ["template_key"]
+            isOneToOne: false
+            referencedRelation: "reply_templates"
+            referencedColumns: ["key"]
+          },
+          {
+            foreignKeyName: "notice_reply_options_used_draft_id_fkey"
+            columns: ["used_draft_id"]
+            isOneToOne: false
+            referencedRelation: "notice_drafts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notice_type_settings: {
+        Row: {
+          form_code: string
+          response_need: string
+          show_on_dashboard: boolean
+          updated_at: string
+          updated_by_name: string | null
+        }
+        Insert: {
+          form_code: string
+          response_need?: string
+          show_on_dashboard?: boolean
+          updated_at?: string
+          updated_by_name?: string | null
+        }
+        Update: {
+          form_code?: string
+          response_need?: string
+          show_on_dashboard?: boolean
+          updated_at?: string
+          updated_by_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notice_type_settings_form_code_fkey"
+            columns: ["form_code"]
+            isOneToOne: false
+            referencedRelation: "notice_form_rules"
+            referencedColumns: ["form_code"]
+          },
+        ]
+      }
       password_reset_requests: {
         Row: {
           id: string
@@ -7907,6 +8265,197 @@ export type Database = {
           },
         ]
       }
+      reply_annexures: {
+        Row: {
+          client_id: string
+          explained_amount: number | null
+          financial_year: string | null
+          generated_at: string
+          generated_by_name: string | null
+          id: string
+          inputs_hash: string | null
+          is_current: boolean
+          issue_id: string | null
+          note: string | null
+          notice_id: string
+          periods: string[]
+          readiness: Json | null
+          recipe_key: string
+          status: string
+          summary: Json | null
+          tables: Json | null
+          title: string | null
+          to_pay_amount: number | null
+          version: number
+        }
+        Insert: {
+          client_id: string
+          explained_amount?: number | null
+          financial_year?: string | null
+          generated_at?: string
+          generated_by_name?: string | null
+          id?: string
+          inputs_hash?: string | null
+          is_current?: boolean
+          issue_id?: string | null
+          note?: string | null
+          notice_id: string
+          periods?: string[]
+          readiness?: Json | null
+          recipe_key: string
+          status: string
+          summary?: Json | null
+          tables?: Json | null
+          title?: string | null
+          to_pay_amount?: number | null
+          version: number
+        }
+        Update: {
+          client_id?: string
+          explained_amount?: number | null
+          financial_year?: string | null
+          generated_at?: string
+          generated_by_name?: string | null
+          id?: string
+          inputs_hash?: string | null
+          is_current?: boolean
+          issue_id?: string | null
+          note?: string | null
+          notice_id?: string
+          periods?: string[]
+          readiness?: Json | null
+          recipe_key?: string
+          status?: string
+          summary?: Json | null
+          tables?: Json | null
+          title?: string | null
+          to_pay_amount?: number | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reply_annexures_issue_id_fkey"
+            columns: ["issue_id"]
+            isOneToOne: false
+            referencedRelation: "notice_issues"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reply_annexures_notice_id_fkey"
+            columns: ["notice_id"]
+            isOneToOne: false
+            referencedRelation: "gst_notices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reply_issue_types: {
+        Row: {
+          approved_at: string | null
+          approved_by_name: string | null
+          code: string
+          description: string | null
+          documents: string[]
+          family: string
+          firm_position: string | null
+          forms: string[]
+          is_active: boolean
+          para_accept: string | null
+          para_contest: string | null
+          position_status: string
+          recipe_key: string | null
+          sort: number
+          title: string
+          updated_at: string
+          updated_by_name: string | null
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by_name?: string | null
+          code: string
+          description?: string | null
+          documents?: string[]
+          family: string
+          firm_position?: string | null
+          forms?: string[]
+          is_active?: boolean
+          para_accept?: string | null
+          para_contest?: string | null
+          position_status?: string
+          recipe_key?: string | null
+          sort?: number
+          title: string
+          updated_at?: string
+          updated_by_name?: string | null
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by_name?: string | null
+          code?: string
+          description?: string | null
+          documents?: string[]
+          family?: string
+          firm_position?: string | null
+          forms?: string[]
+          is_active?: boolean
+          para_accept?: string | null
+          para_contest?: string | null
+          position_status?: string
+          recipe_key?: string | null
+          sort?: number
+          title?: string
+          updated_at?: string
+          updated_by_name?: string | null
+        }
+        Relationships: [
+        ]
+      }
+      reply_templates: {
+        Row: {
+          body: string
+          created_at: string
+          forms: string[]
+          is_active: boolean
+          key: string
+          sort: number
+          stance: string
+          summary: string
+          title: string
+          updated_at: string
+          updated_by_name: string | null
+          version: number
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          forms?: string[]
+          is_active?: boolean
+          key: string
+          sort?: number
+          stance: string
+          summary?: string
+          title: string
+          updated_at?: string
+          updated_by_name?: string | null
+          version?: number
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          forms?: string[]
+          is_active?: boolean
+          key?: string
+          sort?: number
+          stance?: string
+          summary?: string
+          title?: string
+          updated_at?: string
+          updated_by_name?: string | null
+          version?: number
+        }
+        Relationships: [
+        ]
+      }
       return_reminder_schedules: {
         Row: {
           due_day: number
@@ -8367,6 +8916,8 @@ export type Database = {
           new_notice_max_age_days: number
           quiet_end: string
           quiet_start: string
+          reply_place: string | null
+          reply_signatory: string | null
           updated_at: string
           updated_by: string | null
         }
@@ -8379,6 +8930,8 @@ export type Database = {
           new_notice_max_age_days?: number
           quiet_end?: string
           quiet_start?: string
+          reply_place?: string | null
+          reply_signatory?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -8391,6 +8944,8 @@ export type Database = {
           new_notice_max_age_days?: number
           quiet_end?: string
           quiet_start?: string
+          reply_place?: string | null
+          reply_signatory?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -8537,6 +9092,17 @@ export type Database = {
           title: string
           updated_at: string
           updated_by_name: string | null
+          issue_code: string | null
+          period_from: string | null
+          period_to: string | null
+          demand: Json | null
+          page: number | null
+          quote: string | null
+          verified: boolean
+          verified_by_name: string | null
+          verified_at: string | null
+          extraction_id: string | null
+          explained_by: string | null
         }
         Insert: {
           amount?: number
@@ -8555,6 +9121,17 @@ export type Database = {
           title: string
           updated_at?: string
           updated_by_name?: string | null
+          issue_code?: string | null
+          period_from?: string | null
+          period_to?: string | null
+          demand?: Json | null
+          page?: number | null
+          quote?: string | null
+          verified?: boolean
+          verified_by_name?: string | null
+          verified_at?: string | null
+          extraction_id?: string | null
+          explained_by?: string | null
         }
         Update: {
           amount?: number
@@ -8573,6 +9150,17 @@ export type Database = {
           title?: string
           updated_at?: string
           updated_by_name?: string | null
+          issue_code?: string | null
+          period_from?: string | null
+          period_to?: string | null
+          demand?: Json | null
+          page?: number | null
+          quote?: string | null
+          verified?: boolean
+          verified_by_name?: string | null
+          verified_at?: string | null
+          extraction_id?: string | null
+          explained_by?: string | null
         }
         Relationships: []
       }
@@ -8588,6 +9176,8 @@ export type Database = {
           reviewed_at: string | null
           reviewed_by: string | null
           reviewed_by_name: string | null
+          source_option_id: string | null
+          source_template_key: string | null
           status: string
           updated_at: string
           version: number
@@ -8603,6 +9193,8 @@ export type Database = {
           reviewed_at?: string | null
           reviewed_by?: string | null
           reviewed_by_name?: string | null
+          source_option_id?: string | null
+          source_template_key?: string | null
           status?: string
           updated_at?: string
           version: number
@@ -8618,6 +9210,8 @@ export type Database = {
           reviewed_at?: string | null
           reviewed_by?: string | null
           reviewed_by_name?: string | null
+          source_option_id?: string | null
+          source_template_key?: string | null
           status?: string
           updated_at?: string
           version?: number
@@ -8642,6 +9236,10 @@ export type Database = {
           resolved_by_name: string | null
           status: string
           updated_at: string
+          issue_id: string | null
+          source: string
+          client_uploaded_at: string | null
+          client_note: string | null
         }
         Insert: {
           created_at?: string
@@ -8660,6 +9258,10 @@ export type Database = {
           resolved_by_name?: string | null
           status?: string
           updated_at?: string
+          issue_id?: string | null
+          source?: string
+          client_uploaded_at?: string | null
+          client_note?: string | null
         }
         Update: {
           created_at?: string
@@ -8678,6 +9280,10 @@ export type Database = {
           resolved_by_name?: string | null
           status?: string
           updated_at?: string
+          issue_id?: string | null
+          source?: string
+          client_uploaded_at?: string | null
+          client_note?: string | null
         }
         Relationships: []
       }
@@ -8742,12 +9348,22 @@ export type Database = {
           client_id: string | null
           client_inactive: boolean | null
           client_name: string | null
+          clock_date: string | null
+          clock_type: string | null
           close_reason: string | null
           created_at: string | null
+          days_in_stage: number | null
           days_to_due: number | null
+          days_to_plan_due: number | null
           default_priority: string | null
           description: string | null
           dispute_key: string | null
+          docs_last_reminded_at: string | null
+          docs_open: number | null
+          docs_reminders: number | null
+          docs_total: number | null
+          draft_status: string | null
+          draft_version: number | null
           due_basis: string | null
           due_basis_note: string | null
           due_date: string | null
@@ -8760,7 +9376,10 @@ export type Database = {
           form_code: string | null
           form_label: string | null
           hearing_date: string | null
+          hearing_note: string | null
+          hearing_soon: boolean | null
           id: string | null
+          in_plan: boolean | null
           is_drc03_case: boolean | null
           is_due_in_7: boolean | null
           is_new: boolean | null
@@ -8771,54 +9390,44 @@ export type Database = {
           is_unassigned: boolean | null
           issue_date: string | null
           issued_by: string | null
+          issues_amount: number | null
+          issues_explained: number | null
+          issues_to_pay: number | null
+          issues_total: number | null
           last_seen_at: string | null
           matter_id: string | null
+          next_action: string | null
           notice_type: string | null
+          on_dashboard: boolean | null
           order_date: string | null
           order_number: string | null
           pdf_url: string | null
+          plan_due: string | null
+          plan_due_kind: string | null
+          plan_score: number | null
           portal_key: string | null
           portal_status: string | null
           priority: string | null
           pulled_at: string | null
+          readiness: number | null
+          readiness_pct: number | null
           reference_number: string | null
           remarks: string | null
           reply_date: string | null
+          reply_due: string | null
           reply_ref_number: string | null
+          response_need: string | null
           source: string | null
           staff_status: string | null
+          stage: string | null
+          stage_changed_at: string | null
+          stage_changed_by: string | null
+          stage_label: string | null
+          stage_ord: number | null
           submission_arn: string | null
           submission_date: string | null
           today_ist: string | null
           updated_at: string | null
-          stage: string | null
-          stage_label: string | null
-          stage_ord: number | null
-          stage_changed_at: string | null
-          stage_changed_by: string | null
-          days_in_stage: number | null
-          clock_type: string | null
-          clock_date: string | null
-          docs_total: number | null
-          docs_open: number | null
-          docs_reminders: number | null
-          docs_last_reminded_at: string | null
-          draft_version: number | null
-          draft_status: string | null
-          issues_total: number | null
-          issues_amount: number | null
-          issues_explained: number | null
-          issues_to_pay: number | null
-          hearing_soon: boolean | null
-          next_action: string | null
-          plan_due: string | null
-          plan_due_kind: string | null
-          readiness: number | null
-          readiness_pct: number | null
-          days_to_plan_due: number | null
-          in_plan: boolean | null
-          plan_score: number | null
-          hearing_note: string | null
         }
         Relationships: []
       }
@@ -8835,6 +9444,7 @@ export type Database = {
           client_name: string | null
           close_reason: string | null
           created_at: string | null
+          days_in_stage: number | null
           days_to_due: number | null
           default_priority: string | null
           description: string | null
@@ -8851,6 +9461,7 @@ export type Database = {
           form_code: string | null
           form_label: string | null
           hearing_date: string | null
+          hearing_note: string | null
           id: string | null
           is_drc03_case: boolean | null
           is_due_in_7: boolean | null
@@ -8865,6 +9476,7 @@ export type Database = {
           last_seen_at: string | null
           matter_id: string | null
           notice_type: string | null
+          on_dashboard: boolean | null
           order_date: string | null
           order_number: string | null
           pdf_url: string | null
@@ -8876,19 +9488,34 @@ export type Database = {
           remarks: string | null
           reply_date: string | null
           reply_ref_number: string | null
+          response_need: string | null
           source: string | null
           staff_status: string | null
+          stage: string | null
+          stage_changed_at: string | null
+          stage_changed_by: string | null
+          stage_label: string | null
+          stage_ord: number | null
           submission_arn: string | null
           submission_date: string | null
           today_ist: string | null
           updated_at: string | null
-          stage: string | null
-          stage_label: string | null
-          stage_ord: number | null
-          stage_changed_at: string | null
-          stage_changed_by: string | null
-          days_in_stage: number | null
-          hearing_note: string | null
+        }
+        Relationships: []
+      }
+      notice_type_overview: {
+        Row: {
+          category: string | null
+          form_code: string | null
+          is_active: boolean | null
+          label: string | null
+          match_order: number | null
+          open_count: number | null
+          response_need: string | null
+          show_on_dashboard: boolean | null
+          total_count: number | null
+          updated_at: string | null
+          updated_by_name: string | null
         }
         Relationships: []
       }
@@ -9152,6 +9779,120 @@ export type Database = {
       }
     }
     Functions: {
+      notice_reply_context: {
+        Args: { p_notice_id: string }
+        Returns: Json
+      }
+      notice_reply_option_use: {
+        Args: { p_option_id: string; p_author_id?: string; p_author_name?: string }
+        Returns: Json
+      }
+      notice_reply_options_refresh: {
+        Args: { p_notice_id: string; p_force?: boolean }
+        Returns: number
+      }
+      notice_type_set: {
+        Args: { p_form_code: string; p_response_need?: string; p_show_on_dashboard?: boolean; p_actor_name?: string }
+        Returns: Json
+      }
+      reply_evidence_pending: {
+        Args: { p_limit?: number }
+        Returns: {
+          notice_id: string
+          client_id: string
+          form_code: string
+        }[]
+      }
+      reply_factory_status: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      client_doc_request_upload: {
+        Args: { p_client_id: string; p_client_name?: string | null; p_document_id: string; p_note?: string | null; p_request_id: string }
+        Returns: string
+      }
+      client_doc_requests: {
+        Args: { p_client_id: string }
+        Returns: {
+          client_uploaded_at: string | null
+          document_id: string | null
+          due_date: string | null
+          issue_title: string | null
+          item: string
+          notice_id: string
+          notice_label: string | null
+          reference_number: string | null
+          request_id: string
+          requested_at: string
+          resolved_at: string | null
+          status: string
+        }[]
+      }
+      notice_doc_due_default: {
+        Args: { p_notice_id: string }
+        Returns: string
+      }
+      notice_doc_requests_generate: {
+        Args: { p_actor_id?: string | null; p_actor_name?: string | null; p_due_date?: string | null; p_notice_id: string }
+        Returns: Json
+      }
+      reply_annexure_save: {
+        Args: {
+          p_actor_name?: string | null
+          p_explained?: number | null
+          p_financial_year: string | null
+          p_inputs_hash: string | null
+          p_issue_id: string | null
+          p_notice_id: string
+          p_periods: string[]
+          p_readiness: Json
+          p_recipe_key: string
+          p_status: string
+          p_summary: Json
+          p_tables: Json
+          p_title: string | null
+          p_to_pay?: number | null
+        }
+        Returns: Json
+      }
+      ai_read_status: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      ai_set_consent: {
+        Args: { p_client_ids: string[]; p_consent_at: string | null; p_note?: string | null; p_opt_out?: boolean | null }
+        Returns: number
+      }
+      notice_read_request: {
+        Args: { p_actor_id?: string | null; p_actor_name?: string | null; p_notice_id: string; p_priority?: number | null }
+        Returns: Json
+      }
+      notice_due_coverage: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          due_on: string | null
+          form_code: string | null
+          kind: string
+          notice_id: string
+          source: string | null
+        }[]
+      }
+      notice_issue_verify: {
+        Args: { p_actor_name?: string | null; p_issue_id: string }
+        Returns: boolean
+      }
+      notice_read_verify: {
+        Args: { p_action: string; p_actor_name?: string | null; p_field: string; p_notice_id: string }
+        Returns: string
+      }
+      notice_read_form: {
+        Args: { p_notice_id: string }
+        Returns: boolean
+      }
+      notice_read_portal: {
+        Args: { p_notice_id: string }
+        Returns: Json
+      }
       autopilot_ask_client: {
         Args: { p_actor_name?: string | null; p_client_id: string; p_kind: string }
         Returns: Json
@@ -9287,6 +10028,14 @@ export type Database = {
       portal_job_retry: {
         Args: { p_by?: string | null; p_by_name?: string | null; p_job_id: string }
         Returns: Json
+      }
+      reply_has_dash: {
+        Args: { p: string }
+        Returns: boolean
+      }
+      reply_render: {
+        Args: { p_body: string; p_ctx: Json }
+        Returns: string
       }
       sync_ingest: {
         Args: {

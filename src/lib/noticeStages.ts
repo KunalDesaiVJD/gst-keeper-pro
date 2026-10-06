@@ -65,9 +65,10 @@ export const CLOSE_REASONS = [
 // notice; the row's button does it, or opens the workspace where it is done.
 export type NextAction =
   | 'assign' | 'triage' | 'start_work' | 'build_evidence' | 'chase_client' | 'write_draft'
-  | 'review_draft' | 'file_reply' | 'prepare_hearing' | 'decide_order' | 'follow_appeal' | 'await_order';
+  | 'review_draft' | 'file_reply' | 'prepare_hearing' | 'decide_order' | 'follow_appeal' | 'await_order'
+  | 'read_close';
 
-export type WorkspaceTab = 'issues' | 'draft' | 'documents' | 'activity' | 'payments' | 'hearings' | 'deadlines';
+export type WorkspaceTab = 'issues' | 'evidence' | 'draft' | 'documents' | 'activity' | 'payments' | 'hearings' | 'deadlines';
 
 export interface NextActionDef {
   label: string;
@@ -84,7 +85,7 @@ export const NEXT_ACTIONS: Record<NextAction, NextActionDef> = {
   assign: { label: 'Assign', hint: 'Nobody owns it yet', inline: 'assign', primary: true },
   triage: { label: 'Triage', hint: 'Read it, set priority and the next step', tab: 'issues' },
   start_work: { label: 'Start work', hint: 'List the issues or ask the client', tab: 'issues' },
-  build_evidence: { label: 'Build evidence', hint: 'Explain each issue from the firm\'s data', tab: 'issues' },
+  build_evidence: { label: 'Build evidence', hint: 'Explain each issue from the firm\'s data', tab: 'evidence' },
   chase_client: { label: 'Chase client', hint: 'Re-send the open document requests', inline: 'chase', tab: 'documents' },
   write_draft: { label: 'Write draft', hint: 'Draft the reply', tab: 'draft' },
   review_draft: { label: 'Review draft', hint: 'Approve or send back', tab: 'draft', primary: true },
@@ -93,6 +94,9 @@ export const NEXT_ACTIONS: Record<NextAction, NextActionDef> = {
   decide_order: { label: 'Decide on the order', hint: 'Accept, rectify or appeal before the clock runs out', tab: 'deadlines', primary: true },
   follow_appeal: { label: 'Follow the appeal', hint: 'Open the matter', tab: 'deadlines' },
   await_order: { label: 'Awaiting the officer', hint: 'Nothing to do until the officer acts', tab: 'activity' },
+  // A notice type that needs no reply (notice_type_settings.response_need = 'none'):
+  // the notice page's button opens the close flow.
+  read_close: { label: 'Read and close', hint: 'No reply needed: read it, then close it' },
 };
 
 export function nextActionDef(key: string | null | undefined): NextActionDef {

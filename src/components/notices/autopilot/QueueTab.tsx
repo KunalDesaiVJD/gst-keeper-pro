@@ -1,8 +1,10 @@
-// The office agent's queue (roadmap Phase 3; audit U-07-1, U-50-4: each client
-// says queued · waiting for a CAPTCHA · running · done, live): today's jobs and
-// every job still active, with why a job failed, its tries and timings, who
-// typed its CAPTCHA, and Retry / Cancel. Filters live in the URL; the status
-// line's counts open this list with the same filter and the same count.
+// The autopilot's queue (roadmap Phase 3; audit U-07-1, U-50-4: each client
+// says queued · running · done, live): today's jobs and every job still active,
+// with why a job failed, its tries and timings, and Retry / Cancel. With the
+// office agent it also says which clients wait for a CAPTCHA and who typed it;
+// the scheduled Chrome has no CAPTCHA wall, so those stay out of its view.
+// Filters live in the URL; the status line's counts open this list with the
+// same filter and the same count.
 import React, { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -19,7 +21,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import {
   ACTIVE_STATUSES, ORIGIN_LABELS, cancelJob, fmtWhen, istDayStart, jobStatusDef, jobWhat, originLabel, reasonLabel, retryJob,
-  type PortalJob,
+  type PortalJob, type RunnerMode,
 } from '@/lib/autopilot';
 import { plural } from '@/lib/noticeFormat';
 import { EmptyBox, LoadError, ToneBadge } from './parts';
@@ -71,13 +73,13 @@ function timing(j: QueueJob): string {
   return `queued ${fmtWhen(j.created_at)}`;
 }
 
-const StatusCell: React.FC<{ j: QueueJob }> = ({ j }) => {
+const StatusCell: React.FC<{ j: QueueJob; mode: RunnerMode }> = ({ j, mode }) => {
   const def = jobStatusDef(j.status);
   const showReason = (j.status === 'failed' || j.status === 'cancelled' || retrying(j)) && j.reason_class && j.reason_class !== 'cancelled';
   return (
     <div className="space-y-0.5">
       <ToneBadge tone={def.tone}>{retrying(j) ? 'Retrying' : def.label}</ToneBadge>
-      {showReason && <div className="text-xs font-medium">{reasonLabel(j.reason_class)}</div>}
+      {showReason && <div className="text-xs font-medium">{reasonLabel(j.reason_class, null, mode)}</div>}
       {j.error && j.status !== 'succeeded' && <div className="line-clamp-2 break-words text-[11px] text-muted-foreground" title={j.error}>{j.error}</div>}
     </div>
   );
@@ -98,7 +100,7 @@ const Actions: React.FC<{ j: QueueJob; canAct: boolean; onRetry: (j: QueueJob) =
   return null;
 };
 
-export const QueueTab: React.FC = () => {
+export const QueueTab: React.FC<{ runner: RunnerMode }> = ({ runner: mode }) => {
   const { user, canEditNoticeStatus } = useAuth();
   const [sp, setSp] = useSearchParams();
   const qc = useQueryClient();
@@ -125,6 +127,9 @@ export const QueueTab: React.FC = () => {
   const pageRows = rows.slice((page - 1) * PAGE, page * PAGE);
   const actor = user ? { id: user.id, firstName: user.firstName } : null;
   const canAct = canEditNoticeStatus();
+  // No CAPTCHA wall for the scheduled Chrome: its CAPTCHA filter and column show only for leftovers from the office agent.
+  const wall = mode === 'office_agent' || counts.captcha > 0 || base.some((j) => j.captcha_count > 0);
+  const filters = FILTERS.filter((f) => f.key !== 'captcha' || wall);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['autopilot-queue'] });
@@ -142,7 +147,7 @@ export const QueueTab: React.FC = () => {
   const onCancel = async (j: QueueJob) => {
     const ok = await confirm({
       title: `Cancel this job for ${j.clients?.name ?? 'the client'}?`,
-      description: `${jobWhat(j)}. A job the agent is running stops at its next check; Retry queues it again.`,
+      description: `${jobWhat(j)}. A job that is running stops at its next check; Retry queues it again.`,
       confirmText: 'Cancel the job', cancelText: 'Keep it', destructive: true,
     });
     if (!ok) return;
@@ -171,7 +176,7 @@ export const QueueTab: React.FC = () => {
           </div>
           <FilterPill label="Status" allLabel={`Every job today (${counts.all})`} value={status}
             onChange={(v) => set({ status: v === 'all' ? null : v })} options={[]}
-            extraOptions={FILTERS.filter((f) => f.key !== 'all').map((f) => ({ value: f.key, label: `${f.label} (${counts[f.key]})` }))} />
+            extraOptions={filters.filter((f) => f.key !== 'all').map((f) => ({ value: f.key, label: `${f.label} (${counts[f.key]})` }))} />
           <FilterPill label="Run" allLabel="Any" value={origin ?? 'all'} onChange={(v) => set({ origin: v === 'all' ? null : v })} options={[]}
             extraOptions={Object.entries(ORIGIN_LABELS).map(([k, label]) => ({ value: k, label }))} />
           <div className="ml-auto">
@@ -213,12 +218,12 @@ export const QueueTab: React.FC = () => {
                       <Link to={`/notices-company/${j.client_id}`} className="block truncate text-sm font-semibold hover:underline">{j.clients?.name ?? 'Client'}</Link>
                       <div className="font-mono text-[11px] text-muted-foreground">{j.clients?.gstin}</div>
                     </div>
-                    <StatusCell j={j} />
+                    <StatusCell j={j} mode={mode} />
                   </div>
                   <div className="text-xs">{jobWhat(j)}</div>
                   <div className="text-[11px] text-muted-foreground">
                     {originLabel(j.origin)}{j.requested_by_name && j.origin !== 'email' ? ` · ${j.requested_by_name}` : ''} · {timing(j)}
-                    {j.attempts > 0 ? ` · ${plural(j.attempts, 'try', 'tries')}` : ''} · {captchaText(j)}
+                    {j.attempts > 0 ? ` · ${plural(j.attempts, 'try', 'tries')}` : ''}{wall ? ` · ${captchaText(j)}` : ''}
                   </div>
                   <div className="flex justify-end"><Actions j={j} canAct={canAct} busy={busy === j.id} onRetry={onRetry} onCancel={onCancel} /></div>
                 </li>
@@ -234,7 +239,7 @@ export const QueueTab: React.FC = () => {
                     <th scope="col" className={WS_TH}>Status</th>
                     <th scope="col" className={cn(WS_TH, 'text-right')}>Tries</th>
                     <th scope="col" className={WS_TH}>When</th>
-                    <th scope="col" className={WS_TH}>CAPTCHAs</th>
+                    {wall && <th scope="col" className={WS_TH}>CAPTCHAs</th>}
                     <th scope="col" className={WS_TH}><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
@@ -250,10 +255,10 @@ export const QueueTab: React.FC = () => {
                         <div className="whitespace-nowrap">{originLabel(j.origin)}</div>
                         {j.requested_by_name && j.origin !== 'email' && <div className="text-[11px] text-muted-foreground">{j.requested_by_name}</div>}
                       </td>
-                      <td className={cn(WS_TD, 'min-w-[11rem] max-w-[18rem]')}><StatusCell j={j} /></td>
+                      <td className={cn(WS_TD, 'min-w-[11rem] max-w-[18rem]')}><StatusCell j={j} mode={mode} /></td>
                       <td className={cn(WS_TD, 'text-right text-xs tabular-nums')}>{j.attempts}</td>
                       <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>{timing(j)}</td>
-                      <td className={cn(WS_TD, 'text-xs')}>{captchaText(j)}</td>
+                      {wall && <td className={cn(WS_TD, 'text-xs')}>{captchaText(j)}</td>}
                       <td className={cn(WS_TD, 'text-right')}><Actions j={j} canAct={canAct} busy={busy === j.id} onRetry={onRetry} onCancel={onCancel} /></td>
                     </tr>
                   ))}

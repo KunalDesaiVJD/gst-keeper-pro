@@ -11,7 +11,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useExtensionBridge } from '@/hooks/useExtensionBridge';
 import { MIN_EXTENSION_VERSION, RECOMMENDED_EXTENSION_VERSION, outdatedExtensionMessage } from '@/lib/extensionVersion';
-import { agentUsable, enqueueJobs, useAutopilotStatus } from '@/lib/autopilot';
+import { agentUsable, autopilotState, enqueueJobs, runnerMode, useAutopilotStatus } from '@/lib/autopilot';
 import { plural } from '@/lib/noticeFormat';
 
 interface QueueRow { client_id: string; last_success_at: string | null }
@@ -22,15 +22,22 @@ interface QueueRow { client_id: string; last_success_at: string | null }
  * order, with the CAPTCHAs it will take. When the portal autopilot is on and
  * the office agent is online, the same scope can be sent to the agent — its
  * CAPTCHAs come to the CAPTCHA wall, and it needs no extension on this PC
- * (roadmap Phase 3, audit S-23). Without either, it says how to connect the
- * extension (U-06-1) instead of failing with a toast.
+ * (roadmap Phase 3, audit S-23). Since 6 October 2026 the queue is run by the
+ * firm's own Chrome (runner 'chrome'): the scope is queued for it whenever the
+ * autopilot is on, and its CAPTCHA extension fills the CAPTCHAs (no wall).
+ * Without either, it says how to connect the extension (U-06-1) instead of
+ * failing with a toast.
  */
 export const SyncNowButton: React.FC<{ onStarted?: () => void }> = ({ onStarted }) => {
   const bridge = useExtensionBridge({ announceVersion: true });
   const { user } = useAuth();
   const navigate = useNavigate();
   const autopilot = useAutopilotStatus({ refetchMs: 60_000 });
-  const agentOn = agentUsable(autopilot.data);
+  const chrome = runnerMode(autopilot.data) === 'chrome';
+  const runnerOnline = agentUsable(autopilot.data);
+  // The scheduled Chrome takes queued clients whenever it is next on; the office agent only while online.
+  const agentOn = chrome ? autopilotState(autopilot.data?.settings) === 'on' : runnerOnline;
+  const target = chrome ? 'the scheduled Chrome' : 'the office agent';
   const [open, setOpen] = useState(false);
   const [queue, setQueue] = useState<QueueRow[] | null>(null);
   const [scope, setScope] = useState<'stale' | 'all'>('stale');
@@ -66,8 +73,11 @@ export const SyncNowButton: React.FC<{ onStarted?: () => void }> = ({ onStarted 
       actor: user ? { id: user.id, firstName: user.firstName } : null,
     });
     setSending(false);
-    if (!res.ok) { toast.error(`Couldn't send it to the office agent: ${res.error}`); return; }
-    toast[res.tone === 'warning' ? 'warning' : 'success'](res.text, {
+    if (!res.ok) { toast.error(`Couldn't send it to ${target}: ${res.error}`); return; }
+    toast[res.tone === 'warning' ? 'warning' : 'success'](res.text, chrome ? {
+      description: res.result.queued ? 'The scheduled Chrome logs each client in, one at a time; its CAPTCHA extension fills the CAPTCHA.' : undefined,
+      action: { label: 'Open the Autopilot', onClick: () => navigate('/notices-autopilot') },
+    } : {
       description: res.result.queued ? 'The office agent logs each client in; type their CAPTCHAs on the CAPTCHA wall.' : undefined,
       action: { label: 'Open the wall', onClick: () => navigate('/notices-autopilot?tab=wall') },
     });
@@ -133,12 +143,19 @@ export const SyncNowButton: React.FC<{ onStarted?: () => void }> = ({ onStarted 
           <div className="space-y-1.5 rounded-md border bg-muted/30 p-2">
             <Button size="sm" className="h-8 w-full gap-1 text-xs" disabled={queue === null || count === 0 || busy} onClick={sendToAgent}>
               {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Bot className="h-3.5 w-3.5" aria-hidden />}
-              Send to the office agent ({count})
+              {chrome ? 'Queue for the scheduled Chrome' : 'Send to the office agent'} ({count})
             </Button>
-            <p className="text-[11px] text-foreground/80">
-              The office PC logs each client in; their CAPTCHAs come to the{' '}
-              <Link to="/notices-autopilot?tab=wall" className="text-primary underline underline-offset-2">CAPTCHA wall</Link>. Nothing runs in this browser.
-            </p>
+            {chrome ? (
+              <p className="text-[11px] text-foreground/80">
+                The Chrome that runs the scheduled syncs logs each client in; its CAPTCHA extension fills the CAPTCHA.
+                {!runnerOnline && ' It is not online now; the clients wait in the queue until it is.'} Nothing runs in this browser.
+              </p>
+            ) : (
+              <p className="text-[11px] text-foreground/80">
+                The office PC logs each client in; their CAPTCHAs come to the{' '}
+                <Link to="/notices-autopilot?tab=wall" className="text-primary underline underline-offset-2">CAPTCHA wall</Link>. Nothing runs in this browser.
+              </p>
+            )}
           </div>
         )}
         {extensionOk ? (
@@ -150,7 +167,7 @@ export const SyncNowButton: React.FC<{ onStarted?: () => void }> = ({ onStarted 
           </div>
         ) : (
           <p className="text-[11px] text-muted-foreground">
-            {bridge.outdated ? outdatedExtensionMessage(bridge.version) : "The GST Keeper extension isn't on this PC, so the sync can only go to the office agent."}
+            {bridge.outdated ? outdatedExtensionMessage(bridge.version) : `The GST Keeper extension isn't on this PC, so the sync can only go to ${target}.`}
           </p>
         )}
       </PopoverContent>

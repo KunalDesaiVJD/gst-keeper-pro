@@ -13,6 +13,7 @@ import path from 'node:path';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { makeDb } from '../src/db.js';
 import { startAgent, type RunningAgent } from '../src/index.js';
 import { FakePortal } from './fakePortal.js';
@@ -109,7 +110,9 @@ before(async () => {
   }
   await fetch(SUPA + '/rest/v1/clients?gst_user_id=not.in.(asha,bina,chetan)', { method: 'PATCH', headers: { apikey: JWT, Authorization: 'Bearer ' + JWT, 'Content-Type': 'application/json' }, body: JSON.stringify({ inactive_at_hand: true }) });
   await fetch(SUPA + '/rest/v1/autopilot_settings?id=eq.true', { method: 'PATCH', headers: { apikey: JWT, Authorization: 'Bearer ' + JWT, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled: false, schedule_enabled: false, concurrency: 1, captcha_refresh_secs: 60 }) });
+    // This file tests the office agent and its CAPTCHA wall; since 20261008170000 the default
+    // runner is the firm's Chrome (chrome-runner.e2e.test.ts).
+    body: JSON.stringify({ runner: 'office_agent', enabled: false, schedule_enabled: false, concurrency: 1, captcha_refresh_secs: 60 }) });
 
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gstk-agent-e2e-'));
   agent = await startAgent({
@@ -214,5 +217,6 @@ test('the heartbeat shows the agent and its worker', { skip }, async () => {
   const st = await db.rpc<{ agent_online: boolean; agents: { agent_id: string; info: { workers: unknown[]; ext_version: string } }[] }>('autopilot_status');
   assert.ok(st.agent_online);
   const a = st.agents.find((x) => x.agent_id === 'e2e-agent');
-  assert.ok(a && a.info.workers.length === 1 && a.info.ext_version === '0.6.0');
+  const manifestVersion = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'extension', 'manifest.json'), 'utf8')).version;
+  assert.ok(a && a.info.workers.length === 1 && a.info.ext_version === manifestVersion);
 });

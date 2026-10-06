@@ -127,16 +127,29 @@ every number equals its list's count; Ctrl K is `notices_search`. Module pages u
 shell is `supabase/functions/_shared/email.ts` (redeploy `send-gst-email` before
 alerts go live).
 
-**Phase 3 (Portal Autopilot):** `agent/` runs on an always-on office PC and drives
-the same extension (v0.6.0+, `startAgentJob`) in its own Chromium, one client per
-browser; it claims from `portal_jobs` (`portal_job_claim`, SKIP LOCKED), shows each
-login CAPTCHA on the app's CAPTCHA wall (`/notices-autopilot`) only while someone has
-it open, and finishes jobs from the run ledger. People type every CAPTCHA — never add
-a solver, proxy or cloud runner. Ships off (`autopilot_settings.enabled`); schedule,
-nudge and close via `autopilot_tick` (pg_cron). Portal e-mails queue a priority sync
+**Phase 3 (Portal Autopilot):** jobs on `portal_jobs` (`portal_job_claim`, SKIP LOCKED)
+are run by `autopilot_settings.runner`. Default since 2026-10-06 (the firm's decision):
+`chrome` = extension 0.7.0 in the firm's own Chrome ("Run scheduled syncs in this
+Chrome"), one client at a time, CAPTCHA filled by the firm's own CAPTCHA extension, no
+CAPTCHA wall. `office_agent` = `agent/` on an office PC driving the extension
+(`startAgentJob`) with people typing CAPTCHAs on the wall. Never build or ship a CAPTCHA
+solver, OCR or solving service, a proxy or a cloud runner. Ships off
+(`autopilot_settings.enabled`); schedule (05:30 / 13:00 IST) and close via
+`autopilot_tick` (pg_cron). Portal e-mails queue a priority sync
 (`portal_email_ingest`). Tests: `test_99_autopilot.sql`, the extension sim and
-`agent/test/agent.e2e.test.ts` (fake portal). **Read
-`docs/PORTAL_AUTOPILOT_POSITIONS.md` before changing the agent or its hooks.**
+`agent/test/agent.e2e.test.ts` (fake portal), `test_99b_chrome_runner.sql`. **Read
+`docs/PORTAL_AUTOPILOT_POSITIONS.md` before changing the agent, the runner or its hooks.**
+
+**Phase 4 (Reply Factory I):** notices are read into typed facts with provenance
+(`read_fields`) and issues (`reply_issue_types` codes): the portal case folder always,
+the PDF through the Claude API in the office agent (`agent/src/read/`, off by default,
+per-client consent). Evidence recipes (`src/lib/reply/`) build versioned annexures from
+portal-pulled figures only. Notice types (`notice_type_settings`: critical / optional /
+none, and whether the command centre shows them; lists opened from it carry `dash=1`).
+Reply options are rendered by DB triggers from `reply_templates` when a notice arrives
+or changes, with no hyphen or dash anywhere (CHECK constraints), and start drafts. Notices
+& Litigation is one sidebar entry, last; its pages are reached from `NoticesTopNav`.
+Read `docs/REPLY_FACTORY_POSITIONS.md` and `docs/REPLY_TEMPLATES.md` first.
 
 **Read `docs/NOTICES_LITIGATION_POSITIONS.md` before changing auto-close
 logic, tile definitions, due dates, clocks, stages, the plan ranking or alerts.** The positions were

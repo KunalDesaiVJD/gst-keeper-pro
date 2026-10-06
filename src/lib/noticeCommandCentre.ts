@@ -3,9 +3,13 @@
 // calendar (public.notice_calendar) and Ctrl K search (public.notices_search).
 // Each figure is defined in the database over the same views the lists read,
 // so a number opens a list with the same count
-// (supabase/tests/notices/test_95_command_centre.sql).
+// (supabase/tests/notices/test_95_command_centre.sql). Since the notice types
+// (contract §A) the dashboard counts only the types shown on it
+// (on_dashboard); the lists it opens carry dash=1 to match. The top-nav counts
+// (nav) and the sync health stay over every notice.
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import type { NoticePlanRow } from '@/lib/noticeFacts';
 import { applyQueueTab, type QueueTab } from '@/lib/noticeQueries';
 
@@ -50,6 +54,8 @@ export interface CommandCentre {
   next14: DayLoad[];
   exposure_by_stage: StageExposure[];
   clients: ClientAttention[];
+  /** What the dashboard leaves out: notice types taken off it and their notices (absent on an older database). */
+  dashboard?: { hidden_types: number; hidden_open: number; hidden_overdue: number };
 }
 
 export async function loadCommandCentre(userId: string | null): Promise<CommandCentre> {
@@ -74,8 +80,9 @@ export function useNoticesNavCounts(userId: string | null) {
   return q.data?.nav ?? null;
 }
 
+/** The top of Today's plan: the dashboard's notice types only, like its counts. */
 export async function loadPlanTop(tab: QueueTab, userId: string | null, limit = 8): Promise<NoticePlanRow[]> {
-  let q = supabase.from('notice_plan').select('*');
+  let q = supabase.from('notice_plan').select('*').eq('on_dashboard', true);
   q = applyQueueTab(q, tab, userId);
   const { data, error } = await q.order('plan_score', { ascending: false }).order('id').limit(limit);
   if (error) throw error;
@@ -121,10 +128,23 @@ export interface CalendarItem {
   detail: string | null;
 }
 
-export async function loadCalendar(from: string, to: string): Promise<CalendarItem[]> {
-  const { data, error } = await supabase.rpc('notice_calendar', { p_from: from, p_to: to });
-  if (error) throw error;
-  return (data ?? []) as CalendarItem[];
+/**
+ * Reply dues, hearings and clocks by day. dashboardOnly (a day opened from the
+ * command centre's 14-day strip, dash=1) leaves out the notices of types taken
+ * off the dashboard, as the strip's counts do.
+ */
+export async function loadCalendar(from: string, to: string, opts: { dashboardOnly?: boolean } = {}): Promise<CalendarItem[]> {
+  const [cal, hidden] = await Promise.all([
+    supabase.rpc('notice_calendar', { p_from: from, p_to: to }),
+    opts.dashboardOnly
+      ? fetchAllRows<{ id: string }>('notice_facts', 'id', (q) => q.eq('is_open', true).eq('on_dashboard', false).order('id'))
+      : Promise.resolve([] as { id: string }[]),
+  ]);
+  if (cal.error) throw cal.error;
+  const items = (cal.data ?? []) as CalendarItem[];
+  if (!hidden.length) return items;
+  const off = new Set(hidden.map((r) => r.id));
+  return items.filter((it) => !it.notice_id || !off.has(it.notice_id));
 }
 
 export const CALENDAR_KIND_LABEL: Record<CalendarItem['kind'], string> = {

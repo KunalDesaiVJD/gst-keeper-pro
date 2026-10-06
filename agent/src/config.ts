@@ -25,6 +25,12 @@ export interface AgentConfig {
   sessionKey: string | null;
   sessionMaxAgeMin: number;
   maxWorkers: number;
+  // Reading notices with the Claude API (src/read/). No key: the reader stays off.
+  anthropicApiKey: string | null;
+  // Tests only (a stand-in server). Never read from the environment: the agent
+  // sends notices to the Claude API at api.anthropic.com and nowhere else.
+  anthropicBaseUrl: string | null;
+  readerPollMs: number;
 }
 
 // The app's own public settings, so the agent needs no secret of its own: the
@@ -64,6 +70,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     sessionKey: env.AGENT_SESSION_KEY || null,
     sessionMaxAgeMin: num(env.SESSION_MAX_AGE_MIN, 50, 5, 720),
     maxWorkers: num(env.MAX_WORKERS, 4, 1, 4),
+    anthropicApiKey: (env.ANTHROPIC_API_KEY || '').trim() || null,
+    anthropicBaseUrl: null,
+    readerPollMs: num(env.READER_POLL_MS, 15000, 2000, 600000),
     ...overrides,
   };
   if (!cfg.supabaseUrl || !cfg.anonKey) {

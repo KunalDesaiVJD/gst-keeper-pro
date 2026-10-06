@@ -4,6 +4,8 @@
 // CAPTCHA on the app's CAPTCHA wall for a person to type, and writes nothing
 // itself but job status — the extension saves the data. No CAPTCHA solver, no
 // proxies, no filing. See agent/README.md and docs/PORTAL_AUTOPILOT_POSITIONS.md.
+// Next to the workers runs the notice reader (src/read/): notice PDFs read with
+// the Claude API, only when switched on in the app and an API key is in .env.
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -12,6 +14,7 @@ import { makeDb, sleep, type Db } from './db.js';
 import { stageExtension } from './extension.js';
 import { initLog, log } from './log.js';
 import { inboxAddress, inboxConfigFromEnv, startInboxWatcher, type InboxWatcher } from './mail/inbox.js';
+import { NoticeReader } from './read/reader.js';
 import { SessionStore } from './sessions.js';
 import { PortalWorker, type Hooks, type Settings, type Shared } from './worker.js';
 
@@ -24,6 +27,7 @@ export interface RunningAgent {
   stop(): Promise<void>;
   shared: Shared;
   workers: PortalWorker[];
+  reader: NoticeReader;
 }
 
 export interface StartOptions extends Hooks {
@@ -48,6 +52,9 @@ export async function startAgent(opts: StartOptions = {}): Promise<RunningAgent>
 
   const workers = Array.from({ length: cfg.maxWorkers }, (_, i) =>
     new PortalWorker(i + 1, cfg, db, shared, ext.dir, sessions, { route: opts.route }));
+  // Reading notice PDFs with the Claude API: its own loop, independent of the
+  // autopilot's switches (the app's reading switch comes back with each claim).
+  const reader = new NoticeReader(cfg, db);
 
   // The portal e-mail inbox (optional, read-only): set up in agent/.env.
   let inbox: InboxWatcher | null = null;
@@ -81,6 +88,7 @@ export async function startAgent(opts: StartOptions = {}): Promise<RunningAgent>
           version: VERSION, ext_version: ext.version, headful: cfg.headful, host: os.hostname(), started_at: startedAt,
           workers: workers.map((w) => w.info()),
           inbox: { configured: !!inboxAddr, address: inboxAddr, error: inboxError, ...(inbox ? inbox.status() : {}) },
+          reader: reader.info(),
         },
       });
       if (s.keep_sessions && !sessions.enabled && !warnedNoKey) {
@@ -101,14 +109,16 @@ export async function startAgent(opts: StartOptions = {}): Promise<RunningAgent>
   await beat();
   const timer = setInterval(() => { void beat(); }, cfg.heartbeatMs);
   const loops = workers.map((w) => w.loop().catch((e) => log('error', `worker ${w.n} stopped: ${(e as Error).message}`)));
+  reader.start();
 
   return {
     shared,
     workers,
+    reader,
     async stop() {
       shared.stopping = true;
       clearInterval(timer);
-      await Promise.race([Promise.all(loops), sleep(15_000)]);
+      await Promise.all([Promise.race([Promise.all(loops), sleep(15_000)]), reader.stop()]);
       await inbox?.stop();
       await db.rpc('portal_jobs_release', { p_agent: cfg.agentId }).catch(() => 0);
       await Promise.all(workers.map((w) => w.closeBrowser()));

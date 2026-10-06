@@ -1,7 +1,9 @@
 // Notices & Litigation · Work queue: "Today's plan" in full (roadmap Phase 2;
 // audit U-20-4 "route Work queue to the open queue"). Open notices with a next
 // step, ranked by deadline × exposure × readiness (public.notice_plan), split
-// Mine / Team / Unassigned / Review with the same counts as the command centre.
+// Mine / Team / Unassigned / Review. Each tab's count is taken under the list's
+// own filters, so it is the length of its list: opened from the command centre
+// (dash=1, the dashboard's notice types only) it equals the plan's count there.
 import React, { useMemo } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -15,8 +17,9 @@ import { NoticesShell } from '@/components/notices/NoticesShell';
 import { NoticeFilterBar } from '@/components/notices/NoticeFilterBar';
 import { Pager } from '@/components/notices/Pager';
 import { PlanRows } from '@/components/notices/command/TodaysPlan';
-import { useCommandCentre } from '@/lib/noticeCommandCentre';
-import { fetchQueuePage, listSearch, parseListParams, PAGE_SIZE, type NoticeListParams, type QueueTab, type SortKey } from '@/lib/noticeQueries';
+import {
+  fetchQueueCounts, fetchQueuePage, listSearch, parseListParams, PAGE_SIZE, type NoticeListParams, type QueueTab, type SortKey,
+} from '@/lib/noticeQueries';
 import { cn } from '@/lib/utils';
 
 const TABS: { key: QueueTab; label: string; empty: string }[] = [
@@ -39,7 +42,13 @@ const NoticeQueuePage: React.FC = () => {
   const meId = user?.id ?? null;
   const tab = (TABS.some((t) => t.key === sp.get('tab')) ? sp.get('tab') : 'team') as QueueTab;
   const params = useMemo(() => parseListParams(sp, 'all'), [sp]);
-  const cc = useCommandCentre(meId);
+  // The tab counts ignore the page and the order, nothing else.
+  const countKey = listSearch({ ...params, page: 1, sort: undefined, dir: undefined }, 'all');
+  const tabCounts = useQuery({
+    queryKey: ['notice-queue-counts', countKey, meId],
+    queryFn: () => fetchQueueCounts(params, meId),
+    placeholderData: (prev) => prev,
+  });
   const q = useQuery({
     queryKey: ['notice-queue', tab, listSearch(params, 'all'), meId],
     queryFn: () => fetchQueuePage(tab, params, meId),
@@ -56,10 +65,11 @@ const NoticeQueuePage: React.FC = () => {
   };
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['notice-queue'] });
+    qc.invalidateQueries({ queryKey: ['notice-queue-counts'] });
     qc.invalidateQueries({ queryKey: ['notices-command-centre'] });
     qc.invalidateQueries({ queryKey: ['notice-plan-top'] });
   };
-  const counts = cc.data?.plan_counts;
+  const counts = tabCounts.data;
   const total = q.data?.total ?? 0;
   const empty = TABS.find((t) => t.key === tab)?.empty;
 

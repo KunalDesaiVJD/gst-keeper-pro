@@ -8,8 +8,10 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // fills the run ledger, skips documents already stored and has the CAPTCHA
 // watchdog. Phase 3: 0.6.0 also reads applications on the portal, the
 // registration status and the GSTR-3A period, and is what the office agent runs.
-// 0.4.x and 0.5.x are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.6.0';
+// 0.7.0 runs the autopilot's scheduled syncs in the firm's own Chrome ("Run
+// scheduled syncs in this Chrome"; its CAPTCHA extension fills the CAPTCHA).
+// 0.4.x to 0.6.x are still allowed (their writes are safe), only nudged to update.
+export const RECOMMENDED_EXTENSION_VERSION = '0.7.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -34,9 +36,12 @@ export function isExtensionUpdateRecommended(version: string | null | undefined)
 }
 
 export function updateRecommendedMessage(version: string | null | undefined): string {
-  const gains = version && compareVersions(version, '0.5.0') >= 0
-    ? 'also reads applications on the portal (appeals and others), the registration status and the GSTR-3A period'
-    : 'is faster (skips documents already saved), fills the sync run ledger and also reads applications on the portal and the registration status';
+  const scheduled = 'runs the scheduled syncs in the Chrome that has your CAPTCHA extension (tick "Run scheduled syncs in this Chrome" in its popup)';
+  const gains = version && compareVersions(version, '0.6.0') >= 0
+    ? scheduled
+    : version && compareVersions(version, '0.5.0') >= 0
+      ? `also reads applications on the portal (appeals and others), the registration status and the GSTR-3A period, and ${scheduled}`
+      : `is faster (skips documents already saved), fills the sync run ledger, reads applications on the portal and the registration status, and ${scheduled}`;
   return `Browser extension v${version} still syncs, but v${RECOMMENDED_EXTENSION_VERSION} ${gains}. `
     + 'Reload it from the updated extension folder (chrome://extensions → Reload) when convenient.';
 }

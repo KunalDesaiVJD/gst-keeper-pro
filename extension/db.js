@@ -81,6 +81,15 @@
     }),
     getLastRun: () => restGet('sync_runs?select=id,started_at,finished_at,status,mode,clients_total,clients_done,note'
       + '&order=started_at.desc&limit=1').then((a) => (a && a[0]) || null),
+    // 0.7.0: scheduled syncs in this Chrome (runner.js). runnerEndJob is the
+    // content script's: a scheduled client that ended on its page.
+    runnerEndJob: (info) => call('runnerEndJob', info),
+    runnerGet: () => call('runnerGet'),
+    runnerSet: (patch) => call('runnerSet', patch),
+    runnerNow: () => call('runnerNow'),
+    putActiveJob: (job) => call('putActiveJob', job),
+    // Who runs the autopilot queue (chrome | office_agent), from the header badge's RPC.
+    getRunnerMode: () => restRpc('autopilot_badge', {}),
   };
 
   // An RPC from an extension page that loads config.js (the popup).

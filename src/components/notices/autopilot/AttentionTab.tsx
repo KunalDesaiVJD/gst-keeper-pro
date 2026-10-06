@@ -1,8 +1,10 @@
 // "Needs a person" (roadmap Phase 3; audit U-51-1, S-22): every active client
 // the autopilot could not read, grouped by what fixes it, each with its one-
-// click fix — update the password, ask the client (password or OTP reset), open
-// the CAPTCHA wall, run again — and the clients whose registration the portal
-// shows as cancelled or suspended, to mark inactive.
+// click fix — update the password, ask the client (password or OTP reset), run
+// again (with the office agent: open the CAPTCHA wall) — and the clients whose
+// registration the portal shows as cancelled or suspended, to mark inactive.
+// With the scheduled Chrome a CAPTCHA not filled in time points at the CAPTCHA
+// extension in that Chrome.
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -17,8 +19,8 @@ import { PortalLoginPopover } from '@/components/notices/clients/PortalLoginPopo
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import {
-  askClient, enqueueJobs, reasonLabel, useRegistrationAlerts,
-  type Actor, type AutopilotStatus, type FailureClient, type FailureGroup, type RegistrationAlert,
+  askClient, enqueueJobs, reasonLabel, runnerMode, useRegistrationAlerts,
+  type Actor, type AutopilotStatus, type FailureClient, type FailureGroup, type RegistrationAlert, type RunnerMode,
 } from '@/lib/autopilot';
 import { fmtAgo, fmtDate, plural } from '@/lib/noticeFormat';
 import { EmptyBox, INLINE_LINK, ToneBadge } from './parts';
@@ -26,7 +28,7 @@ import { EmptyBox, INLINE_LINK, ToneBadge } from './parts';
 type Fix = 'login' | 'locked' | 'wall' | 'retry';
 
 /** What fixes a group, and what to tell the person. */
-function fixOf(g: FailureGroup): { kind: Fix; hint: string } {
+function fixOf(g: FailureGroup, mode: RunnerMode): { kind: Fix; hint: string } {
   if (g.reason === 'login_failed' && (g.fix === 'password' || g.fix === 'no_password')) {
     return { kind: 'login', hint: g.fix === 'no_password'
       ? 'No portal password is saved for these clients. Add it, or ask the client for it; the next run logs in with it.'
@@ -35,11 +37,19 @@ function fixOf(g: FailureGroup): { kind: Fix; hint: string } {
   if (g.reason === 'login_failed' && g.fix === 'account_locked') {
     return { kind: 'locked', hint: 'The portal account is locked. Only the client can reset it (Forgot Password; the OTP goes to their registered mobile and e-mail). Ask them, then save the new password.' };
   }
+  if (g.reason === 'captcha_timeout' && mode === 'chrome') {
+    return { kind: 'retry', hint: 'The CAPTCHA was not filled in time in the scheduled Chrome, on every try. Check that the CAPTCHA extension there is switched on and fills the GST portal\'s CAPTCHA, then run them again.' };
+  }
   if (g.reason === 'captcha_timeout') {
     return { kind: 'wall', hint: 'Nobody typed the CAPTCHA for these clients. Run them again and type the CAPTCHAs on the wall.' };
   }
+  if ((g.reason === 'agent_offline' || g.reason === 'not_reached') && mode === 'chrome') {
+    return { kind: 'retry', hint: 'The scheduled Chrome was closed or busy until the day closed. Keep that PC and Chrome on at the scheduled times, then run them again.' };
+  }
   if (g.reason === 'skipped_at_wall') {
-    return { kind: 'wall', hint: 'Someone skipped these clients on the wall. Run them again when there is time to type their CAPTCHAs.' };
+    return mode === 'chrome'
+      ? { kind: 'retry', hint: 'Someone skipped these clients on the CAPTCHA wall while the office agent ran the queue. Run them again; the scheduled Chrome takes them.' }
+      : { kind: 'wall', hint: 'Someone skipped these clients on the wall. Run them again when there is time to type their CAPTCHAs.' };
   }
   return { kind: 'retry', hint: 'Usually temporary. Run them again; if one keeps failing, open its sync log.' };
 }
@@ -71,9 +81,10 @@ export const AttentionTab: React.FC<{ status: AutopilotStatus | undefined; loadi
   const actor: Actor | null = user ? { id: user.id, firstName: user.firstName } : null;
   const canAct = canEditNoticeStatus();
   const canEditClients = canAddEditClients();
+  const mode = runnerMode(status);
 
-  const groups = [...(status?.failures ?? [])].sort((a, b) => RANK[fixOf(a).kind] - RANK[fixOf(b).kind] || b.count - a.count);
-  const loginIds = groups.filter((g) => fixOf(g).kind === 'login' || fixOf(g).kind === 'locked').flatMap((g) => g.clients.map((c) => c.client_id));
+  const groups = [...(status?.failures ?? [])].sort((a, b) => RANK[fixOf(a, mode).kind] - RANK[fixOf(b, mode).kind] || b.count - a.count);
+  const loginIds = groups.filter((g) => fixOf(g, mode).kind === 'login' || fixOf(g, mode).kind === 'locked').flatMap((g) => g.clients.map((c) => c.client_id));
   // The saved portal user ID, so "Update password" opens with it filled in.
   const logins = useQuery({
     queryKey: ['autopilot-logins', loginIds.join(',')],
@@ -95,7 +106,9 @@ export const AttentionTab: React.FC<{ status: AutopilotStatus | undefined; loadi
     const res = await enqueueJobs({ clientIds: ids, jobType: 'PULL_NOTICES_BUNDLE', origin: 'manual', actor });
     setBusy(null);
     if (!res.ok) { toast.error(`Couldn't queue ${what}: ${res.error}`); return; }
-    toast[res.tone === 'warning' ? 'warning' : 'success'](res.text, {
+    toast[res.tone === 'warning' ? 'warning' : 'success'](res.text, mode === 'chrome' ? {
+      description: res.result.queued ? 'The scheduled Chrome takes them one at a time.' : undefined,
+    } : {
       description: res.result.queued ? 'Their CAPTCHAs come to the CAPTCHA wall.' : undefined,
       action: res.result.queued ? { label: 'Open the wall', onClick: onOpenWall } : undefined,
     });
@@ -132,11 +145,11 @@ export const AttentionTab: React.FC<{ status: AutopilotStatus | undefined; loadi
     <div className="space-y-3">
       {!canAct && <Note tone="info">You can see what needs a person. Running clients again and asking clients needs the "Edit notice status" permission.</Note>}
       {groups.map((g) => {
-        const fix = fixOf(g);
+        const fix = fixOf(g, mode);
         const key = `${g.reason}-${g.fix ?? ''}`;
         return (
           <SectionCard key={key}
-            title={<span className="flex flex-wrap items-center gap-2">{reasonLabel(g.reason, g.fix)} <ToneBadge tone={fix.kind === 'retry' ? 'secondary' : 'warning'}>{plural(g.count, 'client')}</ToneBadge></span>}
+            title={<span className="flex flex-wrap items-center gap-2">{reasonLabel(g.reason, g.fix, mode)} <ToneBadge tone={fix.kind === 'retry' ? 'secondary' : 'warning'}>{plural(g.count, 'client')}</ToneBadge></span>}
             description={fix.hint}
             actions={canAct && (fix.kind === 'wall' || fix.kind === 'retry') && g.clients.length > 1 && (
               <Button size="sm" variant="outline" className={WS_BTN} disabled={busy === key} onClick={() => runAgain(g.clients.map((c) => c.client_id), key, 'them')}>

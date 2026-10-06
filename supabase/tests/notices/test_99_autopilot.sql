@@ -19,6 +19,9 @@ VALUES ('99999999-0000-0000-0000-0000000000f1', '99999999-0000-0000-0000-0000000
 
 -- Only these test clients matter here.
 UPDATE clients SET inactive_at_hand = true WHERE id::text NOT LIKE '99999999-%';
+-- This file tests the Phase 3 office agent with its CAPTCHA wall; since 20261008170000 the
+-- default runner is the firm's Chrome (test_99b_chrome_runner.sql).
+UPDATE autopilot_settings SET runner = 'office_agent';
 
 -- ── Enqueue ────────────────────────────────────────────────────────────────
 SELECT t_eq((autopilot_enqueue(NULL, 'PULL_NOTICES_BUNDLE', '{}', 'schedule_morning') ->> 'queued')::int, 3, 'every active client with credentials is queued once');
@@ -177,9 +180,12 @@ SELECT t_eq((SELECT status || '/' || (notice_id IS NOT NULL)::text FROM portal_e
             'synced/true', 'the notice arriving links the e-mail');
 
 -- ── The schedule ───────────────────────────────────────────────────────────
+-- "A minute ago", but never across IST midnight (00:00:30 minus a minute would be 23:59:30).
 UPDATE autopilot_settings SET schedule_enabled = true,
-                              morning_at = ((now() AT TIME ZONE 'Asia/Kolkata')::time - interval '1 minute')::time,
-                              nudge_at = ((now() AT TIME ZONE 'Asia/Kolkata')::time - interval '1 minute')::time,
+                              morning_at = CASE WHEN (now() AT TIME ZONE 'Asia/Kolkata')::time < time '00:01' THEN time '00:00'
+                                                ELSE ((now() AT TIME ZONE 'Asia/Kolkata')::time - interval '1 minute')::time END,
+                              nudge_at = CASE WHEN (now() AT TIME ZONE 'Asia/Kolkata')::time < time '00:01' THEN time '00:00'
+                                              ELSE ((now() AT TIME ZONE 'Asia/Kolkata')::time - interval '1 minute')::time END,
                               afternoon_scope = 'off';
 SELECT t_eq((autopilot_tick() -> 'morning' ->> 'queued')::int, 2, 'the morning run queues who has no active job (not the e-mailed client)');
 SELECT t_eq((autopilot_tick() -> 'morning') IS NULL, true, 'and fires once a day');

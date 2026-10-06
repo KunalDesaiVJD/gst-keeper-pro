@@ -67,6 +67,12 @@
     details.other[open] summary { margin-bottom: 6px; }
     .links { display: grid; gap: 6px; }
     .mt8 { margin-top: 8px; }
+    .line { display: flex; gap: 6px; align-items: center; }
+    .line input { flex: 1; min-width: 0; }
+    .toggle { font-weight: 600; padding: 2px 0 4px; }
+    .rows.mt8 { margin-top: 8px; }
+    #runnerRows { grid-template-columns: 118px 1fr; }
+    #runnerRows dd { text-align: left; }
     .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   </style>
 </head>
@@ -104,6 +110,26 @@
       <p class="note" id="stNote" hidden></p>
     </section>
 
+    <section class="card" id="runnerCard" aria-labelledby="runnerHead">
+      <h2 id="runnerHead">Scheduled syncs</h2>
+      <label class="opt toggle"><input type="checkbox" id="runnerOn" /> <span>Run scheduled syncs in this Chrome</span></label>
+      <label class="f" for="runnerLabel">Name of this PC (shown in GST Keeper)</label>
+      <div class="line">
+        <input type="text" id="runnerLabel" maxlength="60" placeholder="e.g. Reception PC" autocomplete="off" />
+        <button type="button" id="runnerLabelSave" class="secondary small">Save</button>
+      </div>
+      <dl class="rows mt8" id="runnerRows" hidden>
+        <dt>Autopilot in GST Keeper</dt><dd id="rnApp">–</dd>
+        <dt>This Chrome</dt><dd id="rnOnline">–</dd>
+        <dt>Now</dt><dd id="rnNow">–</dd>
+        <dt>Next scheduled run</dt><dd id="rnNext">–</dd>
+        <dt>Last result</dt><dd id="rnLast">–</dd>
+      </dl>
+      <p class="note" id="rnWhy" role="status" hidden></p>
+      <p class="note" id="rnOff">Off: this Chrome takes no clients from GST Keeper's schedule. Turn it on in the Chrome that has your CAPTCHA extension, and keep that PC and Chrome on at the scheduled times.</p>
+      <p class="note" id="rnCaptcha">The CAPTCHA is filled by the CAPTCHA extension in this Chrome. If it is not filled within 120 seconds, the client is tried again later.</p>
+    </section>
+
     <section class="card" id="jobCard" aria-labelledby="jobHead" hidden>
       <h2 id="jobHead">Sync running</h2>
       <div id="captchaMsg" class="msg warn" hidden>
@@ -137,6 +163,7 @@
       <button type="button" id="start" class="primary">Sync notices</button>
       <button type="button" id="agentStart" class="secondary wide mt8" hidden>Send to the office agent</button>
       <p class="hint" id="agentHint" hidden>The office agent logs these clients in on its own PC; their CAPTCHAs come to the CAPTCHA wall in GST Keeper (Notices → Autopilot) for anyone to type.</p>
+      <p class="hint" id="takeoverHint" hidden>A scheduled client is running in this Chrome. Starting a sync here puts it back in the queue; it runs again after yours.</p>
       <p class="hint" id="hint">For each client: logs in to the GST portal (you type the CAPTCHA), reads
         notices &amp; orders with their case folders and PDFs, then refund applications, then DRC-03
         payments. Clients are taken most urgent first. Keep the portal tab open until it says done.</p>
