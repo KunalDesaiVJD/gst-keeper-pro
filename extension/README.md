@@ -30,13 +30,28 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
 
 That's it — nothing to keep running, no account, no card.
 
-## Updating (required: v0.4.0 or later)
+## Updating (minimum v0.4.0, recommended v0.5.0)
 The app refuses to start a notices sync from an extension older than **v0.4.0**
-(`src/lib/extensionVersion.ts`). After pulling a new version of this folder, open
-`chrome://extensions` and click **Reload** on “GST Keeper Portal Sync” on **every PC**
-that syncs. v0.4.0 never marks saved notices missing after an empty or partly
-failed pull, checks that the portal session belongs to the client being synced, and
-no longer stores portal passwords in Chrome's extension storage — see CHANGELOG.md.
+(`src/lib/extensionVersion.ts`) and nudges v0.4.x copies to update to **v0.5.0**.
+After pulling a new version of this folder, open `chrome://extensions` and click
+**Reload** on “GST Keeper Portal Sync” on **every PC** that syncs. v0.4.0 never marks
+saved notices missing after an empty or partly failed pull, checks that the portal
+session belongs to the client being synced, and no longer stores portal passwords in
+Chrome's extension storage. v0.5.0 saves through the database's single ingest door
+with a run ledger, skips documents already saved, and moves on from a CAPTCHA nobody
+typed — see CHANGELOG.md.
+
+## Testing without the portal
+`test/notices-sync.sim.mjs` runs the real `background.js`, `db.js` and `content.js` in
+Node against a fake portal and a **local** PostgREST + PostgreSQL carrying the
+migrations (see `supabase/tests/notices/README.md`). It checks a first run, an
+unchanged rerun (nothing downloaded twice), a run with a removed / new notice and a
+reply on the portal, a wrong-GSTIN session, the weekly full folder pass and the
+CAPTCHA watchdog. Never point it at the live project.
+
+```
+node extension/test/notices-sync.sim.mjs http://127.0.0.1:54399 /path/to/anon.jwt
+```
 
 ## Use it
 1. Click the extension icon → pick a **client** and the **return period** → **Start sync**.

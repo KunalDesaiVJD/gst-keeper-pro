@@ -99,23 +99,25 @@ deletes; clients with notices or matters cannot be deleted (FK RESTRICT).
 case_id)`). Refund status tracked in `gst_refund_applications`, DRC-03 in
 `gst_drc03_filings` — both have `client_id`, `arn`, `status`.
 
-**Shared data hook:** `src/hooks/useNoticeSet.ts` (`useNoticeSet()`)
-fetches notices, refund rows, and DRC-03 rows in parallel. Used by the
-dashboard, summary report, and GSTIN-wise count pages.
+**One canonical set (Phase 1):** every tile, list, report, e-mail and MIS reads the
+view `notice_facts` (plus `refund_facts`, `drc03_facts`, `notice_exposure`), whose
+flags (`is_open`, `is_overdue`, `is_due_in_7`, `is_new`, `is_unassigned`,
+`effective_due`, `exposure_amount` once per dispute) are computed in the DB against
+today IST. Load through `src/lib/noticeFacts.ts` / `useNoticeSet()`; don't re-derive
+flags in the browser (`src/utils/noticeDefinitions.ts` only reads them, with a
+fallback for an old DB). Staff writes go through `src/lib/noticeWrites.ts` (stamps
+`edited_by_*`, which the event triggers attribute).
 
-**KPI tiles:** Canonical definitions in `src/utils/noticeDefinitions.ts`
-(`isOpen`, `isOverdue`, `isDueIn7`, `isNew`). A notice is "closed" if
-`staff_status` matches a closed-prefix set (Closed, Withdrawn, Dropped,
-Disposed, Deleted, Adjudged). "Overdue" requires open + no reply +
-effective due < today IST.
-
-**Auto-close & due-date sweep:** the SQL function `public.notices_sweep(client)`
-(run by the extension after each client, nightly by pg_cron, and from the
-dashboard via `src/lib/noticeAutoClose.ts`). Rules and paths are in the
-positions doc §3–§4.
+**Server side:** form rules (`notice_form_rules` → `form_code`, short clocks,
+auto-close), the sweep `notices_sweep(client)`, events (`notice_events`, written by
+triggers), statutory clocks (`notice_clocks_refresh` → `matter_deadlines`), the
+extension's ingest door + run ledger (`sync_ingest`, `sync_runs`, `sync_run_items`,
+`client_sync_status`) and the alert engine (`notice_alerts_run`, pg_cron; starts in
+**preview** — `notice_settings.alerts_mode`). Tests: `supabase/tests/notices/run.sh`
+(local Postgres) and `extension/test/notices-sync.sim.mjs`; see the README there.
 
 **Read `docs/NOTICES_LITIGATION_POSITIONS.md` before changing auto-close
-logic, tile definitions, or due-date extraction.** The positions were
+logic, tile definitions, due dates, clocks or alerts.** The positions were
 implemented by engineering judgement, not confirmed in a firm sign-off.
 
 

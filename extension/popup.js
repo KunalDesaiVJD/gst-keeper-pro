@@ -72,6 +72,11 @@
 
   // Escape hatch: clear any active/stuck sync so the content script stops acting.
   document.getElementById('stop').onclick = async () => {
+    // A notices run records the stop in the run ledger before the job is cleared.
+    const { gstk_active_job: active } = await chrome.storage.local.get('gstk_active_job');
+    if (active && active.runId) {
+      await new Promise((resolve) => chrome.runtime.sendMessage({ gstk: true, fn: 'runFinish', args: [active.runId, 'stopped', 'Stopped from the extension popup.'] }, () => resolve()));
+    }
     await chrome.storage.local.remove('gstk_active_job');
     alert('Sync stopped. You can close any open GST portal tab.');
   };

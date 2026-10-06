@@ -56,6 +56,14 @@
     replaceCaseFolderItems: (clientId, caseId, rows, pullTs, opts) => call('replaceCaseFolderItems', clientId, caseId, rows, pullTs, opts),
     getPortalPassword: (clientId) => call('getPortalPassword', clientId),
     runSweep: (clientId) => call('runSweep', clientId),
+    // 0.5.0: one ingest door (public.sync_ingest) and the run ledger.
+    ingest: (clientId, runId, step, rows, opts, scope) => call('ingest', clientId, runId, step, rows, opts, scope),
+    runFinish: (runId, status, note) => call('runFinish', runId, status, note),
+    logStep: (runId, clientId, step, status, reasonClass, message) => call('logStep', runId, clientId, step, status, reasonClass, message),
+    knownDocs: (clientId) => call('knownDocs', clientId),
+    replaceChallansSince: (clientId, fromIso, rows) => call('replaceChallansSince', clientId, fromIso, rows),
+    notifyCaptcha: (clientName, progress) => call('notifyCaptcha', clientName, progress),
+    clearCaptchaNotice: () => call('clearCaptchaNotice'),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },
   };
 })();

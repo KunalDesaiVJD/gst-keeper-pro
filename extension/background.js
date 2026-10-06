@@ -92,6 +92,38 @@ const guardedSoftDelete = async (table, scopeQuery, rows, pullTs, opts) => {
   return { softDeleted: stale.length, held: null };
 };
 
+// ── One ingest door and the run ledger (0.5.0; notices roadmap Phase 1) ─────
+// Portal rows go through public.sync_ingest(): one advisory lock per client
+// and step, server timestamps, a content hash for new/changed/removed counts,
+// the same guarded soft-delete as above, a sync_run_items ledger row, and the
+// closing sweep after notices / DRC-03. A database without the RPC (404) falls
+// back to the REST path above.
+const EXT_VERSION = chrome.runtime.getManifest().version;
+const rpc = async (fn, body) => {
+  const r = await fetch(base + 'rpc/' + fn, { method: 'POST', headers: H, body: JSON.stringify(body) });
+  const text = await r.text();
+  if (!r.ok) {
+    const err = new Error('RPC ' + fn + ' -> ' + r.status + ' ' + text.slice(0, 160));
+    err.status = r.status;
+    throw err;
+  }
+  return text ? JSON.parse(text) : null;
+};
+const isMissingRpc = (e) => e && (e.status === 404 || /PGRST202|Could not find the function/.test(String(e.message)));
+
+// The REST path needs the bookkeeping columns the RPC sets on the server.
+const legacyRows = (rows, extra) => rows.map((r) => ({ ...r, ...extra }));
+const LEGACY_REPLACE = {
+  notices: (clientId, rows, pullTs, opts) => API.replaceNotices(clientId,
+    legacyRows(rows, { client_id: clientId, source: 'notices', pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null }), pullTs, opts),
+  refunds: (clientId, rows, pullTs, opts) => API.replaceRefundApplications(clientId,
+    legacyRows(rows, { client_id: clientId, pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null }), pullTs, opts),
+  drc03: (clientId, rows, pullTs, opts) => API.replaceDrc03Filings(clientId,
+    legacyRows(rows, { client_id: clientId, pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null }), pullTs, opts),
+  case_folder: (clientId, rows, pullTs, opts, scope) => API.replaceCaseFolderItems(clientId, scope,
+    legacyRows(rows, { client_id: clientId, case_id: scope, pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null }), pullTs, opts),
+};
+
 const API = {
   getClients: () => sel('clients?select=id,name,gstin,gst_user_id,selected_returns,notices_sync_excluded,inactive_at_hand&order=name'),
   getClient: (id) => sel(`clients?id=eq.${id}&select=id,name,gstin,gst_user_id,selected_returns&limit=1`).then((a) => a[0] || null),
@@ -200,6 +232,84 @@ const API = {
     if (!r.ok) throw new Error('RPC notices_sweep -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
     return r.json();
   },
+
+  // { status, new, changed, unchanged, removed, held, held_reason } — see sync_ingest.
+  ingest: async (clientId, runId, step, rows, opts, scope) => {
+    const complete = !opts || opts.complete !== false;
+    try {
+      return await rpc('sync_ingest', {
+        p_client_id: clientId, p_run_id: runId || null, p_step: step, p_rows: rows || [],
+        p_ext_version: EXT_VERSION, p_complete: complete, p_scope: scope || null,
+      });
+    } catch (e) {
+      if (!isMissingRpc(e)) throw e;
+      const pullTs = new Date().toISOString();
+      const res = await LEGACY_REPLACE[step](clientId, rows || [], pullTs, opts, scope);
+      if (step === 'notices' || step === 'drc03') { try { await API.runSweep(clientId); } catch (e2) { /* nightly sweep */ } }
+      return { status: res && res.held ? 'held' : 'ok', held_reason: res && res.held, legacy: true };
+    }
+  },
+  runStart: async (mode, clientsTotal) => {
+    try { return await rpc('sync_run_start', { p_mode: mode, p_clients_total: clientsTotal, p_ext_version: EXT_VERSION, p_machine: null }); }
+    catch (e) { return null; } // ledger is diagnostic; a sync never waits on it
+  },
+  runFinish: async (runId, status, note) => {
+    if (!runId) return null;
+    try { return await rpc('sync_run_finish', { p_run_id: runId, p_status: status || 'done', p_note: note || null }); }
+    catch (e) { return null; }
+  },
+  logStep: async (runId, clientId, step, status, reasonClass, message) => {
+    try {
+      return await rpc('sync_log_step', {
+        p_run_id: runId || null, p_client_id: clientId, p_step: step, p_status: status,
+        p_reason_class: reasonClass || null, p_message: message || null, p_ext_version: EXT_VERSION,
+      });
+    } catch (e) { return null; }
+  },
+  // What is already stored for a client, so a run skips PDFs and attachments it
+  // already has and fetches case folders only for new / open cases.
+  knownDocs: async (clientId) => {
+    const out = { noticePdf: {}, openCases: [], knownCases: [], itemDocs: {}, drc03Pdf: {}, refundDocs: {} };
+    try {
+      const notices = await sel(`gst_notices?client_id=eq.${clientId}&source=eq.notices&deleted_at=is.null&select=portal_key,pdf_url,case_id,staff_status`);
+      const closedRe = /^(closed|withdrawn|dropped|disposed|deleted|adjudged)/i;
+      for (const n of notices) {
+        if (n.pdf_url) out.noticePdf[n.portal_key] = n.pdf_url;
+        if (n.case_id) {
+          out.knownCases.push(n.case_id);
+          if (!closedRe.test((n.staff_status || '').trim())) out.openCases.push(n.case_id);
+        }
+      }
+      const items = await sel(`gst_case_folder_items?client_id=eq.${clientId}&deleted_at=is.null&select=case_id,portal_key,attachments`);
+      for (const it of items) out.itemDocs[it.case_id + '|' + it.portal_key] = Array.isArray(it.attachments) ? it.attachments : [];
+      const drc = await sel(`gst_drc03_filings?client_id=eq.${clientId}&deleted_at=is.null&select=arn,pdf_url`);
+      for (const d of drc) if (d.arn && d.pdf_url) out.drc03Pdf[d.arn] = d.pdf_url;
+    } catch (e) { /* best-effort: an empty map just means "fetch everything" */ }
+    return out;
+  },
+  // Sync All order: open notices due within 7 days (or overdue) first, then
+  // never-synced, then the stalest (public.sync_queue). Null when unavailable.
+  syncQueue: async (clientIds) => {
+    try { return await rpc('sync_queue', { p_client_ids: clientIds && clientIds.length ? clientIds : null }); }
+    catch (e) { return null; }
+  },
+  // Challans from a date on: delete that slice (and old failure markers) and
+  // insert the fresh rows, so a recent-windows pass never drops older history.
+  replaceChallansSince: async (clientId, fromIso, rows) => {
+    await del('gst_challans', `client_id=eq.${clientId}&or=(challan_date.gte.${fromIso},challan_date.is.null)`);
+    return rows.length ? post('gst_challans', rows) : true;
+  },
+  // Desktop notice that a CAPTCHA is waiting (the sync tab may be behind other windows).
+  notifyCaptcha: async (clientName, progress) => {
+    if (!chrome.notifications) return false;
+    chrome.notifications.create('gstk-captcha', {
+      type: 'basic', iconUrl: 'icon128.png', priority: 2, requireInteraction: true,
+      title: 'GST Keeper: CAPTCHA waiting',
+      message: 'Type the CAPTCHA for ' + (clientName || 'the next client') + (progress || '') + ' to continue the sync.',
+    });
+    return true;
+  },
+  clearCaptchaNotice: async () => { if (chrome.notifications) chrome.notifications.clear('gstk-captcha'); return true; },
 
   // The portal password is fetched only at the moment the login form is
   // filled, never stored with the job in chrome.storage.
@@ -495,8 +605,20 @@ const API = {
       withCreds = withCreds.filter((c) => !c.inactive_at_hand);
     }
     if (!withCreds.length) throw new Error(scoped ? 'None of the selected clients have saved GST portal credentials.' : 'No clients have saved GST portal credentials.');
+    const isNotices = info.mode === 'notices' || info.mode === 'notices_bundle';
+    // Notices runs go most urgent first: open notices due within 7 days (or
+    // overdue), then never synced, then the stalest. Anything the queue does
+    // not know keeps its name order at the end.
+    if (isNotices) {
+      const queue = await API.syncQueue(withCreds.map((c) => c.id));
+      if (Array.isArray(queue) && queue.length) {
+        const rank = new Map(queue.map((q, i) => [q.client_id, i]));
+        withCreds = [...withCreds].sort((a, b) => (rank.has(a.id) ? rank.get(a.id) : 1e9) - (rank.has(b.id) ? rank.get(b.id) : 1e9));
+      }
+    }
+    const runId = isNotices ? await API.runStart(info.mode, withCreds.length) : null;
     const job = {
-      mode: info.mode, period: info.period_month || '', idx: 0, step: 'login', startedAt: Date.now(),
+      mode: info.mode, period: info.period_month || '', idx: 0, step: 'login', startedAt: Date.now(), runId,
       // Only the Notices Dashboard's Sync All records a Company List
       // sync-log row per client — every other section (refunds/drc03/
       // taxpayerprofile/etc) uses this exact same job machinery unchanged.
@@ -511,7 +633,9 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
+    job.lastActivityAt = Date.now();
     await chrome.storage.local.set({ gstk_active_job: job });
+    armWatchdog();
     return { started: true, count: withCreds.length, mode: info.mode };
   },
 
@@ -746,6 +870,82 @@ chrome.downloads.onCreated.addListener(async (item) => {
     } });
   } catch (e) { /* ignore — the in-page path or a timeout will report */ }
 });
+}
+
+// ── Watchdog (0.5.0) ────────────────────────────────────────────────────────
+// A job used to be dropped silently by the next page load once it had been
+// idle 10 minutes (or run 3 hours). Now an alarm checks every minute: a
+// client stuck for 10 minutes is recorded in the run ledger (CAPTCHA not
+// typed, or stalled) and the run moves on to the next client; a run past
+// 3 hours is closed as abandoned with every remaining client recorded.
+const WATCHDOG = 'gstk-watchdog';
+const IDLE_LIMIT_MS = 10 * 60 * 1000;
+const RUN_LIMIT_MS = 3 * 60 * 60 * 1000;
+function armWatchdog() {
+  try { chrome.alarms.create(WATCHDOG, { periodInMinutes: 1 }); } catch (e) { /* alarms unavailable */ }
+}
+async function watchdogTick() {
+  const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
+  if (!job) { try { chrome.alarms.clear(WATCHDOG); } catch (e) { /* ignore */ } return; }
+  // Only notices runs (they carry a ledger run id); every other sync keeps the
+  // content script's old rule (dropped on the next page load after 10 idle
+  // minutes or 3 hours), exactly as content.js expects.
+  if (!job.runId) return;
+  const now = Date.now();
+  const clients = job.clients || [];
+  const idx = job.idx || 0;
+  const cur = clients[idx];
+  const idle = now - (job.lastActivityAt || job.startedAt || now);
+  if (now - (job.startedAt || now) > RUN_LIMIT_MS) {
+    for (let i = idx; i < clients.length; i++) {
+      await API.logStep(job.runId, clients[i].clientId, job.step === 'login' ? 'login' : (job.step || 'notices'), 'skipped', 'stalled', 'Run stopped after 3 hours before reaching this client.');
+    }
+    await API.runFinish(job.runId, 'abandoned', 'Stopped after 3 hours.');
+    await chrome.storage.local.remove('gstk_active_job');
+    notify('gstk-run', 'GST Keeper: sync stopped', 'The sync ran for 3 hours and was stopped. ' + (clients.length - idx) + ' client(s) were not reached; they are marked in the run ledger.');
+    return;
+  }
+  if (idle < IDLE_LIMIT_MS || !cur) return;
+  const atLogin = job.step === 'login';
+  await API.logStep(job.runId, cur.clientId, atLogin ? 'login' : (job.step || 'notices'), 'failed',
+    atLogin ? 'captcha_timeout' : 'stalled',
+    atLogin ? 'No CAPTCHA entered for 10 minutes — moved on.' : 'No progress for 10 minutes on step ' + job.step + ' — moved on.');
+  job.idx = idx + 1;
+  delete job.captchaRetry;
+  job.retries = 0;
+  job.lastActivityAt = now;
+  if (job.idx >= clients.length) {
+    await API.runFinish(job.runId, 'done', 'Last client stalled.');
+    await chrome.storage.local.remove('gstk_active_job');
+    return;
+  }
+  job.periodIdx = 0;
+  if (Array.isArray(job.periods)) job.period = job.periods[0];
+  job.step = 'logout';
+  await chrome.storage.local.set({ gstk_active_job: job });
+  if (job.tabId != null) {
+    try { await chrome.tabs.update(job.tabId, { url: 'https://services.gst.gov.in/services/logout' }); } catch (e) { /* tab closed */ }
+  }
+  notify('gstk-run', 'GST Keeper: moved on', (cur.creds && cur.creds.name ? cur.creds.name : 'A client') + ' made no progress for 10 minutes and was skipped.');
+}
+function notify(id, title, message) {
+  try { chrome.notifications.create(id, { type: 'basic', iconUrl: 'icon128.png', title, message, priority: 1 }); } catch (e) { /* ignore */ }
+}
+if (chrome.alarms && chrome.alarms.onAlarm) {
+  chrome.alarms.onAlarm.addListener((a) => { if (a.name === WATCHDOG) watchdogTick().catch(() => {}); });
+}
+if (chrome.notifications && chrome.notifications.onClicked) {
+  // Clicking the CAPTCHA notice brings the sync tab forward.
+  chrome.notifications.onClicked.addListener(async (id) => {
+    if (id !== 'gstk-captcha') return;
+    const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
+    if (job && job.tabId != null) {
+      try {
+        const tab = await chrome.tabs.update(job.tabId, { active: true });
+        if (tab && tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+      } catch (e) { /* tab closed */ }
+    }
+  });
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

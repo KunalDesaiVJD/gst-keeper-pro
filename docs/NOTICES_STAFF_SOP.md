@@ -11,13 +11,20 @@ Quick-reference guide for the GST team working with the Notices Dashboard.
    - **Open** — total notices not yet closed. Click to filter.
    - **Overdue** — open notices past their due date with no reply logged.
      These need immediate attention.
-   - **Due in 7 days** — upcoming deadlines. Plan your week around these.
+   - **Due in 7 days** — upcoming deadlines with no reply logged yet. Plan your
+     week around these.
    - **New (24h)** — notices first seen in the last 24 hours from a sync.
+   - **Unassigned** — open notices nobody owns yet.
+   Every tile opens a list with exactly the same number of rows — if they ever
+   differ, report it.
 3. **Sync** — click "Sync All" to trigger a fresh pull from the portal
-   via the Chrome Extension (v0.4.0 or later — the app refuses older copies;
-   see `extension/README.md` → Updating). The closing sweep (auto-close and
-   due dates) runs by itself after each client and again nightly — there is
-   no need to click it.
+   via the Chrome Extension (v0.5.0 recommended, v0.4.0 the minimum; see
+   `extension/README.md` → Updating). Clients with deadlines in the next 7 days
+   go first. Only new documents are downloaded, so a repeat run is quick. If
+   nobody types a CAPTCHA for 10 minutes, the run skips that client, notes it
+   in the sync ledger and shows a desktop notification. The closing sweep
+   (auto-close and due dates) runs by itself after each client and again
+   nightly — there is no need to click it.
 4. **Triage new notices** — open each new notice, review the portal data,
    and set a `staff_status` (e.g. "Under Review", "Reply Drafted").
 
@@ -32,7 +39,7 @@ edit dialog. Fields available:
 | **Reply Ref No.** / **Reply Date** | Track that a reply was filed |
 | **Order No.** / **Order Date** | Track an order received |
 | **Submission ARN** / **Submission Date** | Track a submission filed |
-| **Extended Due Date** | Override the portal due date if an extension was granted |
+| **Extended Due Date** | Override the portal due date (or the computed one) if an extension was granted |
 | **Amount of Demand** | Numeric amount demanded |
 | **Financial Year** | e.g. 2025-2026 |
 | **Assign To** | Staff member responsible |
@@ -57,12 +64,41 @@ The sweep runs **by itself**: right after each client's sync, and every night at
    - refund with a **payment order** (and no rejection) → `auto:refund_paid`
    - LUT with an order → `auto:lut_approval`
    - DRC-03 voluntary payment acknowledged → `auto:drc03_acknowledged`
+   - by the notice's own wording: proceedings dropped (`auto:proceedings_dropped`),
+     a response or payment accepted (`auto:accepted`), an approved LUT
+     (`auto:lut_approval`), a registration certificate, amendment or revocation
+     order or waiver approval (`auto:informational_order`)
    A refund with only a sanction/rejection order stays open — a rejection may need
    an appeal.
 2. **Due dates** — case notices get the due date of their own document in the
    case folder, or else of the latest notice in the case not yet replied to.
 
 The sweep never touches a notice you have already given a status.
+
+## Due dates you did not type: computed and statutory clocks
+
+- When the portal gives no due date, the app **computes** one from the form's
+  usual reply period (e.g. DRC-01B: 7 days). The notice drawer marks it
+  "computed" with the basis; the periods are **not yet confirmed by the firm**.
+  If the notice itself states a different date, enter it as the Extended Due
+  Date.
+- The drawer's **Deadlines** list is written automatically: reply due, hearing,
+  appeal (s.107 / s.112) and its condonation limit, and the expiry of a
+  provisional attachment. A date you change there stays yours; the computed
+  date is shown beside it.
+
+## E-mail alerts (preview week)
+
+- Alerts are generated automatically: new notices to their owner (every 15
+  minutes, one e-mail per client), the 09:30 morning list of your deadlines,
+  and the Monday MIS for managers. Routine alerts (assigned to you, status
+  changes, replies, portal updates) arising between 20:00 and 08:00 wait until
+  08:00; a new notice is sent straight away.
+- They start in **preview**: Reminders → Email outbox shows each alert as it
+  would be sent, but nothing leaves. A GST manager or the superadmin switches
+  to live (Reminders → Notice alerts) once the previews look right.
+- A new notice takes its client's accountant (Edit Client → Assigned
+  accountant) as owner when that name matches one staff member.
 
 ## Owner, manual notices and deleting clients
 

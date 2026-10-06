@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { isExtensionOutdated, outdatedExtensionMessage } from '@/lib/extensionVersion';
+import { isExtensionOutdated, isExtensionUpdateRecommended, outdatedExtensionMessage, updateRecommendedMessage } from '@/lib/extensionVersion';
 import { useNoticeSet } from '@/hooks/useNoticeSet';
 import { isOpen, isOverdue, isDueIn7, isNew, effectiveDue } from '@/utils/noticeDefinitions';
 import { istToday, daysBetween } from '@/lib/noticeFacts';
@@ -146,6 +146,7 @@ const NoticesDashboardPage: React.FC = () => {
         setExtReady(true);
         setExtVersion(d.version || null);
         if (isExtensionOutdated(d.version)) toast.error(outdatedExtensionMessage(d.version));
+        else if (isExtensionUpdateRecommended(d.version)) toast.warning(updateRecommendedMessage(d.version), { id: 'ext-update' });
       }
       if (d.__gstkPullSectionAllClientsResult) {
         setSyncing(false);

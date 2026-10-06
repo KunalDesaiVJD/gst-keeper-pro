@@ -2,6 +2,40 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-06 — One pipe and a run ledger (v0.5.0) — reload on every PC
+
+Phase 1 of the notices roadmap (`docs/NOTICES_MISSION_AUDIT_AND_ROADMAP.pdf`). v0.4.x
+still syncs; the app nudges it to update.
+
+- **One ingest door.** Notices, case-folder items, refunds and DRC-03 rows are saved
+  through the database function `sync_ingest` (migration `20261006113000`) instead of
+  four REST writes: a per-client lock, server timestamps, and the guarded soft delete
+  decided in the database. Older databases fall back to the REST path.
+- **Run ledger.** Each Sync All opens a `sync_runs` row; every client and step writes a
+  `sync_run_items` row with new / changed / unchanged / removed / held counts and a
+  failure reason (`captcha_timeout`, `session_mismatch`, `timeout`, `portal_error`,
+  `stalled`, …). Company List shows the last result per client and offers "Retry
+  failed" and "Sync stale > 24 h".
+- **Faster runs.** PDFs and folder attachments already saved are not downloaded
+  again; a case's folder is read only when the case is new or still open, plus one
+  full pass per client every 7 days; challans are read for recent months with a
+  weekly full read; every portal call has a timeout.
+- **Risk-ordered queue.** Sync All starts with clients whose notices are due within
+  7 days or overdue, then never-synced, then the stalest; inactive clients are skipped.
+- **CAPTCHA watchdog.** A `chrome.alarms` watchdog notices a client that made no
+  progress for 10 minutes (an untyped CAPTCHA), records it in the ledger, shows a
+  desktop notification and moves to the next client; a run idle for 3 hours is
+  closed as abandoned. A desktop notification also asks for the CAPTCHA when one
+  is waiting.
+- **Case links kept.** A case task with the same reference as a listed notice now
+  links that notice to its case (its folder shows on the notice) instead of being
+  dropped.
+- **Fixed:** steps that read a constant declared lower in `content.js` failed with
+  "Cannot access … before initialization" — the credit reversal / re-claim pull and
+  the RCM liability pull on every run, and the refund documents step for a folder
+  without a type name. All such constants now sit at the top of the script.
+- New permissions: `alarms`, `notifications` (and an icon for the notifications).
+
 ## 2026-10-06 — Safety release for notices sync (v0.4.0) — update on every PC
 
 Phase 0 of the notices roadmap (`docs/NOTICES_MISSION_AUDIT_AND_ROADMAP.pdf`). The app
