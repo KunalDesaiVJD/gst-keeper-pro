@@ -268,7 +268,7 @@ BEGIN
   SELECT * INTO v_e5 FROM public.notice_alert_rules WHERE alert_key = 'E5_limitation_alert';
   SELECT * INTO v_e11 FROM public.notice_alert_rules WHERE alert_key = 'E11_unassigned';
 
-  -- Personal lists: a notice goes to its owner; one nobody (reachable) owns goes
+  -- Personal lists: a notice goes to its owner, one nobody (reachable) owns goes
   -- to every manager — except its overdue line, which the firm-wide E2 list covers.
   DROP TABLE IF EXISTS pg_temp._digest_items;
   CREATE TEMP TABLE _digest_items ON COMMIT DROP AS

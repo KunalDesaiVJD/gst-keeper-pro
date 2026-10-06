@@ -168,7 +168,7 @@ BEGIN
     IF NEW.stage IS NULL OR NEW.stage = 'new' THEN
       -- Stage from the status and facts given (never from an auto-owner).
       NEW.stage := public.notice_stage_from_status(NEW.staff_status, NEW.reply_date, NEW.order_date, NULL);
-      -- A spelling of a stage becomes its label; other wording is kept as typed.
+      -- A spelling of a stage becomes its label, other wording is kept as typed.
       IF NEW.stage <> 'closed' AND public.notice_stage_key(NEW.staff_status) IS NOT NULL THEN
         NEW.staff_status := public.notice_stage_status(NEW.stage, NEW.staff_status);
       END IF;
@@ -182,7 +182,7 @@ BEGIN
   v_staff := NEW.edited_at IS DISTINCT FROM OLD.edited_at;
 
   IF NEW.stage IS DISTINCT FROM OLD.stage THEN
-    -- Stage set by the writer: staff_status follows; reopening clears the
+    -- Stage set by the writer: staff_status follows, reopening clears the
     -- close reason of the earlier closure.
     NEW.staff_status := public.notice_stage_status(NEW.stage, NEW.staff_status);
     IF OLD.stage = 'closed' AND NEW.stage <> 'closed'
