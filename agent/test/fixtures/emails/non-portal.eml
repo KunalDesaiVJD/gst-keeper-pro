@@ -1,0 +1,16 @@
+From: Demo Supplier <billing@demo-supplier.example>
+To: notices@demo-ca-firm.example
+Subject: Invoice DS/1024 for September 2026
+Date: Wed, 30 Sep 2026 12:00:00 +0530
+Message-ID: <fixture-nonportal-0008@demo-supplier.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Dear Sir,
+
+Please find our invoice DS/1024 for September 2026 attached.
+Our GSTIN: 24ZZZZF0006F1ZF. The amount includes IGST; the ITC will show in
+your GSTR-2B. For GST portal queries you may also write to helpdesk@gst.gov.in.
+
+From: the accounts team
+Demo Supplier (fictitious)

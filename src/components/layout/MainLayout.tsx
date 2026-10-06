@@ -6,6 +6,7 @@ import QuickActionsButton from './QuickActionsButton';
 import ChatWidget from '@/components/chat/ChatWidget';
 import NotificationBell from '@/components/notices/NotificationBell';
 import SearchPalette from '@/components/notices/SearchPalette';
+import AutopilotBadge from '@/components/notices/autopilot/AutopilotBadge';
 import { Loader2, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -76,6 +77,8 @@ const MainLayout: React.FC = () => {
         </div>
 
         <main className="min-h-screen px-4 pb-24 pt-4 md:px-6 md:pb-24 md:pt-6">
+          {/* CAPTCHAs waiting for a person (portal autopilot), on every staff page. */}
+          {isStaffRole() && <AutopilotBadge />}
           <Outlet />
         </main>
       </div>

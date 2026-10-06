@@ -39,6 +39,204 @@ export type Database = {
   }
   public: {
     Tables: {
+      autopilot_presence: {
+        Row: {
+          last_seen: string
+          name: string | null
+          user_id: string
+        }
+        Insert: {
+          last_seen?: string
+          name?: string | null
+          user_id: string
+        }
+        Update: {
+          last_seen?: string
+          name?: string | null
+          user_id?: string
+        }
+        Relationships: [
+        ]
+      }
+      autopilot_settings: {
+        Row: {
+          afternoon_at: string
+          afternoon_scope: string
+          captcha_refresh_secs: number
+          close_at: string
+          concurrency: number
+          email_trigger: boolean
+          enabled: boolean
+          id: boolean
+          inbox_address: string | null
+          inbox_last_error: string | null
+          inbox_last_poll_at: string | null
+          keep_sessions: boolean
+          max_attempts: number
+          morning_at: string
+          nudge_at: string
+          paused_until: string | null
+          schedule_enabled: boolean
+          updated_at: string
+          updated_by_name: string | null
+        }
+        Insert: {
+          afternoon_at?: string
+          afternoon_scope?: string
+          captcha_refresh_secs?: number
+          close_at?: string
+          concurrency?: number
+          email_trigger?: boolean
+          enabled?: boolean
+          id?: boolean
+          inbox_address?: string | null
+          inbox_last_error?: string | null
+          inbox_last_poll_at?: string | null
+          keep_sessions?: boolean
+          max_attempts?: number
+          morning_at?: string
+          nudge_at?: string
+          paused_until?: string | null
+          schedule_enabled?: boolean
+          updated_at?: string
+          updated_by_name?: string | null
+        }
+        Update: {
+          afternoon_at?: string
+          afternoon_scope?: string
+          captcha_refresh_secs?: number
+          close_at?: string
+          concurrency?: number
+          email_trigger?: boolean
+          enabled?: boolean
+          id?: boolean
+          inbox_address?: string | null
+          inbox_last_error?: string | null
+          inbox_last_poll_at?: string | null
+          keep_sessions?: boolean
+          max_attempts?: number
+          morning_at?: string
+          nudge_at?: string
+          paused_until?: string | null
+          schedule_enabled?: boolean
+          updated_at?: string
+          updated_by_name?: string | null
+        }
+        Relationships: [
+        ]
+      }
+      autopilot_slot_runs: {
+        Row: {
+          fired_at: string
+          ist_date: string
+          jobs: number
+          note: string | null
+          run_id: string | null
+          slot: string
+        }
+        Insert: {
+          fired_at?: string
+          ist_date: string
+          jobs?: number
+          note?: string | null
+          run_id?: string | null
+          slot: string
+        }
+        Update: {
+          fired_at?: string
+          ist_date?: string
+          jobs?: number
+          note?: string | null
+          run_id?: string | null
+          slot?: string
+        }
+        Relationships: [
+        ]
+      }
+      autopilot_wall_minutes: {
+        Row: {
+          ist_date: string
+          name: string | null
+          seconds: number
+          user_id: string
+        }
+        Insert: {
+          ist_date: string
+          name?: string | null
+          seconds?: number
+          user_id: string
+        }
+        Update: {
+          ist_date?: string
+          name?: string | null
+          seconds?: number
+          user_id?: string
+        }
+        Relationships: [
+        ]
+      }
+      gst_portal_applications: {
+        Row: {
+          arn: string | null
+          case_id: string | null
+          case_type_cd: string
+          client_id: string
+          deleted_at: string | null
+          filed_date: string | null
+          first_seen_at: string
+          form_description: string | null
+          form_number: string | null
+          id: string
+          last_seen_at: string
+          portal_hash: string | null
+          portal_key: string
+          raw_json: Json | null
+          status: string | null
+        }
+        Insert: {
+          arn?: string | null
+          case_id?: string | null
+          case_type_cd: string
+          client_id: string
+          deleted_at?: string | null
+          filed_date?: string | null
+          first_seen_at?: string
+          form_description?: string | null
+          form_number?: string | null
+          id?: string
+          last_seen_at?: string
+          portal_hash?: string | null
+          portal_key: string
+          raw_json?: Json | null
+          status?: string | null
+        }
+        Update: {
+          arn?: string | null
+          case_id?: string | null
+          case_type_cd?: string
+          client_id?: string
+          deleted_at?: string | null
+          filed_date?: string | null
+          first_seen_at?: string
+          form_description?: string | null
+          form_number?: string | null
+          id?: string
+          last_seen_at?: string
+          portal_hash?: string | null
+          portal_key?: string
+          raw_json?: Json | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_portal_applications_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notice_bell_state: {
         Row: {
           user_id: string
@@ -4901,6 +5099,7 @@ export type Database = {
           stage_changed_at: string | null
           stage_changed_by: string | null
           hearing_note: string | null
+          portal_detail: Json | null
         }
         Insert: {
           amount_of_demand?: number | null
@@ -4950,6 +5149,7 @@ export type Database = {
           stage_changed_at?: string | null
           stage_changed_by?: string | null
           hearing_note?: string | null
+          portal_detail?: Json | null
         }
         Update: {
           amount_of_demand?: number | null
@@ -4999,6 +5199,7 @@ export type Database = {
           stage_changed_at?: string | null
           stage_changed_by?: string | null
           hearing_note?: string | null
+          portal_detail?: Json | null
         }
         Relationships: [
           {
@@ -5362,6 +5563,9 @@ export type Database = {
           registration_date: string | null
           trade_name: string | null
           updated_at: string
+          gstin_status: string | null
+          cancellation_date: string | null
+          profile_json: Json | null
         }
         Insert: {
           aadhaar_authentication_status?: string | null
@@ -5379,6 +5583,9 @@ export type Database = {
           registration_date?: string | null
           trade_name?: string | null
           updated_at?: string
+          gstin_status?: string | null
+          cancellation_date?: string | null
+          profile_json?: Json | null
         }
         Update: {
           aadhaar_authentication_status?: string | null
@@ -5396,6 +5603,9 @@ export type Database = {
           registration_date?: string | null
           trade_name?: string | null
           updated_at?: string
+          gstin_status?: string | null
+          cancellation_date?: string | null
+          profile_json?: Json | null
         }
         Relationships: [
           {
@@ -7010,6 +7220,82 @@ export type Database = {
         }
         Relationships: []
       }
+      portal_emails: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          form_code: string | null
+          from_addr: string | null
+          gstins: string[]
+          id: string
+          job_id: string | null
+          message_id: string
+          notice_id: string | null
+          notice_seen_at: string | null
+          received_at: string
+          reference_number: string | null
+          snippet: string | null
+          status: string
+          subject: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          form_code?: string | null
+          from_addr?: string | null
+          gstins?: string[]
+          id?: string
+          job_id?: string | null
+          message_id: string
+          notice_id?: string | null
+          notice_seen_at?: string | null
+          received_at: string
+          reference_number?: string | null
+          snippet?: string | null
+          status?: string
+          subject?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          form_code?: string | null
+          from_addr?: string | null
+          gstins?: string[]
+          id?: string
+          job_id?: string | null
+          message_id?: string
+          notice_id?: string | null
+          notice_seen_at?: string | null
+          received_at?: string
+          reference_number?: string | null
+          snippet?: string | null
+          status?: string
+          subject?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_emails_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_emails_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "portal_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_emails_notice_id_fkey"
+            columns: ["notice_id"]
+            isOneToOne: false
+            referencedRelation: "gst_notices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       portal_gstr1_category_figures: {
         Row: {
           category: string
@@ -7097,7 +7383,14 @@ export type Database = {
       }
       portal_jobs: {
         Row: {
+          active_key: string | null
+          answered_by_name: string | null
           attempts: number
+          captcha_answered_at: string | null
+          captcha_count: number
+          captcha_shown_at: string | null
+          captcha_typing_ms: number
+          captcha_wait_secs: number
           claimed_by: string | null
           client_id: string
           created_at: string | null
@@ -7108,16 +7401,33 @@ export type Database = {
           id: string
           job_type: string
           mode: string
+          not_before: string | null
+          origin: string | null
           payload: Json | null
           period_month: string | null
+          priority: number
+          prompt_id: string | null
+          queue_rank: number | null
+          reason_class: string | null
           requested_by: string | null
+          requested_by_name: string | null
           result: Json | null
+          run_id: string | null
+          session_reused: boolean | null
+          started_at: string | null
           status: string
           updated_at: string | null
           verified: boolean | null
         }
         Insert: {
+          active_key?: string | null
+          answered_by_name?: string | null
           attempts?: number
+          captcha_answered_at?: string | null
+          captcha_count?: number
+          captcha_shown_at?: string | null
+          captcha_typing_ms?: number
+          captcha_wait_secs?: number
           claimed_by?: string | null
           client_id: string
           created_at?: string | null
@@ -7128,16 +7438,33 @@ export type Database = {
           id?: string
           job_type: string
           mode?: string
+          not_before?: string | null
+          origin?: string | null
           payload?: Json | null
           period_month?: string | null
+          priority?: number
+          prompt_id?: string | null
+          queue_rank?: number | null
+          reason_class?: string | null
           requested_by?: string | null
+          requested_by_name?: string | null
           result?: Json | null
+          run_id?: string | null
+          session_reused?: boolean | null
+          started_at?: string | null
           status?: string
           updated_at?: string | null
           verified?: boolean | null
         }
         Update: {
+          active_key?: string | null
+          answered_by_name?: string | null
           attempts?: number
+          captcha_answered_at?: string | null
+          captcha_count?: number
+          captcha_shown_at?: string | null
+          captcha_typing_ms?: number
+          captcha_wait_secs?: number
           claimed_by?: string | null
           client_id?: string
           created_at?: string | null
@@ -7148,10 +7475,20 @@ export type Database = {
           id?: string
           job_type?: string
           mode?: string
+          not_before?: string | null
+          origin?: string | null
           payload?: Json | null
           period_month?: string | null
+          priority?: number
+          prompt_id?: string | null
+          queue_rank?: number | null
+          reason_class?: string | null
           requested_by?: string | null
+          requested_by_name?: string | null
           result?: Json | null
+          run_id?: string | null
+          session_reused?: boolean | null
+          started_at?: string | null
           status?: string
           updated_at?: string | null
           verified?: boolean | null
@@ -7162,6 +7499,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_jobs_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sync_runs"
             referencedColumns: ["id"]
           },
         ]
@@ -8808,6 +9152,57 @@ export type Database = {
       }
     }
     Functions: {
+      autopilot_ask_client: {
+        Args: { p_actor_name?: string | null; p_client_id: string; p_kind: string }
+        Returns: Json
+      }
+      autopilot_badge: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      autopilot_enqueue: {
+        Args: {
+          p_client_ids?: string[] | null
+          p_job_type?: string
+          p_origin?: string
+          p_payload?: Json
+          p_priority?: number | null
+          p_requested_by?: string | null
+          p_requested_by_name?: string | null
+          p_scope?: string
+        }
+        Returns: Json
+      }
+      autopilot_metrics: {
+        Args: { p_days?: number }
+        Returns: {
+          captchas: number
+          capture_median_hours: number | null
+          captured_within_24h: number
+          day: string
+          eligible: number
+          email_median_minutes: number | null
+          fresh: number
+          jobs_done: number
+          jobs_failed: number
+          named: number
+          notices_captured: number
+          share: number | null
+          short_form_emails: number
+          short_form_within_4h: number
+          typing_minutes: number
+          wall_minutes: number
+          working: boolean
+        }[]
+      }
+      autopilot_status: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      autopilot_wall_ping: {
+        Args: { p_attentive?: boolean; p_name?: string | null; p_user_id?: string | null }
+        Returns: Json
+      }
       notice_calendar: {
         Args: { p_from: string; p_to: string }
         Returns: {
@@ -8871,6 +9266,26 @@ export type Database = {
       }
       notices_dashboard_summary: {
         Args: { p_category?: string }
+        Returns: Json
+      }
+      portal_job_answer: {
+        Args: {
+          p_action?: string
+          p_job_id: string
+          p_prompt_id: string
+          p_text?: string | null
+          p_typing_ms?: number | null
+          p_user_id?: string | null
+          p_user_name?: string | null
+        }
+        Returns: string
+      }
+      portal_job_cancel: {
+        Args: { p_by_name?: string | null; p_job_id: string }
+        Returns: string
+      }
+      portal_job_retry: {
+        Args: { p_by?: string | null; p_by_name?: string | null; p_job_id: string }
         Returns: Json
       }
       sync_ingest: {

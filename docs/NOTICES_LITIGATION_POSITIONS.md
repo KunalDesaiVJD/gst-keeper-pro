@@ -5,7 +5,7 @@ encodes. Read this before changing auto-close logic, due-date extraction,
 or the KPI tile definitions.
 
 **These positions were implemented by engineering judgement during
-Phases 0–2 of the notices roadmap, not confirmed in a firm sign-off
+Phases 0–3 of the notices roadmap, not confirmed in a firm sign-off
 conversation.** Flag any that don't match how the firm actually wants it
 to work; each is a localised change to reverse. Statutory periods and form
 rules carry a `confirmed_at` column that stays empty until the firm confirms
@@ -413,3 +413,29 @@ it, `client_sync_status` takes that client's last known state from the older
 `client_sync_log` — its last good notices pull, or a failed login after it — so
 "never synced" means no sync on record at all, and an old failed login still shows
 as a login failure.
+
+## 18. GSTR-3A closes when its return is filed (Phase 3)
+
+A GSTR-3A notice ("notice to return defaulter u/s 46") says on its face that it
+is deemed withdrawn if the return is filed before an assessment order. From
+extension v0.6.0 the sync keeps the summary's return type and period on the notice
+(`gst_notices.portal_detail -> 'gstr3a'`; `ret_period` is `MMYYYY`, as the portal's
+own `gstr3actrl.js` reads it), and `notices_close_gstr3a_filed()` closes the notice
+with `close_reason = 'auto:return_filed'` once Filing Status has that return filed
+(`filed_date` set or status "Filed") for that client and period. It runs after each
+sync's detail write and whenever a Filing Status row is marked filed (trigger
+`filing_status_close_gstr3a`).
+
+**Positions:** GSTR-3B settles a `3B` notice (monthly or quarterly row for the same
+`MM/YYYY`), GSTR-1 or IFF a `1` notice. Annual (GSTR-9 / GSTR-4 annual) and final
+(GSTR-10) GSTR-3A notices, quarterly periods and anything the period cannot be read
+from stay open for a person. Only notices still at New, Triaged, Evidence, Waiting on
+client or Draft close; one at Filed, Hearing, Order or Appeal has had something else
+happen and is left alone. Like every automatic close it shows under "Closed
+automatically today (reviewable)" and can be reopened.
+
+The portal's own wording rebuilt into the GSTR-3A PDF now ends with a line saying
+it is rebuilt by GST Keeper from the portal's GSTR-3A data (audit S-31).
+
+Portal Autopilot positions (CAPTCHA posture, office-only agent, sessions, the
+inbox, acceptance measures) are in `docs/PORTAL_AUTOPILOT_POSITIONS.md`.

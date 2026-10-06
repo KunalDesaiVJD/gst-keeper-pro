@@ -61,6 +61,9 @@
     runFinish: (runId, status, note) => call('runFinish', runId, status, note),
     logStep: (runId, clientId, step, status, reasonClass, message) => call('logStep', runId, clientId, step, status, reasonClass, message),
     knownDocs: (clientId) => call('knownDocs', clientId),
+    // 0.6.0: applications on the portal; kept notice detail (GSTR-3A period).
+    ingestApplications: (clientId, runId, rows, caseTypes, complete) => call('ingestApplications', clientId, runId, rows, caseTypes, complete),
+    noticeDetails: (clientId, rows) => call('noticeDetails', clientId, rows),
     replaceChallansSince: (clientId, fromIso, rows) => call('replaceChallansSince', clientId, fromIso, rows),
     notifyCaptcha: (clientName, progress) => call('notifyCaptcha', clientName, progress),
     clearCaptchaNotice: () => call('clearCaptchaNotice'),
@@ -70,9 +73,28 @@
     startSectionPull: (info) => call('startAllClientsSectionPull', info),
     getSyncStatus: () => restGet('client_sync_status?step=in.(notices,login)'
       + '&select=client_id,step,last_attempt_at,last_status,last_reason_class,last_message,last_success_at'),
+    // 0.6.0: the office agent (Portal Autopilot) — is it on, and queue clients for it.
+    getAutopilot: () => restRpc('autopilot_wall_ping', {}),
+    queueOnAgent: (clientIds) => restRpc('autopilot_enqueue', {
+      p_client_ids: clientIds && clientIds.length ? clientIds : null, p_job_type: 'PULL_NOTICES_BUNDLE',
+      p_origin: 'manual', p_requested_by_name: 'Extension popup',
+    }),
     getLastRun: () => restGet('sync_runs?select=id,started_at,finished_at,status,mode,clients_total,clients_done,note'
       + '&order=started_at.desc&limit=1').then((a) => (a && a[0]) || null),
   };
+
+  // An RPC from an extension page that loads config.js (the popup).
+  async function restRpc(fn, body) {
+    const cfg = globalThis.GSTK_CONFIG;
+    if (!cfg) throw new Error('config.js is not loaded on this page');
+    const r = await fetch(cfg.SUPABASE_URL + '/rest/v1/rpc/' + fn, {
+      method: 'POST',
+      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    if (!r.ok) throw new Error('RPC ' + fn + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
+    return r.json();
+  }
 
   // GET only, for extension pages that load config.js (the popup). The
   // background worker has no generic reader, and content scripts never call these.

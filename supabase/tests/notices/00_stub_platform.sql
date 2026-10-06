@@ -57,11 +57,24 @@ CREATE TABLE public.clients (
   gst_password text,
   assigned_accountant text,
   inactive_at_hand boolean NOT NULL DEFAULT false,
+  selected_returns text[],
   registration_date date NOT NULL DEFAULT '2017-07-01',
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
-CREATE TABLE public.filing_status (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+CREATE TABLE public.filing_status (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid, return_type public.return_type, period_month text, status text, filed_date date,
+  UNIQUE (client_id, return_type, period_month));
+-- Taxpayer profile (20260817200000), so 0.6.0's registration status can be tested.
+CREATE TABLE public.gst_taxpayer_profile (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid NOT NULL UNIQUE REFERENCES public.clients(id) ON DELETE CASCADE,
+  legal_name text, trade_name text, constitution_of_business text, registration_date date,
+  jurisdiction_state text, jurisdiction_centre text, principal_place_address text,
+  aadhaar_authentication_status text, registration_certificate_url text,
+  pulled_at timestamptz NOT NULL DEFAULT now(), pulled_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE public.profiles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL UNIQUE,

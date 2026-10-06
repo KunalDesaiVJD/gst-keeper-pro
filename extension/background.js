@@ -266,6 +266,64 @@ const API = {
       });
     } catch (e) { return null; }
   },
+  // 0.6.0: applications on the portal and kept notice detail (GSTR-3A). Both
+  // are no-ops on a database without migration 20261007122000.
+  ingestApplications: async (clientId, runId, rows, caseTypes, complete) => {
+    try {
+      return await rpc('sync_ingest_applications', {
+        p_client_id: clientId, p_run_id: runId || null, p_rows: rows || [], p_case_types: caseTypes || [],
+        p_ext_version: EXT_VERSION, p_complete: complete !== false,
+      });
+    } catch (e) {
+      if (isMissingRpc(e)) return { status: 'skipped', reason: 'database not updated' };
+      throw e;
+    }
+  },
+  noticeDetails: async (clientId, rows) => {
+    if (!rows || !rows.length) return 0;
+    try { return await rpc('sync_notice_details', { p_client_id: clientId, p_rows: rows }); }
+    catch (e) { if (isMissingRpc(e)) return 0; throw e; }
+  },
+
+  // Portal Autopilot (agent/, 0.6.0): the office agent starts one client's job
+  // here, in its own browser, exactly as a person's Sync does — same steps,
+  // same ingest. job.agent marks it: the CAPTCHA goes to the app's CAPTCHA
+  // wall (no desktop notice), the login wait has no 60-second give-up and the
+  // watchdog leaves it to the agent, and the run belongs to the queue, so this
+  // worker never finishes it.
+  startAgentJob: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const mode = info.mode || 'notices_bundle';
+    const periods = Array.isArray(info.periods) && info.periods.length ? info.periods : [''];
+    const job = {
+      mode, period: periods[0], periods, periodIdx: 0, idx: 0, step: 'login',
+      startedAt: Date.now(), lastActivityAt: Date.now(), runId: info.runId || null,
+      logSync: mode === 'notices' || mode === 'notices_bundle',
+      agent: { jobId: info.jobId || null },
+      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+    };
+    // The job is stored before the tab loads the portal, so the first page
+    // already finds it (a fast page could otherwise run ahead of the store).
+    const tab = await chrome.tabs.create({ url: 'about:blank' });
+    job.tabId = tab.id;
+    await chrome.storage.local.set({ gstk_active_job: job });
+    armWatchdog();
+    await chrome.tabs.update(tab.id, { url: info.startUrl || 'https://services.gst.gov.in/services/login' });
+    return { started: true, tabId: tab.id, client: c.name, version: EXT_VERSION };
+  },
+  // What the agent watches: null once the job is over.
+  agentJobState: async () => {
+    const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
+    if (!job) return null;
+    return {
+      step: job.step, mode: job.mode, periodIdx: job.periodIdx || 0, periods: (job.periods || []).length,
+      captchaRetry: job.captchaRetry || 0, retries: job.retries || 0, lastActivityAt: job.lastActivityAt || null,
+      tabId: job.tabId, jobId: job.agent ? job.agent.jobId : null,
+    };
+  },
+  agentClearJob: async () => { await chrome.storage.local.remove('gstk_active_job'); return true; },
+
   // What is already stored for a client, so a run skips PDFs and attachments it
   // already has and fetches case folders only for new / open cases.
   knownDocs: async (clientId) => {
@@ -319,9 +377,18 @@ const API = {
   },
 
   upsertTaxpayerProfile: async (clientId, patchObj) => {
-    const ex = await sel(`gst_taxpayer_profile?client_id=eq.${clientId}&select=id&limit=1`);
-    if (ex[0]) return patch(`gst_taxpayer_profile?id=eq.${ex[0].id}`, patchObj);
-    return post('gst_taxpayer_profile', [{ client_id: clientId, ...patchObj }]);
+    const write = async (obj) => {
+      const ex = await sel(`gst_taxpayer_profile?client_id=eq.${clientId}&select=id&limit=1`);
+      if (ex[0]) return patch(`gst_taxpayer_profile?id=eq.${ex[0].id}`, obj);
+      return post('gst_taxpayer_profile', [{ client_id: clientId, ...obj }]);
+    };
+    try { return await write(patchObj); }
+    catch (e) {
+      // A database without migration 20261007122000 has no status columns yet.
+      const { gstin_status, cancellation_date, profile_json, ...rest } = patchObj || {};
+      if (gstin_status === undefined && cancellation_date === undefined && profile_json === undefined) throw e;
+      return write(rest);
+    }
   },
 
   // Quick DB-only check (no portal visit) for a client's known registration
@@ -896,6 +963,15 @@ async function watchdogTick() {
   const idx = job.idx || 0;
   const cur = clients[idx];
   const idle = now - (job.lastActivityAt || job.startedAt || now);
+  // An agent job: the agent owns the CAPTCHA wait and the run. A step stuck
+  // for 10 minutes is recorded and the job dropped; the agent sees it go.
+  if (job.agent) {
+    if (job.step === 'login' || idle < IDLE_LIMIT_MS || !cur) return;
+    await API.logStep(job.runId, cur.clientId, job.step || 'notices', 'failed', 'stalled',
+      'No progress for 10 minutes on step ' + job.step + '.');
+    await chrome.storage.local.remove('gstk_active_job');
+    return;
+  }
   if (now - (job.startedAt || now) > RUN_LIMIT_MS) {
     for (let i = idx; i < clients.length; i++) {
       await API.logStep(job.runId, clients[i].clientId, job.step === 'login' ? 'login' : (job.step || 'notices'), 'skipped', 'stalled', 'Run stopped after 3 hours before reaching this client.');

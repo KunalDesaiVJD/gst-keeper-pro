@@ -30,24 +30,39 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
 
 That's it — nothing to keep running, no account, no card.
 
-## Updating (minimum v0.4.0, recommended v0.5.0)
+## Updating (minimum v0.4.0, recommended v0.6.0)
 The app refuses to start a notices sync from an extension older than **v0.4.0**
-(`src/lib/extensionVersion.ts`) and nudges v0.4.x copies to update to **v0.5.0**.
+(`src/lib/extensionVersion.ts`) and nudges older copies to update to **v0.6.0**.
 After pulling a new version of this folder, open `chrome://extensions` and click
 **Reload** on “GST Keeper Portal Sync” on **every PC** that syncs. v0.4.0 never marks
 saved notices missing after an empty or partly failed pull, checks that the portal
 session belongs to the client being synced, and no longer stores portal passwords in
 Chrome's extension storage. v0.5.0 saves through the database's single ingest door
 with a run ledger, skips documents already saved, and moves on from a CAPTCHA nobody
-typed — see CHANGELOG.md.
+typed — see CHANGELOG.md. v0.6.0 also reads applications on the portal (appeals
+and others) and the registration status in every notices sync, keeps a GSTR-3A's
+return period so it closes itself once that return is filed, and is what the
+office agent drives (below).
+
+## The office agent (Portal Autopilot, v0.6.0+)
+`agent/` runs this same extension on an always-on office PC, in its own Chromium,
+on a schedule. It starts each client's job with `startAgentJob` (background.js); an
+agent job (`job.agent`) sends its login CAPTCHA to the app's CAPTCHA wall instead of
+a desktop notice and waits up to 30 minutes for the answer the agent types into the
+field, marks the page (`data-gstk-captcha="ready"`) once it is listening, and leaves
+its run to the queue. The watchdog leaves an agent job's CAPTCHA wait to the agent.
+People type every CAPTCHA; see `docs/PORTAL_AUTOPILOT_POSITIONS.md`.
 
 ## Testing without the portal
 `test/notices-sync.sim.mjs` runs the real `background.js`, `db.js` and `content.js` in
 Node against a fake portal and a **local** PostgREST + PostgreSQL carrying the
 migrations (see `supabase/tests/notices/README.md`). It checks a first run, an
 unchanged rerun (nothing downloaded twice), a run with a removed / new notice and a
-reply on the portal, a wrong-GSTIN session, the weekly full folder pass and the
-CAPTCHA watchdog. Never point it at the live project.
+reply on the portal, a wrong-GSTIN session, the weekly full folder pass, the 0.6.0
+applications / registration status / GSTR-3A detail, the agent hooks and the
+CAPTCHA watchdog. Never point it at the live project. The agent's own end-to-end
+test drives this extension in Chromium against a stand-in portal
+(`agent/test/README.md`).
 
 ```
 node extension/test/notices-sync.sim.mjs http://127.0.0.1:54399 /path/to/anon.jwt

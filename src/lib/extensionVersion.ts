@@ -6,8 +6,10 @@
 export const MIN_EXTENSION_VERSION = '0.4.0';
 // Phase 1: 0.5.0 writes through the database's single ingest door (sync_ingest),
 // fills the run ledger, skips documents already stored and has the CAPTCHA
-// watchdog. 0.4.x is still allowed (its writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.5.1';
+// watchdog. Phase 3: 0.6.0 also reads applications on the portal, the
+// registration status and the GSTR-3A period, and is what the office agent runs.
+// 0.4.x and 0.5.x are still allowed (their writes are safe), only nudged to update.
+export const RECOMMENDED_EXTENSION_VERSION = '0.6.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -32,6 +34,9 @@ export function isExtensionUpdateRecommended(version: string | null | undefined)
 }
 
 export function updateRecommendedMessage(version: string | null | undefined): string {
-  return `Browser extension v${version} still syncs, but v${RECOMMENDED_EXTENSION_VERSION} is faster (skips documents already saved) `
-    + 'and fills the sync run ledger. Reload it from the updated extension folder (chrome://extensions → Reload) when convenient.';
+  const gains = version && compareVersions(version, '0.5.0') >= 0
+    ? 'also reads applications on the portal (appeals and others), the registration status and the GSTR-3A period'
+    : 'is faster (skips documents already saved), fills the sync run ledger and also reads applications on the portal and the registration status';
+  return `Browser extension v${version} still syncs, but v${RECOMMENDED_EXTENSION_VERSION} ${gains}. `
+    + 'Reload it from the updated extension folder (chrome://extensions → Reload) when convenient.';
 }

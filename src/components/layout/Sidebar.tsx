@@ -29,6 +29,7 @@ import {
   Gavel,
   CalendarDays,
   BarChart3,
+  Bot,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -95,6 +96,7 @@ const STAFF_NAV_ITEMS: NavItem[] = [
   { label: 'Hearings', path: '/notices-hearings', icon: <Gavel className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
   { label: 'Calendar', path: '/notices-calendar', icon: <CalendarDays className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
   { label: 'Clients and sync', path: '/notices-company-list', icon: <Users className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
+  { label: 'Portal autopilot', path: '/notices-autopilot', icon: <Bot className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
   { label: 'Reports', path: '/notices-report', icon: <BarChart3 className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
   {
     label: '2B Reconciliation',
@@ -208,7 +210,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Notices & Litigation',
     icon: <Scale className="h-5 w-5" />,
     paths: ['/notices-dashboard', '/notices-queue', '/notices-all', '/litigation', '/notices-hearings',
-      '/notices-calendar', '/notices-company-list', '/notices-report'],
+      '/notices-calendar', '/notices-company-list', '/notices-autopilot', '/notices-report'],
     also: ['/notices', '/notices-company', '/notices-case-folder', '/notices-gstin-wise-count', '/refunds-all',
       '/drc03-all', '/litigation-mis'],
   },

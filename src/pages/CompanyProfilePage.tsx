@@ -24,6 +24,7 @@ import { FilterTile } from '@/components/notices/clients/FilterTile';
 import { PortalLoginPopover } from '@/components/notices/clients/PortalLoginPopover';
 import { ClientProfileCard } from '@/components/notices/clients/ClientProfileCard';
 import { ReturnStrip } from '@/components/notices/clients/ReturnStrip';
+import { PortalApplicationsCard } from '@/components/notices/autopilot/PortalApplicationsCard';
 import { ClientCases } from '@/components/notices/clients/ClientCases';
 import { Drc03List, RefundList } from '@/components/notices/clients/ClientLedgers';
 import { useClientSync } from '@/components/notices/clients/useClientSync';
@@ -295,6 +296,7 @@ const CompanyProfilePage: React.FC = () => {
           <ClientProfileCard client={c} extras={d.extras} profile={d.profile} busy={sync.busy}
             onFetchProfile={canSync && c.gst_user_id ? fetchProfile : undefined} />
           <ReturnStrip filings={d.filings} extras={d.extras} today={today} />
+          <PortalApplicationsCard clientId={clientId} />
         </aside>
       </div>
     </NoticesShell>
