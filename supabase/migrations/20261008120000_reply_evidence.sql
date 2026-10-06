@@ -118,3 +118,25 @@ END;
 $$;
 GRANT EXECUTE ON FUNCTION public.reply_annexure_save(uuid, uuid, text, text, text, text[], text, jsonb, jsonb, jsonb, text, numeric, numeric, text)
   TO anon, authenticated, service_role;
+
+-- ── Evidence nobody has built yet ──────────────────────────────────────────
+-- Open notices of the forms the acceptance counts (ASMT-10, DRC-01A, DRC-01B,
+-- DRC-01C) with no current annexure at all, the soonest due first: what the
+-- app builds in the background when staff open the notices module (saved as
+-- Auto; docs/REPLY_FACTORY_POSITIONS.md §6). A notice built once, even to
+-- "needs data", is left to the Evidence tab and "Build evidence for all".
+CREATE OR REPLACE FUNCTION public.reply_evidence_pending(p_limit int DEFAULT 20)
+RETURNS TABLE (notice_id uuid, client_id uuid, form_code text)
+LANGUAGE sql STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT g.id, g.client_id, g.form_code
+    FROM public.gst_notices g
+   WHERE g.deleted_at IS NULL AND g.source = 'notices' AND NOT public.notice_is_closed(g.staff_status)
+     AND g.form_code IN ('ASMT-10', 'DRC-01A', 'DRC-01B', 'DRC-01C')
+     AND NOT EXISTS (SELECT 1 FROM public.reply_annexures a WHERE a.notice_id = g.id AND a.is_current)
+   ORDER BY coalesce(g.extended_due_date, g.due_date) NULLS LAST, g.issue_date DESC NULLS LAST, g.id
+   LIMIT greatest(coalesce(p_limit, 20), 0)
+$$;
+GRANT EXECUTE ON FUNCTION public.reply_evidence_pending(int) TO anon, authenticated, service_role;

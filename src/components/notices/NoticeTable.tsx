@@ -1,7 +1,8 @@
 // The notice list (audit U-20-1..6, U-31-*, U-33-*): eight columns that say
 // what the notice is and what is next, a card list on phones, the stage and
 // owner changed in place, and a bulk bar that never reflows the filters —
-// closing asks for a reason and every bulk change can be undone.
+// closing asks for a reason and every bulk change can be undone. Each row
+// carries its type's reply need (Critical / Optional / Info only, contract §A).
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ChevronDown, FileText, Flag, UserPlus, X } from 'lucide-react';
@@ -21,6 +22,7 @@ import { StagePicker } from './StagePicker';
 import { StageBadge } from './StageBadge';
 import { AssignPopover } from './AssignPopover';
 import { OwnerChip } from './OwnerChip';
+import { ResponseNeedChip } from './types/ResponseNeedChip';
 import { cn } from '@/lib/utils';
 
 export function DueCell({ r }: { r: NoticeFact }) {
@@ -107,6 +109,7 @@ export const NoticeTable: React.FC<{
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <StageBadge stage={r.stage} since={r.stage_changed_at} by={r.stage_changed_by} />
+              <ResponseNeedChip need={r.response_need} compact />
               {Number(r.amount_of_demand) > 0 && <span className="text-xs tabular-nums">{fmtInrShort(r.amount_of_demand)}</span>}
               <OwnerChip name={r.assign_to} showName className="ml-auto" />
             </div>
@@ -150,6 +153,7 @@ export const NoticeTable: React.FC<{
                   )}
                   <td className={cn(WS_TD, 'min-w-[18rem]')}>
                     <Link to={`/notices/${id}`} className="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{noticeTitle(r)}</Link>
+                    <ResponseNeedChip need={r.response_need} className="ml-1.5 align-middle" />
                     <div className="line-clamp-1 text-xs text-muted-foreground" title={r.description ?? ''}>
                       {(r.reference_number || r.case_id) && <span className="font-mono">{r.reference_number || r.case_id}</span>}
                       {r.issue_date ? ` · issued ${fmtDate(r.issue_date)}` : ''}

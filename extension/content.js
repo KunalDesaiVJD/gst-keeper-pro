@@ -6,8 +6,15 @@
   const JOB_KEY = 'gstk_active_job';
   const store = chrome.storage.local;
   const getJob = async () => (await store.get(JOB_KEY))[JOB_KEY] || null;
-  const setJob = (j) => { j.lastActivityAt = Date.now(); return store.set({ [JOB_KEY]: j }); };
-  const clearJob = () => store.remove(JOB_KEY);
+  // A scheduled job (job.runner, 0.7.0) only ever writes or clears itself: a
+  // sync a person starts in this Chrome takes the slot, and this tab is closed.
+  const stillMine = async (j) => {
+    if (!j || !j.runner) return true;
+    const cur = await getJob();
+    return !!(cur && cur.runner && cur.runner.jobId === j.runner.jobId);
+  };
+  const setJob = async (j) => { j.lastActivityAt = Date.now(); if (!(await stillMine(j))) return; return store.set({ [JOB_KEY]: j }); };
+  const clearJob = async () => { if (!(await stillMine(job))) return; return store.remove(JOB_KEY); };
   const EXT_VERSION = chrome.runtime.getManifest().version;
   // While a long step works (hundreds of PDFs on a first run), keep the job's
   // lastActivityAt fresh so the background watchdog does not take it for a
@@ -16,7 +23,7 @@
     const t = setInterval(async () => {
       try {
         const j = (await store.get(JOB_KEY))[JOB_KEY];
-        if (j) { j.lastActivityAt = Date.now(); await store.set({ [JOB_KEY]: j }); }
+        if (j && (!job.runner || (j.runner && j.runner.jobId === job.runner.jobId))) { j.lastActivityAt = Date.now(); await store.set({ [JOB_KEY]: j }); }
       } catch (e) { /* the next tick retries */ }
     }, 30000);
     return () => clearInterval(t);
@@ -285,6 +292,7 @@
       return;
     }
     job.step = 'login';
+    delete job.captchaWaitSince;
     await setJob(job);
     banner('Session expired — signing in again…', '#f59e0b');
     location.href = 'https://services.gst.gov.in/services/login';
@@ -368,8 +376,8 @@
       location.href = 'https://services.gst.gov.in/services/logout';
     } else {
       banner('All ' + job.clients.length + ' client(s) done ✓ — you can close this tab.', '#16a34a');
-      // An agent job's run belongs to the queue (portal_job_finish closes it).
-      if (job.runId && !job.agent) { try { await GSTKdb.runFinish(job.runId, 'done'); } catch (e) { /* ledger is diagnostic */ } }
+      // An agent or scheduled job's run belongs to the queue (portal_job_finish closes it).
+      if (job.runId && !job.agent && !job.runner) { try { await GSTKdb.runFinish(job.runId, 'done'); } catch (e) { /* ledger is diagnostic */ } }
       await clearJob();
     }
   }
@@ -401,11 +409,22 @@
     return !!job.runId || ['notices', 'notices_bundle', 'refunds', 'drc03'].includes(job.mode);
   }
 
+  // A scheduled job (runner.js) waits captcha_wait_secs for the CAPTCHA box.
+  function runnerWaitMs(job) {
+    return Math.min(900, Math.max(30, Number(job.runner && job.runner.captchaWaitSecs) || 120)) * 1000;
+  }
+  // A scheduled job that ends on this page (CAPTCHA not filled in time, no login
+  // form): the runner records it on the queue, which tries the client again later.
+  async function runnerEnd(job, outcome, reason, error) {
+    try { await GSTKdb.runnerEndJob({ jobId: job.runner.jobId, outcome, reason, error }); } catch (e) { /* the runner's own deadline ends it */ }
+  }
+
   async function handleLogout(job) {
     // On the logout page now — let the previous client's session fully clear, then
     // start the next client's login.
     await sleep(2000);
     job.step = 'login';
+    delete job.captchaWaitSince;
     await setJob(job);
     location.href = 'https://services.gst.gov.in/services/login';
   }
@@ -414,6 +433,7 @@
     if (isLoggedIn()) {
       job.retries = 0;
       delete job.captchaRetry;
+      delete job.captchaWaitSince;
       try { await GSTKdb.clearCaptchaNotice(); } catch (e) { /* optional */ }
       if (job.mode === 'returnpdf') {
         banner('Logged in — fetching the return + PDF…' + progress);
@@ -593,16 +613,26 @@
     // this is a no-op for them either way.
     if (job.mode === 'filing') { try { await GSTKdb.focusTab(); } catch (e) { /* non-fatal */ } }
     banner('Logging in ' + cur.creds.name + '…' + progress);
-    if (!(await waitFor('#username'))) { banner('Login form did not load — reload the page.', '#dc2626'); return; }
+    if (!(await waitFor('#username'))) {
+      banner('Login form did not load — reload the page.', '#dc2626');
+      if (job.runner) await runnerEnd(job, 'retry', 'portal_error', 'The portal login page did not load.');
+      return;
+    }
     setVal($('#username'), cur.creds.user);
     let portalPass = cur.creds.pass || null; // jobs saved by extension < 0.4.0 still carry it
     if (!portalPass) { try { portalPass = await GSTKdb.getPortalPassword(cur.clientId); } catch (e) { portalPass = null; } }
-    if (!portalPass) { banner('No saved GST portal password for ' + cur.creds.name + ' — update it in Edit Client.', '#dc2626'); return; }
+    if (!portalPass) {
+      banner('No saved GST portal password for ' + cur.creds.name + ' — update it in Edit Client.', '#dc2626');
+      // Nobody is at a scheduled sync to read the banner: it goes in the run ledger, and the client fails with it.
+      if (job.runner) { await logLoginFailure(job, cur, 'No saved GST portal password for this client.'); await advance(job); }
+      return;
+    }
     setVal($('#user_pass'), portalPass);
     await waitFor('#imgCaptcha', 8000);
     // The sync tab is often behind other windows: say so on the desktop. An
-    // agent job's CAPTCHA goes to the app's CAPTCHA wall instead.
-    if (!job.agent) { try { await GSTKdb.notifyCaptcha(cur.creds.name, progress); } catch (e) { /* optional */ } }
+    // agent job's CAPTCHA goes to the app's CAPTCHA wall instead, and a
+    // scheduled job's is filled by the CAPTCHA extension in this Chrome.
+    if (!job.agent && !job.runner) { try { await GSTKdb.notifyCaptcha(cur.creds.name, progress); } catch (e) { /* optional */ } }
     // No custom popup — the CAPTCHA is typed straight into the portal's own
     // native #captcha field. The field has no maxlength/expected-length we
     // can read (confirmed live: only a numeric-only ng-pattern), so "is it
@@ -622,28 +652,64 @@
     const cap = $('#captcha');
     let autoFilled = false;
     if (cap) {
+      if (job.runner) {
+        // The runner (background) ends a wait this page's timer misses, e.g. in a throttled tab.
+        job.captchaWaitSince = Date.now();
+        await setJob(job);
+        banner('Waiting for the CAPTCHA extension in this Chrome to fill the CAPTCHA…' + progress);
+      }
       autoFilled = await new Promise((resolve) => {
         let prevLen = (cap.value || '').length;
+        let keyed = false;
+        let settled = false;
+        let poll = null;
+        const done = (filled) => {
+          if (settled) return;
+          settled = true;
+          cap.removeEventListener('input', onInput);
+          cap.removeEventListener('keydown', onKey);
+          clearTimeout(giveUp);
+          if (poll) clearInterval(poll);
+          resolve(filled);
+        };
         const onInput = () => {
           const newLen = (cap.value || '').length;
           const delta = newLen - prevLen;
           prevLen = newLen;
-          if (delta > 1 && newLen > 0) {
-            cap.removeEventListener('input', onInput);
-            clearTimeout(giveUp);
-            resolve(true);
-          }
+          if (delta > 1 && newLen > 0) done(true);
           // A one-character-at-a-time change (typing or backspacing) never
           // resolves here — the human submits manually, and this promise
           // is left to time out below.
         };
+        const onKey = (e) => { if (e.isTrusted) keyed = true; };
         cap.addEventListener('input', onInput);
+        cap.addEventListener('keydown', onKey);
         // The office agent waits for this before it shows the CAPTCHA on the wall.
         if (job.agent) document.documentElement.setAttribute('data-gstk-captcha', 'ready');
+        // A scheduled job also takes a box the CAPTCHA extension filled before
+        // this script was listening, or filled in steps with no key pressed:
+        // once it holds still for 1.5 s. Only the box's value is looked at,
+        // never the CAPTCHA image; a person's keys leave it to them.
+        if (job.runner) {
+          let last = cap.value || '';
+          let since = Date.now();
+          poll = setInterval(() => {
+            const v = cap.value || '';
+            if (v !== last) { last = v; since = Date.now(); return; }
+            if (!keyed && v.length >= 4 && Date.now() - since >= 1500) done(true);
+          }, 500);
+        }
         // A person types within a minute; the agent relays a CAPTCHA typed on
-        // the wall, which may take longer (it reloads a stale one itself).
-        const giveUp = setTimeout(() => { cap.removeEventListener('input', onInput); resolve(false); }, job.agent ? 30 * 60000 : 60000);
+        // the wall, which may take longer (it reloads a stale one itself); a
+        // scheduled job waits captcha_wait_secs (Autopilot settings).
+        const giveUp = setTimeout(() => done(false), job.agent ? 30 * 60000 : job.runner ? runnerWaitMs(job) : 60000);
       });
+    }
+    if (!autoFilled && job.runner) {
+      const secs = Math.round(runnerWaitMs(job) / 1000);
+      banner('The CAPTCHA was not filled within ' + secs + ' seconds — this client is tried again later.' + progress, '#dc2626');
+      await runnerEnd(job, 'retry', 'captcha_timeout', 'The CAPTCHA was not filled within ' + secs + ' seconds.');
+      return;
     }
     if (!autoFilled) {
       banner('Type the CAPTCHA and press Login yourself — auto-submit only kicks in for a scripted/OCR fill.' + progress, '#2563eb');
@@ -700,6 +766,7 @@
         }
         if ($('#captcha') && tries < 3) {
           job.captchaRetry = tries + 1;
+          delete job.captchaWaitSince;
           await setJob(job);
           location.reload();
           return;

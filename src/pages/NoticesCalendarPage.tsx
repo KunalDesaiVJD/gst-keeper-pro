@@ -2,11 +2,13 @@
 // reply dues, hearings and appeal / attachment clocks per day, weekends tinted,
 // and the chosen day's list beneath it with ‹ › to move a day. The 14-day strip
 // on the command centre opens here; a day's count there is this list's length
-// (both read public.notice_calendar).
+// (both read public.notice_calendar). Opened from the strip (dash=1) it shows
+// only the notice types on the dashboard, as the strip counts them (contract
+// §A), with a chip that removes the filter.
 import React, { useMemo } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarPlus, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CalendarPlus, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -45,7 +47,11 @@ const NoticesCalendarPage: React.FC = () => {
   const monthKey = /^\d{4}-\d{2}$/.test(sp.get('month') || '') ? (sp.get('month') as string) : day.slice(0, 7);
   const [y, m] = monthKey.split('-').map(Number);
   const grid = useMemo(() => monthGrid(y, m - 1), [y, m]);
-  const q = useQuery({ queryKey: ['notice-calendar', grid[0], grid[41]], queryFn: () => loadCalendar(grid[0], grid[41]) });
+  const dashOnly = sp.get('dash') === '1';
+  const q = useQuery({
+    queryKey: ['notice-calendar', grid[0], grid[41], dashOnly],
+    queryFn: () => loadCalendar(grid[0], grid[41], { dashboardOnly: dashOnly }),
+  });
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
@@ -63,6 +69,11 @@ const NoticesCalendarPage: React.FC = () => {
   };
   const items = byDay.get(day) ?? [];
   const monthItems = (q.data ?? []).filter((it) => it.day.startsWith(monthKey));
+  const dropDash = () => {
+    const next = new URLSearchParams(sp);
+    next.delete('dash');
+    setSp(next, { replace: true });
+  };
 
   return (
     <NoticesShell section="Calendar"
@@ -75,6 +86,14 @@ const NoticesCalendarPage: React.FC = () => {
           <CalendarPlus className="h-3.5 w-3.5" /> {MONTHS[m - 1]} to calendar (.ics)
         </Button>
       )}>
+      {dashOnly && (
+        <div className="flex flex-wrap items-center gap-1.5" aria-label="Active filters">
+          <button type="button" onClick={dropDash} aria-label="Remove filter Dashboard notice types only"
+            className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            Dashboard notice types only <X className="h-3 w-3" aria-hidden />
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <SectionCard title={`${MONTHS[m - 1]} ${y}`} description="Reply due · personal hearings · appeal and attachment clocks"
           actions={<div className="flex items-center gap-1">

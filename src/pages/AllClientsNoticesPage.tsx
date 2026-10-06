@@ -3,7 +3,9 @@
 // carries every filter, so the two always agree and a link reproduces the
 // view. The database filters, sorts and pages (lib/noticeQueries), so it stays
 // quick at 5,000 notices. A row opens the notice workspace (/notices/:id);
-// old ?noticeId= links (e-mails, the bell) go there too.
+// old ?noticeId= links (e-mails, the bell) go there too. Opened from the
+// command centre the list carries dash=1 (the dashboard's notice types only,
+// shown as a removable chip); every row shows its type's reply need.
 import React, { useMemo, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -27,6 +29,7 @@ import {
 } from '@/lib/noticeQueries';
 import { stageLabel } from '@/lib/noticeStages';
 import { closeReasonText, fmtDate, fmtFy, noticeTitle } from '@/lib/noticeFormat';
+import { responseNeedDef } from '@/lib/noticeTypes';
 
 const AllClientsNoticesPage: React.FC = () => {
   const { isStaffRole, user, canEditNoticeStatus, canExportData } = useAuth();
@@ -79,7 +82,8 @@ const AllClientsNoticesPage: React.FC = () => {
       const data = rows.map((r) => ({
         Client: r.client_name, GSTIN: r.client_gstin, Notice: noticeTitle(r), Form: r.form_code ?? '', Reference: r.reference_number ?? '',
         Case: r.case_id ?? '', Issued: fmtDate(r.issue_date), 'Due': fmtDate(r.effective_due), 'Due basis': r.due_basis ?? '',
-        'Days to due': r.is_open && !r.is_replied ? r.days_to_due ?? '' : '', Stage: stageLabel(r.stage), Owner: r.assign_to ?? '',
+        'Days to due': r.is_open && !r.is_replied ? r.days_to_due ?? '' : '', 'Reply need': responseNeedDef(r.response_need).label,
+        Stage: stageLabel(r.stage), Owner: r.assign_to ?? '',
         Priority: r.effective_priority ?? '', 'Demand (₹)': r.amount_of_demand ?? '', 'Exposure (₹)': r.exposure_amount ?? '',
         'Replied on': fmtDate(r.reply_date), 'Order on': fmtDate(r.order_date), Category: r.category ?? '', FY: fmtFy(r.financial_year),
         'Close reason': closeReasonText(r.close_reason), Description: r.description ?? '',

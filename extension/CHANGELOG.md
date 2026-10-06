@@ -2,6 +2,104 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-08 — Scheduled syncs in your own Chrome (v0.7.0)
+
+The firm's decision of 6 October 2026: no CAPTCHA wall. The firm's Chrome has a
+CAPTCHA extension of its own choosing that fills the portal's CAPTCHA box, so GST
+Keeper runs the agreed schedule (05:30 every active client, 13:00 the clients that
+need it) in that Chrome and the CAPTCHA extension does the rest. Needs the database
+update `20261008170000_autopilot_chrome_runner.sql`; on an older database the runner
+says "Database not updated" and takes nothing.
+
+- **Run scheduled syncs in this Chrome** (popup; off by default) makes this browser a
+  runner of the autopilot queue: agent `chrome:<id>` (the id kept in
+  chrome.storage.local), with a name for the PC that GST Keeper shows. About once a
+  minute (`chrome.alarms`) it reports itself (`autopilot_heartbeat`: kind, label,
+  version, busy, job, client, step) and, when nothing else runs in this browser,
+  claims one job (`portal_job_claim(p_agent, p_wall_open => false)`), starts it the
+  way `startAgentJob` does (same steps, same `sync_ingest`, same run ledger), calls
+  `portal_job_start`, watches it to the end and calls `portal_job_finish` with the
+  office agent's outcome and reason mapping (`agent/src/outcome.ts`). Then it logs the
+  portal out, closes the window it opened and claims the next. New file `runner.js`,
+  loaded by `background.js`.
+- **The CAPTCHA.** A scheduled job relays its CAPTCHA nowhere: no CAPTCHA wall, no
+  `data-gstk-captcha` mark, no desktop notice. It waits up to `captcha_wait_secs`
+  (Autopilot settings; 120 s by default) for the box to be filled — in one jump, the
+  existing auto-submit path, or (scheduled jobs only) a box the CAPTCHA extension had
+  filled before the page was listening, or filled in steps with no key pressed, once
+  it holds still for 1.5 s. Only the box's value is looked at, never the image. Not
+  filled in time: the client fails with `captcha_timeout`, the queue tries it again
+  after 5, 10, 20 … minutes up to `max_attempts`, and the runner moves on. Three wrong
+  CAPTCHAs and a rejected password end the client as before (`login_failed`). A person
+  who types in the box still presses Login themselves. A client with no saved password
+  fails at once with `login_failed`, in the run ledger.
+- **A person comes first.** A sync a person starts in this Chrome (the app's Sync now,
+  the popup) takes the job slot even while a scheduled client runs: the runner gives
+  that client back to the queue (`portal_jobs_release`, no try counted), logs the
+  portal out and closes its window. The runner does not start while a person's sync
+  runs, nor while a GST portal tab is open and someone has used the PC in the last 5
+  minutes (`chrome.idle`): the portal keeps one session per browser profile, so logging
+  a client in would change that person's session. A portal tab someone opens while a
+  scheduled client runs makes the runner give the client back and log out.
+- **Restarts.** When Chrome or the extension restarts in the middle of a client, the
+  runner gives it back at startup (`portal_jobs_release`, as the office agent does) and
+  clears the job slot; a step it was in the middle of resumes from
+  `gstk_runner_state`. A give-back that did not reach the database is released before
+  the next claim.
+- **Kill switch.** Autopilot off or paused in the app, or the runner set to the office
+  agent: nothing new is claimed; a client still at the login goes back to the queue; a
+  client already logged in finishes its pull. A job cancelled in the app stops at the
+  next check.
+- **Deadlines kept by the service worker**, from timestamps on every alarm, not by the
+  page's timers: the CAPTCHA wait (`captcha_wait_secs` + 45 s; the page's own timer
+  normally ends it first), a login page that never loads (3 minutes), the whole client
+  (40 minutes, as the office agent) and a closed window. The watchdog treats a
+  scheduled job like an agent job (a step stuck for 10 minutes is recorded as
+  `stalled` and dropped).
+- **One job slot.** Every start (`start…`, `startAgentJob`, the popup's ledger pull
+  through `putActiveJob`) writes `gstk_active_job` through one queue (`jobSlot`), and
+  so does the watchdog, so a person's start and the runner never interleave a check
+  and a write. A scheduled job's content script only writes or clears its own job.
+- **Popup:** a "Scheduled syncs" card — the switch, the PC's name, the autopilot on or
+  off in the app, this Chrome online, the current client and step, the next scheduled
+  run, the last result, and one line: "The CAPTCHA is filled by the CAPTCHA extension
+  in this Chrome. If it is not filled within N seconds, the client is tried again
+  later." A scheduled client shows as "Scheduled sync running" with "Pause scheduled
+  syncs in this Chrome". With the Chrome runner, "Send to the office agent" becomes
+  "Queue for the scheduled Chrome".
+- New permission: `idle` (is someone using this PC; no install warning).
+- Unchanged: the app's Sync now, the popup's Sync notices and every other pull, and
+  `startAgentJob` for an office agent (`autopilot_settings.runner = 'office_agent'`).
+
+### Where a scheduled client runs, and why
+
+Each scheduled client runs in **a window of its own**: `chrome.windows.create` (a
+normal window, 1280 × 900, never minimised), focused only when nobody has used the PC
+for 5 minutes — so it comes to the front at 05:30 and never takes the keyboard from
+someone working at 13:00 — with its tab marked not auto-discardable, and closed when
+the client is done.
+
+- Chrome slows timers in hidden pages (to once a second, and after 5 minutes hidden to
+  once a minute for chained timers) and Memory Saver may discard background tabs. A
+  person's sync avoids that by keeping its tab in front. A tab added to a window
+  someone works in would be a background tab whenever they look at another tab; the
+  only tab of its own window is the active tab there, and counts as visible unless the
+  window is minimised or covered. A new window per client also starts Chrome's
+  5-minute clock afresh for every client.
+- Nobody's tabs or windows are touched, and closing the window leaves no portal tab
+  logged in behind it (the runner logs out first).
+- The deadlines above are the service worker's, so a slowed or frozen page can delay
+  one client but cannot hold the queue.
+- Limits: on Windows a locked screen, a display that is off, or a window covered by
+  others counts as hidden. Keep that PC's display on and unlocked at the scheduled
+  times where the office allows it, or ask IT to set Chrome's policy
+  `IntensiveWakeUpThrottlingEnabled` to false; otherwise a long first sync can take
+  longer, and the deadlines still close it.
+- Not chosen: a tab in the window a person uses (background throttling, and it would
+  take the focus at 13:00); a minimised window (always hidden); an incognito window (it
+  would keep the portal session apart from the person's, but needs "Allow in
+  Incognito" for both extensions, and a CAPTCHA extension may not run there).
+
 ## 2026-10-07 — Office autopilot and more read per sync (v0.6.0)
 
 Phase 3 of the notices roadmap (Portal Autopilot; audit findings S-01, S-21, S-22,

@@ -111,6 +111,20 @@ const rpc = async (fn, body) => {
 };
 const isMissingRpc = (e) => e && (e.status === 404 || /PGRST202|Could not find the function/.test(String(e.message)));
 
+// ── The job slot (0.7.0) ────────────────────────────────────────────────────
+// One job runs in this browser at a time (gstk_active_job). Every start goes
+// through jobSlot, and so does the scheduled-sync runner (runner.js), so a check
+// and a write never interleave: a person's sync always gets the slot (the runner
+// gives its client back to the queue and closes its window), and the runner only
+// takes an empty slot.
+let jobSlotChain = Promise.resolve();
+function jobSlot(fn) {
+  const run = jobSlotChain.then(() => fn());
+  jobSlotChain = run.catch(() => {});
+  return run;
+}
+const setActiveJob = (job) => jobSlot(() => chrome.storage.local.set({ gstk_active_job: job }));
+
 // The REST path needs the bookkeeping columns the RPC sets on the server.
 const legacyRows = (rows, extra) => rows.map((r) => ({ ...r, ...extra }));
 const LEGACY_REPLACE = {
@@ -307,7 +321,7 @@ const API = {
     // already finds it (a fast page could otherwise run ahead of the store).
     const tab = await chrome.tabs.create({ url: 'about:blank' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     armWatchdog();
     await chrome.tabs.update(tab.id, { url: info.startUrl || 'https://services.gst.gov.in/services/login' });
     return { started: true, tabId: tab.id, client: c.name, version: EXT_VERSION };
@@ -323,6 +337,9 @@ const API = {
     };
   },
   agentClearJob: async () => { await chrome.storage.local.remove('gstk_active_job'); return true; },
+  // The popup's ledger pull opens its own tab and hands the job here, so it
+  // takes the job slot like every other start (0.7.0).
+  putActiveJob: async (job) => { await setActiveJob(job); return true; },
 
   // What is already stored for a client, so a run skips PDFs and attachments it
   // already has and fetches case folders only for new / open cases.
@@ -513,7 +530,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name, return_type: info.return_type };
   },
 
@@ -529,7 +546,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name };
   },
 
@@ -551,7 +568,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name };
   },
 
@@ -577,7 +594,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login', active: false });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name, return_type: info.return_type };
   },
 
@@ -604,7 +621,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name };
   },
 
@@ -632,7 +649,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name, mode: info.mode, periods: periods.length };
   },
 
@@ -701,7 +718,7 @@ const API = {
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
     job.lastActivityAt = Date.now();
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     armWatchdog();
     return { started: true, count: withCreds.length, mode: info.mode };
   },
@@ -718,7 +735,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name };
   },
 
@@ -743,7 +760,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name };
   },
 
@@ -784,7 +801,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name, period: short };
   },
 
@@ -814,7 +831,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name };
   },
 
@@ -890,7 +907,7 @@ const API = {
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
-    await chrome.storage.local.set({ gstk_active_job: job });
+    await setActiveJob(job);
     return { started: true, client: c.name, period: short };
   },
 };
@@ -963,9 +980,10 @@ async function watchdogTick() {
   const idx = job.idx || 0;
   const cur = clients[idx];
   const idle = now - (job.lastActivityAt || job.startedAt || now);
-  // An agent job: the agent owns the CAPTCHA wait and the run. A step stuck
-  // for 10 minutes is recorded and the job dropped; the agent sees it go.
-  if (job.agent) {
+  // An agent job or a scheduled job (job.runner, runner.js): the agent or the
+  // runner owns the CAPTCHA wait and the run. A step stuck for 10 minutes is
+  // recorded and the job dropped; the agent or the runner sees it go.
+  if (job.agent || job.runner) {
     if (job.step === 'login' || idle < IDLE_LIMIT_MS || !cur) return;
     await API.logStep(job.runId, cur.clientId, job.step || 'notices', 'failed', 'stalled',
       'No progress for 10 minutes on step ' + job.step + '.');
@@ -1008,7 +1026,8 @@ function notify(id, title, message) {
   try { chrome.notifications.create(id, { type: 'basic', iconUrl: 'icon128.png', title, message, priority: 1 }); } catch (e) { /* ignore */ }
 }
 if (chrome.alarms && chrome.alarms.onAlarm) {
-  chrome.alarms.onAlarm.addListener((a) => { if (a.name === WATCHDOG) watchdogTick().catch(() => {}); });
+  // Inside the job slot: its read, ledger write and write-back never interleave with a new start.
+  chrome.alarms.onAlarm.addListener((a) => { if (a.name === WATCHDOG) jobSlot(watchdogTick).catch(() => {}); });
 }
 if (chrome.notifications && chrome.notifications.onClicked) {
   // Clicking the CAPTCHA notice brings the sync tab forward.
@@ -1054,3 +1073,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     .catch((e) => sendResponse({ error: String(e && e.message ? e.message : e) }));
   return true; // keep the channel open for the async response
 });
+
+// Scheduled syncs in this Chrome (0.7.0): the runner, off until switched on in the popup.
+importScripts('runner.js');

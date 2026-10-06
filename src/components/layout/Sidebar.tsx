@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   HandCoins,
@@ -23,13 +23,7 @@ import {
   FileSignature,
   ScrollText,
   Scale,
-  ListTodo,
-  Inbox,
-  Briefcase,
-  Gavel,
-  CalendarDays,
-  BarChart3,
-  Bot,
+  FileUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -41,10 +35,6 @@ interface NavItem {
   path: string;
   icon: React.ReactNode;
   roles?: ('superadmin' | 'gst_manager' | 'employee' | 'client')[];
-  /** Left out of the icon-only rail: its group's first page stands for it there. */
-  railHidden?: boolean;
-  /** The rail's tooltip, when it differs from the label (a group's first page). */
-  railLabel?: string;
 }
 
 interface SidebarProps {
@@ -73,6 +63,11 @@ const CLIENT_NAV_ITEMS: NavItem[] = [
     path: '/gstr1-data',
     icon: <FileJson className="h-5 w-5" />,
   },
+  {
+    label: 'Documents requested',
+    path: '/client-documents',
+    icon: <FileUp className="h-5 w-5" />,
+  },
 ];
 
 // Staff navigation - 2B and RCM is a single page with tabs
@@ -88,16 +83,6 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <Users className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
-  // Notices & Litigation is a daily module: high in the list (audit U-130-5).
-  { label: 'Command centre', railLabel: 'Notices & Litigation', path: '/notices-dashboard', icon: <Scale className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'] },
-  { label: 'Work queue', path: '/notices-queue', icon: <ListTodo className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
-  { label: 'All notices', path: '/notices-all', icon: <Inbox className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
-  { label: 'Matters', path: '/litigation', icon: <Briefcase className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
-  { label: 'Hearings', path: '/notices-hearings', icon: <Gavel className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
-  { label: 'Calendar', path: '/notices-calendar', icon: <CalendarDays className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
-  { label: 'Clients and sync', path: '/notices-company-list', icon: <Users className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
-  { label: 'Portal autopilot', path: '/notices-autopilot', icon: <Bot className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
-  { label: 'Reports', path: '/notices-report', icon: <BarChart3 className="h-5 w-5" />, roles: ['superadmin', 'gst_manager', 'employee'], railHidden: true },
   {
     label: '2B Reconciliation',
     path: '/2b-and-rcm',
@@ -185,6 +170,15 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <FolderDown className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
+  // Notices & Litigation is one entry, the last in the list: the module's own
+  // tab bar (NoticesTopNav) moves between its pages, and this entry is marked
+  // on every one of them (NOTICES_PATHS).
+  {
+    label: 'Notices & Litigation',
+    path: '/notices-dashboard',
+    icon: <Scale className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+  },
 ];
 
 // Collapsible groups in the expanded rail. Order within `paths` is the order
@@ -205,15 +199,6 @@ interface NavGroup {
 }
 
 const NAV_GROUPS: NavGroup[] = [
-  {
-    key: 'notices',
-    label: 'Notices & Litigation',
-    icon: <Scale className="h-5 w-5" />,
-    paths: ['/notices-dashboard', '/notices-queue', '/notices-all', '/litigation', '/notices-hearings',
-      '/notices-calendar', '/notices-company-list', '/notices-autopilot', '/notices-report'],
-    also: ['/notices', '/notices-company', '/notices-case-folder', '/notices-gstin-wise-count', '/refunds-all',
-      '/drc03-all', '/litigation-mis'],
-  },
   {
     key: 'gst-working',
     label: 'GST Working',
@@ -236,9 +221,16 @@ const NAV_GROUPS: NavGroup[] = [
 
 const GROUPED_PATHS = new Set(NAV_GROUPS.flatMap((g) => g.paths));
 
-// Every page of the module, for the rail's active mark (U-130-3).
-const NOTICES_PATHS = NAV_GROUPS.filter((g) => g.key === 'notices').flatMap((g) => [...g.paths, ...(g.also ?? [])]);
+// Every page of the Notices & Litigation module (and its nested routes, such as
+// /notices/:id and /litigation/:id): its one entry is marked on all of them (U-130-3).
+const NOTICES_PATHS = ['/notices-dashboard', '/notices-queue', '/notices-all', '/notices', '/notices-hearings', '/notices-calendar',
+  '/notices-company-list', '/notices-company', '/notices-case-folder', '/notices-autopilot', '/notices-reply-factory', '/notices-report',
+  '/notices-gstin-wise-count', '/refunds-all', '/drc03-all', '/litigation', '/litigation-mis'];
 const onPath = (pathname: string, p: string) => pathname === p || pathname.startsWith(`${p}/`);
+/** A top-level entry is marked on its own page and below it; Notices & Litigation on every page of the module. */
+const isItemActive = (pathname: string, item: NavItem) => (item.path === '/notices-dashboard'
+  ? NOTICES_PATHS.some((p) => onPath(pathname, p))
+  : onPath(pathname, item.path));
 
 const getRoleLabel = (role: string) => {
   switch (role) {
@@ -408,21 +400,13 @@ export const SidebarContents: React.FC<{
               </div>
             );
           }
+          const active = isItemActive(location.pathname, item);
           return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              onClick={onNavigate}
-              className={({ isActive }) => {
-                const active = item.path === '/notices-dashboard'
-                  ? isActive || NOTICES_PATHS.some((p) => onPath(location.pathname, p))
-                  : isActive;
-                return navLinkClasses({ isActive: active });
-              }}
-            >
+            <Link key={item.path} to={item.path} onClick={onNavigate} aria-current={active ? 'page' : undefined}
+              className={navLinkClasses({ isActive: active })}>
               {item.icon}
               <span>{item.label}</span>
-            </NavLink>
+            </Link>
           );
         })}
       </nav>
@@ -490,31 +474,31 @@ const Sidebar: React.FC<SidebarProps> = ({ isMinimized = false, onToggleMinimize
         {/* Minimized nav - icons only, with a tooltip carrying the label so the
             rail stays narrow without losing discoverability. */}
         <nav className="flex-1 py-4 px-2 space-y-2 overflow-y-auto">
-          {navItems.filter((item) => !item.railHidden).map((item) => (
-            <Tooltip key={item.path} delayDuration={100}>
-              <TooltipTrigger asChild>
-                <NavLink
-                  to={item.path}
-                  className={({ isActive }) => {
-                    const active = item.path === '/notices-dashboard'
-                      ? isActive || NOTICES_PATHS.some((p) => onPath(location.pathname, p))
-                      : isActive;
-                    return cn(
+          {navItems.map((item) => {
+            const active = isItemActive(location.pathname, item);
+            return (
+              <Tooltip key={item.path} delayDuration={100}>
+                {/* A plain class string: the trigger's Slot would turn NavLink's className function into text. */}
+                <TooltipTrigger asChild>
+                  <Link
+                    to={item.path}
+                    aria-current={active ? 'page' : undefined}
+                    className={cn(
                       'relative flex items-center justify-center p-2 rounded-lg transition-all duration-200',
                       'before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:w-1 before:rounded-r-full before:transition-all',
                       active
                         ? 'bg-sidebar-accent text-sidebar-accent-foreground before:h-6 before:bg-accent'
                         : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground before:h-0'
-                    );
-                  }}
-                  aria-label={item.railLabel ?? item.label}
-                >
-                  {item.icon}
-                </NavLink>
-              </TooltipTrigger>
-              <TooltipContent side="right">{item.railLabel ?? item.label}</TooltipContent>
-            </Tooltip>
-          ))}
+                    )}
+                    aria-label={item.label}
+                  >
+                    {item.icon}
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent side="right">{item.label}</TooltipContent>
+              </Tooltip>
+            );
+          })}
         </nav>
 
         {/* Minimized user section */}

@@ -84,7 +84,8 @@ GRANT ALL ON public.ai_audit_log TO service_role;
 
 -- ── Which document to read ─────────────────────────────────────────────────
 -- The notice's own PDF; else the first attachment of its own case-folder item
--- (the notice itself is the item's main document).
+-- (the notice itself is the item's main document). Only files kept in the app's
+-- own storage: the agent downloads from nowhere else.
 CREATE OR REPLACE FUNCTION public.notice_read_document(p_notice_id uuid)
 RETURNS jsonb
 LANGUAGE sql STABLE
@@ -93,7 +94,7 @@ SET search_path = public
 AS $$
   SELECT coalesce(
     (SELECT jsonb_build_object('url', g.pdf_url, 'label', 'Notice PDF')
-       FROM public.gst_notices g WHERE g.id = p_notice_id AND coalesce(g.pdf_url, '') <> ''),
+       FROM public.gst_notices g WHERE g.id = p_notice_id AND coalesce(g.pdf_url, '') ~ '/storage/v1/object/'),
     (SELECT jsonb_build_object('url', a ->> 'url', 'label', coalesce(nullif(a ->> 'label', ''), 'Case folder document'))
        FROM public.gst_notices g
        JOIN public.gst_case_folder_items fi ON fi.client_id = g.client_id AND fi.case_id = g.case_id
@@ -101,6 +102,7 @@ AS $$
        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(fi.attachments) = 'array' THEN fi.attachments ELSE '[]'::jsonb END)
                           WITH ORDINALITY x(a, n)
       WHERE g.id = p_notice_id AND coalesce(a ->> 'url', '') ~* '\.pdf($|\?)'
+        AND coalesce(a ->> 'url', '') ~ '/storage/v1/object/'
       ORDER BY fi.last_seen_at DESC NULLS LAST, x.n
       LIMIT 1))
 $$;
@@ -332,6 +334,7 @@ DECLARE
   v_res     jsonb := jsonb_build_object('applied', '[]'::jsonb, 'conflicts', '{}'::jsonb);
   v_outcome text;
   v_issues  jsonb;
+  v_withheld boolean := false;
   v_iss_sum numeric;
   v_cur_sum numeric;
   v_touched boolean;
@@ -421,6 +424,15 @@ BEGIN
   -- Issues: added when the notice has none, or only untouched portal/form
   -- issues that this reading's issues add up to (within ₹1), which they replace.
   v_issues := CASE WHEN jsonb_typeof(p_result -> 'issues') = 'array' THEN p_result -> 'issues' ELSE '[]'::jsonb END;
+  -- All or nothing: one issue whose quote does not check out, or issues the reader
+  -- held back (detail.issues_withheld), leave the list to a person; a partial list
+  -- would read as the whole notice.
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(v_issues) e3 WHERE e3 ->> 'quote_ok' = 'false') THEN
+    v_withheld := true;
+    v_issues := '[]'::jsonb;
+  END IF;
+  v_withheld := v_withheld OR coalesce(jsonb_typeof(p_result -> 'detail' -> 'issues_withheld') = 'array'
+                                       AND jsonb_array_length(p_result -> 'detail' -> 'issues_withheld') > 0, false);
   IF jsonb_array_length(v_issues) > 0 THEN
     SELECT coalesce(sum(coalesce((e2 ->> 'amount')::numeric, public.reply_demand_total(e2 -> 'demand'))), 0)
       INTO v_iss_sum FROM jsonb_array_elements(v_issues) e2;
@@ -446,7 +458,7 @@ BEGIN
   END IF;
 
   v_outcome := CASE
-    WHEN jsonb_array_length(v_issues) > 0 AND v_added = 0 THEN 'needs_review'
+    WHEN v_withheld OR (jsonb_array_length(v_issues) > 0 AND v_added = 0) THEN 'needs_review'
     WHEN v_res -> 'conflicts' <> '{}'::jsonb THEN 'conflict'
     WHEN jsonb_array_length(v_res -> 'applied') > 0 OR v_added > 0 THEN 'applied'
     ELSE 'nothing_new' END;

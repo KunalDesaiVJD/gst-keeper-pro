@@ -53,3 +53,6 @@
 20261008120000_reply_evidence.sql
 20261008130000_reply_documents.sql
 20261008140000_reply_status.sql
+20261008150000_notice_types.sql
+20261008160000_reply_options.sql
+20261008170000_autopilot_chrome_runner.sql

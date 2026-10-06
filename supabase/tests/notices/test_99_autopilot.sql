@@ -19,6 +19,9 @@ VALUES ('99999999-0000-0000-0000-0000000000f1', '99999999-0000-0000-0000-0000000
 
 -- Only these test clients matter here.
 UPDATE clients SET inactive_at_hand = true WHERE id::text NOT LIKE '99999999-%';
+-- This file tests the Phase 3 office agent with its CAPTCHA wall; since 20261008170000 the
+-- default runner is the firm's Chrome (test_99b_chrome_runner.sql).
+UPDATE autopilot_settings SET runner = 'office_agent';
 
 -- ── Enqueue ────────────────────────────────────────────────────────────────
 SELECT t_eq((autopilot_enqueue(NULL, 'PULL_NOTICES_BUNDLE', '{}', 'schedule_morning') ->> 'queued')::int, 3, 'every active client with credentials is queued once');

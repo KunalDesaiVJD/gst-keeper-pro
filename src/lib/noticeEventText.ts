@@ -62,7 +62,24 @@ export const EVENT_LABELS: Record<string, string> = {
   document_added: 'Document uploaded',
   comment: 'Note',
   extension_requested: 'Extension requested',
+  read_by_ai: 'Notice PDF read',
+  reply_option_used: 'Draft started from a reply option',
 };
+
+/** What a reading of the notice PDF did (notice_read_finish, migration 20261008110000). */
+function readOutcome(n: Obj): { title: string; detail?: string } {
+  const applied = Array.isArray(n.applied) ? n.applied.length : 0;
+  const added = Number(n.issues_added ?? 0);
+  const did = [applied ? `${applied} value${applied === 1 ? '' : 's'} filled` : '', added ? `${added} issue${added === 1 ? '' : 's'} added` : '']
+    .filter(Boolean).join(', ');
+  switch (s(n.outcome)) {
+    case 'gstin_mismatch': return { title: 'The notice PDF names another GSTIN: nothing was applied', detail: 'Check that the right PDF is attached' };
+    case 'nothing_new': return { title: 'The notice PDF was read: nothing new' };
+    case 'needs_review': return { title: 'The notice PDF was read', detail: `${did ? `${did}; ` : ''}the issues it found were not added, the notice already had issues` };
+    case 'conflict': return { title: 'The notice PDF was read', detail: `${did ? `${did}; ` : ''}some values differ from the record and were kept as they were` };
+    default: return { title: 'The notice PDF was read', detail: did ? `${did}, to verify` : undefined };
+  }
+}
 
 export const eventLabel = (type: string): string => EVENT_LABELS[type] ?? type.replace(/_/g, ' ');
 
@@ -137,6 +154,10 @@ export function describeEvent(e: EventLike): { title: string; detail?: string } 
       return { title: `${who} unlinked it from its matter` };
     case 'removed':
       return { title: 'No longer listed on the portal', detail: 'Kept here; restored if the portal lists it again' };
+    case 'read_by_ai':
+      return readOutcome(n);
+    case 'reply_option_used':
+      return { title: `${who} started draft v${s(n.version)} from a reply option`, detail: s(n.title) || undefined };
     default:
       return { title: `${who}: ${eventLabel(e.event_type)}` };
   }

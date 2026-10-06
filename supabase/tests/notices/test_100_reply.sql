@@ -99,7 +99,7 @@ SELECT t_eq((SELECT c.source FROM notice_due_coverage() c WHERE c.notice_id = 'c
             'portal notice list', 'a reply date says where it came from');
 
 -- ── AI reading: switches and consent ───────────────────────────────────────
-UPDATE gst_notices SET pdf_url = 'https://example.test/notice-01c.pdf' WHERE id = 'c4200000-0000-0000-0000-000000000021';
+UPDATE gst_notices SET pdf_url = 'https://example.test/storage/v1/object/public/notice-pdfs/notice-01c.pdf' WHERE id = 'c4200000-0000-0000-0000-000000000021';
 SELECT t_eq(ai_read_allowed('c4100000-0000-0000-0000-000000000001'), 'off', 'reading ships off');
 SELECT t_eq((SELECT count(*) FROM notice_extractions WHERE source = 'ai'), 0::bigint, 'nothing was queued while off');
 SELECT t_eq(notice_read_request('c4200000-0000-0000-0000-000000000021', NULL, 'Asha') ->> 'reason', 'off', 'a request while off says so');
@@ -114,11 +114,11 @@ SELECT t_eq((SELECT priority || ' ' || document_label FROM notice_extractions WH
 -- New notices are read by themselves, but not GSTR-3A or acknowledgements.
 INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, pdf_url) VALUES
  ('c4200000-0000-0000-0000-000000000030', 'c4100000-0000-0000-0000-000000000001', 'notices', 'n1', 'Scrutiny Of Returns',
-  'Notice for intimating discrepancies in the return after scrutiny (ASMT-10)', ist_today(), 'ZD-ASMT', 'https://example.test/asmt.pdf'),
+  'Notice for intimating discrepancies in the return after scrutiny (ASMT-10)', ist_today(), 'ZD-ASMT', 'https://example.test/storage/v1/object/public/notice-pdfs/asmt.pdf'),
  ('c4200000-0000-0000-0000-000000000031', 'c4100000-0000-0000-0000-000000000001', 'notices', 'n2', 'Notice',
-  'Notice to return defaulter u/s 46 for not filing return (GSTR-3A)', ist_today(), 'ZD-3A', 'https://example.test/3a.pdf'),
+  'Notice to return defaulter u/s 46 for not filing return (GSTR-3A)', ist_today(), 'ZD-3A', 'https://example.test/storage/v1/object/public/notice-pdfs/3a.pdf'),
  ('c4200000-0000-0000-0000-000000000032', 'c4100000-0000-0000-0000-000000000002', 'notices', 'n3', 'Scrutiny Of Returns',
-  'Notice for intimating discrepancies in the return after scrutiny (ASMT-10)', ist_today(), 'ZD-QUIET', 'https://example.test/q.pdf');
+  'Notice for intimating discrepancies in the return after scrutiny (ASMT-10)', ist_today(), 'ZD-QUIET', 'https://example.test/storage/v1/object/public/notice-pdfs/q.pdf');
 SELECT t_eq((SELECT string_agg(g.reference_number, ' ' ORDER BY g.reference_number) FROM notice_extractions x JOIN gst_notices g ON g.id = x.notice_id
               WHERE x.source = 'ai'),
             'ZD-01C ZD-ASMT', 'auto-read: the ASMT-10 of the client with consent; not the GSTR-3A, not a client without consent');
@@ -128,7 +128,7 @@ DO $$ DECLARE j jsonb; BEGIN
   j := notice_read_claim('office-pc-1');
   PERFORM t_eq(j ->> 'reference_number', 'ZD-01C', 'the person''s request is claimed first');
   PERFORM t_eq(j ->> 'client_gstin' || ' ' || (j ->> 'model') || ' ' || (j ->> 'document_url'),
-               '24READR0000R1Z5 claude-opus-5-5 https://example.test/notice-01c.pdf', 'the job carries what the reader needs');
+               '24READR0000R1Z5 claude-opus-5-5 https://example.test/storage/v1/object/public/notice-pdfs/notice-01c.pdf', 'the job carries what the reader needs');
   PERFORM t_eq(jsonb_array_length(j -> 'issue_codes') > 15, true, 'and the issue codes');
 END $$;
 -- Consent withdrawn before the claim: the job is dropped, not read.
@@ -186,7 +186,7 @@ END $$;
 -- Retries back off, then fail after three tries.
 DO $$ DECLARE x uuid; BEGIN
   PERFORM notice_read_request('c4200000-0000-0000-0000-000000000020');
-  UPDATE gst_notices SET pdf_url = 'https://example.test/01b.pdf' WHERE id = 'c4200000-0000-0000-0000-000000000020';
+  UPDATE gst_notices SET pdf_url = 'https://example.test/storage/v1/object/public/notice-pdfs/01b.pdf' WHERE id = 'c4200000-0000-0000-0000-000000000020';
   PERFORM notice_read_request('c4200000-0000-0000-0000-000000000020', NULL, 'Asha');
   x := (notice_read_claim('office-pc-1') ->> 'extraction_id')::uuid;
   PERFORM t_eq(notice_read_finish(x, 'office-pc-2', 'done', '{}'::jsonb) ->> 'error', 'not_yours', 'another agent cannot finish it');
@@ -266,6 +266,15 @@ SELECT t_eq((notice_doc_reminders_run() ->> 'sent')::int, 1, 'a reminder for the
 SELECT t_eq((SELECT max(reminders_sent) FROM notice_doc_requests WHERE notice_id = 'c4200000-0000-0000-0000-000000000021' AND status = 'requested'), 1,
             'counted');
 SELECT t_eq((notice_doc_reminders_run() ->> 'notices')::int, 0, 'not again within the cooldown');
+
+-- ── Evidence nobody has built yet (background builds) ──────────────────────
+SELECT t_eq((SELECT count(*) FROM reply_evidence_pending(500) WHERE notice_id = 'c4200000-0000-0000-0000-000000000021'), 0::bigint,
+            'a notice with an annexure is not pending');
+SELECT t_eq((SELECT bool_and(p.form_code IN ('ASMT-10', 'DRC-01A', 'DRC-01B', 'DRC-01C')) FROM reply_evidence_pending(500) p), true,
+            'only the forms the acceptance counts');
+SELECT t_eq((SELECT count(*) FROM reply_evidence_pending(500) p JOIN gst_notices g ON g.id = p.notice_id
+              WHERE g.deleted_at IS NOT NULL OR notice_is_closed(g.staff_status)), 0::bigint, 'only open notices');
+SELECT t_eq((SELECT count(*) FROM reply_evidence_pending(1)) <= 1, true, 'the limit holds');
 
 -- ── The status ─────────────────────────────────────────────────────────────
 SELECT t_eq((SELECT reply_factory_status() -> 'annexures' ->> 'automatic') IS NOT NULL, true, 'the status reads');

@@ -40,6 +40,8 @@ import NoticeQueuePage from "@/pages/NoticeQueuePage";
 import NoticesHearingsPage from "@/pages/NoticesHearingsPage";
 import NoticesCalendarPage from "@/pages/NoticesCalendarPage";
 import NoticesAutopilotPage from "@/pages/NoticesAutopilotPage";
+import NoticesReplyFactoryPage from "@/pages/NoticesReplyFactoryPage";
+import ClientDocumentsPage from "@/pages/ClientDocumentsPage";
 import AllClientsRefundsPage from "@/pages/AllClientsRefundsPage";
 import AllClientsDrc03Page from "@/pages/AllClientsDrc03Page";
 import BuilderWorkspacePage from "@/pages/BuilderWorkspacePage";
@@ -81,6 +83,7 @@ const App = () => (
                 {/* Protected Routes */}
                 <Route element={<MainLayout />}>
                   <Route path="/dashboard" element={<DashboardPage />} />
+                  <Route path="/client-documents" element={<ClientDocumentsPage />} />
                   <Route path="/add-client" element={<StaffGuard><AddClientPage /></StaffGuard>} />
                   <Route path="/edit-client/:clientId" element={<StaffGuard><EditClientPage /></StaffGuard>} />
                   <Route path="/clients" element={<StaffGuard><ClientsPage /></StaffGuard>} />
@@ -124,6 +127,7 @@ const App = () => (
                   <Route path="/notices-hearings" element={<NoticesHearingsPage />} />
                   <Route path="/notices-calendar" element={<NoticesCalendarPage />} />
                   <Route path="/notices-autopilot" element={<NoticesAutopilotPage />} />
+                  <Route path="/notices-reply-factory" element={<NoticesReplyFactoryPage />} />
                   <Route path="/litigation" element={<LitigationMattersPage />} />
                   <Route path="/litigation/:id" element={<LitigationMatterDetailPage />} />
                   <Route path="/litigation-mis" element={<LitigationMISPage />} />

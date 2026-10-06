@@ -1,0 +1,92 @@
+// Notice types (contract §A; migration 20261008150000_notice_types.sql): how
+// much each kind of notice needs a reply (critical, optional or none) and
+// whether its notices count on the command centre. The firm asked for it on
+// 6 Oct 2026: "certain kinds of notices need no reply". One place for the
+// words and tones, so the settings table, the list chips and the filters say
+// the same thing. Notices with no form recognised are always "Reply required"
+// and on the dashboard (the database decides that, in notice_facts).
+import type { QueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import type { Database } from '@/integrations/supabase/types';
+
+export type NoticeTypeRow = Database['public']['Views']['notice_type_overview']['Row'];
+
+export type ResponseNeed = 'critical' | 'optional' | 'none';
+
+export interface ResponseNeedDef {
+  key: ResponseNeed;
+  /** The setting: "Reply required". */
+  label: string;
+  /** The short chip on a list row: "Critical". */
+  chip: string;
+  /** Red, amber, neutral (gstr9 Badge variants). */
+  tone: 'destructive' | 'warning' | 'secondary';
+  /** What it means, in one line. */
+  hint: string;
+}
+
+export const RESPONSE_NEEDS: ResponseNeedDef[] = [
+  { key: 'critical', label: 'Reply required', chip: 'Critical', tone: 'destructive', hint: 'a reply, appearance or payment is due by a date' },
+  { key: 'optional', label: 'Reply optional', chip: 'Optional', tone: 'warning', hint: 'the firm may respond (say, to a DRC-01A intimation) but need not' },
+  { key: 'none', label: 'No reply needed', chip: 'Info only', tone: 'secondary', hint: 'an acknowledgement, approval, own filing or payment: read it and close it' },
+];
+
+const BY_KEY = new Map(RESPONSE_NEEDS.map((d) => [d.key, d]));
+
+export function isResponseNeed(v: unknown): v is ResponseNeed {
+  return typeof v === 'string' && BY_KEY.has(v as ResponseNeed);
+}
+
+/** Unknown or empty is "Reply required", as the database treats an unclassified notice. */
+export function responseNeedDef(key: string | null | undefined): ResponseNeedDef {
+  return BY_KEY.get((key || 'critical') as ResponseNeed) ?? RESPONSE_NEEDS[0];
+}
+
+/** Only a superadmin or a GST manager changes the settings; everyone else reads them. */
+export const canManageNoticeTypes = (role: string | null | undefined): boolean =>
+  role === 'superadmin' || role === 'gst_manager';
+
+export const NOTICE_TYPES_KEY = ['notice-types'] as const;
+
+/** One row per form rule, with its setting and how many notices it has. */
+export async function loadNoticeTypes(): Promise<NoticeTypeRow[]> {
+  const { data, error } = await supabase.from('notice_type_overview').select('*').order('form_code');
+  if (error) throw error;
+  return data ?? [];
+}
+
+export function useNoticeTypes() {
+  return useQuery({ queryKey: NOTICE_TYPES_KEY, queryFn: loadNoticeTypes, staleTime: 60_000 });
+}
+
+/** Open notices with no form recognised (always "Reply required" and shown). */
+export async function countUnclassifiedOpen(): Promise<number> {
+  const { count, error } = await supabase.from('notice_facts').select('id', { count: 'exact', head: true })
+    .is('form_code', null).eq('is_open', true);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export interface NoticeTypePatch {
+  response_need?: ResponseNeed;
+  show_on_dashboard?: boolean;
+}
+
+/** Saves one type's setting (a field left out stays as it is) and stamps who changed it. */
+export async function saveNoticeType(formCode: string, patch: NoticeTypePatch, actorName: string | null): Promise<Partial<NoticeTypeRow>> {
+  const { data, error } = await supabase.rpc('notice_type_set', {
+    p_form_code: formCode,
+    p_response_need: patch.response_need,
+    p_show_on_dashboard: patch.show_on_dashboard,
+    p_actor_name: actorName ?? undefined,
+  });
+  if (error) throw error;
+  return (data ?? {}) as Partial<NoticeTypeRow>;
+}
+
+/** After a type changes: the dashboard's numbers, its plan and every notice list follow. */
+export function invalidateAfterTypeChange(qc: QueryClient) {
+  ['notices-command-centre', 'notice-plan-top', 'notice-list', 'notice-list-sum', 'notice-queue', 'notice-queue-counts',
+    'notice-calendar', 'notice-types-unclassified'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+}

@@ -1,10 +1,9 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { SectionCard } from '@/components/gstr9/ui';
-import { Badge } from '@/components/gstr9/badge';
 import type { Workspace } from '@/lib/noticeWorkspace';
 import { stageLabel, nextActionDef } from '@/lib/noticeStages';
-import { fmtAgo, fmtDate, fmtDateTime, fmtFy, noticeTitle, sentenceCase } from '@/lib/noticeFormat';
+import { fmtAgo, fmtDateTime, noticeTitle, sentenceCase } from '@/lib/noticeFormat';
 
 const REASON: Record<string, string> = {
   login_failed: 'login failed — password changed?', captcha_timeout: 'CAPTCHA not typed', session_mismatch: 'portal session was another GSTIN',
@@ -26,6 +25,11 @@ export const NextStepCard: React.FC<{ ws: Workspace; action: React.ReactNode }> 
   );
 };
 
+/**
+ * Who and where (client, sync, form, matter, related notices). The notice's own
+ * facts — section, year, period, reply due, officer — are in "What the notice
+ * says", with their sources.
+ */
 export const KeyFacts: React.FC<{ ws: Workspace }> = ({ ws }) => {
   const f = ws.fact;
   const n = ws.notice;
@@ -50,18 +54,6 @@ export const KeyFacts: React.FC<{ ws: Workspace }> = ({ ws }) => {
         </Row>
         <Row k="Form">{f.form_code ? <>{f.form_code}{f.form_label ? ` · ${f.form_label.replace(/\s*\([A-Z0-9-]+\)\s*$/, '')}` : ''}</> : sentenceCase(f.notice_type) || '—'}</Row>
         <Row k="Category">{f.category ?? '—'}</Row>
-        <Row k="Reply window">
-          {f.effective_due ? <>
-            {fmtDate(f.effective_due)}{' '}
-            <Badge variant={f.due_basis === 'computed' ? 'warning' : 'secondary'} className="text-[10px]">
-              {f.due_basis === 'extended' ? 'extended' : f.due_basis === 'computed' ? 'computed — verify' : 'portal'}
-            </Badge>
-            {f.due_basis === 'computed' && f.due_basis_note && <span className="block font-normal text-muted-foreground">{f.due_basis_note}</span>}
-            {n.extended_due_date && n.due_date && <span className="block font-normal text-muted-foreground">original due {fmtDate(n.due_date)}</span>}
-          </> : 'no due date'}
-        </Row>
-        <Row k="Issued">{n.issue_date ? fmtDate(n.issue_date) : '—'}{n.issued_by ? ` · ${n.issued_by}` : ''}</Row>
-        <Row k="Financial year">{fmtFy(n.financial_year) || '—'}</Row>
         <Row k="Captured">{fmtDateTime(n.first_seen_at)}{n.portal_key?.startsWith('manual:') ? ' · typed in' : ' · portal sync'}</Row>
         {ws.matter && (
           <Row k="Matter">

@@ -1,9 +1,13 @@
 // Portal Autopilot (roadmap Phase 3; audit S-01, S-13, S-23, U-07-1, U-51-1):
-// what the app reads and writes for the office agent — its queue, the CAPTCHA
-// wall, the acceptance numbers and the switches (migrations 20261007120000–
-// 123000). One place for the words: failure reasons, where a job came from,
-// job states and the reports the agent can fetch, so the Autopilot page, the
-// command centre and Sync now say the same thing.
+// what the app reads and writes for the queue's runner — its queue, the
+// acceptance numbers and the switches (migrations 20261007120000–123000) — and,
+// since the firm's decision of 6 Oct 2026 (20261008170000), who runs it:
+// 'chrome' (the default: GST Keeper extension 0.7.0 in the firm's own Chrome,
+// whose CAPTCHA extension fills the CAPTCHA; no wall) or 'office_agent' (the
+// Phase 3 office agent with the CAPTCHA wall, set by SQL). One place for the
+// words: failure reasons, where a job came from, job states and the reports a
+// runner can fetch, so the Autopilot page, the command centre and Sync now say
+// the same thing.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -54,6 +58,10 @@ export interface WallState {
 
 export interface AgentWorker { n?: number; state?: string; client_name?: string; job_id?: string; since?: string }
 export interface AgentInfo {
+  /** A Chrome runner's (extension 0.7.0): why it is idle — person_sync, portal_in_use, autopilot_off … */
+  waiting?: string | null;
+  kind?: string;
+  label?: string;
   version?: string;
   ext_version?: string;
   headful?: boolean;
@@ -76,6 +84,21 @@ export interface FailureGroup { reason: string; fix: LoginFix | null; count: num
 
 export interface SlotRun { fired_at: string; jobs: number; run_id: string | null }
 
+export type RunnerMode = 'chrome' | 'office_agent';
+
+/** A runner of the queue as its heartbeat reports it (autopilot_status.runners; online = seen within 150 s). */
+export interface RunnerRow {
+  agent_id: string;
+  kind: RunnerMode;
+  label: string | null;
+  version: string | null;
+  online: boolean;
+  last_seen: string;
+  busy: boolean;
+  client_name: string | null;
+  step: string | null;
+}
+
 export interface AutopilotStatus {
   freshness: { eligible: number; fresh: number; named: number; never: number; stale: number };
   failures: FailureGroup[];
@@ -94,10 +117,16 @@ export interface AutopilotStatus {
     last_error: string | null;
     today: { received: number; queued: number; unmatched: number };
   };
+  /** Who runs the queue (20261008170000; absent on an older database, which only had the office agent). */
+  runner?: RunnerMode;
+  /** How long a Chrome runner waits for the CAPTCHA box to be filled. */
+  captcha_wait_secs?: number;
+  /** The runners of the configured kind, newest report first. */
+  runners?: RunnerRow[];
   server_time: string;
 }
 
-export interface AutopilotBadgeData { live: number; waiting: number; enabled: boolean | null }
+export interface AutopilotBadgeData { live: number; waiting: number; enabled: boolean | null; runner: RunnerMode | null }
 
 export interface EnqueueResult {
   queued: number;
@@ -108,22 +137,77 @@ export interface EnqueueResult {
   skipped: { no_credentials: number; excluded: number; inactive: number };
 }
 
+// ── Who runs the queue ─────────────────────────────────────────────────────
+/** 'chrome' unless the settings name the office agent (a database without the column had only the agent). */
+export function runnerMode(s: AutopilotStatus | undefined | null): RunnerMode {
+  const r = s?.runner ?? s?.settings?.runner;
+  if (r === 'office_agent' || r === 'chrome') return r;
+  return s && !('runner' in s) && !s.settings?.runner ? 'office_agent' : 'chrome';
+}
+
+/** The Chrome runners as they last reported, newest first. */
+export const chromeRunners = (s: AutopilotStatus | undefined): RunnerRow[] => (s?.runners ?? []).filter((r) => r.kind === 'chrome');
+
+/** What a Chrome runner says about why it is idle (its heartbeat's info.waiting), from the full agent row. */
+export function runnerWaiting(s: AutopilotStatus | undefined, agentId: string): string | null {
+  const w = s?.agents?.find((a) => a.agent_id === agentId)?.info?.waiting;
+  return typeof w === 'string' && w ? w : null;
+}
+
+const RUNNER_WAITING: Record<string, string> = {
+  autopilot_off: 'waiting: the autopilot is off',
+  paused: 'waiting: the autopilot is paused',
+  office_agent: 'not used: the autopilot is set to the office agent',
+  person_sync: 'waiting: a person is syncing in this Chrome',
+  portal_in_use: 'waiting: someone at this PC has the GST portal open',
+  window_closed: 'waiting a moment: its window was closed',
+  offline: 'cannot reach the database',
+  old_database: 'the database is not updated for Chrome runners',
+};
+
+const RUNNER_STEPS: Record<string, string> = {
+  starting: 'opening the portal',
+  logout: 'opening the portal',
+  login: 'logging in, waiting for the CAPTCHA extension',
+  notices: 'reading notices and orders',
+  refunds: 'reading refund applications',
+  refunds_reg_check: 'reading refund applications',
+  refunds_warmup: 'reading refund applications',
+  refund_docs: 'reading refund documents',
+  drc03: 'reading DRC-03 payments',
+  applications: 'reading applications on the portal',
+  taxpayerprofile: 'reading the taxpayer profile',
+};
+
+/** "Asha Traders: reading notices and orders", "idle", "waiting: a person is syncing in this Chrome". */
+export function runnerWords(r: RunnerRow, waiting: string | null = null): string {
+  if (!r.online) return 'not reporting';
+  if (r.busy) return `${r.client_name ? `${r.client_name}: ` : ''}${RUNNER_STEPS[r.step ?? ''] ?? (r.step ? r.step.replace(/_/g, ' ') : 'starting')}`;
+  return (waiting && RUNNER_WAITING[waiting]) || 'idle, ready for the next client';
+}
+
 // ── Labels ─────────────────────────────────────────────────────────────────
-/** Why a client was not read, by the reason class the agent and the extension record. */
+/** Why a client was not read, by the reason class the runner and the extension record (the Chrome runner's words). */
 export const REASON_LABELS: Record<string, string> = {
   login_failed: 'Login failed',
-  captcha_timeout: 'Nobody typed the CAPTCHA',
+  captcha_timeout: 'CAPTCHA not filled in time',
   skipped_at_wall: 'Skipped on the CAPTCHA wall',
   session_mismatch: 'Portal session was another GSTIN',
   portal_error: 'Portal error',
   timeout: 'Portal timed out',
   stalled: 'Run stalled',
-  agent_error: 'Office agent error',
-  agent_offline: 'Office agent was offline',
+  agent_error: 'Error in the scheduled sync',
+  agent_offline: 'The scheduled Chrome was offline',
   not_reached: 'Not reached today',
   cancelled: 'Cancelled',
   save_failed: 'Save error in the app',
   other: 'Other failure',
+};
+/** The office agent's words where they differ (runner = 'office_agent'). */
+const AGENT_REASON_LABELS: Record<string, string> = {
+  captcha_timeout: 'Nobody typed the CAPTCHA',
+  agent_error: 'Office agent error',
+  agent_offline: 'Office agent was offline',
 };
 
 /** A failed login, by what fixes it (public.autopilot_login_fix). */
@@ -135,10 +219,10 @@ export const LOGIN_FIX_LABELS: Record<LoginFix, string> = {
   other: 'Login failed',
 };
 
-export function reasonLabel(reason: string | null | undefined, fix?: string | null): string {
+export function reasonLabel(reason: string | null | undefined, fix?: string | null, mode: RunnerMode = 'chrome'): string {
   if (!reason) return REASON_LABELS.other;
   if (reason === 'login_failed' && fix && fix in LOGIN_FIX_LABELS) return LOGIN_FIX_LABELS[fix as LoginFix];
-  const known = REASON_LABELS[reason];
+  const known = (mode === 'office_agent' && AGENT_REASON_LABELS[reason]) || REASON_LABELS[reason];
   if (known) return known;
   const words = reason.replace(/_/g, ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
@@ -150,6 +234,7 @@ export const ORIGIN_LABELS: Record<string, string> = {
   manual: 'Sent by staff',
   report: 'Report fetch',
   email: 'Portal e-mail',
+  evidence: 'Evidence for a notice',
 };
 export const originLabel = (o: string | null | undefined) => (o ? ORIGIN_LABELS[o] ?? o.replace(/_/g, ' ') : '—');
 
@@ -417,7 +502,7 @@ export function useAutopilotStatus(opts: { refetchMs?: number; enabled?: boolean
   });
 }
 
-/** Can a sync be sent to the office agent right now: switched on, not paused, an agent reporting. */
+/** Can a sync be sent to the queue right now: switched on, not paused, its runner (Chrome or office agent) reporting. */
 export function agentUsable(s: AutopilotStatus | undefined): boolean {
   return !!s && autopilotState(s.settings) === 'on' && !!s.agent_online;
 }
@@ -527,7 +612,7 @@ export function useCaptchaNotify() {
   return { supported: notifySupported(), on, enable, disable, show };
 }
 
-/** The header badge: CAPTCHAs on the wall and clients waiting for one (no presence). */
+/** The header badge: CAPTCHAs on the wall and clients waiting for one (no presence); none without a wall (Chrome runner). */
 export function useAutopilotBadge(enabled = true) {
   return useQuery({
     queryKey: ['autopilot-badge'],
@@ -535,7 +620,8 @@ export function useAutopilotBadge(enabled = true) {
       const { data, error } = await supabase.rpc('autopilot_badge');
       if (error) throw error;
       const d = (data ?? {}) as unknown as Partial<AutopilotBadgeData>;
-      return { live: Number(d.live ?? 0), waiting: Number(d.waiting ?? 0), enabled: d.enabled ?? null };
+      const runner = d.runner === 'chrome' || d.runner === 'office_agent' ? d.runner : null;
+      return { live: Number(d.live ?? 0), waiting: Number(d.waiting ?? 0), enabled: d.enabled ?? null, runner };
     },
     enabled,
     refetchInterval: 30_000,
@@ -638,7 +724,7 @@ export async function enqueueJobs(args: {
   jobType: 'PULL_NOTICES_BUNDLE' | 'FETCH_REPORT';
   mode?: string;
   periods?: string[];
-  origin: 'manual' | 'report';
+  origin: 'manual' | 'report' | 'evidence';
   actor: Actor | null;
 }): Promise<EnqueueOutcome> {
   const { data, error } = await supabase.rpc('autopilot_enqueue', {

@@ -3,10 +3,14 @@
 // database does the filtering, sorting and paging, so a list stays fast at
 // 5,000 notices and a dashboard number opens a list with the same count.
 // Each filter below is the same predicate the command centre counts with
-// (migration 20261006122000_notice_command_centre.sql).
+// (migration 20261006122000_notice_command_centre.sql). A list opened from the
+// command centre carries dash=1 and shows only the notice types on the
+// dashboard (notice_facts.on_dashboard), because the dashboard counts only
+// those (contract §A, migration 20261008150000_notice_types.sql).
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import type { NoticeFact, NoticePlanRow } from '@/lib/noticeFacts';
+import { isResponseNeed, type ResponseNeed } from '@/lib/noticeTypes';
 
 export type ListFilter =
   | 'open' | 'overdue' | 'due7' | 'new' | 'unassigned' | 'exposure' | 'issued15'
@@ -53,12 +57,17 @@ export interface NoticeListParams {
   /** 'me', 'none' or a staff user id. */
   owner?: string;
   category?: string;
+  /** A form code, or 'none' for notices with no form recognised. */
   form?: string;
   fy?: string;
   priority?: string;
   q?: string;
   /** Effective due date on this day (YYYY-MM-DD). */
   due?: string;
+  /** Reply need of the notice's type. */
+  need?: ResponseNeed;
+  /** '1' = only the notice types on the dashboard (lists opened from it); '0' = only those taken off it. */
+  dash?: '1' | '0';
   sort?: SortKey;
   dir?: 'asc' | 'desc';
   page: number;
@@ -78,6 +87,10 @@ export function parseListParams(sp: URLSearchParams, defaultFilter: ListFilter =
   const out: NoticeListParams = { filter, page: Math.max(1, Number(sp.get('page')) || 1) };
   KEYS.forEach((k) => { const v = sp.get(k); if (v) out[k] = v; });
   if (!out.due && sp.get('date')) out.due = sp.get('date') || undefined;
+  const need = sp.get('need');
+  if (isResponseNeed(need)) out.need = need;
+  const dash = sp.get('dash');
+  if (dash === '1' || dash === '0') out.dash = dash;
   if (!out.priority && sp.get('filter') === 'priority') out.priority = 'High';
   const sort = sp.get('sort') as SortKey | null;
   if (sort && sort in SORTS) out.sort = sort;
@@ -91,6 +104,8 @@ export function listSearch(p: Partial<NoticeListParams>, defaultFilter: ListFilt
   const sp = new URLSearchParams();
   if (p.filter && p.filter !== defaultFilter) sp.set('filter', p.filter);
   KEYS.forEach((k) => { const v = p[k]; if (v) sp.set(k, v); });
+  if (p.need) sp.set('need', p.need);
+  if (p.dash) sp.set('dash', p.dash);
   if (p.sort) sp.set('sort', p.sort);
   if (p.dir) sp.set('dir', p.dir);
   if (p.page && p.page > 1) sp.set('page', String(p.page));
@@ -100,6 +115,8 @@ export function listSearch(p: Partial<NoticeListParams>, defaultFilter: ListFilt
 
 /** A link to the All notices list with these filters. */
 export const noticesListHref = (p: Partial<NoticeListParams>) => `/notices-all${listSearch(p)}`;
+/** A list opened from the command centre: only the notice types on the dashboard, as it counts them. */
+export const dashListHref = (p: Partial<NoticeListParams>) => noticesListHref({ ...p, dash: '1' });
 /** A link to the Work queue with these filters. */
 export const queueHref = (tab: QueueTab, p: Partial<NoticeListParams> = {}) => {
   const s = listSearch(p);
@@ -141,10 +158,14 @@ export function applyListFilters(q: Q, p: NoticeListParams, meId: string | null)
   else if (p.owner === 'none') q = q.is('assign_to_user_id', null);
   else if (p.owner) q = q.eq('assign_to_user_id', p.owner);
   if (p.category) q = q.eq('category', p.category);
-  if (p.form) q = q.eq('form_code', p.form);
+  if (p.form === 'none') q = q.is('form_code', null);
+  else if (p.form) q = q.eq('form_code', p.form);
   if (p.fy) q = q.eq('financial_year', p.fy);
   if (p.priority) q = q.eq('effective_priority', p.priority);
   if (p.due) q = q.eq('effective_due', p.due);
+  if (p.need) q = q.eq('response_need', p.need);
+  if (p.dash === '1') q = q.eq('on_dashboard', true);
+  else if (p.dash === '0') q = q.eq('on_dashboard', false);
   const term = searchTerm(p.q);
   if (term) {
     const t = `*${term}*`;
@@ -201,6 +222,24 @@ export function applyQueueTab(q: Q, tab: QueueTab, meId: string | null): Q {
   if (tab === 'unassigned') q = q.is('assign_to_user_id', null);
   if (tab === 'review') q = q.eq('next_action', 'review_draft');
   return q;
+}
+
+export const QUEUE_TABS: QueueTab[] = ['mine', 'team', 'unassigned', 'review'];
+
+/**
+ * Each queue tab's count under the list's own filters (dash, reply need,
+ * stage, owner, search…), so a tab's number is always the length of its list.
+ */
+export async function fetchQueueCounts(p: NoticeListParams, meId: string | null): Promise<Record<QueueTab, number>> {
+  const counts = await Promise.all(QUEUE_TABS.map(async (tab) => {
+    let q = supabase.from('notice_plan').select('id', { count: 'exact', head: true });
+    q = applyQueueTab(q, tab, meId);
+    q = applyListFilters(q, { ...p, filter: 'all' }, meId);
+    const { count, error } = await q;
+    if (error) throw error;
+    return count ?? 0;
+  }));
+  return Object.fromEntries(QUEUE_TABS.map((t, i) => [t, counts[i]])) as Record<QueueTab, number>;
 }
 
 /** The Work queue (Today's plan in full): ranked open notices with their next action. */

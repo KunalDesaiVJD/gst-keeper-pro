@@ -1,6 +1,9 @@
 // The command centre's cards (roadmap Phase 2 task 2, target-dashboard.png).
 // Every number links to the list it counts, with the same filter, so the two
-// always agree (supabase/tests/notices/test_95_command_centre.sql).
+// always agree (supabase/tests/notices/test_95_command_centre.sql). The
+// dashboard counts only the notice types shown on it (contract §A), so each
+// list link carries dash=1 (dashListHref); the sync-health rows count every notice
+// and link without it.
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowUpRight, Loader2, Send } from 'lucide-react';
@@ -10,7 +13,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { CommandCentre } from '@/lib/noticeCommandCentre';
-import { noticesListHref } from '@/lib/noticeQueries';
+import { dashListHref as dashHref, noticesListHref } from '@/lib/noticeQueries';
 import { fmtAgo, fmtDay, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { runNoticeAlerts, describeAlertRun } from '@/lib/noticeAlertQueue';
 import { latestAgent, reasonLabel, useAutopilotBadge, useAutopilotStatus } from '@/lib/autopilot';
@@ -46,24 +49,48 @@ export const CommandTiles: React.FC<{ cc: CommandCentre }> = ({ cc }) => {
   const t = cc.tiles;
   return (
     <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-      <TileLink to={noticesListHref({ filter: 'overdue' })} label="Overdue & still open" accent="destructive" strong={t.overdue.count > 0}
+      <TileLink to={dashHref({ filter: 'overdue' })} label="Overdue & still open" accent="destructive" strong={t.overdue.count > 0}
         value={t.overdue.count.toLocaleString('en-IN')}
         hint={t.overdue.count ? `${fmtInrShort(t.overdue.amount)} at risk · oldest ${t.overdue.oldest_days ?? 0} d` : 'nothing overdue'} />
-      <TileLink to={noticesListHref({ filter: 'due7' })} label="Due in next 7 days" accent="warning"
+      <TileLink to={dashHref({ filter: 'due7' })} label="Due in next 7 days" accent="warning"
         value={t.due7.count.toLocaleString('en-IN')}
         hint={t.due7.next_date ? `next ${fmtDay(t.due7.next_date)} · ${t.due7.next_client}` : `${plural(t.due7.hearings, 'hearing')} · ${plural(t.due7.clocks, 'appeal clock')}`} />
-      <TileLink to={noticesListHref({ filter: 'new' })} label="New in last 24 h" accent="info"
+      <TileLink to={dashHref({ filter: 'new' })} label="New in last 24 h" accent="info"
         value={t.new.count.toLocaleString('en-IN')}
         hint={t.new.count ? `${t.new.with_demand} with demand · ${t.new.unassigned} unassigned` : 'none since yesterday'} />
-      <TileLink to={noticesListHref({ filter: 'unassigned' })} label="Without an owner" accent="primary"
+      <TileLink to={dashHref({ filter: 'unassigned' })} label="Without an owner" accent="primary"
         value={t.unassigned.toLocaleString('en-IN')} hint={`of ${t.open.toLocaleString('en-IN')} open`} />
-      <TileLink to={noticesListHref({ filter: 'open', stage: 'partner_review' })} label="In partner review" accent="warning"
+      <TileLink to={dashHref({ filter: 'open', stage: 'partner_review' })} label="In partner review" accent="warning"
         value={t.review.count.toLocaleString('en-IN')}
         hint={t.review.approved ? `${t.review.approved} approved, ready to file` : `${t.waiting_client} waiting on clients`} />
-      <TileLink to={noticesListHref({ filter: 'exposure' })} label="Exposure under dispute" accent="muted"
+      <TileLink to={dashHref({ filter: 'exposure' })} label="Exposure under dispute" accent="muted"
         value={fmtInrShort(t.exposure.total)}
         hint={`${plural(t.exposure.notices, 'notice')}${t.exposure.matters ? ` · ${plural(t.exposure.matters, 'matter')}` : ''}`} />
     </div>
+  );
+};
+
+// ── What the dashboard leaves out (notice types taken off it, contract §A) ──
+const QUIET_LINK = 'underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm';
+
+/**
+ * "Not on the dashboard: 14 notice types, 3 open notices." The notices open as
+ * their own list (dash=0), so the number is that list's length; an admin's
+ * "notice types" opens the settings (onOpenTypes), for everyone else it is text.
+ */
+export const HiddenTypesLine: React.FC<{ cc: CommandCentre; onOpenTypes?: () => void }> = ({ cc, onOpenTypes }) => {
+  const d = cc.dashboard;
+  if (!d || d.hidden_types <= 0) return null;
+  const types = plural(d.hidden_types, 'notice type');
+  return (
+    <p className="text-xs text-muted-foreground">
+      Not on the dashboard:{' '}
+      {onOpenTypes ? <button type="button" onClick={onOpenTypes} className={QUIET_LINK}>{types}</button> : types},{' '}
+      <Link to={noticesListHref({ dash: '0' })} className={QUIET_LINK}>{plural(d.hidden_open, 'open notice')}</Link>
+      {d.hidden_overdue > 0 && (
+        <> (<Link to={noticesListHref({ filter: 'overdue', dash: '0' })} className={cn(QUIET_LINK, 'text-destructive-strong')}>{d.hidden_overdue} overdue</Link>)</>
+      )}.
+    </p>
   );
 };
 
@@ -114,7 +141,7 @@ export const ReplyPipeline: React.FC<{ cc: CommandCentre }> = ({ cc }) => {
       <ul className="space-y-1.5">
         {rows.map((p) => (
           <li key={p.stage}>
-            <Link to={noticesListHref({ filter: 'open', stage: p.stage })}
+            <Link to={dashHref({ filter: 'open', stage: p.stage })}
               className="grid grid-cols-[minmax(7rem,9rem)_1fr_3rem_3.5rem] items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <span className="truncate">{p.label}</span>
               <span className="h-2 rounded-full bg-muted" aria-hidden>
@@ -228,7 +255,7 @@ export const Next14Days: React.FC<{ cc: CommandCentre }> = ({ cc }) => (
         const cls = cn('flex flex-col items-center gap-1 rounded-md border px-0.5 py-1.5 text-center',
           i === 0 && 'border-primary ring-1 ring-primary', (wd === 0 || wd === 6) && 'bg-muted/40');
         return d.total > 0 ? (
-          <Link key={d.date} to={`/notices-calendar?date=${d.date}`}
+          <Link key={d.date} to={`/notices-calendar?date=${d.date}&dash=1`}
             className={cn(cls, 'hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring')}>{cell}</Link>
         ) : (
           <div key={d.date} className={cls}>{cell}</div>
@@ -249,7 +276,7 @@ export const ExposureByStage: React.FC<{ cc: CommandCentre }> = ({ cc }) => {
         <ul className="space-y-1.5">
           {rows.map((r) => {
             // Notices and matters open different lists, so each amount links to its own (U-24-2).
-            const toNotices = noticesListHref({ filter: 'exposure', stage: r.stage });
+            const toNotices = dashHref({ filter: 'exposure', stage: r.stage });
             const toMatters = `/litigation?stage=${r.stage}`;
             return (
               <li key={r.stage} className="grid grid-cols-[minmax(6rem,8rem)_1fr_auto] items-center gap-2 px-1 py-0.5 text-xs">
@@ -283,7 +310,7 @@ export const ClientsAttention: React.FC<{ cc: CommandCentre }> = ({ cc }) => (
         {cc.clients.map((c) => (
           <li key={c.client_id} className="flex items-center gap-2 py-1.5 text-xs">
             <Link to={`/notices-company/${c.client_id}`} className="min-w-0 flex-1 truncate font-medium hover:underline">{c.name}</Link>
-            <Link to={noticesListHref({ filter: 'open', client: c.client_id })} className="shrink-0 tabular-nums hover:underline">
+            <Link to={dashHref({ filter: 'open', client: c.client_id })} className="shrink-0 tabular-nums hover:underline">
               <span className="sr-only">{c.name}: </span>{c.open}<span className="sr-only"> open,</span> · <span className={cn(c.overdue > 0 && 'font-semibold text-destructive-strong')}>{c.overdue}</span><span className="sr-only"> overdue</span>
             </Link>
             <span className="w-16 shrink-0 text-right tabular-nums">{fmtInrShort(c.exposure)}</span>

@@ -30,9 +30,9 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
 
 That's it — nothing to keep running, no account, no card.
 
-## Updating (minimum v0.4.0, recommended v0.6.0)
+## Updating (minimum v0.4.0, recommended v0.7.0)
 The app refuses to start a notices sync from an extension older than **v0.4.0**
-(`src/lib/extensionVersion.ts`) and nudges older copies to update to **v0.6.0**.
+(`src/lib/extensionVersion.ts`) and nudges older copies to update to **v0.7.0**.
 After pulling a new version of this folder, open `chrome://extensions` and click
 **Reload** on “GST Keeper Portal Sync” on **every PC** that syncs. v0.4.0 never marks
 saved notices missing after an empty or partly failed pull, checks that the portal
@@ -42,9 +42,48 @@ with a run ledger, skips documents already saved, and moves on from a CAPTCHA no
 typed — see CHANGELOG.md. v0.6.0 also reads applications on the portal (appeals
 and others) and the registration status in every notices sync, keeps a GSTR-3A's
 return period so it closes itself once that return is filed, and is what the
-office agent drives (below).
+office agent drives (below). v0.7.0 runs the autopilot's scheduled syncs in your own
+Chrome (below).
 
-## The office agent (Portal Autopilot, v0.6.0+)
+## Scheduled syncs in your Chrome (v0.7.0)
+GST Keeper's autopilot runs the agreed schedule — 05:30 every active client, 13:00 the
+clients that need it — in **your own Chrome**, the one that has your CAPTCHA extension.
+There is no CAPTCHA wall and nobody needs to be at the screen.
+
+1. Load this extension (v0.7.0 or later) in the Chrome that has your CAPTCHA extension
+   (`chrome://extensions` → Developer mode → Load unpacked, or Reload).
+2. In its popup, tick **Run scheduled syncs in this Chrome** and give the PC a name
+   (for example "Reception PC"); GST Keeper shows it under Notices → Autopilot.
+3. In GST Keeper, Notices → Autopilot → Settings, switch the autopilot on. Keep that PC
+   and Chrome on at 05:30 and 13:00; a slot that finds Chrome closed runs when it opens
+   within 3 hours.
+
+What it does: about once a minute the extension tells GST Keeper this Chrome is there
+and, when nothing else runs in it, takes the next client from the queue. Each client
+gets a window of its own: the extension logs out of the portal, fills the user ID and
+password, and **waits for your CAPTCHA extension to fill the CAPTCHA box**; it then logs
+in, reads notices & orders (with case folders and PDFs), refunds, DRC-03, applications
+and the profile, saves them, logs out and closes the window. If the box is not filled
+within the wait set in the app (120 seconds unless changed), that client is tried again
+later (after 5, 10, 20 … minutes, up to the tries set in the app) and the next one
+starts. This extension never reads, copies or solves the CAPTCHA, and passwords are
+fetched only at the moment of login, as for a person's sync.
+
+People come first. A sync someone starts in this Chrome (Sync now, the popup) takes
+over at once: the scheduled client goes back to the queue. Scheduled syncs also wait
+while a GST portal tab is open and someone has used the PC in the last 5 minutes,
+because the portal keeps one login per browser and the scheduled client would replace
+theirs. Close the portal tab when you are done, or keep a separate Chrome profile
+(with both extensions) for scheduled syncs. Untick the box, or press "Pause scheduled
+syncs in this Chrome" in the popup, to stop.
+
+Good to know: leave the scheduled windows alone (do not minimise them); where the
+office allows it, keep that PC's display on and unlocked at the scheduled times, as
+Chrome slows pages it thinks nobody can see (CHANGELOG 0.7.0 says how the extension
+copes). Two PCs can both run scheduled syncs; each takes its own clients. If the
+autopilot is set to the office agent (by SQL), this Chrome takes nothing.
+
+## The office agent (Portal Autopilot, v0.6.0+; behind `runner = 'office_agent'` since v0.7.0)
 `agent/` runs this same extension on an always-on office PC, in its own Chromium,
 on a schedule. It starts each client's job with `startAgentJob` (background.js); an
 agent job (`job.agent`) sends its login CAPTCHA to the app's CAPTCHA wall instead of
@@ -62,7 +101,9 @@ reply on the portal, a wrong-GSTIN session, the weekly full folder pass, the 0.6
 applications / registration status / GSTR-3A detail, the agent hooks and the
 CAPTCHA watchdog. Never point it at the live project. The agent's own end-to-end
 test drives this extension in Chromium against a stand-in portal
-(`agent/test/README.md`).
+(`agent/test/README.md`), and so does the scheduled-sync test
+(`agent/test/chrome-runner.e2e.test.ts`, with a test-only stand-in for a CAPTCHA
+extension).
 
 ```
 node extension/test/notices-sync.sim.mjs http://127.0.0.1:54399 /path/to/anon.jwt

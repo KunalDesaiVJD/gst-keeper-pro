@@ -3,8 +3,9 @@
 How the app reads a notice, splits it into issues with amounts, computes the
 firm's position from data it already holds, and asks the client for the rest.
 Read this before changing the Phase 4 migrations
-(`supabase/migrations/20261008100000`–`140000`), the notice reader in
-`agent/src/read/`, the recipes in `src/lib/reply/`, or the Reply Factory pages.
+(`supabase/migrations/20261008100000`–`161000`), the notice reader in
+`agent/src/read/`, the recipes in `src/lib/reply/`, the reply templates
+(`docs/REPLY_TEMPLATES.md`), or the Reply Factory pages.
 
 **These positions were written by engineering from the roadmap and the mission
 audit (findings R-08, R-10, R-11, R-23, S stage 6). The partner has not signed
@@ -29,7 +30,12 @@ client's consent is on file and a manager switches it on.
 3. **Asks the client for the rest** — the documents each issue code lists,
    tracked, reminded on the alert ladder, uploadable in the client portal (§7).
 4. **Writes the firm's reply rule per issue type** for the partner to approve
-   (§5); Phase 5 drafts replies from them.
+   (§5).
+5. **Sorts notice types by whether they need a reply** (critical, optional or
+   none) and lets an admin choose which types the dashboard shows (§11).
+6. **Prepares several replies for every notice by itself**, in formal legal
+   wording without any hyphen or dash, for a person to pick one and start the
+   draft (§12).
 
 ## 2. Reading a notice
 
@@ -192,9 +198,35 @@ partner should confirm the current position before approving.
   clicked is saved as `Auto`. An issue's "explained" amount follows the recipe
   unless a person typed it.
 - **Missing data.** The readiness check lists, per month and source, what is
-  ready, not fetched or not filed. When the autopilot is on and the office agent
-  is online, the missing pulls are queued on it (origin `evidence`); otherwise
-  the page says how to pull them with the extension.
+  ready, not fetched or not filed. "Fetch missing data" queues the pulls on the
+  autopilot (origin `evidence`), which its runner (the firm's Chrome, see
+  `docs/PORTAL_AUTOPILOT_POSITIONS.md` §1a) picks up; otherwise the page says how
+  to pull them with the extension.
+- **Engineering positions inside the recipes** (not yet confirmed by the
+  partner):
+  - a shortfall in one month settled in a later month of the same financial year
+    is shown as timing, matched first in, first out;
+  - a DRC-03 counts against an issue when its cause matches, or when it is
+    linked to the notice and that is the notice's only money issue;
+  - credit re-claimed in Table 4D(1) is deducted from 4A(5) before the GSTR-2B
+    comparison;
+  - the rule 36(4) allowance (20%, 10%, 5%) is applied month by month for
+    periods compared with GSTR-2A;
+  - for s.16(4), credit is taken to be claimed in the GSTR-3B of the month whose
+    GSTR-2B shows the document;
+  - explained = the notice's figure less what is left to pay, per head;
+  - interest and late fee already paid in GSTR-3B Table 5.1 are set against what
+    the recipe computes.
+- **Evidence without a click.** Annexures built when a person opens the Evidence
+  tab, from the Reply Factory's "Build evidence for all", or in the background
+  when staff open the notices module are saved as `Auto`. The background batch
+  (`src/lib/reply/autoBuild.ts`) takes up to 15 open ASMT-10, DRC-01A, DRC-01B
+  and DRC-01C notices that have no annexure yet, soonest due first
+  (`reply_evidence_pending()`), at most once every three hours per browser; while
+  the autopilot is on it also queues the portal pulls those workings miss, so the
+  next build has the data. On 6 October 2026 only 2 of the 41 such open notices
+  on live belonged to a client whose returns had been pulled, so the 70%
+  automatic-annexure target depends on the autopilot running.
 
 ## 7. Client document requests
 
@@ -250,7 +282,94 @@ another rule matches.
 
 ## 10. Not built yet
 
-Paragraph templates and drafting (Phase 5), the e-way bill recipe (the app has
-no e-way bill data), supplier registration status (needed for the cancelled
-suppliers recipe), the clause-wise s.17(5) mapping, rule 43, and per-issue
-interest on wrongly utilised credit from daily ledger balances.
+AI drafting of replies (the templates of §12 are filled from facts, not
+written by a model), the e-way bill recipe (the app has no e-way bill data),
+supplier registration status (needed for the cancelled suppliers recipe), the
+clause-wise s.17(5) mapping, rule 43, per-issue interest on wrongly utilised
+credit from daily ledger balances, and quarterly (QRMP) filers in the recipes.
+
+## 11. Notice types: which need a reply, and which the dashboard shows (asked by the firm, 6 October 2026)
+
+"Certain kind of notices are not required to reply so create different
+categories for type of notice which are critical & optional for respond & also
+give option to admin which notices to be shown on dashboard and which not to
+show." (`supabase/migrations/20261008150000_notice_types.sql`)
+
+- **Three categories per notice type** (`notice_type_settings.response_need`,
+  one row per form code):
+  - *Critical, reply required*: a reply or an action is required, with a
+    consequence if it is missed: show cause notices (DRC-01, ASMT-14, REG-17,
+    REG-23, REG-SCN, RFD-08), scrutiny (ASMT-10), intimations with a reply
+    clock (DRC-01B, DRC-01C), queries (REG-03), return defaulter notices
+    (GSTR-3A), refund deficiency memos (RFD-03), detention (MOV-07), audit
+    (ADT-01), attachment and recovery (DRC-22, DRC-13), summons, appeal hearings,
+    and orders with an appeal clock that matters (DRC-07, DRC-07A, MOV-09,
+    REG-19, APL-04).
+  - *Optional, reply allowed*: DRC-01A (rule 142(1A) lets the taxpayer reply or
+    pay; it is not required), audit findings (ADT-02), and orders that only
+    matter when adverse (RFD-06, REG-05, rectification orders, an order
+    rejecting a cancellation application).
+  - *None, information only*: acknowledgements and approvals, the firm's own
+    filings and payments (proceedings dropped, response accepted, LUT, LUT
+    approved, APL-01, APL-02, REG-06, REG-15, REG-22, SPL-05, DRC-03, PMT-03,
+    RFD-04, audit closure).
+  A notice the rules cannot classify needs a reply and is shown.
+- **What follows from the category.** A no-reply notice is never overdue or due
+  in 7 days, has no reply date in the calendar or the plan, gets the next action
+  "Read and close" and no reply options; due-date coverage counts it as
+  informational. An optional notice keeps its clock and alerts but ranks below a
+  required one (plan score × 0.7).
+- **The dashboard.** `show_on_dashboard` per type; information-only types start
+  hidden, everything else shown. Only a superadmin or GST manager changes either
+  setting (Reply Factory → Notice types, or "Notice types" on the command
+  centre). A hidden type leaves the command centre only: every list still shows
+  it, the top navigation still counts it, and the command centre says how many
+  types and open notices it is not showing. A list opened from the command
+  centre carries `dash=1` and filters to the dashboard's types, so every number
+  still equals its list.
+
+## 12. Reply options, prepared by themselves (asked by the firm, 6 October 2026)
+
+"When the notice is fetched by the portal, our system should on its own prepare
+different replies and give option to users for the multiple response to draft.
+Make sure that all the wordings for reply should be legal wordings & should be
+prepared without hyphen." (`supabase/migrations/20261008160000_reply_options.sql`,
+templates in `20261008161000_reply_templates_seed.sql`, catalogue in
+`docs/REPLY_TEMPLATES.md`)
+
+- **When.** A notice inserted by a sync, or a change to a fact a reply uses
+  (form, section, period, financial year, DIN, demand, dates, reference,
+  officer), to its issues or its annexures, re-renders that notice's options.
+  Editing a template, an issue paragraph, a notice type or the signature block
+  re-renders every open notice. A reply that cannot be prepared is logged as a
+  warning and never blocks the sync's write. Closed notices and no-reply types
+  get none.
+- **Which.** Every active template for the notice's form, two to four per form
+  that needs a reply (contest in full, part acceptance, acceptance and payment,
+  explanation, more time, documents relied upon, rectification, stay of
+  recovery, as the form allows); the general templates when the form has none
+  of its own.
+- **The wording rule.** Formal legal English and no hyphen or dash of any kind
+  (U+002D, U+2010 to U+2015, U+2212, the small and fullwidth hyphens, the soft
+  hyphen) in any template, issue paragraph, signature setting or rendered reply:
+  enforced by constraint. Facts are cleaned before they go in: a dash between
+  digits becomes a slash (2023-24 → 2023/24, 01-04-2023 → 01/04/2023), any
+  other dash a space (DRC-01 → DRC 01; an identifier such as a DIN or reference
+  number that itself holds a hyphen is written with a space in its place, so
+  check such a number against the notice before filing), and "Rs. 500/-" loses
+  its "/-". Amounts read "Rs. 1,23,456 (Rupees One Lakh Twenty Three Thousand
+  Four Hundred Fifty Six only)", dates "6 October 2026", forms "FORM GST DRC 01",
+  the State law from the GSTIN's state code ("the Gujarat Goods and Services Tax
+  Act, 2017"; the Union Territory Act for a UT without a legislature).
+- **Facts the app does not hold** are written as a graceful phrase ("the amount
+  proposed in the notice") or a fill-in in square brackets ("[ARN of FORM GST
+  DRC 03]", "[place]") that the person completes in the draft; nothing is
+  invented.
+- **Using one.** "Use this reply" renders the template again with today's facts
+  and starts the next draft version; earlier open versions are superseded, never
+  overwritten, and the notice moves to the draft stage. The draft then goes
+  through the usual partner review. Nothing is filed or sent by the app.
+- **Who owns the words.** The templates are the firm's: editable, versioned, and
+  each a starting point that a partner should review before the first use
+  (decision pending, like §5). The signature block uses
+  `notice_settings.reply_place` and `reply_signatory`.

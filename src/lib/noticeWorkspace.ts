@@ -2,10 +2,13 @@
 // task 1). Everything a notice page shows is loaded here in one go; every
 // action writes as the signed-in staff member, so the database's event
 // triggers attribute it (migrations 20261006112000 / 120000 / 121000) and the
-// Activity tab, the bell and the alert engine pick it up.
+// Activity tab, the bell and the alert engine pick it up. Phase 4 adds issue
+// codes (reply_issue_types), document requests that serve an issue (from the
+// code's list, or typed) and the client e-mail settings the page explains
+// (migrations 20261008100000 / 130000).
 import { supabase } from '@/integrations/supabase/client';
 import type { Database, TablesUpdate } from '@/integrations/supabase/types';
-import { loadNoticeFact, type NoticeFact, type NoticePlanRow } from '@/lib/noticeFacts';
+import { addDays, istToday, loadNoticeFact, type NoticeFact, type NoticePlanRow } from '@/lib/noticeFacts';
 import { updateNotices, staffEditFields, type NoticeActor } from '@/lib/noticeWrites';
 import type { StageKey } from '@/lib/noticeStages';
 
@@ -165,17 +168,37 @@ export async function addComment(notice: Pick<NoticeRow, 'id' | 'client_id'>, te
 }
 
 // ── Issues ─────────────────────────────────────────────────────────────────
-export type IssueInput = Pick<NoticeIssue, 'title' | 'detail' | 'amount' | 'explained_amount' | 'position' | 'annexure' | 'status'>;
+export type IssueType = Tables['reply_issue_types']['Row'];
 
+/** The firm's issue codes (reply_issue_types), in their order. Static: cache it. */
+export async function loadIssueTypes(): Promise<IssueType[]> {
+  const { data, error } = await supabase.from('reply_issue_types').select('*').order('sort').order('code');
+  if (error) throw error;
+  return data ?? [];
+}
+export const issueTypesQuery = { queryKey: ['reply-issue-types'], queryFn: loadIssueTypes, staleTime: 10 * 60_000 } as const;
+
+export type IssueInput = Pick<NoticeIssue, 'title' | 'detail' | 'amount' | 'position' | 'annexure' | 'status'>
+  & Partial<Pick<NoticeIssue, 'explained_amount' | 'issue_code' | 'period_from' | 'period_to' | 'explained_by'>>;
+
+const ISSUE_FIELDS = ['title', 'detail', 'amount', 'explained_amount', 'position', 'annexure', 'status',
+  'issue_code', 'period_from', 'period_to', 'explained_by'] as const;
+
+/**
+ * Adds or edits an issue; only the fields staff edit are written. Pass
+ * explained_by: null when staff typed the explained amount, so an evidence
+ * recipe leaves it alone from then on.
+ */
 export async function saveIssue(noticeId: string, issue: IssueInput & { id?: string; seq?: number }, actor: NoticeActor) {
+  const payload: TablesUpdate<'notice_issues'> = {};
+  for (const k of ISSUE_FIELDS) if (issue[k] !== undefined) (payload as Record<string, unknown>)[k] = issue[k];
   if (issue.id) {
-    const { id, ...rest } = issue;
-    const { error } = await supabase.from('notice_issues').update({ ...rest, updated_by_name: actor.firstName ?? null }).eq('id', id);
+    const { error } = await supabase.from('notice_issues').update({ ...payload, updated_by_name: actor.firstName ?? null }).eq('id', issue.id);
     if (error) throw error;
     return;
   }
   const { error } = await supabase.from('notice_issues').insert({
-    ...issue, notice_id: noticeId, created_by: actor.id ?? null, created_by_name: actor.firstName ?? null,
+    ...payload, title: issue.title, seq: issue.seq, notice_id: noticeId, created_by: actor.id ?? null, created_by_name: actor.firstName ?? null,
   });
   if (error) throw error;
 }
@@ -202,6 +225,35 @@ export async function saveDraft(noticeId: string, body: string, latest: NoticeDr
   if (error) throw error;
 }
 
+// ── Reply options (Phase 4b): prepared by the database from the notice's facts,
+// issues and annexures when it is fetched or changes (notice_reply_options).
+export type ReplyOption = Tables['notice_reply_options']['Row'];
+
+export const replyOptionsKey = (noticeId: string) => ['notice-reply-options', noticeId] as const;
+
+export async function loadReplyOptions(noticeId: string): Promise<ReplyOption[]> {
+  const { data, error } = await supabase.from('notice_reply_options').select('*').eq('notice_id', noticeId).order('sort').order('title');
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Starts the next draft version from an option (notice_reply_option_use); an existing draft is never overwritten. */
+export async function startDraftFromOption(optionId: string, actor: NoticeActor): Promise<{ draftId: string | null; version: number | null }> {
+  const { data, error } = await supabase.rpc('notice_reply_option_use', {
+    p_option_id: optionId, p_author_id: actor.id ?? null, p_author_name: actor.firstName ?? null,
+  });
+  if (error) throw error;
+  const o = (data && typeof data === 'object' && !Array.isArray(data) ? data : {}) as Record<string, unknown>;
+  return { draftId: typeof o.draft_id === 'string' ? o.draft_id : null, version: typeof o.version === 'number' ? o.version : null };
+}
+
+/** Prepares the notice's options again from its current facts (forced), returning how many there are. */
+export async function refreshReplyOptions(noticeId: string): Promise<number> {
+  const { data, error } = await supabase.rpc('notice_reply_options_refresh', { p_notice_id: noticeId, p_force: true });
+  if (error) throw error;
+  return Number(data ?? 0);
+}
+
 export async function setDraftStatus(draft: NoticeDraft, status: 'in_review' | 'approved' | 'changes_requested', actor: NoticeActor, note?: string) {
   const payload: TablesUpdate<'notice_drafts'> = { status };
   if (status === 'in_review') { payload.author_id = actor.id ?? null; payload.author_name = actor.firstName ?? null; }
@@ -211,12 +263,108 @@ export async function setDraftStatus(draft: NoticeDraft, status: 'in_review' | '
 }
 
 // ── Client documents ───────────────────────────────────────────────────────
-export async function requestDocuments(noticeId: string, items: string[], due: string | null, actor: NoticeActor) {
-  const rows = items.map((item) => ({
-    notice_id: noticeId, item, due_date: due, requested_by: actor.id ?? null, requested_by_name: actor.firstName ?? null,
+export interface DocItem { item: string; issue_id?: string | null; source?: 'manual' | 'catalogue' }
+
+/** Asks for documents; an item from an issue code's list carries the issue and source 'catalogue'. */
+export async function requestDocumentItems(noticeId: string, items: DocItem[], due: string | null, actor: NoticeActor) {
+  const rows = items.map((d) => ({
+    notice_id: noticeId, item: d.item, issue_id: d.issue_id ?? null, source: d.source ?? 'manual',
+    due_date: due, requested_by: actor.id ?? null, requested_by_name: actor.firstName ?? null,
   }));
   const { error } = await supabase.from('notice_doc_requests').insert(rows);
   if (error) throw error;
+}
+
+export const requestDocuments = (noticeId: string, items: string[], due: string | null, actor: NoticeActor) =>
+  requestDocumentItems(noticeId, items.map((item) => ({ item })), due, actor);
+
+/** The firm's deadline for documents: three days before the reply is due, never sooner than two days (notice_doc_due_default). */
+export function docDueDefault(effectiveDue: string | null | undefined): string {
+  const today = istToday();
+  if (!effectiveDue) return addDays(today, 5);
+  const d = addDays(effectiveDue, -3);
+  const floor = addDays(today, 2);
+  return d > floor ? d : floor;
+}
+
+export interface CatalogueItem { item: string; issueId: string; issueSeq: number; issueTitle: string }
+
+const docKey = (s: string) => s.trim().toLowerCase();
+
+/** What the open coded issues need that this notice has not asked for yet (the same rule as notice_doc_requests_generate). */
+export function catalogueFor(issues: NoticeIssue[], types: IssueType[], asked: string[]): CatalogueItem[] {
+  const seen = new Set(asked.map(docKey));
+  const out: CatalogueItem[] = [];
+  [...issues].sort((a, b) => a.seq - b.seq).forEach((i, n) => {
+    if (!i.issue_code || !['open', 'contest'].includes(i.status)) return;
+    const t = types.find((x) => x.code === i.issue_code && x.is_active);
+    for (const raw of t?.documents ?? []) {
+      const item = raw.trim();
+      if (!item || seen.has(docKey(item))) continue;
+      seen.add(docKey(item));
+      out.push({ item, issueId: i.id, issueSeq: n + 1, issueTitle: i.title });
+    }
+  });
+  return out;
+}
+
+/** Why "Ask for what the issues need" adds nothing, in one sentence. */
+export function catalogueWhyNot(issues: NoticeIssue[], types: IssueType[]): string {
+  const open = issues.filter((i) => ['open', 'contest'].includes(i.status));
+  const coded = open.filter((i) => i.issue_code);
+  if (!issues.length) return 'No issues are listed yet — list them on the Issues tab first.';
+  if (!open.length) return 'Every issue is explained or marked to pay, so nothing more is needed from the client.';
+  if (!coded.length) return 'No open issue has an issue type — set the type on the Issues tab to get its document list.';
+  const listed = coded.filter((i) => (types.find((t) => t.code === i.issue_code)?.documents ?? []).length > 0);
+  if (!listed.length) return 'The issue types on this notice list no client documents.';
+  return 'Everything the issues need is already asked for.';
+}
+
+export interface GenerateResult { added: number; items: string[]; dueDate: string | null; error?: string }
+
+/** Adds, for every open coded issue, the documents its code lists that are not asked yet (notice_doc_requests_generate). */
+export async function generateDocRequests(noticeId: string, actor: NoticeActor): Promise<GenerateResult> {
+  const { data, error } = await supabase.rpc('notice_doc_requests_generate', {
+    p_notice_id: noticeId, p_actor_id: actor.id ?? null, p_actor_name: actor.firstName ?? null,
+  });
+  if (error) throw error;
+  const o = (data && typeof data === 'object' && !Array.isArray(data) ? data : {}) as Record<string, unknown>;
+  return {
+    added: Number(o.added ?? 0),
+    items: Array.isArray(o.items) ? o.items.map(String) : [],
+    dueDate: typeof o.due_date === 'string' ? o.due_date : null,
+    error: typeof o.error === 'string' ? o.error : undefined,
+  };
+}
+
+export interface ClientEmailSettings { mode: string | null; e12Active: boolean | null; maxRepeats: number | null; cooldownHrs: number | null }
+
+/** Whether client e-mails (alert E12) go out: the alert engine's mode and the rule's own switch and ladder. */
+export async function loadClientEmailSettings(): Promise<ClientEmailSettings> {
+  const [s, r] = await Promise.all([
+    supabase.from('notice_settings').select('alerts_mode').maybeSingle(),
+    supabase.from('notice_alert_rules').select('is_active, max_repeats, cooldown_hrs').eq('alert_key', 'E12_client_docs').maybeSingle(),
+  ]);
+  return {
+    mode: s.error ? null : s.data?.alerts_mode ?? null,
+    e12Active: r.error || !r.data ? null : r.data.is_active,
+    maxRepeats: r.data?.max_repeats ?? null,
+    cooldownHrs: r.data?.cooldown_hrs ?? null,
+  };
+}
+export const clientEmailSettingsQuery = { queryKey: ['client-email-settings'], queryFn: loadClientEmailSettings, staleTime: 60_000 } as const;
+
+/** One honest line on automatic reminders. */
+export function reminderNote(s: ClientEmailSettings | undefined): string | null {
+  if (!s || s.mode === null) return null;
+  if (s.mode === 'off' || s.e12Active === false) {
+    return 'Automatic reminders are off: e-mails to clients are switched off, so nothing goes to the client by itself.';
+  }
+  const ladder = `up to ${s.maxRepeats ?? 3}, at least ${s.cooldownHrs ?? 72} h apart`;
+  if (s.mode === 'preview') {
+    return `Reminders go by themselves on the E12 ladder (${ladder}) only when client e-mails are live. They are in preview now: written to the outbox, not sent to the client.`;
+  }
+  return `Reminders go to the client by themselves on the E12 ladder: ${ladder}, once a request is due within a day or was asked three days ago.`;
 }
 
 export async function resolveRequest(id: string, status: 'received' | 'waived' | 'requested', actor: NoticeActor, note?: string | null, documentId?: string | null) {

@@ -170,6 +170,7 @@ export type Database = {
           afternoon_at: string
           afternoon_scope: string
           captcha_refresh_secs: number
+          captcha_wait_secs: number
           close_at: string
           concurrency: number
           email_trigger: boolean
@@ -183,6 +184,7 @@ export type Database = {
           morning_at: string
           nudge_at: string
           paused_until: string | null
+          runner: string
           schedule_enabled: boolean
           updated_at: string
           updated_by_name: string | null
@@ -191,6 +193,7 @@ export type Database = {
           afternoon_at?: string
           afternoon_scope?: string
           captcha_refresh_secs?: number
+          captcha_wait_secs?: number
           close_at?: string
           concurrency?: number
           email_trigger?: boolean
@@ -204,6 +207,7 @@ export type Database = {
           morning_at?: string
           nudge_at?: string
           paused_until?: string | null
+          runner?: string
           schedule_enabled?: boolean
           updated_at?: string
           updated_by_name?: string | null
@@ -212,6 +216,7 @@ export type Database = {
           afternoon_at?: string
           afternoon_scope?: string
           captcha_refresh_secs?: number
+          captcha_wait_secs?: number
           close_at?: string
           concurrency?: number
           email_trigger?: boolean
@@ -225,6 +230,7 @@ export type Database = {
           morning_at?: string
           nudge_at?: string
           paused_until?: string | null
+          runner?: string
           schedule_enabled?: boolean
           updated_at?: string
           updated_by_name?: string | null
@@ -7283,6 +7289,117 @@ export type Database = {
           },
         ]
       }
+      notice_reply_options: {
+        Row: {
+          body: string
+          id: string
+          inputs: Json
+          inputs_hash: string
+          notice_id: string
+          rendered_at: string
+          sort: number
+          stance: string
+          status: string
+          summary: string
+          template_key: string
+          template_version: number
+          title: string
+          used_at: string | null
+          used_by_name: string | null
+          used_draft_id: string | null
+        }
+        Insert: {
+          body: string
+          id?: string
+          inputs?: Json
+          inputs_hash: string
+          notice_id: string
+          rendered_at?: string
+          sort?: number
+          stance: string
+          status?: string
+          summary?: string
+          template_key: string
+          template_version: number
+          title: string
+          used_at?: string | null
+          used_by_name?: string | null
+          used_draft_id?: string | null
+        }
+        Update: {
+          body?: string
+          id?: string
+          inputs?: Json
+          inputs_hash?: string
+          notice_id?: string
+          rendered_at?: string
+          sort?: number
+          stance?: string
+          status?: string
+          summary?: string
+          template_key?: string
+          template_version?: number
+          title?: string
+          used_at?: string | null
+          used_by_name?: string | null
+          used_draft_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notice_reply_options_notice_id_fkey"
+            columns: ["notice_id"]
+            isOneToOne: false
+            referencedRelation: "gst_notices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notice_reply_options_template_key_fkey"
+            columns: ["template_key"]
+            isOneToOne: false
+            referencedRelation: "reply_templates"
+            referencedColumns: ["key"]
+          },
+          {
+            foreignKeyName: "notice_reply_options_used_draft_id_fkey"
+            columns: ["used_draft_id"]
+            isOneToOne: false
+            referencedRelation: "notice_drafts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notice_type_settings: {
+        Row: {
+          form_code: string
+          response_need: string
+          show_on_dashboard: boolean
+          updated_at: string
+          updated_by_name: string | null
+        }
+        Insert: {
+          form_code: string
+          response_need?: string
+          show_on_dashboard?: boolean
+          updated_at?: string
+          updated_by_name?: string | null
+        }
+        Update: {
+          form_code?: string
+          response_need?: string
+          show_on_dashboard?: boolean
+          updated_at?: string
+          updated_by_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notice_type_settings_form_code_fkey"
+            columns: ["form_code"]
+            isOneToOne: false
+            referencedRelation: "notice_form_rules"
+            referencedColumns: ["form_code"]
+          },
+        ]
+      }
       password_reset_requests: {
         Row: {
           id: string
@@ -8243,6 +8360,8 @@ export type Database = {
           firm_position: string | null
           forms: string[]
           is_active: boolean
+          para_accept: string | null
+          para_contest: string | null
           position_status: string
           recipe_key: string | null
           sort: number
@@ -8260,6 +8379,8 @@ export type Database = {
           firm_position?: string | null
           forms?: string[]
           is_active?: boolean
+          para_accept?: string | null
+          para_contest?: string | null
           position_status?: string
           recipe_key?: string | null
           sort?: number
@@ -8277,12 +8398,60 @@ export type Database = {
           firm_position?: string | null
           forms?: string[]
           is_active?: boolean
+          para_accept?: string | null
+          para_contest?: string | null
           position_status?: string
           recipe_key?: string | null
           sort?: number
           title?: string
           updated_at?: string
           updated_by_name?: string | null
+        }
+        Relationships: [
+        ]
+      }
+      reply_templates: {
+        Row: {
+          body: string
+          created_at: string
+          forms: string[]
+          is_active: boolean
+          key: string
+          sort: number
+          stance: string
+          summary: string
+          title: string
+          updated_at: string
+          updated_by_name: string | null
+          version: number
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          forms?: string[]
+          is_active?: boolean
+          key: string
+          sort?: number
+          stance: string
+          summary?: string
+          title: string
+          updated_at?: string
+          updated_by_name?: string | null
+          version?: number
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          forms?: string[]
+          is_active?: boolean
+          key?: string
+          sort?: number
+          stance?: string
+          summary?: string
+          title?: string
+          updated_at?: string
+          updated_by_name?: string | null
+          version?: number
         }
         Relationships: [
         ]
@@ -8747,6 +8916,8 @@ export type Database = {
           new_notice_max_age_days: number
           quiet_end: string
           quiet_start: string
+          reply_place: string | null
+          reply_signatory: string | null
           updated_at: string
           updated_by: string | null
         }
@@ -8759,6 +8930,8 @@ export type Database = {
           new_notice_max_age_days?: number
           quiet_end?: string
           quiet_start?: string
+          reply_place?: string | null
+          reply_signatory?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -8771,6 +8944,8 @@ export type Database = {
           new_notice_max_age_days?: number
           quiet_end?: string
           quiet_start?: string
+          reply_place?: string | null
+          reply_signatory?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -9001,6 +9176,8 @@ export type Database = {
           reviewed_at: string | null
           reviewed_by: string | null
           reviewed_by_name: string | null
+          source_option_id: string | null
+          source_template_key: string | null
           status: string
           updated_at: string
           version: number
@@ -9016,6 +9193,8 @@ export type Database = {
           reviewed_at?: string | null
           reviewed_by?: string | null
           reviewed_by_name?: string | null
+          source_option_id?: string | null
+          source_template_key?: string | null
           status?: string
           updated_at?: string
           version: number
@@ -9031,6 +9210,8 @@ export type Database = {
           reviewed_at?: string | null
           reviewed_by?: string | null
           reviewed_by_name?: string | null
+          source_option_id?: string | null
+          source_template_key?: string | null
           status?: string
           updated_at?: string
           version?: number
@@ -9167,12 +9348,22 @@ export type Database = {
           client_id: string | null
           client_inactive: boolean | null
           client_name: string | null
+          clock_date: string | null
+          clock_type: string | null
           close_reason: string | null
           created_at: string | null
+          days_in_stage: number | null
           days_to_due: number | null
+          days_to_plan_due: number | null
           default_priority: string | null
           description: string | null
           dispute_key: string | null
+          docs_last_reminded_at: string | null
+          docs_open: number | null
+          docs_reminders: number | null
+          docs_total: number | null
+          draft_status: string | null
+          draft_version: number | null
           due_basis: string | null
           due_basis_note: string | null
           due_date: string | null
@@ -9185,7 +9376,10 @@ export type Database = {
           form_code: string | null
           form_label: string | null
           hearing_date: string | null
+          hearing_note: string | null
+          hearing_soon: boolean | null
           id: string | null
+          in_plan: boolean | null
           is_drc03_case: boolean | null
           is_due_in_7: boolean | null
           is_new: boolean | null
@@ -9196,54 +9390,44 @@ export type Database = {
           is_unassigned: boolean | null
           issue_date: string | null
           issued_by: string | null
+          issues_amount: number | null
+          issues_explained: number | null
+          issues_to_pay: number | null
+          issues_total: number | null
           last_seen_at: string | null
           matter_id: string | null
+          next_action: string | null
           notice_type: string | null
+          on_dashboard: boolean | null
           order_date: string | null
           order_number: string | null
           pdf_url: string | null
+          plan_due: string | null
+          plan_due_kind: string | null
+          plan_score: number | null
           portal_key: string | null
           portal_status: string | null
           priority: string | null
           pulled_at: string | null
+          readiness: number | null
+          readiness_pct: number | null
           reference_number: string | null
           remarks: string | null
           reply_date: string | null
+          reply_due: string | null
           reply_ref_number: string | null
+          response_need: string | null
           source: string | null
           staff_status: string | null
+          stage: string | null
+          stage_changed_at: string | null
+          stage_changed_by: string | null
+          stage_label: string | null
+          stage_ord: number | null
           submission_arn: string | null
           submission_date: string | null
           today_ist: string | null
           updated_at: string | null
-          stage: string | null
-          stage_label: string | null
-          stage_ord: number | null
-          stage_changed_at: string | null
-          stage_changed_by: string | null
-          days_in_stage: number | null
-          clock_type: string | null
-          clock_date: string | null
-          docs_total: number | null
-          docs_open: number | null
-          docs_reminders: number | null
-          docs_last_reminded_at: string | null
-          draft_version: number | null
-          draft_status: string | null
-          issues_total: number | null
-          issues_amount: number | null
-          issues_explained: number | null
-          issues_to_pay: number | null
-          hearing_soon: boolean | null
-          next_action: string | null
-          plan_due: string | null
-          plan_due_kind: string | null
-          readiness: number | null
-          readiness_pct: number | null
-          days_to_plan_due: number | null
-          in_plan: boolean | null
-          plan_score: number | null
-          hearing_note: string | null
         }
         Relationships: []
       }
@@ -9260,6 +9444,7 @@ export type Database = {
           client_name: string | null
           close_reason: string | null
           created_at: string | null
+          days_in_stage: number | null
           days_to_due: number | null
           default_priority: string | null
           description: string | null
@@ -9276,6 +9461,7 @@ export type Database = {
           form_code: string | null
           form_label: string | null
           hearing_date: string | null
+          hearing_note: string | null
           id: string | null
           is_drc03_case: boolean | null
           is_due_in_7: boolean | null
@@ -9290,6 +9476,7 @@ export type Database = {
           last_seen_at: string | null
           matter_id: string | null
           notice_type: string | null
+          on_dashboard: boolean | null
           order_date: string | null
           order_number: string | null
           pdf_url: string | null
@@ -9301,19 +9488,34 @@ export type Database = {
           remarks: string | null
           reply_date: string | null
           reply_ref_number: string | null
+          response_need: string | null
           source: string | null
           staff_status: string | null
+          stage: string | null
+          stage_changed_at: string | null
+          stage_changed_by: string | null
+          stage_label: string | null
+          stage_ord: number | null
           submission_arn: string | null
           submission_date: string | null
           today_ist: string | null
           updated_at: string | null
-          stage: string | null
-          stage_label: string | null
-          stage_ord: number | null
-          stage_changed_at: string | null
-          stage_changed_by: string | null
-          days_in_stage: number | null
-          hearing_note: string | null
+        }
+        Relationships: []
+      }
+      notice_type_overview: {
+        Row: {
+          category: string | null
+          form_code: string | null
+          is_active: boolean | null
+          label: string | null
+          match_order: number | null
+          open_count: number | null
+          response_need: string | null
+          show_on_dashboard: boolean | null
+          total_count: number | null
+          updated_at: string | null
+          updated_by_name: string | null
         }
         Relationships: []
       }
@@ -9577,6 +9779,30 @@ export type Database = {
       }
     }
     Functions: {
+      notice_reply_context: {
+        Args: { p_notice_id: string }
+        Returns: Json
+      }
+      notice_reply_option_use: {
+        Args: { p_option_id: string; p_author_id?: string; p_author_name?: string }
+        Returns: Json
+      }
+      notice_reply_options_refresh: {
+        Args: { p_notice_id: string; p_force?: boolean }
+        Returns: number
+      }
+      notice_type_set: {
+        Args: { p_form_code: string; p_response_need?: string; p_show_on_dashboard?: boolean; p_actor_name?: string }
+        Returns: Json
+      }
+      reply_evidence_pending: {
+        Args: { p_limit?: number }
+        Returns: {
+          notice_id: string
+          client_id: string
+          form_code: string
+        }[]
+      }
       reply_factory_status: {
         Args: Record<PropertyKey, never>
         Returns: Json
@@ -9802,6 +10028,14 @@ export type Database = {
       portal_job_retry: {
         Args: { p_by?: string | null; p_by_name?: string | null; p_job_id: string }
         Returns: Json
+      }
+      reply_has_dash: {
+        Args: { p: string }
+        Returns: boolean
+      }
+      reply_render: {
+        Args: { p_body: string; p_ctx: Json }
+        Returns: string
       }
       sync_ingest: {
         Args: {
