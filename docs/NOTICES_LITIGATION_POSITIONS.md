@@ -407,3 +407,9 @@ searches clients by name or GSTIN and notices by reference, case ID / ARN, reply
 order number, form, and the DIN or reference inside case-folder items
 (`notices_search()`).
 
+**Sync health before the run ledger** (migration `20261006124000`): the run ledger
+(`sync_run_items`) starts with extension v0.5.0. Until a client has been synced with
+it, `client_sync_status` takes that client's last known state from the older
+`client_sync_log` — its last good notices pull, or a failed login after it — so
+"never synced" means no sync on record at all, and an old failed login still shows
+as a login failure.

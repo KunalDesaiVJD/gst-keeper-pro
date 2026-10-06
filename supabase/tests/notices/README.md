@@ -30,6 +30,7 @@ PGHOST=/path/to/socket PGPORT=55432 PGUSER=postgres supabase/tests/notices/run.s
 | `test_90_workspace` | issues, drafts and partner review, document requests and E12, payments, uploads, the stage moves they imply |
 | `test_95_command_centre` | every command-centre number equals the count of the list or plan tab it opens; calendar, hearings, search |
 | `test_96_scale` | 5,000 notices: the command centre, plan and list queries stay well under the first-paint budget |
+| `test_97_sync_legacy` | sync status before the run ledger: clients synced only by an older extension keep their last known state from `client_sync_log`; "never synced" means no history at all |
 
 Phase 2's e-mail changes (deep links to `/notices/<id>`, headline, button, grouped
 overdue list) are covered in `test_60_alerts`.
