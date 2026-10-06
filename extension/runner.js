@@ -44,6 +44,10 @@
   const EMPTY = { status: 'off', why: null, job: null, beat: null, last: null, error: null, pause_until: null };
 
   const errText = (e) => String((e && e.message) || e || 'unknown error').slice(0, 300);
+  // Every database call the runner makes ends within 30 s, so a hung request never holds the next tick.
+  const within = (p, what) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(what + ': no answer within 30 s')), 30000))]);
+  const call = (fn, body) => within(rpc(fn, body), 'RPC ' + fn);
+  const query = (path) => within(sel(path), 'GET ' + path.split('?')[0]);
   const read = async (key) => (await local.get(key))[key];
   const clampWait = (v) => Math.min(900, Math.max(30, Number(v) || 120));
   const captchaWords = (secs) => 'The CAPTCHA was not filled within ' + secs + ' seconds.';
@@ -102,7 +106,7 @@
     // Whatever this runner held cannot go on: its page scripts are gone.
     await jobSlot(async () => { const aj = await read(JOB_KEY); if (aj && aj.runner) await local.remove(JOB_KEY); });
     await local.remove(RESULT_KEY);
-    if (c.id) { try { await rpc('portal_jobs_release', { p_agent: agentOf(c) }); } catch (e) { /* claimNext releases leftovers */ } }
+    if (c.id) { try { await call('portal_jobs_release', { p_agent: agentOf(c) }); } catch (e) { /* claimNext releases leftovers */ } }
     if (st.job) {
       const rj = st.job;
       // After a reload the tab ids still hold; after a restart they may belong to a person's tabs now.
@@ -135,7 +139,7 @@
     };
     const t0 = Date.now();
     try {
-      const s = (await rpc('autopilot_heartbeat', { p_agent: agentOf(c), p_info: info })) || {};
+      const s = (await call('autopilot_heartbeat', { p_agent: agentOf(c), p_info: info })) || {};
       const t1 = Date.now();
       st.beat = {
         ok: true, at: t1, enabled: !!s.enabled, paused: !!s.paused, paused_until: s.paused_until || null,
@@ -172,9 +176,9 @@
     if (st.why) return;
     // Nothing of this runner's is running, so anything the queue still lists as
     // its own is left over (a give-back that did not reach the database).
-    try { await rpc('portal_jobs_release', { p_agent: agentOf(c) }); } catch (e) { /* the claim below tells */ }
+    try { await call('portal_jobs_release', { p_agent: agentOf(c) }); } catch (e) { /* the claim below tells */ }
     let claimed = null;
-    try { claimed = await rpc('portal_job_claim', { p_agent: agentOf(c), p_wall_open: false }); }
+    try { claimed = await call('portal_job_claim', { p_agent: agentOf(c), p_wall_open: false }); }
     catch (e) { st.why = 'offline'; st.error = errText(e); return; }
     if (!claimed || !claimed.id) return;
     await start(c, st, claimed, hb);
@@ -202,12 +206,12 @@
       return finish(c, st, { outcome: 'retry', reason: 'agent_error', error: 'This client has no saved GST credentials.' });
     }
     let started = false;
-    try { started = await rpc('portal_job_start', { p_job_id: claimed.id, p_agent: agentOf(c), p_session_reused: false }); }
+    try { started = await call('portal_job_start', { p_job_id: claimed.id, p_agent: agentOf(c), p_session_reused: false }); }
     catch (e) { return finish(c, st, { outcome: 'retry', reason: 'agent_error', error: errText(e) }); }
     if (!started) { st.job = null; st.status = 'idle'; return; } // cancelled meanwhile, or no longer this runner's
 
-    // Portal tabs already open here belong to nobody at the PC (else the claim
-    // would have waited): they are left alone, and only a new one counts.
+    // Portal tabs already open here were left by someone who is not at the PC
+    // (else the claim would have waited): they count again only when someone is.
     st.job.known_tabs = (await portalTabs()).map((t) => t.id);
     let win = null;
     try {
@@ -259,7 +263,7 @@
       return finish(c, st, (await takeResult(rj.id)) || (await readOutcome(rj)));
     }
     let row = null;
-    try { row = (await sel('portal_jobs?id=eq.' + rj.id + '&select=status,claimed_by'))[0] || null; } catch (e) { /* the next tick looks again */ }
+    try { row = (await query('portal_jobs?id=eq.' + rj.id + '&select=status,claimed_by'))[0] || null; } catch (e) { /* the next tick looks again */ }
     if (row && (['cancelled', 'succeeded', 'failed'].includes(row.status) || row.claimed_by !== agentOf(c))) {
       return endJob(c, st, row.status === 'cancelled'
         ? { outcome: 'none', reason: 'cancelled', error: 'Cancelled in GST Keeper.' }
@@ -269,8 +273,16 @@
       st.pause_until = Date.now() + CLOSED_PAUSE_MS;
       return endJob(c, st, { outcome: 'retry', reason: 'stalled', error: 'The scheduled sync window was closed before this client finished.' });
     }
-    if ((await foreignPortalTabs(rj)).length) {
+    // A person and the portal in this Chrome: the portal keeps one login per browser,
+    // so the runner logs out and steps aside — for a portal tab opened now, or one
+    // left open that someone came back to (input at the PC in the last 5 minutes).
+    const others = await foreignPortalTabs(rj);
+    const known = new Set(rj.known_tabs || []);
+    if (others.some((t) => !known.has(t.id))) {
       return giveBack(c, st, 'Someone opened the GST portal in this Chrome; the scheduled client went back to the queue and the portal was logged out.');
+    }
+    if (others.length && (await personState()) === 'active') {
+      return giveBack(c, st, 'Someone is using this PC with a GST portal tab open; the scheduled client went back to the queue and the portal was logged out.');
     }
     const atLogin = aj.step === 'login' || aj.step === 'logout';
     if (atLogin && hb && hb.ok && (!hb.enabled || hb.paused || !hb.serves)) {
@@ -297,7 +309,7 @@
     let items = [];
     if (rj.run_id) {
       try {
-        items = await sel('sync_run_items?run_id=eq.' + rj.run_id + '&client_id=eq.' + rj.client_id
+        items = await query('sync_run_items?run_id=eq.' + rj.run_id + '&client_id=eq.' + rj.client_id
           + '&created_at=gte.' + encodeURIComponent(rj.since) + '&select=step,status,reason_class,message&order=created_at');
       } catch (e) {
         return { outcome: 'retry', reason: 'agent_error', error: 'Could not read the run ledger: ' + errText(e), result: { runner: 'chrome' } };
@@ -355,7 +367,7 @@
     let status = null;
     if (result.outcome !== 'none') {
       try {
-        const r = await rpc('portal_job_finish', {
+        const r = await call('portal_job_finish', {
           p_job_id: rj.id, p_agent: agentOf(c), p_outcome: result.outcome, p_reason_class: result.reason || null,
           p_error: result.error || null, p_result: result.result || null,
         });
@@ -386,7 +398,7 @@
     await save(st);
     await clearSlotIfOurs(rj.id);
     const closing = closeTab(rj); // logs the portal out at once
-    try { await rpc('portal_jobs_release', { p_agent: agentOf(c) }); } catch (e) { /* claimNext releases leftovers */ }
+    try { await call('portal_jobs_release', { p_agent: agentOf(c) }); } catch (e) { /* claimNext releases leftovers */ }
     await event(rj.id, 'info', 'release', why);
     await closing;
     st.last = { at: new Date().toISOString(), job_id: rj.id, client_name: rj.client_name, outcome: 'released', status: 'queued', reason: null, error: why };
@@ -442,8 +454,7 @@
   async function foreignPortalTabs(rj) {
     const tabs = await portalTabs();
     if (!rj) return tabs;
-    const known = new Set(rj.known_tabs || []);
-    return tabs.filter((t) => t.id !== rj.tab_id && t.windowId !== rj.window_id && t.openerTabId !== rj.tab_id && !known.has(t.id));
+    return tabs.filter((t) => t.id !== rj.tab_id && t.windowId !== rj.window_id && t.openerTabId !== rj.tab_id);
   }
   // 'active' when someone used this PC in the last 5 minutes ('idle', 'locked' otherwise).
   async function personState() {
@@ -451,7 +462,7 @@
   }
 
   async function event(jobId, level, step, message) {
-    try { await post('portal_job_events', [{ job_id: jobId, level, step, message: String(message).slice(0, 1000) }]); }
+    try { await within(post('portal_job_events', [{ job_id: jobId, level, step, message: String(message).slice(0, 1000) }]), 'POST portal_job_events'); }
     catch (e) { /* diagnostic only */ }
   }
 
@@ -496,6 +507,12 @@
     const runnerJob = (j) => (j && j.runner ? j.runner.jobId : null);
     if ((runnerJob(was) && runnerJob(was) !== runnerJob(now)) || (was && !now)) tick('slot');
   });
+  // Someone came back to this PC: if a portal tab is open, the runner steps aside (watch).
+  if (chrome.idle && chrome.idle.onStateChanged) {
+    chrome.idle.onStateChanged.addListener((now) => {
+      if (now === 'active') state().then((st) => { if (st.job) tick('person_back'); }).catch(() => {});
+    });
+  }
   // Someone opened the GST portal while a scheduled client runs: the runner steps aside.
   if (chrome.tabs && chrome.tabs.onUpdated) {
     const onPortal = (tabId) => { state().then((st) => { if (st.job && st.job.tab_id !== tabId) tick('portal_tab'); }).catch(() => {}); };

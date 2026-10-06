@@ -24,7 +24,7 @@ export type ClientDocRequest = Functions['client_doc_requests']['Returns'][numbe
 export type Tone = 'success' | 'warning' | 'info' | 'destructive' | 'secondary';
 export interface Actor { id: string; firstName: string }
 
-export type FactoryTab = 'overview' | 'rules' | 'ai' | 'consent';
+export type FactoryTab = 'overview' | 'types' | 'rules' | 'ai' | 'consent';
 
 /** A list's page in the URL (?p= by default); links to another list leave it out, so a new list starts on page 1. */
 export function useListPage(param = 'p', pageSize = 50) {

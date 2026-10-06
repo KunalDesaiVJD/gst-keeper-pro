@@ -18,6 +18,7 @@ import { after, before, test } from 'node:test';
 import { loadConfig } from '../src/config.js';
 import { makeDb } from '../src/db.js';
 import { stageExtension } from '../src/extension.js';
+import type { Page } from 'playwright';
 import { CaptchaFiller, ChromeRunner, RunnerPortal, sleep, startGateway } from './runnerHarness.js';
 
 const PGRST = process.env.E2E_RUNNER_PGRST;
@@ -93,6 +94,24 @@ async function snapshot(): Promise<string> {
   return out.join('\n');
 }
 const agentOf = async (r: ChromeRunner) => `chrome:${(await r.api<{ config: { id: string } }>('runnerGet')).config.id}`;
+/**
+ * A person's Sync in this Chrome: the app's Sync now and the popup call the same
+ * function. The test browser cannot route the first load of a tab the extension
+ * opens straight on a portal URL (it loads before the routing attaches), so the
+ * test loads that tab again; a real Chrome needs no help.
+ */
+async function personSync(r: ChromeRunner, user: string): Promise<Page> {
+  const before = new Set(r.ctx.pages());
+  await r.api('startAllClientsSectionPull', { mode: 'notices_bundle', clientIds: [ids[user]] });
+  const page = await waitFor("the person's tab", async () => r.ctx.pages().find((p) => !before.has(p)) ?? null);
+  await page.goto('https://services.gst.gov.in/services/login').catch(() => {});
+  return page;
+}
+/** The person stops their sync (the popup's Stop) and closes the tab. */
+async function personDone(r: ChromeRunner, page: Page) {
+  await r.clearJob();
+  await page.close().catch(() => {});
+}
 const starts = (jobId: string) => rest<{ message: string }[]>('GET', `portal_job_events?job_id=eq.${jobId}&step=eq.start&select=message`);
 
 before(async () => {
@@ -274,7 +293,7 @@ test("e: a person's sync in this Chrome comes first", { skip }, async () => {
   const r = A!;
   // A person's Sync (the app's Sync now and the popup start the same function) while the runner is idle.
   filler.allow = (u) => u !== 'jaya';
-  await r.api('startAllClientsSectionPull', { mode: 'notices_bundle', clientIds: [ids.jaya] });
+  let person = await personSync(r, 'jaya');
   await enqueue('asha');
   await r.tick();
   await sleep(3000);
@@ -284,8 +303,7 @@ test("e: a person's sync in this Chrome comes first", { skip }, async () => {
   assert.equal(st.job, null);
   assert.equal((await latestJob('asha')).status, 'queued', 'the runner waits');
   // The person stops their sync and closes the tab; the runner goes on.
-  await r.clearJob();
-  for (const p of r.portalPages()) await p.close();
+  await personDone(r, person);
   await r.tick();
   const a = await waitFor('Asha to finish', () => ended('asha'), 120_000);
   assert.equal(a.status, 'succeeded');
@@ -297,7 +315,7 @@ test("e: a person's sync in this Chrome comes first", { skip }, async () => {
   await waitFor('Bina waiting for the fill', async () => { const aj = await r.activeJob(); return !!aj?.runner && !!aj.captchaWaitSince; });
   const held = await latestJob('bina');
   assert.equal(held.status, 'running');
-  await r.api('startAllClientsSectionPull', { mode: 'notices_bundle', clientIds: [ids.jaya] });
+  person = await personSync(r, 'jaya');
   const back = await waitFor('Bina given back', async () => { const j = await latestJob('bina'); return j.status === 'queued' && !j.claimed_by && j; });
   assert.equal(back.id, held.id);
   assert.equal(back.attempts, 0, 'no try counted');
@@ -309,8 +327,7 @@ test("e: a person's sync in this Chrome comes first", { skip }, async () => {
   assert.ok(release.some((e) => /person/.test(e.message)), JSON.stringify(release));
 
   // The person is done: the runner takes Bina again.
-  await r.clearJob();
-  for (const p of r.portalPages()) await p.close();
+  await personDone(r, person);
   filler.allow = () => true;
   await r.tick();
   const b = await waitFor('Bina to finish', () => ended('bina'), 120_000);
