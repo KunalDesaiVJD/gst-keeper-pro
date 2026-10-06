@@ -59,6 +59,8 @@ export interface BuildOutcome {
   cards: { recipe: string; issueId: string | null; status: string; saved: boolean; version: number | null; error?: string }[];
   /** A saved version changed an issue's explained amount (reload the notice). */
   touchedIssues: boolean;
+  /** The missing portal pulls queued for the autopilot (opts.queueMissing). */
+  queued?: QueueOutcome;
   error?: string;
 }
 
@@ -80,14 +82,22 @@ export async function saveCards(cards: EvidenceCard[], saved: SavedAnnexure[], o
 
 /**
  * Builds and saves a notice's evidence. auto: true saves only what is new or
- * changed, as 'Auto' (what the Evidence tab does on open, and the Reply
- * Factory's batch button); auto: false saves every card as the named person.
+ * changed, as 'Auto' (what the Evidence tab does on open, the Reply Factory's
+ * batch button and the background batch); auto: false saves every card as the
+ * named person. queueMissing: also queue the portal pulls the workings miss for
+ * the autopilot (callers pass it only while the autopilot is on).
  */
-export async function buildEvidenceForNotice(noticeId: string, opts: { auto: boolean; actorName?: string | null }): Promise<BuildOutcome> {
+export async function buildEvidenceForNotice(
+  noticeId: string,
+  opts: { auto: boolean; actorName?: string | null; queueMissing?: boolean; actor?: { id?: string | null; firstName?: string | null } | null },
+): Promise<BuildOutcome> {
   try {
     const b = await loadEvidence(noticeId);
     const r = await saveCards(b.cards, b.saved, opts);
-    return { noticeId, ...r };
+    if (!opts.queueMissing) return { noticeId, ...r };
+    const plan = mergePlans(b.cards.map((c) => c.result.readiness.plan));
+    const queued = plan.length ? await queueMissing(b.inputs.notice.clientId, plan, opts.actor ?? null) : undefined;
+    return { noticeId, ...r, ...(queued ? { queued } : {}) };
   } catch (e) {
     return { noticeId, cards: [], touchedIssues: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -99,7 +109,7 @@ export async function buildEvidenceForNotice(noticeId: string, opts: { auto: boo
  */
 export async function buildEvidenceForNotices(
   noticeIds: string[],
-  opts: { auto: boolean; actorName?: string | null; concurrency?: number },
+  opts: { auto: boolean; actorName?: string | null; concurrency?: number; queueMissing?: boolean },
   onProgress?: (done: number, total: number, last: BuildOutcome) => void,
 ): Promise<BuildOutcome[]> {
   const out: BuildOutcome[] = [];

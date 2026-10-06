@@ -59,8 +59,9 @@ AS $$
       'issues_extracted', (SELECT count(*) FROM public.notice_issues i WHERE i.source = 'extracted'),
       'issues_unverified', (SELECT count(*) FROM public.notice_issues i WHERE NOT i.verified),
       'ai_done', (SELECT count(*) FROM public.notice_extractions x WHERE x.source = 'ai' AND x.status = 'done'),
-      'ai_outcomes', (SELECT coalesce(jsonb_object_agg(coalesce(outcome, status), n), '{}'::jsonb)
-                        FROM (SELECT outcome, status, count(*) n FROM public.notice_extractions WHERE source = 'ai' GROUP BY 1, 2) o)),
+      'ai_outcomes', (SELECT coalesce(jsonb_object_agg(k, n), '{}'::jsonb)
+                        FROM (SELECT coalesce(outcome, status) AS k, count(*) n FROM public.notice_extractions
+                               WHERE source = 'ai' GROUP BY 1) o)),
     'accuracy', jsonb_build_object(
       'due_date_verified', (SELECT count(*) FROM ai_fields WHERE field = 'due_date'),
       'due_date_exact', (SELECT count(*) FROM ai_fields WHERE field = 'due_date' AND rf ->> 'result' = 'confirmed'),

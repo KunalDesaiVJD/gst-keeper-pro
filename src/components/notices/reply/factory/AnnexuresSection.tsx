@@ -17,6 +17,7 @@ import { WS_BTN, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_
 import { ToneBadge } from '@/components/notices/autopilot/parts';
 import { Pager } from '@/components/notices/Pager';
 import { buildEvidenceForNotice, type BuildOutcome } from '@/lib/reply';
+import { autopilotOn } from '@/lib/reply/autoBuild';
 import { noticesListHref } from '@/lib/noticeQueries';
 import { fmtDate, plural } from '@/lib/noticeFormat';
 import { fmtWhen } from '@/lib/autopilot';
@@ -76,9 +77,14 @@ export const AnnexuresSection: React.FC<{ s: ReplyFactoryStatus; show: string; c
   const buildAll = async () => {
     const list = [...pending];
     if (!list.length) return;
+    const queueMissing = await autopilotOn().catch(() => false);
     const ok = await confirm({
       title: `Build evidence for ${plural(list.length, 'notice')}?`,
-      description: 'For each open ASMT-10, DRC-01A, DRC-01B and DRC-01C notice without a ready annexure, the app runs the evidence recipes on the portal figures it already holds and saves the annexures as built automatically. Where portal figures are missing the annexure waits for data; each notice\'s Evidence tab says what to fetch. Nothing is filed or sent to anyone.',
+      description: 'For each open ASMT-10, DRC-01A, DRC-01B and DRC-01C notice without a ready annexure, the app runs the evidence recipes on the portal figures it already holds and saves the annexures as built automatically. '
+        + (queueMissing
+          ? 'Where portal figures are missing, the pulls are queued for the autopilot and the annexure is built again when the data arrives.'
+          : 'Where portal figures are missing the annexure waits for data; the autopilot is off, so each notice\'s Evidence tab says what to fetch.')
+        + ' Nothing is filed or sent to anyone.',
       confirmText: 'Build evidence',
     });
     if (!ok) return;
@@ -90,7 +96,7 @@ export const AnnexuresSection: React.FC<{ s: ReplyFactoryStatus; show: string; c
       tally.current = t;
       setRun({ ...tally });
       try {
-        const r = await buildEvidenceForNotice(t.notice.id, { auto: true });
+        const r = await buildEvidenceForNotice(t.notice.id, { auto: true, queueMissing });
         const out = buildOutcome(r);
         if (out === 'built') tally.built += 1;
         else if (out === 'needs_data') tally.needs += 1;

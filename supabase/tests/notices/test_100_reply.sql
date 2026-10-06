@@ -122,6 +122,17 @@ INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, descrip
 SELECT t_eq((SELECT string_agg(g.reference_number, ' ' ORDER BY g.reference_number) FROM notice_extractions x JOIN gst_notices g ON g.id = x.notice_id
               WHERE x.source = 'ai'),
             'ZD-01C ZD-ASMT', 'auto-read: the ASMT-10 of the client with consent; not the GSTR-3A, not a client without consent');
+-- A client's first sync brings old and closed notices: those are not read by themselves.
+INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, pdf_url, staff_status) VALUES
+ ('c4200000-0000-0000-0000-000000000033', 'c4100000-0000-0000-0000-000000000001', 'notices', 'n4', 'Scrutiny Of Returns',
+  'Notice for intimating discrepancies in the return after scrutiny (ASMT-10)', ist_today() - 200, 'ZD-OLD',
+  'https://example.test/storage/v1/object/public/notice-pdfs/old.pdf', NULL),
+ ('c4200000-0000-0000-0000-000000000034', 'c4100000-0000-0000-0000-000000000001', 'notices', 'n5', 'Scrutiny Of Returns',
+  'Notice for intimating discrepancies in the return after scrutiny (ASMT-10)', ist_today(), 'ZD-SHUT',
+  'https://example.test/storage/v1/object/public/notice-pdfs/shut.pdf', 'Closed');
+SELECT t_eq((SELECT count(*) FROM notice_extractions x JOIN gst_notices g ON g.id = x.notice_id
+              WHERE x.source = 'ai' AND g.reference_number IN ('ZD-OLD', 'ZD-SHUT')), 0::bigint,
+            'auto-read skips a notice issued long ago and a closed one');
 
 -- ── Claim, cap, finish ─────────────────────────────────────────────────────
 DO $$ DECLARE j jsonb; BEGIN

@@ -59,6 +59,13 @@ function useTypeFilters(urlState: boolean): [Filters, (patch: Partial<Filters>) 
 
 const istDay = (ts: string) => fmtDate(new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
 
+/** The rule's label without a trailing "(DRC-01A)" that only repeats the code beside it. */
+function typeLabel(r: NoticeTypeRow): string {
+  const label = r.label ?? '';
+  const tail = `(${r.form_code ?? ''})`;
+  return r.form_code && label.endsWith(tail) ? label.slice(0, -tail.length).trim() : label;
+}
+
 /** "Changed by Kunal on 06 Oct 2026", or "Default setting" while nobody has changed it. */
 function changedWords(r: NoticeTypeRow): string {
   if (!r.updated_by_name) return 'Default setting';
@@ -192,9 +199,9 @@ export const NoticeTypesSettings: React.FC<{
     <div className={cn('space-y-2', className)}>
       <p className="text-xs leading-relaxed text-muted-foreground">
         {RESPONSE_NEEDS.map((d) => (
-          <React.Fragment key={d.key}><span className="font-medium text-foreground">{d.label}</span>: {d.hint}. </React.Fragment>
+          <React.Fragment key={d.key}><span className="font-medium text-foreground">{d.label}</span>: {d.short} · </React.Fragment>
         ))}
-        Types taken off the dashboard still appear in All notices and the Work queue.
+        types off the dashboard still appear in All notices and the Work queue.
       </p>
       {!canEdit && <Note tone="info">Only a superadmin or a GST manager can change these settings. You can read them.</Note>}
 
@@ -228,7 +235,7 @@ export const NoticeTypesSettings: React.FC<{
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="font-mono text-xs font-semibold">{r.form_code}</div>
-                      <div className="break-words text-sm leading-snug">{r.label}</div>
+                      <div className="break-words text-sm leading-snug">{typeLabel(r)}</div>
                       <div className="text-[11px] text-foreground/70">{r.category || 'No category'}{!r.is_active && ' · not in use'}</div>
                     </div>
                     <div className="shrink-0 text-right text-xs">
@@ -266,10 +273,9 @@ export const NoticeTypesSettings: React.FC<{
                   {rows.map((r) => (
                     <tr key={r.form_code} className={cn(WS_TR, !r.is_active && 'bg-muted/40')}>
                       <td className={cn(WS_TD, 'min-w-[16rem]')}>
-                        <div className="flex flex-wrap items-baseline gap-x-2">
-                          <span className="font-mono text-xs font-semibold">{r.form_code}</span>
-                          <span className="leading-snug">{r.label}</span>
-                          {!r.is_active && <span className="text-[11px] font-medium text-foreground/70">not in use</span>}
+                        <div className="leading-snug">
+                          <span className="mr-2 font-mono text-xs font-semibold">{r.form_code}</span>{typeLabel(r)}
+                          {!r.is_active && <span className="ml-2 text-[11px] font-medium text-foreground/70">not in use</span>}
                         </div>
                         <div className="text-[11px] text-foreground/70">{changedWords(r)}</div>
                       </td>

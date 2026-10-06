@@ -51,7 +51,9 @@ export function readinessText(r: NoticePlanRow): string {
 
 export function dueCell(r: NoticePlanRow) {
   const d = r.days_to_plan_due;
-  if (d === null || d === undefined || !r.plan_due) return <span className="text-muted-foreground">no date</span>;
+  if (d === null || d === undefined || !r.plan_due) {
+    return <span className="text-muted-foreground">{r.response_need === 'none' ? 'no reply needed' : 'no date'}</span>;
+  }
   return (
     <span className="leading-tight">
       <span className={cn('block font-semibold tabular-nums', d < 0 ? 'text-destructive-strong' : d <= 3 ? 'text-warning-foreground' : '')}>

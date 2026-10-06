@@ -22,14 +22,19 @@ export interface ResponseNeedDef {
   chip: string;
   /** Red, amber, neutral (gstr9 Badge variants). */
   tone: 'destructive' | 'warning' | 'secondary';
-  /** What it means, in one line. */
+  /** What it means, in one line (the chip's tooltip). */
   hint: string;
+  /** The same in a few words (the settings' explanation line). */
+  short: string;
 }
 
 export const RESPONSE_NEEDS: ResponseNeedDef[] = [
-  { key: 'critical', label: 'Reply required', chip: 'Critical', tone: 'destructive', hint: 'a reply, appearance or payment is due by a date' },
-  { key: 'optional', label: 'Reply optional', chip: 'Optional', tone: 'warning', hint: 'the firm may respond (say, to a DRC-01A intimation) but need not' },
-  { key: 'none', label: 'No reply needed', chip: 'Info only', tone: 'secondary', hint: 'an acknowledgement, approval, own filing or payment: read it and close it' },
+  { key: 'critical', label: 'Reply required', chip: 'Critical', tone: 'destructive',
+    hint: 'a reply, appearance or payment is due by a date', short: 'due by a date' },
+  { key: 'optional', label: 'Reply optional', chip: 'Optional', tone: 'warning',
+    hint: 'the firm may respond (say, to a DRC-01A intimation) but need not', short: 'the firm may respond, ranked lower' },
+  { key: 'none', label: 'No reply needed', chip: 'Info only', tone: 'secondary',
+    hint: 'an acknowledgement, approval, own filing or payment: read it and close it', short: 'read and close, never overdue' },
 ];
 
 const BY_KEY = new Map(RESPONSE_NEEDS.map((d) => [d.key, d]));

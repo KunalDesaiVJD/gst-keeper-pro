@@ -178,11 +178,23 @@ BEGIN
   IF NOT coalesce((SELECT s.read_enabled AND s.auto_read_new FROM public.ai_settings s WHERE s.id), false) THEN
     RETURN false;
   END IF;
-  SELECT g.id, g.client_id, g.form_code, r.auto_close_reason
+  SELECT g.id, g.client_id, g.form_code, g.staff_status, g.issue_date, r.auto_close_reason
     INTO v_n
     FROM public.gst_notices g LEFT JOIN public.notice_form_rules r ON r.form_code = g.form_code
    WHERE g.id = p_notice_id AND g.deleted_at IS NULL;
   IF v_n.id IS NULL OR v_n.auto_close_reason IS NOT NULL OR v_n.form_code IN ('GSTR-3A', 'LUT', 'DRC-03') THEN RETURN false; END IF;
+  -- Only new, open notices read themselves: a client's first sync brings years of closed
+  -- and old notices, and reading those is a person's choice (Read the PDF).
+  IF public.notice_is_closed(v_n.staff_status)
+     OR v_n.issue_date < public.ist_today() - coalesce((SELECT s.new_notice_max_age_days FROM public.notice_settings s LIMIT 1), 30) THEN
+    RETURN false;
+  END IF;
+  -- A notice type that needs no reply (20261008150000) is not read either.
+  IF to_regclass('public.notice_type_settings') IS NOT NULL THEN
+    IF EXISTS (SELECT 1 FROM public.notice_type_settings t WHERE t.form_code = v_n.form_code AND t.response_need = 'none') THEN
+      RETURN false;
+    END IF;
+  END IF;
   IF public.ai_read_allowed(v_n.client_id) IS NOT NULL THEN RETURN false; END IF;
   v_doc := public.notice_read_document(p_notice_id);
   IF v_doc IS NULL THEN RETURN false; END IF;

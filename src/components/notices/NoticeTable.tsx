@@ -27,6 +27,15 @@ import { cn } from '@/lib/utils';
 
 export function DueCell({ r }: { r: NoticeFact }) {
   if (r.reply_date) return <span className="text-xs"><span className="block font-medium text-success-strong">Replied</span><span className="text-muted-foreground">{fmtDate(r.reply_date)}</span></span>;
+  // A type that needs no reply has no reply clock: never late (contract §A).
+  if (r.response_need === 'none') {
+    return (
+      <span className="text-xs leading-tight">
+        {r.effective_due && <span className="block tabular-nums">{fmtDate(r.effective_due)}</span>}
+        <span className="text-muted-foreground">no reply needed</span>
+      </span>
+    );
+  }
   if (!r.effective_due) return <span className="text-xs text-muted-foreground">no due date</span>;
   const d = r.days_to_due ?? 0;
   const open = r.is_open;

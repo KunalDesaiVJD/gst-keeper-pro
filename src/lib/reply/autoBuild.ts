@@ -7,8 +7,7 @@
 // at a time, after the page has loaded its own data.
 import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { mergePlans, queueMissing, saveCards } from './build';
-import { loadEvidence } from './load';
+import { buildEvidenceForNotice } from './build';
 
 const LAST_RUN_KEY = 'gstk.autoEvidence.lastRun';
 const EVERY_MS = 3 * 60 * 60 * 1000;
@@ -23,7 +22,7 @@ function markRun(at: number) {
   try { window.localStorage.setItem(LAST_RUN_KEY, String(at)); } catch { /* storage blocked: runs again next time */ }
 }
 
-async function autopilotOn(): Promise<boolean> {
+export async function autopilotOn(): Promise<boolean> {
   const { data } = await supabase.from('autopilot_settings').select('enabled, paused_until').maybeSingle();
   return !!data?.enabled && !(data.paused_until && new Date(data.paused_until) > new Date());
 }
@@ -32,18 +31,12 @@ async function autopilotOn(): Promise<boolean> {
 export async function buildPendingEvidence(limit = BATCH): Promise<number> {
   const { data, error } = await supabase.rpc('reply_evidence_pending', { p_limit: limit });
   if (error || !data?.length) return 0;
-  const fetchMissing = await autopilotOn().catch(() => false);
+  const queueMissing = await autopilotOn().catch(() => false);
   let built = 0;
+  // One at a time; a notice that fails never stops the batch (the Reply Factory lists what is still missing).
   for (const row of data) {
-    try {
-      const b = await loadEvidence(row.notice_id);
-      await saveCards(b.cards, b.saved, { auto: true });
-      built += 1;
-      if (fetchMissing) {
-        const plan = mergePlans(b.cards.map((c) => c.result.readiness.plan));
-        if (plan.length) await queueMissing(row.client_id, plan, null);
-      }
-    } catch { /* one notice failing never stops the batch; the Reply Factory lists what is still missing */ }
+    const r = await buildEvidenceForNotice(row.notice_id, { auto: true, queueMissing });
+    if (!r.error) built += 1;
   }
   return built;
 }

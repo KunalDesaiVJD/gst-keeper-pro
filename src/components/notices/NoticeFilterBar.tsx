@@ -95,7 +95,7 @@ export const NoticeFilterBar: React.FC<{
           extraOptions={[{ value: 'me', label: 'Me' }, { value: 'none', label: 'Unassigned' }, ...staff.map((s) => ({ value: s.userId, label: s.name }))]} />
         <FilterPill label="Category" allLabel="Any" value={params.category ?? 'all'} onChange={set('category')} options={opts?.categories ?? []} />
         <FilterPill label="Form" allLabel="Any" value={params.form ?? 'all'} onChange={set('form')} options={[]}
-          extraOptions={(opts?.forms ?? []).map((f) => ({ value: f.code, label: `${f.code} · ${f.label}` }))} />
+          extraOptions={[...(opts?.forms ?? []).map((f) => ({ value: f.code, label: `${f.code} · ${f.label}` })), { value: 'none', label: 'Not recognised' }]} />
         <FilterPill label="FY" allLabel="Any" value={params.fy ?? 'all'} onChange={set('fy')} options={[]}
           extraOptions={(opts?.fys ?? []).map((y) => ({ value: y, label: fmtFy(y) }))} />
         <FilterPill label="Priority" allLabel="Any" value={params.priority ?? 'all'} onChange={set('priority')} options={['High', 'Medium', 'Low']} />
