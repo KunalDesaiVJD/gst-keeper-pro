@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
+import { describeClientDeleteError } from '@/lib/clientDeleteError';
 import { toast } from 'sonner';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import { useAuth } from '@/contexts/AuthContext';
@@ -147,7 +148,7 @@ const ClientsPage: React.FC = () => {
       .eq('id', id);
 
     if (error) {
-      toast.error('Failed to delete client: ' + error.message);
+      toast.error('Failed to delete client: ' + describeClientDeleteError(error));
     } else {
       toast.success('Client deleted successfully');
       fetchClients();

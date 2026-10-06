@@ -3,7 +3,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { prettyPeriod } from '@/lib/gstReminders';
-import { runScheduledAlerts, flushOutbox } from '@/lib/noticeAlertQueue';
+import { runNoticeAlerts, describeAlertRun, setAlertsMode, type AlertsMode } from '@/lib/noticeAlertQueue';
+import { buildEmailHtml } from '@/lib/emailTemplate';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import EmailTemplatesEditor from '@/components/reminders/EmailTemplatesEditor';
 import ReturnReminderScheduleCard from '@/components/reminders/ReturnReminderScheduleCard';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -12,10 +14,10 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { BellRing, Send, RefreshCw, Loader2, Mail, Clock, CheckCircle2, XCircle, Ban, AlertTriangle, Shield } from 'lucide-react';
+import { BellRing, Send, RefreshCw, Loader2, Mail, Clock, CheckCircle2, XCircle, Ban, AlertTriangle, Shield, Eye } from 'lucide-react';
 
 // ── Types ───────────────────────────────────────────────────────────────────
-type OutboxStatus = 'pending' | 'sent' | 'failed' | 'skipped' | 'cancelled';
+type OutboxStatus = 'pending' | 'sent' | 'failed' | 'skipped' | 'cancelled' | 'preview';
 
 interface OutboxRow {
   id: string;
@@ -69,9 +71,17 @@ const STATUS_META: Record<OutboxStatus, { label: string; className: string; icon
   failed: { label: 'Failed', className: 'bg-red-100 text-red-800 border-red-200', icon: <XCircle className="h-3 w-3" /> },
   skipped: { label: 'Skipped', className: 'bg-slate-100 text-slate-600 border-slate-200', icon: <Ban className="h-3 w-3" /> },
   cancelled: { label: 'Cancelled', className: 'bg-slate-100 text-slate-600 border-slate-200', icon: <Ban className="h-3 w-3" /> },
+  // Notice alerts written while the engine is in preview mode: never sent.
+  preview: { label: 'Preview', className: 'bg-violet-100 text-violet-800 border-violet-200', icon: <Eye className="h-3 w-3" /> },
 };
 
-const FILTERS = ['all', 'pending', 'sent', 'failed'] as const;
+const FILTERS = ['all', 'pending', 'sent', 'failed', 'preview'] as const;
+
+const ALERT_MODES: { value: AlertsMode; label: string; hint: string }[] = [
+  { value: 'off', label: 'Off', hint: 'No notice alerts are written.' },
+  { value: 'preview', label: 'Preview', hint: 'Alerts are written to the outbox as previews and never sent — review them here before going live.' },
+  { value: 'live', label: 'Live', hint: 'Alerts are e-mailed to staff (the outbox is sent every 15 minutes).' },
+];
 type FilterKey = (typeof FILTERS)[number];
 
 // ── Page ───────────────────────────────────────────────────────────────────────
@@ -83,7 +93,7 @@ interface RemindersPageProps {
 }
 
 const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
-  const { user, isStaffRole } = useAuth();
+  const { user, isStaffRole, canManageNoticeAlerts } = useAuth();
   const { selectedMonth } = useMonth();
 
   const [rows, setRows] = useState<OutboxRow[]>([]);
@@ -95,10 +105,13 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
   const [filter, setFilter] = useState<FilterKey>('all');
   const [alertRules, setAlertRules] = useState<AlertRuleRow[]>([]);
   const [runningAlerts, setRunningAlerts] = useState(false);
+  const [alertsMode, setAlertsModeState] = useState<AlertsMode | null>(null);
+  const [savingMode, setSavingMode] = useState(false);
+  const [previewRow, setPreviewRow] = useState<{ subject: string; html: string; to: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: outbox }, { data: clients }, { data: rules }] = await Promise.all([
+    const [{ data: outbox }, { data: clients }, { data: rules }, settingsRes] = await Promise.all([
       supabase
         .from('email_outbox')
         .select('id, client_id, to_email, kind, return_type, period_month, subject, status, error, reminder_step, created_at, sent_at, notice_id')
@@ -106,7 +119,9 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
         .limit(400),
       supabase.from('clients').select('id, name'),
       supabase.from('notice_alert_rules').select('id, alert_key, name, description, event_type, schedule, recipient, is_active, priority').order('alert_key'),
+      supabase.from('notice_settings').select('alerts_mode').maybeSingle(),
     ]);
+    setAlertsModeState(settingsRes.error ? null : ((settingsRes.data?.alerts_mode ?? null) as AlertsMode | null));
     setRows((outbox ?? []) as OutboxRow[]);
     setNames(Object.fromEntries((clients ?? []).map((c) => [c.id as string, c.name as string])));
     setAlertRules((rules ?? []) as AlertRuleRow[]);
@@ -140,10 +155,24 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
   };
 
   const counts = useMemo(() => {
-    const c = { pending: 0, sent: 0, failed: 0 };
+    const c = { pending: 0, sent: 0, failed: 0, preview: 0 };
     for (const r of rows) if (r.status in c) (c as Record<string, number>)[r.status]++;
     return c;
   }, [rows]);
+
+  // Shows a notice alert exactly as it will look when sent (same letterhead
+  // shell the sender applies), so a preview week can be reviewed here.
+  const openPreview = async (id: string) => {
+    const { data, error } = await supabase.from('email_outbox')
+      .select('to_email, subject, body, kind, template_key, render_vars').eq('id', id).maybeSingle();
+    if (error || !data) { toast.error('Could not load this e-mail.'); return; }
+    const vars = (data.render_vars ?? {}) as Record<string, string>;
+    setPreviewRow({
+      to: data.to_email,
+      subject: data.subject,
+      html: buildEmailHtml({ key: data.template_key, kind: data.kind, message: data.body, vars }),
+    });
+  };
 
   const visible = useMemo(
     () => (filter === 'all' ? rows : rows.filter((r) => r.status === filter)),
@@ -229,6 +258,7 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
             <CardTitle className="text-base">Email outbox</CardTitle>
             <CardDescription>
               {counts.pending} queued · {counts.sent} sent · {counts.failed} failed
+              {counts.preview > 0 ? ` · ${counts.preview} notice-alert previews (not sent)` : ''}
             </CardDescription>
           </div>
           <Tabs value={filter} onValueChange={(v) => setFilter(v as FilterKey)}>
@@ -281,7 +311,17 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
                           <div>{r.return_type}</div>
                           <div className="text-xs text-muted-foreground">{prettyPeriod(r.period_month)}</div>
                         </td>
-                        <td className="max-w-[22rem] truncate py-2.5 pr-3" title={r.subject}>{r.subject}</td>
+                        <td className="max-w-[22rem] truncate py-2.5 pr-3" title={r.subject}>
+                          {r.kind === 'notice_alert' ? (
+                            <button
+                              type="button"
+                              className="max-w-full truncate text-left text-primary hover:underline"
+                              onClick={() => void openPreview(r.id)}
+                            >
+                              {r.subject}
+                            </button>
+                          ) : r.subject}
+                        </td>
                         <td className="py-2.5 pr-3">
                           <Badge variant="outline" className={`gap-1 ${meta.className}`}>{meta.icon}{meta.label}</Badge>
                           {r.status === 'failed' && r.error && (
@@ -307,8 +347,35 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
               <Shield className="h-4 w-4" /> Notice Alerts
             </CardTitle>
             <CardDescription>
-              Automatic email alerts for notice events — new notices, overdue, assignments, and more. Toggle individual rules on/off or run scheduled alerts manually.
+              Written by the database: new notices and assignments every 15 minutes, each owner's morning list at 09:30 IST, the weekly MIS on Mondays. Toggle individual rules or run them now — an alert is never written twice.
             </CardDescription>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-medium text-muted-foreground">Mode:</span>
+              {ALERT_MODES.map((m) => (
+                <Button
+                  key={m.value}
+                  size="sm"
+                  variant={alertsMode === m.value ? 'default' : 'outline'}
+                  className="h-7 px-2.5 text-xs"
+                  disabled={savingMode || !canManageNoticeAlerts() || alertsMode === null}
+                  title={m.hint}
+                  onClick={async () => {
+                    if (m.value === alertsMode) return;
+                    if (m.value === 'live' && !window.confirm('Switch notice alerts to live? From now on they are e-mailed to staff.')) return;
+                    setSavingMode(true);
+                    const err = await setAlertsMode(m.value, user?.firstName ?? null);
+                    setSavingMode(false);
+                    if (err) { toast.error(`Could not change the alert mode: ${err}`); return; }
+                    setAlertsModeState(m.value);
+                    toast.success(`Notice alerts: ${m.label}. ${m.hint}`);
+                  }}
+                >
+                  {m.label}
+                </Button>
+              ))}
+              {alertsMode === null && <span className="text-muted-foreground">(alert engine not installed yet)</span>}
+              {alertsMode && <span className="text-muted-foreground">{ALERT_MODES.find((m) => m.value === alertsMode)?.hint}</span>}
+            </div>
           </div>
           <Button
             size="sm"
@@ -317,19 +384,11 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
             className="gap-1.5 self-start"
             onClick={async () => {
               setRunningAlerts(true);
-              try {
-                const result = await runScheduledAlerts();
-                if (result.queued > 0) {
-                  flushOutbox();
-                  toast.success(`Queued ${result.queued} notice alert${result.queued === 1 ? '' : 's'}.`);
-                } else {
-                  toast.info('No notice alerts due right now.');
-                }
-                void load();
-              } catch {
-                toast.error('Failed to run notice alerts.');
-              }
+              const result = await runNoticeAlerts('all');
               setRunningAlerts(false);
+              if (result.error) { toast.error(result.error); return; }
+              toast.success(describeAlertRun(result));
+              void load();
             }}
           >
             {runningAlerts ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
@@ -377,6 +436,23 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!previewRow} onOpenChange={(o) => { if (!o) setPreviewRow(null); }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base">{previewRow?.subject}</DialogTitle>
+            <DialogDescription>To {previewRow?.to}</DialogDescription>
+          </DialogHeader>
+          {previewRow && (
+            <iframe
+              title="E-mail preview"
+              sandbox=""
+              srcDoc={previewRow.html}
+              className="h-[60vh] w-full rounded-md border bg-white"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Email templates — edit the wording right here (also under Settings). */}
       <div className="pt-2">

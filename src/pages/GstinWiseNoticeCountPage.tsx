@@ -1,285 +1,310 @@
-// GstinWiseNoticeCountPage — the destination behind Report > GSTIN Wise
-// Notice Count (see NoticesTopNav). Confirmed live against Notice Alert
-// (2026-08-26): same Total/Open/Closed/Replied breakdown as their Notice
-// Summary page, just grouped by company instead of by category — and its
-// grand total matches Notice Summary's grand total exactly (both fold in
-// Refund/DRC-03 alongside gst_notices), so this groups all three sources the
-// same way computeNoticeSummary already does per-category.
+// Notices & Litigation · GSTIN-wise count (audit U-72-1..4; L-12, L-13;
+// cross-cutting ui-b). One row per client with notices or an open matter:
+// open, overdue, due in 7 days, unassigned, exposure on open notices, the next
+// reply date, open matters with their outstanding demand and the last good
+// portal pull (red when older than a day). Counted from public.notice_facts
+// with the All notices list's own flags, so each number opens
+// noticesListHref({ filter, client }) and that list shows the same count.
+// Most overdue first, then exposure, then open — the command centre's
+// "Clients needing attention", whose "All clients" opens this page. Search,
+// the Show filter and the sort live in the URL. Clients left out of the sync
+// or marked inactive say so. Total, closed and replied stay in the export.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Navigate, Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import * as XLSX from 'xlsx';
+import { toast } from 'sonner';
+import { FileSpreadsheet, Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
-import { useNoticeSet } from '@/hooks/useNoticeSet';
-import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
-import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
-import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
-import FilterPill from '@/components/notices/FilterPill';
-import { Card, CardContent } from '@/components/ui/card';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { isClosed, isRefundClosed, isDrc03Closed } from '@/utils/noticeSummaryReport';
-import { isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
-import { renderReportToExcel, type ReportTable } from '@/utils/allClientsReports';
-import { Building2, Loader2, FileSpreadsheet, Search } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Badge } from '@/components/gstr9/badge';
+import { WS_BTN, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL } from '@/components/workspace/theme';
+import { NoticesShell } from '@/components/notices/NoticesShell';
+import { FilterPill } from '@/components/notices/FilterPill';
+import { AmountLink, AsOfLine, CountLink, FilterChips, SortHead, type Chip } from '@/components/notices/reports/ReportBits';
+import { loadCountRows, emptyCounts, type Counts } from '@/components/notices/reports/noticeCounts';
+import { clientRows, loadClientContext, type ClientReportRow } from '@/components/notices/reports/clientRows';
+import { noticesListHref, type NoticeListParams } from '@/lib/noticeQueries';
+import { daysBetween, istToday } from '@/lib/noticeFacts';
+import { dueWords, fmtAgo, fmtDate, fmtDateTime, fmtDay, fmtInrShort, plural } from '@/lib/noticeFormat';
+import { cn } from '@/lib/utils';
 
-interface ClientRow { id: string; name: string; gstin: string; }
+type SortKey = 'attention' | 'client' | 'open' | 'overdue' | 'due7' | 'unassigned' | 'exposure' | 'next' | 'matters' | 'pull';
+type Show = 'all' | 'open' | 'overdue' | 'nosync';
+const SORT_KEYS: SortKey[] = ['attention', 'client', 'open', 'overdue', 'due7', 'unassigned', 'exposure', 'next', 'matters', 'pull'];
+const SHOWS: { key: Show; label: string }[] = [
+  { key: 'open', label: 'With open notices' },
+  { key: 'overdue', label: 'With overdue notices' },
+  { key: 'nosync', label: 'Not synced in 24 h' },
+];
+/** Sorts that read naturally smallest first. */
+const ASCENDING: SortKey[] = ['client', 'next', 'pull'];
 
-type TypeOfNoticesFilter = 'all' | 'registration' | 'other';
+const attention = (a: ClientReportRow, b: ClientReportRow) =>
+  b.counts.overdue - a.counts.overdue || b.counts.exposure - a.counts.exposure || b.counts.open - a.counts.open || a.name.localeCompare(b.name);
 
-interface GstinCountRow {
-  clientId: string;
-  gstin: string;
-  name: string;
-  total: number;
-  open: number;
-  closed: number;
-  replied: number;
-  matterCount: number;
-  exposure: number;
+function sortValue(r: ClientReportRow, k: SortKey): number | string | null {
+  switch (k) {
+    case 'client': return r.name.toLowerCase();
+    case 'open': return r.counts.open;
+    case 'overdue': return r.counts.overdue;
+    case 'due7': return r.counts.due7;
+    case 'unassigned': return r.counts.unassigned;
+    case 'exposure': return r.counts.exposure;
+    case 'next': return r.counts.nextDue;
+    case 'matters': return r.matterOutstanding || r.matters;
+    // Never synced sorts as the stalest; clients left out of the sync go last.
+    case 'pull': return r.excluded ? null : r.lastPull ?? '0000';
+    default: return null;
+  }
 }
 
-interface MatterAgg { client_id: string; count: number; demand: number; }
-
 const GstinWiseNoticeCountPage: React.FC = () => {
-  const { isStaffRole } = useAuth();
-  const navigate = useNavigate();
-  const { rows: notices, refundRows: refunds, drc03Rows: drc03s, loading } = useNoticeSet();
-  const [clients, setClients] = useState<ClientRow[]>([]);
-  const [clientsLoading, setClientsLoading] = useState(true);
-  const [matterAggs, setMatterAggs] = useState<MatterAgg[]>([]);
-  const [typeFilter, setTypeFilter] = useState<TypeOfNoticesFilter>('all');
-  const [search, setSearch] = useState('');
+  const { isStaffRole, user, canExportData } = useAuth();
+  const [sp, setSp] = useSearchParams();
+  const meId = user?.id ?? null;
+  const today = istToday();
 
+  const sort = (SORT_KEYS.includes(sp.get('sort') as SortKey) ? sp.get('sort') : 'attention') as SortKey;
+  const dir: 'asc' | 'desc' = sp.get('dir') === 'asc' || sp.get('dir') === 'desc' ? (sp.get('dir') as 'asc' | 'desc') : ASCENDING.includes(sort) ? 'asc' : 'desc';
+  const show = (SHOWS.some((s) => s.key === sp.get('show')) ? sp.get('show') : 'all') as Show;
+  const qParam = sp.get('q') ?? '';
+  const [q, setQ] = useState(qParam);
+  useEffect(() => { setQ(qParam); }, [qParam]);
+
+  const set = (patch: Record<string, string | undefined>) => {
+    const next = new URLSearchParams(sp);
+    Object.entries(patch).forEach(([k, v]) => { if (v) next.set(k, v); else next.delete(k); });
+    setSp(next, { replace: false });
+  };
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [{ data: cData }, { data: mData }] = await Promise.all([
-        supabase.from('clients').select('id, name, gstin').order('name'),
-        supabase.from('litigation_matters').select('client_id, status, demand_tax, demand_interest, demand_penalty, demand_cess'),
-      ]);
-      if (cancelled) return;
-      setClients((cData || []) as ClientRow[]);
-      const agg = new Map<string, MatterAgg>();
-      ((mData || []) as any[]).filter(m => m.status !== 'Closed').forEach(m => {
-        if (!agg.has(m.client_id)) agg.set(m.client_id, { client_id: m.client_id, count: 0, demand: 0 });
-        const e = agg.get(m.client_id)!;
-        e.count += 1;
-        e.demand += (m.demand_tax ?? 0) + (m.demand_interest ?? 0) + (m.demand_penalty ?? 0) + (m.demand_cess ?? 0);
-      });
-      setMatterAggs([...agg.values()]);
-      setClientsLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    if (q === qParam) return;
+    const t = setTimeout(() => set({ q: q.trim() || undefined }), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+
+  const notices = useQuery({ queryKey: ['notice-report-rows', {}, meId], queryFn: () => loadCountRows({}, meId) });
+  const context = useQuery({ queryKey: ['notice-report-clients'], queryFn: loadClientContext });
+
+  const all = useMemo(() => (notices.data && context.data ? clientRows(notices.data, context.data) : []), [notices.data, context.data]);
+  const visible = useMemo(() => {
+    const term = qParam.trim().toLowerCase();
+    const list = all.filter((r) => {
+      if (term && !r.name.toLowerCase().includes(term) && !r.gstin.toLowerCase().includes(term)) return false;
+      if (show === 'open') return r.counts.open > 0;
+      if (show === 'overdue') return r.counts.overdue > 0;
+      if (show === 'nosync') return r.excluded || r.inactive || r.stale;
+      return true;
+    });
+    const sign = dir === 'asc' ? 1 : -1;
+    return list.sort((a, b) => {
+      if (sort === 'attention') return attention(a, b);
+      const va = sortValue(a, sort);
+      const vb = sortValue(b, sort);
+      if (va === vb) return attention(a, b);
+      if (va === null) return 1;
+      if (vb === null) return -1;
+      return sign * (va < vb ? -1 : 1);
+    });
+  }, [all, qParam, show, sort, dir]);
+  const total = useMemo(() => visible.reduce((acc, r) => {
+    const c = acc.counts;
+    (['total', 'open', 'overdue', 'due7', 'unassigned', 'replied', 'closed', 'exposure', 'exposureCount'] as const).forEach((k) => { c[k] += r.counts[k]; });
+    return { counts: c, matters: acc.matters + r.matters, outstanding: acc.outstanding + r.matterOutstanding };
+  }, { counts: emptyCounts(), matters: 0, outstanding: 0 }), [visible]);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
-  const filteredNotices = notices.filter((r) => {
-    if (typeFilter === 'registration') return isRegistrationDescription(r.description);
-    if (typeFilter === 'other') return !isRegistrationDescription(r.description);
-    return true;
-  });
+  const onSort = (k: SortKey) => set(k === sort
+    ? { sort: k === 'attention' ? undefined : k, dir: dir === 'asc' ? 'desc' : 'asc' }
+    : { sort: k === 'attention' ? undefined : k, dir: undefined });
+  // The total row is the firm-wide list only while every client with open notices is on screen.
+  const totalsLink = !qParam && (show === 'all' || show === 'open');
+  const chips: Chip[] = [];
+  if (qParam) chips.push({ key: 'q', label: `Search: ${qParam}`, onRemove: () => { setQ(''); set({ q: undefined }); } });
+  if (show !== 'all') chips.push({ key: 'show', label: SHOWS.find((s) => s.key === show)?.label ?? show, onRemove: () => set({ show: undefined }) });
+  const loading = !notices.data || !context.data;
+  const error = notices.error ?? context.error;
 
-  const matterMap = useMemo(() => {
-    const m = new Map<string, MatterAgg>();
-    matterAggs.forEach(a => m.set(a.client_id, a));
-    return m;
-  }, [matterAggs]);
-
-  const countsByClient = useMemo(() => {
-    const m = new Map<string, GstinCountRow>();
-    const ensure = (clientId: string) => {
-      let e = m.get(clientId);
-      if (!e) {
-        const c = clients.find((c) => c.id === clientId);
-        const ma = matterMap.get(clientId);
-        e = { clientId, gstin: c?.gstin || '—', name: c?.name || '—', total: 0, open: 0, closed: 0, replied: 0, matterCount: ma?.count ?? 0, exposure: ma?.demand ?? 0 };
-        m.set(clientId, e);
-      }
-      return e;
-    };
-    filteredNotices.forEach((r) => {
-      const e = ensure(r.client_id);
-      e.total += 1;
-      if (isClosed(r.staff_status)) e.closed += 1; else e.open += 1;
-      if (r.reply_date) e.replied += 1;
-    });
-    if (typeFilter === 'all') {
-      refunds.forEach((r) => {
-        if (!r.client_id) return;
-        const e = ensure(r.client_id);
-        e.total += 1;
-        if (isRefundClosed(r.status)) e.closed += 1; else e.open += 1;
-      });
-      drc03s.forEach((r) => {
-        if (!r.client_id) return;
-        const e = ensure(r.client_id);
-        e.total += 1;
-        if (isDrc03Closed(r.status)) e.closed += 1; else e.open += 1;
-      });
-    }
-    for (const [cid, ma] of matterMap) {
-      if (!m.has(cid)) ensure(cid);
-    }
-    return Array.from(m.values()).sort((a, b) => b.total - a.total);
-  }, [filteredNotices, refunds, drc03s, clients, typeFilter, matterMap]);
-
-  const filteredCounts = countsByClient.filter((r) => {
-    const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return r.gstin.toLowerCase().includes(q) || r.name.toLowerCase().includes(q);
-  });
-
-  const fmtINR = (n: number) => n > 0 ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n) : '—';
-
-  const grandTotal = filteredCounts.reduce(
-    (acc, r) => ({ total: acc.total + r.total, open: acc.open + r.open, closed: acc.closed + r.closed, replied: acc.replied + r.replied, matters: acc.matters + r.matterCount, exposure: acc.exposure + r.exposure }),
-    { total: 0, open: 0, closed: 0, replied: 0, matters: 0, exposure: 0 },
-  );
-
-  const handleExport = () => {
-    const table: ReportTable = {
-      title: 'GSTIN Wise Notice Count',
-      subtitle: `${filteredCounts.length} compan${filteredCounts.length === 1 ? 'y' : 'ies'}`,
-      headers: ['GSTIN', 'Trade Name', 'Total', 'Open', 'Closed', 'Replied', 'Matters', 'Exposure'],
-      rows: [
-        ...filteredCounts.map((r) => [r.gstin, r.name, r.total, r.open, r.closed, r.replied, r.matterCount, r.exposure]),
-        ['Total', '', grandTotal.total, grandTotal.open, grandTotal.closed, grandTotal.replied, grandTotal.matters, grandTotal.exposure],
-      ],
-      fileNameBase: 'gstin_wise_notice_count',
-      columnWidths: [18, 24, 8, 8, 8, 8, 8, 14],
-    };
-    renderReportToExcel(table);
+  const exportXlsx = () => {
+    const data = visible.map((r) => ({
+      GSTIN: r.gstin, Client: r.name, Open: r.counts.open, Overdue: r.counts.overdue, 'Due in 7 days': r.counts.due7,
+      Unassigned: r.counts.unassigned, 'Exposure (₹)': Math.round(r.counts.exposure), 'Next reply due': fmtDate(r.counts.nextDue),
+      'Open matters': r.matters, 'Matters outstanding (₹)': Math.round(r.matterOutstanding),
+      'Last good pull': r.lastPull ? fmtDateTime(r.lastPull) : 'never', Sync: r.excluded ? 'excluded from sync' : r.inactive ? 'inactive' : r.loginFailed ? 'login failed' : '',
+      Replied: r.counts.replied, Closed: r.counts.closed, Total: r.counts.total,
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'GSTIN-wise');
+    XLSX.writeFile(wb, `GSTIN-wise notice count ${today}.xlsx`);
+    toast.success(`Exported ${plural(visible.length, 'client')}`);
   };
 
-  return (
-    <div className="space-y-4 animate-fade-in">
-      <NoticesPageHeader
-        title="GSTIN-wise Notice Count"
-        icon={Building2}
-        subtitle={
-          <>
-            <span className="flex items-center gap-1.5">
-              <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
-              <span>›</span>
-              <span>GSTIN Wise Notice Count</span>
-            </span>
-            <span>{filteredCounts.length} companies · {grandTotal.total} notices</span>
-          </>
-        }
-        actions={
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleExport}>
-            <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" /> Export to Excel
-          </Button>
-        }
-      />
+  const href = (r: ClientReportRow | null, p: Partial<NoticeListParams>) => noticesListHref(r ? { ...p, client: r.clientId } : p);
+  const who = (r: ClientReportRow | null) => (r ? r.name : 'All clients');
+  const countCell = (r: ClientReportRow | null, c: Counts, k: 'open' | 'overdue' | 'due7' | 'unassigned', what: string) =>
+    !r && !totalsLink ? <span className="tabular-nums">{c[k].toLocaleString('en-IN')}</span>
+      : <CountLink n={c[k]} to={href(r, { filter: k })} label={`${who(r)}, ${what}`} alarm={k === 'overdue'} onMuted={!r} />;
+  const exposureCell = (r: ClientReportRow | null, c: Counts) =>
+    !r && !totalsLink ? <span className="tabular-nums">{c.exposure ? fmtInrShort(c.exposure) : '—'}</span>
+      : <AmountLink amount={c.exposure} to={href(r, { filter: 'exposure' })} label={`${who(r)}, exposure on ${plural(c.exposureCount, 'open notice')}`} onMuted={!r} />;
+  const nextCell = (r: ClientReportRow) => {
+    const d = r.counts.nextDue;
+    if (!d) return <span className="text-muted-foreground">—</span>;
+    const days = daysBetween(today, d);
+    return (
+      <Link to={href(r, { filter: 'open', due: d })} className="block rounded text-xs leading-tight hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <span className="sr-only">{r.name}, next reply due: </span>
+        <span className={cn('block font-semibold text-primary', days <= 2 && 'text-destructive-strong')}>{fmtDay(d)}</span>
+        <span className="text-muted-foreground">{dueWords(days)}{r.counts.nextDueCount > 1 ? ` · ${r.counts.nextDueCount} notices` : ''}</span>
+      </Link>
+    );
+  };
+  const mattersCell = (r: ClientReportRow) => (r.matters > 0 ? (
+    <Link to={`/litigation?client=${r.clientId}`} className="block rounded text-xs leading-tight hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <span className="sr-only">{r.name}, open matters: </span>
+      <span className="block font-medium tabular-nums text-primary">{r.matters}</span>
+      {r.matterOutstanding > 0 && <span className="text-muted-foreground">{fmtInrShort(r.matterOutstanding)} outstanding</span>}
+    </Link>
+  ) : <span className="text-muted-foreground">0</span>);
+  const pullCell = (r: ClientReportRow) => {
+    if (r.excluded) return <span className="text-xs text-muted-foreground">left out of the sync</span>;
+    return (
+      <span className="text-xs leading-tight">
+        <span className={cn('block', r.stale && 'font-medium text-destructive-strong')}>{r.lastPull ? fmtAgo(r.lastPull) : 'never'}</span>
+        {r.loginFailed && <span className="text-destructive-strong">login failed</span>}
+      </span>
+    );
+  };
+  const chipsFor = (r: ClientReportRow) => (
+    <>
+      {r.excluded && <Badge variant="secondary" className="text-[10px] font-medium">Not synced</Badge>}
+      {r.inactive && <Badge variant="secondary" className="text-[10px] font-medium">Inactive</Badge>}
+    </>
+  );
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <NoticesTopNav />
+  return (
+    <NoticesShell section="GSTIN-wise count" status={<AsOfLine at={notices.dataUpdatedAt} />}
+      actions={canExportData() && (
+        <Button size="sm" variant="outline" className={WS_BTN} onClick={exportXlsx} disabled={loading || !visible.length}>
+          <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden /> Export to Excel
+        </Button>
+      )}>
+      <div className="space-y-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
-          <FilterPill
-            label="Type"
-            allLabel="All notices"
-            value={typeFilter}
-            onChange={(v) => setTypeFilter(v as TypeOfNoticesFilter)}
-            options={[]}
-            extraOptions={[
-              { value: 'registration', label: 'Registration' },
-              { value: 'other', label: 'Other than Registration' },
-            ]}
-          />
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Client name or GSTIN" aria-label="Search clients" className="h-8 pl-7 text-xs" />
+          </div>
+          <FilterPill label="Show" allLabel="All clients" value={show} onChange={(v) => set({ show: v === 'all' ? undefined : v })} options={[]}
+            extraOptions={SHOWS.map((s) => ({ value: s.key, label: s.label }))} />
         </div>
+        <FilterChips chips={chips} onClear={() => { setQ(''); set({ q: undefined, show: undefined }); }} />
       </div>
 
-      <Card>
-        <NoticesCardHeader title="Notices by GSTIN" badge={filteredCounts.length} />
-        <CardContent className="space-y-3 pt-3 pb-3">
-          <div className="relative w-[240px] space-y-1">
-            <Label className="text-[11px] text-muted-foreground">Search</Label>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="GSTIN or Trade Name" className="h-8 pl-8 text-xs" />
-            </div>
-          </div>
+      {error ? (
+        <Note tone="warn">Couldn't load the clients: {error instanceof Error ? error.message : String(error)}{' '}
+          <Button variant="link" className="h-auto p-0 text-xs" onClick={() => { notices.refetch(); context.refetch(); }}>Retry</Button></Note>
+      ) : loading ? (
+        <Skeleton className="h-96 w-full" />
+      ) : (
+        <SectionCard title={`${plural(visible.length, 'client')}${sort === 'attention' ? ' · most overdue first' : ''}`}
+          description="Each number opens that client's notices with the same filter · exposure is open notices' demand, each dispute once">
+          {visible.length === 0 ? (
+            <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No client matches.</p>
+          ) : (
+            <>
+              {/* Phones: one card per client. */}
+              <ul className="space-y-2 md:hidden">
+                {visible.map((r) => (
+                  <li key={r.clientId} className={cn('rounded-lg border bg-card p-3', r.counts.overdue > 0 && 'border-destructive/50')}>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Link to={`/notices-company/${r.clientId}`} className="min-w-0 truncate text-sm font-semibold text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary">{r.name}</Link>
+                      {chipsFor(r)}
+                    </div>
+                    <div className="font-mono text-[11px] text-muted-foreground">{r.gstin}</div>
+                    <dl className="mt-2 grid grid-cols-3 gap-x-3 gap-y-1.5 text-xs">
+                      <div><dt className="text-muted-foreground">Open</dt><dd>{countCell(r, r.counts, 'open', 'open')}</dd></div>
+                      <div><dt className="text-muted-foreground">Overdue</dt><dd>{countCell(r, r.counts, 'overdue', 'overdue')}</dd></div>
+                      <div><dt className="text-muted-foreground">Due in 7 d</dt><dd>{countCell(r, r.counts, 'due7', 'due in 7 days')}</dd></div>
+                      <div><dt className="text-muted-foreground">Unassigned</dt><dd>{countCell(r, r.counts, 'unassigned', 'without an owner')}</dd></div>
+                      <div><dt className="text-muted-foreground">Exposure</dt><dd>{exposureCell(r, r.counts)}</dd></div>
+                      <div><dt className="text-muted-foreground">Open matters</dt><dd>{mattersCell(r)}</dd></div>
+                      <div><dt className="text-muted-foreground">Next reply due</dt><dd>{nextCell(r)}</dd></div>
+                      <div className="col-span-2"><dt className="text-muted-foreground">Last good pull</dt><dd>{pullCell(r)}</dd></div>
+                    </dl>
+                  </li>
+                ))}
+              </ul>
 
-          <div className="overflow-auto rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">GSTIN</TableHead>
-                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Trade Name</TableHead>
-                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Total</TableHead>
-                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Open</TableHead>
-                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Closed</TableHead>
-                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Replied</TableHead>
-                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Matters</TableHead>
-                  <TableHead className="bg-muted text-right text-[10px] font-semibold uppercase">Exposure</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(loading || clientsLoading) ? (
-                  <TableRow><TableCell colSpan={8} className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
-                ) : filteredCounts.length === 0 ? (
-                  <TableRow><TableCell colSpan={8} className="py-10 text-center text-xs text-muted-foreground">No companies match.</TableCell></TableRow>
-                ) : (
-                  filteredCounts.map((r) => (
-                    <TableRow key={r.clientId}>
-                      <TableCell className="text-[10px] font-mono text-muted-foreground">
-                        <Link to={`/notices-company/${r.clientId}`} className="hover:text-primary hover:underline">
-                          {r.gstin}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="max-w-[240px] truncate text-xs" title={r.name}>{r.name}</TableCell>
-                      <TableCell
-                        className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
-                        onClick={() => navigate(`/notices-all?client=${r.clientId}`)}
-                      >
-                        {r.total}
-                      </TableCell>
-                      <TableCell
-                        className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
-                        onClick={() => navigate(`/notices-all?client=${r.clientId}&status=Open`)}
-                      >
-                        {r.open || '—'}
-                      </TableCell>
-                      <TableCell
-                        className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
-                        onClick={() => navigate(`/notices-all?client=${r.clientId}&status=Closed`)}
-                      >
-                        {r.closed || '—'}
-                      </TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{r.replied || '—'}</TableCell>
-                      <TableCell
-                        className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
-                        onClick={() => r.matterCount > 0 ? navigate(`/litigation?client=${r.clientId}`) : undefined}
-                      >
-                        {r.matterCount || '—'}
-                      </TableCell>
-                      <TableCell className="text-right text-xs tabular-nums text-primary">{fmtINR(r.exposure)}</TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-              {!(loading || clientsLoading) && filteredCounts.length > 0 && (
-                <tfoot>
-                  <TableRow className="bg-primary/5 font-semibold hover:bg-primary/10">
-                    <TableCell colSpan={2} className="text-xs">Total</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{grandTotal.total}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{grandTotal.open}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{grandTotal.closed}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{grandTotal.replied}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums">{grandTotal.matters}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums text-primary">{fmtINR(grandTotal.exposure)}</TableCell>
-                  </TableRow>
-                </tfoot>
-              )}
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+              <div className={cn(WS_TABLE_WRAP, 'hidden md:block')}>
+                <table className={WS_TABLE}>
+                  <thead>
+                    <tr>
+                      <SortHead label="Client" k="client" sort={sort} dir={dir} onSort={onSort} />
+                      <SortHead label="Open" k="open" sort={sort} dir={dir} onSort={onSort} right />
+                      <SortHead label="Overdue" k="overdue" sort={sort} dir={dir} onSort={onSort} right />
+                      <SortHead label="Due in 7 d" k="due7" sort={sort} dir={dir} onSort={onSort} right />
+                      <SortHead label="Unassigned" k="unassigned" sort={sort} dir={dir} onSort={onSort} right />
+                      <SortHead label="Exposure" k="exposure" sort={sort} dir={dir} onSort={onSort} right />
+                      <SortHead label="Next reply due" k="next" sort={sort} dir={dir} onSort={onSort} />
+                      <SortHead label="Open matters" k="matters" sort={sort} dir={dir} onSort={onSort} />
+                      <SortHead label="Last good pull" k="pull" sort={sort} dir={dir} onSort={onSort} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((r) => (
+                      <tr key={r.clientId} className={cn(WS_TR, r.counts.overdue > 0 && 'bg-destructive/[0.03]')}>
+                        <th scope="row" className={cn(WS_TD, 'max-w-[16rem] text-left font-normal')}>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Link to={`/notices-company/${r.clientId}`} className="min-w-0 truncate font-medium text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary">{r.name}</Link>
+                            {chipsFor(r)}
+                          </div>
+                          <div className="font-mono text-[11px] text-muted-foreground">{r.gstin}</div>
+                        </th>
+                        <td className={WS_TD_NUM}>{countCell(r, r.counts, 'open', 'open')}</td>
+                        <td className={WS_TD_NUM}>{countCell(r, r.counts, 'overdue', 'overdue')}</td>
+                        <td className={WS_TD_NUM}>{countCell(r, r.counts, 'due7', 'due in 7 days')}</td>
+                        <td className={WS_TD_NUM}>{countCell(r, r.counts, 'unassigned', 'without an owner')}</td>
+                        <td className={WS_TD_NUM}>{exposureCell(r, r.counts)}</td>
+                        <td className={cn(WS_TD, 'whitespace-nowrap')}>{nextCell(r)}</td>
+                        <td className={cn(WS_TD, 'whitespace-nowrap')}>{mattersCell(r)}</td>
+                        <td className={cn(WS_TD, 'whitespace-nowrap')}>{pullCell(r)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className={WS_TR_TOTAL}>
+                      <th scope="row" className={cn(WS_TD, 'text-left')}>{totalsLink ? 'All clients' : `Total of ${plural(visible.length, 'client')} shown`}</th>
+                      <td className={WS_TD_NUM}>{countCell(null, total.counts, 'open', 'open')}</td>
+                      <td className={WS_TD_NUM}>{countCell(null, total.counts, 'overdue', 'overdue')}</td>
+                      <td className={WS_TD_NUM}>{countCell(null, total.counts, 'due7', 'due in 7 days')}</td>
+                      <td className={WS_TD_NUM}>{countCell(null, total.counts, 'unassigned', 'without an owner')}</td>
+                      <td className={WS_TD_NUM}>{exposureCell(null, total.counts)}</td>
+                      <td className={WS_TD} />
+                      <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>
+                        <span className="tabular-nums">{total.matters}</span>
+                        {total.outstanding > 0 && <span className="block font-normal text-foreground/70">{fmtInrShort(total.outstanding)} outstanding</span>}
+                      </td>
+                      <td className={WS_TD} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Last good pull turns red after 24 hours without a successful portal sync. Matters' outstanding is demand less paid and pre-deposit;
+                the command centre's exposure adds it to the notices' figure.
+              </p>
+            </>
+          )}
+        </SectionCard>
+      )}
+    </NoticesShell>
   );
 };
 

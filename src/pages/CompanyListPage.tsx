@@ -1,498 +1,304 @@
-// CompanyListPage — the destination behind the Notices Dashboard's "Company"
-// button, matching Notice Alert's own "View Company List" page: Active/
-// Inactive + Status filters, a Search box, a Total Downloaded/Pending
-// summary, bulk actions (Delete/Sync Log/Bulk Update/Import/Fetch Company/
-// Sync) over checkbox-selected rows, and a table with GSTIN, Trade Name,
-// User Name, Last Download Date, Status, Status Message, Action.
-//
-// "Last Download Date / Status / Status Message" are new to this app — see
-// supabase/migrations/20260828100000_client_sync_log.sql. They're populated
-// by the extension's existing "Sync All" (Notices) flow only (content.js's
-// logSyncAttempt, gated on job.logSync) — no other extension job writes to
-// this table, so nothing else about the extension changed.
-//
-// "Total Downloaded / Total Pending" is an adapted metric, not a literal port:
-// Notice Alert's own version reflects a live in-progress sync batch (their
-// backend crawls unattended). This extension's Sync All is semi-manual — a
-// human still solves each client's CAPTCHA — so there's no live per-run
-// counter to mirror faithfully. Downloaded = clients whose most recent
-// attempt succeeded; Pending = credentialed clients that have never
-// succeeded yet (never attempted, or last attempt failed).
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useNavigate, useSearchParams, Link } from 'react-router-dom';
+// Notices & Litigation · Clients: portal sync health per client (roadmap Phase 2;
+// target-sync.png "Freshness by client"). Fixes audit U-50-1..6, U-51-1..3,
+// U-52-1..3, U-53-1..3, U-54-2..4 and the cross-cutting house-style, wording,
+// machine-text and number findings for this screen. Every count is the command
+// centre's (components/notices/clients/syncHealth.ts mirrors its SQL), the
+// filters live in the URL (?status=fresh|stale|never|failed|off&reason=…), a
+// failure says what went wrong with its one fix, and the sync log is a tab.
+import React, { useMemo, useState } from 'react';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { RefreshCw, Search, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent } from '@/components/ui/card';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { useConfirm } from '@/components/ui/confirm-dialog';
-import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
-import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
-import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
-import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
-import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
-import FilterPill from '@/components/notices/FilterPill';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Note } from '@/components/gstr9/ui';
+import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
+import { WS_BTN } from '@/components/workspace/theme';
+import { NoticesShell } from '@/components/notices/NoticesShell';
+import { SyncNowButton } from '@/components/notices/SyncNowButton';
+import { FilterPill } from '@/components/notices/FilterPill';
+import { Pager } from '@/components/notices/Pager';
+import { FilterTile } from '@/components/notices/clients/FilterTile';
+import { ClientSyncTable, type ClientSort, type RowHandlers } from '@/components/notices/clients/ClientSyncTable';
+import { SyncLogTab } from '@/components/notices/clients/SyncLogTab';
+import { SyncSettingDialog } from '@/components/notices/clients/SyncSettingDialog';
+import { DeleteClientDialog } from '@/components/notices/clients/DeleteClientDialog';
+import { ImportPortalIdsDialog } from '@/components/notices/clients/ImportPortalIdsDialog';
+import { useClientSync } from '@/components/notices/clients/useClientSync';
 import {
-  Building2, ChevronLeft, ChevronRight, Loader2, Search, Trash2, History,
-  RefreshCw, Upload, DownloadCloud, Pencil, CheckCircle2, XCircle,
-} from 'lucide-react';
+  REASONS, countHealth, isRetryable, loadClientHealth, loadFailureRuns, loadOpenCounts, loadRuns, matchesStatus, reasonDef, tsCmp,
+  type ClientHealth, type HealthCounts, type StatusFilter, type SyncRun, type SyncState,
+} from '@/components/notices/clients/syncHealth';
+import { fmtAgo, plural } from '@/lib/noticeFormat';
+import { cn } from '@/lib/utils';
 
-interface ClientRow {
-  id: string;
-  name: string;
-  gstin: string;
-  gst_user_id: string | null;
-  inactive_at_hand: boolean | null;
+const PAGE = 50;
+const STATUSES: StatusFilter[] = ['all', 'fresh', 'stale', 'never', 'failed', 'off'];
+const STATUS_LABEL: Record<StatusFilter, string> = {
+  all: 'Every synced client', fresh: 'Synced in 24 h', stale: 'Not synced in 24 h', never: 'Never synced', failed: 'Failing',
+  off: 'Not synced by the app',
+};
+const RANK: Record<SyncState, number> = { failed: 0, never: 1, stale: 2, fresh: 3, off: 4 };
+const DEFAULT_DIR: Record<ClientSort, 'asc' | 'desc'> = { attention: 'asc', client: 'asc', pull: 'asc', open: 'desc' };
+
+function parseStatus(v: string | null): StatusFilter {
+  if (v === 'success') return 'fresh';
+  return STATUSES.includes(v as StatusFilter) ? (v as StatusFilter) : 'all';
 }
 
-interface SyncLogRow {
-  id: string;
-  client_id: string;
-  action: string;
-  status: 'success' | 'failed';
-  message: string | null;
-  created_at: string;
-}
-
-const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
+/** "8 of 12 GSTINs synced in 24 h · last run …" — the command centre's line, for this page (U-50-2). */
+const SyncLine: React.FC<{ c: HealthCounts; run: SyncRun | undefined; polling: boolean }> = ({ c, run, polling }) => {
+  const share = c.all ? c.fresh / c.all : 1;
+  const tone = share >= 0.9 && c.failed === 0 ? 'bg-success' : share >= 0.5 ? 'bg-warning' : 'bg-destructive';
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground" aria-live="polite">
+      <span className={cn('inline-block h-2 w-2 rounded-full', tone)} aria-hidden />
+      <span className="font-medium text-foreground">{c.fresh} of {c.all} GSTINs synced in 24 h</span>
+      {run && (
+        <span>· last run {run.status === 'running' ? 'running' : run.status} {fmtAgo(run.started_at)}
+          {run.clients_total ? ` (${run.clients_done} of ${plural(run.clients_total, 'client')}${run.ext_version ? `, extension v${run.ext_version}` : ''})` : ''}</span>
+      )}
+      {polling && <span>· updating every 10 s</span>}
+      {c.failed > 0 && (
+        <Link to="/notices-company-list?status=failed" className="font-medium text-destructive-strong underline-offset-2 hover:underline">· {c.failed} failing →</Link>
+      )}
+    </p>
+  );
+};
 
 const CompanyListPage: React.FC = () => {
-  const { isStaffRole, canAddEditClients, canDeleteClients } = useAuth();
-  const navigate = useNavigate();
-  const confirm = useConfirm();
+  const { isStaffRole, canAddEditClients, canDeleteClients, canEditNoticeStatus, canExportData } = useAuth();
+  const [sp, setSp] = useSearchParams();
+  const qc = useQueryClient();
+  const sync = useClientSync();
+  const [pollFrom, setPollFrom] = useState<number | null>(null);
+  const [settingFor, setSettingFor] = useState<ClientHealth[] | null>(null);
+  const [deleting, setDeleting] = useState<ClientHealth | null>(null);
 
-  const [clients, setClients] = useState<ClientRow[]>([]);
-  const [syncLogs, setSyncLogs] = useState<SyncLogRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const tab = sp.get('tab') === 'log' ? 'log' : 'clients';
+  const status = parseStatus(sp.get('status'));
+  const reason = status === 'failed' ? sp.get('reason') : null;
+  const q = sp.get('q') ?? '';
+  const owner = sp.get('owner');
+  const sort: ClientSort = (['attention', 'client', 'pull', 'open'] as const).find((k) => k === sp.get('sort')) ?? 'attention';
+  const dir: 'asc' | 'desc' = sp.get('dir') === 'desc' ? 'desc' : sp.get('dir') === 'asc' ? 'asc' : DEFAULT_DIR[sort];
+  const page = Math.max(1, Number(sp.get('page')) || 1);
 
-  // Pre-selects Status from the Notices Dashboard's "Failed Logins" tile
-  // (?status=failed) — read once on mount, same one-way-in convention as
-  // every other dashboard-tile drill-down link in this app.
-  const [searchParams] = useSearchParams();
-  const initialStatusParam = searchParams.get('status');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed' | 'never'>(
-    initialStatusParam === 'failed' || initialStatusParam === 'success' || initialStatusParam === 'never' ? initialStatusParam : 'all',
-  );
-  const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
+  // Poll while a run is going or one was just started from here (U-50-4).
+  const [pollMs, setPollMs] = useState<number | false>(false);
+  const runs = useQuery({ queryKey: ['client-sync-runs'], queryFn: () => loadRuns(12), refetchInterval: pollMs });
+  const health = useQuery({ queryKey: ['client-sync-health'], queryFn: loadClientHealth, refetchInterval: pollMs });
+  const counts = useQuery({ queryKey: ['client-open-counts'], queryFn: loadOpenCounts, staleTime: 60_000 });
+  const all = useMemo(() => health.data ?? [], [health.data]);
+  const failing = useMemo(() => all.filter((h) => h.failReason), [all]);
+  const failRuns = useQuery({
+    queryKey: ['client-fail-runs', failing.map((f) => `${f.client.id}:${f.lastSuccessAt}`).join(',')],
+    enabled: health.isSuccess,
+    queryFn: () => loadFailureRuns(failing),
+  });
 
-  const [bulkUpdateOpen, setBulkUpdateOpen] = useState(false);
-  const [bulkActiveValue, setBulkActiveValue] = useState<'active' | 'inactive'>('active');
-  const [bulkSaving, setBulkSaving] = useState(false);
-  const [syncLogOpen, setSyncLogOpen] = useState(false);
+  const startedAt = sync.started?.at ?? pollFrom;
+  const pending = sync.started
+    ? all.filter((h) => sync.started?.ids.has(h.client.id) && !(h.lastAttemptAt && tsCmp(h.lastAttemptAt, new Date(sync.started.at).toISOString()) > 0)).length
+    : 0;
+  const running = runs.data?.[0]?.status === 'running';
+  const wantPoll = running || (!!startedAt && Date.now() - startedAt < 30 * 60_000 && (pending > 0 || !sync.started));
+  React.useEffect(() => { setPollMs(wantPoll ? 10_000 : false); }, [wantPoll]);
 
-  const [extReady, setExtReady] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [fetching, setFetching] = useState(false);
-  // Sync and Fetch Company now share the same underlying extension message
-  // (__gstkPullSectionAllClients, scoped via clientIds) since both are
-  // selection-scoped in the same way — this ref tracks which one is
-  // in-flight so the single result handler below clears the right loading
-  // state and shows the right toast. A ref (not state) avoids the stale-
-  // closure trap: the message listener effect below only runs once on
-  // mount, so a captured `syncing`/`fetching` state value would always read
-  // its initial false.
-  const pendingActionRef = useRef<'sync' | 'fetch' | null>(null);
+  const c = useMemo(() => countHealth(all), [all]);
+  const owners = useMemo(() => [...new Set(all.map((h) => h.client.assigned_accountant).filter((o): o is string => !!o))].sort(), [all]);
+  const names = useMemo(() => new Map(all.map((h) => [h.client.id, { name: h.client.name, gstin: h.client.gstin }])), [all]);
 
-  const fetchAll = async () => {
-    setLoading(true);
-    const [clientsRes, logsRes] = await Promise.all([
-      // This page is entirely scoped to Notices Dashboard work (Sync/Fetch
-      // Company, Total Downloaded/Pending, etc.) — a client opted out via
-      // "Exclude from Notices Dashboard sync" shouldn't appear here at all,
-      // not just be unselectable. The general client registry (/clients)
-      // is untouched, so nothing about managing that client is lost.
-      supabase.from('clients').select('id, name, gstin, gst_user_id, inactive_at_hand').eq('notices_sync_excluded', false).order('name'),
-      supabase.from('client_sync_log').select('id, client_id, action, status, message, created_at').order('created_at', { ascending: false }),
-    ]);
-    setClients((clientsRes.data || []) as ClientRow[]);
-    setSyncLogs((logsRes.data || []) as SyncLogRow[]);
-    setLoading(false);
-  };
-
-  useEffect(() => { fetchAll(); }, []);
-
-  // Extension handshake — same ping/pong pattern used on the Notices Dashboard.
-  useEffect(() => {
-    const onMsg = (e: MessageEvent) => {
-      const d: any = e.data;
-      if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) setExtReady(true);
-      if (d.__gstkPullSectionAllClientsResult) {
-        const action = pendingActionRef.current;
-        pendingActionRef.current = null;
-        if (action === 'fetch') setFetching(false); else setSyncing(false);
-        const verb = action === 'fetch' ? 'Fetch Company' : 'Sync';
-        if (d.__gstkPullSectionAllClientsResult.ok) {
-          toast.success(`${verb} started for ${d.__gstkPullSectionAllClientsResult.count} compan${d.__gstkPullSectionAllClientsResult.count === 1 ? 'y' : 'ies'}. Complete the CAPTCHA for each as it comes up.`);
-        } else {
-          toast.error(d.__gstkPullSectionAllClientsResult.error || `${verb} failed to start.`);
-        }
-      }
+  const list = useMemo(() => {
+    const cnt = counts.data;
+    const term = q.trim().toLowerCase();
+    const urgent = (id: string) => (cnt?.get(id)?.overdue ?? 0) + (cnt?.get(id)?.due7 ?? 0);
+    const pull = (h: ClientHealth) => (h.lastSuccessAt ? Date.parse(h.lastSuccessAt) : 0);
+    const rows = all.filter((h) => matchesStatus(h, status, reason)
+      && (!owner || (owner === 'none' ? !h.client.assigned_accountant : h.client.assigned_accountant === owner))
+      && (!term || h.client.name.toLowerCase().includes(term) || h.client.gstin.toLowerCase().includes(term)
+        || (h.client.gst_user_id ?? '').toLowerCase().includes(term)));
+    const sign = dir === 'asc' ? 1 : -1;
+    const byName = (a: ClientHealth, b: ClientHealth) => a.client.name.localeCompare(b.client.name);
+    // Failing, then never synced, then stale (most urgent notices, oldest pull first), then fresh (U-50-5, U-51-3).
+    const cmp: Record<ClientSort, (a: ClientHealth, b: ClientHealth) => number> = {
+      attention: (a, b) => RANK[a.state] - RANK[b.state] || urgent(b.client.id) - urgent(a.client.id) || pull(a) - pull(b),
+      client: byName,
+      pull: (a, b) => pull(a) - pull(b),
+      open: (a, b) => (cnt?.get(a.client.id)?.open ?? 0) - (cnt?.get(b.client.id)?.open ?? 0),
     };
-    window.addEventListener('message', onMsg);
-    const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
-    ping();
-    const t1 = setTimeout(ping, 400);
-    const t2 = setTimeout(ping, 1200);
-    return () => { window.removeEventListener('message', onMsg); clearTimeout(t1); clearTimeout(t2); };
-  }, []);
+    return rows.sort((a, b) => sign * cmp[sort](a, b) || byName(a, b));
+  }, [all, counts.data, status, reason, owner, q, sort, dir]);
+
+  const set = (patch: Record<string, string | null>, keepPage = false) => {
+    const next = new URLSearchParams(sp);
+    Object.entries(patch).forEach(([k, v]) => { if (v === null || v === '') next.delete(k); else next.set(k, v); });
+    if (!keepPage) next.delete('page');
+    setSp(next);
+  };
+  const [search, setSearch] = useState(q);
+  React.useEffect(() => { setSearch(q); }, [q]);
+  React.useEffect(() => {
+    if (search === q) return;
+    const t = setTimeout(() => set({ q: search || null }), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
-  // Latest sync-log row per client (logs are already ordered newest-first).
-  const latestLogByClient = useMemo(() => {
-    const m = new Map<string, SyncLogRow>();
-    for (const l of syncLogs) if (!m.has(l.client_id)) m.set(l.client_id, l);
-    return m;
-  }, [syncLogs]);
-
-  const filtered = useMemo(() => {
-    let list = clients;
-    if (activeFilter === 'active') list = list.filter((c) => !c.inactive_at_hand);
-    if (activeFilter === 'inactive') list = list.filter((c) => !!c.inactive_at_hand);
-    if (statusFilter !== 'all') {
-      list = list.filter((c) => {
-        const log = latestLogByClient.get(c.id);
-        if (statusFilter === 'never') return !log;
-        return log?.status === statusFilter;
-      });
-    }
-    const q = search.trim().toLowerCase();
-    if (q) list = list.filter((c) => c.name.toLowerCase().includes(q) || c.gstin.toLowerCase().includes(q) || (c.gst_user_id || '').toLowerCase().includes(q));
-    return list;
-  }, [clients, activeFilter, statusFilter, search, latestLogByClient]);
-
-  useEffect(() => { setPage(0); }, [activeFilter, statusFilter, search, rowsPerPage]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / rowsPerPage));
-  const pageRows = filtered.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
-
-  const totalDownloaded = clients.filter((c) => latestLogByClient.get(c.id)?.status === 'success').length;
-  const totalPending = clients.filter((c) => c.gst_user_id && latestLogByClient.get(c.id)?.status !== 'success').length;
-
-  const toggleSelect = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['client-sync-health'] });
+    qc.invalidateQueries({ queryKey: ['client-sync-runs'] });
+    qc.invalidateQueries({ queryKey: ['client-open-counts'] });
+    qc.invalidateQueries({ queryKey: ['client-fail-runs'] });
+    qc.invalidateQueries({ queryKey: ['sync-log-items'] });
+    qc.invalidateQueries({ queryKey: ['sync-log-messages'] });
+    qc.invalidateQueries({ queryKey: ['notices-command-centre'] });
   };
-  const toggleSelectAllVisible = (checked: boolean) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      pageRows.forEach((c) => { if (checked) next.add(c.id); else next.delete(c.id); });
-      return next;
-    });
+  const canSync = canEditNoticeStatus();
+  const handlers: RowHandlers = {
+    canSync,
+    canEditClients: canAddEditClients(),
+    canDelete: canDeleteClients(),
+    onSync: (ids) => { sync.start(ids).then((ok) => { if (ok) refresh(); }); },
+    onFetchProfile: (ids) => { sync.start(ids, 'taxpayerprofile'); },
+    onSetting: (rows) => setSettingFor(rows),
+    onDelete: (h) => setDeleting(h),
+    onChanged: refresh,
   };
-
-  const handleDeleteSelected = async () => {
-    if (selected.size === 0) { toast.error('Select at least one company first.'); return; }
-    if (!(await confirm({ title: `Delete ${selected.size} compan${selected.size === 1 ? 'y' : 'ies'}?`, description: 'This permanently deletes each selected company and all of its data.', destructive: true, confirmText: 'Delete' }))) return;
-    const { error } = await supabase.from('clients').delete().in('id', Array.from(selected));
-    if (error) { toast.error('Delete failed: ' + error.message); return; }
-    toast.success('Deleted.');
-    setSelected(new Set());
-    fetchAll();
+  const onSort = (k: ClientSort) => {
+    if (k === sort) set({ sort: k, dir: dir === 'asc' ? 'desc' : 'asc' });
+    else set({ sort: k === 'attention' ? null : k, dir: null });
   };
+  const retryIds = failing.filter(isRetryable).map((h) => h.client.id);
+  const total = list.length;
+  const pageRows = list.slice((page - 1) * PAGE, page * PAGE);
+  const loginFails = c.reasons.login_failed ?? 0;
+  const tileHref = (s: StatusFilter) => (s === 'all' ? '/notices-company-list' : `/notices-company-list?status=${s}`);
+  const reasonHint = Object.entries(c.reasons).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([r, n]) => `${n} ${reasonDef(r).short}`).join(' · ');
 
-  const handleDeleteOne = async (id: string, name: string) => {
-    if (!(await confirm({ title: 'Delete company?', description: `This permanently deletes "${name}" and all of its data.`, destructive: true, confirmText: 'Delete' }))) return;
-    const { error } = await supabase.from('clients').delete().eq('id', id);
-    if (error) { toast.error('Delete failed: ' + error.message); return; }
-    toast.success('Deleted.');
-    fetchAll();
-  };
-
-  const applyBulkUpdate = async () => {
-    if (selected.size === 0) return;
-    setBulkSaving(true);
-    const { error } = await supabase.from('clients').update({ inactive_at_hand: bulkActiveValue === 'inactive' }).in('id', Array.from(selected));
-    setBulkSaving(false);
-    if (error) { toast.error('Bulk update failed: ' + error.message); return; }
-    toast.success(`${selected.size} compan${selected.size === 1 ? 'y' : 'ies'} updated.`);
-    setBulkUpdateOpen(false);
-    setSelected(new Set());
-    fetchAll();
-  };
-
-  // Both selection-scoped, matching Notice Alert's own Company List buttons
-  // exactly (confirmed live 2026-08-26): neither runs against every company
-  // — each requires checking rows first and only acts on those. That's
-  // distinct from the Notices Dashboard's separate "Sync All" button, which
-  // intentionally still covers every credentialed client with no selection.
-  const handleSync = () => {
-    if (selected.size === 0) { toast.error('Select at least one company first.'); return; }
-    if (!extReady) { toast.error('GST Keeper browser extension not detected. Install/enable it to sync.'); return; }
-    // Clients with "Exclude from Notices Dashboard sync" set (Edit Client)
-    // never load onto this page at all (see fetchAll's query), so `selected`
-    // can't contain one — no filtering needed here.
-    const clientIds = Array.from(selected);
-    pendingActionRef.current = 'sync';
-    setSyncing(true);
-    // 'notices_bundle': same mode the Notices Dashboard's own "Sync All" now
-    // uses — pulls Notices & Orders, then chains through Refunds and DRC-03
-    // for each selected client before moving to the next, instead of
-    // stopping after Notices alone (see chainOrStop in content.js).
-    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle', clientIds } }, '*');
-  };
-
-  const handleFetchCompany = () => {
-    if (selected.size === 0) { toast.error('Select at least one company first.'); return; }
-    if (!extReady) { toast.error('GST Keeper browser extension not detected.'); return; }
-    pendingActionRef.current = 'fetch';
-    setFetching(true);
-    window.postMessage({ __gstkPullSectionAllClients: { mode: 'taxpayerprofile', clientIds: Array.from(selected) } }, '*');
-  };
-
-  const selectedLogs = selected.size > 0 ? syncLogs.filter((l) => selected.has(l.client_id)) : syncLogs.slice(0, 50);
-  const clientNameById = useMemo(() => new Map(clients.map((c) => [c.id, c.name])), [clients]);
+  const chips: { key: string; label: string; clear: Record<string, null> }[] = [];
+  if (status !== 'all') chips.push({ key: 'status', label: `Status: ${STATUS_LABEL[status]}`, clear: { status: null, reason: null } });
+  if (reason) chips.push({ key: 'reason', label: `Reason: ${reasonDef(reason).long}`, clear: { reason: null } });
+  if (owner) chips.push({ key: 'owner', label: `Owner: ${owner === 'none' ? 'nobody' : owner}`, clear: { owner: null } });
+  if (q) chips.push({ key: 'q', label: `Search: ${q}`, clear: { q: null } });
 
   return (
-    <div className="space-y-4 animate-fade-in">
-      <NoticesPageHeader
-        title="Company List"
-        icon={Building2}
-        subtitle={
-          <>
-            <span>Total Downloaded: <span className="font-semibold text-foreground tabular-nums">{totalDownloaded}</span></span>
-            <span>Total Pending: <span className="font-semibold text-foreground tabular-nums">{totalPending}</span></span>
-          </>
-        }
-        actions={
-          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={fetchAll} title="Refresh">
-            <RefreshCw className="h-3.5 w-3.5" />
+    <NoticesShell
+      section="Clients"
+      status={health.data ? <SyncLine c={c} run={runs.data?.[0]} polling={pollMs !== false} /> : <Skeleton className="h-4 w-96 max-w-full" />}
+      actions={<>
+        {canSync && retryIds.length > 0 && (
+          <Button size="sm" variant="outline" className={WS_BTN} disabled={sync.busy} onClick={() => handlers.onSync(retryIds)}
+            title={loginFails ? `Leaves out ${plural(loginFails, 'failed login')}: update those passwords first.` : undefined}>
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Retry failed ({retryIds.length})
           </Button>
-        }
-      />
+        )}
+        {canAddEditClients() && <ImportPortalIdsDialog clients={all.map((h) => h.client)} onDone={refresh} />}
+        {canSync && <SyncNowButton onStarted={() => { setPollFrom(Date.now()); refresh(); }} />}
+      </>}
+    >
+      <Tabs value={tab} onValueChange={(v) => set({ tab: v === 'log' ? 'log' : null })} className="space-y-3">
+        <TabsList className={TAB_LIST_CLASS} aria-label="Clients view">
+          <TabsTrigger value="clients" className={cn(TAB_TRIGGER_CLASS, 'h-8 px-3')}>By client</TabsTrigger>
+          <TabsTrigger value="log" className={cn(TAB_TRIGGER_CLASS, 'h-8 px-3')}>Sync log</TabsTrigger>
+        </TabsList>
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <NoticesTopNav />
-        <div className="flex flex-wrap items-center gap-1.5">
-          <FilterPill
-            label="Active/InActive"
-            allLabel="All"
-            value={activeFilter}
-            onChange={(v) => setActiveFilter(v as typeof activeFilter)}
-            options={[]}
-            extraOptions={[
-              { value: 'active', label: 'Active' },
-              { value: 'inactive', label: 'Inactive' },
-            ]}
-          />
-          <FilterPill
-            label="Status"
-            allLabel="All"
-            value={statusFilter}
-            onChange={(v) => setStatusFilter(v as typeof statusFilter)}
-            options={[]}
-            extraOptions={[
-              { value: 'success', label: 'Success' },
-              { value: 'failed', label: 'Failed' },
-              { value: 'never', label: 'Never synced' },
-            ]}
-          />
-        </div>
-      </div>
-
-      <Card>
-        <NoticesCardHeader title="Companies" badge={filtered.length} />
-        <CardContent className="pt-3 pb-3 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="relative w-[240px]">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name, GSTIN, or User ID" className="h-7 pl-8 text-[11px]" />
+        <TabsContent value="clients" className="mt-0 space-y-3">
+          {health.data ? (
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+              <FilterTile to={tileHref('all')} label="Synced clients" accent="primary" active={status === 'all'} value={c.all.toLocaleString('en-IN')}
+                hint="with a portal user ID, active" />
+              <FilterTile to={tileHref('fresh')} label="Synced in 24 h" accent="success" active={status === 'fresh'}
+                value={<>{c.fresh}<span className="text-base font-medium text-muted-foreground"> / {c.all}</span></>} hint="good pull in the last 24 h" />
+              <FilterTile to={tileHref('stale')} label="Not synced in 24 h" accent="warning" active={status === 'stale'} value={c.stale}
+                hint={c.never ? `${c.never} of them never synced` : 'oldest first'} />
+              <FilterTile to={tileHref('never')} label="Never synced" accent="warning" active={status === 'never'} value={c.never} hint="no attempt on record" />
+              <FilterTile to={tileHref('failed')} label="Failing" accent="destructive" active={status === 'failed'} value={c.failed} strong={c.failed > 0}
+                hint={reasonHint || 'nothing failing'} />
+              <FilterTile to={tileHref('off')} label="Not synced by the app" accent="muted" active={status === 'off'} value={c.off}
+                hint="no user ID, inactive or excluded" />
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {canDeleteClients() && (
-                <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleDeleteSelected}>
-                  <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete Company
-                </Button>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[70px]" />)}</div>
+          )}
+
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div className="relative w-full sm:w-64">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Client, GSTIN or portal user ID" aria-label="Search clients" className="h-8 pl-7 text-xs" />
+              </div>
+              <FilterPill label="Status" allLabel={STATUS_LABEL.all} value={status} onChange={(v) => set({ status: v === 'all' ? null : v, reason: null })}
+                options={[]} extraOptions={STATUSES.filter((s) => s !== 'all').map((s) => ({ value: s, label: STATUS_LABEL[s] }))} />
+              <FilterPill label="Reason" allLabel="Any" value={reason ?? 'all'}
+                onChange={(v) => set({ status: v === 'all' ? sp.get('status') : 'failed', reason: v === 'all' ? null : v })}
+                options={[]} extraOptions={Object.keys({ ...REASONS, ...c.reasons }).map((r) => ({ value: r, label: `${reasonDef(r).long} (${c.reasons[r] ?? 0})` }))} />
+              {owners.length > 0 && (
+                <FilterPill label="Owner" allLabel="Anyone" value={owner ?? 'all'} onChange={(v) => set({ owner: v === 'all' ? null : v })}
+                  options={[]} extraOptions={[...owners.map((o) => ({ value: o, label: o })), { value: 'none', label: 'Nobody' }]} />
               )}
-              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setSyncLogOpen(true)}>
-                <History className="mr-1.5 h-3.5 w-3.5" /> Sync Log
-              </Button>
-              {canAddEditClients() && (
-                <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setBulkUpdateOpen(true)}>
-                  <Pencil className="mr-1.5 h-3.5 w-3.5" /> Bulk Update
+              <div className="ml-auto flex items-center gap-1.5">
+                <Button size="sm" variant="outline" className={WS_BTN} onClick={refresh} disabled={health.isFetching}>
+                  <RefreshCw className={cn('h-3.5 w-3.5', health.isFetching && 'animate-spin')} aria-hidden /> Refresh
                 </Button>
-              )}
-              {canAddEditClients() && <BulkAddClientsDialog triggerLabel="Import" triggerClassName="h-7 text-[11px]" onSuccess={fetchAll} />}
-              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleFetchCompany} disabled={fetching}>
-                {fetching ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <DownloadCloud className="mr-1.5 h-3.5 w-3.5" />}
-                Fetch Company
-              </Button>
-              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleSync} disabled={syncing}>
-                {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
-                Sync
-              </Button>
+              </div>
             </div>
+            {chips.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5" aria-label="Active filters">
+                {chips.map((ch) => (
+                  <button key={ch.key} type="button" onClick={() => set(ch.clear)}
+                    className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={`Remove filter ${ch.label}`}>
+                    {ch.label} <X className="h-3 w-3" aria-hidden />
+                  </button>
+                ))}
+                <button type="button" className="text-[11px] text-muted-foreground underline-offset-2 hover:underline" onClick={() => set({ status: null, reason: null, owner: null, q: null })}>
+                  Clear all
+                </button>
+              </div>
+            )}
           </div>
 
-          <div className="overflow-auto rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8 bg-muted px-2 py-1.5">
-                    <Checkbox
-                      checked={pageRows.length > 0 && pageRows.every((c) => selected.has(c.id))}
-                      onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)}
-                    />
-                  </TableHead>
-                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">GSTIN</TableHead>
-                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">Trade Name</TableHead>
-                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">User Name</TableHead>
-                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">Last Download Date</TableHead>
-                  <TableHead className="bg-muted px-2 py-1.5 text-center text-[10px] font-semibold uppercase">Status</TableHead>
-                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">Status Message</TableHead>
-                  <TableHead className="bg-muted px-2 py-1.5 text-[10px] font-semibold uppercase">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loading ? (
-                  <TableRow><TableCell colSpan={8} className="py-8 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
-                ) : pageRows.length === 0 ? (
-                  <TableRow><TableCell colSpan={8} className="py-8 text-center text-xs text-muted-foreground">No companies match these filters.</TableCell></TableRow>
-                ) : (
-                  pageRows.map((c) => {
-                    const log = latestLogByClient.get(c.id);
-                    return (
-                      <TableRow key={c.id}>
-                        <TableCell className="px-2 py-1"><Checkbox checked={selected.has(c.id)} onCheckedChange={() => toggleSelect(c.id)} /></TableCell>
-                        <TableCell className="px-2 py-1">
-                          <Link to={`/notices-company/${c.id}`} className="font-mono text-[10px] text-primary hover:underline">{c.gstin}</Link>
-                        </TableCell>
-                        <TableCell className="max-w-[240px] truncate px-2 py-1 text-[11px]" title={c.name}>{c.name}</TableCell>
-                        <TableCell className="px-2 py-1 text-[11px] text-muted-foreground">{c.gst_user_id || '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-[11px] tabular-nums text-muted-foreground">{log ? new Date(log.created_at).toLocaleString() : '—'}</TableCell>
-                        <TableCell
-                          className="px-2 py-1 text-center"
-                          title={!log ? 'Never synced' : log.status === 'success' ? 'Success' : 'Failed'}
-                        >
-                          <span className="inline-flex items-center gap-1.5 text-[11px]">
-                            <span
-                              className={cn(
-                                'inline-block h-2 w-2 rounded-sm',
-                                !log ? 'bg-muted-foreground/40' : log.status === 'success' ? 'bg-success' : 'bg-destructive',
-                              )}
-                            />
-                          </span>
-                        </TableCell>
-                        <TableCell className="max-w-[260px] truncate px-2 py-1 text-[11px] text-muted-foreground" title={log?.message || ''}>{log?.message || 'Not synced yet'}</TableCell>
-                        <TableCell className="px-2 py-1">
-                          <div className="flex items-center gap-0.5">
-                            {canAddEditClients() && (
-                              <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => navigate(`/edit-client/${c.id}`)}><Pencil className="h-3 w-3" /></Button>
-                            )}
-                            {canDeleteClients() && (
-                              <Button size="icon" variant="ghost" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => handleDeleteOne(c.id, c.name)}><Trash2 className="h-3 w-3" /></Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
+          <Note tone="info">
+            Counted as on the command centre: <b>synced</b> means a good notices pull in the last 24 hours; a client is <b>failing</b> when its
+            last login failed after its last good pull, or its last notices pull failed. Inactive clients, clients excluded from the notices
+            sync and clients without a portal user ID are not synced by the app and sit under "Not synced by the app".
+          </Note>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1.5">
-              Rows per page:
-              <Select value={String(rowsPerPage)} onValueChange={(v) => setRowsPerPage(Number(v))}>
-                <SelectTrigger className="h-7 w-[70px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ROWS_PER_PAGE_OPTIONS.map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
-                </SelectContent>
-              </Select>
+          {health.error ? (
+            <Note tone="warn">Couldn't load the clients: {health.error instanceof Error ? health.error.message : String(health.error)}{' '}
+              <Button variant="link" className="h-auto p-0 text-xs" onClick={() => health.refetch()}>Retry</Button></Note>
+          ) : health.isLoading ? (
+            <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+          ) : total === 0 ? (
+            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+              {status === 'failed' ? 'Nothing is failing.' : status === 'never' ? 'Every synced client has been tried at least once.' : 'No client matches these filters.'}{' '}
+              {chips.length > 0 && <button type="button" className="text-primary underline underline-offset-2" onClick={() => set({ status: null, reason: null, owner: null, q: null })}>Show every synced client</button>}
             </div>
-            <div className="flex items-center gap-2">
-              <span className="tabular-nums">{filtered.length === 0 ? '0' : `${page * rowsPerPage + 1}-${Math.min(filtered.length, (page + 1) * rowsPerPage)}`} of {filtered.length}</span>
-              <Button size="icon" variant="ghost" className="h-6 w-6" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}><ChevronLeft className="h-3.5 w-3.5" /></Button>
-              <Button size="icon" variant="ghost" className="h-6 w-6" disabled={page >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}><ChevronRight className="h-3.5 w-3.5" /></Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          ) : (
+            <>
+              <h2 className="sr-only" aria-live="polite">{STATUS_LABEL[status]} · {plural(total, 'client')}</h2>
+              <ClientSyncTable rows={pageRows} counts={counts.data ?? new Map()} failRuns={failRuns.data ?? new Map()} started={sync.started}
+                busy={sync.busy} sort={sort} dir={dir} onSort={onSort} handlers={handlers} />
+              <Pager page={page} pageSize={PAGE} total={total} onPage={(p) => set({ page: String(p) }, true)} />
+            </>
+          )}
+        </TabsContent>
 
-      {/* Bulk Update — sets Active/Inactive for every selected company. */}
-      <Dialog open={bulkUpdateOpen} onOpenChange={setBulkUpdateOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Bulk Update</DialogTitle>
-            <DialogDescription>Applies to the {selected.size} selected compan{selected.size === 1 ? 'y' : 'ies'}.</DialogDescription>
-          </DialogHeader>
-          <Select value={bulkActiveValue} onValueChange={(v) => setBulkActiveValue(v as typeof bulkActiveValue)}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="inactive">Inactive</SelectItem>
-            </SelectContent>
-          </Select>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBulkUpdateOpen(false)}>Cancel</Button>
-            <Button onClick={applyBulkUpdate} disabled={bulkSaving || selected.size === 0}>
-              {bulkSaving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null} Apply
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <TabsContent value="log" className="mt-0">
+          <SyncLogTab runs={runs.data ?? []} runsLoading={runs.isLoading} names={names} canExport={canExportData()} />
+        </TabsContent>
+      </Tabs>
 
-      {/* Sync Log — full sync-attempt history, scoped to the current selection when any rows are checked. */}
-      <Dialog open={syncLogOpen} onOpenChange={setSyncLogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Sync Log</DialogTitle>
-            <DialogDescription>
-              {selected.size > 0 ? `History for the ${selected.size} selected compan${selected.size === 1 ? 'y' : 'ies'}.` : 'Most recent 50 sync attempts across every company.'}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[50vh] overflow-auto rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Company</TableHead>
-                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Status</TableHead>
-                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Message</TableHead>
-                  <TableHead className="bg-muted text-[10px] font-semibold uppercase">Date</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {selectedLogs.length === 0 ? (
-                  <TableRow><TableCell colSpan={4} className="py-6 text-center text-xs text-muted-foreground">No sync attempts recorded yet.</TableCell></TableRow>
-                ) : (
-                  selectedLogs.map((l) => (
-                    <TableRow key={l.id}>
-                      <TableCell className="text-[11px]">{clientNameById.get(l.client_id) || '—'}</TableCell>
-                      <TableCell className="text-[11px]">
-                        <span className={cn('inline-flex items-center gap-1', l.status === 'success' ? 'text-success' : 'text-destructive')}>
-                          {l.status === 'success' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
-                          {l.status === 'success' ? 'Success' : 'Failed'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="max-w-[280px] truncate text-[11px] text-muted-foreground" title={l.message || ''}>{l.message || '—'}</TableCell>
-                      <TableCell className="whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">{new Date(l.created_at).toLocaleString()}</TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSyncLogOpen(false)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+      <SyncSettingDialog clients={(settingFor ?? []).map((h) => ({ id: h.client.id, name: h.client.name }))} open={!!settingFor}
+        onOpenChange={(o) => { if (!o) setSettingFor(null); }} onDone={refresh} />
+      <DeleteClientDialog client={deleting?.client ?? null} onOpenChange={(o) => { if (!o) setDeleting(null); }} onDone={refresh} />
+    </NoticesShell>
   );
 };
 

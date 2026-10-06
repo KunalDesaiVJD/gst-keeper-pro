@@ -1,0 +1,991 @@
+{
+ "screens": [
+  {
+   "id": "80-litigation-matters",
+   "verdict": "A plain filter-and-table list ordered by creation date. It shows a single \"Due date\" clock, includes closed matters by default, and leaves the largest open exposure (₹2.85 cr, order received, appeal clock running) as the last row of an inner scroll box. Nothing is suggested or prioritised for the user.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-80-1",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "Rows are ordered by created_at desc (line 159) with Status = All by default, inside a fixed-height scroll box (line 361) that shows 8 of 11 rows. The matter that most needs a decision is M-2025-0012 Specimen Chemicals: ₹2,85,00,000, \"Order received\", next action \"Decide on first appeal; arrange 10% pre-deposit\". It is row 11, below two closed matters and out of view.",
+     "fix": "Default Status = Open. Sort by the nearest clock: overdue first, then the earliest of reply due, hearing and limitation, then exposure (extend the unused litigationData.sortMatters, lib/litigationData.ts:84). Make headers sortable, let the page scroll instead of the nested box, and move closed matters to their own tab.",
+     "ref": "src/pages/LitigationMattersPage.tsx:159",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-80-2",
+     "severity": "High",
+     "area": "Data",
+     "issue": "The only date column is \"Due date\" = override ?? computed_due_date (line 379), so hearings and limitation never appear. M-2026-0004 shows Due 08 Oct but not its hearing on 07 Oct 11:00. M-2026-0003 shows \"---\" although its hearing is on 21 Oct. The ₹2.85 cr order has no column for its appeal limitation (66 days left). There is no days-left figure either, only amber or red text.",
+     "fix": "Replace \"Due date\" with a \"Next clock\" cell: type, date (and time) and an IST days-left chip, e.g. \"Hearing · 07/10 11:00 · 2 d\", \"Appeal limit · 10/12 · 66 d\", \"Reply DRC-06 · 09/10 · 4 d\". Add \"Forum\" and \"Outstanding\" columns. Read clocks from matter_deadlines once it carries matter_id.",
+     "ref": "src/pages/LitigationMattersPage.tsx:379",
+     "pillar": "At-a-glance",
+     "links": "L-09, L-33"
+    },
+    {
+     "id": "U-80-3",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "A matter exists only if someone types it in, either with Create Matter here or one notice at a time from the drawer. suggestMatters() (lib/litigationData.ts:623) already groups unlinked notices by portal case_id into suggested matters, but no screen calls it.",
+     "fix": "Add a \"Suggested from portal cases (n)\" strip above the table with Create and Create all, prefilled from the notices: client, form + FY title, demand from amount_of_demand, due date and the linked notices. Fix inferLifecycle first: it returns \"Assessment\" and \"Seizure\", which are not in the list's lower-case LIFECYCLES (line 52), so the filters would miss them.",
+     "ref": "src/lib/litigationData.ts:623",
+     "pillar": "Zero-touch",
+     "links": "L-30"
+    },
+    {
+     "id": "U-80-4",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "The filters are thin and fragile. Status tests stage === \"Closed\" instead of status (lines 180-181). There are no quick filters or counts (overdue, hearings this week, appeal clocks, unassigned). Search covers only client name and GSTIN, not matter no., title or notice reference. Filters live in component state, so \"All matters\" or Back from a matter resets them.",
+     "fix": "Filter on a shared isMatterOpen(). Add count chips (Open · Overdue · Hearings 7 d · Appeal clocks ≤30 d · Unassigned) that set filters. Use one search box over matter_no, title, client, GSTIN and reference. Persist all filters in the URL.",
+     "ref": "src/pages/LitigationMattersPage.tsx:178",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-80-5",
+     "severity": "Low",
+     "area": "Accessibility",
+     "issue": "A matter opens only through onClick on the <tr> (lines 382-386): rows are not focusable, have no link semantics and cannot open in a new tab. The matter number is plain text while the client name is styled as the link, and that link goes to the client's notices page (line 391), not to the matter.",
+     "fix": "Make the matter number a <Link> to /litigation/:id (the row can stay clickable), move the notices link to a small secondary icon, and give rows a visible focus ring.",
+     "ref": "src/pages/LitigationMattersPage.tsx:382",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-80-6",
+     "severity": "Low",
+     "area": "Mobile",
+     "issue": "At 390 px (m-80) the 8-column table is cut off at Stage, matter numbers wrap onto three lines (\"M- / 2026- / 0005\"), and there is no card layout.",
+     "fix": "Below md, show each matter as a card (title, client, next-clock chip, outstanding, owner) and keep IDs on one line with whitespace-nowrap.",
+     "ref": "src/pages/LitigationMattersPage.tsx:364",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "81-litigation-matters-client",
+   "verdict": "The deep link from GSTIN-wise count does narrow the list, but the scope shows only as small text next to the count, the filter bar still shows an empty Client box, and the page does not summarise the client's litigation.",
+   "score": 5,
+   "findings": [
+    {
+     "id": "U-81-1",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "There are two separate client filters. The ?client= id filter shows only as subtitle text, \"Client: Example Foods Pvt Ltd × Clear\" (lines 247-258), while the Client box in the filter bar still reads \"Search name or GSTIN\" (line 322). Typing another name combines with the hidden id filter and returns 0 rows without saying why.",
+     "fix": "Drive one Client control (SearchableSelect by id) from the URL and show the chip inside the filter bar (FilterPill). Make the empty state list the active filters with a \"Clear filters\" action.",
+     "ref": "src/pages/LitigationMattersPage.tsx:247",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-81-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Scoped to one client, the page is one row and blank space. There is no client summary (open matters, demand, pre-deposit/paid, outstanding, next hearing, notices not yet in a matter) and no client report, though exportClientLitigationReport() already exists unused (litigationPdfExport.ts:152). That function also prints the matter title under its \"Section\" column (lines 195, 204).",
+     "fix": "When ?client is set, show a KpiTile row for the client and a \"Client litigation report (PDF)\" action wired to exportClientLitigationReport, after pointing its Section column at section_of_law.",
+     "ref": "src/utils/litigationPdfExport.ts:152",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-81-3",
+     "severity": "Low",
+     "area": "Accessibility",
+     "issue": "\"× Clear\" is a 10px muted pill (text-[10px], line 253): low contrast, smaller than a 24 px target and easy to miss.",
+     "fix": "Use the module's FilterPill (src/components/notices/FilterPill.tsx) in the filter bar, with aria-label \"Clear client filter\".",
+     "ref": "src/pages/LitigationMattersPage.tsx:253",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "82-litigation-create-dialog",
+   "verdict": "The dialog creates an empty shell: no linked notice, amounts, dates, FY or forum. The lifecycle shows its raw code and \"Authority\" confuses jurisdiction with forum, so every matter made here starts at ₹0 with no clock.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-82-1",
+     "severity": "High",
+     "area": "Data",
+     "issue": "The dialog captures only client, lifecycle, title, section, priority and authority (lines 144-151, 206-217). It skips linked notices or order, FY, demand by head, notice/order date, due and limitation dates, officer and jurisdiction, although the table has columns for most of these (financial_years, officer, jurisdiction, limitation_date). Screen 95 shows the result: ₹0, no dates, no notices, Activity (0).",
+     "fix": "Make \"From notices\" the default path: pick the client, tick unlinked notices or a portal case (suggestMatters), then prefill title (form + section + FY), demand (amount_of_demand or the DRC-07 heads), due date (notice due), officer (issued_by) and limitation (order date + litigation_rules). Keep \"Blank matter\" as a secondary tab, and save through createMatter so the \"created\" event is logged.",
+     "ref": "src/pages/LitigationMattersPage.tsx:144",
+     "pillar": "Zero-touch",
+     "links": "L-30"
+    },
+    {
+     "id": "U-82-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The lifecycle trigger shows \"registration\" in lower case: the items are only capitalised by CSS (lines 482-484), so the trigger shows the raw text. The 15 options mix subjects (demand, refund, registration, summons) with forums and steps (appeal, tribunal, rectification), with no grouping or help text.",
+     "fix": "Render labels from a LIFECYCLE_LABEL map (e.g. \"Registration — REG-03/REG-17\"). Keep subject and forum as separate fields, and infer both from the notice form when the matter is created from notices.",
+     "ref": "src/pages/LitigationMattersPage.tsx:477",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-82-3",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "\"Authority\" offers only CGST and SGST (lines 525-533). That is the administrative jurisdiction, not the forum, so a matter before the Appellate Authority, GSTAT or a High Court cannot be recorded. The table has officer and jurisdiction columns, but the dialog never asks for them.",
+     "fix": "Split the field into Jurisdiction (Centre/State), Forum (Adjudicating authority / Appellate authority s.107 / GSTAT s.112 / High Court / Supreme Court) and Officer & designation, prefilled from the notice's issued_by.",
+     "ref": "src/pages/LitigationMattersPage.tsx:525",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-82-4",
+     "severity": "Low",
+     "area": "Interaction",
+     "issue": "Client is a plain Select of all clients with no search (lines 461-472), a long scroll with 90+ GSTINs. Required fields are checked only by a toast after Create is clicked (lines 196-198), and nothing warns that the client already has an open matter of the same lifecycle.",
+     "fix": "Use SearchableSelect (components/ui/searchable-select.tsx). Disable Create until the form is valid and show inline errors. List \"Open matters for this client: …\" under the field to prevent duplicates.",
+     "ref": "src/pages/LitigationMattersPage.tsx:461",
+     "pillar": "Reply speed"
+    }
+   ]
+  },
+  {
+   "id": "84-matter-detail",
+   "verdict": "All the facts are on the page but not organised as a workspace. The matter number is the title, the client appears twice, the demand tiles are unformatted editable inputs, dates are bare with no clock or time, and linked notices cannot be opened. It is far from the target notice workspace that a matter page should match.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-84-1",
+     "severity": "High",
+     "area": "Layout",
+     "issue": "The H1 is the matter number (line 495) and the real title sits in a card below it (line 521). Client and GSTIN appear twice (lines 499-502 and 524-526). There is no breadcrumb, no stepper of the legal path (DRC-01A → DRC-01 → reply → PH → order → appeal) and no Key facts rail. financial_years and jurisdiction (\"Surat CGST Commissionerate\") are stored but never shown, and matter_stage_history is written but never displayed.",
+     "fix": "Adopt the target workspace layout. Add a breadcrumb (Notices & Litigation › Matters › client) and make the H1 the title. Use a meta line such as \"M-2026-0001 · s.73 · FY 2021-22 · AC Div-II, Surat CGST\" and a chip row for clocks, priority, owner and reviewer. Add a forum stepper dated from stage history and linked notices, and four KpiTiles. Put the tabs on the left and Key facts, Next action and Documents in a right rail.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:495",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-84-2",
+     "severity": "High",
+     "area": "Data",
+     "issue": "Demand Tax, Interest, Penalty and Cess are uncontrolled type=number inputs styled as KPI tiles (lines 648-653). They save on every blur with no dirty check, confirmation or event (lines 482-490), and show 1240000 unformatted. Clearing a field silently saves 0. After a failed save the input keeps the unsaved value. Any staff login can change them.",
+     "fix": "Show formatted read-only KpiTiles (₹12,40,000) and move editing to an \"Edit demand\" dialog: NumberInput with Indian grouping, source (SCN para or order), reason, and a permission gate. Save through litigationData.updateMatter so field_changed events are logged. Prefill from the DRC-07 or notice amounts instead of retyping.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:482",
+     "pillar": "Data trust",
+     "links": "L-28"
+    },
+    {
+     "id": "U-84-3",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "None of the dates works as a clock. \"Due date 09/10/2026\" has no days-left count or overdue tone (line 551), although the list colours the same date amber. \"Limitation\" is \"—\" (line 555). \"Next hearing 14/10/2026\" drops the 10:30 time (fmtDate, line 559). Nothing says what each date is for (DRC-06 reply, PH u/s 75(4), s.107 appeal).",
+     "fix": "Add a Clocks strip: \"Reply DRC-06 · 09/10 · 4 d left\", \"PH · 14/10 10:30 · Room 204\", and \"Appeal (s.107) · … + condonation\" once an order is recorded, each with its statutory basis and source. Read matter_deadlines, adding a matter_id column first; today it is keyed by notice_id only (20260914140000_notice_alerts_phase1.sql:89).",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:551",
+     "pillar": "Reply speed",
+     "links": "L-09, L-33"
+    },
+    {
+     "id": "U-84-4",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Linked notices are dead rows (lines 700-711): clicking opens no drawer, PDF, case folder or portal page. Type shows the portal's raw \"Determination Of Tax\" instead of the form (DRC-01), and descriptions are cut at 200 px with no tooltip. There is no Link or Unlink action, although linkNoticesToMatter and unlinkNotice exist (lib/litigationData.ts:380, 401).",
+     "fix": "Open the NoticeDrawer (or /notices/:id) from the row. Add PDF, form code, due, reply date and ARN columns. Add \"Link notices…\" (multi-select over the client's unlinked notices) and Unlink, both logged.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:700",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-84-5",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "The action row is four equal outline h-7 buttons (lines 614-633): \"Change Stage\" has no icon, Close is red text, and nothing marks the next step. The Owner, Priority and Reviewer selects sit in the facts grid among read-only facts. \"Next action\" is display-only and cannot be set anywhere (lines 606-611).",
+     "fix": "Use a header action bar as in the target: a primary button for the next legal step (\"Record reply filed\", \"Record order\", \"Start appeal\") and a ⋯ menu for stage and close. Show owner, reviewer and priority as chips with popover editors, and make Next action editable inline with a due date and owner.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:614",
+     "pillar": "Reply speed"
+    }
+   ]
+  },
+  {
+   "id": "85-matter-hearings",
+   "verdict": "A bare log of hearing rows. Times, notes, attendees and the next date are hidden, Record Outcome is offered on a hearing nine days away, and an adjournment does not create the next hearing. Nothing here helps prepare for a hearing.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-85-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "The table drops what hearing preparation needs (lines 739-765). Times are missing (11:00, 10:30). The 22/09 row's notes (\"Officer sought vendor-wise ledger; adjourned at our request\") are hidden, and attended_by is never shown. There is no purpose, hearing-notice reference, documents to carry, or follow-up with a due date.",
+     "fix": "Show each hearing as a card: date · time IST · mode · venue or VC link · officer · attendees · purpose · notes. Add a \"carry\" checklist from matter documents, dated follow-up tasks, and Add to calendar (ICS).",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:739",
+     "pillar": "Reply speed",
+     "links": "L-33"
+    },
+    {
+     "id": "U-85-2",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "Recording \"Adjourned to <date>\" only updates the hearing row and matter.hearing_at (lines 443-448). No row is created for the next date, so the next hearing never appears in this tab and cannot get its own outcome. \"Record Outcome\" also shows on the future 14/10/2026 hearing (lines 748-762), so an outcome can be filed before the hearing happens.",
+     "fix": "On adjournment, insert the next matter_hearings row (copying venue, officer and mode) and set hearing_at to the earliest upcoming scheduled_at. Offer \"Record outcome\" only after a hearing's start time.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:443",
+     "pillar": "Reply speed"
+    },
+    {
+     "id": "U-85-3",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "\"Outcome: Adjourned\" and \"Adjourned: Yes\" say the same thing, yet next_date is never shown. Adjournments are not counted, although s.75(5) allows no more than three per proceeding.",
+     "fix": "Merge them into one Outcome cell such as \"Adjourned → 14/10 10:30 (1 of 3)\", and warn before a third adjournment is sought.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:745",
+     "pillar": "Reply speed"
+    },
+    {
+     "id": "U-85-4",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "Row actions are ghost 10px text buttons under an empty header cell (lines 735, 748-751). Upcoming and past hearings share one list with no visual split.",
+     "fix": "Split the list into \"Upcoming\" and \"Held\" sections, use WS_BTN outline buttons, and give the action column a header.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:735",
+     "pillar": "Per-notice"
+    }
+   ]
+  },
+  {
+   "id": "86-matter-payments",
+   "verdict": "The money story is wrong and thin. A ₹2,80,000 pre-deposit is recorded yet Outstanding shows the full ₹44,24,000, the DRC-03 ARN stored on the payment is never shown, and the appeal is not linked to the demand matter it came from.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-86-1",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "Outstanding = demand − paid_total (line 267) and ignores pre_deposit_total. This appeal shows ₹44,24,000 here but ₹41,44,000 in MIS By Client and in the PDF: two answers for one matter. The tile caption \"Paid ₹0 / Pre-deposit ₹2,80,000\" does not explain the gap.",
+     "fix": "Compute every page's figures with one matterMoney() helper and show the arithmetic in the tile: \"₹44,24,000 − pre-deposit ₹2,80,000 − paid ₹0 = ₹41,44,000\".",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:267",
+     "pillar": "Data trust",
+     "links": "L-31"
+    },
+    {
+     "id": "U-86-2",
+     "severity": "High",
+     "area": "Data",
+     "issue": "The pre-deposit row carries a drc03_arn (the synced \"Section 107(6) pre-deposit\" DRC-03), but the table has no ARN column (lines 779-803). Nothing offers the client's synced DRC-03 filings for linking, so the payment is never reconciled with the portal record.",
+     "fix": "Add an ARN column linking to the DRC-03 record and PDF. Add a \"Link DRC-03\" picker over the client's unlinked gst_drc03_filings that prefills IGST/CGST/SGST/Cess and cash/credit. Show \"Linked to portal\" chips and coverage (\"2 of 2 payments linked\").",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:779",
+     "pillar": "Fetch",
+     "links": "R-21"
+    },
+    {
+     "id": "U-86-3",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The pre-deposit is just another payment row. Nothing shows the requirement (10% of disputed tax ₹28,00,000 = ₹2,80,000 u/s 107(6)), that recovery of the balance is deemed stayed once it is paid (s.107(7)), the further pre-deposit due before GSTAT (s.112(8)), or that it is refundable with interest if the appeal succeeds (s.115). Verify the current caps and rates.",
+     "fix": "Add a Pre-deposit panel: required amount (from litigation_rules) against paid, a status such as \"Balance ₹41,44,000 — recovery stayed u/s 107(7)\", and a preview of the next forum's deposit. Keep the payments table for the transactions.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:792",
+     "pillar": "Data trust",
+     "links": "L-32"
+    },
+    {
+     "id": "U-86-4",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "\"First appeal against DRC-07 — FY 2020-21 (s.73 order)\" is a separate matter with no link to the demand matter it came from. The schema has no parent_matter_id, so the SCN, reply, PH and order history cannot be seen from the appeal.",
+     "fix": "Add parent_matter_id and a \"Start appeal\" action that creates the child matter with the parent's facts. Show the whole chain (SCN → Order → APL-01 → APL-04 → GSTAT) as one stepper across parent and child.",
+     "ref": "supabase/migrations/20260914160000_litigation_core_phase3.sql:7",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-86-5",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "The payments table has no total row. Its \"Pre Deposit\" label differs from the dialog's \"Pre-deposit\", zero heads print \"₹0\" instead of \"—\", remarks are muted, and right-aligned money headers beside a left-aligned \"Paid on\" leave an uneven gap.",
+     "fix": "Add a WS_TR_TOTAL footer, take labels from the shared label map, print \"—\" for zero heads, and use WS_TD_NUM for money cells.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:794",
+     "pillar": "Per-notice"
+    }
+   ]
+  },
+  {
+   "id": "87-matter-documents",
+   "verdict": "A list of titles with no files. Nothing opens, the portal PDFs already synced for the linked notices are missing, and there is no way to put a paper book together.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-87-1",
+     "severity": "High",
+     "area": "Data",
+     "issue": "Rows are text only, with no open, preview or download (lines 834-841), although matter_documents has storage_path, mime and size_bytes (migration lines 112-114). \"DRC-01 Show Cause Notice · Portal\" is listed by name while the PDF itself sits on the linked notice (gst_notices.pdf_url) and in the case-folder items.",
+     "fix": "Make the tab a union of the linked notices' PDFs, case-folder attachments and uploaded files, each with a source chip and open/preview/download. Serve files from a private bucket through signed URLs (R-01).",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:834",
+     "pillar": "Per-notice",
+     "links": "R-18, R-01"
+    },
+    {
+     "id": "U-87-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Documents are not grouped by proceeding (Notice → Reply → Evidence → Hearing → Order → Appeal). There is no paper-book or hearing-kit builder and no way to ask the client for a missing document; the purchase register marked \"Client\" came in with no request or tracking.",
+     "fix": "Group documents by kind with counts. Add multi-select → \"Make paper book (PDF)\" with an index and page numbers, and \"Request from client\" to create a tracked request with ageing.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:810",
+     "pillar": "Reply speed",
+     "links": "R-11"
+    },
+    {
+     "id": "U-87-3",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "matter_documents.notice_id and uploaded_by are never shown, so a document cannot be traced to its notice or to who added it. The card heading repeats the tab name (\"Documents\"), and Kind and Source are lower-case codes capitalised by CSS.",
+     "fix": "Add \"Relates to\" (notice or hearing) and \"Added by\" columns, remove the duplicate heading, and take labels from the shared map.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:812",
+     "pillar": "Per-notice"
+    }
+   ]
+  },
+  {
+   "id": "88-matter-activity",
+   "verdict": "A raw payload dump (\"note: null\", UUIDs, 124000) that also misses edits made on this page and goes stale after every action. It does not read as a history of the matter.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-88-1",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Payloads print as `${k}: ${v}` (line 865), giving \"note: null\", \"notice_ids: a1000000-0000-4000-8000-000000000018 · count: 1\", \"kind: voluntary · amount: 124000\" and \"lifecycle: demand · stage: Captured\".",
+     "fix": "Render each event type as a sentence: \"Stage: Awaiting client data → Reply drafting\", \"Payment ₹1,24,000 · Voluntary (DRC-03 …071122)\", \"Linked DRC-01 ZD2409092601718\". Omit null fields.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:865",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-88-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "The history is incomplete. Demand edits (lines 482-490) and matters created from the list log nothing, and logEvent ignores insert errors (lines 271-279). System events (\"created\", \"notices linked\") carry no actor, so the log cannot be used as an audit trail.",
+     "fix": "Write matter_events from DB triggers on litigation_matters and the matter_* tables so no path can skip them. Label the actor \"System (portal sync)\" or the staff name, and show absolute timestamps.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:271",
+     "pillar": "Data trust",
+     "links": "L-28"
+    },
+    {
+     "id": "U-88-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Events load once on mount (lines 211-242). Stage changes, payments, hearings and documents insert events but never add them to state, so the tab and its \"(6)\" count stay stale until a reload.",
+     "fix": "Append the inserted event to state (insert … select()), or refetch events after each action.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:219",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-88-4",
+     "severity": "Low",
+     "area": "Interaction",
+     "issue": "Plain grey bullets give no cue to event type. There is no filter and no way to add a note, and events from the linked notices (notice_events) are not merged in.",
+     "fix": "Use a timeline with type icons and filter chips (stage · hearing · money · documents · notes), an \"Add note\" box (event_type \"note\"), and the linked notices' events merged in.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:856",
+     "pillar": "Per-notice"
+    }
+   ]
+  },
+  {
+   "id": "89-matter-change-stage",
+   "verdict": "Any of 11 stages can be picked, regardless of lifecycle or legal order. A matter can be set to \"Closed\" without being closed, and the step records no date or reference.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-89-1",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "\"Closed\" is one of the stages (lines 110-114, 888), and handleStageChange updates only stage (lines 285-288). status stays \"Open\" and closed_at/closed_reason stay empty. The list's Status filter (stage-based) then calls the matter closed, while the MIS, the PDF and the page's own Close button still treat it as open.",
+     "fix": "Remove \"Closed\" from Change Stage and close only through Close Matter. Enforce it with a DB trigger or CHECK so stage = \"Closed\" if and only if status = \"Closed\".",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:285",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-89-2",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "One list serves every lifecycle and mixes internal workflow states (Captured, Triage, Awaiting client data, Reply drafting, Partner review) with legal stages (Hearing, Order received, Appeal filed). The order is odd (\"Appeal decision\" comes before \"Appeal filed\"), GSTAT, High Court and recovery are missing, and any jump is allowed.",
+     "fix": "Split it into two fields, Forum stage (SCN → Reply filed → PH → Order → First appeal → GSTAT → HC; Recovery) and Work status, with allowed transitions per lifecycle and the likely next step suggested. Show them as the page stepper.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:110",
+     "pillar": "At-a-glance",
+     "links": "L-25"
+    },
+    {
+     "id": "U-89-3",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "A stage change takes only an optional note, hidden under the open list (lines 892-895). There is no event date, ARN, order number, DIN or attachment, so \"Filed/submitted\" or \"Order received\" cannot start the next clock; the appeal period runs from communication of the order (s.107(1)).",
+     "fix": "Ask for stage-specific facts. Filed: date, ARN and reply PDF, prefilled from the case-folder REPLY item. Order received: order no., order date, communication date and confirmed demand by head, prefilled from DRC-07, which computes limitation and condonation. Appeal filed: APL-01 ARN, date and pre-deposit.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:892",
+     "pillar": "Reply speed",
+     "links": "L-09"
+    }
+   ]
+  },
+  {
+   "id": "90-matter-close",
+   "verdict": "Closing is one dropdown: no order reference or amounts, \"Auto-closed\" offered as a manual choice, and closing as \"Lost\" does not start the appeal clock.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-90-1",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "\"Lost\" and \"Partly Allowed\" simply close the matter (lines 328-347). Nothing records the order date or opens the next forum, so the appeal limitation (3 months + 1 month condonation u/s 107; s.112 for GSTAT) goes untracked from the moment it starts.",
+     "fix": "On Lost or Partly allowed, ask \"Appeal?\". Yes creates a linked appeal matter (parent_matter_id) with limitation from the communication date and the 10% pre-deposit computed. No records the decision with partner sign-off.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:328",
+     "pillar": "Reply speed",
+     "links": "L-09, L-32"
+    },
+    {
+     "id": "U-90-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "\"Auto-closed\" (value \"auto:closure\", line 921) can be chosen by hand, so manual closes cannot be told apart from the system's auto-closes that reviewers rely on (docs/NOTICES_LITIGATION_POSITIONS.md).",
+     "fix": "Remove it from the manual list and show auto-close reasons read-only, together with the rule that fired.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:921",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-90-3",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "Closing records no facts: no order number or date, no confirmed, dropped or paid amounts, no closing document (DRC-05, ASMT-12, APL-04) and no approval. The reason is stored as a bare code and later shown raw as \"Closed: paid\" (line 541).",
+     "fix": "Add a closure form: order reference and date (prefilled from the linked ORDRS folder item), amounts by head, an outcome code with a note, and the closing order attached. This also gives the MIS win/loss and time-to-close.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:907",
+     "pillar": "Data trust",
+     "links": "L-41"
+    },
+    {
+     "id": "U-90-4",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "The confirm button is variant=\"destructive\" (red, line 927), so it reads as \"delete\", although closing can be undone with Reopen.",
+     "fix": "Use a primary \"Close matter\" button and keep destructive styling for actions that cannot be undone.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:927",
+     "pillar": "Per-notice"
+    }
+   ]
+  },
+  {
+   "id": "91-matter-schedule-hearing",
+   "verdict": "The form opens blank even though the matter knows the officer and venue, and it saves the time without a timezone into timestamptz columns. It sets up no preparation, reminder or calendar entry, and a scheduled hearing cannot be edited afterwards.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-91-1",
+     "severity": "High",
+     "area": "Data",
+     "issue": "The datetime-local value (\"2026-10-14T10:30\", no offset; line 941) is written straight into matter_hearings.scheduled_at and litigation_matters.hearing_at, both timestamptz (lines 369, 377). Postgres reads offset-less input in the session time zone, which is UTC on Supabase, so an 11:00 IST hearing is stored as 16:30 IST and entries after 18:30 move to the next day. The outcome dialog's next date (line 1005) has the same bug. Verify the DB TimeZone on gcquafqxbykxkbexcdpy.",
+     "fix": "Convert in the browser before insert (new Date(v).toISOString(), or append \"+05:30\"), and always display in Asia/Kolkata.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:941",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-91-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Venue, officer and mode start empty (lines 182-185), although the matter already holds officer \"Assistant Commissioner, Division-II\" and the previous hearing was in \"Room 204, CGST Bhavan, Surat\". There are no fields for the hearing-notice reference, purpose, attendees (attended_by is unused), reminder or calendar entry.",
+     "fix": "Prefill from matter.officer and jurisdiction and from the last hearing. Add purpose (PH u/s 75(4) / appeal / GSTAT), attendees (staff multi-select), notice reference, T-3/T-1 reminders through email_outbox kind \"hearing\" (already allowed) and an ICS download.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:182",
+     "pillar": "Zero-touch",
+     "links": "L-33"
+    },
+    {
+     "id": "U-91-3",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "Nothing is validated: past dates are accepted and clashes with the owner's other hearings are not checked. matter.hearing_at is always overwritten with the new date, even when an earlier hearing is still to come (lines 376-378), and the stage does not move to \"Hearing\".",
+     "fix": "Require a future date, warn on same-day clashes for the owner and attendees, set hearing_at to the earliest upcoming scheduled_at, and offer \"Move stage to Hearing\".",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:376",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-91-4",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "A scheduled hearing cannot be edited, rescheduled or cancelled; rows offer only \"Record Outcome\" or \"Edit\" of the outcome (lines 748-762). A date change therefore means adding a second hearing row.",
+     "fix": "Add Reschedule (keeping history, e.g. \"Rescheduled by department\"), Cancel with a reason, and Edit details on each upcoming hearing.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:748",
+     "pillar": "Reply speed"
+    }
+   ]
+  },
+  {
+   "id": "92-matter-hearing-outcome",
+   "verdict": "The form saves with an empty outcome, asks about adjournment twice, shows the saved next date as blank when reopened, and records nothing that moves the matter forward.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-92-1",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "An outcome does not change the matter. \"Order reserved\", \"Order passed\", \"Dismissed\", \"Allowed\" and \"Partly allowed\" leave stage, money and clocks as they were (lines 430-459). Directions given at the hearing, such as \"written submissions within 15 days\", survive only as free-text notes.",
+     "fix": "Attach a next step to each outcome. Order passed opens \"Record order\" (no., date, amounts; stage Order received; appeal clock). Submissions directed creates a dated task or deadline. Adjourned creates the next hearing row (U-85-2).",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:430",
+     "pillar": "Reply speed"
+    },
+    {
+     "id": "U-92-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "\"Save Outcome\" is enabled while \"Select outcome\" is still empty; it is disabled only during saving (line 1015). The \"Adjourned\" outcome and the \"Adjourned to next date\" tick are independent (lines 978-1007): choosing the outcome without the tick saves no next date, and ticking without a date also saves.",
+     "fix": "Make the outcome required. Choosing \"Adjourned\" should reveal a required next date and time and set adjourned automatically; drop the separate checkbox.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:1015",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-92-3",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "\"Edit\" on a recorded hearing loads next_date as an ISO timestamp (line 756), which is not a valid datetime-local value. The browser shows \"Next Hearing Date\" blank although a date is saved, inviting the user to re-enter it or lose it.",
+     "fix": "Convert the stored timestamp to \"YYYY-MM-DDTHH:mm\" in IST when the dialog opens, and convert it back on save.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:756",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-92-4",
+     "severity": "Low",
+     "area": "Accessibility",
+     "issue": "The adjourned control is a native checkbox (lines 993-999, browser-default blue) instead of the kit Checkbox, and the dialog does not say which hearing is being recorded.",
+     "fix": "Use the shadcn Checkbox or Switch, and add a DialogDescription such as \"Hearing of 14/10/2026 10:30 · Room 204, CGST Bhavan\".",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:993",
+     "pillar": "Per-notice"
+    }
+   ]
+  },
+  {
+   "id": "93-matter-record-payment",
+   "verdict": "Every kind of payment, including \"Refund Received\", is added to paid_total. Amounts are free-typed numbers with no DRC-03 link, and an all-blank form can be saved.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-93-1",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "handleAddPayment adds the total of any kind to paid_total (line 403). A \"Refund Received\" therefore lowers Outstanding as if tax had been paid, and a \"Pre-deposit\" never reaches pre_deposit_total. The kind-aware litigationData.addPayment (lib/litigationData.ts:514) is not used.",
+     "fix": "Save through addPayment, extended so refund_received reduces pre-deposit or paid in a separate refund ledger. Before saving, preview the effect (\"Outstanding ₹17,36,000 → ₹…\").",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:403",
+     "pillar": "Data trust",
+     "links": "L-31"
+    },
+    {
+     "id": "U-93-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "There is no ARN, CPIN or challan field and no way to pick a synced DRC-03 filing, although matter_payments.drc03_arn exists. Staff retype head-wise figures the extension already fetched, and nothing reconciles the two: in the fixture the linked DRC-03 …071122 totals ₹1,27,300 (including ₹3,300 interest) against ₹1,24,000 typed as tax only.",
+     "fix": "Make the first field \"Link DRC-03 / challan\": search the client's gst_drc03_filings by ARN, date or section and prefill the heads, cash/credit and paid_on. Keep manual entry as a fallback, with the ARN required for DRC-03 kinds.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:1074",
+     "pillar": "Fetch",
+     "links": "R-21"
+    },
+    {
+     "id": "U-93-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "\"Record\" is enabled with every amount blank (line 1097), so it inserts a ₹0 payment and an event. Paid-on is optional, amounts can exceed the outstanding head and drive Outstanding negative, and the type=number inputs have no Indian grouping (lines 1087-1090).",
+     "fix": "Require an amount above 0 and a date no later than today. Show each head's outstanding beside its input and warn when it is exceeded. Use NumberInput with grouping.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:1086",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-93-4",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "Four kinds leave out common cases: tax and interest paid within 30 days of the SCN to close it (s.73(8)), payment with reduced penalty (s.74(8)/74A), pre-deposit debited through APL-01, adjustment against a refund (s.54(10)), and recovery by the department (s.79). Verify the list with the firm.",
+     "fix": "Give each kind help text with its statutory basis, and report \"Recovery by department\" apart from voluntary payments in the MIS.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:1079",
+     "pillar": "Data trust"
+    }
+   ]
+  },
+  {
+   "id": "94-matter-add-document",
+   "verdict": "\"Add Document\" adds only a title. There is no file picker even when the source is \"Manual Upload\", so the matter cannot hold its documents.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-94-1",
+     "severity": "High",
+     "area": "Data",
+     "issue": "There is no file input. The dialog saves title, kind and source only (lines 464-469, 1022-1067), although the table has storage_path, mime and size_bytes. The default source \"Manual Upload\" (line 1052) promises an upload that never happens.",
+     "fix": "Add a drag-and-drop picker (multiple files) that uploads to a private bucket served through signed URLs, takes the title from the filename and guesses the kind from the form code in the name.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:1022",
+     "pillar": "Per-notice",
+     "links": "R-18"
+    },
+    {
+     "id": "U-94-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Portal documents that are already synced (notice PDFs, case-folder attachments) cannot be attached by reference. Choosing \"GST Portal\" as the source links nothing.",
+     "fix": "Add a \"From portal\" tab listing the client's case-folder items and notice PDFs that are not yet on the matter. Attach them by reference and set the source automatically.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:1048",
+     "pillar": "Zero-touch"
+    },
+    {
+     "id": "U-94-3",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "Kind defaults to \"Order\" whatever the context (line 208). The document's own date (order date, reply date) is not captured, and neither is the notice or hearing it belongs to, although matter_documents.notice_id exists.",
+     "fix": "Default the kind from the tab or stage, and capture the document date and what it relates to (notice or hearing).",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:208",
+     "pillar": "Per-notice"
+    }
+   ]
+  },
+  {
+   "id": "95-matter-created-detail",
+   "verdict": "A newly created matter opens in an inconsistent state: it offers \"Reopen\" instead of \"Close\", shows a green ₹0 \"Outstanding\" although no amounts were entered, has Activity (0), and its empty Notices tab offers no way to link a notice.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-95-1",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "Create writes status \"open\" (LitigationMattersPage.tsx:215) but the detail page tests status === \"Open\" (line 618). The open matter therefore shows \"Reopen\" and no \"Close\". Clicking Reopen moves it to stage \"Triage\" and logs a false \"reopened\" event (lines 349-362).",
+     "fix": "Write \"Open\" (or create through createMatter), compare through a shared isMatterOpen(), normalise existing rows, and add CHECK (status IN ('Open','Closed')).",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:618",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-95-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "With no demand entered, the Outstanding tile shows \"₹0\" in green success styling (lines 657-660), so an unknown amount reads as settled.",
+     "fix": "When demand is 0 or null, show a neutral \"Demand not recorded\" with an \"Add from notice/order\" action. Use green only for matters that are closed or fully paid.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:657",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-95-3",
+     "severity": "Medium",
+     "area": "Empty/error state",
+     "issue": "This creation path logs no \"created\" event (Activity (0)) and links no notice. The Notices tab then dead-ends at \"No notices linked to this matter.\" with no action (lines 684-686).",
+     "fix": "Create through createMatter, which logs \"created\", and give the empty state a call to action: \"Link notices from Placeholder Logistics (n unlinked)\".",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:684",
+     "pillar": "Zero-touch",
+     "links": "L-30"
+    },
+    {
+     "id": "U-95-4",
+     "severity": "Low",
+     "area": "Data",
+     "issue": "The toast reads \"Matter M-2026-0012 created\" although the highest 2026 number is M-2026-0009. count(*)+1 across all years skips 0010–0011, and those numbers can later collide with the drawer's max+1 numbering.",
+     "fix": "Number matters from a per-year DB sequence via an RPC, with matter_no unique.",
+     "ref": "src/pages/LitigationMattersPage.tsx:202",
+     "pillar": "Data trust",
+     "links": "L-34"
+    }
+   ]
+  },
+  {
+   "id": "96-matter-closed",
+   "verdict": "Closure shows only as small raw chips (\"Closed: paid\", \"Voluntary_payment\"), every edit control stays active, and there is no closure summary.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-96-1",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "A closed matter keeps every edit control: Change Stage, Schedule Hearing, Record Payment, the Owner, Priority and Reviewer selects, and the editable demand inputs (lines 567-656). It can be changed without notice, moving the MIS totals. Reopen has no confirmation and forces stage \"Triage\" (line 352), losing the stage the matter closed at.",
+     "fix": "Make closed matters read-only. Reopen through useConfirm with a reason, and restore the last stage from matter_stage_history.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:614",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-96-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Closure is a 9px chip showing the raw value (\"Closed: paid\", line 541) next to a \"Voluntary_payment\" chip (line 532: CSS capitalize keeps the underscore). closed_at, who closed it and the closing reference are never shown.",
+     "fix": "Show a closure banner such as \"Closed 02/07/2026 by Associate One · Paid / Settled · DRC-03 AD…\", linking to the closing event and document.",
+     "ref": "src/pages/LitigationMatterDetailPage.tsx:539",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-96-3",
+     "severity": "Low",
+     "area": "Logic",
+     "issue": "A DRC-03 voluntary payment against an ASMT-10 is its own matter (lifecycle \"voluntary_payment\"), although it settles the scrutiny rather than being a dispute. It inflates matter counts (MIS \"Closed matters 2\"). Verify with the firm.",
+     "fix": "Drop \"voluntary_payment\" as a lifecycle. Record the DRC-03 as a payment on the scrutiny matter it settles and close that matter as Paid / Settled.",
+     "ref": "src/pages/LitigationMattersPage.tsx:52",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "100-litigation-mis",
+   "verdict": "Six large numbers above an empty page. Exposure is not split by tax, interest and penalty, proposed vs confirmed, or forum, and refund claims are counted in \"Outstanding\". The partner cannot see what falls due next or what changed.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-100-1",
+     "severity": "High",
+     "area": "Layout",
+     "issue": "The landing tab is six tiles and about 70% blank page (lines 473-496). The partner's questions take five more tab clicks or get no answer: what is due in the next 14 days, exposure by forum, top clients, unassigned or stale matters, and this month's movement.",
+     "fix": "Turn this tab into a one-screen summary like the target dashboard. Tiles: Exposure (split tax/interest/penalty), Pre-deposit, Paid, Outstanding, Hearings 14 d, Appeal clocks ≤30 d. Below them: a \"Next 14 days\" list, \"Exposure by forum\" bars in ₹ lakh, \"Top clients\" and \"Needs attention\", each linking to the filtered matters list.",
+     "ref": "src/pages/LitigationMISPage.tsx:473",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-100-2",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "Totals add unlike amounts. The refund matter (M-2026-0007, RFD-08 SCN, ₹11,85,000) is summed into Total exposure and Outstanding, because demand() covers all lifecycles (lines 71-73, 152). Amounts proposed in SCNs are added to amounts confirmed by orders (the ₹2.85 cr DRC-07). Nothing says the tiles cover open matters only, or that interest is frozen at the typed figure although s.50 interest keeps accruing (verify the firm's position).",
+     "fix": "Report \"Refund at stake\" apart from tax demand. Split exposure into Proposed (intimation/SCN) and Confirmed (order/appeal). Add a subtitle such as \"open matters · as at 05/10/2026 15:10\", and optionally show interest accrued to date.",
+     "ref": "src/pages/LitigationMISPage.tsx:152",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-100-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "The MIS has no filters and no period. It cannot be sliced by owner, client, FY, lifecycle or forum, and shows no movement (matters opened or closed, exposure added or released this month).",
+     "fix": "Add one filter bar shared by all tabs and kept in the URL, an \"as at\" stamp, and a \"Movement this month\" tile with drill-through.",
+     "ref": "src/pages/LitigationMISPage.tsx:365",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-100-4",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "The tiles are hand-made 30px full-rupee cards (line 486), not KpiTile, and \"₹3,63,84,800\" overflows at 390 px. Outstanding, a derived figure, comes before Total exposure, and the Closed tile's border-l-muted is invisible.",
+     "fix": "Use KpiTile with compact amounts (₹3.64 cr, full value in the title attribute), ordered Exposure → Pre-deposit → Paid → Outstanding, with the counts in a smaller second row.",
+     "ref": "src/pages/LitigationMISPage.tsx:483",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-100-5",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Exports give no feedback and are not gated. exportLitigationMIS() runs fire-and-forget with no spinner or try/catch, and returns silently when there are no matters (litigationPdfExport.ts:44). Export Tab, Export All and PDF all skip canExportData(), and the PDF leaves out hearings and clocks.",
+     "fix": "Show a loading state and a success or failure toast, gate all three exports with canExportData(), and add \"Next 30 days\" and \"Hearings\" sections to the PDF.",
+     "ref": "src/pages/LitigationMISPage.tsx:440",
+     "pillar": "Security"
+    }
+   ]
+  },
+  {
+   "id": "101-litigation-mis-by-client",
+   "verdict": "The most useful MIS table, ranking clients by outstanding. But \"Paid\" quietly includes pre-deposit, a missing demand prints as ₹0, client links lead to the notices page, and concentration and next clocks are not shown.",
+   "score": 5,
+   "findings": [
+    {
+     "id": "U-101-1",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "\"Paid\" = paid_total + pre_deposit_total (line 180). For Example Foods the whole ₹2,80,000 is pre-deposit, yet the Exposure tab shows Paid and Pre-deposit separately and the matter page leaves pre-deposit out of Outstanding.",
+     "fix": "Show \"Pre-deposit\" and \"Paid\" as separate columns, compute Outstanding = Demand − both, and put the formula in the header tooltip.",
+     "ref": "src/pages/LitigationMISPage.tsx:180",
+     "pillar": "Data trust",
+     "links": "L-31"
+    },
+    {
+     "id": "U-101-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "The client name links to /notices-company/:id (line 521), the notices page, not to that client's matters, and there is no other way to drill down.",
+     "fix": "Link the name to /litigation?client=<id>, and keep a small \"notices\" icon for the notices page.",
+     "ref": "src/pages/LitigationMISPage.tsx:521",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-101-3",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Concentration and urgency are not visible. Specimen Chemicals alone is ₹2.85 cr of ₹3.68 cr (about 77%), but there is no share column, next clock, overdue count or hearings-in-14-days per client.",
+     "fix": "Add \"% of exposure\" with an inline bar, \"Next clock\" and \"Overdue / Hearings 14 d\" columns, and a top-5 summary line.",
+     "ref": "src/pages/LitigationMISPage.tsx:161",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-101-4",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "Clients with no demand recorded (Placeholder Logistics, Test Engineering Works) show ₹0 in every money column, which reads as nothing owed. The matters list shows \"—\" for the same matters.",
+     "fix": "Print \"—\" with a \"not recorded\" tooltip, and show the number of matters missing demand in the card header.",
+     "ref": "src/pages/LitigationMISPage.tsx:527",
+     "pillar": "Data trust"
+    }
+   ]
+  },
+  {
+   "id": "102-litigation-mis-by-stage",
+   "verdict": "The donut sizes each stage by matter count, so the ₹2.85 cr order and a ₹0 matter get equal slices. Its colours match nothing else in the module, and the stages are workflow states rather than forums.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-102-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "The pie uses dataKey=\"count\" (line 576). With one matter per stage, all nine slices are equal and the chart says nothing: \"Order received\" (₹2,85,00,000) looks the same as \"Captured\" and \"Filed/submitted\" (₹0 each).",
+     "fix": "Replace it with horizontal bars of ₹ exposure by stage in pipeline order, like the target's \"Exposure by stage\", with the count as a secondary label.",
+     "ref": "src/pages/LitigationMISPage.tsx:576",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-102-2",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "Rows are sorted by demand (line 197) rather than pipeline order, and the stages mix internal workflow (Captured, Triage, Awaiting client data, Reply drafting, Partner review) with legal stages. The partner's question, how much sits at SCN, at order, in first appeal, at GSTAT and in recovery, cannot be answered.",
+     "fix": "For the MIS, group stages into forum buckets (SCN & reply, Order passed, First appeal, GSTAT, HC, Recovery) in pipeline order, with workflow status as a drill-down.",
+     "ref": "src/pages/LitigationMISPage.tsx:197",
+     "pillar": "At-a-glance",
+     "links": "L-25"
+    },
+    {
+     "id": "U-102-3",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "Slices take a generic COLORS array (lines 66-69, 586), so \"Reply drafting\" is orange here but blue in the list and \"Hearing\" is indigo here but amber in the list. Labels are drawn in the slice colour, and yellow or orange text on white fails contrast.",
+     "fix": "Use one STAGE_TONE map built on semantic tokens for the list, detail, MIS and PDF, and draw chart labels in the foreground colour.",
+     "ref": "src/pages/LitigationMISPage.tsx:66",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "103-litigation-mis-by-lifecycle",
+   "verdict": "A two-number table that largely repeats By Stage. Its lifecycle taxonomy mixes subject with forum, so an appeal drops out of its subject.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-103-1",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "Lifecycles mix subjects (demand, refund, registration) with forums and steps (appeal, tribunal, rectification). M-2026-0003, an appeal against a s.73 demand, is counted under \"Appeal\", not \"Demand\". \"Refund ₹11,85,000\" sits in a \"Total demand\" column although it is a refund at stake.",
+     "fix": "Make lifecycle mean subject only (demand/ITC, refund, registration, …) and keep forum as a separate axis. Label the refund amount \"Refund at stake\" and exclude it from demand.",
+     "ref": "src/pages/LitigationMattersPage.tsx:52",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-103-2",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "The tab is a table only (lines 601-628): no chart, no share of total, no outcomes. It adds little beyond By Stage and costs the user another tab.",
+     "fix": "Merge By Stage and By Lifecycle into one \"Breakdown\" tab with a dimension switch (Forum / Subject / Owner / Client), using the same bars-plus-table layout, and add outcome columns once outcomes are structured (L-41).",
+     "ref": "src/pages/LitigationMISPage.tsx:601",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-103-3",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "Lifecycle cells are raw values capitalised by CSS (line 619), so multi-word lifecycles would show as \"Voluntary_payment\" or \"Non_filer\".",
+     "fix": "Use the shared LIFECYCLE_LABEL map in the MIS, the Excel export and the PDF.",
+     "ref": "src/pages/LitigationMISPage.tsx:619",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "104-litigation-mis-ageing",
+   "verdict": "Matters are aged by the date they were keyed into the app, so the ₹2.85 cr order sits in \"180d+\" for the wrong reason, and the figure that matters, time left on its appeal clock, appears nowhere.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-104-1",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "Buckets are computed from created_at (line 216). The ₹2,85,00,000 order-received matter lands in \"180d+\" only because it was keyed on 02/12/2025, while its 66 days of appeal limitation are not shown.",
+     "fix": "Age matters from the first notice or order date, counted in IST calendar days.",
+     "ref": "src/pages/LitigationMISPage.tsx:216",
+     "pillar": "Data trust",
+     "links": "L-41"
+    },
+    {
+     "id": "U-104-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The tab lacks the two ageing views a partner acts on: time left on the controlling clock (expired, ≤7, 8–30, 31–90, >90 days) and staleness (no activity for 30, 60 or 90 days, from updated_at or the last event).",
+     "fix": "Add \"Time left\" and \"Untouched for\" bucket sets, each linking to the filtered matters list.",
+     "ref": "src/pages/LitigationMISPage.tsx:210",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-104-3",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "Each bucket gets an arbitrary colour (lines 665-669), e.g. red for 31–60d and indigo for 180d+, implying a severity order the colours do not follow. Y-axis ticks read \"300.0L\" and \"75.0L\" and switch to raw numbers below ₹1 lakh (line 663).",
+     "fix": "Use one sequential tone that darkens with age, a consistent ₹ lakh/crore formatter without decimals, and count labels on the bars.",
+     "ref": "src/pages/LitigationMISPage.tsx:663",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "105-litigation-mis-per-staff",
+   "verdict": "Shows workload per owner but not risk: no overdue items, hearings, review queue or stale matters per person, and the names lead nowhere.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-105-1",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Each owner gets only open matters and total demand (lines 224-235). To allocate work, a partner needs per person: overdue, due within 7 days, hearings within 14 days, matters waiting on them as reviewer, matters with no next action, and the oldest untouched.",
+     "fix": "Add those columns and a reviewer queue, sort by risk, and link names to /litigation?owner=<id>.",
+     "ref": "src/pages/LitigationMISPage.tsx:224",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-105-2",
+     "severity": "Low",
+     "area": "Data",
+     "issue": "Rows are grouped by owner_user_id but keyed and labelled by first_name (line 695). Two staff with the same first name produce duplicate React keys and look like one person.",
+     "fix": "Key rows by user id and show the full name and role.",
+     "ref": "src/pages/LitigationMISPage.tsx:695",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-105-3",
+     "severity": "Low",
+     "area": "Interaction",
+     "issue": "There is no way to drill from a staff row into their matters, because the matters list's Owner filter offers only All, Mine and Unassigned (LitigationMattersPage.tsx:336-340).",
+     "fix": "List every staff member in the Owner filter (useStaffList) and keep the choice in the URL.",
+     "ref": "src/pages/LitigationMattersPage.tsx:336",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "106-litigation-mis-hearings",
+   "verdict": "The only firm-wide hearing list is the seventh tab of a report. It reads one date per matter, drops the time and venue, and counts days from the current time of day.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-106-1",
+     "severity": "High",
+     "area": "Data",
+     "issue": "Hearings sit under Reports → Litigation MIS → the seventh tab, while the module tab named \"Hearings\" opens the matters list. The list reads litigation_matters.hearing_at, one date per matter (lines 238-254), rather than matter_hearings, so time (11:00, 15:00), mode, venue and officer are lost.",
+     "fix": "Build a Hearings page or calendar behind the module's \"Hearings\" tab, listing matter_hearings from today: date · time IST, mode, venue or VC link, officer, attendees, prep status, plus an ICS feed. Keep only a count in the MIS.",
+     "ref": "src/pages/LitigationMISPage.tsx:238",
+     "pillar": "At-a-glance",
+     "links": "L-33, L-40"
+    },
+    {
+     "id": "U-106-2",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "\"Days away\" is Math.ceil over milliseconds (line 737), and only hearings within 3 days get a chip (line 748). A hearing tomorrow at 10:00, viewed today at 09:00, shows \"2d\", and the 08 Oct 15:00 hearing gets no chip in the capture although it is 3 calendar days away.",
+     "fix": "Count IST calendar days and show \"Today\", \"Tomorrow\" or \"in n d\" for anything within 7 days, toned by proximity.",
+     "ref": "src/pages/LitigationMISPage.tsx:737",
+     "pillar": "Reply speed",
+     "links": "L-27"
+    },
+    {
+     "id": "U-106-3",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "The client name is not a link. M-2026-0005's unrecorded demand prints as \"₹0\". The Stage column shows a workflow state (\"Filed/submitted\") rather than the hearing's purpose, and \"Hearings (4)\" is the only sub-tab with a count.",
+     "fix": "Link the client to /litigation?client=, add a Purpose column (PH u/s 75(4), appeal hearing), print \"—\" for unrecorded demand, and show counts on all sub-tabs or none.",
+     "ref": "src/pages/LitigationMISPage.tsx:745",
+     "pillar": "At-a-glance"
+    }
+   ]
+  }
+ ],
+ "crossCutting": [
+  "Navigation (src/components/notices/NoticesTopNav.tsx:7-13, 43): every matters and detail screen highlights \"Hearings\" and the MIS highlights \"Reports\". \"Matters\" opens notices (?filter=submitted), and hearings have no page of their own (L-40). The inline-flex bar neither wraps nor scrolls, so every litigation page renders about 484 px wide at 390 px. Fix: point Matters to /litigation and Hearings to a calendar over matter_hearings, and add \"Litigation MIS\" as its own entry. Give the bar max-w-full overflow-x-auto (or StepTabs TAB_LIST_CLASS with flex-wrap), and replace the \"All matters\" button on /litigation/:id with a breadcrumb.",
+  "The fixed desktop bell (src/components/layout/MainLayout.tsx:69, md:fixed top-4 right-4 z-40) sits on top of the right-most header action: \"Create Matter\" on the list and \"PDF\" on the MIS. NoticesPageHeader (src/components/notices/NoticesPageHeader.tsx:29) reserves no space for it, whereas PageHeader compact adds md:pr-12 (src/components/layout/PageHeader.tsx:36). Fix: switch to PageHeader compact, or add md:pr-12.",
+  "No litigation screen uses the house style (workspace/theme.ts, gstr9/ui.tsx, docs/UI-UX-REDESIGN.md). Instead: a 22px NoticesPageHeader rather than PageHeader compact; text-[10px] uppercase headers and text-xs cells rather than WS_TH/WS_TD/WS_TD_NUM inside WS_TABLE_WRAP; hand-made 9px chips rather than the gstr9 Badge tones; 30px border-l-4 cards rather than KpiTile/SectionCard; a grey shadcn TabsList (detail) and centred 11px pills (MIS, LitigationMISPage.tsx:452) rather than TAB_LIST_CLASS/TAB_TRIGGER_CLASS with CountBadge. The pages also use raw palette classes (bg-blue-400…bg-red-500, hex COLORS) and dark: variants, which the design rules forbid, type=number instead of NumberInput, a plain client Select instead of SearchableSelect, AlertTriangle or \"No data\" text instead of TableEmptyState, and Reopen without useConfirm. Fix: one conversion pass to the WS_* classes and the gstr9/ui kit, with a semantic STAGE_TONE map.",
+  "Raw codes reach the screen: \"registration\" in the create dialog's trigger, \"Voluntary_payment\" and \"Closed: paid\" chips, \"Pre Deposit\" in the table vs \"Pre-deposit\" in the dialog, \"lifecycle: demand · stage: Captured\" in Activity, and CSS-only capitalisation in the MIS lifecycle column. Fix: add src/lib/litigationLabels.ts (LIFECYCLE, STAGE, STATUS, CLOSE_REASON, PAYMENT_KIND, DOC_KIND, DOC_SOURCE, EVENT) and use it in the pages, in Select items (so triggers show the label too), and in the Excel and PDF exports.",
+  "Dates and times are inconsistent. The list and MIS show \"dd Mon yyyy\" (en-IN renders \"20 Sept 2026\"), the detail page and PDF show dd/mm/yyyy, and Documents and Activity mix \"18h ago\" with dates. Hearing times are captured but never displayed. Day counts use browser time (Math.ceil, LitigationMISPage.tsx:737) or UTC-midnight parsing (LitigationMattersPage.tsx:108-119) rather than IST calendar days. Fix: a shared fmtDate (DD/MM/YYYY, per utils/formatDate.ts), an fmtDateTime giving \"dd/mm/yyyy · HH:mm\" in Asia/Kolkata, and a daysUntilIST() reused from noticeDefinitions; show relative time only in tooltips (L-27).",
+  "Four definitions of \"closed\": the list uses stage === \"Closed\" (LitigationMattersPage.tsx:180); the detail page uses status === \"Open\"/\"Closed\", case-sensitive (LitigationMatterDetailPage.tsx:539, 618); the MIS uses lower(status) !== \"closed\" (LitigationMISPage.tsx:76); the PDF uses status !== \"Closed\" (litigationPdfExport.ts:53). Create writes \"open\", and Change Stage can set stage \"Closed\" on its own, so one matter is counted differently on each screen. Fix: export isMatterOpen() from lib/litigationData.ts and use it everywhere. Add a migration (applied to gcquafqxbykxkbexcdpy) that normalises status, adds CHECK (status IN ('Open','Closed')), and adds a trigger tying stage \"Closed\" to status.",
+  "Money is computed four ways. Detail Outstanding = demand − paid, ignoring pre-deposit. MIS Exposure = demand − paid − pre-deposit. \"Paid\" in By Client and the PDF includes pre-deposit. Record Payment adds every kind to paid_total, and refund claims are summed as demand (L-31). Fix: one matterMoney() helper returning proposed and confirmed demand, paid, preDeposit, refundAtStake and outstanding, used by the detail page, MIS, PDF and Excel, with the formula in a tooltip.",
+  "The pages bypass lib/litigationData.ts. Their own inserts and updates log no \"created\" or field_changed events, number matters count+1, drop pre-deposits, and sort by created_at. createMatter, updateMatter, addPayment, closeMatter, linkNoticesToMatter and sortMatters go unused by these screens (L-28, L-31, L-34). Fix: one write path (litigationData or Postgres RPCs), with matter_events written by DB triggers so no change can skip the log.",
+  "No permission gates. The notice screens gate edits with canEditNoticeStatus() (AllClientsNoticesPage.tsx:267, NoticeWorkQueue.tsx:143), but on the litigation screens any staff login can create matters, retype demand, close and reopen, record payments, and export the MIS (no canExportData() check). Fix: gate edit controls with canEditNoticeStatus() or a new manage_litigation key, gate exports with canExportData(), and render read-only otherwise.",
+  "Failures look like data. The detail page's Promise.all ignores every {error} (LitigationMatterDetailPage.tsx:216-223), so a failed query shows \"Matter not found.\" or empty tabs. The list catches only thrown errors (LitigationMattersPage.tsx:157-168) and reports \"No litigation matters found\". The MIS renders ₹0 on error, event and stage-history inserts are unchecked, and exports fail silently. Fix: check every error, show an error card with Retry, toast failed writes, and never render money totals from a failed load.",
+  "MIS numbers are dead ends. No tile and no By Stage, Lifecycle, Ageing or Per Staff row links anywhere. No table has a total row. Card badges count unlike things (9 clients, 9 stages, 7 lifecycles, 5 buckets, 5 staff) and read as matter counts. Fix: link every count and amount to /litigation with the matching URL filter, add WS_TR_TOTAL footers, and drop or label the badges (\"9 clients\").",
+  "There is no URL state. Detail tabs (defaultValue \"notices\"), MIS tabs (useState \"exposure\") and list filters other than ?client live in component state. Back or \"All matters\" resets the filters, and an alert or email cannot link to \"M-2026-0001 › Hearings\" or \"MIS › By client\" (R-19). Fix: keep ?tab= and filter params in useSearchParams on all three pages.",
+  "Mobile (390 px), beyond the nav bar: 30px full-rupee figures overflow their tiles (MIS \"₹3,63,84,800\", matter Outstanding \"₹17,36,000\"); 8-column tables are cut with no card layout; matter numbers wrap onto three lines; the detail page's five tabs overflow and the MIS's seven sub-tabs wrap onto two rows. Fix: compact ₹ lakh/crore with the full value in title, whitespace-nowrap on IDs, a card list below md, and scrollable tab lists.",
+  "Mission gap: litigation is manual end to end. Matters are typed in, never suggested (suggestMatters is unused). Stages never move on portal events such as a reply filed or a DRC-07/APL-04 synced (R-06, L-11). Hearings are not extracted (L-33) and clocks are never computed (L-09). Fix: after each sync, suggest or attach matters by case_id; map case-folder REPLY, ORDRS and APL items to stage changes with their dates and ARNs; write matter_deadlines (with matter_id) from litigation_rules; and feed the results to the dashboard's \"Next 14 days\" and a \"Needs you\" list."
+ ]
+}

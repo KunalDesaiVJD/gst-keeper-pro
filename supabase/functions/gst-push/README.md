@@ -21,7 +21,7 @@ Requires the Supabase CLI, logged in and linked to project `gcquafqxbykxkbexcdpy
 
 ```bash
 # 1. Set the secret token (never commit it to source)
-supabase secrets set HUMONEX_BEARER_TOKEN=zMUvsRC6o3Q3CbhHUKWCv4pDzugkvmsn \
+supabase secrets set HUMONEX_BEARER_TOKEN=<your-humonex-bearer-token> \
   --project-ref gcquafqxbykxkbexcdpy
 
 # 2. Deploy the function (verify_jwt=false is set in supabase/config.toml)

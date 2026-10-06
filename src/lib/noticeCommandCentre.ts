@@ -1,0 +1,150 @@
+// The command centre's data (roadmap Phase 2 task 2): one RPC for every figure
+// (public.notices_command_centre), the ranked plan (public.notice_plan), the
+// calendar (public.notice_calendar) and Ctrl K search (public.notices_search).
+// Each figure is defined in the database over the same views the lists read,
+// so a number opens a list with the same count
+// (supabase/tests/notices/test_95_command_centre.sql).
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import type { NoticePlanRow } from '@/lib/noticeFacts';
+import { applyQueueTab, type QueueTab } from '@/lib/noticeQueries';
+
+export interface PipelineStage { stage: string; label: string; count: number; median_days: number | null }
+export interface DayLoad { date: string; reply: number; hearing: number; clock: number; total: number }
+export interface StageExposure { stage: string; label: string; notices: number; matters: number; total: number }
+export interface ClientAttention { client_id: string; name: string; gstin: string | null; open: number; overdue: number; exposure: number }
+
+export interface CommandCentre {
+  generated_at: string;
+  today: string;
+  tiles: {
+    open: number;
+    overdue: { count: number; amount: number; oldest_days: number | null };
+    due7: { count: number; next_date: string | null; next_client: string | null; hearings: number; clocks: number };
+    new: { count: number; with_demand: number; unassigned: number };
+    unassigned: number;
+    review: { count: number; approved: number };
+    waiting_client: number;
+    exposure: { total: number; notices: number; notices_amount: number; matters: number; matters_amount: number };
+  };
+  nav: { queue: number; open: number; matters: number; hearings: number };
+  plan_counts: Record<QueueTab, number>;
+  pipeline: PipelineStage[];
+  replies: { this_month: number; median_days_this_month: number | null; median_days_last_month: number | null };
+  health: {
+    eligible: number;
+    fresh: number;
+    never: number;
+    failing: Record<string, number>;
+    last_run: {
+      started_at: string; finished_at: string | null; status: string;
+      clients_total: number | null; clients_done: number; ext_version: string | null;
+    } | null;
+    last_success_at: string | null;
+    new_today: number;
+    auto_closed_today: number;
+    ext_versions: string[];
+    alerts_mode: 'off' | 'preview' | 'live' | null;
+    alerts_today: number;
+  };
+  next14: DayLoad[];
+  exposure_by_stage: StageExposure[];
+  clients: ClientAttention[];
+}
+
+export async function loadCommandCentre(userId: string | null): Promise<CommandCentre> {
+  const { data, error } = await supabase.rpc('notices_command_centre', { p_user_id: userId });
+  if (error) throw error;
+  return data as unknown as CommandCentre;
+}
+
+export function useCommandCentre(userId: string | null) {
+  return useQuery({
+    queryKey: ['notices-command-centre', userId],
+    queryFn: () => loadCommandCentre(userId),
+    staleTime: 60_000,
+    // While a sync run is going, the figures follow it (audit U-07-1).
+    refetchInterval: (q) => (q.state.data?.health?.last_run?.status === 'running' ? 15_000 : false),
+  });
+}
+
+/** Counts for the module's tab bar, shared by every Notices page (one call a minute). */
+export function useNoticesNavCounts(userId: string | null) {
+  const q = useCommandCentre(userId);
+  return q.data?.nav ?? null;
+}
+
+export async function loadPlanTop(tab: QueueTab, userId: string | null, limit = 8): Promise<NoticePlanRow[]> {
+  let q = supabase.from('notice_plan').select('*');
+  q = applyQueueTab(q, tab, userId);
+  const { data, error } = await q.order('plan_score', { ascending: false }).order('id').limit(limit);
+  if (error) throw error;
+  return (data ?? []) as NoticePlanRow[];
+}
+
+export interface HearingItem {
+  kind: 'notice' | 'matter';
+  ref_id: string;
+  notice_id: string | null;
+  matter_id: string | null;
+  client_id: string;
+  client_name: string;
+  hearing_on: string;
+  hearing_at: string | null;
+  title: string | null;
+  reference: string | null;
+  stage: string;
+  owner_id: string | null;
+  owner: string | null;
+  venue: string | null;
+  note: string | null;
+}
+
+export async function loadUpcomingHearings(): Promise<HearingItem[]> {
+  const { data, error } = await supabase.rpc('notice_hearings_upcoming', { p_from: null });
+  if (error) throw error;
+  return ((data ?? []) as HearingItem[]).sort((a, b) => (a.hearing_at || a.hearing_on).localeCompare(b.hearing_at || b.hearing_on));
+}
+
+export interface CalendarItem {
+  day: string;
+  kind: 'reply' | 'hearing' | 'appeal' | 'attachment';
+  notice_id: string | null;
+  client_id: string;
+  client_name: string;
+  form_code: string | null;
+  reference: string | null;
+  title: string | null;
+  stage: string;
+  owner_id: string | null;
+  owner: string | null;
+  detail: string | null;
+}
+
+export async function loadCalendar(from: string, to: string): Promise<CalendarItem[]> {
+  const { data, error } = await supabase.rpc('notice_calendar', { p_from: from, p_to: to });
+  if (error) throw error;
+  return (data ?? []) as CalendarItem[];
+}
+
+export const CALENDAR_KIND_LABEL: Record<CalendarItem['kind'], string> = {
+  reply: 'Reply due',
+  hearing: 'Hearing',
+  appeal: 'Appeal clock',
+  attachment: 'Attachment lapses',
+};
+
+export interface SearchResult {
+  clients: { id: string; name: string; gstin: string | null; open: number; overdue: number }[];
+  notices: {
+    id: string; client_id: string; client_name: string; gstin: string | null; form_code: string | null;
+    notice_type: string | null; reference_number: string | null; case_id: string | null; stage: string;
+    issue_date: string | null; matched_on: string;
+  }[];
+}
+
+export async function searchNotices(q: string): Promise<SearchResult> {
+  const { data, error } = await supabase.rpc('notices_search', { p_q: q, p_limit: 8 });
+  if (error) throw error;
+  return (data ?? { clients: [], notices: [] }) as unknown as SearchResult;
+}

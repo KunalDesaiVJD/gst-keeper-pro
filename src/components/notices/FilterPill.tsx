@@ -35,11 +35,12 @@ export const FilterPill: React.FC<FilterPillProps> = ({
   return (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger
+        aria-label={`${label}: ${shown}`}
         className={cn(
           // w-auto is load-bearing: SelectTrigger is w-full by default, which
           // made these stretch into full-width stacked bars instead of pills.
-          'h-auto w-auto gap-1 rounded-full border-0 px-2 py-0.5 text-[10.5px] font-semibold focus:ring-1',
-          active ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground',
+          'h-8 w-auto gap-1 rounded-full border px-2.5 text-xs font-medium focus:ring-2 focus:ring-ring',
+          active ? 'border-primary/40 bg-primary/10 text-primary' : 'bg-card text-muted-foreground',
           className,
         )}
       >

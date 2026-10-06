@@ -1,0 +1,1525 @@
+[
+  {
+    "id": "01-dashboard",
+    "group": "Dashboard",
+    "title": "Notices & Litigation dashboard (landing)",
+    "route": "/notices-dashboard",
+    "steps": "Sidebar → Notices Dashboard",
+    "desktop": "shots/d-01-dashboard.png",
+    "mobile": "shots/m-01-dashboard.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Landing dashboard: header with last-sync line and \"2 logins failed\", four KPI tiles (14 overdue · 12 due in 7 days · 6 new · ₹4.23 cr exposure), the work queue (top 50 open notices, newest first) and the category / next-14-days / sync-health cards. Mobile (390 px): Page is 485 px wide (the tab bar sets the width), header actions wrap onto two rows, KPI tiles go two-up with cramped text, and the work-queue table is cut at the Notice / Matter column — stage, due, demand and owner are off-screen.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "NoticeWorkQueue selects profiles.last_name, which does not exist → 400 → every Owner avatar is \"?\" and the bulk Assign dialog lists nobody, so the queue cannot assign work (tsc flags it too).",
+      "The fixed notification bell (top-right, z-40) sits on top of the page header's right-most action (Sync All / Add Notice / Export to Excel / PDF / refresh).",
+      "Sync & alerts card hard-codes \"Emails sent today 0\" and \"Next scheduled unattended sync: 06:00 IST\"; the ⌘K hint does nothing (Ctrl+K verified) and the search pill promises ARN search but the dialog only matches GSTIN/name.",
+      "\"Clients synced / with credentials 5 / 11\": the denominator is every non-excluded client, including ones without saved credentials.",
+      "Category is keyword-based on description: a DRC-01 demand SCN whose text mentions \"registration was cancelled\" is counted under Registration, not DRC 01.",
+      "Work-queue badge reads \"Open notices · earliest due first\" while the card subtitle says \"Newest first\" and rows are ordered by issue date (due 19 Oct, 03 Nov, —, 11 Oct …), so the most urgent items are not at the top.",
+      "The Exposure tile's \"22 matters\" counts open notices with an amount of demand, not litigation matters, and its ₹4.23 cr disagrees with Litigation MIS (₹3.68 cr total exposure across 9 open matters) — two \"exposure\" figures with different bases.",
+      "Due-in-7 tile counts 12 (open, extended due date) while its drill-down ?filter=due7 lists 10 (raw due_date, includes closed, and drops notices due today once UTC midnight has passed) — see findings/drilldown-counts.json.",
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "03-dashboard-reports-menu",
+    "group": "Dashboard",
+    "title": "Top-nav \"Reports ▾\" dropdown",
+    "route": "/notices-dashboard",
+    "steps": "Click \"Reports ▾\" in the module tab bar",
+    "desktop": "shots/d-03-dashboard-reports-menu.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "\"Reports ▾\" dropdown: Notice Summary, GSTIN Wise Notice Count (also the \"Clients\" tab), Litigation MIS, Company List & sync log.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Module tab labels mislead: \"Matters\" opens notices with a submission logged (?filter=submitted); litigation matters live under \"Hearings\"; \"Clients\" is the GSTIN-wise count report."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "04-dashboard-search-company",
+    "group": "Dashboard",
+    "title": "Search Company dialog (⌘K pill)",
+    "route": "/notices-dashboard",
+    "steps": "Press Ctrl+K (nothing happens) then click the \"Search GSTIN, trade name, ARN…\" pill; type \"pharma\"",
+    "desktop": "shots/d-04-dashboard-search-company.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Search Company dialog filtered to \"pharma\": GSTIN link + trade name only. Ctrl+K was pressed first and did not open it.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Sync & alerts card hard-codes \"Emails sent today 0\" and \"Next scheduled unattended sync: 06:00 IST\"; the ⌘K hint does nothing (Ctrl+K verified) and the search pill promises ARN search but the dialog only matches GSTIN/name."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "05-dashboard-add-notice",
+    "group": "Dashboard",
+    "title": "Add Notice dialog — submit fails (portal_key NOT NULL)",
+    "route": "/notices-dashboard",
+    "steps": "Click \"Add Notice\", fill all fields, Submit",
+    "desktop": "shots/d-05-dashboard-add-notice.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Add Notice dialog fully filled; on Submit the toast reports: null value in column \"portal_key\" of relation \"gst_notices\" violates not-null constraint.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name",
+      "400 POST gst_notices 23502 — null value in column \"portal_key\" of relation \"gst_notices\" violates not-null constraint"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "AddNoticeDialog inserts into gst_notices without portal_key, which is NOT NULL (20260914100000_notices_upsert_sync.sql) → every manual \"Add Notice\" is rejected with 23502."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "06-dashboard-sync-all-no-extension",
+    "group": "Dashboard",
+    "title": "\"Sync All\" without the browser extension",
+    "route": "/notices-dashboard",
+    "steps": "Click \"Sync All\" (extension not installed)",
+    "desktop": "shots/d-06-dashboard-sync-all-no-extension.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "\"Sync All\" without the extension: error toast \"GST Keeper browser extension not detected…\"; Sync & alerts card shows \"Offline\" / \"Extension: Not detected\".",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "07-dashboard-sync-all-extension",
+    "group": "Dashboard",
+    "title": "\"Sync All\" with a (simulated) connected extension v0.3.3",
+    "route": "/notices-dashboard",
+    "steps": "Extension answers the __gstkAppReady ping (simulated via window.postMessage); click \"Sync All\"",
+    "desktop": "shots/d-07-dashboard-sync-all-extension.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "With a simulated v0.3.3 extension: Sync & alerts card reads \"v0.3.3 · connected\" with an \"Attention\" badge, and Sync All toasts \"Sync started for 11 client(s). Complete the CAPTCHA for each…\" — the 11 include the inactive Dummy Retail Traders.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "Extension presence and the Sync All reply are simulated by an init script answering the window.postMessage protocol from extension/appbridge.js, with the count computed the way background.js startAllClientsSectionPull does; no portal traffic occurs.",
+    "suspectedAppBugs": [
+      "Suspected: Sync All queues every client with saved credentials except notices_sync_excluded — the extension's getClients has no inactive_at_hand filter, so inactive clients (Company List \"Inactive\") are still logged into and synced, and count in the header's \"11 GSTINs\"."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "08-dashboard-closing-sweep",
+    "group": "Dashboard",
+    "title": "Work-queue footer \"run the closing sweep\"",
+    "route": "/notices-dashboard",
+    "steps": "Click \"run the closing sweep\" under the work queue",
+    "desktop": "shots/d-08-dashboard-closing-sweep.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Clicking \"run the closing sweep\" in the work-queue footer produces the toast \"Sweep errors: column gst_case_folder_items.notice_id does not exist; …\" (twice: auto-close and due-date sweep).",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name",
+      "400 GET gst_case_folder_items 42703 — column gst_case_folder_items.notice_id does not exist ?select=notice_id,folder_section,raw_json&notice_id=in.(a1000000-0000-4000-8000-000000000030,a1000000-0000-4000-8000-000000000032,a1000000-0000-4000-8000-000000",
+      "400 GET gst_case_folder_items 42703 — column gst_case_folder_items.notice_id does not exist ?select=notice_id,folder_section,raw_json&notice_id=in.(a1000000-0000-4000-8000-000000000030,a1000000-0000-4000-8000-000000000031,a1000000-0000-4000-8000-000000"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Closing sweep (runAutoClose/runDueDateSweep) filters gst_case_folder_items.notice_id — that column does not exist (folder items join on client_id+case_id, and gst_notices.id is a uuid but the code treats it as a number) → the sweep always fails, so no auto:* close or due-date back-fill can ever happen."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "09-dashboard-send-digest",
+    "group": "Dashboard",
+    "title": "\"Send digest\" button",
+    "route": "/notices-dashboard",
+    "steps": "Click \"Send digest\"",
+    "desktop": "shots/d-09-dashboard-send-digest.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "\"Send digest\" returns \"No notice alerts due right now.\" although 14 notices are overdue.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name",
+      "400 GET gst_notices 42703 — column gst_notices.hearing_date does not exist ?select=id,client_id,notice_type,reference_number,description,issue_date,due_date,extended_due_date,staff_status,priority,assign_to,assign_to_user_id,reply_date"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Every notice-alert path selects gst_notices.hearing_date, which no migration creates: the in-app \"Send digest\" (runScheduledAlerts) swallows the 400 and says \"No notice alerts due right now.\" with 14 overdue; the pg_cron queue-notice-alerts function gets no rows and returns \"no notices\"; the event-driven alerts (E1/E6–E8) fail on the same select — so no notice alert email can currently be queued. Both queue paths also select the non-existent clients.contact_person, and E4/E5 look up alert_keys (E4_hearing, E5_limitation) that differ from the seeded ones (E4_hearing_reminder, E5_limitation_alert)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "10-dashboard-category-filter",
+    "group": "Dashboard",
+    "title": "Category row clicked → dashboard filtered; empty categories expanded",
+    "route": "/notices-dashboard",
+    "steps": "Click the \"Demand Notice\" bar row; click \"+ 8 categories with no data\"",
+    "desktop": "shots/d-10-dashboard-category-filter.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Category row \"Demand Notice\" clicked: tiles drop to 5 / 3 / 2 / ₹22.2 L with a \"Filtering: Demand Notice ✕\" chip and the empty-category list toggled, but the work queue still lists all 51.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Clicking a category re-scopes the four tiles and the calendar, but not the work queue directly below it (still \"Team · 51\").",
+      "NoticeWorkQueue selects profiles.last_name, which does not exist → 400 → every Owner avatar is \"?\" and the bulk Assign dialog lists nobody, so the queue cannot assign work (tsc flags it too)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "11-dashboard-calendar-month",
+    "group": "Dashboard",
+    "title": "Deadline strip switched to \"Month\" (35 days)",
+    "route": "/notices-dashboard",
+    "steps": "Click \"Month\" on the Next 14 days card",
+    "desktop": "shots/d-11-dashboard-calendar-month.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Deadline strip switched to \"Month\": 35-day grid with reply-due / issued count chips; chips with one item open the drawer. No hearing or limitation chips although the legend lists them.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Next-14-days card is subtitled \"Statutory due dates & hearings\" and its legend shows Appeal limitation / Hearing, but the dashboard only feeds it reply-due and issued items — matter hearings and matter_deadlines (e.g. the 66-day APL-01 limitation) never appear."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "12-dashboard-queue-assign",
+    "group": "Dashboard",
+    "title": "Work queue → Unassigned tab, 3 rows selected, Assign dialog opened",
+    "route": "/notices-dashboard",
+    "steps": "Click \"Unassigned · N\", tick 3 rows, click \"Assign ▾\", open the member dropdown",
+    "desktop": "shots/d-12-dashboard-queue-assign.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Unassigned tab with 3 rows ticked and the Assign dialog's member dropdown open — it is empty.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "NoticeWorkQueue selects profiles.last_name, which does not exist → 400 → every Owner avatar is \"?\" and the bulk Assign dialog lists nobody, so the queue cannot assign work (tsc flags it too)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "13-dashboard-queue-change-stage",
+    "group": "Dashboard",
+    "title": "Work queue bulk \"Change stage\" → Closed",
+    "route": "/notices-dashboard",
+    "steps": "Tick 2 rows, click \"Change stage ▾\", choose Closed (close-reason box appears)",
+    "desktop": "shots/d-13-dashboard-queue-change-stage.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Bulk \"Change stage\" dialog with the 9-stage list set to Closed and the optional close-reason box.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Four different status vocabularies: work-queue stages (9), the list's inline Status select (Open/Closed only — any other stage renders as the placeholder \"Set status\"), the drawer stepper (9 steps) and litigation stages (11)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "02-dashboard-bell",
+    "group": "Shell",
+    "title": "Notification bell popover",
+    "route": "/notices-dashboard",
+    "steps": "Click the bell (fixed top-right)",
+    "desktop": "shots/d-02-dashboard-bell.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Notification bell popover: event-type labels only (\"status changed\", \"priority changed\"), most without an actor name and none linking text to a client.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Notice events are written with actor_name = user?.name, a property AppUser does not have → activity shows \"Staff\"/no name; nothing in the codebase logs \"captured\" events, and the bell filters neq(actor_id, me), which also drops every system (null-actor) event.",
+      "The fixed notification bell (top-right, z-40) sits on top of the page header's right-most action (Sync All / Add Notice / Export to Excel / PDF / refresh)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "130-mobile-nav",
+    "group": "Shell",
+    "title": "Mobile navigation drawer",
+    "route": "/notices-dashboard",
+    "steps": "Mobile → hamburger",
+    "desktop": null,
+    "mobile": "shots/m-130-mobile-nav.png",
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Mobile only: the hamburger opens the app-wide sidebar, where the whole module is one \"Notices Dashboard\" entry — litigation, reports, refunds/DRC-03 and the company list are reachable only through the module tab bar, which overflows at this width.",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "20-workqueue-all",
+    "group": "Work queue",
+    "title": "Notices — All Clients (Work Queue tab)",
+    "route": "/notices-all",
+    "steps": "Module tab \"Work Queue\" (or \"View full work queue →\")",
+    "desktop": "shots/d-20-workqueue-all.png",
+    "mobile": "shots/m-20-workqueue-all.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Notices — All Clients (141 rows): status tiles including a \"—\" tile (34 rows with no status) next to \"Open 1\", toolbar filters, 23-column table with horizontal scroll and 50-row pages. Mobile (390 px): 484 px wide: 16 status tiles stack two-up and push the table ~1,200 px down; the table (only GSTIN and trade name visible, the other columns sideways) sits in a fixed-height box showing about four rows at a time.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "The fixed notification bell (top-right, z-40) sits on top of the page header's right-most action (Sync All / Add Notice / Export to Excel / PDF / refresh).",
+      "Four different status vocabularies: work-queue stages (9), the list's inline Status select (Open/Closed only — any other stage renders as the placeholder \"Set status\"), the drawer stepper (9 steps) and litigation stages (11).",
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "21-workqueue-merged",
+    "group": "Work queue",
+    "title": "Merged Notices tab (notices + refunds + DRC-03)",
+    "route": "/notices-all?tab=merged",
+    "steps": "On /notices-all click \"Merged Notices\"",
+    "desktop": "shots/d-21-workqueue-merged.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Merged Notices tab: 186 records from notices + refunds + DRC-03 with ~29 status tiles; refund/DRC-03 cases appear twice (case row + dedicated row).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Refund/DRC-03 cases exist both as gst_notices case rows (\"Refunds\"/\"Voluntary Payment\") and in the dedicated tables; Notice Summary de-dupes by ARN (182) but GSTIN-wise count, Merged Notices and the company profile do not (186 / duplicate rows)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "22-workqueue-overdue-drilldown",
+    "group": "Work queue",
+    "title": "Overdue tile drill-down (?filter=overdue)",
+    "route": "/notices-all?filter=overdue",
+    "steps": "Dashboard → click \"Overdue & still open\" tile",
+    "desktop": "shots/d-22-workqueue-overdue-drilldown.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Overdue tile drill-down: \"69 records, overdue\" (tile said 14), first row is a DRC-01C due today (05/10/2026), 43 of the 69 are already Closed. The toolbar's \"Over Due Notices\" date filter on the unfiltered list gives the same 69 of 141.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Tile vs list definitions differ: the Overdue tile (open, no reply, extended due date, IST calendar date) shows 14, but its drill-down ?filter=overdue lists 69 — it uses due_date only, ignores closed/replied/extension, and compares UTC-midnight to \"now\", so a notice due today is listed as overdue. The list toolbar's own \"Over Due Notices\" date filter is a third rule (local midnight vs now, any status) and also yields 69 of 141."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "23-workqueue-matters-submitted",
+    "group": "Work queue",
+    "title": "\"Matters\" tab (?filter=submitted)",
+    "route": "/notices-all?filter=submitted",
+    "steps": "Module tab \"Matters\"",
+    "desktop": "shots/d-23-workqueue-matters-submitted.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "The \"Matters\" tab: 3 notices that have a submission ARN/date — not litigation matters.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Module tab labels mislead: \"Matters\" opens notices with a submission logged (?filter=submitted); litigation matters live under \"Hearings\"; \"Clients\" is the GSTIN-wise count report.",
+      "Four different status vocabularies: work-queue stages (9), the list's inline Status select (Open/Closed only — any other stage renders as the placeholder \"Set status\"), the drawer stepper (9 steps) and litigation stages (11)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "24-workqueue-open-exposure",
+    "group": "Work queue",
+    "title": "Exposure tile drill-down (?status=Open)",
+    "route": "/notices-all?status=Open",
+    "steps": "Dashboard → click \"Exposure under dispute\" tile",
+    "desktop": "shots/d-24-workqueue-open-exposure.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Exposure tile drill-down (?status=Open): every open notice (51), not just the 22 with a demand that the tile sums.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "The Exposure tile's \"22 matters\" counts open notices with an amount of demand, not litigation matters, and its ₹4.23 cr disagrees with Litigation MIS (₹3.68 cr total exposure across 9 open matters) — two \"exposure\" figures with different bases."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "25-workqueue-calendar-date",
+    "group": "Work queue",
+    "title": "Calendar day drill-down (?date=…)",
+    "route": "/notices-all?date=2026-10-09",
+    "steps": "Dashboard → Next 14 days → click a day cell (Fri 9)",
+    "desktop": "shots/d-25-workqueue-calendar-date.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Calendar day drill-down for 09/10/2026: notices issued OR due that day (filter echoed in the subtitle).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "26-workqueue-client-scope",
+    "group": "Work queue",
+    "title": "Company-scoped list (?client=…) from Company profile \"View All\"",
+    "route": "/notices-all?client=c1000000-0000-4000-8000-000000000001",
+    "steps": "Company profile (Demo Textiles) → \"Total Notices\" tile or \"View All\"",
+    "desktop": "shots/d-26-workqueue-client-scope.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Company-scoped list (?client=Demo Textiles): 12 records; the page still says \"Notices — All Clients\" and gives no visible client chip or way to clear the scope.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Company profile tiles use different rules from the dashboard: \"Total Notices\" includes refund/DRC-03 rows that \"View all\" (/notices-all?client=) does not list (17 vs 12), \"Last 24 Hours\" counts every row re-pulled today (17) rather than first_seen, \"Over Due\" ignores closed/extended; dates and FY are raw ISO (\"2017-07-01\", \"2026-2027\")."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "27-workqueue-notice-deeplink",
+    "group": "Work queue",
+    "title": "Single-notice deep link (?noticeId=…) from drawer \"Open in list\" / bell",
+    "route": "/notices-all?noticeId=a1000000-0000-4000-8000-000000000018",
+    "steps": "Notice drawer → \"Open in list\"",
+    "desktop": "shots/d-27-workqueue-notice-deeplink.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Deep link ?noticeId= (drawer \"Open in list\" / bell): a single row; its stage \"Reply drafted\" shows as tile but the inline select reads \"Set status\".",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Four different status vocabularies: work-queue stages (9), the list's inline Status select (Open/Closed only — any other stage renders as the placeholder \"Set status\"), the drawer stepper (9 steps) and litigation stages (11)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "29-workqueue-inline-status",
+    "group": "Work queue",
+    "title": "Inline Status select on a row whose stage is \"Reply drafted\"",
+    "route": "/notices-all",
+    "steps": "Open the Status cell select on the Test Engineering Works DRC-01C row",
+    "desktop": "shots/d-29-workqueue-inline-status.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Inline Status select opened on a \"Reply drafted\" row: only Open / Closed are offered and the current stage is shown as \"Set status\".",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Four different status vocabularies: work-queue stages (9), the list's inline Status select (Open/Closed only — any other stage renders as the placeholder \"Set status\"), the drawer stepper (9 steps) and litigation stages (11)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "30-workqueue-edit-dialog",
+    "group": "Work queue",
+    "title": "\"Log reply / order / submission\" edit dialog (auto-closed row)",
+    "route": "/notices-all",
+    "steps": "Search the reference no. of the Test Engineering Works \"Determination Of Tax\" case (closed, auto:closure) and click its pencil",
+    "desktop": "shots/d-30-workqueue-edit-dialog.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "\"Log reply / order / submission\" dialog for an auto-closed case (close_reason auto:closure): Close Reason field is empty, Assign To is free text, no status field.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "The edit dialog opens with Close Reason blank and always saves close_reason = form value → saving any edit erases an existing reason (e.g. auto:closure); \"Assign To\" is free text that never sets assign_to_user_id, so the queue still counts the row as unassigned."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "31-workqueue-bulk-update-status",
+    "group": "Work queue",
+    "title": "Bulk \"Update Status\" dialog",
+    "route": "/notices-all",
+    "steps": "Tick 2 rows → \"Update Status\" → choose Closed",
+    "desktop": "shots/d-31-workqueue-bulk-update-status.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Two rows ticked → \"Update Status\" dialog with Open/Closed choice and close-reason input.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Four different status vocabularies: work-queue stages (9), the list's inline Status select (Open/Closed only — any other stage renders as the placeholder \"Set status\"), the drawer stepper (9 steps) and litigation stages (11)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "33-workqueue-portal-no-extension",
+    "group": "Work queue",
+    "title": "Work queue right-hand columns; row \"open on GST portal\" without the extension",
+    "route": "/notices-all",
+    "steps": "Work Queue → scroll the table to the right → click the orange external-link icon on the first row",
+    "desktop": "shots/d-33-workqueue-portal-no-extension.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Table scrolled to its right-hand columns (Amount of Demand, Remarks, Issued By, Financial Year, Assign To, PDF, Actions — mostly \"—\"); clicking the orange \"open on GST portal\" icon without the extension gives the toast \"GST Keeper browser extension not detected.\"",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "34-workqueue-employee-readonly",
+    "group": "Work queue",
+    "title": "Work queue as an employee without edit_notice_status",
+    "route": "/notices-all",
+    "steps": "Log in as Associate Two (employee, no edit_notice_status grant) → Work Queue",
+    "desktop": "shots/d-34-workqueue-employee-readonly.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Same list for an employee without edit_notice_status: no Add Notice, no checkboxes / actions; statuses are \"—\" badges.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "40-drawer-notice-not-found",
+    "group": "Per-notice",
+    "title": "Notice drawer as it actually loads (strict schema)",
+    "route": "/notices-dashboard",
+    "steps": "Dashboard → click any work-queue row",
+    "desktop": "shots/d-40-drawer-notice-not-found.png",
+    "mobile": "shots/m-40-drawer-notice-not-found.png",
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Clicking any work-queue row opens the drawer with only \"Notice\" and \"Notice not found.\" Mobile (390 px): The drawer opens as a full-width sheet with the same \"Notice not found.\"",
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    ],
+    "failedRequests": [
+      "400 GET profiles 42703 — column profiles.last_name does not exist ?select=user_id,first_name,last_name",
+      "400 GET gst_notices 42703 — column gst_notices.hearing_date does not exist ?select=id,client_id,notice_type,reference_number,description,issue_date,due_date,extended_due_date,staff_status,priority,assign_to,assign_to_user_id,reply_date"
+    ],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "NoticeDrawer selects gst_notices.hearing_date, a column no migration or types.ts declares → PostgREST 400 (42703) → the drawer always shows \"Notice not found.\" (tsc reports the same SelectQueryError)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "41-drawer-due-today-activity",
+    "group": "Per-notice",
+    "title": "Drawer — DRC-01C due today, Activity tab (lenient schema)",
+    "route": "/notices-dashboard",
+    "steps": "Dashboard → click the Test Engineering Works DRC-01C row",
+    "desktop": "shots/d-41-drawer-due-today-activity.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "lenient",
+    "shows": "Drawer (schema-tolerant mock) for a DRC-01C due today: badges, \"No litigation matter linked / Create Matter\", red \"Due today\" banner, 9-step stepper (last step cut off), fact tiles, Activity shows \"? → Reply drafted\" with no actor.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Rendered with the mock in lenient mode (unknown column hearing_date returned as null) to show the intended drawer; in production this drawer shows \"Notice not found.\" (see 40).",
+    "suspectedAppBugs": [
+      "Notice events are written with actor_name = user?.name, a property AppUser does not have → activity shows \"Staff\"/no name; nothing in the codebase logs \"captured\" events, and the bell filters neq(actor_id, me), which also drops every system (null-actor) event.",
+      "Four different status vocabularies: work-queue stages (9), the list's inline Status select (Open/Closed only — any other stage renders as the placeholder \"Set status\"), the drawer stepper (9 steps) and litigation stages (11)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "42-drawer-extended-details",
+    "group": "Per-notice",
+    "title": "Drawer — ASMT-10 with extended due date, Details tab (lenient)",
+    "route": "/notices-dashboard",
+    "steps": "Dashboard → click the Example Foods ASMT-10 row → Details",
+    "desktop": "shots/d-42-drawer-extended-details.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "lenient",
+    "shows": "Drawer Details tab for an ASMT-10 with an extension: Due Date 11/10/2026 \"Extended from 15/09/2026\", reply/order fields \"—\", remarks.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Lenient mode (see 41).",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "43-drawer-case-matter-deadlines",
+    "group": "Per-notice",
+    "title": "Drawer — case-linked DRC-01 with matter, Deadlines tab (lenient)",
+    "route": "/notices-dashboard",
+    "steps": "Dashboard → click the Demo Textiles \"Determination Of Tax\" row → Deadlines",
+    "desktop": "shots/d-43-drawer-case-matter-deadlines.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "lenient",
+    "shows": "Drawer for a case-linked DRC-01 with matter M-2026-0001 linked: \"Due in 4 days\" banner, demand ₹18,60,000, Deadlines tab listing met / due statutory deadlines. No link to the case folder.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Lenient mode (see 41).",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "44-drawer-closed-docs",
+    "group": "Per-notice",
+    "title": "Drawer — closed refund case (auto:refund_order), Docs tab (lenient)",
+    "route": "/notices-dashboard",
+    "steps": "Dashboard loaded; the Sample Pharma refund case is then closed (simulating the sweep/colleague); click its still-listed row → Docs",
+    "desktop": "shots/d-44-drawer-closed-docs.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "lenient",
+    "shows": "Drawer for a refund case closed with auto:refund_order: \"Closed\" + reason badge, every stepper stage ticked (incl. Hearing/Order never reached), Docs tab \"No documents attached.\" although its case folder holds 2 PDFs; Create Matter still offered.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Lenient mode. The notice was closed in the mock after the dashboard loaded (the UI offers no way to open a closed notice — the queue lists open rows only), simulating a colleague/sweep closing it.",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "45-drawer-create-matter",
+    "group": "Per-notice",
+    "title": "Drawer — \"Create Matter\" clicked on an unlinked notice (lenient)",
+    "route": "/notices-dashboard",
+    "steps": "Dashboard → click the Example Foods DRC-01C row → \"Create Matter\"",
+    "desktop": "shots/d-45-drawer-create-matter.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "lenient",
+    "shows": "After \"Create Matter\" in the drawer: the notice is linked to new matter \"M-2026-0010 — Notice\" (title = raw notice_type).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Lenient mode (see 41).",
+    "suspectedAppBugs": [
+      "Two matter-number generators: the list dialog uses count(*)+1 across all years (→ M-2026-0012) while the drawer uses max(M-2026-xxxx)+1 (→ M-2026-0010); numbers skip and can collide with the (client_id, matter_no) unique key."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "50-company-list",
+    "group": "Companies",
+    "title": "Company List & sync log",
+    "route": "/notices-company-list",
+    "steps": "Reports ▾ → Company List & sync log (or Sync & alerts card → \"Sync log →\")",
+    "desktop": "shots/d-50-company-list.png",
+    "mobile": "shots/m-50-company-list.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Company List: Total Downloaded 5 / Pending 6, toolbar (Delete Company first), 11 companies with last download, status dot and status message (one shows refunds_debug text). Mobile (390 px): 484 px wide: toolbar buttons wrap into three rows, the table shows only GSTIN and trade name (status columns off to the right), the floating action buttons cover the last rows.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Dashboard \"2 logins failed\" counts only action=\"notices\" failures; Company List (?status=failed) uses the latest log of any action and shows 5 (login_failed, refunds failures). Status Message shows raw debug text from refunds_debug rows.",
+      "The fixed notification bell (top-right, z-40) sits on top of the page header's right-most action (Sync All / Add Notice / Export to Excel / PDF / refresh).",
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "51-company-list-failed",
+    "group": "Companies",
+    "title": "Company List filtered to failed syncs (?status=failed)",
+    "route": "/notices-company-list?status=failed",
+    "steps": "Dashboard header → \"2 logins failed\"",
+    "desktop": "shots/d-51-company-list-failed.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Company List pre-filtered by the dashboard's \"2 logins failed\" link: 5 companies (incl. login_failed and refunds failures).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Dashboard \"2 logins failed\" counts only action=\"notices\" failures; Company List (?status=failed) uses the latest log of any action and shows 5 (login_failed, refunds failures). Status Message shows raw debug text from refunds_debug rows."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "52-company-list-sync-log",
+    "group": "Companies",
+    "title": "Sync Log dialog",
+    "route": "/notices-company-list",
+    "steps": "Click \"Sync Log\"",
+    "desktop": "shots/d-52-company-list-sync-log.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Sync Log dialog: last 50 attempts across companies, no action/type column, messages truncated.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Dashboard \"2 logins failed\" counts only action=\"notices\" failures; Company List (?status=failed) uses the latest log of any action and shows 5 (login_failed, refunds failures). Status Message shows raw debug text from refunds_debug rows."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "53-company-list-bulk-update",
+    "group": "Companies",
+    "title": "Bulk Update dialog (Active/Inactive)",
+    "route": "/notices-company-list",
+    "steps": "Tick 2 companies → \"Bulk Update\"",
+    "desktop": "shots/d-53-company-list-bulk-update.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Bulk Update dialog (Active / Inactive) for 2 selected companies.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "54-company-list-import",
+    "group": "Companies",
+    "title": "\"Import\" (Bulk Add Clients) dialog",
+    "route": "/notices-company-list",
+    "steps": "Click \"Import\"",
+    "desktop": "shots/d-54-company-list-import.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "\"Import\" opens the generic \"Bulk Add Clients\" two-step Excel dialog.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "56-company-profile",
+    "group": "Companies",
+    "title": "Company profile (Company Dashboard)",
+    "route": "/notices-company/c1000000-0000-4000-8000-000000000001",
+    "steps": "Click a GSTIN anywhere (Company List, GSTIN-wise count, Search Company)",
+    "desktop": "shots/d-56-company-profile.png",
+    "mobile": "shots/m-56-company-profile.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Company Dashboard for Demo Textiles: profile card, six KPI tiles (2 over due · 1 due · 17 last 24 h · 3 last 15 days · 6 open · 17 total), Notices & Orders (a DRC-03 filing listed among them), empty View Submission, Track Return Status (Aug 2026 back to Sep 2025 with raw ISO filing dates; Sep 2026 returns not yet due/filed), four permanently empty panels. Mobile (390 px): 481 px wide: tiles two-up, Track Return Status squeezed into four narrow columns with wrapped dates, four empty panels at the bottom.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Company profile tiles use different rules from the dashboard: \"Total Notices\" includes refund/DRC-03 rows that \"View all\" (/notices-all?client=) does not list (17 vs 12), \"Last 24 Hours\" counts every row re-pulled today (17) rather than first_seen, \"Over Due\" ignores closed/extended; dates and FY are raw ISO (\"2017-07-01\", \"2026-2027\").",
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "57-company-profile-type-filter",
+    "group": "Companies",
+    "title": "Company profile with Type pill = \"Refunds\"",
+    "route": "/notices-company/c1000000-0000-4000-8000-000000000007",
+    "steps": "Fictional Exports profile → Type pill → \"Refunds\"",
+    "desktop": "shots/d-57-company-profile-type-filter.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Fictional Exports profile with Type = Refunds: 5 items — the refund case row (Ref Id \"—\") and the dedicated refund row with the same ARN appear separately; Open 0 of 5.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Refund/DRC-03 cases exist both as gst_notices case rows (\"Refunds\"/\"Voluntary Payment\") and in the dedicated tables; Notice Summary de-dupes by ARN (182) but GSTIN-wise count, Merged Notices and the company profile do not (186 / duplicate rows).",
+      "Company profile tiles use different rules from the dashboard: \"Total Notices\" includes refund/DRC-03 rows that \"View all\" (/notices-all?client=) does not list (17 vs 12), \"Last 24 Hours\" counts every row re-pulled today (17) rather than first_seen, \"Over Due\" ignores closed/extended; dates and FY are raw ISO (\"2017-07-01\", \"2026-2027\")."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "60-case-folder-drc01",
+    "group": "Case folder",
+    "title": "Additional Notice Folder — DRC-01 case (open)",
+    "route": "/notices-case-folder/c1000000-0000-4000-8000-000000000001/AD2409260052913",
+    "steps": "Work queue → click the blue Reference No. of a case-linked row",
+    "desktop": "shots/d-60-case-folder-drc01.png",
+    "mobile": "shots/m-60-case-folder-drc01.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Additional Notice Folder for an open DRC-01 case: header (Case ID, GSTIN, date, status REPLY DRAFTED) and sections; Intimation, Notice and Reply rows with attachments; APPLICATIONS / NOTICE-ACKNOWLEDGEMENT / ORDERS / CLOSURE empty. Mobile (390 px): 481 px wide: each folder section's table is cut at the right edge (reference numbers truncated; dates and document links off-screen).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "61-case-folder-refund",
+    "group": "Case folder",
+    "title": "Refund Notice Folder — refund case with audit history",
+    "route": "/notices-case-folder/c1000000-0000-4000-8000-000000000007/AA2707260065695",
+    "steps": "Merged Notices / Company profile → refund ARN link",
+    "desktop": "shots/d-61-case-folder-refund.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Refund Notice Folder: application (RFD-01), RFD-02/RFD-08, RFD-09 reply, RFD-06 order and a synthesized Audit History; \"Date Of Application/Case Creation\" shows the latest event (15-09-2026), not the application date (31-07-2026).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "62-case-folder-appeal",
+    "group": "Case folder",
+    "title": "Appeal case (APL-01) rendered by the folder page",
+    "route": "/notices-case-folder/c1000000-0000-4000-8000-000000000003/AD2907260053826",
+    "steps": "Work queue → Example Foods \"Appeal\" row Reference No.",
+    "desktop": "shots/d-62-case-folder-appeal.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Appeal case (APL-01) rendered as \"Refund Notice Folder\": \"Reason of Refund\" column, audit line \"Refund Application filed (GST APL-01)\", and the hearing notice item is not shown anywhere.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "A case with an APLCN folder (appeal APL-01, per the code comment also seen live) is treated as a refund case: titled \"Refund Notice Folder\", columns \"Reason of Refund\", audit says \"Refund Application filed (GST APL-01)\", and its NOTICES section (hearing notice) is hidden entirely."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "63-case-folder-enforcement",
+    "group": "Case folder",
+    "title": "Enforcement case with an unmapped folder section (DRC7A)",
+    "route": "/notices-case-folder/c1000000-0000-4000-8000-000000000008/AD2407260056565",
+    "steps": "Work queue → Specimen Chemicals \"Enforcement Case\" row Reference No.",
+    "desktop": "shots/d-63-case-folder-enforcement.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Enforcement case: summons under NOTICES and an unmapped DRC7A section rendered as a raw key dump (\"Sdtls — Dmdtype\", \"Todtls — Nm\").",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "70-notice-summary",
+    "group": "Reports",
+    "title": "Notice Summary report",
+    "route": "/notices-report",
+    "steps": "Reports ▾ → Notice Summary",
+    "desktop": "shots/d-70-notice-summary.png",
+    "mobile": "shots/m-70-notice-summary.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Notice Summary report: 23 category rows (8 placeholders) with Total/Open/Closed/Replied links; first column headed \"Special Remarks\"; separate \"Others\" and \"Other\" rows; grand total 182. Mobile (390 px): 484 px wide: Total / Open / Closed fit but the Replied column is cut off.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "The fixed notification bell (top-right, z-40) sits on top of the page header's right-most action (Sync All / Add Notice / Export to Excel / PDF / refresh).",
+      "Category is keyword-based on description: a DRC-01 demand SCN whose text mentions \"registration was cancelled\" is counted under Registration, not DRC 01.",
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "72-gstin-wise-count",
+    "group": "Reports",
+    "title": "GSTIN-wise Notice Count (\"Clients\" tab)",
+    "route": "/notices-gstin-wise-count",
+    "steps": "Module tab \"Clients\" (or Reports ▾ → GSTIN Wise Notice Count)",
+    "desktop": "shots/d-72-gstin-wise-count.png",
+    "mobile": "shots/m-72-gstin-wise-count.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "GSTIN-wise Notice Count (\"Clients\" tab): 12 companies, 186 notices (vs 182 in Notice Summary), Matters and Exposure from litigation; excluded-from-sync client still listed. Mobile (390 px): 484 px wide: only GSTIN and trade name are visible — every count column is off-screen, the Total row shows just its label.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Refund/DRC-03 cases exist both as gst_notices case rows (\"Refunds\"/\"Voluntary Payment\") and in the dedicated tables; Notice Summary de-dupes by ARN (182) but GSTIN-wise count, Merged Notices and the company profile do not (186 / duplicate rows).",
+      "Module tab labels mislead: \"Matters\" opens notices with a submission logged (?filter=submitted); litigation matters live under \"Hearings\"; \"Clients\" is the GSTIN-wise count report.",
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "75-refunds-all",
+    "group": "Refunds & DRC-03",
+    "title": "Refund — All Clients",
+    "route": "/refunds-all",
+    "steps": "Dashboard → Notice summary → \"Refund\" count (21)",
+    "desktop": "shots/d-75-refunds-all.png",
+    "mobile": "shots/m-75-refunds-all.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Refund — All Clients (21): different page header (back arrow, no module tab bar), status tiles, refund table with claimed / sanctioned amounts and document icons. Mobile (390 px): Fits 390 px (no module tab bar): 13 tiles with truncated labels (\"Refund Application F…\", \"Deficiency Memo Iss…\"), the floating action buttons sit over the search box and status filter; table scrolls sideways.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Refund status colours are inverted (Refund Application Filed = green/success, Refund Disbursed = neutral) and pending applications show Sanctioned Amount \"0\" instead of blank."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "76-refunds-open",
+    "group": "Refunds & DRC-03",
+    "title": "Refund — All Clients, open only (?status=Open)",
+    "route": "/refunds-all?status=Open",
+    "steps": "Notice Summary report → Refund row → Open count",
+    "desktop": "shots/d-76-refunds-open.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Refund list filtered to open (?status=Open): includes \"Refund Sanctioned\" and \"Provisional Refund Order Issued\" as open.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Refund status colours are inverted (Refund Application Filed = green/success, Refund Disbursed = neutral) and pending applications show Sanctioned Amount \"0\" instead of blank."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "77-drc03-all",
+    "group": "Refunds & DRC-03",
+    "title": "DRC-03 — All Clients",
+    "route": "/drc03-all",
+    "steps": "Dashboard → Notice summary → \"DRC 03\" count",
+    "desktop": "shots/d-77-drc03-all.png",
+    "mobile": "shots/m-77-drc03-all.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "DRC-03 — All Clients (27): status tiles (Acknowledged 19 · Pending for Action by… 5 · Open 2 · Submitted 1) and the wide DRC-03 table. Mobile (390 px): Fits 390 px (no module tab bar); the floating action buttons cover the ARN column.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "80-litigation-matters",
+    "group": "Litigation",
+    "title": "Litigation Matters list (\"Hearings\" tab)",
+    "route": "/litigation",
+    "steps": "Module tab \"Hearings\"",
+    "desktop": "shots/d-80-litigation-matters.png",
+    "mobile": "shots/m-80-litigation-matters.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Litigation Matters (under the \"Hearings\" tab): filter bar and 11 matters with lifecycle, stage dot, priority chip, due date, demand and owner; table scrolls inside a fixed-height box. Mobile (390 px): 484 px wide: \"Hearings\" is the highlighted tab on the matters list, the filter grid stacks, the table is cut at the Stage column.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Module tab labels mislead: \"Matters\" opens notices with a submission logged (?filter=submitted); litigation matters live under \"Hearings\"; \"Clients\" is the GSTIN-wise count report.",
+      "The fixed notification bell (top-right, z-40) sits on top of the page header's right-most action (Sync All / Add Notice / Export to Excel / PDF / refresh).",
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "81-litigation-matters-client",
+    "group": "Litigation",
+    "title": "Matters list scoped to one client (?client=…)",
+    "route": "/litigation?client=c1000000-0000-4000-8000-000000000003",
+    "steps": "GSTIN-wise count → Matters cell for Example Foods",
+    "desktop": "shots/d-81-litigation-matters-client.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Matters list deep-linked from GSTIN-wise count (?client=Example Foods) with a \"Client: … ✕ Clear\" chip.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "82-litigation-create-dialog",
+    "group": "Litigation",
+    "title": "Create Litigation Matter dialog (filled)",
+    "route": "/litigation",
+    "steps": "Click \"Create Matter\", fill the form",
+    "desktop": "shots/d-82-litigation-create-dialog.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Create Litigation Matter dialog filled (client, lifecycle \"registration\", title, section, priority, authority CGST/SGST).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "84-matter-detail",
+    "group": "Litigation",
+    "title": "Matter detail — Notices tab",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000001",
+    "steps": "Matters list → click M-2026-0001",
+    "desktop": "shots/d-84-matter-detail.png",
+    "mobile": "shots/m-84-matter-detail.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Matter M-2026-0001: header card (due, limitation, next hearing, authority, owner/priority/reviewer selects, next action), editable raw-number demand inputs, Outstanding ₹17,36,000, Notices tab with 2 linked notices (not clickable). Mobile (390 px): 484 px wide: header facts stack, Outstanding \"₹17,36,000\" touches the tile edge, the five tabs overflow and the notices table is cut.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Matter detail \"Outstanding\" = demand − paid_total (ignores pre-deposit), while Litigation MIS subtracts pre-deposit too; and the detail page's \"Record Payment\" adds every kind — Pre-deposit, Voluntary (DRC-03), Recovery, even Refund Received — to paid_total (the kind-aware insert in lib/litigationData.ts is not used by the page).",
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "85-matter-hearings",
+    "group": "Litigation",
+    "title": "Matter detail — Hearings tab",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000001",
+    "steps": "Matter detail → Hearings",
+    "desktop": "shots/d-85-matter-hearings.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Hearings tab: past hearing (Adjourned) and upcoming one with \"Record Outcome\"; dates only, no time.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "86-matter-payments",
+    "group": "Litigation",
+    "title": "Matter detail — Payments tab (appeal with pre-deposit)",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000003",
+    "steps": "Matters list → M-2026-0003 → Payments",
+    "desktop": "shots/d-86-matter-payments.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Appeal matter M-2026-0003: pre-deposit ₹2,80,000 recorded, yet Outstanding shows the full ₹44,24,000.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Matter detail \"Outstanding\" = demand − paid_total (ignores pre-deposit), while Litigation MIS subtracts pre-deposit too; and the detail page's \"Record Payment\" adds every kind — Pre-deposit, Voluntary (DRC-03), Recovery, even Refund Received — to paid_total (the kind-aware insert in lib/litigationData.ts is not used by the page)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "87-matter-documents",
+    "group": "Litigation",
+    "title": "Matter detail — Documents tab",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000001",
+    "steps": "Matter detail → Documents",
+    "desktop": "shots/d-87-matter-documents.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Documents tab: metadata-only list (title, kind, source, added) with \"Add Document\"; no file links.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "88-matter-activity",
+    "group": "Litigation",
+    "title": "Matter detail — Activity tab",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000001",
+    "steps": "Matter detail → Activity",
+    "desktop": "shots/d-88-matter-activity.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Activity tab: raw payload dump (\"note: null\", notice_ids as UUIDs, unformatted amounts).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "89-matter-change-stage",
+    "group": "Litigation",
+    "title": "Change Stage dialog",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000001",
+    "steps": "Matter detail → \"Change Stage\" → open the stage list",
+    "desktop": "shots/d-89-matter-change-stage.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Change Stage dialog with the 11 litigation stages (incl. \"Closed\" as a stage).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Four different status vocabularies: work-queue stages (9), the list's inline Status select (Open/Closed only — any other stage renders as the placeholder \"Set status\"), the drawer stepper (9 steps) and litigation stages (11)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "90-matter-close",
+    "group": "Litigation",
+    "title": "Close Matter dialog",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000001",
+    "steps": "Matter detail → \"Close\" → open reason list",
+    "desktop": "shots/d-90-matter-close.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Close Matter dialog with reasons (Dropped, Paid/Settled, Won, Lost, Partly Allowed, Withdrawn, Auto-closed).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Close Matter offers \"Auto-closed\" (value auto:closure) as a manual reason, so hand-closed matters become indistinguishable from system auto-closes."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "91-matter-schedule-hearing",
+    "group": "Litigation",
+    "title": "Schedule Hearing dialog",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000001",
+    "steps": "Matter detail → \"Schedule Hearing\"",
+    "desktop": "shots/d-91-matter-schedule-hearing.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Schedule Hearing dialog (date-time, mode, venue, officer).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Suspected: Schedule Hearing / Adjourned-to use <input type=\"datetime-local\"> and save the raw \"YYYY-MM-DDTHH:mm\" (no offset) into timestamptz columns (matter_hearings.scheduled_at, litigation_matters.hearing_at); with Supabase's UTC session zone an 11:00 IST hearing is stored as 11:00 UTC (16:30 IST) and late-evening entries shift date. Not verifiable against the mock."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "92-matter-hearing-outcome",
+    "group": "Litigation",
+    "title": "Record Hearing Outcome dialog",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000001",
+    "steps": "Hearings tab → \"Record Outcome\" on the upcoming hearing → tick Adjourned",
+    "desktop": "shots/d-92-matter-hearing-outcome.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Record Hearing Outcome dialog with \"Adjourned to next date\" ticked revealing the next-date field.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "93-matter-record-payment",
+    "group": "Litigation",
+    "title": "Record Payment dialog (kind list open)",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000001",
+    "steps": "Matter detail → \"Record Payment\" → open Kind",
+    "desktop": "shots/d-93-matter-record-payment.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Record Payment dialog with the Kind list open (Pre-deposit, Voluntary (DRC-03), Recovery, Refund Received); no DRC-03 ARN field.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Matter detail \"Outstanding\" = demand − paid_total (ignores pre-deposit), while Litigation MIS subtracts pre-deposit too; and the detail page's \"Record Payment\" adds every kind — Pre-deposit, Voluntary (DRC-03), Recovery, even Refund Received — to paid_total (the kind-aware insert in lib/litigationData.ts is not used by the page)."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "94-matter-add-document",
+    "group": "Litigation",
+    "title": "Add Document dialog",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000001",
+    "steps": "Documents tab → \"Add Document\"",
+    "desktop": "shots/d-94-matter-add-document.png",
+    "mobile": null,
+    "capture": "viewport",
+    "mockMode": "strict",
+    "shows": "Add Document dialog (title, kind, source) — metadata only, no file picker.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "95-matter-created-detail",
+    "group": "Litigation",
+    "title": "Detail page of a matter just created through \"Create Matter\"",
+    "route": "/litigation",
+    "steps": "Create Matter dialog → fill → Create → click the new M-2026-0012 row",
+    "desktop": "shots/d-95-matter-created-detail.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Detail of M-2026-0012, just created via the list dialog (toast \"Matter M-2026-0012 created\"; number = count + 1): open, but the action row offers \"Reopen\" (no \"Close\"); Activity (0) — no \"created\" event logged on this path.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Create Matter (list page) inserts status \"open\" (lower-case) while the detail page tests status === \"Open\" → a brand-new open matter shows \"Reopen\" instead of \"Close\"; the list's Status filter uses stage instead of status.",
+      "Two matter-number generators: the list dialog uses count(*)+1 across all years (→ M-2026-0012) while the drawer uses max(M-2026-xxxx)+1 (→ M-2026-0010); numbers skip and can collide with the (client_id, matter_no) unique key."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "96-matter-closed",
+    "group": "Litigation",
+    "title": "Closed matter detail",
+    "route": "/litigation/9a000000-0000-4000-8000-000000000010",
+    "steps": "Matters list → M-2026-0008 (closed, paid)",
+    "desktop": "shots/d-96-matter-closed.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Closed matter M-2026-0008: \"Closed: paid\" chip, Reopen button, settled outstanding.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "100-litigation-mis",
+    "group": "Litigation",
+    "title": "Litigation MIS — Exposure",
+    "route": "/litigation-mis",
+    "steps": "Reports ▾ → Litigation MIS",
+    "desktop": "shots/d-100-litigation-mis.png",
+    "mobile": "shots/m-100-litigation-mis.png",
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "Litigation MIS — Exposure: Outstanding ₹3.64 cr, total exposure, pre-deposit, paid, open / closed counts; Export Tab / Export All / PDF. Mobile (390 px): 484 px wide: \"₹3,63,84,800\" overflows the Outstanding tile and the seven tab pills wrap onto two rows.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [
+      "Matter detail \"Outstanding\" = demand − paid_total (ignores pre-deposit), while Litigation MIS subtracts pre-deposit too; and the detail page's \"Record Payment\" adds every kind — Pre-deposit, Voluntary (DRC-03), Recovery, even Refund Received — to paid_total (the kind-aware insert in lib/litigationData.ts is not used by the page).",
+      "The fixed notification bell (top-right, z-40) sits on top of the page header's right-most action (Sync All / Add Notice / Export to Excel / PDF / refresh).",
+      "At 390 px the module tab bar (Dashboard · Work Queue · Matters · Hearings · Clients · Reports) neither wraps nor scrolls, so every page carrying it renders ~481–485 px wide (sideways page scroll, cards clipped at the right); large ₹ amounts also overflow their tiles (Litigation MIS, matter Outstanding). Refund/DRC-03 pages (no tab bar) fit."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "101-litigation-mis-by-client",
+    "group": "Litigation",
+    "title": "Litigation MIS — By Client",
+    "route": "/litigation-mis",
+    "steps": "Reports ▾ → Litigation MIS → \"By Client\" tab",
+    "desktop": "shots/d-101-litigation-mis-by-client.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "MIS By Client: open matters, demand, paid (incl. pre-deposit) and outstanding per client.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "102-litigation-mis-by-stage",
+    "group": "Litigation",
+    "title": "Litigation MIS — By Stage",
+    "route": "/litigation-mis",
+    "steps": "Reports ▾ → Litigation MIS → \"By Stage\" tab",
+    "desktop": "shots/d-102-litigation-mis-by-stage.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "MIS By Stage: open matters and demand per stage, plus a labelled donut whose slices are sized by matter count — a ₹2.85 cr matter and a ₹0 matter get equal slices.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "103-litigation-mis-by-lifecycle",
+    "group": "Litigation",
+    "title": "Litigation MIS — By Lifecycle",
+    "route": "/litigation-mis",
+    "steps": "Reports ▾ → Litigation MIS → \"By Lifecycle\" tab",
+    "desktop": "shots/d-103-litigation-mis-by-lifecycle.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "MIS By Lifecycle: seven lifecycles (Demand 3, Appeal, Refund, Audit, Scrutiny, Registration, Enforcement) with open count and demand; table only, no chart.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "104-litigation-mis-ageing",
+    "group": "Litigation",
+    "title": "Litigation MIS — Ageing",
+    "route": "/litigation-mis",
+    "steps": "Reports ▾ → Litigation MIS → \"Ageing\" tab",
+    "desktop": "shots/d-104-litigation-mis-ageing.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "MIS Ageing: buckets by matter created_at (not by notice date/limitation) with a bar chart.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "105-litigation-mis-per-staff",
+    "group": "Litigation",
+    "title": "Litigation MIS — Per Staff",
+    "route": "/litigation-mis",
+    "steps": "Reports ▾ → Litigation MIS → \"Per Staff\" tab",
+    "desktop": "shots/d-105-litigation-mis-per-staff.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "MIS Per Staff: open matters and demand per owner, incl. \"Unassigned\".",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "106-litigation-mis-hearings",
+    "group": "Litigation",
+    "title": "Litigation MIS — Hearings",
+    "route": "/litigation-mis",
+    "steps": "Reports ▾ → Litigation MIS → \"Hearings\" tab",
+    "desktop": "shots/d-106-litigation-mis-hearings.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "strict",
+    "shows": "MIS Hearings (4): upcoming hearings from matter.hearing_at with matter, client, stage, owner and demand.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "none",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "110-extension-popup",
+    "group": "Extension",
+    "title": "Browser-extension popup (GST Keeper — Portal Sync)",
+    "route": "file://extension/popup.html",
+    "steps": "Chrome toolbar → GST Keeper Sync icon",
+    "desktop": "shots/d-110-extension-popup.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "n/a",
+    "shows": "Extension popup (popup.html, 400 px): client dropdown (\"All clients with credentials (11)\"), MM/YYYY period, Start/Stop buttons — scoped to filing status + ledger pulls; nothing about notices sync status.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Rendered from extension/popup.html via file:// with a stubbed window.chrome returning the fictional clients.",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "111-extension-popup-error",
+    "group": "Extension",
+    "title": "Extension popup — background worker unreachable",
+    "route": "file://extension/popup.html",
+    "steps": "Open the popup while the service worker is not responding",
+    "desktop": "shots/d-111-extension-popup-error.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "n/a",
+    "shows": "Extension popup when the background worker does not answer: \"Error: Could not establish connection…\" in the client box, Start disabled.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Error injected through the stubbed chrome.runtime.lastError.",
+    "suspectedAppBugs": [],
+    "actionError": null
+  },
+  {
+    "id": "120-email-due-soon-inapp",
+    "group": "Emails",
+    "title": "Notice-alert email E3 \"due soon\" — in-app path",
+    "route": "file://emails/120-email-due-soon-inapp.html",
+    "steps": "Dashboard \"Send digest\" → email_outbox → send-gst-email",
+    "desktop": "shots/d-120-email-due-soon-inapp.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "n/a",
+    "shows": "E3 \"Notice due in 2 days\" email to Associate Two as the in-app path would queue it: generic gold reminder shell (template_key notice_due_soon has no shell entry), \"Dear Mock Builders LLP,\" on an internal staff alert, details box then the same facts again as plain text, raw ISO due date, \"Type: Notice\", and signed \"-- V. J. Desai & Co. LLP\" + \"Warm regards, Associate Two\" (the recipient).",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Rendered offline with buildEmailHtml() from supabase/functions/_shared/email.ts and the seeded template text; values fictional. In production this alert cannot currently be queued (see digest bug).",
+    "suspectedAppBugs": [
+      "Every notice-alert path selects gst_notices.hearing_date, which no migration creates: the in-app \"Send digest\" (runScheduledAlerts) swallows the 400 and says \"No notice alerts due right now.\" with 14 overdue; the pg_cron queue-notice-alerts function gets no rows and returns \"no notices\"; the event-driven alerts (E1/E6–E8) fail on the same select — so no notice alert email can currently be queued. Both queue paths also select the non-existent clients.contact_person, and E4/E5 look up alert_keys (E4_hearing, E5_limitation) that differ from the seeded ones (E4_hearing_reminder, E5_limitation_alert).",
+      "Alert emails: both queue paths set staff_name to the recipient, so the shell signs \"Warm regards, <recipient's own name>\"; internal staff alerts open \"Dear <client name>,\"; the body adds a second sign-off (\"-- V. J. Desai & Co. LLP\"); dates are raw ISO; on E5 the details box shows the notice's long-past reply due date (2026-07-07) beside the real 2026-12-10 deadline."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "121-email-due-soon-cron",
+    "group": "Emails",
+    "title": "Notice-alert email E3 \"due soon\" — cron path",
+    "route": "file://emails/121-email-due-soon-cron.html",
+    "steps": "pg_cron → queue-notice-alerts → send-gst-email",
+    "desktop": "shots/d-121-email-due-soon-cron.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "n/a",
+    "shows": "The same alert through the cron function: purple \"Notice Alert\" pill shell — the two paths produce differently-branded emails for one rule; same client-addressed greeting and recipient-name sign-off.",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Rendered offline (see 120).",
+    "suspectedAppBugs": [
+      "Every notice-alert path selects gst_notices.hearing_date, which no migration creates: the in-app \"Send digest\" (runScheduledAlerts) swallows the 400 and says \"No notice alerts due right now.\" with 14 overdue; the pg_cron queue-notice-alerts function gets no rows and returns \"no notices\"; the event-driven alerts (E1/E6–E8) fail on the same select — so no notice alert email can currently be queued. Both queue paths also select the non-existent clients.contact_person, and E4/E5 look up alert_keys (E4_hearing, E5_limitation) that differ from the seeded ones (E4_hearing_reminder, E5_limitation_alert).",
+      "Alert emails: both queue paths set staff_name to the recipient, so the shell signs \"Warm regards, <recipient's own name>\"; internal staff alerts open \"Dear <client name>,\"; the body adds a second sign-off (\"-- V. J. Desai & Co. LLP\"); dates are raw ISO; on E5 the details box shows the notice's long-past reply due date (2026-07-07) beside the real 2026-12-10 deadline."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "122-email-overdue-digest-inapp",
+    "group": "Emails",
+    "title": "Notice-alert email E2 daily overdue digest — in-app path",
+    "route": "file://emails/122-email-overdue-digest-inapp.html",
+    "steps": "Dashboard \"Send digest\" → email_outbox → send-gst-email",
+    "desktop": "shots/d-122-email-overdue-digest-inapp.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "n/a",
+    "shows": "E2 overdue digest (in-app path): empty details box, \"Dear Sir/Madam,\", list lines with type + reference only (no client names), double sign-off (\"-- V. J. Desai & Co. LLP\" then \"Warm regards, V. J. Desai & Co. (GST Team)\").",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Rendered offline (see 120).",
+    "suspectedAppBugs": [
+      "Every notice-alert path selects gst_notices.hearing_date, which no migration creates: the in-app \"Send digest\" (runScheduledAlerts) swallows the 400 and says \"No notice alerts due right now.\" with 14 overdue; the pg_cron queue-notice-alerts function gets no rows and returns \"no notices\"; the event-driven alerts (E1/E6–E8) fail on the same select — so no notice alert email can currently be queued. Both queue paths also select the non-existent clients.contact_person, and E4/E5 look up alert_keys (E4_hearing, E5_limitation) that differ from the seeded ones (E4_hearing_reminder, E5_limitation_alert).",
+      "In-app E2 digest passes only overdue_count / notice_list / firm_name, so the shell's details box renders empty, the greeting falls back to \"Dear Sir/Madam,\" and each line shows type + reference only (no client name, raw ISO date), followed by a double sign-off."
+    ],
+    "actionError": null
+  },
+  {
+    "id": "123-email-limitation-critical-cron",
+    "group": "Emails",
+    "title": "Notice-alert email E5 limitation warning (critical) — cron path",
+    "route": "file://emails/123-email-limitation-critical-cron.html",
+    "steps": "pg_cron → queue-notice-alerts → send-gst-email",
+    "desktop": "shots/d-123-email-limitation-critical-cron.png",
+    "mobile": null,
+    "capture": "full-page",
+    "mockMode": "n/a",
+    "shows": "E5 limitation warning to Partner Demo (critical shell, red \"Urgent · Notice Alert\" pill) for the 2026-12-10 first-appeal deadline, as it would be queued 30 days out: the details box shows \"Due Date 2026-07-07\" (the order notice's long-past reply date) next to the real deadline, greeting \"Dear Specimen Chemicals Ltd,\", signed \"Warm regards, Partner Demo\".",
+    "consoleErrors": [],
+    "failedRequests": [],
+    "mockGaps": "Rendered offline (see 120) as of the send date 2026-11-10 (the cron fires E5 only at exactly 30/15/7 days); the E5 rule lookup key mismatch means neither path currently sends it.",
+    "suspectedAppBugs": [
+      "Every notice-alert path selects gst_notices.hearing_date, which no migration creates: the in-app \"Send digest\" (runScheduledAlerts) swallows the 400 and says \"No notice alerts due right now.\" with 14 overdue; the pg_cron queue-notice-alerts function gets no rows and returns \"no notices\"; the event-driven alerts (E1/E6–E8) fail on the same select — so no notice alert email can currently be queued. Both queue paths also select the non-existent clients.contact_person, and E4/E5 look up alert_keys (E4_hearing, E5_limitation) that differ from the seeded ones (E4_hearing_reminder, E5_limitation_alert).",
+      "Alert emails: both queue paths set staff_name to the recipient, so the shell signs \"Warm regards, <recipient's own name>\"; internal staff alerts open \"Dear <client name>,\"; the body adds a second sign-off (\"-- V. J. Desai & Co. LLP\"); dates are raw ISO; on E5 the details box shows the notice's long-past reply due date (2026-07-07) beside the real 2026-12-10 deadline."
+    ],
+    "actionError": null
+  }
+]

@@ -86,6 +86,10 @@ interface AuthContextType {
   canUnlockSheets: () => boolean;
   canViewVersionHistory: () => boolean;
   canResetPasswords: () => boolean;
+  /** Switch notice alerts between off / preview / live (outward-facing e-mail). */
+  canManageNoticeAlerts: () => boolean;
+  /** Approve a reply draft in partner review (superadmin / GST manager). */
+  canApproveNoticeReplies: () => boolean;
   canAddEditClients: () => boolean;
   canDeleteClients: () => boolean;
   canEditFilingStatus: () => boolean;
@@ -505,6 +509,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user?.role === 'superadmin' || user?.role === 'gst_manager';
   }, [user]);
 
+  const canManageNoticeAlerts = useCallback((): boolean => {
+    return user?.role === 'superadmin' || user?.role === 'gst_manager';
+  }, [user]);
+
+  const canApproveNoticeReplies = useCallback((): boolean => {
+    return user?.role === 'superadmin' || user?.role === 'gst_manager';
+  }, [user]);
+
   const canAddEditClients = useCallback((): boolean => {
     if (!user) return false;
     if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
@@ -674,6 +686,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canUnlockSheets,
         canViewVersionHistory,
         canResetPasswords,
+        canManageNoticeAlerts,
+        canApproveNoticeReplies,
         canAddEditClients,
         canDeleteClients,
         canEditFilingStatus,

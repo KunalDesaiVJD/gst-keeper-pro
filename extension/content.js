@@ -9,6 +9,18 @@
   const setJob = (j) => { j.lastActivityAt = Date.now(); return store.set({ [JOB_KEY]: j }); };
   const clearJob = () => store.remove(JOB_KEY);
   const EXT_VERSION = chrome.runtime.getManifest().version;
+  // While a long step works (hundreds of PDFs on a first run), keep the job's
+  // lastActivityAt fresh so the background watchdog does not take it for a
+  // stalled client. Never runs during the CAPTCHA wait, so that still times out.
+  function startHeartbeat() {
+    const t = setInterval(async () => {
+      try {
+        const j = (await store.get(JOB_KEY))[JOB_KEY];
+        if (j) { j.lastActivityAt = Date.now(); await store.set({ [JOB_KEY]: j }); }
+      } catch (e) { /* the next tick retries */ }
+    }, 30000);
+    return () => clearInterval(t);
+  }
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const $ = (s) => document.querySelector(s);
@@ -18,6 +30,22 @@
   // initialized before that point in the script's top-to-bottom execution,
   // not down near where it's textually used, or it's a TDZ ReferenceError.
   const MONTH_ABBR = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+  // Same rule for every constant below: the dispatcher awaits the step handlers
+  // inside this IIFE, so a const declared further down is still uninitialized
+  // when a handler reads it ("Cannot access … before initialization").
+  // A notices run re-reads everything the portal lists, but only DOWNLOADS what
+  // is new: PDFs and folder attachments already stored are skipped, and a case's
+  // folder is fetched only when the case is new or still open — plus one full
+  // pass per client every 7 days, so a change in a closed case is still caught.
+  const FULL_FOLDER_PASS_MS = 7 * 24 * 60 * 60 * 1000;
+  const REFUND_FOLDER_LABELS = { APLCN: 'Applications', NOTAC: 'Notice/Acknowledgement', REPLY: 'Replies', ORDRS: 'Orders', AUDIT: 'Audit History' };
+  // rtnprd from the reversal / RCM liability APIs is 'YYYYMM' (e.g. '202603') —
+  // this app's own convention is 'MM/YYYY'.
+  const rtnPrdToPeriod = (rtnprd) => {
+    const s = String(rtnprd || '');
+    return s.length === 6 ? (s.slice(4) + '/' + s.slice(0, 4)) : null;
+  };
+  const numOr0 = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
 
   function simpleHash(s) {
     let h = 0;
@@ -152,10 +180,13 @@
 
   // Only act in the sync tab we opened, and drop stale jobs — so the extension
   // NEVER prompts a CAPTCHA during normal portal browsing (the "harassment" bug).
+  // A notices run (job.runId) is watched by the background watchdog, which
+  // records a stuck client in the run ledger and moves on; other jobs keep the
+  // old rule and are dropped after 10 idle minutes or 3 hours.
   const now = Date.now();
   const idleMs = now - (job.lastActivityAt || job.startedAt || now);
   const totalMs = now - (job.startedAt || now);
-  if (idleMs > 10 * 60 * 1000 || totalMs > 3 * 60 * 60 * 1000) { await clearJob(); return; }
+  if (!job.runId && (idleMs > 10 * 60 * 1000 || totalMs > 3 * 60 * 60 * 1000)) { await clearJob(); return; }
   // Right after the extension is reloaded, any ALREADY-OPEN gst.gov.in tab's
   // content script becomes orphaned — its chrome.runtime.sendMessage calls
   // reject ("Extension context invalidated"). whoami() then resolves to null
@@ -208,6 +239,7 @@
       else if (job.step === 'cashledger') await writeLedgerFailureRow(GSTKdb.replaceCashLedgerEntries, cur, job, 'session kept dropping (bounced to login/error page 3x) while reading the Cash Ledger');
       else if (job.step === 'notices') {
         try { await GSTKdb.logClientSync(cur.clientId, 'notices', 'failed', 'PULL FAILED: session kept dropping (bounced to login/error page 3x)'); } catch (e2) { /* diagnostic only */ }
+        try { await GSTKdb.logStep(job.runId, cur.clientId, 'notices', 'failed', 'portal_error', 'Session kept dropping (bounced to login/error page 3x).'); } catch (e2) { /* diagnostic only */ }
         await logSyncAttempt(job, cur, 'failed', 'Session kept dropping (bounced to login/error page 3x) while reading Notices & Orders.');
       } else if (job.step === 'refunds') {
         try { await GSTKdb.logClientSync(cur.clientId, 'refunds', 'failed', 'PULL FAILED: session kept dropping (bounced to login/error page 3x)'); } catch (e2) { /* diagnostic only */ }
@@ -292,6 +324,7 @@
       const reason = (e && e.message) || 'unknown error';
       banner('Error on ' + (job.step || '?') + ': ' + reason + ' — moving on.', '#dc2626');
       try { await GSTKdb.logClientSync(cur.clientId, job.step || 'unknown', 'failed', 'Unhandled: ' + reason + ' [ext ' + EXT_VERSION + ']'); } catch (_) {}
+      if (ledgerJob(job)) { try { await GSTKdb.logStep(job.runId, cur.clientId, job.step || 'unknown', 'failed', /timed out/.test(reason) ? 'timeout' : 'other', reason); } catch (_) {} }
       await advance(job);
     }
   }
@@ -325,6 +358,7 @@
       location.href = 'https://services.gst.gov.in/services/logout';
     } else {
       banner('All ' + job.clients.length + ' client(s) done ✓ — you can close this tab.', '#16a34a');
+      if (job.runId) { try { await GSTKdb.runFinish(job.runId, 'done'); } catch (e) { /* ledger is diagnostic */ } }
       await clearJob();
     }
   }
@@ -347,6 +381,13 @@
   // instead of looking identical to "never synced".
   async function logLoginFailure(job, cur, message) {
     try { await GSTKdb.logClientSync(cur.clientId, 'login_failed', 'failed', message || null); } catch (e) { /* diagnostic only */ }
+    if (ledgerJob(job)) { try { await GSTKdb.logStep(job.runId, cur.clientId, 'login', 'failed', 'login_failed', message || null); } catch (e) { /* diagnostic only */ } }
+  }
+
+  // The run ledger (sync_run_items) records the notices module's syncs only;
+  // a GSTR-3B or ledger pull keeps writing client_sync_log as before.
+  function ledgerJob(job) {
+    return !!job.runId || ['notices', 'notices_bundle', 'refunds', 'drc03'].includes(job.mode);
   }
 
   async function handleLogout(job) {
@@ -362,6 +403,7 @@
     if (isLoggedIn()) {
       job.retries = 0;
       delete job.captchaRetry;
+      try { await GSTKdb.clearCaptchaNotice(); } catch (e) { /* optional */ }
       if (job.mode === 'returnpdf') {
         banner('Logged in — fetching the return + PDF…' + progress);
         job.step = 'efiledpdf';
@@ -542,8 +584,13 @@
     banner('Logging in ' + cur.creds.name + '…' + progress);
     if (!(await waitFor('#username'))) { banner('Login form did not load — reload the page.', '#dc2626'); return; }
     setVal($('#username'), cur.creds.user);
-    setVal($('#user_pass'), cur.creds.pass);
+    let portalPass = cur.creds.pass || null; // jobs saved by extension < 0.4.0 still carry it
+    if (!portalPass) { try { portalPass = await GSTKdb.getPortalPassword(cur.clientId); } catch (e) { portalPass = null; } }
+    if (!portalPass) { banner('No saved GST portal password for ' + cur.creds.name + ' — update it in Edit Client.', '#dc2626'); return; }
+    setVal($('#user_pass'), portalPass);
     await waitFor('#imgCaptcha', 8000);
+    // The sync tab is often behind other windows: say so on the desktop.
+    try { await GSTKdb.notifyCaptcha(cur.creds.name, progress); } catch (e) { /* optional */ }
     // No custom popup — the CAPTCHA is typed straight into the portal's own
     // native #captcha field. The field has no maxlength/expected-length we
     // can read (confirmed live: only a numeric-only ng-pattern), so "is it
@@ -2643,81 +2690,112 @@
   // that second report in the Hub has no separate data source anymore).
   // services.gst.gov.in's own JSON API (get/notices), confirmed live via
   // DevTools network tab, same story as the ledger APIs above.
+  // Never save one client's portal data under another client's id. The portal
+  // session is shared by the whole Chrome profile, so a second tab logged into
+  // a different GSTIN would otherwise be read and saved as this client's.
+  // Returns a message when the session clearly belongs to someone else;
+  // null when it matches or cannot be checked (never blocks on uncertainty).
+  async function sessionGstinMismatch(cur) {
+    const expected = String((cur.creds && cur.creds.gstin) || '').trim().toUpperCase();
+    if (!expected) return null;
+    try {
+      const r = await withTimeout(fetch('https://services.gst.gov.in/services/auth/profile/detail', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      }), 10000, 'profile/detail');
+      if (!r.ok) return null;
+      const j = await r.json();
+      const found = String((j && (j.gstin || j.gstIn || j.gstinId)) || '').trim().toUpperCase();
+      if (/^[0-9A-Z]{15}$/.test(found) && found !== expected) {
+        return 'Portal session belongs to ' + found + ', not ' + expected + ' — nothing was saved for this client.';
+      }
+    } catch (e) { /* cannot verify — do not block */ }
+    return null;
+  }
+
+  // Skip the rest of this client's steps (all periods) and move to the next.
+  async function skipClient(job) {
+    if (Array.isArray(job.periods) && job.periods.length) job.periodIdx = job.periods.length - 1;
+    await advance(job);
+  }
+
   async function handleNotices(job, cur, progress) {
     if (!/\/services\/auth\/notices/.test(url)) { location.href = 'https://services.gst.gov.in/services/auth/notices'; return; }
+    const stopHeartbeat = startHeartbeat();
+    try {
+      await pullNotices(job, cur, progress);
+    } finally {
+      stopHeartbeat();
+    }
+    await sleep(1000);
+    await chainOrStop(job, 'notices', proceedToRefunds);
+  }
+
+  async function pullNotices(job, cur, progress) {
+    banner('Checking the portal session…' + progress);
+    const mismatch = await sessionGstinMismatch(cur);
+    if (mismatch) {
+      banner(mismatch + progress, '#dc2626');
+      await logSyncAttempt(job, cur, 'failed', mismatch);
+      try { await GSTKdb.logStep(job.runId, cur.clientId, 'notices', 'failed', 'session_mismatch', mismatch); } catch (e) { /* ledger is diagnostic */ }
+      await sleep(2500);
+      await skipClient(job);
+      return;
+    }
     banner('Reading Notices & Orders…' + progress);
     const pullTs = new Date().toISOString();
     let list = [];
     try {
-      const r = await fetch('https://services.gst.gov.in/services/auth/api/get/notices', {
+      const r = await withTimeout(fetch('https://services.gst.gov.in/services/auth/api/get/notices', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ onLoad: true, type: '', from: '01/01/2017', to: shownTodayDdMmYyyy() }),
-      });
+      }), 45000, 'get/notices');
       if (!r.ok) throw new Error('HTTP ' + r.status + ' from get/notices');
       const j = await r.json();
       list = Array.isArray(j) ? j : Object.keys(j || {}).filter((k) => /^\d+$/.test(k)).map((k) => j[k]);
+      // An error envelope ({status: 0, error: …}) is a failed read, never an empty list.
+      if (!Array.isArray(j) && list.length === 0 && j && typeof j === 'object' && (j.status === 0 || j.error || j.errorCode || j.errCd)) {
+        throw new Error('portal returned an error instead of a notice list: ' + JSON.stringify(j).slice(0, 160));
+      }
     } catch (e) {
-      debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
-      banner('Notices & Orders: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
-      await logSyncAttempt(job, cur, 'failed', 'Could not read the portal API: ' + ((e && e.message) || 'unknown error'));
+      const msg = (e && e.message) || 'unknown error';
+      debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'fetch failed: ' + msg]);
+      banner('Notices & Orders: could not read the portal API (' + msg + ') — skipped.' + progress, '#dc2626');
+      await logSyncAttempt(job, cur, 'failed', 'Could not read the portal API: ' + msg);
+      try { await GSTKdb.logStep(job.runId, cur.clientId, 'notices', 'failed', /timed out/.test(msg) ? 'timeout' : 'portal_error', msg); } catch (e2) { /* diagnostic */ }
       await sleep(1500);
-      await chainOrStop(job, 'notices', proceedToRefunds);
       return;
     }
 
-    // The portal's own "View Notices and Orders" page merges get/notices
-    // above with a SECOND, differently-shaped API — litserv's case/task/get
-    // (confirmed live 2026-08-22 via the page's own viewnoticeorderctrl.js:
-    // both calls share one payload and the responses get combined client-side
-    // before rendering). get/notices alone never carries LUT-application or
-    // DRC-03 voluntary-payment acknowledgement rows — those live only here,
-    // keyed by caseTypeName ("LETTER OF UNDERTAKING", "VOLUNTARY PAYMENT",
-    // etc.) with a refId in the same ZD.../ZA... format as noticeOrderId.
-    // Best-effort: a failure here must not lose the get/notices rows already
-    // read above, so it's swallowed to an empty list rather than aborting.
+    // The portal's own page merges get/notices with litserv's case/task/get
+    // (LUT and DRC-03 acknowledgements, case summaries). Best-effort: a failure
+    // here keeps the get/notices rows and marks the pull partial.
     let taskList = [];
+    let tasksComplete = false;
     try {
-      const tr = await fetch('https://services.gst.gov.in/litserv/auth/api/case/task/get', {
+      const tr = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/task/get', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gstIn: cur.creds.gstin || '', type: '', fmdt: '01/01/2017', todt: shownTodayDdMmYyyy(), onLoad: true }),
-      });
+      }), 45000, 'case/task/get');
       if (tr.ok) {
         const tj = await tr.json();
         taskList = Array.isArray(tj) ? tj : Object.keys(tj || {}).filter((k) => /^\d+$/.test(k)).map((k) => tj[k]);
+        tasksComplete = Array.isArray(tj) || taskList.length > 0 || !(tj && typeof tj === 'object' && (tj.status === 0 || tj.error || tj.errorCode || tj.errCd));
       }
     } catch (e) { /* non-fatal — get/notices rows above still get saved */ }
 
-    // Per-row PDF capture. Confirmed live (2026-08-21): the list response
-    // above already carries docId + applnId per notice, and GET
-    // /document/{docId}/{applnId} serves the PDF directly — no encrypted
-    // token needed (same simple pattern as the Registration Certificate,
-    // unlike DRC-03's docId+eh flow). Not every row has a docId (e.g.
-    // "Letter Of Undertaking" entries don't), so this is best-effort per row
-    // and a failure here must not drop that row's own reference/description.
-    let pdfOk = 0, pdfFail = 0;
+    // What is already stored: skip those downloads.
+    let known = null;
+    try { known = await GSTKdb.knownDocs(cur.clientId); } catch (e) { known = null; }
+    const knownCases = new Set((known && known.knownCases) || []);
+    const openCases = new Set((known && known.openCases) || []);
+    const fullKey = 'gstk_folder_full_' + cur.clientId;
+    const lastFull = ((await store.get(fullKey))[fullKey]) || 0;
+    const fullFolderPass = !known || Date.now() - lastFull > FULL_FOLDER_PASS_MS;
+
+    let pdfOk = 0, pdfFail = 0, pdfSkipped = 0, foldersFetched = 0, foldersSkipped = 0, attachSkipped = 0;
+    let folderPassOk = true;
     const gstr3aErrors = [];
-    try {
-      const dnr = await GSTKdb.getDnrDebug();
-      gstr3aErrors.push('DNR rules: ' + JSON.stringify(dnr).slice(0, 300));
-    } catch (e) { gstr3aErrors.push('DNR debug call failed: ' + ((e && e.message) || String(e))); }
     const rows = [];
-    // Rows with no docId/applnId aren't necessarily document-less — confirmed
-    // live 2026-08-29: a "Notice to return defaulter u/s 46" row instead
-    // carries pdfDownloadURL ("/returns/auth/gstr3a") + appDefId. That's the
-    // portal's own GSTR-3A notice viewer (return.gst.gov.in) — reverse
-    // engineered live: it fetches a small JSON summary (gstin/name/address/
-    // ret_period/orderId/retTyp) from /returns/auth/api/gstr3a/summary, then
-    // builds the actual PDF client-side via pdfMake using a FIXED legal-text
-    // template (see returnstatic.gst.gov.in/uiassets/js/returns/gstr3actrl.js,
-    // publicly fetchable, no auth needed) and immediately calls
-    // pdfMake...download() — which is a real Chrome "Save As" prompt per
-    // notice, confirmed live, and why an earlier version of this capture
-    // (opening that page in a tab and screenshotting it) forced the user to
-    // click through a save dialog per notice during every sync. Fetching the
-    // same summary JSON directly and rebuilding that exact template ourselves
-    // (buildGstr3aNoticePdf below) needs no tab and never touches Chrome's
-    // download UI — same silent, background-fetch shape as every other
-    // notice type's PDF capture in this loop.
     for (const n of list) {
       const refNo = n.noticeOrderId || null;
       const row = {
@@ -2727,20 +2805,24 @@
         description: n.descr || null, issue_date: ddmmyyyyToIso(n.dtOfIssue || ''),
         due_date: /^\d{2}\/\d{2}\/\d{4}$/.test(n.dueDate || '') ? ddmmyyyyToIso(n.dueDate) : null,
         status: n.status || null, issued_by: n.issuedBy || null, case_id: null, pdf_url: null,
-        pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
       };
-      if (n.docId && n.applnId) {
+      const havePdf = !!(known && known.noticePdf && known.noticePdf[row.portal_key]);
+      if (havePdf && (n.docId || n.pdfDownloadURL)) {
+        pdfSkipped++;
+      } else if (n.docId && n.applnId) {
         try {
-          const pdfR = await fetch('https://services.gst.gov.in/document/' + n.docId + '/' + n.applnId, { credentials: 'include' });
+          const pdfR = await withTimeout(fetch('https://services.gst.gov.in/document/' + n.docId + '/' + n.applnId, { credentials: 'include' }), 30000, 'notice pdf');
           if (pdfR.ok) {
-            const buf = await pdfR.arrayBuffer();
+            const buf = await withTimeout(pdfR.arrayBuffer(), 30000, 'pdf arrayBuffer');
             const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
             const path = 'notices/' + cur.clientId + '/' + (row.reference_number || n.docId) + '.pdf';
-            row.pdf_url = await GSTKdb.uploadPdf(path, dataUrl);
+            row.pdf_url = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 30000, 'uploadPdf');
             pdfOk++;
           } else pdfFail++;
         } catch (e) { pdfFail++; }
       } else if (n.pdfDownloadURL && n.noticeOrderId && n.appDefId) {
+        // GSTR-3A: the portal builds this PDF client-side from a small summary
+        // JSON; fetch that summary and rebuild the same template (no Save-As dialog).
         try {
           const summaryUrl = 'https://return.gst.gov.in/returns/auth/api/gstr3a/summary?defaulter_id=' +
             encodeURIComponent(n.appDefId) + '&order_id=' + encodeURIComponent(n.noticeOrderId);
@@ -2766,28 +2848,10 @@
       rows.push(row);
     }
 
-    // Fold in the case/task/get rows (LUT applications, DRC-03 voluntary
-    // payment acknowledgements, etc.) fetched above — skip any refId that
-    // get/notices already returned, so a row the portal happens to carry in
-    // both responses doesn't get saved twice.
-    //
-    // Each one also gets its own best-effort PDF capture. Unlike get/notices
-    // rows (which carry docId+applnId directly), a task row's own PDF (its
-    // "GST RFD-11A" deemed-approval order, in the LUT case) needs three
-    // chained calls, confirmed live 2026-08-24 against a real LUT case:
-    //   1. POST case/folder {caseId, gstid, caseTypeCd: t.caseTpeCd} — the
-    //      case's list of folder tabs (Applications/Notices/Replies/Orders/
-    //      Additional Document), each with its own caseFolderId.
-    //   2. Find the folder where caseFolderTypeCd === 'ORDRS', then POST
-    //      case/folder/items {caseFolderId: <that folder's id>} — an array
-    //      of order items; each item's `itemJson` is itself a JSON STRING
-    //      (needs a second JSON.parse) whose docupdtl[0].id is the real docId
-    //      and .crn is the ARN to pair it with.
-    //   3. The same fetchEncrypDocEh(docId, arn) + downloadhb/download/new
-    //      flow already used by Refund/DRC-03 above turns that into the PDF.
-    // A case type without an ORDRS folder, or any step failing, just leaves
-    // pdf_url null — same "best-effort" contract as the get/notices loop.
-    const seenRefs = new Set(rows.map((r) => r.reference_number).filter(Boolean));
+    // Fold in the case/task rows. A task whose refId get/notices already
+    // returned is the same notice: link its case (so its folder shows on the
+    // notice) instead of dropping the link with the duplicate.
+    const rowByRef = new Map(rows.filter((r) => r.reference_number).map((r) => [r.reference_number, r]));
     const titleCase = (s) => (s || '').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
     const epochMsToIsoDate = (ms) => {
       if (!ms) return null;
@@ -2795,154 +2859,165 @@
       return isNaN(d.getTime()) ? null : d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     };
     let taskRows = 0;
+    const folderBatches = [];
     for (const t of taskList) {
       const refId = t.refId || null;
-      if (refId && seenRefs.has(refId)) continue;
-      if (refId) seenRefs.add(refId);
-      const row = {
-        client_id: cur.clientId, source: 'notices',
-        portal_key: refId || ('case:' + (t.arn || simpleHash((t.taskDesc || '') + '|' + (t.assignmentDt || '')))),
-        reference_number: refId, notice_type: titleCase(t.caseTypeName),
-        description: t.taskDesc || null, issue_date: epochMsToIsoDate(t.assignmentDt),
-        due_date: null, status: null, issued_by: null, case_id: t.arn || null, pdf_url: null,
-        pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
-      };
-      // Hoisted out of the try block below (was `const`, scoped only to
-      // that try) so the Additional Notice Folder capture further down can
-      // reuse this same fetch instead of hitting case/folder a second time.
+      let row = refId ? rowByRef.get(refId) : null;
+      const isDuplicate = !!row;
+      if (isDuplicate) {
+        if (t.arn && !row.case_id) row.case_id = t.arn;
+      } else {
+        row = {
+          client_id: cur.clientId, source: 'notices',
+          portal_key: refId || ('case:' + (t.arn || simpleHash((t.taskDesc || '') + '|' + (t.assignmentDt || '')))),
+          reference_number: refId, notice_type: titleCase(t.caseTypeName),
+          description: t.taskDesc || null, issue_date: epochMsToIsoDate(t.assignmentDt),
+          due_date: null, status: null, issued_by: null, case_id: t.arn || null, pdf_url: null,
+        };
+        if (refId) rowByRef.set(refId, row);
+        rows.push(row);
+        taskRows++;
+      }
+      if (!t.caseId || !t.arn) continue;
+
+      // Folders: new or open cases every run; every case on the weekly full pass.
+      const needFolders = fullFolderPass || !knownCases.has(t.arn) || openCases.has(t.arn);
+      if (!needFolders) { foldersSkipped++; continue; }
       let folders = [];
-      if (t.caseId && t.arn) {
+      try {
+        const fr = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ caseId: t.caseId, gstid: cur.creds.gstin || '', caseTypeCd: t.caseTpeCd || '' }),
+        }), 20000, 'case/folder');
+        folders = fr.ok ? await fr.json() : [];
+        if (!fr.ok) folderPassOk = false;
+      } catch (e) { folders = []; folderPassOk = false; }
+      if (!Array.isArray(folders) || !folders.length) continue;
+      foldersFetched++;
+
+      // The task row's own PDF (e.g. an LUT's RFD-11A order) — only when not stored yet.
+      const haveTaskPdf = isDuplicate || !!(known && known.noticePdf && known.noticePdf[row.portal_key]);
+      const ordersFolder = folders.find((f) => f.caseFolderTypeCd === 'ORDRS');
+      if (!haveTaskPdf && ordersFolder) {
         try {
-          const fr = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
+          const ir = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
             method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ caseId: t.caseId, gstid: cur.creds.gstin || '', caseTypeCd: t.caseTpeCd || '' }),
-          }), 15000, 'case/folder');
-          folders = fr.ok ? await fr.json() : [];
-          const ordersFolder = Array.isArray(folders) ? folders.find((f) => f.caseFolderTypeCd === 'ORDRS') : null;
-          if (ordersFolder) {
-            const ir = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
-              method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ caseFolderId: ordersFolder.caseFolderId }),
-            }), 15000, 'case/folder/items');
-            const items = ir.ok ? await ir.json() : [];
-            const item = Array.isArray(items) ? (items.find((it) => it.refId === refId) || items[0]) : null;
-            const parsed = item && item.itemJson ? JSON.parse(item.itemJson) : null;
-            const docId = parsed && parsed.docupdtl && parsed.docupdtl[0] ? parsed.docupdtl[0].id : null;
-            const docArn = (parsed && parsed.crn) || t.arn;
-            if (docId) {
-              const eh = await withTimeout(fetchEncrypDocEh(docId, docArn), 15000, 'getEncrypDocIds');
-              if (eh) {
-                const pdfR = await withTimeout(fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(docId) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' }), 20000, 'downloadhb');
-                if (pdfR.ok) {
-                  const buf = await withTimeout(pdfR.arrayBuffer(), 15000, 'pdf arrayBuffer');
-                  if (buf && buf.byteLength > 200) {
-                    const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
-                    const path = 'notices/' + cur.clientId + '/' + (refId || docId) + '.pdf';
-                    row.pdf_url = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
-                    pdfOk++;
-                  } else pdfFail++;
-                } else pdfFail++;
+            body: JSON.stringify({ caseFolderId: ordersFolder.caseFolderId }),
+          }), 15000, 'case/folder/items');
+          const items = ir.ok ? await ir.json() : [];
+          const item = Array.isArray(items) ? (items.find((it) => it.refId === refId) || items[0]) : null;
+          const parsed = item && item.itemJson ? JSON.parse(item.itemJson) : null;
+          const docId = parsed && parsed.docupdtl && parsed.docupdtl[0] ? parsed.docupdtl[0].id : null;
+          const docArn = (parsed && parsed.crn) || t.arn;
+          if (docId) {
+            const eh = await withTimeout(fetchEncrypDocEh(docId, docArn), 15000, 'getEncrypDocIds');
+            if (eh) {
+              const pdfR = await withTimeout(fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(docId) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' }), 20000, 'downloadhb');
+              const buf = pdfR.ok ? await withTimeout(pdfR.arrayBuffer(), 15000, 'pdf arrayBuffer') : null;
+              if (buf && buf.byteLength > 200) {
+                const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+                const path = 'notices/' + cur.clientId + '/' + (refId || docId) + '.pdf';
+                row.pdf_url = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
+                pdfOk++;
               } else pdfFail++;
             } else pdfFail++;
-          }
+          } else pdfFail++;
         } catch (e) { pdfFail++; }
+      } else if (haveTaskPdf && ordersFolder) {
+        pdfSkipped++;
       }
-      rows.push(row);
-      taskRows++;
 
-      // Additional Notice Folder capture — Notice Alert parity: clicking a
-      // case-linked row's Reference No. opens the full case folder
-      // (Intimations/Notices/Replies/Orders/Closure, each with its own
-      // attachments), not just the single ORDRS PDF captured above. Reuses
-      // the exact same `folders` fetch already done for that PDF — every
-      // Every other folder type the portal returns (confirmed live
-      // 2026-08-27 against a real case: INTIM/NOTCE/REPLY/ORDRS/DRC7A — note
-      // NOT the INTM/NOTC/RPLY/CLSR guessed above) gets the same
-      // items+attachments treatment here, best-effort: raw_json is stored
-      // verbatim so nothing captured is lost even where a field's exact
-      // meaning isn't known yet.
-      if (t.caseId && t.arn && Array.isArray(folders) && folders.length) {
+      // Every folder's items, with attachments not stored yet.
+      const folderItems = [];
+      let folderFailures = 0;
+      for (const folder of folders) {
         try {
-          const folderItems = [];
-          for (const folder of folders) {
-            try {
-              const fir = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
-                method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ caseFolderId: folder.caseFolderId }),
-              }), 15000, 'case/folder/items');
-              const fItems = fir.ok ? await fir.json() : [];
-              if (!Array.isArray(fItems)) continue;
-              for (const fi of fItems) {
-                let fParsed = null;
-                try { fParsed = fi.itemJson ? JSON.parse(fi.itemJson) : null; } catch (e) { /* keep raw_json as the unparsed string below */ }
-                const rawDocs = [];
-                findDocDescriptors(fParsed, new Set(), rawDocs);
-                const seenDocIds = new Set();
-                const attachments = [];
-                for (const doc of rawDocs) {
-                  if (seenDocIds.has(doc.id)) continue;
-                  seenDocIds.add(doc.id);
-                  try {
-                    const docArn = (fParsed && fParsed.crn) || t.arn;
-                    const eh = await withTimeout(fetchEncrypDocEh(doc.id, docArn), 15000, 'getEncrypDocIds');
-                    if (!eh) continue;
-                    const pdfR = await withTimeout(fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(doc.id) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' }), 20000, 'downloadhb');
-                    if (!pdfR.ok) continue;
-                    const buf = await withTimeout(pdfR.arrayBuffer(), 15000, 'pdf arrayBuffer');
-                    if (!buf || buf.byteLength <= 200) continue;
-                    const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
-                    const path = 'notices/' + cur.clientId + '/case-folder/' + t.arn + '/' + doc.id + '.pdf';
-                    const url = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
-                    attachments.push({ label: doc.docName || doc.docttl || (doc.id + '.pdf'), url });
-                  } catch (e) { /* best-effort per attachment */ }
-                }
-                const fiRef = fi.refId || (fParsed && fParsed.crn) || null;
-                folderItems.push({
-                  client_id: cur.clientId,
-                  case_id: t.arn,
-                  portal_key: (folder.caseFolderTypeCd || '_') + ':' + (fiRef || simpleHash(JSON.stringify(fParsed || fi.itemJson || ''))),
-                  folder_section: folder.caseFolderTypeCd || null,
-                  reference_number: fiRef,
-                  attachments,
-                  raw_json: fParsed !== null ? fParsed : (fi.itemJson || null),
-                  pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
-                });
-              }
-            } catch (e) { /* best-effort per folder */ }
+          const fir = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
+            method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ caseFolderId: folder.caseFolderId }),
+          }), 15000, 'case/folder/items');
+          if (!fir.ok) { folderFailures++; continue; }
+          const fItems = await fir.json();
+          if (!Array.isArray(fItems)) { folderFailures++; continue; }
+          for (const fi of fItems) {
+            let fParsed = null;
+            try { fParsed = fi.itemJson ? JSON.parse(fi.itemJson) : null; } catch (e) { /* keep raw_json as the unparsed string below */ }
+            const fiRef = fi.refId || (fParsed && fParsed.crn) || null;
+            const itemKey = (folder.caseFolderTypeCd || '_') + ':' + (fiRef || simpleHash(JSON.stringify(fParsed || fi.itemJson || '')));
+            const stored = (known && known.itemDocs && known.itemDocs[t.arn + '|' + itemKey]) || [];
+            const rawDocs = [];
+            findDocDescriptors(fParsed, new Set(), rawDocs);
+            const seenDocIds = new Set();
+            const attachments = [];
+            for (const doc of rawDocs) {
+              if (seenDocIds.has(doc.id)) continue;
+              seenDocIds.add(doc.id);
+              const already = stored.find((a) => a && typeof a.url === 'string' && a.url.indexOf('/' + doc.id + '.pdf') !== -1);
+              if (already) { attachments.push(already); attachSkipped++; continue; }
+              try {
+                const docArn = (fParsed && fParsed.crn) || t.arn;
+                const eh = await withTimeout(fetchEncrypDocEh(doc.id, docArn), 15000, 'getEncrypDocIds');
+                if (!eh) continue;
+                const pdfR = await withTimeout(fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(doc.id) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' }), 20000, 'downloadhb');
+                if (!pdfR.ok) continue;
+                const buf = await withTimeout(pdfR.arrayBuffer(), 15000, 'pdf arrayBuffer');
+                if (!buf || buf.byteLength <= 200) continue;
+                const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+                const path = 'notices/' + cur.clientId + '/case-folder/' + t.arn + '/' + doc.id + '.pdf';
+                const urlOut = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
+                attachments.push({ label: doc.docName || doc.docttl || (doc.id + '.pdf'), url: urlOut });
+              } catch (e) { /* best-effort per attachment */ }
+            }
+            folderItems.push({
+              portal_key: itemKey,
+              folder_section: folder.caseFolderTypeCd || null,
+              reference_number: fiRef,
+              attachments,
+              raw_json: fParsed !== null ? fParsed : (fi.itemJson || null),
+            });
           }
-          if (folderItems.length) {
-            try { await GSTKdb.replaceCaseFolderItems(cur.clientId, t.arn, folderItems, pullTs); } catch (e2) { /* diagnostic only */ }
-          }
-        } catch (e) { /* best-effort, never blocks the main notices row above */ }
+        } catch (e) { folderFailures++; }
       }
+      if (folderFailures) folderPassOk = false;
+      if (folderItems.length) folderBatches.push({ caseId: t.arn, items: folderItems, complete: folderFailures === 0 });
     }
 
+    // Folder items first (a new reply / order on a known case is logged
+    // against its notice), then the notice list, then the server-side sweep.
+    let foldersSaved = 0;
+    for (const b of folderBatches) {
+      try { await GSTKdb.ingest(cur.clientId, job.runId, 'case_folder', b.items, { complete: b.complete }, b.caseId); foldersSaved++; } catch (e) { /* diagnostic: the notice list below still saves */ }
+    }
     try {
-      await GSTKdb.replaceNotices(cur.clientId, rows, pullTs);
-
+      const saved = await GSTKdb.ingest(cur.clientId, job.runId, 'notices', rows, { complete: tasksComplete });
+      if (saved && saved.status === 'held') {
+        try { await GSTKdb.logClientSync(cur.clientId, 'notices_guard', 'success', 'Soft-delete held back: ' + (saved.held_reason || 'held')); } catch (e) { /* diagnostic only */ }
+      }
+      if (fullFolderPass && folderPassOk) { try { await store.set({ [fullKey]: Date.now() }); } catch (e) { /* next run retries the full pass */ } }
+      const counts = saved && !saved.legacy
+        ? ' — ' + saved.new + ' new, ' + saved.changed + ' changed, ' + saved.removed + ' removed' + (saved.status === 'held' ? ' (removal held back)' : '')
+        : '';
       debugPanel([
         'STEP: View Notices and Orders  (' + location.pathname + ')',
-        'rows read         : ' + rows.length + ' (' + (rows.length - taskRows) + ' notices, ' + taskRows + ' LUT/case-task)',
-        'PDFs captured     : ' + pdfOk + ' ok, ' + pdfFail + ' failed/not applicable',
+        'rows read         : ' + rows.length + ' (' + (rows.length - taskRows) + ' notices, ' + taskRows + ' case/task)' + counts,
+        'PDFs              : ' + pdfOk + ' downloaded, ' + pdfSkipped + ' already stored, ' + pdfFail + ' failed/not applicable',
+        'case folders      : ' + foldersFetched + ' fetched (' + (fullFolderPass ? 'weekly full pass' : 'new or open cases') + '), ' + foldersSkipped + ' skipped, ' + foldersSaved + ' saved',
+        'attachments       : ' + attachSkipped + ' already stored',
         ...(gstr3aErrors.length ? ['GSTR-3A errors    :', ...gstr3aErrors.map((m) => '  - ' + m)] : []),
       ]);
-      banner('Notices & Orders → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Refund applications…' + progress, '#16a34a');
-      await logSyncAttempt(job, cur, 'success', rows.length + ' entries found (' + pdfOk + ' PDFs captured' + (pdfFail ? ', ' + pdfFail + ' failed' : '') + ').');
-      // Temporary diagnostic — the debug panel navigates away with the page
-      // before a human can read it, so this writes the same detail
-      // somewhere durable regardless of job.logSync (client_sync_log),
-      // queryable straight from Supabase after the fact.
+      banner('Notices & Orders → ' + rows.length + ' entries' + counts + ' (' + pdfOk + ' new PDFs, ' + pdfSkipped + ' already stored). Now Refund applications…' + progress, '#16a34a');
+      await logSyncAttempt(job, cur, 'success', rows.length + ' entries found' + counts + ' (' + pdfOk + ' PDFs captured, ' + pdfSkipped + ' already stored' + (pdfFail ? ', ' + pdfFail + ' failed' : '') + ').');
       if (gstr3aErrors.length) {
         const realFailures = gstr3aErrors.some((m) => !m.startsWith('DNR rules') && !m.startsWith('DNR debug call failed'));
         try { await GSTKdb.logClientSync(cur.clientId, 'notices_gstr3a_debug', realFailures ? 'failed' : 'success', gstr3aErrors.join(' | ').slice(0, 2000)); } catch (e) { /* diagnostic only */ }
       }
     } catch (e) {
-      debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'DB write failed: ' + ((e && e.message) || 'unknown error')]);
-      banner('Notices & Orders: read ' + rows.length + ' rows but the save failed (' + ((e && e.message) || 'unknown error') + ') — skipped.' + progress, '#dc2626');
-      await logSyncAttempt(job, cur, 'failed', 'Read ' + rows.length + ' rows but the save failed: ' + ((e && e.message) || 'unknown error'));
+      const msg = (e && e.message) || 'unknown error';
+      debugPanel(['STEP: View Notices and Orders  (' + location.pathname + ')', 'DB write failed: ' + msg]);
+      banner('Notices & Orders: read ' + rows.length + ' rows but the save failed (' + msg + ') — skipped.' + progress, '#dc2626');
+      await logSyncAttempt(job, cur, 'failed', 'Read ' + rows.length + ' rows but the save failed: ' + msg);
+      try { await GSTKdb.logStep(job.runId, cur.clientId, 'notices', 'failed', 'save_failed', msg); } catch (e2) { /* diagnostic */ }
     }
-    await sleep(1000);
-    await chainOrStop(job, 'notices', proceedToRefunds);
   }
 
   // Rebuilds the exact GSTR-3A "Notice to return defaulter" PDF the portal's
@@ -3078,15 +3153,18 @@
     banner('Reading Refund applications…' + progress);
     const pullTs = new Date().toISOString();
     let cases = [];
+    let refundsComplete = true;
     try {
-      const r = await fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
+      const r = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caseTypeCd: 'RFUND', startDate: '01/07/2017', endDate: shownTodayDdMmYyyy() }),
-      });
+      }), 45000, 'case/search RFUND');
       if (!r.ok) throw new Error('HTTP ' + r.status + ' from case/search');
       cases = await r.json();
-      if (!Array.isArray(cases)) cases = [];
+      // An error envelope is not "no refunds": nothing is marked missing.
+      if (!Array.isArray(cases)) { cases = []; refundsComplete = false; }
     } catch (e) {
+      try { await GSTKdb.logStep(job.runId, cur.clientId, 'refunds', 'failed', /timed out/.test(String(e && e.message)) ? 'timeout' : 'portal_error', (e && e.message) || 'unknown error'); } catch (e2) { /* diagnostic */ }
       debugPanel(['STEP: Refund Applications  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Refund applications: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.logClientSync(cur.clientId, 'refunds', 'failed', 'PULL FAILED: ' + ((e && e.message) || 'unknown error')); } catch (e2) { /* diagnostic only */ }
@@ -3115,7 +3193,8 @@
       });
     }
 
-    try { await GSTKdb.replaceRefundApplications(cur.clientId, allRows, pullTs); } catch (e) { /* non-fatal */ }
+    try { await GSTKdb.ingest(cur.clientId, job.runId, 'refunds', allRows, { complete: refundsComplete }); }
+    catch (e) { try { await GSTKdb.logStep(job.runId, cur.clientId, 'refunds', 'failed', 'save_failed', (e && e.message) || 'save failed'); } catch (e2) { /* diagnostic */ } }
     debugPanel([
       'STEP: Refund Applications  (' + location.pathname + ')',
       'rows read         : ' + allRows.length,
@@ -3155,7 +3234,6 @@
   // the Notices capture above (which only had caseFolderTypeCd to go on,
   // hence its own hardcoded map). Kept as a thin fallback only for the rare
   // folder whose typeName the API omits.
-  const REFUND_FOLDER_LABELS = { APLCN: 'Applications', NOTAC: 'Notice/Acknowledgement', REPLY: 'Replies', ORDRS: 'Orders', AUDIT: 'Audit History' };
 
   // Document harvest for every refund case the portal has for this client —
   // rewritten 2026-09-07 the same way handleRefunds above was: no DOM
@@ -3348,15 +3426,17 @@
     banner('Reading DRC-03 filings…' + progress);
     const pullTs = new Date().toISOString();
     let cases = [];
+    let drc03Complete = true;
     try {
-      const r = await fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
+      const r = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caseTypeCd: 'ADJVP', startDate: '01/07/2017', endDate: shownTodayDdMmYyyy() }),
-      });
+      }), 45000, 'case/search ADJVP');
       if (!r.ok) throw new Error('HTTP ' + r.status + ' from case/search');
       cases = await r.json();
-      if (!Array.isArray(cases)) cases = [];
+      if (!Array.isArray(cases)) { cases = []; drc03Complete = false; }
     } catch (e) {
+      try { await GSTKdb.logStep(job.runId, cur.clientId, 'drc03', 'failed', /timed out/.test(String(e && e.message)) ? 'timeout' : 'portal_error', (e && e.message) || 'unknown error'); } catch (e2) { /* diagnostic */ }
       debugPanel(['STEP: DRC-03 Filings  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('DRC-03: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.logClientSync(cur.clientId, 'drc03', 'failed', 'PULL FAILED: ' + ((e && e.message) || 'unknown error')); } catch (e2) { /* diagnostic only */ }
@@ -3366,17 +3446,23 @@
     }
 
     const rows = [];
-    let pdfOk = 0, pdfFail = 0;
+    let pdfOk = 0, pdfFail = 0, pdfSkipped = 0;
+    let knownDrc = {};
+    try { knownDrc = ((await GSTKdb.knownDocs(cur.clientId)) || {}).drc03Pdf || {}; } catch (e) { knownDrc = {}; }
+    const stopHeartbeat = startHeartbeat();
     for (const c of cases) {
       const row = parseDrc03Case(c, cur.clientId);
       if (!row) continue;
       row.portal_key = row.arn || ('legacy:' + simpleHash(JSON.stringify(c)));
       row.pulled_at = pullTs; row.last_seen_at = pullTs; row.deleted_at = null;
       // Best-effort PDF capture — one document per filing (the DRC-03 form
-      // itself). A failure here must not drop the filing's own figures.
+      // itself), skipped when that PDF is already stored. A failure here
+      // must not drop the filing's own figures.
       try {
         const docId = row.__docId;
-        if (docId) {
+        if (docId && row.arn && knownDrc[row.arn]) {
+          pdfSkipped++;
+        } else if (docId) {
           const eh = await fetchEncrypDocEh(docId, row.arn);
           if (eh) {
             const pdfR = await fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(docId) + '&arn=' + encodeURIComponent(row.arn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' });
@@ -3394,14 +3480,18 @@
       rows.push(row);
     }
 
-    try { await GSTKdb.replaceDrc03Filings(cur.clientId, rows, pullTs); } catch (e) { /* non-fatal */ }
+    stopHeartbeat();
+    // The ingest also runs the closing sweep (acknowledged DRC-03 payments
+    // close their voluntary-payment case rows).
+    try { await GSTKdb.ingest(cur.clientId, job.runId, 'drc03', rows, { complete: drc03Complete }); }
+    catch (e) { try { await GSTKdb.logStep(job.runId, cur.clientId, 'drc03', 'failed', 'save_failed', (e && e.message) || 'save failed'); } catch (e2) { /* diagnostic */ } }
     debugPanel([
       'STEP: DRC-03 Filings  (' + location.pathname + ')',
       'cases read        : ' + cases.length,
       'rows saved        : ' + rows.length,
-      'PDFs captured     : ' + pdfOk + ' ok, ' + pdfFail + ' failed',
+      'PDFs              : ' + pdfOk + ' downloaded, ' + pdfSkipped + ' already stored, ' + pdfFail + ' failed',
     ]);
-    banner('DRC-03 filings → ' + rows.length + ' entries saved (' + pdfOk + ' PDFs). Now Taxpayer Profile…' + progress, '#16a34a');
+    banner('DRC-03 filings → ' + rows.length + ' entries saved (' + pdfOk + ' new PDFs, ' + pdfSkipped + ' already stored). Now Taxpayer Profile…' + progress, '#16a34a');
     await sleep(1000);
     await chainOrStop(job, ['drc03', 'notices_bundle'], proceedToTaxpayerProfile);
   }
@@ -3495,9 +3585,17 @@
 
     const p2 = (n) => String(n).padStart(2, '0');
     const fmt = (d) => p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
+    const iso = (d) => d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+    // History back to GST inception once a week per client; the runs in
+    // between read only the last ~300 days (two portal windows) and replace
+    // that slice, so older challans are kept as they are.
+    const fullKey = 'gstk_challan_full_' + cur.clientId;
+    const lastFull = ((await store.get(fullKey))[fullKey]) || 0;
+    const fullPass = Date.now() - lastFull > 7 * 24 * 60 * 60 * 1000;
     const windows = [];
-    let winStart = new Date(2017, 6, 1); // 01 Jul 2017 — GST inception
     const today = new Date();
+    let winStart = fullPass ? new Date(2017, 6, 1) : new Date(today.getTime() - 299 * 24 * 60 * 60 * 1000);
+    const sliceFrom = iso(winStart);
     while (winStart <= today) {
       const winEnd = new Date(winStart.getTime() + 149 * 24 * 60 * 60 * 1000);
       windows.push([fmt(winStart), fmt(winEnd > today ? today : winEnd)]);
@@ -3508,7 +3606,7 @@
     let windowsFailed = 0;
     for (const [fm, to] of windows) {
       try {
-        const r = await fetch('https://payment.gst.gov.in/payment/auth/challan/getlist?fm_dt=' + fm + '&to_dt=' + to + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include' });
+        const r = await withTimeout(fetch('https://payment.gst.gov.in/payment/auth/challan/getlist?fm_dt=' + fm + '&to_dt=' + to + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include' }), 30000, 'challan/getlist');
         if (!r.ok) { windowsFailed++; continue; }
         const list = await r.json();
         if (!Array.isArray(list)) { windowsFailed++; continue; }
@@ -3528,10 +3626,14 @@
     }
 
     const rows = [...seen.values()];
-    try { await GSTKdb.replaceChallans(cur.clientId, rows); } catch (e) { /* non-fatal */ }
+    try {
+      if (fullPass) await GSTKdb.replaceChallans(cur.clientId, rows);
+      else await GSTKdb.replaceChallansSince(cur.clientId, sliceFrom, rows);
+      if (fullPass && windowsFailed === 0) await store.set({ [fullKey]: Date.now() });
+    } catch (e) { /* non-fatal */ }
     debugPanel([
       'STEP: Challan Summary  (' + location.pathname + ')',
-      'windows checked   : ' + windows.length + ' (150-day steps back to 01/07/2017)',
+      'windows checked   : ' + windows.length + (fullPass ? ' (weekly full pass, 150-day steps back to 01/07/2017)' : ' (recent ~300 days; full pass weekly)'),
       'windows failed    : ' + windowsFailed,
       'rows saved        : ' + rows.length,
     ]);
@@ -3859,13 +3961,6 @@
     };
   }
 
-  // rtnprd from these two APIs is 'YYYYMM' (e.g. '202603') — this app's own
-  // convention is 'MM/YYYY'.
-  const rtnPrdToPeriod = (rtnprd) => {
-    const s = String(rtnprd || '');
-    return s.length === 6 ? (s.slice(4) + '/' + s.slice(0, 4)) : null;
-  };
-  const numOr0 = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
 
   // Electronic Credit Reversal and Re-claimed Statement — a REAL Dashboard
   // Quick Link (Services > Ledger > "Electronic Credit Reversal and

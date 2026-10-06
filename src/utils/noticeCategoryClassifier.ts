@@ -40,13 +40,22 @@ const CASE_NOTICE_TYPE_MAP: Record<string, string> = {
   'Waiver Scheme U/S 128a': 'Others',
 };
 
-export const classifyNoticeCategory = (r: ClassifiableNotice): string => {
+// The text rules alone — the same as public.notice_category_legacy() in the
+// database. Used only where the canonical set is unavailable (lib/noticeFacts
+// fallback); everything else reads notice_facts.category.
+export const classifyNoticeCategoryLegacy = (r: ClassifiableNotice): string => {
   if (isRegistrationRelated(r.description)) return 'Registration';
   if (isNonFilerRelated(r.description)) return 'Non filers';
   if (isDemandNoticeRelated(r.description)) return 'Demand Notice';
   const type = r.notice_type || 'Uncategorised';
   return CASE_NOTICE_TYPE_MAP[type] || type;
 };
+
+// Since Phase 1 the category comes from the database (notice_facts.category:
+// the form code's category from notice_form_rules, else the text rules above),
+// so the dashboard, the summary and the list it opens can never disagree.
+export const classifyNoticeCategory = (r: ClassifiableNotice & { category?: string | null }): string =>
+  r.category || classifyNoticeCategoryLegacy(r);
 
 // Notice Alert categories confirmed to come from a portal source ("Additional
 // Notices" case/task endpoints) this app has never pulled — shown as zero-

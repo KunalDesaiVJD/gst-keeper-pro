@@ -30,12 +30,41 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
 
 That's it — nothing to keep running, no account, no card.
 
+## Updating (minimum v0.4.0, recommended v0.5.0)
+The app refuses to start a notices sync from an extension older than **v0.4.0**
+(`src/lib/extensionVersion.ts`) and nudges v0.4.x copies to update to **v0.5.0**.
+After pulling a new version of this folder, open `chrome://extensions` and click
+**Reload** on “GST Keeper Portal Sync” on **every PC** that syncs. v0.4.0 never marks
+saved notices missing after an empty or partly failed pull, checks that the portal
+session belongs to the client being synced, and no longer stores portal passwords in
+Chrome's extension storage. v0.5.0 saves through the database's single ingest door
+with a run ledger, skips documents already saved, and moves on from a CAPTCHA nobody
+typed — see CHANGELOG.md.
+
+## Testing without the portal
+`test/notices-sync.sim.mjs` runs the real `background.js`, `db.js` and `content.js` in
+Node against a fake portal and a **local** PostgREST + PostgreSQL carrying the
+migrations (see `supabase/tests/notices/README.md`). It checks a first run, an
+unchanged rerun (nothing downloaded twice), a run with a removed / new notice and a
+reply on the portal, a wrong-GSTIN session, the weekly full folder pass and the
+CAPTCHA watchdog. Never point it at the live project.
+
+```
+node extension/test/notices-sync.sim.mjs http://127.0.0.1:54399 /path/to/anon.jwt
+```
+
 ## Use it
-1. Click the extension icon → pick a **client** and the **return period** → **Start sync**.
-2. A GST-portal tab opens and logs in. **Type the CAPTCHA** in the popup that appears.
-3. Watch the blue banner at the top of the tab: it logs in → reads filing status → reads
-   the ledger → says **“done”**. The data is now in GST Keeper.
-4. Repeat for the next client. (Each client is a separate portal login, so one CAPTCHA each.)
+The toolbar popup is the "Portal autopilot" (v0.5.1+):
+1. It shows the last notices sync, how many clients synced in the last 24 h and which
+   are failing, and why.
+2. **Sync notices for stale & failed (n)** is the default; you can pick all active
+   clients or one client instead. It says how many CAPTCHAs and roughly how long.
+3. A GST-portal tab opens per client and logs in — **type the CAPTCHA** (the popup shows
+   "CAPTCHA waiting → Open the portal tab"). Each client reads notices & orders with
+   their case folders and PDFs, then refunds, then DRC-03. Progress and **Stop** show
+   in the popup while it runs. The app's **Sync now** starts the same run.
+4. **Other syncs → ledger pull** (return period) logs in and reads the credit, credit
+   reversal & re-claim, liability and cash ledgers; it does not write filing status.
 
 ## Why this works when the cloud didn't
 The GST portal's firewall blocks **datacenter/cloud IPs** (that's why the free cloud

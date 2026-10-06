@@ -1,0 +1,1179 @@
+{
+ "screens": [
+  {
+   "id": "40-drawer-notice-not-found",
+   "verdict": "The only per-notice view is a dead end in production: a schema error is shown as 'Notice not found.' with no header, no retry and no way on to the PDF, case folder or list. On a phone the sheet is wider than the screen, so its close button cannot be reached.",
+   "score": 1,
+   "findings": [
+    {
+     "id": "U-40-1",
+     "severity": "High",
+     "area": "Empty/error state",
+     "issue": "Every row click ends at a bare 'Notice' title and 'Notice not found.'. The select's error is discarded, nothing from the clicked row (client, reference, due date) is shown, and the footer links (Company profile / Open in list) render only when the fetch succeeds, so the user is left with nothing to act on.",
+     "fix": "Pass the clicked work-queue row into the drawer as initial data and render the header, due chip and PDF / case-folder / list links from it at once. If the detail fetch fails, show 'Could not load full details' with the PostgREST code, a Retry button and the same fallback links, never 'not found'. The root cause (hearing_date) is L-03.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:142-157,198-202,501-510",
+     "pillar": "Per-notice",
+     "links": "L-03, L-38"
+    },
+    {
+     "id": "U-40-2",
+     "severity": "High",
+     "area": "Mobile",
+     "issue": "At 390 px the sheet (w-full, fixed right-0) spans the ~485 px layout width forced by the module tab bar. Its X button sits off-screen, and because the sheet covers the whole viewport there is no overlay to tap either, so a phone user has no visible way to close the drawer.",
+     "fix": "Fix the tab-bar overflow (cross-cutting) and give the drawer a sticky in-sheet header with its own Close/Back control inside the left 360 px. Below md, open the notice as a full-page route (/notices/:id) instead of a sheet.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:183; src/components/ui/sheet.tsx:40-41,60",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-40-3",
+     "severity": "Low",
+     "area": "Data",
+     "issue": "Header state is never reset between notices. While the next notice loads, the title still shows the previous notice's type and reference, and if the next fetch fails the previous client's name and GSTIN stay in the description above 'Notice not found.'.",
+     "fix": "Reset notice, clientName, gstin and matterInfo at the start of the effect (or key the sheet body by noticeId), and show a skeleton header while loading.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:128-141,160-163,184-195",
+     "pillar": "Data trust"
+    }
+   ]
+  },
+  {
+   "id": "41-drawer-due-today-activity",
+   "verdict": "When it loads, the drawer is a tidy read-only summary, but nothing on it moves the notice forward: a DRC-01C due today gets a red banner and an activity log, not a next step. The stepper hides its last stage, and the layout puts the audit log ahead of the notice itself.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-41-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "'Due today' on a DRC-01C (a short Part-B reply clock) is the loudest element, yet the drawer offers no action: no assign, log reply/ARN, request extension, open on portal or open PDF. From the drawer, the only route to log a reply is the small footer link 'Open in list', which leaves the dashboard for the list's edit dialog.",
+     "fix": "Add the target-notice action bar to the drawer header: a primary button chosen by stage (Log reply / Approve & file / Open on portal) and secondary Assign, Ask client, Request extension and Open PDF. Each action writes an event and updates the banner.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:274-287,501-510",
+     "pillar": "Reply speed",
+     "links": "L-19"
+    },
+    {
+     "id": "U-41-2",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "Lifecycle stepper: nine stages in an overflow-x box show only eight (Closed is scrolled out of view with no cue). Upcoming steps are white digits on bg-muted and nearly invisible. The connectors are fixed 16 px bars centred on circle-plus-label, so they sit below the circles and gaps vary with label width. The current step changes colour by stage (slate, amber, blue) using raw palette classes.",
+     "fix": "Replace it with the target's stage rail: stages that fit the width (or wrap), the current step in navy with a label, upcoming steps outlined with readable numbers, a connector line drawn behind the circle centres, and 'auto · timestamp' captions under each step. Use semantic tokens, not bg-amber-400 or bg-blue-500.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:86-96,293-327",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-41-3",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "Activity is the default tab, so the first thing under the tiles is an audit log ('? → Reply drafted, 2h ago') while the notice PDF sits in the fourth tab ('Docs'). The description, the only text saying what the notice is about, is muted grey body copy between the banner and the stepper.",
+     "fix": "Default to a Summary/Documents view with the notice PDF and case-folder items first. Show the description as a foreground subtitle under the title, and move Activity towards the end, as in the target (Issues · Draft reply · Documents · Activity · Payments).",
+     "ref": "src/components/notices/NoticeDrawer.tsx:289-291,363-369,483-498",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-41-4",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "A stage event with no previous value renders as '? → Reply drafted' with no actor, so the log cannot say who moved the notice or from where.",
+     "fix": "Render 'Stage set to Reply drafted by <name>' when the old value is empty, show 'System' for null actors, and record the actor at write time.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:386-387,398-400",
+     "pillar": "Data trust",
+     "links": "L-28"
+    }
+   ]
+  },
+  {
+   "id": "42-drawer-extended-details",
+   "verdict": "Details are complete but repetitive and partly mislabelled: the due date appears four times while the original due date disappears from the Details tab. Every open stage, including 'Awaiting data', is painted success-green.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-42-1",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "The stage pill is emerald for every status that is not closed, so 'Awaiting data' (blocked on the client) looks as finished as a filed reply. Priority uses raw red/amber classes rather than the shared tones.",
+     "fix": "Map stage to tone with the shared Badge (src/components/gstr9/badge.tsx): Awaiting data and Partner review as warning, overdue as destructive, Filed as success, Captured and Triage as info. Reuse the same map in the queue and the list.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:205-220",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-42-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "Details shows 'Due Date 11/10/2026' (already the extended date) and then 'Extended Due 11/10/2026', the same value twice. The original due date 15/09/2026 appears only in the tile caption, so anyone reading the Details tab cannot see that an extension was granted.",
+     "fix": "Label the rows 'Original due' (due_date) and 'Extended to' (extended_due_date, with who and when), and keep 'Effective due' only in the header chip.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:175,341-345,413-415",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-42-3",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "Fields with icons (Issue date, Due date, Demand) indent their values by the icon width while the other fields sit flush, so both columns are ragged. Four of ten fields are '—' (reply date and reference, order date and number) and cannot be filled here.",
+     "fix": "Drop the per-field icons (or reserve an icon column on every row) and use a two-column definition list. Hide empty reply/order fields behind 'Log reply' and 'Log order' actions.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:410-425,518-528",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-42-4",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "The same facts repeat: the 'Due in 6 days' banner, the Due Date tile, and Details' Due Date and Extended Due; Demand appears in a tile and again in Details. The top tiles (text-lg bold) and bottom tiles (text-sm) use different value sizes and heights.",
+     "fix": "Keep one header chip line (due · demand · owner · FY) as in the target, let the tabs carry only what the header does not, and use KpiTile for any tile row.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:329-360",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "43-drawer-case-matter-deadlines",
+   "verdict": "This is the best drawer state, with a linked matter and statutory deadlines, but it cannot reach the case folder that holds the notice, the reply already filed and the hearing details. The user has to go back to the work queue and click the reference instead.",
+   "score": 5,
+   "findings": [
+    {
+     "id": "U-43-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "This DRC-01 belongs to case AD2409260052913 (screen 60), yet the drawer neither selects case_id nor links to the folder. Its footer offers only 'Company profile' and 'Open in list', and Docs shows only pdf_url.",
+     "fix": "Select case_id and add 'Case folder (n items)' to the header and the Documents tab, listing folder attachments inline grouped by Intimation, Notice, Reply and Order. Add an 'Open on portal' deep link.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:144,483-510",
+     "pillar": "Per-notice",
+     "links": "R-18"
+    },
+    {
+     "id": "U-43-2",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "The personal hearing (14/10/2026, s.75(4)) and the reduced-penalty window appear only in the fourth tab, while the header shows just 'Due in 4 days'. Deadline rows are passive: there is no mark-met, add-to-calendar or remind action.",
+     "fix": "Promote the next two deadlines (reply 09/10, hearing 14/10) to header chips. Give each deadline row actions (Mark met, Add to calendar/ICS, Remind owner) and link the hearing to matter_hearings.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:274-287,439-480",
+     "pillar": "Reply speed",
+     "links": "L-09, L-33"
+    },
+    {
+     "id": "U-43-3",
+     "severity": "Low",
+     "area": "Data",
+     "issue": "'Issued by —' takes a prime tile although the folder JSON already names the officer (Assistant Commissioner). The matter row shows only its number and title, not its stage, next hearing or exposure.",
+     "fix": "Fill Issued by from the folder's todtls (designation and name), or hide the tile when it is empty. Show matter stage · next hearing · exposure in the linked-matter row.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:227-238,354-359",
+     "pillar": "Per-notice",
+     "links": "S-18"
+    }
+   ]
+  },
+  {
+   "id": "44-drawer-closed-docs",
+   "verdict": "For a closed refund case the drawer shows four empty tiles, a fully ticked lifecycle (including a hearing and an order that never happened), a machine close code and 'No documents attached' while the folder holds the RFD-01 and RFD-02. It tells the reader nothing true about the refund.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-44-1",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The title is just 'Refunds' (case rows carry no reference, so the ARN appears nowhere) and Demand, Due Date, Assigned To and Issued By are all '—'. The refund facts that exist in gst_refund_applications (ARN, refund type, claimed amount, portal status) are not shown.",
+     "fix": "Give refunds their own drawer layout: title 'Refund · <type> · ARN', with tiles for Claimed, Sanctioned, Portal status and Next deadline, read from gst_refund_applications where arn = case_id.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:185-191,329-360",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-44-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "Because 'Closed' maps to the last stage, every step is ticked (Reply Drafting, Partner Review, Filed, Hearing, Order Received) although none happened for this refund. The current step, 'Closed', is the ninth and is scrolled out of view.",
+     "fix": "Derive ticks from evidence (reply_date or a REPLY item for Filed, matter_hearings for Hearing, order_date or an ORDRS item for Order) and show skipped stages hollow. Show Closed as an end-state badge with its reason instead of a ninth step.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:98-109,297-325",
+     "pillar": "Data trust",
+     "links": "L-25"
+    },
+    {
+     "id": "U-44-3",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The close reason is printed raw as a badge ('auto:refund_order') with no date, no explanation of the rule and no Confirm or Reopen action, so staff cannot review an automatic closure where they see it.",
+     "fix": "Humanise close reasons (for example 'Auto-closed 15 Sep: refund order captured (RFD-06)') and add a 'Review: Confirm · Reopen' control that writes an event.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:221-223",
+     "pillar": "Zero-touch",
+     "links": "L-11, L-19"
+    },
+    {
+     "id": "U-44-4",
+     "severity": "Medium",
+     "area": "Empty/error state",
+     "issue": "Docs says 'No documents attached.' although this ARN's case folder holds two PDFs (the RFD-01 application and the RFD-02 acknowledgement).",
+     "fix": "List gst_case_folder_items attachments for (client_id, case_id) in Docs. When there really are none, say 'No documents captured yet' and offer a targeted Fetch.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:483-497",
+     "pillar": "Per-notice",
+     "links": "R-18"
+    },
+    {
+     "id": "U-44-5",
+     "severity": "Low",
+     "area": "Interaction",
+     "issue": "'Create Matter' is still offered on a closed refund case, inviting a litigation matter for a finished application.",
+     "fix": "Hide Create Matter on closed notices. For refunds, offer 'Appeal (APL-01)' only when the order is a full or partial rejection.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:239-270",
+     "pillar": "Per-notice"
+    }
+   ]
+  },
+  {
+   "id": "45-drawer-create-matter",
+   "verdict": "'Create Matter' is a one-click action with no preview and no feedback, and it produces a matter titled with the raw word 'Notice'. Meanwhile the drawer calls this notice 'No status' while the queue row behind it says 'Captured'.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-45-1",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "One click creates 'M-2026-0010 — Notice' (title = raw notice_type, lifecycle fixed to 'demand', no FY, demand or section), with no preview, no option to add the notice to an existing matter for the same case, and no undo. Here it was used on a DRC-01C intimation that is not yet litigation.",
+     "fix": "Open a prefilled dialog: title from form and FY (for example 'DRC-01C · ITC 2B vs 3B · FY 2025-26'), lifecycle from the form, demand from the notice, and 'Add to existing matter' (same client and case_id listed first). Create and link in one RPC.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:242-269",
+     "pillar": "Per-notice",
+     "links": "R-27, L-30, L-34"
+    },
+    {
+     "id": "U-45-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "Nothing confirms the action. There is no toast and the new matter is not opened; the button simply becomes a link. The Activity tab still says 'No activity recorded yet.', and a failure is silently swallowed.",
+     "fix": "Show a toast 'Matter M-2026-0010 created' with an Open action, log a matter_linked event that appears in Activity, and show an inline error with Retry on failure.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:258-266,372-375",
+     "pillar": "Data trust",
+     "links": "L-30, L-38"
+    },
+    {
+     "id": "U-45-3",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "A notice with no staff_status shows a green 'No status' pill, while the queue row behind it reads 'Captured' and the stepper highlights 'Captured'.",
+     "fix": "Use one stage-label function in the queue, the drawer and the list (null shows as 'Captured'), together with the shared tone map.",
+     "ref": "src/components/notices/NoticeDrawer.tsx:206-211; src/components/notices/NoticeWorkQueue.tsx:96",
+     "pillar": "At-a-glance",
+     "links": "L-25"
+    }
+   ]
+  },
+  {
+   "id": "50-company-list",
+   "verdict": "The page the dashboard calls the 'sync log' shows a colour dot and a raw log line per company, mislabels its totals and offers no fix for any failure. It is an admin table, not the Portal Autopilot's 'Freshness by client' view.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-50-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "Status is a colour dot of about 8 px with no text. Beside it sits the newest log line of any step, verbatim ('build=0.2.0 (JSON API) | rows: 2 | arns: AA24…', 'Read 15 rows but the save failed: duplicate key value violates uniq…'). There is no reason class and no per-row fix, so staff cannot tell 'update the password' from 'retry later' from 'app bug'.",
+     "fix": "Adopt the target's Freshness table: Last good pull (age, red over 24 h), a reason chip (Login failed · CAPTCHA timeout · Portal 503 · Save error) and one action per reason (Update password, Retry, Report). Keep the raw text behind a 'Details' popover.",
+     "ref": "src/pages/CompanyListPage.tsx:151-156,376-389",
+     "pillar": "Fetch",
+     "links": "S-14, S-32"
+    },
+    {
+     "id": "U-50-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "'Total Downloaded 5 · Total Pending 6' uses the wrong words: 'Pending' lumps four failed companies with one that has never synced, nothing is actually pending, and neither number is clickable.",
+     "fix": "Show clickable chips 'Fresh < 24 h 5 · Failed 4 · Never synced 1 · Stale > 24 h n' that set the Status filter.",
+     "ref": "src/pages/CompanyListPage.tsx:179-180,264-268",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-50-3",
+     "severity": "Medium",
+     "area": "Consistency",
+     "issue": "Toolbar: 'Delete Company' (a hard delete that cascades every notice, matter and event) is the first button, at the same weight as Sync. 'Sync' uses the Upload icon also used by 'Import', against the house rule that RefreshCw means pull from portal. 'Fetch Company' does not say that it pulls the taxpayer profile. Every button is h-7 at 11 px and none is primary.",
+     "fix": "Order the toolbar Sync (primary, RefreshCw) · Retry failed · Fetch profile · Sync log · Import. Move Delete into a row '…' menu behind a typed confirmation, or archive instead. Use WS_BTN sizing.",
+     "ref": "src/pages/CompanyListPage.tsx:315-336",
+     "pillar": "Fetch",
+     "links": "L-14"
+    },
+    {
+     "id": "U-50-4",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "After Sync the page never updates. Logs load only on mount or when the refresh icon is clicked, so whoever runs the sync has to keep reloading to see whether each company succeeded. No row shows 'syncing' or 'waiting for CAPTCHA'.",
+     "fix": "Subscribe to client_sync_log (realtime, or a 10 s poll while a job is active) and show a per-row state chip (Queued · Logging in · Waiting for CAPTCHA · Done 05:41).",
+     "ref": "src/pages/CompanyListPage.tsx:105-121,124-147",
+     "pillar": "Zero-touch"
+    },
+    {
+     "id": "U-50-5",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "'Last Download Date' is the time of the last attempt, failed ones included, printed with seconds in browser locale ('5/10/2026, 7:43:00 am'). Rows sort by name with 10 per page by default, so Test Engineering Works (failed) is hidden on page 2.",
+     "fix": "Show 'Last good pull' as a relative age, with 'Last attempt' as a secondary line. Sort failed and stale companies first, and default to 50 rows or a 'Needs attention' tab as in the target.",
+     "ref": "src/pages/CompanyListPage.tsx:62,85,375",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-50-6",
+     "severity": "Low",
+     "area": "Accessibility",
+     "issue": "The row Edit and Delete buttons are icon-only with no aria-label or title, and Edit navigates away to the full Edit Client page with no way back to the list.",
+     "fix": "Add aria-labels. Open credential and owner edits in a side sheet so the user stays on the list.",
+     "ref": "src/pages/CompanyListPage.tsx:390-398",
+     "pillar": "Fetch"
+    }
+   ]
+  },
+  {
+   "id": "51-company-list-failed",
+   "verdict": "The 'failed' view lists five failures with five different causes but offers one remedy, tick and Sync again, and does not explain why the dashboard said two.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-51-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "Each failure needs a different fix: wrong password (Example Foods), portal 503 (Fictional Exports), the app's own save bug (Illustrative Software), CAPTCHA timeout (Sandbox Auto), session dropping (Test Engineering). The only path offered is select + Sync, which asks for another CAPTCHA and, with a bad password, fails again.",
+     "fix": "Classify failures (credentials, CAPTCHA, portal down, session, app error) and give each row its own action: Update password (inline), Retry now, Auto-retry later, Report to admin. Add 'Retry all retryable', which skips credential errors.",
+     "ref": "src/pages/CompanyListPage.tsx:232-246,389",
+     "pillar": "Zero-touch"
+    },
+    {
+     "id": "U-51-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "The user arrives from the dashboard's '2 logins failed' and finds 5 failed companies, with no banner explaining that the two pages use different rules (latest log of any step here, the notices step only there).",
+     "fix": "Use one failure definition on both pages, and show where the user came from ('From dashboard: failed logins') as a chip that can be cleared.",
+     "ref": "src/pages/CompanyListPage.tsx:73-81,162-167",
+     "pillar": "Data trust",
+     "links": "S-14, L-17"
+    },
+    {
+     "id": "U-51-3",
+     "severity": "Low",
+     "area": "Data",
+     "issue": "Failures are listed alphabetically with no 'failing since' date or count of consecutive failures, so a client stuck for a week looks the same as one that failed once this morning.",
+     "fix": "Add 'Failing since' and the attempt count, and sort by the age of the last good pull and by open notices due within 7 days.",
+     "ref": "src/pages/CompanyListPage.tsx:158-172",
+     "pillar": "Fetch"
+    }
+   ]
+  },
+  {
+   "id": "52-company-list-sync-log",
+   "verdict": "A cramped dialog of the last 50 attempts that cannot say which step ran, how long it took or what changed. It is not the run ledger shown in the autopilot target.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-52-1",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "There is no step/action column, so notices, refunds, DRC-03, login and *_debug rows all look alike. A 'Success' line may be a debug row while the notices step itself failed.",
+     "fix": "Add Step and Rows (new / changed / removed) columns, and hide *_debug rows behind a toggle.",
+     "ref": "src/pages/CompanyListPage.tsx:459-488",
+     "pillar": "Data trust",
+     "links": "S-14, S-32"
+    },
+    {
+     "id": "U-52-2",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "Column widths are the wrong way round: company names wrap to four lines while Message is cut at 280 px with an ellipsis and cannot be expanded. Each row is about 95 px tall, so only four attempts fit on screen.",
+     "fix": "Give Company a fixed width with truncation and a GSTIN subline, let Message wrap to two lines with click-to-expand, and use WS_TABLE density.",
+     "ref": "src/pages/CompanyListPage.tsx:463-483",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-52-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "It shows only the newest 50 rows, with no search, filter, date range, export, grouping by run or durations, so it cannot answer 'what happened in this morning's run'. The log is dialog state with no URL; the dashboard's 'Sync log →' link lands on the company table, where the user still has to find this button.",
+     "fix": "Make it a page section with its own URL (opened by 'Sync log →'), styled like the target's 'Today's run log' (run started/finished, one line per client, counts), with 'Full log →' leading to a filterable, exportable list.",
+     "ref": "src/pages/CompanyListPage.tsx:256,450-494; src/components/notices/SyncHealthCard.tsx:215-216",
+     "pillar": "Fetch"
+    }
+   ]
+  },
+  {
+   "id": "53-company-list-bulk-update",
+   "verdict": "A dialog with one unlabelled dropdown, preset to 'Active', that changes a flag the sync ignores.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-53-1",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The title is 'Bulk Update' and the only control is a select defaulting to 'Active'. The dialog does not say which field changes, does not list the selected companies, and keeps the last choice between openings.",
+     "fix": "Rename it 'Mark 2 companies inactive' (or active), list the names, and use a labelled RadioGroup that explains the effect.",
+     "ref": "src/pages/CompanyListPage.tsx:88,427-448",
+     "pillar": "Fetch"
+    },
+    {
+     "id": "U-53-2",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "Marking a company Inactive has no effect on Sync All, which skips only notices_sync_excluded clients, so the control implies a saving it does not deliver.",
+     "fix": "Make Sync All skip inactive companies, or state 'still synced' in the dialog. Offer 'Exclude from notices sync' as a separate choice.",
+     "ref": "src/pages/CompanyListPage.tsx:215-225",
+     "pillar": "Zero-touch",
+     "links": "S-25"
+    },
+    {
+     "id": "U-53-3",
+     "severity": "Low",
+     "area": "Interaction",
+     "issue": "With nothing ticked the button still opens the dialog, which reads 'Applies to the 0 selected companies.' with Apply disabled.",
+     "fix": "Disable Bulk Update until a row is ticked (tooltip 'Select companies first') and show the selection count on the button.",
+     "ref": "src/pages/CompanyListPage.tsx:323-327,432",
+     "pillar": "Fetch"
+    }
+   ]
+  },
+  {
+   "id": "54-company-list-import",
+   "verdict": "'Import' opens the generic client-master import. It cannot carry the one thing this page needs, portal user IDs, and it does much more than add companies without saying so.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-54-1",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "Every imported client is written with client-portal user ID = PAN and client_password = GSTIN in plain text, and is_first_login = true. Both values are printed on the client's invoices. Either the account is guessable, or, if the live login checks bcrypt hashes as migration 20260923120536 states, the client cannot log in until someone resets the password. Either way the plaintext sits in a column the anon key can read. AddClientPage uses the same default.",
+     "fix": "Generate a random one-time password and deliver it through an invite link or e-mail. Never derive credentials from the GSTIN or PAN, store only hashes, and force a reset for existing rows that still carry the GSTIN as password.",
+     "ref": "src/components/clients/BulkAddClientsDialog.tsx:254-272; src/pages/AddClientPage.tsx:234; supabase/migrations/20260126073221_1da4466e-17dd-4451-a8bb-d12b47786d60.sql:33-41",
+     "pillar": "Security"
+    },
+    {
+     "id": "U-54-2",
+     "severity": "High",
+     "area": "Data",
+     "issue": "The template has no GST portal user-ID column, so companies imported from this page cannot be synced and are not even counted in 'Pending'. The page's own import cannot feed its own sync.",
+     "fix": "Use a notices-specific template with 'Portal user ID' and owner (assigned accountant) columns. Never collect passwords in Excel; ask for them afterwards in a secure inline form.",
+     "ref": "src/components/clients/BulkAddClientsDialog.tsx:20-28,259-275",
+     "pillar": "Fetch"
+    },
+    {
+     "id": "U-54-3",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "Import is insert-only and gstin is UNIQUE, so an existing company fails and the import cannot be used to bulk-update portal user IDs or owners. Each new row also creates Filing Status records for every month since registration, a heavy side effect launched from a notices page without warning.",
+     "fix": "Upsert by GSTIN with a preview (new / updated / unchanged), and make the filing-status back-fill an explicit opt-in checkbox.",
+     "ref": "src/components/clients/BulkAddClientsDialog.tsx:259-312",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-54-4",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "The button says 'Import' but the dialog says 'Bulk Add Clients', and the steps do not show which columns are required.",
+     "fix": "Title the dialog 'Import companies for notices sync' and list the required columns before the download step.",
+     "ref": "src/pages/CompanyListPage.tsx:328; src/components/clients/BulkAddClientsDialog.tsx:345-353",
+     "pillar": "Fetch"
+    }
+   ]
+  },
+  {
+   "id": "56-company-profile",
+   "verdict": "A tidy profile card with six tiles, but the page cannot say whether this company's data is fresh, what is at stake or what to do next. Half the page is a filing-date table in raw ISO plus four panels that are always empty.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-56-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "There is no sync health (last good pull, failure reason, 'Sync now') and no litigation snapshot (open matters, exposure, next hearing or deadline), which are the two things a partner opens a company page for. The tiles count rows rather than risk.",
+     "fix": "Add a header strip ('Portal: synced 05:41', or 'Login failed 3 d — Update password') with a 'Sync this company' button, and tiles Open · Overdue · Due 7 d · Exposure · Next hearing that link to filtered lists. Use KpiTile.",
+     "ref": "src/pages/CompanyProfilePage.tsx:131-152,238-245,269-283",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-56-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Rows in 'Notices & Orders' read 'Notice', 'Notice', 'DRC-03', 'Determination Of Tax' with only a Ref Id and issue date: no stage, due date, amount or owner. A row cannot be clicked to open the notice, and its icon is either an eye (case folder) or a PDF, never both. A DRC-03 payment sits among the notices.",
+     "fix": "Render rows like the target queue (form · FY · what it is about / due chip / stage / owner), each opening the notice workspace. Show the PDF and folder icons side by side with aria-labels, and move payments to their own list.",
+     "ref": "src/pages/CompanyProfilePage.tsx:380-402",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-56-3",
+     "severity": "Medium",
+     "area": "Empty/error state",
+     "issue": "Four panels (Business Owners, HSN/SAC, Return Periodicity, Business Activities) always say 'Not captured by the portal sync.', although the file header says they were left out. Fields the extension does capture (constitution of business, jurisdiction state and centre, Aadhaar status, registration certificate) are not shown at all.",
+     "fix": "Delete the four placeholders. Show constitution, jurisdiction (needed in every reply) and a registration-certificate link in the profile card, with 'Fetch profile now' when they are missing.",
+     "ref": "src/pages/CompanyProfilePage.tsx:10-13,133,455-482; extension/content.js:3431-3436",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-56-4",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Track Return Status fills most of the page with 12 rows of raw ISO dates ('2026-09-10') and FY '2026-2027', with no due dates and no late flags, although late filing is exactly what explains GSTR-3A and late-fee notices.",
+     "fix": "Show it as a compact 12-month strip (on time / late n d / not filed) with isoDateToDMY dates and FY '2026-27', collapsed by default.",
+     "ref": "src/pages/CompanyProfilePage.tsx:101-106,423-453",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-56-5",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "Tile wording differs from the dashboard ('Over Due', '7 Days Due', 'Last 24 Hours newly synced' versus 'Overdue & still open', 'Due in next 7 days', 'New since last sync'). 'Total 17' opens a list of 12, and 'Open queue →' opens a list, not the queue.",
+     "fix": "Use the dashboard's labels and definitions filtered to this client, and make every tile's count equal the list it opens.",
+     "ref": "src/pages/CompanyProfilePage.tsx:238-245",
+     "pillar": "Data trust",
+     "links": "L-21"
+    },
+    {
+     "id": "U-56-6",
+     "severity": "Low",
+     "area": "Empty/error state",
+     "issue": "'View Submission' takes half a row to say 'No submissions on record.' and still offers 'View All' into an empty list. The breadcrumb calls the module 'GST Dashboard'.",
+     "fix": "Fold submissions into the notice rows (Filed · ARN) and drop the card. Label the breadcrumb 'Notices & Litigation'.",
+     "ref": "src/pages/CompanyProfilePage.tsx:274-277,404-419",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "57-company-profile-type-filter",
+   "verdict": "Filtering a company to Refunds shows five identical 'Refunds' rows, one a duplicate without a reference, and tiles that say nothing is open or overdue, while one of those refunds is an RFD-08 show-cause notice waiting for a reply.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-57-1",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "With Type = Refunds the tiles read 'Over Due 0 of 5' and 'Open 0 of 5', because refund and DRC-03 rows are excluded from the workflow counts by design. Yet AA2709260074825 has status 'Show Cause Notice Issued (RFD-08)' (screen 75) and needs an RFD-09 reply within 15 days.",
+     "fix": "Count refund rows whose portal status needs action (RFD-08 show-cause, RFD-03 deficiency) as open, with their reply-by date. Otherwise label the tiles 'n/a for refunds' rather than 0.",
+     "ref": "src/pages/CompanyProfilePage.tsx:222-232",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-57-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "Every row is titled 'Refunds', with no refund type, amount or status, and the same case appears twice: the case row (Ref Id '—', 31/07/2026) and the dedicated row (AA2707260065695, 31/07/2026).",
+     "fix": "De-duplicate by ARN as Notice Summary does, title rows like 'RFD-01 · Export of services · ₹18.4 L · Sanctioned', and show the ARN (case_id) on case rows.",
+     "ref": "src/pages/CompanyProfilePage.tsx:156-196,383-398",
+     "pillar": "Data trust",
+     "links": "L-21"
+    },
+    {
+     "id": "U-57-3",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "The Type options are raw notice_type values (for example 'Notice', 'Refunds', 'DRC-03', 'Determination Of Tax'), so 'Notice' counts as a type and the same category can appear under two names.",
+     "fix": "Filter by the canonical categories used in Notice Summary.",
+     "ref": "src/pages/CompanyProfilePage.tsx:207-212,289-295",
+     "pillar": "At-a-glance",
+     "links": "L-22"
+    }
+   ]
+  },
+  {
+   "id": "60-case-folder-drc01",
+   "verdict": "A faithful copy of the portal's case folder, but a dead end: it does not name the client, misreports the reply date, clips the allegation text and offers nothing to do except 'Back to List'.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-60-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "There is no way to act or move on. The page has no link to the notice drawer or workspace, to matter M-2026-0001 or to the portal case, and no owner, stage or due chips. The only control is 'Back to List' at the bottom right.",
+     "fix": "Add a header action row (Open notice workspace · Matter M-2026-0001 · Open on portal · Log reply from this REPLY item) and chips for due 09/10 · hearing 14/10 · owner · stage. Eventually embed this folder as the workspace's Documents tab.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:443-470,617-621",
+     "pillar": "Per-notice",
+     "links": "R-19"
+    },
+    {
+     "id": "U-60-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "'Reply Date/PH' shows the date of the notice being replied to (intdt/ntcdt), not the filing date. The Part-B reply reads 09-07-2026, which is the DRC-01A's own issue date, while the real filing date 06-08-2026 (decdtls.dt) appears nowhere, so nobody can see that the reply beat the 08-08 deadline.",
+     "fix": "Split the column into 'Filed on' (decdtls.dt or replydt) and 'Against notice dated' (ntcdt/intdt), and flag 'on time' or 'late' against the intimation's due date.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:138-146,188-203",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-60-3",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The title 'Additional Notice Folder' is portal jargon and is followed only by a 10 px GSTIN. The client name is fetched but never rendered, and the header carries no case type, FY or demand.",
+     "fix": "Title the page '<Client> · DRC-01 SCN u/s 73 · FY 2021-22' with the subtitle 'Case AD2409260052913 · opened 09-07-2026 · last activity 09-09-2026 · demand ₹x'.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:375,445-460,477-485",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-60-4",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "The SCN's Subject, the only text stating the allegation, is the last of nine nowrap columns and is cut off at the card edge ('ITC of ₹ 12,40,000 availed on in…'). The Replies attachments column sits under the floating action buttons.",
+     "fix": "Render each item as a card: type and subject on the first line (wrapping), dates, officer and section on a meta line, attachments as chips. Keep tables only at md and above, and let text cells wrap.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:172-186,516-522",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-60-5",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "The staff workflow stage is shown twice as if it were the portal status ('REPLY DRAFTED' in the card header and again under 'Status'), as an uppercase grey pill with no tone.",
+     "fix": "Show 'Our stage: Reply drafted' (shared tone) separately from a portal-derived status such as 'Portal: reply awaited' or 'Closed'.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:441,467-471,490-495",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "61-case-folder-refund",
+   "verdict": "The clearest case history in the module (application, RFD-08, reply and order, each with its document), but it leaves out the money and lists every event twice.",
+   "score": 5,
+   "findings": [
+    {
+     "id": "U-61-1",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "'Date Of Application/Case Creation' reads 15-09-2026, which is the RFD-06 order date; the application was filed on 31-07-2026. The code deliberately shows the most recent event under this label (screen 60 does the same: 09-09-2026 instead of 09-07-2026).",
+     "fix": "Show 'Filed 31-07-2026' and 'Last activity 15-09-2026 (RFD-06)' as two labelled facts.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:412-427,486-489",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-61-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "No amounts appear anywhere (claimed, sanctioned, rejected or withheld), so the reader cannot tell whether the RFD-06 'Refund Sanction Order' was full or partial; a partial rejection starts an appeal clock. The status just says CLOSED. The refund list shows ₹18,40,000 claimed against ₹17,35,000 sanctioned for this ARN.",
+     "fix": "Add a money strip (Claimed ₹18,40,000 · Sanctioned ₹17,35,000 · Rejected ₹1,05,000 → appeal by dd-mm) from gst_refund_applications and the order JSON.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:237-255,441",
+     "pillar": "Per-notice",
+     "links": "S-21, L-11"
+    },
+    {
+     "id": "U-61-3",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "Audit History repeats all five events already shown in the four tables above it, doubling the page, while those tables carry columns that are always blank (Reply Type, Original Due Date, Option for Personal Hearing).",
+     "fix": "Lead with one vertical timeline (date · event · by · document), collapse the portal tables under 'Portal sections', and hide columns that are blank on every row.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:199-208,586-614",
+     "pillar": "At-a-glance",
+     "links": "R-28"
+    }
+   ]
+  },
+  {
+   "id": "62-case-folder-appeal",
+   "verdict": "An appeal case is labelled 'Refund Notice Folder' and its hearing notice, a personal hearing 16 days away, is hidden, so the page is actively misleading.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-62-1",
+     "severity": "High",
+     "area": "Logic",
+     "issue": "Any case with an APLCN item is treated as a refund (APLCN maps to APPLICATIONS, which sets isRefundCase). This APL-01 appeal therefore gets the refund layout, which drops the NOTICES section, so the Commissioner (Appeals) hearing notice for 21-10-2026 10:30 appears nowhere on the page.",
+     "fix": "Decide the case type from the item's form (formNo 'GST APL-01' versus RFD-01) rather than the folder code, and never hide a section that has items; render unmapped or extra sections instead.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:58-72,404-409,446",
+     "pillar": "Per-notice"
+    },
+    {
+     "id": "U-62-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "The APPLICATIONS table uses refund columns ('ARN Date', 'Reason of Refund') that read '—' for an appeal, while the APL-01's filing date (arndt 17-07-2026), disputed tax ₹28,00,000 and pre-deposit ₹2,80,000 in the same JSON are not shown.",
+     "fix": "Add an APL-01 column set: Filed on, Order appealed, Disputed tax, Pre-deposit paid (linked to its DRC-03) and Appellate authority.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:237-241",
+     "pillar": "Per-notice",
+     "links": "R-21"
+    },
+    {
+     "id": "U-62-3",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Audit History reads 'Refund Application filed (GST APL-01)' with date '—' because it reads rfdSubDt only. The header's 15-09-2026 comes from the hidden hearing notice, an event the page does not show.",
+     "fix": "Word audit lines by form ('Appeal filed (APL-01)'), fall back to arndt for the date, and derive the header date only from items that are displayed.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:318-325,420-427",
+     "pillar": "Data trust"
+    }
+   ]
+  },
+  {
+   "id": "63-case-folder-enforcement",
+   "verdict": "An enforcement case with an outstanding recovery demand shows that demand last, as a raw JSON key dump after six empty sections, and nothing on the page says this client needs attention.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-63-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "The DRC-07A recovery demand (₹1,12,400, Outstanding, Recovery Officer), the most coercive item in the case, appears at the bottom under the raw code 'DRC7A' as a key dump ('Refdt: 05/09/2026', 'Sdtls — Dmdtype', 'Sdtls — Amount', 'Todtls — Nm').",
+     "fix": "Map DRC7A to 'Demand / recovery (DRC-07A)' with typed columns (Demand ID, Period, Type, Amount, Status, Officer). Pin outstanding demands to the top with a red 'Outstanding ₹1.12 L' chip, and keep the generic dump only behind 'Raw fields'.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:58-76,267-294,540-580",
+     "pillar": "Per-notice",
+     "links": "R-28, R-08"
+    },
+    {
+     "id": "U-63-2",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "The only status shown is 'HEARING' (a staff stage), although the summons' reply due date of 17-07-2026 passed with no REPLY item and a recovery demand is outstanding. The folder has no overdue or attention indicator at all.",
+     "fix": "Compute folder alerts from the items (notice due date passed with no reply, outstanding demand, hearing in n days) and show them as chips under the title.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:441,467-496",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-63-3",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "The page uses two date formats: table cells are normalised to 02-07-2026, but the fallback dump prints the portal's 05/09/2026 untouched.",
+     "fix": "Run every date-like value through the same formatter, including the fallback dump.",
+     "ref": "src/pages/AdditionalNoticeFolderPage.tsx:81-88,291",
+     "pillar": "Data trust"
+    }
+   ]
+  },
+  {
+   "id": "70-notice-summary",
+   "verdict": "A count table that follows a third-party layout more than the firm's needs: empty placeholder rows come first, the biggest buckets come last, the category column is mislabelled, and nothing measures risk.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-70-1",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "Rows follow a fixed external order: 15 slots, 8 of them permanently empty placeholders (with both 'Others' and 'Other'), come first, and the five largest real buckets (Demand Notice 28, Notice 28, Non filers 22, Registration 21, Order 21) are appended at the bottom.",
+     "fix": "Sort real categories by open count or exposure, collapse the zero placeholders into one 'Not tracked yet (8)' line, and merge 'Other' with 'Others'.",
+     "ref": "src/utils/noticeSummaryReport.ts:125-135; src/utils/noticeCategoryClassifier.ts:57-69",
+     "pillar": "At-a-glance",
+     "links": "L-22"
+    },
+    {
+     "id": "U-70-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The table has only Total, Open, Closed and Replied: no Overdue, Due within 7 days, Exposure or age of the oldest open item, and no 'as of' sync time. The summary cannot show where the risk is, unlike the target's pipeline and exposure cards.",
+     "fix": "Add Overdue, Due 7 d and Exposure columns (each linking to the filtered list) and an 'as of last sync' line. Offer a PDF export next to Excel for the MIS pack.",
+     "ref": "src/pages/NoticeSummaryReportPage.tsx:102-151",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-70-3",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "The category column is headed 'Special Remarks', and 'Remarks' in the Excel export.",
+     "fix": "Rename it 'Category' in both places.",
+     "ref": "src/pages/NoticeSummaryReportPage.tsx:47,105",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-70-4",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "The 'Type' pill offers only Registration or 'Other than Registration', and it filters gst_notices rows only, so the Refund and DRC 03 rows do not change when it is set.",
+     "fix": "Replace it with Category, Owner and FY filters that apply to every row, or label it 'Registration notices only'.",
+     "ref": "src/pages/NoticeSummaryReportPage.tsx:36-41,79-91",
+     "pillar": "Data trust",
+     "links": "L-12"
+    }
+   ]
+  },
+  {
+   "id": "72-gstin-wise-count",
+   "verdict": "The 'Clients' tab is a table of lifetime counts sorted by total notices, so it cannot say which client needs attention today.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-72-1",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Rows are sorted by lifetime Total (mostly closed notices), and there are no Overdue, Due 7 d, next-deadline or last-synced columns. The target's 'Clients needing attention' ranks by open · overdue · exposure.",
+     "fix": "Sort by overdue, then exposure, by default. Add Overdue, Due 7 d, Next deadline and Last good pull (red when stale), and keep Total and Closed for the export only.",
+     "ref": "src/pages/GstinWiseNoticeCountPage.tsx:91-127,207-261",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-72-2",
+     "severity": "Low",
+     "area": "Interaction",
+     "issue": "Link styling is unreliable. Exposure is always navy (link colour) but does nothing; Matters shows a pointer even when it reads '—'; Replied is plain text; and the GSTIN, the only link to the company page, is grey 10 px monospace.",
+     "fix": "Style only real links, make the GSTIN or the name a visible link, and make Exposure open the client's matters.",
+     "ref": "src/pages/GstinWiseNoticeCountPage.tsx:229-260",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-72-3",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "Exposure is printed in full rupees without the ₹ sign ('2,85,00,000'; total 3,67,88,800), while the dashboard shows '₹ 4.23 cr' for a differently defined exposure.",
+     "fix": "Use the shared money formatter (₹ with lakh/crore) and a single exposure definition.",
+     "ref": "src/pages/GstinWiseNoticeCountPage.tsx:135,260,274",
+     "pillar": "Data trust",
+     "links": "L-13"
+    },
+    {
+     "id": "U-72-4",
+     "severity": "Low",
+     "area": "Data",
+     "issue": "The company set differs from Company List (12 versus 11). Trial Hospitality LLP, which is excluded from sync, is listed with 3 notices that will never refresh, and the inactive Dummy Retail Traders carries no marker.",
+     "fix": "Mark excluded and inactive clients with a 'not synced' chip, or hide them by default behind a toggle.",
+     "ref": "src/pages/GstinWiseNoticeCountPage.tsx:59,91-127",
+     "pillar": "Data trust"
+    }
+   ]
+  },
+  {
+   "id": "75-refunds-all",
+   "verdict": "The only screen in this set built on the house style (KpiTile, WS table), but its colours point the wrong way: filed applications are green and the refunds that need action are grey.",
+   "score": 5,
+   "findings": [
+    {
+     "id": "U-75-1",
+     "severity": "High",
+     "area": "Consistency",
+     "issue": "Status tones are inverted. 'Refund Application Filed' and 'Acknowledgement Issued' are green (success) and 'Refund Disbursed' and 'Refund Sanctioned' are neutral. The two actionable states are neutral grey: 'Show Cause Notice Issued (RFD-08)', which needs an RFD-09 reply within 15 days, and 'Deficiency Memo Issued (RFD-03)', which needs a corrected fresh application. Tiles and pills hide exactly the rows that need work.",
+     "fix": "Give the refund (and DRC-03) status map explicit tones: needs action (RFD-08, RFD-03) as destructive or warning with a reply-by date; in process (filed, acknowledged, provisional) as info; sanctioned or disbursed as success; rejected as destructive with 'appeal by'.",
+     "ref": "src/components/reports/views/EvidenceEventListView.tsx:50-56,274-288,430-437",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-75-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "There is no 'reply by', 'days pending' or 'next action' column. An RFD-08 needs an RFD-09 within 15 days and a complete application has a 60-day order clock (s.54(7)), but the table shows only the filed date and status. ARN links open a case folder that may never have been captured; with no items, it renders as an 'Additional Notice Folder' of empty sections.",
+     "fix": "Add Next action and Due columns derived from status and folder items, and sort open rows by due date. Link the ARN only when folder items exist; otherwise show 'Fetch folder'.",
+     "ref": "src/pages/AllClientsRefundsPage.tsx:111-137; src/components/reports/views/EvidenceEventListView.tsx:441-452",
+     "pillar": "Reply speed",
+     "links": "S-21, L-09"
+    },
+    {
+     "id": "U-75-3",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "'Sanctioned Amount' shows 0 for every pending or uncaptured refund (null becomes 0), which reads as 'nothing sanctioned'. Case-only rows also show Claimed 0.",
+     "fix": "Render null as '—' (or the 'not captured' sentinel), keep 0 only for a genuine nil sanction, and leave unknowns out of the totals.",
+     "ref": "src/pages/AllClientsRefundsPage.tsx:47,86-87,118; src/components/reports/views/EvidenceEventListView.tsx:127-132",
+     "pillar": "Data trust",
+     "links": "S-21"
+    },
+    {
+     "id": "U-75-4",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "Thirteen tiles (one per raw status, plus 'Events' and 'With evidence PDF') take a quarter of the page and push the table below the fold on a phone. Staff stages ('Closed', and 'Open' from case rows) are mixed in as if they were portal statuses.",
+     "fix": "Group the tiles into four that filter (Needs action · In process · Sanctioned/paid · Rejected), keep the full status list in the dropdown, and show the staff stage in its own column.",
+     "ref": "src/pages/AllClientsRefundsPage.tsx:83-93; src/components/reports/views/EvidenceEventListView.tsx:186-197,258-291",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-75-5",
+     "severity": "Low",
+     "area": "Interaction",
+     "issue": "'Download all visible PDFs' opens one browser tab per PDF through window.open (21 tabs here), the same mechanism the file's own comment says popup blockers silently stop, instead of downloading anything.",
+     "fix": "Zip the files (server-side, or sequential fetch plus JSZip), save one file, and label the button 'Download n PDFs (.zip)'.",
+     "ref": "src/components/reports/views/EvidenceEventListView.tsx:223-236,385-387",
+     "pillar": "Fetch"
+    }
+   ]
+  },
+  {
+   "id": "76-refunds-open",
+   "verdict": "The 'Open' drill-down includes sanctioned and re-credited refunds, and its own controls do not show that it is filtered.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-76-1",
+     "severity": "Medium",
+     "area": "Logic",
+     "issue": "'Open' (12) includes 'Refund Sanctioned', 'Provisional Refund Order Issued (RFD-04)' and 'Re-credit of ITC', so the count overstates pending work.",
+     "fix": "Use one shared refund status map: sanction, payment and re-credit count as closed; a partial rejection stays open with an appeal clock.",
+     "ref": "src/pages/AllClientsRefundsPage.tsx:106-109",
+     "pillar": "Data trust",
+     "links": "L-37"
+    },
+    {
+     "id": "U-76-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "The URL filter is invisible: the status dropdown still says 'All statuses' and the 'Events' tile is highlighted as if nothing were filtered. Only the small subtitle '12 records, status Open' reveals the filter, and there is no chip to clear it.",
+     "fix": "Show an 'Open only' chip with a remove control next to the search box, and reflect the filter in the tile and dropdown state.",
+     "ref": "src/pages/AllClientsRefundsPage.tsx:52,107-109,130-131; src/components/reports/views/EvidenceEventListView.tsx:136,260-262,305-317",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-76-3",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "Open refunds are sorted newest-filed first rather than by urgency, and the TOTAL row (claimed and sanctioned) sits at the bottom of an inner 65vh scroll box, invisible unless the table itself is scrolled.",
+     "fix": "Sort open rows by reply-by date or age, and pin the totals in a sticky footer or the card header.",
+     "ref": "src/components/reports/views/EvidenceEventListView.tsx:208-219,338,480-497",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "77-drc03-all",
+   "verdict": "A complete but very wide ledger: 20 columns push the status and PDF off-screen, uncaptured rows read as zero payments, and nothing ties a payment to the notice it settles.",
+   "score": 4,
+   "findings": [
+    {
+     "id": "U-77-1",
+     "severity": "Medium",
+     "area": "Layout",
+     "issue": "The table has twenty columns (six tax heads, cash and credit, period, section and more) with wrapping cells. At 1440 px the Status (19th) and PDF (20th) columns are off-screen, there is no per-row total paid, and only six rows fit on a screen.",
+     "fix": "Show Client · ARN · Cause · Period · Total paid · Status · PDF by default, move the head-wise split into an expandable row, and make the first column sticky.",
+     "ref": "src/pages/AllClientsDrc03Page.tsx:128-135,150-154",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-77-2",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "Case-only rows (no dedicated filing record) print 0 for every amount and '— to —' for the period. The zeros read as 'nothing paid'.",
+     "fix": "Show '—' or 'not captured' for nulls, and flag the row 'details not fetched' with a Fetch action.",
+     "ref": "src/pages/AllClientsDrc03Page.tsx:58,97-105,128-135",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-77-3",
+     "severity": "Medium",
+     "area": "Data",
+     "issue": "No column links a payment to the notice, demand or matter it discharges (there is only the cause text), so DRC-03s cannot be used to close DRC-01A or ASMT-10 items or to count pre-deposits.",
+     "fix": "Add an 'Against' column that suggests the notice or matter by ARN, period and cause, confirmed with one click.",
+     "ref": "src/pages/AllClientsDrc03Page.tsx:150-154",
+     "pillar": "Per-notice",
+     "links": "R-21"
+    },
+    {
+     "id": "U-77-4",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "'Taxable Value' is 0 on every row, and the page icon for voluntary payments is a warning document (FileWarning).",
+     "fix": "Drop or rename the column (it holds total tax, see S-30) and use a payment icon.",
+     "ref": "src/pages/AllClientsDrc03Page.tsx:16,151-152,167",
+     "pillar": "Data trust",
+     "links": "S-30"
+    }
+   ]
+  },
+  {
+   "id": "110-extension-popup",
+   "verdict": "The toolbar popup, the one extension surface always within reach, cannot start, watch or explain a notices sync. It runs a legacy ledger pull, defaults to the whole firm, and claims to pull filing status, which it does not.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-110-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "The popup says nothing about notices: no last-sync time, no failures, no 'waiting for CAPTCHA', and no button to sync notices, refunds or DRC-03. Its only action starts the default job, which logs in and pulls the ledger and reversal registers for a return period.",
+     "fix": "Rebuild the popup as a small Portal Autopilot: a status line (last run, fresh n/N, failures), 'CAPTCHA waiting (n) → Open', a primary 'Sync notices for stale & failed (n)', 'Open Notices dashboard', and the current job's progress read from gstk_active_job.",
+     "ref": "extension/popup.html:17-28; extension/popup.js:42-71; extension/content.js:361-376",
+     "pillar": "Fetch"
+    },
+    {
+     "id": "U-110-2",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "The client list defaults to 'All clients with credentials (11)', so one click (after a native confirm()) starts a firm-wide serial run of CAPTCHAs. The native select lists every client with no search, including disabled 'no credentials' rows.",
+     "fix": "Default to 'Stale or failed (n)', add a searchable client picker, and replace confirm() with an in-popup summary ('11 clients · about 11 CAPTCHAs · about 25 min').",
+     "ref": "extension/popup.js:24-34,47-58",
+     "pillar": "Zero-touch"
+    },
+    {
+     "id": "U-110-3",
+     "severity": "Medium",
+     "area": "Interaction",
+     "issue": "'Stop / clear current sync' is a full-width red button with the same weight as Start, and it is enabled even when nothing is running. It deletes the job key and always reports 'Sync stopped.'.",
+     "fix": "Show Stop only while a job is active, as a secondary button under a progress line ('Client 4 of 11 · waiting for CAPTCHA'), and say what was stopped.",
+     "ref": "extension/popup.html:12,22-23; extension/popup.js:74-77",
+     "pillar": "Fetch"
+    },
+    {
+     "id": "U-110-4",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The hint promises that the popup 'pulls filing status + ledger opening', but the job only logs in and reads ledgers; nothing in the extension writes filing status.",
+     "fix": "Generate the hint from the job definition so it states exactly what the chosen action will pull.",
+     "ref": "extension/popup.html:24-28",
+     "pillar": "Data trust",
+     "links": "S-22"
+    },
+    {
+     "id": "U-110-5",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "The popup is unbranded and off-system: system font, raw #2563eb and #ef4444 buttons, no logo, no version or 'update available' notice, no signed-in firm or user, and native alert()/confirm(), which the app itself has retired.",
+     "fix": "Use the app's navy primary and Inter, add a header with logo and version (warning when below the app's minimum), and show inline messages instead of alert().",
+     "ref": "extension/popup.html:5-14; extension/popup.js:44,51,54,56,76",
+     "pillar": "Fetch",
+     "links": "S-04"
+    }
+   ]
+  },
+  {
+   "id": "111-extension-popup-error",
+   "verdict": "When the background worker is down, the popup shows a truncated raw Chrome error inside the client dropdown and offers no way to recover.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-111-1",
+     "severity": "Medium",
+     "area": "Empty/error state",
+     "issue": "The failure appears as an <option> inside the Client select ('Error: Could not establish connection. Receiv…', cut at 60 characters and again by the select width), with no plain-language explanation and no Retry.",
+     "fix": "Show an error panel above the form: 'The extension's background service is not responding — Retry · Reload extension (chrome://extensions)', with the raw message under 'Details', and retry once automatically.",
+     "ref": "extension/popup.js:13,16-19",
+     "pillar": "Fetch"
+    },
+    {
+     "id": "U-111-2",
+     "severity": "Low",
+     "area": "Interaction",
+     "issue": "Start is disabled, but Stop stays bright red and enabled, and the hint still describes a normal run. There is no link to open the app or to see the last known sync status.",
+     "fix": "In the error state, hide the form and keep 'Open Notices dashboard' plus the last known status (cached in chrome.storage).",
+     "ref": "extension/popup.html:22-28; extension/popup.js:17-20",
+     "pillar": "Fetch"
+    }
+   ]
+  },
+  {
+   "id": "120-email-due-soon-inapp",
+   "verdict": "An internal reminder that greets the client, signs off as its own recipient, prints every fact twice in raw form and gives the reader nothing to click.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-120-1",
+     "severity": "High",
+     "area": "Interaction",
+     "issue": "There is no call to action: no 'Open notice' button or deep link, no PDF, and no 'Mark filed' or 'Request extension', so the reader has to log in and search for ZD2411092601792.",
+     "fix": "Add a CTA row to the notice-alert shell, placed above the details box: a primary 'Open notice' (deep link to /notices/:id), with secondary 'Notice PDF' (signed link) and 'Mark reply filed'.",
+     "ref": "supabase/functions/_shared/email.ts:72-97; supabase/migrations/20260914140000_notice_alerts_phase1.sql:189-192",
+     "pillar": "Reply speed",
+     "links": "L-42, R-19"
+    },
+    {
+     "id": "U-120-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The staff alert opens 'Dear Mock Builders LLP,' (the client) and is then signed twice: '-- V. J. Desai & Co. LLP' from the template body, then 'Warm regards, Associate Two' (the recipient's own name) from the shell.",
+     "fix": "For internal alerts, drop the greeting (open with 'Assigned to you · due in 2 days') and the personal sign-off. Remove '-- {{firm_name}}' from every notice body, and never set staff_name to the recipient.",
+     "ref": "supabase/functions/_shared/email.ts:69-70,83,88-90; src/lib/noticeAlertQueue.ts:230,389; supabase/migrations/20260914140000_notice_alerts_phase1.sql:191",
+     "pillar": "Reply speed"
+    },
+    {
+     "id": "U-120-3",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "Facts are printed twice (in the details box, then the same list in the body) and in raw form: 'Type: Notice', 'Due Date 2026-10-07', and 'Priority Normal', which is not one of the app's High/Medium/Low tiers. What the notice is about, its amount and its current stage (Partner review) are missing.",
+     "fix": "Make the body one sentence on what the notice is (form, subject, amount) plus stage, owner and days left. Show the details box once, format dates as '07 Oct 2026', and take priority from the app's tiers.",
+     "ref": "src/lib/noticeAlertQueue.ts:200-232; supabase/migrations/20260914140000_notice_alerts_phase1.sql:189-192",
+     "pillar": "Reply speed"
+    }
+   ]
+  },
+  {
+   "id": "121-email-due-soon-cron",
+   "verdict": "The same alert through the cron path, in a different livery, with a subject that leads with the word 'Notice' and no visual emphasis on the deadline.",
+   "score": 3,
+   "findings": [
+    {
+     "id": "U-121-1",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The subject 'Notice due in 2 days -- Mock Builders LLP' starts with the generic type and uses an ASCII '--'. In an inbox list it does not say which notice, which date or what is at stake.",
+     "fix": "Use a subject like '[Due Wed 07 Oct] <form> · Mock Builders LLP · reply in 2 days (Partner review)', with an en dash.",
+     "ref": "supabase/migrations/20260914140000_notice_alerts_phase1.sql:190",
+     "pillar": "Reply speed"
+    },
+    {
+     "id": "U-121-2",
+     "severity": "Low",
+     "area": "Consistency",
+     "issue": "One rule produces two looks: the purple 'Notice Alert' pill shell here and the gold generic reminder shell on the in-app path (screen 120).",
+     "fix": "Store the shell key separately from the rule's template key so both paths render the same shell.",
+     "ref": "supabase/functions/_shared/email.ts:15-27",
+     "pillar": "At-a-glance",
+     "links": "L-42"
+    },
+    {
+     "id": "U-121-3",
+     "severity": "Low",
+     "area": "Layout",
+     "issue": "The due date is not emphasised (only a row labelled 'Filing due' gets the due colour), and the pill colour follows the rule's priority rather than the days left, so '2 days' looks as calm as '7 days'.",
+     "fix": "Colour the Due row and the pill by days remaining (2 days or less red, 7 days or less amber) and add a one-line countdown at the top.",
+     "ref": "supabase/functions/_shared/email.ts:48-53,63-65; supabase/functions/queue-notice-alerts/index.ts:170",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "122-email-overdue-digest-inapp",
+   "verdict": "A digest of 14 bare reference numbers (no client, owner, age or link) under an empty box and a 'Dear Sir/Madam'. It cannot be triaged from the inbox.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-122-1",
+     "severity": "High",
+     "area": "Content",
+     "issue": "Each line reads '• Notice — ZD2415092601237 (Due: 2026-09-22)', with no client, owner, days overdue, amount or link. Lines are unsorted (a 2025-08-19 item sits mid-list), and the list is silently cut at 50.",
+     "fix": "Group by owner, then client. Make each line '<Client> · <form> · 13 d overdue · ₹x · owner' with a link to the notice, sort by days overdue, and end with 'and n more → Open overdue queue'.",
+     "ref": "src/lib/noticeAlertQueue.ts:326-348",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-122-2",
+     "severity": "Medium",
+     "area": "Empty/error state",
+     "issue": "The shell always draws the details box, so the digest opens with an empty grey rectangle under 'Dear Sir/Madam,', although it is addressed to an internal manager.",
+     "fix": "Skip the box when it has no rows, and open with a digest header (date, counts by severity) instead of a greeting.",
+     "ref": "supabase/functions/_shared/email.ts:30,49-54,70,84-86",
+     "pillar": "At-a-glance"
+    },
+    {
+     "id": "U-122-3",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "The closing names the firm four times in a row: '-- V. J. Desai & Co. LLP', 'Warm regards, V. J. Desai & Co. (GST Team)', 'V. J. Desai & Co. LLP', then the footer.",
+     "fix": "Use one signature line for internal mail (or none) and a single firm-name constant.",
+     "ref": "supabase/functions/_shared/email.ts:67-69,88-93; supabase/migrations/20260914140000_notice_alerts_phase1.sql:187",
+     "pillar": "At-a-glance"
+    }
+   ]
+  },
+  {
+   "id": "123-email-limitation-critical-cron",
+   "verdict": "A critical limitation alert that shows two contradictory dates and none of the facts a partner needs to decide on the appeal.",
+   "score": 2,
+   "findings": [
+    {
+     "id": "U-123-1",
+     "severity": "High",
+     "area": "Data",
+     "issue": "The red details box says 'Due Date 2026-07-07' (the order notice's long-past reply date), while the body says 'Deadline Date: 2026-12-10'. The contradiction sits in the very alert meant to protect the appeal right.",
+     "fix": "For E5, put deadline type, deadline date and statutory basis in the box and leave out the notice's due_date. Format both dates with the weekday.",
+     "ref": "supabase/functions/_shared/email.ts:30-37; supabase/functions/queue-notice-alerts/index.ts:221,338-344",
+     "pillar": "Data trust"
+    },
+    {
+     "id": "U-123-2",
+     "severity": "Medium",
+     "area": "Content",
+     "issue": "The alert has no decision facts: no order number or date, disputed tax, 10% pre-deposit (s.107(6)), APL-01 draft status or matter link. It says only 'Action is required before this date to preserve rights.'.",
+     "fix": "Make the E5 body read 'Order DRC-07 dd-mm (₹x tax) → APL-01 due 10 Dec (s.107(1), plus 1 month condonation) · pre-deposit ₹y · draft: not started', with 'Open matter' and 'Start APL-01' buttons.",
+     "ref": "supabase/migrations/20260914140000_notice_alerts_phase1.sql:197-200",
+     "pillar": "Reply speed",
+     "links": "L-09"
+    },
+    {
+     "id": "U-123-3",
+     "severity": "Low",
+     "area": "Content",
+     "issue": "Every limitation alert gets the red 'URGENT' styling, even at T-30, which dilutes urgency: T-7 looks the same as T-30.",
+     "fix": "Use amber at 30 and 15 days and red at 7 days or less and when overdue.",
+     "ref": "supabase/functions/queue-notice-alerts/index.ts:170,350; supabase/functions/_shared/email.ts:22",
+     "pillar": "At-a-glance"
+    }
+   ]
+  }
+ ],
+ "crossCutting": [
+  "Module shell drifts from the house style on every screen. NoticesPageHeader (22 px title, solid tile, no md:pr-12 reserve) lets the fixed bell sit on the right-most action (Refresh on Company List; Export to Excel on Notice Summary and GSTIN-wise). NoticesCardHeader and uppercase 10 px TableHeads replace SectionCard and WS_TH. Refund and DRC-03 use a third shell (PageHeader plus a back arrow, no tab bar, title repeated in the card). Fix: PageHeader compact (it reserves the bell column), SectionCard, and WS_TABLE/WS_TH/WS_TD/WS_BTN everywhere, plus the module tab bar on Refund/DRC-03. EvidenceEventListView already shows the target density.",
+  "Six date formats across sibling screens: the drawer shows 05/10/2026, the case folder 09-09-2026 (and 05/09/2026 in its raw dump), Company List '5/10/2026, 7:43:00 am', the company profile '2017-07-01' and FY '2026-2027', the e-mails '2026-10-07', and the dashboard '05 Oct 2026'. Fix: one formatDate (DD Mon YYYY; relative age for sync times; FY as 2026-27) shared by the UI and the e-mail variables.",
+  "Raw portal types serve as titles and categories. 'Notice', 'Refunds', 'Voluntary Payment' and 'Determination Of Tax' head the drawer, company-profile rows, Type filters, e-mail subjects and details ('Type: Notice') and digest lines, and become matter titles ('M-2026-0010 — Notice'). Fix: one displayTitle(notice) = form code + short subject + FY, taken from the description or folder JSON until form_code exists (L-22), used everywhere.",
+  "Status has no shared vocabulary or colour. The drawer pill is green for every open stage ('No status', 'Awaiting data'); the case folder shows the staff stage in a grey uppercase pill labelled as status; Company List uses a colour-only dot; refund pills are inverted (filed green, RFD-08 grey); and staff 'Open'/'Closed' is mixed into the portal status columns on Refund and DRC-03. Fix: one stage enum and tone map through src/components/gstr9/badge.tsx (needs action = warning or destructive, in progress = info, done = success), always text beside colour, and separate 'Our stage' and 'Portal status' columns (links L-25).",
+  "Portal-parity empty boxes crowd out content: 'There are no records to display' sections (4 of 7 on screen 60, 6 of 8 on screen 63), four 'Not captured by the portal sync' panels, 'No submissions on record' with a 'View All' link, four '—' tiles on refund drawers, and eight zero placeholder rows on Notice Summary. Fix: collapse empty sections into one muted line ('No applications, orders or closure yet'), delete permanently empty panels and rows, and make every empty state say what will fill it and offer the action (Fetch now).",
+  "Per-notice information is split across three places that do not link to each other. The drawer holds stage, owner and deadlines; the case folder holds portal items, replies, hearings and documents; the matter holds the litigation. The drawer has no link to the folder, the folder none to the drawer or matter, and company-profile rows open neither. Fix: one /notices/:id workspace following the target-notice mock (header chips and action bar; tabs Issues · Draft reply · Documents with the folder sections embedded · Activity · Payments), with the drawer reduced to a peek with 'Open workspace' (R-19).",
+  "Every screen in this set is read-only at the moment of decision: no Update password or Retry on a failed sync, no Log reply, Request extension or Assign on a due notice, no Open notice in an e-mail, no Reopen on an auto-closure. Fix: give each status its one next action in the row or header (the target's 'Next action' column) and log an event for each (links L-19).",
+  "Machine text reaches staff: 'auto:refund_order', 'build=0.2.0 (JSON API) | rows: 2 | arns: …', 'duplicate key value violates uniq…', 'Could not establish connection. Receiving end does not exist.', 'Sdtls — Dmdtype'. Fix: a small message catalogue (code to plain sentence plus action) used by Company List, the drawer, the case folder and the popup, with the raw detail behind a 'Details' disclosure.",
+  "Numbers for the same concept disagree between sibling screens, with no 'as of' time or definition note: companies 11 (Company List) vs 12 (GSTIN-wise); failed logins 2 (dashboard) vs 5 (Company List); notices 182 (Summary) vs 186 (GSTIN-wise); exposure ₹4.23 cr (dashboard) vs 3,67,88,800 (GSTIN-wise and MIS); and the profile's Total 17 vs 12 in its 'View all' list. Fix: one definitions module, an 'i — how this is counted' tooltip on every KPI, and an 'as of <last sync>' stamp on every report (links L-12, L-13, L-21, S-14).",
+  "Clickable affordances are inconsistent. Counts on Notice Summary and GSTIN-wise are <td onClick> (no keyboard focus, no open-in-new-tab); category names and Exposure are link-coloured but inert; icon-only buttons (row Edit/Delete, profile eye and PDF icons, Refresh) lack aria-labels. Fix: real <Link>s inside cells, link colour only on links, and an aria-label on every icon-only control (house rule).",
+  "Mobile: the module tab bar widens every page to about 485 px (already known). On these screens that hides the drawer's close button, Company List's status columns, GSTIN-wise counts and the case folder's dates and attachments. The two floating action buttons also cover table cells, search boxes and filters on desktop and mobile (Company List rows, case-folder attachments, Notice Summary 'Replied', Refund and DRC-03 search). Fix: a horizontally scrollable tab bar, card layouts below md for list tables, and hidden or offset FABs on module pages (bottom padding equal to their height).",
+  "E-mail shell and templates fight each other. Every notice template ends with '-- {{firm_name}}' while the shell adds 'Dear <contact>' and 'Warm regards / <staff_name> / firm', so internal alerts greet the client and sign off twice. The client-facing E12/E13 bodies already contain their own 'Dear {{contact_person}}' and 'Regards…', so once wired they will greet and sign off twice as well. The details box renders even when empty, dates are raw ISO, and nothing links back to the app. Fix: two shells, an internal alert (no greeting or signature, CTA buttons with a deep link, human dates) and a client letter (greeting and signature from the shell only), and strip greetings and sign-offs from the template bodies (links L-42)."
+ ]
+}

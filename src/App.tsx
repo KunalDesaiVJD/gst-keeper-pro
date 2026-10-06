@@ -35,6 +35,10 @@ import NoticeSummaryReportPage from "@/pages/NoticeSummaryReportPage";
 import GstinWiseNoticeCountPage from "@/pages/GstinWiseNoticeCountPage";
 import AdditionalNoticeFolderPage from "@/pages/AdditionalNoticeFolderPage";
 import AllClientsNoticesPage from "@/pages/AllClientsNoticesPage";
+import NoticeWorkspacePage from "@/pages/NoticeWorkspacePage";
+import NoticeQueuePage from "@/pages/NoticeQueuePage";
+import NoticesHearingsPage from "@/pages/NoticesHearingsPage";
+import NoticesCalendarPage from "@/pages/NoticesCalendarPage";
 import AllClientsRefundsPage from "@/pages/AllClientsRefundsPage";
 import AllClientsDrc03Page from "@/pages/AllClientsDrc03Page";
 import BuilderWorkspacePage from "@/pages/BuilderWorkspacePage";
@@ -63,7 +67,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <ConfirmProvider>
-      <Sonner />
+      <Sonner offset={96} />
       <BrowserRouter>
         <AuthProvider>
           <MonthProvider>
@@ -114,6 +118,10 @@ const App = () => (
                   <Route path="/notices-gstin-wise-count" element={<GstinWiseNoticeCountPage />} />
                   <Route path="/notices-case-folder/:clientId/:caseId" element={<AdditionalNoticeFolderPage />} />
                   <Route path="/notices-all" element={<AllClientsNoticesPage />} />
+                  <Route path="/notices/:id" element={<NoticeWorkspacePage />} />
+                  <Route path="/notices-queue" element={<NoticeQueuePage />} />
+                  <Route path="/notices-hearings" element={<NoticesHearingsPage />} />
+                  <Route path="/notices-calendar" element={<NoticesCalendarPage />} />
                   <Route path="/litigation" element={<LitigationMattersPage />} />
                   <Route path="/litigation/:id" element={<LitigationMatterDetailPage />} />
                   <Route path="/litigation-mis" element={<LitigationMISPage />} />

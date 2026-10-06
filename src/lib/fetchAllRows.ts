@@ -7,20 +7,30 @@
 // disagree on the same category's count. Paginate with .range() in a loop
 // until a page comes back short, so every caller sees the full table.
 import { supabase } from '@/integrations/supabase/client';
+import type { Database } from '@/integrations/supabase/types';
 
 const PAGE_SIZE = 1000;
 
 export async function fetchAllRows<T>(
-  table: string,
+  table: keyof Database['public']['Tables'] | keyof Database['public']['Views'],
   select: string,
-  build: (query: ReturnType<typeof supabase.from>) => ReturnType<typeof supabase.from> = (q) => q,
+  // The callback receives the .select() builder (filters, order, …). Typed loosely:
+  // the builder's generic type for a runtime select string is not expressible here.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  build: (query: any) => any = (q) => q,
 ): Promise<T[]> {
   const all: T[] = [];
   let from = 0;
   for (;;) {
-    const query: any = build(supabase.from(table).select(select) as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const query: any = build(supabase.from(table as never).select(select));
     const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
-    if (error) throw new Error(`fetchAllRows(${table}) page ${from}: ${error.message}`);
+    if (error) {
+      // Keep PostgREST's code so callers can tell "relation missing" from other failures.
+      const err = new Error(`fetchAllRows(${table}) page ${from}: ${error.message}`) as Error & { code?: string };
+      err.code = error.code;
+      throw err;
+    }
     if (!data) break;
     all.push(...(data as T[]));
     if (data.length < PAGE_SIZE) break;

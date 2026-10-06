@@ -31,6 +31,8 @@ interface SearchableSelectProps {
   emptyText?: string;
   className?: string;
   disabled?: boolean;
+  /** Lets a <Label htmlFor> name the trigger. */
+  id?: string;
 }
 
 export function SearchableSelect({
@@ -42,6 +44,7 @@ export function SearchableSelect({
   emptyText = "No results found.",
   className,
   disabled = false,
+  id,
 }: SearchableSelectProps) {
   const [open, setOpen] = React.useState(false);
 
@@ -51,6 +54,7 @@ export function SearchableSelect({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          id={id}
           variant="outline"
           role="combobox"
           aria-expanded={open}

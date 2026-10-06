@@ -1,489 +1,303 @@
-// CompanyProfilePage — what clicking a GSTIN should open, firm-wide (Company
-// List, the Notices Dashboard's mini Company panel, and its "Search Company"
-// picker all point here now). Confirmed live against Notice Alert
-// (2026-08-26): clicking a GSTIN there opens a per-company "Company
-// Dashboard" — profile fields + KPI tiles + Notices/Submissions lists + a
-// Track Return Status table — NOT the client edit form. This app had every
-// GSTIN link wired to /edit-client instead; the pencil/edit icon already
-// covers editing separately; this page is that missing profile view.
-//
-// Business Owners / HSN-SAC / Return Periodicity / Business Activities
-// panels from Notice Alert's own page are left out — their own screenshot
-// shows them permanently empty (one even showing a raw "Undefined-NaN"), so
-// there's nothing there to faithfully port.
-import React, { useEffect, useMemo, useState } from 'react';
-import { Navigate, useNavigate, useParams, Link } from 'react-router-dom';
+// Notices & Litigation · Client profile (/notices-company/:clientId; roadmap
+// Phase 2). Fixes audit U-56-1..6, U-57-1..3 and the cross-cutting house-style,
+// date, title and linking findings for this screen: is this client's portal
+// data fresh (and the one fix when it is not), what is at stake (the command
+// centre's tiles for this client, each opening a list with the same count),
+// the client's notices in the shared notice table with the canonical
+// categories, refunds and DRC-03 in their own lists, the case folders, and the
+// registration facts a reply needs. Filters, sort and page live in the URL.
+import React, { useMemo } from 'react';
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { DownloadCloud, Pencil, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
-import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
-import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
-import FilterPill from '@/components/notices/FilterPill';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/gstr9/badge';
+import { Note, SectionCard } from '@/components/gstr9/ui';
+import { WS_BTN } from '@/components/workspace/theme';
+import { NoticesShell } from '@/components/notices/NoticesShell';
+import { NoticeTable } from '@/components/notices/NoticeTable';
+import { FilterPill } from '@/components/notices/FilterPill';
+import { Pager } from '@/components/notices/Pager';
+import { FilterTile } from '@/components/notices/clients/FilterTile';
+import { PortalLoginPopover } from '@/components/notices/clients/PortalLoginPopover';
+import { ClientProfileCard } from '@/components/notices/clients/ClientProfileCard';
+import { ReturnStrip } from '@/components/notices/clients/ReturnStrip';
+import { ClientCases } from '@/components/notices/clients/ClientCases';
+import { Drc03List, RefundList } from '@/components/notices/clients/ClientLedgers';
+import { useClientSync } from '@/components/notices/clients/useClientSync';
+import { loadClientProfile, matterOutstanding, refundNeedsReply, type ClientProfileData } from '@/components/notices/clients/profileData';
+import { OFF_LABEL, reasonDef, type ClientHealth, type FailureRun } from '@/components/notices/clients/syncHealth';
+import { summarizeCase } from '@/components/notices/clients/caseFolder';
+import { LIST_FILTERS, SORTS, defaultSort, filterDef, noticesListHref, type ListFilter, type SortKey } from '@/lib/noticeQueries';
+import { daysBetween, istToday, type NoticeFact } from '@/lib/noticeFacts';
+import { fmtAgo, fmtDay, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
-import { isoDateToDMY } from '@/utils/formatDate';
-import { isClosed } from '@/utils/noticeSummaryReport';
-import { Building2, Loader2, Pencil, FileText, Eye } from 'lucide-react';
 
-interface ClientRow {
-  id: string;
-  name: string;
-  gstin: string;
-  registration_type: string;
-  registration_date: string | null;
-  email: string | null;
-  mobile: string | null;
+const PAGE = 50;
+const SHOW: ListFilter[] = ['open', 'overdue', 'due7', 'new', 'unassigned', 'exposure', 'nodue', 'issued15', 'replied', 'submitted', 'closed', 'auto_closed', 'all'];
+
+/** The All notices list's filters (lib/noticeQueries applyListFilters), on the client's rows. */
+function matchesFilter(f: NoticeFact, filter: ListFilter, issuedFrom: string): boolean {
+  switch (filter) {
+    case 'open': return !!f.is_open;
+    case 'overdue': return !!f.is_overdue;
+    case 'due7': return !!f.is_due_in_7;
+    case 'new': return !!f.is_new;
+    case 'unassigned': return !!f.is_unassigned;
+    case 'exposure': return !!f.is_open && Number(f.exposure_amount) > 0;
+    case 'nodue': return !!f.is_open && !f.effective_due;
+    case 'issued15': return !!f.issue_date && f.issue_date >= issuedFrom;
+    case 'replied': return !!f.is_replied;
+    case 'submitted': return !!(f.submission_date || f.submission_arn);
+    case 'closed': return !f.is_open;
+    case 'auto_closed': return !f.is_open && /^auto:/.test(f.close_reason ?? '');
+    default: return true;
+  }
 }
 
-interface TaxpayerProfileRow {
-  legal_name: string | null;
-  trade_name: string | null;
-  registration_date: string | null;
-  principal_place_address: string | null;
+function sortRows(rows: NoticeFact[], key: SortKey, dir: 'asc' | 'desc'): NoticeFact[] {
+  const col = SORTS[key].column as keyof NoticeFact;
+  const sign = dir === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const av = a[col] as unknown; const bv = b[col] as unknown;
+    if (av === null || av === undefined) return bv === null || bv === undefined ? String(a.id).localeCompare(String(b.id)) : 1;
+    if (bv === null || bv === undefined) return -1;
+    const c = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
+    return sign * c || String(a.id).localeCompare(String(b.id));
+  });
 }
 
-interface NoticeRow {
-  id: string;
-  reference_number: string | null;
-  notice_type: string | null;
-  description: string | null;
-  issue_date: string | null;
-  due_date: string | null;
-  staff_status: string | null;
-  submission_arn: string | null;
-  submission_date: string | null;
-  pdf_url: string | null;
-  pulled_at: string;
-  // Matches gst_case_folder_items.case_id when this event has a drill-down
-  // "Notice Folder" page (AdditionalNoticeFolderPage) — real gst_notices
-  // rows carry their own case_id column; synthesized refund/drc03 rows use
-  // the ARN itself, same convention gst_case_folder_items already uses.
-  case_id: string | null;
-  // 'refund'/'drc03' rows are synthesized from gst_refund_applications /
-  // gst_drc03_filings below — neither table carries a staff_status or
-  // due_date (that workflow tracking only exists on gst_notices), so they
-  // count toward Total/Last-15-Days/Last-24-Hours and the notices list, but
-  // are excluded from Open/7-Days-Due/Over Due rather than guessing
-  // open/closed from the portal's own status text.
-  kind?: 'notice' | 'refund' | 'drc03';
-}
-
-interface RefundApplicationRow {
-  id: string;
-  arn: string | null;
-  refund_type: string | null;
-  filed_date: string | null;
-  status: string | null;
-  documents: { tab: string; label: string; url: string }[] | null;
-  pulled_at: string;
-}
-
-interface Drc03FilingRow {
-  id: string;
-  arn: string | null;
-  cause_of_payment: string | null;
-  filed_date: string | null;
-  status: string | null;
-  pdf_url: string | null;
-  pulled_at: string;
-}
-
-interface FilingRow {
-  return_type: string;
-  period_month: string;
-  filed_date: string | null;
-}
-
-
-// Indian financial year (April-March) for an MM/YYYY period string.
-const financialYearFor = (periodMonth: string) => {
-  const [mm, yyyy] = periodMonth.split('/').map(Number);
-  if (!mm || !yyyy) return periodMonth;
-  return mm >= 4 ? `${yyyy}-${yyyy + 1}` : `${yyyy - 1}-${yyyy}`;
+/** Is this client's portal data fresh, and the one fix when it is not (U-56-1). */
+const SyncStrip: React.FC<{
+  h: ClientHealth; run: FailureRun | null; canSync: boolean; canEditClients: boolean; busy: boolean;
+  onSync: () => void; onSaved: (retry: boolean) => void;
+}> = ({ h, run, canSync, canEditClients, busy, onSync, onSaved }) => {
+  const n = h.steps.notices;
+  const dot = h.state === 'fresh' ? 'bg-success' : h.state === 'failed' ? 'bg-destructive' : h.state === 'off' ? 'bg-muted-foreground' : 'bg-warning';
+  const login = (label: string) => canEditClients && <PortalLoginPopover client={h.client} label={label} align="start" onSaved={({ retry }) => onSaved(retry)} />;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" aria-live="polite">
+      <span className={cn('inline-block h-2 w-2 rounded-full', dot)} aria-hidden />
+      {h.state === 'off' && h.off ? (
+        <span className="font-medium text-foreground">Not synced by the app: {OFF_LABEL[h.off].toLowerCase()}</span>
+      ) : h.state === 'failed' ? (
+        <span className="font-medium text-destructive-strong">
+          {reasonDef(h.failReason).long} {fmtAgo(h.failAt)}{run ? ` · failing since ${fmtAgo(run.since)}, ${plural(run.tries, 'try', 'tries')}` : ''}
+        </span>
+      ) : h.never ? (
+        <span className="font-medium text-foreground">Never synced from the portal</span>
+      ) : (
+        <span className={cn('font-medium', h.fresh ? 'text-foreground' : 'text-destructive-strong')}>Portal: last good pull {fmtAgo(h.lastSuccessAt)}{h.fresh ? '' : ' (over 24 h)'}</span>
+      )}
+      {n?.last_success_at && <span>· {n.rows_seen ?? 0} on the portal, {n.rows_new ?? 0} new{n.last_ext_version ? ` · extension v${n.last_ext_version}` : ''}</span>}
+      <span aria-hidden>·</span>
+      <Link to={`/notices-company-list?tab=log&client=${h.client.id}`} className="text-primary underline-offset-2 hover:underline">Sync log</Link>
+      {h.state === 'failed' && reasonDef(h.failReason).action === 'password' && login('Update password')}
+      {h.state === 'off' && h.off === 'no_user_id' && login('Add portal user ID')}
+      {canSync && h.eligible && !h.fresh && reasonDef(h.failReason).action !== 'password' && (
+        <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" disabled={busy} onClick={onSync}>
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden /> {h.state === 'failed' ? 'Retry' : 'Sync now'}
+        </Button>
+      )}
+    </div>
+  );
 };
-const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const monthLabel = (periodMonth: string) => {
-  const [mm, yyyy] = periodMonth.split('/').map(Number);
-  if (!mm || !yyyy) return periodMonth;
-  return `${MONTH_NAMES_SHORT[mm - 1]} ${yyyy}`;
+
+/** The command centre's tiles for this client; each opens the list it counts (U-56-1, U-56-5, U-57-1). */
+const ClientTiles: React.FC<{ d: ClientProfileData; clientId: string; today: string }> = ({ d, clientId, today }) => {
+  const f = d.notices;
+  const open = f.filter((n) => n.is_open);
+  const overdue = f.filter((n) => n.is_overdue);
+  const due7 = f.filter((n) => n.is_due_in_7);
+  const exposure = f.filter((n) => n.is_open && Number(n.exposure_amount) > 0);
+  const fresh = f.filter((n) => n.is_new).length;
+  const oldest = overdue.reduce((m, n) => Math.max(m, -(n.days_to_due ?? 0)), 0);
+  const next = due7.map((n) => n.effective_due).filter(Boolean).sort()[0] ?? null;
+  const outstanding = d.matters.reduce((s, m) => s + matterOutstanding(m), 0);
+  // Hearings fixed on notices or matters, and those only the portal's case folders show.
+  const folderHearings = [...new Set(d.folders.map((x) => x.case_id))].map((caseId) => {
+    const s = summarizeCase(d.folders.filter((x) => x.case_id === caseId), { today });
+    return s.nextHearing ? { date: s.nextHearing.date, title: s.nextHearing.event.title, to: `/notices-case-folder/${clientId}/${encodeURIComponent(caseId)}` } : null;
+  }).filter((x): x is { date: string; title: string; to: string } => !!x);
+  const hearing = [
+    ...d.hearings.map((h) => ({ date: h.hearing_on, title: h.title ?? 'Hearing', to: h.notice_id ? `/notices/${h.notice_id}?tab=hearings` : `/litigation/${h.matter_id}` })),
+    ...folderHearings,
+  ].sort((a, b) => a.date.localeCompare(b.date))[0];
+  return (
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+      <FilterTile to={noticesListHref({ client: clientId })} label="Open notices" accent="primary" value={open.length}
+        hint={`of ${f.length} on record${fresh ? ` · ${fresh} new in 24 h` : ''}`} />
+      <FilterTile to={noticesListHref({ filter: 'overdue', client: clientId })} label="Overdue & still open" accent="destructive" strong={overdue.length > 0}
+        value={overdue.length} hint={overdue.length ? `oldest ${oldest} d late` : 'nothing overdue'} />
+      <FilterTile to={noticesListHref({ filter: 'due7', client: clientId })} label="Due in next 7 days" accent="warning" value={due7.length}
+        hint={next ? `next ${fmtDay(next)}` : 'nothing due this week'} />
+      <FilterTile to={noticesListHref({ filter: 'exposure', client: clientId })} label="Exposure under dispute" accent="muted"
+        value={fmtInrShort(exposure.reduce((s, n) => s + Number(n.exposure_amount ?? 0), 0))} hint={plural(exposure.length, 'notice')} />
+      <FilterTile to={hearing?.to ?? '/notices-hearings'} label="Next hearing" accent="info" value={hearing ? fmtDay(hearing.date) : 'None'}
+        hint={hearing ? `${daysBetween(today, hearing.date) === 0 ? 'today' : `in ${daysBetween(today, hearing.date)} d`} · ${hearing.title}` : 'none fixed'} />
+      <FilterTile to={`/litigation?client=${clientId}`} label="Open matters" accent="warning" value={d.matters.length}
+        hint={d.matters.length ? `${fmtInrShort(outstanding)} outstanding` : 'no litigation'} />
+    </div>
+  );
 };
 
 const CompanyProfilePage: React.FC = () => {
-  const { isStaffRole, canAddEditClients } = useAuth();
-  const navigate = useNavigate();
-  const { clientId } = useParams<{ clientId: string }>();
+  const { clientId = '' } = useParams<{ clientId: string }>();
+  const { isStaffRole, canEditNoticeStatus, canAddEditClients } = useAuth();
+  const [sp, setSp] = useSearchParams();
+  const qc = useQueryClient();
+  const sync = useClientSync();
+  const today = istToday();
+  const q = useQuery({ queryKey: ['client-profile', clientId], enabled: !!clientId, queryFn: () => loadClientProfile(clientId) });
+  const d = q.data;
 
-  const [client, setClient] = useState<ClientRow | null>(null);
-  const [profile, setProfile] = useState<TaxpayerProfileRow | null>(null);
-  const [notices, setNotices] = useState<NoticeRow[]>([]);
-  const [filings, setFilings] = useState<FilingRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState('all');
+  const show: ListFilter = SHOW.find((s) => s === sp.get('show')) ?? 'open';
+  const cat = sp.get('cat');
+  const sort: SortKey = (Object.keys(SORTS) as SortKey[]).find((k) => k === sp.get('sort')) ?? defaultSort(show);
+  const dir: 'asc' | 'desc' = sp.get('dir') === 'asc' || sp.get('dir') === 'desc' ? (sp.get('dir') as 'asc' | 'desc') : SORTS[sort].ascending ? 'asc' : 'desc';
+  const page = Math.max(1, Number(sp.get('page')) || 1);
 
-  useEffect(() => {
-    if (!clientId) return;
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      const [clientRes, profileRes, noticesRes, filingsRes, refundsRes, drc03Res] = await Promise.all([
-        supabase.from('clients').select('id, name, gstin, registration_type, registration_date, email, mobile').eq('id', clientId).maybeSingle(),
-        supabase.from('gst_taxpayer_profile').select('legal_name, trade_name, registration_date, principal_place_address').eq('client_id', clientId).maybeSingle(),
-        supabase.from('gst_notices').select('id, case_id, reference_number, notice_type, description, issue_date, due_date, staff_status, submission_arn, submission_date, pdf_url, pulled_at').eq('client_id', clientId).eq('source', 'notices').is('deleted_at', null).order('issue_date', { ascending: false }),
-        // gst_filed_returns holds the actual as-filed-on-portal date (pulled
-        // straight from the portal's own GSTR-1/3B JSON APIs) — filing_status
-        // is this app's own internal prep/compliance tracker (a manually-set
-        // date, defaults to 'Prepared'), a different signal entirely.
-        // "Track Return Status" is meant to mirror the portal, so it needs
-        // the former, confirmed against Notice Alert's own equivalent table
-        // (2026-09-08).
-        supabase.from('gst_filed_returns').select('return_type, period_month, filed_date').eq('client_id', clientId).in('return_type', ['GSTR1', 'GSTR3B']).not('filed_date', 'is', null),
-        // Folded into the unified notices/KPI list below (2026-09-08 fix) —
-        // gst_notices' Additional Notice Folder capture only ever writes the
-        // case-folder DOCUMENTS (its acknowledgement/order, keyed by their
-        // own portal reference), never the refund APPLICATION event itself
-        // (keyed by its ARN, e.g. "a refund was filed on 18/08/2026").
-        // Notice Alert shows both as separate timeline rows for the same
-        // case; this recovers the missing one.
-        supabase.from('gst_refund_applications').select('id, arn, refund_type, filed_date, status, documents, pulled_at').eq('client_id', clientId).is('deleted_at', null),
-        supabase.from('gst_drc03_filings').select('id, arn, cause_of_payment, filed_date, status, pdf_url, pulled_at').eq('client_id', clientId).is('deleted_at', null),
-      ]);
-      if (!cancelled) {
-        setClient((clientRes.data || null) as ClientRow | null);
-        setProfile((profileRes.data || null) as TaxpayerProfileRow | null);
-        const gstNoticeRows = ((noticesRes.data || []) as NoticeRow[]).map((n) => ({ ...n, kind: 'notice' as const }));
-        const refundRows = ((refundsRes.data || []) as RefundApplicationRow[]).map((r): NoticeRow => ({
-          id: 'refund-' + r.id,
-          reference_number: r.arn,
-          notice_type: 'Refunds',
-          description: r.refund_type,
-          issue_date: r.filed_date,
-          due_date: null,
-          staff_status: null,
-          submission_arn: null,
-          submission_date: null,
-          pdf_url: (Array.isArray(r.documents) && r.documents[0]?.url) || null,
-          pulled_at: r.pulled_at,
-          // gst_case_folder_items.case_id for a refund case is its own ARN
-          // (see handleRefundDocs in extension/content.js) — links this row
-          // straight to its "Refund Notice Folder" drill-down page once that
-          // capture has run for it.
-          case_id: r.arn,
-          kind: 'refund',
-        }));
-        const drc03Rows = ((drc03Res.data || []) as Drc03FilingRow[]).map((d): NoticeRow => ({
-          id: 'drc03-' + d.id,
-          reference_number: d.arn,
-          notice_type: 'DRC-03',
-          description: d.cause_of_payment,
-          issue_date: d.filed_date,
-          due_date: null,
-          staff_status: null,
-          submission_arn: null,
-          submission_date: null,
-          pdf_url: d.pdf_url,
-          pulled_at: d.pulled_at,
-          case_id: d.arn,
-          kind: 'drc03',
-        }));
-        const combined = [...gstNoticeRows, ...refundRows, ...drc03Rows].sort((a, b) => {
-          const ad = a.issue_date ? new Date(a.issue_date).getTime() : 0;
-          const bd = b.issue_date ? new Date(b.issue_date).getTime() : 0;
-          return bd - ad;
-        });
-        setNotices(combined);
-        setFilings((filingsRes.data || []) as FilingRow[]);
-        setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [clientId]);
+  const categories = useMemo(() => [...new Set((d?.notices ?? []).map((n) => n.category).filter((c): c is string => !!c))].sort(), [d]);
+  const rows = useMemo(() => {
+    const issuedFrom = new Date(Date.now() - 15 * 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    return sortRows((d?.notices ?? []).filter((n) => matchesFilter(n, show, issuedFrom) && (!cat || n.category === cat)), sort, dir);
+  }, [d, show, cat, sort, dir]);
+  const caseIds = useMemo(() => new Set((d?.folders ?? []).map((f) => f.case_id)), [d]);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
   if (!clientId) return <Navigate to="/notices-company-list" replace />;
 
-  // Distinct notice_type values on record for this client, for the "Types
-  // Of Notices" filter — matches Notice Alert's own equivalent dropdown
-  // (2026-09-08 comparison). Derived from the unfiltered list so a chosen
-  // filter never hides itself from its own options.
-  const noticeTypes = Array.from(new Set(notices.map((n) => n.notice_type).filter((t): t is string => !!t))).sort();
-  const filteredNotices = typeFilter === 'all' ? notices : notices.filter((n) => n.notice_type === typeFilter);
+  const set = (patch: Record<string, string | null>, keepPage = false) => {
+    const next = new URLSearchParams(sp);
+    Object.entries(patch).forEach(([k, v]) => { if (v === null || v === '') next.delete(k); else next.set(k, v); });
+    if (!keepPage) next.delete('page');
+    setSp(next);
+  };
+  const reload = () => {
+    qc.invalidateQueries({ queryKey: ['client-profile', clientId] });
+    qc.invalidateQueries({ queryKey: ['notices-command-centre'] });
+    qc.invalidateQueries({ queryKey: ['client-sync-health'] });
+  };
+  const onSort = (k: SortKey) => {
+    if (k === sort) set({ sort: k, dir: dir === 'asc' ? 'desc' : 'asc' });
+    else set({ sort: k, dir: null });
+  };
+  const canSync = canEditNoticeStatus();
+  const syncNow = () => { sync.start([clientId]).then((ok) => { if (ok) reload(); }); };
+  const fetchProfile = () => { sync.start([clientId], 'taxpayerprofile'); };
 
-  const now = Date.now();
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const daysAgo = (v: string | null) => (v ? (now - new Date(v).getTime()) / DAY_MS : Infinity);
-  const daysUntil = (v: string | null) => (v ? (new Date(v).getTime() - now) / DAY_MS : -Infinity);
+  if (q.isLoading) {
+    return (
+      <NoticesShell section="Clients">
+        <div className="space-y-2" aria-busy="true">
+          <Skeleton className="h-7 w-80 max-w-full" />
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[70px]" />)}</div>
+          <Skeleton className="h-96 w-full" />
+        </div>
+      </NoticesShell>
+    );
+  }
+  if (q.error || !d) {
+    return (
+      <NoticesShell section="Clients">
+        <Note tone="warn">Couldn't load the client: {q.error instanceof Error ? q.error.message : String(q.error)}</Note>
+        <Button size="sm" variant="outline" className={WS_BTN} onClick={() => q.refetch()}><RefreshCw className="h-3.5 w-3.5" aria-hidden /> Retry</Button>
+      </NoticesShell>
+    );
+  }
+  if (!d.client || !d.health) {
+    return (
+      <NoticesShell section="Clients">
+        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+          This client is not on record — it may have been deleted. <Link to="/notices-company-list" className="text-primary underline underline-offset-2">All clients</Link>
+        </div>
+      </NoticesShell>
+    );
+  }
 
-  const totalNotices = filteredNotices.length;
-  const last15Days = filteredNotices.filter((n) => daysAgo(n.issue_date) <= 15).length;
-  const last24Hours = filteredNotices.filter((n) => daysAgo(n.pulled_at) <= 1).length;
-  // Open/7-Days-Due/Over-Due are staff_status/due_date workflow concepts —
-  // gst_refund_applications and gst_drc03_filings carry neither (that
-  // tracking only exists on gst_notices), so synthesized refund/drc03 rows
-  // are excluded here rather than guessed at from the portal's own status
-  // text. due_date is already null on every such row, so dueSoon/overdue
-  // exclude them naturally; openNotices needs the explicit kind check since
-  // a null staff_status alone reads as "open".
-  const workflowRows = filteredNotices.filter((n) => n.kind !== 'refund' && n.kind !== 'drc03');
-  const openNotices = workflowRows.filter((n) => !isClosed(n.staff_status)).length;
-  const dueSoon = filteredNotices.filter((n) => n.due_date && daysUntil(n.due_date) >= 0 && daysUntil(n.due_date) <= 7).length;
-  const overdue = filteredNotices.filter((n) => n.due_date && daysUntil(n.due_date) < 0).length;
-
-  // Each tile opens the same list filtered the way the tile counts — the
-  // query-string filters AllClientsNoticesPage already parses (last15,
-  // last24h, due7, overdue, status=Open), so the number on the tile and the
-  // rows behind it always come from the same rule.
-  const kpiCards = [
-    { label: 'Over Due', value: overdue, accent: 'border-l-destructive', context: `of ${totalNotices}`, cta: 'Open queue →', href: `/notices-all?client=${clientId}&filter=overdue` },
-    { label: '7 Days Due', value: dueSoon, accent: 'border-l-amber-500', context: 'this week', cta: 'View due →', href: `/notices-all?client=${clientId}&filter=due7` },
-    { label: 'Last 24 Hours', value: last24Hours, accent: 'border-l-blue-500', context: 'newly synced', cta: 'View new →', href: `/notices-all?client=${clientId}&filter=last24h` },
-    { label: 'Last 15 Days', value: last15Days, accent: 'border-l-primary', context: 'recent', cta: 'View recent →', href: `/notices-all?client=${clientId}&filter=last15` },
-    { label: 'Open Notices', value: openNotices, accent: 'border-l-primary', context: `of ${totalNotices}`, cta: 'View open →', href: `/notices-all?client=${clientId}&status=Open` },
-    { label: 'Total Notices', value: totalNotices, accent: 'border-l-primary', context: 'on record', cta: 'View all →', href: `/notices-all?client=${clientId}` },
-  ];
-
-  const submissions = filteredNotices.filter((n) => n.submission_arn || n.submission_date);
-
-  const filingsByPeriod = useMemo(() => {
-    const m = new Map<string, { period: string; fy: string; gstr1: string | null; gstr3b: string | null }>();
-    filings.forEach((f) => {
-      const entry = m.get(f.period_month) || { period: f.period_month, fy: financialYearFor(f.period_month), gstr1: null, gstr3b: null };
-      if (f.return_type === 'GSTR1') entry.gstr1 = f.filed_date;
-      if (f.return_type === 'GSTR3B') entry.gstr3b = f.filed_date;
-      m.set(f.period_month, entry);
-    });
-    return Array.from(m.values()).sort((a, b) => {
-      const [am, ay] = a.period.split('/').map(Number);
-      const [bm, by] = b.period.split('/').map(Number);
-      return by !== ay ? by - ay : bm - am;
-    });
-  }, [filings]);
-
-  const legalName = profile?.legal_name || client?.name || '—';
-  const tradeName = profile?.trade_name || client?.name || '—';
+  const c = d.client;
+  const h = d.health;
+  const refundsWaiting = d.refunds.filter(refundNeedsReply).length;
+  const total = rows.length;
+  const pageRows = rows.slice((page - 1) * PAGE, page * PAGE);
+  const listHref = noticesListHref({ filter: show, client: clientId, category: cat ?? undefined });
 
   return (
-    <div className="space-y-4 animate-fade-in">
-      <NoticesPageHeader
-        title={tradeName}
-        icon={Building2}
-        subtitle={
-          <>
-            <span className="flex items-center gap-1.5">
-              <Link to="/notices-dashboard" className="text-primary hover:underline">GST Dashboard</Link>
-              <span>›</span>
-              <span>Company Dashboard</span>
-            </span>
-            {client && <span className="text-[10px] font-mono">{client.gstin}</span>}
-            {client && <span>{client.registration_type}</span>}
-          </>
-        }
-      />
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <NoticesTopNav />
-        {!loading && client && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <FilterPill
-              label="Type"
-              allLabel="All notices"
-              value={typeFilter}
-              onChange={setTypeFilter}
-              options={noticeTypes}
-            />
-          </div>
+    <NoticesShell
+      section="Clients"
+      status={<SyncStrip h={h} run={d.failRun} canSync={canSync} canEditClients={canAddEditClients()} busy={sync.busy}
+        onSync={syncNow} onSaved={(retry) => { reload(); if (retry) syncNow(); }} />}
+      actions={<>
+        {canAddEditClients() && (
+          <Button size="sm" variant="outline" className={WS_BTN} asChild><Link to={`/edit-client/${c.id}`}><Pencil className="h-3.5 w-3.5" aria-hidden /> Edit client</Link></Button>
         )}
+        {canSync && c.gst_user_id && (
+          <Button size="sm" variant="outline" className={WS_BTN} onClick={fetchProfile} disabled={sync.busy}><DownloadCloud className="h-3.5 w-3.5" aria-hidden /> Fetch profile</Button>
+        )}
+        {canSync && c.gst_user_id && !c.notices_sync_excluded && (
+          <Button size="sm" className={WS_BTN} onClick={syncNow} disabled={sync.busy}><RefreshCw className="h-3.5 w-3.5" aria-hidden /> Sync this client</Button>
+        )}
+      </>}
+    >
+      <div className="space-y-1">
+        <nav aria-label="Breadcrumb" className="text-xs text-muted-foreground"><Link to="/notices-company-list" className="hover:underline">Clients</Link> › {c.name}</nav>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h2 className="min-w-0 break-words font-heading text-lg font-bold leading-tight sm:text-xl">{c.name}</h2>
+          <span className="font-mono text-xs text-muted-foreground">{c.gstin}</span>
+          {c.assigned_accountant && <span className="text-xs text-muted-foreground">Owner {c.assigned_accountant}</span>}
+          {c.inactive_at_hand && <Badge variant="secondary" className="text-[11px]">Inactive at hand</Badge>}
+          {c.notices_sync_excluded && <Badge variant="secondary" className="text-[11px]">Excluded from notices sync</Badge>}
+          {refundsWaiting > 0 && (
+            <a href="#client-refunds" className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <Badge variant="warning" className="text-[11px]">{plural(refundsWaiting, 'refund')} waiting for a reply</Badge>
+            </a>
+          )}
+        </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-      ) : !client ? (
-        <p className="py-16 text-center text-sm text-muted-foreground">Company not found.</p>
-      ) : (
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
-          {/* Company Profile */}
-          <Card className="xl:w-[280px] xl:shrink-0">
-            <NoticesCardHeader
-              title="Company Profile"
-              badge={canAddEditClients() ? (
-                <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0" onClick={() => navigate(`/edit-client/${client.id}`)} title="Edit Client">
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-              ) : undefined}
-            />
-            <CardContent className="space-y-3 pt-3 pb-4 text-xs">
-              <div>
-                <p className="text-muted-foreground">Legal Name</p>
-                <p className="font-medium">{legalName}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">Trade Name</p>
-                <p className="font-medium">{tradeName}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">GSTIN</p>
-                <p className="text-[10px] font-mono text-muted-foreground">{client.gstin}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">Taxpayer Type</p>
-                <Badge variant="outline" className="text-xs">{client.registration_type}</Badge>
-              </div>
-              <div>
-                <p className="text-muted-foreground">Date of Registration</p>
-                <p className="font-medium">{profile?.registration_date || client.registration_date || '—'}</p>
-              </div>
-              {client.email && (
-                <div>
-                  <p className="text-muted-foreground">Contact Person Email</p>
-                  <p className="font-medium">{client.email}</p>
-                </div>
+      <ClientTiles d={d} clientId={clientId} today={today} />
+
+      <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="min-w-0 space-y-3">
+          <SectionCard title={`${filterDef(show).title} · ${total}`}
+            description="Each opens its workspace; the stage and owner change in place"
+            actions={<Link to={listHref} className="text-xs font-medium text-primary hover:underline">Open in All notices →</Link>}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <FilterPill label="Show" allLabel="All" value={show === 'all' ? 'all' : show}
+                onChange={(v) => set({ show: v === 'open' ? null : v, sort: null, dir: null })}
+                options={[]} extraOptions={LIST_FILTERS.filter((x) => x.key !== 'all').map((x) => ({ value: x.key, label: x.label }))} />
+              {categories.length > 0 && (
+                <FilterPill label="Category" allLabel="Any" value={cat ?? 'all'} onChange={(v) => set({ cat: v === 'all' ? null : v })} options={categories} />
               )}
-              {profile?.principal_place_address && (
-                <div>
-                  <p className="text-muted-foreground">Principal Office</p>
-                  <p className="font-medium">{profile.principal_place_address}</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <div className="flex min-w-0 flex-1 flex-col gap-4">
-            {/* KPI tiles */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-              {kpiCards.map((card) => (
-                <Card
-                  key={card.label}
-                  className={cn('border-l-4 cursor-pointer transition-shadow hover:shadow-md', card.accent)}
-                  onClick={() => navigate(card.href)}
-                >
-                  <CardContent className="p-3.5 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{card.label}</span>
-                    </div>
-                    <p className="font-heading text-[30px] font-bold tabular-nums leading-none">
-                      {card.value}
-                      <span className="ml-1.5 font-sans text-xs font-medium text-muted-foreground">{card.context}</span>
-                    </p>
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span />
-                      <span className="font-semibold text-primary">{card.cta}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
             </div>
+            {total === 0 ? (
+              <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                No {filterDef(show).label.toLowerCase()} notices{cat ? ` in ${cat}` : ''}.{' '}
+                {(show !== 'all' || cat) && <button type="button" className="text-primary underline underline-offset-2" onClick={() => set({ show: 'all', cat: null })}>Show every notice</button>}
+              </p>
+            ) : (
+              <>
+                <NoticeTable rows={pageRows} canEdit={canSync} sort={sort} dir={dir} onSort={onSort} onChanged={reload} showClient={false} />
+                <Pager page={page} pageSize={PAGE} total={total} onPage={(p) => set({ page: String(p) }, true)} />
+              </>
+            )}
+          </SectionCard>
 
-            {/* Notices & Orders + View Submission */}
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Card>
-                <NoticesCardHeader title="Notices & Orders" badge={filteredNotices.length} />
-                <CardContent className="space-y-2 pt-3 pb-3">
-                  {filteredNotices.slice(0, 5).map((n, i) => (
-                    <div key={n.id} className="flex items-start gap-2 border-b pb-2 text-xs last:border-0 last:pb-0">
-                      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{n.notice_type || n.description || 'Notice'}</p>
-                        <p className="text-muted-foreground">Ref Id: {n.reference_number || '—'} · Issue: {isoDateToDMY(n.issue_date)}</p>
-                      </div>
-                      {n.case_id ? (
-                        <Link to={`/notices-case-folder/${client.id}/${encodeURIComponent(n.case_id)}`} title="Open Notice Folder">
-                          <Eye className="h-4 w-4 text-primary" />
-                        </Link>
-                      ) : n.pdf_url ? (
-                        <a href={n.pdf_url} target="_blank" rel="noreferrer"><FileText className="h-4 w-4 text-destructive" /></a>
-                      ) : null}
-                    </div>
-                  ))}
-                  {filteredNotices.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">No notices on record.</p>}
-                  <Link to={`/notices-all?client=${client.id}`} className="block text-right text-[11px] font-semibold text-primary hover:underline">View All</Link>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <NoticesCardHeader title="View Submission" badge={submissions.length} />
-                <CardContent className="space-y-2 pt-3 pb-3">
-                  {submissions.slice(0, 5).map((n, i) => (
-                    <div key={n.id} className="flex items-start gap-2 border-b pb-2 text-xs last:border-0 last:pb-0">
-                      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{n.description || n.notice_type || 'Submission'}</p>
-                        <p className="text-muted-foreground">ARN: {n.submission_arn || '—'} · Date: {isoDateToDMY(n.submission_date)}</p>
-                      </div>
-                    </div>
-                  ))}
-                  {submissions.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">No submissions on record.</p>}
-                  <Link to={`/notices-all?client=${client.id}&filter=submitted`} className="block text-right text-[11px] font-semibold text-primary hover:underline">View All</Link>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Track Return Status */}
-            <Card>
-              <NoticesCardHeader title="Track Return Status" description="Filing dates as recorded on the GST portal." />
-              <CardContent className="pt-3 pb-3">
-                <div className="overflow-auto rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="bg-muted text-[10px] font-semibold uppercase">Financial Year</TableHead>
-                        <TableHead className="bg-muted text-[10px] font-semibold uppercase">Period</TableHead>
-                        <TableHead className="bg-muted text-[10px] font-semibold uppercase">GSTR-1 Filing Date</TableHead>
-                        <TableHead className="bg-muted text-[10px] font-semibold uppercase">GSTR-3B Filing Date</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filingsByPeriod.length === 0 ? (
-                        <TableRow><TableCell colSpan={4} className="py-6 text-center text-xs text-muted-foreground">No filed returns on record.</TableCell></TableRow>
-                      ) : (
-                        filingsByPeriod.slice(0, 12).map((f) => (
-                          <TableRow key={f.period}>
-                            <TableCell className="text-xs tabular-nums">{f.fy}</TableCell>
-                            <TableCell className="text-xs tabular-nums">{monthLabel(f.period)}</TableCell>
-                            <TableCell className="text-xs tabular-nums">{f.gstr1 || '—'}</TableCell>
-                            <TableCell className="text-xs tabular-nums">{f.gstr3b || '—'}</TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/*
-              Business Owners / HSN-SAC / Return Periodicity / Business
-              Activities — matches Notice Alert's own layout, but shown as
-              empty placeholder panels: confirmed live (2026-08-26) on an
-              ACTIVE client with 35 real notices and full filing history that
-              these 4 boxes render permanently empty on their end too (Return
-              Periodicity even shows a raw "Undefined-NaN Undefined-NaN"
-              rendering bug) — there's no real data source behind them to
-              port, only the panel shells themselves.
-            */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <Card>
-                <NoticesCardHeader title="Business Owners" />
-                <CardContent className="pt-3 pb-4"><p className="text-xs text-muted-foreground">Not captured by the portal sync.</p></CardContent>
-              </Card>
-              <Card>
-                <NoticesCardHeader title="HSN / SAC" />
-                <CardContent className="pt-3 pb-4"><p className="text-xs text-muted-foreground">Not captured by the portal sync.</p></CardContent>
-              </Card>
-              <Card>
-                <NoticesCardHeader title="Return Periodicity" />
-                <CardContent className="pt-3 pb-4"><p className="text-xs text-muted-foreground">Not captured by the portal sync.</p></CardContent>
-              </Card>
-              <Card>
-                <NoticesCardHeader title="Business Activities" />
-                <CardContent className="pt-3 pb-4"><p className="text-xs text-muted-foreground">Not captured by the portal sync.</p></CardContent>
-              </Card>
-            </div>
+          <ClientCases clientId={clientId} folders={d.folders} notices={d.notices} today={today} />
+          <div className="grid grid-cols-1 items-start gap-3 2xl:grid-cols-2">
+            <div id="client-refunds" className="scroll-mt-4"><RefundList clientId={clientId} rows={d.refunds} caseIds={caseIds} /></div>
+            <Drc03List clientId={clientId} rows={d.drc03} caseIds={caseIds} />
           </div>
         </div>
-      )}
-    </div>
+        <aside className="min-w-0 space-y-3" aria-label="Client facts">
+          <ClientProfileCard client={c} extras={d.extras} profile={d.profile} busy={sync.busy}
+            onFetchProfile={canSync && c.gst_user_id ? fetchProfile : undefined} />
+          <ReturnStrip filings={d.filings} extras={d.extras} today={today} />
+        </aside>
+      </div>
+    </NoticesShell>
   );
 };
 

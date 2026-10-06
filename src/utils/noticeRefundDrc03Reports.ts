@@ -6,6 +6,7 @@
 // pattern as the Registration Certificate), DRC-03 via the docId+eh flow.
 
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import type { ReportTable } from './allClientsReports';
 import { isoDateToDMY } from './formatDate';
 
@@ -59,11 +60,9 @@ export const buildViewNoticesAndOrdersReport = async (clientId: string): Promise
   const client = await fetchClient(clientId);
   const { data, error } = await supabase
     .from('gst_notices')
-    .select(
-      'id, reference_number, case_id, notice_type, description, issue_date, due_date, extended_due_date, ' +
-      'staff_status, priority, reply_ref_number, reply_date, order_number, order_date, submission_arn, submission_date, ' +
-      'amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url',
-    )
+    // One literal (not '…' + '…'): concatenated strings type as plain `string`,
+    // which the client cannot parse, so every column below read as an error type.
+    .select('id, reference_number, case_id, notice_type, description, issue_date, due_date, extended_due_date, staff_status, priority, reply_ref_number, reply_date, order_number, order_date, submission_arn, submission_date, amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url')
     .eq('client_id', clientId).eq('source', 'notices').is('deleted_at', null)
     .order('issue_date', { ascending: false });
   if (error) throw error;
@@ -115,9 +114,9 @@ interface RefundDocument { tab: string; label: string; url: string; }
 const refundRow = (r: {
   arn: string | null; refund_type: string | null; filed_date: string | null;
   claimed_amount: number | null; sanctioned_amount: number | null; status: string | null;
-  documents: RefundDocument[] | null;
+  documents: Json | null; // jsonb array of RefundDocument
 }): (string | number)[] => {
-  const docs = Array.isArray(r.documents) ? r.documents : [];
+  const docs = (Array.isArray(r.documents) ? r.documents : []) as unknown as RefundDocument[];
   // Cell must be a bare URL (or '—') — the on-screen preview's isUrl() check
   // only tests the string's start, so appending "(+2 more)" text here would
   // still render as a clickable link but with that suffix baked into the
@@ -192,9 +191,7 @@ export const buildRefundClaimedFromCashLedgerReport = (clientId: string) => buil
 
 // ─────────────────── DRC-03 (3 reports) ────────────────────────────────────
 
-const DRC03_FULL_SELECT = 'arn, cause_of_payment, filed_date, period_from, period_to, financial_year, section, ' +
-  'taxable_value, igst_amount, cgst_amount, sgst_amount, cess_amount, interest_amount, late_fee_amount, penalty_amount, ' +
-  'cash_amount, credit_amount, status, pdf_url';
+const DRC03_FULL_SELECT = 'arn, cause_of_payment, filed_date, period_from, period_to, financial_year, section, taxable_value, igst_amount, cgst_amount, sgst_amount, cess_amount, interest_amount, late_fee_amount, penalty_amount, cash_amount, credit_amount, status, pdf_url';
 
 const DRC03_FULL_HEADERS = [
   'ARN', 'Cause of Payment', 'Section', 'FY', 'Filed Date', 'Period',

@@ -1,0 +1,60 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><style>
+.grid{display:grid;grid-template-columns:1.35fr 1fr;gap:12px}
+.cw{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.cap{border:1px solid var(--border);border-radius:8px;padding:9px 10px;background:#fff}
+.img{height:44px;border-radius:5px;background:repeating-linear-gradient(115deg,#e9edf5 0 7px,#f7f8fb 7px 14px);display:flex;align-items:center;justify-content:center;font:600 21px 'JetBrains Mono',monospace;letter-spacing:5px;color:#3b4a6b;font-style:italic;text-decoration:line-through wavy hsl(220 30% 60%)}
+.in{margin-top:6px;height:30px;border:1.5px solid var(--primary);border-radius:6px;display:flex;align-items:center;padding:0 8px;font-family:'JetBrains Mono';font-size:13px}
+.in.e{border-color:var(--border);color:var(--muted-fg);font-family:Inter;font-size:12px}
+.cat td{font-size:12px}.tog{display:inline-block;width:30px;height:17px;border-radius:9px;background:var(--success);position:relative;vertical-align:middle}.tog:after{content:"";position:absolute;right:2px;top:2px;width:13px;height:13px;border-radius:50%;background:#fff}.tog.off{background:#cbd5e1}.tog.off:after{left:2px;right:auto}
+.log div{display:grid;grid-template-columns:52px 1fr;gap:8px;padding:5px 0;border-bottom:1px dashed var(--border);font-size:12px}
+.f{display:grid;grid-template-columns:repeat(4,1fr) auto;gap:8px;align-items:end}.f label{font-size:11px;color:var(--muted-fg);font-weight:500}.f .sel{height:32px;border:1px solid var(--border);border-radius:6px;display:flex;align-items:center;padding:0 9px;font-size:12px;background:#fff;justify-content:space-between}
+</style></head><body><div class="shell"><div class="side"><i></i><i></i><i></i><i class="on"></i><i></i><i></i></div><div class="main">
+<div style="display:flex;justify-content:space-between;align-items:flex-start">
+ <div><h1 style="font-size:21px;font-weight:700">Portal Autopilot</h1><div style="font-size:12px;margin-top:3px"><span class="dot" style="background:var(--success)"></span><b>On</b> <span class="muted">· office agent (headless Chrome on the office network) · runs 05:30 and 13:00 IST · extension is the fallback on any staff PC · every run writes through one server-side path with a run ledger</span></div></div>
+ <div style="display:flex;gap:8px"><span class="btn">Pause</span><span class="btn">Run log</span><span class="btn p">⟳ Run now for selected</span></div></div>
+<div class="kpis">
+ <div class="kpi ok"><div class="l">GSTINs fresh (&lt; 24 h)</div><div class="v">86 / 92</div><div class="h">05:30 run · 41 min · 0 errors</div></div>
+ <div class="kpi warn"><div class="l">Waiting for a person</div><div class="v">6</div><div class="h">CAPTCHA wall · about 1 minute of typing</div></div>
+ <div class="kpi err"><div class="l">Need fixing</div><div class="v">2</div><div class="h">password changed · portal account locked</div></div>
+ <div class="kpi info"><div class="l">New / changed today</div><div class="v">9 · 14</div><div class="h">only new PDFs downloaded (37 skipped)</div></div>
+ <div class="kpi ai"><div class="l">Read automatically</div><div class="v">9 PDFs</div><div class="h">form, section, period, ₹ by head, due &amp; hearing dates</div></div>
+ <div class="kpi n"><div class="l">Triggered by portal emails</div><div class="v">3</div><div class="h">notice e-mail arrived → that client synced in 12 min</div></div>
+</div>
+<div class="grid"><div style="display:flex;flex-direction:column;gap:12px">
+ <div class="card"><div class="ch"><div><h3>CAPTCHA wall — 6 logins waiting</h3><div class="d">The agent holds each login open and shows every CAPTCHA here at once. Type them one after another (Tab moves on); the agent finishes the rest. CAPTCHAs are never solved by software — a firm decision, see §5.</div></div><span class="btn p">Submit all ⏎</span></div><div class="cb"><div class="cw">
+ <div class="cap"><b>Demo Textiles Pvt Ltd</b><div class="muted mono" style="font-size:10.5px">24AAAAA0001A1Z5 · session expired</div><div class="img">7Kq4mP</div><div class="in">7Kq4mP</div></div>
+ <div class="cap"><b>Omega Sample Steel</b><div class="muted" style="font-size:10.5px">24AAAAA0009A1Z8 · new client · first run</div><div class="img">x2B9rT</div><div class="in">x2B9</div></div>
+ <div class="cap"><b>Kappa Demo Polymers</b><div class="muted" style="font-size:10.5px">24AAAAA0010A1Z5 · e-mail-triggered</div><div class="img">Lm83Qd</div><div class="in e">type the 6 characters</div></div>
+ <div class="cap"><b>Gamma Test Exports</b><div class="muted" style="font-size:10.5px">24AAAAA0005A1Z6 · session expired</div><div class="img">pW5zK8</div><div class="in e">type the 6 characters</div></div>
+ <div class="cap"><b>Beta Sample Infra LLP</b><div class="muted" style="font-size:10.5px">24AAAAA0007A1Z2 · session expired</div><div class="img">3hNv7Y</div><div class="in e">type the 6 characters</div></div>
+ <div class="cap"><b>Alpha Demo Chemicals</b><div class="muted" style="font-size:10.5px">24AAAAA0008A1Z0 · session expired</div><div class="img">Rt6c2W</div><div class="in e">type the 6 characters</div></div>
+ </div><div class="note" style="margin-top:8px">Images expire after a few minutes (confirm on the portal), so the wall refreshes any that age out. Sessions are reused while still valid, so most days only a handful of GSTINs need a CAPTCHA at all.</div></div></div>
+ <div class="card"><div class="ch"><div><h3>Freshness by client</h3><div class="d">One row per GSTIN · reason class on every failure · one-click fix</div></div><div class="tabs" style="padding:3px"><span class="tab on" style="height:26px">Needs attention <span class="c">8</span></span><span class="tab" style="height:26px">All <span class="c">92</span></span></div></div><div class="cb" style="padding:0"><table><thead><tr><th>Client</th><th>Last good pull</th><th class="r">New · changed</th><th>Notices</th><th>Case folders</th><th>Refunds · DRC-03</th><th>Ledgers · status</th><th>Action</th></tr></thead><tbody>
+ <tr><td><b>Delta Demo Traders</b><div class="muted mono" style="font-size:10.5px">24AAAAA0006A1Z4</div></td><td class="num"><b style="color:var(--destructive-strong)">3 d ago</b></td><td class="num r">—</td><td colspan="4"><span class="b err">Login failed · password changed on portal (02 Oct)</span> <span class="muted">client e-mailed automatically for the new password</span></td><td><span class="btn s">Update password</span></td></tr>
+ <tr><td><b>Test Engineering Works</b><div class="muted mono" style="font-size:10.5px">33AAAAA0004A1Z8</div></td><td class="num">2 d ago</td><td class="num r">—</td><td colspan="4"><span class="b err">Portal account locked after 3 failed attempts</span> <span class="muted">unlock via "Forgot username/password" with the client's OTP</span></td><td><span class="btn s">Ask client for OTP</span></td></tr>
+ <tr><td><b>Demo Textiles Pvt Ltd</b><div class="muted mono" style="font-size:10.5px">24AAAAA0001A1Z5</div></td><td class="num">yesterday 13:04</td><td class="num r">—</td><td colspan="4"><span class="b warn">Waiting for CAPTCHA (wall)</span></td><td><span class="btn s">Open wall</span></td></tr>
+ <tr><td><b>Sample Pharma LLP</b><div class="muted mono" style="font-size:10.5px">27AAAAA0002A1Z3</div></td><td class="num">today 05:41</td><td class="num r">1 · 2</td><td><span class="b ok">✓ 61</span></td><td><span class="b ok">✓ 12</span></td><td><span class="b ok">✓ 4 · 9</span></td><td><span class="b ok">✓ · Active</span></td><td class="muted">—</td></tr>
+ <tr><td><b>Example Foods Pvt Ltd</b><div class="muted mono" style="font-size:10.5px">24AAAAA0003A1Z1</div></td><td class="num">today 05:44</td><td class="num r">2 · 3</td><td><span class="b ok">✓ 88</span></td><td><span class="b warn">1 folder retried</span></td><td><span class="b ok">✓ 0 · 3</span></td><td><span class="b ok">✓ · Active</span></td><td class="muted">—</td></tr>
+ <tr><td style="border:0"><b>Gamma Test Exports</b><div class="muted mono" style="font-size:10.5px">24AAAAA0005A1Z6</div></td><td class="num" style="border:0">today 05:47</td><td class="num r" style="border:0">0 · 1</td><td style="border:0"><span class="b ok">✓ 17</span></td><td style="border:0"><span class="b ok">✓ 5</span></td><td style="border:0"><span class="b ok">✓ 6 · 0</span></td><td style="border:0"><span class="b warn">Rule 86A block found</span></td><td style="border:0"><span class="btn s">Create notice</span></td></tr>
+ </tbody></table></div></div>
+</div><div style="display:flex;flex-direction:column;gap:12px">
+ <div class="card"><div class="ch"><div><h3>What the autopilot fetches</h3><div class="d">Per data set: on/off, how often, and what happens with documents</div></div></div><div class="cb" style="padding:0"><table class="cat"><thead><tr><th>Data set</th><th>When</th><th>Documents</th><th></th></tr></thead><tbody>
+ <tr><td><b>Notices &amp; orders</b> + GSTR-3A</td><td>2× daily</td><td>new PDFs only · text read</td><td><span class="tog"></span></td></tr>
+ <tr><td><b>Additional notices / case folders</b></td><td>2× daily</td><td>incremental attachments</td><td><span class="tog"></span></td></tr>
+ <tr><td><b>Refunds</b> (RFD) · <b>DRC-03</b></td><td>daily</td><td>new memos / SCNs / orders</td><td><span class="tog"></span></td></tr>
+ <tr><td><b>Liability ledger Part II</b> (demands)</td><td>daily</td><td>order dates → appeal clocks</td><td><span class="tog"></span></td></tr>
+ <tr><td><b>Return filing status</b> (all returns)</td><td>daily</td><td>closes GSTR-3A on filing</td><td><span class="tog"></span></td></tr>
+ <tr><td><b>Registration status</b> · Rule 86A blocks</td><td>daily</td><td>alert on suspension / block</td><td><span class="tog"></span></td></tr>
+ <tr><td><b>GSTR-2B</b> · ledgers · filed returns</td><td>monthly, 15th</td><td>feeds reply evidence</td><td><span class="tog"></span></td></tr>
+ <tr><td><b>Portal notice e-mails</b> → targeted sync</td><td>on arrival</td><td>links the e-mail to the notice</td><td><span class="tog"></span></td></tr>
+ <tr><td style="border:0"><b>E-way bill (MOV) notices</b></td><td style="border:0">—</td><td style="border:0">needs EWB API · manual for now</td><td style="border:0"><span class="tog off"></span></td></tr>
+ </tbody></table></div></div>
+ <div class="card"><div class="ch"><div><h3>Fetch a report now</h3><div class="d">Queue any data set for any set of clients; results land in the app</div></div></div><div class="cb"><div class="f">
+ <div><label>Report</label><div class="sel">Liability ledger Part II <span>▾</span></div></div><div><label>Clients</label><div class="sel">With open matters (31) <span>▾</span></div></div><div><label>Period</label><div class="sel">FY 2025-26 <span>▾</span></div></div><div><label>Format</label><div class="sel">In app + Excel <span>▾</span></div></div><span class="btn p">Queue</span></div></div></div>
+ <div class="card"><div class="ch"><h3>Today's run log</h3><span class="muted" style="font-size:11.5px">full log →</span></div><div class="cb log">
+ <div><b>05:30</b><span>Run started · 92 GSTINs · 86 sessions still valid</span></div>
+ <div><b>05:41</b><span>Sample Pharma LLP · 1 new DRC-01C · PDF read · owner auto-set (Associate Two) · alert sent</span></div>
+ <div><b>05:44</b><span>Example Foods · case folder NOTCE retry 1 of 3 succeeded · nothing deleted</span></div>
+ <div><b>06:11</b><span>Run finished · 41 min · 9 new · 14 changed · 0 rows removed by mistake (zero-row guard held for 2 clients)</span></div>
+ <div style="border:0"><b>09:52</b><span>Portal e-mail for Example Foods → targeted sync queued → done 10:04</span></div></div></div>
+</div></div></div></div></body></html>

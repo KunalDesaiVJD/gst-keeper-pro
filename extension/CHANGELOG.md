@@ -2,6 +2,96 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-06 — Toolbar popup rebuilt as a portal autopilot (v0.5.1)
+
+Phase 2 of the notices roadmap (audit findings U-110, U-111). Popup only; the sync
+itself is unchanged.
+
+- **Status first.** The popup shows the last run, clients synced in the last 24 h
+  (n of N) and failing clients with their reasons, counted exactly like the app's
+  command centre (eligible = credentials, active, not excluded; failed = login failed
+  since the last notices success, or the notices step failed).
+- **Sync notices** defaults to the stale or failed clients, with "All active clients"
+  and a searchable one-client picker; a summary line gives clients, CAPTCHAs and an
+  estimate (~2.5 min a client) before an explicit Start. It starts the same
+  `notices_bundle` job as the app's Sync now (notices & orders, then refunds, then
+  DRC-03).
+- **Running job.** "Client 4 of 11 · name · step" from the active job, a "CAPTCHA
+  waiting → Open the portal tab" prompt at login, and Stop (only while a job runs),
+  which still records the stop in the run ledger and says what was stopped.
+- **Open Notices dashboard** link; the old return-period ledger pull moved under
+  "Other syncs" with an accurate description (it does not write filing status).
+- **Errors in the popup.** If the background worker or the database does not
+  answer, an error panel (Retry, reload link, raw message) replaces the form after
+  one automatic retry, and the last known status stays visible. No alert()/confirm().
+- Version shown in the header, with a warning below the app's minimum (0.4.0).
+- `db.js`: added `startSectionPull`, `getSyncStatus`, `getLastRun` (read-only REST
+  for the popup, which now loads `config.js`).
+
+## 2026-10-06 — One pipe and a run ledger (v0.5.0) — reload on every PC
+
+Phase 1 of the notices roadmap (`docs/NOTICES_MISSION_AUDIT_AND_ROADMAP.pdf`). v0.4.x
+still syncs; the app nudges it to update.
+
+- **One ingest door.** Notices, case-folder items, refunds and DRC-03 rows are saved
+  through the database function `sync_ingest` (migration `20261006113000`) instead of
+  four REST writes: a per-client lock, server timestamps, and the guarded soft delete
+  decided in the database. Older databases fall back to the REST path.
+- **Run ledger.** Each Sync All opens a `sync_runs` row; every client and step writes a
+  `sync_run_items` row with new / changed / unchanged / removed / held counts and a
+  failure reason (`captcha_timeout`, `session_mismatch`, `timeout`, `portal_error`,
+  `stalled`, …). Company List shows the last result per client and offers "Retry
+  failed" and "Sync stale > 24 h".
+- **Faster runs.** PDFs and folder attachments already saved are not downloaded
+  again; a case's folder is read only when the case is new or still open, plus one
+  full pass per client every 7 days; challans are read for recent months with a
+  weekly full read; every portal call has a timeout.
+- **Risk-ordered queue.** Sync All starts with clients whose notices are due within
+  7 days or overdue, then never-synced, then the stalest; inactive clients are skipped.
+- **CAPTCHA watchdog.** A `chrome.alarms` watchdog notices a client that made no
+  progress for 10 minutes (an untyped CAPTCHA), records it in the ledger, shows a
+  desktop notification and moves to the next client; a run idle for 3 hours is
+  closed as abandoned. A desktop notification also asks for the CAPTCHA when one
+  is waiting.
+- **Case links kept.** A case task with the same reference as a listed notice now
+  links that notice to its case (its folder shows on the notice) instead of being
+  dropped.
+- **Fixed:** steps that read a constant declared lower in `content.js` failed with
+  "Cannot access … before initialization" — the credit reversal / re-claim pull and
+  the RCM liability pull on every run, and the refund documents step for a folder
+  without a type name. All such constants now sit at the top of the script.
+- New permissions: `alarms`, `notifications` (and an icon for the notifications).
+
+## 2026-10-06 — Safety release for notices sync (v0.4.0) — update on every PC
+
+Phase 0 of the notices roadmap (`docs/NOTICES_MISSION_AUDIT_AND_ROADMAP.pdf`). The app
+now refuses to start a notices sync from any copy older than 0.4.0.
+
+- **Nothing is marked missing after a bad pull.** A pull that returns no rows, a
+  portal error envelope (`{status: 0, error: …}`, previously read as "no notices"), a
+  failed case-task list or a failed case-folder read no longer soft-deletes the
+  client's saved notices, refunds, DRC-03 rows or folder items. A pass that would
+  remove more than half of a client's rows (and more than 5) is held back and logged
+  as `notices_guard` in the sync log instead of applied.
+- **Batches are de-duplicated** by their conflict key before upserting (a repeated
+  key made PostgREST reject the whole batch).
+- **Identity check.** Before saving anything, the notices step asks the portal whose
+  session this is (`profile/detail`); if the GSTIN differs from the client being
+  synced, nothing is saved for that client and the run moves on. If the GSTIN cannot
+  be read, the run is not blocked.
+- **Passwords leave chrome.storage.** Jobs no longer carry portal passwords; the
+  login step fetches the one password it needs at the moment it fills the form.
+- **Sweep after each client.** The notices step and the DRC-03 step call the
+  database's `notices_sweep` for that client, so case due dates and auto-closures
+  appear immediately (a nightly run covers older copies).
+- **Unscoped Sync All skips inactive clients** (`inactive_at_hand`); a hand-picked
+  selection still syncs them.
+- **The app bridge answers only the app.** It accepts messages from
+  `https://gst.vjdesai.com` and `https://gst-keeper-pro.vercel.app` only (previously
+  any `*.vercel.app` page could start portal logins, syncs or GSTR-1/3B pushes) and
+  replies to the page's own origin rather than `*`.
+- Removed the unused `fastcaptcha.org` host permission.
+
 ## 2026-09-28 — New: GSTR-9 system-computed pull for the Annual Return (v0.3.3)
 
 **What:** a new section-pull mode, `gstr9_pull`, started from Annual Return →
