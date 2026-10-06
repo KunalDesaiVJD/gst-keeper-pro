@@ -41,7 +41,7 @@ Every tile, list, report, e-mail and MIS reads the same rows: the view
 computed once, in the database, against **today in IST** (`ist_today()`). Refund
 and DRC-03 tiles read `refund_facts` / `drc03_facts`; exposure reads
 `notice_exposure`. The app loads them through `src/lib/noticeFacts.ts` /
-`useNoticeSet()`; `notices_dashboard_summary()` returns the same counts in one call.
+`src/lib/noticeQueries.ts` (reports count with the list's own filters, `components/notices/reports/noticeCounts.ts`); `notices_dashboard_summary()` returns the same counts in one call.
 
 | Flag / tile | Definition |
 |---|---|

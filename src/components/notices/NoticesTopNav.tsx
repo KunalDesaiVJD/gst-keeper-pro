@@ -82,7 +82,7 @@ export const NoticesTopNav: React.FC = () => {
         })}
         <DropdownMenu>
           <DropdownMenuTrigger className={cn(WS_TAB, 'h-8 px-3 outline-none', activeReport && WS_TAB_ACTIVE)}
-            aria-label={activeReport ? `Reports, current: ${activeReport.label}` : 'Reports'}>
+            aria-current={activeReport ? 'page' : undefined}>
             {activeReport ? `Reports · ${activeReport.label}` : 'Reports'} <ChevronDown className="h-3.5 w-3.5" aria-hidden />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">

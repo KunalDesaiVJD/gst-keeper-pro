@@ -103,7 +103,7 @@ case_id)`). Refund status tracked in `gst_refund_applications`, DRC-03 in
 view `notice_facts` (plus `refund_facts`, `drc03_facts`, `notice_exposure`), whose
 flags (`is_open`, `is_overdue`, `is_due_in_7`, `is_new`, `is_unassigned`,
 `effective_due`, `exposure_amount` once per dispute) are computed in the DB against
-today IST. Load through `src/lib/noticeFacts.ts` / `useNoticeSet()`; don't re-derive
+today IST. Load through `src/lib/noticeFacts.ts` / `src/lib/noticeQueries.ts`; don't re-derive
 flags in the browser (`src/utils/noticeDefinitions.ts` only reads them, with a
 fallback for an old DB). Staff writes go through `src/lib/noticeWrites.ts` (stamps
 `edited_by_*`, which the event triggers attribute).

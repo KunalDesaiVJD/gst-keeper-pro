@@ -142,7 +142,7 @@ const AllClientsNoticesPage: React.FC = () => {
           {params.filter === 'exposure' && (
             <p className="text-xs text-muted-foreground">
               Each open dispute is counted once (its latest notice carries the demand). The dashboard's exposure also adds open
-              matters' outstanding — <Link to="/litigation" className="text-primary hover:underline">see Matters</Link>.
+              matters' outstanding — <Link to="/litigation" className="text-primary underline underline-offset-2">see Matters</Link>.
             </p>
           )}
           <Pager page={params.page} pageSize={PAGE_SIZE} total={total} onPage={(p) => update({ page: p })} />
