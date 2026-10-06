@@ -48,3 +48,8 @@
 20261007121000_portal_emails.sql
 20261007122000_portal_coverage.sql
 20261007123000_autopilot_status.sql
+20261008100000_reply_reading.sql
+20261008110000_reply_ai_reader.sql
+20261008120000_reply_evidence.sql
+20261008130000_reply_documents.sql
+20261008140000_reply_status.sql

@@ -39,6 +39,113 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_audit_log: {
+        Row: {
+          agent_id: string | null
+          at: string
+          client_id: string | null
+          cost_usd: number | null
+          document_sha256: string | null
+          duration_ms: number | null
+          error: string | null
+          extraction_id: string | null
+          id: number
+          input_tokens: number | null
+          model: string | null
+          notice_id: string | null
+          output_tokens: number | null
+          purpose: string
+          request_id: string | null
+          requested_by_name: string | null
+          status: string
+        }
+        Insert: {
+          agent_id?: string | null
+          at?: string
+          client_id?: string | null
+          cost_usd?: number | null
+          document_sha256?: string | null
+          duration_ms?: number | null
+          error?: string | null
+          extraction_id?: string | null
+          id?: number
+          input_tokens?: number | null
+          model?: string | null
+          notice_id?: string | null
+          output_tokens?: number | null
+          purpose: string
+          request_id?: string | null
+          requested_by_name?: string | null
+          status: string
+        }
+        Update: {
+          agent_id?: string | null
+          at?: string
+          client_id?: string | null
+          cost_usd?: number | null
+          document_sha256?: string | null
+          duration_ms?: number | null
+          error?: string | null
+          extraction_id?: string | null
+          id?: number
+          input_tokens?: number | null
+          model?: string | null
+          notice_id?: string | null
+          output_tokens?: number | null
+          purpose?: string
+          request_id?: string | null
+          requested_by_name?: string | null
+          status?: string
+        }
+        Relationships: [
+        ]
+      }
+      ai_settings: {
+        Row: {
+          auto_read_new: boolean
+          daily_cap_usd: number
+          effort: string
+          id: boolean
+          max_pages: number
+          model: string
+          price_in_per_mtok: number
+          price_out_per_mtok: number
+          read_enabled: boolean
+          updated_at: string
+          updated_by_name: string | null
+          usd_inr: number
+        }
+        Insert: {
+          auto_read_new?: boolean
+          daily_cap_usd?: number
+          effort?: string
+          id?: boolean
+          max_pages?: number
+          model?: string
+          price_in_per_mtok?: number
+          price_out_per_mtok?: number
+          read_enabled?: boolean
+          updated_at?: string
+          updated_by_name?: string | null
+          usd_inr?: number
+        }
+        Update: {
+          auto_read_new?: boolean
+          daily_cap_usd?: number
+          effort?: string
+          id?: boolean
+          max_pages?: number
+          model?: string
+          price_in_per_mtok?: number
+          price_out_per_mtok?: number
+          read_enabled?: boolean
+          updated_at?: string
+          updated_by_name?: string | null
+          usd_inr?: number
+        }
+        Relationships: [
+        ]
+      }
       autopilot_presence: {
         Row: {
           last_seen: string
@@ -4042,6 +4149,9 @@ export type Database = {
           target_date_group1: number | null
           target_date_group2: number | null
           updated_at: string | null
+          ai_consent_at: string | null
+          ai_consent_note: string | null
+          ai_opt_out: boolean
         }
         Insert: {
           assigned_accountant?: string | null
@@ -4073,6 +4183,9 @@ export type Database = {
           target_date_group1?: number | null
           target_date_group2?: number | null
           updated_at?: string | null
+          ai_consent_at?: string | null
+          ai_consent_note?: string | null
+          ai_opt_out?: boolean
         }
         Update: {
           assigned_accountant?: string | null
@@ -4104,6 +4217,9 @@ export type Database = {
           target_date_group1?: number | null
           target_date_group2?: number | null
           updated_at?: string | null
+          ai_consent_at?: string | null
+          ai_consent_note?: string | null
+          ai_opt_out?: boolean
         }
         Relationships: []
       }
@@ -5100,6 +5216,13 @@ export type Database = {
           stage_changed_by: string | null
           hearing_note: string | null
           portal_detail: Json | null
+          section_of_law: string | null
+          period_from: string | null
+          period_to: string | null
+          din: string | null
+          demand: Json | null
+          demand_total: number | null
+          read_fields: Json
         }
         Insert: {
           amount_of_demand?: number | null
@@ -5150,6 +5273,13 @@ export type Database = {
           stage_changed_by?: string | null
           hearing_note?: string | null
           portal_detail?: Json | null
+          section_of_law?: string | null
+          period_from?: string | null
+          period_to?: string | null
+          din?: string | null
+          demand?: Json | null
+          demand_total?: number | null
+          read_fields?: Json
         }
         Update: {
           amount_of_demand?: number | null
@@ -5200,6 +5330,13 @@ export type Database = {
           stage_changed_by?: string | null
           hearing_note?: string | null
           portal_detail?: Json | null
+          section_of_law?: string | null
+          period_from?: string | null
+          period_to?: string | null
+          din?: string | null
+          demand?: Json | null
+          demand_total?: number | null
+          read_fields?: Json
         }
         Relationships: [
           {
@@ -7042,6 +7179,110 @@ export type Database = {
         }
         Relationships: []
       }
+      notice_extractions: {
+        Row: {
+          agent_id: string | null
+          attempts: number
+          checks: Json | null
+          claimed_at: string | null
+          client_id: string
+          created_at: string
+          detail: Json | null
+          document_label: string | null
+          document_sha256: string | null
+          document_url: string | null
+          error: string | null
+          fields: Json | null
+          finished_at: string | null
+          id: string
+          issues: Json | null
+          model: string | null
+          not_before: string | null
+          notice_id: string
+          outcome: string | null
+          pages: number | null
+          priority: number
+          reason_class: string | null
+          requested_by: string | null
+          requested_by_name: string | null
+          source: string
+          status: string
+          text_layer: boolean | null
+          updated_at: string
+          usage: Json | null
+        }
+        Insert: {
+          agent_id?: string | null
+          attempts?: number
+          checks?: Json | null
+          claimed_at?: string | null
+          client_id: string
+          created_at?: string
+          detail?: Json | null
+          document_label?: string | null
+          document_sha256?: string | null
+          document_url?: string | null
+          error?: string | null
+          fields?: Json | null
+          finished_at?: string | null
+          id?: string
+          issues?: Json | null
+          model?: string | null
+          not_before?: string | null
+          notice_id: string
+          outcome?: string | null
+          pages?: number | null
+          priority?: number
+          reason_class?: string | null
+          requested_by?: string | null
+          requested_by_name?: string | null
+          source: string
+          status?: string
+          text_layer?: boolean | null
+          updated_at?: string
+          usage?: Json | null
+        }
+        Update: {
+          agent_id?: string | null
+          attempts?: number
+          checks?: Json | null
+          claimed_at?: string | null
+          client_id?: string
+          created_at?: string
+          detail?: Json | null
+          document_label?: string | null
+          document_sha256?: string | null
+          document_url?: string | null
+          error?: string | null
+          fields?: Json | null
+          finished_at?: string | null
+          id?: string
+          issues?: Json | null
+          model?: string | null
+          not_before?: string | null
+          notice_id?: string
+          outcome?: string | null
+          pages?: number | null
+          priority?: number
+          reason_class?: string | null
+          requested_by?: string | null
+          requested_by_name?: string | null
+          source?: string
+          status?: string
+          text_layer?: boolean | null
+          updated_at?: string
+          usage?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notice_extractions_notice_id_fkey"
+            columns: ["notice_id"]
+            isOneToOne: false
+            referencedRelation: "gst_notices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       password_reset_requests: {
         Row: {
           id: string
@@ -7907,6 +8148,145 @@ export type Database = {
           },
         ]
       }
+      reply_annexures: {
+        Row: {
+          client_id: string
+          explained_amount: number | null
+          financial_year: string | null
+          generated_at: string
+          generated_by_name: string | null
+          id: string
+          inputs_hash: string | null
+          is_current: boolean
+          issue_id: string | null
+          note: string | null
+          notice_id: string
+          periods: string[]
+          readiness: Json | null
+          recipe_key: string
+          status: string
+          summary: Json | null
+          tables: Json | null
+          title: string | null
+          to_pay_amount: number | null
+          version: number
+        }
+        Insert: {
+          client_id: string
+          explained_amount?: number | null
+          financial_year?: string | null
+          generated_at?: string
+          generated_by_name?: string | null
+          id?: string
+          inputs_hash?: string | null
+          is_current?: boolean
+          issue_id?: string | null
+          note?: string | null
+          notice_id: string
+          periods?: string[]
+          readiness?: Json | null
+          recipe_key: string
+          status: string
+          summary?: Json | null
+          tables?: Json | null
+          title?: string | null
+          to_pay_amount?: number | null
+          version: number
+        }
+        Update: {
+          client_id?: string
+          explained_amount?: number | null
+          financial_year?: string | null
+          generated_at?: string
+          generated_by_name?: string | null
+          id?: string
+          inputs_hash?: string | null
+          is_current?: boolean
+          issue_id?: string | null
+          note?: string | null
+          notice_id?: string
+          periods?: string[]
+          readiness?: Json | null
+          recipe_key?: string
+          status?: string
+          summary?: Json | null
+          tables?: Json | null
+          title?: string | null
+          to_pay_amount?: number | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reply_annexures_issue_id_fkey"
+            columns: ["issue_id"]
+            isOneToOne: false
+            referencedRelation: "notice_issues"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reply_annexures_notice_id_fkey"
+            columns: ["notice_id"]
+            isOneToOne: false
+            referencedRelation: "gst_notices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reply_issue_types: {
+        Row: {
+          approved_at: string | null
+          approved_by_name: string | null
+          code: string
+          description: string | null
+          documents: string[]
+          family: string
+          firm_position: string | null
+          forms: string[]
+          is_active: boolean
+          position_status: string
+          recipe_key: string | null
+          sort: number
+          title: string
+          updated_at: string
+          updated_by_name: string | null
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by_name?: string | null
+          code: string
+          description?: string | null
+          documents?: string[]
+          family: string
+          firm_position?: string | null
+          forms?: string[]
+          is_active?: boolean
+          position_status?: string
+          recipe_key?: string | null
+          sort?: number
+          title: string
+          updated_at?: string
+          updated_by_name?: string | null
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by_name?: string | null
+          code?: string
+          description?: string | null
+          documents?: string[]
+          family?: string
+          firm_position?: string | null
+          forms?: string[]
+          is_active?: boolean
+          position_status?: string
+          recipe_key?: string | null
+          sort?: number
+          title?: string
+          updated_at?: string
+          updated_by_name?: string | null
+        }
+        Relationships: [
+        ]
+      }
       return_reminder_schedules: {
         Row: {
           due_day: number
@@ -8537,6 +8917,17 @@ export type Database = {
           title: string
           updated_at: string
           updated_by_name: string | null
+          issue_code: string | null
+          period_from: string | null
+          period_to: string | null
+          demand: Json | null
+          page: number | null
+          quote: string | null
+          verified: boolean
+          verified_by_name: string | null
+          verified_at: string | null
+          extraction_id: string | null
+          explained_by: string | null
         }
         Insert: {
           amount?: number
@@ -8555,6 +8946,17 @@ export type Database = {
           title: string
           updated_at?: string
           updated_by_name?: string | null
+          issue_code?: string | null
+          period_from?: string | null
+          period_to?: string | null
+          demand?: Json | null
+          page?: number | null
+          quote?: string | null
+          verified?: boolean
+          verified_by_name?: string | null
+          verified_at?: string | null
+          extraction_id?: string | null
+          explained_by?: string | null
         }
         Update: {
           amount?: number
@@ -8573,6 +8975,17 @@ export type Database = {
           title?: string
           updated_at?: string
           updated_by_name?: string | null
+          issue_code?: string | null
+          period_from?: string | null
+          period_to?: string | null
+          demand?: Json | null
+          page?: number | null
+          quote?: string | null
+          verified?: boolean
+          verified_by_name?: string | null
+          verified_at?: string | null
+          extraction_id?: string | null
+          explained_by?: string | null
         }
         Relationships: []
       }
@@ -8642,6 +9055,10 @@ export type Database = {
           resolved_by_name: string | null
           status: string
           updated_at: string
+          issue_id: string | null
+          source: string
+          client_uploaded_at: string | null
+          client_note: string | null
         }
         Insert: {
           created_at?: string
@@ -8660,6 +9077,10 @@ export type Database = {
           resolved_by_name?: string | null
           status?: string
           updated_at?: string
+          issue_id?: string | null
+          source?: string
+          client_uploaded_at?: string | null
+          client_note?: string | null
         }
         Update: {
           created_at?: string
@@ -8678,6 +9099,10 @@ export type Database = {
           resolved_by_name?: string | null
           status?: string
           updated_at?: string
+          issue_id?: string | null
+          source?: string
+          client_uploaded_at?: string | null
+          client_note?: string | null
         }
         Relationships: []
       }
@@ -9152,6 +9577,96 @@ export type Database = {
       }
     }
     Functions: {
+      reply_factory_status: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      client_doc_request_upload: {
+        Args: { p_client_id: string; p_client_name?: string | null; p_document_id: string; p_note?: string | null; p_request_id: string }
+        Returns: string
+      }
+      client_doc_requests: {
+        Args: { p_client_id: string }
+        Returns: {
+          client_uploaded_at: string | null
+          document_id: string | null
+          due_date: string | null
+          issue_title: string | null
+          item: string
+          notice_id: string
+          notice_label: string | null
+          reference_number: string | null
+          request_id: string
+          requested_at: string
+          resolved_at: string | null
+          status: string
+        }[]
+      }
+      notice_doc_due_default: {
+        Args: { p_notice_id: string }
+        Returns: string
+      }
+      notice_doc_requests_generate: {
+        Args: { p_actor_id?: string | null; p_actor_name?: string | null; p_due_date?: string | null; p_notice_id: string }
+        Returns: Json
+      }
+      reply_annexure_save: {
+        Args: {
+          p_actor_name?: string | null
+          p_explained?: number | null
+          p_financial_year: string | null
+          p_inputs_hash: string | null
+          p_issue_id: string | null
+          p_notice_id: string
+          p_periods: string[]
+          p_readiness: Json
+          p_recipe_key: string
+          p_status: string
+          p_summary: Json
+          p_tables: Json
+          p_title: string | null
+          p_to_pay?: number | null
+        }
+        Returns: Json
+      }
+      ai_read_status: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      ai_set_consent: {
+        Args: { p_client_ids: string[]; p_consent_at: string | null; p_note?: string | null; p_opt_out?: boolean | null }
+        Returns: number
+      }
+      notice_read_request: {
+        Args: { p_actor_id?: string | null; p_actor_name?: string | null; p_notice_id: string; p_priority?: number | null }
+        Returns: Json
+      }
+      notice_due_coverage: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          due_on: string | null
+          form_code: string | null
+          kind: string
+          notice_id: string
+          source: string | null
+        }[]
+      }
+      notice_issue_verify: {
+        Args: { p_actor_name?: string | null; p_issue_id: string }
+        Returns: boolean
+      }
+      notice_read_verify: {
+        Args: { p_action: string; p_actor_name?: string | null; p_field: string; p_notice_id: string }
+        Returns: string
+      }
+      notice_read_form: {
+        Args: { p_notice_id: string }
+        Returns: boolean
+      }
+      notice_read_portal: {
+        Args: { p_notice_id: string }
+        Returns: Json
+      }
       autopilot_ask_client: {
         Args: { p_actor_name?: string | null; p_client_id: string; p_kind: string }
         Returns: Json
