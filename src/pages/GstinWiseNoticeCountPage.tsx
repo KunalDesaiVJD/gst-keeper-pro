@@ -1,15 +1,17 @@
 // GstinWiseNoticeCountPage — the destination behind Report > GSTIN Wise
-// Notice Count (see NoticesTopNav). Confirmed live against Notice Alert
-// (2026-08-26): same Total/Open/Closed/Replied breakdown as their Notice
-// Summary page, just grouped by company instead of by category — and its
-// grand total matches Notice Summary's grand total exactly (both fold in
-// Refund/DRC-03 alongside gst_notices), so this groups all three sources the
-// same way computeNoticeSummary already does per-category.
+// Notice Count (see NoticesTopNav). Same Total/Open/Closed/Replied breakdown
+// as the Notice Summary, grouped by company: each client's row is
+// computeNoticeSummary over that client's canonical set (notices, plus the
+// de-duplicated refund and DRC-03 sets), so the grand total here equals the
+// Notice Summary's, and each number opens the Merged list for that client
+// (same rows). Exposure is the client's open disputes, each counted once,
+// plus its open matters' outstanding demand (public.notice_exposure).
 import React, { useEffect, useMemo, useState } from 'react';
 import { Navigate, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useNoticeSet } from '@/hooks/useNoticeSet';
+import { computeNoticeSummary } from '@/utils/noticeSummaryReport';
 import { NoticesTopNav } from '@/components/notices/NoticesTopNav';
 import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
 import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
@@ -19,7 +21,6 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { isClosed, isRefundClosed, isDrc03Closed } from '@/utils/noticeSummaryReport';
 import { isRegistrationRelated as isRegistrationDescription } from '@/utils/noticeCategoryClassifier';
 import { renderReportToExcel, type ReportTable } from '@/utils/allClientsReports';
 import { Building2, Loader2, FileSpreadsheet, Search } from 'lucide-react';
@@ -40,97 +41,84 @@ interface GstinCountRow {
   exposure: number;
 }
 
-interface MatterAgg { client_id: string; count: number; demand: number; }
 
 const GstinWiseNoticeCountPage: React.FC = () => {
   const { isStaffRole } = useAuth();
   const navigate = useNavigate();
-  const { rows: notices, refundRows: refunds, drc03Rows: drc03s, loading } = useNoticeSet();
+  const { rows: notices, refundRows: refunds, drc03Rows: drc03s, matterExposure, loading } = useNoticeSet();
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [clientsLoading, setClientsLoading] = useState(true);
-  const [matterAggs, setMatterAggs] = useState<MatterAgg[]>([]);
   const [typeFilter, setTypeFilter] = useState<TypeOfNoticesFilter>('all');
   const [search, setSearch] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [{ data: cData }, { data: mData }] = await Promise.all([
-        supabase.from('clients').select('id, name, gstin').order('name'),
-        supabase.from('litigation_matters').select('client_id, status, demand_tax, demand_interest, demand_penalty, demand_cess'),
-      ]);
+      const { data: cData } = await supabase.from('clients').select('id, name, gstin').order('name');
       if (cancelled) return;
       setClients((cData || []) as ClientRow[]);
-      const agg = new Map<string, MatterAgg>();
-      ((mData || []) as any[]).filter(m => m.status !== 'Closed').forEach(m => {
-        if (!agg.has(m.client_id)) agg.set(m.client_id, { client_id: m.client_id, count: 0, demand: 0 });
-        const e = agg.get(m.client_id)!;
-        e.count += 1;
-        e.demand += (m.demand_tax ?? 0) + (m.demand_interest ?? 0) + (m.demand_penalty ?? 0) + (m.demand_cess ?? 0);
-      });
-      setMatterAggs([...agg.values()]);
       setClientsLoading(false);
     })();
     return () => { cancelled = true; };
   }, []);
 
-  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
-
-  const filteredNotices = notices.filter((r) => {
-    if (typeFilter === 'registration') return isRegistrationDescription(r.description);
-    if (typeFilter === 'other') return !isRegistrationDescription(r.description);
-    return true;
-  });
-
-  const matterMap = useMemo(() => {
-    const m = new Map<string, MatterAgg>();
-    matterAggs.forEach(a => m.set(a.client_id, a));
-    return m;
-  }, [matterAggs]);
-
   const countsByClient = useMemo(() => {
-    const m = new Map<string, GstinCountRow>();
-    const ensure = (clientId: string) => {
-      let e = m.get(clientId);
-      if (!e) {
-        const c = clients.find((c) => c.id === clientId);
-        const ma = matterMap.get(clientId);
-        e = { clientId, gstin: c?.gstin || '—', name: c?.name || '—', total: 0, open: 0, closed: 0, replied: 0, matterCount: ma?.count ?? 0, exposure: ma?.demand ?? 0 };
-        m.set(clientId, e);
-      }
-      return e;
+    const clientById = new Map(clients.map((c) => [c.id, c]));
+    const group = <T extends { client_id: string | null }>(list: T[]) => {
+      const m = new Map<string, T[]>();
+      list.forEach((r) => {
+        if (!r.client_id) return;
+        const arr = m.get(r.client_id);
+        if (arr) arr.push(r); else m.set(r.client_id, [r]);
+      });
+      return m;
     };
-    filteredNotices.forEach((r) => {
-      const e = ensure(r.client_id);
-      e.total += 1;
-      if (isClosed(r.staff_status)) e.closed += 1; else e.open += 1;
-      if (r.reply_date) e.replied += 1;
+    const filteredNotices = notices.filter((r) => {
+      if (typeFilter === 'registration') return isRegistrationDescription(r.description);
+      if (typeFilter === 'other') return !isRegistrationDescription(r.description);
+      return true;
     });
-    if (typeFilter === 'all') {
-      refunds.forEach((r) => {
-        if (!r.client_id) return;
-        const e = ensure(r.client_id);
-        e.total += 1;
-        if (isRefundClosed(r.status)) e.closed += 1; else e.open += 1;
+    const noticesBy = group(filteredNotices);
+    // Refund and DRC-03 sets only belong to the unfiltered view (as on the Notice Summary).
+    const refundsBy = typeFilter === 'all' ? group(refunds) : new Map<string, typeof refunds>();
+    const drc03By = typeFilter === 'all' ? group(drc03s) : new Map<string, typeof drc03s>();
+    const ids = new Set<string>([...noticesBy.keys(), ...refundsBy.keys(), ...drc03By.keys(), ...matterExposure.keys()]);
+    const out: GstinCountRow[] = [];
+    ids.forEach((clientId) => {
+      const { grandTotal } = computeNoticeSummary(noticesBy.get(clientId) ?? [], refundsBy.get(clientId) ?? [], drc03By.get(clientId) ?? []);
+      const c = clientById.get(clientId);
+      const firstNotice = noticesBy.get(clientId)?.[0];
+      const matters = matterExposure.get(clientId);
+      const noticeExposure = (noticesBy.get(clientId) ?? []).reduce((sum, r) => sum + (Number(r.exposure_amount) || 0), 0);
+      out.push({
+        clientId,
+        gstin: c?.gstin || firstNotice?.client_gstin || '—',
+        name: c?.name || firstNotice?.client_name || '—',
+        total: grandTotal.total, open: grandTotal.open, closed: grandTotal.closed, replied: grandTotal.replied,
+        matterCount: matters?.matters ?? 0,
+        exposure: noticeExposure + (typeFilter === 'all' ? matters?.amount ?? 0 : 0),
       });
-      drc03s.forEach((r) => {
-        if (!r.client_id) return;
-        const e = ensure(r.client_id);
-        e.total += 1;
-        if (isDrc03Closed(r.status)) e.closed += 1; else e.open += 1;
-      });
-    }
-    for (const [cid, ma] of matterMap) {
-      if (!m.has(cid)) ensure(cid);
-    }
-    return Array.from(m.values()).sort((a, b) => b.total - a.total);
-  }, [filteredNotices, refunds, drc03s, clients, typeFilter, matterMap]);
+    });
+    return out.sort((a, b) => b.total - a.total);
+  }, [notices, refunds, drc03s, clients, typeFilter, matterExposure]);
 
   const filteredCounts = countsByClient.filter((r) => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
     return r.gstin.toLowerCase().includes(q) || r.name.toLowerCase().includes(q);
   });
+
+  // After every hook (Rules of Hooks).
+  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
+
+  // Totals include refunds and DRC-03, so they open the Merged list (every
+  // source, each case once); a Type filter narrows to notices only.
+  const listHref = (clientId: string, status?: 'Open' | 'Closed') => {
+    const q = new URLSearchParams({ client: clientId });
+    if (typeFilter === 'all') q.set('tab', 'merged'); else q.set('type', typeFilter);
+    if (status) q.set('status', status);
+    return `/notices-all?${q.toString()}`;
+  };
 
   const fmtINR = (n: number) => n > 0 ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n) : '—';
 
@@ -234,23 +222,28 @@ const GstinWiseNoticeCountPage: React.FC = () => {
                       <TableCell className="max-w-[240px] truncate text-xs" title={r.name}>{r.name}</TableCell>
                       <TableCell
                         className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
-                        onClick={() => navigate(`/notices-all?client=${r.clientId}`)}
+                        onClick={() => navigate(listHref(r.clientId))}
                       >
                         {r.total}
                       </TableCell>
                       <TableCell
                         className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
-                        onClick={() => navigate(`/notices-all?client=${r.clientId}&status=Open`)}
+                        onClick={() => navigate(listHref(r.clientId, 'Open'))}
                       >
                         {r.open || '—'}
                       </TableCell>
                       <TableCell
                         className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
-                        onClick={() => navigate(`/notices-all?client=${r.clientId}&status=Closed`)}
+                        onClick={() => navigate(listHref(r.clientId, 'Closed'))}
                       >
                         {r.closed || '—'}
                       </TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">{r.replied || '—'}</TableCell>
+                      <TableCell
+                        className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
+                        onClick={() => r.replied > 0 ? navigate(`/notices-all?client=${r.clientId}&filter=replied${typeFilter === 'all' ? '' : `&type=${typeFilter}`}`) : undefined}
+                      >
+                        {r.replied || '—'}
+                      </TableCell>
                       <TableCell
                         className="cursor-pointer text-right text-xs tabular-nums text-primary underline-offset-2 hover:underline"
                         onClick={() => r.matterCount > 0 ? navigate(`/litigation?client=${r.clientId}`) : undefined}

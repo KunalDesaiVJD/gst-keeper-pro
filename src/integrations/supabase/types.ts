@@ -4316,6 +4316,7 @@ export type Database = {
           pulled_at: string
           raw_json: Json | null
           reference_number: string | null
+          portal_hash: string | null
         }
         Insert: {
           attachments?: Json
@@ -4330,6 +4331,7 @@ export type Database = {
           pulled_at?: string
           raw_json?: Json | null
           reference_number?: string | null
+          portal_hash?: string | null
         }
         Update: {
           attachments?: Json
@@ -4344,6 +4346,7 @@ export type Database = {
           pulled_at?: string
           raw_json?: Json | null
           reference_number?: string | null
+          portal_hash?: string | null
         }
         Relationships: [
           {
@@ -4646,6 +4649,7 @@ export type Database = {
           status: string | null
           taxable_value: number | null
           updated_at: string
+          portal_hash: string | null
         }
         Insert: {
           arn?: string | null
@@ -4677,6 +4681,7 @@ export type Database = {
           status?: string | null
           taxable_value?: number | null
           updated_at?: string
+          portal_hash?: string | null
         }
         Update: {
           arn?: string | null
@@ -4708,6 +4713,7 @@ export type Database = {
           status?: string | null
           taxable_value?: number | null
           updated_at?: string
+          portal_hash?: string | null
         }
         Relationships: [
           {
@@ -4867,6 +4873,12 @@ export type Database = {
           submission_arn: string | null
           submission_date: string | null
           updated_at: string
+          form_code: string | null
+          edited_by_id: string | null
+          edited_by_name: string | null
+          edited_at: string | null
+          due_date_source: string | null
+          portal_hash: string | null
         }
         Insert: {
           amount_of_demand?: number | null
@@ -4906,6 +4918,12 @@ export type Database = {
           submission_arn?: string | null
           submission_date?: string | null
           updated_at?: string
+          form_code?: string | null
+          edited_by_id?: string | null
+          edited_by_name?: string | null
+          edited_at?: string | null
+          due_date_source?: string | null
+          portal_hash?: string | null
         }
         Update: {
           amount_of_demand?: number | null
@@ -4945,6 +4963,12 @@ export type Database = {
           submission_arn?: string | null
           submission_date?: string | null
           updated_at?: string
+          form_code?: string | null
+          edited_by_id?: string | null
+          edited_by_name?: string | null
+          edited_at?: string | null
+          due_date_source?: string | null
+          portal_hash?: string | null
         }
         Relationships: [
           {
@@ -5160,6 +5184,7 @@ export type Database = {
           source_ledger: string | null
           status: string | null
           updated_at: string
+          portal_hash: string | null
         }
         Insert: {
           arn?: string | null
@@ -5180,6 +5205,7 @@ export type Database = {
           source_ledger?: string | null
           status?: string | null
           updated_at?: string
+          portal_hash?: string | null
         }
         Update: {
           arn?: string | null
@@ -5200,6 +5226,7 @@ export type Database = {
           source_ledger?: string | null
           status?: string | null
           updated_at?: string
+          portal_hash?: string | null
         }
         Relationships: [
           {
@@ -6265,6 +6292,10 @@ export type Database = {
           notes: string | null
           created_at: string
           updated_at: string
+          computed_date: string | null
+          base_date: string | null
+          period_key: string | null
+          period_confirmed: boolean
         }
         Insert: {
           id?: string
@@ -6280,6 +6311,10 @@ export type Database = {
           notes?: string | null
           created_at?: string
           updated_at?: string
+          computed_date?: string | null
+          base_date?: string | null
+          period_key?: string | null
+          period_confirmed?: boolean
         }
         Update: {
           id?: string
@@ -6295,6 +6330,10 @@ export type Database = {
           notes?: string | null
           created_at?: string
           updated_at?: string
+          computed_date?: string | null
+          base_date?: string | null
+          period_key?: string | null
+          period_confirmed?: boolean
         }
         Relationships: []
       }
@@ -6597,6 +6636,8 @@ export type Database = {
           effective_from: string | null
           note: string | null
           created_at: string
+          confirmed_at: string | null
+          confirmed_by: string | null
         }
         Insert: {
           key: string
@@ -6605,6 +6646,8 @@ export type Database = {
           effective_from?: string | null
           note?: string | null
           created_at?: string
+          confirmed_at?: string | null
+          confirmed_by?: string | null
         }
         Update: {
           key?: string
@@ -6613,6 +6656,8 @@ export type Database = {
           effective_from?: string | null
           note?: string | null
           created_at?: string
+          confirmed_at?: string | null
+          confirmed_by?: string | null
         }
         Relationships: []
       }
@@ -6723,6 +6768,8 @@ export type Database = {
           actor_id: string | null
           actor_name: string | null
           created_at: string
+          source: string | null
+          alert_processed_at: string | null
         }
         Insert: {
           id?: string
@@ -6734,6 +6781,8 @@ export type Database = {
           actor_id?: string | null
           actor_name?: string | null
           created_at?: string
+          source?: string | null
+          alert_processed_at?: string | null
         }
         Update: {
           id?: string
@@ -6745,6 +6794,8 @@ export type Database = {
           actor_id?: string | null
           actor_name?: string | null
           created_at?: string
+          source?: string | null
+          alert_processed_at?: string | null
         }
         Relationships: []
       }
@@ -7875,8 +7926,328 @@ export type Database = {
         }
         Relationships: []
       }
+      notice_form_rules: {
+        Row: {
+          appeal_section: string | null
+          category: string | null
+          clock_basis: string | null
+          confirmed_at: string | null
+          confirmed_by: string | null
+          default_priority: string | null
+          form_code: string
+          is_active: boolean
+          label: string
+          match_order: number
+          note: string | null
+          pattern: string
+          reply_day_kind: string
+          reply_days: number | null
+          updated_at: string
+        }
+        Insert: {
+          appeal_section?: string | null
+          category?: string | null
+          clock_basis?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          default_priority?: string | null
+          form_code: string
+          is_active?: boolean
+          label: string
+          match_order: number
+          note?: string | null
+          pattern: string
+          reply_day_kind?: string
+          reply_days?: number | null
+          updated_at?: string
+        }
+        Update: {
+          appeal_section?: string | null
+          category?: string | null
+          clock_basis?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          default_priority?: string | null
+          form_code?: string
+          is_active?: boolean
+          label?: string
+          match_order?: number
+          note?: string | null
+          pattern?: string
+          reply_day_kind?: string
+          reply_days?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      notice_settings: {
+        Row: {
+          alerts_mode: string
+          alerts_mode_changed_at: string
+          app_base_url: string
+          computed_clock_from: string
+          id: boolean
+          new_notice_max_age_days: number
+          quiet_end: string
+          quiet_start: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          alerts_mode?: string
+          alerts_mode_changed_at?: string
+          app_base_url?: string
+          computed_clock_from?: string
+          id?: boolean
+          new_notice_max_age_days?: number
+          quiet_end?: string
+          quiet_start?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          alerts_mode?: string
+          alerts_mode_changed_at?: string
+          app_base_url?: string
+          computed_clock_from?: string
+          id?: boolean
+          new_notice_max_age_days?: number
+          quiet_end?: string
+          quiet_start?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      sync_runs: {
+        Row: {
+          clients_done: number
+          clients_total: number | null
+          ext_version: string | null
+          finished_at: string | null
+          id: string
+          machine: string | null
+          mode: string | null
+          note: string | null
+          started_at: string
+          status: string
+        }
+        Insert: {
+          clients_done?: number
+          clients_total?: number | null
+          ext_version?: string | null
+          finished_at?: string | null
+          id?: string
+          machine?: string | null
+          mode?: string | null
+          note?: string | null
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          clients_done?: number
+          clients_total?: number | null
+          ext_version?: string | null
+          finished_at?: string | null
+          id?: string
+          machine?: string | null
+          mode?: string | null
+          note?: string | null
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      sync_run_items: {
+        Row: {
+          alert_processed_at: string | null
+          client_id: string
+          created_at: string
+          ext_version: string | null
+          id: string
+          message: string | null
+          reason_class: string | null
+          rows_changed: number
+          rows_held: number
+          rows_new: number
+          rows_removed: number
+          rows_seen: number
+          rows_unchanged: number
+          run_id: string | null
+          scope: string | null
+          status: string
+          step: string
+        }
+        Insert: {
+          alert_processed_at?: string | null
+          client_id: string
+          created_at?: string
+          ext_version?: string | null
+          id?: string
+          message?: string | null
+          reason_class?: string | null
+          rows_changed?: number
+          rows_held?: number
+          rows_new?: number
+          rows_removed?: number
+          rows_seen?: number
+          rows_unchanged?: number
+          run_id?: string | null
+          scope?: string | null
+          status: string
+          step: string
+        }
+        Update: {
+          alert_processed_at?: string | null
+          client_id?: string
+          created_at?: string
+          ext_version?: string | null
+          id?: string
+          message?: string | null
+          reason_class?: string | null
+          rows_changed?: number
+          rows_held?: number
+          rows_new?: number
+          rows_removed?: number
+          rows_seen?: number
+          rows_unchanged?: number
+          run_id?: string | null
+          scope?: string | null
+          status?: string
+          step?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
+      notice_facts: {
+        Row: {
+          amount_of_demand: number | null
+          assign_to: string | null
+          assign_to_user_id: string | null
+          case_id: string | null
+          category: string | null
+          client_gstin: string | null
+          client_id: string | null
+          client_inactive: boolean | null
+          client_name: string | null
+          close_reason: string | null
+          created_at: string | null
+          days_to_due: number | null
+          default_priority: string | null
+          description: string | null
+          dispute_key: string | null
+          due_basis: string | null
+          due_basis_note: string | null
+          due_date: string | null
+          effective_due: string | null
+          effective_priority: string | null
+          exposure_amount: number | null
+          extended_due_date: string | null
+          financial_year: string | null
+          first_seen_at: string | null
+          form_code: string | null
+          form_label: string | null
+          hearing_date: string | null
+          id: string | null
+          is_drc03_case: boolean | null
+          is_due_in_7: boolean | null
+          is_new: boolean | null
+          is_open: boolean | null
+          is_overdue: boolean | null
+          is_refund_case: boolean | null
+          is_replied: boolean | null
+          is_unassigned: boolean | null
+          issue_date: string | null
+          issued_by: string | null
+          last_seen_at: string | null
+          matter_id: string | null
+          notice_type: string | null
+          order_date: string | null
+          order_number: string | null
+          pdf_url: string | null
+          portal_key: string | null
+          portal_status: string | null
+          priority: string | null
+          pulled_at: string | null
+          reference_number: string | null
+          remarks: string | null
+          reply_date: string | null
+          reply_ref_number: string | null
+          source: string | null
+          staff_status: string | null
+          submission_arn: string | null
+          submission_date: string | null
+          today_ist: string | null
+          updated_at: string | null
+        }
+        Relationships: []
+      }
+      refund_facts: {
+        Row: {
+          arn: string | null
+          claimed_amount: number | null
+          client_gstin: string | null
+          client_id: string | null
+          client_name: string | null
+          documents: Json | null
+          filed_date: string | null
+          id: string | null
+          is_closed: boolean | null
+          notice_id: string | null
+          origin: string | null
+          refund_type: string | null
+          sanctioned_amount: number | null
+          status: string | null
+        }
+        Relationships: []
+      }
+      drc03_facts: {
+        Row: {
+          arn: string | null
+          cause_of_payment: string | null
+          client_gstin: string | null
+          client_id: string | null
+          client_name: string | null
+          filed_date: string | null
+          id: string | null
+          is_closed: boolean | null
+          notice_id: string | null
+          origin: string | null
+          pdf_url: string | null
+          status: string | null
+        }
+        Relationships: []
+      }
+      notice_exposure: {
+        Row: {
+          amount: number | null
+          client_id: string | null
+          kind: string | null
+          ref_id: string | null
+        }
+        Relationships: []
+      }
+      client_sync_status: {
+        Row: {
+          client_id: string | null
+          is_stale: boolean | null
+          last_attempt_at: string | null
+          last_ext_version: string | null
+          last_message: string | null
+          last_reason_class: string | null
+          last_run_id: string | null
+          last_status: string | null
+          last_success_at: string | null
+          rows_changed: number | null
+          rows_held: number | null
+          rows_new: number | null
+          rows_removed: number | null
+          rows_seen: number | null
+          step: string | null
+        }
+        Relationships: []
+      }
       annual_return_activity: {
         Row: {
           client_id: string | null
@@ -8072,6 +8443,65 @@ export type Database = {
       }
     }
     Functions: {
+      notice_alerts_run: {
+        Args: { p_mode?: string }
+        Returns: Json
+      }
+      notice_clocks_refresh: {
+        Args: { p_notice_id?: string }
+        Returns: Json
+      }
+      notices_auto_assign_open: {
+        Args: Record<PropertyKey, never>
+        Returns: number
+      }
+      notices_dashboard_summary: {
+        Args: { p_category?: string }
+        Returns: Json
+      }
+      sync_ingest: {
+        Args: {
+          p_client_id: string
+          p_complete?: boolean
+          p_ext_version?: string
+          p_rows: Json
+          p_run_id: string | null
+          p_scope?: string
+          p_step: string
+        }
+        Returns: Json
+      }
+      sync_log_step: {
+        Args: {
+          p_client_id: string
+          p_ext_version?: string
+          p_message?: string
+          p_reason_class?: string
+          p_run_id: string | null
+          p_status: string
+          p_step: string
+        }
+        Returns: string
+      }
+      sync_queue: {
+        Args: { p_client_ids?: string[] }
+        Returns: {
+          client_id: string
+          gstin: string
+          last_success_at: string | null
+          name: string
+          queue_reason: string
+          urgent_notices: number
+        }[]
+      }
+      sync_run_finish: {
+        Args: { p_note?: string; p_run_id: string; p_status?: string }
+        Returns: undefined
+      }
+      sync_run_start: {
+        Args: { p_clients_total?: number; p_ext_version?: string; p_machine?: string; p_mode: string }
+        Returns: string
+      }
       notices_sweep: {
         Args: { p_client_id?: string }
         Returns: Json

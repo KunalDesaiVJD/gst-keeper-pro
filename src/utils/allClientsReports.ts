@@ -160,6 +160,10 @@ export interface ReportTable {
   // Left undefined for single-client reports, where every row shares one
   // client already known to the page rendering the report.
   clientIds?: (string | null)[];
+  // Parallel to `rows` — the canonical notice flags (public.notice_facts) for
+  // a notices table, so the view's Overdue / Due-in-7 presets use the same
+  // definition as the dashboard tiles instead of re-parsing the Due Date cell.
+  rowFlags?: ({ overdue: boolean; dueIn7: boolean } | null)[];
 }
 
 // ─────────────────── REPORT 1: Suspended — All Clients ───────────────────

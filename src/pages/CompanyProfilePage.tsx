@@ -25,7 +25,8 @@ import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
 import FilterPill from '@/components/notices/FilterPill';
 import { cn } from '@/lib/utils';
 import { isoDateToDMY } from '@/utils/formatDate';
-import { isClosed } from '@/utils/noticeSummaryReport';
+import { loadClientNoticeFacts, loadRefundFacts, loadDrc03Facts, istToday, daysBetween, type NoticeFact } from '@/lib/noticeFacts';
+import { isOpen, isOverdue, isDueIn7 } from '@/utils/noticeDefinitions';
 import { Building2, Loader2, Pencil, FileText, Eye } from 'lucide-react';
 
 interface ClientRow {
@@ -71,25 +72,6 @@ interface NoticeRow {
   kind?: 'notice' | 'refund' | 'drc03';
 }
 
-interface RefundApplicationRow {
-  id: string;
-  arn: string | null;
-  refund_type: string | null;
-  filed_date: string | null;
-  status: string | null;
-  documents: { tab: string; label: string; url: string }[] | null;
-  pulled_at: string;
-}
-
-interface Drc03FilingRow {
-  id: string;
-  arn: string | null;
-  cause_of_payment: string | null;
-  filed_date: string | null;
-  status: string | null;
-  pdf_url: string | null;
-  pulled_at: string;
-}
 
 interface FilingRow {
   return_type: string;
@@ -119,6 +101,9 @@ const CompanyProfilePage: React.FC = () => {
   const [client, setClient] = useState<ClientRow | null>(null);
   const [profile, setProfile] = useState<TaxpayerProfileRow | null>(null);
   const [notices, setNotices] = useState<NoticeRow[]>([]);
+  // The client's canonical notice set (public.notice_facts) — what the tiles count
+  // and exactly what the list each tile opens shows.
+  const [facts, setFacts] = useState<NoticeFact[]>([]);
   const [filings, setFilings] = useState<FilingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState('all');
@@ -128,71 +113,73 @@ const CompanyProfilePage: React.FC = () => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [clientRes, profileRes, noticesRes, filingsRes, refundsRes, drc03Res] = await Promise.all([
+      const [clientRes, profileRes, filingsRes, noticeFacts, refundFacts, drc03Facts] = await Promise.all([
         supabase.from('clients').select('id, name, gstin, registration_type, registration_date, email, mobile').eq('id', clientId).maybeSingle(),
         supabase.from('gst_taxpayer_profile').select('legal_name, trade_name, registration_date, principal_place_address').eq('client_id', clientId).maybeSingle(),
-        supabase.from('gst_notices').select('id, case_id, reference_number, notice_type, description, issue_date, due_date, staff_status, submission_arn, submission_date, pdf_url, pulled_at').eq('client_id', clientId).eq('source', 'notices').is('deleted_at', null).order('issue_date', { ascending: false }),
         // gst_filed_returns holds the actual as-filed-on-portal date (pulled
         // straight from the portal's own GSTR-1/3B JSON APIs) — filing_status
-        // is this app's own internal prep/compliance tracker (a manually-set
-        // date, defaults to 'Prepared'), a different signal entirely.
-        // "Track Return Status" is meant to mirror the portal, so it needs
-        // the former, confirmed against Notice Alert's own equivalent table
-        // (2026-09-08).
+        // is this app's own internal prep/compliance tracker, a different signal.
         supabase.from('gst_filed_returns').select('return_type, period_month, filed_date').eq('client_id', clientId).in('return_type', ['GSTR1', 'GSTR3B']).not('filed_date', 'is', null),
-        // Folded into the unified notices/KPI list below (2026-09-08 fix) —
-        // gst_notices' Additional Notice Folder capture only ever writes the
-        // case-folder DOCUMENTS (its acknowledgement/order, keyed by their
-        // own portal reference), never the refund APPLICATION event itself
-        // (keyed by its ARN, e.g. "a refund was filed on 18/08/2026").
-        // Notice Alert shows both as separate timeline rows for the same
-        // case; this recovers the missing one.
-        supabase.from('gst_refund_applications').select('id, arn, refund_type, filed_date, status, documents, pulled_at').eq('client_id', clientId).is('deleted_at', null),
-        supabase.from('gst_drc03_filings').select('id, arn, cause_of_payment, filed_date, status, pdf_url, pulled_at').eq('client_id', clientId).is('deleted_at', null),
+        loadClientNoticeFacts(clientId).catch(() => [] as NoticeFact[]),
+        // Refund applications and DRC-03 filings join the timeline below, each
+        // case once (the refund / voluntary-payment case rows are in these sets).
+        loadRefundFacts(clientId).catch(() => []),
+        loadDrc03Facts(clientId).catch(() => []),
       ]);
       if (!cancelled) {
         setClient((clientRes.data || null) as ClientRow | null);
         setProfile((profileRes.data || null) as TaxpayerProfileRow | null);
-        const gstNoticeRows = ((noticesRes.data || []) as NoticeRow[]).map((n) => ({ ...n, kind: 'notice' as const }));
-        const refundRows = ((refundsRes.data || []) as RefundApplicationRow[]).map((r): NoticeRow => ({
+        setFacts(noticeFacts);
+        const gstNoticeRows = noticeFacts
+          .filter((n) => !n.is_refund_case && !n.is_drc03_case)
+          .map((n): NoticeRow => ({
+            id: n.id as string,
+            reference_number: n.reference_number,
+            notice_type: n.notice_type,
+            description: n.description,
+            issue_date: n.issue_date,
+            due_date: n.effective_due,
+            staff_status: n.staff_status,
+            submission_arn: n.submission_arn,
+            submission_date: n.submission_date,
+            pdf_url: n.pdf_url,
+            pulled_at: n.pulled_at as string,
+            case_id: n.case_id,
+            kind: 'notice',
+          }));
+        const refundRows = refundFacts.map((r): NoticeRow => ({
           id: 'refund-' + r.id,
           reference_number: r.arn,
           notice_type: 'Refunds',
           description: r.refund_type,
           issue_date: r.filed_date,
           due_date: null,
-          staff_status: null,
+          staff_status: r.origin === 'case' ? r.status : null,
           submission_arn: null,
           submission_date: null,
-          pdf_url: (Array.isArray(r.documents) && r.documents[0]?.url) || null,
-          pulled_at: r.pulled_at,
-          // gst_case_folder_items.case_id for a refund case is its own ARN
-          // (see handleRefundDocs in extension/content.js) — links this row
-          // straight to its "Refund Notice Folder" drill-down page once that
-          // capture has run for it.
+          pdf_url: (Array.isArray(r.documents) && (r.documents as { url?: string }[])[0]?.url) || null,
+          pulled_at: '',
+          // A refund case's folder is keyed by its own ARN (gst_case_folder_items.case_id).
           case_id: r.arn,
           kind: 'refund',
         }));
-        const drc03Rows = ((drc03Res.data || []) as Drc03FilingRow[]).map((d): NoticeRow => ({
+        const drc03Rows = drc03Facts.map((d): NoticeRow => ({
           id: 'drc03-' + d.id,
           reference_number: d.arn,
           notice_type: 'DRC-03',
           description: d.cause_of_payment,
           issue_date: d.filed_date,
           due_date: null,
-          staff_status: null,
+          staff_status: d.origin === 'case' ? d.status : null,
           submission_arn: null,
           submission_date: null,
           pdf_url: d.pdf_url,
-          pulled_at: d.pulled_at,
+          pulled_at: '',
           case_id: d.arn,
           kind: 'drc03',
         }));
-        const combined = [...gstNoticeRows, ...refundRows, ...drc03Rows].sort((a, b) => {
-          const ad = a.issue_date ? new Date(a.issue_date).getTime() : 0;
-          const bd = b.issue_date ? new Date(b.issue_date).getTime() : 0;
-          return bd - ad;
-        });
+        const combined = [...gstNoticeRows, ...refundRows, ...drc03Rows].sort((a, b) =>
+          (b.issue_date || '').localeCompare(a.issue_date || ''));
         setNotices(combined);
         setFilings((filingsRes.data || []) as FilingRow[]);
         setLoading(false);
@@ -201,8 +188,6 @@ const CompanyProfilePage: React.FC = () => {
     return () => { cancelled = true; };
   }, [clientId]);
 
-  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
-  if (!clientId) return <Navigate to="/notices-company-list" replace />;
 
   // Distinct notice_type values on record for this client, for the "Types
   // Of Notices" filter — matches Notice Alert's own equivalent dropdown
@@ -211,30 +196,19 @@ const CompanyProfilePage: React.FC = () => {
   const noticeTypes = Array.from(new Set(notices.map((n) => n.notice_type).filter((t): t is string => !!t))).sort();
   const filteredNotices = typeFilter === 'all' ? notices : notices.filter((n) => n.notice_type === typeFilter);
 
-  const now = Date.now();
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const daysAgo = (v: string | null) => (v ? (now - new Date(v).getTime()) / DAY_MS : Infinity);
-  const daysUntil = (v: string | null) => (v ? (new Date(v).getTime() - now) / DAY_MS : -Infinity);
+  // Tiles count the client's canonical notice set — the rows /notices-all?client=
+  // shows — with the same flags the firm-wide dashboard uses (IST calendar
+  // dates; replied notices are neither overdue nor due). They are not narrowed
+  // by the Type filter, which only filters the timeline below.
+  const today = istToday();
+  const nowMs = Date.now();
+  const totalNotices = facts.length;
+  const last15Days = facts.filter((n) => !!n.issue_date && daysBetween(n.issue_date, today) >= 0 && daysBetween(n.issue_date, today) <= 15).length;
+  const last24Hours = facts.filter((n) => !!n.pulled_at && nowMs - new Date(n.pulled_at).getTime() <= 24 * 60 * 60 * 1000).length;
+  const openNotices = facts.filter((n) => isOpen(n)).length;
+  const dueSoon = facts.filter((n) => isDueIn7(n)).length;
+  const overdue = facts.filter((n) => isOverdue(n)).length;
 
-  const totalNotices = filteredNotices.length;
-  const last15Days = filteredNotices.filter((n) => daysAgo(n.issue_date) <= 15).length;
-  const last24Hours = filteredNotices.filter((n) => daysAgo(n.pulled_at) <= 1).length;
-  // Open/7-Days-Due/Over-Due are staff_status/due_date workflow concepts —
-  // gst_refund_applications and gst_drc03_filings carry neither (that
-  // tracking only exists on gst_notices), so synthesized refund/drc03 rows
-  // are excluded here rather than guessed at from the portal's own status
-  // text. due_date is already null on every such row, so dueSoon/overdue
-  // exclude them naturally; openNotices needs the explicit kind check since
-  // a null staff_status alone reads as "open".
-  const workflowRows = filteredNotices.filter((n) => n.kind !== 'refund' && n.kind !== 'drc03');
-  const openNotices = workflowRows.filter((n) => !isClosed(n.staff_status)).length;
-  const dueSoon = filteredNotices.filter((n) => n.due_date && daysUntil(n.due_date) >= 0 && daysUntil(n.due_date) <= 7).length;
-  const overdue = filteredNotices.filter((n) => n.due_date && daysUntil(n.due_date) < 0).length;
-
-  // Each tile opens the same list filtered the way the tile counts — the
-  // query-string filters AllClientsNoticesPage already parses (last15,
-  // last24h, due7, overdue, status=Open), so the number on the tile and the
-  // rows behind it always come from the same rule.
   const kpiCards = [
     { label: 'Over Due', value: overdue, accent: 'border-l-destructive', context: `of ${totalNotices}`, cta: 'Open queue →', href: `/notices-all?client=${clientId}&filter=overdue` },
     { label: '7 Days Due', value: dueSoon, accent: 'border-l-amber-500', context: 'this week', cta: 'View due →', href: `/notices-all?client=${clientId}&filter=due7` },
@@ -260,6 +234,10 @@ const CompanyProfilePage: React.FC = () => {
       return by !== ay ? by - ay : bm - am;
     });
   }, [filings]);
+
+  // After every hook (Rules of Hooks): the filings memo above used to sit below these returns.
+  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
+  if (!clientId) return <Navigate to="/notices-company-list" replace />;
 
   const legalName = profile?.legal_name || client?.name || '—';
   const tradeName = profile?.trade_name || client?.name || '—';

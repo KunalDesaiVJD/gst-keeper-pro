@@ -13,6 +13,9 @@ interface SyncHealthCardProps {
   newNotices24h: number;
   /** notice_alert e-mails sent since midnight IST; null when the outbox could not be read */
   emailsSentToday: number | null;
+  /** Alerts written today while the engine is in preview mode (never sent). */
+  previewsToday?: number | null;
+  alertsMode?: string | null;
   extensionVersion: string | null;
   extensionReady: boolean;
 }
@@ -121,6 +124,8 @@ export default function SyncHealthCard({
   failedLogins,
   newNotices24h,
   emailsSentToday,
+  previewsToday,
+  alertsMode,
   extensionVersion,
   extensionReady,
 }: SyncHealthCardProps) {
@@ -160,6 +165,13 @@ export default function SyncHealthCard({
     {
       label: 'Alert e-mails sent today',
       value: emailsSentToday === null ? '—' : String(emailsSentToday),
+    },
+    {
+      label: 'Alert mode',
+      value: alertsMode === 'live' ? 'Live'
+        : alertsMode === 'off' ? 'Off'
+        : alertsMode === 'preview' ? `Preview · ${previewsToday ?? 0} today, not sent`
+        : '—',
     },
     {
       label: 'Extension',

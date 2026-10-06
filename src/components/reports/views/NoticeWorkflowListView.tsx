@@ -14,7 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { TablesUpdate } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import { logNoticeFieldChanges } from '@/lib/noticeEvents';
-import { processEventAlert, flushOutbox } from '@/lib/noticeAlertQueue';
+import { updateNotices } from '@/lib/noticeWrites';
 import { Card, CardContent } from '@/components/ui/card';
 import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
 import { Badge } from '@/components/gstr9/badge';
@@ -382,6 +382,10 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
         list = list.filter(({ row }) => { const d = parseDateLoose(row[dateColIdx]); return !Number.isNaN(d) && now - d <= DAY_MS; });
       } else if (dateFilter === 'last15days' && dateColIdx !== -1) {
         list = list.filter(({ row }) => { const d = parseDateLoose(row[dateColIdx]); return !Number.isNaN(d) && now - d <= 15 * DAY_MS; });
+      } else if (dateFilter === 'due7' && table.rowFlags) {
+        list = list.filter(({ idx }) => !!table.rowFlags?.[idx]?.dueIn7);
+      } else if (dateFilter === 'overdue' && table.rowFlags) {
+        list = list.filter(({ idx }) => !!table.rowFlags?.[idx]?.overdue);
       } else if (dateFilter === 'due7' && dueDateColIdx !== -1) {
         list = list.filter(({ row }) => { const d = parseDateLoose(row[dueDateColIdx]); return !Number.isNaN(d) && d - now >= 0 && d - now <= 7 * DAY_MS; });
       } else if (dateFilter === 'overdue' && dueDateColIdx !== -1) {
@@ -404,7 +408,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       });
     }
     return list;
-  }, [dataRows, search, statusFilter, statusColIdx, typeFilter, typeColIdx, priorityFilter, priorityColIdx, dateFilter, dateColIdx, dueDateColIdx, replyDateColIdx]);
+  }, [dataRows, search, statusFilter, statusColIdx, typeFilter, typeColIdx, priorityFilter, priorityColIdx, dateFilter, dateColIdx, dueDateColIdx, replyDateColIdx, table.rowFlags]);
 
   useEffect(() => { setPage(0); }, [search, statusFilter, typeFilter, priorityFilter, dateFilter, rowsPerPage]);
   const pageCount = Math.max(1, Math.ceil(visibleRows.length / rowsPerPage));
@@ -443,26 +447,16 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     if (!rowId || statusColIdx === -1) return;
     const oldStatus = cellToText(rows[idx]?.[statusColIdx]);
     setSavingIdx(idx);
-    const { error } = await supabase.from('gst_notices').update({ staff_status: newStatus }).eq('id', rowId);
+    const { error, legacy } = await updateNotices([rowId], { staff_status: newStatus }, user);
     setSavingIdx(null);
     if (error) { toast.error('Failed to update status: ' + error.message); return; }
     patchRow(idx, statusColIdx, newStatus);
     toast.success('Status updated');
-
-    if (clientId && oldStatus !== newStatus) {
-      void logNoticeFieldChanges(
-        rowId, clientId,
-        { staff_status: oldStatus },
-        { staff_status: newStatus },
-        user?.id ?? null, user?.firstName ?? null,
-      ).then(async () => {
-        const { data: events } = await supabase.from('notice_events')
-          .select('*').eq('notice_id', rowId).order('created_at', { ascending: false }).limit(1);
-        if (events?.length) {
-          await processEventAlert(events[0] as never);
-          flushOutbox();
-        }
-      }).catch(() => {});
+    // The database logs the change (and any alert) itself; only a database
+    // without the Phase 1 triggers needs the browser to do it.
+    if (legacy && clientId && oldStatus !== newStatus) {
+      void logNoticeFieldChanges(rowId, clientId, { staff_status: oldStatus }, { staff_status: newStatus },
+        user?.id ?? null, user?.firstName ?? null).catch(() => {});
     }
   };
 
@@ -493,7 +487,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     const payload: TablesUpdate<'gst_notices'> = { staff_status: bulkStatus };
     if (bulkStatus === 'Closed') payload.close_reason = bulkCloseReason || null;
     else payload.close_reason = null;
-    const { error } = await supabase.from('gst_notices').update(payload).in('id', ids);
+    const { error } = await updateNotices(ids, payload, user);
     setBulkSaving(false);
     if (error) { toast.error('Failed to update status: ' + error.message); return; }
     setRows((prev) => prev.map((r, i) => {
@@ -514,7 +508,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     const ids = Array.from(selectedIdx).map((idx) => rowIds?.[idx]).filter((id): id is string => !!id);
     if (ids.length === 0) { setBulkPriorityOpen(false); return; }
     setBulkSaving(true);
-    const { error } = await supabase.from('gst_notices').update({ priority: bulkPriority }).in('id', ids);
+    const { error } = await updateNotices(ids, { priority: bulkPriority }, user);
     setBulkSaving(false);
     if (error) { toast.error('Failed to update priority: ' + error.message); return; }
     setRows((prev) => prev.map((r, i) => {
@@ -568,12 +562,12 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     if (amount !== null && !Number.isFinite(amount)) { toast.error('Amount of Demand must be a number.'); return; }
     setSavingEdit(true);
 
-    // Snapshot old values for event logging
+    // Snapshot old values, for event logging on a database without the Phase 1 triggers.
     const { data: oldRow } = await supabase.from('gst_notices')
       .select('staff_status, assign_to, assign_to_user_id, reply_date, reply_ref_number, order_date, order_number, close_reason')
       .eq('id', rowId).maybeSingle();
 
-    const { error } = await supabase.from('gst_notices').update({
+    const { error, legacy } = await updateNotices([rowId], {
       priority: editForm.priority || null,
       reply_ref_number: editForm.replyRefNumber || null,
       reply_date: editForm.replyDate || null,
@@ -588,12 +582,11 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       assign_to: editForm.assignTo || null,
       assign_to_user_id: editForm.assignToUserId || null,
       close_reason: editForm.closeReason || null,
-    }).eq('id', rowId);
+    }, user);
     setSavingEdit(false);
     if (error) { toast.error('Failed to save: ' + error.message); return; }
 
-    // Log events and fire alerts (best-effort, never blocks the UI toast)
-    if (oldRow && clientId) {
+    if (legacy && oldRow && clientId) {
       const newFields = {
         staff_status: oldRow.staff_status,
         assign_to: editForm.assignTo || null,
@@ -605,14 +598,6 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
         close_reason: editForm.closeReason || null,
       };
       void logNoticeFieldChanges(rowId, clientId, oldRow, newFields, user?.id ?? null, user?.firstName ?? null)
-        .then(async () => {
-          const { data: events } = await supabase.from('notice_events')
-            .select('*').eq('notice_id', rowId).order('created_at', { ascending: false }).limit(5);
-          if (events?.length) {
-            for (const ev of events) { await processEventAlert(ev as never); }
-            flushOutbox();
-          }
-        })
         .catch(() => {});
     }
 

@@ -22,6 +22,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import type { Database } from '@/integrations/supabase/types';
 import { isExtensionOutdated, outdatedExtensionMessage } from '@/lib/extensionVersion';
 import { describeClientDeleteError } from '@/lib/clientDeleteError';
 import { Card, CardContent } from '@/components/ui/card';
@@ -59,6 +60,34 @@ interface SyncLogRow {
   status: 'success' | 'failed';
   message: string | null;
   created_at: string;
+}
+
+type LedgerRow = Database['public']['Views']['client_sync_status']['Row'];
+
+const REASON_LABELS: Record<string, string> = {
+  login_failed: 'Login failed',
+  captcha_timeout: 'CAPTCHA not entered',
+  session_mismatch: 'Portal session was another GSTIN',
+  portal_error: 'Portal error',
+  timeout: 'Portal timed out',
+  save_failed: 'Save failed',
+  stalled: 'Stalled',
+  guard_held: 'Removal held back',
+  partial: 'Partial pull',
+  empty: 'Empty pull',
+  skipped_inactive: 'Skipped (inactive)',
+};
+
+// What the run ledger says about a client's latest notices sync.
+function ledgerText(r: LedgerRow | undefined): string | null {
+  if (!r || !r.last_status) return null;
+  if (r.last_status === 'failed' || r.last_status === 'skipped') {
+    const reason = REASON_LABELS[r.last_reason_class ?? ''] ?? r.last_reason_class ?? 'Failed';
+    return r.last_message ? `${reason}: ${r.last_message}` : reason;
+  }
+  const counts = `${r.rows_seen ?? 0} on portal · ${r.rows_new ?? 0} new · ${r.rows_changed ?? 0} changed · ${r.rows_removed ?? 0} removed`;
+  if (r.last_status === 'held') return `${counts} · ${r.last_message ?? 'removal held back'}`;
+  return r.is_stale ? `${counts} · stale (> 24 h)` : counts;
 }
 
 const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
@@ -107,9 +136,13 @@ const CompanyListPage: React.FC = () => {
   // its initial false.
   const pendingActionRef = useRef<'sync' | 'fetch' | null>(null);
 
+  // Latest notices step per client from the run ledger (extension 0.5.0+):
+  // new / changed / removed counts and a failure reason class.
+  const [ledger, setLedger] = useState<Map<string, LedgerRow>>(new Map());
+
   const fetchAll = async () => {
     setLoading(true);
-    const [clientsRes, logsRes] = await Promise.all([
+    const [clientsRes, logsRes, ledgerRes] = await Promise.all([
       // This page is entirely scoped to Notices Dashboard work (Sync/Fetch
       // Company, Total Downloaded/Pending, etc.) — a client opted out via
       // "Exclude from Notices Dashboard sync" shouldn't appear here at all,
@@ -117,9 +150,13 @@ const CompanyListPage: React.FC = () => {
       // is untouched, so nothing about managing that client is lost.
       supabase.from('clients').select('id, name, gstin, gst_user_id, inactive_at_hand').eq('notices_sync_excluded', false).order('name'),
       supabase.from('client_sync_log').select('id, client_id, action, status, message, created_at').order('created_at', { ascending: false }),
+      supabase.from('client_sync_status').select('*').eq('step', 'notices'),
     ]);
     setClients((clientsRes.data || []) as ClientRow[]);
     setSyncLogs((logsRes.data || []) as SyncLogRow[]);
+    setLedger(new Map(((ledgerRes.error ? [] : ledgerRes.data) || [])
+      .filter((r) => r.client_id)
+      .map((r) => [r.client_id as string, r as LedgerRow])));
     setLoading(false);
   };
 
@@ -252,6 +289,32 @@ const CompanyListPage: React.FC = () => {
     window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle', clientIds } }, '*');
   };
 
+  // Quick selections (audit S-25): every active, credentialed client whose last
+  // successful notices sync is older than 24 hours (or never happened), or
+  // whose latest attempt failed — then Sync runs them, most urgent first.
+  const lastSuccessAt = (clientId: string): number | null => {
+    const fromLedger = ledger.get(clientId)?.last_success_at;
+    if (fromLedger) return new Date(fromLedger).getTime();
+    const log = syncLogs.find((l) => l.client_id === clientId && l.action === 'notices' && l.status === 'success');
+    return log ? new Date(log.created_at).getTime() : null;
+  };
+  const syncable = clients.filter((c) => c.gst_user_id && !c.inactive_at_hand);
+  const staleIds = syncable.filter((c) => {
+    const t = lastSuccessAt(c.id);
+    return t === null || Date.now() - t > 24 * 60 * 60 * 1000;
+  }).map((c) => c.id);
+  const failedIds = syncable.filter((c) => latestLogByClient.get(c.id)?.status === 'failed'
+    || ledger.get(c.id)?.last_status === 'failed').map((c) => c.id);
+  const startSyncFor = (ids: string[], label: string) => {
+    if (ids.length === 0) { toast.info(`No ${label} companies.`); return; }
+    if (!extReady) { toast.error('GST Keeper browser extension not detected. Install/enable it to sync.'); return; }
+    if (isExtensionOutdated(extVersion)) { toast.error(outdatedExtensionMessage(extVersion)); return; }
+    setSelected(new Set(ids));
+    pendingActionRef.current = 'sync';
+    setSyncing(true);
+    window.postMessage({ __gstkPullSectionAllClients: { mode: 'notices_bundle', clientIds: ids } }, '*');
+  };
+
   const handleFetchCompany = () => {
     if (selected.size === 0) { toast.error('Select at least one company first.'); return; }
     if (!extReady) { toast.error('GST Keeper browser extension not detected.'); return; }
@@ -341,6 +404,14 @@ const CompanyListPage: React.FC = () => {
                 {fetching ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <DownloadCloud className="mr-1.5 h-3.5 w-3.5" />}
                 Fetch Company
               </Button>
+              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => startSyncFor(failedIds, 'failed')} disabled={syncing}
+                title="Select every company whose last sync failed and sync them">
+                Retry failed ({failedIds.length})
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => startSyncFor(staleIds, 'stale')} disabled={syncing}
+                title="Select every active company not synced in the last 24 hours and sync them">
+                Sync stale &gt;24 h ({staleIds.length})
+              </Button>
               <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleSync} disabled={syncing}>
                 {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
                 Sync
@@ -397,7 +468,9 @@ const CompanyListPage: React.FC = () => {
                             />
                           </span>
                         </TableCell>
-                        <TableCell className="max-w-[260px] truncate px-2 py-1 text-[11px] text-muted-foreground" title={log?.message || ''}>{log?.message || 'Not synced yet'}</TableCell>
+                        <TableCell className="max-w-[260px] truncate px-2 py-1 text-[11px] text-muted-foreground" title={ledgerText(ledger.get(c.id)) || log?.message || ''}>
+                          {ledgerText(ledger.get(c.id)) || log?.message || 'Not synced yet'}
+                        </TableCell>
                         <TableCell className="px-2 py-1">
                           <div className="flex items-center gap-0.5">
                             {canAddEditClients() && (

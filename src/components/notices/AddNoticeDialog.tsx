@@ -14,6 +14,8 @@
 // wired to a dead end.
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { insertManualNotice } from '@/lib/noticeWrites';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,6 +36,7 @@ const EMPTY = {
 };
 
 export const AddNoticeDialog: React.FC<AddNoticeDialogProps> = ({ onSuccess }) => {
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [clients, setClients] = useState<SearchableSelectOption[]>([]);
   const [form, setForm] = useState(EMPTY);
@@ -80,24 +83,21 @@ export const AddNoticeDialog: React.FC<AddNoticeDialogProps> = ({ onSuccess }) =
     // so a failed save never leaves an orphaned public file behind. portal_key is
     // required (NOT NULL since the upsert sync); the 'manual:' prefix also tells
     // the sync never to mark this notice missing (the portal does not return it).
-    const { data: inserted, error } = await supabase
-      .from('gst_notices')
-      .insert({
-        client_id: form.clientId,
-        source: 'notices',
-        portal_key: `manual:${crypto.randomUUID()}`,
-        reference_number: refId,
-        notice_type: form.type,
-        issued_by: form.issuedBy.trim() || null,
-        issue_date: form.issuedDate,
-        due_date: form.dueDate || null,
-        amount_of_demand: amount,
-        description: form.description.trim() || null,
-        staff_status: 'Open',
-        pulled_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single();
+    const { id: insertedId, error } = await insertManualNotice({
+      client_id: form.clientId,
+      source: 'notices',
+      portal_key: `manual:${crypto.randomUUID()}`,
+      reference_number: refId,
+      notice_type: form.type,
+      issued_by: form.issuedBy.trim() || null,
+      issue_date: form.issuedDate,
+      due_date: form.dueDate || null,
+      amount_of_demand: amount,
+      description: form.description.trim() || null,
+      staff_status: 'Open',
+      pulled_at: new Date().toISOString(),
+    }, user);
+    const inserted = insertedId ? { id: insertedId } : null;
     if (error || !inserted) {
       setSaving(false);
       toast.error('Failed to add notice: ' + (error?.message ?? 'no row returned'));

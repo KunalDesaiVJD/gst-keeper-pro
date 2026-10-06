@@ -83,9 +83,9 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
 <tr><td style="padding:28px 28px 6px 28px;color:#1f2937;font-size:14px;line-height:1.6;">
 ${pill}
 <p style="margin:0 0 14px;">Dear ${contact},</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${meta.box.bg};border:1px solid ${meta.box.border};border-radius:6px;margin:4px 0 18px;">
+${detailRows ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${meta.box.bg};border:1px solid ${meta.box.border};border-radius:6px;margin:4px 0 18px;">
 <tr><td style="padding:14px 16px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;color:#334155;">${detailRows}</table></td></tr>
-</table>
+</table>` : ''}
 ${paras}
 <p style="margin:0 0 6px;">Warm regards,</p>
 <p style="margin:0 0 1px;font-weight:600;color:#0f2b46;">${staff}</p>

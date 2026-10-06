@@ -11,7 +11,8 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { EvidenceEventListView } from '@/components/reports/views/EvidenceEventListView';
 import type { ReportTable } from '@/utils/allClientsReports';
-import { isDrc03Closed, isClosed } from '@/utils/noticeSummaryReport';
+import { loadDrc03Facts } from '@/lib/noticeFacts';
+import { toast } from 'sonner';
 import { isoDateToDMY } from '@/utils/formatDate';
 import { FileWarning, ArrowLeft, Loader2 } from 'lucide-react';
 
@@ -39,85 +40,60 @@ interface Drc03Record {
   client_id: string | null;
 }
 
-// See AllClientsRefundsPage for why this merge exists: the Additional
-// Notices case-folder sync also writes a "Voluntary Payment"-typed
-// gst_notices row per DRC-03 case, most of which have no matching ARN in the
-// dedicated gst_drc03_filings table (confirmed live 2026-08-29: 11 of 146
-// share an ARN) — without merging both, this page undercounted against the
-// Notice Summary panel's own DRC 03 total.
-interface CaseDrc03Row {
-  case_id: string | null;
-  description: string | null;
-  issue_date: string | null;
-  staff_status: string | null;
-  pdf_url: string | null;
-  clients: { name: string | null; gstin: string | null } | null;
-  client_id: string | null;
-}
-
+// The rows are public.drc03_facts (lib/noticeFacts): every DRC-03 filing plus
+// the "Voluntary Payment" case rows no filing covers (same ARN = same case) —
+// the set the Notice Summary's DRC 03 row counts. A filing's figures come from
+// gst_drc03_filings itself.
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+
+type Drc03Row = Drc03Record & { is_closed: boolean };
 
 const AllClientsDrc03Page: React.FC = () => {
   const { isStaffRole } = useAuth();
   const [params] = useSearchParams();
   const status = params.get('status') || '';
-  const [records, setRecords] = useState<Drc03Record[]>([]);
+  const [records, setRecords] = useState<Drc03Row[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [{ data }, { data: caseData }] = await Promise.all([
-        supabase
-          .from('gst_drc03_filings')
-          .select(
-            'arn, cause_of_payment, section, financial_year, filed_date, period_from, period_to, ' +
-            'taxable_value, igst_amount, cgst_amount, sgst_amount, cess_amount, interest_amount, late_fee_amount, penalty_amount, ' +
-            'cash_amount, credit_amount, status, pdf_url, client_id, clients(name, gstin)',
-          )
-          .is('deleted_at', null)
-          .order('filed_date', { ascending: false }),
-        supabase
-          .from('gst_notices')
-          .select('case_id, description, issue_date, staff_status, pdf_url, client_id, clients(name, gstin)')
-          .eq('source', 'notices')
-          .eq('notice_type', 'Voluntary Payment')
-          .is('deleted_at', null),
-      ]);
-      if (!cancelled) {
-        const dedicated = (data || []) as unknown as Drc03Record[];
-        // Dedupe by ARN, matching computeNoticeSummary's own key-based union
-        // exactly — see AllClientsRefundsPage for why a naive concat
-        // over-counts (duplicate ARNs within each source plus overlap
-        // between them). Dedicated wins on a shared key since it carries
-        // the richer tax-breakdown fields.
-        const byKey = new Map<string, Drc03Record>();
-        dedicated.forEach((r) => { if (r.arn) byKey.set(r.arn, r); });
-        ((caseData || []) as unknown as CaseDrc03Row[]).forEach((r) => {
-          if (!r.case_id || byKey.has(r.case_id)) return;
-          byKey.set(r.case_id, {
-            arn: r.case_id, cause_of_payment: r.description, section: null, financial_year: null,
-            filed_date: r.issue_date, period_from: null, period_to: null,
+      try {
+        const [facts, { data: detail }] = await Promise.all([
+          loadDrc03Facts(),
+          supabase
+            .from('gst_drc03_filings')
+            .select('id, arn, cause_of_payment, section, financial_year, filed_date, period_from, period_to, taxable_value, igst_amount, cgst_amount, sgst_amount, cess_amount, interest_amount, late_fee_amount, penalty_amount, cash_amount, credit_amount, status, pdf_url, client_id, clients(name, gstin)')
+            .is('deleted_at', null),
+        ]);
+        const byId = new Map((detail ?? []).map((d) => [d.id, d]));
+        const rows: Drc03Row[] = facts.map((f) => {
+          const d = f.origin === 'filing' && f.id ? byId.get(f.id) : undefined;
+          if (d) return { ...(d as unknown as Drc03Record), is_closed: !!f.is_closed };
+          return {
+            arn: f.arn, cause_of_payment: f.cause_of_payment, section: null, financial_year: null,
+            filed_date: f.filed_date, period_from: null, period_to: null,
             taxable_value: null, igst_amount: null, cgst_amount: null, sgst_amount: null, cess_amount: null,
             interest_amount: null, late_fee_amount: null, penalty_amount: null, cash_amount: null, credit_amount: null,
-            status: r.staff_status || 'Open', pdf_url: r.pdf_url, clients: r.clients, client_id: r.client_id,
-          });
+            status: f.status || 'Open', pdf_url: f.pdf_url,
+            clients: { name: f.client_name, gstin: f.client_gstin }, client_id: f.client_id,
+            is_closed: !!f.is_closed,
+          };
         });
-        setRecords(Array.from(byKey.values()));
-        setLoading(false);
+        if (!cancelled) setRecords(rows);
+      } catch (e) {
+        if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load DRC-03 filings');
       }
+      if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
   }, []);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
-  // Same split as computeNoticeSummary: dedicated rows close via
-  // isDrc03Closed's portal-status wording, case-only rows via isClosed.
-  const rowIsClosed = (r: Drc03Record) => isDrc03Closed(r.status) || isClosed(r.status);
   const filteredRecords = status
-    ? records.filter((r) => (status.toLowerCase() === 'closed' ? rowIsClosed(r) : !rowIsClosed(r)))
+    ? records.filter((r) => (status.toLowerCase() === 'closed' ? r.is_closed : !r.is_closed))
     : records;
 
   let totTaxable = 0, totIgst = 0, totCgst = 0, totSgst = 0, totCess = 0, totIntr = 0, totFee = 0, totPnlty = 0, totCash = 0, totCredit = 0;

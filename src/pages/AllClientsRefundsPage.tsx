@@ -6,117 +6,59 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { loadRefundFacts, type RefundFact } from '@/lib/noticeFacts';
+import { toast } from 'sonner';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { EvidenceEventListView } from '@/components/reports/views/EvidenceEventListView';
 import type { ReportTable } from '@/utils/allClientsReports';
-import { isRefundClosed, isClosed } from '@/utils/noticeSummaryReport';
 import { isoDateToDMY } from '@/utils/formatDate';
 import { Banknote, ArrowLeft, Loader2 } from 'lucide-react';
 
-interface RefundRecord {
-  arn: string | null;
-  refund_type: string | null;
-  filed_date: string | null;
-  claimed_amount: number | null;
-  sanctioned_amount: number | null;
-  status: string | null;
-  documents: { tab: string; label: string; url: string }[] | null;
-  clients: { name: string | null; gstin: string | null } | null;
-  client_id: string | null;
-}
-
-// The Additional Notices case-folder sync also writes a "Refunds"-typed
-// gst_notices row per refund case — a MINORITY of those share an ARN with a
-// dedicated gst_refund_applications row (confirmed live 2026-08-29: 9 of 49),
-// but most don't, meaning most refund cases only exist here, never in the
-// dedicated table. Without merging both sources this page silently showed
-// far fewer records (28) than the Notice Summary panel's own count (51) for
-// the exact same underlying data — same dedup-by-ARN as computeNoticeSummary.
-interface CaseRefundRow {
-  case_id: string | null;
-  description: string | null;
-  issue_date: string | null;
-  staff_status: string | null;
-  pdf_url: string | null;
-  clients: { name: string | null; gstin: string | null } | null;
-  client_id: string | null;
-}
-
+// The rows are public.refund_facts (lib/noticeFacts): every refund application
+// plus the "Refunds" case rows from the portal's case list that no application
+// covers (same ARN = same case) — exactly the set the Notice Summary's Refund
+// row counts, so its number is this list's row count. "Closed" is the set's
+// own flag (disbursed / withdrawn / rejected / re-credited, or a closed case).
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
 const AllClientsRefundsPage: React.FC = () => {
   const { isStaffRole } = useAuth();
   const [params] = useSearchParams();
   const status = params.get('status') || '';
-  const [records, setRecords] = useState<RefundRecord[]>([]);
+  const [records, setRecords] = useState<RefundFact[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [{ data }, { data: caseData }] = await Promise.all([
-        supabase
-          .from('gst_refund_applications')
-          .select('arn, refund_type, filed_date, claimed_amount, sanctioned_amount, status, documents, client_id, clients(name, gstin)')
-          .is('deleted_at', null)
-          .order('filed_date', { ascending: false }),
-        supabase
-          .from('gst_notices')
-          .select('case_id, description, issue_date, staff_status, pdf_url, client_id, clients(name, gstin)')
-          .eq('source', 'notices')
-          .eq('notice_type', 'Refunds')
-          .is('deleted_at', null),
-      ]);
-      if (!cancelled) {
-        const dedicated = (data || []) as unknown as RefundRecord[];
-        // Dedupe by ARN, matching computeNoticeSummary's own key-based union
-        // exactly (28 raw dedicated rows include 2 duplicate ARNs; the 49
-        // raw case rows include further duplicates and overlap with
-        // dedicated ARNs — a naive concat over-counts by ~17 vs the Notice
-        // Summary panel's own total). Dedicated wins on a shared key since
-        // it carries the richer amount/status fields.
-        const byKey = new Map<string, RefundRecord>();
-        dedicated.forEach((r) => { if (r.arn) byKey.set(r.arn, r); });
-        ((caseData || []) as unknown as CaseRefundRow[]).forEach((r) => {
-          if (!r.case_id || byKey.has(r.case_id)) return;
-          byKey.set(r.case_id, {
-            arn: r.case_id, refund_type: r.description, filed_date: r.issue_date,
-            claimed_amount: null, sanctioned_amount: null,
-            status: r.staff_status || 'Open',
-            documents: r.pdf_url ? [{ tab: '', label: 'PDF', url: r.pdf_url }] : [],
-            clients: r.clients,
-            client_id: r.client_id,
-          });
-        });
-        setRecords(Array.from(byKey.values()));
-        setLoading(false);
+      try {
+        const rows = await loadRefundFacts();
+        if (!cancelled) setRecords(rows);
+      } catch (e) {
+        if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load refunds');
       }
+      if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
   }, []);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
-  // Dedicated rows close via isRefundClosed's portal-status wording; case-only
-  // rows (staff_status 'Open'/'Closed') via isClosed instead — same split
-  // computeNoticeSummary uses when merging the two sources.
-  const rowIsClosed = (r: RefundRecord) => isRefundClosed(r.status) || isClosed(r.status);
   const filteredRecords = status
-    ? records.filter((r) => (status.toLowerCase() === 'closed' ? rowIsClosed(r) : !rowIsClosed(r)))
+    ? records.filter((r) => (status.toLowerCase() === 'closed' ? !!r.is_closed : !r.is_closed))
     : records;
 
   let totClaimed = 0, totSanctioned = 0;
   const dataRows = filteredRecords.map((r) => {
     totClaimed += num(r.claimed_amount); totSanctioned += num(r.sanctioned_amount);
-    const docs = Array.isArray(r.documents) ? r.documents : [];
+    const docs = Array.isArray(r.documents) ? (r.documents as { url?: string }[]) : [];
     return [
-      r.clients?.gstin || '—', r.clients?.name || '—',
+      r.client_gstin || '—', r.client_name || '—',
       r.arn || '—', r.refund_type || '—', isoDateToDMY(r.filed_date),
-      num(r.claimed_amount), num(r.sanctioned_amount), r.status || '—',
-      docs.length === 0 ? '—' : docs[0].url,
+      num(r.claimed_amount), num(r.sanctioned_amount), r.status || (r.origin === 'case' ? 'Open' : '—'),
+      docs.length === 0 || !docs[0].url ? '—' : docs[0].url,
     ];
   });
   const clientIds: (string | null)[] = filteredRecords.map((r) => r.client_id);

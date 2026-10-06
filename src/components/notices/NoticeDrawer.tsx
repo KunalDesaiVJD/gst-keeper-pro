@@ -11,6 +11,19 @@ import { cn } from '@/lib/utils';
 import { Loader2, ExternalLink, Calendar, AlertTriangle, FileText, Clock, User, Activity, IndianRupee, MessageSquare, Check, Briefcase } from 'lucide-react';
 import { isClosed } from '@/utils/noticeSummaryReport';
 import { createMatter } from '@/lib/litigationData';
+import { useAuth } from '@/contexts/AuthContext';
+import { updateNotices } from '@/lib/noticeWrites';
+import { istToday, daysBetween } from '@/lib/noticeFacts';
+
+const DEADLINE_LABELS: Record<string, string> = {
+  reply_due: 'Reply due',
+  hearing: 'Personal hearing',
+  appeal_s107: 'First appeal (s.107)',
+  appeal_s107_condonation: 'First appeal — outer limit with condonation',
+  appeal_s112: 'Tribunal appeal (s.112)',
+  appeal_s112_condonation: 'Tribunal appeal — outer limit with condonation',
+  attachment_expiry: 'Provisional attachment lapses (DRC-22)',
+};
 
 interface NoticeDetail {
   id: string;
@@ -53,13 +66,20 @@ interface DeadlineRow {
   id: string;
   deadline_type: string;
   deadline_date: string;
+  computed_date?: string | null;
+  source?: string | null;
+  period_confirmed?: boolean | null;
   statutory_basis: string | null;
   is_met: boolean;
   notes: string | null;
 }
 
+// Dates are calendar dates (YYYY-MM-DD): format from the string, never via a
+// time-zone shifted Date.
 function fmtDate(iso: string | null): string {
   if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
   const d = new Date(iso);
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 }
@@ -73,13 +93,10 @@ function fmtRelative(iso: string): string {
   return fmtDate(iso);
 }
 
+// Whole IST calendar days from today (0 = due today, all day long).
 function daysUntil(iso: string | null): number | null {
   if (!iso) return null;
-  const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const ist = new Date(utc + 5.5 * 3600000);
-  const d = new Date(iso);
-  return Math.round((d.getTime() - ist.getTime()) / 86400000);
+  return daysBetween(istToday(), iso);
 }
 
 // Stage stepper: shows lifecycle progression
@@ -124,6 +141,7 @@ interface Props {
 }
 
 const NoticeDrawer: React.FC<Props> = ({ noticeId, clientId, open, onOpenChange }) => {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [notice, setNotice] = useState<NoticeDetail | null>(null);
   const [clientName, setClientName] = useState('');
@@ -149,7 +167,7 @@ const NoticeDrawer: React.FC<Props> = ({ noticeId, clientId, open, onOpenChange 
           .order('created_at', { ascending: false })
           .limit(30),
         supabase.from('matter_deadlines')
-          .select('id, deadline_type, deadline_date, statutory_basis, is_met, notes')
+          .select('*')
           .eq('notice_id', noticeId)
           .order('deadline_date', { ascending: true }),
       ]);
@@ -259,7 +277,7 @@ const NoticeDrawer: React.FC<Props> = ({ noticeId, clientId, open, onOpenChange 
                         setLinkingMatter(false);
                         return;
                       }
-                      await supabase.from('gst_notices').update({ matter_id: newMatter.id }).eq('id', notice.id);
+                      await updateNotices([notice.id], { matter_id: newMatter.id }, user);
                       setNotice({ ...notice, matter_id: newMatter.id });
                       setMatterInfo({ id: newMatter.id, matter_no: newMatter.matter_no, title: newMatter.title });
                       setLinkingMatter(false);
@@ -451,10 +469,16 @@ const NoticeDrawer: React.FC<Props> = ({ noticeId, clientId, open, onOpenChange 
                           days !== null && days <= 7 ? 'bg-amber-50/50 border-amber-200' : ''
                         )}>
                           <div>
-                            <p className="text-xs font-medium">{dl.deadline_type}</p>
+                            <p className="text-xs font-medium">{DEADLINE_LABELS[dl.deadline_type] ?? dl.deadline_type}</p>
                             {dl.statutory_basis && (
                               <p className="text-[10px] text-muted-foreground">{dl.statutory_basis}</p>
                             )}
+                            <p className="text-[10px] text-muted-foreground">
+                              {dl.source === 'override'
+                                ? `Overridden${dl.computed_date && dl.computed_date !== dl.deadline_date ? ` · rule says ${fmtDate(dl.computed_date)}` : ''}`
+                                : 'Computed'}
+                              {dl.period_confirmed === false && ' · period not yet confirmed by the firm'}
+                            </p>
                             {dl.notes && (
                               <p className="mt-1 text-[10px] text-muted-foreground">{dl.notes}</p>
                             )}

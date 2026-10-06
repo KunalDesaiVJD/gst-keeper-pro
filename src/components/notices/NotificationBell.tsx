@@ -56,8 +56,35 @@ function formatRelativeTime(isoDate: string): string {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+// Events are written by database triggers (migration 20261006112000) for every
+// writer — staff, the portal sync, the closing sweep — so the bell also shows
+// what the system did (actor_id NULL), not just other people's edits.
+const EVENT_LABELS: Record<string, string> = {
+  captured: 'New notice captured',
+  removed: 'Notice no longer on the portal',
+  restored: 'Notice back on the portal',
+  status_changed: 'Status changed',
+  closed: 'Notice closed',
+  reopened: 'Notice reopened',
+  assigned: 'Owner changed',
+  due_changed: 'Due date changed',
+  hearing_fixed: 'Hearing fixed',
+  reply_logged: 'Reply logged',
+  submission_logged: 'Submission logged',
+  order_logged: 'Order logged',
+  priority_changed: 'Priority changed',
+  linked_to_matter: 'Linked to a matter',
+  unlinked_from_matter: 'Unlinked from a matter',
+  reply_filed: 'Reply filed on the portal',
+  order_received: 'Order on the portal',
+  notice_issued: 'New notice in a case',
+  closure_on_portal: 'Case closed on the portal',
+  folder_item_added: 'New item in a case folder',
+  folder_item_removed: 'Case folder item removed',
+};
+
 function formatEventType(raw: string): string {
-  return raw.replace(/_/g, ' ');
+  return EVENT_LABELS[raw] ?? raw.replace(/_/g, ' ');
 }
 
 function NotificationBell() {
@@ -76,7 +103,7 @@ function NotificationBell() {
     const noticePromise = supabase
       .from('notice_events')
       .select('id, event_type, actor_id, actor_name, notice_id, created_at')
-      .neq('actor_id', userId)
+      .or(`actor_id.is.null,actor_id.neq.${userId}`)
       .order('created_at', { ascending: false })
       .limit(20);
 
@@ -86,7 +113,7 @@ function NotificationBell() {
       .select(
         'id, event_type, actor_user_id, actor_name, matter_id, created_at',
       )
-      .neq('actor_user_id', userId)
+      .or(`actor_user_id.is.null,actor_user_id.neq.${userId}`)
       .order('created_at', { ascending: false })
       .limit(20);
 
@@ -127,9 +154,12 @@ function NotificationBell() {
     setEvents(merged);
   }, [user]);
 
-  // Fetch on mount and when popover opens
+  // Fetch on mount, every two minutes (the sync and the sweep write events
+  // while the page is open), and when the popover opens.
   useEffect(() => {
     fetchEvents();
+    const t = setInterval(fetchEvents, 120_000);
+    return () => clearInterval(t);
   }, [fetchEvents]);
 
   useEffect(() => {

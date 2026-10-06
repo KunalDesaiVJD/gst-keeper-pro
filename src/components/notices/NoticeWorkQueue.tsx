@@ -3,6 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import type { TablesUpdate } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
+import type { NoticeFact } from '@/lib/noticeFacts';
+import { istToday, daysBetween } from '@/lib/noticeFacts';
+import { updateNotices } from '@/lib/noticeWrites';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -29,6 +32,9 @@ interface QueueItem {
   assign_to: string | null;
   assign_to_user_id: string | null;
   amount_of_demand: number | null;
+  hearing_date: string | null;
+  effective_due: string | null;
+  is_overdue: boolean;
   owner_initials: string | null;
 }
 
@@ -58,18 +64,16 @@ const PRIORITY_TIERS = ['Low', 'Medium', 'High'];
 // the rest, rather than growing the page to fit every row.
 const ROW_LIMIT = 50;
 
+// The canonical effective due (portal, officer's extension, case folder or the
+// form's short clock) — the same date the overdue tile counts.
 function effectiveDue(item: QueueItem): string | null {
-  return item.extended_due_date || item.due_date;
+  return item.effective_due || item.extended_due_date || item.due_date;
 }
 
+// Whole IST calendar days, so "due today" never shows as -1 in the evening.
 function daysRemaining(item: QueueItem): number | null {
   const due = effectiveDue(item);
-  if (!due) return null;
-  const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const ist = new Date(utc + 5.5 * 3600000);
-  const d = new Date(due);
-  return Math.round((d.getTime() - ist.getTime()) / 86400000);
+  return due ? daysBetween(istToday(), due) : null;
 }
 
 // Newest first. Sorting by deadline surfaced notices from 2017 at the top of
@@ -118,17 +122,23 @@ type TabKey = 'team' | 'mine' | 'unassigned' | 'hearings';
 const CLOSED_RE = /^(closed|withdrawn|dropped|disposed|deleted|adjudged)/i;
 
 interface Props {
+  /** The dashboard's canonical notice set (lib/noticeFacts); the queue shows its open rows. */
+  rows: NoticeFact[];
+  loading?: boolean;
+  /** Called after a bulk action so the dashboard reloads its numbers. */
+  onChanged?: () => void;
   onSelectNotice?: (noticeId: string, clientId: string) => void;
   onSweep?: () => void;
   sweeping?: boolean;
 }
 
-const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping }) => {
+const NoticeWorkQueue: React.FC<Props> = ({ rows, loading: rowsLoading = false, onChanged, onSelectNotice, onSweep, sweeping }) => {
   const { user, canEditNoticeStatus } = useAuth();
   const navigate = useNavigate();
   const [allItems, setAllItems] = useState<QueueItem[]>([]);
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [profilesLoading, setProfilesLoading] = useState(true);
+  const loading = rowsLoading || profilesLoading;
   const [tab, setTab] = useState<TabKey>('team');
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -144,24 +154,10 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
   const canEdit = canEditNoticeStatus();
 
   useEffect(() => {
-    if (!user?.id) return;
     let cancelled = false;
     (async () => {
-      const { data: notices } = await supabase
-        .from('gst_notices')
-        .select('id, client_id, notice_type, reference_number, staff_status, priority, due_date, extended_due_date, issue_date, assign_to, assign_to_user_id, amount_of_demand')
-        .is('deleted_at', null)
-        .limit(1000);
-
-      if (cancelled || !notices?.length) { setLoading(false); return; }
-
-      const clientIds = [...new Set(notices.map((n) => n.client_id))];
-      const { data: clients } = await supabase.from('clients').select('id, name, gstin').in('id', clientIds);
-      const clientMap = new Map((clients ?? []).map((c) => [c.id, c]));
-
-      // profiles has first_name and email only (no last_name — selecting it made the
-      // whole query fail, so the assignee list was empty and every owner showed "?").
-      // Offer staff only: client logins also have profile rows.
+      // profiles has first_name and email only. Offer staff only: client logins
+      // also have profile rows.
       const [{ data: profileRows }, { data: roleRows }] = await Promise.all([
         supabase.from('profiles').select('user_id, first_name, email'),
         supabase.from('user_roles').select('user_id, role'),
@@ -176,30 +172,48 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
           return { user_id: p.user_id, name, initials };
         })
         .sort((a, b) => a.name.localeCompare(b.name));
-      const profileMap = new Map(opts.map((p) => [p.user_id, p.initials]));
-
-      const queue: QueueItem[] = notices
-        .filter((n) => !CLOSED_RE.test(n.staff_status ?? ''))
-        .map((n) => {
-          const c = clientMap.get(n.client_id);
-          return {
-            ...n,
-            client_name: c?.name || 'Unknown',
-            gstin: c?.gstin || null,
-            owner_initials: n.assign_to_user_id ? (profileMap.get(n.assign_to_user_id) || '?') : null,
-          } as QueueItem;
-        })
-        .sort((a, b) => recencyKey(b).localeCompare(recencyKey(a)));
-
-      if (!cancelled) { setAllItems(queue); setProfiles(opts); setLoading(false); }
+      if (!cancelled) { setProfiles(opts); setProfilesLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [user?.id]);
+  }, []);
+
+  // Every open notice of the canonical set — no 1000-row cap, the same rows
+  // the dashboard tiles count.
+  useEffect(() => {
+    const initials = new Map(profiles.map((p) => [p.user_id, p.initials]));
+    const queue: QueueItem[] = rows
+      .filter((n) => n.is_open ?? !CLOSED_RE.test(n.staff_status ?? ''))
+      .map((n) => ({
+        id: n.id as string,
+        client_id: n.client_id as string,
+        client_name: n.client_name || 'Unknown',
+        gstin: n.client_gstin,
+        notice_type: n.form_label || n.notice_type,
+        reference_number: n.reference_number,
+        staff_status: n.staff_status,
+        priority: n.priority ?? n.effective_priority,
+        due_date: n.due_date,
+        extended_due_date: n.extended_due_date,
+        issue_date: n.issue_date,
+        assign_to: n.assign_to,
+        assign_to_user_id: n.assign_to_user_id,
+        amount_of_demand: n.amount_of_demand,
+        hearing_date: n.hearing_date,
+        effective_due: n.effective_due,
+        is_overdue: !!n.is_overdue,
+        owner_initials: n.assign_to_user_id ? (initials.get(n.assign_to_user_id) || '?') : null,
+      }))
+      .sort((a, b) => recencyKey(b).localeCompare(recencyKey(a)));
+    setAllItems(queue);
+  }, [rows, profiles]);
+
+  // A hearing date today or later (set by staff or found in the case folder).
+  const hasUpcomingHearing = (i: QueueItem) => !!i.hearing_date && daysBetween(istToday(), i.hearing_date) >= 0;
 
   const items = useMemo(() => {
     if (tab === 'mine') return allItems.filter((i) => i.assign_to_user_id === user?.id);
     if (tab === 'unassigned') return allItems.filter((i) => !i.assign_to_user_id);
-    if (tab === 'hearings') return allItems.filter((i) => /hearing/i.test(i.staff_status ?? ''));
+    if (tab === 'hearings') return allItems.filter(hasUpcomingHearing);
     return allItems;
   }, [allItems, tab, user?.id]);
 
@@ -207,7 +221,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
     team: allItems.length,
     mine: allItems.filter((i) => i.assign_to_user_id === user?.id).length,
     unassigned: allItems.filter((i) => !i.assign_to_user_id).length,
-    hearings: allItems.filter((i) => /hearing/i.test(i.staff_status ?? '')).length,
+    hearings: allItems.filter(hasUpcomingHearing).length,
   }), [allItems, user?.id]);
 
   const staleCount = allItems.filter((i) => !effectiveDue(i) && !i.staff_status).length;
@@ -244,14 +258,12 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
     if (!assignTo || ids.length === 0) return;
     const profile = profiles.find((p) => p.user_id === assignTo);
     setSaving(true);
-    const { error } = await supabase
-      .from('gst_notices')
-      .update({ assign_to_user_id: assignTo, assign_to: profile?.name ?? null })
-      .in('id', ids);
+    const { error } = await updateNotices(ids, { assign_to_user_id: assignTo, assign_to: profile?.name ?? null }, user);
     setSaving(false);
     if (error) { toast.error('Failed to assign: ' + error.message); return; }
     patchLocal(ids, { assign_to_user_id: assignTo, assign_to: profile?.name ?? null, owner_initials: profile?.initials ?? '?' });
     toast.success(`Assigned ${ids.length} notice${ids.length === 1 ? '' : 's'} to ${profile?.name ?? 'user'}.`);
+    onChanged?.();
     setAssignOpen(false);
     setAssignTo('');
     setSelected(new Set());
@@ -261,11 +273,12 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
     const ids = selectedIds();
     if (!bulkPriority || ids.length === 0) return;
     setSaving(true);
-    const { error } = await supabase.from('gst_notices').update({ priority: bulkPriority }).in('id', ids);
+    const { error } = await updateNotices(ids, { priority: bulkPriority }, user);
     setSaving(false);
     if (error) { toast.error('Failed to set priority: ' + error.message); return; }
     patchLocal(ids, { priority: bulkPriority });
     toast.success(`Set priority on ${ids.length} notice${ids.length === 1 ? '' : 's'}.`);
+    onChanged?.();
     setPriorityOpen(false);
     setBulkPriority('');
     setSelected(new Set());
@@ -277,7 +290,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
     setSaving(true);
     const payload: TablesUpdate<'gst_notices'> = { staff_status: bulkStage };
     payload.close_reason = bulkStage === 'Closed' ? (closeReason || null) : null;
-    const { error } = await supabase.from('gst_notices').update(payload).in('id', ids);
+    const { error } = await updateNotices(ids, payload, user);
     setSaving(false);
     if (error) { toast.error('Failed to change stage: ' + error.message); return; }
     // A row moved to a closed stage drops out of the queue entirely, matching
@@ -288,6 +301,7 @@ const NoticeWorkQueue: React.FC<Props> = ({ onSelectNotice, onSweep, sweeping })
       patchLocal(ids, { staff_status: bulkStage });
     }
     toast.success(`Moved ${ids.length} notice${ids.length === 1 ? '' : 's'} to ${bulkStage}.`);
+    onChanged?.();
     setStageOpen(false);
     setBulkStage('');
     setCloseReason('');

@@ -4,7 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { isExtensionOutdated, outdatedExtensionMessage } from '@/lib/extensionVersion';
 import { useNoticeSet } from '@/hooks/useNoticeSet';
-import { isOpen, isOverdue, isDueIn7, isNew } from '@/utils/noticeDefinitions';
+import { isOpen, isOverdue, isDueIn7, isNew, effectiveDue } from '@/utils/noticeDefinitions';
+import { istToday, daysBetween } from '@/lib/noticeFacts';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,7 +18,7 @@ import NoticesPageHeader from '@/components/notices/NoticesPageHeader';
 import { classifyNoticeCategory } from '@/utils/noticeCategoryClassifier';
 import { computeNoticeSummary, summaryCellHref, type SummaryCellKind } from '@/utils/noticeSummaryReport';
 import { runNoticeSweep } from '@/lib/noticeAutoClose';
-import { runScheduledAlerts, flushOutbox } from '@/lib/noticeAlertQueue';
+import { runNoticeAlerts, describeAlertRun } from '@/lib/noticeAlertQueue';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
 import NoticeWorkQueue from '@/components/notices/NoticeWorkQueue';
 import CategorySummaryBars from '@/components/notices/CategorySummaryBars';
@@ -35,6 +36,13 @@ interface SyncLogRow {
   created_at: string;
 }
 
+interface ClockRow {
+  notice_id: string;
+  client_id: string;
+  deadline_type: string;
+  deadline_date: string;
+}
+
 interface MiniClient {
   id: string;
   name: string;
@@ -43,15 +51,21 @@ interface MiniClient {
   inactive_at_hand?: boolean;
 }
 
-function todayISOString(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-}
+const todayISOString = istToday;
+
+const CLOCK_LABELS: Record<string, string> = {
+  appeal_s107: 'Appeal (s.107)',
+  appeal_s107_condonation: 'Appeal, condonation limit',
+  appeal_s112: 'Tribunal appeal (s.112)',
+  appeal_s112_condonation: 'Tribunal, condonation limit',
+  attachment_expiry: 'Attachment lapses',
+};
 
 
 const NoticesDashboardPage: React.FC = () => {
   const { isStaffRole } = useAuth();
   const navigate = useNavigate();
-  const { rows, refundRows, drc03Rows, loading, error: noticeError, refetch } = useNoticeSet();
+  const { rows, refundRows, drc03Rows, matterExposure, loading, error: noticeError, refetch } = useNoticeSet();
 
   const [drawerNoticeId, setDrawerNoticeId] = useState<string | null>(null);
   const [drawerClientId, setDrawerClientId] = useState<string | null>(null);
@@ -87,6 +101,9 @@ const NoticesDashboardPage: React.FC = () => {
   const [syncLogs, setSyncLogs] = useState<SyncLogRow[]>([]);
   const [clients, setClients] = useState<MiniClient[]>([]);
   const [emailsSentToday, setEmailsSentToday] = useState<number | null>(null);
+  const [previewsToday, setPreviewsToday] = useState<number | null>(null);
+  const [alertsMode, setAlertsMode] = useState<string | null>(null);
+  const [clocks, setClocks] = useState<ClockRow[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,16 +111,28 @@ const NoticesDashboardPage: React.FC = () => {
       // A failed portal login is logged as action 'login_failed', not 'notices':
       // read both, or a client whose password changed shows as healthy.
       const startOfTodayIst = new Date(`${todayISOString()}T00:00:00+05:30`).toISOString();
-      const [logRes, clientRes, emailRes] = await Promise.all([
+      const horizon = new Date(`${todayISOString()}T00:00:00Z`);
+      horizon.setUTCDate(horizon.getUTCDate() + 35);
+      const [logRes, clientRes, emailRes, previewRes, settingsRes, clockRes] = await Promise.all([
         supabase.from('client_sync_log').select('client_id, status, created_at').in('action', ['notices', 'login_failed']).order('created_at', { ascending: false }),
         supabase.from('clients').select('id, name, gstin, gst_user_id, inactive_at_hand').eq('notices_sync_excluded', false).order('name'),
         supabase.from('email_outbox').select('id', { count: 'exact', head: true })
           .eq('kind', 'notice_alert').eq('status', 'sent').gte('sent_at', startOfTodayIst),
+        supabase.from('email_outbox').select('id', { count: 'exact', head: true })
+          .eq('kind', 'notice_alert').eq('status', 'preview').gte('created_at', startOfTodayIst),
+        supabase.from('notice_settings').select('alerts_mode').maybeSingle(),
+        // Appeal and attachment clocks in the deadline strip's window (statutory clocks writer).
+        supabase.from('matter_deadlines').select('notice_id, client_id, deadline_type, deadline_date')
+          .in('deadline_type', Object.keys(CLOCK_LABELS)).eq('is_met', false)
+          .gte('deadline_date', todayISOString()).lte('deadline_date', horizon.toISOString().slice(0, 10)),
       ]);
       if (!cancelled) {
         setSyncLogs((logRes.data || []) as SyncLogRow[]);
         setClients((clientRes.data || []) as MiniClient[]);
         setEmailsSentToday(emailRes.error ? null : emailRes.count ?? 0);
+        setPreviewsToday(previewRes.error ? null : previewRes.count ?? 0);
+        setAlertsMode(settingsRes.error ? null : settingsRes.data?.alerts_mode ?? null);
+        setClocks(clockRes.error ? [] : (clockRes.data || []) as ClockRow[]);
       }
     })();
     return () => { cancelled = true; };
@@ -150,22 +179,16 @@ const NoticesDashboardPage: React.FC = () => {
     }
   };
 
+  // The alert engine runs on its own (every 15 minutes, 09:30 IST, Mondays);
+  // this runs it now. It never writes the same alert twice.
   const [sendingDigest, setSendingDigest] = useState(false);
   const handleSendDigest = async () => {
     setSendingDigest(true);
-    try {
-      const { queued, errors } = await runScheduledAlerts();
-      if (errors.length) toast.error('Digest errors: ' + errors.join('; '));
-      else if (queued > 0) {
-        flushOutbox();
-        toast.success(`Queued ${queued} notice alert${queued === 1 ? '' : 's'}.`);
-      } else {
-        toast.info('No notice alerts due right now.');
-      }
-    } catch {
-      toast.error('Failed to run notice alerts.');
-    }
+    const result = await runNoticeAlerts('all');
     setSendingDigest(false);
+    if (result.error) { toast.error(result.error); return; }
+    if (result.alertsMode) setAlertsMode(result.alertsMode);
+    toast.success(describeAlertRun(result));
   };
 
   const handleSyncAll = () => {
@@ -188,9 +211,9 @@ const NoticesDashboardPage: React.FC = () => {
 
   const { categoryRows, grandTotal } = computeNoticeSummary(rows, refundRows, drc03Rows);
 
-  const totalNotices = categoryFilter
-    ? (categoryRows.find((r) => r.type === categoryFilter)?.total ?? displayRows.length)
-    : grandTotal.total;
+  // Every number below is a count of canonical flags (public.notice_facts), and
+  // each tile opens the list filtered by the same flag — and by the category
+  // when one is picked — so the tile and the list always agree.
   const openNotices = displayRows.filter((r) => isOpen(r)).length;
   const overdueRows = displayRows.filter((r) => isOverdue(r));
   const overdue = overdueRows.length;
@@ -199,50 +222,49 @@ const NoticesDashboardPage: React.FC = () => {
   const newNotices = newRows.length;
   const newGstins = new Set(newRows.map((r) => r.client_id)).size;
 
-  const openWithDemand = displayRows.filter((r) => isOpen(r) && r.amount_of_demand && r.amount_of_demand > 0);
-  const exposureAmount = openWithDemand.reduce((sum, r) => sum + (r.amount_of_demand || 0), 0);
+  // Exposure: each open dispute once, plus (firm-wide) the open matters' outstanding demand.
+  const exposureRows = displayRows.filter((r) => Number(r.exposure_amount) > 0);
+  const matterTotals = useMemo(() => {
+    let matters = 0;
+    let amount = 0;
+    matterExposure.forEach((m) => { matters += m.matters; amount += m.amount; });
+    return { matters, amount };
+  }, [matterExposure]);
+  const exposureAmount = exposureRows.reduce((sum, r) => sum + Number(r.exposure_amount), 0)
+    + (categoryFilter ? 0 : matterTotals.amount);
 
-  // Richer KPI data
-  const demandAtRisk = overdueRows.reduce((s, r) => s + (r.amount_of_demand || 0), 0);
-  const oldestOverdueDays = useMemo(() => {
-    if (overdueRows.length === 0) return 0;
-    const today = todayISOString();
-    let oldest = 0;
-    overdueRows.forEach((r) => {
-      const due = r.extended_due_date || r.due_date;
-      if (due) {
-        const days = Math.floor((new Date(today).getTime() - new Date(due).getTime()) / 86400000);
-        if (days > oldest) oldest = days;
-      }
-    });
-    return oldest;
-  }, [overdueRows]);
+  const demandAtRisk = overdueRows.reduce((s, r) => s + (Number(r.amount_of_demand) || 0), 0);
+  const oldestOverdueDays = overdueRows.reduce((oldest, r) => {
+    const due = effectiveDue(r);
+    return due ? Math.max(oldest, daysBetween(due, todayISOString())) : oldest;
+  }, 0);
 
-  const newWithDemand = newRows.filter((r) => r.amount_of_demand && r.amount_of_demand > 0).length;
+  const newWithDemand = newRows.filter((r) => Number(r.amount_of_demand) > 0).length;
   const unassignedCount = displayRows.filter((r) => isOpen(r) && !r.assign_to_user_id).length;
-  const needClosingCount = displayRows.filter((r) => isOpen(r) && !r.due_date && !r.staff_status).length;
+  const needClosingCount = displayRows.filter((r) => isOpen(r) && !effectiveDue(r) && !r.staff_status).length;
 
-  const dueSoonBreakdown = useMemo(() => {
-    const due7Rows = displayRows.filter((r) => isDueIn7(r));
-    return {
-      replies: due7Rows.filter((r) => !/appeal|hearing/i.test(r.staff_status ?? '')).length,
-      appeals: due7Rows.filter((r) => /appeal/i.test(r.staff_status ?? '')).length,
-      hearings: due7Rows.filter((r) => /hearing/i.test(r.staff_status ?? '')).length,
-    };
-  }, [displayRows]);
+  const displayIds = useMemo(() => new Set(displayRows.map((r) => r.id)), [displayRows]);
+  const inNextDays = (date: string | null | undefined, days: number) => {
+    if (!date) return false;
+    const d = daysBetween(todayISOString(), date);
+    return d >= 0 && d <= days;
+  };
+  const dueSoonBreakdown = {
+    replies: dueSoon,
+    hearings: displayRows.filter((r) => isOpen(r) && inNextDays(r.hearing_date, 7)).length,
+    appeals: clocks.filter((c) => displayIds.has(c.notice_id) && inNextDays(c.deadline_date, 7)).length,
+  };
 
   const nextDeadline = useMemo(() => {
-    const today = todayISOString();
     const upcoming = displayRows
       .filter((r) => isDueIn7(r))
-      .map((r) => ({ ...r, _due: r.extended_due_date || r.due_date || '' }))
-      .filter((r) => r._due >= today)
+      .map((r) => ({ ...r, _due: effectiveDue(r) || '' }))
       .sort((a, b) => a._due.localeCompare(b._due));
     const first = upcoming[0];
     if (!first) return '';
-    const clientName = clients.find((c) => c.id === first.client_id)?.name || '';
-    const dueDate = new Date(first._due).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
-    return `Next: ${clientName} · ${first.notice_type || 'Notice'} · ${dueDate}`;
+    const clientName = first.client_name || clients.find((c) => c.id === first.client_id)?.name || '';
+    const dueDate = new Date(`${first._due}T00:00:00+05:30`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
+    return `Next: ${clientName} · ${first.form_label || first.notice_type || 'Notice'} · ${dueDate}`;
   }, [displayRows, clients]);
 
   // Sync health
@@ -252,28 +274,30 @@ const NoticesDashboardPage: React.FC = () => {
   const now24h = Date.now() - 24 * 60 * 60 * 1000;
   const clientsSynced24h = new Set(syncLogs.filter((l) => l.status === 'success' && new Date(l.created_at).getTime() > now24h).map((l) => l.client_id)).size;
   const lastSuccessSync = syncLogs.find((l) => l.status === 'success');
-  const newNotices24h = rows.filter((r) => r.first_seen_at && new Date(r.first_seen_at).getTime() > now24h).length;
+  const newNotices24h = rows.filter((r) => isNew(r)).length;
 
   // Deadline strip window — 35 days so the strip's own "Month" toggle has data
   // to show; it renders only the range it is currently set to.
   const deadlineItems = useMemo<DeadlineItem[]>(() => {
-    const today = todayISOString();
-    const horizon = new Date(today);
-    horizon.setDate(horizon.getDate() + 35);
-    const end = horizon.toISOString().slice(0, 10);
     const items: DeadlineItem[] = [];
-
     displayRows.forEach((r) => {
-      const due = r.extended_due_date || r.due_date;
-      if (due && due >= today && due <= end && isOpen(r)) {
-        items.push({ date: due, type: 'reply_due', label: r.notice_type || 'Notice', noticeId: r.id, clientId: r.client_id });
+      const due = effectiveDue(r);
+      if (isOpen(r) && inNextDays(due, 35)) {
+        items.push({ date: due as string, type: 'reply_due', label: r.form_label || r.notice_type || 'Notice', noticeId: r.id ?? undefined, clientId: r.client_id ?? undefined });
       }
-      if (r.issue_date && r.issue_date >= today && r.issue_date <= end) {
-        items.push({ date: r.issue_date, type: 'issued', label: r.notice_type || 'Issued', noticeId: r.id, clientId: r.client_id });
+      if (isOpen(r) && inNextDays(r.hearing_date, 35)) {
+        items.push({ date: r.hearing_date as string, type: 'hearing', label: 'Hearing', noticeId: r.id ?? undefined, clientId: r.client_id ?? undefined });
+      }
+      if (inNextDays(r.issue_date, 35)) {
+        items.push({ date: r.issue_date as string, type: 'issued', label: r.form_label || r.notice_type || 'Issued', noticeId: r.id ?? undefined, clientId: r.client_id ?? undefined });
       }
     });
+    clocks.forEach((c) => {
+      if (!displayIds.has(c.notice_id)) return;
+      items.push({ date: c.deadline_date, type: 'appeal_limitation', label: CLOCK_LABELS[c.deadline_type] || c.deadline_type, noticeId: c.notice_id, clientId: c.client_id });
+    });
     return items;
-  }, [displayRows]);
+  }, [displayRows, clocks, displayIds]);
 
   // Sync line for header
   // Clients a Sync All actually covers: portal credentials saved, not marked inactive.
@@ -282,6 +306,9 @@ const NoticesDashboardPage: React.FC = () => {
     ? new Date(lastSuccessSync.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) +
       ', ' + new Date(lastSuccessSync.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST'
     : null;
+
+  const listLink = (filter: string) =>
+    `/notices-all?filter=${filter}${categoryFilter ? `&category=${encodeURIComponent(categoryFilter)}` : ''}`;
 
   // After every hook (Rules of Hooks): an early return above them would change
   // the hook order if the role changes between renders.
@@ -329,7 +356,7 @@ const NoticesDashboardPage: React.FC = () => {
             <AddNoticeDialog onSuccess={refetch} />
             <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleSendDigest} disabled={sendingDigest}>
               {sendingDigest ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Mail className="mr-1.5 h-3.5 w-3.5" />}
-              Send digest
+              Run alerts
             </Button>
             <Button size="sm" className="h-8 text-xs" onClick={handleSyncAll} disabled={syncing}>
               {syncing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
@@ -354,19 +381,20 @@ const NoticesDashboardPage: React.FC = () => {
         newWithDemand={newWithDemand}
         unassignedCount={unassignedCount}
         exposureAmount={exposureAmount}
-        exposureCount={openWithDemand.length}
+        exposureCount={exposureRows.length}
+        exposureMatters={categoryFilter ? 0 : matterTotals.matters}
         demandAtRisk={demandAtRisk}
         oldestOverdueDays={oldestOverdueDays}
         needClosingCount={needClosingCount}
         loading={loading}
-        onClickOverdue={() => navigate('/notices-all?filter=overdue')}
-        onClickDueSoon={() => navigate('/notices-all?filter=due7')}
-        onClickNew={() => navigate('/notices-all?filter=new')}
-        onClickExposure={() => navigate('/notices-all?status=Open')}
+        onClickOverdue={() => navigate(listLink('overdue'))}
+        onClickDueSoon={() => navigate(listLink('due7'))}
+        onClickNew={() => navigate(listLink('new'))}
+        onClickExposure={() => navigate(listLink('exposure'))}
       />
 
       {/* ── Zone 2: Work queue ─────────────────────────────────────────────── */}
-      <NoticeWorkQueue onSelectNotice={openDrawer} onSweep={handleSweep} sweeping={sweeping} />
+      <NoticeWorkQueue rows={rows} loading={loading} onChanged={refetch} onSelectNotice={openDrawer} onSweep={handleSweep} sweeping={sweeping} />
 
       {/* ── Zone 3: Category summary | 14 days | Sync health ──────────────── */}
       <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-[1.2fr_1fr_1fr]">
@@ -385,7 +413,7 @@ const NoticesDashboardPage: React.FC = () => {
           onClickItem={(item) => {
             if (item.noticeId && item.clientId) openDrawer(item.noticeId, item.clientId);
           }}
-          onClickDate={(dateISO) => navigate(`/notices-all?date=${dateISO}`)}
+          onClickDate={(dateISO) => navigate(`/notices-all?date=${dateISO}${categoryFilter ? `&category=${encodeURIComponent(categoryFilter)}` : ''}`)}
           loading={loading}
         />
 
@@ -397,6 +425,8 @@ const NoticesDashboardPage: React.FC = () => {
           failedLogins={failedLoginsCount}
           newNotices24h={newNotices24h}
           emailsSentToday={emailsSentToday}
+          previewsToday={previewsToday}
+          alertsMode={alertsMode}
           extensionVersion={extVersion}
           extensionReady={extReady}
         />

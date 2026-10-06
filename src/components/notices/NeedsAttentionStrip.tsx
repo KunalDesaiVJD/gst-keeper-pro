@@ -13,7 +13,10 @@ interface NeedsAttentionStripProps {
   newWithDemand?: number;
   unassignedCount?: number;
   exposureAmount: number;
+  /** Open notice disputes with a demand — the rows the exposure list shows. */
   exposureCount: number;
+  /** Open litigation matters with outstanding demand (counted on the Matters page). */
+  exposureMatters?: number;
   exposureTax?: number;
   exposureInterest?: number;
   exposurePenalty?: number;
@@ -46,6 +49,7 @@ function NeedsAttentionStrip({
   unassignedCount,
   exposureAmount,
   exposureCount,
+  exposureMatters,
   exposureTax,
   exposureInterest,
   exposurePenalty,
@@ -125,7 +129,7 @@ function NeedsAttentionStrip({
             {dueSoon}
             {dueSoonBreakdown && (
               <span className="ml-1.5 font-sans text-xs font-medium text-muted-foreground">
-                {dueSoonBreakdown.replies} replies · {dueSoonBreakdown.appeals} appeals · {dueSoonBreakdown.hearings} hearings
+                replies · also {dueSoonBreakdown.hearings} hearing{dueSoonBreakdown.hearings === 1 ? '' : 's'} · {dueSoonBreakdown.appeals} appeal clock{dueSoonBreakdown.appeals === 1 ? '' : 's'}
               </span>
             )}
           </p>
@@ -176,7 +180,7 @@ function NeedsAttentionStrip({
               Exposure under dispute
             </span>
             <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
-              {exposureCount} matters
+              {exposureCount} notice{exposureCount === 1 ? '' : 's'}{exposureMatters ? ` · ${exposureMatters} matter${exposureMatters === 1 ? '' : 's'}` : ''}
             </span>
           </div>
           <p className="font-heading text-[30px] font-bold tabular-nums leading-none">

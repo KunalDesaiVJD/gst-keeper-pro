@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { updateNotices, type NoticeActor } from '@/lib/noticeWrites';
 import type { TablesUpdate } from '@/integrations/supabase/types';
 
 export interface LitigationMatter {
@@ -381,14 +382,10 @@ export async function reopenMatter(
 export async function linkNoticesToMatter(
   matterId: string,
   noticeIds: string[],
+  actor?: NoticeActor | null,
 ): Promise<{ error: any }> {
-  for (const noticeId of noticeIds) {
-    const { error } = await supabase
-      .from('gst_notices')
-      .update({ matter_id: matterId })
-      .eq('id', noticeId);
-    if (error) return { error };
-  }
+  const { error } = await updateNotices(noticeIds, { matter_id: matterId }, actor);
+  if (error) return { error };
 
   await logMatterEvent({
     matter_id: matterId,
@@ -401,6 +398,7 @@ export async function linkNoticesToMatter(
 
 export async function unlinkNotice(
   noticeId: string,
+  actor?: NoticeActor | null,
 ): Promise<{ error: any }> {
   const { data: notice } = await supabase
     .from('gst_notices')
@@ -408,10 +406,7 @@ export async function unlinkNotice(
     .eq('id', noticeId)
     .maybeSingle();
 
-  const { error } = await supabase
-    .from('gst_notices')
-    .update({ matter_id: null })
-    .eq('id', noticeId);
+  const { error } = await updateNotices([noticeId], { matter_id: null }, actor);
 
   if (error) return { error };
 

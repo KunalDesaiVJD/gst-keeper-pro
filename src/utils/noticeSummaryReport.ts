@@ -10,20 +10,25 @@ export interface NoticeSummarySourceRow {
   description: string | null;
   staff_status: string | null;
   reply_date: string | null;
-  // Needed to dedupe the "Refunds"/"Voluntary Payment" case-summary rows
-  // against gst_refund_applications/gst_drc03_filings by ARN — see
-  // computeNoticeSummary below.
   case_id?: string | null;
+  // Canonical flags from public.notice_facts (lib/noticeFacts).
+  category?: string | null;
+  is_open?: boolean | null;
+  is_replied?: boolean | null;
 }
 
+// One row per refund case, already de-duplicated by ARN (public.refund_facts:
+// the applications plus the case rows no application covers).
 export interface RefundSummarySourceRow {
   arn: string | null;
   status: string | null;
+  is_closed?: boolean | null;
 }
 
 export interface Drc03SummarySourceRow {
   arn: string | null;
   status: string | null;
+  is_closed?: boolean | null;
 }
 
 export interface CategoryRow {
@@ -87,37 +92,25 @@ export function computeNoticeSummary(
     const type = classifyNoticeCategory(r);
     const entry = categoryMap.get(type) || { type, total: 0, open: 0, closed: 0, replied: 0 };
     entry.total += 1;
-    if (isClosed(r.staff_status)) entry.closed += 1; else entry.open += 1;
-    if (r.reply_date) entry.replied += 1;
+    const open = typeof r.is_open === 'boolean' ? r.is_open : !isClosed(r.staff_status);
+    if (open) entry.open += 1; else entry.closed += 1;
+    if (typeof r.is_replied === 'boolean' ? r.is_replied : !!r.reply_date) entry.replied += 1;
     categoryMap.set(type, entry);
   });
 
-  // Refund/DRC-03 aren't gst_notices rows for this purpose — they're folded
-  // into the same Notice Summary table Notice Alert shows them in, but as
-  // their own rows with their own drill-down page (see
-  // AllClientsRefundsPage/Drc03Page), deduped against the case-summary rows
-  // above by ARN (dedicated table's arn === case row's case_id, both being
-  // the portal's own ARN for that case).
+  // Refund/DRC-03 rows come from their own de-duplicated sets (refund_facts /
+  // drc03_facts: the dedicated table's rows plus the case rows it does not
+  // cover), and link to their own lists, which show exactly those rows.
   const mergeIntoCategory = (
     label: string,
-    dedicated: { arn: string | null; status: string | null }[],
-    caseType: string,
+    set: { status: string | null; is_closed?: boolean | null }[],
+    _caseType: string,
     isDedicatedClosed: (s: string | null) => boolean,
     to: string,
   ) => {
-    const caseRows = filteredRows.filter((r) => r.notice_type === caseType);
-    const keys = new Set<string>();
-    dedicated.forEach((d) => { if (d.arn) keys.add(d.arn); });
-    caseRows.forEach((r) => { if (r.case_id) keys.add(r.case_id); });
-    if (keys.size === 0) return;
-    let closed = 0;
-    keys.forEach((key) => {
-      const d = dedicated.find((x) => x.arn === key);
-      if (d) { if (isDedicatedClosed(d.status)) closed += 1; return; }
-      const cr = caseRows.find((x) => x.case_id === key);
-      if (cr && isClosed(cr.staff_status)) closed += 1;
-    });
-    categoryMap.set(label, { type: label, total: keys.size, open: keys.size - closed, closed, replied: 0, to });
+    if (set.length === 0) return;
+    const closed = set.filter((d) => (typeof d.is_closed === 'boolean' ? d.is_closed : isDedicatedClosed(d.status))).length;
+    categoryMap.set(label, { type: label, total: set.length, open: set.length - closed, closed, replied: 0, to });
   };
   mergeIntoCategory('Refund', refundRows, CASE_REFUND_TYPE, isRefundClosed, '/refunds-all');
   mergeIntoCategory('DRC 03', drc03Rows, CASE_DRC03_TYPE, isDrc03Closed, '/drc03-all');
