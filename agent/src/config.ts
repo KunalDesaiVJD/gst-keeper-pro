@@ -1,33 +1,74 @@
+// Agent settings from agent/.env (see .env.example). The switches that matter
+// day to day (on/off, schedule, how many browsers, sessions) live in the app's
+// Autopilot settings and come back with every heartbeat, not from here.
 import 'dotenv/config';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-function req(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing required env var: ${name}`);
-  return v;
+const here = path.dirname(fileURLToPath(import.meta.url));
+export const AGENT_ROOT = path.resolve(here, '..');
+export const VERSION: string = JSON.parse(fs.readFileSync(path.join(AGENT_ROOT, 'package.json'), 'utf8')).version;
+
+export interface AgentConfig {
+  agentId: string;
+  supabaseUrl: string;
+  anonKey: string;
+  extensionDir: string;
+  dataDir: string;
+  headful: boolean;
+  chromiumPath: string | null;
+  pollMs: number;
+  heartbeatMs: number;
+  jobBudgetMin: number;
+  sessionKey: string | null;
+  sessionMaxAgeMin: number;
+  maxWorkers: number;
 }
 
-export const config = {
-  supabaseUrl: req('SUPABASE_URL'),
-  supabaseServiceKey: req('SUPABASE_SERVICE_ROLE_KEY'),
-  agentId: process.env.AGENT_ID || 'office-pc-1',
-  pollIntervalMs: Number(process.env.POLL_INTERVAL_MS || 4000),
-  headful: (process.env.HEADFUL || 'true') === 'true',
-  dataDir: process.env.DATA_DIR || './.agent-data',
-  // RUN_ONCE: drain the queue and exit (for ephemeral cloud runners like GitHub
-  // Actions). Default false = the persistent poll loop (office PC / a VM).
-  runOnce: (process.env.RUN_ONCE || 'false') === 'true',
-  // Hard time budget for a run-once pass, so a scheduled job can't run away.
-  maxRunMs: Number(process.env.MAX_RUN_MS || 300000),
-  portalBaseUrl: 'https://services.gst.gov.in',
-  loginUrl: 'https://services.gst.gov.in/services/login',
+// The app's own public settings, so the agent needs no secret of its own: the
+// URL and the publishable (anon) key the extension already ships with.
+function extensionConfig(extensionDir: string): { url?: string; key?: string } {
+  try {
+    const src = fs.readFileSync(path.join(extensionDir, 'config.js'), 'utf8');
+    return {
+      url: /SUPABASE_URL\s*:\s*['"]([^'"]+)['"]/.exec(src)?.[1],
+      key: /SUPABASE_ANON_KEY\s*:\s*['"]([^'"]+)['"]/.exec(src)?.[1],
+    };
+  } catch {
+    return {};
+  }
+}
+
+const bool = (v: string | undefined, d: boolean) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.test(v));
+const num = (v: string | undefined, d: number, min: number, max: number) => {
+  const n = Number(v);
+  return Number.isFinite(n) && v !== undefined && v !== '' ? Math.min(max, Math.max(min, n)) : d;
 };
 
-export type JobType =
-  | 'LOGIN_TEST'
-  | 'SYNC_ALL'
-  | 'PULL_2B'
-  | 'PULL_LEDGERS'
-  | 'PULL_GSTR1'
-  | 'PULL_FILING_STATUS'
-  | 'PUSH_GSTR1_SAVE'
-  | 'PUSH_GSTR3B_SAVE';
+export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Partial<AgentConfig> = {}): AgentConfig {
+  const extensionDir = path.resolve(AGENT_ROOT, env.EXTENSION_DIR || '../extension');
+  const ext = extensionConfig(extensionDir);
+  const cfg: AgentConfig = {
+    agentId: env.AGENT_ID || `office-${os.hostname().toLowerCase().replace(/[^a-z0-9-]/g, '') || 'pc'}`,
+    supabaseUrl: (env.SUPABASE_URL || ext.url || '').replace(/\/+$/, ''),
+    anonKey: env.SUPABASE_ANON_KEY || ext.key || '',
+    extensionDir,
+    dataDir: path.resolve(AGENT_ROOT, env.DATA_DIR || './.agent-data'),
+    headful: bool(env.HEADFUL, true),
+    chromiumPath: env.CHROMIUM_PATH || null,
+    pollMs: num(env.POLL_INTERVAL_MS, 5000, 1000, 60000),
+    heartbeatMs: num(env.HEARTBEAT_MS, 10000, 2000, 60000),
+    jobBudgetMin: num(env.JOB_BUDGET_MIN, 40, 5, 180),
+    sessionKey: env.AGENT_SESSION_KEY || null,
+    sessionMaxAgeMin: num(env.SESSION_MAX_AGE_MIN, 50, 5, 720),
+    maxWorkers: num(env.MAX_WORKERS, 4, 1, 4),
+    ...overrides,
+  };
+  if (!cfg.supabaseUrl || !cfg.anonKey) {
+    throw new Error('No database address: set SUPABASE_URL and SUPABASE_ANON_KEY in agent/.env, or keep the extension folder next to the agent.');
+  }
+  if (/gst\.gov\.in/i.test(cfg.supabaseUrl)) throw new Error('SUPABASE_URL must be the GST Keeper database, not the portal.');
+  return cfg;
+}

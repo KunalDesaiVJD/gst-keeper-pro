@@ -7,7 +7,7 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // Phase 1: 0.5.0 writes through the database's single ingest door (sync_ingest),
 // fills the run ledger, skips documents already stored and has the CAPTCHA
 // watchdog. 0.4.x is still allowed (its writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.5.1';
+export const RECOMMENDED_EXTENSION_VERSION = '0.6.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);

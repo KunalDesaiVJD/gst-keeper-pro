@@ -254,6 +254,34 @@
     }
   };
 
+  // ── The office agent (0.6.0): queue the same clients on it instead ──────
+  let agentOn = false;
+  async function loadAgent() {
+    try {
+      const a = await withTimeout(GSTKdb.getAutopilot(), 8000);
+      agentOn = !!(a && a.enabled && a.agent_online);
+    } catch (e) { agentOn = false; /* database without the autopilot: hide it */ }
+    $('agentStart').hidden = !agentOn;
+    $('agentHint').hidden = !agentOn;
+  }
+  $('agentStart').onclick = async () => {
+    const ids = targetIds();
+    if (!ids.length) return;
+    $('agentStart').disabled = true;
+    try {
+      const res = await GSTKdb.queueOnAgent(scope() === 'all' ? null : ids);
+      const n = (res && res.queued) || 0;
+      const already = (res && res.already) || 0;
+      msgBox($('flash'), 'ok', n ? 'Queued ' + plural(n, 'client') + ' on the office agent.' : 'Already queued on the office agent.',
+        (already && n ? already + ' were already queued. ' : '') + 'Open the CAPTCHA wall in GST Keeper (Notices → Autopilot) and type their CAPTCHAs there.');
+    } catch (e) {
+      msgBox($('flash'), 'bad', 'Could not queue on the office agent.', (e && e.message) || String(e));
+    } finally {
+      $('agentStart').disabled = false;
+    }
+  };
+  loadAgent();
+
   // ── Other syncs: legacy return-period ledger pull ───────────────────────
   const now = new Date();
   const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1);

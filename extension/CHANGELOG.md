@@ -2,6 +2,35 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-07 — Office autopilot and more read per sync (v0.6.0)
+
+Phase 3 of the notices roadmap (Portal Autopilot; audit findings S-01, S-21, S-22,
+S-23, S-31). Works on a database without the Phase 3 migrations: the new writes are
+skipped there.
+
+- **The office agent drives this extension.** `startAgentJob` (background) starts
+  one client's job in the agent's own Chromium the way a person's Sync does — same
+  steps, same `sync_ingest`. An agent job (`job.agent`) relays its CAPTCHA to the
+  app's CAPTCHA wall instead of a desktop notice, waits up to 30 minutes for the
+  relayed answer instead of 60 seconds, and leaves its run to the queue (no
+  `runFinish`). The watchdog leaves an agent job's CAPTCHA wait to the agent and
+  drops a step stuck for 10 minutes with a `stalled` ledger row. `agentJobState`
+  and `agentClearJob` let the agent watch and stop it.
+- **Applications on the portal** (S-22): after DRC-03 the notices bundle reads the
+  portal's "My Applications" types — appeals (APL-01), rectification, objections
+  to a provisional attachment, the s.128A waiver, compounding, provisional
+  assessment — with the same case search (codes from the portal's public
+  casesearchctrl.js) and saves them through `sync_ingest_applications`.
+- **Registration status** (S-22): the bundle ends with the taxpayer profile
+  (status Active / Cancelled / Suspended, cancellation date, the raw profile); the
+  certificate PDF is left to "Fetch Company".
+- **GSTR-3A** (S-31): the return type and period from the portal's summary are kept
+  on the notice (`sync_notice_details`), which closes itself once Filing Status
+  shows that return filed; the rebuilt PDF now says it is rebuilt.
+- **Popup:** when the office agent is online and the autopilot is on, "Send to the
+  office agent" queues the same clients on it (their CAPTCHAs go to the app's
+  CAPTCHA wall) instead of syncing in this browser.
+
 ## 2026-10-06 — Toolbar popup rebuilt as a portal autopilot (v0.5.1)
 
 Phase 2 of the notices roadmap (audit findings U-110, U-111). Popup only; the sync

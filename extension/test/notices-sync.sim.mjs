@@ -50,6 +50,8 @@ const portal = {
   folderItems: {},  // caseFolderId -> [{refId, itemJson}]
   refunds: [],
   drc03: [],
+  applications: {}, // caseTypeCd -> case/search rows (0.6.0)
+  gstr3a: {},       // order id -> summary data
   downloads: 0,     // every document fetched from the portal
   folderCalls: 0,   // case/folder calls
 };
@@ -59,7 +61,11 @@ const json = (o, status = 200) => new Response(JSON.stringify(o), { status, head
 async function portalFetch(url, init) {
   const u = new URL(url);
   const body = init && init.body ? JSON.parse(init.body) : {};
-  if (u.pathname === '/services/auth/profile/detail') return json({ gstin: portal.gstin });
+  if (u.pathname === '/services/auth/profile/detail') return json({ gstin: portal.gstin, lgnm: 'Sim Client', sts: 'Active', rgdt: '01/07/2017' });
+  if (u.pathname === '/returns/auth/api/gstr3a/summary') {
+    const d = portal.gstr3a[u.searchParams.get('order_id')];
+    return d ? json({ data: d }) : json({ status: 0, error: 'not found' });
+  }
   if (u.pathname === '/services/auth/api/get/notices') return json(portal.notices);
   if (u.pathname === '/litserv/auth/api/case/task/get') return json(portal.tasks);
   if (u.pathname === '/litserv/auth/api/case/folder') { portal.folderCalls++; return json(portal.folders[body.caseId] || []); }
@@ -71,6 +77,7 @@ async function portalFetch(url, init) {
   if (u.pathname === '/litserv/auth/api/case/search') {
     if (body.caseTypeCd === 'RFUND') return json(portal.refunds);
     if (body.caseTypeCd === 'ADJVP') return json(portal.drc03);
+    if (['APPEL', 'ADJRO', 'ADJAT', 'ADJWS', 'COMPD', 'ADJPA'].includes(body.caseTypeCd)) return json(portal.applications[body.caseTypeCd] || []);
   }
   return new Response('not simulated: ' + u.pathname, { status: 404 });
 }
@@ -219,6 +226,10 @@ function setPortalDay1() {
   };
   portal.refunds = [];
   portal.drc03 = [];
+  portal.applications = {
+    APPEL: [{ arn: 'AD24SIMAPL1', caseId: 'CAPL1', caseName: 'Appeal to Appellate Authority', caseTypeCd: 'APPEL',
+              statusDesc: 'Submitted', caseCreationDate: '02/05/2026', caseJson: null }],
+  };
 }
 
 // ── Scenarios ──────────────────────────────────────────────────────────────
@@ -304,6 +315,48 @@ await runBundle(clientId, runId);
 check(portal.folderCalls - folderCalls5 === 3, 'every case folder read, the closed LUT case included', portal.folderCalls - folderCalls5);
 check(portal.downloads === downloads5, 'still nothing downloaded twice', portal.downloads - downloads5);
 check(storage['gstk_folder_full_' + clientId] > Date.now() - 60 * 1000, 'full-pass time stamped for the next 7 days');
+
+console.log('Run 6 — 0.6.0: applications, registration status, GSTR-3A kept and closed on filing');
+portal.notices.push({ noticeOrderId: 'ZD24SIM006', type: 'Notice', descr: 'Notice to return defaulter u/s 46 for not filing return',
+                      dtOfIssue: '20/05/2026', dueDate: '04/06/2026', pdfDownloadURL: 'gstr3a', appDefId: 'DEF6' });
+portal.gstr3a.ZD24SIM006 = { retTyp: '3B', ret_period: '042026', orderId: 'ZD24SIM006', gstin: GSTIN, name: 'Sim Client', address: 'Somewhere' };
+await rest('filing_status', { method: 'POST', body: JSON.stringify([{ client_id: clientId, return_type: 'GSTR-3B', period_month: '04/2026', status: 'Filed', filed_date: '2026-05-25' }]) });
+runId = await bgCall('runStart', 'notices_bundle', 1);
+await runBundle(clientId, runId);
+const apps6 = await rest(`gst_portal_applications?client_id=eq.${clientId}&select=case_type_cd,arn,form_number,status,filed_date`);
+check(apps6.length === 1 && apps6[0].arn === 'AD24SIMAPL1' && apps6[0].form_number === 'GST APL-01' && apps6[0].filed_date === '2026-05-02',
+      'the appeal on the portal is saved', apps6);
+const prof6 = await rest(`gst_taxpayer_profile?client_id=eq.${clientId}&select=gstin_status,legal_name`);
+check(prof6[0] && prof6[0].gstin_status === 'Active', 'registration status read with the profile', prof6);
+const n6 = await rest(`gst_notices?client_id=eq.${clientId}&portal_key=eq.ZD24SIM006&select=form_code,portal_detail,stage,close_reason,pdf_url`);
+check(n6[0] && n6[0].portal_detail && n6[0].portal_detail.gstr3a && n6[0].portal_detail.gstr3a.ret_period === '042026',
+      'the GSTR-3A return period is kept on the notice', n6);
+check(n6[0] && n6[0].stage === 'closed' && n6[0].close_reason === 'auto:return_filed', 'and it closed itself: the return is filed', n6);
+check(n6[0] && n6[0].pdf_url, 'its PDF is still rebuilt', n6);
+const ledger6 = await rest(`sync_run_items?run_id=eq.${runId}&select=step,status&order=created_at`);
+check(ledger6.some((i) => i.step === 'applications' && i.status === 'ok'), 'ledger: applications step recorded', ledger6);
+
+console.log('Watchdog — an agent job (0.6.0)');
+runId = await bgCall('runStart', 'notices_bundle', 1);
+storage.gstk_active_job = {
+  mode: 'notices_bundle', idx: 0, step: 'login', startedAt: Date.now(), lastActivityAt: Date.now() - 30 * 60 * 1000, runId, logSync: true, tabId: 1,
+  agent: { jobId: 'job-1' }, clients: [{ clientId, creds: { user: 'sim', name: 'Sim Client', gstin: GSTIN } }],
+};
+await new Promise((resolve) => { alarmListener({ name: 'gstk-watchdog' }); setTimeout(resolve, 300); });
+check(storage.gstk_active_job && storage.gstk_active_job.step === 'login', 'the CAPTCHA wait of an agent job is left to the agent');
+storage.gstk_active_job.step = 'refunds';
+await new Promise((resolve) => { alarmListener({ name: 'gstk-watchdog' }); setTimeout(resolve, 300); });
+const ledgerA = await rest(`sync_run_items?run_id=eq.${runId}&select=step,status,reason_class`);
+check(!storage.gstk_active_job && ledgerA.some((i) => i.step === 'refunds' && i.reason_class === 'stalled'), 'a stuck agent step is recorded and dropped', ledgerA);
+const runA = await rest(`sync_runs?id=eq.${runId}&select=status`);
+check(runA[0] && runA[0].status === 'running', 'the agent job\'s run is left to the queue', runA);
+const started = await bgCall('startAgentJob', { clientId, mode: 'notices_bundle', runId, jobId: 'job-2' });
+check(started && started.started && storage.gstk_active_job && storage.gstk_active_job.agent && storage.gstk_active_job.agent.jobId === 'job-2',
+      'startAgentJob queues one client in its own tab', storage.gstk_active_job);
+const state = await bgCall('agentJobState');
+check(state && state.step === 'login' && state.jobId === 'job-2', 'agentJobState reports the step', state);
+await bgCall('agentClearJob');
+check(!storage.gstk_active_job, 'agentClearJob drops it');
 
 console.log('Watchdog — a CAPTCHA nobody typed');
 runId = await bgCall('runStart', 'notices_bundle', 2);

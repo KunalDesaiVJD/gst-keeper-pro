@@ -3,7 +3,7 @@
 Quick-reference guide for the GST team. The module is under **Notices & Litigation**
 in the sidebar; its pages are the tabs at the top of every module page: Command
 centre · Work queue · All notices · Matters · Hearings · Calendar · Clients ·
-Reports. **Ctrl K** (⌘K on a Mac) searches anywhere: a client's name or GSTIN, a
+Autopilot · Reports. **Ctrl K** (⌘K on a Mac) searches anywhere: a client's name or GSTIN, a
 reference number, case ID / ARN, reply or order number, or the DIN printed on a
 notice.
 
@@ -21,13 +21,51 @@ notice.
    for the next step (Assign, Triage, Remind client, Write the draft, Review, Log
    reply, Prepare hearing, Decide on the order…). Tabs: Mine · Team · Unassigned ·
    For review. The **Work queue** tab is the same list, full page.
-4. **Sync** — "Sync now" asks which clients (stale and failed first) and starts the
-   Chrome extension (v0.5.1 recommended; its toolbar popup can start the same run). Clients with deadlines in the next 7 days go
-   first; only new documents are downloaded. If nobody types a CAPTCHA for 10
-   minutes, the run skips that client and says so. The command centre follows the
-   run while it goes. The closing sweep runs by itself after each client and nightly.
-5. **Check Hearings and the Calendar** for the week (personal hearings, reply dues,
+4. **CAPTCHAs (once the Portal Autopilot is switched on)** — the office agent
+   fetches the portal for every client each morning and the urgent ones after lunch,
+   but each login needs a CAPTCHA typed by one of us. When the header shows
+   "n waiting for a CAPTCHA" (and at 09:00), open **Autopilot → CAPTCHA wall**, type
+   each CAPTCHA and press Enter: the next one is ready while the agent reads the
+   client you just let in. "Can't read it" gets a new one; "Skip this client" leaves
+   it for today. Keep the wall open until it says nothing is waiting — it only
+   fetches CAPTCHAs while someone has it open. See "Portal Autopilot" below.
+5. **Sync by hand** — "Sync now" asks which clients (stale and failed first) and either
+   sends them to the office agent (their CAPTCHAs then come to the wall) or starts
+   the Chrome extension on your PC (v0.6.0 recommended; its toolbar popup can start
+   the same run). Clients with deadlines in the next 7 days go first; only new
+   documents are downloaded. If nobody types a CAPTCHA for 10 minutes, an extension
+   run skips that client and says so. The closing sweep runs by itself after each
+   client and nightly.
+6. **Check Hearings and the Calendar** for the week (personal hearings, reply dues,
    appeal and attachment clocks). Either exports to your calendar (.ics).
+
+## Portal Autopilot (Notices → Autopilot)
+
+An always-on office PC runs the agent, which uses the same extension in its own
+browser. It ships **switched off**; a manager switches it on in the Settings tab.
+Positions and the CAPTCHA posture: `docs/PORTAL_AUTOPILOT_POSITIONS.md`.
+
+- **CAPTCHA wall** — CAPTCHAs for clients waiting to be logged in. People type every
+  CAPTCHA; nothing is solved by software. The page counts what you typed today.
+- **Queue** — today's jobs: waiting, running, done, failed (with the reason), and
+  Retry / Cancel.
+- **Needs a person** — clients the portal refused, grouped by the fix: a changed
+  password (update it in Edit Client, or "Ask the client"), a locked account ("Ask
+  the client to reset" — they get an OTP), CAPTCHAs never typed (open the wall), a
+  cancelled registration (mark the client inactive). "Ask the client" e-mails go out
+  only once client e-mails are switched on (they are off now).
+- **Fetch a report** — queue any portal pull (returns, 2B, ledgers, refunds…) for
+  chosen clients and periods; results land in the same reports as an extension pull.
+- **Portal e-mails** — notice e-mails from the portal read from the firm's notices
+  inbox; each queues its client straight away (when the e-mail trigger is on).
+- **Acceptance** — per day: share of clients fresh or with a named reason, minutes at
+  the wall, how fast new notices arrived.
+- **Settings** (managers) — on/off and pause, schedule (05:30 all, 13:00 urgent),
+  browsers at once, keep portal sessions (ask the partner first), e-mail trigger.
+
+Every sync now also reads **applications on the portal** (appeals and others; shown on
+the client's page) and the **registration status**, and a **GSTR-3A** closes itself
+once Filing Status shows that return filed.
 
 ## The notice page
 

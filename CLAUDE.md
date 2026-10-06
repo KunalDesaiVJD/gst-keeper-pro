@@ -127,6 +127,17 @@ every number equals its list's count; Ctrl K is `notices_search`. Module pages u
 shell is `supabase/functions/_shared/email.ts` (redeploy `send-gst-email` before
 alerts go live).
 
+**Phase 3 (Portal Autopilot):** `agent/` runs on an always-on office PC and drives
+the same extension (v0.6.0+, `startAgentJob`) in its own Chromium, one client per
+browser; it claims from `portal_jobs` (`portal_job_claim`, SKIP LOCKED), shows each
+login CAPTCHA on the app's CAPTCHA wall (`/notices-autopilot`) only while someone has
+it open, and finishes jobs from the run ledger. People type every CAPTCHA — never add
+a solver, proxy or cloud runner. Ships off (`autopilot_settings.enabled`); schedule,
+nudge and close via `autopilot_tick` (pg_cron). Portal e-mails queue a priority sync
+(`portal_email_ingest`). Tests: `test_99_autopilot.sql`, the extension sim and
+`agent/test/agent.e2e.test.ts` (fake portal). **Read
+`docs/PORTAL_AUTOPILOT_POSITIONS.md` before changing the agent or its hooks.**
+
 **Read `docs/NOTICES_LITIGATION_POSITIONS.md` before changing auto-close
 logic, tile definitions, due dates, clocks, stages, the plan ranking or alerts.** The positions were
 implemented by engineering judgement, not confirmed in a firm sign-off.

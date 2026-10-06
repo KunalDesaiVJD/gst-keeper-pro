@@ -39,6 +39,15 @@
   // pass per client every 7 days, so a change in a closed case is still caught.
   const FULL_FOLDER_PASS_MS = 7 * 24 * 60 * 60 * 1000;
   const REFUND_FOLDER_LABELS = { APLCN: 'Applications', NOTAC: 'Notice/Acknowledgement', REPLY: 'Replies', ORDRS: 'Orders', AUDIT: 'Audit History' };
+  // "My Applications" types the notices bundle reads (handleApplications, 0.6.0).
+  const APPLICATION_TYPES = {
+    APPEL: { form: 'GST APL-01', label: 'Appeal to Appellate Authority' },
+    ADJRO: { form: null, label: 'Application for rectification of order' },
+    ADJAT: { form: null, label: 'Objection against provisional attachment' },
+    ADJWS: { form: null, label: 'Waiver scheme under section 128A' },
+    COMPD: { form: null, label: 'Compounding application' },
+    ADJPA: { form: 'GST ASMT-01', label: 'Provisional assessment' },
+  };
   // rtnprd from the reversal / RCM liability APIs is 'YYYYMM' (e.g. '202603') —
   // this app's own convention is 'MM/YYYY'.
   const rtnPrdToPeriod = (rtnprd) => {
@@ -222,7 +231,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'applications' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       // 'filing' jobs run on a backgrounded tab (see startFilingOpen in
@@ -292,6 +301,7 @@
     else if (job.step === 'refunds') await handleRefunds(job, cur, progress);
     else if (job.step === 'refund_docs') await handleRefundDocs(job, cur, progress);
     else if (job.step === 'drc03') await handleDrc03(job, cur, progress);
+    else if (job.step === 'applications') await handleApplications(job, cur, progress);
     else if (job.step === 'taxpayerprofile') await handleTaxpayerProfile(job, cur, progress);
     else if (job.step === 'challans') await handleChallans(job, cur, progress);
     else if (job.step === 'gstr3b_pull') await handleGstr3bPull(job, cur, progress);
@@ -358,7 +368,8 @@
       location.href = 'https://services.gst.gov.in/services/logout';
     } else {
       banner('All ' + job.clients.length + ' client(s) done ✓ — you can close this tab.', '#16a34a');
-      if (job.runId) { try { await GSTKdb.runFinish(job.runId, 'done'); } catch (e) { /* ledger is diagnostic */ } }
+      // An agent job's run belongs to the queue (portal_job_finish closes it).
+      if (job.runId && !job.agent) { try { await GSTKdb.runFinish(job.runId, 'done'); } catch (e) { /* ledger is diagnostic */ } }
       await clearJob();
     }
   }
@@ -589,8 +600,9 @@
     if (!portalPass) { banner('No saved GST portal password for ' + cur.creds.name + ' — update it in Edit Client.', '#dc2626'); return; }
     setVal($('#user_pass'), portalPass);
     await waitFor('#imgCaptcha', 8000);
-    // The sync tab is often behind other windows: say so on the desktop.
-    try { await GSTKdb.notifyCaptcha(cur.creds.name, progress); } catch (e) { /* optional */ }
+    // The sync tab is often behind other windows: say so on the desktop. An
+    // agent job's CAPTCHA goes to the app's CAPTCHA wall instead.
+    if (!job.agent) { try { await GSTKdb.notifyCaptcha(cur.creds.name, progress); } catch (e) { /* optional */ } }
     // No custom popup — the CAPTCHA is typed straight into the portal's own
     // native #captcha field. The field has no maxlength/expected-length we
     // can read (confirmed live: only a numeric-only ng-pattern), so "is it
@@ -626,7 +638,11 @@
           // is left to time out below.
         };
         cap.addEventListener('input', onInput);
-        const giveUp = setTimeout(() => { cap.removeEventListener('input', onInput); resolve(false); }, 60000);
+        // The office agent waits for this before it shows the CAPTCHA on the wall.
+        if (job.agent) document.documentElement.setAttribute('data-gstk-captcha', 'ready');
+        // A person types within a minute; the agent relays a CAPTCHA typed on
+        // the wall, which may take longer (it reloads a stale one itself).
+        const giveUp = setTimeout(() => { cap.removeEventListener('input', onInput); resolve(false); }, job.agent ? 30 * 60000 : 60000);
       });
     }
     if (!autoFilled) {
@@ -2795,6 +2811,7 @@
     let pdfOk = 0, pdfFail = 0, pdfSkipped = 0, foldersFetched = 0, foldersSkipped = 0, attachSkipped = 0;
     let folderPassOk = true;
     const gstr3aErrors = [];
+    const gstr3aDetails = [];
     const rows = [];
     for (const n of list) {
       const refNo = n.noticeOrderId || null;
@@ -2832,6 +2849,9 @@
           let summary;
           try { summary = JSON.parse(raw); } catch (e) { throw new Error('not JSON (' + raw.length + ' chars): ' + raw.slice(0, 120)); }
           if (summary && summary.data) {
+            gstr3aDetails.push({ portal_key: row.portal_key, detail: { gstr3a: {
+              retTyp: summary.data.retTyp || null, ret_period: summary.data.ret_period || null,
+              orderId: summary.data.orderId || n.noticeOrderId } } });
             const pdfDataUrl = buildGstr3aNoticePdf(summary.data, n.dtOfIssue, n.noticeOrderId);
             const path = 'notices/' + cur.clientId + '/' + n.noticeOrderId + '.pdf';
             row.pdf_url = await withTimeout(GSTKdb.uploadPdf(path, pdfDataUrl), 20000, 'uploadPdf');
@@ -2994,6 +3014,8 @@
         try { await GSTKdb.logClientSync(cur.clientId, 'notices_guard', 'success', 'Soft-delete held back: ' + (saved.held_reason || 'held')); } catch (e) { /* diagnostic only */ }
       }
       if (fullFolderPass && folderPassOk) { try { await store.set({ [fullKey]: Date.now() }); } catch (e) { /* next run retries the full pass */ } }
+      // GSTR-3A return type and period: the notice closes itself once that return is filed.
+      if (gstr3aDetails.length) { try { await GSTKdb.noticeDetails(cur.clientId, gstr3aDetails); } catch (e) { /* the notices are saved; detail retries next run */ } }
       const counts = saved && !saved.legacy
         ? ' — ' + saved.new + ' new, ' + saved.changed + ' changed, ' + saved.removed + ' removed' + (saved.status === 'held' ? ' (removal held back)' : '')
         : '';
@@ -3100,6 +3122,8 @@
       'The notice shall be deemed to have been withdrawn in case the return referred above, is filed by you before issue of the assessment order.',
       'This is a system generated notice and will not require signature.',
     ];
+    // Said on the PDF itself (audit S-31): this is the portal's text, rebuilt.
+    paragraphs.push('Rebuilt by GST Keeper from the GST portal\u2019s GSTR-3A data for ' + (noticeOrderId || 'this notice') + '; the wording is the portal\u2019s own.');
     paragraphs.forEach((p, i) => {
       const lines = doc.splitTextToSize((i + 1) + '. ' + p, pageWidth - margin * 2);
       if (y + lines.length * 14 > pageHeight - margin) { doc.addPage(); y = margin; }
@@ -3441,7 +3465,8 @@
       banner('DRC-03: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.logClientSync(cur.clientId, 'drc03', 'failed', 'PULL FAILED: ' + ((e && e.message) || 'unknown error')); } catch (e2) { /* diagnostic only */ }
       await sleep(1500);
-      await chainOrStop(job, ['drc03', 'notices_bundle'], proceedToTaxpayerProfile);
+      if (job.mode === 'notices_bundle') { await proceedToApplications(job); return; }
+      await chainOrStop(job, 'drc03', proceedToTaxpayerProfile);
       return;
     }
 
@@ -3491,9 +3516,77 @@
       'rows saved        : ' + rows.length,
       'PDFs              : ' + pdfOk + ' downloaded, ' + pdfSkipped + ' already stored, ' + pdfFail + ' failed',
     ]);
-    banner('DRC-03 filings → ' + rows.length + ' entries saved (' + pdfOk + ' new PDFs, ' + pdfSkipped + ' already stored). Now Taxpayer Profile…' + progress, '#16a34a');
+    banner('DRC-03 filings → ' + rows.length + ' entries saved (' + pdfOk + ' new PDFs, ' + pdfSkipped + ' already stored).' + progress, '#16a34a');
     await sleep(1000);
-    await chainOrStop(job, ['drc03', 'notices_bundle'], proceedToTaxpayerProfile);
+    if (job.mode === 'notices_bundle') { await proceedToApplications(job); return; }
+    await chainOrStop(job, 'drc03', proceedToTaxpayerProfile);
+  }
+
+  // Applications on the portal (0.6.0, audit S-22): the portal's own "My
+  // Applications" types read with the same case search refunds and DRC-03
+  // use (codes from the portal's public casesearchctrl.js): appeals (APL-01),
+  // rectification, objection to a provisional attachment, the s.128A waiver,
+  // compounding and provisional assessment. A type that fails or comes back
+  // empty removes nothing (sync_ingest_applications).
+  async function proceedToApplications(job) {
+    job.step = 'applications';
+    await setJob(job);
+    location.href = 'https://services.gst.gov.in/litserv/auth/case/search';
+  }
+  function parseApplication(c, code) {
+    let cj = c && c.caseJson;
+    if (typeof cj === 'string') { try { cj = JSON.parse(cj); } catch (e) { cj = null; } }
+    const arn = (c && c.arn) || (cj && cj.arn) || null;
+    const caseId = (c && c.caseId) || null;
+    const key = arn || caseId;
+    if (!key) return null;
+    const t = APPLICATION_TYPES[code];
+    return {
+      case_type_cd: code, portal_key: String(key), arn, case_id: caseId,
+      form_number: (cj && (cj.formNo || cj.formNumber)) || t.form,
+      form_description: (cj && (cj.formDesc || cj.formDescription)) || c.caseName || t.label,
+      status: c.statusDesc || (cj && cj.status) || c.status || null,
+      filed_date: ddmmyyyyToIso(String(c.caseCreationDate || '').slice(0, 10)) || null,
+      raw_json: Object.assign({}, c, { caseJson: cj }),
+    };
+  }
+  async function handleApplications(job, cur, progress) {
+    if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
+    banner('Reading applications on the portal (appeals, rectification…)' + progress);
+    const rows = [];
+    const typesRead = [];
+    const failed = [];
+    for (const code of Object.keys(APPLICATION_TYPES)) {
+      try {
+        const r = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ caseTypeCd: code, startDate: '01/07/2017', endDate: shownTodayDdMmYyyy() }),
+        }), 30000, 'case/search ' + code);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const list = await r.json();
+        if (!Array.isArray(list)) throw new Error('not a list');
+        typesRead.push(code);
+        for (const c of list) { const row = parseApplication(c, code); if (row) rows.push(row); }
+      } catch (e) { failed.push(code + ': ' + ((e && e.message) || 'failed')); }
+      await sleep(300);
+    }
+    let saved = null;
+    if (typesRead.length) {
+      try { saved = await GSTKdb.ingestApplications(cur.clientId, job.runId, rows, typesRead, true); }
+      catch (e) { failed.push('save: ' + ((e && e.message) || 'failed')); }
+    }
+    if (failed.length && ledgerJob(job)) {
+      try { await GSTKdb.logStep(job.runId, cur.clientId, 'applications', 'failed', 'portal_error', failed.join(' | ').slice(0, 500)); } catch (e) { /* diagnostic */ }
+    }
+    debugPanel([
+      'STEP: Applications on the portal  (' + location.pathname + ')',
+      'types read        : ' + (typesRead.join(', ') || 'none'),
+      'applications      : ' + rows.length + (saved && saved.status === 'ok' ? ' (' + saved.new + ' new, ' + saved.changed + ' changed)' : ''),
+      ...(failed.length ? ['failed            : ' + failed.join(' | ')] : []),
+    ]);
+    banner('Applications → ' + rows.length + ' read. Now the taxpayer profile…' + progress, '#16a34a');
+    await sleep(800);
+    await proceedToTaxpayerProfile(job);
   }
 
   async function proceedToTaxpayerProfile(job) {
@@ -3519,6 +3612,10 @@
       if (!r.ok) throw new Error('HTTP ' + r.status + ' from profile/detail');
       const j = await r.json();
       patchObj = {
+        // 0.6.0: registration status (Active / Cancelled / Suspended) and the raw profile.
+        gstin_status: j.sts || j.gstinStatus || j.status || null,
+        cancellation_date: ddmmyyyyToIso(j.cxdt || ''),
+        profile_json: j,
         legal_name: j.lgnm || null, trade_name: j.tradeNam || null, constitution_of_business: j.ctb || null,
         registration_date: ddmmyyyyToIso(j.rgdt || ''), jurisdiction_state: j.stj || null, jurisdiction_centre: j.ctj || null,
         principal_place_address: (j.pradr && j.pradr.adr) || null, aadhaar_authentication_status: j.adhrVFlag || null,
@@ -3528,13 +3625,13 @@
       debugPanel(['STEP: Taxpayer Profile  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Taxpayer Profile: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       await sleep(1500);
-      await chainOrStop(job, 'taxpayerprofile', proceedToChallans);
+      await chainOrStop(job, ['taxpayerprofile', 'notices_bundle'], proceedToChallans);
       return;
     }
 
     // Registration certificate PDF — best-effort, must not drop the profile
-    // fields above if it fails.
-    try {
+    // fields above if it fails. The notices bundle reads only the profile.
+    if (job.mode !== 'notices_bundle') try {
       const cr = await fetch('https://services.gst.gov.in/services/auth/api/get/regcert', { credentials: 'include' });
       if (cr.ok) {
         const cj = await cr.json();
@@ -3556,9 +3653,9 @@
       'legal name        : ' + (patchObj.legal_name || '(none)'),
       'registration cert : ' + (patchObj.registration_certificate_url ? 'saved' : 'not captured'),
     ]);
-    banner('Taxpayer Profile → saved. Now Challan Summary…' + progress, '#16a34a');
+    banner('Taxpayer Profile → saved.' + progress, '#16a34a');
     await sleep(1000);
-    await chainOrStop(job, 'taxpayerprofile', proceedToChallans);
+    await chainOrStop(job, ['taxpayerprofile', 'notices_bundle'], proceedToChallans);
   }
 
   async function proceedToChallans(job) {

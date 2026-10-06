@@ -1,134 +1,95 @@
-# GST Keeper Portal Agent
+# GST Keeper portal agent (Portal Autopilot)
 
-A local worker that gives GST Keeper **pull & push** to the GST portal. It runs on
-an always-on office machine, polls a job queue in Supabase, drives a headless
-browser (Playwright) against the portal, and writes results + self-checks back.
+The agent fetches GST portal data for the firm's clients on a schedule, from an
+always-on PC **in the office**, so nobody has to sit at a browser running Sync for
+hours. It drives the **same GST Keeper extension** the staff use, in its own
+Chromium, one client per browser at a time. Every portal login needs a CAPTCHA:
+the agent shows it on the app's **CAPTCHA wall** and a member of staff types it.
+It never solves a CAPTCHA, never files or saves anything on the portal, and never
+runs in the cloud. Read `docs/PORTAL_AUTOPILOT_POSITIONS.md` before changing it.
 
 ```
-GST Keeper app ──enqueue job──▶ Supabase (portal_jobs) ──poll──▶ THIS Agent ──▶ GST Portal
-       ▲                                                                │
-       └──────────────── results + verifications ──────────────────────┘
-Then a human does the final: offset ITC + File (OTP / DSC).
+ schedule 05:30 / 13:00 IST ─┐
+ portal e-mail (notices@) ───┼─▶ portal_jobs ──claim──▶ agent (office PC)
+ "Fetch a report" in the app ┘        ▲                   │  Chromium + GST Keeper extension
+                                      │                   ▼
+   CAPTCHA wall in the app ◀── CAPTCHA image ──── portal login page
+   staff type it ─────────────── answer ────────▶ extension logs in, reads, saves
 ```
 
-## Scope (hard rules)
-- **PULL** (portal → our tables): GSTR-2B, Electronic Cash/Credit ledgers, GSTR-1, filing status.
-- **PUSH-SAVE** (our JSON → portal): GSTR-1 and GSTR-3B — **uploaded and SAVED only.**
-- **NEVER** offsets ITC, **never** submits/files. Those need OTP/DSC and stay 100% human.
-- Because it only saves, the Agent **never needs an OTP or DSC** — it only needs to log in.
+## What it needs
+- A PC on the office network that stays on and signed in (Windows 10/11; Linux or
+  macOS work too), set never to sleep.
+- Node.js 20 or later (LTS from nodejs.org).
+- This repository on that PC (the `agent` folder next to the `extension` folder).
+- Nothing secret: the agent uses the app's publishable key from
+  `extension/config.js`. No Supabase service-role key.
 
-## The CAPTCHA (read this)
-This Agent does **not** auto-solve the portal CAPTCHA. When a fresh login is needed it
-captures the CAPTCHA, sets the job to `needs_human`, and the app shows it for a
-one-time manual entry. The **session is then reused for hours** (`storageState`), so
-this is a handful of clicks per day for the whole office — not per return. If you
-want fully-unattended login you would add a solver at the `solveCaptcha()` seam in
-`src/login.ts` yourself; it is intentionally left unimplemented here.
+## Install (Windows)
+1. Copy or `git clone` the repository to the office PC.
+2. Double-click `agent/install-agent.bat`. It checks Node.js, writes `agent/.env`
+   (agent name, a random key for encrypting kept sessions), runs `npm install`,
+   downloads Chromium (`npx playwright install chromium`) and registers the
+   scheduled task **GSTKeeperAgent** (starts at sign-in, restarts if it stops).
+3. In GST Keeper open **Notices → Autopilot**: the agent shows as online.
+4. A manager switches the autopilot on in the **Settings** tab (it ships off).
 
-## Legal / risk (eyes open)
-Automating the GST portal with stored client credentials is against GSTN's terms
-(they classify automated access as "unauthorised"; IT Act 2000 s.43/45; 9-Sep-2023
-advisory). This Agent is **save-only + human-files**, which is materially lower risk
-than automated filing, but the risk is not zero. Use only with **written client
-authorization**, keep the machine **office-local**, and encrypt credentials at rest.
+On Linux / macOS: `cd agent && npm install && npx playwright install chromium &&
+npm start` under a service manager (systemd, launchd) that restarts it.
 
-## Phase roadmap (this folder builds toward all of it)
-- **Phase 0 — schema** ✅ `supabase/migrations/…_portal_agent.sql` (portal_jobs / events / verifications).
-- **Phase 1 — Agent core** ✅ (this installment): config, Supabase queue loop, browser+session,
-  login (human-assisted CAPTCHA), verification harness, screenshot audit, `LOGIN_TEST` handler.
-- **Phase 2 — PULL 2B** 🚧 `handlers.ts:pullGstr2b` (structure + TODO selectors).
-- **Phase 3 — PULL ledgers / GSTR-1 / filing status** 🚧 scaffolds.
-- **Phase 4 — PUSH GSTR-1 (save)** 🚧 scaffold + read-back verify.
-- **Phase 5 — PUSH GSTR-3B (save)** 🚧 scaffold + read-back verify + hard stop.
-- **Phase 6 — hardening**: retry/backoff, per-client profile isolation, portal-change alerts, scheduling.
-- **Phase 7 — pilot**: shadow-mode → canary → human-approval gate → staged rollout.
+To remove the auto-start: `uninstall-agent.bat` (files and `.env` stay).
 
-> The portal-navigation handlers (Phases 2–5) contain the flow + verification wiring but
-> the exact CSS/XPath selectors are marked `TODO(selector)` — they must be filled in and
-> tested against the **live portal DOM** (which can't be done from this repo). Start in
-> `mode: 'shadow'` (does everything except the final Save) on a test GSTIN.
+## Day to day
+- **05:30** every active client is queued; **13:00** the priority ones (notices due
+  within 7 days, never synced, stale or failing). A portal e-mail queues its client
+  at once (when the inbox is set up). Staff can queue reports from the
+  **Fetch a report** tab.
+- Jobs wait as "waiting for a CAPTCHA" until someone opens the **CAPTCHA wall**.
+  The 09:00 header badge says how many. Open the wall, type each CAPTCHA, press
+  Enter; the agent logs in and reads that client while you type the next. "Can't
+  read it" fetches a new CAPTCHA; "Skip this client" leaves it for today.
+- **Needs a person** lists clients the portal refused (password changed, account
+  locked, CAPTCHA never typed…) with the fix next to each.
+- **Acceptance** shows, per day, the share of clients fresh or with a named
+  reason, minutes at the wall and how fast notices arrived.
 
-## Setup
-```bash
-cd agent
-cp .env.example .env      # fill SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY + AGENT_ID
-npm install
-npx playwright install chromium
-npm run dev               # starts the poll loop
-```
-`SUPABASE_SERVICE_ROLE_KEY` lets the Agent read client credentials + write results.
-Keep it only on the trusted office machine.
+Settings (Notices → Autopilot → Settings, managers): master switch and pause,
+schedule times and the afternoon scope, browsers at once (1–4), keep portal
+sessions (off by default; with it on, a client's portal cookies are kept encrypted
+on this PC for up to 50 minutes so a second job needs no CAPTCHA), the e-mail
+trigger, retries.
 
-## Run it automatically, forever (nobody starts it manually)
+## Updating
+`git pull` in the repository, then restart the task (Task Scheduler →
+GSTKeeperAgent → End, Run) — the agent copies the extension fresh at every start
+and refuses an extension older than 0.6.0.
 
-Two ways to host the always-on agent. After either, the team just clicks **Sync**
-in the app and the background Agent does the rest.
+## Logs and data on this PC
+`agent/.agent-data/`: `logs/` (one file a day, kept 14 days; no passwords,
+cookies or CAPTCHA images), `profiles/` (the browsers), `sessions/` (encrypted, only
+when keeping sessions is on), `extension/` (the staged copy).
 
-### Free cloud, no card — GitHub Actions (no office PC)
-Runs the agent on GitHub's free cloud runners on a schedule (every 30 min) + on
-demand. **No card, nothing installed on any machine.** See
-**[GITHUB-ACTIONS.md](GITHUB-ACTIONS.md)**: apply one migration, add one repo secret,
-enable Actions. Trade-offs: up to ~30-min delay (or click "Run workflow" for instant),
-and GitHub's datacenter IP can draw more CAPTCHAs. This is the free choice.
+## Troubleshooting
+- **Agent offline on the Autopilot page** — the PC is off or asleep, or the task
+  stopped: run it from Task Scheduler, or `npm start` in this folder to see errors.
+- **"The extension … is older than 0.6.0"** — `git pull`.
+- **Portal login page never shows a CAPTCHA** — the job is retried later as a portal
+  error; if it keeps happening, watch the agent's browser window on the office PC.
+  If the portal refuses the agent's browser, do not try to disguise it (see the
+  positions doc): sync with the extension as before.
+- **CAPTCHAs never appear on the wall** — the autopilot is off or paused, or nobody
+  else's job is waiting; the status line on the page says which.
 
-### Paid always-on worker (Render / Railway / Fly.io) — instant, no schedule
-Deploy the agent as a small always-on cloud worker so **no machine in your office does
-anything**. The repo has `render.yaml` + `Dockerfile`; see
-**[CLOUD-DEPLOY.md](CLOUD-DEPLOY.md)**: connect it in the Render dashboard, paste one
-secret, click Apply. **~US$5–7/mo** (requires a card). Instant (no 30-min wait) and a
-persistent session. (Trade-off: cloud IPs can draw more CAPTCHAs — proxy fallback in
-CLOUD-DEPLOY.md.)
-
-### On an office PC — double-click the installer
-On the office PC, open the `agent` folder and **double-click `install-agent.bat`**.
-It will:
-1. check Node.js is installed (if not, it points you to nodejs.org),
-2. ask **once** for your Supabase **service-role key** (Supabase dashboard →
-   Project Settings → API → `service_role` secret) and write the local `.env`
-   (the `SUPABASE_URL` is filled in for you),
-3. `npm install` + download the Chromium browser,
-4. register a **scheduled task** that starts the agent **at logon and restarts it
-   if it ever crashes**, then start it right now.
-
-After that single double-click the agent runs 24/7 on its own — **nobody opens a
-terminal again.** The only recurring human step is typing a CAPTCHA in the app.
-(One prerequisite: install **Node.js LTS** from https://nodejs.org once. To stop
-and remove the auto-start later, double-click `uninstall-agent.bat`.)
-
-> Keep the PC **on and signed in** — the task starts the agent at logon and it
-> polls the queue continuously. `.env` sets `HEADFUL=false` so it runs invisibly;
-> if the portal ever blocks headless logins, set `HEADFUL=true` and re-save.
-
-### Option A — Windows service on an office PC (via NSSM, alternative)
-Install [NSSM](https://nssm.cc/) (Non-Sucking Service Manager), then:
-```powershell
-# from an elevated PowerShell, in the agent folder
-npm install
-npx playwright install chromium
-npm run build            # optional: or run via tsx directly below
-
-nssm install GSTKeeperAgent "C:\Program Files\nodejs\node.exe" "C:\path\to\agent\node_modules\tsx\dist\cli.mjs" "C:\path\to\agent\src\index.ts"
-nssm set GSTKeeperAgent AppDirectory "C:\path\to\agent"
-nssm set GSTKeeperAgent Start SERVICE_AUTO_START     # starts on boot
-nssm set GSTKeeperAgent AppExit Default Restart      # auto-restart on crash
-nssm start GSTKeeperAgent
-```
-The service now starts on boot, restarts if it crashes, and polls the queue 24/7.
-(Set `HEADFUL=false` in `.env` for a service; keep the PC on and signed in.)
-
-Simpler (no NSSM): Task Scheduler → "Create Task" → Trigger "At startup" → Action
-`npm --prefix C:\path\to\agent run start` → check "Run whether user is logged on".
-
-### Option B — a small always-on container (cloud or a mini-PC)
-A `Dockerfile` using the official `mcr.microsoft.com/playwright` image, `npm ci`,
-then `CMD ["npm","start"]`, deployed to any host that can keep one small container
-running (a cheap VPS / Fly.io / a Raspberry-class box). Same behaviour, off your desk.
-
-## The CAPTCHA (auto-attempt, then human)
-`login.ts` calls `autoSolveCaptcha()` (in `captchaSolver.ts`) first. That function is
-**left unimplemented on purpose** (returns null) — auto-defeating the portal CAPTCHA
-is against GSTN's terms and is not provided here. Until/unless your firm fills it in,
-every fresh login **falls back to a human**: the job parks as `needs_human`, the app
-shows the CAPTCHA image, and any staff member types it once (the session is then
-reused for hours). So the day-to-day is: click Sync → it runs in the background →
-occasionally someone types a CAPTCHA when a client's session has expired.
+## How it works (code)
+- `src/index.ts` — start-up, heartbeat (`autopilot_heartbeat`: reports the workers,
+  gets the switches back every 10 s), the workers, shutdown.
+- `src/worker.ts` — one Chromium profile with the extension: claim
+  (`portal_job_claim`), park when nobody is at the wall, start the job in the
+  extension (`startAgentJob`), relay the CAPTCHA (`portal_job_captcha` /
+  `portal_job_answer`), finish (`portal_job_finish`) from the run ledger.
+- `src/portal.ts` — the few things done on the page itself (CAPTCHA image and
+  field, log out). `src/outcome.ts` — reading the run ledger. `src/sessions.ts` —
+  encrypted kept sessions. `src/extension.ts` — staging the extension.
+  `src/mail/` — the portal e-mail inbox.
+- Tests: `npm test` (unit), and the end-to-end test that runs the real agent and
+  extension against a stand-in portal and a local database — see `test/README.md`.

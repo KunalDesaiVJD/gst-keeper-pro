@@ -1,10 +1,15 @@
-# GST Keeper Portal Agent - one-time installer.
+# GST Keeper portal agent - one-time installer for the office PC.
 #
-# Run this ONCE (double-click install-agent.bat). After it finishes, the agent
-# runs automatically forever: it starts when Windows starts, restarts itself if
-# it ever crashes, and polls the job queue 24/7. Nobody opens a terminal again.
-# The only recurring human step is typing a CAPTCHA in the app when a client's
-# portal session needs a fresh login.
+# Double-click install-agent.bat once. It writes agent\.env, installs what the
+# agent needs, and registers a scheduled task that starts the agent when you
+# sign in to Windows and restarts it if it stops. The agent then waits: nothing
+# reaches the GST portal until a manager switches the autopilot on in GST Keeper
+# (Notices -> Autopilot -> Settings), and every portal login waits for a person
+# to type its CAPTCHA on the CAPTCHA wall. See README.md.
+#
+# The agent needs no secret key: it uses the app's own publishable key from
+# ..\extension\config.js. Keep this folder next to the extension folder (the
+# repository as it is).
 
 $ErrorActionPreference = 'Stop'
 $agentDir = $PSScriptRoot
@@ -12,11 +17,11 @@ Set-Location $agentDir
 
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Cyan
-Write-Host "  GST Keeper Portal Agent - installer" -ForegroundColor Cyan
+Write-Host "  GST Keeper portal agent - installer" -ForegroundColor Cyan
 Write-Host "==============================================" -ForegroundColor Cyan
 Write-Host ""
 
-# 1) Node.js must be present (one-time prerequisite).
+# 1) Node.js 20 or later.
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
   Write-Host "Node.js is not installed on this PC." -ForegroundColor Red
@@ -24,71 +29,80 @@ if (-not $node) {
   Read-Host "Press Enter to exit"
   exit 1
 }
+$nodeMajor = [int]((node -v).TrimStart('v').Split('.')[0])
+if ($nodeMajor -lt 20) {
+  Write-Host ("Node.js " + (node -v) + " is too old; install the current LTS from https://nodejs.org/ .") -ForegroundColor Red
+  Read-Host "Press Enter to exit"
+  exit 1
+}
 Write-Host ("Node.js found: " + (node -v))
 
-# 2) .env - created once. Only the Supabase service-role key is needed; the URL
-#    is filled in for you.
-$envPath = Join-Path $agentDir ".env"
-if (-not (Test-Path $envPath)) {
-  Write-Host ""
-  Write-Host "ONE-TIME SETUP: paste your Supabase SERVICE ROLE key." -ForegroundColor Yellow
-  Write-Host "Find it at: Supabase dashboard -> Project Settings -> API -> 'service_role' (secret)."
-  Write-Host "(It is only stored locally on this PC, never in the app or git.)"
-  $key = Read-Host "Service role key"
-  if ([string]::IsNullOrWhiteSpace($key)) {
-    Write-Host "No key entered - aborting." -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit 1
-  }
-  $envText = @"
-SUPABASE_URL=https://gcquafqxbykxkbexcdpy.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=$key
-AGENT_ID=office-pc-1
-HEADFUL=false
-"@
-  Set-Content -Path $envPath -Value $envText -Encoding UTF8
-  Write-Host ".env created." -ForegroundColor Green
-} else {
-  Write-Host ".env already exists - keeping your existing settings."
+if (-not (Test-Path (Join-Path $agentDir "..\extension\manifest.json"))) {
+  Write-Host "The extension folder is missing next to this folder (..\extension). Copy the whole repository to this PC." -ForegroundColor Red
+  Read-Host "Press Enter to exit"
+  exit 1
 }
 
-# 3) Dependencies + the browser Playwright drives.
+# 2) .env - written once, no secrets typed. A random key encrypts portal
+#    sessions if the firm later turns on "Keep portal sessions".
+$envPath = Join-Path $agentDir ".env"
+if (-not (Test-Path $envPath)) {
+  $bytes = New-Object byte[] 32
+  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+  $sessionKey = -join ($bytes | ForEach-Object { $_.ToString("x2") })
+  $agentId = "office-" + ($env:COMPUTERNAME.ToLower() -replace '[^a-z0-9-]', '')
+  $envText = @"
+# GST Keeper portal agent settings (see .env.example for every option).
+AGENT_ID=$agentId
+HEADFUL=true
+AGENT_SESSION_KEY=$sessionKey
+# Portal e-mail inbox (optional; see src\mail\README.md):
+# IMAP_HOST=imap.gmail.com
+# IMAP_USER=notices@yourfirm.com
+# IMAP_PASSWORD=app-password
+"@
+  Set-Content -Path $envPath -Value $envText -Encoding UTF8
+  Write-Host (".env created (agent id " + $agentId + ").") -ForegroundColor Green
+} else {
+  Write-Host ".env already exists - keeping your settings."
+}
+
+# 3) Dependencies and the Chromium the agent drives.
 Write-Host ""
 Write-Host "Installing dependencies (a few minutes the first time)..." -ForegroundColor Cyan
-npm install
+npm install --no-audit --no-fund
 Write-Host "Downloading the Chromium browser the agent uses..." -ForegroundColor Cyan
 npx playwright install chromium
 
-# 4) Register the always-on auto-start task.
+# 4) Start at sign-in, restart if it stops.
 $taskName = "GSTKeeperAgent"
 $npmCmd = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
 if (-not $npmCmd) { $npmCmd = "npm.cmd" }
-
 $action   = New-ScheduledTaskAction -Execute $npmCmd -Argument "start" -WorkingDirectory $agentDir
 $trigger  = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
               -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
               -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable
-
 try {
   Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
   Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings `
-    -Description "GST Keeper portal agent - polls the job queue and runs pulls." | Out-Null
-  Write-Host ("Auto-start registered as scheduled task '" + $taskName + "' (runs at logon, restarts on crash).") -ForegroundColor Green
+    -Description "GST Keeper portal agent (Portal Autopilot): fetches portal data; CAPTCHAs are typed by staff in the app." | Out-Null
+  Write-Host ("Scheduled task '" + $taskName + "' registered (starts at sign-in, restarts if it stops).") -ForegroundColor Green
   Start-ScheduledTask -TaskName $taskName
   Write-Host "Agent started." -ForegroundColor Green
 } catch {
-  Write-Host ("Could not register the auto-start task automatically: " + $_.Exception.Message) -ForegroundColor Yellow
-  Write-Host "The agent is installed; start it once with 'npm start' in this folder, or re-run this as Administrator."
+  Write-Host ("Could not register the scheduled task: " + $_.Exception.Message) -ForegroundColor Yellow
+  Write-Host "Run this installer as Administrator, or start the agent with 'npm start' in this folder."
 }
 
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Green
-Write-Host "  DONE - the agent is running and will now" -ForegroundColor Green
-Write-Host "  start automatically every time this PC is on." -ForegroundColor Green
+Write-Host "  DONE. Keep this PC on, signed in and set" -ForegroundColor Green
+Write-Host "  never to sleep (Settings -> Power)." -ForegroundColor Green
 Write-Host "==============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "Your team just clicks 'Sync from portal' in the app and types a"
-Write-Host "CAPTCHA when one pops up. Nothing else to run here."
+Write-Host "Next, in GST Keeper: Notices -> Autopilot. The page shows this agent online."
+Write-Host "A manager switches the autopilot on in its Settings tab; then staff type the"
+Write-Host "CAPTCHAs on the CAPTCHA wall tab. Logs: .agent-data\logs on this PC."
 Write-Host ""
 Read-Host "Press Enter to close"
