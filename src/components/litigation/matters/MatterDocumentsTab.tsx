@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/gstr9/badge';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { WS_BTN } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { documentUrl } from '@/lib/noticeWorkspace';

@@ -23,7 +23,9 @@ export const MatterFilterBar: React.FC<{
   clients: ClientOption[];
   meId: string | null;
   actions?: React.ReactNode;
-}> = ({ params, onChange, clients, meId, actions }) => {
+  /** The page shows the master filter bar: leave client, owner, priority, FY and form to it. */
+  master?: boolean;
+}> = ({ params, onChange, clients, meId, actions, master = false }) => {
   const { staff } = useStaffList();
   const [q, setQ] = useState(params.q ?? '');
   useEffect(() => { setQ(params.q ?? ''); }, [params.q]);
@@ -39,12 +41,12 @@ export const MatterFilterBar: React.FC<{
   const clientName = clients.find((c) => c.id === params.client)?.name ?? 'one client';
 
   const chips: { key: keyof MatterListParams; label: string }[] = [];
-  if (params.client) chips.push({ key: 'client', label: `Client: ${clientName}` });
+  if (params.client && !master) chips.push({ key: 'client', label: `Client: ${clientName}` });
   if (params.clock) chips.push({ key: 'clock', label: CLOCK_FILTERS.find((c) => c.key === params.clock)?.label ?? params.clock });
   if (params.stage) chips.push({ key: 'stage', label: `Stage: ${stageLabel(params.stage)}` });
   if (params.lifecycle) chips.push({ key: 'lifecycle', label: `Type: ${lifecycleLabel(params.lifecycle)}` });
-  if (params.owner) chips.push({ key: 'owner', label: `Owner: ${staffName(params.owner)}` });
-  if (params.priority) chips.push({ key: 'priority', label: `Priority: ${params.priority}` });
+  if (params.owner && !master) chips.push({ key: 'owner', label: `Owner: ${staffName(params.owner)}` });
+  if (params.priority && !master) chips.push({ key: 'priority', label: `Priority: ${params.priority}` });
   if (params.age) chips.push({ key: 'age', label: `Opened: ${ageLabel(params.age)} ago` });
   if (params.q) chips.push({ key: 'q', label: `Search: “${params.q}”` });
 
@@ -58,15 +60,19 @@ export const MatterFilterBar: React.FC<{
         <FilterPill label="Show" allLabel="All matters" value={params.status === 'all' ? 'all' : params.status}
           onChange={(v) => onChange({ status: (v === 'all' ? 'all' : v) as MatterStatusFilter, page: 1 })}
           options={[]} extraOptions={[{ value: 'open', label: 'Open' }, { value: 'closed', label: 'Closed' }]} />
-        <ClientPicker clients={clients} value={params.client ?? null} onChange={(id) => onChange({ client: id ?? undefined, page: 1 })} />
+        {!master && <ClientPicker clients={clients} value={params.client ?? null} onChange={(id) => onChange({ client: id ?? undefined, page: 1 })} />}
         <FilterPill label="Stage" allLabel="Any" value={params.stage ?? 'all'} onChange={set('stage')} options={[]}
           extraOptions={STAGES.map((s) => ({ value: s.key, label: s.label }))} />
         <FilterPill label="Type" allLabel="Any" value={params.lifecycle ?? 'all'} onChange={set('lifecycle')} options={[]}
           extraOptions={LIFECYCLES.map((l) => ({ value: l.key, label: l.label }))} />
-        <FilterPill label="Owner" allLabel="Anyone" value={params.owner ?? 'all'} onChange={(v) => onChange({ owner: v === 'all' ? undefined : v, page: 1 })} options={[]}
-          extraOptions={[...(meId ? [{ value: meId, label: 'Me' }] : []), { value: 'none', label: 'Unassigned' },
-            ...staff.filter((s) => s.userId !== meId).map((s) => ({ value: s.userId, label: s.name }))]} />
-        <FilterPill label="Priority" allLabel="Any" value={params.priority ?? 'all'} onChange={set('priority')} options={['High', 'Medium', 'Low']} />
+        {!master && (
+          <>
+            <FilterPill label="Owner" allLabel="Anyone" value={params.owner ?? 'all'} onChange={(v) => onChange({ owner: v === 'all' ? undefined : v, page: 1 })} options={[]}
+              extraOptions={[...(meId ? [{ value: meId, label: 'Me' }] : []), { value: 'none', label: 'Unassigned' },
+                ...staff.filter((s) => s.userId !== meId).map((s) => ({ value: s.userId, label: s.name }))]} />
+            <FilterPill label="Priority" allLabel="Any" value={params.priority ?? 'all'} onChange={set('priority')} options={['High', 'Medium', 'Low']} />
+          </>
+        )}
         <FilterPill label="Opened" allLabel="Any time" value={params.age ?? 'all'} onChange={set('age')} options={[]}
           extraOptions={AGE_BUCKETS.map((a) => ({ value: a, label: `${ageLabel(a)} ago` }))} />
         {actions && <div className="ml-auto flex flex-wrap items-center gap-1.5">{actions}</div>}
@@ -80,7 +86,9 @@ export const MatterFilterBar: React.FC<{
             </button>
           ))}
           <button type="button" className="text-[11px] text-foreground/70 underline underline-offset-2 hover:text-foreground"
-            onClick={() => onChange({ stage: undefined, client: undefined, owner: undefined, lifecycle: undefined, priority: undefined, age: undefined, clock: undefined, q: undefined, page: 1 })}>
+            onClick={() => onChange(master
+              ? { stage: undefined, lifecycle: undefined, age: undefined, clock: undefined, q: undefined, page: 1 }
+              : { stage: undefined, client: undefined, owner: undefined, lifecycle: undefined, priority: undefined, age: undefined, clock: undefined, q: undefined, page: 1 })}>
             Clear all filters
           </button>
         </div>

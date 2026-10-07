@@ -4,7 +4,8 @@
 // its counts match). IST calendar days; tones that darken with urgency; bars
 // sized by rupees with the matter count on each.
 import React from 'react';
-import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Note } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { fmtInrShort, plural } from '@/lib/noticeFormat';
 import type { AgeBucket, Bucket, MisLinks, MisReport } from './misData';
 import { BarList, EmptyBox } from './ui';

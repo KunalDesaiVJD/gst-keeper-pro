@@ -104,6 +104,7 @@ const AllClientsNoticesPage: React.FC = () => {
   return (
     <NoticesShell
       section="All notices"
+      master
       actions={canEditNoticeStatus() ? <AddNoticeDialog onSuccess={refresh} /> : undefined}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -118,7 +119,7 @@ const AllClientsNoticesPage: React.FC = () => {
           </span>
         )}
       </div>
-      <NoticeFilterBar params={params} onChange={update} clientName={client.data?.name ?? null}
+      <NoticeFilterBar master params={params} onChange={update} clientName={client.data?.name ?? null}
         actions={<>
           <Button size="sm" variant="outline" className={WS_BTN} onClick={() => list.refetch()} aria-label="Refresh"><RefreshCw className="h-3.5 w-3.5" /></Button>
           {canExportData() && (

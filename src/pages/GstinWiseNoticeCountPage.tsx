@@ -19,7 +19,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Note } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
 import { WS_BTN, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
@@ -30,6 +31,7 @@ import { clientRows, loadClientContext, type ClientReportRow } from '@/component
 import { noticesListHref, type NoticeListParams } from '@/lib/noticeQueries';
 import { daysBetween, istToday } from '@/lib/noticeFacts';
 import { dueWords, fmtAgo, fmtDate, fmtDateTime, fmtDay, fmtInrShort, plural } from '@/lib/noticeFormat';
+import { useMaster } from '@/lib/masterFilters';
 import { cn } from '@/lib/utils';
 
 type SortKey = 'attention' | 'client' | 'open' | 'overdue' | 'due7' | 'unassigned' | 'exposure' | 'next' | 'matters' | 'pull';
@@ -87,13 +89,16 @@ const GstinWiseNoticeCountPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
-  const notices = useQuery({ queryKey: ['notice-report-rows', {}, meId], queryFn: () => loadCountRows({}, meId) });
+  // The master filters (client, FY, owner, form, priority) count only what they keep.
+  const { m: master } = useMaster();
+  const notices = useQuery({ queryKey: ['notice-report-rows', master, meId], queryFn: () => loadCountRows(master, meId) });
   const context = useQuery({ queryKey: ['notice-report-clients'], queryFn: loadClientContext });
 
   const all = useMemo(() => (notices.data && context.data ? clientRows(notices.data, context.data) : []), [notices.data, context.data]);
   const visible = useMemo(() => {
     const term = qParam.trim().toLowerCase();
     const list = all.filter((r) => {
+      if (master.client && r.clientId !== master.client) return false;
       if (term && !r.name.toLowerCase().includes(term) && !r.gstin.toLowerCase().includes(term)) return false;
       if (show === 'open') return r.counts.open > 0;
       if (show === 'overdue') return r.counts.overdue > 0;
@@ -110,7 +115,7 @@ const GstinWiseNoticeCountPage: React.FC = () => {
       if (vb === null) return -1;
       return sign * (va < vb ? -1 : 1);
     });
-  }, [all, qParam, show, sort, dir]);
+  }, [all, qParam, show, sort, dir, master.client]);
   const total = useMemo(() => visible.reduce((acc, r) => {
     const c = acc.counts;
     (['total', 'open', 'overdue', 'due7', 'unassigned', 'replied', 'closed', 'exposure', 'exposureCount'] as const).forEach((k) => { c[k] += r.counts[k]; });
@@ -189,7 +194,7 @@ const GstinWiseNoticeCountPage: React.FC = () => {
   );
 
   return (
-    <NoticesShell section="GSTIN-wise count" status={<AsOfLine at={notices.dataUpdatedAt} />}
+    <NoticesShell section="GSTIN-wise count" master status={<AsOfLine at={notices.dataUpdatedAt} />}
       actions={canExportData() && (
         <Button size="sm" variant="outline" className={WS_BTN} onClick={exportXlsx} disabled={loading || !visible.length}>
           <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden /> Export to Excel

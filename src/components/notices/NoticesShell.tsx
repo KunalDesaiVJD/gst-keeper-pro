@@ -3,6 +3,8 @@ import { Scale } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { WS_PAGE } from '@/components/workspace/theme';
 import { NoticesTopNav } from './NoticesTopNav';
+import { MasterFilterBar } from './MasterFilterBar';
+import type { MasterKey } from '@/lib/masterFilters';
 import { SearchButton } from './SearchPalette';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAutoEvidence } from '@/lib/reply/autoBuild';
@@ -20,9 +22,11 @@ export const NoticesShell: React.FC<{
   status?: React.ReactNode;
   /** Hide the module tabs (e.g. a full-page notice view that has a breadcrumb). */
   hideNav?: boolean;
+  /** The master filters this page applies (true: all five); the bar sits under the tabs. */
+  master?: boolean | readonly MasterKey[];
   className?: string;
   children: React.ReactNode;
-}> = ({ section, actions, status, hideNav, className, children }) => {
+}> = ({ section, actions, status, hideNav, master, className, children }) => {
   const { isStaffRole } = useAuth();
   // Evidence nobody has built yet, in the background (saved as Auto).
   useAutoEvidence(isStaffRole());
@@ -37,6 +41,7 @@ export const NoticesShell: React.FC<{
       />
       {status}
       {!hideNav && <NoticesTopNav />}
+      {master && <MasterFilterBar keys={master === true ? undefined : master} />}
       {children}
     </div>
   );

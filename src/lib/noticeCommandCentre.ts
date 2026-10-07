@@ -8,6 +8,7 @@
 // (on_dashboard); the lists it opens carry dash=1 to match. The top-nav counts
 // (nav) and the sync health stay over every notice.
 import { useQuery } from '@tanstack/react-query';
+import { applyMasterToQuery, type Master } from '@/lib/masterFilters';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import type { NoticePlanRow } from '@/lib/noticeFacts';
@@ -58,16 +59,22 @@ export interface CommandCentre {
   dashboard?: { hidden_types: number; hidden_open: number; hidden_overdue: number };
 }
 
-export async function loadCommandCentre(userId: string | null): Promise<CommandCentre> {
-  const { data, error } = await supabase.rpc('notices_command_centre', { p_user_id: userId });
-  if (error) throw error;
+/** filters: the master filters (lib/masterFilters, masterForRpc); null counts everything. */
+export async function loadCommandCentre(userId: string | null, filters: Record<string, string> | null = null): Promise<CommandCentre> {
+  const { data, error } = await supabase.rpc('notices_command_centre', filters ? { p_user_id: userId, p_filters: filters } : { p_user_id: userId });
+  if (error) {
+    if (filters && (error.code === 'PGRST202' || /function .*does not exist|could not find the function/i.test(error.message))) {
+      throw new Error('Filtering the command centre needs migration 20261009110000_master_filters.sql on the database.');
+    }
+    throw error;
+  }
   return data as unknown as CommandCentre;
 }
 
-export function useCommandCentre(userId: string | null) {
+export function useCommandCentre(userId: string | null, filters: Record<string, string> | null = null) {
   return useQuery({
-    queryKey: ['notices-command-centre', userId],
-    queryFn: () => loadCommandCentre(userId),
+    queryKey: ['notices-command-centre', userId, filters],
+    queryFn: () => loadCommandCentre(userId, filters),
     staleTime: 60_000,
     // While a sync run is going, the figures follow it (audit U-07-1).
     refetchInterval: (q) => (q.state.data?.health?.last_run?.status === 'running' ? 15_000 : false),
@@ -84,9 +91,10 @@ export function useNoticesNavCounts(userId: string | null) {
 /** The dashboard's plan: 'newest' (the default, by issue date) or 'urgent' (deadline × exposure × readiness). */
 export type PlanOrder = 'newest' | 'urgent';
 
-export async function loadPlanTop(tab: QueueTab, userId: string | null, limit = 8, order: PlanOrder = 'newest'): Promise<NoticePlanRow[]> {
+export async function loadPlanTop(tab: QueueTab, userId: string | null, limit = 8, order: PlanOrder = 'newest', master: Master = {}): Promise<NoticePlanRow[]> {
   let q = supabase.from('notice_plan').select('*').eq('on_dashboard', true);
   q = applyQueueTab(q, tab, userId);
+  q = applyMasterToQuery(q, master, userId);
   q = order === 'urgent'
     ? q.order('plan_score', { ascending: false })
     : q.order('issue_date', { ascending: false, nullsFirst: false }).order('first_seen_at', { ascending: false, nullsFirst: false });

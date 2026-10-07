@@ -94,7 +94,7 @@ const LitigationMattersPage: React.FC = () => {
   ];
   const client = params.client ? clients.find((c) => c.id === params.client) ?? { id: params.client, name: clientName(params.client), gstin: null } : null;
   const clientRows = client ? all.filter((r) => r.client_id === client.id) : [];
-  const anyFilter = !!(params.stage || params.client || params.owner || params.lifecycle || params.priority || params.age || params.clock || params.q);
+  const anyFilter = !!(params.stage || params.client || params.owner || params.lifecycle || params.priority || params.fy || params.form || params.age || params.clock || params.q);
 
   const exportXlsx = () => {
     const data = sorted.map((r) => ({
@@ -111,7 +111,7 @@ const LitigationMattersPage: React.FC = () => {
   };
 
   return (
-    <NoticesShell section="Matters"
+    <NoticesShell section="Matters" master
       actions={canEdit && (
         <Button size="sm" className={WS_BTN} onClick={() => { setSuggestion(null); setCreating(true); }}>
           <Plus className="h-3.5 w-3.5" aria-hidden /> New matter
@@ -151,7 +151,7 @@ const LitigationMattersPage: React.FC = () => {
         ))}
       </div>
 
-      <MatterFilterBar params={params} onChange={update} clients={clients} meId={meId}
+      <MatterFilterBar master params={params} onChange={update} clients={clients} meId={meId}
         actions={<>
           <Button size="sm" variant="outline" className={WS_BTN} onClick={() => list.refetch()} aria-label="Refresh the list"><RefreshCw className="h-3.5 w-3.5" aria-hidden /></Button>
           {canExportData() && client && clientRows.length > 0 && (

@@ -5,7 +5,7 @@
 // so and offers to fetch it.
 import React from 'react';
 import { DownloadCloud, ExternalLink } from 'lucide-react';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { Button } from '@/components/ui/button';
 import { WS_BTN } from '@/components/workspace/theme';
 import { fmtAgo, fmtDate } from '@/lib/noticeFormat';

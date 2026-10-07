@@ -1,25 +1,25 @@
-// Rows for the Notice summary's breakdown (audit U-70-1): one per category,
-// stage or financial year that has notices, biggest open first (stages in the
-// order work moves, years newest first), or by any column.
+// Rows for the Notice summary's breakdown (audit U-70-1): one per category or
+// stage that has notices, biggest open first (stages in the order work moves),
+// or by any column. (Totals by financial year were taken out at the firm's
+// request of 7 October 2026; the year is a filter.)
 import type { NoticeListParams } from '@/lib/noticeQueries';
 import { stageIndex, stageLabel } from '@/lib/noticeStages';
-import { fmtFy } from '@/lib/noticeFormat';
 import { ageDays, type CountRow, type Counts } from './noticeCounts';
 
-export type SummaryTab = 'category' | 'stage' | 'fy';
+export type SummaryTab = 'category' | 'stage';
 export type SummarySort = 'default' | 'name' | 'open' | 'overdue' | 'due7' | 'unassigned' | 'exposure' | 'oldest' | 'replied' | 'closed' | 'total';
 
 export interface SummaryRow {
   key: string;
   label: string;
-  /** The list filter for this row; null when the list cannot select it (no financial year). */
+  /** The list filter for this row; null when the list cannot select it. */
   param: Partial<NoticeListParams> | null;
   counts: Counts;
 }
 
 /** What a notice is grouped by on each tab. */
 export const groupKey = (tab: SummaryTab) => (r: CountRow): string | null =>
-  tab === 'category' ? r.category ?? 'Uncategorised' : tab === 'stage' ? r.stage ?? 'new' : r.financial_year;
+  tab === 'category' ? r.category ?? 'Uncategorised' : r.stage ?? 'new';
 
 const value = (r: SummaryRow, k: SummarySort, today: string): number | null => {
   const c = r.counts;
@@ -40,12 +40,10 @@ const value = (r: SummaryRow, k: SummarySort, today: string): number | null => {
 export function summaryRows(tab: SummaryTab, groups: Map<string, Counts>, sort: SummarySort, dir: 'asc' | 'desc', today: string): SummaryRow[] {
   const rows: SummaryRow[] = [...groups.entries()].map(([key, counts]) => {
     if (tab === 'stage') return { key, label: stageLabel(key), param: { stage: key }, counts };
-    if (tab === 'fy') return key ? { key, label: `FY ${fmtFy(key)}`, param: { fy: key }, counts } : { key, label: 'Year not stated', param: null, counts };
     return { key, label: key || 'Uncategorised', param: { category: key || 'Uncategorised' }, counts };
   });
   const natural = (a: SummaryRow, b: SummaryRow) => {
     if (tab === 'stage') return stageIndex(a.key) - stageIndex(b.key);
-    if (tab === 'fy') return (b.key || '0').localeCompare(a.key || '0');
     return b.counts.open - a.counts.open || b.counts.exposure - a.counts.exposure || b.counts.total - a.counts.total || a.label.localeCompare(b.label);
   };
   const sign = dir === 'asc' ? 1 : -1;

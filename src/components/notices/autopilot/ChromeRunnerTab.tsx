@@ -9,7 +9,8 @@ import { Link } from 'react-router-dom';
 import { Check, Circle, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Note } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { WS_BTN } from '@/components/workspace/theme';
 import { compareVersions, RECOMMENDED_EXTENSION_VERSION } from '@/lib/extensionVersion';
 import {

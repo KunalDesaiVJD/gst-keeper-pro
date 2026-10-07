@@ -17,7 +17,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Note } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   answerCaptcha, autopilotQueueHref, autopilotState, latestAgent, modeLabel, nextRunWords, originLabel, pausedUntilWords, useCaptchaNotify,

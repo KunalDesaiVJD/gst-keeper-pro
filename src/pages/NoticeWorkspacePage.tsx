@@ -28,7 +28,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useExtensionBridge } from '@/hooks/useExtensionBridge';
 import { loadWorkspace, NoticeHidden, NoticeNotFound, assignOwner, setPriority, setStage, docEmailOutcome, emailDocumentRequests, type Workspace } from '@/lib/noticeWorkspace';
 import { nextActionDef, type StageKey, type WorkspaceTab } from '@/lib/noticeStages';
-import { closeReasonText, dueWords, fmtDate, fmtDateTime, fmtInrShort, noticeTitle, sentenceCase } from '@/lib/noticeFormat';
+import { closeReasonText, fmtDate, fmtDateTime, fmtInrShort, noticeTitle, sentenceCase } from '@/lib/noticeFormat';
 import { AssignPopover } from '@/components/notices/AssignPopover';
 import { StagePicker } from '@/components/notices/StagePicker';
 import { OwnerChip } from '@/components/notices/OwnerChip';
@@ -47,17 +47,19 @@ import { ReadCloseDialog } from '@/components/notices/workspace/ReadCloseDialog'
 import { NoticeReadCard } from '@/components/notices/reply/read/NoticeReadCard';
 import { aiDetail, isActiveRead, loadReading } from '@/lib/noticeReading';
 import { DraftTab } from '@/components/notices/workspace/DraftTab';
+import { AssistantTab } from '@/components/notices/workspace/AssistantTab';
 import { DocumentsTab, portalReplyFrom } from '@/components/notices/workspace/DocumentsTab';
 import { ActivityTab } from '@/components/notices/workspace/ActivityTab';
 import { PaymentsTab } from '@/components/notices/workspace/PaymentsTab';
 import { HearingsTab } from '@/components/notices/workspace/HearingsTab';
 import { DeadlinesTab } from '@/components/notices/workspace/DeadlinesTab';
-import { KeyFacts, NextStepCard } from '@/components/notices/workspace/SidePanel';
+import { KeyFactsLine, nextHint } from '@/components/notices/workspace/SidePanel';
 import { cn } from '@/lib/utils';
 
 const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: 'issues', label: 'Issues' },
   { key: 'evidence', label: 'Evidence' },
+  { key: 'assistant', label: 'AI assistant' },
   { key: 'draft', label: 'Draft reply' },
   { key: 'documents', label: 'Documents' },
   { key: 'activity', label: 'Activity' },
@@ -320,8 +322,9 @@ const NoticeWorkspacePage: React.FC = () => {
             <StagePicker value={f.stage} since={f.stage_changed_at} by={f.stage_changed_by} disabled={!canEdit} onChange={changeStage} />
             {ws.issues.length > 0 && <Badge variant="info" className="text-[11px]">{ws.issues.length} issue{ws.issues.length === 1 ? '' : 's'} · {fmtInrShort(issuesTotal)}</Badge>}
             {latestDraft && <Badge variant={latestDraft.status === 'approved' ? 'success' : latestDraft.status === 'changes_requested' ? 'warning' : 'secondary'} className="text-[11px]">Draft v{latestDraft.version} · {DRAFT_STATUS[latestDraft.status] ?? latestDraft.status.replace('_', ' ')}</Badge>}
-            {ws.matter && <Link to={`/litigation/${ws.matter.id}`}><Badge variant="secondary" className="text-[11px] hover:bg-muted">Matter {ws.matter.matter_no}</Badge></Link>}
+            {nextHint(ws) && <span className="text-xs text-muted-foreground">Next: {nextHint(ws)}</span>}
           </div>
+          <KeyFactsLine ws={ws} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canEdit && !closed && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('docs')}><Mail className="h-3.5 w-3.5" /> Ask client</Button>}
@@ -351,8 +354,7 @@ const NoticeWorkspacePage: React.FC = () => {
 
       <FactTiles ws={ws} onAskClient={canEdit && !closed ? () => setDialog('docs') : undefined} />
 
-      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0 space-y-3">
+      <div className="min-w-0 space-y-3">
           <NoticeReadCard ws={ws} reading={rq.data} loading={rq.isLoading} error={rq.error} canEdit={canEdit} onChanged={reload} />
           <Tabs value={tab} onValueChange={setTab} className="min-w-0 space-y-2">
             <TabsList className={cn(TAB_LIST_CLASS, 'w-full sm:w-auto')}>
@@ -369,6 +371,7 @@ const NoticeWorkspacePage: React.FC = () => {
             <div className="rounded-lg border bg-card p-3">
               <TabsContent value="issues" className="mt-0"><IssuesTab noticeId={n.id} issues={ws.issues} canEdit={canEdit} onChanged={reload} /></TabsContent>
               <TabsContent value="evidence" className="mt-0"><EvidenceTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
+              <TabsContent value="assistant" className="mt-0"><AssistantTab ws={ws} canEdit={canEdit} onChanged={reload} onOpenDraft={() => setTab('draft')} /></TabsContent>
               <TabsContent value="draft" className="mt-0"><DraftTab ws={ws} canEdit={canEdit} canApprove={canApproveNoticeReplies()} onChanged={reload} /></TabsContent>
               <TabsContent value="documents" className="mt-0"><DocumentsTab ws={ws} canEdit={canEdit} onChanged={reload} onAskClient={() => setDialog('docs')} /></TabsContent>
               <TabsContent value="activity" className="mt-0"><ActivityTab notice={n} events={ws.events} canEdit={canEdit} onChanged={reload} /></TabsContent>
@@ -377,11 +380,6 @@ const NoticeWorkspacePage: React.FC = () => {
               <TabsContent value="deadlines" className="mt-0"><DeadlinesTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
             </div>
           </Tabs>
-        </div>
-        <aside className="space-y-3" aria-label="Next step and key facts">
-          <NextStepCard ws={ws} action={primary ?? <span className="text-xs text-muted-foreground">{dueWords(f.days_to_due)}</span>} />
-          <KeyFacts ws={ws} />
-        </aside>
       </div>
 
       <LogReplyDialog notice={ref} open={dialog === 'reply'} onOpenChange={(o) => setDialog(o ? 'reply' : null)} onDone={reload} portalReply={portalReply} />

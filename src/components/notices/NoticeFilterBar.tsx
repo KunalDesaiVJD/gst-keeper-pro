@@ -49,7 +49,9 @@ export const NoticeFilterBar: React.FC<{
   /** Names for chips (client id → name). */
   clientName?: string | null;
   actions?: React.ReactNode;
-}> = ({ params, onChange, showFilter = true, clientName, actions }) => {
+  /** The page shows the master filter bar: leave client, owner, form, FY and priority to it. */
+  master?: boolean;
+}> = ({ params, onChange, showFilter = true, clientName, actions, master = false }) => {
   const { staff } = useStaffList();
   const opts = useNoticeFilterOptions().data;
   const [q, setQ] = useState(params.q ?? '');
@@ -67,15 +69,15 @@ export const NoticeFilterBar: React.FC<{
   const chips: { key: keyof NoticeListParams; label: string }[] = [];
   if (params.dash === '1') chips.push({ key: 'dash', label: 'Dashboard notice types only' });
   if (params.dash === '0') chips.push({ key: 'dash', label: 'Notice types not on the dashboard' });
-  if (params.client) chips.push({ key: 'client', label: `Client: ${clientName ?? 'one client'}` });
+  if (params.client && !master) chips.push({ key: 'client', label: `Client: ${clientName ?? 'one client'}` });
   if (params.due) chips.push({ key: 'due', label: `Due on ${fmtDate(params.due)}` });
   if (params.stage) chips.push({ key: 'stage', label: `Stage: ${stageLabel(params.stage)}` });
-  if (params.owner) chips.push({ key: 'owner', label: `Owner: ${ownerName}` });
+  if (params.owner && !master) chips.push({ key: 'owner', label: `Owner: ${ownerName}` });
   if (params.category) chips.push({ key: 'category', label: `Category: ${params.category}` });
-  if (params.form) chips.push({ key: 'form', label: params.form === 'none' ? 'Form: not recognised' : `Form: ${params.form}` });
+  if (params.form && !master) chips.push({ key: 'form', label: params.form === 'none' ? 'Form: not recognised' : `Form: ${params.form}` });
   if (params.need) chips.push({ key: 'need', label: `Reply need: ${responseNeedDef(params.need).chip}` });
-  if (params.fy) chips.push({ key: 'fy', label: `FY ${fmtFy(params.fy)}` });
-  if (params.priority) chips.push({ key: 'priority', label: `Priority: ${params.priority}` });
+  if (params.fy && !master) chips.push({ key: 'fy', label: params.fy === 'none' ? 'FY not stated' : `FY ${fmtFy(params.fy)}` });
+  if (params.priority && !master) chips.push({ key: 'priority', label: `Priority: ${params.priority}` });
 
   return (
     <div className="space-y-1.5">
@@ -91,14 +93,20 @@ export const NoticeFilterBar: React.FC<{
         )}
         <FilterPill label="Stage" allLabel="Any" value={params.stage ?? 'all'} onChange={set('stage')} options={[]}
           extraOptions={STAGES.map((s) => ({ value: s.key, label: s.label }))} />
-        <FilterPill label="Owner" allLabel="Anyone" value={params.owner ?? 'all'} onChange={set('owner')} options={[]}
-          extraOptions={[{ value: 'me', label: 'Me' }, { value: 'none', label: 'Unassigned' }, ...staff.map((s) => ({ value: s.userId, label: s.name }))]} />
+        {!master && (
+          <FilterPill label="Owner" allLabel="Anyone" value={params.owner ?? 'all'} onChange={set('owner')} options={[]}
+            extraOptions={[{ value: 'me', label: 'Me' }, { value: 'none', label: 'Unassigned' }, ...staff.map((s) => ({ value: s.userId, label: s.name }))]} />
+        )}
         <FilterPill label="Category" allLabel="Any" value={params.category ?? 'all'} onChange={set('category')} options={opts?.categories ?? []} />
-        <FilterPill label="Form" allLabel="Any" value={params.form ?? 'all'} onChange={set('form')} options={[]}
-          extraOptions={[...(opts?.forms ?? []).map((f) => ({ value: f.code, label: `${f.code} · ${f.label}` })), { value: 'none', label: 'Not recognised' }]} />
-        <FilterPill label="FY" allLabel="Any" value={params.fy ?? 'all'} onChange={set('fy')} options={[]}
-          extraOptions={(opts?.fys ?? []).map((y) => ({ value: y, label: fmtFy(y) }))} />
-        <FilterPill label="Priority" allLabel="Any" value={params.priority ?? 'all'} onChange={set('priority')} options={['High', 'Medium', 'Low']} />
+        {!master && (
+          <>
+            <FilterPill label="Form" allLabel="Any" value={params.form ?? 'all'} onChange={set('form')} options={[]}
+              extraOptions={[...(opts?.forms ?? []).map((f) => ({ value: f.code, label: `${f.code} · ${f.label}` })), { value: 'none', label: 'Not recognised' }]} />
+            <FilterPill label="FY" allLabel="Any" value={params.fy ?? 'all'} onChange={set('fy')} options={[]}
+              extraOptions={[...(opts?.fys ?? []).map((y) => ({ value: y, label: fmtFy(y) })), { value: 'none', label: 'Not stated' }]} />
+            <FilterPill label="Priority" allLabel="Any" value={params.priority ?? 'all'} onChange={set('priority')} options={['High', 'Medium', 'Low']} />
+          </>
+        )}
         <FilterPill label="Reply need" allLabel="All" value={params.need ?? 'all'} onChange={set('need')} options={[]}
           extraOptions={RESPONSE_NEEDS.map((d) => ({ value: d.key, label: d.chip }))} />
         {actions && <div className="ml-auto flex flex-wrap items-center gap-1.5">{actions}</div>}

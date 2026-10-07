@@ -103,7 +103,8 @@ UPDATE gst_notices SET pdf_url = 'https://example.test/storage/v1/object/public/
 SELECT t_eq(ai_read_allowed('c4100000-0000-0000-0000-000000000001'), 'off', 'reading ships off');
 SELECT t_eq((SELECT count(*) FROM notice_extractions WHERE source = 'ai'), 0::bigint, 'nothing was queued while off');
 SELECT t_eq(notice_read_request('c4200000-0000-0000-0000-000000000021', NULL, 'Asha') ->> 'reason', 'off', 'a request while off says so');
-UPDATE ai_settings SET read_enabled = true;
+-- The office agent reads here (since 20261009100000 the Edge Function is the default runner).
+UPDATE ai_settings SET read_enabled = true, runner = 'office_agent';
 SELECT t_eq(notice_read_request('c4200000-0000-0000-0000-000000000021', NULL, 'Asha') ->> 'reason', 'no_consent', 'no consent, nothing queued');
 SELECT t_eq(ai_set_consent(ARRAY['c4100000-0000-0000-0000-000000000001']::uuid[], ist_today(), 'Engagement letter clause'), 1, 'consent recorded');
 SELECT t_eq(notice_read_request('c4200000-0000-0000-0000-000000000011', NULL, 'Asha') ->> 'reason', 'no_document', 'no PDF and no folder document');

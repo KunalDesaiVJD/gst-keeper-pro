@@ -64,7 +64,7 @@ export const SummaryTable: React.FC<{
     { key: 'closed', label: 'Closed', node: (r, c) => count(r, c.closed, { filter: 'closed' }, 'closed') },
     { key: 'total', label: 'Total', node: (r, c) => count(r, c.total, { filter: 'all' }, 'all notices') },
   ];
-  const firstHead = tab === 'stage' ? 'Stage' : tab === 'fy' ? 'Financial year' : 'Category';
+  const firstHead = tab === 'stage' ? 'Stage' : 'Category';
   // Refund and DRC-03 cases are notices here; their applications and payments are counted under the table.
   const CASES: Record<string, string> = { Refunds: 'portal cases', 'Voluntary Payment': 'DRC-03 cases' };
   const label = (r: SummaryRow) => (tab === 'stage' ? <StageBadge stage={r.key} /> : (

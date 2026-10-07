@@ -76,7 +76,7 @@ const NoticeQueuePage: React.FC = () => {
   const empty = TABS.find((t) => t.key === tab)?.empty;
 
   return (
-    <NoticesShell section="Work queue">
+    <NoticesShell section="Work queue" master>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div role="tablist" aria-label="Whose work" className={WS_TABS_LIST}>
           {TABS.map((t) => (
@@ -92,7 +92,7 @@ const NoticeQueuePage: React.FC = () => {
           <SelectContent>{SORT_CHOICES.map((s) => <SelectItem key={s.key} value={s.key} className="text-xs">{s.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
-      <NoticeFilterBar params={params} onChange={(patch) => go(tab, patch)} showFilter={false} />
+      <NoticeFilterBar master params={params} onChange={(patch) => go(tab, patch)} showFilter={false} />
       {q.error ? (
         <Note tone="warn">Couldn't load the queue: {q.error instanceof Error ? q.error.message : String(q.error)}{' '}
           <Button variant="link" className="h-auto p-0 text-xs" onClick={() => q.refetch()}>Retry</Button></Note>

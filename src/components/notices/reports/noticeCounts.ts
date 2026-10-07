@@ -32,8 +32,8 @@ export interface CountRow {
 const COLUMNS = 'id, client_id, client_name, client_gstin, category, stage, financial_year, is_open, is_overdue, is_due_in_7, '
   + 'is_unassigned, is_replied, exposure_amount, effective_due, days_to_due, issue_date';
 
-/** The report's filters (owner, FY, category, priority, client) as the list understands them. */
-export type BaseFilters = Pick<NoticeListParams, 'owner' | 'fy' | 'category' | 'priority' | 'client' | 'stage'>;
+/** The report's filters (the master filters: client, FY, owner, form, priority; and category) as the list understands them. */
+export type BaseFilters = Pick<NoticeListParams, 'owner' | 'fy' | 'category' | 'priority' | 'client' | 'stage' | 'form'>;
 
 export async function loadCountRows(base: BaseFilters, meId: string | null): Promise<CountRow[]> {
   return fetchAllRows<CountRow>('notice_facts', COLUMNS,

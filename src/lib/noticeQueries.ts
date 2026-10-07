@@ -7,6 +7,7 @@
 // command centre carries dash=1 and shows only the notice types on the
 // dashboard (notice_facts.on_dashboard), because the dashboard counts only
 // those (contract §A, migration 20261008150000_notice_types.sql).
+import { fyVariants } from '@/lib/masterFilters';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import type { NoticeFact, NoticePlanRow } from '@/lib/noticeFacts';
@@ -160,7 +161,8 @@ export function applyListFilters(q: Q, p: NoticeListParams, meId: string | null)
   if (p.category) q = q.eq('category', p.category);
   if (p.form === 'none') q = q.is('form_code', null);
   else if (p.form) q = q.eq('form_code', p.form);
-  if (p.fy) q = q.eq('financial_year', p.fy);
+  if (p.fy === 'none') q = q.is('financial_year', null);
+  else if (p.fy) q = q.in('financial_year', fyVariants(p.fy));
   if (p.priority) q = q.eq('effective_priority', p.priority);
   if (p.due) q = q.eq('effective_due', p.due);
   if (p.need) q = q.eq('response_need', p.need);

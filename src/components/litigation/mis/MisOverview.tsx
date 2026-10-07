@@ -6,7 +6,7 @@
 // moved in the last 30 days. Every figure opens the list it counts.
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { SectionCard } from '@/components/gstr9/ui';
+import { InfoTip, SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
 import { fmtDay, fmtInr, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { isAppealClock30, sumMoney, type AgendaItem, type MisLinks, type MisReport } from './misData';
@@ -61,7 +61,7 @@ export const MisCountsLine: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, 
         <span>Refund at stake <Link to={links.matters({ lifecycle: 'refund' })} className={link}>
           <Rupees v={r.money.refund} /> on {plural(r.sets.refund.length, 'matter')}</Link> (kept out of demand)</span>
       )}
-      <span>Outstanding = demand − pre-deposit − paid, as recorded on each matter; interest is not accrued to date.</span>
+      <InfoTip label="How outstanding is worked out">Outstanding = demand − pre-deposit − paid, as recorded on each matter; interest is not accrued to date.</InfoTip>
     </p>
   );
 };
@@ -71,7 +71,7 @@ const detail = (a: AgendaItem) => (a.kind === 'hearing' ? [a.label, a.time && `$
   : /^(Due date|Reply|Reply due|Limitation)$/.test(a.label) ? '' : a.label);
 
 const NextDays: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) => (
-  <SectionCard title="Next 14 days" description="Hearings, due dates, limitation and appeal clocks on open matters (IST)"
+  <SectionCard title="Next 14 days" info="Hearings, due dates, limitation and appeal clocks on open matters (IST)."
     actions={<Badge variant="secondary" className="text-[11px]">{plural(r.agenda.length, 'item')}</Badge>}>
     {r.sets.overdue.length > 0 && (
       <p className="rounded-md border border-destructive/40 px-2 py-1 text-xs">
@@ -81,7 +81,7 @@ const NextDays: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) => 
       </p>
     )}
     {r.agenda.length === 0 ? <EmptyBox className="p-4">Nothing falls due in the next 14 days.</EmptyBox> : (
-      <ul className="max-h-[26rem] divide-y overflow-y-auto">
+      <ul className="max-h-[17rem] divide-y overflow-y-auto pr-1">
         {r.agenda.map((a) => (
           <li key={a.key} className="flex items-start gap-2 py-1.5 text-xs">
             <div className="w-[4.5rem] shrink-0">
@@ -105,7 +105,7 @@ const NextDays: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) => 
 );
 
 const ByForum: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) => (
-  <SectionCard title="Outstanding by forum" description="Where the money sits · ₹ outstanding · matters"
+  <SectionCard title="Outstanding by forum" info="Where the money sits: ₹ outstanding and matters by forum. Forum is the matter's own, else read from its lifecycle and stage."
     actions={<Link to={links.tab('breakdown')} className="text-xs font-medium text-primary underline underline-offset-2">Breakdown</Link>}>
     <BarList rows={r.byForum.map((b) => ({ key: b.key, label: b.label, tone: b.tone, amount: b.money.outstanding, count: b.rows.length, to: links.drill(`forum:${b.key}`) }))} />
     <p className="text-[11px] text-muted-foreground">
@@ -116,7 +116,7 @@ const ByForum: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) => (
       {r.sets.confirmed.length > 0
         ? <Link to={links.drill('confirmed')} className="text-primary underline underline-offset-2">confirmed <Rupees v={r.money.confirmed} /></Link>
         : <>confirmed <Rupees v={0} /></>}
-      {' '}by an order or later. Forum is the matter's own, else read from its lifecycle and stage.
+      {' '}by an order or later.
     </p>
   </SectionCard>
 );
@@ -132,7 +132,7 @@ const Attention: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) =>
     { label: 'No amount recorded', n: r.sets.nodemand.length, to: links.drill('nodemand') },
   ];
   return (
-    <SectionCard title="Needs attention" description="Open matters · each count opens its list">
+    <SectionCard title="Needs attention" info="Open matters; each count opens its list.">
       <ul className="divide-y">
         {rows.map((x) => (
           <li key={x.label}>
@@ -158,7 +158,7 @@ const TopClients: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) =
   const top = r.byClient.slice(0, 5);
   const share = top.reduce((s, c) => s + c.share, 0);
   return (
-    <SectionCard title="Top clients" description="By outstanding · share of the firm's outstanding"
+    <SectionCard title="Top clients" info="By outstanding, with each client's share of the firm's outstanding."
       actions={<Link to={links.tab('clients')} className="text-xs font-medium text-primary underline underline-offset-2">All clients</Link>}>
       {top.length === 0 ? <EmptyBox className="p-4">No client has an open matter.</EmptyBox> : (
         <ul className="divide-y">
@@ -187,14 +187,13 @@ const TopClients: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) =
   );
 };
 
-const MoveRow: React.FC<{ label: string; n: number; to: string; amount: number; what: string }> = ({ label, n, to, amount, what }) => (
-  <div className="flex items-center justify-between gap-2 py-1.5 text-xs">
-    <span className="min-w-0">
-      {label}{' '}
-      {n > 0 ? <Link to={to} className="font-semibold text-primary underline underline-offset-2">{plural(n, 'matter')}</Link>
-        : <span className="font-semibold">no matters</span>}
-    </span>
-    <span className="shrink-0 tabular-nums text-muted-foreground">{what} <span className="font-semibold text-foreground">{fmtInrShort(amount)}</span></span>
+const MoveStat: React.FC<{ label: string; n: number; to: string; amount: number; what: string }> = ({ label, n, to, amount, what }) => (
+  <div className="min-w-0">
+    <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+    <div className="text-lg font-semibold leading-tight tabular-nums">
+      {n > 0 ? <Link to={to} className="text-primary underline underline-offset-2">{plural(n, 'matter')}</Link> : 'none'}
+    </div>
+    <div className="text-[11px] text-muted-foreground">{what} <span className="font-semibold tabular-nums text-foreground">{fmtInrShort(amount)}</span></div>
   </div>
 );
 
@@ -202,10 +201,10 @@ const Movement: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, links }) => 
   const opened = sumMoney(r.opened30);
   const closed = sumMoney(r.sets.closed30);
   return (
-    <SectionCard title="Movement · last 30 days" description="Matters opened and closed, with their demand">
-      <div className="divide-y">
-        <MoveRow label="Opened" n={r.opened30.length} to={links.matters({ status: 'all', age: '0-30' })} amount={opened.demand} what="demand added" />
-        <MoveRow label="Closed" n={r.sets.closed30.length} to={links.drill('closed30')} amount={closed.demand} what="demand closed" />
+    <SectionCard title="Last 30 days" info="Matters opened and closed in the last 30 days, with their demand.">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
+        <MoveStat label="Opened" n={r.opened30.length} to={links.matters({ status: 'all', age: '0-30' })} amount={opened.demand} what="demand added" />
+        <MoveStat label="Closed" n={r.sets.closed30.length} to={links.drill('closed30')} amount={closed.demand} what="demand closed" />
       </div>
     </SectionCard>
   );
@@ -215,13 +214,13 @@ export const MisOverview: React.FC<{ r: MisReport; links: MisLinks }> = ({ r, li
   <div className="space-y-3">
     <MisTiles r={r} links={links} />
     <MisCountsLine r={r} links={links} />
-    <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-3">
+    <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-3">
       <NextDays r={r} links={links} />
       <ByForum r={r} links={links} />
       <Attention r={r} links={links} />
     </div>
-    <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
-      <TopClients r={r} links={links} />
+    <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-3">
+      <div className="min-w-0 lg:col-span-2"><TopClients r={r} links={links} /></div>
       <Movement r={r} links={links} />
     </div>
   </div>

@@ -39,6 +39,8 @@ PGHOST=/path/to/socket PGPORT=55432 PGUSER=postgres supabase/tests/notices/run.s
 | `test_100d_notice_types_hidden` | a type hidden everywhere (GSTR-3A): left out of facts, plan, calendar, search and the command centre's counts, no reply options or alert e-mail, kept on record, back as it was when shown again |
 | `test_100c_reply_options` | the hyphen free wording helpers, options prepared when a notice arrives or changes, using one to start a draft, a failing reply never blocking a sync write |
 | `test_101_reply_templates` | the firm's 64 templates on every form, with all facts and with none: no dash, no unfilled placeholder, letter shape and numbering, issue paragraphs, re-runs keep the firm's edits |
+| `test_102_ai_assistant` | the Notice Response AI Assistant: every case-folder PDF, sent draft and typed position registered; backfill and claim order (a reply after its notice); copies not read twice; reply pairs, the admin's choice of past and ongoing responses, the closest examples, the assistant's run (no dashes, examples counted, separate cap), edited paragraphs kept, the runner's lease and the cron tick |
+| `test_103_master_filters` | the master filters: one key for every spelling of a year, owner / FY / form "none", and the command centre counting, filter by filter, exactly what its lists show (notices and matters) |
 
 Phase 2's e-mail changes (deep links to `/notices/<id>`, headline, button, grouped
 overdue list) are covered in `test_60_alerts`.

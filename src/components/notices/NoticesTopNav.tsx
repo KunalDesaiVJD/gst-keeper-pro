@@ -1,11 +1,12 @@
 import React from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { BarChart3, Building2, ChevronDown, FileWarning, ListOrdered, ReceiptIndianRupee, Wallet } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { WS_TAB, WS_TAB_ACTIVE, WS_TABS_LIST } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNoticesNavCounts } from '@/lib/noticeCommandCentre';
+import { hrefWithMaster, readMaster } from '@/lib/masterFilters';
 import { cn } from '@/lib/utils';
 
 type CountKey = 'queue' | 'open' | 'matters' | 'hearings';
@@ -43,6 +44,10 @@ export function noticesSectionLabel(pathname: string): string {
 export const NoticesTopNav: React.FC = () => {
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  // The master filters go along to the next page (lib/masterFilters).
+  const [sp] = useSearchParams();
+  const master = readMaster(sp);
+  const go = (to: string) => hrefWithMaster(to, master);
   const { user } = useAuth();
   const counts = useNoticesNavCounts(user?.id ?? null);
   const activeReport = REPORTS.find((r) => r.to === pathname);
@@ -52,7 +57,7 @@ export const NoticesTopNav: React.FC = () => {
     <>
       {/* Phones: one select instead of a rail wider than the screen (U-130-1). */}
       <div className="sm:hidden">
-        <Select value={current} onValueChange={(to) => navigate(to)}>
+        <Select value={current} onValueChange={(to) => navigate(go(to))}>
           <SelectTrigger className="h-9 text-sm" aria-label="Notices section">
             <SelectValue placeholder="Section" />
           </SelectTrigger>
@@ -71,7 +76,7 @@ export const NoticesTopNav: React.FC = () => {
           const active = n.match(pathname);
           const count = n.count && counts ? counts[n.count] : null;
           return (
-            <Link key={n.to} to={n.to} aria-current={active ? 'page' : undefined} className={cn(WS_TAB, 'h-8 px-3', active && WS_TAB_ACTIVE)}>
+            <Link key={n.to} to={go(n.to)} aria-current={active ? 'page' : undefined} className={cn(WS_TAB, 'h-8 px-3', active && WS_TAB_ACTIVE)}>
               {n.label}
               {count !== null && (
                 <span className={cn('rounded-full px-1.5 text-[11px] font-semibold tabular-nums',
@@ -90,7 +95,7 @@ export const NoticesTopNav: React.FC = () => {
           <DropdownMenuContent align="start">
             {REPORTS.map((r) => (
               <DropdownMenuItem key={r.to} asChild>
-                <Link to={r.to} className="flex items-center gap-2 text-sm" aria-current={r.to === pathname ? 'page' : undefined}>
+                <Link to={go(r.to)} className="flex items-center gap-2 text-sm" aria-current={r.to === pathname ? 'page' : undefined}>
                   <r.icon className="h-4 w-4" aria-hidden /> {r.label}
                 </Link>
               </DropdownMenuItem>

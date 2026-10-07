@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Badge } from '@/components/gstr9/badge';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { WS_BTN, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { ToneBadge } from '@/components/notices/autopilot/parts';
 import { Pager } from '@/components/notices/Pager';
@@ -53,7 +53,7 @@ interface Run {
   current: AnnexureTarget | null; stopping: boolean; firstError: string | null;
 }
 
-export const AnnexuresSection: React.FC<{ s: ReplyFactoryStatus; show: string; canBuild: boolean }> = ({ s, show, canBuild }) => {
+export const AnnexuresSection: React.FC<{ s: ReplyFactoryStatus; show: string; canBuild: boolean; part?: 'card' | 'list' }> = ({ s, show, canBuild, part = 'card' }) => {
   const [sp] = useSearchParams();
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -127,30 +127,63 @@ export const AnnexuresSection: React.FC<{ s: ReplyFactoryStatus; show: string; c
   const listRows = kind && KINDS[kind] ? rows.filter((t) => KINDS[kind].match(t) && (!aform || t.notice.form_code === aform)) : [];
   const pageRows = pager.slice(listRows);
 
+  const list = kind && KINDS[kind] ? (
+    <DrillFrame title={`${KINDS[kind].title}${aform ? ` · ${aform}` : ''}`} count={targets.data ? listRows.length : null}
+      closeTo={factoryHref('overview', { show: 'none' })} loading={targets.isLoading} error={targets.error} onRetry={() => targets.refetch()}
+      empty="No notice matches.">
+      <ul className="space-y-1.5 md:hidden">
+        {pageRows.map((t) => (
+          <li key={t.notice.id} className="space-y-1 rounded-md border bg-card p-2.5">
+            <NoticeCell n={t.notice} id={t.notice.id} tab="evidence" />
+            <AnnexureState t={t} />
+          </li>
+        ))}
+      </ul>
+      <div className={cn(WS_TABLE_WRAP, 'hidden md:block')}>
+        <table className={WS_TABLE}>
+          <caption className="sr-only">{KINDS[kind].title}</caption>
+          <thead>
+            <tr>
+              <th scope="col" className={WS_TH}>Notice</th>
+              <th scope="col" className={WS_TH}>Due</th>
+              <th scope="col" className={WS_TH}>Latest annexure</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((t) => (
+              <tr key={t.notice.id} className={WS_TR}>
+                <td className={cn(WS_TD, 'max-w-[20rem]')}><NoticeCell n={t.notice} id={t.notice.id} tab="evidence" /></td>
+                <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>{fmtDate(t.notice.effective_due)}</td>
+                <td className={WS_TD}><AnnexureState t={t} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Pager page={pager.page} pageSize={pager.pageSize} total={listRows.length} onPage={pager.setPage} />
+    </DrillFrame>
+  ) : null;
+  if (part === 'list') return list;
+
   return (
     <SectionCard
       title="Evidence built automatically"
-      description={`Open ASMT-10, DRC-01A, DRC-01B and DRC-01C notices whose annexures the app built by itself from the portal figures. Target: at least ${AUTO_ANNEXURE_TARGET}%.`}
+      description={`Open ASMT-10, DRC-01A, DRC-01B and DRC-01C notices whose annexures the app built by itself from the portal figures. Target: at least ${AUTO_ANNEXURE_TARGET}%. Ready: a ready annexure; awaiting data: waiting for portal figures.`}
       actions={(
-        <Badge variant={tone === 'ok' ? 'success' : tone === 'warn' ? 'warning' : tone === 'error' ? 'destructive' : 'secondary'} className="text-xs tabular-nums">
-          {fmtShare(a.share_automatic)}<TargetMark ok={a.share_automatic === null ? null : a.share_automatic >= AUTO_ANNEXURE_TARGET} what={`the ${AUTO_ANNEXURE_TARGET}% target`} />
-        </Badge>
+        <>
+          <Badge variant={tone === 'ok' ? 'success' : tone === 'warn' ? 'warning' : tone === 'error' ? 'destructive' : 'secondary'} className="text-xs tabular-nums">
+            {fmtShare(a.share_automatic)}<TargetMark ok={a.share_automatic === null ? null : a.share_automatic >= AUTO_ANNEXURE_TARGET} what={`the ${AUTO_ANNEXURE_TARGET}% target`} />
+          </Badge>
+          {canBuild && (
+            <Button size="sm" variant="outline" className={WS_BTN} disabled={!!run || targets.isLoading || pending.length === 0} onClick={buildAll}
+              title="Build evidence for every notice without a ready annexure">
+              {run ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Hammer className="h-3.5 w-3.5" aria-hidden />}
+              Build all ({pending.length.toLocaleString('en-IN')})
+            </Button>
+          )}
+        </>
       )}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="min-w-0 text-sm">
-          <CountLink to={href('auto')} n={a.automatic} /> of <CountLink to={href('all')} n={a.target_open} /> built
-          automatically ({fmtShare(a.share_automatic)}) · <CountLink to={href('with')} n={a.with_annexure} /> with a ready
-          annexure · <CountLink to={href('needs')} n={a.needs_data} /> waiting for portal data.
-        </p>
-        {canBuild && (
-          <Button size="sm" className={WS_BTN} disabled={!!run || targets.isLoading || pending.length === 0} onClick={buildAll}>
-            {run ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Hammer className="h-3.5 w-3.5" aria-hidden />}
-            Build evidence for all ({pending.length.toLocaleString('en-IN')})
-          </Button>
-        )}
-      </div>
-
       {run && (
         <div className="space-y-1.5 rounded-md border border-primary/30 bg-primary/5 p-2.5" role="status" aria-live="polite">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -194,11 +227,11 @@ export const AnnexuresSection: React.FC<{ s: ReplyFactoryStatus; show: string; c
             <tr>
               <th scope="col" className={WS_TH}>Form</th>
               <th scope="col" className={cn(WS_TH, 'text-right')}>Open</th>
-              <th scope="col" className={cn(WS_TH, 'text-right')}>Ready annexure</th>
-              <th scope="col" className={cn(WS_TH, 'text-right')}>Built automatically</th>
-              <th scope="col" className={cn(WS_TH, 'text-right')}>Waiting for portal data</th>
-              <th scope="col" className={cn(WS_TH, 'text-right')}>Without one</th>
-              <th scope="col" className={cn(WS_TH, 'text-right')}>Share automatic</th>
+              <th scope="col" className={cn(WS_TH, 'text-right')}>Ready</th>
+              <th scope="col" className={cn(WS_TH, 'text-right')}>Automatic</th>
+              <th scope="col" className={cn(WS_TH, 'text-right')}>Awaiting data</th>
+              <th scope="col" className={cn(WS_TH, 'text-right')}>Without</th>
+              <th scope="col" className={cn(WS_TH, 'text-right')}>Share</th>
             </tr>
           </thead>
           <tbody>
@@ -224,42 +257,6 @@ export const AnnexuresSection: React.FC<{ s: ReplyFactoryStatus; show: string; c
       </div>
       {!canBuild && <p className="text-[11px] text-muted-foreground">Building evidence needs the permission to work on notices.</p>}
 
-      {kind && KINDS[kind] && (
-        <DrillFrame title={`${KINDS[kind].title}${aform ? ` · ${aform}` : ''}`} count={targets.data ? listRows.length : null}
-          closeTo={factoryHref('overview', { show: 'none' })} loading={targets.isLoading} error={targets.error} onRetry={() => targets.refetch()}
-          empty="No notice matches.">
-          <ul className="space-y-1.5 md:hidden">
-            {pageRows.map((t) => (
-              <li key={t.notice.id} className="space-y-1 rounded-md border bg-card p-2.5">
-                <NoticeCell n={t.notice} id={t.notice.id} tab="evidence" />
-                <AnnexureState t={t} />
-              </li>
-            ))}
-          </ul>
-          <div className={cn(WS_TABLE_WRAP, 'hidden md:block')}>
-            <table className={WS_TABLE}>
-              <caption className="sr-only">{KINDS[kind].title}</caption>
-              <thead>
-                <tr>
-                  <th scope="col" className={WS_TH}>Notice</th>
-                  <th scope="col" className={WS_TH}>Due</th>
-                  <th scope="col" className={WS_TH}>Latest annexure</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((t) => (
-                  <tr key={t.notice.id} className={WS_TR}>
-                    <td className={cn(WS_TD, 'max-w-[20rem]')}><NoticeCell n={t.notice} id={t.notice.id} tab="evidence" /></td>
-                    <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>{fmtDate(t.notice.effective_due)}</td>
-                    <td className={WS_TD}><AnnexureState t={t} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <Pager page={pager.page} pageSize={pager.pageSize} total={listRows.length} onPage={pager.setPage} />
-        </DrillFrame>
-      )}
     </SectionCard>
   );
 };

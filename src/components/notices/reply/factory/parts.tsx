@@ -1,8 +1,8 @@
 // Small pieces the Reply Factory tabs share: a count that opens the list it
-// counts (audit cross-cutting "every number clickable"), a notice cell, the
-// drill-down list frame, and a target mark that says on target / off target
-// in words as well as colour.
-import React from 'react';
+// counts (audit cross-cutting "every number clickable"), a row of counted
+// chips, a notice cell, the drill-down list frame, and a target mark that says
+// on target / off target in words as well as colour.
+import React, { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, X } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -39,6 +39,8 @@ export const NoticeCell: React.FC<{ n: NoticeRef | null; id: string; tab?: strin
 /**
  * The frame of a drill-down list opened from a count: its title with the
  * count (the same number as the link that opened it), Close, and the body.
+ * The overview opens it full width under the row of the count, so it comes
+ * into view when it opens.
  */
 export const DrillFrame: React.FC<{
   title: string;
@@ -49,15 +51,33 @@ export const DrillFrame: React.FC<{
   onRetry: () => void;
   empty: string;
   children: React.ReactNode;
-}> = ({ title, count, closeTo, loading, error, onRetry, empty, children }) => (
-  <div className="space-y-2 rounded-md border bg-muted/20 p-2.5" role="region" aria-label={title}>
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <h3 className="text-sm font-semibold" aria-live="polite">{title}{count !== null && <span className="font-normal text-foreground/70"> · {plural(count, 'row')}</span>}</h3>
-      <Button asChild size="sm" variant="ghost" className={WS_BTN}><Link to={closeTo}>Close the list</Link></Button>
+}> = ({ title, count, closeTo, loading, error, onRetry, empty, children }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { ref.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); }, [title]);
+  return (
+    <div ref={ref} className="scroll-mt-4 space-y-2 rounded-md border bg-muted/20 p-2.5" role="region" aria-label={title}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold" aria-live="polite">{title}{count !== null && <span className="font-normal text-foreground/70"> · {plural(count, 'row')}</span>}</h3>
+        <Button asChild size="sm" variant="ghost" className={WS_BTN}><Link to={closeTo}>Close the list</Link></Button>
+      </div>
+      {error ? <LoadError what="this list" error={error} onRetry={onRetry} />
+        : loading ? <div className="space-y-1.5">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
+        : count === 0 ? <EmptyBox className="p-4">{empty}</EmptyBox>
+        : children}
     </div>
-    {error ? <LoadError what="this list" error={error} onRetry={onRetry} />
-      : loading ? <div className="space-y-1.5">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
-      : count === 0 ? <EmptyBox className="p-4">{empty}</EmptyBox>
-      : children}
+  );
+};
+
+/** "Date from: Portal 120 · Typed 4": each chip opens the list it counts. */
+export const ChipLinks: React.FC<{ label: string; items: { key: string; label: string; n: number; to: string; bad?: boolean }[] }> = ({ label, items }) => (
+  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+    <span className="font-medium text-muted-foreground">{label}</span>
+    {items.map((it) => (
+      <Link key={it.key} to={it.to}
+        className={cn('inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          it.bad && it.n > 0 && 'border-destructive/40')}>
+        {it.label} <span className={cn('font-semibold tabular-nums', it.bad && it.n > 0 && 'text-destructive-strong')}>{it.n.toLocaleString('en-IN')}</span>
+      </Link>
+    ))}
   </div>
 );

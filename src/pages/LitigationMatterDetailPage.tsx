@@ -42,7 +42,7 @@ import { MatterPaymentsTab, RecordPaymentDialog, isAppeal, preDepositNeed } from
 import { MatterDocumentsTab } from '@/components/litigation/matters/MatterDocumentsTab';
 import { MatterActivityTab } from '@/components/litigation/matters/MatterActivityTab';
 import { MatterDeadlinesTab } from '@/components/litigation/matters/MatterDeadlinesTab';
-import { KeyFacts, NextStepCard } from '@/components/litigation/matters/MatterSidePanel';
+import { MatterFacts } from '@/components/litigation/matters/MatterSidePanel';
 import {
   CloseMatterDialog, EditDemandDialog, EditMatterDialog, RecordOrderDialog, RecordReplyDialog, ReopenDialog,
 } from '@/components/litigation/matters/MatterDialogs';
@@ -284,8 +284,9 @@ const LitigationMatterDetailPage: React.FC = () => {
           hint={money.recorded ? `${fmtInr(money.demand)} − ${fmtInr(money.paid)} paid − ${fmtInr(money.preDeposit)} pre-deposit` : 'demand not recorded'} />
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <Tabs value={tab} onValueChange={setTab} className="min-w-0 space-y-2">
+      <MatterFacts ws={ws} hint={step.hint} canEdit={edit} onChanged={reload} />
+
+      <Tabs value={tab} onValueChange={setTab} className="min-w-0 space-y-2">
           <TabsList className={cn(TAB_LIST_CLASS, 'w-full sm:w-auto')}>
             {TABS.map((t) => (
               <TabsTrigger key={t.key} value={t.key} className={cn(TAB_TRIGGER_CLASS, 'h-8 px-3')}>
@@ -305,11 +306,6 @@ const LitigationMatterDetailPage: React.FC = () => {
             <TabsContent value="deadlines" className="mt-0"><MatterDeadlinesTab ws={ws} canEdit={edit} onChanged={reload} /></TabsContent>
           </div>
         </Tabs>
-        <aside className="space-y-3" aria-label="Next step and key facts">
-          <NextStepCard ws={ws} hint={step.hint} action={step.button} />
-          <KeyFacts ws={ws} canEdit={edit} ownerName={owner} reviewerName={reviewer} onChanged={reload} />
-        </aside>
-      </div>
 
       <HearingDialog open={dialog === 'hearing'} onOpenChange={(o) => setDialog(o ? 'hearing' : null)} ws={ws} hearing={hearing} onDone={reload} />
       <OutcomeDialog open={dialog === 'outcome'} onOpenChange={(o) => setDialog(o ? 'outcome' : null)} ws={ws} hearing={hearing} onDone={reload} onOrder={() => setDialog('order')} />

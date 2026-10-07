@@ -11,13 +11,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { SectionCard } from '@/components/gstr9/ui';
+import { Panel } from '@/components/notices/ui/Panel';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { WS_TABS_LIST, WS_TAB, WS_TAB_ACTIVE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import type { CommandCentre } from '@/lib/noticeCommandCentre';
 import { loadPlanTop, type PlanOrder } from '@/lib/noticeCommandCentre';
+import { hrefWithMaster, type Master } from '@/lib/masterFilters';
 import type { NoticePlanRow } from '@/lib/noticeFacts';
 import { queueHref, type QueueTab } from '@/lib/noticeQueries';
 import { nextActionDef } from '@/lib/noticeStages';
@@ -176,12 +177,14 @@ export const PlanRows: React.FC<{ rows: NoticePlanRow[]; onChanged: () => void }
                 <div className="truncate font-medium">{r.client_name}</div>
                 <div className="font-mono text-[11px] text-muted-foreground">{r.client_gstin}</div>
               </td>
-              <td className={cn(WS_TD, 'min-w-[14rem]')}>
-                <Link to={`/notices/${r.id}`} className="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  {noticeTitle(r)}{r.amount_of_demand ? ` · ${fmtInrShort(r.amount_of_demand)}` : ''}
-                </Link>
-                <ResponseNeedChip need={r.response_need} className="ml-1.5 align-middle" />
-                <div className="line-clamp-1 text-xs text-muted-foreground" title={r.description ?? ''}>
+              <td className={cn(WS_TD, 'min-w-[14rem] max-w-[26rem]')}>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <Link to={`/notices/${r.id}`} title={noticeTitle(r)} className="min-w-0 truncate font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    {noticeTitle(r)}{r.amount_of_demand ? ` · ${fmtInrShort(r.amount_of_demand)}` : ''}
+                  </Link>
+                  <ResponseNeedChip need={r.response_need} className="shrink-0" />
+                </div>
+                <div className="truncate text-xs text-muted-foreground" title={r.description ?? ''}>
                   {r.reference_number || r.case_id ? <span className="font-mono">{r.reference_number || r.case_id}</span> : null}
                   {r.description ? ` · ${sentenceCase(r.description)}` : ''}
                 </div>
@@ -208,7 +211,7 @@ export const PlanRows: React.FC<{ rows: NoticePlanRow[]; onChanged: () => void }
   </>
 );
 
-export const TodaysPlan: React.FC<{ cc: CommandCentre | undefined }> = ({ cc }) => {
+export const TodaysPlan: React.FC<{ cc: CommandCentre | undefined; master?: Master }> = ({ cc, master = {} }) => {
   const { user } = useAuth();
   const qc = useQueryClient();
   const counts = cc?.plan_counts;
@@ -220,8 +223,8 @@ export const TodaysPlan: React.FC<{ cc: CommandCentre | undefined }> = ({ cc }) 
   };
   const userId = user?.id ?? null;
   const plan = useQuery({
-    queryKey: ['notice-plan-top', tab, userId, order],
-    queryFn: () => loadPlanTop(tab, userId, 8, order),
+    queryKey: ['notice-plan-top', tab, userId, order, master],
+    queryFn: () => loadPlanTop(tab, userId, 8, order, master),
     staleTime: 60_000,
   });
   const refresh = () => {
@@ -232,9 +235,10 @@ export const TodaysPlan: React.FC<{ cc: CommandCentre | undefined }> = ({ cc }) 
   const total = counts ? counts[tab] : rows.length;
 
   return (
-    <SectionCard
-      title="Today's plan — next best action"
-      description={`${order === 'urgent' ? 'Ranked by statutory deadline × exposure × readiness.' : 'Newest notices first, by date of issue.'} One click does the next step; the row leaves the list when it is done.`}>
+    <Panel
+      title="Today's plan"
+      info={`${order === 'urgent' ? 'Ranked by statutory deadline × exposure × readiness.' : 'Newest notices first, by date of issue.'} One click does the next step; the row leaves the list when it is done.`}
+      bodyClassName="space-y-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div role="tablist" aria-label="Whose work" className={WS_TABS_LIST}>
           {TABS.map((t) => (
@@ -269,9 +273,9 @@ export const TodaysPlan: React.FC<{ cc: CommandCentre | undefined }> = ({ cc }) 
         <span>Showing {rows.length} of {total.toLocaleString('en-IN')}
           {cc && cc.health.auto_closed_today > 0 && <> · {cc.health.auto_closed_today} closed automatically today — <Link to="/notices-all?filter=auto_closed" className="text-primary hover:underline">see why</Link></>}
         </span>
-        <Link to={queueHref(tab, order === 'urgent' ? { dash: '1', sort: 'score' } : { dash: '1' })} className="font-medium text-primary hover:underline">Open the work queue ({total.toLocaleString('en-IN')}) →</Link>
+        <Link to={hrefWithMaster(queueHref(tab, order === 'urgent' ? { dash: '1', sort: 'score' } : { dash: '1' }), master)} className="font-medium text-primary hover:underline">Open the work queue ({total.toLocaleString('en-IN')}) →</Link>
       </div>
-    </SectionCard>
+    </Panel>
   );
 };
 

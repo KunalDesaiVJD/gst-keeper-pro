@@ -12,7 +12,9 @@ export const MisFilterBar: React.FC<{
   filters: MisFilters;
   onChange: (patch: MisFilters) => void;
   actions?: React.ReactNode;
-}> = ({ data, filters, onChange, actions }) => {
+  /** The page shows the master filter bar: leave client, owner, priority, FY and form to it. */
+  master?: boolean;
+}> = ({ data, filters, onChange, actions, master = false }) => {
   const clients = data?.clients ?? [];
   const staff = data?.staff ?? [];
   // Lifecycles on record (old keys too), in the Matters list's order.
@@ -24,21 +26,25 @@ export const MisFilterBar: React.FC<{
   const ownerName = filters.owner === 'none' ? 'Unassigned' : staff.find((s) => s.userId === filters.owner)?.name ?? 'one person';
 
   const chips: { key: keyof MisFilters; label: string }[] = [];
-  if (filters.client) chips.push({ key: 'client', label: `Client: ${clients.find((c) => c.id === filters.client)?.name ?? 'one client'}` });
-  if (filters.owner) chips.push({ key: 'owner', label: `Owner: ${ownerName}` });
+  if (filters.client && !master) chips.push({ key: 'client', label: `Client: ${clients.find((c) => c.id === filters.client)?.name ?? 'one client'}` });
+  if (filters.owner && !master) chips.push({ key: 'owner', label: `Owner: ${ownerName}` });
   if (filters.lifecycle) chips.push({ key: 'lifecycle', label: `Lifecycle: ${lifecycleLabel(filters.lifecycle)}` });
-  if (filters.priority) chips.push({ key: 'priority', label: `Priority: ${filters.priority}` });
+  if (filters.priority && !master) chips.push({ key: 'priority', label: `Priority: ${filters.priority}` });
 
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
-        <FilterPill label="Client" allLabel="All" value={filters.client ?? 'all'} onChange={set('client')} options={[]}
-          extraOptions={clients.map((c) => ({ value: c.id, label: c.name }))} className="max-w-full" />
-        <FilterPill label="Owner" allLabel="Anyone" value={filters.owner ?? 'all'} onChange={set('owner')} options={[]}
-          extraOptions={[{ value: 'none', label: 'Unassigned' }, ...staff.map((s) => ({ value: s.userId, label: s.name }))]} />
+        {!master && (
+          <>
+            <FilterPill label="Client" allLabel="All" value={filters.client ?? 'all'} onChange={set('client')} options={[]}
+              extraOptions={clients.map((c) => ({ value: c.id, label: c.name }))} className="max-w-full" />
+            <FilterPill label="Owner" allLabel="Anyone" value={filters.owner ?? 'all'} onChange={set('owner')} options={[]}
+              extraOptions={[{ value: 'none', label: 'Unassigned' }, ...staff.map((s) => ({ value: s.userId, label: s.name }))]} />
+          </>
+        )}
         <FilterPill label="Lifecycle" allLabel="Any" value={filters.lifecycle ?? 'all'} onChange={set('lifecycle')} options={[]}
           extraOptions={lifecycles.map((l) => ({ value: l.key, label: l.label }))} />
-        <FilterPill label="Priority" allLabel="Any" value={filters.priority ?? 'all'} onChange={set('priority')} options={[...PRIORITIES]} />
+        {!master && <FilterPill label="Priority" allLabel="Any" value={filters.priority ?? 'all'} onChange={set('priority')} options={[...PRIORITIES]} />}
         {actions && <div className="ml-auto flex flex-wrap items-center gap-1.5">{actions}</div>}
       </div>
       {chips.length > 0 && (
@@ -51,7 +57,7 @@ export const MisFilterBar: React.FC<{
             </button>
           ))}
           <button type="button" className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
-            onClick={() => onChange({ client: undefined, owner: undefined, lifecycle: undefined, priority: undefined })}>
+            onClick={() => onChange(master ? { lifecycle: undefined } : { client: undefined, owner: undefined, lifecycle: undefined, priority: undefined })}>
             Clear all
           </button>
         </div>

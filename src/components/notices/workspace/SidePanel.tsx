@@ -1,77 +1,61 @@
+// What used to be the notice page's right column (rebalanced 7 October 2026, the
+// firm's request: one column, nothing said twice). The next step is the header's
+// one primary button with its hint beside the chips; the facts the header does
+// not already carry (portal sync, the matter, the same case's other notices) are
+// one line under it. The notice's own facts are in "What the notice says".
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { SectionCard } from '@/components/gstr9/ui';
 import type { Workspace } from '@/lib/noticeWorkspace';
 import { stageLabel, nextActionDef } from '@/lib/noticeStages';
-import { fmtAgo, fmtDateTime, noticeTitle, sentenceCase } from '@/lib/noticeFormat';
+import { fmtAgo, noticeTitle } from '@/lib/noticeFormat';
 
 const REASON: Record<string, string> = {
   login_failed: 'login failed — password changed?', captcha_timeout: 'CAPTCHA not typed', session_mismatch: 'portal session was another GSTIN',
   portal_error: 'portal error', timeout: 'portal timed out', stalled: 'run stalled', other: 'failed',
 };
 
-/** The next step, said once and done with one button (target-notice: right column). */
-export const NextStepCard: React.FC<{ ws: Workspace; action: React.ReactNode }> = ({ ws, action }) => {
+/** "Next: assign an owner" — the hint of the header's primary button. */
+export function nextHint(ws: Workspace): string | null {
   const f = ws.fact;
-  const closed = f.stage === 'closed';
-  const def = nextActionDef(f.next_action);
-  return (
-    <SectionCard title="Next step" description={closed ? 'This notice is closed.' : def.hint}>
-      <div className="flex flex-wrap items-center gap-2">
-        {action}
-        {!closed && <span className="text-xs text-muted-foreground">Stage: {stageLabel(f.stage)}{f.days_in_stage ? ` for ${f.days_in_stage} d` : ''}</span>}
-      </div>
-    </SectionCard>
-  );
-};
+  if (f.stage === 'closed') return null;
+  const hint = nextActionDef(f.next_action).hint;
+  return hint ? `${hint}${f.days_in_stage ? ` · ${stageLabel(f.stage)} for ${f.days_in_stage} d` : ''}` : null;
+}
 
-/**
- * Who and where (client, sync, form, matter, related notices). The notice's own
- * facts — section, year, period, reply due, officer — are in "What the notice
- * says", with their sources.
- */
-export const KeyFacts: React.FC<{ ws: Workspace }> = ({ ws }) => {
-  const f = ws.fact;
+/** Portal sync · matter · other notices of the same case, in one line. */
+export const KeyFactsLine: React.FC<{ ws: Workspace }> = ({ ws }) => {
   const n = ws.notice;
   const notices = ws.sync.find((s) => s.step === 'notices');
   const login = ws.sync.find((s) => s.step === 'login');
   const loginFailedLater = login?.last_status === 'failed' && (!notices?.last_success_at || (login.last_attempt_at ?? '') > notices.last_success_at);
-  const Row: React.FC<{ k: string; children: React.ReactNode }> = ({ k, children }) => (
-    <div className="grid grid-cols-[7.5rem_1fr] gap-2 py-1 text-xs">
-      <dt className="text-muted-foreground">{k}</dt>
-      <dd className="min-w-0 break-words font-medium">{children}</dd>
-    </div>
+  const parts: React.ReactNode[] = [];
+  parts.push(
+    <span key="sync">
+      Portal sync:{' '}
+      {loginFailedLater ? <span className="text-destructive-strong">{REASON[login?.last_reason_class ?? 'other'] ?? 'failed'} {fmtAgo(login?.last_attempt_at)}</span>
+        : notices?.last_success_at ? <>{fmtAgo(notices.last_success_at)}{notices.last_status === 'failed' ? <span className="text-destructive-strong"> · last try {REASON[notices.last_reason_class ?? 'other'] ?? 'failed'}</span> : null}</>
+        : 'none recorded'}
+    </span>,
   );
+  if (ws.matter) {
+    parts.push(
+      <span key="matter">Matter <Link to={`/litigation/${ws.matter.id}`} className="text-primary underline underline-offset-2">{ws.matter.matter_no}</Link> · {stageLabel(ws.matter.stage)}</span>,
+    );
+  }
+  if (ws.related.length > 0) {
+    parts.push(
+      <span key="related">
+        {n.case_id ? 'Same case' : 'Other open'}:{' '}
+        {ws.related.slice(0, 3).map((r, i) => (
+          <React.Fragment key={r.id}>{i > 0 && ', '}<Link to={`/notices/${r.id}`} className="text-primary underline underline-offset-2">{noticeTitle(r, { fy: false })}</Link></React.Fragment>
+        ))}
+        {ws.related.length > 3 && ` +${ws.related.length - 3}`}
+      </span>,
+    );
+  }
   return (
-    <SectionCard title="Key facts">
-      <dl className="divide-y">
-        <Row k="Client"><Link to={`/notices-company/${n.client_id}`} className="text-primary underline underline-offset-2">{ws.client?.name ?? f.client_name}</Link></Row>
-        <Row k="GSTIN"><span className="font-mono">{ws.client?.gstin ?? f.client_gstin}</span></Row>
-        <Row k="Portal sync">
-          {loginFailedLater ? <span className="text-destructive-strong">{REASON[login?.last_reason_class ?? 'other'] ?? 'failed'} · {fmtAgo(login?.last_attempt_at)}</span>
-            : notices?.last_success_at ? <>synced {fmtAgo(notices.last_success_at)}{notices.last_status === 'failed' ? <span className="text-destructive-strong"> · last try {REASON[notices.last_reason_class ?? 'other'] ?? 'failed'}</span> : null}</>
-            : <span className="text-muted-foreground">no sync recorded</span>}
-        </Row>
-        <Row k="Form">{f.form_code ? <>{f.form_code}{f.form_label ? ` · ${f.form_label.replace(/\s*\([A-Z0-9-]+\)\s*$/, '')}` : ''}</> : sentenceCase(f.notice_type) || '—'}</Row>
-        <Row k="Category">{f.category ?? '—'}</Row>
-        <Row k="Captured">{fmtDateTime(n.first_seen_at)}{n.portal_key?.startsWith('manual:') ? ' · typed in' : ' · portal sync'}</Row>
-        {ws.matter && (
-          <Row k="Matter">
-            <Link to={`/litigation/${ws.matter.id}`} className="text-primary underline underline-offset-2">{ws.matter.matter_no}</Link>
-            <span className="font-normal text-muted-foreground"> · {stageLabel(ws.matter.stage)}{ws.matter.title ? ` · ${ws.matter.title}` : ''}</span>
-          </Row>
-        )}
-        {ws.related.length > 0 && (
-          <Row k={n.case_id ? 'Same case' : 'Other open'}>
-            <ul className="space-y-0.5">
-              {ws.related.slice(0, 5).map((r) => (
-                <li key={r.id}><Link to={`/notices/${r.id}`} className="text-primary underline underline-offset-2">{noticeTitle(r, { fy: false })}</Link>
-                  <span className="font-normal text-muted-foreground"> · {stageLabel(r.stage)}</span></li>
-              ))}
-            </ul>
-          </Row>
-        )}
-      </dl>
-    </SectionCard>
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+      {parts.map((p, i) => <React.Fragment key={i}>{i > 0 && <span aria-hidden>·</span>}{p}</React.Fragment>)}
+    </p>
   );
 };
