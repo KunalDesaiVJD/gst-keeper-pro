@@ -30,10 +30,9 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
 
 That's it — nothing to keep running, no account, no card.
 
-## Updating (minimum v0.4.0, recommended v0.8.0)
+## Updating (minimum v0.4.0, recommended v0.8.1)
 The app refuses to start a notices sync from an extension older than **v0.4.0**
-(`src/lib/extensionVersion.ts`) and nudges older copies to update to **v0.7.1**
-(raise that constant to 0.8.0 when every PC has this build).
+(`src/lib/extensionVersion.ts`) and nudges older copies to update to **v0.8.1**.
 After pulling a new version of this folder, open `chrome://extensions` and click
 **Reload** on “GST Keeper Portal Sync” on **every PC** that syncs. v0.4.0 never marks
 saved notices missing after an empty or partly failed pull, checks that the portal
@@ -49,7 +48,10 @@ notices sync, and keeps every pull outside Notices & Litigation as v0.3.3 ran it
 (CHANGELOG.md lists the few security and crash fixes those pulls keep). v0.8.0
 gives every notice the four things the portal's notice list leaves out — its own
 PDF, its reply date, its officer and its DIN — from the case folder this sync
-already reads (below).
+already reads (below). v0.8.1 offers a password the portal refused only once: a
+bulk or scheduled sync logs that client, moves on to the next one, and skips it
+until the password is changed in Edit Client (or the client is logged in once
+from GST Keeper).
 
 ## What a notice carries after a sync (v0.8.0)
 The portal's notice list (`get/notices`) is thin: a reference number, a type, an

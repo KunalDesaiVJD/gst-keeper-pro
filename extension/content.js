@@ -63,6 +63,30 @@
   };
   const normKey = (k) => String(k || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const isRealText = (s) => s.length > 1 && !/^(na|n\/a|null|none|-+|0)$/i.test(s);
+  // 0.8.1: how the portal answers a Login press, read off the login form (it
+  // shows its refusal in place). A refused user ID or password, or a locked or
+  // expired account, ends that client for the run and is remembered, so the
+  // same password is never offered again (background.js, pwRefusal*); a
+  // CAPTCHA typo is tried again; anything else gets one more try. Every
+  // refusal needs a negative word next to a credential noun, so the form's own
+  // labels ("Password", "Forgot Password") can never read as one. Declared up
+  // here for the reason NOTICE_FIELD_KEYS is.
+  const LOGIN_ERR_SEL = '.alert-danger, .toast-error, .toast-message, .error-msg, .err, .text-danger, .help-block, .invalid-feedback, '
+    + '[role="alert"], .modal.in .modal-body, .modal.show .modal-body';
+  const LOGIN_REFUSALS = [
+    { reason: 'account_locked', rx: /\b(account|user\s*id|user\s*name|username|user|login)\b\W+(?:\w+\W+){0,5}?(locked|blocked|suspended|disabled|deactivated|frozen)\b/i },
+    { reason: 'account_locked', rx: /\b(maximum|exceeded|too\s+many)\b\W+(?:\w+\W+){0,4}?(attempts?|tries|logins?)\b/i },
+    { reason: 'password_expired', rx: /\bpassword\b\W+(?:\w+\W+){0,4}?(has\s+)?expired\b|\bexpired\b\W+(?:\w+\W+){0,3}?password\b/i },
+    { reason: 'wrong_password', rx: /\b(invalid|incorrect|wrong|not\s+valid|does\s*n[o']?t\s+match|did\s*n[o']?t\s+match|mismatch(?:ed)?)\b\W+(?:\w+\W+){0,4}?(user\s*name|username|user\s*id|userid|password|credentials?)\b/i },
+    { reason: 'wrong_password', rx: /\b(user\s*name|username|user\s*id|userid|password|credentials?)\b\W+(?:\w+\W+){0,5}?(invalid|incorrect|wrong|not\s+valid|not\s+match|mismatch(?:ed)?)\b/i },
+    { reason: 'wrong_password', rx: /\b(user\s*name|username|user\s*id|userid)\b\W+(?:\w+\W+){0,3}?(does\s*n[o']?t\s+exist|not\s+(found|registered|exist))\b/i },
+  ];
+  const LOGIN_CAPTCHA_RX = /captcha|letters\s+shown|characters\s+(shown|displayed|in\s+the\s+image)|image\s+text|verification\s+code|security\s+code/i;
+  const REFUSAL_WORDS = {
+    wrong_password: 'Wrong user ID or password',
+    password_expired: 'The portal password has expired',
+    account_locked: 'The portal account is locked',
+  };
   // "My Applications" types the notices bundle reads (handleApplications, 0.6.0).
   const APPLICATION_TYPES = {
     APPEL: { form: 'GST APL-01', label: 'Appeal to Appellate Authority' },
@@ -392,7 +416,11 @@
       banner('Client done — switching to the next…', '#2563eb');
       location.href = 'https://services.gst.gov.in/services/logout';
     } else {
-      banner('All ' + job.clients.length + ' client(s) done ✓ — you can close this tab.', '#16a34a');
+      // 0.8.1: say which clients were left out for a refused password.
+      const refused = job.loginRefused || [];
+      banner('All ' + job.clients.length + ' client(s) done ✓'
+        + (refused.length ? ' · not logged in (password refused): ' + refused.map((r) => r.name).join(', ') + ' — change them in Edit Client' : '')
+        + ' — you can close this tab.', refused.length ? '#d97706' : '#16a34a');
       // An agent or scheduled job's run belongs to the queue (portal_job_finish closes it).
       if (job.runId && !job.agent && !job.runner) { try { await GSTKdb.runFinish(job.runId, 'done'); } catch (e) { /* ledger is diagnostic */ } }
       await clearJob();
@@ -418,6 +446,162 @@
   async function logLoginFailure(job, cur, message) {
     try { await GSTKdb.logClientSync(cur.clientId, 'login_failed', 'failed', message || null); } catch (e) { /* diagnostic only */ }
     if (ledgerJob(job)) { try { await GSTKdb.logStep(job.runId, cur.clientId, 'login', 'failed', 'login_failed', message || null); } catch (e) { /* diagnostic only */ } }
+  }
+
+  // ── 0.8.1: a refused password ends the client, once ──────────────────────
+  // Before 0.8.1 a wrong or changed password kept the run on that client: a
+  // person typing the CAPTCHAs was asked for one after another for the same
+  // client (the portal's answer was read only after an automatic fill), and an
+  // automatic fill tried three more times when it could not read the answer.
+  // Now the answer is read after every Login press, whoever pressed it; a
+  // refusal is logged once, remembered, and the run moves to the next client.
+
+  // A bulk or scheduled run: never offers a password the portal refused. One
+  // client logged in by a person's own click is still tried (and clears the
+  // mark when it works), so the firm can always check a password by hand.
+  // Function declarations, not consts: the dispatcher runs a step before the
+  // lines of this file below it have run (CHANGELOG 0.5.0, "before initialization").
+  function bulkJob(job) { return !!(job.runner || job.agent || (Array.isArray(job.clients) && job.clients.length > 1)); }
+
+  function shown(el) { return !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'; }
+  function oneLine(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
+
+  // What the login form says now: the portal's message elements that are on
+  // screen, and any line of the form that reads as a refusal.
+  function loginMessages() {
+    const out = [];
+    const add = (t) => { t = oneLine(t); if (t && t.length <= 300 && !out.includes(t)) out.push(t); };
+    for (const el of $$(LOGIN_ERR_SEL)) if (shown(el) && !el.closest('#gstk-banner')) add(el.innerText || el.textContent);
+    const user = $('#username');
+    const form = user && user.closest('form');
+    if (form) for (const line of String(form.innerText || '').split('\n')) if (LOGIN_REFUSALS.some((r) => r.rx.test(line))) add(line);
+    return out;
+  }
+
+  // 'refused' (with why), 'captcha', 'other', or 'none' when nothing is shown.
+  function classifyLogin(msgs) {
+    const refusal = (m) => LOGIN_REFUSALS.find((r) => r.rx.test(m));
+    for (const m of msgs) {
+      const hit = !LOGIN_CAPTCHA_RX.test(m) && refusal(m);
+      if (hit) return { kind: 'refused', reason: hit.reason, message: m };
+    }
+    const cap = msgs.find((m) => LOGIN_CAPTCHA_RX.test(m) && !refusal(m));
+    if (cap) return { kind: 'captcha', message: cap };
+    if (msgs.length) return { kind: 'other', message: msgs[0] };
+    return { kind: 'none', message: '' };
+  }
+
+  function whenText(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? 'an earlier run' : d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function noteRefused(job, cur, skipped) {
+    job.loginRefused = [...(job.loginRefused || []), { name: (cur.creds && cur.creds.name) || 'Client', skipped: !!skipped }];
+  }
+
+  // The portal refused this client's saved password: remember it, log it once,
+  // and move to the next client. Never tried again until the password changes.
+  async function refuseClient(job, cur, progress, pass, verdict) {
+    const words = REFUSAL_WORDS[verdict.reason] || 'The portal refused the saved password';
+    try { await GSTKdb.pwRefusalMark(cur.clientId, cur.creds.user, pass, { reason: verdict.reason, message: verdict.message, name: cur.creds.name }); }
+    catch (e) { /* the sync log below still says it */ }
+    noteRefused(job, cur, false);
+    banner(cur.creds.name + ': ' + words.toLowerCase() + ' — logged; moving to the next client.' + progress, '#dc2626');
+    await logLoginFailure(job, cur, words + ' (the portal said: "' + verdict.message.slice(0, 200) + '"). '
+      + 'Not tried again until the password is changed in Edit Client.');
+    await sleep(1500); // long enough to read the banner
+    await advance(job);
+  }
+
+  // A Login press, noted in the tab's sessionStorage (it survives a page load),
+  // so a refusal the portal answers with a fresh login page rather than in
+  // place is still read as this press's answer on the next load.
+  function notePress(cur) {
+    try { sessionStorage.setItem('gstk_login_pressed', JSON.stringify({ client: cur.clientId, at: Date.now() })); } catch (e) { /* in-place answers are read anyway */ }
+  }
+  function takePress(cur) {
+    try {
+      const p = JSON.parse(sessionStorage.getItem('gstk_login_pressed') || 'null');
+      sessionStorage.removeItem('gstk_login_pressed');
+      return !!p && p.client === cur.clientId && Date.now() - p.at < 90000;
+    } catch (e) { return false; }
+  }
+
+  // After an automatic Login press: wait for the portal's answer (a new page,
+  // or a new message on the form) and act on it. `before` are the messages the
+  // form already showed, which say nothing about this press.
+  async function settleAutoLogin(job, cur, progress, pass, before, guard) {
+    // A refusal is acted on the moment it shows; any other message only once
+    // the page has had 2.5 s to settle (a "please wait" is not an answer).
+    let msgs = [];
+    const t0 = Date.now();
+    for (let i = 0; i < 40; i++) {
+      await sleep(250);
+      if (!/services\/login/.test(location.href)) { if (isLoggedIn()) return; continue; }
+      msgs = loginMessages().filter((m) => !before.includes(m));
+      if (classifyLogin(msgs).kind === 'refused' || (msgs.length && Date.now() - t0 >= 2500)) break;
+    }
+    if (!/services\/login/.test(location.href)) {
+      if (isLoggedIn() || guard.done) return; // genuinely logged in: the dispatcher carries on
+      guard.done = true;
+      const heading = (($('h1,h2,h3') || {}).textContent || '').trim().slice(0, 160);
+      const reason = 'Landed on an unrecognized page after login (' + location.pathname + (heading ? ': "' + heading + '"' : '') + ') — not the login form, but no logged-in signal either.';
+      banner('Could not log in ' + cur.creds.name + ' — unexpected page after login. Moving on.' + progress, '#dc2626');
+      await logLoginFailure(job, cur, reason);
+      await advance(job);
+      return;
+    }
+    if (guard.done) return; // the person watcher already acted on this answer
+    guard.done = true;
+    const verdict = classifyLogin(msgs);
+    if (verdict.kind === 'refused') { await refuseClient(job, cur, progress, pass, verdict); return; }
+    const tries = Number(job.captchaRetry || 0);
+    // An answer that is neither a refusal nor a CAPTCHA gets one more try with
+    // the same password, never three; the same answer again ends the client.
+    if (verdict.kind === 'other') {
+      if (job.loginOther) {
+        banner('Could not log in ' + cur.creds.name + ' (' + verdict.message.slice(0, 120) + ') — logged; moving on.' + progress, '#dc2626');
+        await logLoginFailure(job, cur, 'The portal did not log in: "' + verdict.message.slice(0, 200) + '"');
+        await advance(job);
+        return;
+      }
+      job.loginOther = verdict.message;
+    }
+    if ($('#captcha') && tries < 3) {
+      job.captchaRetry = tries + 1;
+      delete job.captchaWaitSince;
+      await setJob(job);
+      location.reload();
+      return;
+    }
+    banner('Could not log in ' + cur.creds.name + ' after 3 attempts — moving on.' + progress, '#dc2626');
+    await logLoginFailure(job, cur, verdict.message || 'Login did not succeed after 3 automatic retries.');
+    await advance(job);
+  }
+
+  // A person types the CAPTCHA and presses Login: the portal's answer is read
+  // the same way, so a refused password moves the run on instead of asking
+  // for another CAPTCHA for the same client. Only a refusal is acted on; a
+  // CAPTCHA typo is left to the person, as on the portal itself.
+  function watchPersonLogin(job, cur, progress, pass, guard) {
+    const before = loginMessages();
+    const pressed = (e) => {
+      const t = e.target && e.target.closest ? e.target : null;
+      if (e.type === 'keydown' ? (e.key === 'Enter' && t && t.closest('form, #username, #user_pass, #captcha'))
+        : (t && /log\s*in/i.test(((t.closest('button, input[type=submit]') || {}).textContent || '') + ((t.closest('input[type=submit]') || {}).value || '')))) notePress(cur);
+    };
+    document.addEventListener('click', pressed, true);
+    document.addEventListener('keydown', pressed, true);
+    const timer = setInterval(async () => {
+      if (guard.done) { clearInterval(timer); return; }
+      if (!/services\/login/.test(location.href)) return;
+      const verdict = classifyLogin(loginMessages().filter((m) => !before.includes(m)));
+      if (verdict.kind !== 'refused') return;
+      guard.done = true;
+      clearInterval(timer);
+      await refuseClient(job, cur, progress, pass, verdict);
+    }, 750);
   }
 
   // The run ledger (sync_run_items) records the notices module's syncs only;
@@ -451,6 +635,10 @@
       job.retries = 0;
       delete job.captchaRetry;
       delete job.captchaWaitSince;
+      delete job.loginOther;
+      try { sessionStorage.removeItem('gstk_login_pressed'); } catch (e) { /* none noted */ }
+      // 0.8.1: the portal took this password: any earlier refusal is over.
+      try { await GSTKdb.pwRefusalClear(cur.clientId); } catch (e) { /* only a later skip would notice */ }
       try { await GSTKdb.clearCaptchaNotice(); } catch (e) { /* optional */ }
       if (job.mode === 'returnpdf') {
         banner('Logged in — fetching the return + PDF…' + progress);
@@ -635,16 +823,45 @@
       if (job.runner) await runnerEnd(job, 'retry', 'portal_error', 'The portal login page did not load.');
       return;
     }
-    setVal($('#username'), cur.creds.user);
     let portalPass = cur.creds.pass || null; // jobs saved by extension < 0.4.0 still carry it
     if (!portalPass) { try { portalPass = await GSTKdb.getPortalPassword(cur.clientId); } catch (e) { portalPass = null; } }
+    // 0.8.1: this page may itself be the portal's answer to this client's Login
+    // press (a refusal sent back as a fresh page): read it before filling again.
+    if (takePress(cur)) {
+      await sleep(600);
+      const answer = classifyLogin(loginMessages());
+      if (answer.kind === 'refused') { await refuseClient(job, cur, progress, portalPass, answer); return; }
+    }
+    setVal($('#username'), cur.creds.user);
     if (!portalPass) {
       banner('No saved GST portal password for ' + cur.creds.name + ' — update it in Edit Client.', '#dc2626');
       // Nobody is at a scheduled sync to read the banner: it goes in the run ledger, and the client fails with it.
       if (job.runner) { await logLoginFailure(job, cur, 'No saved GST portal password for this client.'); await advance(job); }
       return;
     }
+    // 0.8.1: a password the portal already refused is not offered again in a
+    // bulk or scheduled run: the client is logged and the run moves on, until
+    // the password saved in GST Keeper changes.
+    if (bulkJob(job)) {
+      let refused = null;
+      try { refused = await GSTKdb.pwRefusalCheck(cur.clientId, cur.creds.user, portalPass); } catch (e) { refused = null; }
+      if (refused) {
+        banner('Skipping ' + cur.creds.name + ' — the portal refused this password on ' + whenText(refused.at) + '; logged.' + progress, '#dc2626');
+        noteRefused(job, cur, true);
+        await logLoginFailure(job, cur, 'Not tried: the portal refused this saved password on ' + whenText(refused.at)
+          + (refused.message ? ' ("' + String(refused.message).slice(0, 160) + '")' : '')
+          + '. Change it in Edit Client, or log the client in once from GST Keeper, and the next sync tries it again.');
+        await sleep(1200);
+        await advance(job);
+        return;
+      }
+    }
     setVal($('#user_pass'), portalPass);
+    // One answer to a Login press is acted on, whoever pressed it. A person may
+    // type this CAPTCHA (any sync but a scheduled or agent one): their Login is
+    // watched from now, since the wait below only ends for an automatic fill.
+    const guard = { done: false };
+    if (!job.runner && !job.agent) watchPersonLogin(job, cur, progress, portalPass, guard);
     await waitFor('#imgCaptcha', 8000);
     // A notices sync tab is often behind other windows: say so on the desktop.
     // An agent job's CAPTCHA goes to the app's CAPTCHA wall instead, a
@@ -737,64 +954,17 @@
       $$('button').find((b) => /login/i.test(b.textContent || '') && /btn-primary/.test(b.className || '')) ||
       $('button[type=submit]');
     if (btn) {
+      // A wrong CAPTCHA and a wrong saved password bring back the same login
+      // form; only the portal's own message tells them apart, so it is read
+      // (settleAutoLogin) rather than every bounce being taken for a CAPTCHA
+      // typo. Confirmed live before 0.4: a WRONG PASSWORD was retried with a
+      // fresh CAPTCHA, pointlessly, and stalled the run behind it. 0.8.1 reads
+      // the answer as soon as it appears, from more of the page, and never
+      // offers a refused password again.
+      const before = loginMessages();
+      notePress(cur);
       btn.click();
-      // A wrong CAPTCHA and a wrong saved password bounce back to this same
-      // page identically (login form again, fresh #captcha field) — nothing
-      // here can visually tell them apart except the portal's own error
-      // banner, so read that first rather than always assuming "just a bad
-      // CAPTCHA". Confirmed live: a WRONG PASSWORD used to retry the CAPTCHA
-      // up to 3 times (pointless — the same password fails every time),
-      // then silently stall forever on this one client, blocking every
-      // other client queued behind it in the same Sync All run with no
-      // error, no log entry, and no way to tell which client caused it.
-      setTimeout(async () => {
-        // A single fixed-delay check raced the portal's own error-banner
-        // render — confirmed live 2026-09-13: a genuine bad-password bounce
-        // sometimes read as an empty errText at exactly 2.5s (banner not
-        // painted yet), silently falling through to the CAPTCHA-retry path
-        // instead of being caught immediately. Poll a few times over ~2s
-        // instead of checking once.
-        for (let i = 0; i < 8; i++) {
-          if (/services\/login/.test(location.href)) {
-            const hasErr = $$('.alert-danger, .toast-error, .error-msg').some((el) => (el.textContent || '').trim());
-            if (hasErr) break;
-          } else if (isLoggedIn()) {
-            return; // genuinely logged in — let the normal dispatcher continue
-          }
-          await sleep(250);
-        }
-        if (!/services\/login/.test(location.href)) {
-          if (isLoggedIn()) return;
-          const heading = (($('h1,h2,h3') || {}).textContent || '').trim().slice(0, 160);
-          const reason = 'Landed on an unrecognized page after login (' + location.pathname + (heading ? ': "' + heading + '"' : '') + ') — not the login form, but no logged-in signal either.';
-          banner('Could not log in ' + cur.creds.name + ' — unexpected page after login. Moving on.' + progress, '#dc2626');
-          await logLoginFailure(job, cur, reason);
-          await advance(job);
-          return;
-        }
-        const errText = $$('.alert-danger, .toast-error, .error-msg')
-          .map((el) => (el.textContent || '').trim()).filter(Boolean)[0] || '';
-        const isCredentialError = /invalid.*(credential|user\s*id|username|password)|incorrect.*(user\s*id|username|password)|wrong\s*password/i.test(errText);
-        const tries = Number((job && job.captchaRetry) || 0);
-        if (isCredentialError) {
-          banner('Login failed for ' + cur.creds.name + ' (' + (errText || 'invalid credentials') + ') — moving on.' + progress, '#dc2626');
-          await logLoginFailure(job, cur, errText || 'Invalid username or password.');
-          await advance(job);
-          return;
-        }
-        if ($('#captcha') && tries < 3) {
-          job.captchaRetry = tries + 1;
-          delete job.captchaWaitSince;
-          await setJob(job);
-          location.reload();
-          return;
-        }
-        if ($('#captcha') && tries >= 3) {
-          banner('Could not log in ' + cur.creds.name + ' after 3 attempts — moving on.' + progress, '#dc2626');
-          await logLoginFailure(job, cur, errText || 'Login did not succeed after 3 automatic retries.');
-          await advance(job);
-        }
-      }, 2500);
+      settleAutoLogin(job, cur, progress, portalPass, before, guard).catch(() => { /* the watchdog ends a stuck client */ });
     }
     // Page navigates; next content-script load (step still 'login') re-checks isLoggedIn().
   }

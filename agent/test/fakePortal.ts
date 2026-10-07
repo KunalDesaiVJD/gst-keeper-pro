@@ -52,12 +52,16 @@ const LOGIN_HTML = `<!doctype html><html><head><title>GST Portal (test)</title><
 <input id="captcha" placeholder="Enter Characters shown below">
 <button type="button" class="btn btn-primary" id="login">Login</button>
 <script>
+const shownErr = new URLSearchParams(location.search).get('e');
+if (shownErr) document.getElementById('err').textContent = shownErr;
 document.getElementById('login').addEventListener('click', async () => {
   const r = await fetch('/services/api/authenticate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user: document.getElementById('username').value, pass: document.getElementById('user_pass').value,
                            captcha: document.getElementById('captcha').value }) });
   const j = await r.json();
   if (j.ok) { document.cookie = 'fsess=' + j.session + '; path=/; domain=.gst.gov.in'; location.href = '/services/auth/dashboard'; return; }
+  // Some portals answer with a fresh login page carrying the message (RunnerPortal.freshPage).
+  if (j.reload) { location.href = '/services/login?e=' + encodeURIComponent(j.error); return; }
   document.getElementById('err').textContent = j.error;
   document.getElementById('captcha').value = '';
   document.getElementById('imgCaptcha').src = '/services/captcha?t=' + Date.now();

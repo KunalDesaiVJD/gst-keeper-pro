@@ -150,6 +150,26 @@ const LEGACY_REPLACE = {
     legacyRows(rows, { client_id: clientId, case_id: scope, pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null }), pullTs, opts),
 };
 
+// 0.8.1: refused portal passwords (API.pwRefusal*). Keyed by client id; each
+// entry holds a fingerprint of the refused user ID + password, never either.
+const PW_REFUSED_KEY = 'gstk_pw_refused';
+const PW_SALT_KEY = 'gstk_pw_salt';
+async function pwRefusals() {
+  try { return (await chrome.storage.local.get(PW_REFUSED_KEY))[PW_REFUSED_KEY] || {}; } catch (e) { return {}; }
+}
+async function pwSalt() {
+  const got = (await chrome.storage.local.get(PW_SALT_KEY))[PW_SALT_KEY];
+  if (got) return got;
+  const salt = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  await chrome.storage.local.set({ [PW_SALT_KEY]: salt });
+  return salt;
+}
+async function pwFingerprint(user, pass) {
+  const data = new TextEncoder().encode(await pwSalt() + '\n' + String(user || '').trim().toLowerCase() + '\n' + String(pass == null ? '' : pass));
+  const buf = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 const API = {
   getClients: () => sel('clients?select=id,name,gstin,gst_user_id,selected_returns,notices_sync_excluded,inactive_at_hand&order=name'),
   getClient: (id) => sel(`clients?id=eq.${id}&select=id,name,gstin,gst_user_id,selected_returns&limit=1`).then((a) => a[0] || null),
@@ -437,6 +457,47 @@ const API = {
     const rows = await sel(`clients?id=eq.${clientId}&select=gst_password&limit=1`);
     return (rows[0] && rows[0].gst_password) || null;
   },
+
+  // 0.8.1 — a password the portal refused is never offered again. A bulk or
+  // scheduled sync skips that client at once, logged as a failed login, and
+  // moves to the next one, until the user ID or password saved in GST Keeper
+  // changes (or someone logs that client in once by hand). Retrying a wrong
+  // password achieves nothing and, a few tries in, the portal locks the
+  // client's account. Only a salted SHA-256 fingerprint of the refused user ID
+  // and password is kept, in this Chrome's own storage; never the password.
+  // `pass` is the one the login form was filled with; the runner, which has
+  // none, leaves it out and the saved one is read.
+  pwRefusalCheck: async (clientId, user, pass) => {
+    const all = await pwRefusals();
+    const m = all[clientId];
+    if (!m) return null;
+    if (pass == null) pass = await API.getPortalPassword(clientId);
+    if (m.fp === await pwFingerprint(user, pass)) return { at: m.at, reason: m.reason, message: m.message };
+    // Changed in GST Keeper since it was refused: the new one is tried.
+    delete all[clientId];
+    await chrome.storage.local.set({ [PW_REFUSED_KEY]: all });
+    return null;
+  },
+  pwRefusalMark: async (clientId, user, pass, info) => {
+    const all = await pwRefusals();
+    all[clientId] = {
+      fp: await pwFingerprint(user, pass), at: new Date().toISOString(),
+      reason: String((info && info.reason) || 'wrong_password'), message: String((info && info.message) || '').slice(0, 300),
+      name: String((info && info.name) || '').slice(0, 120),
+    };
+    await chrome.storage.local.set({ [PW_REFUSED_KEY]: all });
+    return true;
+  },
+  pwRefusalClear: async (clientId) => {
+    const all = await pwRefusals();
+    if (!all[clientId]) return false;
+    delete all[clientId];
+    await chrome.storage.local.set({ [PW_REFUSED_KEY]: all });
+    return true;
+  },
+  // Every client whose saved password is waiting to be changed (name, when, why).
+  pwRefusalList: async () => Object.entries(await pwRefusals())
+    .map(([clientId, m]) => ({ clientId, name: m.name || null, at: m.at, reason: m.reason, message: m.message })),
 
   upsertTaxpayerProfile: async (clientId, patchObj) => {
     const write = async (obj) => {

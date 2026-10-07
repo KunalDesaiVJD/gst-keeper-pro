@@ -37,7 +37,7 @@ interface Status {
   failures: { reason: string; clients: { client_id: string }[] }[];
 }
 
-const CLIENTS = ['asha', 'bina', 'chetan', 'dina', 'eshan', 'farah', 'gopal', 'hema', 'isha', 'jaya'].map((user, i) => ({
+const CLIENTS = ['asha', 'bina', 'chetan', 'dina', 'eshan', 'farah', 'gopal', 'hema', 'isha', 'jaya', 'kiran', 'lata', 'mohan', 'nikhil'].map((user, i) => ({
   user, name: `${user[0].toUpperCase()}${user.slice(1)} Runner Test`, gstin: `24RUNR${String(i).padStart(4, '0')}X1Z${i}`, pass: `${user}-pass`,
 }));
 
@@ -355,4 +355,115 @@ test('f: Chrome restarting in the middle of a client gives it back to the queue,
   assert.equal(done.attempts, 1, 'the interrupted try is not counted');
   const release = await rest<{ message: string }[]>('GET', `portal_job_events?job_id=eq.${held.id}&step=eq.release&select=message`);
   assert.ok(release.some((e) => /restarted|reloaded/.test(e.message)), JSON.stringify(release));
+});
+
+// ── 0.8.1: a refused password is offered once ───────────────────────────────
+/** How often the portal was asked to log `user` in, and with what answer. */
+const auths = (user: string, answer?: 'ok' | 'refused' | 'captcha') =>
+  portal.fake.log.filter((l) => l.startsWith(`auth ${user} `) && (!answer || l === `auth ${user} ${answer}`)).length;
+const lastLoginFailure = async (user: string) => (await rest<{ message: string }[]>('GET',
+  `client_sync_log?client_id=eq.${ids[user]}&action=eq.login_failed&select=message&order=created_at.desc&limit=1`))[0]?.message ?? '';
+async function nextEnded(user: string, after: string): Promise<Job> {
+  return waitFor(`${user}'s next job to end`, async () => { const j = await latestJob(user); return j.id !== after && ['succeeded', 'failed', 'cancelled'].includes(j.status) && j; }, 150_000);
+}
+
+test('g: a password the portal refuses is tried once, the client fails and is not retried; skipped at once next time; tried again once changed', { skip }, async () => {
+  const r = A!;
+  filler.allow = () => true;
+  await settings({ enabled: true });
+  await r.api('runnerSet', { enabled: true, label: 'Test PC A' });
+  // Changed on the portal, not yet in GST Keeper.
+  await rest('PATCH', `clients?id=eq.${ids.kiran}`, { gst_password: 'kiran-old-pass' });
+  await enqueue('kiran', 95);
+  await r.tick();
+  const first = await waitFor('Kiran to end', () => ended('kiran'), 150_000);
+  assert.equal(first.status, 'failed', JSON.stringify(first));
+  assert.equal(first.reason_class, 'login_failed');
+  assert.equal(first.attempts, 1, 'no second try');
+  assert.equal(auths('kiran'), 1, 'the refused password was offered to the portal once');
+  assert.equal(auths('kiran', 'refused'), 1);
+  assert.match(await lastLoginFailure('kiran'), /^Wrong user ID or password \(the portal said: "Invalid Username or Password/);
+  const marks = await r.api<{ clientId: string; reason: string }[]>('pwRefusalList');
+  assert.ok(marks.some((m) => m.clientId === ids.kiran && m.reason === 'wrong_password'), JSON.stringify(marks));
+  await waitFor('the runner window to close', async () => (await r.state()).job === null && r.portalPages().length === 0);
+
+  // The next sync of Kiran: failed at once, logged, the portal never opened.
+  const portalCalls = portal.fake.requests;
+  await enqueue('kiran', 95);
+  await r.tick();
+  const second = await nextEnded('kiran', first.id);
+  assert.equal(second.status, 'failed');
+  assert.equal(second.reason_class, 'login_failed');
+  assert.match(second.error ?? '', /^Not tried: the portal refused this saved password on /);
+  assert.equal(auths('kiran'), 1, 'not offered again');
+  assert.equal(portal.fake.requests, portalCalls, 'the portal was not opened for Kiran');
+  assert.match(await lastLoginFailure('kiran'), /^Not tried: the portal refused this saved password/);
+  const ledger = await rest<{ step: string; status: string; reason_class: string }[]>('GET',
+    `sync_run_items?run_id=eq.${second.run_id}&client_id=eq.${ids.kiran}&select=step,status,reason_class`);
+  assert.ok(ledger.some((i) => i.step === 'login' && i.status === 'failed' && i.reason_class === 'login_failed'), JSON.stringify(ledger));
+
+  // The password is corrected in GST Keeper: tried again, logged in, the refusal forgotten.
+  await rest('PATCH', `clients?id=eq.${ids.kiran}`, { gst_password: 'kiran-pass' });
+  await enqueue('kiran', 95);
+  await r.tick();
+  const third = await nextEnded('kiran', second.id);
+  assert.equal(third.status, 'succeeded', JSON.stringify(third));
+  assert.equal(auths('kiran', 'ok'), 1);
+  assert.ok(!(await r.api<{ clientId: string }[]>('pwRefusalList')).some((m) => m.clientId === ids.kiran), 'the refusal is forgotten');
+  await waitFor('the runner window to close', async () => (await r.state()).job === null && r.portalPages().length === 0);
+});
+
+test("h: a person's sync of two clients moves past a refused password to the next client, and skips it next time", { skip }, async () => {
+  const r = A!;
+  await r.api('runnerSet', { enabled: false });
+  await rest('PATCH', `clients?id=eq.${ids.lata}`, { gst_password: 'lata-old-pass' });
+  filler.allow = (u) => u !== 'lata'; // the person types Lata's CAPTCHA; the extension fills Mohan's
+  const start = async () => {
+    const before = new Set(r.ctx.pages());
+    await r.api('startAllClientsSectionPull', { mode: 'notices_bundle', clientIds: [ids.lata, ids.mohan] });
+    const page = await waitFor("the person's tab", async () => r.ctx.pages().find((p) => !before.has(p)) ?? null);
+    await page.goto('https://services.gst.gov.in/services/login').catch(() => {});
+    return page;
+  };
+  // The run takes the most urgent client first, so Lata may come first or second.
+  const page = await start();
+  await waitFor("Lata's login form filled", async () => (await page.inputValue('#user_pass').catch(() => '')) !== ''
+    && (await page.inputValue('#username').catch(() => '')) === 'lata', 150_000);
+  await page.type('#captcha', portal.answerFor(r.ctx), { delay: 40 }); // one key at a time, as a person types
+  await page.click('#login');
+  await waitFor('the sync to finish', async () => (await r.activeJob()) === null, 180_000);
+  assert.equal(auths('lata'), 1, "Lata's refused password was offered once");
+  assert.equal(auths('lata', 'refused'), 1);
+  assert.match(await lastLoginFailure('lata'), /^Wrong user ID or password/);
+  assert.ok(auths('mohan', 'ok') >= 1, 'the run went on to Mohan');
+  const mohanNotices = await rest<{ id: string }[]>('GET', `gst_notices?client_id=eq.${ids.mohan}&select=id`);
+  assert.equal(mohanNotices.length, 2, "Mohan's notices were read");
+  await page.close().catch(() => {});
+
+  // The same two clients again: Lata is skipped without the portal, Mohan runs.
+  const mohanBefore = auths('mohan', 'ok');
+  const again = await start();
+  await waitFor('the second sync to finish', async () => (await r.activeJob()) === null, 180_000);
+  assert.equal(auths('lata'), 1, 'Lata not offered again');
+  assert.match(await lastLoginFailure('lata'), /^Not tried: the portal refused this saved password/);
+  assert.ok(auths('mohan', 'ok') > mohanBefore, 'Mohan synced again');
+  await again.close().catch(() => {});
+});
+
+test('i: a refusal the portal answers with a fresh login page is read the same way', { skip }, async () => {
+  const r = A!;
+  filler.allow = () => true;
+  await settings({ enabled: true });
+  await r.api('runnerSet', { enabled: true, label: 'Test PC A' });
+  portal.freshPage.add('nikhil');
+  await rest('PATCH', `clients?id=eq.${ids.nikhil}`, { gst_password: 'nikhil-old-pass' });
+  await enqueue('nikhil', 95);
+  await r.tick();
+  const done = await waitFor('Nikhil to end', () => ended('nikhil'), 150_000);
+  assert.equal(done.status, 'failed', JSON.stringify(done));
+  assert.equal(done.reason_class, 'login_failed');
+  assert.equal(auths('nikhil'), 1, 'offered once, though the answer came as a new page');
+  assert.match(await lastLoginFailure('nikhil'), /^Wrong user ID or password/);
+  await waitFor('the runner window to close', async () => (await r.state()).job === null && r.portalPages().length === 0);
+  portal.freshPage.delete('nikhil');
 });

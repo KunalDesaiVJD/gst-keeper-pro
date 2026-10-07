@@ -63,6 +63,12 @@
     // handleNotices' task-list loop in content.js for the capture.
     replaceCaseFolderItems: (clientId, caseId, rows, pullTs, opts) => call('replaceCaseFolderItems', clientId, caseId, rows, pullTs, opts),
     getPortalPassword: (clientId) => call('getPortalPassword', clientId),
+    // 0.8.1: passwords the portal refused (background.js, pwRefusal*): checked
+    // before a bulk or scheduled login, marked on a refusal, cleared on a login.
+    pwRefusalCheck: (clientId, user, pass) => call('pwRefusalCheck', clientId, user, pass),
+    pwRefusalMark: (clientId, user, pass, info) => call('pwRefusalMark', clientId, user, pass, info),
+    pwRefusalClear: (clientId) => call('pwRefusalClear', clientId),
+    pwRefusalList: () => call('pwRefusalList'),
     runSweep: (clientId) => call('runSweep', clientId),
     // 0.5.0: one ingest door (public.sync_ingest) and the run ledger.
     ingest: (clientId, runId, step, rows, opts, scope) => call('ingest', clientId, runId, step, rows, opts, scope),

@@ -2,6 +2,50 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-08 — A refused password is offered once; the sync moves on (v0.8.1)
+
+Built on 0.8.0. Only the login is touched; every pull, the notices link pass and
+the popup are as 0.8.0 runs them. Needs no database update.
+
+- **Fixed: a wrong or changed password held a bulk sync on one client.** When a
+  person typed the CAPTCHA, the portal's "Invalid Username or Password" was never
+  read: the answer was checked only after an automatic fill, so the extension
+  filled the same password in again and asked for another CAPTCHA for the same
+  client, again and again, while every client queued behind it waited. Now the
+  portal's answer is read after every Login press, whoever pressed it.
+- **A refusal is logged once, and the sync starts the next client.** A refused
+  user ID or password, an expired password or a locked account is written to the
+  client's sync log and the run ledger ("Wrong user ID or password (the portal
+  said: …). Not tried again until the password is changed in Edit Client."), the
+  banner says so, and the run goes straight on. The last banner of the run names
+  every client left out this way.
+- **Never offered again until it is changed.** Each wrong password a few tries in
+  locks the client's portal account, so a refused password is remembered: the
+  next bulk or scheduled sync skips that client at once, logged as "Not tried: the
+  portal refused this saved password on …", without opening the portal (a
+  scheduled sync does not even open a window for it). Changing the password or
+  user ID in Edit Client, or logging the client in once from GST Keeper (its
+  Credentials Login), clears it. Only a salted SHA-256 fingerprint of the refused
+  user ID and password is kept, in this Chrome's own storage; never the password.
+- **A CAPTCHA typo is still tried again; anything else only once.** "Enter valid
+  Letters shown." and other CAPTCHA answers get a fresh CAPTCHA up to three times,
+  as before. A message that is neither (a portal error, say) gets one more try with
+  the same password, never three; the same answer again logs the client and moves
+  on. The answer is read from more of the page (the portal's alert, toast and
+  field messages, and any line of the login form that reads as a refusal), and a
+  message already on the form before Login was pressed is not taken for its answer.
+  A refusal the portal sends back as a fresh login page, rather than in place, is
+  read too: the press is noted in the tab's sessionStorage, which outlives the page.
+- Tests: `test/06-login-answers.test.mjs` (which messages read as a refusal, a
+  CAPTCHA typo or neither; the form's own labels never as anything), and two new
+  cases in `agent/test/chrome-runner.e2e.test.ts` with the real extension in
+  Chromium: a scheduled sync with a changed password (tried once, failed without a
+  retry, skipped without the portal next time, tried again once corrected) and a
+  person's two-client sync (the person types the CAPTCHA, the refusal moves the run
+  to the next client, and the next sync skips it), and a refusal answered with a
+  fresh page. All nine runner cases, the seven office agent cases and the notices
+  sync simulation pass on 0.8.1.
+
 ## 2026-10-07 — The notice's own PDF, its reply date, its officer and its DIN (v0.8.0)
 
 Notices & Litigation only. Every other pull — GSTR-2B / 2A, GSTR-1 upload and

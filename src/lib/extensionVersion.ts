@@ -11,9 +11,12 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // 0.7.0 runs the autopilot's scheduled syncs in the firm's own Chrome ("Run
 // scheduled syncs in this Chrome"; its CAPTCHA extension fills the CAPTCHA).
 // 0.7.1 also reads the documents of new or changed refunds in the notices sync
-// and leaves every other pull exactly as 0.3.3 ran it.
-// 0.4.x to 0.7.0 are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.7.1';
+// and leaves every other pull exactly as 0.3.3 ran it. 0.8.0 links each notice's
+// own PDF, reply date, officer and DIN from its case folder. 0.8.1 offers a
+// password the portal refused only once: a bulk or scheduled sync logs that
+// client and moves on, and skips it until the password is changed.
+// 0.4.x to 0.8.0 are still allowed (their writes are safe), only nudged to update.
+export const RECOMMENDED_EXTENSION_VERSION = '0.8.1';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -40,8 +43,14 @@ export function isExtensionUpdateRecommended(version: string | null | undefined)
 export function updateRecommendedMessage(version: string | null | undefined): string {
   const scheduled = 'runs the scheduled syncs in the Chrome that has your CAPTCHA extension (tick "Run scheduled syncs in this Chrome" in its popup)';
   const refundDocs = 'reads the documents of new or changed refunds in the notices sync';
-  const gains = version && compareVersions(version, '0.7.0') >= 0
-    ? `also ${refundDocs}`
+  const passwords = 'never retries a wrong or changed portal password: the client is logged and the sync moves on to the next one';
+  const linking = "links each notice's own PDF, reply date, officer and DIN from its case folder";
+  const gains = version && compareVersions(version, '0.8.0') >= 0
+    ? passwords
+    : version && compareVersions(version, '0.7.1') >= 0
+    ? `${linking}, and ${passwords}`
+    : version && compareVersions(version, '0.7.0') >= 0
+    ? `also ${refundDocs}, ${linking}, and ${passwords}`
     : version && compareVersions(version, '0.6.0') >= 0
     ? `${scheduled}, and ${refundDocs}`
     : version && compareVersions(version, '0.5.0') >= 0
