@@ -34,6 +34,14 @@
     replaceNotices: (clientId, rows, pullTs, opts) => call('replaceNotices', clientId, rows, pullTs, opts),
     replaceRefundApplications: (clientId, rows, pullTs, opts) => call('replaceRefundApplications', clientId, rows, pullTs, opts),
     patchRefundDocument: (clientId, arn, patchObj) => call('patchRefundDocument', clientId, arn, patchObj),
+    // 0.8.0: one notice's own columns, patched on their own after the notices
+    // save — the link pass's DIN, and a refund notice's PDF and reply date,
+    // which only become known when the refunds step reads that case's folder
+    // later in the same run. Isolated on purpose: see background.js.
+    patchNoticeFields: (clientId, portalKey, patchObj) => call('patchNoticeFields', clientId, portalKey, patchObj),
+    // 0.8.0: the open notices of this client that still have no PDF, reply
+    // date or officer — what the refunds step's link pass patches.
+    noticesNeedingDetail: (clientId) => call('noticesNeedingDetail', clientId),
     replaceDrc03Filings: (clientId, rows, pullTs, opts) => call('replaceDrc03Filings', clientId, rows, pullTs, opts),
     upsertTaxpayerProfile: (clientId, patchObj) => call('upsertTaxpayerProfile', clientId, patchObj),
     getTaxpayerRegistrationDate: (clientId) => call('getTaxpayerRegistrationDate', clientId),

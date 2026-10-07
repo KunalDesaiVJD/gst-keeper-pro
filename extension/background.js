@@ -23,20 +23,32 @@ const enc = encodeURIComponent;
 // declarativeNetRequest, which is allowed to. Registered once per worker
 // startup; scoped narrowly to this one endpoint so it can't affect any other
 // cross-origin fetch this file makes.
-try {
-  chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [1],
-    addRules: [{
-      id: 1,
-      priority: 1,
-      condition: { urlFilter: '||return.gst.gov.in/returns/auth/api/gstr3a/summary', resourceTypes: ['xmlhttprequest'] },
-      action: {
-        type: 'modifyHeaders',
-        requestHeaders: [{ header: 'Referer', operation: 'set', value: 'https://services.gst.gov.in/services/auth/notices' }],
-      },
-    }],
-  }).catch(() => { /* best-effort — a failed registration just leaves the old fetch behavior */ });
-} catch (e) { /* best-effort — a failed registration just leaves the old fetch behavior */ }
+// 0.8.0: the registration is awaited before the first cross-origin fetch
+// (dnrReady, used by fetchCrossOriginAsBase64 below). Registering is async,
+// and this worker starts on the very message that wants the rule — so a
+// GSTR-3A summary fetched in the first moments of a worker's life went out
+// with the page's own Referer, came back as the 200 "Access Denied" HTML page
+// described above, and failed as "not JSON". That is the GSTR-3A "no PDF
+// captured" row: not a notice the portal has no PDF for, just one whose
+// request raced the rule. Dynamic rules persist across worker restarts, so
+// after the first registration this resolves immediately.
+const dnrReady = (async () => {
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [1],
+      addRules: [{
+        id: 1,
+        priority: 1,
+        condition: { urlFilter: '||return.gst.gov.in/returns/auth/api/gstr3a/summary', resourceTypes: ['xmlhttprequest'] },
+        action: {
+          type: 'modifyHeaders',
+          requestHeaders: [{ header: 'Referer', operation: 'set', value: 'https://services.gst.gov.in/services/auth/notices' }],
+        },
+      }],
+    });
+    return true;
+  } catch (e) { return false; } // best-effort — a failed registration just leaves the old fetch behavior
+})();
 
 const sel = async (path) => {
   const r = await fetch(base + path, { headers: H });
@@ -210,6 +222,42 @@ const API = {
   // financial data replaceRefundApplications already saved.
   patchRefundDocument: async (clientId, arn, patchObj) =>
     patch(`gst_refund_applications?client_id=eq.${clientId}&arn=eq.${enc(arn)}`, patchObj),
+
+  // 0.8.0 — one notice's own columns, separately from the notices upsert.
+  // Two things need this. The DIN: this extension cannot migrate the
+  // database, and an unknown column anywhere in the upsert body would fail
+  // the whole client's notices save, so the DIN goes in a PATCH of its own
+  // that fails harmlessly on a database without the column — the same
+  // reasoning patchRefundDocument above is built on. And a refund notice's
+  // PDF and reply date: those live in the refund case's folder, which the
+  // refunds step reads after the notices are already saved, so patching is
+  // the only way to get them onto the notice in the same run.
+  // Manual rows (portal_key 'manual:…') are never touched: they are the
+  // firm's own, and the portal has nothing to say about them.
+  // 0.8.0: this client's portal notices that are still missing a PDF, a reply
+  // date or an officer. Read once by the refunds step so its link pass patches
+  // only what is actually missing, and never a notice the firm entered itself.
+  noticesNeedingDetail: async (clientId) => {
+    try {
+      const rows = await sel(`gst_notices?client_id=eq.${clientId}&source=eq.notices&deleted_at=is.null`
+        + '&or=(pdf_url.is.null,due_date.is.null,issued_by.is.null)'
+        + '&reference_number=not.is.null'
+        + '&select=portal_key,reference_number,pdf_url,due_date,issued_by&limit=2000');
+      // The firm's own rows are filtered here rather than in the query: a
+      // `not.like.manual:*` filter whose value carries a colon is the kind of
+      // thing PostgREST answers with a 400, and this reader swallows its own
+      // errors, so a filter that failed would silently return nothing at all.
+      return (rows || []).filter((r) => String(r.portal_key || '').indexOf('manual:') !== 0);
+    } catch (e) { return []; }
+  },
+
+  patchNoticeFields: async (clientId, portalKey, patchObj) => {
+    const key = String(portalKey || '');
+    if (!key || key.indexOf('manual:') === 0) return false;
+    if (!patchObj || !Object.keys(patchObj).length) return false;
+    await patch(`gst_notices?client_id=eq.${clientId}&source=eq.notices&portal_key=eq.${enc(key)}`, patchObj);
+    return true;
+  },
 
   // DRC-03 voluntary payments — upsert on (client_id, portal_key).
   replaceDrc03Filings: async (clientId, rows, pullTs, opts) => {
@@ -457,6 +505,10 @@ const API = {
   // generation, so content.js can't fetch it directly — this relay can,
   // since host_permissions covers *.gst.gov.in for the background worker.
   fetchCrossOriginAsBase64: async (url) => {
+    // Wait for the Referer-rewrite rule above, or this request can beat it.
+    // Never blocks longer than a moment: a slow or failed registration falls
+    // through to the fetch, exactly as before 0.8.0.
+    try { await Promise.race([dnrReady, new Promise((r) => setTimeout(r, 3000))]); } catch (e) { /* fetch anyway */ }
     const r = await fetch(url, { credentials: 'include' });
     if (!r.ok) throw new Error('fetchCrossOriginAsBase64 -> HTTP ' + r.status);
     const buf = await r.arrayBuffer();

@@ -46,6 +46,23 @@
   // pass per client every 7 days, so a change in a closed case is still caught.
   const FULL_FOLDER_PASS_MS = 7 * 24 * 60 * 60 * 1000;
   const REFUND_FOLDER_LABELS = { APLCN: 'Applications', NOTAC: 'Notice/Acknowledgement', REPLY: 'Replies', ORDRS: 'Orders', AUDIT: 'Audit History' };
+  // 0.8.0: the officer, the DIN and the reply date a notice row takes from its
+  // case-folder item (noticeFieldsFromItem, further down). Declared up here
+  // with every other constant a step handler reads, for the same reason: the
+  // dispatcher awaits those handlers inside this IIFE, so a const sitting next
+  // to its own function further down is still in its temporal dead zone when
+  // pullNotices runs ("Cannot access ... before initialization", CHANGELOG 0.5.0).
+  // The portal spells the same field differently from one folder section to the
+  // next, so each entry is a list of candidate key names, compared with
+  // separators stripped and case ignored (dueDt == due_dt == DUEDT).
+  const NOTICE_FIELD_KEYS = {
+    due: ['replyduedt', 'replyduedate', 'duedt', 'duedate', 'dtofreply', 'replydt', 'replybydt', 'lastdtofreply', 'dtofsubmission'],
+    officer: ['issuedby', 'officername', 'issuedbyname', 'empname', 'officerfullname', 'issuername', 'issuer'],
+    designation: ['designation', 'issuedbydesignation', 'officerdesignation', 'desgn', 'dsgn', 'desig', 'officerdesg'],
+    din: ['din', 'dinno', 'dinnumber', 'docdin', 'dinnum', 'dinid'],
+  };
+  const normKey = (k) => String(k || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const isRealText = (s) => s.length > 1 && !/^(na|n\/a|null|none|-+|0)$/i.test(s);
   // "My Applications" types the notices bundle reads (handleApplications, 0.6.0).
   const APPLICATION_TYPES = {
     APPEL: { form: 'GST APL-01', label: 'Appeal to Appellate Authority' },
@@ -2876,7 +2893,41 @@
     const lastFull = ((await store.get(fullKey))[fullKey]) || 0;
     const fullFolderPass = !known || Date.now() - lastFull > FULL_FOLDER_PASS_MS;
 
+    // 0.8.0 — the link pass. A notice read from get/notices arrives with no
+    // PDF of its own (the portal only gives docId/applnId for some forms), no
+    // officer and, for a DRC-01 / RFD-03 / RFD-08, often no reply date. All of
+    // it is in the matching case-folder item, which this run already reads —
+    // and before 0.8.0 the notice's own PDF was the one document in that
+    // folder nothing ever linked, so the app showed "PDF not captured yet"
+    // beside a notice whose PDF was in fact already in storage.
+    //
+    // Folder items are keyed (client, case_id, '<SECTION>:<refId>'), so a
+    // notice's reference number finds its item by that key's suffix —
+    // including a refund notice, whose folder the refunds step saves under the
+    // refund ARN. This maps every attachment list already stored, so a notice
+    // synced before 0.8.0 gets its PDF linked on the next run with no
+    // download at all.
+    const storedAttachByRef = new Map();
+    for (const key of Object.keys((known && known.itemDocs) || {})) {
+      const ref = key.slice(key.lastIndexOf(':') + 1);
+      const list = known.itemDocs[key];
+      if (ref && Array.isArray(list) && list.length && !storedAttachByRef.has(ref)) storedAttachByRef.set(ref, list);
+    }
+    // This run's folder items, by reference number: attachments to link and
+    // the parsed itemJson to read the officer, DIN and reply date out of.
+    const detailByRef = new Map();
+    // A case whose notice still has no PDF, date or officer is opened even when
+    // the case is closed and its folder would otherwise wait for the weekly
+    // pass. Bounded: a reference that yields nothing is not forced again for a
+    // week, so a notice the portal simply has no folder detail for cannot turn
+    // into an extra folder fetch on every run, for ever.
+    const triedKey = 'gstk_fill_tried_' + cur.clientId;
+    const fillTried = ((await store.get(triedKey))[triedKey]) || {};
+    const needsFill = (row) => !!row && (!row.pdf_url || !row.due_date || !row.issued_by);
+    const mayForceFill = (ref) => !!ref && !(fillTried[ref] && Date.now() - fillTried[ref] < FULL_FOLDER_PASS_MS);
+
     let pdfOk = 0, pdfFail = 0, pdfSkipped = 0, foldersFetched = 0, foldersSkipped = 0, attachSkipped = 0;
+    let foldersForFill = 0, linkedPdf = 0, linkedDue = 0, linkedOfficer = 0, linkedDin = 0;
     let folderPassOk = true;
     const gstr3aErrors = [];
     const gstr3aDetails = [];
@@ -2892,6 +2943,12 @@
         status: n.status || null, issued_by: n.issuedBy || null, case_id: null, pdf_url: null,
       };
       const havePdf = !!(known && known.noticePdf && known.noticePdf[row.portal_key]);
+      // 0.8.0: carry the stored URL on the row rather than leaving it null.
+      // The row is upserted, so a null here is written over a PDF that is
+      // already in storage whenever the ingest RPC is unavailable and the
+      // legacy REST path runs (background.js's LEGACY_REPLACE). It also lets
+      // the link pass below tell "has a PDF" from "needs one".
+      if (havePdf) row.pdf_url = known.noticePdf[row.portal_key];
       if (havePdf && (n.docId || n.pdfDownloadURL)) {
         pdfSkipped++;
       } else if (n.docId && n.applnId) {
@@ -2911,11 +2968,30 @@
         try {
           const summaryUrl = 'https://return.gst.gov.in/returns/auth/api/gstr3a/summary?defaulter_id=' +
             encodeURIComponent(n.appDefId) + '&order_id=' + encodeURIComponent(n.noticeOrderId);
-          const { base64 } = await withTimeout(GSTKdb.fetchCrossOriginAsBase64(summaryUrl), 15000, 'gstr3a summary');
-          let raw;
-          try { raw = atob(base64); } catch (e) { throw new Error('base64 decode failed: ' + (e && e.message)); }
-          let summary;
-          try { summary = JSON.parse(raw); } catch (e) { throw new Error('not JSON (' + raw.length + ' chars): ' + raw.slice(0, 120)); }
+          // 0.8.0: one retry. A client with hundreds of GSTR-3A notices (326
+          // open on this firm's own books) makes this call hundreds of times
+          // in a row and the portal drops some of them — the "no PDF captured"
+          // rows in All notices. A single failure used to be final for that
+          // notice until the portal changed something, because a notice with
+          // no PDF was never retried. Two seconds between tries, and a notice
+          // that still fails is retried by the gap-fill pass on a later run.
+          // The portal answers this one with a 200 "Access Denied" HTML page
+          // when it dislikes the request, so a failed read is not only a
+          // failed fetch — an HTML body counts too, and both are worth one
+          // retry. Parsing therefore sits inside the loop.
+          let summary = null;
+          let lastErr = null;
+          for (let attempt = 0; attempt < 2 && summary == null; attempt++) {
+            if (attempt) await sleep(2000);
+            try {
+              const { base64 } = await withTimeout(GSTKdb.fetchCrossOriginAsBase64(summaryUrl), 15000, 'gstr3a summary');
+              let raw;
+              try { raw = atob(base64); } catch (e) { throw new Error('base64 decode failed: ' + (e && e.message)); }
+              if (/^\s*</.test(raw)) throw new Error('portal answered with an HTML page, not JSON (' + raw.length + ' chars)');
+              try { summary = JSON.parse(raw); } catch (e) { throw new Error('not JSON (' + raw.length + ' chars): ' + raw.slice(0, 120)); }
+            } catch (e) { lastErr = e; summary = null; }
+          }
+          if (summary == null) throw (lastErr || new Error('gstr3a summary did not answer'));
           if (summary && summary.data) {
             gstr3aDetails.push({ portal_key: row.portal_key, detail: { gstr3a: {
               retTyp: summary.data.retTyp || null, ret_period: summary.data.ret_period || null,
@@ -2968,9 +3044,14 @@
       }
       if (!t.caseId || !t.arn) continue;
 
-      // Folders: new or open cases every run; every case on the weekly full pass.
-      const needFolders = fullFolderPass || !knownCases.has(t.arn) || openCases.has(t.arn);
+      // Folders: new or open cases every run; every case on the weekly full
+      // pass; and (0.8.0) a case whose notice still has no PDF, reply date or
+      // officer, so the gap is closed on the next run instead of waiting for
+      // that weekly pass — once, then not again for a week (mayForceFill).
+      const fillThis = needsFill(row) && mayForceFill(refId);
+      const needFolders = fullFolderPass || !knownCases.has(t.arn) || openCases.has(t.arn) || fillThis;
       if (!needFolders) { foldersSkipped++; continue; }
+      if (fillThis) foldersForFill++;
       let folders = [];
       try {
         const fr = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
@@ -3063,12 +3144,48 @@
               attachments,
               raw_json: fParsed !== null ? fParsed : (fi.itemJson || null),
             });
+            // 0.8.0: this item, for the link pass below. Keep the first one a
+            // reference has — the portal lists an item once per case, and a
+            // reply or order filed against the same reference must not take
+            // the notice's own place.
+            if (fiRef && !detailByRef.has(fiRef)) detailByRef.set(fiRef, { attachments, raw: fParsed, section: folder.caseFolderTypeCd || null });
           }
         } catch (e) { folderFailures++; }
       }
       if (folderFailures) folderPassOk = false;
       if (folderItems.length) folderBatches.push({ caseId: t.arn, items: folderItems, complete: folderFailures === 0 });
     }
+
+    // ── The link pass (0.8.0) ───────────────────────────────────────────
+    // Every notice row now takes from its case-folder item what get/notices
+    // did not give it: the notice's own PDF, the reply date, the officer and
+    // the DIN. Nothing already on the row is overwritten — a date the portal
+    // put in the notice list stays the authority — and a reference with no
+    // folder item is left exactly as it was.
+    const dinByKey = [];
+    for (const row of rows) {
+      const ref = row.reference_number;
+      if (!ref) continue;
+      const detail = detailByRef.get(ref);
+      const attachments = (detail && detail.attachments && detail.attachments.length)
+        ? detail.attachments : storedAttachByRef.get(ref);
+      if (!row.pdf_url) {
+        const url = pickNoticeAttachment(attachments, ref);
+        if (url) { row.pdf_url = url; linkedPdf++; }
+      }
+      const f = noticeFieldsFromItem(detail && detail.raw);
+      if (!row.due_date && f.due_date) { row.due_date = f.due_date; linkedDue++; }
+      if (!row.issued_by && f.issued_by) { row.issued_by = f.issued_by; linkedOfficer++; }
+      // The DIN goes in its own small PATCH after the save, never on the row:
+      // this extension cannot migrate the database, and one unknown column in
+      // the upsert body would fail the whole notices save for the client. The
+      // same reasoning background.js's patchRefundDocument is built on.
+      if (f.din) { dinByKey.push({ portal_key: row.portal_key, din: f.din }); linkedDin++; }
+      // Remember a reference that yielded nothing, so forcing its folder open
+      // is not repeated on every run (mayForceFill above).
+      if (needsFill(row)) fillTried[ref] = Date.now(); else if (fillTried[ref]) delete fillTried[ref];
+    }
+    try { await store.set({ [triedKey]: fillTried }); } catch (e) { /* only costs a repeat folder fetch */ }
 
     // Folder items first (a new reply / order on a known case is logged
     // against its notice), then the notice list, then the server-side sweep.
@@ -3084,6 +3201,17 @@
       if (fullFolderPass && folderPassOk) { try { await store.set({ [fullKey]: Date.now() }); } catch (e) { /* next run retries the full pass */ } }
       // GSTR-3A return type and period: the notice closes itself once that return is filed.
       if (gstr3aDetails.length) { try { await GSTKdb.noticeDetails(cur.clientId, gstr3aDetails); } catch (e) { /* the notices are saved; detail retries next run */ } }
+      // DINs, one best-effort PATCH per notice, after the save and never part
+      // of it (see the link pass above). A database without the column fails
+      // these harmlessly and the notices stay saved.
+      // Three failures with nothing saved means the column is not there, not
+      // that three notices were unlucky: stop, rather than spend a client with
+      // 326 notices on 326 writes the database will refuse one at a time.
+      let dinSaved = 0, dinFailed = 0, dinGaveUp = false;
+      for (const d of dinByKey) {
+        try { await GSTKdb.patchNoticeFields(cur.clientId, d.portal_key, { din: d.din }); dinSaved++; }
+        catch (e) { dinFailed++; if (dinFailed >= 3 && !dinSaved) { dinGaveUp = true; break; } }
+      }
       const counts = saved && !saved.legacy
         ? ' — ' + saved.new + ' new, ' + saved.changed + ' changed, ' + saved.removed + ' removed' + (saved.status === 'held' ? ' (removal held back)' : '')
         : '';
@@ -3091,12 +3219,15 @@
         'STEP: View Notices and Orders  (' + location.pathname + ')',
         'rows read         : ' + rows.length + ' (' + (rows.length - taskRows) + ' notices, ' + taskRows + ' case/task)' + counts,
         'PDFs              : ' + pdfOk + ' downloaded, ' + pdfSkipped + ' already stored, ' + pdfFail + ' failed/not applicable',
-        'case folders      : ' + foldersFetched + ' fetched (' + (fullFolderPass ? 'weekly full pass' : 'new or open cases') + '), ' + foldersSkipped + ' skipped, ' + foldersSaved + ' saved',
+        'case folders      : ' + foldersFetched + ' fetched (' + (fullFolderPass ? 'weekly full pass' : 'new or open cases') + (foldersForFill ? ', ' + foldersForFill + ' to fill a gap' : '') + '), ' + foldersSkipped + ' skipped, ' + foldersSaved + ' saved',
         'attachments       : ' + attachSkipped + ' already stored',
+        'linked from folder: ' + linkedPdf + ' notice PDFs, ' + linkedDue + ' reply dates, ' + linkedOfficer + ' officers, ' + linkedDin + ' DINs'
+          + (dinFailed ? ' (' + dinFailed + ' DIN writes failed' + (dinGaveUp ? ', gave up — no din column in this database?' : '') + ')' : ''),
         ...(gstr3aErrors.length ? ['GSTR-3A errors    :', ...gstr3aErrors.map((m) => '  - ' + m)] : []),
       ]);
       banner('Notices & Orders → ' + rows.length + ' entries' + counts + ' (' + pdfOk + ' new PDFs, ' + pdfSkipped + ' already stored). Now Refund applications…' + progress, '#16a34a');
-      await logSyncAttempt(job, cur, 'success', rows.length + ' entries found' + counts + ' (' + pdfOk + ' PDFs captured, ' + pdfSkipped + ' already stored' + (pdfFail ? ', ' + pdfFail + ' failed' : '') + ').');
+      await logSyncAttempt(job, cur, 'success', rows.length + ' entries found' + counts + ' (' + pdfOk + ' PDFs captured, ' + pdfSkipped + ' already stored' + (pdfFail ? ', ' + pdfFail + ' failed' : '')
+        + (linkedPdf || linkedDue || linkedOfficer || linkedDin ? '; linked from the case folder: ' + linkedPdf + ' PDFs, ' + linkedDue + ' reply dates, ' + linkedOfficer + ' officers, ' + dinSaved + ' DINs' : '') + ').');
       if (gstr3aErrors.length) {
         const realFailures = gstr3aErrors.some((m) => !m.startsWith('DNR rules') && !m.startsWith('DNR debug call failed'));
         try { await GSTKdb.logClientSync(cur.clientId, 'notices_gstr3a_debug', realFailures ? 'failed' : 'success', gstr3aErrors.join(' | ').slice(0, 2000)); } catch (e) { /* diagnostic only */ }
@@ -3402,6 +3533,9 @@
     const lastFull = ((await store.get(fullKey))[fullKey]) || 0;
     const everyRefund = !inBundle || !known || Date.now() - lastFull > FULL_FOLDER_PASS_MS;
     const stopHeartbeat = startHeartbeat();
+    // 0.8.0: refund folder items by reference number, for the link pass that
+    // closes this step (refund notices in View Notices and Orders).
+    const refundItemByRef = new Map();
     let arnsWithDocs = 0, docsOk = 0, docsFail = 0, casesFailed = 0, casesWithFolderItems = 0, casesSkipped = 0, docsSkipped = 0, casesNoArn = 0;
     for (const c of cases) {
       const arn = c.arn;
@@ -3491,6 +3625,14 @@
                 raw_json: parsed !== null ? parsed : (item.itemJson || null),
                 pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
               });
+              // 0.8.0: an RFD-03 deficiency memo or an RFD-08 show cause
+              // notice is listed in View Notices and Orders too, but its PDF
+              // and its reply date are here, in the refund case's folder —
+              // and the notices step ran before this one, so it had nothing
+              // to link. Kept for the link pass at the end of this step.
+              if (itemRef && !refundItemByRef.has(itemRef)) {
+                refundItemByRef.set(itemRef, { attachments: itemAttachments, raw: parsed });
+              }
             }
           } catch (e) { caseComplete = false; /* best-effort per folder */ }
         }
@@ -3515,12 +3657,48 @@
       try { await GSTKdb.logStep(job.runId, cur.clientId, 'refund_docs', 'failed', 'partial', casesFailed + ' refund case folder(s) could not be read.'); } catch (e) { /* diagnostic */ }
     }
 
+    // ── The refund link pass (0.8.0) ────────────────────────────────────
+    // RFD-03 and RFD-08 are notices in View Notices and Orders, but their PDF
+    // and reply date only exist in the refund case's folder, which this step
+    // reads after the notices are already saved. So each one is patched on its
+    // own notice row here. Only what is missing is written: the fields a
+    // notice already carries are left alone, which is why every patch is read
+    // back against the notice list first.
+    let refundNoticesLinked = 0, refundLinkFailed = 0, dinWrites = 0, dinRefused = 0, dinGaveUp = false;
+    if (refundItemByRef.size) {
+      let openNotices = [];
+      try { openNotices = await GSTKdb.noticesNeedingDetail(cur.clientId); } catch (e) { openNotices = []; }
+      for (const nrow of openNotices) {
+        const ref = nrow.reference_number;
+        const item = ref ? refundItemByRef.get(ref) : null;
+        if (!item) continue;
+        const f = noticeFieldsFromItem(item.raw);
+        const p = {};
+        if (!nrow.pdf_url) { const u = pickNoticeAttachment(item.attachments, ref); if (u) p.pdf_url = u; }
+        if (!nrow.due_date && f.due_date) p.due_date = f.due_date;
+        if (!nrow.issued_by && f.issued_by) p.issued_by = f.issued_by;
+        if (Object.keys(p).length) {
+          try { await GSTKdb.patchNoticeFields(cur.clientId, nrow.portal_key, p); refundNoticesLinked++; }
+          catch (e) { refundLinkFailed++; }
+        }
+        // The DIN on its own, as in the notices step: an unknown column must
+        // not cost this notice its PDF and date. Three refusals in a row and
+        // this run stops offering it.
+        if (f.din && !dinGaveUp) {
+          try { await GSTKdb.patchNoticeFields(cur.clientId, nrow.portal_key, { din: f.din }); dinWrites++; }
+          catch (e) { dinRefused++; if (dinRefused >= 3 && !dinWrites) dinGaveUp = true; }
+        }
+      }
+    }
+
     debugPanel([
       'STEP: Refund Application Documents  (' + location.pathname + ')',
       'cases read        : ' + cases.length + ' (' + casesFailed + ' folder-fetch failed, ' + casesSkipped + ' unchanged and skipped' + (casesNoArn ? ', ' + casesNoArn + ' without an ARN' : '') + ')',
       'documents captured: ' + docsOk + ' ok, ' + docsSkipped + ' already stored, ' + docsFail + ' failed',
       'applications w/docs: ' + arnsWithDocs,
       'cases w/folder items: ' + casesWithFolderItems + ' (feeds the Refund Notice Folder page)',
+      'refund notices linked: ' + refundNoticesLinked + ' (RFD-03 / RFD-08 PDF, reply date, officer)' + (refundLinkFailed ? ', ' + refundLinkFailed + ' failed' : '')
+        + (dinWrites ? ', ' + dinWrites + ' DINs' : '') + (dinGaveUp ? ' (DIN writes refused — no din column in this database?)' : ''),
     ]);
     // Same durable-logging gap handleRefunds already learned from (the
     // in-page debug panel above navigates away with the page, leaving no
@@ -4522,6 +4700,100 @@
     const candidate = (node.dcupdtls && typeof node.dcupdtls === 'object') ? node.dcupdtls : node;
     if (candidate.id && candidate.docName) out.push(candidate);
     Object.keys(node).forEach((k) => { if (k !== 'dcupdtls') findDocDescriptors(node[k], seen, out); });
+  }
+
+  // ── 0.8.0: what a case-folder item says about its notice ────────────────
+  // The notice list (get/notices) carries a reference number, a type and an
+  // issue date and little else: no officer, no DIN, and — for a DRC-01, an
+  // RFD-03 or an RFD-08 — often no reply date either, which is why 31 open
+  // notices had no date to run on. All of it sits in the matching case-folder
+  // item's itemJson, which this extension already reads and saves whole
+  // (gst_case_folder_items.raw_json). These helpers lift the few fields the
+  // notice row itself needs out of that JSON, so the notice carries them too.
+  //
+  // The portal spells the same thing differently from one folder section to
+  // the next (dueDt / replyDueDt / dtOfReply …, and the officer sits under
+  // issuedBy, officerName or a nested jurisdiction object), and a section not
+  // seen yet would silently yield nothing if a single path were hardcoded —
+  // the same reasoning findDocDescriptors() above is built on. So each field
+  // is found by walking the parsed JSON for any key in its candidate list,
+  // depth-first, taking the first usable value. Keys are compared
+  // case-insensitively with separators stripped, so dueDt, due_dt and DUEDT
+  // all match one candidate.
+  // First scalar value under any of `keys`, anywhere in `node`. `accept`
+  // decides whether a value counts, so a date search skips an empty string or
+  // a placeholder like 'NA' instead of stopping at it.
+  function findByKeys(node, keys, accept, seen) {
+    if (!node || typeof node !== 'object') return null;
+    seen = seen || new Set();
+    if (seen.has(node)) return null;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const n of node) { const v = findByKeys(n, keys, accept, seen); if (v != null) return v; }
+      return null;
+    }
+    for (const k of Object.keys(node)) {
+      const v = node[k];
+      if (v != null && typeof v !== 'object' && keys.indexOf(normKey(k)) !== -1) {
+        const s = String(v).trim();
+        if (s && accept(s)) return s;
+      }
+    }
+    for (const k of Object.keys(node)) {
+      const v = findByKeys(node[k], keys, accept, seen); if (v != null) return v;
+    }
+    return null;
+  }
+  // dd/mm/yyyy (the portal's own format everywhere else in this file), plus
+  // the ISO and dd-mm-yyyy spellings a few folder sections use.
+  function anyDateToIso(s) {
+    const t = String(s || '').trim().slice(0, 10);
+    const m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/) ? [t, t.slice(8, 10), t.slice(5, 7), t.slice(0, 4)]
+      : t.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/);
+    if (!m) return null;
+    const [dd, mm, yyyy] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    // An impossible day (31/02, 00/00, month 13) must not reach the row:
+    // Postgres rejects it and the whole notices upsert fails with it, so the
+    // run would lose every notice over one bad folder field. Date() alone is
+    // no guard — V8 rolls 2024-02-31 over into March rather than failing —
+    // so the parts are checked back against what Date() made of them.
+    if (!(yyyy >= 2017 && yyyy <= 2100) || mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+    const d = new Date(Date.UTC(yyyy, mm - 1, dd));
+    if (d.getUTCFullYear() !== yyyy || d.getUTCMonth() !== mm - 1 || d.getUTCDate() !== dd) return null;
+    return yyyy + '-' + String(mm).padStart(2, '0') + '-' + String(dd).padStart(2, '0');
+  }
+  // What the notice row can take from its folder item. `raw` is the parsed
+  // itemJson; everything here is best-effort and null when the item has no
+  // such field — a notice never loses a value it already has (see the link
+  // pass in pullNotices).
+  function noticeFieldsFromItem(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const due = findByKeys(raw, NOTICE_FIELD_KEYS.due, (s) => !!anyDateToIso(s));
+    const officer = findByKeys(raw, NOTICE_FIELD_KEYS.officer, isRealText);
+    const desig = findByKeys(raw, NOTICE_FIELD_KEYS.designation, isRealText);
+    const din = findByKeys(raw, NOTICE_FIELD_KEYS.din, (s) => /^[A-Za-z0-9/-]{8,}$/.test(s));
+    return {
+      due_date: due ? anyDateToIso(due) : null,
+      issued_by: officer ? (desig ? officer + ', ' + desig : officer) : null,
+      din: din || null,
+    };
+  }
+  // Which of a folder item's attachments IS the notice (rather than a
+  // supporting document the officer attached). The portal names the generated
+  // form after the reference number — DOT_NOTICE_<ref>_<ts>.pdf,
+  // ADJDT_DRPRC_<ref>_<ts>.pdf, DOT_INTIMATION_SEC74_<ref>_<ts>.pdf — so a
+  // label or URL carrying the reference wins; failing that, one whose name
+  // looks like the portal's own generated form; failing that, the first.
+  function pickNoticeAttachment(attachments, refNo) {
+    const list = (attachments || []).filter((a) => a && typeof a.url === 'string' && a.url);
+    if (!list.length) return null;
+    const ref = String(refNo || '').trim().toUpperCase();
+    if (ref) {
+      const byRef = list.find((a) => ((a.label || '') + ' ' + a.url).toUpperCase().indexOf(ref) !== -1);
+      if (byRef) return byRef.url;
+    }
+    const generated = list.find((a) => /^(DOT|ADJDT|ADJ|REG|RFD|ASMT|DRC)_/i.test(String(a.label || '')));
+    return (generated || list[0]).url;
   }
 
   function extractDocId(el) {

@@ -2,6 +2,87 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-07 — The notice's own PDF, its reply date, its officer and its DIN (v0.8.0)
+
+Notices & Litigation only. Every other pull — GSTR-2B / 2A, GSTR-1 upload and
+pulls, GSTR-3B push and pulls, GSTR-9, ledgers, challans, filing, Fetch Company,
+the popup's return-period sync — is byte-for-byte as 0.7.1 ran it, and so are
+the login, the CAPTCHA wait, the job slot, the scheduled-sync runner
+(`runner.js`), the popup and the app bridge: those files are untouched. Needs no
+database update.
+
+- **Fixed: a notice's own PDF was never linked, though it was already in
+  storage.** The app showed "PDF not captured yet — the next sync fetches it"
+  beside a DRC-01, an ASMT-10 or a DRC-07 whose PDF the previous sync had in
+  fact downloaded into its case folder. The notices step downloads a notice's
+  PDF only when `get/notices` hands it a `docId` + `applnId`, which it does not
+  for a case-based form; the folder route that would have caught it was skipped
+  for exactly those notices, because a row that `get/notices` had already
+  returned counted as "PDF already stored" (`haveTaskPdf = isDuplicate || …`).
+  So the document was fetched, uploaded and attached to the case folder, and the
+  notice beside it stayed empty. A **link pass** now gives every notice row the
+  matching folder item's document: the generated form named after the reference
+  number (`DOT_NOTICE_<ref>_<ts>.pdf`, `ADJDT_DRPRC_<ref>_<ts>.pdf`) in
+  preference to a supporting attachment.
+- **No document is downloaded twice to do it.** Folder items are keyed
+  `'<SECTION>:<refId>'`, so a notice finds its item by that key's suffix among
+  the attachments **already stored** — which is how a notice on a closed case
+  whose folder is not re-opened still gets its PDF linked, with no portal call
+  for that folder at all.
+- **Reply dates, from the case folder.** A DRC-01, an RFD-03 and an RFD-08 often
+  arrive in `get/notices` with no `dueDate`; the date is in the folder item. The
+  Reply Factory's "due dates on open notices" measure was 610 of 641 (95.2%)
+  against a 98% target, with 31 open notices carrying no date to run on. Those
+  are now read from the folder — and only when the notice has none of its own,
+  so a date the portal put in the notice list stays the authority.
+- **The officer, and the DIN.** The notice detail's "Officer" and "DIN" were
+  always "—" although the folder item carries the officer's name and
+  designation. Both are now read. The portal spells these differently from one
+  folder section to the next, so each field is found by walking the item's JSON
+  for any of a list of candidate key names (`dueDt` / `replyDueDt` / `dtOfReply`
+  …, `issuedBy` / `officerName` …, `din` / `dinNo` / `docDin` …), separators
+  stripped and case ignored — the same reasoning `findDocDescriptors` is built
+  on, so a section not seen yet still yields something.
+- **The DIN is written on its own, never in the notices save.** This extension
+  cannot migrate the database, and one unknown column in the upsert body would
+  cost a client every notice in that save. So the DIN goes through a small
+  `patchNoticeFields` PATCH per notice after the save, which fails harmlessly on
+  a database without the column — and gives up after three refusals with nothing
+  written, rather than spending a client with 326 notices on 326 refusals.
+- **A gap is closed on the next run, not in a week's time.** A case whose notice
+  still has no PDF, reply date or officer has its folder opened even when the
+  case is closed and would otherwise wait for the weekly full pass. Bounded: a
+  reference that yields nothing is not forced again for seven days, so a notice
+  the portal simply has no detail for cannot become an extra folder fetch on
+  every run for ever.
+- **Refund notices (RFD-03, RFD-08) are linked in the same run.** Their PDF and
+  reply date live in the refund case's folder, which the refunds step reads
+  *after* the notices are saved — so that step now ends with a link pass of its
+  own, patching only the notices that are actually still missing something
+  (`noticesNeedingDetail`).
+- **Fixed: GSTR-3A notices that lost their PDF to a race.** The portal serves
+  `gstr3a/summary` only with a Referer it likes, which 0.3.2 solved with a
+  `declarativeNetRequest` rule — registered asynchronously at worker startup,
+  while the worker starts on the very message that wants the rule. A summary
+  fetched in those first moments went out with the page's own Referer and came
+  back as the 200 "Access Denied" HTML page, failing as "not JSON": the "no PDF
+  captured" rows in All notices. The registration is now awaited before the
+  first cross-origin fetch (at most 3 s, then the fetch goes anyway), an HTML
+  body is recognised as the refusal it is rather than parsed, and each summary
+  gets one retry two seconds later.
+- **A bad date in a folder can no longer cost a client its whole notices save.**
+  A reply date is accepted only if it is a real calendar day in 2017–2100:
+  `31/02/2024` is refused rather than passed to Postgres, which would reject the
+  row and take every other notice in the batch with it. (`new Date()` alone is
+  no guard — V8 rolls that date over into March.)
+- **A PDF already stored is carried on the row** instead of being left null.
+  The row is upserted, so a null was written over a stored PDF whenever the
+  ingest RPC was unavailable and the legacy REST path ran. One-off side effect:
+  the first run after updating reports those notices as "changed".
+- New in the debug panel and the client sync log: what the link pass filled —
+  notice PDFs, reply dates, officers and DINs — so a run that fills nothing is
+  diagnosable rather than silent.
+
 ## 2026-10-08 — Notices only; every other pull as in 0.3.3 (v0.7.1)
 
 For a PC coming straight from **v0.3.3**: this release carries everything 0.4.0 to
