@@ -393,3 +393,57 @@ templates in `20261008161000_reply_templates_seed.sql`, catalogue in
   each a starting point that a partner should review before the first use
   (decision pending, like §5). The signature block uses
   `notice_settings.reply_place` and `reply_signatory`.
+
+## 13. The Notice Response AI Assistant (asked by the firm, 7 October 2026)
+
+"AI learning through human behaviour should be preserved for future usage of same
+kind of notice para & response … AI shall read each & every notices and
+attachments and responses. Everything should be done through claude CLI file
+already available in supabase. … admin can select which past & ongoing client
+responses should be part of this learning capabilities." (migration
+`20261009100000_ai_assistant.sql`, Edge Function `supabase/functions/notice-ai/`,
+app: Reply Factory → AI and Learning, the notice page's AI assistant tab)
+
+- **Where it runs.** In Supabase, not on a PC: the Edge Function `notice-ai`
+  calls the Claude API with the `ANTHROPIC_API_KEY` secret of the project.
+  pg_cron (`notice-ai-tick`, every 2 minutes) wakes it; one run at a time holds a
+  lease (`ai_runner_status`) and reads until about 75 s of its time are left.
+  `ai_settings.runner = 'office_agent'` hands the reading back to the office
+  agent of Phase 4; the assistant stays on the Edge Function either way.
+- **Off until switched on.** `read_enabled` ships false; the admin switches it on
+  in Reply Factory → AI. Which clients are read is `consent_scope`: the clients
+  with consent (the default, as Phase 4), or every client by the firm's choice.
+- **What it reads.** Every notice PDF (as Phase 4), and every document in a case
+  folder: the department's notices and orders, the client's replies and their
+  supporting papers, applications. A reply in review or approved in the app is
+  read too. Each document is read once (the same file under two names is read
+  once, by its hash); replies first, then orders and notices, then the rest.
+  Pages beyond `doc_max_pages` (40) are left out and the reading says so.
+- **What it keeps.** For each reply, the paragraphs of the notice it answers
+  (P1, P2 …) paired with the reply's own words for each (`ai_learning_pairs`),
+  with the issue code and form; facts are kept only as the document states them,
+  with a quote that is checked against the text. A reading that cannot be checked
+  is not used for learning.
+- **The admin chooses what it learns from.** Reply Factory → Learning lists every
+  past and ongoing response (portal replies, the app's drafts, issue positions)
+  with client, form, year and phase; the admin ticks which count, one by one or
+  all those a filter shows, and can untick single pairs. Nothing counts until
+  chosen (`learning_auto_include` false).
+- **How it helps.** On a notice's AI assistant tab: draft a reply to an issue,
+  improve a draft, or ask a question. It finds the chosen examples closest to the
+  paragraph (same issue code and form first, then by wording), shows which it
+  used (E1, E2 …), and writes in the firm's legal English with no hyphen or dash
+  (cleaned in the database, as §12). It never carries another client's facts into
+  a reply: names, GSTINs, amounts and dates come only from this notice. What it
+  writes is a suggestion: "Use in draft" saves it as the next draft version, and
+  the partner review is unchanged. When a person edits the assistant's words and
+  uses them, the edited version becomes a learning pair of its own.
+- **Cost and caps.** Reading and the assistant have separate daily caps
+  (`daily_cap_usd` $10, `assist_daily_cap_usd` $5); every call is in the audit
+  log with its tokens and cost. Documents are read at low effort, the assistant
+  at high. A full backfill of the firm's roughly 2,000 documents is about $0.08 to
+  $0.11 each, some $160 to $220 in all, spread over the days the cap allows.
+- **Not decided by the firm yet.** Reading every client (rather than those with
+  consent), and whether the assistant's examples may be drawn from any client's
+  responses (they are, once chosen; only the reasoning and wording travel) are
+  engineering defaults pending a partner's confirmation.

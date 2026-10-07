@@ -447,5 +447,35 @@ automatically today (reviewable)" and can be reopened.
 The portal's own wording rebuilt into the GSTR-3A PDF now ends with a line saying
 it is rebuilt by GST Keeper from the portal's GSTR-3A data (audit S-31).
 
+## 19. Master filters, financial years and balanced pages (asked by the firm, 7 October 2026)
+
+"Litigation year filters required, total litigation amount per year is not
+needed. Master filters required to filter out anything." and "I need every page
+to be balanced, properly structured and keep less text heavy and shall have
+minimalist view." (migration `20261009110000_master_filters.sql`,
+`src/lib/masterFilters.ts`, `MasterFilterBar`)
+
+- **Five master filters, one row, every list page.** Client, financial year,
+  owner, form and priority sit under the module's tabs on the command centre,
+  the work queue, all notices, matters, hearings, the calendar, the MIS and the
+  reports, and travel with the tabs (`?client=&fy=&owner=&form=&priority=`).
+  Each page's own bar keeps only what is particular to it. The command centre
+  applies them in the database (`notices_command_centre(p_user_id, p_filters)`,
+  `notice_master_match`, `matter_master_match`) exactly as the lists do, so
+  every number still equals the list it opens (test_103).
+- **One year, however it is written.** "2019-2020", "FY 2019/20" and "2019-20"
+  are the same year (`notice_fy_key`). A notice or matter with no year at all
+  (905 live notices on 7 October 2026) is found under "Not stated" rather than
+  under no filter. A matter matches a year when any of its years does, a form
+  when any of its notices has it.
+- **No totals per year.** The per-year amounts are gone from the MIS and the
+  notice summary (the summary's FY tab with them); the year is a filter instead.
+- **Balanced pages.** Panels sit in pairs (or threes) of equal height; an
+  explanation is behind an (i) instead of a paragraph; a section with nothing in
+  it is one line, not an empty card; the same figure is not shown twice on a
+  page (the Reply Factory overview lost the row of tiles its sections repeated);
+  a list opened from a count opens full width under the row it belongs to, and
+  nothing is open by default.
+
 Portal Autopilot positions (CAPTCHA posture, office-only agent, sessions, the
 inbox, acceptance measures) are in `docs/PORTAL_AUTOPILOT_POSITIONS.md`.
