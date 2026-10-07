@@ -6,6 +6,9 @@
 -- numbered in order; the issue paragraphs land in place; and re-running the seed never
 -- overwrites the firm's own wording.
 BEGIN;
+-- GSTR-3A is hidden everywhere since 20261008180000 (test_100d covers that); this test
+-- shows it again, as it was seeded, to render its templates, which stay in the seed.
+SELECT notice_type_set('GSTR-3A', 'critical', true, 'Test', false);
 
 -- ── The seed itself ────────────────────────────────────────────────────────
 SELECT t_eq((SELECT count(*) FROM reply_templates WHERE cardinality(forms) = 0 AND is_active), 3::bigint,

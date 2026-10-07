@@ -1,5 +1,8 @@
 -- Classifier and short clocks (migration 20261006110000, view in 20261006111000).
 BEGIN;
+-- GSTR-3A is hidden everywhere since 20261008180000 (test_100d covers that); this test
+-- shows it again, as it was seeded, to keep exercising it.
+SELECT notice_type_set('GSTR-3A', 'critical', true, 'Test', false);
 INSERT INTO clients (id, name, gstin) VALUES ('11111111-0000-0000-0000-000000000001', 'Alpha Traders', '24AAAAA0000A1Z5');
 UPDATE notice_settings SET computed_clock_from = ist_today() - 60;
 

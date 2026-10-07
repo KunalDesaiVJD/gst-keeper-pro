@@ -1,11 +1,13 @@
-// Notice types (contract §A; the firm's request of 6 Oct 2026: "certain kinds
-// of notice need no reply"): per form, whether it needs a reply (Reply
-// required / Reply optional / No reply needed) and whether its notices count on
-// the command centre. A superadmin or GST manager changes a row in place: saved
-// at once, rolled back with a toast if the save fails, stamped with their name.
-// Everyone else reads. Self-contained: the command centre opens it in a dialog
-// and the Reply Factory shows it as a tab; with `urlState` the filters live in
-// the URL (tq, tneed, tdash), so a link reproduces the view.
+// Notice types (contract §A; the firm's requests of 6 Oct 2026, "certain kinds
+// of notice need no reply", and 7 Oct 2026, GSTR-3A "not shown anywhere"): per
+// form, whether it needs a reply (Reply required / Reply optional / No reply
+// needed) and where its notices show (Dashboard and lists / Lists only / Hidden
+// everywhere; a hidden type needs no reply). A superadmin or GST manager changes
+// a row in place: saved at once, rolled back with a toast if the save fails,
+// stamped with their name. Everyone else reads. Self-contained: the command
+// centre opens it in a dialog and the Reply Factory shows it as a tab; with
+// `urlState` the filters live in the URL (tq, tneed, tdash), so a link
+// reproduces the view.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,7 +15,6 @@ import { Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/gstr9/badge';
 import { Note } from '@/components/gstr9/ui';
@@ -25,11 +26,13 @@ import { noticesListHref } from '@/lib/noticeQueries';
 import { fmtDate, plural } from '@/lib/noticeFormat';
 import {
   canManageNoticeTypes, countUnclassifiedOpen, invalidateAfterTypeChange, isResponseNeed, NOTICE_TYPES_KEY, RESPONSE_NEEDS,
-  responseNeedDef, saveNoticeType, useNoticeTypes, type NoticeTypePatch, type NoticeTypeRow, type ResponseNeed,
+  responseNeedDef, saveNoticeType, useNoticeTypes, VISIBILITIES, visibilityDef, visibilityOf, visibilityPatch,
+  type NoticeTypePatch, type NoticeTypeRow, type ResponseNeed, type TypeVisibility,
 } from '@/lib/noticeTypes';
 import { cn } from '@/lib/utils';
 
-type DashFilter = 'all' | 'shown' | 'hidden';
+/** shown: on the dashboard; listed: lists only (the command centre's "not on the dashboard" link); nowhere: hidden everywhere. */
+type DashFilter = 'all' | 'shown' | 'listed' | 'nowhere';
 interface Filters { q: string; need: ResponseNeed | 'all'; dash: DashFilter }
 const NO_FILTERS: Filters = { q: '', need: 'all', dash: 'all' };
 
@@ -43,7 +46,8 @@ function useTypeFilters(urlState: boolean): [Filters, (patch: Partial<Filters>) 
   const current: Filters = {
     q: sp.get('tq') ?? '',
     need: isResponseNeed(need) ? need : 'all',
-    dash: dash === 'shown' || dash === 'hidden' ? dash : 'all',
+    // 'hidden' is the old name of 'listed' (before a type could be hidden everywhere).
+    dash: dash === 'shown' || dash === 'listed' || dash === 'nowhere' ? dash : dash === 'hidden' ? 'listed' : 'all',
   };
   // Only the keys in the patch change, read from the live URL (the search box writes late).
   const set = (patch: Partial<Filters>) => setSp((prev) => {
@@ -99,18 +103,31 @@ const NeedBadge: React.FC<{ r: NoticeTypeRow }> = ({ r }) => {
   return <Badge variant={def.tone} className="whitespace-nowrap text-[11px] font-medium">{def.label}</Badge>;
 };
 
-const DashSwitch: React.FC<{ r: NoticeTypeRow; disabled: boolean; onSave: (p: NoticeTypePatch) => void }> = ({ r, disabled, onSave }) => (
-  <Switch checked={!!r.show_on_dashboard} disabled={disabled} onCheckedChange={(on) => onSave({ show_on_dashboard: on })}
-    aria-label={`Show ${r.form_code} on the dashboard`} />
-);
+const isVisibility = (v: string): v is TypeVisibility => VISIBILITIES.some((d) => d.key === v);
 
-/** Open and total, each a link to the list it counts. */
-const Count: React.FC<{ n: number | null; to: string; what: string; code: string }> = ({ n, to, what, code }) => (
-  (n ?? 0) > 0
+const VisibilitySelect: React.FC<{ r: NoticeTypeRow; disabled: boolean; onSave: (p: NoticeTypePatch) => void; className?: string }> = ({ r, disabled, onSave, className }) => {
+  const v = visibilityOf(r);
+  return (
+    <Select value={v} disabled={disabled} onValueChange={(x) => { if (isVisibility(x) && x !== v) onSave(visibilityPatch(x)); }}>
+      <SelectTrigger className={cn('h-8 w-[11.5rem] text-xs', className)} aria-label={`Where ${r.form_code} shows: ${visibilityDef(v).label}`}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {VISIBILITIES.map((d) => <SelectItem key={d.key} value={d.key} className="text-xs">{d.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+};
+
+/** Open and total, each a link to the list it counts; a hidden type has no list, only its numbers. */
+const Count: React.FC<{ n: number | null; to: string; what: string; code: string; hidden?: boolean }> = ({ n, to, what, code, hidden }) => (
+  (n ?? 0) > 0 && !hidden
     ? <Link to={to} className="font-medium tabular-nums text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         {(n ?? 0).toLocaleString('en-IN')}<span className="sr-only"> {what} {code} notices</span>
       </Link>
-    : <span className="tabular-nums text-muted-foreground">0<span className="sr-only"> {what}</span></span>
+    : <span className="tabular-nums text-muted-foreground" title={hidden ? 'Hidden everywhere: kept on record, listed nowhere' : undefined}>
+        {(n ?? 0).toLocaleString('en-IN')}<span className="sr-only"> {what}{hidden ? ', hidden everywhere' : ''}</span>
+      </span>
 );
 
 export const NoticeTypesSettings: React.FC<{
@@ -147,8 +164,9 @@ export const NoticeTypesSettings: React.FC<{
       mark(v.code, true);
       await qc.cancelQueries({ queryKey: NOTICE_TYPES_KEY });
       const prevRow = qc.getQueryData<NoticeTypeRow[]>(NOTICE_TYPES_KEY)?.find((r) => r.form_code === v.code) ?? null;
+      const implied = v.patch.hidden ? { response_need: 'none', show_on_dashboard: false } : {};
       qc.setQueryData<NoticeTypeRow[]>(NOTICE_TYPES_KEY, (old) => old?.map((r) => (r.form_code === v.code
-        ? { ...r, ...v.patch, updated_by_name: user?.firstName ?? r.updated_by_name, updated_at: new Date().toISOString() } : r)));
+        ? { ...r, ...v.patch, ...implied, updated_by_name: user?.firstName ?? r.updated_by_name, updated_at: new Date().toISOString() } : r)));
       return { prevRow };
     },
     onError: (e, v, ctx) => {
@@ -159,10 +177,17 @@ export const NoticeTypesSettings: React.FC<{
       toast.error(`Couldn't save ${v.code}: ${e instanceof Error ? e.message : String(e)}. The setting is as it was.`);
     },
     onSuccess: (row, v) => {
-      const fresh = Object.fromEntries((['response_need', 'show_on_dashboard', 'updated_at', 'updated_by_name'] as const)
+      const fresh = Object.fromEntries((['response_need', 'show_on_dashboard', 'hidden', 'updated_at', 'updated_by_name'] as const)
         .filter((k) => row && k in row).map((k) => [k, row[k]])) as Partial<NoticeTypeRow>;
       qc.setQueryData<NoticeTypeRow[]>(NOTICE_TYPES_KEY, (old) => old?.map((r) => (r.form_code === v.code ? { ...r, ...fresh } : r)));
-      if (v.patch.response_need) {
+      if (v.patch.hidden === true) {
+        toast.success(`${v.code} is hidden everywhere: its notices are in no list, count, search, report or e-mail, and need no reply. They stay on record.`);
+      } else if (v.patch.hidden === false) {
+        const need = responseNeedDef(row?.response_need as string | undefined).label;
+        toast.success(v.patch.show_on_dashboard
+          ? `${v.code} is back on the dashboard and in every list (${need}).`
+          : `${v.code} is back in All notices and the Work queue, off the dashboard (${need}).`);
+      } else if (v.patch.response_need) {
         const d = responseNeedDef(v.patch.response_need);
         toast.success(v.patch.response_need === 'none'
           ? `${v.code}: ${d.label}. Its notices never turn overdue; their next step is Read and close.`
@@ -186,10 +211,11 @@ export const NoticeTypesSettings: React.FC<{
   const term = text.trim().toLowerCase();
   const base = useMemo(() => all.filter((r) => !term || `${r.form_code} ${r.label ?? ''} ${r.category ?? ''}`.toLowerCase().includes(term)), [all, term]);
   const needCount = (k: ResponseNeed) => base.filter((r) => responseNeedDef(r.response_need).key === k).length;
-  const shown = base.filter((r) => r.show_on_dashboard).length;
+  const visCount = (k: TypeVisibility) => base.filter((r) => visibilityOf(r) === k).length;
+  const DASH_VIS: Record<Exclude<DashFilter, 'all'>, TypeVisibility> = { shown: 'dashboard', listed: 'lists', nowhere: 'hidden' };
   const rows = base
     .filter((r) => filters.need === 'all' || responseNeedDef(r.response_need).key === filters.need)
-    .filter((r) => filters.dash === 'all' || (filters.dash === 'shown') === !!r.show_on_dashboard)
+    .filter((r) => filters.dash === 'all' || visibilityOf(r) === DASH_VIS[filters.dash])
     .sort((a, b) => Number(!!b.is_active) - Number(!!a.is_active) || (b.open_count ?? 0) - (a.open_count ?? 0)
       || (b.total_count ?? 0) - (a.total_count ?? 0) || (a.form_code ?? '').localeCompare(b.form_code ?? ''));
   const filtered = !!term || filters.need !== 'all' || filters.dash !== 'all';
@@ -198,10 +224,14 @@ export const NoticeTypesSettings: React.FC<{
   return (
     <div className={cn('space-y-2', className)}>
       <p className="text-xs leading-relaxed text-muted-foreground">
-        {RESPONSE_NEEDS.map((d) => (
-          <React.Fragment key={d.key}><span className="font-medium text-foreground">{d.label}</span>: {d.short} · </React.Fragment>
+        {RESPONSE_NEEDS.map((d, i) => (
+          <React.Fragment key={d.key}>{i > 0 && ' · '}<span className="font-medium text-foreground">{d.label}</span>: {d.short}</React.Fragment>
         ))}
-        types off the dashboard still appear in All notices and the Work queue.
+      </p>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Where it shows: {VISIBILITIES.map((d, i) => (
+          <React.Fragment key={d.key}>{i > 0 && ' · '}<span className="font-medium text-foreground">{d.label}</span>: {d.short}</React.Fragment>
+        ))}. A hidden type's notices stay on record and come back as they were when it is shown again.
       </p>
       {!canEdit && <Note tone="info">Only a superadmin or a GST manager can change these settings. You can read them.</Note>}
 
@@ -212,8 +242,13 @@ export const NoticeTypesSettings: React.FC<{
         </div>
         <FilterPill label="Reply need" allLabel={`All (${base.length})`} value={filters.need} onChange={(v) => setFilters({ need: isResponseNeed(v) ? v : 'all' })}
           options={[]} extraOptions={RESPONSE_NEEDS.map((d) => ({ value: d.key, label: `${d.label} (${needCount(d.key)})` }))} />
-        <FilterPill label="Dashboard" allLabel={`Any (${base.length})`} value={filters.dash} onChange={(v) => setFilters({ dash: v === 'shown' || v === 'hidden' ? v : 'all' })}
-          options={[]} extraOptions={[{ value: 'shown', label: `Shown (${shown})` }, { value: 'hidden', label: `Not shown (${base.length - shown})` }]} />
+        <FilterPill label="Shows" allLabel={`Anywhere (${base.length})`} value={filters.dash}
+          onChange={(v) => setFilters({ dash: v === 'shown' || v === 'listed' || v === 'nowhere' ? v : 'all' })}
+          options={[]} extraOptions={[
+            { value: 'shown', label: `${visibilityDef('dashboard').label} (${visCount('dashboard')})` },
+            { value: 'listed', label: `${visibilityDef('lists').label} (${visCount('lists')})` },
+            { value: 'nowhere', label: `${visibilityDef('hidden').label} (${visCount('hidden')})` },
+          ]} />
         {filtered && (
           <button type="button" className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
             onClick={() => { setText(''); setFilters(NO_FILTERS); }}>
@@ -239,17 +274,15 @@ export const NoticeTypesSettings: React.FC<{
                       <div className="text-[11px] text-foreground/70">{r.category || 'No category'}{!r.is_active && ' · not in use'}</div>
                     </div>
                     <div className="shrink-0 text-right text-xs">
-                      <div><Count n={r.open_count} to={noticesListHref({ form: r.form_code ?? undefined })} what="open" code={r.form_code ?? ''} /> open</div>
-                      <div className="text-muted-foreground"><Count n={r.total_count} to={noticesListHref({ filter: 'all', form: r.form_code ?? undefined })} what="in all" code={r.form_code ?? ''} /> in all</div>
+                      <div><Count n={r.open_count} to={noticesListHref({ form: r.form_code ?? undefined })} what="open" code={r.form_code ?? ''} hidden={!!r.hidden} /> open</div>
+                      <div className="text-muted-foreground"><Count n={r.total_count} to={noticesListHref({ filter: 'all', form: r.form_code ?? undefined })} what="in all" code={r.form_code ?? ''} hidden={!!r.hidden} /> in all</div>
                     </div>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-                    {canEdit ? <NeedSelect r={r} disabled={busy(r)} onSave={onSave(r)} /> : <NeedBadge r={r} />}
-                    {canEdit ? (
-                      <label className="inline-flex items-center gap-2 text-xs">
-                        <DashSwitch r={r} disabled={busy(r)} onSave={onSave(r)} /> On the dashboard
-                      </label>
-                    ) : <span className="text-xs text-foreground/70">{r.show_on_dashboard ? 'On the dashboard' : 'Not on the dashboard'}</span>}
+                    {canEdit && !r.hidden ? <NeedSelect r={r} disabled={busy(r)} onSave={onSave(r)} /> : <NeedBadge r={r} />}
+                    {canEdit
+                      ? <VisibilitySelect r={r} disabled={busy(r)} onSave={onSave(r)} />
+                      : <span className="text-xs text-foreground/70">{visibilityDef(visibilityOf(r)).label}</span>}
                   </div>
                   <div className="mt-1.5 text-[11px] text-muted-foreground">{changedWords(r)}</div>
                 </li>
@@ -258,7 +291,7 @@ export const NoticeTypesSettings: React.FC<{
 
             <div className={cn(WS_TABLE_WRAP, 'hidden lg:block')}>
               <table className={WS_TABLE}>
-                <caption className="sr-only">Notice types: whether each needs a reply and whether it shows on the dashboard</caption>
+                <caption className="sr-only">Notice types: whether each needs a reply and where its notices show</caption>
                 <thead>
                   <tr>
                     <th scope="col" className={WS_TH}>Notice type</th>
@@ -266,7 +299,7 @@ export const NoticeTypesSettings: React.FC<{
                     <th scope="col" className={cn(WS_TH, 'text-right')}>Open</th>
                     <th scope="col" className={cn(WS_TH, 'text-right')}>Total</th>
                     <th scope="col" className={WS_TH}>Reply need</th>
-                    <th scope="col" className={WS_TH}>Show on the dashboard</th>
+                    <th scope="col" className={WS_TH}>Where it shows</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -280,16 +313,13 @@ export const NoticeTypesSettings: React.FC<{
                         <div className="text-[11px] text-foreground/70">{changedWords(r)}</div>
                       </td>
                       <td className={cn(WS_TD, 'text-xs')}>{r.category || <span className="text-muted-foreground">—</span>}</td>
-                      <td className={WS_TD_NUM}><Count n={r.open_count} to={noticesListHref({ form: r.form_code ?? undefined })} what="open" code={r.form_code ?? ''} /></td>
-                      <td className={WS_TD_NUM}><Count n={r.total_count} to={noticesListHref({ filter: 'all', form: r.form_code ?? undefined })} what="in all" code={r.form_code ?? ''} /></td>
-                      <td className={WS_TD}>{canEdit ? <NeedSelect r={r} disabled={busy(r)} onSave={onSave(r)} /> : <NeedBadge r={r} />}</td>
+                      <td className={WS_TD_NUM}><Count n={r.open_count} to={noticesListHref({ form: r.form_code ?? undefined })} what="open" code={r.form_code ?? ''} hidden={!!r.hidden} /></td>
+                      <td className={WS_TD_NUM}><Count n={r.total_count} to={noticesListHref({ filter: 'all', form: r.form_code ?? undefined })} what="in all" code={r.form_code ?? ''} hidden={!!r.hidden} /></td>
+                      <td className={WS_TD}>{canEdit && !r.hidden ? <NeedSelect r={r} disabled={busy(r)} onSave={onSave(r)} /> : <NeedBadge r={r} />}</td>
                       <td className={WS_TD}>
-                        {canEdit ? (
-                          <span className="inline-flex items-center gap-2">
-                            <DashSwitch r={r} disabled={busy(r)} onSave={onSave(r)} />
-                            <span className="text-xs text-foreground/70" aria-hidden>{r.show_on_dashboard ? 'Shown' : 'Not shown'}</span>
-                          </span>
-                        ) : <span className="text-xs">{r.show_on_dashboard ? 'Shown' : 'Not shown'}</span>}
+                        {canEdit
+                          ? <VisibilitySelect r={r} disabled={busy(r)} onSave={onSave(r)} />
+                          : <span className="text-xs">{visibilityDef(visibilityOf(r)).label}</span>}
                       </td>
                     </tr>
                   ))}

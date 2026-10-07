@@ -26,7 +26,7 @@ import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepT
 import { WS_BTN, WS_PAGE } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useExtensionBridge } from '@/hooks/useExtensionBridge';
-import { loadWorkspace, NoticeNotFound, assignOwner, setPriority, setStage, docEmailOutcome, emailDocumentRequests, type Workspace } from '@/lib/noticeWorkspace';
+import { loadWorkspace, NoticeHidden, NoticeNotFound, assignOwner, setPriority, setStage, docEmailOutcome, emailDocumentRequests, type Workspace } from '@/lib/noticeWorkspace';
 import { nextActionDef, type StageKey, type WorkspaceTab } from '@/lib/noticeStages';
 import { closeReasonText, dueWords, fmtDate, fmtDateTime, fmtInrShort, noticeTitle, sentenceCase } from '@/lib/noticeFormat';
 import { AssignPopover } from '@/components/notices/AssignPopover';
@@ -187,11 +187,13 @@ const NoticeWorkspacePage: React.FC = () => {
   }
   if (q.error || !ws || !ref) {
     const notFound = q.error instanceof NoticeNotFound;
+    const hidden = q.error instanceof NoticeHidden ? q.error.formCode : null;
     return (
       <div className={WS_PAGE}>
         <nav aria-label="Breadcrumb" className="text-xs text-muted-foreground"><Link to="/notices-dashboard" className="hover:underline">Notices & Litigation</Link> › Notice</nav>
-        <Note tone="warn">
-          {notFound ? 'This notice is not on record — it may have been removed by a portal sync, or the link is wrong.'
+        <Note tone={hidden ? 'info' : 'warn'}>
+          {hidden ? `${hidden} notices are hidden everywhere, so this one is not shown. It stays on record; a superadmin or GST manager can show the type again under Notice types.`
+            : notFound ? 'This notice is not on record — it may have been removed by a portal sync, or the link is wrong.'
             : <>Couldn't load the notice: {q.error instanceof Error ? q.error.message : String(q.error)}</>}
         </Note>
         <div className="flex gap-2">

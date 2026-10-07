@@ -36,6 +36,7 @@ PGHOST=/path/to/socket PGPORT=55432 PGUSER=postgres supabase/tests/notices/run.s
 | `test_99b_chrome_runner` | scheduled syncs in the firm's own Chrome: only the named runner claims, one job at a time, no wall, CAPTCHA timeouts retried, status and close |
 | `test_100_reply` | reading a notice (portal and form readers, verify), the AI reading queue (consent, cap, finish, only new open notices), evidence annexures, document requests and reminders, the Reply Factory numbers |
 | `test_100b_notice_types` | reply need and dashboard choice per notice type; flags, plan, calendar and coverage follow; every dashboard number still equals its list |
+| `test_100d_notice_types_hidden` | a type hidden everywhere (GSTR-3A): left out of facts, plan, calendar, search and the command centre's counts, no reply options or alert e-mail, kept on record, back as it was when shown again |
 | `test_100c_reply_options` | the hyphen free wording helpers, options prepared when a notice arrives or changes, using one to start a draft, a failing reply never blocking a sync write |
 | `test_101_reply_templates` | the firm's 64 templates on every form, with all facts and with none: no dash, no unfilled placeholder, letter shape and numbering, issue paragraphs, re-runs keep the firm's edits |
 

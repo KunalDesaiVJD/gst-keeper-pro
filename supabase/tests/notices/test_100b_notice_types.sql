@@ -80,7 +80,8 @@ SELECT t_eq((notices_command_centre(NULL) -> 'nav' ->> 'queue')::bigint,
 SELECT t_eq((notices_command_centre(NULL) -> 'dashboard' ->> 'hidden_open')::bigint,
             (SELECT count(*) FROM notice_facts WHERE is_open AND NOT on_dashboard), 'what is hidden is reported');
 SELECT t_eq((notices_command_centre(NULL) -> 'dashboard' ->> 'hidden_types')::bigint,
-            (SELECT count(*) FROM notice_type_settings WHERE NOT show_on_dashboard), 'and how many types');
+            (SELECT count(*) FROM notice_type_settings WHERE NOT show_on_dashboard AND NOT hidden),
+            'and how many types (those still in the lists; 20261008180000)');
 
 -- Hiding a type moves its notices off the dashboard and nowhere else.
 SELECT notice_type_set('ASMT-10', NULL, false, 'Partner');

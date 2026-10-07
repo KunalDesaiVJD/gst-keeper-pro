@@ -1,6 +1,9 @@
 -- The alert engine must finish inside the API's statement timeout as anon
 -- (live 2026-10-06: 419 backlog events timed out; migration 20261006117000).
 BEGIN;
+-- GSTR-3A is hidden everywhere since 20261008180000 (test_100d covers that); this test
+-- shows it again, as it was seeded, to keep exercising it.
+SELECT notice_type_set('GSTR-3A', 'critical', true, 'Test', false);
 INSERT INTO profiles (user_id, first_name, email) VALUES
  ('77777777-0000-0000-0000-00000000000a', 'Riya', 'riya@firm.test'),
  ('77777777-0000-0000-0000-00000000000b', 'Kunal', 'kunal@firm.test');

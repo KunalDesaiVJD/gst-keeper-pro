@@ -10,6 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Database, TablesUpdate } from '@/integrations/supabase/types';
 import { addDays, istToday, loadNoticeFact, type NoticeFact, type NoticePlanRow } from '@/lib/noticeFacts';
 import { updateNotices, staffEditFields, type NoticeActor } from '@/lib/noticeWrites';
+import { loadHiddenForms } from '@/lib/noticeTypes';
 import type { StageKey } from '@/lib/noticeStages';
 
 type Tables = Database['public']['Tables'];
@@ -56,6 +57,12 @@ export interface Workspace {
 }
 
 export class NoticeNotFound extends Error {}
+/** A notice of a type the firm hides everywhere (Notice types): on record, shown nowhere. */
+export class NoticeHidden extends NoticeNotFound {
+  constructor(readonly formCode: string) {
+    super(`${formCode} notices are hidden everywhere.`);
+  }
+}
 
 export async function loadWorkspace(id: string): Promise<Workspace> {
   const [fact, noticeRes] = await Promise.all([
@@ -64,6 +71,9 @@ export async function loadWorkspace(id: string): Promise<Workspace> {
   ]);
   if (noticeRes.error) throw noticeRes.error;
   const notice = noticeRes.data;
+  if (notice && !notice.deleted_at && !fact && notice.form_code && (await loadHiddenForms()).has(notice.form_code)) {
+    throw new NoticeHidden(notice.form_code);
+  }
   if (!notice || !fact || notice.deleted_at) throw new NoticeNotFound('This notice is not on record (it may have been removed by a portal sync).');
 
   const caseId = notice.case_id;

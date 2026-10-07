@@ -48,7 +48,8 @@ const NoticesDashboardPage: React.FC = () => {
 
   // The dialog and its filters live in the URL, so a link opens it as it was.
   const typesOpen = sp.get('types') === '1';
-  const openTypes = (dash?: 'hidden') => setSp((prev) => {
+  // 'listed': the types off the dashboard that are still in the lists (HiddenTypesLine counts those).
+  const openTypes = (dash?: 'listed') => setSp((prev) => {
     const next = new URLSearchParams(prev);
     next.set('types', '1');
     if (dash) next.set('tdash', dash);
@@ -86,7 +87,7 @@ const NoticesDashboardPage: React.FC = () => {
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[74px]" />)}
         </div>
       )}
-      {data && <HiddenTypesLine cc={data} onOpenTypes={canTypes ? () => openTypes('hidden') : undefined} />}
+      {data && <HiddenTypesLine cc={data} onOpenTypes={canTypes ? () => openTypes('listed') : undefined} />}
 
       <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,2.3fr)_minmax(0,1fr)]">
         <TodaysPlan cc={data} />

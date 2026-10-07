@@ -145,7 +145,8 @@ solver, OCR or solving service, a proxy or a cloud runner. Ships off
 the PDF through the Claude API in the office agent (`agent/src/read/`, off by default,
 per-client consent). Evidence recipes (`src/lib/reply/`) build versioned annexures from
 portal-pulled figures only. Notice types (`notice_type_settings`: critical / optional /
-none, and whether the command centre shows them; lists opened from it carry `dash=1`).
+none, and whether the command centre shows them; lists opened from it carry `dash=1`;
+or `hidden` everywhere, left out of `notice_facts`: GSTR-3A since 7 Oct 2026).
 Reply options are rendered by DB triggers from `reply_templates` when a notice arrives
 or changes, with no hyphen or dash anywhere (CHECK constraints), and start drafts. Notices
 & Litigation is one sidebar entry, last; its pages are reached from `NoticesTopNav`.

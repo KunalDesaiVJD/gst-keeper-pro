@@ -57,3 +57,4 @@
 20261008160000_reply_options.sql
 20261008161000_reply_templates_seed.sql
 20261008170000_autopilot_chrome_runner.sql
+20261008180000_notice_types_hidden.sql

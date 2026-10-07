@@ -353,6 +353,9 @@ centre and the Work queue page read it, so their counts agree.
   urgent" on Today's plan (remembered per browser, and carried to the Work queue it
   links to) and "Most urgent" in the Work queue's order picker; list headers still sort
   by due date, demand, stage and the rest.
+- **Types hidden everywhere** (the firm's decision of 7 October 2026, for GSTR-3A) are
+  in none of these: `notice_facts` leaves them out, so the plan, the queue, every list,
+  tile, calendar and alert leave them out too (REPLY_FACTORY_POSITIONS.md §11).
 
 ## 15. The notice workspace (Phase 2)
 

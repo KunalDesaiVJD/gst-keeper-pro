@@ -7371,6 +7371,7 @@ export type Database = {
       notice_type_settings: {
         Row: {
           form_code: string
+          hidden: boolean
           response_need: string
           show_on_dashboard: boolean
           updated_at: string
@@ -7378,6 +7379,7 @@ export type Database = {
         }
         Insert: {
           form_code: string
+          hidden?: boolean
           response_need?: string
           show_on_dashboard?: boolean
           updated_at?: string
@@ -7385,6 +7387,7 @@ export type Database = {
         }
         Update: {
           form_code?: string
+          hidden?: boolean
           response_need?: string
           show_on_dashboard?: boolean
           updated_at?: string
@@ -9507,6 +9510,7 @@ export type Database = {
         Row: {
           category: string | null
           form_code: string | null
+          hidden: boolean | null
           is_active: boolean | null
           label: string | null
           match_order: number | null
@@ -9791,8 +9795,12 @@ export type Database = {
         Args: { p_notice_id: string; p_force?: boolean }
         Returns: number
       }
+      notice_type_hidden: {
+        Args: { p_form_code: string }
+        Returns: boolean
+      }
       notice_type_set: {
-        Args: { p_form_code: string; p_response_need?: string; p_show_on_dashboard?: boolean; p_actor_name?: string }
+        Args: { p_form_code: string; p_response_need?: string; p_show_on_dashboard?: boolean; p_actor_name?: string; p_hidden?: boolean }
         Returns: Json
       }
       reply_evidence_pending: {

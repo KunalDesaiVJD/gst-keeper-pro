@@ -300,8 +300,8 @@ show." (`supabase/migrations/20261008150000_notice_types.sql`)
   - *Critical, reply required*: a reply or an action is required, with a
     consequence if it is missed: show cause notices (DRC-01, ASMT-14, REG-17,
     REG-23, REG-SCN, RFD-08), scrutiny (ASMT-10), intimations with a reply
-    clock (DRC-01B, DRC-01C), queries (REG-03), return defaulter notices
-    (GSTR-3A), refund deficiency memos (RFD-03), detention (MOV-07), audit
+    clock (DRC-01B, DRC-01C), queries (REG-03), refund deficiency memos
+    (RFD-03), detention (MOV-07), audit
     (ADT-01), attachment and recovery (DRC-22, DRC-13), summons, appeal hearings,
     and orders with an appeal clock that matters (DRC-07, DRC-07A, MOV-09,
     REG-19, APL-04).
@@ -313,7 +313,9 @@ show." (`supabase/migrations/20261008150000_notice_types.sql`)
     filings and payments (proceedings dropped, response accepted, LUT, LUT
     approved, APL-01, APL-02, REG-06, REG-15, REG-22, SPL-05, DRC-03, PMT-03,
     RFD-04, audit closure).
-  A notice the rules cannot classify needs a reply and is shown.
+  A notice the rules cannot classify needs a reply and is shown. Return
+  defaulter notices (GSTR-3A) started as critical and are hidden everywhere
+  since 7 October 2026 (below).
 - **What follows from the category.** A no-reply notice is never overdue or due
   in 7 days, has no reply date in the calendar or the plan, gets the next action
   "Read and close" and no reply options; due-date coverage counts it as
@@ -327,6 +329,21 @@ show." (`supabase/migrations/20261008150000_notice_types.sql`)
   types and open notices it is not showing. A list opened from the command
   centre carries `dash=1` and filters to the dashboard's types, so every number
   still equals its list.
+- **Hidden everywhere** (asked by the firm, 7 October 2026, for GSTR-3A: "do not
+  show this notice anywhere in any client and keep always considered as non
+  priority to respond"; `20261008180000_notice_types_hidden.sql`). A third choice
+  in "Where it shows" (Dashboard and lists / Lists only / Hidden everywhere).
+  `notice_facts` leaves a hidden type out, so it is in no list, tile, plan,
+  calendar, client page, matter, report, digest or export; search, the bell, the
+  "View Notice and Orders" report, the command centre's "auto-closed today", the
+  autopilot's capture metrics and the background evidence build leave it out too.
+  A hidden type needs no reply and is off the dashboard (a CHECK keeps it so), so
+  its reply options are withdrawn and the notice reader skips it; an event on a
+  hidden notice is written already handled, so no alert e-mail goes out. Its
+  notices are still synced and kept (a GSTR-3A still closes itself when the
+  return is filed), and the Notice types screen still counts them. Showing the
+  type again brings every notice back as it was, with no reply needed until an
+  admin changes that.
 
 ## 12. Reply options, prepared by themselves (asked by the firm, 6 October 2026)
 
