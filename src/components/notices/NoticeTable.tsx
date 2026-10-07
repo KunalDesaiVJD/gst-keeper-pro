@@ -136,7 +136,8 @@ export const NoticeTable: React.FC<{
                 </th>
               )}
               {showClient && <SortHead label="Client" k="client" sort={sort} dir={dir} onSort={onSort} />}
-              <th scope="col" className={WS_TH}>Notice</th>
+              {/* The lists open newest first by issue date; this header turns it to oldest first and back. */}
+              <SortHead label="Notice · issued" k="issued" sort={sort} dir={dir} onSort={onSort} />
               <SortHead label="Due" k="due" sort={sort} dir={dir} onSort={onSort} />
               <SortHead label="Stage" k="stage" sort={sort} dir={dir} onSort={onSort} />
               <SortHead label="Demand" k="demand" sort={sort} dir={dir} onSort={onSort} className="text-right" />

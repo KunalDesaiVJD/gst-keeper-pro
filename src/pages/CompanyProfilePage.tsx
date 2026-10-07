@@ -66,7 +66,9 @@ function sortRows(rows: NoticeFact[], key: SortKey, dir: 'asc' | 'desc'): Notice
     if (av === null || av === undefined) return bv === null || bv === undefined ? String(a.id).localeCompare(String(b.id)) : 1;
     if (bv === null || bv === undefined) return -1;
     const c = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
-    return sign * c || String(a.id).localeCompare(String(b.id));
+    // Issued the same day: the one the portal sync brought in last comes first (as in the lists).
+    const seen = key === 'issued' ? String(a.first_seen_at ?? '').localeCompare(String(b.first_seen_at ?? '')) : 0;
+    return sign * c || sign * seen || String(a.id).localeCompare(String(b.id));
   });
 }
 

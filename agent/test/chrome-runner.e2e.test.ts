@@ -190,7 +190,8 @@ test('a: the runner claims a queued job; the CAPTCHA extension fills the box; lo
 
   const status = await db.rpc<Status>('autopilot_status');
   const me = status.runners.find((x) => x.agent_id === agentA);
-  assert.ok(me && me.online && me.kind === 'chrome' && me.label === 'Test PC A' && me.version === '0.7.0', JSON.stringify(status.runners));
+  const manifestVersion = JSON.parse(fs.readFileSync(path.join(extDir, 'manifest.json'), 'utf8')).version;
+  assert.ok(me && me.online && me.kind === 'chrome' && me.label === 'Test PC A' && me.version === manifestVersion, JSON.stringify(status.runners));
   assert.equal(status.agent_online, true);
 });
 

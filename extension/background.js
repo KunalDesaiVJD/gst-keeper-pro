@@ -359,6 +359,9 @@ const API = {
       for (const it of items) out.itemDocs[it.case_id + '|' + it.portal_key] = Array.isArray(it.attachments) ? it.attachments : [];
       const drc = await sel(`gst_drc03_filings?client_id=eq.${clientId}&deleted_at=is.null&select=arn,pdf_url`);
       for (const d of drc) if (d.arn && d.pdf_url) out.drc03Pdf[d.arn] = d.pdf_url;
+      // 0.7.1: refund documents already saved, per ARN ({tab, label, url}).
+      const rf = await sel(`gst_refund_applications?client_id=eq.${clientId}&deleted_at=is.null&arn=not.is.null&select=arn,documents`);
+      for (const r of rf) if (r.arn && Array.isArray(r.documents) && r.documents.length) out.refundDocs[r.arn] = r.documents;
     } catch (e) { /* best-effort: an empty map just means "fetch everything" */ }
     return out;
   },
@@ -367,12 +370,6 @@ const API = {
   syncQueue: async (clientIds) => {
     try { return await rpc('sync_queue', { p_client_ids: clientIds && clientIds.length ? clientIds : null }); }
     catch (e) { return null; }
-  },
-  // Challans from a date on: delete that slice (and old failure markers) and
-  // insert the fresh rows, so a recent-windows pass never drops older history.
-  replaceChallansSince: async (clientId, fromIso, rows) => {
-    await del('gst_challans', `client_id=eq.${clientId}&or=(challan_date.gte.${fromIso},challan_date.is.null)`);
-    return rows.length ? post('gst_challans', rows) : true;
   },
   // Desktop notice that a CAPTCHA is waiting (the sync tab may be behind other windows).
   notifyCaptcha: async (clientName, progress) => {

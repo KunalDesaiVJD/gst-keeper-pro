@@ -629,10 +629,11 @@
     }
     setVal($('#user_pass'), portalPass);
     await waitFor('#imgCaptcha', 8000);
-    // The sync tab is often behind other windows: say so on the desktop. An
-    // agent job's CAPTCHA goes to the app's CAPTCHA wall instead, and a
-    // scheduled job's is filled by the CAPTCHA extension in this Chrome.
-    if (!job.agent && !job.runner) { try { await GSTKdb.notifyCaptcha(cur.creds.name, progress); } catch (e) { /* optional */ } }
+    // A notices sync tab is often behind other windows: say so on the desktop.
+    // An agent job's CAPTCHA goes to the app's CAPTCHA wall instead, a
+    // scheduled job's is filled by the CAPTCHA extension in this Chrome, and
+    // every other pull (2B, GSTR-1, 3B, ledgers…) logs in as it always did.
+    if (!job.agent && !job.runner && ledgerJob(job)) { try { await GSTKdb.notifyCaptcha(cur.creds.name, progress); } catch (e) { /* optional */ } }
     // No custom popup — the CAPTCHA is typed straight into the portal's own
     // native #captcha field. The field has no maxlength/expected-length we
     // can read (confirmed live: only a numeric-only ng-pattern), so "is it
@@ -3305,7 +3306,9 @@
     // part. It's a separate, explicitly-triggered pull now (job.mode
     // 'refund_docs', wired from the Documents page) — this just proceeds
     // straight to DRC-03 (full chain) or stops (standalone pull), the same
-    // as every other section pull.
+    // as every other section pull. The notices bundle (0.7.1) goes on to the
+    // documents of new or changed refunds only, then DRC-03.
+    if (job.mode === 'notices_bundle') { await proceedToRefundDocs(job); return; }
     await chainOrStop(job, 'refunds', proceedToDrc03);
   }
 
@@ -3362,16 +3365,20 @@
   async function handleRefundDocs(job, cur, progress) {
     if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
     banner('Reading Refund documents…' + progress);
+    // The Refund Notice Folder rows below carry this run's time (0.7.1: it was
+    // never declared here, so those rows were never saved).
+    const pullTs = new Date().toISOString();
     let cases = [];
     try {
-      const r = await fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
+      const r = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caseTypeCd: 'RFUND', startDate: '01/07/2017', endDate: shownTodayDdMmYyyy() }),
-      });
+      }), 45000, 'case/search RFUND');
       if (!r.ok) throw new Error('HTTP ' + r.status + ' from case/search');
       cases = await r.json();
       if (!Array.isArray(cases)) cases = [];
     } catch (e) {
+      if (ledgerJob(job)) { try { await GSTKdb.logStep(job.runId, cur.clientId, 'refund_docs', 'failed', /timed out/.test(String(e && e.message)) ? 'timeout' : 'portal_error', (e && e.message) || 'unknown error'); } catch (e2) { /* diagnostic */ } }
       debugPanel(['STEP: Refund Application Documents  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Refund documents: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.logClientSync(cur.clientId, 'refund_docs_debug', 'failed', 'build=' + chrome.runtime.getManifest().version + ' | fetch failed: ' + ((e && e.message) || 'unknown error')); } catch (e2) { /* diagnostic only */ }
@@ -3379,11 +3386,32 @@
       return;
     }
 
-    let arnsWithDocs = 0, docsOk = 0, docsFail = 0, casesFailed = 0, casesWithFolderItems = 0;
+    // What is stored already (0.7.1): a document saved once is not downloaded
+    // again. In the notices bundle (the scheduled sync) a refund is opened
+    // only when this Chrome has not read it in full yet or its status changed
+    // since, plus every refund once a week; the Refunds page's own "fetch
+    // documents" still opens every refund.
+    let known = null;
+    try { known = await GSTKdb.knownDocs(cur.clientId); } catch (e) { known = null; }
+    const storedByArn = (known && known.refundDocs) || {};
+    const storedItems = (known && known.itemDocs) || {};
+    const inBundle = job.mode === 'notices_bundle';
+    const statusKey = 'gstk_refund_status_' + cur.clientId;
+    const fullKey = 'gstk_refund_full_' + cur.clientId;
+    const readStatus = ((await store.get(statusKey))[statusKey]) || {};
+    const lastFull = ((await store.get(fullKey))[fullKey]) || 0;
+    const everyRefund = !inBundle || !known || Date.now() - lastFull > FULL_FOLDER_PASS_MS;
+    const stopHeartbeat = startHeartbeat();
+    let arnsWithDocs = 0, docsOk = 0, docsFail = 0, casesFailed = 0, casesWithFolderItems = 0, casesSkipped = 0, docsSkipped = 0, casesNoArn = 0;
     for (const c of cases) {
       const arn = c.arn;
-      if (!c.caseId || !arn) { casesFailed++; continue; }
+      if (!c.caseId || !arn) { casesNoArn++; continue; }
+      const stored = Array.isArray(storedByArn[arn]) ? storedByArn[arn] : [];
+      const status = c.statusDesc || '';
+      if (!everyRefund && readStatus[arn] === status) { casesSkipped++; continue; }
       const arnDocs = [];
+      let caseComplete = true;  // every folder and item list read
+      let docsMissing = 0;       // documents that failed to download
       // One row per case/folder/items entry, mirroring exactly what the
       // Additional Notice Folder capture (handleNotices above) already
       // writes for LUT/DRC-03 case tasks — this is the ONLY thing feeding
@@ -3412,7 +3440,7 @@
               body: JSON.stringify({ caseFolderId: folder.caseFolderId }),
             }), 15000, 'case/folder/items');
             const items = ir.ok ? await ir.json() : [];
-            if (!Array.isArray(items)) continue;
+            if (!Array.isArray(items)) { caseComplete = false; continue; }
             const folderLabel = folder.caseFolderTypeName || REFUND_FOLDER_LABELS[folder.caseFolderTypeCd] || folder.caseFolderTypeCd || 'Documents';
             for (const item of items) {
               let parsed = null;
@@ -3420,17 +3448,30 @@
               const rawDocs = [];
               findDocDescriptors(parsed, new Set(), rawDocs);
               const docArn = (parsed && parsed.crn) || arn;
+              const itemRef = item.refId || (parsed && parsed.crn) || null;
+              const itemKey = (folder.caseFolderTypeCd || '_') + ':' + (itemRef || simpleHash(JSON.stringify(parsed || item.itemJson || '')));
+              const storedAttachments = storedItems[arn + '|' + itemKey] || [];
               const itemAttachments = [];
               for (const doc of rawDocs) {
                 if (seenDocIds.has(doc.id)) continue;
                 seenDocIds.add(doc.id);
+                const mark = '/' + doc.id + '.pdf';
+                const had = stored.find((a) => a && typeof a.url === 'string' && a.url.indexOf(mark) !== -1)
+                  || storedAttachments.find((a) => a && typeof a.url === 'string' && a.url.indexOf(mark) !== -1);
+                if (had) {
+                  const label = had.label || doc.docName || doc.docttl || (doc.id + '.pdf');
+                  arnDocs.push({ tab: folderLabel, label, url: had.url });
+                  itemAttachments.push({ label, url: had.url });
+                  docsSkipped++;
+                  continue;
+                }
                 try {
                   const eh = await withTimeout(fetchEncrypDocEh(doc.id, docArn), 15000, 'getEncrypDocIds');
-                  if (!eh) { docsFail++; continue; }
+                  if (!eh) { docsFail++; docsMissing++; continue; }
                   const pdfR = await withTimeout(fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(doc.id) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' }), 20000, 'downloadhb');
-                  if (!pdfR.ok) { docsFail++; continue; }
+                  if (!pdfR.ok) { docsFail++; docsMissing++; continue; }
                   const buf = await withTimeout(pdfR.arrayBuffer(), 15000, 'pdf arrayBuffer');
-                  if (!buf || buf.byteLength <= 200) { docsFail++; continue; } // guard against an HTML error page, not a real PDF
+                  if (!buf || buf.byteLength <= 200) { docsFail++; docsMissing++; continue; } // guard against an HTML error page, not a real PDF
                   const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
                   const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + doc.id + '.pdf';
                   const url = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
@@ -3438,13 +3479,12 @@
                   arnDocs.push({ tab: folderLabel, label, url });
                   itemAttachments.push({ label, url });
                   docsOk++;
-                } catch (e) { docsFail++; }
+                } catch (e) { docsFail++; docsMissing++; }
               }
-              const itemRef = item.refId || (parsed && parsed.crn) || null;
               folderItems.push({
                 client_id: cur.clientId,
                 case_id: arn,
-                portal_key: (folder.caseFolderTypeCd || '_') + ':' + (itemRef || simpleHash(JSON.stringify(parsed || item.itemJson || ''))),
+                portal_key: itemKey,
                 folder_section: folder.caseFolderTypeCd || null,
                 reference_number: itemRef,
                 attachments: itemAttachments,
@@ -3452,7 +3492,7 @@
                 pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
               });
             }
-          } catch (e) { /* best-effort per folder */ }
+          } catch (e) { caseComplete = false; /* best-effort per folder */ }
         }
       } catch (e) { casesFailed++; continue; }
 
@@ -3460,14 +3500,25 @@
         try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents: arnDocs }); arnsWithDocs++; } catch (e) { /* non-fatal */ }
       }
       if (folderItems.length) {
-        try { await GSTKdb.replaceCaseFolderItems(cur.clientId, arn, folderItems, pullTs); casesWithFolderItems++; } catch (e) { /* non-fatal */ }
+        // A folder that failed to read removes nothing (the same guard as the notices folders).
+        try { await GSTKdb.replaceCaseFolderItems(cur.clientId, arn, folderItems, pullTs, { complete: caseComplete }); casesWithFolderItems++; } catch (e) { /* non-fatal */ }
       }
+      // Read again next run unless every list and document came through.
+      if (caseComplete && !docsMissing) readStatus[arn] = status;
+    }
+    stopHeartbeat();
+    try {
+      await store.set({ [statusKey]: readStatus });
+      if (inBundle && everyRefund && !casesFailed) await store.set({ [fullKey]: Date.now() });
+    } catch (e) { /* the next run reads these refunds again */ }
+    if (inBundle && casesFailed && ledgerJob(job)) {
+      try { await GSTKdb.logStep(job.runId, cur.clientId, 'refund_docs', 'failed', 'partial', casesFailed + ' refund case folder(s) could not be read.'); } catch (e) { /* diagnostic */ }
     }
 
     debugPanel([
       'STEP: Refund Application Documents  (' + location.pathname + ')',
-      'cases read        : ' + cases.length + ' (' + casesFailed + ' folder-fetch failed)',
-      'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed',
+      'cases read        : ' + cases.length + ' (' + casesFailed + ' folder-fetch failed, ' + casesSkipped + ' unchanged and skipped' + (casesNoArn ? ', ' + casesNoArn + ' without an ARN' : '') + ')',
+      'documents captured: ' + docsOk + ' ok, ' + docsSkipped + ' already stored, ' + docsFail + ' failed',
       'applications w/docs: ' + arnsWithDocs,
       'cases w/folder items: ' + casesWithFolderItems + ' (feeds the Refund Notice Folder page)',
     ]);
@@ -3478,7 +3529,7 @@
     // stale-build run left literally no record anywhere that anything had
     // even attempted to run.
     try { await GSTKdb.logClientSync(cur.clientId, 'refund_docs_debug', 'success', 'build=' + chrome.runtime.getManifest().version + ' | cases: ' + cases.length + ' (' + casesFailed + ' folder-fetch failed) | docs: ' + docsOk + ' ok, ' + docsFail + ' failed | applications w/docs: ' + arnsWithDocs + ' | cases w/folder items: ' + casesWithFolderItems); } catch (e) { /* diagnostic only */ }
-    banner('Refund documents → ' + docsOk + ' captured across ' + arnsWithDocs + ' application(s).' + progress, '#16a34a');
+    banner('Refund documents → ' + docsOk + ' captured, ' + docsSkipped + ' already stored, across ' + arnsWithDocs + ' application(s).' + progress, '#16a34a');
     await sleep(1000);
     await chainOrStop(job, 'refund_docs', proceedToDrc03);
   }
@@ -3749,17 +3800,9 @@
 
     const p2 = (n) => String(n).padStart(2, '0');
     const fmt = (d) => p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
-    const iso = (d) => d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
-    // History back to GST inception once a week per client; the runs in
-    // between read only the last ~300 days (two portal windows) and replace
-    // that slice, so older challans are kept as they are.
-    const fullKey = 'gstk_challan_full_' + cur.clientId;
-    const lastFull = ((await store.get(fullKey))[fullKey]) || 0;
-    const fullPass = Date.now() - lastFull > 7 * 24 * 60 * 60 * 1000;
     const windows = [];
+    let winStart = new Date(2017, 6, 1); // 01 Jul 2017 — GST inception
     const today = new Date();
-    let winStart = fullPass ? new Date(2017, 6, 1) : new Date(today.getTime() - 299 * 24 * 60 * 60 * 1000);
-    const sliceFrom = iso(winStart);
     while (winStart <= today) {
       const winEnd = new Date(winStart.getTime() + 149 * 24 * 60 * 60 * 1000);
       windows.push([fmt(winStart), fmt(winEnd > today ? today : winEnd)]);
@@ -3770,7 +3813,7 @@
     let windowsFailed = 0;
     for (const [fm, to] of windows) {
       try {
-        const r = await withTimeout(fetch('https://payment.gst.gov.in/payment/auth/challan/getlist?fm_dt=' + fm + '&to_dt=' + to + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include' }), 30000, 'challan/getlist');
+        const r = await fetch('https://payment.gst.gov.in/payment/auth/challan/getlist?fm_dt=' + fm + '&to_dt=' + to + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include' });
         if (!r.ok) { windowsFailed++; continue; }
         const list = await r.json();
         if (!Array.isArray(list)) { windowsFailed++; continue; }
@@ -3790,14 +3833,10 @@
     }
 
     const rows = [...seen.values()];
-    try {
-      if (fullPass) await GSTKdb.replaceChallans(cur.clientId, rows);
-      else await GSTKdb.replaceChallansSince(cur.clientId, sliceFrom, rows);
-      if (fullPass && windowsFailed === 0) await store.set({ [fullKey]: Date.now() });
-    } catch (e) { /* non-fatal */ }
+    try { await GSTKdb.replaceChallans(cur.clientId, rows); } catch (e) { /* non-fatal */ }
     debugPanel([
       'STEP: Challan Summary  (' + location.pathname + ')',
-      'windows checked   : ' + windows.length + (fullPass ? ' (weekly full pass, 150-day steps back to 01/07/2017)' : ' (recent ~300 days; full pass weekly)'),
+      'windows checked   : ' + windows.length + ' (150-day steps back to 01/07/2017)',
       'windows failed    : ' + windowsFailed,
       'rows saved        : ' + rows.length,
     ]);

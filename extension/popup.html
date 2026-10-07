@@ -165,8 +165,9 @@
       <p class="hint" id="agentHint" hidden>The office agent logs these clients in on its own PC; their CAPTCHAs come to the CAPTCHA wall in GST Keeper (Notices → Autopilot) for anyone to type.</p>
       <p class="hint" id="takeoverHint" hidden>A scheduled client is running in this Chrome. Starting a sync here puts it back in the queue; it runs again after yours.</p>
       <p class="hint" id="hint">For each client: logs in to the GST portal (you type the CAPTCHA), reads
-        notices &amp; orders with their case folders and PDFs, then refund applications, then DRC-03
-        payments. Clients are taken most urgent first. Keep the portal tab open until it says done.</p>
+        notices &amp; orders with their case folders and PDFs, then refund applications and the documents
+        of new or changed refunds, DRC-03 payments, applications (appeals and others) and the registration
+        status. Clients are taken most urgent first. Keep the portal tab open until it says done.</p>
     </section>
 
     <div class="links">
@@ -174,17 +175,17 @@
     </div>
 
     <details class="other card" id="otherCard" hidden>
-      <summary>Other syncs</summary>
+      <summary>Other syncs (return period)</summary>
       <label class="f" for="legClient">Client</label>
       <select id="legClient"></select>
       <label class="f" for="period">Return period (MM/YYYY)</label>
       <input type="text" id="period" inputmode="numeric" placeholder="06/2026" />
-      <p class="hint">Ledger pull: logs in, then reads the credit ledger (opening balance and entries, for
-        GST Receivable Reco), the credit reversal &amp; re-claim, liability and cash ledgers for the period,
-        and goes on through notices, refunds, DRC-03, taxpayer profile and challans without a run-ledger
-        record. It does not write filing status.</p>
-      <div id="legMsg" role="status" aria-live="polite"></div>
-      <button type="button" id="legGo" class="secondary wide mt8">Start ledger pull</button>
+      <p class="hint">The return-period sync, as before: logs in (you type the CAPTCHA), reads the credit
+        ledger (opening balance and entries, for GST Receivable Reco), the credit reversal &amp; re-claim,
+        liability and cash ledgers for the period, and goes on through notices, refunds, DRC-03, taxpayer
+        profile and challans. It does not write filing status.</p>
+      <div id="legMsg" role="status" aria-live="polite" hidden></div>
+      <button type="button" id="legGo" class="secondary wide mt8">Start sync in this browser</button>
     </details>
   </main>
 

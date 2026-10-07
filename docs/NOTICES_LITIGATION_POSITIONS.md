@@ -346,6 +346,13 @@ centre and the Work queue page read it, so their counts agree.
   are open), Draft → Write the draft, Partner review → Review (draft in review) or
   File the reply (approved), Order → Decide on the order, Appeal → Follow the appeal.
   Filed / Hearing with nothing due are waiting on the officer and stay off the plan.
+- **Order shown (the firm's decision of 7 October 2026):** notices run from new to old.
+  Today's plan, the Work queue, All notices (every filter) and each client's notices
+  open newest first by date of issue (the latest captured first on the same day,
+  undated notices last). The score above is unchanged and one click away: "Most
+  urgent" on Today's plan (remembered per browser, and carried to the Work queue it
+  links to) and "Most urgent" in the Work queue's order picker; list headers still sort
+  by due date, demand, stage and the rest.
 
 ## 15. The notice workspace (Phase 2)
 

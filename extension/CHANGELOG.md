@@ -2,6 +2,49 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-08 — Notices only; every other pull as in 0.3.3 (v0.7.1)
+
+For a PC coming straight from **v0.3.3**: this release carries everything 0.4.0 to
+0.7.0 added for Notices & Litigation, and keeps every other pull (GSTR-2B / 2A,
+GSTR-1 upload and pulls, GSTR-3B push and pulls, GSTR-9, ledgers, challans, filing,
+Fetch Company, the popup's return-period sync) working as it did in 0.3.3. Needs no
+database update beyond the migrations already applied.
+
+- **Refund documents in the notices sync.** The notices bundle (the app's Sync now,
+  the popup's Sync notices and the scheduled syncs) now reads, after the refund list,
+  the documents of refunds that this Chrome has not read in full yet or whose status
+  changed since (a deficiency memo, a show cause notice, an order), and every refund
+  once a week. A document already saved is never downloaded again, here or from the
+  Refunds page's own "fetch documents".
+- **Fixed: the Refund Notice Folder was never filled.** The refund documents step used
+  a pull time it never declared, so each folder's items were dropped after the first
+  one's documents and no folder item reached `gst_case_folder_items`. A folder that
+  fails to read now removes nothing.
+- **The desktop "CAPTCHA waiting" notice is for notices syncs only.** 0.5.0 showed it
+  at every login; a 2B pull, a GSTR-1 upload or any other pull logs in as in 0.3.3.
+- **Challans as in 0.3.3**: the whole history back to July 2017 on every pull (0.5.0's
+  weekly full pass with a 300-day slice in between is gone; the notices sync never
+  reads challans).
+- **Popup, Other syncs:** the return-period sync offers "All clients with credentials"
+  again, as 0.3.3 did, under its old button name "Start sync in this browser".
+
+### What changed for the other pulls since 0.3.3, and why it stays
+
+- **The app bridge answers only the app** (0.4.0): `https://gst.vjdesai.com` and
+  `https://gst-keeper-pro.vercel.app`. In 0.3.3 any `*.vercel.app` page could start
+  portal logins, syncs or GSTR-1 / 3B pushes; a Vercel preview link no longer reaches
+  the extension.
+- **The portal password is fetched when the login form is filled** (0.4.0), not
+  stored with the job in Chrome's storage. The login itself is the same.
+- **Fixed: "Cannot access … before initialization"** (0.5.0): the credit reversal and
+  re-claim statement and the RCM liability statement failed on every run in 0.3.3
+  because they read a constant declared further down `content.js`. They work now; the
+  notices evidence reads the first of them.
+- **Fetch Company** also saves the registration status (Active / Cancelled /
+  Suspended) from the same profile response (0.6.0).
+- One job at a time still: every start goes through one queue (0.7.0), and a sync a
+  person starts always comes before a scheduled one.
+
 ## 2026-10-08 — Scheduled syncs in your own Chrome (v0.7.0)
 
 The firm's decision of 6 October 2026: no CAPTCHA wall. The firm's Chrome has a

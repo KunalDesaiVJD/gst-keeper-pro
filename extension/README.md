@@ -30,9 +30,9 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
 
 That's it — nothing to keep running, no account, no card.
 
-## Updating (minimum v0.4.0, recommended v0.7.0)
+## Updating (minimum v0.4.0, recommended v0.7.1)
 The app refuses to start a notices sync from an extension older than **v0.4.0**
-(`src/lib/extensionVersion.ts`) and nudges older copies to update to **v0.7.0**.
+(`src/lib/extensionVersion.ts`) and nudges older copies to update to **v0.7.1**.
 After pulling a new version of this folder, open `chrome://extensions` and click
 **Reload** on “GST Keeper Portal Sync” on **every PC** that syncs. v0.4.0 never marks
 saved notices missing after an empty or partly failed pull, checks that the portal
@@ -43,27 +43,33 @@ typed — see CHANGELOG.md. v0.6.0 also reads applications on the portal (appeal
 and others) and the registration status in every notices sync, keeps a GSTR-3A's
 return period so it closes itself once that return is filed, and is what the
 office agent drives (below). v0.7.0 runs the autopilot's scheduled syncs in your own
-Chrome (below).
+Chrome (below). v0.7.1 also reads the documents of new or changed refunds in the
+notices sync, and keeps every pull outside Notices & Litigation as v0.3.3 ran it
+(CHANGELOG.md lists the few security and crash fixes those pulls keep).
 
 ## Scheduled syncs in your Chrome (v0.7.0)
 GST Keeper's autopilot runs the agreed schedule — 05:30 every active client, 13:00 the
 clients that need it — in **your own Chrome**, the one that has your CAPTCHA extension.
 There is no CAPTCHA wall and nobody needs to be at the screen.
 
-1. Load this extension (v0.7.0 or later) in the Chrome that has your CAPTCHA extension
+1. Load this extension (v0.7.1 or later) in the Chrome that has your CAPTCHA extension
    (`chrome://extensions` → Developer mode → Load unpacked, or Reload).
 2. In its popup, tick **Run scheduled syncs in this Chrome** and give the PC a name
    (for example "Reception PC"); GST Keeper shows it under Notices → Autopilot.
-3. In GST Keeper, Notices → Autopilot → Settings, switch the autopilot on. Keep that PC
-   and Chrome on at 05:30 and 13:00; a slot that finds Chrome closed runs when it opens
-   within 3 hours.
+3. In GST Keeper, Notices → Autopilot → Settings, switch the autopilot on, and set "Who
+   the afternoon run takes" (13:00) to "Only clients that need it" or every client
+   ("None" turns the 13:00 run off). Keep that PC and Chrome on at 05:30 and 13:00; a
+   slot that finds Chrome closed runs when it opens within 3 hours.
 
 What it does: about once a minute the extension tells GST Keeper this Chrome is there
 and, when nothing else runs in it, takes the next client from the queue. Each client
 gets a window of its own: the extension logs out of the portal, fills the user ID and
 password, and **waits for your CAPTCHA extension to fill the CAPTCHA box**; it then logs
-in, reads notices & orders (with case folders and PDFs), refunds, DRC-03, applications
-and the profile, saves them, logs out and closes the window. If the box is not filled
+in, reads notices & orders (with case folders and PDFs), refunds (and the documents of
+new or changed ones), DRC-03, applications and the profile, saves them, logs out and
+closes the window. Evidence a notice's reply needs (GSTR-1, 3B, 2A, 2B, the credit
+reversal statement, GSTR-9 for its periods) is queued by GST Keeper and fetched the same
+way, one client at a time. If the box is not filled
 within the wait set in the app (120 seconds unless changed), that client is tried again
 later (after 5, 10, 20 … minutes, up to the tries set in the app) and the next one
 starts. This extension never reads, copies or solves the CAPTCHA, and passwords are

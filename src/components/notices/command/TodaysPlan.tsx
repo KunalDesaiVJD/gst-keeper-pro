@@ -1,9 +1,11 @@
 // "Today's plan — next best action" (target-dashboard.png; audit U-01-1/2,
-// U-12-2): open notices ranked by deadline × exposure × readiness, one button
-// per row that does the next step in place (assign, chase the client, log the
-// reply) or opens the notice where it is done. The same rows, in full, are the
-// Work queue page. Like every dashboard count, the plan holds only the notice
-// types shown on the dashboard, and its link opens the queue with dash=1.
+// U-12-2): open notices, newest first by issue date (the firm's choice of
+// 7 October 2026) or ranked by deadline × exposure × readiness ("Most urgent",
+// remembered per browser), one button per row that does the next step in place
+// (assign, chase the client, log the reply) or opens the notice where it is
+// done. The same rows, in full and in the same order, are the Work queue page.
+// Like every dashboard count, the plan holds only the notice types shown on the
+// dashboard, and its link opens the queue with dash=1.
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -15,7 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { WS_TABS_LIST, WS_TAB, WS_TAB_ACTIVE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import type { CommandCentre } from '@/lib/noticeCommandCentre';
-import { loadPlanTop } from '@/lib/noticeCommandCentre';
+import { loadPlanTop, type PlanOrder } from '@/lib/noticeCommandCentre';
 import type { NoticePlanRow } from '@/lib/noticeFacts';
 import { queueHref, type QueueTab } from '@/lib/noticeQueries';
 import { nextActionDef } from '@/lib/noticeStages';
@@ -37,6 +39,16 @@ const TABS: { key: QueueTab; label: string }[] = [
 ];
 
 const KIND_WORD: Record<string, string> = { reply: 'reply', hearing: 'hearing', appeal: 'appeal clock', attachment: 'attachment' };
+
+const ORDERS: { key: PlanOrder; label: string }[] = [
+  { key: 'newest', label: 'Newest first' },
+  { key: 'urgent', label: 'Most urgent' },
+];
+// The order is a per-browser convenience; without storage it is newest first.
+const ORDER_KEY = 'gstk.notices.planOrder';
+function readPlanOrder(): PlanOrder {
+  try { return localStorage.getItem(ORDER_KEY) === 'urgent' ? 'urgent' : 'newest'; } catch { return 'newest'; }
+}
 
 /** What the row's readiness bar says. */
 export function readinessText(r: NoticePlanRow): string {
@@ -201,10 +213,15 @@ export const TodaysPlan: React.FC<{ cc: CommandCentre | undefined }> = ({ cc }) 
   const qc = useQueryClient();
   const counts = cc?.plan_counts;
   const [tab, setTab] = useState<QueueTab>('team');
+  const [order, setOrderState] = useState<PlanOrder>(readPlanOrder);
+  const setOrder = (o: PlanOrder) => {
+    setOrderState(o);
+    try { localStorage.setItem(ORDER_KEY, o); } catch { /* remembered for this visit only */ }
+  };
   const userId = user?.id ?? null;
   const plan = useQuery({
-    queryKey: ['notice-plan-top', tab, userId],
-    queryFn: () => loadPlanTop(tab, userId, 8),
+    queryKey: ['notice-plan-top', tab, userId, order],
+    queryFn: () => loadPlanTop(tab, userId, 8, order),
     staleTime: 60_000,
   });
   const refresh = () => {
@@ -217,15 +234,25 @@ export const TodaysPlan: React.FC<{ cc: CommandCentre | undefined }> = ({ cc }) 
   return (
     <SectionCard
       title="Today's plan — next best action"
-      description="Ranked by statutory deadline × exposure × readiness. One click does the next step; the row leaves the list when it is done.">
-      <div role="tablist" aria-label="Whose work" className={WS_TABS_LIST}>
-        {TABS.map((t) => (
-          <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
-            className={cn(WS_TAB, 'h-7 px-2.5 text-xs', tab === t.key && WS_TAB_ACTIVE)}>
-            {t.label}
-            {counts && <span className="rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold tabular-nums">{counts[t.key].toLocaleString('en-IN')}</span>}
-          </button>
-        ))}
+      description={`${order === 'urgent' ? 'Ranked by statutory deadline × exposure × readiness.' : 'Newest notices first, by date of issue.'} One click does the next step; the row leaves the list when it is done.`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div role="tablist" aria-label="Whose work" className={WS_TABS_LIST}>
+          {TABS.map((t) => (
+            <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
+              className={cn(WS_TAB, 'h-7 px-2.5 text-xs', tab === t.key && WS_TAB_ACTIVE)}>
+              {t.label}
+              {counts && <span className="rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold tabular-nums">{counts[t.key].toLocaleString('en-IN')}</span>}
+            </button>
+          ))}
+        </div>
+        <div role="group" aria-label="Order" className={WS_TABS_LIST}>
+          {ORDERS.map((o) => (
+            <button key={o.key} type="button" aria-pressed={order === o.key} onClick={() => setOrder(o.key)}
+              className={cn(WS_TAB, 'h-7 px-2.5 text-xs', order === o.key && WS_TAB_ACTIVE)}>
+              {o.label}
+            </button>
+          ))}
+        </div>
       </div>
       {plan.isLoading ? (
         <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
@@ -242,7 +269,7 @@ export const TodaysPlan: React.FC<{ cc: CommandCentre | undefined }> = ({ cc }) 
         <span>Showing {rows.length} of {total.toLocaleString('en-IN')}
           {cc && cc.health.auto_closed_today > 0 && <> · {cc.health.auto_closed_today} closed automatically today — <Link to="/notices-all?filter=auto_closed" className="text-primary hover:underline">see why</Link></>}
         </span>
-        <Link to={queueHref(tab, { dash: '1' })} className="font-medium text-primary hover:underline">Open the work queue ({total.toLocaleString('en-IN')}) →</Link>
+        <Link to={queueHref(tab, order === 'urgent' ? { dash: '1', sort: 'score' } : { dash: '1' })} className="font-medium text-primary hover:underline">Open the work queue ({total.toLocaleString('en-IN')}) →</Link>
       </div>
     </SectionCard>
   );

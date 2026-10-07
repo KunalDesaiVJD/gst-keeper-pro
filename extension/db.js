@@ -64,7 +64,6 @@
     // 0.6.0: applications on the portal; kept notice detail (GSTR-3A period).
     ingestApplications: (clientId, runId, rows, caseTypes, complete) => call('ingestApplications', clientId, runId, rows, caseTypes, complete),
     noticeDetails: (clientId, rows) => call('noticeDetails', clientId, rows),
-    replaceChallansSince: (clientId, fromIso, rows) => call('replaceChallansSince', clientId, fromIso, rows),
     notifyCaptcha: (clientName, progress) => call('notifyCaptcha', clientName, progress),
     clearCaptchaNotice: () => call('clearCaptchaNotice'),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },
