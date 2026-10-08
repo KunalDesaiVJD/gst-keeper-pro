@@ -86,6 +86,7 @@
     wrong_password: 'Wrong user ID or password',
     password_expired: 'The portal password has expired',
     account_locked: 'The portal account is locked',
+    password_change_required: 'The portal asks for a new password',
   };
   // "My Applications" types the notices bundle reads (handleApplications, 0.6.0).
   const APPLICATION_TYPES = {
@@ -228,6 +229,9 @@
   }
   function isLoggedIn() {
     if (/services\/login/.test(url)) return false;
+    // 0.8.2: the portal's own "set a new password" page sits under /auth/ but
+    // is not a usable session: nothing can be synced until the password changes.
+    if (passwordChangePage()) return false;
     if ($$('a,button').some((a) => /logout/i.test(a.textContent || ''))) return true;
     return /\/auth\//.test(url);
   }
@@ -337,6 +341,22 @@
     await setJob(job);
     banner('Session expired — signing in again…', '#f59e0b');
     location.href = 'https://services.gst.gov.in/services/login';
+    return;
+  }
+
+  // 0.8.2: the portal sent this client to its change or reset password page
+  // (an expired password, a first login after a reset, a forced change). Before
+  // 0.8.2 that page counted as logged in, the sync steps kept opening pages the
+  // portal sent back to it, and the run never moved on. Now the client is
+  // recorded as having a password issue and the run goes to the next client.
+  if (job.step !== 'logout' && passwordChangePage()) {
+    const heading = oneLine((($('h1,h2,h3,h4') || {}).textContent) || '').slice(0, 160);
+    let pass = cur.creds && cur.creds.pass || null;
+    if (!pass) { try { pass = await GSTKdb.getPortalPassword(cur.clientId); } catch (e) { pass = null; } }
+    await refuseClient(job, cur, progress, pass, {
+      kind: 'refused', reason: 'password_change_required',
+      message: 'The portal asks for a new password' + (heading ? ' ("' + heading + '")' : '') + ' at ' + location.pathname,
+    });
     return;
   }
 
@@ -466,6 +486,19 @@
   function shown(el) { return !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'; }
   function oneLine(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
 
+  // The portal's change, reset or first-time password page: by its address, or
+  // by what it shows (two or more password boxes and words about a new password).
+  // The login form itself has one password box, so it never reads as one.
+  function passwordChangePage() {
+    const href = String(location.href || '');
+    if (/services\/login/.test(href)) return false;
+    if (/(change|reset|new|force|expir|update|first)[-_]?(user)?[-_]?pass(word)?|pwd(change|reset)|forgotpassword/i.test(href)) return true;
+    const boxes = $$('input[type=password]').filter((el) => shown(el));
+    if (boxes.length < 2) return false;
+    const text = oneLine((document.body && document.body.innerText) || '').slice(0, 4000);
+    return /(new|change|reset|confirm|re-?enter)\s+(your\s+)?password|password\s+(has\s+)?expired/i.test(text);
+  }
+
   // What the login form says now: the portal's message elements that are on
   // screen, and any line of the form that reads as a refusal.
   function loginMessages() {
@@ -506,6 +539,9 @@
     const words = REFUSAL_WORDS[verdict.reason] || 'The portal refused the saved password';
     try { await GSTKdb.pwRefusalMark(cur.clientId, cur.creds.user, pass, { reason: verdict.reason, message: verdict.message, name: cur.creds.name }); }
     catch (e) { /* the sync log below still says it */ }
+    // 0.8.2: and in GST Keeper itself (Notices · Settings, "Portal password
+    // issues"), so the team sees it and every sync, in any Chrome, skips it.
+    try { await GSTKdb.loginIssueSet(cur.clientId, verdict.reason, verdict.message); } catch (e) { /* older database */ }
     noteRefused(job, cur, false);
     banner(cur.creds.name + ': ' + words.toLowerCase() + ' — logged; moving to the next client.' + progress, '#dc2626');
     await logLoginFailure(job, cur, words + ' (the portal said: "' + verdict.message.slice(0, 200) + '"). '
@@ -639,6 +675,7 @@
       try { sessionStorage.removeItem('gstk_login_pressed'); } catch (e) { /* none noted */ }
       // 0.8.1: the portal took this password: any earlier refusal is over.
       try { await GSTKdb.pwRefusalClear(cur.clientId); } catch (e) { /* only a later skip would notice */ }
+      try { await GSTKdb.loginIssueSet(cur.clientId, null, null); } catch (e) { /* older database */ }
       try { await GSTKdb.clearCaptchaNotice(); } catch (e) { /* optional */ }
       if (job.mode === 'returnpdf') {
         banner('Logged in — fetching the return + PDF…' + progress);

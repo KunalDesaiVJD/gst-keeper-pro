@@ -74,7 +74,7 @@ export class RunnerPortal {
       return json({ ok: false, error: 'Invalid Username or Password. Please try again.', reload: this.freshPage.has(b.user ?? '') });
     }
     this.fake.log.push(`auth ${b.user} ok`);
-    return json({ ok: true, session: b.user });
+    return json({ ok: true, session: b.user, redirect: this.fake.forceChange.has(b.user ?? '') ? '/services/auth/changepassword' : undefined });
   }
 }
 

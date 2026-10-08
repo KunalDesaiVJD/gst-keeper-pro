@@ -171,8 +171,16 @@ async function pwFingerprint(user, pass) {
 }
 
 const API = {
-  getClients: () => sel('clients?select=id,name,gstin,gst_user_id,selected_returns,notices_sync_excluded,inactive_at_hand&order=name'),
-  getClient: (id) => sel(`clients?id=eq.${id}&select=id,name,gstin,gst_user_id,selected_returns&limit=1`).then((a) => a[0] || null),
+  // 0.8.2: portal_login_issue too (a client the portal refused is skipped); a
+  // database without that column is read as before.
+  getClients: () => sel('clients?select=id,name,gstin,gst_user_id,selected_returns,notices_sync_excluded,inactive_at_hand,portal_login_issue&order=name')
+    .catch(() => sel('clients?select=id,name,gstin,gst_user_id,selected_returns,notices_sync_excluded,inactive_at_hand&order=name')),
+  getClient: (id) => sel(`clients?id=eq.${id}&select=id,name,gstin,gst_user_id,selected_returns,portal_login_issue,portal_login_issue_message,portal_login_issue_at&limit=1`)
+    .catch(() => sel(`clients?id=eq.${id}&select=id,name,gstin,gst_user_id,selected_returns&limit=1`)).then((a) => a[0] || null),
+  loginIssueSet: async (clientId, reason, message) => {
+    try { return await rpc('client_login_issue_set', { p_client_id: clientId, p_reason: reason || null, p_message: message ? String(message).slice(0, 500) : null }); }
+    catch (e) { return null; } // a database without migration 20261010100000
+  },
   upsertFilingStatus: (rows) => post('filing_status?on_conflict=client_id,return_type,period_month', rows, 'resolution=merge-duplicates,return=minimal'),
   upsertReco: async (table, clientId, period, patchObj) => {
     const ex = await sel(`${table}?client_id=eq.${clientId}&period_month=eq.${enc(period)}&select=id&limit=1`);
@@ -798,7 +806,15 @@ const API = {
       // a hand-picked selection still syncs them.
       withCreds = withCreds.filter((c) => !c.inactive_at_hand);
     }
-    if (!withCreds.length) throw new Error(scoped ? 'None of the selected clients have saved GST portal credentials.' : 'No clients have saved GST portal credentials.');
+    // 0.8.2: a client whose portal login was refused (Notices · Settings,
+    // "Portal password issues") is skipped until its password is fixed.
+    const passwordIssues = withCreds.filter((c) => c.portal_login_issue);
+    withCreds = withCreds.filter((c) => !c.portal_login_issue);
+    if (!withCreds.length) {
+      throw new Error(passwordIssues.length
+        ? 'Every selected client has a portal password issue; fix them in Notices · Settings first.'
+        : scoped ? 'None of the selected clients have saved GST portal credentials.' : 'No clients have saved GST portal credentials.');
+    }
     const isNotices = info.mode === 'notices' || info.mode === 'notices_bundle';
     // Notices runs go most urgent first: open notices due within 7 days (or
     // overdue), then never synced, then the stalest. Anything the queue does
@@ -830,7 +846,7 @@ const API = {
     job.lastActivityAt = Date.now();
     await setActiveJob(job);
     armWatchdog();
-    return { started: true, count: withCreds.length, mode: info.mode };
+    return { started: true, count: withCreds.length, mode: info.mode, skippedPasswordIssues: passwordIssues.length };
   },
 
   // From the Clients → Credentials "Login" button: just log the client into the

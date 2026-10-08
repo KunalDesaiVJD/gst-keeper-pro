@@ -59,7 +59,7 @@ document.getElementById('login').addEventListener('click', async () => {
     body: JSON.stringify({ user: document.getElementById('username').value, pass: document.getElementById('user_pass').value,
                            captcha: document.getElementById('captcha').value }) });
   const j = await r.json();
-  if (j.ok) { document.cookie = 'fsess=' + j.session + '; path=/; domain=.gst.gov.in'; location.href = '/services/auth/dashboard'; return; }
+  if (j.ok) { document.cookie = 'fsess=' + j.session + '; path=/; domain=.gst.gov.in'; location.href = j.redirect || '/services/auth/dashboard'; return; }
   // Some portals answer with a fresh login page carrying the message (RunnerPortal.freshPage).
   if (j.reload) { location.href = '/services/login?e=' + encodeURIComponent(j.error); return; }
   document.getElementById('err').textContent = j.error;
@@ -68,10 +68,20 @@ document.getElementById('login').addEventListener('click', async () => {
 });
 </script></body></html>`;
 
+// The portal's forced password change (an expired password, a first login after a reset).
+export const CHANGE_PASSWORD_HTML = `<!doctype html><html><head><title>GST Portal (test)</title></head><body>
+<h2>Change Password</h2><p>Your password has expired. Please set a new password to continue.</p>
+<label>Current Password <input type="password" id="oldp"></label>
+<label>New Password <input type="password" id="newp"></label>
+<label>Confirm Password <input type="password" id="conp"></label>
+<button type="button">Submit</button></body></html>`;
+
 const shell = (title: string) => `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1><a href="/services/logout">Logout</a></body></html>`;
 
 export class FakePortal {
   accounts: Record<string, FakeAccount> = {};
+  /** Users the portal sends to its change-password page after a correct login. */
+  forceChange = new Set<string>();
   expected = '';                // the answer to the CAPTCHA shown last
   captchasServed = 0;
   requests = 0;                 // every portal request the browser made
@@ -107,7 +117,7 @@ export class FakePortal {
       if (String(b.captcha) !== this.expected) return json({ ok: false, error: 'Enter valid Letters shown.' });
       const acc = this.accounts[b.user];
       if (!acc || acc.password !== b.pass) return json({ ok: false, error: 'Invalid Username or Password. Please try again.' });
-      return json({ ok: true, session: b.user });
+      return json({ ok: true, session: b.user, redirect: this.forceChange.has(b.user) ? '/services/auth/changepassword' : undefined });
     }
     if (p === '/services/logout') {
       return html('<!doctype html><html><body>Logged out<script>document.cookie = "fsess=; path=/; domain=.gst.gov.in; expires=Thu, 01 Jan 1970 00:00:00 GMT";</script></body></html>');
@@ -121,6 +131,8 @@ export class FakePortal {
     }
     const acc = this.accounts[user];
 
+    // Until the password is changed, every page of the session is the change page.
+    if (isPage && this.forceChange.has(user)) return html(CHANGE_PASSWORD_HTML);
     if (isPage) return html(shell(p));
     const body = req.postData() ? JSON.parse(req.postData() || '{}') : {};
     if (p === '/services/auth/profile/detail') return json({ gstin: acc.gstin, lgnm: user.toUpperCase() + ' TRADERS', sts: 'Active', rgdt: '01/07/2017' });

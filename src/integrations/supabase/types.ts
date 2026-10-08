@@ -4532,6 +4532,10 @@ export type Database = {
           mobile: string | null
           name: string
           notices_sync_excluded: boolean
+          notices_handled: boolean
+          portal_login_issue: string | null
+          portal_login_issue_at: string | null
+          portal_login_issue_message: string | null
           registration_cancellation_date: string | null
           registration_date: string
           registration_type: Database["public"]["Enums"]["registration_type"]
@@ -4566,6 +4570,10 @@ export type Database = {
           mobile?: string | null
           name: string
           notices_sync_excluded?: boolean
+          notices_handled?: boolean
+          portal_login_issue?: string | null
+          portal_login_issue_at?: string | null
+          portal_login_issue_message?: string | null
           registration_cancellation_date?: string | null
           registration_date: string
           registration_type?: Database["public"]["Enums"]["registration_type"]
@@ -4600,6 +4608,10 @@ export type Database = {
           mobile?: string | null
           name?: string
           notices_sync_excluded?: boolean
+          notices_handled?: boolean
+          portal_login_issue?: string | null
+          portal_login_issue_at?: string | null
+          portal_login_issue_message?: string | null
           registration_cancellation_date?: string | null
           registration_date?: string
           registration_type?: Database["public"]["Enums"]["registration_type"]
@@ -10196,6 +10208,30 @@ export type Database = {
       }
     }
     Functions: {
+      notices_client_settings: {
+        Args: never
+        Returns: {
+          id: string
+          name: string
+          gstin: string
+          gst_user_id: string | null
+          notices_handled: boolean
+          notices_sync_excluded: boolean
+          inactive_at_hand: boolean
+          open_notices: number
+          portal_login_issue: string | null
+          portal_login_issue_message: string | null
+          portal_login_issue_at: string | null
+        }[]
+      }
+      notices_clients_handled_set: {
+        Args: { p_client_ids: string[]; p_handled: boolean }
+        Returns: number
+      }
+      client_login_issue_set: {
+        Args: { p_client_id: string; p_reason: string | null; p_message?: string | null }
+        Returns: boolean
+      }
       ai_sync: {
         Args: Record<PropertyKey, never>
         Returns: Json

@@ -29,7 +29,7 @@ SELECT t_eq((SELECT count(*) FROM matter_deadlines WHERE notice_id = 'f1000000-0
 SELECT notices_sweep('15151515-0000-0000-0000-000000000001');
 SELECT t_eq((SELECT string_agg(portal_key || '=' || close_reason, ' ' ORDER BY portal_key) FROM gst_notices
               WHERE client_id = '15151515-0000-0000-0000-000000000001' AND close_reason LIKE 'auto:%'),
-  'w2=auto:proceedings_dropped w3=auto:accepted w4=auto:lut_approval w5=auto:informational_order w6=auto:informational_order',
+  'w13=auto:registration_concluded w2=auto:proceedings_dropped w3=auto:accepted w4=auto:lut_approval w5=auto:informational_order w6=auto:informational_order',
   'acknowledgements and favourable orders closed by rule');
 SELECT t_eq((SELECT staff_status FROM gst_notices WHERE portal_key = 'w11'), 'Reviewed', 'a triaged notice is never auto-closed');
 SELECT t_eq((SELECT count(*) FROM notice_events WHERE notice_id = 'f1000000-0000-0000-0000-000000000005' AND event_type = 'closed' AND actor_name = 'Closing sweep'), 1::bigint,

@@ -477,5 +477,44 @@ minimalist view." (migration `20261009110000_master_filters.sql`,
   a list opened from a count opens full width under the row it belongs to, and
   nothing is open by default.
 
+## 20. Notices the portal has moved past; clients not handled; password issues (asked by the firm, 8 October 2026)
+
+"So many notices showing on our dashboard which in fact is not the case …
+everything has been synced but our system has not decided intelligently what to
+close", "a settings section in notice section only where I should be able to
+select for which client we are handling the litigation", and clients with password
+problems "logged in our portal … so that the team can act". (Migration
+`20261010100000_notices_cleanup_settings.sql`, page Notices · Settings.)
+
+**Closing sweep, part 4** (`notices_sweep_superseded`, run by every sweep). Only
+untriaged notices, reviewable and reopenable like every automatic close:
+
+| Rule | Forms | `close_reason` |
+|---|---|---|
+| A later notice of the same case exists | ASMT-10, ASMT-02, DRC-01, DRC-01A/B/C, RFD-03, RFD-08, ADT-01/02, hearing notice, summons | `auto:superseded_in_case` |
+| The case holds a reply and an order | the same | `auto:replied_and_decided` |
+| A later registration notice of the client, or over 120 days old | REG-03, REG-17 / REG-SCN, REG-05, rejected cancellation request | `auto:registration_concluded` |
+| The registration is active again, or a REG-22 revoked the cancellation | REG-19 | `auto:registration_restored` |
+
+**Position:** orders (DRC-07, RFD-06, rectification orders, a cancellation that
+stands) are never closed by these rules: their appeal clock is the task. 120 days
+covers every registration reply window (7 to 30 days) and the appeal window (three
+months plus one month of condonation). On the live data (8 October 2026) the first
+run closed 247 notices and left 73 open, from 320: 153 registration notices, 113
+case notices that had moved on (38 DRC-01, 16 DRC-01A, 14 hearing notices, 11
+ASMT-10, 9 RFD-08 …).
+
+**Clients not handled** (`clients.notices_handled`, Settings). Off: the client's
+notices leave `notice_facts`, so every task, list, count, plan, report and alert;
+events about them raise no e-mail; the notices sync skips the client
+(`notices_sync_excluded` follows the switch). Back on, everything returns: nothing
+is deleted. Changing it needs the permission to add and edit clients.
+
+**Password issues** (`clients.portal_login_issue`). Set by extension 0.8.2 when the
+portal refuses the saved login (wrong user ID or password, locked account, expired
+password, a required change); listed in Settings with the portal's words; skipped by
+every person's and scheduled sync; cleared by a new user ID or password in Edit
+Client, by "Fixed", or by a login that works.
+
 Portal Autopilot positions (CAPTCHA posture, office-only agent, sessions, the
 inbox, acceptance measures) are in `docs/PORTAL_AUTOPILOT_POSITIONS.md`.
