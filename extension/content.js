@@ -463,9 +463,13 @@
   // List's Status/Status Message columns exactly like every other
   // client_sync_log row — surfaces as a real, distinguishable failure
   // instead of looking identical to "never synced".
-  async function logLoginFailure(job, cur, message) {
+  // 0.8.3: `reason` says why. Only a refused password is 'login_failed'; a
+  // CAPTCHA the portal kept rejecting is 'captcha_failed' and an unexpected
+  // page 'portal_error', so neither reads as a password issue anywhere.
+  async function logLoginFailure(job, cur, message, reason) {
+    const why = reason || 'login_failed';
     try { await GSTKdb.logClientSync(cur.clientId, 'login_failed', 'failed', message || null); } catch (e) { /* diagnostic only */ }
-    if (ledgerJob(job)) { try { await GSTKdb.logStep(job.runId, cur.clientId, 'login', 'failed', 'login_failed', message || null); } catch (e) { /* diagnostic only */ } }
+    if (ledgerJob(job)) { try { await GSTKdb.logStep(job.runId, cur.clientId, 'login', 'failed', why, message || null); } catch (e) { /* diagnostic only */ } }
   }
 
   // ── 0.8.1: a refused password ends the client, once ──────────────────────
@@ -584,7 +588,7 @@
       const heading = (($('h1,h2,h3') || {}).textContent || '').trim().slice(0, 160);
       const reason = 'Landed on an unrecognized page after login (' + location.pathname + (heading ? ': "' + heading + '"' : '') + ') — not the login form, but no logged-in signal either.';
       banner('Could not log in ' + cur.creds.name + ' — unexpected page after login. Moving on.' + progress, '#dc2626');
-      await logLoginFailure(job, cur, reason);
+      await logLoginFailure(job, cur, reason, 'portal_error');
       await advance(job);
       return;
     }
@@ -611,8 +615,13 @@
       location.reload();
       return;
     }
-    banner('Could not log in ' + cur.creds.name + ' after 3 attempts — moving on.' + progress, '#dc2626');
-    await logLoginFailure(job, cur, verdict.message || 'Login did not succeed after 3 automatic retries.');
+    // 0.8.3: three CAPTCHAs the portal would not take (or no answer at all) say
+    // nothing about the password: logged as a CAPTCHA failure, never marked as
+    // a password issue, and the client is tried again on the next sync.
+    banner('Could not log in ' + cur.creds.name + ': the portal did not accept the CAPTCHA 3 times — moving on.' + progress, '#dc2626');
+    await logLoginFailure(job, cur, 'CAPTCHA not accepted 3 times'
+      + (verdict.message ? ' (the portal said: "' + verdict.message.slice(0, 200) + '")' : ' (the portal gave no answer)')
+      + '. The password was not refused; tried again on the next sync.', 'captcha_failed');
     await advance(job);
   }
 

@@ -2,6 +2,20 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-08 — A CAPTCHA failure is not a password issue (v0.8.3)
+
+Pairs with migration `20261010120000_login_captcha_reason.sql` (which also files an
+older extension's CAPTCHA failures correctly).
+
+- **Fixed: three rejected CAPTCHAs read as a password failure.** When the portal
+  did not accept the CAPTCHA three times ("Enter valid Letters shown."), or gave no
+  answer, the client was logged with reason `login_failed`, the class a refused
+  password uses, and showed as "Login failed — password changed?". It is now
+  logged as `captcha_failed` with the portal's words ("CAPTCHA not accepted 3
+  times … The password was not refused"), never recorded as a password issue, and
+  a scheduled run retries it instead of failing the client.
+- An unexpected page after Login is logged as `portal_error`, not `login_failed`.
+
 ## 2026-10-08 — Password issues are recorded in GST Keeper; every sync skips them (v0.8.2)
 
 Needs migration `20261010100000_notices_cleanup_settings.sql` for the shared record;

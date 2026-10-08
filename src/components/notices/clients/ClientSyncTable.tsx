@@ -91,7 +91,7 @@ export const StatusCell: React.FC<{ h: ClientHealth; run?: FailureRun; started: 
     <div className="min-w-0 space-y-0.5">
       <div className="flex flex-wrap items-center gap-1">
         {h.state === 'failed' && <Badge variant="destructive" className="text-[11px]">{reasonDef(h.failReason).label}</Badge>}
-        {h.state === 'never' && <Badge variant="warning" className="text-[11px]">Never synced</Badge>}
+        {h.state === 'never' && <Badge variant="warning" className="text-[11px]">{h.passwordReset ? 'Password changed · not synced yet' : 'Never synced'}</Badge>}
         {h.state === 'stale' && <Badge variant="warning" className="text-[11px]">Not synced in 24 h</Badge>}
         {h.state === 'fresh' && <Badge variant="success" className="text-[11px]">Synced</Badge>}
         {h.state === 'off' && h.off && <Badge variant="secondary" className="text-[11px]">{OFF_LABEL[h.off]}</Badge>}

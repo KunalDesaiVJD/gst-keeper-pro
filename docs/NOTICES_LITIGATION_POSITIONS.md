@@ -510,6 +510,16 @@ events about them raise no e-mail; the notices sync skips the client
 (`notices_sync_excluded` follows the switch). Back on, everything returns: nothing
 is deleted. Changing it needs the permission to add and edit clients.
 
+**A changed password re-queues the client** (migration `20261010110000`, asked the
+same day). `clients.gst_password_changed_at` is stamped whenever the portal
+password or user ID changes, wherever it is changed (Clients > Credentials, Edit
+Client). A login or notices failure recorded before that moment no longer counts
+as failing, in the command centre and the Clients list alike: the client shows as
+"Password changed · not synced yet" until its next sync, which logs in with the new
+password. A failure after the change counts again. One time, on 8 October, the
+clients whose record had been edited after their last login failure were given
+that edit as their change time (3 of 15 then failing).
+
 **Password issues** (`clients.portal_login_issue`). Set by extension 0.8.2 when the
 portal refuses the saved login (wrong user ID or password, locked account, expired
 password, a required change); listed in Settings with the portal's words; skipped by
@@ -518,3 +528,13 @@ Client, by "Fixed", or by a login that works.
 
 Portal Autopilot positions (CAPTCHA posture, office-only agent, sessions, the
 inbox, acceptance measures) are in `docs/PORTAL_AUTOPILOT_POSITIONS.md`.
+
+**A CAPTCHA failure is not a password issue** (asked by the firm, 8 October 2026;
+extension 0.8.3, migration `20261010120000`). Three CAPTCHAs the portal would not
+take, or no answer at all, are filed as `captcha_failed` ("CAPTCHA not accepted"),
+retried by the next sync and never recorded in `clients.portal_login_issue`. Only a
+portal refusal (wrong user ID or password, locked, expired, change required) is
+`login_failed`. A trigger on `sync_run_items` files an older extension's CAPTCHA
+failures the same way (`login_failure_is_captcha`: a message about the CAPTCHA that
+names neither the user ID nor the password); an unexpected page after Login is
+`portal_error`.

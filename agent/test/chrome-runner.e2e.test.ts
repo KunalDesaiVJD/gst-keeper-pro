@@ -37,7 +37,7 @@ interface Status {
   failures: { reason: string; clients: { client_id: string }[] }[];
 }
 
-const CLIENTS = ['asha', 'bina', 'chetan', 'dina', 'eshan', 'farah', 'gopal', 'hema', 'isha', 'jaya', 'kiran', 'lata', 'mohan', 'nikhil', 'omkar', 'priya'].map((user, i) => ({
+const CLIENTS = ['asha', 'bina', 'chetan', 'dina', 'eshan', 'farah', 'gopal', 'hema', 'isha', 'jaya', 'kiran', 'lata', 'mohan', 'nikhil', 'omkar', 'priya', 'qasim'].map((user, i) => ({
   user, name: `${user[0].toUpperCase()}${user.slice(1)} Runner Test`, gstin: `24RUNR${String(i).padStart(4, '0')}X1Z${i}`, pass: `${user}-pass`,
 }));
 
@@ -514,4 +514,29 @@ test("j: the portal's change-password page ends the client, records the issue in
   await rest('PATCH', `clients?id=eq.${ids.omkar}`, { gst_password: 'omkar-pass-2' });
   assert.equal((await loginIssue('omkar')).portal_login_issue, null);
   await page.close().catch(() => {});
+});
+
+test('k: a CAPTCHA the portal keeps rejecting is a CAPTCHA failure, retried, never a password issue', { skip }, async () => {
+  const r = A!;
+  filler.allow = () => true;
+  filler.wrong.add('qasim');
+  await settings({ enabled: true });
+  await r.api('runnerSet', { enabled: true, label: 'Test PC A' });
+  await enqueue('qasim', 95);
+  await r.tick();
+  // Retried, not failed: the queue takes the job back with the CAPTCHA as the reason.
+  const done = await waitFor('Qasim to go back to the queue', async () => {
+    const j = await latestJob('qasim');
+    return j.reason_class === 'captcha_failed' && j;
+  }, 180_000);
+  assert.notEqual(done.status, 'failed', JSON.stringify(done));
+  await rest('PATCH', `portal_jobs?id=eq.${done.id}`, { status: 'cancelled' });
+  assert.match(await lastLoginFailure('qasim'), /^CAPTCHA not accepted 3 times/);
+  const ledger = await rest<{ step: string; status: string; reason_class: string }[]>('GET',
+    `sync_run_items?client_id=eq.${ids.qasim}&select=step,status,reason_class`);
+  assert.ok(ledger.some((i) => i.step === 'login' && i.reason_class === 'captcha_failed'), JSON.stringify(ledger));
+  assert.ok(!ledger.some((i) => i.reason_class === 'login_failed'), 'not filed as a password failure');
+  assert.equal((await loginIssue('qasim')).portal_login_issue, null, 'no password issue recorded');
+  await waitFor('the runner window to close', async () => (await r.state()).job === null && r.portalPages().length === 0);
+  filler.wrong.delete('qasim');
 });

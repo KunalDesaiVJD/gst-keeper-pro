@@ -23,6 +23,8 @@ export interface ClientBase {
   inactive_at_hand: boolean | null;
   notices_sync_excluded: boolean | null;
   assigned_accountant: string | null;
+  /** When the portal password or user ID last changed (20261010110000); absent on an older database. */
+  gst_password_changed_at?: string | null;
 }
 
 export type OffReason = 'excluded' | 'inactive' | 'no_user_id';
@@ -42,6 +44,8 @@ export interface ClientHealth {
   lastAttemptAt: string | null;
   fresh: boolean;
   never: boolean;
+  /** The password was changed after every attempt so far: earlier failures no longer count; waiting for its next sync. */
+  passwordReset: boolean;
   /** The reason class the command centre counts this client under, else null. */
   failReason: string | null;
   failStep: 'login' | 'notices' | null;
@@ -68,8 +72,12 @@ export function classify(client: ClientBase, steps: Partial<Record<Step, StepSta
   const lastSuccessAt = notices?.last_success_at ?? null;
   const attempts = [notices?.last_attempt_at, login?.last_attempt_at].filter((t): t is string => !!t).sort(tsCmp);
   const lastAttemptAt = attempts.length ? attempts[attempts.length - 1] : null;
-  const fresh = eligible && !!lastSuccessAt && Date.parse(lastSuccessAt) > now - DAY_MS;
-  const never = eligible && !lastSuccessAt && !notices?.last_attempt_at && !login?.last_attempt_at;
+  // As the command centre (20261010110000): a password changed after every
+  // attempt so far puts the client back to "not synced" until its next sync.
+  const changedAt = client.gst_password_changed_at ?? null;
+  const passwordReset = eligible && !!changedAt && (!lastAttemptAt || tsCmp(changedAt, lastAttemptAt) > 0);
+  const fresh = eligible && !passwordReset && !!lastSuccessAt && Date.parse(lastSuccessAt) > now - DAY_MS;
+  const never = eligible && ((!lastSuccessAt && !notices?.last_attempt_at && !login?.last_attempt_at) || passwordReset);
 
   // CASE WHEN login failed at or after the last good pull THEN its reason
   //      WHEN the notices step's last attempt failed THEN its reason END
@@ -77,7 +85,7 @@ export function classify(client: ClientBase, steps: Partial<Record<Step, StepSta
   let failStep: 'login' | 'notices' | null = null;
   let failMessage: string | null = null;
   let failAt: string | null = null;
-  if (eligible) {
+  if (eligible && !passwordReset) {
     if (login?.last_status === 'failed' && login.last_attempt_at && (!lastSuccessAt || tsCmp(login.last_attempt_at, lastSuccessAt) >= 0)) {
       failReason = login.last_reason_class ?? null;
       failStep = 'login';
@@ -92,7 +100,7 @@ export function classify(client: ClientBase, steps: Partial<Record<Step, StepSta
     if (!failReason) { failStep = null; failMessage = null; failAt = null; }
   }
   const state: SyncState = !eligible ? 'off' : failReason ? 'failed' : never ? 'never' : fresh ? 'fresh' : 'stale';
-  return { client, eligible, off, steps, lastSuccessAt, lastAttemptAt, fresh, never, failReason, failStep, failMessage, failAt, state };
+  return { client, eligible, off, steps, lastSuccessAt, lastAttemptAt, fresh, never, passwordReset, failReason, failStep, failMessage, failAt, state };
 }
 
 export function matchesStatus(h: ClientHealth, status: StatusFilter, reason?: string | null): boolean {
@@ -131,6 +139,10 @@ export const REASONS: Record<string, { label: string; long: string; short: strin
   login_failed: {
     label: 'Login failed', long: 'Login failed — password changed?', short: 'login', action: 'password',
     hint: 'The portal refused the user ID or password; it was probably changed. Update it, then retry.',
+  },
+  captcha_failed: {
+    label: 'CAPTCHA not accepted', long: 'CAPTCHA not accepted by the portal', short: 'CAPTCHA', action: 'retry',
+    hint: 'The portal rejected the CAPTCHA three times. The password was not refused, so nothing needs changing; the next sync tries again.',
   },
   captcha_timeout: {
     label: 'CAPTCHA not typed', long: 'CAPTCHA not typed', short: 'CAPTCHA', action: 'retry',
@@ -188,7 +200,7 @@ export const syncableIds = (rows: ClientHealth[]) =>
 // ── Loading ────────────────────────────────────────────────────────────────
 export async function loadClientHealth(): Promise<ClientHealth[]> {
   const [clients, status] = await Promise.all([
-    fetchAllRows<ClientBase>('clients', 'id, name, gstin, gst_user_id, inactive_at_hand, notices_sync_excluded, assigned_accountant',
+    fetchAllRows<ClientBase>('clients', 'id, name, gstin, gst_user_id, inactive_at_hand, notices_sync_excluded, assigned_accountant, gst_password_changed_at',
       (q) => q.order('name').order('id')),
     fetchAllRows<StepStatus>('client_sync_status', '*', (q) => q.in('step', STEPS).order('client_id').order('step')),
   ]);

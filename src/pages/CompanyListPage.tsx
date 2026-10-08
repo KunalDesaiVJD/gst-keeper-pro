@@ -39,7 +39,7 @@ import { cn } from '@/lib/utils';
 const PAGE = 50;
 const STATUSES: StatusFilter[] = ['all', 'fresh', 'stale', 'never', 'failed', 'off'];
 const STATUS_LABEL: Record<StatusFilter, string> = {
-  all: 'Every synced client', fresh: 'Synced in 24 h', stale: 'Not synced in 24 h', never: 'Never synced', failed: 'Failing',
+  all: 'Every synced client', fresh: 'Synced in 24 h', stale: 'Not synced in 24 h', never: 'Not synced yet', failed: 'Failing',
   off: 'Not synced by the app',
 };
 const RANK: Record<SyncState, number> = { failed: 0, never: 1, stale: 2, fresh: 3, off: 4 };

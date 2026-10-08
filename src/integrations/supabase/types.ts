@@ -4533,6 +4533,7 @@ export type Database = {
           name: string
           notices_sync_excluded: boolean
           notices_handled: boolean
+          gst_password_changed_at: string | null
           portal_login_issue: string | null
           portal_login_issue_at: string | null
           portal_login_issue_message: string | null
@@ -4571,6 +4572,7 @@ export type Database = {
           name: string
           notices_sync_excluded?: boolean
           notices_handled?: boolean
+          gst_password_changed_at?: string | null
           portal_login_issue?: string | null
           portal_login_issue_at?: string | null
           portal_login_issue_message?: string | null
@@ -4609,6 +4611,7 @@ export type Database = {
           name?: string
           notices_sync_excluded?: boolean
           notices_handled?: boolean
+          gst_password_changed_at?: string | null
           portal_login_issue?: string | null
           portal_login_issue_at?: string | null
           portal_login_issue_message?: string | null

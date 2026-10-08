@@ -10,7 +10,7 @@ import { stageLabel, nextActionDef } from '@/lib/noticeStages';
 import { fmtAgo, noticeTitle } from '@/lib/noticeFormat';
 
 const REASON: Record<string, string> = {
-  login_failed: 'login failed — password changed?', captcha_timeout: 'CAPTCHA not typed', session_mismatch: 'portal session was another GSTIN',
+  login_failed: 'login failed — password changed?', captcha_timeout: 'CAPTCHA not typed', captcha_failed: 'CAPTCHA not accepted', session_mismatch: 'portal session was another GSTIN',
   portal_error: 'portal error', timeout: 'portal timed out', stalled: 'run stalled', other: 'failed',
 };
 

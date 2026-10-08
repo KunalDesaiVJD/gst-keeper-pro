@@ -161,7 +161,7 @@ reaches Claude through the firm's Claude CLI gateway (`CLAUDE_CLI_GATEWAY_URL` /
 (client, FY, owner, form, priority) run on every list page via `src/lib/masterFilters.ts`
 and in `notices_command_centre(p_user_id, p_filters)`. Module pages use the panels in
 `src/components/notices/ui/Panel.tsx` (pairs of equal height, explanations behind (i)).
-Extension 0.8.2 offers a refused portal password once and records it on the client (`clients.portal_login_issue`, skipped by every sync). Notices · Settings (`/notices-settings`) switches litigation handling per client (`clients.notices_handled`, off = out of `notice_facts`); closing sweep part 4 closes notices the portal has moved past (§20 of the positions).
+Extension 0.8.2 offers a refused portal password once and records it on the client (`clients.portal_login_issue`, skipped by every sync); 0.8.3 files a rejected CAPTCHA as `captcha_failed`, never a password issue. Notices · Settings (`/notices-settings`) switches litigation handling per client (`clients.notices_handled`, off = out of `notice_facts`); closing sweep part 4 closes notices the portal has moved past (§20 of the positions).
 
 **Read `docs/NOTICES_LITIGATION_POSITIONS.md` before changing auto-close
 logic, tile definitions, due dates, clocks, stages, the plan ranking or alerts.** The positions were

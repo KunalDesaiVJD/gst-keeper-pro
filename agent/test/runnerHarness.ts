@@ -106,6 +106,8 @@ export interface Fill { user: string; marked: string | null; at: number }
  */
 export class CaptchaFiller {
   allow: (user: string) => boolean = () => true;
+  /** Users whose CAPTCHA is filled wrong, every time (the portal says "Enter valid Letters shown."). */
+  readonly wrong = new Set<string>();
   delayMs = 300;
   readonly fills: Fill[] = [];
   private watched = new WeakSet<Page>();
@@ -140,7 +142,7 @@ export class CaptchaFiller {
             if (s.user && s.pass && s.ready && !s.box && s.src !== filledSrc && this.allow(s.user)) {
               await sleep(this.delayMs);
               filledSrc = s.src;
-              await page.fill('#captcha', this.portal.answerFor(ctx), { timeout: 5000 });
+              await page.fill('#captcha', this.wrong.has(s.user) ? 'WRONG1' : this.portal.answerFor(ctx), { timeout: 5000 });
               this.fills.push({ user: s.user, marked: s.marked, at: Date.now() });
             }
           }
