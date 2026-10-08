@@ -140,6 +140,10 @@ export const REASONS: Record<string, { label: string; long: string; short: strin
     label: 'Login failed', long: 'Login failed — password changed?', short: 'login', action: 'password',
     hint: 'The portal refused the user ID or password; it was probably changed. Update it, then retry.',
   },
+  captcha_failed: {
+    label: 'CAPTCHA not accepted', long: 'CAPTCHA not accepted by the portal', short: 'CAPTCHA', action: 'retry',
+    hint: 'The portal rejected the CAPTCHA three times. The password was not refused, so nothing needs changing; the next sync tries again.',
+  },
   captcha_timeout: {
     label: 'CAPTCHA not typed', long: 'CAPTCHA not typed', short: 'CAPTCHA', action: 'retry',
     hint: 'Nobody typed the CAPTCHA within 10 minutes, so the run moved on. Retry when someone can type it.',

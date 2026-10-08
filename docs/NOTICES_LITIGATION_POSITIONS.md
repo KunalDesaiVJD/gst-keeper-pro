@@ -528,3 +528,13 @@ Client, by "Fixed", or by a login that works.
 
 Portal Autopilot positions (CAPTCHA posture, office-only agent, sessions, the
 inbox, acceptance measures) are in `docs/PORTAL_AUTOPILOT_POSITIONS.md`.
+
+**A CAPTCHA failure is not a password issue** (asked by the firm, 8 October 2026;
+extension 0.8.3, migration `20261010120000`). Three CAPTCHAs the portal would not
+take, or no answer at all, are filed as `captcha_failed` ("CAPTCHA not accepted"),
+retried by the next sync and never recorded in `clients.portal_login_issue`. Only a
+portal refusal (wrong user ID or password, locked, expired, change required) is
+`login_failed`. A trigger on `sync_run_items` files an older extension's CAPTCHA
+failures the same way (`login_failure_is_captcha`: a message about the CAPTCHA that
+names neither the user ID nor the password); an unexpected page after Login is
+`portal_error`.

@@ -191,6 +191,7 @@ export function runnerWords(r: RunnerRow, waiting: string | null = null): string
 export const REASON_LABELS: Record<string, string> = {
   login_failed: 'Login failed',
   captcha_timeout: 'CAPTCHA not filled in time',
+  captcha_failed: 'CAPTCHA not accepted by the portal',
   skipped_at_wall: 'Skipped on the CAPTCHA wall',
   session_mismatch: 'Portal session was another GSTIN',
   portal_error: 'Portal error',

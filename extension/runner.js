@@ -40,6 +40,7 @@
   const PERSON_IDLE_SECS = 300;              // someone used this PC in the last 5 minutes
   // Failures worth another try later (agent/src/outcome.ts).
   const TRANSIENT = new Set(['portal_error', 'timeout', 'stalled', 'save_failed', 'other']);
+  const LOGIN_RETRY = new Set(['captcha_failed', 'captcha_timeout', 'portal_error', 'timeout']);
   const local = chrome.storage.local;
   const EMPTY = { status: 'off', why: null, job: null, beat: null, last: null, error: null, pause_until: null };
 
@@ -339,7 +340,9 @@
     for (const i of items) steps[i.step] = i.status === 'failed' ? 'failed: ' + (i.reason_class || 'other') : i.status;
     const result = { steps, runner: 'chrome' };
     const login = items.find((i) => i.step === 'login' && i.status === 'failed');
-    if (login) return { outcome: 'failed', reason: login.reason_class || 'login_failed', error: login.message, result };
+    // 0.8.3: a CAPTCHA the portal kept rejecting, or a portal hiccup at login, is
+    // retried; only a refused password (login_failed) fails the client.
+    if (login) return { outcome: LOGIN_RETRY.has(login.reason_class) ? 'retry' : 'failed', reason: login.reason_class || 'login_failed', error: login.message, result };
     if (rj.job_type !== 'PULL_NOTICES_BUNDLE') {
       const failed = items.find((i) => i.status === 'failed');
       return failed

@@ -62,3 +62,4 @@
 20261009110000_master_filters.sql
 20261010100000_notices_cleanup_settings.sql
 20261010110000_password_change_resync.sql
+20261010120000_login_captcha_reason.sql

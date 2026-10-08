@@ -38,6 +38,9 @@ function fixOf(g: FailureGroup, mode: RunnerMode): { kind: Fix; hint: string } {
   if (g.reason === 'login_failed' && g.fix === 'account_locked') {
     return { kind: 'locked', hint: 'The portal account is locked. Only the client can reset it (Forgot Password; the OTP goes to their registered mobile and e-mail). Ask them, then save the new password.' };
   }
+  if (g.reason === 'captcha_failed' || (g.reason === 'login_failed' && g.fix === 'captcha')) {
+    return { kind: 'retry', hint: 'The portal did not accept the CAPTCHA three times. The password was not refused, so nothing needs changing; run them again. If it keeps happening, check the CAPTCHA extension in that Chrome.' };
+  }
   if (g.reason === 'captcha_timeout' && mode === 'chrome') {
     return { kind: 'retry', hint: 'The CAPTCHA was not filled in time in the scheduled Chrome, on every try. Check that the CAPTCHA extension there is switched on and fills the GST portal\'s CAPTCHA, then run them again.' };
   }

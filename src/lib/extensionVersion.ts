@@ -17,8 +17,10 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // client and moves on, and skips it until the password is changed.
 // 0.8.2 also leaves the portal's change-password page at once and skips every
 // client with a password issue recorded in GST Keeper (Notices · Settings).
-// 0.4.x to 0.8.1 are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.8.2';
+// 0.8.3 records a CAPTCHA the portal kept rejecting as a CAPTCHA failure
+// (captcha_failed, retried), never as a password issue.
+// 0.4.x to 0.8.2 are still allowed (their writes are safe), only nudged to update.
+export const RECOMMENDED_EXTENSION_VERSION = '0.8.3';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
