@@ -271,7 +271,7 @@ export const TodaysPlan: React.FC<{ cc: CommandCentre | undefined; master?: Mast
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>Showing {rows.length} of {total.toLocaleString('en-IN')}
-          {cc && cc.health.auto_closed_today > 0 && <> · {cc.health.auto_closed_today} closed automatically today — <Link to="/notices-all?filter=auto_closed" className="text-primary hover:underline">see why</Link></>}
+          {cc && cc.health.auto_closed_today > 0 && <> · {cc.health.auto_closed_today} closed automatically today — <Link to="/notices-all?filter=auto_closed" className="text-primary underline underline-offset-2">see why</Link></>}
         </span>
         <Link to={hrefWithMaster(queueHref(tab, order === 'urgent' ? { dash: '1', sort: 'score' } : { dash: '1' }), master)} className="font-medium text-primary hover:underline">Open the work queue ({total.toLocaleString('en-IN')}) →</Link>
       </div>

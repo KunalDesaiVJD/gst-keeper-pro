@@ -2,6 +2,34 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-08 — Password issues are recorded in GST Keeper; every sync skips them (v0.8.2)
+
+Needs migration `20261010100000_notices_cleanup_settings.sql` for the shared record;
+without it 0.8.2 behaves as 0.8.1.
+
+- **Fixed: a client the portal sends to its change-password page held the run.**
+  An expired password, a first login after a reset or a forced change opens the
+  portal's "set a new password" page, which sits under /auth/ like any logged-in
+  page. 0.8.1 took it for a working session, the sync steps kept opening pages the
+  portal sent back to that page, and the run never moved on (seen live on
+  8 October: ten clients synced, then the eleventh never ended). Now that page is
+  recognised by its address or by what it shows (two or more password boxes and
+  words about a new password), the client is logged as "The portal asks for a new
+  password" and the run starts the next client.
+- **Every password issue is recorded in GST Keeper.** A wrong user ID or password,
+  a locked account, an expired password or a required change is written to the
+  client (`client_login_issue_set`) and listed in Notices · Settings, "Portal
+  password issues", with the portal's own words, for the team to fix.
+- **Skipped everywhere until fixed.** A person's "Sync" leaves those clients out
+  from the start (the app says how many), and a scheduled sync fails them at once
+  without opening the portal, in any Chrome. Changing the password or user ID in
+  Edit Client clears the issue by itself; "Fixed" in Settings clears it too, and a
+  login that works clears it.
+- Tests: a forced password change case in `agent/test/chrome-runner.e2e.test.ts`
+  (the change page is opened once, the issue is recorded, the next scheduled and
+  person's syncs skip the client, a new password clears it). All ten runner cases
+  pass.
+
 ## 2026-10-08 — A refused password is offered once; the sync moves on (v0.8.1)
 
 Built on 0.8.0. Only the login is touched; every pull, the notices link pass and

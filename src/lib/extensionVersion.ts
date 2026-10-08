@@ -15,8 +15,10 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // own PDF, reply date, officer and DIN from its case folder. 0.8.1 offers a
 // password the portal refused only once: a bulk or scheduled sync logs that
 // client and moves on, and skips it until the password is changed.
-// 0.4.x to 0.8.0 are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.8.1';
+// 0.8.2 also leaves the portal's change-password page at once and skips every
+// client with a password issue recorded in GST Keeper (Notices · Settings).
+// 0.4.x to 0.8.1 are still allowed (their writes are safe), only nudged to update.
+export const RECOMMENDED_EXTENSION_VERSION = '0.8.2';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -45,7 +47,9 @@ export function updateRecommendedMessage(version: string | null | undefined): st
   const refundDocs = 'reads the documents of new or changed refunds in the notices sync';
   const passwords = 'never retries a wrong or changed portal password: the client is logged and the sync moves on to the next one';
   const linking = "links each notice's own PDF, reply date, officer and DIN from its case folder";
-  const gains = version && compareVersions(version, '0.8.0') >= 0
+  const gains = version && compareVersions(version, '0.8.1') >= 0
+    ? 'leaves the portal\'s change-password page at once and skips every client with a password issue listed in Notices · Settings'
+    : version && compareVersions(version, '0.8.0') >= 0
     ? passwords
     : version && compareVersions(version, '0.7.1') >= 0
     ? `${linking}, and ${passwords}`

@@ -212,7 +212,11 @@
     // person's sync logs it, and the portal is not opened at all (content.js
     // records the refusal; a login that works clears it).
     let refused = null;
-    try { refused = await API.pwRefusalCheck(client.id, client.gst_user_id); } catch (e) { refused = null; }
+    // 0.8.2: a password issue recorded in GST Keeper (any Chrome found it).
+    if (client.portal_login_issue) {
+      refused = { at: client.portal_login_issue_at || new Date().toISOString(), reason: client.portal_login_issue, message: client.portal_login_issue_message || client.portal_login_issue };
+    }
+    if (!refused) { try { refused = await API.pwRefusalCheck(client.id, client.gst_user_id); } catch (e) { refused = null; } }
     if (refused) {
       const words = 'Not tried: the portal refused this saved password on ' + new Date(refused.at).toLocaleString('en-IN')
         + (refused.message ? ' ("' + String(refused.message).slice(0, 160) + '")' : '')

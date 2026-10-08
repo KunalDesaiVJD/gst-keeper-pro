@@ -37,7 +37,7 @@ interface Status {
   failures: { reason: string; clients: { client_id: string }[] }[];
 }
 
-const CLIENTS = ['asha', 'bina', 'chetan', 'dina', 'eshan', 'farah', 'gopal', 'hema', 'isha', 'jaya', 'kiran', 'lata', 'mohan', 'nikhil'].map((user, i) => ({
+const CLIENTS = ['asha', 'bina', 'chetan', 'dina', 'eshan', 'farah', 'gopal', 'hema', 'isha', 'jaya', 'kiran', 'lata', 'mohan', 'nikhil', 'omkar', 'priya'].map((user, i) => ({
   user, name: `${user[0].toUpperCase()}${user.slice(1)} Runner Test`, gstin: `24RUNR${String(i).padStart(4, '0')}X1Z${i}`, pass: `${user}-pass`,
 }));
 
@@ -445,7 +445,8 @@ test("h: a person's sync of two clients moves past a refused password to the nex
   const again = await start();
   await waitFor('the second sync to finish', async () => (await r.activeJob()) === null, 180_000);
   assert.equal(auths('lata'), 1, 'Lata not offered again');
-  assert.match(await lastLoginFailure('lata'), /^Not tried: the portal refused this saved password/);
+  // 0.8.2: the refusal is in GST Keeper, so the run left Lata out from the start.
+  assert.equal((await rest<{ portal_login_issue: string | null }[]>('GET', `clients?id=eq.${ids.lata}&select=portal_login_issue`))[0].portal_login_issue, 'wrong_password');
   assert.ok(auths('mohan', 'ok') > mohanBefore, 'Mohan synced again');
   await again.close().catch(() => {});
 });
@@ -466,4 +467,51 @@ test('i: a refusal the portal answers with a fresh login page is read the same w
   assert.match(await lastLoginFailure('nikhil'), /^Wrong user ID or password/);
   await waitFor('the runner window to close', async () => (await r.state()).job === null && r.portalPages().length === 0);
   portal.freshPage.delete('nikhil');
+});
+
+const loginIssue = async (user: string) => (await rest<{ portal_login_issue: string | null; portal_login_issue_message: string | null }[]>('GET',
+  `clients?id=eq.${ids[user]}&select=portal_login_issue,portal_login_issue_message`))[0];
+
+test("j: the portal's change-password page ends the client, records the issue in GST Keeper, and every later sync skips it", { skip }, async () => {
+  const r = A!;
+  filler.allow = () => true;
+  await settings({ enabled: true });
+  await r.api('runnerSet', { enabled: true, label: 'Test PC A' });
+  portal.fake.forceChange.add('omkar');
+  await enqueue('omkar', 95);
+  await r.tick();
+  const first = await waitFor('Omkar to end', () => ended('omkar'), 150_000);
+  assert.equal(first.status, 'failed', JSON.stringify(first));
+  assert.equal(first.reason_class, 'login_failed');
+  const changePages = portal.fake.log.filter((l) => l === 'GET /services/auth/changepassword').length;
+  assert.ok(changePages >= 1 && changePages <= 2, `the change page was not reloaded again and again (${changePages})`);
+  const issue = await loginIssue('omkar');
+  assert.equal(issue.portal_login_issue, 'password_change_required');
+  assert.match(issue.portal_login_issue_message ?? '', /new password/i);
+  await waitFor('the runner window to close', async () => (await r.state()).job === null && r.portalPages().length === 0);
+
+  // The next scheduled sync of Omkar: failed at once, the portal not opened.
+  const calls = portal.fake.requests;
+  await enqueue('omkar', 95);
+  await r.tick();
+  const second = await nextEnded('omkar', first.id);
+  assert.equal(second.status, 'failed');
+  assert.equal(portal.fake.requests, calls, 'the portal was not opened');
+
+  // A person's Sync of Omkar and Priya: Omkar is left out, Priya runs.
+  await r.api('runnerSet', { enabled: false });
+  const before = new Set(r.ctx.pages());
+  const started = await r.api<{ count: number; skippedPasswordIssues: number }>('startAllClientsSectionPull', { mode: 'notices_bundle', clientIds: [ids.omkar, ids.priya] });
+  assert.deepEqual([started.count, started.skippedPasswordIssues], [1, 1]);
+  const page = await waitFor("the person's tab", async () => r.ctx.pages().find((p) => !before.has(p)) ?? null);
+  await page.goto('https://services.gst.gov.in/services/login').catch(() => {});
+  await waitFor('the sync to finish', async () => (await r.activeJob()) === null, 180_000);
+  assert.ok(auths('priya', 'ok') >= 1, 'Priya synced');
+  assert.equal(auths('omkar'), 1, 'Omkar not tried again');
+
+  // The password is changed in GST Keeper: the issue is gone.
+  portal.fake.forceChange.delete('omkar');
+  await rest('PATCH', `clients?id=eq.${ids.omkar}`, { gst_password: 'omkar-pass-2' });
+  assert.equal((await loginIssue('omkar')).portal_login_issue, null);
+  await page.close().catch(() => {});
 });

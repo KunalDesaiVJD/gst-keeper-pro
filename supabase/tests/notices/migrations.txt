@@ -60,3 +60,4 @@
 20261008180000_notice_types_hidden.sql
 20261009100000_ai_assistant.sql
 20261009110000_master_filters.sql
+20261010100000_notices_cleanup_settings.sql

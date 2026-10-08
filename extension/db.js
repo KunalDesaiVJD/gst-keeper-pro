@@ -69,6 +69,8 @@
     pwRefusalMark: (clientId, user, pass, info) => call('pwRefusalMark', clientId, user, pass, info),
     pwRefusalClear: (clientId) => call('pwRefusalClear', clientId),
     pwRefusalList: () => call('pwRefusalList'),
+    // 0.8.2: the client's portal password issue in GST Keeper (NULL clears it).
+    loginIssueSet: (clientId, reason, message) => call('loginIssueSet', clientId, reason, message),
     runSweep: (clientId) => call('runSweep', clientId),
     // 0.5.0: one ingest door (public.sync_ingest) and the run ledger.
     ingest: (clientId, runId, step, rows, opts, scope) => call('ingest', clientId, runId, step, rows, opts, scope),

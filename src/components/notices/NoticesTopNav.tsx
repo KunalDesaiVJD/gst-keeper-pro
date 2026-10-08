@@ -27,6 +27,7 @@ const NAV: NavItem[] = [
   },
   { label: 'Autopilot', to: '/notices-autopilot', match: (p) => p === '/notices-autopilot' },
   { label: 'Reply Factory', to: '/notices-reply-factory', match: (p) => p === '/notices-reply-factory' },
+  { label: 'Settings', to: '/notices-settings', match: (p) => p === '/notices-settings' },
 ];
 
 const REPORTS = [
