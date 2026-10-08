@@ -49,7 +49,7 @@ export const matterOutstanding = (m: MatterLite) => Math.max(0,
 
 export async function loadClientProfile(clientId: string): Promise<ClientProfileData> {
   const [client, extras, profile, steps, notices, refunds, drc03, folders, matters, hearings, filings] = await Promise.all([
-    supabase.from('clients').select('id, name, gstin, email, gst_user_id, assigned_accountant, inactive_at_hand, notices_sync_excluded, registration_date')
+    supabase.from('clients').select('id, name, gstin, email, gst_user_id, assigned_accountant, inactive_at_hand, notices_sync_excluded, registration_date, gst_password_changed_at')
       .eq('id', clientId).maybeSingle(),
     supabase.from('clients').select('registration_type, mobile, target_date_group1, target_date_group2').eq('id', clientId).maybeSingle(),
     supabase.from('gst_taxpayer_profile').select('*').eq('client_id', clientId).maybeSingle(),

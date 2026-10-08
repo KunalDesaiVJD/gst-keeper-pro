@@ -20,7 +20,7 @@ while read -r f; do
   case "$f" in ''|'#'*) continue ;; esac
   psql_q -f "$mig/$f" >/dev/null || { echo "FAILED applying $f"; exit 1; }
   if [ -z "${SKIP_REAPPLY:-}" ]; then
-    case "$f" in 2026100611*|2026100612*|2026100712*|202610081*|2026100910*|2026101010*) psql_q -f "$mig/$f" >/dev/null || { echo "FAILED re-applying $f"; exit 1; } ;; esac
+    case "$f" in 2026100611*|2026100612*|2026100712*|202610081*|2026100910*|2026101010*|2026101011*) psql_q -f "$mig/$f" >/dev/null || { echo "FAILED re-applying $f"; exit 1; } ;; esac
   fi
 done < "$here/migrations.txt"
 status=0
