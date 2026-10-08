@@ -26,6 +26,7 @@ import { RulesTab } from '@/components/notices/reply/factory/RulesTab';
 import { TemplatesTab } from '@/components/notices/reply/factory/TemplatesTab';
 import { AiReadingTab } from '@/components/notices/reply/factory/AiReadingTab';
 import { ConsentTab } from '@/components/notices/reply/factory/ConsentTab';
+import { LearningTab } from '@/components/notices/reply/factory/LearningTab';
 import { NoticeTypesSettings } from '@/components/notices/types/NoticeTypesSettings';
 import { useReplyFactoryStatus, type FactoryTab } from '@/lib/replyFactory';
 import { cn } from '@/lib/utils';
@@ -35,7 +36,8 @@ const TABS: { key: FactoryTab; label: string }[] = [
   { key: 'types', label: 'Notice types' },
   { key: 'templates', label: 'Reply templates' },
   { key: 'rules', label: 'Reply rules' },
-  { key: 'ai', label: 'AI reading' },
+  { key: 'ai', label: 'AI' },
+  { key: 'learning', label: 'Learning' },
   { key: 'consent', label: 'Client consent' },
 ];
 
@@ -64,7 +66,8 @@ const NoticesReplyFactoryPage: React.FC = () => {
   };
   const s = status.data;
   const counts: Partial<Record<FactoryTab, { n: number; label: string }>> = s ? {
-    ai: { n: s.ai.queue.queued + s.ai.queue.running, label: 'readings waiting or in progress' },
+    ai: { n: s.ai.queue.queued + s.ai.queue.running + s.ai.documents.queued + s.ai.documents.running, label: 'readings waiting or in progress' },
+    learning: { n: s.ai.learning.responses_included, label: 'responses chosen' },
     consent: { n: s.ai.consent.with_consent, label: 'clients with consent' },
   } : {};
 
@@ -92,6 +95,7 @@ const NoticesReplyFactoryPage: React.FC = () => {
         <TabsContent value="templates" className="mt-0"><TemplatesTab /></TabsContent>
         <TabsContent value="rules" className="mt-0"><RulesTab /></TabsContent>
         <TabsContent value="ai" className="mt-0"><AiReadingTab s={s} loading={status.isLoading} /></TabsContent>
+        <TabsContent value="learning" className="mt-0"><LearningTab s={s} /></TabsContent>
         <TabsContent value="consent" className="mt-0"><ConsentTab /></TabsContent>
       </Tabs>
     </NoticesShell>

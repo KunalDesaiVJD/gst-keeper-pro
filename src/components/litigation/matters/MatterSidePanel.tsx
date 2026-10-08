@@ -1,19 +1,20 @@
-// The matter page's right rail (audit U-84-1, U-84-5, U-86-4): the next step
-// said once with one button, and the key facts — client, type, forum,
-// jurisdiction, officer, section, years, when it was opened, the team, the
-// appeal chain — with the next action editable in place.
+// The matter at a glance (audit U-84-1, U-84-5, U-86-4; rebalanced 7 October
+// 2026 into one panel across the page): the next step's hint and clock, and the
+// key facts — type, forum, jurisdiction, officer, section, years, when it was
+// opened, the appeal chain — with the next action editable in place.
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { SectionCard } from '@/components/gstr9/ui';
+import { Panel } from '@/components/notices/ui/Panel';
 import { useAuth } from '@/contexts/AuthContext';
 import { daysBetween, istToday } from '@/lib/noticeFacts';
 import { fmtDate, plural } from '@/lib/noticeFormat';
 import { editMatterDetails, forumLabel, istDate, jurisdictionText, lifecycleLabel, type MatterWorkspace } from '@/lib/litigationData';
 import { ClockCell } from './ClockCell';
+import { cn } from '@/lib/utils';
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : {});
@@ -26,24 +27,20 @@ export function appealLinks(ws: MatterWorkspace) {
   return { from, to };
 }
 
-const Row: React.FC<{ k: string; children: React.ReactNode }> = ({ k, children }) => (
-  <div className="grid grid-cols-[7.5rem_1fr] gap-2 py-1 text-xs">
-    <dt className="text-muted-foreground">{k}</dt>
-    <dd className="min-w-0 break-words font-medium">{children}</dd>
+/** One fact: its label above, its value below (a grid of these fills a row). */
+const Fact: React.FC<{ k: string; wide?: boolean; children: React.ReactNode }> = ({ k, wide, children }) => (
+  <div className={cn('min-w-0', wide && 'col-span-2')}>
+    <dt className="text-[11px] text-muted-foreground">{k}</dt>
+    <dd className="min-w-0 break-words text-sm font-medium">{children}</dd>
   </div>
 );
 
-export const NextStepCard: React.FC<{ ws: MatterWorkspace; hint: string; action: React.ReactNode }> = ({ ws, hint, action }) => {
-  const open = ws.clocks.length > 0 || ws.matter.stage !== 'closed';
-  return (
-    <SectionCard title="Next step" description={hint}>
-      {open && ws.matter.stage !== 'closed' && <ClockCell clock={ws.clocks[0] ?? null} open />}
-      {action && <div className="flex flex-wrap items-center gap-2">{action}</div>}
-    </SectionCard>
-  );
-};
-
-export const KeyFacts: React.FC<{ ws: MatterWorkspace; canEdit: boolean; ownerName: string | null; reviewerName: string | null; onChanged: () => void }> = ({ ws, canEdit, ownerName, reviewerName, onChanged }) => {
+/**
+ * The matter at a glance, one panel across the page (rebalanced 7 October 2026:
+ * no right column; client, GSTIN, owner and reviewer are in the header). The
+ * next step's hint and clock sit in its title row; the header carries its button.
+ */
+export const MatterFacts: React.FC<{ ws: MatterWorkspace; hint: string; canEdit: boolean; onChanged: () => void }> = ({ ws, hint, canEdit, onChanged }) => {
   const { user } = useAuth();
   const m = ws.matter;
   const [editing, setEditing] = useState(false);
@@ -51,6 +48,7 @@ export const KeyFacts: React.FC<{ ws: MatterWorkspace; canEdit: boolean; ownerNa
   const [saving, setSaving] = useState(false);
   const opened = istDate(m.created_at);
   const chain = appealLinks(ws);
+  const open = m.stage !== 'closed';
   const saveNext = async () => {
     if (!user) return;
     setSaving(true);
@@ -59,22 +57,19 @@ export const KeyFacts: React.FC<{ ws: MatterWorkspace; canEdit: boolean; ownerNa
     finally { setSaving(false); }
   };
   return (
-    <SectionCard title="Key facts">
-      <dl className="divide-y">
-        <Row k="Client"><Link to={`/notices-company/${m.client_id}`} className="text-primary underline underline-offset-2">{ws.client?.name ?? 'Client'}</Link></Row>
-        <Row k="GSTIN"><span className="font-mono">{ws.client?.gstin ?? '—'}</span></Row>
-        <Row k="Type">{lifecycleLabel(m.lifecycle)}</Row>
-        <Row k="Forum">{forumLabel(m)}</Row>
-        <Row k="Jurisdiction">{jurisdictionText(m) || '—'}</Row>
-        <Row k="Officer">{m.officer || '—'}</Row>
-        <Row k="Section">{m.section_of_law || '—'}</Row>
-        <Row k="Financial years">{(m.financial_years ?? []).join(', ') || '—'}</Row>
-        <Row k="Opened">{fmtDate(opened)} · {plural(daysBetween(opened, istToday()), 'day')} ago</Row>
-        <Row k="Owner">{ownerName ?? 'Nobody yet'}</Row>
-        <Row k="Reviewer">{reviewerName ?? '—'}</Row>
-        {chain.from && <Row k="Appeal from"><Link to={`/litigation/${chain.from.id}`} className="text-primary underline underline-offset-2">{chain.from.no}</Link></Row>}
-        {chain.to.length > 0 && <Row k="Appealed in">{chain.to.map((t, i) => <React.Fragment key={t.id}>{i > 0 && ', '}<Link to={`/litigation/${t.id}`} className="text-primary underline underline-offset-2">{t.no}</Link></React.Fragment>)}</Row>}
-        <Row k="Next action">
+    <Panel title={open ? `Next: ${hint}` : 'At a glance'}
+      actions={open && ws.clocks[0] ? <ClockCell clock={ws.clocks[0]} open /> : undefined}>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-6">
+        <Fact k="Type">{lifecycleLabel(m.lifecycle)}</Fact>
+        <Fact k="Forum">{forumLabel(m)}</Fact>
+        <Fact k="Jurisdiction">{jurisdictionText(m) || '—'}</Fact>
+        <Fact k="Officer">{m.officer || '—'}</Fact>
+        <Fact k="Section">{m.section_of_law || '—'}</Fact>
+        <Fact k="Financial years">{(m.financial_years ?? []).join(', ') || '—'}</Fact>
+        <Fact k="Opened">{fmtDate(opened)} · {plural(daysBetween(opened, istToday()), 'day')} ago</Fact>
+        {chain.from && <Fact k="Appeal from"><Link to={`/litigation/${chain.from.id}`} className="text-primary underline underline-offset-2">{chain.from.no}</Link></Fact>}
+        {chain.to.length > 0 && <Fact k="Appealed in">{chain.to.map((t, i) => <React.Fragment key={t.id}>{i > 0 && ', '}<Link to={`/litigation/${t.id}`} className="text-primary underline underline-offset-2">{t.no}</Link></React.Fragment>)}</Fact>}
+        <Fact k="Next action" wide>
           {editing ? (
             <span className="block space-y-1">
               <Textarea rows={2} value={next} onChange={(e) => setNext(e.target.value)} aria-label="Next action" className="text-xs font-normal" />
@@ -93,8 +88,8 @@ export const KeyFacts: React.FC<{ ws: MatterWorkspace; canEdit: boolean; ownerNa
               )}
             </span>
           )}
-        </Row>
+        </Fact>
       </dl>
-    </SectionCard>
+    </Panel>
   );
 };

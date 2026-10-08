@@ -3,7 +3,7 @@
 // what needs a person and the last activity, each opening the folder.
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import type { NoticeFact } from '@/lib/noticeFacts';

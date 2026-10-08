@@ -300,8 +300,8 @@ show." (`supabase/migrations/20261008150000_notice_types.sql`)
   - *Critical, reply required*: a reply or an action is required, with a
     consequence if it is missed: show cause notices (DRC-01, ASMT-14, REG-17,
     REG-23, REG-SCN, RFD-08), scrutiny (ASMT-10), intimations with a reply
-    clock (DRC-01B, DRC-01C), queries (REG-03), return defaulter notices
-    (GSTR-3A), refund deficiency memos (RFD-03), detention (MOV-07), audit
+    clock (DRC-01B, DRC-01C), queries (REG-03), refund deficiency memos
+    (RFD-03), detention (MOV-07), audit
     (ADT-01), attachment and recovery (DRC-22, DRC-13), summons, appeal hearings,
     and orders with an appeal clock that matters (DRC-07, DRC-07A, MOV-09,
     REG-19, APL-04).
@@ -313,7 +313,9 @@ show." (`supabase/migrations/20261008150000_notice_types.sql`)
     filings and payments (proceedings dropped, response accepted, LUT, LUT
     approved, APL-01, APL-02, REG-06, REG-15, REG-22, SPL-05, DRC-03, PMT-03,
     RFD-04, audit closure).
-  A notice the rules cannot classify needs a reply and is shown.
+  A notice the rules cannot classify needs a reply and is shown. Return
+  defaulter notices (GSTR-3A) started as critical and are hidden everywhere
+  since 7 October 2026 (below).
 - **What follows from the category.** A no-reply notice is never overdue or due
   in 7 days, has no reply date in the calendar or the plan, gets the next action
   "Read and close" and no reply options; due-date coverage counts it as
@@ -327,6 +329,21 @@ show." (`supabase/migrations/20261008150000_notice_types.sql`)
   types and open notices it is not showing. A list opened from the command
   centre carries `dash=1` and filters to the dashboard's types, so every number
   still equals its list.
+- **Hidden everywhere** (asked by the firm, 7 October 2026, for GSTR-3A: "do not
+  show this notice anywhere in any client and keep always considered as non
+  priority to respond"; `20261008180000_notice_types_hidden.sql`). A third choice
+  in "Where it shows" (Dashboard and lists / Lists only / Hidden everywhere).
+  `notice_facts` leaves a hidden type out, so it is in no list, tile, plan,
+  calendar, client page, matter, report, digest or export; search, the bell, the
+  "View Notice and Orders" report, the command centre's "auto-closed today", the
+  autopilot's capture metrics and the background evidence build leave it out too.
+  A hidden type needs no reply and is off the dashboard (a CHECK keeps it so), so
+  its reply options are withdrawn and the notice reader skips it; an event on a
+  hidden notice is written already handled, so no alert e-mail goes out. Its
+  notices are still synced and kept (a GSTR-3A still closes itself when the
+  return is filed), and the Notice types screen still counts them. Showing the
+  type again brings every notice back as it was, with no reply needed until an
+  admin changes that.
 
 ## 12. Reply options, prepared by themselves (asked by the firm, 6 October 2026)
 
@@ -376,3 +393,65 @@ templates in `20261008161000_reply_templates_seed.sql`, catalogue in
   each a starting point that a partner should review before the first use
   (decision pending, like §5). The signature block uses
   `notice_settings.reply_place` and `reply_signatory`.
+
+## 13. The Notice Response AI Assistant (asked by the firm, 7 October 2026)
+
+"AI learning through human behaviour should be preserved for future usage of same
+kind of notice para & response … AI shall read each & every notices and
+attachments and responses. Everything should be done through claude CLI file
+already available in supabase. … admin can select which past & ongoing client
+responses should be part of this learning capabilities." (migration
+`20261009100000_ai_assistant.sql`, Edge Function `supabase/functions/notice-ai/`,
+app: Reply Factory → AI and Learning, the notice page's AI assistant tab)
+
+- **Where it runs.** In Supabase, not on a PC: the Edge Function `notice-ai`.
+  It reaches Claude through the firm's **Claude CLI gateway** (the firm's choice,
+  8 October 2026: the same gateway its other Supabase project uses, on the firm's
+  Claude subscription; secrets `CLAUDE_CLI_GATEWAY_URL` and
+  `CLAUDE_CLI_GATEWAY_SECRET`). The gateway takes text, so a PDF goes as its own
+  text layer page by page and quotes are checked against that same text. A scanned
+  PDF with no text layer is read by the Claude API when `ANTHROPIC_API_KEY` is also
+  set, and otherwise left with the reason `needs_vision`. Without the gateway
+  secrets the API key is used for everything (`NOTICE_AI_BACKEND=api` forces it).
+  Calls through the gateway bill no tokens, so the dollar caps only bind API calls.
+  pg_cron (`notice-ai-tick`, every 2 minutes) wakes it; one run at a time holds a
+  lease (`ai_runner_status`) and reads until about 75 s of its time are left.
+  `ai_settings.runner = 'office_agent'` hands the reading back to the office
+  agent of Phase 4; the assistant stays on the Edge Function either way.
+- **Off until switched on.** `read_enabled` ships false; the admin switches it on
+  in Reply Factory → AI. Which clients are read is `consent_scope`: the clients
+  with consent (the default, as Phase 4), or every client by the firm's choice.
+- **What it reads.** Every notice PDF (as Phase 4), and every document in a case
+  folder: the department's notices and orders, the client's replies and their
+  supporting papers, applications. A reply in review or approved in the app is
+  read too. Each document is read once (the same file under two names is read
+  once, by its hash); replies first, then orders and notices, then the rest.
+  Pages beyond `doc_max_pages` (40) are left out and the reading says so.
+- **What it keeps.** For each reply, the paragraphs of the notice it answers
+  (P1, P2 …) paired with the reply's own words for each (`ai_learning_pairs`),
+  with the issue code and form; facts are kept only as the document states them,
+  with a quote that is checked against the text. A reading that cannot be checked
+  is not used for learning.
+- **The admin chooses what it learns from.** Reply Factory → Learning lists every
+  past and ongoing response (portal replies, the app's drafts, issue positions)
+  with client, form, year and phase; the admin ticks which count, one by one or
+  all those a filter shows, and can untick single pairs. Nothing counts until
+  chosen (`learning_auto_include` false).
+- **How it helps.** On a notice's AI assistant tab: draft a reply to an issue,
+  improve a draft, or ask a question. It finds the chosen examples closest to the
+  paragraph (same issue code and form first, then by wording), shows which it
+  used (E1, E2 …), and writes in the firm's legal English with no hyphen or dash
+  (cleaned in the database, as §12). It never carries another client's facts into
+  a reply: names, GSTINs, amounts and dates come only from this notice. What it
+  writes is a suggestion: "Use in draft" saves it as the next draft version, and
+  the partner review is unchanged. When a person edits the assistant's words and
+  uses them, the edited version becomes a learning pair of its own.
+- **Cost and caps.** Reading and the assistant have separate daily caps
+  (`daily_cap_usd` $10, `assist_daily_cap_usd` $5); every call is in the audit
+  log with its tokens and cost. Documents are read at low effort, the assistant
+  at high. A full backfill of the firm's roughly 2,000 documents is about $0.08 to
+  $0.11 each, some $160 to $220 in all, spread over the days the cap allows.
+- **Not decided by the firm yet.** Reading every client (rather than those with
+  consent), and whether the assistant's examples may be drawn from any client's
+  responses (they are, once chosen; only the reasoning and wording travel) are
+  engineering defaults pending a partner's confirmation.

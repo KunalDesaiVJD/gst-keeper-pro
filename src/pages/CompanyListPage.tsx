@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Note } from '@/components/gstr9/ui';
+import { InfoTip } from '@/components/notices/ui/Panel';
 import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
 import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
@@ -57,6 +58,11 @@ const SyncLine: React.FC<{ c: HealthCounts; run: SyncRun | undefined; polling: b
     <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground" aria-live="polite">
       <span className={cn('inline-block h-2 w-2 rounded-full', tone)} aria-hidden />
       <span className="font-medium text-foreground">{c.fresh} of {c.all} GSTINs synced in 24 h</span>
+      <InfoTip label="How a client is counted">
+        Counted as on the command centre: synced means a good notices pull in the last 24 hours; a client is failing when its last login
+        failed after its last good pull, or its last notices pull failed. Inactive clients, clients excluded from the notices sync and
+        clients without a portal user ID are not synced by the app and sit under "Not synced by the app".
+      </InfoTip>
       {run && (
         <span>· last run {run.status === 'running' ? 'running' : run.status} {fmtAgo(run.started_at)}
           {run.clients_total ? ` (${run.clients_done} of ${plural(run.clients_total, 'client')}${run.ext_version ? `, extension v${run.ext_version}` : ''})` : ''}</span>
@@ -263,12 +269,6 @@ const CompanyListPage: React.FC = () => {
               </div>
             )}
           </div>
-
-          <Note tone="info">
-            Counted as on the command centre: <b>synced</b> means a good notices pull in the last 24 hours; a client is <b>failing</b> when its
-            last login failed after its last good pull, or its last notices pull failed. Inactive clients, clients excluded from the notices
-            sync and clients without a portal user ID are not synced by the app and sit under "Not synced by the app".
-          </Note>
 
           {health.error ? (
             <Note tone="warn">Couldn't load the clients: {health.error instanceof Error ? health.error.message : String(health.error)}{' '}

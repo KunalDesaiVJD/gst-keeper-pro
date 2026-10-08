@@ -145,11 +145,23 @@ solver, OCR or solving service, a proxy or a cloud runner. Ships off
 the PDF through the Claude API in the office agent (`agent/src/read/`, off by default,
 per-client consent). Evidence recipes (`src/lib/reply/`) build versioned annexures from
 portal-pulled figures only. Notice types (`notice_type_settings`: critical / optional /
-none, and whether the command centre shows them; lists opened from it carry `dash=1`).
+none, and whether the command centre shows them; lists opened from it carry `dash=1`;
+or `hidden` everywhere, left out of `notice_facts`: GSTR-3A since 7 Oct 2026).
 Reply options are rendered by DB triggers from `reply_templates` when a notice arrives
 or changes, with no hyphen or dash anywhere (CHECK constraints), and start drafts. Notices
 & Litigation is one sidebar entry, last; its pages are reached from `NoticesTopNav`.
 Read `docs/REPLY_FACTORY_POSITIONS.md` and `docs/REPLY_TEMPLATES.md` first.
+
+**Phase 7 (AI assistant, master filters):** the Edge Function `notice-ai`
+(`supabase/functions/notice-ai/`, Deno; tests `deno test test/`) reads notices and every
+case folder document (`ai_documents`, pg_cron `notice-ai-tick`), keeps reply ↔ paragraph
+pairs (`ai_learning_pairs`) that an admin chooses to learn from (Reply Factory → Learning),
+and drafts or improves replies on the notice page; off until `ai_settings.read_enabled`,
+reaches Claude through the firm's Claude CLI gateway (`CLAUDE_CLI_GATEWAY_URL` / `CLAUDE_CLI_GATEWAY_SECRET`, `cli.ts`), the API key only for scans or as fallback (§13 of the Reply Factory positions). Master filters
+(client, FY, owner, form, priority) run on every list page via `src/lib/masterFilters.ts`
+and in `notices_command_centre(p_user_id, p_filters)`. Module pages use the panels in
+`src/components/notices/ui/Panel.tsx` (pairs of equal height, explanations behind (i)).
+Extension 0.8.1 offers a refused portal password once (`pwRefusal*` in background.js).
 
 **Read `docs/NOTICES_LITIGATION_POSITIONS.md` before changing auto-close
 logic, tile definitions, due dates, clocks, stages, the plan ranking or alerts.** The positions were

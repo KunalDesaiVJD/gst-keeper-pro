@@ -26,7 +26,7 @@ export type ClientDocRequest = Functions['client_doc_requests']['Returns'][numbe
 export type Tone = 'success' | 'warning' | 'info' | 'destructive' | 'secondary';
 export interface Actor { id: string; firstName: string }
 
-export type FactoryTab = 'overview' | 'types' | 'templates' | 'rules' | 'ai' | 'consent';
+export type FactoryTab = 'overview' | 'types' | 'templates' | 'rules' | 'ai' | 'learning' | 'consent';
 
 /** A list's page in the URL (?p= by default); links to another list leave it out, so a new list starts on page 1. */
 export function useListPage(param = 'p', pageSize = 50) {
@@ -64,7 +64,15 @@ export interface AiReadStatus {
   settings: AiSettings | null;
   agent_online: boolean;
   spend_today_usd: number;
-  queue: { queued: number; running: number; done_today: number; failed_today: number };
+  /** The assistant's own spend today (its cap is assist_daily_cap_usd; 20261009100000). */
+  assist_spend_today_usd: number;
+  queue: { queued: number; running: number; done: number; done_today: number; failed_today: number };
+  /** Attachments, replies, orders and drafts the AI reads (ai_documents). */
+  documents: { queued: number; running: number; done: number; failed: number; skipped: number; done_today: number };
+  learning: { responses: number; responses_included: number; pairs: number; pairs_included: number; uses: number };
+  assist: { runs_today: number; used_today: number };
+  /** The notice-ai Edge Function's heartbeat (ai_runner_status). */
+  runner: { last_tick_at: string | null; last_work_at: string | null; last_sync_at: string | null; last_error: string | null; key_ok: boolean | null; version: string | null } | null;
   consent: { clients: number; with_consent: number; opted_out: number };
   month: { calls: number; cost_usd: number; input_tokens: number; output_tokens: number };
 }
@@ -125,11 +133,22 @@ const counts = (v: unknown): Record<string, number> => Object.fromEntries(Object
 export function normaliseAiStatus(raw: unknown): AiReadStatus {
   const a = obj(raw);
   const q = obj(a.queue); const c = obj(a.consent); const m = obj(a.month);
+  const d = obj(a.documents); const l = obj(a.learning); const as = obj(a.assist);
+  const r = a.runner && typeof a.runner === 'object' ? obj(a.runner) : null;
+  const s = (v: unknown) => (typeof v === 'string' ? v : null);
   return {
     settings: a.settings && typeof a.settings === 'object' ? (a.settings as AiSettings) : null,
     agent_online: !!a.agent_online,
     spend_today_usd: num(a.spend_today_usd),
-    queue: { queued: num(q.queued), running: num(q.running), done_today: num(q.done_today), failed_today: num(q.failed_today) },
+    assist_spend_today_usd: num(a.assist_spend_today_usd),
+    queue: { queued: num(q.queued), running: num(q.running), done: num(q.done), done_today: num(q.done_today), failed_today: num(q.failed_today) },
+    documents: { queued: num(d.queued), running: num(d.running), done: num(d.done), failed: num(d.failed), skipped: num(d.skipped), done_today: num(d.done_today) },
+    learning: { responses: num(l.responses), responses_included: num(l.responses_included), pairs: num(l.pairs), pairs_included: num(l.pairs_included), uses: num(l.uses) },
+    assist: { runs_today: num(as.runs_today), used_today: num(as.used_today) },
+    runner: r ? {
+      last_tick_at: s(r.last_tick_at), last_work_at: s(r.last_work_at), last_sync_at: s(r.last_sync_at), last_error: s(r.last_error),
+      key_ok: typeof r.key_ok === 'boolean' ? r.key_ok : null, version: s(r.version),
+    } : null,
     consent: { clients: num(c.clients), with_consent: num(c.with_consent), opted_out: num(c.opted_out) },
     month: { calls: num(m.calls), cost_usd: num(m.cost_usd), input_tokens: num(m.input_tokens), output_tokens: num(m.output_tokens) },
   };

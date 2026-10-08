@@ -5,7 +5,7 @@
 // Matters list filtered to that owner (U-105-3). Cards on phones.
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
 import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { initials, plural } from '@/lib/noticeFormat';

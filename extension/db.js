@@ -34,6 +34,14 @@
     replaceNotices: (clientId, rows, pullTs, opts) => call('replaceNotices', clientId, rows, pullTs, opts),
     replaceRefundApplications: (clientId, rows, pullTs, opts) => call('replaceRefundApplications', clientId, rows, pullTs, opts),
     patchRefundDocument: (clientId, arn, patchObj) => call('patchRefundDocument', clientId, arn, patchObj),
+    // 0.8.0: one notice's own columns, patched on their own after the notices
+    // save — the link pass's DIN, and a refund notice's PDF and reply date,
+    // which only become known when the refunds step reads that case's folder
+    // later in the same run. Isolated on purpose: see background.js.
+    patchNoticeFields: (clientId, portalKey, patchObj) => call('patchNoticeFields', clientId, portalKey, patchObj),
+    // 0.8.0: the open notices of this client that still have no PDF, reply
+    // date or officer — what the refunds step's link pass patches.
+    noticesNeedingDetail: (clientId) => call('noticesNeedingDetail', clientId),
     replaceDrc03Filings: (clientId, rows, pullTs, opts) => call('replaceDrc03Filings', clientId, rows, pullTs, opts),
     upsertTaxpayerProfile: (clientId, patchObj) => call('upsertTaxpayerProfile', clientId, patchObj),
     getTaxpayerRegistrationDate: (clientId) => call('getTaxpayerRegistrationDate', clientId),
@@ -55,6 +63,12 @@
     // handleNotices' task-list loop in content.js for the capture.
     replaceCaseFolderItems: (clientId, caseId, rows, pullTs, opts) => call('replaceCaseFolderItems', clientId, caseId, rows, pullTs, opts),
     getPortalPassword: (clientId) => call('getPortalPassword', clientId),
+    // 0.8.1: passwords the portal refused (background.js, pwRefusal*): checked
+    // before a bulk or scheduled login, marked on a refusal, cleared on a login.
+    pwRefusalCheck: (clientId, user, pass) => call('pwRefusalCheck', clientId, user, pass),
+    pwRefusalMark: (clientId, user, pass, info) => call('pwRefusalMark', clientId, user, pass, info),
+    pwRefusalClear: (clientId) => call('pwRefusalClear', clientId),
+    pwRefusalList: () => call('pwRefusalList'),
     runSweep: (clientId) => call('runSweep', clientId),
     // 0.5.0: one ingest door (public.sync_ingest) and the run ledger.
     ingest: (clientId, runId, step, rows, opts, scope) => call('ingest', clientId, runId, step, rows, opts, scope),
@@ -64,7 +78,6 @@
     // 0.6.0: applications on the portal; kept notice detail (GSTR-3A period).
     ingestApplications: (clientId, runId, rows, caseTypes, complete) => call('ingestApplications', clientId, runId, rows, caseTypes, complete),
     noticeDetails: (clientId, rows) => call('noticeDetails', clientId, rows),
-    replaceChallansSince: (clientId, fromIso, rows) => call('replaceChallansSince', clientId, fromIso, rows),
     notifyCaptcha: (clientName, progress) => call('notifyCaptcha', clientName, progress),
     clearCaptchaNotice: () => call('clearCaptchaNotice'),
     logEvent: (clientId, level, message) => { console.log('[GSTKeeper]', level, clientId, message); },

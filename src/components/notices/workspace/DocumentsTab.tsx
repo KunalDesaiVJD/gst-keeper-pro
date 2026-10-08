@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, FileText, FolderOpen, ListChecks, Loader2, Mail, Paperclip, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';

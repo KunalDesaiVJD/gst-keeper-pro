@@ -5,7 +5,7 @@
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { FilterPill } from '@/components/notices/FilterPill';
 import { EmptyBox, LoadError, ToneBadge } from '@/components/notices/autopilot/parts';

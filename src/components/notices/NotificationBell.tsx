@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { describeEvent } from '@/lib/noticeEventText';
+import { loadHiddenForms } from '@/lib/noticeTypes';
 import { stageLabel } from '@/lib/noticeStages';
 import { fmtAgo, fmtDate, fmtInrShort, sentenceCase } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
@@ -79,22 +80,28 @@ async function loadBell(userId: string): Promise<BellItem[]> {
 
   const noticeIds = [...new Set(nEvents.map((e) => e.notice_id))];
   const matterIds = [...new Set(mEvents.map((e) => e.matter_id))];
-  const [notices, matters] = await Promise.all([
+  const [notices, matters, hiddenForms] = await Promise.all([
     noticeIds.length
       ? supabase.from('gst_notices').select('id, client_id, form_code, notice_type, reference_number, assign_to_user_id').in('id', noticeIds)
       : Promise.resolve({ data: [], error: null }),
     matterIds.length
       ? supabase.from('litigation_matters').select('id, client_id, matter_no, owner_user_id').in('id', matterIds)
       : Promise.resolve({ data: [], error: null }),
+    loadHiddenForms(),
   ]);
   const noticeById = new Map((notices.data ?? []).map((n) => [n.id, n]));
+  // A notice type hidden everywhere (Notice types) never rings the bell.
+  const shownEvents = nEvents.filter((e) => {
+    const code = noticeById.get(e.notice_id)?.form_code;
+    return !code || !hiddenForms.has(code);
+  });
   const matterById = new Map((matters.data ?? []).map((m) => [m.id, m]));
   const clientIds = [...new Set([...nEvents.map((e) => e.client_id), ...(matters.data ?? []).map((m) => m.client_id)].filter(Boolean))];
   const clients = clientIds.length ? await supabase.from('clients').select('id, name').in('id', clientIds) : { data: [] as { id: string; name: string }[] };
   const clientName = new Map((clients.data ?? []).map((c) => [c.id, c.name]));
 
   const items: BellItem[] = [
-    ...nEvents.map((e) => {
+    ...shownEvents.map((e) => {
       const n = noticeById.get(e.notice_id);
       const what = [n?.form_code || (n?.notice_type ? sentenceCase(n.notice_type) : ''), n?.reference_number].filter(Boolean).join(' ');
       const d = describeEvent(e);

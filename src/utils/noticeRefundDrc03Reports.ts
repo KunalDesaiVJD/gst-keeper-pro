@@ -59,11 +59,13 @@ export const buildViewNoticesAndOrdersReport = async (clientId: string): Promise
   const title = 'View Notice and Orders';
   const client = await fetchClient(clientId);
   const { data, error } = await supabase
-    .from('gst_notices')
+    // notice_facts: the client's notices on record, without the types the firm
+    // hides everywhere (Notice types; GSTR-3A since 7 Oct 2026).
+    .from('notice_facts')
     // One literal (not '…' + '…'): concatenated strings type as plain `string`,
     // which the client cannot parse, so every column below read as an error type.
     .select('id, reference_number, case_id, notice_type, description, issue_date, due_date, extended_due_date, staff_status, priority, reply_ref_number, reply_date, order_number, order_date, submission_arn, submission_date, amount_of_demand, remarks, issued_by, financial_year, assign_to, pdf_url')
-    .eq('client_id', clientId).eq('source', 'notices').is('deleted_at', null)
+    .eq('client_id', clientId)
     .order('issue_date', { ascending: false });
   if (error) throw error;
   const rows = data || [];

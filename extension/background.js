@@ -23,20 +23,32 @@ const enc = encodeURIComponent;
 // declarativeNetRequest, which is allowed to. Registered once per worker
 // startup; scoped narrowly to this one endpoint so it can't affect any other
 // cross-origin fetch this file makes.
-try {
-  chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [1],
-    addRules: [{
-      id: 1,
-      priority: 1,
-      condition: { urlFilter: '||return.gst.gov.in/returns/auth/api/gstr3a/summary', resourceTypes: ['xmlhttprequest'] },
-      action: {
-        type: 'modifyHeaders',
-        requestHeaders: [{ header: 'Referer', operation: 'set', value: 'https://services.gst.gov.in/services/auth/notices' }],
-      },
-    }],
-  }).catch(() => { /* best-effort — a failed registration just leaves the old fetch behavior */ });
-} catch (e) { /* best-effort — a failed registration just leaves the old fetch behavior */ }
+// 0.8.0: the registration is awaited before the first cross-origin fetch
+// (dnrReady, used by fetchCrossOriginAsBase64 below). Registering is async,
+// and this worker starts on the very message that wants the rule — so a
+// GSTR-3A summary fetched in the first moments of a worker's life went out
+// with the page's own Referer, came back as the 200 "Access Denied" HTML page
+// described above, and failed as "not JSON". That is the GSTR-3A "no PDF
+// captured" row: not a notice the portal has no PDF for, just one whose
+// request raced the rule. Dynamic rules persist across worker restarts, so
+// after the first registration this resolves immediately.
+const dnrReady = (async () => {
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [1],
+      addRules: [{
+        id: 1,
+        priority: 1,
+        condition: { urlFilter: '||return.gst.gov.in/returns/auth/api/gstr3a/summary', resourceTypes: ['xmlhttprequest'] },
+        action: {
+          type: 'modifyHeaders',
+          requestHeaders: [{ header: 'Referer', operation: 'set', value: 'https://services.gst.gov.in/services/auth/notices' }],
+        },
+      }],
+    });
+    return true;
+  } catch (e) { return false; } // best-effort — a failed registration just leaves the old fetch behavior
+})();
 
 const sel = async (path) => {
   const r = await fetch(base + path, { headers: H });
@@ -138,6 +150,26 @@ const LEGACY_REPLACE = {
     legacyRows(rows, { client_id: clientId, case_id: scope, pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null }), pullTs, opts),
 };
 
+// 0.8.1: refused portal passwords (API.pwRefusal*). Keyed by client id; each
+// entry holds a fingerprint of the refused user ID + password, never either.
+const PW_REFUSED_KEY = 'gstk_pw_refused';
+const PW_SALT_KEY = 'gstk_pw_salt';
+async function pwRefusals() {
+  try { return (await chrome.storage.local.get(PW_REFUSED_KEY))[PW_REFUSED_KEY] || {}; } catch (e) { return {}; }
+}
+async function pwSalt() {
+  const got = (await chrome.storage.local.get(PW_SALT_KEY))[PW_SALT_KEY];
+  if (got) return got;
+  const salt = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  await chrome.storage.local.set({ [PW_SALT_KEY]: salt });
+  return salt;
+}
+async function pwFingerprint(user, pass) {
+  const data = new TextEncoder().encode(await pwSalt() + '\n' + String(user || '').trim().toLowerCase() + '\n' + String(pass == null ? '' : pass));
+  const buf = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 const API = {
   getClients: () => sel('clients?select=id,name,gstin,gst_user_id,selected_returns,notices_sync_excluded,inactive_at_hand&order=name'),
   getClient: (id) => sel(`clients?id=eq.${id}&select=id,name,gstin,gst_user_id,selected_returns&limit=1`).then((a) => a[0] || null),
@@ -210,6 +242,42 @@ const API = {
   // financial data replaceRefundApplications already saved.
   patchRefundDocument: async (clientId, arn, patchObj) =>
     patch(`gst_refund_applications?client_id=eq.${clientId}&arn=eq.${enc(arn)}`, patchObj),
+
+  // 0.8.0 — one notice's own columns, separately from the notices upsert.
+  // Two things need this. The DIN: this extension cannot migrate the
+  // database, and an unknown column anywhere in the upsert body would fail
+  // the whole client's notices save, so the DIN goes in a PATCH of its own
+  // that fails harmlessly on a database without the column — the same
+  // reasoning patchRefundDocument above is built on. And a refund notice's
+  // PDF and reply date: those live in the refund case's folder, which the
+  // refunds step reads after the notices are already saved, so patching is
+  // the only way to get them onto the notice in the same run.
+  // Manual rows (portal_key 'manual:…') are never touched: they are the
+  // firm's own, and the portal has nothing to say about them.
+  // 0.8.0: this client's portal notices that are still missing a PDF, a reply
+  // date or an officer. Read once by the refunds step so its link pass patches
+  // only what is actually missing, and never a notice the firm entered itself.
+  noticesNeedingDetail: async (clientId) => {
+    try {
+      const rows = await sel(`gst_notices?client_id=eq.${clientId}&source=eq.notices&deleted_at=is.null`
+        + '&or=(pdf_url.is.null,due_date.is.null,issued_by.is.null)'
+        + '&reference_number=not.is.null'
+        + '&select=portal_key,reference_number,pdf_url,due_date,issued_by&limit=2000');
+      // The firm's own rows are filtered here rather than in the query: a
+      // `not.like.manual:*` filter whose value carries a colon is the kind of
+      // thing PostgREST answers with a 400, and this reader swallows its own
+      // errors, so a filter that failed would silently return nothing at all.
+      return (rows || []).filter((r) => String(r.portal_key || '').indexOf('manual:') !== 0);
+    } catch (e) { return []; }
+  },
+
+  patchNoticeFields: async (clientId, portalKey, patchObj) => {
+    const key = String(portalKey || '');
+    if (!key || key.indexOf('manual:') === 0) return false;
+    if (!patchObj || !Object.keys(patchObj).length) return false;
+    await patch(`gst_notices?client_id=eq.${clientId}&source=eq.notices&portal_key=eq.${enc(key)}`, patchObj);
+    return true;
+  },
 
   // DRC-03 voluntary payments — upsert on (client_id, portal_key).
   replaceDrc03Filings: async (clientId, rows, pullTs, opts) => {
@@ -359,6 +427,9 @@ const API = {
       for (const it of items) out.itemDocs[it.case_id + '|' + it.portal_key] = Array.isArray(it.attachments) ? it.attachments : [];
       const drc = await sel(`gst_drc03_filings?client_id=eq.${clientId}&deleted_at=is.null&select=arn,pdf_url`);
       for (const d of drc) if (d.arn && d.pdf_url) out.drc03Pdf[d.arn] = d.pdf_url;
+      // 0.7.1: refund documents already saved, per ARN ({tab, label, url}).
+      const rf = await sel(`gst_refund_applications?client_id=eq.${clientId}&deleted_at=is.null&arn=not.is.null&select=arn,documents`);
+      for (const r of rf) if (r.arn && Array.isArray(r.documents) && r.documents.length) out.refundDocs[r.arn] = r.documents;
     } catch (e) { /* best-effort: an empty map just means "fetch everything" */ }
     return out;
   },
@@ -367,12 +438,6 @@ const API = {
   syncQueue: async (clientIds) => {
     try { return await rpc('sync_queue', { p_client_ids: clientIds && clientIds.length ? clientIds : null }); }
     catch (e) { return null; }
-  },
-  // Challans from a date on: delete that slice (and old failure markers) and
-  // insert the fresh rows, so a recent-windows pass never drops older history.
-  replaceChallansSince: async (clientId, fromIso, rows) => {
-    await del('gst_challans', `client_id=eq.${clientId}&or=(challan_date.gte.${fromIso},challan_date.is.null)`);
-    return rows.length ? post('gst_challans', rows) : true;
   },
   // Desktop notice that a CAPTCHA is waiting (the sync tab may be behind other windows).
   notifyCaptcha: async (clientName, progress) => {
@@ -392,6 +457,47 @@ const API = {
     const rows = await sel(`clients?id=eq.${clientId}&select=gst_password&limit=1`);
     return (rows[0] && rows[0].gst_password) || null;
   },
+
+  // 0.8.1 — a password the portal refused is never offered again. A bulk or
+  // scheduled sync skips that client at once, logged as a failed login, and
+  // moves to the next one, until the user ID or password saved in GST Keeper
+  // changes (or someone logs that client in once by hand). Retrying a wrong
+  // password achieves nothing and, a few tries in, the portal locks the
+  // client's account. Only a salted SHA-256 fingerprint of the refused user ID
+  // and password is kept, in this Chrome's own storage; never the password.
+  // `pass` is the one the login form was filled with; the runner, which has
+  // none, leaves it out and the saved one is read.
+  pwRefusalCheck: async (clientId, user, pass) => {
+    const all = await pwRefusals();
+    const m = all[clientId];
+    if (!m) return null;
+    if (pass == null) pass = await API.getPortalPassword(clientId);
+    if (m.fp === await pwFingerprint(user, pass)) return { at: m.at, reason: m.reason, message: m.message };
+    // Changed in GST Keeper since it was refused: the new one is tried.
+    delete all[clientId];
+    await chrome.storage.local.set({ [PW_REFUSED_KEY]: all });
+    return null;
+  },
+  pwRefusalMark: async (clientId, user, pass, info) => {
+    const all = await pwRefusals();
+    all[clientId] = {
+      fp: await pwFingerprint(user, pass), at: new Date().toISOString(),
+      reason: String((info && info.reason) || 'wrong_password'), message: String((info && info.message) || '').slice(0, 300),
+      name: String((info && info.name) || '').slice(0, 120),
+    };
+    await chrome.storage.local.set({ [PW_REFUSED_KEY]: all });
+    return true;
+  },
+  pwRefusalClear: async (clientId) => {
+    const all = await pwRefusals();
+    if (!all[clientId]) return false;
+    delete all[clientId];
+    await chrome.storage.local.set({ [PW_REFUSED_KEY]: all });
+    return true;
+  },
+  // Every client whose saved password is waiting to be changed (name, when, why).
+  pwRefusalList: async () => Object.entries(await pwRefusals())
+    .map(([clientId, m]) => ({ clientId, name: m.name || null, at: m.at, reason: m.reason, message: m.message })),
 
   upsertTaxpayerProfile: async (clientId, patchObj) => {
     const write = async (obj) => {
@@ -460,6 +566,10 @@ const API = {
   // generation, so content.js can't fetch it directly — this relay can,
   // since host_permissions covers *.gst.gov.in for the background worker.
   fetchCrossOriginAsBase64: async (url) => {
+    // Wait for the Referer-rewrite rule above, or this request can beat it.
+    // Never blocks longer than a moment: a slow or failed registration falls
+    // through to the fetch, exactly as before 0.8.0.
+    try { await Promise.race([dnrReady, new Promise((r) => setTimeout(r, 3000))]); } catch (e) { /* fetch anyway */ }
     const r = await fetch(url, { credentials: 'include' });
     if (!r.ok) throw new Error('fetchCrossOriginAsBase64 -> HTTP ' + r.status);
     const buf = await r.arrayBuffer();

@@ -7,6 +7,7 @@
 // command centre carries dash=1 and shows only the notice types on the
 // dashboard (notice_facts.on_dashboard), because the dashboard counts only
 // those (contract §A, migration 20261008150000_notice_types.sql).
+import { fyVariants } from '@/lib/masterFilters';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import type { NoticeFact, NoticePlanRow } from '@/lib/noticeFacts';
@@ -160,7 +161,8 @@ export function applyListFilters(q: Q, p: NoticeListParams, meId: string | null)
   if (p.category) q = q.eq('category', p.category);
   if (p.form === 'none') q = q.is('form_code', null);
   else if (p.form) q = q.eq('form_code', p.form);
-  if (p.fy) q = q.eq('financial_year', p.fy);
+  if (p.fy === 'none') q = q.is('financial_year', null);
+  else if (p.fy) q = q.in('financial_year', fyVariants(p.fy));
   if (p.priority) q = q.eq('effective_priority', p.priority);
   if (p.due) q = q.eq('effective_due', p.due);
   if (p.need) q = q.eq('response_need', p.need);
@@ -181,15 +183,19 @@ function applySort(q: Q, p: NoticeListParams, fallback: SortKey): Q {
   const key: SortKey = p.sort ?? fallback;
   const def = SORTS[key];
   const ascending = p.dir ? p.dir === 'asc' : def.ascending;
-  return q.order(def.column, { ascending, nullsFirst: false }).order('id', { ascending: true });
+  q = q.order(def.column, { ascending, nullsFirst: false });
+  // Notices issued the same day: the one the portal sync brought in last comes first.
+  if (key === 'issued') q = q.order('first_seen_at', { ascending, nullsFirst: false });
+  return q.order('id', { ascending: true });
 }
 
-/** The natural order for a filter: overdue / due soon by date, demand by size, new by arrival. */
-export function defaultSort(filter: ListFilter): SortKey {
-  if (filter === 'exposure') return 'demand';
-  if (filter === 'new') return 'seen';
-  if (filter === 'closed' || filter === 'auto_closed' || filter === 'replied' || filter === 'submitted' || filter === 'all' || filter === 'issued15') return 'issued';
-  return 'due';
+/**
+ * Every list opens newest first, by issue date (the firm's choice of 7 October
+ * 2026: notices run from new to old, on the dashboard and in every list). A
+ * column header or the order picker still sorts by due date, demand, rank …
+ */
+export function defaultSort(_filter?: ListFilter): SortKey {
+  return 'issued';
 }
 
 export const PAGE_SIZE = 50;
@@ -242,13 +248,13 @@ export async function fetchQueueCounts(p: NoticeListParams, meId: string | null)
   return Object.fromEntries(QUEUE_TABS.map((t, i) => [t, counts[i]])) as Record<QueueTab, number>;
 }
 
-/** The Work queue (Today's plan in full): ranked open notices with their next action. */
+/** The Work queue (Today's plan in full): open notices with their next action, newest first unless ordered otherwise. */
 export async function fetchQueuePage(tab: QueueTab, p: NoticeListParams, meId: string | null, pageSize = PAGE_SIZE):
   Promise<{ rows: NoticePlanRow[]; total: number }> {
   let q = supabase.from('notice_plan').select('*', { count: 'exact' });
   q = applyQueueTab(q, tab, meId);
   q = applyListFilters(q, { ...p, filter: 'all' }, meId);
-  q = applySort(q, p, 'score');
+  q = applySort(q, p, defaultSort());
   const from = (p.page - 1) * pageSize;
   const { data, error, count } = await q.range(from, from + pageSize - 1);
   if (error) throw error;

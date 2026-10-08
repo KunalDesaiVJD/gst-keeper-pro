@@ -131,7 +131,8 @@ before(async () => {
   await fake.start();
 
   // Reading off while the test sets up; the autopilot stays off throughout.
-  await settings({ read_enabled: false, auto_read_new: false, daily_cap_usd: 10, model: 'claude-opus-5-5', effort: 'high', max_pages: 60 });
+  // The office agent is the runner here (the Edge Function is the default since 20261009100000).
+  await settings({ read_enabled: false, auto_read_new: false, daily_cap_usd: 10, model: 'claude-opus-5-5', effort: 'high', max_pages: 60, runner: 'office_agent' });
   await rest('PATCH', 'autopilot_settings?id=eq.true', { enabled: false }, 'return=minimal');
 
   for (const p of Object.values(P)) {

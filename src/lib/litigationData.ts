@@ -8,6 +8,7 @@
 // stage change also writes matter_stage_history, and the database keeps
 // litigation_matters.status in step with the stage (stage 'closed' ⇒ status
 // Closed + closed_at), so the app writes the stage, never the status.
+import { fyMatches, formMatches } from '@/lib/masterFilters';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database, TablesUpdate } from '@/integrations/supabase/types';
 import { fetchAllRows } from '@/lib/fetchAllRows';
@@ -404,6 +405,10 @@ export interface MatterListParams {
   owner?: string;
   lifecycle?: string;
   priority?: string;
+  /** A financial year (any of the matter's), or 'none' (no year recorded): the master filter. */
+  fy?: string;
+  /** A form code of any of the matter's notices, or 'none': the master filter. */
+  form?: string;
   age?: AgeBucket;
   clock?: ClockFilter;
   q?: string;
@@ -421,7 +426,7 @@ export const CLOCK_FILTERS: { key: ClockFilter; label: string }[] = [
   { key: 'overdue', label: 'Overdue' }, { key: 'hearing7', label: 'Hearing in 7 days' }, { key: 'appeal30', label: 'Appeal clock in 30 days' },
 ];
 
-const PARAM_KEYS = ['stage', 'client', 'owner', 'lifecycle', 'priority', 'age', 'clock', 'q'] as const;
+const PARAM_KEYS = ['stage', 'client', 'owner', 'lifecycle', 'priority', 'fy', 'form', 'age', 'clock', 'q'] as const;
 
 export function parseMatterParams(sp: URLSearchParams): MatterListParams {
   const stage = sp.get('stage') || undefined;
@@ -477,6 +482,8 @@ export function filterMatters(rows: MatterListRow[], p: MatterListParams, meId: 
     if (p.owner === 'none' ? !!r.owner_user_id : owner && r.owner_user_id !== owner) return false;
     if (p.lifecycle && r.lifecycle !== p.lifecycle) return false;
     if (p.priority && r.priority !== p.priority) return false;
+    if (p.fy && !(p.fy === 'none' ? !(r.financial_years ?? []).length : fyMatches(r.financial_years ?? [], p.fy))) return false;
+    if (p.form && !formMatches(r.notices.length ? r.notices.map((n) => n.form_code ?? null) : [null], p.form)) return false;
     if (p.age && ageBucket(r.age_days) !== p.age) return false;
     if (p.clock && !clockMatches(r, p.clock)) return false;
     if (q && !q.split(/\s+/).every((t) => r.search.includes(t))) return false;

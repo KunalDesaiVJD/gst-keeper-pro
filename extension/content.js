@@ -46,6 +46,47 @@
   // pass per client every 7 days, so a change in a closed case is still caught.
   const FULL_FOLDER_PASS_MS = 7 * 24 * 60 * 60 * 1000;
   const REFUND_FOLDER_LABELS = { APLCN: 'Applications', NOTAC: 'Notice/Acknowledgement', REPLY: 'Replies', ORDRS: 'Orders', AUDIT: 'Audit History' };
+  // 0.8.0: the officer, the DIN and the reply date a notice row takes from its
+  // case-folder item (noticeFieldsFromItem, further down). Declared up here
+  // with every other constant a step handler reads, for the same reason: the
+  // dispatcher awaits those handlers inside this IIFE, so a const sitting next
+  // to its own function further down is still in its temporal dead zone when
+  // pullNotices runs ("Cannot access ... before initialization", CHANGELOG 0.5.0).
+  // The portal spells the same field differently from one folder section to the
+  // next, so each entry is a list of candidate key names, compared with
+  // separators stripped and case ignored (dueDt == due_dt == DUEDT).
+  const NOTICE_FIELD_KEYS = {
+    due: ['replyduedt', 'replyduedate', 'duedt', 'duedate', 'dtofreply', 'replydt', 'replybydt', 'lastdtofreply', 'dtofsubmission'],
+    officer: ['issuedby', 'officername', 'issuedbyname', 'empname', 'officerfullname', 'issuername', 'issuer'],
+    designation: ['designation', 'issuedbydesignation', 'officerdesignation', 'desgn', 'dsgn', 'desig', 'officerdesg'],
+    din: ['din', 'dinno', 'dinnumber', 'docdin', 'dinnum', 'dinid'],
+  };
+  const normKey = (k) => String(k || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const isRealText = (s) => s.length > 1 && !/^(na|n\/a|null|none|-+|0)$/i.test(s);
+  // 0.8.1: how the portal answers a Login press, read off the login form (it
+  // shows its refusal in place). A refused user ID or password, or a locked or
+  // expired account, ends that client for the run and is remembered, so the
+  // same password is never offered again (background.js, pwRefusal*); a
+  // CAPTCHA typo is tried again; anything else gets one more try. Every
+  // refusal needs a negative word next to a credential noun, so the form's own
+  // labels ("Password", "Forgot Password") can never read as one. Declared up
+  // here for the reason NOTICE_FIELD_KEYS is.
+  const LOGIN_ERR_SEL = '.alert-danger, .toast-error, .toast-message, .error-msg, .err, .text-danger, .help-block, .invalid-feedback, '
+    + '[role="alert"], .modal.in .modal-body, .modal.show .modal-body';
+  const LOGIN_REFUSALS = [
+    { reason: 'account_locked', rx: /\b(account|user\s*id|user\s*name|username|user|login)\b\W+(?:\w+\W+){0,5}?(locked|blocked|suspended|disabled|deactivated|frozen)\b/i },
+    { reason: 'account_locked', rx: /\b(maximum|exceeded|too\s+many)\b\W+(?:\w+\W+){0,4}?(attempts?|tries|logins?)\b/i },
+    { reason: 'password_expired', rx: /\bpassword\b\W+(?:\w+\W+){0,4}?(has\s+)?expired\b|\bexpired\b\W+(?:\w+\W+){0,3}?password\b/i },
+    { reason: 'wrong_password', rx: /\b(invalid|incorrect|wrong|not\s+valid|does\s*n[o']?t\s+match|did\s*n[o']?t\s+match|mismatch(?:ed)?)\b\W+(?:\w+\W+){0,4}?(user\s*name|username|user\s*id|userid|password|credentials?)\b/i },
+    { reason: 'wrong_password', rx: /\b(user\s*name|username|user\s*id|userid|password|credentials?)\b\W+(?:\w+\W+){0,5}?(invalid|incorrect|wrong|not\s+valid|not\s+match|mismatch(?:ed)?)\b/i },
+    { reason: 'wrong_password', rx: /\b(user\s*name|username|user\s*id|userid)\b\W+(?:\w+\W+){0,3}?(does\s*n[o']?t\s+exist|not\s+(found|registered|exist))\b/i },
+  ];
+  const LOGIN_CAPTCHA_RX = /captcha|letters\s+shown|characters\s+(shown|displayed|in\s+the\s+image)|image\s+text|verification\s+code|security\s+code/i;
+  const REFUSAL_WORDS = {
+    wrong_password: 'Wrong user ID or password',
+    password_expired: 'The portal password has expired',
+    account_locked: 'The portal account is locked',
+  };
   // "My Applications" types the notices bundle reads (handleApplications, 0.6.0).
   const APPLICATION_TYPES = {
     APPEL: { form: 'GST APL-01', label: 'Appeal to Appellate Authority' },
@@ -375,7 +416,11 @@
       banner('Client done — switching to the next…', '#2563eb');
       location.href = 'https://services.gst.gov.in/services/logout';
     } else {
-      banner('All ' + job.clients.length + ' client(s) done ✓ — you can close this tab.', '#16a34a');
+      // 0.8.1: say which clients were left out for a refused password.
+      const refused = job.loginRefused || [];
+      banner('All ' + job.clients.length + ' client(s) done ✓'
+        + (refused.length ? ' · not logged in (password refused): ' + refused.map((r) => r.name).join(', ') + ' — change them in Edit Client' : '')
+        + ' — you can close this tab.', refused.length ? '#d97706' : '#16a34a');
       // An agent or scheduled job's run belongs to the queue (portal_job_finish closes it).
       if (job.runId && !job.agent && !job.runner) { try { await GSTKdb.runFinish(job.runId, 'done'); } catch (e) { /* ledger is diagnostic */ } }
       await clearJob();
@@ -401,6 +446,162 @@
   async function logLoginFailure(job, cur, message) {
     try { await GSTKdb.logClientSync(cur.clientId, 'login_failed', 'failed', message || null); } catch (e) { /* diagnostic only */ }
     if (ledgerJob(job)) { try { await GSTKdb.logStep(job.runId, cur.clientId, 'login', 'failed', 'login_failed', message || null); } catch (e) { /* diagnostic only */ } }
+  }
+
+  // ── 0.8.1: a refused password ends the client, once ──────────────────────
+  // Before 0.8.1 a wrong or changed password kept the run on that client: a
+  // person typing the CAPTCHAs was asked for one after another for the same
+  // client (the portal's answer was read only after an automatic fill), and an
+  // automatic fill tried three more times when it could not read the answer.
+  // Now the answer is read after every Login press, whoever pressed it; a
+  // refusal is logged once, remembered, and the run moves to the next client.
+
+  // A bulk or scheduled run: never offers a password the portal refused. One
+  // client logged in by a person's own click is still tried (and clears the
+  // mark when it works), so the firm can always check a password by hand.
+  // Function declarations, not consts: the dispatcher runs a step before the
+  // lines of this file below it have run (CHANGELOG 0.5.0, "before initialization").
+  function bulkJob(job) { return !!(job.runner || job.agent || (Array.isArray(job.clients) && job.clients.length > 1)); }
+
+  function shown(el) { return !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'; }
+  function oneLine(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
+
+  // What the login form says now: the portal's message elements that are on
+  // screen, and any line of the form that reads as a refusal.
+  function loginMessages() {
+    const out = [];
+    const add = (t) => { t = oneLine(t); if (t && t.length <= 300 && !out.includes(t)) out.push(t); };
+    for (const el of $$(LOGIN_ERR_SEL)) if (shown(el) && !el.closest('#gstk-banner')) add(el.innerText || el.textContent);
+    const user = $('#username');
+    const form = user && user.closest('form');
+    if (form) for (const line of String(form.innerText || '').split('\n')) if (LOGIN_REFUSALS.some((r) => r.rx.test(line))) add(line);
+    return out;
+  }
+
+  // 'refused' (with why), 'captcha', 'other', or 'none' when nothing is shown.
+  function classifyLogin(msgs) {
+    const refusal = (m) => LOGIN_REFUSALS.find((r) => r.rx.test(m));
+    for (const m of msgs) {
+      const hit = !LOGIN_CAPTCHA_RX.test(m) && refusal(m);
+      if (hit) return { kind: 'refused', reason: hit.reason, message: m };
+    }
+    const cap = msgs.find((m) => LOGIN_CAPTCHA_RX.test(m) && !refusal(m));
+    if (cap) return { kind: 'captcha', message: cap };
+    if (msgs.length) return { kind: 'other', message: msgs[0] };
+    return { kind: 'none', message: '' };
+  }
+
+  function whenText(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? 'an earlier run' : d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function noteRefused(job, cur, skipped) {
+    job.loginRefused = [...(job.loginRefused || []), { name: (cur.creds && cur.creds.name) || 'Client', skipped: !!skipped }];
+  }
+
+  // The portal refused this client's saved password: remember it, log it once,
+  // and move to the next client. Never tried again until the password changes.
+  async function refuseClient(job, cur, progress, pass, verdict) {
+    const words = REFUSAL_WORDS[verdict.reason] || 'The portal refused the saved password';
+    try { await GSTKdb.pwRefusalMark(cur.clientId, cur.creds.user, pass, { reason: verdict.reason, message: verdict.message, name: cur.creds.name }); }
+    catch (e) { /* the sync log below still says it */ }
+    noteRefused(job, cur, false);
+    banner(cur.creds.name + ': ' + words.toLowerCase() + ' — logged; moving to the next client.' + progress, '#dc2626');
+    await logLoginFailure(job, cur, words + ' (the portal said: "' + verdict.message.slice(0, 200) + '"). '
+      + 'Not tried again until the password is changed in Edit Client.');
+    await sleep(1500); // long enough to read the banner
+    await advance(job);
+  }
+
+  // A Login press, noted in the tab's sessionStorage (it survives a page load),
+  // so a refusal the portal answers with a fresh login page rather than in
+  // place is still read as this press's answer on the next load.
+  function notePress(cur) {
+    try { sessionStorage.setItem('gstk_login_pressed', JSON.stringify({ client: cur.clientId, at: Date.now() })); } catch (e) { /* in-place answers are read anyway */ }
+  }
+  function takePress(cur) {
+    try {
+      const p = JSON.parse(sessionStorage.getItem('gstk_login_pressed') || 'null');
+      sessionStorage.removeItem('gstk_login_pressed');
+      return !!p && p.client === cur.clientId && Date.now() - p.at < 90000;
+    } catch (e) { return false; }
+  }
+
+  // After an automatic Login press: wait for the portal's answer (a new page,
+  // or a new message on the form) and act on it. `before` are the messages the
+  // form already showed, which say nothing about this press.
+  async function settleAutoLogin(job, cur, progress, pass, before, guard) {
+    // A refusal is acted on the moment it shows; any other message only once
+    // the page has had 2.5 s to settle (a "please wait" is not an answer).
+    let msgs = [];
+    const t0 = Date.now();
+    for (let i = 0; i < 40; i++) {
+      await sleep(250);
+      if (!/services\/login/.test(location.href)) { if (isLoggedIn()) return; continue; }
+      msgs = loginMessages().filter((m) => !before.includes(m));
+      if (classifyLogin(msgs).kind === 'refused' || (msgs.length && Date.now() - t0 >= 2500)) break;
+    }
+    if (!/services\/login/.test(location.href)) {
+      if (isLoggedIn() || guard.done) return; // genuinely logged in: the dispatcher carries on
+      guard.done = true;
+      const heading = (($('h1,h2,h3') || {}).textContent || '').trim().slice(0, 160);
+      const reason = 'Landed on an unrecognized page after login (' + location.pathname + (heading ? ': "' + heading + '"' : '') + ') — not the login form, but no logged-in signal either.';
+      banner('Could not log in ' + cur.creds.name + ' — unexpected page after login. Moving on.' + progress, '#dc2626');
+      await logLoginFailure(job, cur, reason);
+      await advance(job);
+      return;
+    }
+    if (guard.done) return; // the person watcher already acted on this answer
+    guard.done = true;
+    const verdict = classifyLogin(msgs);
+    if (verdict.kind === 'refused') { await refuseClient(job, cur, progress, pass, verdict); return; }
+    const tries = Number(job.captchaRetry || 0);
+    // An answer that is neither a refusal nor a CAPTCHA gets one more try with
+    // the same password, never three; the same answer again ends the client.
+    if (verdict.kind === 'other') {
+      if (job.loginOther) {
+        banner('Could not log in ' + cur.creds.name + ' (' + verdict.message.slice(0, 120) + ') — logged; moving on.' + progress, '#dc2626');
+        await logLoginFailure(job, cur, 'The portal did not log in: "' + verdict.message.slice(0, 200) + '"');
+        await advance(job);
+        return;
+      }
+      job.loginOther = verdict.message;
+    }
+    if ($('#captcha') && tries < 3) {
+      job.captchaRetry = tries + 1;
+      delete job.captchaWaitSince;
+      await setJob(job);
+      location.reload();
+      return;
+    }
+    banner('Could not log in ' + cur.creds.name + ' after 3 attempts — moving on.' + progress, '#dc2626');
+    await logLoginFailure(job, cur, verdict.message || 'Login did not succeed after 3 automatic retries.');
+    await advance(job);
+  }
+
+  // A person types the CAPTCHA and presses Login: the portal's answer is read
+  // the same way, so a refused password moves the run on instead of asking
+  // for another CAPTCHA for the same client. Only a refusal is acted on; a
+  // CAPTCHA typo is left to the person, as on the portal itself.
+  function watchPersonLogin(job, cur, progress, pass, guard) {
+    const before = loginMessages();
+    const pressed = (e) => {
+      const t = e.target && e.target.closest ? e.target : null;
+      if (e.type === 'keydown' ? (e.key === 'Enter' && t && t.closest('form, #username, #user_pass, #captcha'))
+        : (t && /log\s*in/i.test(((t.closest('button, input[type=submit]') || {}).textContent || '') + ((t.closest('input[type=submit]') || {}).value || '')))) notePress(cur);
+    };
+    document.addEventListener('click', pressed, true);
+    document.addEventListener('keydown', pressed, true);
+    const timer = setInterval(async () => {
+      if (guard.done) { clearInterval(timer); return; }
+      if (!/services\/login/.test(location.href)) return;
+      const verdict = classifyLogin(loginMessages().filter((m) => !before.includes(m)));
+      if (verdict.kind !== 'refused') return;
+      guard.done = true;
+      clearInterval(timer);
+      await refuseClient(job, cur, progress, pass, verdict);
+    }, 750);
   }
 
   // The run ledger (sync_run_items) records the notices module's syncs only;
@@ -434,6 +635,10 @@
       job.retries = 0;
       delete job.captchaRetry;
       delete job.captchaWaitSince;
+      delete job.loginOther;
+      try { sessionStorage.removeItem('gstk_login_pressed'); } catch (e) { /* none noted */ }
+      // 0.8.1: the portal took this password: any earlier refusal is over.
+      try { await GSTKdb.pwRefusalClear(cur.clientId); } catch (e) { /* only a later skip would notice */ }
       try { await GSTKdb.clearCaptchaNotice(); } catch (e) { /* optional */ }
       if (job.mode === 'returnpdf') {
         banner('Logged in — fetching the return + PDF…' + progress);
@@ -618,21 +823,51 @@
       if (job.runner) await runnerEnd(job, 'retry', 'portal_error', 'The portal login page did not load.');
       return;
     }
-    setVal($('#username'), cur.creds.user);
     let portalPass = cur.creds.pass || null; // jobs saved by extension < 0.4.0 still carry it
     if (!portalPass) { try { portalPass = await GSTKdb.getPortalPassword(cur.clientId); } catch (e) { portalPass = null; } }
+    // 0.8.1: this page may itself be the portal's answer to this client's Login
+    // press (a refusal sent back as a fresh page): read it before filling again.
+    if (takePress(cur)) {
+      await sleep(600);
+      const answer = classifyLogin(loginMessages());
+      if (answer.kind === 'refused') { await refuseClient(job, cur, progress, portalPass, answer); return; }
+    }
+    setVal($('#username'), cur.creds.user);
     if (!portalPass) {
       banner('No saved GST portal password for ' + cur.creds.name + ' — update it in Edit Client.', '#dc2626');
       // Nobody is at a scheduled sync to read the banner: it goes in the run ledger, and the client fails with it.
       if (job.runner) { await logLoginFailure(job, cur, 'No saved GST portal password for this client.'); await advance(job); }
       return;
     }
+    // 0.8.1: a password the portal already refused is not offered again in a
+    // bulk or scheduled run: the client is logged and the run moves on, until
+    // the password saved in GST Keeper changes.
+    if (bulkJob(job)) {
+      let refused = null;
+      try { refused = await GSTKdb.pwRefusalCheck(cur.clientId, cur.creds.user, portalPass); } catch (e) { refused = null; }
+      if (refused) {
+        banner('Skipping ' + cur.creds.name + ' — the portal refused this password on ' + whenText(refused.at) + '; logged.' + progress, '#dc2626');
+        noteRefused(job, cur, true);
+        await logLoginFailure(job, cur, 'Not tried: the portal refused this saved password on ' + whenText(refused.at)
+          + (refused.message ? ' ("' + String(refused.message).slice(0, 160) + '")' : '')
+          + '. Change it in Edit Client, or log the client in once from GST Keeper, and the next sync tries it again.');
+        await sleep(1200);
+        await advance(job);
+        return;
+      }
+    }
     setVal($('#user_pass'), portalPass);
+    // One answer to a Login press is acted on, whoever pressed it. A person may
+    // type this CAPTCHA (any sync but a scheduled or agent one): their Login is
+    // watched from now, since the wait below only ends for an automatic fill.
+    const guard = { done: false };
+    if (!job.runner && !job.agent) watchPersonLogin(job, cur, progress, portalPass, guard);
     await waitFor('#imgCaptcha', 8000);
-    // The sync tab is often behind other windows: say so on the desktop. An
-    // agent job's CAPTCHA goes to the app's CAPTCHA wall instead, and a
-    // scheduled job's is filled by the CAPTCHA extension in this Chrome.
-    if (!job.agent && !job.runner) { try { await GSTKdb.notifyCaptcha(cur.creds.name, progress); } catch (e) { /* optional */ } }
+    // A notices sync tab is often behind other windows: say so on the desktop.
+    // An agent job's CAPTCHA goes to the app's CAPTCHA wall instead, a
+    // scheduled job's is filled by the CAPTCHA extension in this Chrome, and
+    // every other pull (2B, GSTR-1, 3B, ledgers…) logs in as it always did.
+    if (!job.agent && !job.runner && ledgerJob(job)) { try { await GSTKdb.notifyCaptcha(cur.creds.name, progress); } catch (e) { /* optional */ } }
     // No custom popup — the CAPTCHA is typed straight into the portal's own
     // native #captcha field. The field has no maxlength/expected-length we
     // can read (confirmed live: only a numeric-only ng-pattern), so "is it
@@ -719,64 +954,17 @@
       $$('button').find((b) => /login/i.test(b.textContent || '') && /btn-primary/.test(b.className || '')) ||
       $('button[type=submit]');
     if (btn) {
+      // A wrong CAPTCHA and a wrong saved password bring back the same login
+      // form; only the portal's own message tells them apart, so it is read
+      // (settleAutoLogin) rather than every bounce being taken for a CAPTCHA
+      // typo. Confirmed live before 0.4: a WRONG PASSWORD was retried with a
+      // fresh CAPTCHA, pointlessly, and stalled the run behind it. 0.8.1 reads
+      // the answer as soon as it appears, from more of the page, and never
+      // offers a refused password again.
+      const before = loginMessages();
+      notePress(cur);
       btn.click();
-      // A wrong CAPTCHA and a wrong saved password bounce back to this same
-      // page identically (login form again, fresh #captcha field) — nothing
-      // here can visually tell them apart except the portal's own error
-      // banner, so read that first rather than always assuming "just a bad
-      // CAPTCHA". Confirmed live: a WRONG PASSWORD used to retry the CAPTCHA
-      // up to 3 times (pointless — the same password fails every time),
-      // then silently stall forever on this one client, blocking every
-      // other client queued behind it in the same Sync All run with no
-      // error, no log entry, and no way to tell which client caused it.
-      setTimeout(async () => {
-        // A single fixed-delay check raced the portal's own error-banner
-        // render — confirmed live 2026-09-13: a genuine bad-password bounce
-        // sometimes read as an empty errText at exactly 2.5s (banner not
-        // painted yet), silently falling through to the CAPTCHA-retry path
-        // instead of being caught immediately. Poll a few times over ~2s
-        // instead of checking once.
-        for (let i = 0; i < 8; i++) {
-          if (/services\/login/.test(location.href)) {
-            const hasErr = $$('.alert-danger, .toast-error, .error-msg').some((el) => (el.textContent || '').trim());
-            if (hasErr) break;
-          } else if (isLoggedIn()) {
-            return; // genuinely logged in — let the normal dispatcher continue
-          }
-          await sleep(250);
-        }
-        if (!/services\/login/.test(location.href)) {
-          if (isLoggedIn()) return;
-          const heading = (($('h1,h2,h3') || {}).textContent || '').trim().slice(0, 160);
-          const reason = 'Landed on an unrecognized page after login (' + location.pathname + (heading ? ': "' + heading + '"' : '') + ') — not the login form, but no logged-in signal either.';
-          banner('Could not log in ' + cur.creds.name + ' — unexpected page after login. Moving on.' + progress, '#dc2626');
-          await logLoginFailure(job, cur, reason);
-          await advance(job);
-          return;
-        }
-        const errText = $$('.alert-danger, .toast-error, .error-msg')
-          .map((el) => (el.textContent || '').trim()).filter(Boolean)[0] || '';
-        const isCredentialError = /invalid.*(credential|user\s*id|username|password)|incorrect.*(user\s*id|username|password)|wrong\s*password/i.test(errText);
-        const tries = Number((job && job.captchaRetry) || 0);
-        if (isCredentialError) {
-          banner('Login failed for ' + cur.creds.name + ' (' + (errText || 'invalid credentials') + ') — moving on.' + progress, '#dc2626');
-          await logLoginFailure(job, cur, errText || 'Invalid username or password.');
-          await advance(job);
-          return;
-        }
-        if ($('#captcha') && tries < 3) {
-          job.captchaRetry = tries + 1;
-          delete job.captchaWaitSince;
-          await setJob(job);
-          location.reload();
-          return;
-        }
-        if ($('#captcha') && tries >= 3) {
-          banner('Could not log in ' + cur.creds.name + ' after 3 attempts — moving on.' + progress, '#dc2626');
-          await logLoginFailure(job, cur, errText || 'Login did not succeed after 3 automatic retries.');
-          await advance(job);
-        }
-      }, 2500);
+      settleAutoLogin(job, cur, progress, portalPass, before, guard).catch(() => { /* the watchdog ends a stuck client */ });
     }
     // Page navigates; next content-script load (step still 'login') re-checks isLoggedIn().
   }
@@ -2875,7 +3063,41 @@
     const lastFull = ((await store.get(fullKey))[fullKey]) || 0;
     const fullFolderPass = !known || Date.now() - lastFull > FULL_FOLDER_PASS_MS;
 
+    // 0.8.0 — the link pass. A notice read from get/notices arrives with no
+    // PDF of its own (the portal only gives docId/applnId for some forms), no
+    // officer and, for a DRC-01 / RFD-03 / RFD-08, often no reply date. All of
+    // it is in the matching case-folder item, which this run already reads —
+    // and before 0.8.0 the notice's own PDF was the one document in that
+    // folder nothing ever linked, so the app showed "PDF not captured yet"
+    // beside a notice whose PDF was in fact already in storage.
+    //
+    // Folder items are keyed (client, case_id, '<SECTION>:<refId>'), so a
+    // notice's reference number finds its item by that key's suffix —
+    // including a refund notice, whose folder the refunds step saves under the
+    // refund ARN. This maps every attachment list already stored, so a notice
+    // synced before 0.8.0 gets its PDF linked on the next run with no
+    // download at all.
+    const storedAttachByRef = new Map();
+    for (const key of Object.keys((known && known.itemDocs) || {})) {
+      const ref = key.slice(key.lastIndexOf(':') + 1);
+      const list = known.itemDocs[key];
+      if (ref && Array.isArray(list) && list.length && !storedAttachByRef.has(ref)) storedAttachByRef.set(ref, list);
+    }
+    // This run's folder items, by reference number: attachments to link and
+    // the parsed itemJson to read the officer, DIN and reply date out of.
+    const detailByRef = new Map();
+    // A case whose notice still has no PDF, date or officer is opened even when
+    // the case is closed and its folder would otherwise wait for the weekly
+    // pass. Bounded: a reference that yields nothing is not forced again for a
+    // week, so a notice the portal simply has no folder detail for cannot turn
+    // into an extra folder fetch on every run, for ever.
+    const triedKey = 'gstk_fill_tried_' + cur.clientId;
+    const fillTried = ((await store.get(triedKey))[triedKey]) || {};
+    const needsFill = (row) => !!row && (!row.pdf_url || !row.due_date || !row.issued_by);
+    const mayForceFill = (ref) => !!ref && !(fillTried[ref] && Date.now() - fillTried[ref] < FULL_FOLDER_PASS_MS);
+
     let pdfOk = 0, pdfFail = 0, pdfSkipped = 0, foldersFetched = 0, foldersSkipped = 0, attachSkipped = 0;
+    let foldersForFill = 0, linkedPdf = 0, linkedDue = 0, linkedOfficer = 0, linkedDin = 0;
     let folderPassOk = true;
     const gstr3aErrors = [];
     const gstr3aDetails = [];
@@ -2891,6 +3113,12 @@
         status: n.status || null, issued_by: n.issuedBy || null, case_id: null, pdf_url: null,
       };
       const havePdf = !!(known && known.noticePdf && known.noticePdf[row.portal_key]);
+      // 0.8.0: carry the stored URL on the row rather than leaving it null.
+      // The row is upserted, so a null here is written over a PDF that is
+      // already in storage whenever the ingest RPC is unavailable and the
+      // legacy REST path runs (background.js's LEGACY_REPLACE). It also lets
+      // the link pass below tell "has a PDF" from "needs one".
+      if (havePdf) row.pdf_url = known.noticePdf[row.portal_key];
       if (havePdf && (n.docId || n.pdfDownloadURL)) {
         pdfSkipped++;
       } else if (n.docId && n.applnId) {
@@ -2910,11 +3138,30 @@
         try {
           const summaryUrl = 'https://return.gst.gov.in/returns/auth/api/gstr3a/summary?defaulter_id=' +
             encodeURIComponent(n.appDefId) + '&order_id=' + encodeURIComponent(n.noticeOrderId);
-          const { base64 } = await withTimeout(GSTKdb.fetchCrossOriginAsBase64(summaryUrl), 15000, 'gstr3a summary');
-          let raw;
-          try { raw = atob(base64); } catch (e) { throw new Error('base64 decode failed: ' + (e && e.message)); }
-          let summary;
-          try { summary = JSON.parse(raw); } catch (e) { throw new Error('not JSON (' + raw.length + ' chars): ' + raw.slice(0, 120)); }
+          // 0.8.0: one retry. A client with hundreds of GSTR-3A notices (326
+          // open on this firm's own books) makes this call hundreds of times
+          // in a row and the portal drops some of them — the "no PDF captured"
+          // rows in All notices. A single failure used to be final for that
+          // notice until the portal changed something, because a notice with
+          // no PDF was never retried. Two seconds between tries, and a notice
+          // that still fails is retried by the gap-fill pass on a later run.
+          // The portal answers this one with a 200 "Access Denied" HTML page
+          // when it dislikes the request, so a failed read is not only a
+          // failed fetch — an HTML body counts too, and both are worth one
+          // retry. Parsing therefore sits inside the loop.
+          let summary = null;
+          let lastErr = null;
+          for (let attempt = 0; attempt < 2 && summary == null; attempt++) {
+            if (attempt) await sleep(2000);
+            try {
+              const { base64 } = await withTimeout(GSTKdb.fetchCrossOriginAsBase64(summaryUrl), 15000, 'gstr3a summary');
+              let raw;
+              try { raw = atob(base64); } catch (e) { throw new Error('base64 decode failed: ' + (e && e.message)); }
+              if (/^\s*</.test(raw)) throw new Error('portal answered with an HTML page, not JSON (' + raw.length + ' chars)');
+              try { summary = JSON.parse(raw); } catch (e) { throw new Error('not JSON (' + raw.length + ' chars): ' + raw.slice(0, 120)); }
+            } catch (e) { lastErr = e; summary = null; }
+          }
+          if (summary == null) throw (lastErr || new Error('gstr3a summary did not answer'));
           if (summary && summary.data) {
             gstr3aDetails.push({ portal_key: row.portal_key, detail: { gstr3a: {
               retTyp: summary.data.retTyp || null, ret_period: summary.data.ret_period || null,
@@ -2967,9 +3214,14 @@
       }
       if (!t.caseId || !t.arn) continue;
 
-      // Folders: new or open cases every run; every case on the weekly full pass.
-      const needFolders = fullFolderPass || !knownCases.has(t.arn) || openCases.has(t.arn);
+      // Folders: new or open cases every run; every case on the weekly full
+      // pass; and (0.8.0) a case whose notice still has no PDF, reply date or
+      // officer, so the gap is closed on the next run instead of waiting for
+      // that weekly pass — once, then not again for a week (mayForceFill).
+      const fillThis = needsFill(row) && mayForceFill(refId);
+      const needFolders = fullFolderPass || !knownCases.has(t.arn) || openCases.has(t.arn) || fillThis;
       if (!needFolders) { foldersSkipped++; continue; }
+      if (fillThis) foldersForFill++;
       let folders = [];
       try {
         const fr = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
@@ -3062,12 +3314,48 @@
               attachments,
               raw_json: fParsed !== null ? fParsed : (fi.itemJson || null),
             });
+            // 0.8.0: this item, for the link pass below. Keep the first one a
+            // reference has — the portal lists an item once per case, and a
+            // reply or order filed against the same reference must not take
+            // the notice's own place.
+            if (fiRef && !detailByRef.has(fiRef)) detailByRef.set(fiRef, { attachments, raw: fParsed, section: folder.caseFolderTypeCd || null });
           }
         } catch (e) { folderFailures++; }
       }
       if (folderFailures) folderPassOk = false;
       if (folderItems.length) folderBatches.push({ caseId: t.arn, items: folderItems, complete: folderFailures === 0 });
     }
+
+    // ── The link pass (0.8.0) ───────────────────────────────────────────
+    // Every notice row now takes from its case-folder item what get/notices
+    // did not give it: the notice's own PDF, the reply date, the officer and
+    // the DIN. Nothing already on the row is overwritten — a date the portal
+    // put in the notice list stays the authority — and a reference with no
+    // folder item is left exactly as it was.
+    const dinByKey = [];
+    for (const row of rows) {
+      const ref = row.reference_number;
+      if (!ref) continue;
+      const detail = detailByRef.get(ref);
+      const attachments = (detail && detail.attachments && detail.attachments.length)
+        ? detail.attachments : storedAttachByRef.get(ref);
+      if (!row.pdf_url) {
+        const url = pickNoticeAttachment(attachments, ref);
+        if (url) { row.pdf_url = url; linkedPdf++; }
+      }
+      const f = noticeFieldsFromItem(detail && detail.raw);
+      if (!row.due_date && f.due_date) { row.due_date = f.due_date; linkedDue++; }
+      if (!row.issued_by && f.issued_by) { row.issued_by = f.issued_by; linkedOfficer++; }
+      // The DIN goes in its own small PATCH after the save, never on the row:
+      // this extension cannot migrate the database, and one unknown column in
+      // the upsert body would fail the whole notices save for the client. The
+      // same reasoning background.js's patchRefundDocument is built on.
+      if (f.din) { dinByKey.push({ portal_key: row.portal_key, din: f.din }); linkedDin++; }
+      // Remember a reference that yielded nothing, so forcing its folder open
+      // is not repeated on every run (mayForceFill above).
+      if (needsFill(row)) fillTried[ref] = Date.now(); else if (fillTried[ref]) delete fillTried[ref];
+    }
+    try { await store.set({ [triedKey]: fillTried }); } catch (e) { /* only costs a repeat folder fetch */ }
 
     // Folder items first (a new reply / order on a known case is logged
     // against its notice), then the notice list, then the server-side sweep.
@@ -3083,6 +3371,17 @@
       if (fullFolderPass && folderPassOk) { try { await store.set({ [fullKey]: Date.now() }); } catch (e) { /* next run retries the full pass */ } }
       // GSTR-3A return type and period: the notice closes itself once that return is filed.
       if (gstr3aDetails.length) { try { await GSTKdb.noticeDetails(cur.clientId, gstr3aDetails); } catch (e) { /* the notices are saved; detail retries next run */ } }
+      // DINs, one best-effort PATCH per notice, after the save and never part
+      // of it (see the link pass above). A database without the column fails
+      // these harmlessly and the notices stay saved.
+      // Three failures with nothing saved means the column is not there, not
+      // that three notices were unlucky: stop, rather than spend a client with
+      // 326 notices on 326 writes the database will refuse one at a time.
+      let dinSaved = 0, dinFailed = 0, dinGaveUp = false;
+      for (const d of dinByKey) {
+        try { await GSTKdb.patchNoticeFields(cur.clientId, d.portal_key, { din: d.din }); dinSaved++; }
+        catch (e) { dinFailed++; if (dinFailed >= 3 && !dinSaved) { dinGaveUp = true; break; } }
+      }
       const counts = saved && !saved.legacy
         ? ' — ' + saved.new + ' new, ' + saved.changed + ' changed, ' + saved.removed + ' removed' + (saved.status === 'held' ? ' (removal held back)' : '')
         : '';
@@ -3090,12 +3389,15 @@
         'STEP: View Notices and Orders  (' + location.pathname + ')',
         'rows read         : ' + rows.length + ' (' + (rows.length - taskRows) + ' notices, ' + taskRows + ' case/task)' + counts,
         'PDFs              : ' + pdfOk + ' downloaded, ' + pdfSkipped + ' already stored, ' + pdfFail + ' failed/not applicable',
-        'case folders      : ' + foldersFetched + ' fetched (' + (fullFolderPass ? 'weekly full pass' : 'new or open cases') + '), ' + foldersSkipped + ' skipped, ' + foldersSaved + ' saved',
+        'case folders      : ' + foldersFetched + ' fetched (' + (fullFolderPass ? 'weekly full pass' : 'new or open cases') + (foldersForFill ? ', ' + foldersForFill + ' to fill a gap' : '') + '), ' + foldersSkipped + ' skipped, ' + foldersSaved + ' saved',
         'attachments       : ' + attachSkipped + ' already stored',
+        'linked from folder: ' + linkedPdf + ' notice PDFs, ' + linkedDue + ' reply dates, ' + linkedOfficer + ' officers, ' + linkedDin + ' DINs'
+          + (dinFailed ? ' (' + dinFailed + ' DIN writes failed' + (dinGaveUp ? ', gave up — no din column in this database?' : '') + ')' : ''),
         ...(gstr3aErrors.length ? ['GSTR-3A errors    :', ...gstr3aErrors.map((m) => '  - ' + m)] : []),
       ]);
       banner('Notices & Orders → ' + rows.length + ' entries' + counts + ' (' + pdfOk + ' new PDFs, ' + pdfSkipped + ' already stored). Now Refund applications…' + progress, '#16a34a');
-      await logSyncAttempt(job, cur, 'success', rows.length + ' entries found' + counts + ' (' + pdfOk + ' PDFs captured, ' + pdfSkipped + ' already stored' + (pdfFail ? ', ' + pdfFail + ' failed' : '') + ').');
+      await logSyncAttempt(job, cur, 'success', rows.length + ' entries found' + counts + ' (' + pdfOk + ' PDFs captured, ' + pdfSkipped + ' already stored' + (pdfFail ? ', ' + pdfFail + ' failed' : '')
+        + (linkedPdf || linkedDue || linkedOfficer || linkedDin ? '; linked from the case folder: ' + linkedPdf + ' PDFs, ' + linkedDue + ' reply dates, ' + linkedOfficer + ' officers, ' + dinSaved + ' DINs' : '') + ').');
       if (gstr3aErrors.length) {
         const realFailures = gstr3aErrors.some((m) => !m.startsWith('DNR rules') && !m.startsWith('DNR debug call failed'));
         try { await GSTKdb.logClientSync(cur.clientId, 'notices_gstr3a_debug', realFailures ? 'failed' : 'success', gstr3aErrors.join(' | ').slice(0, 2000)); } catch (e) { /* diagnostic only */ }
@@ -3305,7 +3607,9 @@
     // part. It's a separate, explicitly-triggered pull now (job.mode
     // 'refund_docs', wired from the Documents page) — this just proceeds
     // straight to DRC-03 (full chain) or stops (standalone pull), the same
-    // as every other section pull.
+    // as every other section pull. The notices bundle (0.7.1) goes on to the
+    // documents of new or changed refunds only, then DRC-03.
+    if (job.mode === 'notices_bundle') { await proceedToRefundDocs(job); return; }
     await chainOrStop(job, 'refunds', proceedToDrc03);
   }
 
@@ -3362,16 +3666,20 @@
   async function handleRefundDocs(job, cur, progress) {
     if (!/litserv\/auth\/case\/search/.test(url)) { location.href = 'https://services.gst.gov.in/litserv/auth/case/search'; return; }
     banner('Reading Refund documents…' + progress);
+    // The Refund Notice Folder rows below carry this run's time (0.7.1: it was
+    // never declared here, so those rows were never saved).
+    const pullTs = new Date().toISOString();
     let cases = [];
     try {
-      const r = await fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
+      const r = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/search', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caseTypeCd: 'RFUND', startDate: '01/07/2017', endDate: shownTodayDdMmYyyy() }),
-      });
+      }), 45000, 'case/search RFUND');
       if (!r.ok) throw new Error('HTTP ' + r.status + ' from case/search');
       cases = await r.json();
       if (!Array.isArray(cases)) cases = [];
     } catch (e) {
+      if (ledgerJob(job)) { try { await GSTKdb.logStep(job.runId, cur.clientId, 'refund_docs', 'failed', /timed out/.test(String(e && e.message)) ? 'timeout' : 'portal_error', (e && e.message) || 'unknown error'); } catch (e2) { /* diagnostic */ } }
       debugPanel(['STEP: Refund Application Documents  (' + location.pathname + ')', 'fetch failed: ' + (e && e.message)]);
       banner('Refund documents: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.logClientSync(cur.clientId, 'refund_docs_debug', 'failed', 'build=' + chrome.runtime.getManifest().version + ' | fetch failed: ' + ((e && e.message) || 'unknown error')); } catch (e2) { /* diagnostic only */ }
@@ -3379,11 +3687,35 @@
       return;
     }
 
-    let arnsWithDocs = 0, docsOk = 0, docsFail = 0, casesFailed = 0, casesWithFolderItems = 0;
+    // What is stored already (0.7.1): a document saved once is not downloaded
+    // again. In the notices bundle (the scheduled sync) a refund is opened
+    // only when this Chrome has not read it in full yet or its status changed
+    // since, plus every refund once a week; the Refunds page's own "fetch
+    // documents" still opens every refund.
+    let known = null;
+    try { known = await GSTKdb.knownDocs(cur.clientId); } catch (e) { known = null; }
+    const storedByArn = (known && known.refundDocs) || {};
+    const storedItems = (known && known.itemDocs) || {};
+    const inBundle = job.mode === 'notices_bundle';
+    const statusKey = 'gstk_refund_status_' + cur.clientId;
+    const fullKey = 'gstk_refund_full_' + cur.clientId;
+    const readStatus = ((await store.get(statusKey))[statusKey]) || {};
+    const lastFull = ((await store.get(fullKey))[fullKey]) || 0;
+    const everyRefund = !inBundle || !known || Date.now() - lastFull > FULL_FOLDER_PASS_MS;
+    const stopHeartbeat = startHeartbeat();
+    // 0.8.0: refund folder items by reference number, for the link pass that
+    // closes this step (refund notices in View Notices and Orders).
+    const refundItemByRef = new Map();
+    let arnsWithDocs = 0, docsOk = 0, docsFail = 0, casesFailed = 0, casesWithFolderItems = 0, casesSkipped = 0, docsSkipped = 0, casesNoArn = 0;
     for (const c of cases) {
       const arn = c.arn;
-      if (!c.caseId || !arn) { casesFailed++; continue; }
+      if (!c.caseId || !arn) { casesNoArn++; continue; }
+      const stored = Array.isArray(storedByArn[arn]) ? storedByArn[arn] : [];
+      const status = c.statusDesc || '';
+      if (!everyRefund && readStatus[arn] === status) { casesSkipped++; continue; }
       const arnDocs = [];
+      let caseComplete = true;  // every folder and item list read
+      let docsMissing = 0;       // documents that failed to download
       // One row per case/folder/items entry, mirroring exactly what the
       // Additional Notice Folder capture (handleNotices above) already
       // writes for LUT/DRC-03 case tasks — this is the ONLY thing feeding
@@ -3412,7 +3744,7 @@
               body: JSON.stringify({ caseFolderId: folder.caseFolderId }),
             }), 15000, 'case/folder/items');
             const items = ir.ok ? await ir.json() : [];
-            if (!Array.isArray(items)) continue;
+            if (!Array.isArray(items)) { caseComplete = false; continue; }
             const folderLabel = folder.caseFolderTypeName || REFUND_FOLDER_LABELS[folder.caseFolderTypeCd] || folder.caseFolderTypeCd || 'Documents';
             for (const item of items) {
               let parsed = null;
@@ -3420,17 +3752,30 @@
               const rawDocs = [];
               findDocDescriptors(parsed, new Set(), rawDocs);
               const docArn = (parsed && parsed.crn) || arn;
+              const itemRef = item.refId || (parsed && parsed.crn) || null;
+              const itemKey = (folder.caseFolderTypeCd || '_') + ':' + (itemRef || simpleHash(JSON.stringify(parsed || item.itemJson || '')));
+              const storedAttachments = storedItems[arn + '|' + itemKey] || [];
               const itemAttachments = [];
               for (const doc of rawDocs) {
                 if (seenDocIds.has(doc.id)) continue;
                 seenDocIds.add(doc.id);
+                const mark = '/' + doc.id + '.pdf';
+                const had = stored.find((a) => a && typeof a.url === 'string' && a.url.indexOf(mark) !== -1)
+                  || storedAttachments.find((a) => a && typeof a.url === 'string' && a.url.indexOf(mark) !== -1);
+                if (had) {
+                  const label = had.label || doc.docName || doc.docttl || (doc.id + '.pdf');
+                  arnDocs.push({ tab: folderLabel, label, url: had.url });
+                  itemAttachments.push({ label, url: had.url });
+                  docsSkipped++;
+                  continue;
+                }
                 try {
                   const eh = await withTimeout(fetchEncrypDocEh(doc.id, docArn), 15000, 'getEncrypDocIds');
-                  if (!eh) { docsFail++; continue; }
+                  if (!eh) { docsFail++; docsMissing++; continue; }
                   const pdfR = await withTimeout(fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(doc.id) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' }), 20000, 'downloadhb');
-                  if (!pdfR.ok) { docsFail++; continue; }
+                  if (!pdfR.ok) { docsFail++; docsMissing++; continue; }
                   const buf = await withTimeout(pdfR.arrayBuffer(), 15000, 'pdf arrayBuffer');
-                  if (!buf || buf.byteLength <= 200) { docsFail++; continue; } // guard against an HTML error page, not a real PDF
+                  if (!buf || buf.byteLength <= 200) { docsFail++; docsMissing++; continue; } // guard against an HTML error page, not a real PDF
                   const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
                   const path = 'refund/' + cur.clientId + '/' + arn.replace(/[^A-Za-z0-9]/g, '_') + '/' + doc.id + '.pdf';
                   const url = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
@@ -3438,21 +3783,28 @@
                   arnDocs.push({ tab: folderLabel, label, url });
                   itemAttachments.push({ label, url });
                   docsOk++;
-                } catch (e) { docsFail++; }
+                } catch (e) { docsFail++; docsMissing++; }
               }
-              const itemRef = item.refId || (parsed && parsed.crn) || null;
               folderItems.push({
                 client_id: cur.clientId,
                 case_id: arn,
-                portal_key: (folder.caseFolderTypeCd || '_') + ':' + (itemRef || simpleHash(JSON.stringify(parsed || item.itemJson || ''))),
+                portal_key: itemKey,
                 folder_section: folder.caseFolderTypeCd || null,
                 reference_number: itemRef,
                 attachments: itemAttachments,
                 raw_json: parsed !== null ? parsed : (item.itemJson || null),
                 pulled_at: pullTs, last_seen_at: pullTs, deleted_at: null,
               });
+              // 0.8.0: an RFD-03 deficiency memo or an RFD-08 show cause
+              // notice is listed in View Notices and Orders too, but its PDF
+              // and its reply date are here, in the refund case's folder —
+              // and the notices step ran before this one, so it had nothing
+              // to link. Kept for the link pass at the end of this step.
+              if (itemRef && !refundItemByRef.has(itemRef)) {
+                refundItemByRef.set(itemRef, { attachments: itemAttachments, raw: parsed });
+              }
             }
-          } catch (e) { /* best-effort per folder */ }
+          } catch (e) { caseComplete = false; /* best-effort per folder */ }
         }
       } catch (e) { casesFailed++; continue; }
 
@@ -3460,16 +3812,63 @@
         try { await GSTKdb.patchRefundDocument(cur.clientId, arn, { documents: arnDocs }); arnsWithDocs++; } catch (e) { /* non-fatal */ }
       }
       if (folderItems.length) {
-        try { await GSTKdb.replaceCaseFolderItems(cur.clientId, arn, folderItems, pullTs); casesWithFolderItems++; } catch (e) { /* non-fatal */ }
+        // A folder that failed to read removes nothing (the same guard as the notices folders).
+        try { await GSTKdb.replaceCaseFolderItems(cur.clientId, arn, folderItems, pullTs, { complete: caseComplete }); casesWithFolderItems++; } catch (e) { /* non-fatal */ }
+      }
+      // Read again next run unless every list and document came through.
+      if (caseComplete && !docsMissing) readStatus[arn] = status;
+    }
+    stopHeartbeat();
+    try {
+      await store.set({ [statusKey]: readStatus });
+      if (inBundle && everyRefund && !casesFailed) await store.set({ [fullKey]: Date.now() });
+    } catch (e) { /* the next run reads these refunds again */ }
+    if (inBundle && casesFailed && ledgerJob(job)) {
+      try { await GSTKdb.logStep(job.runId, cur.clientId, 'refund_docs', 'failed', 'partial', casesFailed + ' refund case folder(s) could not be read.'); } catch (e) { /* diagnostic */ }
+    }
+
+    // ── The refund link pass (0.8.0) ────────────────────────────────────
+    // RFD-03 and RFD-08 are notices in View Notices and Orders, but their PDF
+    // and reply date only exist in the refund case's folder, which this step
+    // reads after the notices are already saved. So each one is patched on its
+    // own notice row here. Only what is missing is written: the fields a
+    // notice already carries are left alone, which is why every patch is read
+    // back against the notice list first.
+    let refundNoticesLinked = 0, refundLinkFailed = 0, dinWrites = 0, dinRefused = 0, dinGaveUp = false;
+    if (refundItemByRef.size) {
+      let openNotices = [];
+      try { openNotices = await GSTKdb.noticesNeedingDetail(cur.clientId); } catch (e) { openNotices = []; }
+      for (const nrow of openNotices) {
+        const ref = nrow.reference_number;
+        const item = ref ? refundItemByRef.get(ref) : null;
+        if (!item) continue;
+        const f = noticeFieldsFromItem(item.raw);
+        const p = {};
+        if (!nrow.pdf_url) { const u = pickNoticeAttachment(item.attachments, ref); if (u) p.pdf_url = u; }
+        if (!nrow.due_date && f.due_date) p.due_date = f.due_date;
+        if (!nrow.issued_by && f.issued_by) p.issued_by = f.issued_by;
+        if (Object.keys(p).length) {
+          try { await GSTKdb.patchNoticeFields(cur.clientId, nrow.portal_key, p); refundNoticesLinked++; }
+          catch (e) { refundLinkFailed++; }
+        }
+        // The DIN on its own, as in the notices step: an unknown column must
+        // not cost this notice its PDF and date. Three refusals in a row and
+        // this run stops offering it.
+        if (f.din && !dinGaveUp) {
+          try { await GSTKdb.patchNoticeFields(cur.clientId, nrow.portal_key, { din: f.din }); dinWrites++; }
+          catch (e) { dinRefused++; if (dinRefused >= 3 && !dinWrites) dinGaveUp = true; }
+        }
       }
     }
 
     debugPanel([
       'STEP: Refund Application Documents  (' + location.pathname + ')',
-      'cases read        : ' + cases.length + ' (' + casesFailed + ' folder-fetch failed)',
-      'documents captured: ' + docsOk + ' ok, ' + docsFail + ' failed',
+      'cases read        : ' + cases.length + ' (' + casesFailed + ' folder-fetch failed, ' + casesSkipped + ' unchanged and skipped' + (casesNoArn ? ', ' + casesNoArn + ' without an ARN' : '') + ')',
+      'documents captured: ' + docsOk + ' ok, ' + docsSkipped + ' already stored, ' + docsFail + ' failed',
       'applications w/docs: ' + arnsWithDocs,
       'cases w/folder items: ' + casesWithFolderItems + ' (feeds the Refund Notice Folder page)',
+      'refund notices linked: ' + refundNoticesLinked + ' (RFD-03 / RFD-08 PDF, reply date, officer)' + (refundLinkFailed ? ', ' + refundLinkFailed + ' failed' : '')
+        + (dinWrites ? ', ' + dinWrites + ' DINs' : '') + (dinGaveUp ? ' (DIN writes refused — no din column in this database?)' : ''),
     ]);
     // Same durable-logging gap handleRefunds already learned from (the
     // in-page debug panel above navigates away with the page, leaving no
@@ -3478,7 +3877,7 @@
     // stale-build run left literally no record anywhere that anything had
     // even attempted to run.
     try { await GSTKdb.logClientSync(cur.clientId, 'refund_docs_debug', 'success', 'build=' + chrome.runtime.getManifest().version + ' | cases: ' + cases.length + ' (' + casesFailed + ' folder-fetch failed) | docs: ' + docsOk + ' ok, ' + docsFail + ' failed | applications w/docs: ' + arnsWithDocs + ' | cases w/folder items: ' + casesWithFolderItems); } catch (e) { /* diagnostic only */ }
-    banner('Refund documents → ' + docsOk + ' captured across ' + arnsWithDocs + ' application(s).' + progress, '#16a34a');
+    banner('Refund documents → ' + docsOk + ' captured, ' + docsSkipped + ' already stored, across ' + arnsWithDocs + ' application(s).' + progress, '#16a34a');
     await sleep(1000);
     await chainOrStop(job, 'refund_docs', proceedToDrc03);
   }
@@ -3749,17 +4148,9 @@
 
     const p2 = (n) => String(n).padStart(2, '0');
     const fmt = (d) => p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + '/' + d.getFullYear();
-    const iso = (d) => d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
-    // History back to GST inception once a week per client; the runs in
-    // between read only the last ~300 days (two portal windows) and replace
-    // that slice, so older challans are kept as they are.
-    const fullKey = 'gstk_challan_full_' + cur.clientId;
-    const lastFull = ((await store.get(fullKey))[fullKey]) || 0;
-    const fullPass = Date.now() - lastFull > 7 * 24 * 60 * 60 * 1000;
     const windows = [];
+    let winStart = new Date(2017, 6, 1); // 01 Jul 2017 — GST inception
     const today = new Date();
-    let winStart = fullPass ? new Date(2017, 6, 1) : new Date(today.getTime() - 299 * 24 * 60 * 60 * 1000);
-    const sliceFrom = iso(winStart);
     while (winStart <= today) {
       const winEnd = new Date(winStart.getTime() + 149 * 24 * 60 * 60 * 1000);
       windows.push([fmt(winStart), fmt(winEnd > today ? today : winEnd)]);
@@ -3770,7 +4161,7 @@
     let windowsFailed = 0;
     for (const [fm, to] of windows) {
       try {
-        const r = await withTimeout(fetch('https://payment.gst.gov.in/payment/auth/challan/getlist?fm_dt=' + fm + '&to_dt=' + to + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include' }), 30000, 'challan/getlist');
+        const r = await fetch('https://payment.gst.gov.in/payment/auth/challan/getlist?fm_dt=' + fm + '&to_dt=' + to + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include' });
         if (!r.ok) { windowsFailed++; continue; }
         const list = await r.json();
         if (!Array.isArray(list)) { windowsFailed++; continue; }
@@ -3790,14 +4181,10 @@
     }
 
     const rows = [...seen.values()];
-    try {
-      if (fullPass) await GSTKdb.replaceChallans(cur.clientId, rows);
-      else await GSTKdb.replaceChallansSince(cur.clientId, sliceFrom, rows);
-      if (fullPass && windowsFailed === 0) await store.set({ [fullKey]: Date.now() });
-    } catch (e) { /* non-fatal */ }
+    try { await GSTKdb.replaceChallans(cur.clientId, rows); } catch (e) { /* non-fatal */ }
     debugPanel([
       'STEP: Challan Summary  (' + location.pathname + ')',
-      'windows checked   : ' + windows.length + (fullPass ? ' (weekly full pass, 150-day steps back to 01/07/2017)' : ' (recent ~300 days; full pass weekly)'),
+      'windows checked   : ' + windows.length + ' (150-day steps back to 01/07/2017)',
       'windows failed    : ' + windowsFailed,
       'rows saved        : ' + rows.length,
     ]);
@@ -4483,6 +4870,100 @@
     const candidate = (node.dcupdtls && typeof node.dcupdtls === 'object') ? node.dcupdtls : node;
     if (candidate.id && candidate.docName) out.push(candidate);
     Object.keys(node).forEach((k) => { if (k !== 'dcupdtls') findDocDescriptors(node[k], seen, out); });
+  }
+
+  // ── 0.8.0: what a case-folder item says about its notice ────────────────
+  // The notice list (get/notices) carries a reference number, a type and an
+  // issue date and little else: no officer, no DIN, and — for a DRC-01, an
+  // RFD-03 or an RFD-08 — often no reply date either, which is why 31 open
+  // notices had no date to run on. All of it sits in the matching case-folder
+  // item's itemJson, which this extension already reads and saves whole
+  // (gst_case_folder_items.raw_json). These helpers lift the few fields the
+  // notice row itself needs out of that JSON, so the notice carries them too.
+  //
+  // The portal spells the same thing differently from one folder section to
+  // the next (dueDt / replyDueDt / dtOfReply …, and the officer sits under
+  // issuedBy, officerName or a nested jurisdiction object), and a section not
+  // seen yet would silently yield nothing if a single path were hardcoded —
+  // the same reasoning findDocDescriptors() above is built on. So each field
+  // is found by walking the parsed JSON for any key in its candidate list,
+  // depth-first, taking the first usable value. Keys are compared
+  // case-insensitively with separators stripped, so dueDt, due_dt and DUEDT
+  // all match one candidate.
+  // First scalar value under any of `keys`, anywhere in `node`. `accept`
+  // decides whether a value counts, so a date search skips an empty string or
+  // a placeholder like 'NA' instead of stopping at it.
+  function findByKeys(node, keys, accept, seen) {
+    if (!node || typeof node !== 'object') return null;
+    seen = seen || new Set();
+    if (seen.has(node)) return null;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const n of node) { const v = findByKeys(n, keys, accept, seen); if (v != null) return v; }
+      return null;
+    }
+    for (const k of Object.keys(node)) {
+      const v = node[k];
+      if (v != null && typeof v !== 'object' && keys.indexOf(normKey(k)) !== -1) {
+        const s = String(v).trim();
+        if (s && accept(s)) return s;
+      }
+    }
+    for (const k of Object.keys(node)) {
+      const v = findByKeys(node[k], keys, accept, seen); if (v != null) return v;
+    }
+    return null;
+  }
+  // dd/mm/yyyy (the portal's own format everywhere else in this file), plus
+  // the ISO and dd-mm-yyyy spellings a few folder sections use.
+  function anyDateToIso(s) {
+    const t = String(s || '').trim().slice(0, 10);
+    const m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/) ? [t, t.slice(8, 10), t.slice(5, 7), t.slice(0, 4)]
+      : t.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/);
+    if (!m) return null;
+    const [dd, mm, yyyy] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    // An impossible day (31/02, 00/00, month 13) must not reach the row:
+    // Postgres rejects it and the whole notices upsert fails with it, so the
+    // run would lose every notice over one bad folder field. Date() alone is
+    // no guard — V8 rolls 2024-02-31 over into March rather than failing —
+    // so the parts are checked back against what Date() made of them.
+    if (!(yyyy >= 2017 && yyyy <= 2100) || mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+    const d = new Date(Date.UTC(yyyy, mm - 1, dd));
+    if (d.getUTCFullYear() !== yyyy || d.getUTCMonth() !== mm - 1 || d.getUTCDate() !== dd) return null;
+    return yyyy + '-' + String(mm).padStart(2, '0') + '-' + String(dd).padStart(2, '0');
+  }
+  // What the notice row can take from its folder item. `raw` is the parsed
+  // itemJson; everything here is best-effort and null when the item has no
+  // such field — a notice never loses a value it already has (see the link
+  // pass in pullNotices).
+  function noticeFieldsFromItem(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const due = findByKeys(raw, NOTICE_FIELD_KEYS.due, (s) => !!anyDateToIso(s));
+    const officer = findByKeys(raw, NOTICE_FIELD_KEYS.officer, isRealText);
+    const desig = findByKeys(raw, NOTICE_FIELD_KEYS.designation, isRealText);
+    const din = findByKeys(raw, NOTICE_FIELD_KEYS.din, (s) => /^[A-Za-z0-9/-]{8,}$/.test(s));
+    return {
+      due_date: due ? anyDateToIso(due) : null,
+      issued_by: officer ? (desig ? officer + ', ' + desig : officer) : null,
+      din: din || null,
+    };
+  }
+  // Which of a folder item's attachments IS the notice (rather than a
+  // supporting document the officer attached). The portal names the generated
+  // form after the reference number — DOT_NOTICE_<ref>_<ts>.pdf,
+  // ADJDT_DRPRC_<ref>_<ts>.pdf, DOT_INTIMATION_SEC74_<ref>_<ts>.pdf — so a
+  // label or URL carrying the reference wins; failing that, one whose name
+  // looks like the portal's own generated form; failing that, the first.
+  function pickNoticeAttachment(attachments, refNo) {
+    const list = (attachments || []).filter((a) => a && typeof a.url === 'string' && a.url);
+    if (!list.length) return null;
+    const ref = String(refNo || '').trim().toUpperCase();
+    if (ref) {
+      const byRef = list.find((a) => ((a.label || '') + ' ' + a.url).toUpperCase().indexOf(ref) !== -1);
+      if (byRef) return byRef.url;
+    }
+    const generated = list.find((a) => /^(DOT|ADJDT|ADJ|REG|RFD|ASMT|DRC)_/i.test(String(a.label || '')));
+    return (generated || list[0]).url;
   }
 
   function extractDocId(el) {

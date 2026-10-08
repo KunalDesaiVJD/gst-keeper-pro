@@ -7,6 +7,7 @@
 // parameters and shows the same number; any other count opens the page's own
 // list of the matters behind it (drillView). Refund matters are reported as
 // refund at stake, apart from demand.
+import { fyMatches, formMatches } from '@/lib/masterFilters';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import { fetchAllRows } from '@/lib/fetchAllRows';
@@ -132,6 +133,9 @@ export interface MisMatter {
   lifecycle: string;
   stage: string;
   priority: string | null;
+  /** The matter's financial years and its notices' forms (the master filters). */
+  fys: string[];
+  forms: (string | null)[];
   ownerId: string | null;
   ownerName: string | null;
   reviewerId: string | null;
@@ -236,6 +240,8 @@ export function buildMisData(rows: MatterListRow[], x: MisExtras, today: string 
       lifecycle: r.lifecycle,
       stage: r.stage,
       priority: r.priority,
+      fys: r.financial_years ?? [],
+      forms: r.notices.map((n) => n.form_code ?? null),
       ownerId: r.owner_user_id,
       ownerName: staffName(r.owner_user_id),
       reviewerId: r.reviewer_user_id,
@@ -278,8 +284,9 @@ export function buildMisData(rows: MatterListRow[], x: MisExtras, today: string 
 }
 
 // ── Filters and links ──────────────────────────────────────────────────────
-export interface MisFilters { client?: string; owner?: string; lifecycle?: string; priority?: string }
-export const FILTER_KEYS = ['client', 'owner', 'lifecycle', 'priority'] as const;
+export interface MisFilters { client?: string; owner?: string; lifecycle?: string; priority?: string; fy?: string; form?: string }
+/** client, owner, priority, fy and form are the module's master filters (lib/masterFilters); lifecycle is the MIS's own. */
+export const FILTER_KEYS = ['client', 'owner', 'lifecycle', 'priority', 'fy', 'form'] as const;
 
 export function readFilters(sp: URLSearchParams): MisFilters {
   const f: MisFilters = {};
@@ -293,7 +300,9 @@ export function applyFilters(ms: MisMatter[], f: MisFilters): MisMatter[] {
     (!f.client || m.clientId === f.client)
     && (!f.owner || (f.owner === 'none' ? !m.ownerId : m.ownerId === f.owner))
     && (!f.lifecycle || m.lifecycle === f.lifecycle)
-    && (!f.priority || m.priority === f.priority));
+    && (!f.priority || m.priority === f.priority)
+    && (!f.fy || (f.fy === 'none' ? !m.fys.length : fyMatches(m.fys, f.fy)))
+    && (!f.form || formMatches(m.forms.length ? m.forms : [null], f.form)));
 }
 
 export type MattersLink = Partial<MatterListParams>;

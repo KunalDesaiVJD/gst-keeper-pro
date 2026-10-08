@@ -5,7 +5,8 @@
 // with pre-deposit, paid, outstanding, share and a total row.
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Note } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { StageBadge } from '@/components/notices/StageBadge';
 import { WS_TAB, WS_TAB_ACTIVE, WS_TABS_LIST } from '@/components/workspace/theme';
 import { cn } from '@/lib/utils';

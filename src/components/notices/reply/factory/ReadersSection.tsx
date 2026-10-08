@@ -5,7 +5,7 @@
 // opens its list; AI outcomes open the AI reading tab's list.
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR } from '@/components/workspace/theme';
 import { ToneBadge } from '@/components/notices/autopilot/parts';
 import { Pager } from '@/components/notices/Pager';
@@ -25,13 +25,18 @@ const ISSUE_TITLES: Record<IssueFilter, string> = {
   unverified: 'Issues nobody has verified yet',
 };
 
-export const ReadersSection: React.FC<{ s: ReplyFactoryStatus; show: string }> = ({ s, show }) => {
+export const ReadersSection: React.FC<{ s: ReplyFactoryStatus; show: string; part?: 'card' | 'list' }> = ({ s, show, part = 'card' }) => {
   const r = s.reading;
   const outcomes = useAiOutcomeCounts(true);
   const href = (k: string) => factoryHref('overview', { show: k });
   const issueFilter = show.startsWith('iss:') ? (show.slice(4) as IssueFilter) : null;
   const readFilter = show === 'rd:portal' || show === 'rd:portal_applied' ? show.slice(3) : null;
   const outcomeKeys = Object.entries(outcomes.data ?? {}).sort((a, b) => b[1] - a[1]);
+
+  if (part === 'list') {
+    return issueFilter && ISSUE_TITLES[issueFilter] ? <IssueList filter={issueFilter} />
+      : readFilter ? <PortalReadList filter={readFilter} /> : null;
+  }
 
   return (
     <SectionCard title="What the readers produced"
@@ -72,8 +77,6 @@ export const ReadersSection: React.FC<{ s: ReplyFactoryStatus; show: string }> =
         </div>
       </div>
 
-      {issueFilter && ISSUE_TITLES[issueFilter] && <IssueList filter={issueFilter} />}
-      {readFilter && <PortalReadList filter={readFilter} />}
     </SectionCard>
   );
 };

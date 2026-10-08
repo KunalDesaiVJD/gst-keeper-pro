@@ -30,9 +30,9 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
 
 That's it — nothing to keep running, no account, no card.
 
-## Updating (minimum v0.4.0, recommended v0.7.0)
+## Updating (minimum v0.4.0, recommended v0.8.1)
 The app refuses to start a notices sync from an extension older than **v0.4.0**
-(`src/lib/extensionVersion.ts`) and nudges older copies to update to **v0.7.0**.
+(`src/lib/extensionVersion.ts`) and nudges older copies to update to **v0.8.1**.
 After pulling a new version of this folder, open `chrome://extensions` and click
 **Reload** on “GST Keeper Portal Sync” on **every PC** that syncs. v0.4.0 never marks
 saved notices missing after an empty or partly failed pull, checks that the portal
@@ -43,27 +43,65 @@ typed — see CHANGELOG.md. v0.6.0 also reads applications on the portal (appeal
 and others) and the registration status in every notices sync, keeps a GSTR-3A's
 return period so it closes itself once that return is filed, and is what the
 office agent drives (below). v0.7.0 runs the autopilot's scheduled syncs in your own
-Chrome (below).
+Chrome (below). v0.7.1 also reads the documents of new or changed refunds in the
+notices sync, and keeps every pull outside Notices & Litigation as v0.3.3 ran it
+(CHANGELOG.md lists the few security and crash fixes those pulls keep). v0.8.0
+gives every notice the four things the portal's notice list leaves out — its own
+PDF, its reply date, its officer and its DIN — from the case folder this sync
+already reads (below). v0.8.1 offers a password the portal refused only once: a
+bulk or scheduled sync logs that client, moves on to the next one, and skips it
+until the password is changed in Edit Client (or the client is logged in once
+from GST Keeper).
+
+## What a notice carries after a sync (v0.8.0)
+The portal's notice list (`get/notices`) is thin: a reference number, a type, an
+issue date. Everything else a reply needs is in the **case folder** — which this
+extension already reads and saves whole. v0.8.0 lifts four of those fields onto
+the notice itself, so the app has them without anyone opening the folder:
+
+| On the notice | Where it comes from |
+| --- | --- |
+| **The notice's own PDF** | the folder document named after the reference number (`DOT_NOTICE_<ref>_<ts>.pdf`) — the one the app used to report as "PDF not captured yet" while it sat in storage, unlinked |
+| **Reply due date** | the folder item's own date, only when the notice list gave none (a DRC-01, RFD-03 or RFD-08 usually gives none) |
+| **Officer** | the officer's name and designation on the folder item |
+| **DIN** | the folder item, written in a PATCH of its own so a database without the column loses nothing else |
+
+Nothing a notice already carries is overwritten, and no document is downloaded
+twice: a notice synced before v0.8.0 is linked to the PDF **already in
+storage** — including when its case folder is not re-opened at all, so a closed
+case costs nothing. A case whose notice is still missing one of these does have
+its folder opened on the next run rather than waiting for the weekly full pass,
+to pick up the officer and the date; a reference that yields nothing is not
+forced again for a week, so this cannot become an extra fetch on every run.
+
+After the first run, check in the app: **Reply Factory → Overview** ("due dates
+on open notices", target 98%) and any notice's **Documents** tab, where "the
+notice" should now name a PDF. The run's own debug panel reports the counts
+("linked from folder: n notice PDFs, n reply dates, n officers, n DINs").
 
 ## Scheduled syncs in your Chrome (v0.7.0)
 GST Keeper's autopilot runs the agreed schedule — 05:30 every active client, 13:00 the
 clients that need it — in **your own Chrome**, the one that has your CAPTCHA extension.
 There is no CAPTCHA wall and nobody needs to be at the screen.
 
-1. Load this extension (v0.7.0 or later) in the Chrome that has your CAPTCHA extension
+1. Load this extension (v0.7.1 or later) in the Chrome that has your CAPTCHA extension
    (`chrome://extensions` → Developer mode → Load unpacked, or Reload).
 2. In its popup, tick **Run scheduled syncs in this Chrome** and give the PC a name
    (for example "Reception PC"); GST Keeper shows it under Notices → Autopilot.
-3. In GST Keeper, Notices → Autopilot → Settings, switch the autopilot on. Keep that PC
-   and Chrome on at 05:30 and 13:00; a slot that finds Chrome closed runs when it opens
-   within 3 hours.
+3. In GST Keeper, Notices → Autopilot → Settings, switch the autopilot on, and set "Who
+   the afternoon run takes" (13:00) to "Only clients that need it" or every client
+   ("None" turns the 13:00 run off). Keep that PC and Chrome on at 05:30 and 13:00; a
+   slot that finds Chrome closed runs when it opens within 3 hours.
 
 What it does: about once a minute the extension tells GST Keeper this Chrome is there
 and, when nothing else runs in it, takes the next client from the queue. Each client
 gets a window of its own: the extension logs out of the portal, fills the user ID and
 password, and **waits for your CAPTCHA extension to fill the CAPTCHA box**; it then logs
-in, reads notices & orders (with case folders and PDFs), refunds, DRC-03, applications
-and the profile, saves them, logs out and closes the window. If the box is not filled
+in, reads notices & orders (with case folders and PDFs), refunds (and the documents of
+new or changed ones), DRC-03, applications and the profile, saves them, logs out and
+closes the window. Evidence a notice's reply needs (GSTR-1, 3B, 2A, 2B, the credit
+reversal statement, GSTR-9 for its periods) is queued by GST Keeper and fetched the same
+way, one client at a time. If the box is not filled
 within the wait set in the app (120 seconds unless changed), that client is tried again
 later (after 5, 10, 20 … minutes, up to the tries set in the app) and the next one
 starts. This extension never reads, copies or solves the CAPTCHA, and passwords are
@@ -93,6 +131,16 @@ its run to the queue. The watchdog leaves an agent job's CAPTCHA wait to the age
 People type every CAPTCHA; see `docs/PORTAL_AUTOPILOT_POSITIONS.md`.
 
 ## Testing without the portal
+`node test/run-all.mjs` (v0.8.0) runs the whole 0.8.0 notices work with no portal,
+no database and no network: the folder-field helpers, the link pass extracted
+from `content.js` itself, and three end-to-end runs that drive the real
+`content.js` against a fake portal — a DRC-01 whose PDF exists only in its case
+folder, a notice linked from the PDF already stored with the folder never
+opened, and the refunds step proving its own rows are shaped exactly as 0.7.1
+wrote them while the RFD-08's notice gets patched. `test/_extract.mjs` rebuilds
+the test copies of those helpers straight from `content.js`, so the tests cannot
+drift from the shipped code.
+
 `test/notices-sync.sim.mjs` runs the real `background.js`, `db.js` and `content.js` in
 Node against a fake portal and a **local** PostgREST + PostgreSQL carrying the
 migrations (see `supabase/tests/notices/README.md`). It checks a first run, an

@@ -207,6 +207,20 @@
     if (!client || !client.gst_user_id) {
       return finish(c, st, { outcome: 'retry', reason: 'agent_error', error: 'This client has no saved GST credentials.' });
     }
+    // 0.8.1: a password the portal refused stays refused until it is changed
+    // in GST Keeper. The client fails at once as a failed login, logged where a
+    // person's sync logs it, and the portal is not opened at all (content.js
+    // records the refusal; a login that works clears it).
+    let refused = null;
+    try { refused = await API.pwRefusalCheck(client.id, client.gst_user_id); } catch (e) { refused = null; }
+    if (refused) {
+      const words = 'Not tried: the portal refused this saved password on ' + new Date(refused.at).toLocaleString('en-IN')
+        + (refused.message ? ' ("' + String(refused.message).slice(0, 160) + '")' : '')
+        + '. Change it in Edit Client, or log the client in once from GST Keeper, and the next sync tries it again.';
+      try { await API.logClientSync(client.id, 'login_failed', 'failed', words); } catch (e) { /* diagnostic only */ }
+      if (claimed.run_id) { try { await API.logStep(claimed.run_id, client.id, 'login', 'failed', 'login_failed', words); } catch (e) { /* diagnostic only */ } }
+      return finish(c, st, { outcome: 'failed', reason: 'login_failed', error: words, result: { runner: 'chrome', skipped: 'password_refused' } });
+    }
     let started = false;
     try { started = await call('portal_job_start', { p_job_id: claimed.id, p_agent: agentOf(c), p_session_reused: false }); }
     catch (e) { return finish(c, st, { outcome: 'retry', reason: 'agent_error', error: errText(e) }); }

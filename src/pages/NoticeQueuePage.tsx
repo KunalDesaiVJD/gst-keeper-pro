@@ -1,6 +1,7 @@
 // Notices & Litigation · Work queue: "Today's plan" in full (roadmap Phase 2;
 // audit U-20-4 "route Work queue to the open queue"). Open notices with a next
-// step, ranked by deadline × exposure × readiness (public.notice_plan), split
+// step (public.notice_plan), newest first by issue date (7 October 2026) or, on
+// request, ranked by deadline × exposure × readiness; split
 // Mine / Team / Unassigned / Review. Each tab's count is taken under the list's
 // own filters, so it is the length of its list: opened from the command centre
 // (dash=1, the dashboard's notice types only) it equals the plan's count there.
@@ -29,7 +30,8 @@ const TABS: { key: QueueTab; label: string; empty: string }[] = [
   { key: 'review', label: 'Review', empty: 'No draft is waiting for a partner.' },
 ];
 const SORT_CHOICES: { key: SortKey; label: string }[] = [
-  { key: 'score', label: 'Rank (deadline × exposure × readiness)' },
+  { key: 'issued', label: 'Newest first' },
+  { key: 'score', label: 'Most urgent (deadline × exposure × readiness)' },
   { key: 'due', label: 'Due date' },
   { key: 'demand', label: 'Demand' },
   { key: 'age', label: 'Days in stage' },
@@ -74,7 +76,7 @@ const NoticeQueuePage: React.FC = () => {
   const empty = TABS.find((t) => t.key === tab)?.empty;
 
   return (
-    <NoticesShell section="Work queue">
+    <NoticesShell section="Work queue" master>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div role="tablist" aria-label="Whose work" className={WS_TABS_LIST}>
           {TABS.map((t) => (
@@ -85,12 +87,12 @@ const NoticeQueuePage: React.FC = () => {
             </button>
           ))}
         </div>
-        <Select value={params.sort ?? 'score'} onValueChange={(v) => go(tab, { sort: v === 'score' ? undefined : (v as SortKey), dir: undefined, page: 1 })}>
+        <Select value={params.sort ?? 'issued'} onValueChange={(v) => go(tab, { sort: v === 'issued' ? undefined : (v as SortKey), dir: undefined, page: 1 })}>
           <SelectTrigger className="h-8 w-auto gap-1 text-xs" aria-label="Order"><SelectValue /></SelectTrigger>
           <SelectContent>{SORT_CHOICES.map((s) => <SelectItem key={s.key} value={s.key} className="text-xs">{s.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
-      <NoticeFilterBar params={params} onChange={(patch) => go(tab, patch)} showFilter={false} />
+      <NoticeFilterBar master params={params} onChange={(patch) => go(tab, patch)} showFilter={false} />
       {q.error ? (
         <Note tone="warn">Couldn't load the queue: {q.error instanceof Error ? q.error.message : String(q.error)}{' '}
           <Button variant="link" className="h-auto p-0 text-xs" onClick={() => q.refetch()}>Retry</Button></Note>

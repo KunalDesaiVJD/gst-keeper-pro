@@ -14,7 +14,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/gstr9/badge';
-import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Note } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { NoticeTable } from '@/components/notices/NoticeTable';
@@ -35,6 +36,9 @@ import { LIST_FILTERS, SORTS, defaultSort, filterDef, noticesListHref, type List
 import { daysBetween, istToday, type NoticeFact } from '@/lib/noticeFacts';
 import { fmtAgo, fmtDay, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
+
+/** ['a', 'b', 'c'] → 'a, b or c'. */
+const orList = (w: string[]) => (w.length < 2 ? w.join('') : `${w.slice(0, -1).join(', ')} or ${w[w.length - 1]}`);
 
 const PAGE = 50;
 const SHOW: ListFilter[] = ['open', 'overdue', 'due7', 'new', 'unassigned', 'exposure', 'nodue', 'issued15', 'replied', 'submitted', 'closed', 'auto_closed', 'all'];
@@ -66,7 +70,9 @@ function sortRows(rows: NoticeFact[], key: SortKey, dir: 'asc' | 'desc'): Notice
     if (av === null || av === undefined) return bv === null || bv === undefined ? String(a.id).localeCompare(String(b.id)) : 1;
     if (bv === null || bv === undefined) return -1;
     const c = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
-    return sign * c || String(a.id).localeCompare(String(b.id));
+    // Issued the same day: the one the portal sync brought in last comes first (as in the lists).
+    const seen = key === 'issued' ? String(a.first_seen_at ?? '').localeCompare(String(b.first_seen_at ?? '')) : 0;
+    return sign * c || sign * seen || String(a.id).localeCompare(String(b.id));
   });
 }
 
@@ -221,6 +227,9 @@ const CompanyProfilePage: React.FC = () => {
   const c = d.client;
   const h = d.health;
   const refundsWaiting = d.refunds.filter(refundNeedsReply).length;
+  const hasCases = d.folders.length > 0 || d.notices.some((n) => !!n.case_id);
+  const nothing = [!hasCases && 'case folder', d.refunds.length === 0 && 'refund application', d.drc03.length === 0 && 'DRC-03 payment']
+    .filter((x): x is string => !!x);
   const total = rows.length;
   const pageRows = rows.slice((page - 1) * PAGE, page * PAGE);
   const listHref = noticesListHref({ filter: show, client: clientId, category: cat ?? undefined });
@@ -286,11 +295,16 @@ const CompanyProfilePage: React.FC = () => {
             )}
           </SectionCard>
 
-          <ClientCases clientId={clientId} folders={d.folders} notices={d.notices} today={today} />
-          <div className="grid grid-cols-1 items-start gap-3 2xl:grid-cols-2">
-            <div id="client-refunds" className="scroll-mt-4"><RefundList clientId={clientId} rows={d.refunds} caseIds={caseIds} /></div>
-            <Drc03List clientId={clientId} rows={d.drc03} caseIds={caseIds} />
-          </div>
+          {hasCases && <ClientCases clientId={clientId} folders={d.folders} notices={d.notices} today={today} />}
+          {d.refunds.length > 0 || d.drc03.length > 0 ? (
+            <div className={cn('grid grid-cols-1 items-stretch gap-3', d.refunds.length > 0 && d.drc03.length > 0 && '2xl:grid-cols-2')}>
+              {d.refunds.length > 0 && <div id="client-refunds" className="scroll-mt-4"><RefundList clientId={clientId} rows={d.refunds} caseIds={caseIds} /></div>}
+              {d.drc03.length > 0 && <Drc03List clientId={clientId} rows={d.drc03} caseIds={caseIds} />}
+            </div>
+          ) : null}
+          {nothing.length > 0 && (
+            <p className="px-1 text-xs text-muted-foreground">No {orList(nothing)} on record.</p>
+          )}
         </div>
         <aside className="min-w-0 space-y-3" aria-label="Client facts">
           <ClientProfileCard client={c} extras={d.extras} profile={d.profile} busy={sync.busy}

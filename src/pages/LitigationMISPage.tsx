@@ -19,7 +19,7 @@ import { Note } from '@/components/gstr9/ui';
 import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
 import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
-import { fmtDateTime, plural } from '@/lib/noticeFormat';
+import { fmtDateTime, fmtFy, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 import { loadMatterList } from '@/lib/litigationData';
 import {
@@ -103,6 +103,8 @@ const LitigationMISPage: React.FC = () => {
     filters.owner && `Owner: ${filters.owner === 'none' ? 'Unassigned' : data?.staff.find((s) => s.userId === filters.owner)?.name ?? 'one person'}`,
     filters.lifecycle && `Lifecycle: ${lifecycleLabel(filters.lifecycle)}`,
     filters.priority && `Priority: ${filters.priority}`,
+    filters.fy && (filters.fy === 'none' ? 'FY not stated' : `FY ${fmtFy(filters.fy)}`),
+    filters.form && `Form: ${filters.form === 'none' ? 'not recognised' : filters.form}`,
   ].filter(Boolean).join(' · ');
 
   const runExport = async (kind: 'tab' | 'all' | 'pdf') => {
@@ -140,8 +142,8 @@ const LitigationMISPage: React.FC = () => {
   ) : <Skeleton className="h-4 w-80 max-w-full" />;
 
   return (
-    <NoticesShell section="Litigation MIS" status={status}>
-      <MisFilterBar data={data} filters={filters} onChange={onFilters} actions={exports} />
+    <NoticesShell section="Litigation MIS" status={status} master>
+      <MisFilterBar master data={data} filters={filters} onChange={onFilters} actions={exports} />
 
       {loadError ? (
         <Note tone="warn">

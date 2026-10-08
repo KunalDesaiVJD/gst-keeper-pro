@@ -6,7 +6,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { FileText, FolderOpen } from 'lucide-react';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
 import type { Drc03Fact, RefundFact } from '@/lib/noticeFacts';
 import { fmtDate, fmtInrShort, plural, sentenceCase } from '@/lib/noticeFormat';

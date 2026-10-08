@@ -2,7 +2,7 @@
   // Same value as MIN_EXTENSION_VERSION / RECOMMENDED_EXTENSION_VERSION in
   // src/lib/extensionVersion.ts; keep them in step when the app raises them.
   const MIN_VERSION = '0.4.0';
-  const RECOMMENDED_VERSION = '0.7.0';
+  const RECOMMENDED_VERSION = '0.7.1';
   const APP_URL = 'https://gst.vjdesai.com';
   const DASHBOARD_URL = APP_URL + '/notices-dashboard';
   const LOGIN_URL = 'https://services.gst.gov.in/services/login';
@@ -83,7 +83,9 @@
       + '(chrome://extensions → Reload) on this PC.');
   } else if (cmpVer(VERSION, RECOMMENDED_VERSION) < 0) {
     msgBox($('versionMsg'), 'warn', 'Update recommended',
-      'v' + VERSION + ' still syncs; v' + RECOMMENDED_VERSION + ' is faster and fills the run ledger.');
+      'v' + VERSION + ' still syncs; v' + RECOMMENDED_VERSION + (cmpVer(VERSION, '0.7.0') >= 0
+        ? ' also reads the documents of new or changed refunds.'
+        : ' runs the scheduled syncs in this Chrome and is faster.'));
   }
 
   $('openDash').onclick = () => openTab(DASHBOARD_URL);
@@ -318,19 +320,35 @@
   };
   loadAgent();
 
-  // ── Other syncs: legacy return-period ledger pull ───────────────────────
+  // ── Other syncs: the return-period sync of 0.3.3 ────────────────────────
+  // The same job as before 0.4: one client or all clients with credentials,
+  // one after another, no mode (the full chain). Only the password is no
+  // longer kept with the job; the login step fetches it.
+  const ALL = '__ALL__';
   const now = new Date();
   const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   $('period').value = String(pm.getMonth() + 1).padStart(2, '0') + '/' + pm.getFullYear();
+  const legacyList = () => {
+    const withCreds = clients.filter((x) => x.gst_user_id);
+    if ($('legClient').value === ALL) return withCreds;
+    const c = withCreds.find((x) => x.id === $('legClient').value);
+    return c ? [c] : [];
+  };
+  const legacyNote = () => {
+    const n = $('legClient').value === ALL ? legacyList().length : 0;
+    if (n > 1) msgBox($('legMsg'), 'info', 'Syncs ' + n + ' clients one after another.', 'You type a CAPTCHA for each; keep the tab open until it says all done.');
+    else { $('legMsg').textContent = ''; $('legMsg').className = ''; $('legMsg').hidden = true; }
+  };
+  $('legClient').onchange = legacyNote;
   $('legGo').onclick = async () => {
     const period = $('period').value.trim();
     if (!/^(0[1-9]|1[0-2])\/\d{4}$/.test(period)) { msgBox($('legMsg'), 'bad', 'Period must be MM/YYYY, e.g. 06/2026.', ''); $('period').focus(); return; }
-    const c = clients.find((x) => x.id === $('legClient').value);
-    if (!c || !c.gst_user_id) { msgBox($('legMsg'), 'bad', 'Pick a client with saved portal credentials.', ''); return; }
+    const list = legacyList();
+    if (!list.length) { msgBox($('legMsg'), 'bad', 'Pick a client with saved portal credentials.', ''); return; }
     const [mm, yyyy] = period.split('/').map((n) => parseInt(n, 10));
     const legacy = {
       period, fyStart: mm >= 4 ? yyyy : yyyy - 1, idx: 0, step: 'login', startedAt: Date.now(),
-      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      clients: list.map((c) => ({ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } })),
     };
     const tab = await chrome.tabs.create({ url: LOGIN_URL });
     legacy.tabId = tab.id;
@@ -340,13 +358,21 @@
   function renderLegacy() {
     const sel = $('legClient');
     sel.textContent = '';
-    for (const c of clients.filter((x) => x.gst_user_id)) {
+    const withCreds = clients.filter((x) => x.gst_user_id);
+    if (withCreds.length > 1) {
+      const all = document.createElement('option');
+      all.value = ALL;
+      all.textContent = 'All clients with credentials (' + withCreds.length + ')';
+      sel.appendChild(all);
+    }
+    for (const c of withCreds) {
       const o = document.createElement('option');
       o.value = c.id;
       o.textContent = c.name;
       sel.appendChild(o);
     }
     $('legGo').disabled = !sel.options.length;
+    legacyNote();
   }
 
   // ── Scheduled syncs in this Chrome (0.7.0, runner.js) ───────────────────

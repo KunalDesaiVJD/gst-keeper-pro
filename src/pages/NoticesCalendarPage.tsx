@@ -12,7 +12,8 @@ import { CalendarPlus, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Note } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
 import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
@@ -22,6 +23,8 @@ import { CALENDAR_KIND_LABEL, loadCalendar, type CalendarItem } from '@/lib/noti
 import { addDays, istToday } from '@/lib/noticeFacts';
 import { fmtDate, plural } from '@/lib/noticeFormat';
 import { downloadIcs } from '@/lib/noticeIcs';
+import { useMaster } from '@/lib/masterFilters';
+import { inScope, useMasterScope } from '@/lib/masterScope';
 import { cn } from '@/lib/utils';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -40,8 +43,10 @@ function monthGrid(year: number, month: number): string[] {
 }
 
 const NoticesCalendarPage: React.FC = () => {
-  const { isStaffRole } = useAuth();
+  const { isStaffRole, user } = useAuth();
   const [sp, setSp] = useSearchParams();
+  const { m: master } = useMaster();
+  const { scope } = useMasterScope(master, user?.id ?? null);
   const today = istToday();
   const day = /^\d{4}-\d{2}-\d{2}$/.test(sp.get('date') || '') ? (sp.get('date') as string) : today;
   const monthKey = /^\d{4}-\d{2}$/.test(sp.get('month') || '') ? (sp.get('month') as string) : day.slice(0, 7);
@@ -55,8 +60,10 @@ const NoticesCalendarPage: React.FC = () => {
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
+  // The master filters keep an item when its notice is kept (a matter's item, by its client).
+  const all = (q.data ?? []).filter((it) => (it.notice_id ? inScope(scope, it) : !master.client || it.client_id === master.client));
   const byDay = new Map<string, CalendarItem[]>();
-  (q.data ?? []).forEach((it) => byDay.set(it.day, [...(byDay.get(it.day) ?? []), it]));
+  all.forEach((it) => byDay.set(it.day, [...(byDay.get(it.day) ?? []), it]));
   const set = (patch: { date?: string; month?: string }) => {
     const next = new URLSearchParams(sp);
     if (patch.date) next.set('date', patch.date);
@@ -68,7 +75,7 @@ const NoticesCalendarPage: React.FC = () => {
     set({ month: d.toISOString().slice(0, 7) });
   };
   const items = byDay.get(day) ?? [];
-  const monthItems = (q.data ?? []).filter((it) => it.day.startsWith(monthKey));
+  const monthItems = all.filter((it) => it.day.startsWith(monthKey));
   const dropDash = () => {
     const next = new URLSearchParams(sp);
     next.delete('dash');
@@ -76,7 +83,7 @@ const NoticesCalendarPage: React.FC = () => {
   };
 
   return (
-    <NoticesShell section="Calendar"
+    <NoticesShell section="Calendar" master
       actions={monthItems.length > 0 && (
         <Button size="sm" variant="outline" className={WS_BTN} onClick={() => downloadIcs(monthItems.map((it) => ({
           uid: `${it.kind}-${it.notice_id ?? it.detail}-${it.day}`, date: it.day,

@@ -100,8 +100,374 @@ export type Database = {
         Relationships: [
         ]
       }
+      ai_assist_runs: {
+        Row: {
+          answer: string | null
+          client_id: string
+          cost_usd: number | null
+          created_at: string
+          error: string | null
+          examples: Json | null
+          examples_used: string[] | null
+          feedback: string | null
+          feedback_at: string | null
+          feedback_by_name: string | null
+          final_text: string | null
+          finished_at: string | null
+          id: string
+          input_text: string | null
+          issue_id: string | null
+          mode: string
+          model: string | null
+          notice_id: string
+          output: Json | null
+          question: string | null
+          reason_class: string | null
+          requested_by_name: string | null
+          status: string
+          usage: Json | null
+        }
+        Insert: {
+          answer?: string | null
+          client_id: string
+          cost_usd?: number | null
+          created_at?: string
+          error?: string | null
+          examples?: Json | null
+          examples_used?: string[] | null
+          feedback?: string | null
+          feedback_at?: string | null
+          feedback_by_name?: string | null
+          final_text?: string | null
+          finished_at?: string | null
+          id?: string
+          input_text?: string | null
+          issue_id?: string | null
+          mode: string
+          model?: string | null
+          notice_id: string
+          output?: Json | null
+          question?: string | null
+          reason_class?: string | null
+          requested_by_name?: string | null
+          status?: string
+          usage?: Json | null
+        }
+        Update: {
+          answer?: string | null
+          client_id?: string
+          cost_usd?: number | null
+          created_at?: string
+          error?: string | null
+          examples?: Json | null
+          examples_used?: string[] | null
+          feedback?: string | null
+          feedback_at?: string | null
+          feedback_by_name?: string | null
+          final_text?: string | null
+          finished_at?: string | null
+          id?: string
+          input_text?: string | null
+          issue_id?: string | null
+          mode?: string
+          model?: string | null
+          notice_id?: string
+          output?: Json | null
+          question?: string | null
+          reason_class?: string | null
+          requested_by_name?: string | null
+          status?: string
+          usage?: Json | null
+        }
+        Relationships: [
+        ]
+      }
+      ai_documents: {
+        Row: {
+          agent_id: string | null
+          attempts: number
+          body: string | null
+          case_id: string | null
+          claimed_at: string | null
+          client_id: string
+          context: Json | null
+          created_at: string
+          doc_date: string | null
+          doc_kind: string | null
+          document_sha256: string | null
+          draft_id: string | null
+          error: string | null
+          finished_at: string | null
+          folder_item_id: string | null
+          folder_section: string | null
+          id: string
+          key_facts: Json | null
+          label: string | null
+          learning_decided_at: string | null
+          learning_decided_by_name: string | null
+          learning_included: boolean
+          model: string | null
+          not_before: string | null
+          notice_id: string | null
+          outcome: string | null
+          pages: number | null
+          paragraphs: Json | null
+          priority: number
+          reason_class: string | null
+          reference: string | null
+          role: string
+          sort_date: string | null
+          source: string
+          source_ref: string
+          status: string
+          summary: string | null
+          text_layer: boolean | null
+          title: string | null
+          updated_at: string
+          url: string | null
+          usage: Json | null
+        }
+        Insert: {
+          agent_id?: string | null
+          attempts?: number
+          body?: string | null
+          case_id?: string | null
+          claimed_at?: string | null
+          client_id: string
+          context?: Json | null
+          created_at?: string
+          doc_date?: string | null
+          doc_kind?: string | null
+          document_sha256?: string | null
+          draft_id?: string | null
+          error?: string | null
+          finished_at?: string | null
+          folder_item_id?: string | null
+          folder_section?: string | null
+          id?: string
+          key_facts?: Json | null
+          label?: string | null
+          learning_decided_at?: string | null
+          learning_decided_by_name?: string | null
+          learning_included?: boolean
+          model?: string | null
+          not_before?: string | null
+          notice_id?: string | null
+          outcome?: string | null
+          pages?: number | null
+          paragraphs?: Json | null
+          priority?: number
+          reason_class?: string | null
+          reference?: string | null
+          role: string
+          sort_date?: string | null
+          source: string
+          source_ref: string
+          status?: string
+          summary?: string | null
+          text_layer?: boolean | null
+          title?: string | null
+          updated_at?: string
+          url?: string | null
+          usage?: Json | null
+        }
+        Update: {
+          agent_id?: string | null
+          attempts?: number
+          body?: string | null
+          case_id?: string | null
+          claimed_at?: string | null
+          client_id?: string
+          context?: Json | null
+          created_at?: string
+          doc_date?: string | null
+          doc_kind?: string | null
+          document_sha256?: string | null
+          draft_id?: string | null
+          error?: string | null
+          finished_at?: string | null
+          folder_item_id?: string | null
+          folder_section?: string | null
+          id?: string
+          key_facts?: Json | null
+          label?: string | null
+          learning_decided_at?: string | null
+          learning_decided_by_name?: string | null
+          learning_included?: boolean
+          model?: string | null
+          not_before?: string | null
+          notice_id?: string | null
+          outcome?: string | null
+          pages?: number | null
+          paragraphs?: Json | null
+          priority?: number
+          reason_class?: string | null
+          reference?: string | null
+          role?: string
+          sort_date?: string | null
+          source?: string
+          source_ref?: string
+          status?: string
+          summary?: string | null
+          text_layer?: boolean | null
+          title?: string | null
+          updated_at?: string
+          url?: string | null
+          usage?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_documents_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_learning_pairs: {
+        Row: {
+          ai_text: string | null
+          allegation: string
+          case_id: string | null
+          client_id: string
+          created_at: string
+          decided_at: string | null
+          decided_by_name: string | null
+          document_id: string
+          financial_year: string | null
+          form_code: string | null
+          id: string
+          included: boolean
+          issue_code: string
+          issue_id: string | null
+          issue_title: string | null
+          last_used_at: string | null
+          notice_id: string | null
+          origin: string
+          outcome: string | null
+          page: number | null
+          response: string
+          search: unknown | null
+          section_of_law: string | null
+          seq: number | null
+          updated_at: string
+          uses: number
+          verified: boolean
+        }
+        Insert: {
+          ai_text?: string | null
+          allegation: string
+          case_id?: string | null
+          client_id: string
+          created_at?: string
+          decided_at?: string | null
+          decided_by_name?: string | null
+          document_id: string
+          financial_year?: string | null
+          form_code?: string | null
+          id?: string
+          included?: boolean
+          issue_code?: string
+          issue_id?: string | null
+          issue_title?: string | null
+          last_used_at?: string | null
+          notice_id?: string | null
+          origin: string
+          outcome?: string | null
+          page?: number | null
+          response: string
+          search?: unknown | null
+          section_of_law?: string | null
+          seq?: number | null
+          updated_at?: string
+          uses?: number
+          verified?: boolean
+        }
+        Update: {
+          ai_text?: string | null
+          allegation?: string
+          case_id?: string | null
+          client_id?: string
+          created_at?: string
+          decided_at?: string | null
+          decided_by_name?: string | null
+          document_id?: string
+          financial_year?: string | null
+          form_code?: string | null
+          id?: string
+          included?: boolean
+          issue_code?: string
+          issue_id?: string | null
+          issue_title?: string | null
+          last_used_at?: string | null
+          notice_id?: string | null
+          origin?: string
+          outcome?: string | null
+          page?: number | null
+          response?: string
+          search?: unknown | null
+          section_of_law?: string | null
+          seq?: number | null
+          updated_at?: string
+          uses?: number
+          verified?: boolean
+        }
+        Relationships: [
+        ]
+      }
+      ai_runner_status: {
+        Row: {
+          id: boolean
+          key_ok: boolean | null
+          last_error: string | null
+          last_error_at: string | null
+          last_sync_at: string | null
+          last_tick_at: string | null
+          last_work_at: string | null
+          lease_holder: string | null
+          lease_until: string | null
+          version: string | null
+        }
+        Insert: {
+          id?: boolean
+          key_ok?: boolean | null
+          last_error?: string | null
+          last_error_at?: string | null
+          last_sync_at?: string | null
+          last_tick_at?: string | null
+          last_work_at?: string | null
+          lease_holder?: string | null
+          lease_until?: string | null
+          version?: string | null
+        }
+        Update: {
+          id?: boolean
+          key_ok?: boolean | null
+          last_error?: string | null
+          last_error_at?: string | null
+          last_sync_at?: string | null
+          last_tick_at?: string | null
+          last_work_at?: string | null
+          lease_holder?: string | null
+          lease_until?: string | null
+          version?: string | null
+        }
+        Relationships: [
+        ]
+      }
       ai_settings: {
         Row: {
+          runner: string
+          consent_scope: string
+          read_backfill: boolean
+          read_documents: boolean
+          doc_effort: string
+          doc_max_pages: number
+          assist_effort: string
+          assist_daily_cap_usd: number
+          learning_auto_include: boolean
+          edge_seconds: number
           auto_read_new: boolean
           daily_cap_usd: number
           effort: string
@@ -116,6 +482,16 @@ export type Database = {
           usd_inr: number
         }
         Insert: {
+          runner?: string
+          consent_scope?: string
+          read_backfill?: boolean
+          read_documents?: boolean
+          doc_effort?: string
+          doc_max_pages?: number
+          assist_effort?: string
+          assist_daily_cap_usd?: number
+          learning_auto_include?: boolean
+          edge_seconds?: number
           auto_read_new?: boolean
           daily_cap_usd?: number
           effort?: string
@@ -130,6 +506,16 @@ export type Database = {
           usd_inr?: number
         }
         Update: {
+          runner?: string
+          consent_scope?: string
+          read_backfill?: boolean
+          read_documents?: boolean
+          doc_effort?: string
+          doc_max_pages?: number
+          assist_effort?: string
+          assist_daily_cap_usd?: number
+          learning_auto_include?: boolean
+          edge_seconds?: number
           auto_read_new?: boolean
           daily_cap_usd?: number
           effort?: string
@@ -7371,6 +7757,7 @@ export type Database = {
       notice_type_settings: {
         Row: {
           form_code: string
+          hidden: boolean
           response_need: string
           show_on_dashboard: boolean
           updated_at: string
@@ -7378,6 +7765,7 @@ export type Database = {
         }
         Insert: {
           form_code: string
+          hidden?: boolean
           response_need?: string
           show_on_dashboard?: boolean
           updated_at?: string
@@ -7385,6 +7773,7 @@ export type Database = {
         }
         Update: {
           form_code?: string
+          hidden?: boolean
           response_need?: string
           show_on_dashboard?: boolean
           updated_at?: string
@@ -9325,6 +9714,33 @@ export type Database = {
       }
     }
     Views: {
+      ai_learning_responses: {
+        Row: {
+          case_id: string | null
+          client_id: string | null
+          client_name: string | null
+          financial_year: string | null
+          form_code: string | null
+          id: string | null
+          label: string | null
+          learning_decided_at: string | null
+          learning_decided_by_name: string | null
+          learning_included: boolean | null
+          notice_id: string | null
+          notice_ref: string | null
+          pairs: number | null
+          pairs_included: number | null
+          phase: string | null
+          response_date: string | null
+          source: string | null
+          status: string | null
+          summary: string | null
+          title: string | null
+          updated_at: string | null
+        }
+        Relationships: [
+        ]
+      }
       notice_form_choices: {
         Row: {
           form_code: string | null
@@ -9507,6 +9923,7 @@ export type Database = {
         Row: {
           category: string | null
           form_code: string | null
+          hidden: boolean | null
           is_active: boolean | null
           label: string | null
           match_order: number | null
@@ -9779,6 +10196,38 @@ export type Database = {
       }
     }
     Functions: {
+      ai_sync: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      ai_documents_request: {
+        Args: { p_notice_id: string }
+        Returns: number
+      }
+      ai_documents_retry: {
+        Args: { p_ids: string[] }
+        Returns: number
+      }
+      ai_learning_select: {
+        Args: { p_document_ids: string[]; p_include: boolean; p_actor?: string | null }
+        Returns: number
+      }
+      ai_learning_select_where: {
+        Args: { p_client_ids: string[] | null; p_phase: string | null; p_include: boolean; p_actor?: string | null }
+        Returns: number
+      }
+      ai_learning_pair_set: {
+        Args: { p_pair_ids: string[]; p_include: boolean; p_actor?: string | null }
+        Returns: number
+      }
+      ai_assist_feedback: {
+        Args: { p_run_id: string; p_action: string; p_items?: Json | null; p_actor?: string | null }
+        Returns: number
+      }
+      ai_assist_spend_today_usd: {
+        Args: Record<PropertyKey, never>
+        Returns: number
+      }
       notice_reply_context: {
         Args: { p_notice_id: string }
         Returns: Json
@@ -9791,8 +10240,12 @@ export type Database = {
         Args: { p_notice_id: string; p_force?: boolean }
         Returns: number
       }
+      notice_type_hidden: {
+        Args: { p_form_code: string }
+        Returns: boolean
+      }
       notice_type_set: {
-        Args: { p_form_code: string; p_response_need?: string; p_show_on_dashboard?: boolean; p_actor_name?: string }
+        Args: { p_form_code: string; p_response_need?: string; p_show_on_dashboard?: boolean; p_actor_name?: string; p_hidden?: boolean }
         Returns: Json
       }
       reply_evidence_pending: {
@@ -9986,7 +10439,7 @@ export type Database = {
         Returns: Json
       }
       notices_command_centre: {
-        Args: { p_user_id?: string | null }
+        Args: { p_user_id?: string | null; p_filters?: Json | null }
         Returns: Json
       }
       notices_search: {

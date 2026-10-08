@@ -1,8 +1,10 @@
-// Notice types (contract §A; migration 20261008150000_notice_types.sql): how
-// much each kind of notice needs a reply (critical, optional or none) and
-// whether its notices count on the command centre. The firm asked for it on
-// 6 Oct 2026: "certain kinds of notices need no reply". One place for the
-// words and tones, so the settings table, the list chips and the filters say
+// Notice types (contract §A; migrations 20261008150000_notice_types.sql and
+// 20261008180000_notice_types_hidden.sql): how much each kind of notice needs a
+// reply (critical, optional or none) and where its notices show: on the
+// dashboard and in every list, in the lists only, or nowhere (hidden everywhere:
+// the firm's choice for GSTR-3A on 7 Oct 2026). The firm asked for the reply
+// need on 6 Oct 2026: "certain kinds of notices need no reply". One place for
+// the words and tones, so the settings table, the list chips and the filters say
 // the same thing. Notices with no form recognised are always "Reply required"
 // and on the dashboard (the database decides that, in notice_facts).
 import type { QueryClient } from '@tanstack/react-query';
@@ -38,6 +40,36 @@ export const RESPONSE_NEEDS: ResponseNeedDef[] = [
 ];
 
 const BY_KEY = new Map(RESPONSE_NEEDS.map((d) => [d.key, d]));
+
+/** Where a type's notices show. */
+export type TypeVisibility = 'dashboard' | 'lists' | 'hidden';
+
+export interface VisibilityDef {
+  key: TypeVisibility;
+  /** The setting: "Lists only". */
+  label: string;
+  /** What it means, in a few words (the settings' explanation line). */
+  short: string;
+}
+
+export const VISIBILITIES: VisibilityDef[] = [
+  { key: 'dashboard', label: 'Dashboard and lists', short: 'counted on the dashboard and in every list' },
+  { key: 'lists', label: 'Lists only', short: 'in All notices and the Work queue, not counted on the dashboard' },
+  { key: 'hidden', label: 'Hidden everywhere', short: 'in no list, count, search, report or e-mail, and no reply needed' },
+];
+
+export function visibilityOf(r: Pick<NoticeTypeRow, 'hidden' | 'show_on_dashboard'>): TypeVisibility {
+  if (r.hidden) return 'hidden';
+  return r.show_on_dashboard === false ? 'lists' : 'dashboard';
+}
+
+export const visibilityDef = (v: TypeVisibility): VisibilityDef => VISIBILITIES.find((d) => d.key === v) ?? VISIBILITIES[0];
+
+/** The save for a visibility: hiding also makes the type need no reply (the database insists). */
+export function visibilityPatch(v: TypeVisibility): NoticeTypePatch {
+  if (v === 'hidden') return { hidden: true };
+  return { hidden: false, show_on_dashboard: v === 'dashboard' };
+}
 
 export function isResponseNeed(v: unknown): v is ResponseNeed {
   return typeof v === 'string' && BY_KEY.has(v as ResponseNeed);
@@ -76,6 +108,8 @@ export async function countUnclassifiedOpen(): Promise<number> {
 export interface NoticeTypePatch {
   response_need?: ResponseNeed;
   show_on_dashboard?: boolean;
+  /** Hidden everywhere (then no reply needed and off the dashboard). */
+  hidden?: boolean;
 }
 
 /** Saves one type's setting (a field left out stays as it is) and stamps who changed it. */
@@ -85,13 +119,27 @@ export async function saveNoticeType(formCode: string, patch: NoticeTypePatch, a
     p_response_need: patch.response_need,
     p_show_on_dashboard: patch.show_on_dashboard,
     p_actor_name: actorName ?? undefined,
+    p_hidden: patch.hidden,
   });
   if (error) throw error;
   return (data ?? {}) as Partial<NoticeTypeRow>;
 }
 
-/** After a type changes: the dashboard's numbers, its plan and every notice list follow. */
+export const HIDDEN_FORMS_KEY = ['notice-hidden-forms'] as const;
+
+/**
+ * The form codes hidden everywhere, for the few screens that read notices outside
+ * notice_facts (the bell). Empty on a database without migration 20261008180000.
+ */
+export async function loadHiddenForms(): Promise<Set<string>> {
+  const { data, error } = await supabase.from('notice_type_settings').select('form_code').eq('hidden', true);
+  if (error) return new Set();
+  return new Set((data ?? []).map((r) => r.form_code));
+}
+
+/** After a type changes: the dashboard's numbers, its plan, every notice list, search and the bell follow. */
 export function invalidateAfterTypeChange(qc: QueryClient) {
   ['notices-command-centre', 'notice-plan-top', 'notice-list', 'notice-list-sum', 'notice-queue', 'notice-queue-counts',
-    'notice-calendar', 'notice-types-unclassified'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    'notice-calendar', 'notice-types-unclassified', 'notice-filter-options', 'notice-bell', 'client-profile', 'notice-workspace',
+    HIDDEN_FORMS_KEY[0]].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
 }

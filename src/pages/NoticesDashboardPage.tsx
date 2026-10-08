@@ -6,7 +6,9 @@
 // count; the ranked plan is public.notice_plan. The dashboard counts only the
 // notice types shown on it (contract §A): a superadmin or GST manager chooses
 // them under "Notice types" (?types=1 opens the dialog), and a quiet line says
-// what is left out.
+// what is left out. Rebalanced on 7 October 2026 (the firm's request): six tiles,
+// then two rows of panels that end level, and the master filters under the tabs
+// (client, FY, owner, form, priority), which every figure and link here keeps.
 import React from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -24,17 +26,17 @@ import { SyncNowButton } from '@/components/notices/SyncNowButton';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
 import { TodaysPlan } from '@/components/notices/command/TodaysPlan';
 import { NoticeTypesSettings } from '@/components/notices/types/NoticeTypesSettings';
-import {
-  AutopilotHealth, AutopilotLine, ClientsAttention, CommandTiles, ExposureByStage, HiddenTypesLine, Next14Days, ReplyPipeline,
-} from '@/components/notices/command/CommandCards';
+import { AutopilotLine, ClientsAttention, CommandTiles, Next14Days, StagePanel } from '@/components/notices/command/CommandCards';
+import { masterForRpc, useMaster } from '@/lib/masterFilters';
 
 const TYPE_PARAMS = ['types', 'tq', 'tneed', 'tdash'];
 
 const NoticesDashboardPage: React.FC = () => {
-  const { isStaffRole, user, canEditNoticeStatus, canManageNoticeAlerts } = useAuth();
+  const { isStaffRole, user, canEditNoticeStatus } = useAuth();
   const qc = useQueryClient();
   const [sp, setSp] = useSearchParams();
-  const cc = useCommandCentre(user?.id ?? null);
+  const { m } = useMaster();
+  const cc = useCommandCentre(user?.id ?? null, masterForRpc(m, user?.id ?? null));
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
@@ -48,7 +50,8 @@ const NoticesDashboardPage: React.FC = () => {
 
   // The dialog and its filters live in the URL, so a link opens it as it was.
   const typesOpen = sp.get('types') === '1';
-  const openTypes = (dash?: 'hidden') => setSp((prev) => {
+  // 'listed': the types off the dashboard that are still in the lists (HiddenTypesLine counts those).
+  const openTypes = (dash?: 'listed') => setSp((prev) => {
     const next = new URLSearchParams(prev);
     next.set('types', '1');
     if (dash) next.set('tdash', dash);
@@ -63,7 +66,8 @@ const NoticesDashboardPage: React.FC = () => {
   return (
     <NoticesShell
       section="Command centre"
-      status={data ? <AutopilotLine cc={data} /> : <Skeleton className="h-4 w-96 max-w-full" />}
+      status={data ? <AutopilotLine cc={data} onOpenTypes={canTypes ? () => openTypes('listed') : undefined} /> : <Skeleton className="h-4 w-96 max-w-full" />}
+      master
       actions={<>
         {canTypes && (
           <Button size="sm" variant="outline" className={WS_BTN} onClick={() => openTypes()}>
@@ -86,19 +90,14 @@ const NoticesDashboardPage: React.FC = () => {
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[74px]" />)}
         </div>
       )}
-      {data && <HiddenTypesLine cc={data} onOpenTypes={canTypes ? () => openTypes('hidden') : undefined} />}
 
-      <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,2.3fr)_minmax(0,1fr)]">
-        <TodaysPlan cc={data} />
-        <div className="space-y-3">
-          {data ? <ReplyPipeline cc={data} /> : <Skeleton className="h-64" />}
-          {data ? <AutopilotHealth cc={data} canRunAlerts={canManageNoticeAlerts()} onAlertsRun={refresh} /> : <Skeleton className="h-64" />}
-        </div>
+      <div className="grid grid-cols-1 items-stretch gap-3 xl:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]">
+        <TodaysPlan cc={data} master={m} />
+        {data ? <StagePanel cc={data} /> : <Skeleton className="h-80" />}
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-3">
+      <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2">
         {data ? <Next14Days cc={data} /> : <Skeleton className="h-48" />}
-        {data ? <ExposureByStage cc={data} /> : <Skeleton className="h-48" />}
         {data ? <ClientsAttention cc={data} /> : <Skeleton className="h-48" />}
       </div>
 

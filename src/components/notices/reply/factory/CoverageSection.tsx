@@ -7,16 +7,16 @@
 import React, { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge } from '@/components/gstr9/badge';
-import { SectionCard } from '@/components/gstr9/ui';
-import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_HEADING, WS_TR_TOTAL } from '@/components/workspace/theme';
+import { SectionCard } from '@/components/notices/ui/Panel';
+import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR, WS_TR_HEADING } from '@/components/workspace/theme';
 import { Pager } from '@/components/notices/Pager';
 import { INLINE_LINK } from '@/components/notices/autopilot/parts';
 import {
-  DUE_COVERAGE_TARGET, coverageKindLabel, coverageKinds, factoryHref, fmtShare, sourceLabel, targetTone, useCoverageRows, useListPage,
+  COVERAGE_KINDS, DUE_COVERAGE_TARGET, coverageKindLabel, coverageKinds, factoryHref, fmtShare, sourceLabel, targetTone, useCoverageRows, useListPage,
   type CoverageItem, type ReplyFactoryStatus,
 } from '@/lib/replyFactory';
 import { fmtDate, plural } from '@/lib/noticeFormat';
-import { CountLink, DrillFrame, NoticeCell, TargetMark } from './parts';
+import { ChipLinks, CountLink, DrillFrame, NoticeCell, TargetMark } from './parts';
 import { cn } from '@/lib/utils';
 
 const UNKNOWN_FORM = '(unknown)';
@@ -47,10 +47,11 @@ const matches = (r: CoverageItem, f: CovFilter) => (!f.kind || r.kind === f.kind
   && (!f.source || (r.source ?? 'none') === f.source)
   && (!f.form || (r.form_code ?? UNKNOWN_FORM) === f.form);
 
-export const CoverageSection: React.FC<{ s: ReplyFactoryStatus; show: string }> = ({ s, show }) => {
+export const CoverageSection: React.FC<{ s: ReplyFactoryStatus; show: string; part?: 'card' | 'list' }> = ({ s, show, part = 'card' }) => {
   const [sp] = useSearchParams();
   const c = s.due_coverage;
   const filter = parseFilter(show, sp);
+  if (part === 'list') return filter ? <CoverageList filter={filter} /> : null;
   const href = (k: string, extra: Record<string, string> = {}) => factoryHref('overview', { show: `cov:${k}`, ...extra });
   const missing = c.by_kind.missing ?? 0;
   const sources = Object.entries(c.by_source).sort((a, b) => b[1] - a[1]);
@@ -60,68 +61,34 @@ export const CoverageSection: React.FC<{ s: ReplyFactoryStatus; show: string }> 
   return (
     <SectionCard
       title="Due dates on open notices"
-      description={`Target: at least ${DUE_COVERAGE_TARGET}% of open notices carry the date they run on — a reply date, a hearing, an appeal period, or "no reply needed".`}
+      info={(
+        <>
+          <span className="block">Target: at least {DUE_COVERAGE_TARGET}% of open notices carry the date they run on.</span>
+          {COVERAGE_KINDS.map((k) => <span key={k.key} className="mt-1 block"><b>{k.label}</b>: {k.hint}</span>)}
+        </>
+      )}
       actions={<Badge variant={tone === 'ok' ? 'success' : tone === 'warn' ? 'warning' : tone === 'error' ? 'destructive' : 'secondary'} className="text-xs tabular-nums">
         {fmtShare(c.share)}<TargetMark ok={c.share === null ? null : c.share >= DUE_COVERAGE_TARGET} what={`the ${DUE_COVERAGE_TARGET}% target`} />
       </Badge>}
     >
       <p className="text-sm">
-        <CountLink to={href('covered')} n={c.covered} /> of <CountLink to={href('all')} n={c.open} /> open notices have a date
-        ({fmtShare(c.share)}) · <CountLink to={href('missing')} n={missing} strong /> {missing === 1 ? 'has' : 'have'} none.
+        <CountLink to={href('covered')} n={c.covered} /> of <CountLink to={href('all')} n={c.open} /> have a date ·{' '}
+        <CountLink to={href('missing')} n={missing} strong /> without
       </p>
-
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <div className={WS_TABLE_WRAP}>
-          <table className={WS_TABLE}>
-            <caption className="sr-only">Open notices by what their date is</caption>
-            <thead><tr><th scope="col" className={WS_TH}>What the date is</th><th scope="col" className={cn(WS_TH, 'text-right')}>Notices</th></tr></thead>
-            <tbody>
-              {coverageKinds(c.by_kind).map((k) => (
-                <tr key={k.key} className={WS_TR}>
-                  <th scope="row" className={cn(WS_TD, 'text-left font-normal')}>
-                    <span className={cn('text-sm', k.key === 'missing' && 'font-medium')}>{k.label}</span>
-                    {k.hint && <span className="block text-[11px] text-muted-foreground">{k.hint}</span>}
-                  </th>
-                  <td className={WS_TD_NUM}><CountLink to={href(k.key)} n={c.by_kind[k.key] ?? 0} strong={k.key === 'missing'} label={k.label} /></td>
-                </tr>
-              ))}
-              <tr className={WS_TR_TOTAL}>
-                <th scope="row" className={cn(WS_TD, 'text-left')}>Open notices</th>
-                <td className={WS_TD_NUM}><CountLink to={href('all')} n={c.open} label="open notices" /></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div className={WS_TABLE_WRAP}>
-          <table className={WS_TABLE}>
-            <caption className="sr-only">Open notices by where their date came from</caption>
-            <thead><tr><th scope="col" className={WS_TH}>Where the date came from</th><th scope="col" className={cn(WS_TH, 'text-right')}>Notices</th></tr></thead>
-            <tbody>
-              {sources.map(([src, n]) => (
-                <tr key={src} className={WS_TR}>
-                  <th scope="row" className={cn(WS_TD, 'text-left text-sm font-normal')}>{sourceLabel(src)}</th>
-                  <td className={WS_TD_NUM}><CountLink to={href('src', { src })} n={n} strong={src === 'none'} label={sourceLabel(src)} /></td>
-                </tr>
-              ))}
-              {sources.length === 0 && <tr><td colSpan={2} className={cn(WS_TD, 'text-center text-xs text-muted-foreground')}>No open notices.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {forms.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="font-medium">Still without a date, by form:</span>
-          {forms.map(([form, n]) => (
-            <Link key={form} to={href('missing', { cform: form })}
-              className="inline-flex items-center gap-1 rounded-full border border-destructive/40 bg-card px-2 py-0.5 font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              {form === UNKNOWN_FORM ? 'Form not known' : form} <span className="tabular-nums">{n}</span>
-            </Link>
-          ))}
-        </div>
+      <ul className="divide-y rounded-md border text-sm" aria-label="Open notices by what their date is">
+        {coverageKinds(c.by_kind).map((k) => (
+          <li key={k.key} className="flex items-center justify-between gap-2 px-2.5 py-1">
+            <span className={cn(k.key === 'missing' ? 'font-medium' : 'text-foreground/85')}>{k.label}</span>
+            <CountLink to={href(k.key)} n={c.by_kind[k.key] ?? 0} strong={k.key === 'missing'} label={k.label} />
+          </li>
+        ))}
+      </ul>
+      {sources.length > 0 && (
+        <ChipLinks label="Date from" items={sources.map(([src, n]) => ({ key: src, label: sourceLabel(src), n, to: href('src', { src }), bad: src === 'none' }))} />
       )}
-
-      {filter && <CoverageList filter={filter} />}
+      {forms.length > 0 && (
+        <ChipLinks label="No date, by form" items={forms.map(([form, n]) => ({ key: form, label: form === UNKNOWN_FORM ? 'Form not known' : form, n, to: href('missing', { cform: form }), bad: true }))} />
+      )}
     </SectionCard>
   );
 };
@@ -201,7 +168,7 @@ const CoverageList: React.FC<{ filter: CovFilter }> = ({ filter }) => {
       </div>
       <Pager page={pager.page} pageSize={pager.pageSize} total={rows.length} onPage={pager.setPage} />
       {filter.kind === 'missing' && rows.length > 0 && (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-[11px] text-foreground/75">
           {plural(rows.length, 'notice')} · the same notices are in{' '}
           <Link to="/notices-all?filter=nodue" className={INLINE_LINK}>All notices without a due date</Link>, which also lists notices with only a hearing or an appeal clock.
         </p>

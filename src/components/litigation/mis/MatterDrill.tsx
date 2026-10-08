@@ -6,7 +6,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { X } from 'lucide-react';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
 import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { StageBadge } from '@/components/notices/StageBadge';

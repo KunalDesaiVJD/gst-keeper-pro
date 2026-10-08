@@ -4,7 +4,7 @@
 // verified yet" below 20 verifications, and the fields still showing
 // "auto — verify". Counts are reply_factory_status(); each opens its fields.
 import React, { useMemo } from 'react';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/components/workspace/theme';
 import { ToneBadge } from '@/components/notices/autopilot/parts';
 import { Pager } from '@/components/notices/Pager';
@@ -13,7 +13,7 @@ import {
   ACCURACY_MIN_SAMPLE, DUE_EXACT_TARGET, READ_FIELD_LABELS, factoryHref, fmtShare, isPendingVerify, readValueText, shareOf,
   useAiReadFields, useListPage, type ReadFieldRow, type ReplyFactoryStatus, type Tone,
 } from '@/lib/replyFactory';
-import { CountLink, DrillFrame, NoticeCell, TargetMark } from './parts';
+import { ChipLinks, CountLink, DrillFrame, NoticeCell, TargetMark } from './parts';
 import { cn } from '@/lib/utils';
 
 type AccKind = 'due' | 'due_exact' | 'demand' | 'demand_ok' | 'all' | 'confirmed' | 'rejected' | 'pending';
@@ -47,18 +47,17 @@ const Measure: React.FC<{
           {fmtShare(share)}<TargetMark ok={share !== null && targetOk(share)} what={target} />
         </div>
       ) : (
-        <div className="text-sm font-semibold">Not enough verified yet</div>
+        <div className="text-lg font-semibold text-muted-foreground">Too few yet</div>
       )}
       <p className="text-xs">
         <CountLink to={goodTo} n={good} /> {goodWords} of <CountLink to={ofTo} n={of} /> verified
-        {!enough && <span className="text-foreground/70"> · the share counts from {ACCURACY_MIN_SAMPLE} verified</span>}
+        {!enough && <span className="text-foreground/70"> · a share from {ACCURACY_MIN_SAMPLE}</span>}
       </p>
-      <p className="text-[11px] text-muted-foreground">Target: {target}</p>
     </div>
   );
 };
 
-export const AccuracySection: React.FC<{ s: ReplyFactoryStatus; show: string }> = ({ s, show }) => {
+export const AccuracySection: React.FC<{ s: ReplyFactoryStatus; show: string; part?: 'card' | 'list' }> = ({ s, show, part = 'card' }) => {
   const acc = s.accuracy;
   const fields = useAiReadFields(true);
   const pending = useMemo(() => (fields.data ?? []).filter(isPendingVerify).length, [fields.data]);
@@ -67,6 +66,49 @@ export const AccuracySection: React.FC<{ s: ReplyFactoryStatus; show: string }> 
   const rows = useMemo(() => (kind && KINDS[kind] ? (fields.data ?? []).filter(KINDS[kind].match) : []), [fields.data, kind]);
   const pager = useListPage();
   const pageRows = pager.slice(rows);
+
+  const list = kind && KINDS[kind] ? (
+    <DrillFrame title={KINDS[kind].title} count={fields.data ? rows.length : null} closeTo={factoryHref('overview', { show: 'none' })}
+      loading={fields.isLoading} error={fields.error} onRetry={() => fields.refetch()} empty="No field matches.">
+      <ul className="space-y-1.5 md:hidden">
+        {pageRows.map((r) => (
+          <li key={`${r.notice_id}-${r.field}`} className="space-y-1 rounded-md border bg-card p-2.5">
+            <NoticeCell n={r.notice} id={r.notice_id} />
+            <div className="text-xs"><span className="font-medium">{READ_FIELD_LABELS[r.field] ?? r.field}:</span> read {readValueText(r.field, r.value)}
+              {' '}· now {readValueText(r.field, r.current)}</div>
+            <ResultLine r={r} />
+          </li>
+        ))}
+      </ul>
+      <div className={cn(WS_TABLE_WRAP, 'hidden md:block')}>
+        <table className={WS_TABLE}>
+          <caption className="sr-only">{KINDS[kind].title}</caption>
+          <thead>
+            <tr>
+              <th scope="col" className={WS_TH}>Notice</th>
+              <th scope="col" className={WS_TH}>Field</th>
+              <th scope="col" className={WS_TH}>Read by AI</th>
+              <th scope="col" className={WS_TH}>On the notice now</th>
+              <th scope="col" className={WS_TH}>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((r) => (
+              <tr key={`${r.notice_id}-${r.field}`} className={WS_TR}>
+                <td className={cn(WS_TD, 'max-w-[18rem]')}><NoticeCell n={r.notice} id={r.notice_id} /></td>
+                <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>{READ_FIELD_LABELS[r.field] ?? r.field}</td>
+                <td className={cn(WS_TD, 'text-xs')}>{readValueText(r.field, r.value)}</td>
+                <td className={cn(WS_TD, 'text-xs')}>{readValueText(r.field, r.current)}</td>
+                <td className={WS_TD}><ResultLine r={r} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Pager page={pager.page} pageSize={pager.pageSize} total={rows.length} onPage={pager.setPage} />
+    </DrillFrame>
+  ) : null;
+  if (part === 'list') return list;
 
   return (
     <SectionCard title="Reading accuracy"
@@ -77,53 +119,12 @@ export const AccuracySection: React.FC<{ s: ReplyFactoryStatus; show: string }> 
         <Measure label="Demand within ₹1" good={acc.demand_within_1} of={acc.demand_verified} goodWords="within ₹1"
           target="every demand within ₹1" targetOk={(x) => x >= 100} goodTo={href('demand_ok')} ofTo={href('demand')} />
       </div>
-      <p className="text-xs">
-        All fields people verified: <CountLink to={href('all')} n={acc.fields_verified} /> · confirmed as
-        read <CountLink to={href('confirmed')} n={acc.fields_confirmed} /> · rejected <CountLink to={href('rejected')} n={acc.fields_rejected} strong /> ·
-        still showing "auto — verify" {fields.data ? <CountLink to={href('pending')} n={pending} /> : '…'}
-      </p>
-
-      {kind && KINDS[kind] && (
-        <DrillFrame title={KINDS[kind].title} count={fields.data ? rows.length : null} closeTo={factoryHref('overview', { show: 'none' })}
-          loading={fields.isLoading} error={fields.error} onRetry={() => fields.refetch()} empty="No field matches.">
-          <ul className="space-y-1.5 md:hidden">
-            {pageRows.map((r) => (
-              <li key={`${r.notice_id}-${r.field}`} className="space-y-1 rounded-md border bg-card p-2.5">
-                <NoticeCell n={r.notice} id={r.notice_id} />
-                <div className="text-xs"><span className="font-medium">{READ_FIELD_LABELS[r.field] ?? r.field}:</span> read {readValueText(r.field, r.value)}
-                  {' '}· now {readValueText(r.field, r.current)}</div>
-                <ResultLine r={r} />
-              </li>
-            ))}
-          </ul>
-          <div className={cn(WS_TABLE_WRAP, 'hidden md:block')}>
-            <table className={WS_TABLE}>
-              <caption className="sr-only">{KINDS[kind].title}</caption>
-              <thead>
-                <tr>
-                  <th scope="col" className={WS_TH}>Notice</th>
-                  <th scope="col" className={WS_TH}>Field</th>
-                  <th scope="col" className={WS_TH}>Read by AI</th>
-                  <th scope="col" className={WS_TH}>On the notice now</th>
-                  <th scope="col" className={WS_TH}>Result</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((r) => (
-                  <tr key={`${r.notice_id}-${r.field}`} className={WS_TR}>
-                    <td className={cn(WS_TD, 'max-w-[18rem]')}><NoticeCell n={r.notice} id={r.notice_id} /></td>
-                    <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>{READ_FIELD_LABELS[r.field] ?? r.field}</td>
-                    <td className={cn(WS_TD, 'text-xs')}>{readValueText(r.field, r.value)}</td>
-                    <td className={cn(WS_TD, 'text-xs')}>{readValueText(r.field, r.current)}</td>
-                    <td className={WS_TD}><ResultLine r={r} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <Pager page={pager.page} pageSize={pager.pageSize} total={rows.length} onPage={pager.setPage} />
-        </DrillFrame>
-      )}
+      <ChipLinks label="Fields verified" items={[
+        { key: 'all', label: 'All', n: acc.fields_verified, to: href('all') },
+        { key: 'confirmed', label: 'Confirmed', n: acc.fields_confirmed, to: href('confirmed') },
+        { key: 'rejected', label: 'Rejected', n: acc.fields_rejected, to: href('rejected'), bad: true },
+        ...(fields.data ? [{ key: 'pending', label: 'To verify', n: pending, to: href('pending') }] : []),
+      ]} />
     </SectionCard>
   );
 };

@@ -54,6 +54,7 @@ const portal = {
   gstr3a: {},       // order id -> summary data
   downloads: 0,     // every document fetched from the portal
   folderCalls: 0,   // case/folder calls
+  refundFolderCalls: 0, // case/folder calls for refund cases (0.7.1)
 };
 const pdfBytes = () => new TextEncoder().encode('%PDF-1.4 ' + 'x'.repeat(400));
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
@@ -68,7 +69,11 @@ async function portalFetch(url, init) {
   }
   if (u.pathname === '/services/auth/api/get/notices') return json(portal.notices);
   if (u.pathname === '/litserv/auth/api/case/task/get') return json(portal.tasks);
-  if (u.pathname === '/litserv/auth/api/case/folder') { portal.folderCalls++; return json(portal.folders[body.caseId] || []); }
+  if (u.pathname === '/litserv/auth/api/case/folder') {
+    if (body.caseTypeCd === 'RFUND') portal.refundFolderCalls++;
+    else portal.folderCalls++;
+    return json(portal.folders[body.caseId] || []);
+  }
   if (u.pathname === '/litserv/auth/api/case/folder/items') return json(portal.folderItems[body.caseFolderId] || []);
   if (u.pathname.startsWith('/document/')) { portal.downloads++; return new Response(pdfBytes(), { status: 200 }); }
   // The real endpoint answers { <docId>: <eh token> } for each id in docIdList.
@@ -184,8 +189,9 @@ async function runPage(href) {
   return current;
 }
 
-// Drive one client's notices_bundle (notices -> refunds -> DRC-03) from a
-// logged-in session, the way a real run continues after the CAPTCHA.
+// Drive one client's notices_bundle (notices -> refunds -> refund documents ->
+// DRC-03 -> applications -> profile) from a logged-in session, the way a real
+// run continues after the CAPTCHA.
 async function runBundle(clientId, runId) {
   storage.gstk_active_job = {
     mode: 'notices_bundle', idx: 0, step: 'notices', startedAt: Date.now(), lastActivityAt: Date.now(), runId, logSync: true, tabId: 1,
@@ -196,6 +202,19 @@ async function runBundle(clientId, runId) {
     const next = await runPage(href);
     if (next === href && storage.gstk_active_job && storage.gstk_active_job.step === 'notices') break;
     href = next;
+    if (/services\/logout|services\/login/.test(href)) break;
+  }
+}
+
+// One standalone section pull (e.g. the Refunds page's "fetch documents").
+async function runMode(clientId, mode, step, startHref) {
+  storage.gstk_active_job = {
+    mode, idx: 0, step, startedAt: Date.now(), lastActivityAt: Date.now(), tabId: 1,
+    clients: [{ clientId, creds: { user: 'sim', name: 'Sim Client', gstin: GSTIN, selectedReturns: [] } }],
+  };
+  let href = startHref;
+  for (let i = 0; i < 6 && storage.gstk_active_job; i++) {
+    href = await runPage(href);
     if (/services\/logout|services\/login/.test(href)) break;
   }
 }
@@ -335,6 +354,62 @@ check(n6[0] && n6[0].stage === 'closed' && n6[0].close_reason === 'auto:return_f
 check(n6[0] && n6[0].pdf_url, 'its PDF is still rebuilt', n6);
 const ledger6 = await rest(`sync_run_items?run_id=eq.${runId}&select=step,status&order=created_at`);
 check(ledger6.some((i) => i.step === 'applications' && i.status === 'ok'), 'ledger: applications step recorded', ledger6);
+
+console.log('Run 7 — 0.7.1: refunds and their documents in the notices sync');
+const refundCase = (arn, caseId, statusDesc) => ({
+  arn, caseId, statusDesc, caseCreationDate: '01/09/2026 10:15:00',
+  appItem: { itemJson: JSON.stringify({ refundRsn: 'Export of services with payment of tax', ttlRfdAmt: 125000 }) },
+});
+portal.refunds = [refundCase('AA24SIMRF1', 'CR1', 'Refund Application filed'), refundCase('AA24SIMRF2', 'CR2', 'Refund disbursed successfully')];
+portal.folders.CR1 = [{ caseFolderId: 'FR1A', caseFolderTypeCd: 'APLCN', caseFolderTypeName: 'APPLICATIONS' }];
+portal.folders.CR2 = [{ caseFolderId: 'FR2A', caseFolderTypeCd: 'APLCN', caseFolderTypeName: 'APPLICATIONS' },
+                      { caseFolderId: 'FR2O', caseFolderTypeCd: 'ORDRS', caseFolderTypeName: 'ORDERS' }];
+portal.folderItems.FR1A = [{ refId: 'AA24SIMRF1', itemJson: itemJson({ crn: 'AA24SIMRF1', docupdtl: [{ id: 'RD1', docName: 'RFD-01.pdf' }] }) }];
+portal.folderItems.FR2A = [{ refId: 'AA24SIMRF2', itemJson: itemJson({ crn: 'AA24SIMRF2', docupdtl: [{ id: 'RD2', docName: 'RFD-01.pdf' }] }) }];
+portal.folderItems.FR2O = [{ refId: 'ZD24SIMRO2', itemJson: itemJson({ crn: 'AA24SIMRF2', docupdtl: [{ id: 'RD3', docName: 'RFD-06.pdf' }, { id: 'RD4', docName: 'PMT-03.pdf' }] }) }];
+let downloads7 = portal.downloads;
+runId = await bgCall('runStart', 'notices_bundle', 1);
+await runBundle(clientId, runId);
+check(portal.downloads - downloads7 === 4, 'every refund document downloaded once (4)', portal.downloads - downloads7);
+const rf7 = await rest(`gst_refund_applications?client_id=eq.${clientId}&select=arn,status,documents&order=arn`);
+check(rf7.length === 2 && rf7[0].documents.length === 1 && rf7[1].documents.length === 3, 'documents saved per refund (1 and 3)', rf7.map((r) => [r.arn, r.documents.length]));
+check(rf7[1].documents.some((d) => d.tab === 'ORDERS' && d.label === 'RFD-06.pdf'), 'each document carries its folder and name', rf7[1].documents);
+const fi7 = await rest(`gst_case_folder_items?client_id=eq.${clientId}&case_id=in.(AA24SIMRF1,AA24SIMRF2)&select=case_id,portal_key,attachments&order=portal_key`);
+check(fi7.length === 3, 'the Refund Notice Folder items are saved (the pull time was undefined before 0.7.1)', fi7);
+const ledger7 = await rest(`sync_run_items?run_id=eq.${runId}&select=step,status,reason_class&order=created_at`);
+check(!ledger7.some((i) => i.step === 'refund_docs' && i.status === 'failed'), 'ledger: no refund document failure', ledger7);
+check(ledger7.some((i) => i.step === 'drc03') && ledger7.some((i) => i.step === 'applications'), 'the bundle goes on to DRC-03 and applications', ledger7);
+
+console.log('Run 8 — refunds unchanged');
+const rfCalls8 = portal.refundFolderCalls;
+const downloads8 = portal.downloads;
+runId = await bgCall('runStart', 'notices_bundle', 1);
+await runBundle(clientId, runId);
+check(portal.refundFolderCalls === rfCalls8, 'no refund folder opened: both read in full, status unchanged', portal.refundFolderCalls - rfCalls8);
+check(portal.downloads === downloads8, 'nothing downloaded', portal.downloads - downloads8);
+
+console.log('Run 9 — a deficiency memo on one refund');
+portal.refunds[0].statusDesc = 'Deficiency Memo Issued in GST RFD-03';
+portal.folders.CR1.push({ caseFolderId: 'FR1N', caseFolderTypeCd: 'NOTAC', caseFolderTypeName: 'NOTICE/ ACKNOWLEDGEMENT' });
+portal.folderItems.FR1N = [{ refId: 'ZD24SIMDM1', itemJson: itemJson({ crn: 'AA24SIMRF1', docupdtl: [{ id: 'RD5', docName: 'RFD-03.pdf' }] }) }];
+const rfCalls9 = portal.refundFolderCalls;
+const downloads9 = portal.downloads;
+runId = await bgCall('runStart', 'notices_bundle', 1);
+await runBundle(clientId, runId);
+check(portal.refundFolderCalls - rfCalls9 === 1, 'only the refund whose status changed is opened', portal.refundFolderCalls - rfCalls9);
+check(portal.downloads - downloads9 === 1, 'only the deficiency memo is downloaded', portal.downloads - downloads9);
+const rf9 = await rest(`gst_refund_applications?client_id=eq.${clientId}&arn=eq.AA24SIMRF1&select=status,documents`);
+check(rf9[0] && rf9[0].status === 'Deficiency Memo Issued in GST RFD-03' && rf9[0].documents.length === 2, 'the refund shows its new status and both documents', rf9);
+
+console.log('Run 10 — the Refunds page fetches documents for every refund');
+const rfCalls10 = portal.refundFolderCalls;
+const downloads10 = portal.downloads;
+await runMode(clientId, 'refund_docs', 'refund_docs', 'https://services.gst.gov.in/litserv/auth/case/search');
+check(portal.refundFolderCalls - rfCalls10 === 2, 'every refund opened', portal.refundFolderCalls - rfCalls10);
+check(portal.downloads === downloads10, 'no stored document downloaded again', portal.downloads - downloads10);
+const rf10 = await rest(`gst_refund_applications?client_id=eq.${clientId}&select=arn,documents&order=arn`);
+check(rf10[0].documents.length === 2 && rf10[1].documents.length === 3, 'the stored documents are kept in the list', rf10.map((r) => [r.arn, r.documents.length]));
+check(!storage.gstk_active_job, 'the standalone pull ends', storage.gstk_active_job);
 
 console.log('Watchdog — an agent job (0.6.0)');
 runId = await bgCall('runStart', 'notices_bundle', 1);

@@ -1,13 +1,14 @@
 // Notices & Litigation · Notice summary (audit U-70-1..4; cross-cutting ui-b:
 // house style, "numbers disagree", "as of" stamp, real links in cells).
-// The canonical notice set (public.notice_facts) by category, stage or
-// financial year: open, overdue, due in 7 days, unassigned, exposure, age of the
-// oldest open notice, replied, closed and total, biggest open first, with no
-// placeholder rows. Every count uses the All notices list's own filter and
-// opens noticesListHref with that filter, so the list shows the same number;
-// the owner / FY / category / priority filters live in the URL and travel with
-// every link. Refunds and DRC-03 payments are counted from their own ledgers
-// and open those pages. Excel (every breakdown) and PDF for the MIS pack.
+// The canonical notice set (public.notice_facts) by category or stage: open,
+// overdue, due in 7 days, unassigned, exposure, age of the oldest open notice,
+// replied, closed and total, biggest open first, with no placeholder rows. Every
+// count uses the All notices list's own filter and opens noticesListHref with
+// that filter, so the list shows the same number; the master filters (client,
+// FY, owner, form, priority) and the category live in the URL and travel with
+// every link. Totals by financial year were taken out at the firm's request of
+// 7 October 2026 (the FY filter stays). Refunds and DRC-03 payments are
+// counted from their own ledgers and open those pages. Excel and PDF.
 import React, { useMemo } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -18,13 +19,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Note } from '@/components/gstr9/ui';
+import { Panel } from '@/components/notices/ui/Panel';
 import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
 import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { FilterPill } from '@/components/notices/FilterPill';
 import { useNoticeFilterOptions } from '@/components/notices/NoticeFilterBar';
-import { useStaffList } from '@/hooks/useStaffList';
 import { AsOfLine, FilterChips, FilterTile, type Chip } from '@/components/notices/reports/ReportBits';
 import { SummaryTable } from '@/components/notices/reports/SummaryTable';
 import { groupKey, summaryRows, type SummaryRow, type SummarySort, type SummaryTab } from '@/components/notices/reports/summaryRows';
@@ -38,7 +39,6 @@ import { renderReportToPdf } from '@/utils/closingBalanceReportsPdf';
 const TABS: { key: SummaryTab; label: string; title: string }[] = [
   { key: 'category', label: 'By category', title: 'Notices by category' },
   { key: 'stage', label: 'By stage', title: 'Notices by stage' },
-  { key: 'fy', label: 'By financial year', title: 'Notices by financial year' },
 ];
 const SORTS: SummarySort[] = ['default', 'name', 'open', 'overdue', 'due7', 'unassigned', 'exposure', 'oldest', 'replied', 'closed', 'total'];
 
@@ -46,7 +46,6 @@ const NoticeSummaryReportPage: React.FC = () => {
   const { isStaffRole, user, canExportData } = useAuth();
   const [sp, setSp] = useSearchParams();
   const meId = user?.id ?? null;
-  const { staff } = useStaffList();
   const opts = useNoticeFilterOptions().data;
 
   const tab = (TABS.some((t) => t.key === sp.get('tab')) ? sp.get('tab') : 'category') as SummaryTab;
@@ -54,7 +53,7 @@ const NoticeSummaryReportPage: React.FC = () => {
   const dir: 'asc' | 'desc' = sp.get('dir') === 'asc' ? 'asc' : 'desc';
   const base: BaseFilters = useMemo(() => {
     const b: BaseFilters = {};
-    (['owner', 'fy', 'category', 'priority'] as const).forEach((k) => { const v = sp.get(k); if (v) b[k] = v; });
+    (['client', 'owner', 'fy', 'form', 'category', 'priority'] as const).forEach((k) => { const v = sp.get(k); if (v) b[k] = v; });
     return b;
   }, [sp]);
 
@@ -77,13 +76,15 @@ const NoticeSummaryReportPage: React.FC = () => {
     setSp(next, { replace: false });
   };
   const href = (p: Partial<NoticeListParams>) => noticesListHref({ ...base, ...p });
-  const ownerName = base.owner === 'me' ? 'Me' : base.owner === 'none' ? 'Unassigned' : staff.find((s) => s.userId === base.owner)?.name ?? 'Someone';
+  // The master filters show in their own bar; this page adds the category.
   const chips: Chip[] = [];
-  if (base.owner) chips.push({ key: 'owner', label: `Owner: ${ownerName}`, onRemove: () => set({ owner: undefined }) });
-  if (base.fy) chips.push({ key: 'fy', label: `FY ${fmtFy(base.fy)}`, onRemove: () => set({ fy: undefined }) });
   if (base.category) chips.push({ key: 'category', label: `Category: ${base.category}`, onRemove: () => set({ category: undefined }) });
-  if (base.priority) chips.push({ key: 'priority', label: `Priority: ${base.priority}`, onRemove: () => set({ priority: undefined }) });
-  const filtersText = chips.map((c) => c.label).join(' · ') || 'All notices';
+  const filtersText = [
+    base.client && 'One client', base.fy && (base.fy === 'none' ? 'FY not stated' : `FY ${fmtFy(base.fy)}`),
+    base.owner && `Owner: ${base.owner === 'me' ? 'Me' : base.owner === 'none' ? 'Unassigned' : 'one person'}`,
+    base.form && `Form: ${base.form}`, base.priority && `Priority: ${base.priority}`, base.category && `Category: ${base.category}`,
+  ].filter(Boolean).join(' · ') || 'All notices';
+  const filtered = Object.keys(base).length > 0;
   const tabDef = TABS.find((t) => t.key === tab) ?? TABS[0];
   const asOf = q.dataUpdatedAt ? `${fmtDateTime(new Date(q.dataUpdatedAt).toISOString())} IST` : '';
 
@@ -98,7 +99,7 @@ const NoticeSummaryReportPage: React.FC = () => {
     ];
   };
   const headers = (rupee: string) => ['Open', 'Overdue', 'Due in 7 days', 'Unassigned', `Exposure (${rupee})`, 'Oldest open (days)', 'Replied', 'Closed', 'Total'];
-  const firstHead = (t: SummaryTab) => (t === 'fy' ? 'Financial year' : t === 'stage' ? 'Stage' : 'Category');
+  const firstHead = (t: SummaryTab) => (t === 'stage' ? 'Stage' : 'Category');
 
   const exportXlsx = () => {
     const wb = XLSX.utils.book_new();
@@ -128,6 +129,7 @@ const NoticeSummaryReportPage: React.FC = () => {
   return (
     <NoticesShell
       section="Notice summary"
+      master
       status={<AsOfLine at={q.dataUpdatedAt} />}
       actions={canExportData() && (
         <>
@@ -140,16 +142,9 @@ const NoticeSummaryReportPage: React.FC = () => {
         </>
       )}
     >
-      <div className="space-y-1.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <FilterPill label="Owner" allLabel="Anyone" value={base.owner ?? 'all'} onChange={(v) => set({ owner: v === 'all' ? undefined : v })} options={[]}
-            extraOptions={[{ value: 'me', label: 'Me' }, { value: 'none', label: 'Unassigned' }, ...staff.map((s) => ({ value: s.userId, label: s.name }))]} />
-          <FilterPill label="FY" allLabel="Any" value={base.fy ?? 'all'} onChange={(v) => set({ fy: v === 'all' ? undefined : v })} options={[]}
-            extraOptions={(opts?.fys ?? []).map((y) => ({ value: y, label: fmtFy(y) }))} />
-          <FilterPill label="Category" allLabel="Any" value={base.category ?? 'all'} onChange={(v) => set({ category: v === 'all' ? undefined : v })} options={opts?.categories ?? []} />
-          <FilterPill label="Priority" allLabel="Any" value={base.priority ?? 'all'} onChange={(v) => set({ priority: v === 'all' ? undefined : v })} options={['High', 'Medium', 'Low']} />
-        </div>
-        <FilterChips chips={chips} onClear={() => set({ owner: undefined, fy: undefined, category: undefined, priority: undefined })} />
+      <div className="flex flex-wrap items-center gap-1.5">
+        <FilterPill label="Category" allLabel="Any" value={base.category ?? 'all'} onChange={(v) => set({ category: v === 'all' ? undefined : v })} options={opts?.categories ?? []} />
+        <FilterChips chips={chips} onClear={() => set({ category: undefined })} />
       </div>
 
       {q.error ? (
@@ -178,20 +173,18 @@ const NoticeSummaryReportPage: React.FC = () => {
             </TabsList>
             {TABS.map((t) => (
               <TabsContent key={t.key} value={t.key} className="mt-0">
-                <SectionCard title={t.title}
-                  description={t.key === 'stage' ? 'In the order work moves · each number opens the list it counts'
-                    : t.key === 'fy' ? 'Newest year first · each number opens the list it counts' : 'Most open first · each number opens the list it counts'}>
+                <Panel title={t.title} info={t.key === 'stage' ? 'In the order work moves. Each number opens the list it counts.' : 'Most open first. Each number opens the list it counts.'}>
                   <SummaryTable tab={t.key} rows={rows} total={total} base={base} today={today} sort={sort} dir={dir}
                     onSort={(k) => set(k === sort ? { sort: k, dir: dir === 'asc' ? 'desc' : 'asc' } : { sort: k === 'default' ? undefined : k, dir: k === 'name' ? 'asc' : undefined })}
-                    showUntracked={t.key === 'category' && chips.length === 0} />
-                </SectionCard>
+                    showUntracked={t.key === 'category' && !filtered} />
+                </Panel>
               </TabsContent>
             ))}
           </Tabs>
         </>
       )}
 
-      <LedgerSummary filtered={chips.length > 0} />
+      <LedgerSummary filtered={filtered} />
     </NoticesShell>
   );
 };

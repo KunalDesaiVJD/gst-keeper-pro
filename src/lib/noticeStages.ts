@@ -68,7 +68,7 @@ export type NextAction =
   | 'review_draft' | 'file_reply' | 'prepare_hearing' | 'decide_order' | 'follow_appeal' | 'await_order'
   | 'read_close';
 
-export type WorkspaceTab = 'issues' | 'evidence' | 'draft' | 'documents' | 'activity' | 'payments' | 'hearings' | 'deadlines';
+export type WorkspaceTab = 'issues' | 'evidence' | 'assistant' | 'draft' | 'documents' | 'activity' | 'payments' | 'hearings' | 'deadlines';
 
 export interface NextActionDef {
   label: string;

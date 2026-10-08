@@ -17,13 +17,18 @@ import { loadUpcomingHearings } from '@/lib/noticeCommandCentre';
 import { daysBetween, istToday } from '@/lib/noticeFacts';
 import { dueWords, fmtDateTime, fmtDay } from '@/lib/noticeFormat';
 import { downloadIcs } from '@/lib/noticeIcs';
+import { useMaster } from '@/lib/masterFilters';
+import { inScope, useMasterScope } from '@/lib/masterScope';
 import { cn } from '@/lib/utils';
 
 const NoticesHearingsPage: React.FC = () => {
-  const { isStaffRole } = useAuth();
+  const { isStaffRole, user } = useAuth();
   const q = useQuery({ queryKey: ['notice-hearings'], queryFn: loadUpcomingHearings });
+  const { m } = useMaster();
+  const { scope, loading } = useMasterScope(m, user?.id ?? null);
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
-  const rows = q.data ?? [];
+  // The master filters keep a hearing when its notice or matter is kept.
+  const rows = (q.data ?? []).filter((h) => inScope(scope, h));
   const today = istToday();
   const exportIcs = () => downloadIcs(rows.map((h) => ({
     uid: `hearing-${h.kind}-${h.ref_id}`, date: h.hearing_on,
@@ -32,9 +37,9 @@ const NoticesHearingsPage: React.FC = () => {
   })), 'hearings', 'GST Keeper hearings');
 
   return (
-    <NoticesShell section="Hearings"
+    <NoticesShell section="Hearings" master
       actions={rows.length > 0 && <Button size="sm" variant="outline" className={WS_BTN} onClick={exportIcs}><CalendarPlus className="h-3.5 w-3.5" /> Add all to calendar (.ics)</Button>}>
-      <h2 className="text-base font-semibold">Upcoming hearings <span className="text-muted-foreground">· {q.isLoading ? '…' : rows.length}</span></h2>
+      <h2 className="text-base font-semibold">Upcoming hearings <span className="text-muted-foreground">· {q.isLoading || loading ? '…' : rows.length}</span></h2>
       {q.error ? <Note tone="warn">Couldn't load hearings: {q.error instanceof Error ? q.error.message : String(q.error)}</Note>
         : q.isLoading ? <Skeleton className="h-64 w-full" />
         : rows.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">No hearing is fixed on an open notice or matter. Fix one from the notice's Hearings tab.</div>

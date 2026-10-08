@@ -5,7 +5,8 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Note } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { AmountLink, CountLink } from './ReportBits';
 import { DRC03_GROUPS, REFUND_GROUPS } from './ledgerStatus';
 import { useDrc03Ledger, useRefundLedger } from './ledgerData';

@@ -40,6 +40,8 @@ export function startGateway(pgrst: string): Promise<{ url: string; close: () =>
  */
 export class RunnerPortal {
   readonly fake = new FakePortal();
+  /** Users whose refused login comes back as a fresh login page, not in place. */
+  readonly freshPage = new Set<string>();
   private answers = new Map<BrowserContext, string>();
 
   async route(ctx: BrowserContext) {
@@ -64,9 +66,14 @@ export class RunnerPortal {
     }
     const b = JSON.parse(req.postData() || '{}') as { user?: string; pass?: string; captcha?: string };
     const json = (o: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(o) });
-    if (String(b.captcha) !== this.answerFor(ctx)) return json({ ok: false, error: 'Enter valid Letters shown.' });
+    // Every Login press, by user and answer ("auth kiran refused"), so a test can count the tries of a password.
+    if (String(b.captcha) !== this.answerFor(ctx)) { this.fake.log.push(`auth ${b.user} captcha`); return json({ ok: false, error: 'Enter valid Letters shown.' }); }
     const acc = this.fake.accounts[b.user ?? ''];
-    if (!acc || acc.password !== b.pass) return json({ ok: false, error: 'Invalid Username or Password. Please try again.' });
+    if (!acc || acc.password !== b.pass) {
+      this.fake.log.push(`auth ${b.user} refused`);
+      return json({ ok: false, error: 'Invalid Username or Password. Please try again.', reload: this.freshPage.has(b.user ?? '') });
+    }
+    this.fake.log.push(`auth ${b.user} ok`);
     return json({ ok: true, session: b.user });
   }
 }

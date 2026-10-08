@@ -9,7 +9,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { CalendarPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
 import { StageBadge } from '@/components/notices/StageBadge';
 import { OwnerChip } from '@/components/notices/OwnerChip';

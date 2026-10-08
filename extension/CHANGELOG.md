@@ -2,6 +2,174 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-08 — A refused password is offered once; the sync moves on (v0.8.1)
+
+Built on 0.8.0. Only the login is touched; every pull, the notices link pass and
+the popup are as 0.8.0 runs them. Needs no database update.
+
+- **Fixed: a wrong or changed password held a bulk sync on one client.** When a
+  person typed the CAPTCHA, the portal's "Invalid Username or Password" was never
+  read: the answer was checked only after an automatic fill, so the extension
+  filled the same password in again and asked for another CAPTCHA for the same
+  client, again and again, while every client queued behind it waited. Now the
+  portal's answer is read after every Login press, whoever pressed it.
+- **A refusal is logged once, and the sync starts the next client.** A refused
+  user ID or password, an expired password or a locked account is written to the
+  client's sync log and the run ledger ("Wrong user ID or password (the portal
+  said: …). Not tried again until the password is changed in Edit Client."), the
+  banner says so, and the run goes straight on. The last banner of the run names
+  every client left out this way.
+- **Never offered again until it is changed.** Each wrong password a few tries in
+  locks the client's portal account, so a refused password is remembered: the
+  next bulk or scheduled sync skips that client at once, logged as "Not tried: the
+  portal refused this saved password on …", without opening the portal (a
+  scheduled sync does not even open a window for it). Changing the password or
+  user ID in Edit Client, or logging the client in once from GST Keeper (its
+  Credentials Login), clears it. Only a salted SHA-256 fingerprint of the refused
+  user ID and password is kept, in this Chrome's own storage; never the password.
+- **A CAPTCHA typo is still tried again; anything else only once.** "Enter valid
+  Letters shown." and other CAPTCHA answers get a fresh CAPTCHA up to three times,
+  as before. A message that is neither (a portal error, say) gets one more try with
+  the same password, never three; the same answer again logs the client and moves
+  on. The answer is read from more of the page (the portal's alert, toast and
+  field messages, and any line of the login form that reads as a refusal), and a
+  message already on the form before Login was pressed is not taken for its answer.
+  A refusal the portal sends back as a fresh login page, rather than in place, is
+  read too: the press is noted in the tab's sessionStorage, which outlives the page.
+- Tests: `test/06-login-answers.test.mjs` (which messages read as a refusal, a
+  CAPTCHA typo or neither; the form's own labels never as anything), and two new
+  cases in `agent/test/chrome-runner.e2e.test.ts` with the real extension in
+  Chromium: a scheduled sync with a changed password (tried once, failed without a
+  retry, skipped without the portal next time, tried again once corrected) and a
+  person's two-client sync (the person types the CAPTCHA, the refusal moves the run
+  to the next client, and the next sync skips it), and a refusal answered with a
+  fresh page. All nine runner cases, the seven office agent cases and the notices
+  sync simulation pass on 0.8.1.
+
+## 2026-10-07 — The notice's own PDF, its reply date, its officer and its DIN (v0.8.0)
+
+Notices & Litigation only. Every other pull — GSTR-2B / 2A, GSTR-1 upload and
+pulls, GSTR-3B push and pulls, GSTR-9, ledgers, challans, filing, Fetch Company,
+the popup's return-period sync — is byte-for-byte as 0.7.1 ran it, and so are
+the login, the CAPTCHA wait, the job slot, the scheduled-sync runner
+(`runner.js`), the popup and the app bridge: those files are untouched. Needs no
+database update.
+
+- **Fixed: a notice's own PDF was never linked, though it was already in
+  storage.** The app showed "PDF not captured yet — the next sync fetches it"
+  beside a DRC-01, an ASMT-10 or a DRC-07 whose PDF the previous sync had in
+  fact downloaded into its case folder. The notices step downloads a notice's
+  PDF only when `get/notices` hands it a `docId` + `applnId`, which it does not
+  for a case-based form; the folder route that would have caught it was skipped
+  for exactly those notices, because a row that `get/notices` had already
+  returned counted as "PDF already stored" (`haveTaskPdf = isDuplicate || …`).
+  So the document was fetched, uploaded and attached to the case folder, and the
+  notice beside it stayed empty. A **link pass** now gives every notice row the
+  matching folder item's document: the generated form named after the reference
+  number (`DOT_NOTICE_<ref>_<ts>.pdf`, `ADJDT_DRPRC_<ref>_<ts>.pdf`) in
+  preference to a supporting attachment.
+- **No document is downloaded twice to do it.** Folder items are keyed
+  `'<SECTION>:<refId>'`, so a notice finds its item by that key's suffix among
+  the attachments **already stored** — which is how a notice on a closed case
+  whose folder is not re-opened still gets its PDF linked, with no portal call
+  for that folder at all.
+- **Reply dates, from the case folder.** A DRC-01, an RFD-03 and an RFD-08 often
+  arrive in `get/notices` with no `dueDate`; the date is in the folder item. The
+  Reply Factory's "due dates on open notices" measure was 610 of 641 (95.2%)
+  against a 98% target, with 31 open notices carrying no date to run on. Those
+  are now read from the folder — and only when the notice has none of its own,
+  so a date the portal put in the notice list stays the authority.
+- **The officer, and the DIN.** The notice detail's "Officer" and "DIN" were
+  always "—" although the folder item carries the officer's name and
+  designation. Both are now read. The portal spells these differently from one
+  folder section to the next, so each field is found by walking the item's JSON
+  for any of a list of candidate key names (`dueDt` / `replyDueDt` / `dtOfReply`
+  …, `issuedBy` / `officerName` …, `din` / `dinNo` / `docDin` …), separators
+  stripped and case ignored — the same reasoning `findDocDescriptors` is built
+  on, so a section not seen yet still yields something.
+- **The DIN is written on its own, never in the notices save.** This extension
+  cannot migrate the database, and one unknown column in the upsert body would
+  cost a client every notice in that save. So the DIN goes through a small
+  `patchNoticeFields` PATCH per notice after the save, which fails harmlessly on
+  a database without the column — and gives up after three refusals with nothing
+  written, rather than spending a client with 326 notices on 326 refusals.
+- **A gap is closed on the next run, not in a week's time.** A case whose notice
+  still has no PDF, reply date or officer has its folder opened even when the
+  case is closed and would otherwise wait for the weekly full pass. Bounded: a
+  reference that yields nothing is not forced again for seven days, so a notice
+  the portal simply has no detail for cannot become an extra folder fetch on
+  every run for ever.
+- **Refund notices (RFD-03, RFD-08) are linked in the same run.** Their PDF and
+  reply date live in the refund case's folder, which the refunds step reads
+  *after* the notices are saved — so that step now ends with a link pass of its
+  own, patching only the notices that are actually still missing something
+  (`noticesNeedingDetail`).
+- **Fixed: GSTR-3A notices that lost their PDF to a race.** The portal serves
+  `gstr3a/summary` only with a Referer it likes, which 0.3.2 solved with a
+  `declarativeNetRequest` rule — registered asynchronously at worker startup,
+  while the worker starts on the very message that wants the rule. A summary
+  fetched in those first moments went out with the page's own Referer and came
+  back as the 200 "Access Denied" HTML page, failing as "not JSON": the "no PDF
+  captured" rows in All notices. The registration is now awaited before the
+  first cross-origin fetch (at most 3 s, then the fetch goes anyway), an HTML
+  body is recognised as the refusal it is rather than parsed, and each summary
+  gets one retry two seconds later.
+- **A bad date in a folder can no longer cost a client its whole notices save.**
+  A reply date is accepted only if it is a real calendar day in 2017–2100:
+  `31/02/2024` is refused rather than passed to Postgres, which would reject the
+  row and take every other notice in the batch with it. (`new Date()` alone is
+  no guard — V8 rolls that date over into March.)
+- **A PDF already stored is carried on the row** instead of being left null.
+  The row is upserted, so a null was written over a stored PDF whenever the
+  ingest RPC was unavailable and the legacy REST path ran. One-off side effect:
+  the first run after updating reports those notices as "changed".
+- New in the debug panel and the client sync log: what the link pass filled —
+  notice PDFs, reply dates, officers and DINs — so a run that fills nothing is
+  diagnosable rather than silent.
+
+## 2026-10-08 — Notices only; every other pull as in 0.3.3 (v0.7.1)
+
+For a PC coming straight from **v0.3.3**: this release carries everything 0.4.0 to
+0.7.0 added for Notices & Litigation, and keeps every other pull (GSTR-2B / 2A,
+GSTR-1 upload and pulls, GSTR-3B push and pulls, GSTR-9, ledgers, challans, filing,
+Fetch Company, the popup's return-period sync) working as it did in 0.3.3. Needs no
+database update beyond the migrations already applied.
+
+- **Refund documents in the notices sync.** The notices bundle (the app's Sync now,
+  the popup's Sync notices and the scheduled syncs) now reads, after the refund list,
+  the documents of refunds that this Chrome has not read in full yet or whose status
+  changed since (a deficiency memo, a show cause notice, an order), and every refund
+  once a week. A document already saved is never downloaded again, here or from the
+  Refunds page's own "fetch documents".
+- **Fixed: the Refund Notice Folder was never filled.** The refund documents step used
+  a pull time it never declared, so each folder's items were dropped after the first
+  one's documents and no folder item reached `gst_case_folder_items`. A folder that
+  fails to read now removes nothing.
+- **The desktop "CAPTCHA waiting" notice is for notices syncs only.** 0.5.0 showed it
+  at every login; a 2B pull, a GSTR-1 upload or any other pull logs in as in 0.3.3.
+- **Challans as in 0.3.3**: the whole history back to July 2017 on every pull (0.5.0's
+  weekly full pass with a 300-day slice in between is gone; the notices sync never
+  reads challans).
+- **Popup, Other syncs:** the return-period sync offers "All clients with credentials"
+  again, as 0.3.3 did, under its old button name "Start sync in this browser".
+
+### What changed for the other pulls since 0.3.3, and why it stays
+
+- **The app bridge answers only the app** (0.4.0): `https://gst.vjdesai.com` and
+  `https://gst-keeper-pro.vercel.app`. In 0.3.3 any `*.vercel.app` page could start
+  portal logins, syncs or GSTR-1 / 3B pushes; a Vercel preview link no longer reaches
+  the extension.
+- **The portal password is fetched when the login form is filled** (0.4.0), not
+  stored with the job in Chrome's storage. The login itself is the same.
+- **Fixed: "Cannot access … before initialization"** (0.5.0): the credit reversal and
+  re-claim statement and the RCM liability statement failed on every run in 0.3.3
+  because they read a constant declared further down `content.js`. They work now; the
+  notices evidence reads the first of them.
+- **Fetch Company** also saves the registration status (Active / Cancelled /
+  Suspended) from the same profile response (0.6.0).
+- One job at a time still: every start goes through one queue (0.7.0), and a sync a
+  person starts always comes before a scheduled one.
+
 ## 2026-10-08 — Scheduled syncs in your own Chrome (v0.7.0)
 
 The firm's decision of 6 October 2026: no CAPTCHA wall. The firm's Chrome has a

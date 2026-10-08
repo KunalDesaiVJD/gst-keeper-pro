@@ -8,7 +8,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ChevronRight, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';

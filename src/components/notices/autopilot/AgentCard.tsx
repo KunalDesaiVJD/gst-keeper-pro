@@ -5,7 +5,7 @@
 // an office agent may still read notice PDFs and portal e-mails; the card shows
 // only when one has reported. Chrome runners are on the Scheduled Chrome tab.
 import React from 'react';
-import { SectionCard } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { fmtWhen, runnerMode, workerWords, type AutopilotStatus } from '@/lib/autopilot';
 import { fmtAgo } from '@/lib/noticeFormat';
 import { ToneBadge } from './parts';
