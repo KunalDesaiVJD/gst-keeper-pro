@@ -4,8 +4,7 @@
 // left, and give the lease back. Every job is finished in the database, which
 // applies or keeps what was read; nothing is kept here.
 
-import type Anthropic from '@anthropic-ai/sdk';
-import { callClaude, scrub, type CallUsage } from './claude.ts';
+import { scrub, type CallRequest, type CallUsage, type Caller } from './claude.ts';
 import { buildDocResult, DOC_OUTPUT_SCHEMA, DOC_SYSTEM_PROMPT, docUserText, type DocumentClaim } from './documents.ts';
 import { DocumentError, documentUrlAllowed, downloadPdf, readPdfText, toBase64, type PdfText } from './pdf.ts';
 import { SYSTEM_PROMPT, userText } from './reader/prompt.ts';
@@ -18,7 +17,7 @@ export interface Db {
 
 export interface Deps {
   db: Db;
-  claude: Anthropic | null;
+  claude: Caller | null;
   supabaseUrl: string;
   agentId: string;
   version: string;
@@ -67,6 +66,7 @@ const PAUSES: Record<string, string> = {
   api_key: 'The Claude API refused the ANTHROPIC_API_KEY secret. Set a valid key in Supabase (Edge Functions, Secrets).',
   api_permission: 'The Claude API refused requests for this API key\'s organisation.',
   api_billing: 'The Claude API account has a billing problem.',
+  cli_auth: 'The Claude CLI gateway refused the CLAUDE_CLI_GATEWAY_SECRET. Set the same secret as the gateway (Edge Functions, Secrets).',
 };
 
 function fromDocumentError(e: unknown, result: Record<string, unknown> | null, what: string): Finish {
@@ -76,12 +76,14 @@ function fromDocumentError(e: unknown, result: Record<string, unknown> | null, w
   return { status: 'retry', reason: 'document', error: `${what}: ${scrub((e as Error).message || String(e)).slice(0, 300)}`, result };
 }
 
-async function textOf(bytes: Uint8Array, attempt: number, maxPages: number): Promise<PdfText> {
+async function textOf(bytes: Uint8Array, attempt: number, maxPages: number, needText = false): Promise<PdfText> {
   // A second try reads no text (the first may have been stopped by the CPU
-  // limit); a third does not even count the pages.
+  // limit); a third does not even count the pages. The Claude CLI reads the
+  // text instead of the PDF, so with it the second try still reads the text.
   if (attempt >= 3) return { pageCount: null, pages: [], textLayer: false, skipped: 'retry' };
-  return await readPdfText(bytes, { maxPages, withText: attempt <= 1 });
+  return await readPdfText(bytes, { maxPages, withText: attempt <= 1 || needText });
 }
+const needsText = (deps: Deps) => !!deps.claude?.backend && deps.claude.backend !== 'api';
 
 // ── A notice's own PDF: typed facts and issues (notice_read_finish) ────────
 export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: AbortSignal): Promise<Finish> {
@@ -97,7 +99,7 @@ export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: Abor
   const base = { document_sha256: doc.sha256 };
   let text: PdfText;
   try {
-    text = await textOf(doc.bytes, claim.attempt ?? 1, claim.max_pages);
+    text = await textOf(doc.bytes, claim.attempt ?? 1, claim.max_pages, needsText(deps));
   } catch (e) {
     return fromDocumentError(e, base, 'The notice PDF');
   }
@@ -107,7 +109,7 @@ export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: Abor
       error: `The PDF has ${text.pageCount} pages; the reader reads at most ${claim.max_pages} (Settings).`,
     };
   }
-  const out = await callClaude(deps.claude!, {
+  const out = await deps.claude!({
     model: claim.model,
     effort: claim.effort,
     system: SYSTEM_PROMPT,
@@ -118,6 +120,7 @@ export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: Abor
     schema: OUTPUT_SCHEMA,
     signal,
     what: 'the notice',
+    pdfText: { pages: text.pages, textLayer: text.textLayer },
   });
   const meta = { ...base, pages: text.pageCount, text_layer: text.textLayer };
   if (!out.ok) return { status: out.status, reason: out.reason, error: out.error, usage: out.usage, result: { ...meta, model: out.usage?.model ?? claim.model }, pause: out.pause };
@@ -130,7 +133,7 @@ export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: Abor
 // ── Any other document of a case (ai_document_finish) ──────────────────────
 export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: AbortSignal): Promise<Finish> {
   const attempt = claim.attempt ?? 1;
-  type Block = Parameters<typeof callClaude>[1]['content'][number];
+  type Block = CallRequest['content'][number];
   let content: Block[];
   let info: { pages: string[]; pageCount: number | null; textLayer: boolean; sha256: string | null };
   if (claim.source === 'draft' || !claim.document_url) {
@@ -157,7 +160,7 @@ export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: 
     if (seen?.duplicate || seen?.error) return { status: 'skipped', reason: 'duplicate' };
     let text: PdfText;
     try {
-      text = await textOf(doc.bytes, attempt, claim.max_pages);
+      text = await textOf(doc.bytes, attempt, claim.max_pages, needsText(deps));
     } catch (e) {
       return fromDocumentError(e, { document_sha256: doc.sha256 }, 'The document');
     }
@@ -173,7 +176,7 @@ export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: 
     ];
     info = { pages: text.pages, pageCount: text.pageCount, textLayer: text.textLayer, sha256: doc.sha256 };
   }
-  const out = await callClaude(deps.claude!, {
+  const out = await deps.claude!({
     model: claim.model,
     effort: claim.effort,
     system: DOC_SYSTEM_PROMPT,
@@ -181,6 +184,7 @@ export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: 
     schema: DOC_OUTPUT_SCHEMA,
     signal,
     what: 'the document',
+    pdfText: { pages: info.pages, textLayer: info.textLayer },
   });
   if (!out.ok) {
     return {

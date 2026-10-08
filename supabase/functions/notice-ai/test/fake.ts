@@ -3,7 +3,8 @@
 // storage (PDFs drawn with pdf-lib, every quote real text) and the database
 // (scripted RPC answers, every call recorded). The real API is never called.
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { makeClaudeClient } from '../claude.ts';
+import { apiCaller, makeClaudeClient } from '../claude.ts';
+import { cliCaller } from '../cli.ts';
 import type { Db } from '../runner.ts';
 
 // deno-lint-ignore no-explicit-any
@@ -71,13 +72,24 @@ export interface Seen {
 }
 
 // One fetch for both the Claude API and the storage.
+export const GATEWAY = 'https://cli-gateway.test/run';
+
 export class FakeNet {
   claude: Seen[] = [];
+  cli: (Seen & { auth: string | null })[] = [];
   downloads: string[] = [];
+  /** The Claude CLI gateway's answer: {status?, body}. */
+  gateway: (req: Seen, n: number) => { status?: number; body: J } = () => ({ status: 500, body: { error: 'no gateway' } });
   constructor(public files: Record<string, Uint8Array>, public reply: (req: Seen, n: number) => FakeReply) {}
 
   fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === GATEWAY) {
+      const seen = { url, body: JSON.parse(String(init?.body ?? '{}')), auth: new Headers(init?.headers).get('authorization') };
+      this.cli.push(seen);
+      const r = this.gateway(seen, this.cli.length);
+      return new Response(JSON.stringify(r.body), { status: r.status ?? 200, headers: { 'content-type': 'application/json' } });
+    }
     if (url.startsWith('https://api.anthropic.com/')) {
       const raw = init?.body ?? (input instanceof Request ? await input.text() : '');
       const body = typeof raw === 'string' ? JSON.parse(raw) : JSON.parse(new TextDecoder().decode(raw as Uint8Array));
@@ -92,8 +104,14 @@ export class FakeNet {
     return new Response(f.slice(), { status: 200, headers: { 'content-type': 'application/pdf', 'content-length': String(f.byteLength) } });
   };
 
-  client() {
+  raw() {
     return makeClaudeClient({ apiKey: 'sk-ant-test-key', fetch: this.fetch, maxRetries: 0 });
+  }
+  client() {
+    return apiCaller(this.raw());
+  }
+  cliClient() {
+    return cliCaller({ url: GATEWAY, secret: 'gw-secret', fetch: this.fetch });
   }
 }
 

@@ -71,6 +71,18 @@ export interface CallRequest {
   signal?: AbortSignal;
   // What the model reads, for the error messages ("the notice", "the document").
   what?: string;
+  // The PDF's own text, page by page, when the request carries a PDF: what the
+  // Claude CLI gateway reads instead of the PDF (it takes text only).
+  pdfText?: { pages: string[]; textLayer: boolean };
+}
+
+/** One way of asking Claude: the Claude API (callClaude) or the Claude CLI gateway (cli.ts). */
+export type Caller = ((req: CallRequest) => Promise<CallOutcome>) & { backend?: 'api' | 'cli' | 'cli+api' };
+
+export function apiCaller(client: Anthropic): Caller {
+  const c: Caller = (req) => callClaude(client, req);
+  c.backend = 'api';
+  return c;
 }
 
 // Haiku 4.5 takes no effort level and no adaptive thinking, and answers at most

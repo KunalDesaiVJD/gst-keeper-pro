@@ -90,7 +90,7 @@ export const AiSettingsCard: React.FC<{ settings: AiSettings; canEdit: boolean; 
       <form className="space-y-1" onSubmit={(e) => { e.preventDefault(); if (canEdit && changed && !invalid) save(); }}>
         <div className="grid gap-x-6 md:grid-cols-2">
           <Group title="Reading">
-            <Row id={id('runner')} label="Runs on" info="The Supabase Edge Function reads from the cloud with the ANTHROPIC_API_KEY secret. The office agent reads on an office PC with its own key.">
+            <Row id={id('runner')} label="Runs on" info="The Supabase Edge Function reads from the cloud through the firm's Claude CLI gateway (CLAUDE_CLI_GATEWAY_URL and CLAUDE_CLI_GATEWAY_SECRET), or the ANTHROPIC_API_KEY secret. The office agent reads on an office PC with its own key.">
               <Select value={draft.runner} onValueChange={(v) => set('runner', v)} disabled={!canEdit}>
                 <SelectTrigger id={id('runner')} className={cn(WS_CONTROL, 'w-36')}><SelectValue /></SelectTrigger>
                 <SelectContent>

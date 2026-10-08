@@ -9,14 +9,19 @@
 // app: one run of the reader, in the background), {"action": "assist",
 // "notice_id", "mode": "draft" | "ask" | "improve", "issue_id"?, "question"?,
 // "text"?, "actor"?} (the assistant, answered when done), {"action": "status"}.
-// Secrets: ANTHROPIC_API_KEY (without it nothing is read and the assistant says
-// so); SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY come with every function.
+// How it reaches Claude: the Claude CLI gateway when CLAUDE_CLI_GATEWAY_URL and
+// CLAUDE_CLI_GATEWAY_SECRET are set (the firm's choice, on its Claude
+// subscription; cli.ts), else the Claude API with ANTHROPIC_API_KEY. With both,
+// the CLI reads and the API reads only scans; NOTICE_AI_BACKEND=api forces the
+// API. With neither, nothing is read and the assistant says so.
+// SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY come with every function.
 import { createClient } from '@supabase/supabase-js';
-import { makeClaudeClient, scrub } from './claude.ts';
+import { apiCaller, makeClaudeClient, scrub, type Caller } from './claude.ts';
+import { cliCaller, cliWithApiForScans } from './cli.ts';
 import { runAssist } from './assist.ts';
 import { runTick, type Db, type Deps } from './runner.ts';
 
-export const VERSION = 'notice-ai 1.0.0';
+export const VERSION = 'notice-ai 1.1.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -37,13 +42,21 @@ function supabaseDb(url: string, key: string): Db {
   };
 }
 
+export function caller(env: (k: string) => string | undefined = (k) => Deno.env.get(k)): Caller | null {
+  const apiKey = (env('ANTHROPIC_API_KEY') ?? '').trim();
+  const api = apiKey ? apiCaller(makeClaudeClient({ apiKey })) : null;
+  const url = (env('CLAUDE_CLI_GATEWAY_URL') ?? '').trim();
+  const secret = env('CLAUDE_CLI_GATEWAY_SECRET') ?? '';
+  if ((env('NOTICE_AI_BACKEND') ?? '').trim().toLowerCase() === 'api' || !url || !secret) return api;
+  return cliWithApiForScans(cliCaller({ url, secret }), api);
+}
+
 function deps(): Deps {
   const url = Deno.env.get('SUPABASE_URL') ?? '';
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-  const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
   return {
     db: supabaseDb(url, key),
-    claude: apiKey ? makeClaudeClient({ apiKey }) : null,
+    claude: caller(),
     supabaseUrl: url,
     agentId: `edge:${crypto.randomUUID().slice(0, 8)}`,
     version: VERSION,
@@ -60,7 +73,8 @@ Deno.serve(async (req) => {
   const action = typeof body.action === 'string' ? body.action : 'tick';
   try {
     if (action === 'status') {
-      return json({ version: VERSION, key: !!Deno.env.get('ANTHROPIC_API_KEY') });
+      const c = caller();
+      return json({ version: VERSION, key: !!c, backend: c?.backend ?? null });
     }
     if (action === 'tick') {
       const d = deps();

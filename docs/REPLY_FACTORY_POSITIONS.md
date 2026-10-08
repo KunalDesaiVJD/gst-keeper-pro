@@ -404,8 +404,16 @@ responses should be part of this learning capabilities." (migration
 `20261009100000_ai_assistant.sql`, Edge Function `supabase/functions/notice-ai/`,
 app: Reply Factory → AI and Learning, the notice page's AI assistant tab)
 
-- **Where it runs.** In Supabase, not on a PC: the Edge Function `notice-ai`
-  calls the Claude API with the `ANTHROPIC_API_KEY` secret of the project.
+- **Where it runs.** In Supabase, not on a PC: the Edge Function `notice-ai`.
+  It reaches Claude through the firm's **Claude CLI gateway** (the firm's choice,
+  8 October 2026: the same gateway its other Supabase project uses, on the firm's
+  Claude subscription; secrets `CLAUDE_CLI_GATEWAY_URL` and
+  `CLAUDE_CLI_GATEWAY_SECRET`). The gateway takes text, so a PDF goes as its own
+  text layer page by page and quotes are checked against that same text. A scanned
+  PDF with no text layer is read by the Claude API when `ANTHROPIC_API_KEY` is also
+  set, and otherwise left with the reason `needs_vision`. Without the gateway
+  secrets the API key is used for everything (`NOTICE_AI_BACKEND=api` forces it).
+  Calls through the gateway bill no tokens, so the dollar caps only bind API calls.
   pg_cron (`notice-ai-tick`, every 2 minutes) wakes it; one run at a time holds a
   lease (`ai_runner_status`) and reads until about 75 s of its time are left.
   `ai_settings.runner = 'office_agent'` hands the reading back to the office

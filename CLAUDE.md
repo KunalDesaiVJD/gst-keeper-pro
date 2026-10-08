@@ -157,7 +157,7 @@ Read `docs/REPLY_FACTORY_POSITIONS.md` and `docs/REPLY_TEMPLATES.md` first.
 case folder document (`ai_documents`, pg_cron `notice-ai-tick`), keeps reply ↔ paragraph
 pairs (`ai_learning_pairs`) that an admin chooses to learn from (Reply Factory → Learning),
 and drafts or improves replies on the notice page; off until `ai_settings.read_enabled`,
-needs the `ANTHROPIC_API_KEY` secret (§13 of the Reply Factory positions). Master filters
+reaches Claude through the firm's Claude CLI gateway (`CLAUDE_CLI_GATEWAY_URL` / `CLAUDE_CLI_GATEWAY_SECRET`, `cli.ts`), the API key only for scans or as fallback (§13 of the Reply Factory positions). Master filters
 (client, FY, owner, form, priority) run on every list page via `src/lib/masterFilters.ts`
 and in `notices_command_centre(p_user_id, p_filters)`. Module pages use the panels in
 `src/components/notices/ui/Panel.tsx` (pairs of equal height, explanations behind (i)).

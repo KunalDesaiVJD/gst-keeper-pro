@@ -1,7 +1,7 @@
 // Notice Response AI Assistant (Notices Phase 7; migration 20261009100000 and the
 // Edge Function notice-ai): what the notice page's Assistant tab and the Reply
 // Factory's AI and Learning tabs read and write. The assistant runs in the Edge
-// Function (it holds the ANTHROPIC_API_KEY secret); the database decides who may be
+// Function (it reaches Claude through the Claude CLI gateway, or the API key); the database decides who may be
 // read, what an answer may use and what the firm's examples are. Read
 // docs/REPLY_FACTORY_POSITIONS.md §13 before changing a rule here.
 import { supabase } from '@/integrations/supabase/client';
@@ -76,7 +76,7 @@ export const ASSIST_REFUSALS: Record<string, string> = {
   no_consent: 'This client has no AI consent on file (Reply Factory, Client consent).',
   opted_out: 'This client asked that nothing of theirs be processed by AI.',
   capped: "Today's assistant spending cap is reached. Try tomorrow, or raise the cap under Reply Factory, AI.",
-  no_key: 'Supabase has no ANTHROPIC_API_KEY secret yet (Edge Functions, Secrets).',
+  no_key: 'Supabase has no way to reach Claude yet: set CLAUDE_CLI_GATEWAY_URL and CLAUDE_CLI_GATEWAY_SECRET (or ANTHROPIC_API_KEY) in Edge Functions, Secrets.',
   gone: 'This notice is no longer on record.',
   no_question: 'Type a question first.',
   no_text: 'Paste the text to improve first.',

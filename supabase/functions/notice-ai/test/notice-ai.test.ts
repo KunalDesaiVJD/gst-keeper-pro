@@ -5,9 +5,10 @@ import { buildParams, callClaude, FALLBACK_BETA } from '../claude.ts';
 import { buildDocResult, type DocumentClaim } from '../documents.ts';
 import { assistUserText, mapAssistOutput, runAssist } from '../assist.ts';
 import { readDocumentJob, runTick, type Deps } from '../runner.ts';
+import { cliModel, cliWithApiForScans, jsonFromText } from '../cli.ts';
 import { documentUrlAllowed } from '../pdf.ts';
 import {
-  buildPdf, FakeDb, FakeNet, ISSUE_CODES, jsonReply, replyPages, replyReading, storageUrl, SUPA, type J,
+  buildPdf, FakeDb, FakeNet, GATEWAY, ISSUE_CODES, jsonReply, replyPages, replyReading, storageUrl, SUPA, type J,
 } from './fake.ts';
 
 const docClaim = (over: Partial<DocumentClaim> = {}): DocumentClaim => ({
@@ -40,7 +41,7 @@ Deno.test('the request: structured output, adaptive thinking, effort, the server
 
 Deno.test('a call: the JSON, its usage, and a cut-off answer asked again with the whole budget', async () => {
   const net = new FakeNet({}, (_r, n) => n === 1 ? { text: '{"a":', stop_reason: 'max_tokens', usage: { input_tokens: 100, output_tokens: 64000 } } : jsonReply({ a: 1 }, { input_tokens: 100, output_tokens: 50 }));
-  const out = await callClaude(net.client(), { model: 'claude-opus-5-5', effort: 'high', system: 'S', content: [{ type: 'text', text: 'x' }], schema: { type: 'object' } });
+  const out = await callClaude(net.raw(), { model: 'claude-opus-5-5', effort: 'high', system: 'S', content: [{ type: 'text', text: 'x' }], schema: { type: 'object' } });
   assert(out.ok);
   if (out.ok) {
     assertEquals(out.json, { a: 1 });
@@ -52,10 +53,10 @@ Deno.test('a call: the JSON, its usage, and a cut-off answer asked again with th
 });
 
 Deno.test('a call: a refusal fails, a refused key pauses', async () => {
-  const refused = await callClaude(new FakeNet({}, () => ({ text: '', stop_reason: 'refusal', stop_details: { category: 'cyber' } })).client(),
+  const refused = await callClaude(new FakeNet({}, () => ({ text: '', stop_reason: 'refusal', stop_details: { category: 'cyber' } })).raw(),
     { model: 'claude-opus-5-5', effort: 'high', system: 'S', content: [], schema: {} });
   assert(!refused.ok && refused.status === 'failed' && refused.reason === 'refused');
-  const key = await callClaude(new FakeNet({}, () => ({ status: 401, errorType: 'authentication_error' })).client(),
+  const key = await callClaude(new FakeNet({}, () => ({ status: 401, errorType: 'authentication_error' })).raw(),
     { model: 'claude-opus-5-5', effort: 'high', system: 'S', content: [], schema: {} });
   assert(!key.ok && key.pause === 'api_key' && key.status === 'retry');
 });
@@ -269,4 +270,70 @@ Deno.test('the assistant: begin, ask the API, finish; no key says so', async () 
     { notice_id: '00000000-0000-0000-0000-0000000000a2' });
   assertEquals(refused.error, 'no_consent');
   assertEquals((await runAssist({ db, claude: null, supabaseUrl: SUPA, agentId: 'e', version: 't' }, { notice_id: 'x' })).error, 'bad_request');
+});
+
+// ── The Claude CLI gateway (the firm's subscription, as in its other project) ──
+Deno.test('CLI: a reply PDF goes as its text, the JSON comes back, no tokens billed', async () => {
+  const pdf = await buildPdf(replyPages);
+  const net = new FakeNet({ 'reply.pdf': pdf }, () => jsonReply(replyReading));
+  net.gateway = () => ({ body: { text: '```json\n' + JSON.stringify(replyReading) + '\n```', model: 'opus' } });
+  const db = new FakeDb({ ai_document_hash: () => ({ duplicate: false }) });
+  const deps: Deps = { db, claude: net.cliClient(), supabaseUrl: SUPA, agentId: 'edge:t', version: 't', fetchImpl: net.fetch };
+  const f = await readDocumentJob(deps, docClaim({ attempt: 2 }), new AbortController().signal);
+  assertEquals(f.status, 'done');
+  assertEquals(net.claude.length, 0, 'the Claude API is not called');
+  const req = net.cli[0];
+  assertEquals(req.auth, 'Bearer gw-secret');
+  assertEquals([req.body.model, req.body.effort], ['opus', 'low']);
+  assertStringIncludes(req.body.system, 'It must match this JSON Schema');
+  assertEquals(req.body.parts.every((p: J) => p.kind === 'text'), true, 'text only');
+  assertStringIncludes(req.body.parts[0].text, '--- Page 1 ---');
+  assertStringIncludes(req.body.parts[0].text, 'the credit is reconciled invoice wise in Annexure A.');
+  const r = f.result as J;
+  assertEquals(r.pairs.length, 2);
+  assertEquals(r.pairs[0].verified, true, 'quotes checked against the same text, on a second try too');
+  assertEquals([f.usage?.input_tokens, f.usage?.output_tokens, f.usage?.model], [0, 0, 'claude-cli:opus']);
+});
+
+Deno.test('CLI: a scan goes to the API when there is a key, else waits for one; a refused secret pauses', async () => {
+  const scan = { ...docClaim(), document_url: null, source: 'draft' as const, body: null };
+  const net = new FakeNet({}, () => jsonReply({ a: 1 }));
+  const req = { model: 'claude-opus-5-5', effort: 'low', system: 'S', schema: {}, what: 'the document',
+    content: [{ type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data: 'JVBERg==' } }],
+    pdfText: { pages: [], textLayer: false } };
+  const only = await net.cliClient()(req);
+  assert(!only.ok && only.reason === 'needs_vision' && only.status === 'failed');
+  assertEquals(net.cli.length, 0, 'nothing sent for a scan');
+  const both = await cliWithApiForScans(net.cliClient(), net.client())(req);
+  assert(both.ok, 'the API read the scan');
+  assertEquals(net.claude.length, 1);
+  net.gateway = () => ({ status: 401, body: { error: 'Unauthorized' } });
+  const refused = await net.cliClient()({ ...req, content: [{ type: 'text', text: 'x' }] });
+  assert(!refused.ok && refused.pause === 'cli_auth' && refused.status === 'retry');
+  net.gateway = () => ({ status: 502, body: { error: 'claude exited 1' } });
+  const down = await net.cliClient()({ ...req, content: [{ type: 'text', text: 'x' }] });
+  assert(!down.ok && down.status === 'retry' && down.reason === 'cli_unavailable');
+  net.gateway = () => ({ body: { text: 'Sorry, I cannot.' } });
+  const junk = await net.cliClient()({ ...req, content: [{ type: 'text', text: 'x' }] });
+  assert(!junk.ok && junk.reason === 'bad_output');
+  void scan;
+});
+
+Deno.test('CLI: the assistant drafts through the gateway', async () => {
+  const net = new FakeNet({}, () => jsonReply({}));
+  net.gateway = () => ({ body: { text: JSON.stringify({ answer: 'The credit is reconciled.', parts: [], examples_used: [], cautions: [] }) } });
+  const db = new FakeDb({
+    ai_assist_begin: () => ({ run_id: 'r1', settings: { model: 'claude-sonnet-5-5', effort: 'high' }, context: {} }),
+    ai_assist_finish: (a: J) => ({ status: a.p_status }),
+  });
+  const r = await runAssist({ db, claude: net.cliClient(), supabaseUrl: SUPA, agentId: 'e', version: 't' }, { notice_id: '00000000-0000-0000-0000-0000000000a2' });
+  assertEquals(r.status, 'done');
+  assertEquals(net.cli[0].body.model, 'sonnet');
+  assertEquals(net.claude.length, 0);
+});
+
+Deno.test('CLI helpers: model names and JSON out of words', () => {
+  assertEquals([cliModel('claude-opus-5-5'), cliModel('claude-sonnet-5-5'), cliModel('claude-haiku-4-5')], ['opus', 'sonnet', 'haiku']);
+  assertEquals(jsonFromText('Here it is:\n{"a": [1, {"b": 2}]}\nDone.'), { a: [1, { b: 2 }] });
+  assertEquals(GATEWAY.startsWith('https://'), true);
 });

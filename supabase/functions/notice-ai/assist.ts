@@ -7,7 +7,7 @@
 // (learned examples, E1, E2, …). The answer is kept by ai_assist_finish, which
 // also takes every hyphen and dash out of reply text, as for every reply.
 
-import { callClaude, scrub, type CallUsage } from './claude.ts';
+import { scrub, type CallUsage } from './claude.ts';
 import type { Deps } from './runner.ts';
 
 export const ASSIST_SYSTEM_PROMPT = `You are the Notice Response Assistant of a firm of chartered accountants in India that answers notices issued under GST law (the CGST Act, 2017, the State and Union Territory GST Acts, the IGST Act and their rules). Staff of the firm ask you, and a partner reviews every word before anything is filed.
@@ -176,10 +176,10 @@ export async function runAssist(deps: Deps, input: AssistInput): Promise<Record<
       p_run_id: begin.run_id, p_status: status, p_output: output, p_usage: usage, p_error: error, p_reason_class: reason,
     });
   if (!deps.claude) {
-    return { ...(await finish('failed', null, null, 'No ANTHROPIC_API_KEY secret is set for the Edge Functions.', 'no_key')), error: 'no_key' };
+    return { ...(await finish('failed', null, null, 'Neither the Claude CLI gateway (CLAUDE_CLI_GATEWAY_URL and CLAUDE_CLI_GATEWAY_SECRET) nor ANTHROPIC_API_KEY is set for the Edge Functions.', 'no_key')), error: 'no_key' };
   }
   const { text, labels } = assistUserText(begin.context ?? {});
-  const out = await callClaude(deps.claude, {
+  const out = await deps.claude({
     model: begin.settings?.model ?? 'claude-opus-5-5',
     effort: begin.settings?.effort ?? 'high',
     system: ASSIST_SYSTEM_PROMPT,
