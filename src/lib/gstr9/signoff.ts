@@ -1,8 +1,16 @@
-// Sign-off of an Annual Return working: the preparer marks it ready for
-// review; a GST manager or superadmin verifies it against this checklist and
-// locks the year (set_annual_return_status — the database refuses a lock by
-// any other role). The checklist and the reviewer's note are stored on the
-// period and printed on the working papers' sign-off page.
+// Sign-off of an Annual Return working, in three stages by three different
+// people (signoffFlow.ts has the rules; the database enforces them):
+//   allotted   — a GST manager or the superadmin allots a preparer, and
+//                optionally a verifier and a reviewer (annual_return_allot);
+//   Prepared   — the preparer marks it prepared (annual_return_signoff);
+//   Verified   — a second person, the allotted verifier or a GST manager /
+//                superadmin, verifies it in the working;
+//   Reviewed & locked — a GST manager or the superadmin who neither prepared
+//                nor verified it reviews it against this checklist and locks
+//                the year (set_annual_return_status).
+// The checklist and the reviewer's note are stored on the period at the lock
+// and printed on the working papers' sign-off page (A3). ROLE_LABEL names the
+// role a sign-off was made as.
 
 export interface ChecklistItem {
   key: string;

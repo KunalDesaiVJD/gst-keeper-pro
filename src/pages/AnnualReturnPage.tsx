@@ -99,14 +99,19 @@ const AnnualReturnPage: React.FC = () => {
     setParams(next, { replace: true });
   }, [financialYear, params, setParams]);
 
-  /** Open a client's working (from the register or the client picker). */
-  const openClient = useCallback((id: string) => {
+  /**
+   * Open a client's working (from the register or the client picker). `extra`
+   * lands on a step — e.g. the register's "Verify in working" opens
+   * ?step=review&reviewtab=signoff&signoff=verify, which opens the dialog.
+   */
+  const openClient = useCallback((id: string, extra?: Record<string, string>) => {
     if (!id) return;
     setSelectedClientId(id);
     // From the register, start at the overview; switching clients inside a working keeps the step.
     const next = urlClient ? new URLSearchParams(params) : new URLSearchParams();
     next.set('client', id);
     next.set('fy', financialYear);
+    Object.entries(extra ?? {}).forEach(([k, v]) => next.set(k, v));
     setParams(next, { replace: false });
     window.scrollTo({ top: 0 });
   }, [urlClient, params, financialYear, setParams, setSelectedClientId]);

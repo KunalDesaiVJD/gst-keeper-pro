@@ -1,9 +1,10 @@
 // Data for the applicability register (the Annual Return home): every
 // client, its aggregate turnover and the client's wish for the year
-// (client_annual_turnover), and how far its working has got.
+// (client_annual_turnover), and its working's allotment and sign-off.
 
 import { supabase } from '@/integrations/supabase/client';
-import type { PeriodStatus } from './store';
+import { toSignoffState, type SignoffChanges, type SignoffPeriod, type SignoffState } from './signoffFlow';
+import { PERIOD_COLUMNS, type SignoffRow } from './store';
 
 export interface RegisterClient {
   id: string;
@@ -26,19 +27,11 @@ export interface TurnoverEntry {
   updated_at: string | null;
 }
 
-export interface WorkingState {
-  status: PeriodStatus;
-  preparedBy: string | null;
-  lockedBy: string | null;
-  lockedAt: string | null;
-  lastSavedAt: string | null;
-  sheets: number;
-}
-
 export interface RegisterData {
   clients: RegisterClient[];
   turnover: Map<string, TurnoverEntry>;
-  working: Map<string, WorkingState>;
+  /** Allotment and sign-off of every client's working (clients without a period row are absent — not started). */
+  working: Map<string, SignoffState>;
 }
 
 const CLIENT_COLUMNS =
@@ -55,8 +48,16 @@ async function allRows<T>(page: (from: number, to: number) => PromiseLike<{ data
   }
 }
 
+/** The period without the payables snapshot (large, and not shown here). */
+const REGISTER_PERIOD_COLUMNS = `client_id, ${PERIOD_COLUMNS.replace(/,\s*payables_at_lock/, '')}`;
+
+type ChangesRow = { client_id: string | null; since_prepared: number | null; since_verified: number | null; last_change_at: string | null; last_change_by: string | null };
+
+const changesOf = (c: Omit<ChangesRow, 'client_id'> | null | undefined): SignoffChanges | null =>
+  c ? { sincePrepared: c.since_prepared ?? 0, sinceVerified: c.since_verified ?? 0, lastAt: c.last_change_at, lastBy: c.last_change_by } : null;
+
 export async function loadRegister(financialYear: string): Promise<RegisterData> {
-  const [clients, turnover, activity, periods] = await Promise.all([
+  const [clients, turnover, activity, periods, changes] = await Promise.all([
     allRows<RegisterClient>((a, b) => supabase.from('clients').select(CLIENT_COLUMNS).order('name').range(a, b)),
     allRows<TurnoverEntry & { client_id: string }>((a, b) =>
       supabase
@@ -68,24 +69,31 @@ export async function loadRegister(financialYear: string): Promise<RegisterData>
     allRows<{ client_id: string | null; last_saved_at: string | null; sheets: number | null }>((a, b) =>
       supabase.from('annual_return_activity').select('client_id, last_saved_at, sheets').eq('financial_year', financialYear).range(a, b),
     ),
-    allRows<{ client_id: string; status: string; prepared_by_name: string | null; locked_by: string | null; locked_at: string | null }>((a, b) =>
+    allRows<SignoffPeriod & { client_id: string }>((a, b) =>
       supabase
         .from('annual_return_periods')
-        .select('client_id, status, prepared_by_name, locked_by, locked_at')
+        .select(REGISTER_PERIOD_COLUMNS)
+        .eq('financial_year', financialYear)
+        .order('client_id')
+        .range(a, b) as unknown as PromiseLike<{ data: (SignoffPeriod & { client_id: string })[] | null; error: { message: string } | null }>,
+    ),
+    allRows<ChangesRow>((a, b) =>
+      supabase
+        .from('annual_return_signoff_changes')
+        .select('client_id, since_prepared, since_verified, last_change_at, last_change_by')
         .eq('financial_year', financialYear)
         .range(a, b),
     ),
   ]);
 
-  const working = new Map<string, WorkingState>();
-  activity.forEach((r) => {
-    if (!r.client_id) return;
-    working.set(r.client_id, { status: 'in_progress', preparedBy: null, lockedBy: null, lockedAt: null, lastSavedAt: r.last_saved_at, sheets: r.sheets ?? 0 });
-  });
-  periods.forEach((p) => {
-    const w = working.get(p.client_id) ?? { status: 'not_started' as PeriodStatus, preparedBy: null, lockedBy: null, lockedAt: null, lastSavedAt: null, sheets: 0 };
-    const status: PeriodStatus = p.status === 'locked' ? 'locked' : p.status === 'in_progress' || w.sheets > 0 ? 'in_progress' : 'not_started';
-    working.set(p.client_id, { ...w, status, preparedBy: p.prepared_by_name, lockedBy: p.locked_by, lockedAt: p.locked_at });
+  const act = new Map(activity.filter((r) => r.client_id).map((r) => [r.client_id as string, r]));
+  const chg = new Map(changes.filter((r) => r.client_id).map((r) => [r.client_id as string, r]));
+  const working = new Map<string, SignoffState>();
+  const ids = new Set<string>([...act.keys(), ...periods.map((p) => p.client_id)]);
+  const byClient = new Map(periods.map((p) => [p.client_id, p]));
+  ids.forEach((id) => {
+    const a = act.get(id);
+    working.set(id, toSignoffState(byClient.get(id) ?? null, { sheets: a?.sheets ?? 0, lastSavedAt: a?.last_saved_at ?? null, changes: changesOf(chg.get(id)) }));
   });
 
   return {
@@ -94,6 +102,10 @@ export async function loadRegister(financialYear: string): Promise<RegisterData>
     working,
   };
 }
+
+/** A sign-off RPC's returned row as the register's state. */
+export const signoffStateOf = (r: SignoffRow): SignoffState =>
+  toSignoffState(r, { sheets: r.sheets ?? 0, lastSavedAt: r.last_saved_at, changes: changesOf(r.changes) });
 
 export type TurnoverPatch = { clientId: string } & Partial<Pick<TurnoverEntry, 'aggregate_turnover' | 'gstr9_opt_in' | 'gstr9c_opt_in' | 'applicability_note'>>;
 

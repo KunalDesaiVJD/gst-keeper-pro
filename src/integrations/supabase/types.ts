@@ -1323,6 +1323,28 @@ export type Database = {
       }
       annual_return_periods: {
         Row: {
+          allotted_at: string | null
+          allotted_by_name: string | null
+          changes_at_lock: number | null
+          changes_at_verify: number | null
+          preparer_allotted_at: string | null
+          preparer_id: string | null
+          preparer_name: string | null
+          returned_at: string | null
+          returned_by_name: string | null
+          returned_note: string | null
+          returned_to: string | null
+          reviewer_id: string | null
+          reviewer_name: string | null
+          signoff_overrides: Json
+          signoff_rev: number
+          verified_at: string | null
+          verified_by: string | null
+          verified_by_name: string | null
+          verified_note: string | null
+          verified_role: string | null
+          verifier_id: string | null
+          verifier_name: string | null
           client_id: string
           created_at: string
           financial_year: string
@@ -1345,6 +1367,28 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          allotted_at?: string | null
+          allotted_by_name?: string | null
+          changes_at_lock?: number | null
+          changes_at_verify?: number | null
+          preparer_allotted_at?: string | null
+          preparer_id?: string | null
+          preparer_name?: string | null
+          returned_at?: string | null
+          returned_by_name?: string | null
+          returned_note?: string | null
+          returned_to?: string | null
+          reviewer_id?: string | null
+          reviewer_name?: string | null
+          signoff_overrides?: Json
+          signoff_rev?: number
+          verified_at?: string | null
+          verified_by?: string | null
+          verified_by_name?: string | null
+          verified_note?: string | null
+          verified_role?: string | null
+          verifier_id?: string | null
+          verifier_name?: string | null
           client_id: string
           created_at?: string
           financial_year: string
@@ -1367,6 +1411,28 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          allotted_at?: string | null
+          allotted_by_name?: string | null
+          changes_at_lock?: number | null
+          changes_at_verify?: number | null
+          preparer_allotted_at?: string | null
+          preparer_id?: string | null
+          preparer_name?: string | null
+          returned_at?: string | null
+          returned_by_name?: string | null
+          returned_note?: string | null
+          returned_to?: string | null
+          reviewer_id?: string | null
+          reviewer_name?: string | null
+          signoff_overrides?: Json
+          signoff_rev?: number
+          verified_at?: string | null
+          verified_by?: string | null
+          verified_by_name?: string | null
+          verified_note?: string | null
+          verified_role?: string | null
+          verifier_id?: string | null
+          verifier_name?: string | null
           client_id?: string
           created_at?: string
           financial_year?: string
@@ -10359,6 +10425,17 @@ export type Database = {
         }
         Relationships: []
       }
+      annual_return_signoff_changes: {
+        Row: {
+          client_id: string | null
+          financial_year: string | null
+          last_change_at: string | null
+          last_change_by: string | null
+          since_prepared: number | null
+          since_verified: number | null
+        }
+        Relationships: []
+      }
       builder_dastavej_reco: {
         Row: {
           booked_at_cutoff: boolean | null
@@ -10946,27 +11023,56 @@ export type Database = {
       }
       set_annual_return_status: {
         Args: {
-          p_by: string
+          p_actor_id: string
+          p_changes_ack?: number
           p_checklist?: Json
           p_client_id: string
+          p_expected_rev: number
           p_financial_year: string
-          p_from: string
           p_note?: string
+          p_override_reason?: string
           p_payables?: Json
-          p_role?: string
           p_to: string
         }
-        Returns: undefined
+        Returns: Json
       }
-      mark_annual_return_prepared: {
+      annual_return_signoff: {
         Args: {
-          p_by: string
-          p_clear?: boolean
+          p_action: string
+          p_actor_id: string
+          p_changes_ack?: number
           p_client_id: string
+          p_expected_rev: number
           p_financial_year: string
           p_note?: string
+          p_return_to?: string
         }
-        Returns: undefined
+        Returns: Json
+      }
+      annual_return_allot: {
+        Args: {
+          p_actor_id: string
+          p_financial_year: string
+          p_items: Json
+          p_stage: string
+        }
+        Returns: Json
+      }
+      annual_return_signoff_row: {
+        Args: {
+          p_client_id: string
+          p_financial_year: string
+        }
+        Returns: Json
+      }
+      annual_return_unacked_changes: {
+        Args: {
+          p_actor_id: string
+          p_client_id: string
+          p_financial_year: string
+          p_for: string
+        }
+        Returns: number
       }
       add_annual_return_setoff: {
         Args: {

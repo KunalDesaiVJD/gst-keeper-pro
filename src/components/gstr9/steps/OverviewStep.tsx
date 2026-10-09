@@ -1,14 +1,17 @@
 import React from 'react';
-import { AlertTriangle, ArrowRight, CheckCircle2, Lock, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, Lock } from 'lucide-react';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
-import { ROLE_LABEL } from '@/lib/gstr9/signoff';
+import { clientStage, clientView, displayName, nextSentence, STAGE_META } from '@/lib/gstr9/signoffFlow';
 import { useWorkspace } from '../WorkspaceContext';
+import { StageTrack } from '../signoff/StageTrack';
 import CarryForwardCard from '../overview/CarryForwardCard';
 import OverviewTiles from '../overview/OverviewTiles';
 import PortalStatusCard from '../overview/PortalStatusCard';
 import StepChecklist from '../overview/StepChecklist';
-import { fmtWhen, periodStatus, rupeesShort, useGoToStep } from '../overview/steps';
+import { rupeesShort, useGoToStep } from '../overview/steps';
+
+const day = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 
 /**
  * One line for where the year stands: status, prepared / verified, GSTIN
@@ -16,38 +19,31 @@ import { fmtWhen, periodStatus, rupeesShort, useGoToStep } from '../overview/ste
  * differences still need a reason.
  */
 const StatusStrip: React.FC = () => {
-  const { client, financialYear, period, locked, workings: w } = useWorkspace();
+  const { client, financialYear, locked, workings: w, signoffState: st, isStaff } = useWorkspace();
   const go = useGoToStep();
-  const status = periodStatus(period);
+  const stage = isStaff ? st.stage : clientStage(st);
+  const meta = STAGE_META[stage];
+  const stamps = [
+    st.prepared && `Prepared ${displayName(st.prepared.name)} ${day(st.prepared.at)}`,
+    st.verified && `Verified ${displayName(st.verified.name)} ${day(st.verified.at)}`,
+    st.locked && `Locked ${displayName(st.locked.name)} ${day(st.locked.at)}`,
+  ].filter(Boolean).join(' · ');
+  const next = isStaff ? nextSentence(st) : null;
   const justified = w.diffs.filter((d) => d.justification?.text?.trim()).length;
   const sep = <span aria-hidden className="text-muted-foreground/60">·</span>;
 
   return (
     <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-lg border bg-card px-3 py-1.5 text-xs">
       <span className="inline-flex items-center gap-1.5">
-        <span className="text-muted-foreground">Status</span>
-        <Badge variant={status.tone} className="gap-1 text-[10px]">
-          {status.key === 'locked' && <Lock className="h-3 w-3" aria-hidden />}
-          {status.label}
+        <span className="text-muted-foreground">Sign-off</span>
+        <StageTrack state={isStaff ? st : clientView(st)} />
+        <Badge variant={meta.tone} className="gap-1 text-[10px]">
+          {stage === 'locked' && <Lock className="h-3 w-3" aria-hidden />}
+          {meta.label}
         </Badge>
       </span>
-      {period?.prepared_by_name ? (
-        <span className="inline-flex items-center gap-1">
-          <CheckCircle2 className="h-3.5 w-3.5 text-success-strong" aria-hidden />
-          Ready for review — <span className="font-medium">{period.prepared_by_name}</span>
-          {period.prepared_at && <span className="text-muted-foreground">{fmtWhen(period.prepared_at)}</span>}
-        </span>
-      ) : !locked ? (
-        <span className="text-muted-foreground">Not marked ready for review</span>
-      ) : null}
-      {locked && (
-        <span className="inline-flex items-center gap-1">
-          <ShieldCheck className="h-3.5 w-3.5 text-success-strong" aria-hidden />
-          Verified &amp; locked by <span className="font-medium">{period?.reviewed_by_name ?? period?.locked_by ?? '—'}</span>
-          {period?.reviewed_role && <span className="text-muted-foreground">({ROLE_LABEL[period.reviewed_role] ?? period.reviewed_role})</span>}
-          {(period?.reviewed_at || period?.locked_at) && <span className="text-muted-foreground">{fmtWhen(period?.reviewed_at ?? period?.locked_at)}</span>}
-        </span>
-      )}
+      {stamps && <span className="text-muted-foreground">{stamps}</span>}
+      {next && !locked && <span className="text-muted-foreground">· Next: {next.replace(/^With /, '')}</span>}
       {sep}
       <span className="inline-flex items-center gap-1">
         <span className="text-muted-foreground">GSTIN</span>
@@ -73,7 +69,7 @@ const StatusStrip: React.FC = () => {
             No open differences{justified ? ` · ${justified} justified` : ''}
           </span>
         ) : null}
-        <Button size="sm" variant="outline" className="h-7" onClick={() => go('review')}>
+        <Button size="sm" variant="outline" className="h-7" onClick={() => go('review', { reviewtab: 'signoff' })}>
           Review &amp; lock <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden />
         </Button>
       </span>

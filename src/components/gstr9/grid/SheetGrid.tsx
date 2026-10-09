@@ -63,6 +63,11 @@ export interface GridColumn<R> {
   align?: 'left' | 'right' | 'center';
   /** Pin to the left while scrolling (from the sm breakpoint; on a phone the label would cover the figures). */
   sticky?: boolean;
+  /**
+   * A display cell that opens something (a popover): Enter or Space on the
+   * active cell calls this. `restoreFocus` hands the keyboard back to the grid.
+   */
+  activate?: (row: R, restoreFocus: () => void) => void;
 }
 
 export interface GridFooterRow {
@@ -325,6 +330,10 @@ export function SheetGrid<R>({
       if (n.r === active.r && n.c === active.c) { setActive(null); return; }
       e.preventDefault();
       setActive(n);
+    }
+    else if ((k === 'Enter' || k === ' ') && columns[active.c]?.activate && rows[active.r]) {
+      e.preventDefault();
+      columns[active.c].activate?.(rows[active.r], () => wrapRef.current?.focus());
     }
     else if (k === 'Enter' || k === 'F2') { e.preventDefault(); startEdit(active); }
     else if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); clearCell(active); }

@@ -7,6 +7,7 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { gstr9PortalPresent, tin, type StepKey, type Workings } from '@/lib/gstr9/engine';
 import type { AnnualReturnPeriod } from '@/lib/gstr9/store';
+import { displayName, stageOf, STAGE_META, type Stage } from '@/lib/gstr9/signoffFlow';
 import { FY_MONTHS, type AnnualReturnDocs, type MonthKey, type Tax, type ValTax } from '@/lib/gstr9/types';
 import { fmtMoney } from '../grid/money';
 
@@ -134,11 +135,8 @@ export const worstHead = (t: Tax): { head: string; value: number } => {
 
 export type BadgeTone = 'success' | 'warning' | 'destructive' | 'info' | 'secondary' | 'outline';
 
-export const periodStatus = (period: AnnualReturnPeriod | null): { key: 'not_started' | 'in_progress' | 'locked'; label: string; tone: BadgeTone } => {
-  if (period?.status === 'locked') return { key: 'locked', label: 'Locked', tone: 'success' };
-  if (period?.status === 'in_progress') return { key: 'in_progress', label: 'In progress', tone: 'warning' };
-  return { key: 'not_started', label: 'Not started', tone: 'outline' };
-};
+/** The sign-off stage as a badge (signoffFlow.ts): Not started → Preparing → Prepared → Verified → Locked, or Sent back. */
+export const stageStatus = (stage: Stage): { stage: Stage; label: string; tone: BadgeTone | 'default' } => ({ stage, ...STAGE_META[stage] });
 
 // ---------------------------------------------------------------------------
 // Portal presence (as-filed 3B months)
@@ -188,7 +186,7 @@ export function stepStatuses(docs: AnnualReturnDocs, w: Workings, period: Annual
   const hasSales = S.partA.length > 0;
   const hasPurch = PR.rows.length > 0;
 
-  const base: Partial<Record<StepKey, { state: StepState; detail: string }>> = {};
+  const base: Partial<Record<StepKey, { state: StepState; detail: string; label?: string }>> = {};
 
   // 1 Portal data
   const g9src = docs.portal.gstr9Meta?.source;
@@ -305,11 +303,20 @@ export function stepStatuses(docs: AnnualReturnDocs, w: Workings, period: Annual
   // 13 Review & lock
   const anyData = hasSales || hasPurch || gstr9 || applied.length > 0 || cats > 0 || outMonths.length > 0 || inMonths.length > 0;
   if (period?.status === 'locked') {
-    base.review = { state: 'locked', detail: `Locked${period.locked_by ? ` by ${period.locked_by}` : ''}${period.locked_at ? ` on ${fmtWhen(period.locked_at)}` : ''}` };
+    base.review = { state: 'locked', detail: `Locked${period.locked_by ? ` by ${displayName(period.locked_by)}` : ''}${period.locked_at ? ` on ${fmtWhen(period.locked_at)}` : ''}` };
   } else {
+    // With no open difference, the step is ready for whichever sign-off comes next.
+    const stage = stageOf(period, anyData ? 1 : 0);
+    const signed = stage === 'verified' ? `Verified by ${displayName(period?.verified_by_name)}`
+      : stage === 'prepared' ? `Prepared by ${displayName(period?.prepared_by_name)}`
+        : stage === 'sent_back' ? `Sent back to the ${period?.returned_to === 'verifier' ? 'verifier' : 'preparer'}` : '';
     base.review = {
       state: w.openCount > 0 ? 'open' : anyData ? 'ready' : 'todo',
-      detail: w.openCount > 0 ? `${w.openCount} difference${w.openCount === 1 ? '' : 's'} still need a reason` : anyData ? 'Every difference is matched, within tolerance or justified' : 'Nothing entered yet',
+      label: w.openCount > 0 || !anyData ? undefined
+        : stage === 'verified' ? 'Ready to lock'
+          : stage === 'prepared' || (stage === 'sent_back' && period?.returned_to === 'verifier') ? 'Ready to verify' : 'Ready to prepare',
+      detail: w.openCount > 0 ? `${w.openCount} difference${w.openCount === 1 ? '' : 's'} still need a reason`
+        : anyData ? (signed ? `${signed} · every difference is matched, within tolerance or justified` : 'Every difference is matched, within tolerance or justified') : 'Nothing entered yet',
     };
   }
 
@@ -335,7 +342,7 @@ export function stepStatuses(docs: AnnualReturnDocs, w: Workings, period: Annual
       out[key] = { key, state: 'open', label: `${open} open`, tone: 'destructive', detail: b.detail };
     } else {
       const s = STATE_LABEL[b.state === 'open' ? 'progress' : b.state];
-      out[key] = { key, state: b.state, label: s.label, tone: s.tone, detail: b.detail };
+      out[key] = { key, state: b.state, label: b.label ?? s.label, tone: s.tone, detail: b.detail };
     }
   });
   return out;

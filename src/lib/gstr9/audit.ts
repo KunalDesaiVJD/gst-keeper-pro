@@ -1,10 +1,13 @@
 // The revision log of an Annual Return working, as the database records it
 // (annual_return_change_log, written by a trigger on every save — see
-// supabase/migrations/20260929100000_annual_return_audit_signoff_payables.sql)
-// and how it reads to a person: which sheet, which place inside it, and the
-// figure before and after.
+// supabase/migrations/20260929100000_annual_return_audit_signoff_payables.sql —
+// and by the allotment and sign-off functions of
+// 20261011100000_annual_return_allotment_signoff.sql) and how it reads to a
+// person: which sheet, which place inside it, and the figure before and after.
 
+import { displayName } from './signoffFlow';
 import { FY_MONTHS, type MonthKey } from './types';
+import { ROLE_LABEL } from './signoff';
 
 export type ChangeKind = 'edit' | 'add' | 'remove' | 'status' | 'setoff';
 
@@ -21,7 +24,7 @@ export interface ChangeLogEntry {
   kind: ChangeKind;
   oldValue: unknown;
   newValue: unknown;
-  /** "Edited", "Imported as-filed GSTR-3B", "Restored version 12", "Verified and locked" … */
+  /** "Edited", "Imported as-filed GSTR-3B", "Restored version 12", "Verified", "Reviewed and locked" … */
   action: string | null;
   changedBy: string | null;
   changedAt: string;
@@ -78,7 +81,7 @@ const KEY_LABEL: Record<string, string> = {
   refundClaimed: 'Refund claimed', refundSanctioned: 'Refund sanctioned', refundRejected: 'Refund rejected', refundPending: 'Refund pending',
   demandTotal: 'Total demand', demandPaid: 'Demand paid', demandPending: 'Demand pending',
   compositionSupplies: 'Supplies from composition taxpayers', deemedSupply: 'Deemed supply u/s 143', approvalNotReturned: 'Goods sent on approval not returned',
-  status_: 'Status', prepared: 'Ready for review',
+  status_: 'Status', prepared: 'Prepared',
 };
 
 const unCamel = (k: string): string =>
@@ -98,9 +101,29 @@ const segment = (key: string, rowLabel: string | null): string | null => {
   return unCamel(key);
 };
 
+const ALLOT_SLOT: Record<string, string> = { preparer: 'Preparer', verifier: 'Verifier', reviewer: 'Reviewer' };
+
+/** Where in the sign-off a 'period' entry belongs, by path[0]. */
+const periodPlace = (path: string[]): string => {
+  switch (path[0]) {
+    case 'prepared': return 'Prepared';
+    case 'verified': return 'Verified';
+    case 'returned': return 'Sent back';
+    case 'allot': return `Allotment › ${ALLOT_SLOT[path[1]] ?? unCamel(path[1] ?? 'person')}`;
+    default: return 'Status';
+  }
+};
+
+/**
+ * Entries a client login is not shown: the allotment and the send-backs
+ * (internal review notes). Everything else of the log is.
+ */
+export const hiddenFromClients = (e: Pick<ChangeLogEntry, 'docKey' | 'path'>): boolean =>
+  e.docKey === 'period' && (e.path[0] === 'allot' || e.path[0] === 'returned');
+
 /** "Part A (taxable) › “Sales @18%” › Taxable value". */
 export const describePlace = (e: Pick<ChangeLogEntry, 'docKey' | 'path' | 'rowLabel'>): string => {
-  if (e.docKey === 'period') return e.path[0] === 'prepared' ? 'Ready for review' : 'Status';
+  if (e.docKey === 'period') return periodPlace(e.path);
   if (e.docKey === 'payables') return `${e.path[0] === 'input' ? 'Input' : 'Output'} payable › ${e.rowLabel ?? 'set-off'}`;
   if (e.docKey === 'justifications' && e.path[0] === 'lines' && e.path[1]) return `Reason for “${e.path[1]}”`;
   const parts = e.path.map((k) => segment(k, e.rowLabel)).filter((x): x is string => !!x);
@@ -148,22 +171,64 @@ export interface DescribedChange {
   what: string;
 }
 
-const STATUS_WORD: Record<string, string> = { not_started: 'Not started', in_progress: 'In progress', locked: 'Locked' };
+/** Stages (status rows from 11 Oct 2026) and the statuses written before them. */
+const STATUS_WORD: Record<string, string> = {
+  not_started: 'Not started', in_progress: 'In progress', preparing: 'Preparing', sent_back: 'Sent back',
+  prepared: 'Prepared', verified: 'Verified', locked: 'Locked',
+};
 
-/** A log entry in words, for the revision history screen and the exports. */
-export const describeChange = (e: ChangeLogEntry): DescribedChange => {
+/** Actions written before the three-stage sign-off, in today's words. */
+const LEGACY_ACTION: Record<string, string> = {
+  'Verified and locked': 'Reviewed and locked (verified in the same step)',
+  'Marked ready for review': 'Marked prepared',
+  'Withdrew ready for review': 'Withdrew prepared',
+};
+
+/** An allotment entry's {id, name} as the name ("—" for nobody). */
+const allottedName = (v: unknown): string => {
+  const name = v && typeof v === 'object' ? (v as { name?: unknown }).name : null;
+  return typeof name === 'string' && name.trim() ? displayName(name) : '—';
+};
+
+/**
+ * A log entry in words, for the revision history screen and the exports.
+ * `forClient` leaves out the sign-off notes (a client login never sees them).
+ */
+export const describeChange = (e: ChangeLogEntry, opts: { forClient?: boolean } = {}): DescribedChange => {
   const sheet = SHEET_LABEL[e.docKey] ?? unCamel(e.docKey);
   const place = describePlace(e);
   let from = formatLoggedValue(e.oldValue);
   let to = formatLoggedValue(e.newValue);
-  let what = e.action || 'Edited';
+  let what = (e.docKey === 'period' && e.action ? LEGACY_ACTION[e.action] : undefined) ?? (e.action || 'Edited');
+  if (opts.forClient && e.docKey === 'period') {
+    // A superadmin override's reason is the firm's internal note, like the other sign-off notes (it may span lines).
+    what = what.replace(/\(superadmin override: [\s\S]*\)$/, '(superadmin override)');
+    // Who was allotted is internal too: "Verified for Riya" reads "Verified".
+    what = what.replace(/^(Marked prepared|Verified|Reviewed and locked) for .+?(?=( after checking \d+ changes? since prepared)?$)/, '$1');
+  }
   if (e.kind === 'add') { what = `${what} — row added`; from = '—'; }
   if (e.kind === 'remove') { what = `${what} — row removed`; to = '—'; }
-  if (e.kind === 'status') {
-    const nv = (e.newValue ?? {}) as { status?: string; role?: string; note?: string };
-    from = typeof e.oldValue === 'string' ? STATUS_WORD[e.oldValue] ?? e.oldValue : '—';
-    to = [nv.status ? STATUS_WORD[nv.status] ?? nv.status : null, nv.role ? `as ${nv.role.replace('_', ' ')}` : null, nv.note ? `“${nv.note}”` : null]
-      .filter(Boolean).join(' · ') || '—';
+  if (e.kind === 'status' && e.path[0] === 'allot') {
+    from = allottedName(e.oldValue);
+    to = allottedName(e.newValue);
+  } else if (e.kind === 'status') {
+    // new_value is {stage, role, note, …}; before 11 Oct 2026 it was {status, role, note, checklist}.
+    const nv = (e.newValue ?? {}) as { stage?: string; status?: string; role?: string; note?: string };
+    let stage = nv.stage ?? nv.status;
+    let old = typeof e.oldValue === 'string' ? e.oldValue : null;
+    if (opts.forClient) {
+      // A client never sees a send-back: it reads as the stage the working went back to. Sent back to
+      // the preparer drops "Prepared" (so a later "Marked prepared" was from Preparing); sent back to
+      // the verifier keeps it (every other step out of a send-back was from Prepared).
+      if (old === 'sent_back') old = e.path[0] === 'prepared' && stage === 'prepared' ? 'preparing' : 'prepared';
+      if (stage === 'sent_back') stage = 'prepared';
+    }
+    from = old ? STATUS_WORD[old] ?? old : '—';
+    to = [
+      stage ? STATUS_WORD[stage] ?? stage : null,
+      nv.role ? `as ${(ROLE_LABEL[nv.role] ?? nv.role.replace(/_/g, ' ')).toLowerCase().replace('gst', 'GST')}` : null,
+      nv.note && !opts.forClient ? `“${nv.note}”` : null,
+    ].filter(Boolean).join(' · ') || '—';
   }
   if (e.kind === 'setoff') {
     const row = (e.action === 'Removed set-off' ? e.oldValue : e.newValue) as Record<string, unknown> | null;

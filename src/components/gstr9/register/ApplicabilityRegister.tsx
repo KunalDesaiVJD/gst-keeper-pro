@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, Download, Loader2, RefreshCw, Search } from 'lucide-react';
+import { Download, Loader2, RefreshCw, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { Badge } from '@/components/gstr9/badge';
@@ -10,11 +10,22 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
 import { applicability, croreText, panOf, thresholdsFor, type Applicability } from '@/lib/gstr9/applicability';
-import { loadRegister, saveTurnover, type RegisterClient, type TurnoverPatch, type WorkingState } from '@/lib/gstr9/register';
+import { useStaffList } from '@/hooks/useStaffList';
+import { loadRegister, saveTurnover, signoffStateOf, type RegisterClient, type TurnoverPatch } from '@/lib/gstr9/register';
+import {
+  changesSinceSignoff, daysInStage, displayName, isMine, isMyTurn, loadsOf, nextSentence, ownerOf, STAGE_META, toSignoffState,
+  type SignoffState,
+} from '@/lib/gstr9/signoffFlow';
+import { loadSignoffRow } from '@/lib/gstr9/store';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
 import { KpiTile, Note } from '../ui';
-import { CountBadge, StepTab, StepTabsList } from '../reco/StepTabs';
+import { CountBadge, StepTab, StepTabsList, ViewSwitch } from '../reco/StepTabs';
 import { fmtWhen } from '../overview/steps';
+import { useSignoffActor } from '../signoff/useSignoffActor';
+import { BulkAllotDialog } from './BulkAllotDialog';
+import { RegisterSignoffContext, type PersonFilter, type RegisterSignoffValue, type SignoffRowInfo, type StageFilter } from './signoffContext';
+import { SignoffCell, signoffLabel, signoffTitle } from './SignoffCell';
+import { SignoffHeader, stageFilterLabel } from './SignoffHeader';
 import { useInvalidateApplicability } from './useApplicability';
 
 /** What staff decide per client and year (client_annual_turnover). */
@@ -25,19 +36,20 @@ interface Entry {
   note: string;
 }
 
-interface Row extends Entry {
-  id: string;
+interface Row extends Entry, SignoffRowInfo {
   c: RegisterClient;
   type: string;
-  pan: string | null;
   /** Other clients with the same PAN — aggregate turnover is the PAN's. */
   siblings: string[];
   a: Applicability;
-  w?: WorkingState;
   inactive: boolean;
 }
 
 type Filter = 'all' | 'file' | 'needed' | 'exempt' | 'na';
+/** Whose work: everyone's, allotted to me, or waiting on me now. */
+type View = 'all' | 'mine' | 'turn';
+
+const NOT_STARTED = toSignoffState(null);
 
 const EMPTY: Entry = { turnover: null, opt9: false, opt9c: false, note: '' };
 
@@ -70,12 +82,23 @@ const inFilter = (r: Row, f: Filter): boolean =>
         : f === 'exempt' ? r.a.gstr9 === 'exempt' && !r.a.file9
           : r.a.gstr9 === 'not_applicable';
 
-const workingLabel = (w: WorkingState | undefined): { label: string; tone: 'outline' | 'warning' | 'info' | 'success' } => {
-  if (!w || (w.status === 'not_started' && !w.sheets)) return { label: 'Not started', tone: 'outline' };
-  if (w.status === 'locked') return { label: 'Locked', tone: 'success' };
-  if (w.preparedBy) return { label: 'Ready for review', tone: 'info' };
-  return { label: 'In progress', tone: 'warning' };
+const returnsText = (a: Applicability): string =>
+  a.file9 ? (a.file9c ? 'GSTR-9 + 9C' : 'GSTR-9 only')
+    : a.gstr9 === 'unknown' ? 'Turnover not typed'
+      : a.gstr9 === 'not_applicable' ? 'Not applicable' : 'Exempt — not filing';
+
+const inStageFilter = (r: SignoffRowInfo, f: StageFilter): boolean => {
+  if (f === 'unallotted') return !r.s.preparer && r.s.stage !== 'locked';
+  if (f === 'changed') return changesSinceSignoff(r.s) > 0;
+  if (f === 'stuck') return (daysInStage(r.s) ?? 0) >= 14;
+  return r.s.stage === f;
 };
+
+const holds = (r: SignoffRowInfo, id: string) => [r.s.preparer, r.s.verifier, r.s.reviewer].some((p) => p?.id === id);
+
+const dayText = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
+
+const VIEW_KEY = (userId: string) => `ar-register-view:${userId}`;
 
 /**
  * The Annual Return home: every client for the year, its aggregate turnover
@@ -84,15 +107,34 @@ const workingLabel = (w: WorkingState | undefined): { label: string; tone: 'outl
  * threshold the return is exempt and is prepared only if the client wishes,
  * which is ticked here per return. Opens each client's working.
  */
-export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (clientId: string) => void }> = ({ financialYear, onOpen }) => {
+export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (clientId: string, extra?: Record<string, string>) => void }> = ({ financialYear, onOpen }) => {
   const { user, isStaffRole } = useAuth();
   const by = user?.firstName || user?.email || 'staff';
   const readOnly = !isStaffRole();
   const invalidate = useInvalidateApplicability();
+  const me = useSignoffActor();
+  const { staff, loading: staffLoading, error: staffError, reload: reloadStaff } = useStaffList();
 
   const [clients, setClients] = useState<RegisterClient[]>([]);
   const [entries, setEntries] = useState<Map<string, Entry>>(new Map());
-  const [working, setWorking] = useState<Map<string, WorkingState>>(new Map());
+  const [working, setWorking] = useState<Map<string, SignoffState>>(new Map());
+  const [view, setViewState] = useState<View>(() => {
+    try {
+      const v = me.id ? localStorage.getItem(VIEW_KEY(me.id)) : null;
+      return v === 'mine' || v === 'turn' || v === 'all' ? v : 'all';
+    } catch { return 'all'; }
+  });
+  const viewChosen = useRef(false);
+  const setView = useCallback((v: View) => {
+    viewChosen.current = true;
+    setViewState(v);
+    try { if (me.id) localStorage.setItem(VIEW_KEY(me.id), v); } catch { /* storage unavailable */ }
+  }, [me.id]);
+  const [stageFilter, setStageFilter] = useState<StageFilter | null>(null);
+  const [personFilter, setPersonFilter] = useState<PersonFilter | null>(null);
+  const [openFor, setOpenFor] = useState<string | null>(null);
+  const restoreFocusRef = useRef<(() => void) | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
@@ -136,23 +178,29 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
   const allRows = useMemo<Row[]>(() => clients.map((c) => {
     const e = entries.get(c.id) ?? EMPTY;
     const pan = panOf(c.gstin);
+    const a = applicability({
+      financialYear,
+      registrationType: c.registration_type,
+      registrationDate: c.registration_date,
+      cancellationDate: c.cancellation_date || c.registration_cancellation_date,
+      turnover: e.turnover,
+      gstr9OptIn: e.opt9,
+      gstr9cOptIn: e.opt9c,
+    });
+    const st = working.get(c.id) ?? NOT_STARTED;
     return {
       ...e,
       id: c.id,
+      name: c.name,
+      gstin: c.gstin,
       c,
       type: typeLabel(c),
       pan,
       siblings: pan ? (byPan.get(pan) ?? []).filter((id) => id !== c.id) : [],
-      a: applicability({
-        financialYear,
-        registrationType: c.registration_type,
-        registrationDate: c.registration_date,
-        cancellationDate: c.cancellation_date || c.registration_cancellation_date,
-        turnover: e.turnover,
-        gstr9OptIn: e.opt9,
-        gstr9cOptIn: e.opt9c,
-      }),
-      w: working.get(c.id),
+      a,
+      s: st,
+      returns: returnsText(a),
+      inScope: a.file9 || a.gstr9 === 'unknown' || st.sheets > 0 || (st.stage !== 'not_started' && st.stage !== 'preparing'),
       inactive: !!c.inactive_at_hand,
     };
   }), [clients, entries, working, byPan, financialYear]);
@@ -163,17 +211,104 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
     return { all: visible.length, file: n('file'), needed: n('needed'), exempt: n('exempt'), na: n('na') };
   }, [visible]);
   const needle = q.trim().toLowerCase();
-  const rows = useMemo(
-    () => visible.filter((r) => inFilter(r, filter) && (!needle || `${r.c.name} ${r.c.gstin ?? ''}`.toLowerCase().includes(needle))),
-    [visible, filter, needle],
+  const inView = useCallback((r: Row, v: View) => (v === 'all' ? true : v === 'mine' ? isMine(r.s, me) : r.inScope && isMyTurn(r.s, me)), [me]);
+  // The register before the Sign-off column's own filters: what their counts are taken over.
+  const base = useMemo(
+    () => visible.filter((r) => inFilter(r, filter) && inView(r, view) && (!needle || `${r.c.name} ${r.c.gstin ?? ''}`.toLowerCase().includes(needle))),
+    [visible, filter, needle, view, inView],
   );
+  const baseIds = useMemo(() => new Set(base.map((r) => r.id)), [base]);
+  const rows = useMemo(
+    () => visible.filter((r) => r.id === openFor || (baseIds.has(r.id) && (!stageFilter || (r.inScope && inStageFilter(r, stageFilter)))
+      && (!personFilter || (personFilter === 'unallotted' ? r.inScope && inStageFilter(r, 'unallotted') : holds(r, personFilter === 'me' ? me.id : personFilter))))),
+    // The row whose popover is open stays while it is open: acting on it (in "My turn") must not pull it away mid-action.
+    [visible, baseIds, stageFilter, personFilter, me.id, openFor],
+  );
+  // Counted on the tab shown, like the rows the switch then shows.
+  const viewCounts = useMemo(() => {
+    const onTab = visible.filter((r) => inFilter(r, filter));
+    return {
+      mine: onTab.filter((r) => isMine(r.s, me)).length,
+      turn: onTab.filter((r) => r.inScope && isMyTurn(r.s, me)).length,
+    };
+  }, [visible, filter, me]);
+  const turnAnywhere = useMemo(() => visible.filter((r) => r.inScope && isMyTurn(r.s, me)).length, [visible, me]);
+  // An employee with work waiting starts on "My turn" — decided once, on the first load; later changes never switch the view.
+  const firstLoadDone = useRef(false);
+  useEffect(() => {
+    if (loading || firstLoadDone.current || !me.id) return;
+    firstLoadDone.current = true;
+    if (viewChosen.current || me.isManager) return;
+    let stored: string | null = null;
+    try { stored = localStorage.getItem(VIEW_KEY(me.id)); } catch { /* storage unavailable */ }
+    if (!stored && turnAnywhere > 0) { viewChosen.current = true; setFilter('all'); setViewState('turn'); }
+  }, [loading, me.isManager, me.id, turnAnywhere]);
+
+  const stageCounts = useMemo(() => {
+    const c: Partial<Record<StageFilter, number>> = {};
+    const fs: StageFilter[] = ['unallotted', 'not_started', 'preparing', 'sent_back', 'prepared', 'verified', 'locked', 'changed', 'stuck'];
+    const scoped = base.filter((r) => r.inScope);
+    fs.forEach((f) => { c[f] = scoped.filter((r) => inStageFilter(r, f)).length; });
+    return c;
+  }, [base]);
+  const personCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    base.forEach((r) => {
+      new Set([r.s.preparer?.id, r.s.verifier?.id, r.s.reviewer?.id].filter((x): x is string => !!x))
+        .forEach((id) => m.set(id, (m.get(id) ?? 0) + 1));
+    });
+    return m;
+  }, [base]);
+  // Open work each person holds, over the workings being prepared this year (not those no longer filed).
+  const loads = useMemo(() => loadsOf(allRows.filter((r) => r.inScope).map((r) => r.s)), [allRows]);
+  const staffById = useMemo(() => new Map(staff.map((x) => [x.userId, x])), [staff]);
+  const allotScope = useMemo(() => rows.filter((r) => r.inScope && r.s.stage !== 'locked'), [rows]);
+
+  const patchRow = useCallback((clientId: string, st: SignoffState) => {
+    setWorking((m) => { const n = new Map(m); n.set(clientId, st); return n; });
+  }, []);
+  const refreshRow = useCallback(async (clientId: string) => {
+    const row = await loadSignoffRow(clientId, financialYear);
+    if (!row) return null;
+    const st = signoffStateOf(row);
+    patchRow(clientId, st);
+    return st;
+  }, [financialYear, patchRow]);
+  const openSignoff = useCallback((id: string, restore: () => void) => {
+    restoreFocusRef.current = restore;
+    setOpenFor(id);
+  }, []);
+
+  const signoffCtx = useMemo<RegisterSignoffValue>(() => ({
+    me, financialYear, staff, staffById, staffLoading, staffError, reloadStaff, loads,
+    openFor, setOpenFor, restoreFocusRef, patchRow, refreshRow, onOpen,
+    stageFilter, setStageFilter, personFilter, setPersonFilter, stageCounts, personCounts,
+    allotScope, openBulk: () => setBulkOpen(true),
+  }), [me, financialYear, staff, staffById, staffLoading, staffError, reloadStaff, loads, openFor, patchRow, refreshRow, onOpen,
+    stageFilter, personFilter, stageCounts, personCounts, allotScope]);
 
   const th = thresholdsFor(financialYear);
   const applicable = visible.filter((r) => r.a.gstr9 !== 'not_applicable');
   const entered = applicable.filter((r) => r.turnover !== null).length;
   const file9 = visible.filter((r) => r.a.file9);
   const file9c = visible.filter((r) => r.a.file9c);
-  const states = file9.map((r) => workingLabel(r.w).label);
+  const allotted = file9.filter((r) => r.s.preparer || ['prepared', 'verified', 'locked'].includes(r.s.stage)).length;
+  const at = (st: SignoffState['stage'][]) => file9.filter((r) => st.includes(r.s.stage)).length;
+  const lockedN = at(['locked']);
+  const toPrepare = at(['not_started', 'preparing']) + file9.filter((r) => r.s.stage === 'sent_back' && r.s.returned?.to === 'preparer').length;
+  const toVerify = at(['prepared']) + file9.filter((r) => r.s.stage === 'sent_back' && r.s.returned?.to === 'verifier').length;
+  const toReview = at(['verified']);
+  const sentBack = at(['sent_back']);
+  const changedN = file9.filter((r) => changesSinceSignoff(r.s) > 0).length;
+  const stuck = file9.filter((r) => (daysInStage(r.s) ?? 0) >= 14).length;
+  const allotUnallotted = () => {
+    setFilter('file');
+    setView('all');
+    setPersonFilter(null);
+    setStageFilter('unallotted');
+    setQ('');
+    setBulkOpen(true);
+  };
   const turnoverOf = (id: string) => (entries.get(id) ?? EMPTY).turnover;
 
   const persist = useCallback(async (patches: TurnoverPatch[], undo: Map<string, Entry>) => {
@@ -258,6 +393,17 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
           {r.c.name}
         </button>
       ),
+    },
+    {
+      key: 'signoff',
+      header: <SignoffHeader />,
+      type: 'display',
+      align: 'left',
+      width: 232,
+      value: (r) => signoffLabel(r),
+      title: (r) => signoffTitle(r),
+      activate: (r, restore) => { if (r.inScope || r.s.preparer || r.s.verifier || r.s.reviewer) openSignoff(r.id, restore); },
+      render: (r) => <SignoffCell row={r} />,
     },
     {
       key: 'gstin',
@@ -361,48 +507,42 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       },
     },
     {
-      key: 'working',
-      header: 'Working',
-      type: 'display',
-      align: 'left',
-      width: 196,
-      value: (r) => workingLabel(r.w).label,
-      title: (r) => (r.w?.lastSavedAt ? `Last saved ${fmtWhen(r.w.lastSavedAt)}` : undefined),
-      render: (r) => {
-        if (!r.a.file9 && !r.w?.sheets) return <span className="text-[11px] text-muted-foreground">—</span>;
-        const s = workingLabel(r.w);
-        return (
-          <span
-            className="inline-flex items-center gap-1.5"
-            // A button inside a grid cell: keep the grid from taking its click and keys.
-            onMouseDown={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <Badge variant={s.tone} className="text-[10px] font-normal">{s.label}</Badge>
-            <button
-              type="button"
-              onClick={() => onOpen(r.id)}
-              className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={`Open the working of ${r.c.name}`}
-            >
-              Open <ArrowRight className="h-3 w-3" aria-hidden />
-            </button>
-          </span>
-        );
-      },
-    },
-    {
       key: 'note',
       header: 'Note',
       type: 'text',
       align: 'left',
-      width: 200,
+      width: 176,
       value: (r) => r.note,
       onEdit: (r, e) => ({ ...r, note: e.text.slice(0, 300) }),
       title: (r) => r.note || 'e.g. why the client wishes the return filed',
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [th, onOpen, entries, clients]);
+  ], [th, onOpen, entries, clients, openSignoff]);
+
+  /** The sign-off as spreadsheet columns (no notes — they stay in the working). */
+  const signoffExport = (r: Row): Record<string, string | number> => {
+    const st = r.s;
+    const out = !r.inScope && !st.preparer && !st.verifier && !st.reviewer;
+    const o = ownerOf(st);
+    const name = (p: { name: string } | null | undefined) => (p ? displayName(p.name) : '');
+    return {
+      Stage: out ? '' : !r.inScope ? 'Not filing' : STAGE_META[st.stage].label,
+      With: out || !r.inScope ? '' : o.kind === 'person' ? displayName(o.person.name) : o.kind === 'managers' ? 'Any GST manager' : o.kind === 'unallotted' ? 'Unallotted' : '',
+      'Days in stage': daysInStage(st) ?? '',
+      Preparer: name(st.preparer),
+      'Prepared by': name(st.prepared),
+      'Prepared on': dayText(st.prepared?.at),
+      Verifier: name(st.verifier),
+      'Verified by': name(st.verified),
+      'Verified on': dayText(st.verified?.at),
+      Reviewer: name(st.reviewer),
+      'Locked by': name(st.locked),
+      'Locked on': dayText(st.locked?.at),
+      'Changes since sign-off': changesSinceSignoff(st) || '',
+      Next: out || !r.inScope ? '' : nextSentence(st) ?? '',
+      'Last saved': st.lastSavedAt ? fmtWhen(st.lastSavedAt) : '',
+    };
+  };
 
   const exportXlsx = () => {
     const data = rows.map((r) => ({
@@ -414,11 +554,11 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       'GSTR-9': g9Label(r),
       'GSTR-9C': g9cLabel(r),
       Note: r.note,
-      Working: r.a.file9 || r.w?.sheets ? workingLabel(r.w).label : '',
-      'Last saved': r.w?.lastSavedAt ? fmtWhen(r.w.lastSavedAt) : '',
+      ...signoffExport(r),
     }));
     const ws = XLSX.utils.json_to_sheet(data);
-    ws['!cols'] = [{ wch: 40 }, { wch: 17 }, { wch: 12 }, { wch: 22 }, { wch: 20 }, { wch: 30 }, { wch: 26 }, { wch: 30 }, { wch: 16 }, { wch: 18 }];
+    ws['!cols'] = [{ wch: 40 }, { wch: 17 }, { wch: 12 }, { wch: 22 }, { wch: 20 }, { wch: 30 }, { wch: 26 }, { wch: 30 },
+      { wch: 12 }, { wch: 18 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 36 }, { wch: 18 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `FY ${financialYear}`);
     XLSX.writeFile(wb, `GSTR-9 9C applicability FY ${financialYear}.xlsx`);
@@ -427,12 +567,14 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
   const fmtCount = (a: number, b?: number) => (b === undefined ? a : `${a} / ${b}`);
 
   return (
+    <RegisterSignoffContext.Provider value={signoffCtx}>
     <div className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="font-heading text-lg font-semibold leading-tight">All clients · FY {financialYear}</h2>
         <p className="min-w-[14rem] flex-1 text-xs leading-snug text-muted-foreground">
           Type each client&apos;s aggregate turnover for the year (paste a column from Excel works). GSTR-9 is required above {croreText(th.gstr9)},
-          GSTR-9C above {croreText(th.gstr9c)}; below that the return is exempt and is prepared only if the client wishes.
+          GSTR-9C above {croreText(th.gstr9c)}; below that the return is exempt and is prepared only if the client wishes. Allot each working and
+          follow it through Prepared → Verified → Reviewed &amp; locked in the Sign-off column.
         </p>
       </div>
 
@@ -445,11 +587,21 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
         />
         <KpiTile label="GSTR-9 to file" value={file9.length} hint={`${file9.filter((r) => r.a.gstr9 === 'required').length} required · ${file9.filter((r) => r.a.gstr9 === 'exempt').length} at the client's wish`} />
         <KpiTile label="GSTR-9C to prepare" value={file9c.length} hint={`${file9c.filter((r) => r.a.gstr9c === 'required').length} required · ${file9c.filter((r) => r.a.gstr9c === 'exempt').length} at the client's wish`} />
-        <KpiTile label="Exempt — not filing" value={counts.exempt} hint={`Turnover up to ${croreText(th.gstr9)}`} />
         <KpiTile
-          label="Workings of those filing"
-          value={`${states.filter((s) => s === 'Locked').length} locked`}
-          hint={`${states.filter((s) => s === 'In progress' || s === 'Ready for review').length} in progress · ${states.filter((s) => s === 'Not started').length} not started`}
+          label="Allotted"
+          value={fmtCount(allotted, file9.length)}
+          hint={allotted < file9.length
+            ? me.isManager
+              ? <button type="button" onClick={allotUnallotted} className="font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Allot {file9.length - allotted} without a preparer →</button>
+              : `${file9.length - allotted} without a preparer`
+            : file9.length ? 'Every working has a preparer' : 'Nothing to file yet'}
+          tone={allotted < file9.length ? 'warn' : file9.length ? 'ok' : 'neutral'}
+        />
+        <KpiTile
+          label="Sign-off"
+          value={`${lockedN} / ${file9.length} locked`}
+          hint={`${toPrepare} to prepare · ${toVerify} to verify · ${toReview} to review${sentBack ? ` · ${sentBack} sent back` : ''}${changedN ? ` · ${changedN} changed since` : ''}${stuck ? ` · ${stuck} stuck 14d+` : ''}`}
+          tone={file9.length && lockedN === file9.length ? 'ok' : sentBack || changedN || stuck ? 'warn' : 'neutral'}
         />
       </div>
 
@@ -459,6 +611,16 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
           value={filter}
           actions={
             <>
+              <ViewSwitch<View>
+                label="Whose work"
+                value={view}
+                onChange={setView}
+                options={[
+                  { value: 'all', label: 'Everyone' },
+                  { value: 'mine', label: `Mine${viewCounts.mine ? ` (${viewCounts.mine})` : ''}`, title: 'Allotted to me — to prepare, verify or review — and not yet locked' },
+                  { value: 'turn', label: `My turn${viewCounts.turn ? ` (${viewCounts.turn})` : ''}`, title: 'Waiting on me now' },
+                ]}
+              />
               <div className="relative w-56">
                 <Search className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
                 <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search client or GSTIN…" className="h-8 pl-7 text-xs" aria-label="Search clients" />
@@ -483,6 +645,25 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
           <StepTab value="na">Not applicable <CountBadge n={counts.na} label="clients" /></StepTab>
         </StepTabsList>
 
+        {(stageFilter || personFilter) && (
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-muted-foreground">Sign-off:</span>
+            {stageFilter && (
+              <button type="button" onClick={() => setStageFilter(null)} aria-label={`Remove the filter ${stageFilterLabel(stageFilter)}`}
+                className="inline-flex h-7 items-center gap-1 rounded-full border bg-card px-2.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                {stageFilterLabel(stageFilter)} <X className="h-3 w-3" aria-hidden />
+              </button>
+            )}
+            {personFilter && (
+              <button type="button" onClick={() => setPersonFilter(null)} aria-label="Remove the person filter"
+                className="inline-flex h-7 items-center gap-1 rounded-full border bg-card px-2.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                {personFilter === 'me' ? 'Allotted to me' : personFilter === 'unallotted' ? 'No preparer' : `Allotted to ${displayName(staffById.get(personFilter)?.name ?? 'someone')}`}
+                <X className="h-3 w-3" aria-hidden />
+              </button>
+            )}
+          </div>
+        )}
+
         <SheetGrid<Row>
           label={`GSTR-9 / 9C applicability, FY ${financialYear}`}
           rows={rows}
@@ -493,9 +674,10 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
           rowTone={(r) => (r.inactive || r.a.gstr9 === 'not_applicable' ? 'muted' : undefined)}
           pasteOrder={['turnover', 'g9', 'g9c', 'note']}
           maxHeight="max(360px, calc(100vh - 330px))"
-          emptyText={loading ? 'Loading clients…' : needle ? 'No client matches the search.' : 'No client in this view.'}
+          emptyText={loading ? 'Loading clients…' : needle ? 'No client matches the search.' : stageFilter || personFilter ? 'No working matches these sign-off filters.' : view !== 'all' ? (filter !== 'all' ? `Nothing ${view === 'turn' ? 'waiting on you' : 'allotted to you'} on this tab — see All.` : view === 'turn' ? 'Nothing is waiting on you.' : 'Nothing is allotted to you.') : 'No client in this view.'}
         />
       </Tabs>
+      <BulkAllotDialog open={bulkOpen} onOpenChange={setBulkOpen} rows={allotScope} />
 
       <Note tone="position">
         FY {financialYear}: GSTR-9 is required above {croreText(th.gstr9)} of aggregate turnover — up to that the year is exempt ({th.gstr9Basis}).
@@ -505,6 +687,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
         (late-fee slab), typed once.
       </Note>
     </div>
+    </RegisterSignoffContext.Provider>
   );
 };
 
