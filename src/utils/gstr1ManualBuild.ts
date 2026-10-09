@@ -22,6 +22,7 @@
 //    own small fixed-shape table.
 
 import { editableUqc, normaliseGstr1Hsn } from '@/lib/gstr1/uqc';
+import { checkRecipientGstin } from '@/lib/gstr1/validate';
 
 // 'ata' / 'txpda' are Table 11(2) — amendments to a PRIOR period's Table 11A /
 // 11B. They carry an `omon` (original month, MMYYYY) and restate that month's
@@ -102,6 +103,18 @@ export const GST_STATE_CODES: { code: string; name: string }[] = [
   { code: '97', name: 'Other Territory' }, { code: '99', name: 'Centre Jurisdiction' },
 ];
 
+/**
+ * Places of supply GSTR-1 takes: the offline tool's state list (no 28, the
+ * pre-2014 Andhra Pradesh code, and no 99, Centre Jurisdiction, which is a
+ * registration code and never a POS) plus 97 Other Territory, and 96 Foreign
+ * Country only on B2B invoices and credit/debit notes to registered persons.
+ * GST_STATE_CODES above stays whole: the advances forms use it for a party's state.
+ */
+export const gstr1PosCodes = (section: Gstr1Section): string[] => {
+  const codes = Array.from({ length: 38 }, (_, i) => String(i + 1).padStart(2, '0')).filter((c) => c !== '28');
+  return [...codes, ...(section === 'b2b' || section === 'cdnr' ? ['96'] : []), '97'];
+};
+
 // ---------------------------------------------------------------------------
 // Section column configs — drive the generic editable grid in the UI
 // ---------------------------------------------------------------------------
@@ -115,6 +128,8 @@ export interface ColumnDef {
   computed?: boolean; // rendered read-only, derived from other fields
 }
 
+const INV_TYPE_OPTIONS = [{ value: 'R', label: 'Regular' }, { value: 'SEWP', label: 'SEZ (Pay)' }, { value: 'SEWOP', label: 'SEZ (No Pay)' }, { value: 'DE', label: 'Deemed Exp' }];
+
 export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ColumnDef[]> = {
   b2b: [
     { key: 'ctin', label: 'Customer GSTIN', type: 'text', width: 'w-36' },
@@ -123,7 +138,7 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'
     { key: 'val', label: 'Invoice Value', type: 'number', width: 'w-28' },
     { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
     { key: 'rchrg', label: 'Rev. Chrg', type: 'select', options: [{ value: 'N', label: 'No' }, { value: 'Y', label: 'Yes' }], width: 'w-20' },
-    { key: 'inv_typ', label: 'Type', type: 'select', options: [{ value: 'R', label: 'Regular' }, { value: 'SEWP', label: 'SEZ (Pay)' }, { value: 'SEWOP', label: 'SEZ (No Pay)' }, { value: 'DE', label: 'Deemed Exp' }], width: 'w-28' },
+    { key: 'inv_typ', label: 'Type', type: 'select', options: INV_TYPE_OPTIONS, width: 'w-28' },
     { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
     { key: 'txval', label: 'Taxable Value', type: 'number', width: 'w-28' },
     { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
@@ -143,7 +158,9 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'
   ],
   b2cs: [
     { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
-    { key: 'typ', label: 'E-Comm?', type: 'select', options: [{ value: 'OE', label: 'No (Own Supply)' }, { value: 'E', label: 'Via E-comm Operator' }], width: 'w-32' },
+    // OE only: the portal takes typ E only with the operator's GSTIN (etin),
+    // which this grid has no column for; e-commerce supplies go in Table 14.
+    { key: 'typ', label: 'E-Comm?', type: 'select', options: [{ value: 'OE', label: 'No (Own Supply)' }], width: 'w-32' },
     { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
     { key: 'txval', label: 'Taxable Value', type: 'number', width: 'w-28' },
     { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
@@ -158,6 +175,10 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'
     { key: 'ntTyp', label: 'Type', type: 'select', options: [{ value: 'C', label: 'Credit Note' }, { value: 'D', label: 'Debit Note' }], width: 'w-24' },
     { key: 'val', label: 'Note Value', type: 'number', width: 'w-28' },
     { key: 'pos', label: 'POS', type: 'state', width: 'w-24' },
+    // Every portal or offline-tool note carries both; a note without them was
+    // rejected as a whole file (Ray Wings Jul-26). Blank goes out as N / R.
+    { key: 'rchrg', label: 'Rev. Chrg', type: 'select', options: [{ value: 'N', label: 'No' }, { value: 'Y', label: 'Yes' }], width: 'w-20' },
+    { key: 'inv_typ', label: 'Supply Type', type: 'select', options: INV_TYPE_OPTIONS, width: 'w-28' },
     { key: 'rt', label: 'Rate %', type: 'number', width: 'w-16' },
     { key: 'txval', label: 'Taxable Value', type: 'number', width: 'w-28' },
     { key: 'iamt', label: 'IGST', type: 'number', width: 'w-24', computed: true },
@@ -166,6 +187,9 @@ export const SECTION_COLUMNS: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'
     { key: 'csamt', label: 'Cess', type: 'number', width: 'w-20' },
   ],
   cdnur: [
+    // B2CL notes follow a large inter-state sale and carry its POS; export
+    // notes (EXPWP / EXPWOP) carry no POS at all, as the offline tool requires.
+    { key: 'urTyp', label: 'Note For', type: 'select', options: [{ value: 'B2CL', label: 'B2CL (Large)' }, { value: 'EXPWP', label: 'Export (Pay)' }, { value: 'EXPWOP', label: 'Export (No Pay)' }], width: 'w-32' },
     { key: 'ntNum', label: 'Note No.', type: 'text', width: 'w-28' },
     { key: 'ntDt', label: 'Note Date', type: 'date', width: 'w-32' },
     { key: 'ntTyp', label: 'Type', type: 'select', options: [{ value: 'C', label: 'Credit Note' }, { value: 'D', label: 'Debit Note' }], width: 'w-24' },
@@ -262,6 +286,9 @@ export const DOC_TYPES = [
 
 export function recomputeRowTax(section: Gstr1Section, row: ManualRow, homeState: string): ManualRow {
   if (section === 'b2cl' || section === 'cdnur' || section === 'exp') {
+    // An export (or export note) without payment carries no tax, as the
+    // offline tool forces: the rate stays for the record, IGST is 0.
+    if ((section === 'exp' && row.expTyp === 'WOPAY') || (section === 'cdnur' && row.urTyp === 'EXPWOP')) return { ...row, iamt: 0 };
     const taxAmt = round2(((Number(row.rt) || 0) / 100) * (Number(row.txval) || 0));
     return { ...row, iamt: taxAmt };
   }
@@ -278,6 +305,11 @@ export function recomputeRowTax(section: Gstr1Section, row: ManualRow, homeState
     return { ...row, ...split };
   }
   if (section === 'b2b' || section === 'cdnr') {
+    // SEZ supplies and CBW are IGST whatever the POS, a SEZ unit in the
+    // client's own state included; SEZ without payment carries no tax at all
+    // (the offline tool zeroes it).
+    if (row.inv_typ === 'SEWOP') return { ...row, iamt: 0, camt: 0, samt: 0 };
+    if (row.inv_typ === 'SEWP' || row.inv_typ === 'CBW') return { ...row, ...computeTaxSplit(row.rt, row.txval, '', homeState) };
     const split = computeTaxSplit(row.rt, row.txval, row.pos, homeState);
     return { ...row, ...split };
   }
@@ -393,7 +425,10 @@ export function assembleGstr1Json(params: {
     if (!cdnrMap.has(r.ctin)) cdnrMap.set(r.ctin, new Map());
     const ntMap = cdnrMap.get(r.ctin)!;
     if (!ntMap.has(r.ntNum)) {
-      ntMap.set(r.ntNum, { nt_num: r.ntNum, nt_dt: toPortalDate(r.ntDt), ntty: r.ntTyp || 'C', val: num(r.val), pos: r.pos, itms: [] });
+      ntMap.set(r.ntNum, {
+        nt_num: r.ntNum, nt_dt: toPortalDate(r.ntDt), ntty: r.ntTyp || 'C', val: num(r.val), pos: r.pos,
+        rchrg: r.rchrg || 'N', inv_typ: r.inv_typ || 'R', itms: [],
+      });
     }
     ntMap.get(r.ntNum)!.itms.push({
       num: ntMap.get(r.ntNum)!.itms.length + 1,
@@ -407,7 +442,11 @@ export function assembleGstr1Json(params: {
   (rowsBySection.cdnur || []).forEach((r) => {
     if (!r.ntNum) return;
     if (!cdnurMap.has(r.ntNum)) {
-      cdnurMap.set(r.ntNum, { nt_num: r.ntNum, nt_dt: toPortalDate(r.ntDt), ntty: r.ntTyp || 'C', val: num(r.val), pos: r.pos, typ: 'B2CL', itms: [] });
+      const typ = r.urTyp || 'B2CL';
+      cdnurMap.set(r.ntNum, {
+        nt_num: r.ntNum, nt_dt: toPortalDate(r.ntDt), ntty: r.ntTyp || 'C', val: num(r.val),
+        ...(typ === 'B2CL' ? { pos: r.pos } : {}), typ, itms: [],
+      });
     }
     cdnurMap.get(r.ntNum)!.itms.push({
       num: cdnurMap.get(r.ntNum)!.itms.length + 1,
@@ -424,7 +463,17 @@ export function assembleGstr1Json(params: {
     if (!expMap.has(typKey)) expMap.set(typKey, new Map());
     const invMap = expMap.get(typKey)!;
     if (!invMap.has(r.inum)) {
-      invMap.set(r.inum, { inum: r.inum, idt: toPortalDate(r.idt), val: num(r.val), sbpcode: r.sbpcode || '', sbnum: r.sbnum || '', sbdt: toPortalDate(r.sbdt), itms: [] });
+      // Shipping bill fields go only when filled: the portal validates them
+      // when present, and blank strings cost Growq Aug-26 two whole-file
+      // rejections while the offline-tool file (which omits them) went through.
+      const sb = (v: unknown) => String(v ?? '').trim();
+      invMap.set(r.inum, {
+        inum: r.inum, idt: toPortalDate(r.idt), val: num(r.val),
+        ...(sb(r.sbpcode) ? { sbpcode: sb(r.sbpcode) } : {}),
+        ...(sb(r.sbnum) ? { sbnum: sb(r.sbnum) } : {}),
+        ...(sb(r.sbdt) ? { sbdt: toPortalDate(sb(r.sbdt)) } : {}),
+        itms: [],
+      });
     }
     invMap.get(r.inum)!.itms.push({ rt: num(r.rt), txval: num(r.txval), iamt: num(r.iamt), csamt: num(r.csamt) });
   });
@@ -506,20 +555,22 @@ export function assembleGstr1Json(params: {
   // Real portal-exported JSON (confirmed against an actual download) puts a
   // "num" (serial within the doc_num group) on EVERY docs[] entry:
   //   {"cancel":0,"from":"...","net_issue":47,"num":1,"to":"...","totnum":47}
-  // We only ever emit one docs[] row per doc_num group, so num is always 1 —
-  // but omitting the field entirely (as before) is a schema mismatch on its
-  // own, independent of the HSN/date fixes.
-  const docDet = (docRows || [])
+  // One doc_det per document type with its series numbered 1..n: two series
+  // of one type as two doc_det entries repeat doc_num, which the Ray Wings
+  // Jul-26 file did before it was rejected whole.
+  const docGroups = new Map<number, { doc_num: number; docs: any[] }>();
+  (docRows || [])
     .filter((r) => r.doc_typ)
-    .map((r, i) => {
+    .forEach((r, i) => {
       const meta = DOC_TYPES.find((d) => d.value === r.doc_typ);
+      const docNum = meta?.doc_num || i + 1;
+      if (!docGroups.has(docNum)) docGroups.set(docNum, { doc_num: docNum, docs: [] });
+      const group = docGroups.get(docNum)!;
       const totnum = num(r.totnum);
       const cancel = num(r.cancel);
-      return {
-        doc_num: meta?.doc_num || i + 1,
-        docs: [{ num: 1, from: r.from || '', to: r.to || '', totnum, cancel, net_issue: totnum - cancel }],
-      };
+      group.docs.push({ num: group.docs.length + 1, from: r.from || '', to: r.to || '', totnum, cancel, net_issue: totnum - cancel });
     });
+  const docDet = Array.from(docGroups.values());
 
   // Real portal-exported JSON omits a section's key entirely when there's
   // nothing in it (confirmed against actual downloads — a return with no
@@ -565,10 +616,6 @@ export function hasMissingHsnSummary(rowsBySection: Record<Exclude<Gstr1Section,
   return hasTaxableValue && !hasHsnRows;
 }
 
-// Standard 15-char GSTIN shape: 2-digit state code, 10-char PAN (5 letters,
-// 4 digits, 1 letter), 1-char entity number, literal 'Z', 1-char checksum.
-const GSTIN_FORMAT = /^[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][1-9A-Za-z]Z[0-9A-Za-z]$/;
-
 /**
  * Pre-flight check before Generate JSON: a single malformed counterparty
  * GSTIN (ctin) anywhere in the return is enough for the portal's upload
@@ -576,16 +623,20 @@ const GSTIN_FORMAT = /^[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][1-9A-Za-z]Z[0-9A-Za-z
  * uploaded" message HSN and other schema problems produce — with no hint
  * which invoice or field is actually wrong. Only b2b/cdnr carry a ctin;
  * b2cl/b2cs/cdnur/exp/at/txpd address the recipient by place-of-supply, not
- * GSTIN, so they're not checked here.
+ * GSTIN, so they're not checked here. The test is the push validator's
+ * (src/lib/gstr1/validate.ts): GSTIN, UIN, TDS and NRTP shapes with GSTN's
+ * check character, and never the client's own GSTIN (`ownGstin`).
  */
-export function findInvalidGstinRows(rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]>): { section: 'b2b' | 'cdnr'; ctin: string; inum: string }[] {
-  const invalid: { section: 'b2b' | 'cdnr'; ctin: string; inum: string }[] = [];
+export function findInvalidGstinRows(
+  rowsBySection: Record<Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>, ManualRow[]>,
+  ownGstin?: string,
+): { section: 'b2b' | 'cdnr'; ctin: string; inum: string; reason: string }[] {
+  const invalid: { section: 'b2b' | 'cdnr'; ctin: string; inum: string; reason: string }[] = [];
   (['b2b', 'cdnr'] as const).forEach((section) => {
     (rowsBySection[section] || []).forEach((r) => {
       const ctin = String(r.ctin || '').trim();
-      if (ctin && !GSTIN_FORMAT.test(ctin)) {
-        invalid.push({ section, ctin, inum: r.inum || r.ntNum || '(row without invoice no.)' });
-      }
+      const reason = ctin ? checkRecipientGstin(ctin, ownGstin) : null;
+      if (reason) invalid.push({ section, ctin, inum: r.inum || r.ntNum || '(row without invoice no.)', reason });
     });
   });
   return invalid;
@@ -611,7 +662,12 @@ export function findInvoiceValueMismatchRows(rowsBySection: Record<Exclude<Gstr1
       if (!enteredRow) return; // nothing entered yet — handled elsewhere (e.g. required-field checks)
       const expected = round2(rows.reduce((s, r) => s + num(r.txval) + num(r.iamt) + num(r.camt) + num(r.samt) + num(r.csamt), 0));
       const entered = num(enteredRow.val);
-      if (Math.abs(entered - expected) > TOLERANCE) {
+      // Under reverse charge the supplier's document value is the taxable
+      // value (the recipient pays the tax): the portal accepted Sunrise
+      // Logistics Sep-26 with 48 such invoices, so that is not a mismatch.
+      const rcmAtTaxable = enteredRow.rchrg === 'Y'
+        && Math.abs(entered - round2(rows.reduce((s, r) => s + num(r.txval), 0))) <= TOLERANCE;
+      if (Math.abs(entered - expected) > TOLERANCE && !rcmAtTaxable) {
         mismatches.push({ section, inum: enteredRow.inum || enteredRow.ntNum || '(row without invoice no.)', entered, expected });
       }
     });
@@ -730,12 +786,13 @@ export function hydrateManualEntriesFromJson(json: any): {
 
   const cdnr: ManualRow[] = [];
   (j.cdnr || []).forEach((party: any) => (party.nt || []).forEach((nt: any) => (nt.itms || []).forEach((itm: any) => {
-    cdnr.push({ id: nextId(), ctin: party.ctin, ntNum: nt.nt_num, ntDt: fromPortalDate(nt.nt_dt), ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, camt: itm.itm_det?.camt, samt: itm.itm_det?.samt, csamt: itm.itm_det?.csamt });
+    cdnr.push({ id: nextId(), ctin: party.ctin, ntNum: nt.nt_num, ntDt: fromPortalDate(nt.nt_dt), ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, rchrg: nt.rchrg, inv_typ: nt.inv_typ, rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, camt: itm.itm_det?.camt, samt: itm.itm_det?.samt, csamt: itm.itm_det?.csamt });
   })));
 
   const cdnur: ManualRow[] = [];
   (j.cdnur || []).forEach((nt: any) => (nt.itms || []).forEach((itm: any) => {
-    cdnur.push({ id: nextId(), ntNum: nt.nt_num, ntDt: fromPortalDate(nt.nt_dt), ntTyp: nt.ntty || nt.typ, val: nt.val, pos: nt.pos, rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
+    // On cdnur `typ` is what the note is for (B2CL / EXPWP / EXPWOP), not C or D.
+    cdnur.push({ id: nextId(), urTyp: nt.typ, ntNum: nt.nt_num, ntDt: fromPortalDate(nt.nt_dt), ntTyp: nt.ntty, val: nt.val, pos: nt.pos, rt: itm.itm_det?.rt, txval: itm.itm_det?.txval, iamt: itm.itm_det?.iamt, csamt: itm.itm_det?.csamt });
   }));
 
   const exp: ManualRow[] = [];
@@ -778,13 +835,17 @@ export function hydrateManualEntriesFromJson(json: any): {
     docRows.push({ id: nextId(), doc_typ: meta?.value || '', from: d.from, to: d.to, totnum: d.totnum, cancel: d.cancel });
   }));
 
-  // Table 12 — same real shape whether the source is an imported JSON or a
-  // Builder-generated one; no transformation needed, just tag each row with
-  // which bucket it came from so the grid's Type dropdown shows correctly
-  // and re-assembly (assembleGstr1Json) puts it back in the same bucket.
+  // Table 12 — tag each row with the bucket it came from so the grid's Type
+  // dropdown shows correctly and re-assembly (assembleGstr1Json) puts it back
+  // in the same bucket. The older single hsn.data list (before May 2025, and
+  // Builder output saved before Builder moved to hsn_b2c) has no B2B/B2C
+  // split; it lands in B2B, as Edit HSN Summary does. Callers holding a
+  // Builder return tidy it into hsn_b2c first (tidyGstr1Json).
+  const hsnRow = (_src: 'hsn_b2b' | 'hsn_b2c') => (h: any): ManualRow => ({ id: nextId(), _src, hsn_sc: h.hsn_sc, desc: h.desc, uqc: editableUqc(h.uqc, h.hsn_sc), qty: h.qty, rt: h.rt, txval: h.txval, iamt: h.iamt, camt: h.camt, samt: h.samt, csamt: h.csamt });
   const hsnRows: ManualRow[] = [
-    ...(j.hsn?.hsn_b2b || []).map((h: any) => ({ id: nextId(), _src: 'hsn_b2b', hsn_sc: h.hsn_sc, desc: h.desc, uqc: editableUqc(h.uqc, h.hsn_sc), qty: h.qty, rt: h.rt, txval: h.txval, iamt: h.iamt, camt: h.camt, samt: h.samt, csamt: h.csamt })),
-    ...(j.hsn?.hsn_b2c || []).map((h: any) => ({ id: nextId(), _src: 'hsn_b2c', hsn_sc: h.hsn_sc, desc: h.desc, uqc: editableUqc(h.uqc, h.hsn_sc), qty: h.qty, rt: h.rt, txval: h.txval, iamt: h.iamt, camt: h.camt, samt: h.samt, csamt: h.csamt })),
+    ...(j.hsn?.data || []).map(hsnRow('hsn_b2b')),
+    ...(j.hsn?.hsn_b2b || []).map(hsnRow('hsn_b2b')),
+    ...(j.hsn?.hsn_b2c || []).map(hsnRow('hsn_b2c')),
   ];
 
   return { rowsBySection: { b2b, b2cl, b2cs, cdnr, cdnur, exp, at, txpd, ata, txpda }, nilRows, docRows, hsnRows };

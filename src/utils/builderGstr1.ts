@@ -88,7 +88,7 @@ export interface Gstr1Warning {
 export interface BuilderGstr1Result {
   json: Record<string, unknown>;
   warnings: Gstr1Warning[];
-  /** Per-section row counts, for the confirmation screen. */
+  /** Per-section row counts, for the confirmation screen (b2csa: rate lines across its months). */
   counts: { b2cs: number; at: number; txpd: number; b2csa: number; nil: number };
   /** Total tax the return carries, for tying back to the workpaper. */
   totalTax: number;
@@ -247,32 +247,41 @@ export function buildBuilderGstr1(params: {
     if (!m) continue;
     byMonth.set(m, [...(byMonth.get(m) || []), r]);
   }
+  // The portal's shape: one entry per amended month and POS, its rates as
+  // lines under itms[] (the offline tool keys b2csa on omon + POS). Flat
+  // b2cs-style rows are not a b2csa the portal recognises.
   const b2csa = [...byMonth.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .flatMap(([omon, rows]) => bucketByRate(rows).map((b) => ({
-      pos: posCode,
-      typ: 'OE',
+    .map(([omon, rows]) => ({
       omon: periodToFp(omon),
       sply_ty: 'INTRA',
-      rt: b.rt,
-      txval: b.txval,
-      iamt: 0,
-      camt: b.camt,
-      samt: b.samt,
-      csamt: 0,
-    })));
+      typ: 'OE',
+      pos: posCode,
+      itms: bucketByRate(rows).map((b) => ({
+        rt: b.rt,
+        txval: b.txval,
+        iamt: 0,
+        camt: b.camt,
+        samt: b.samt,
+        csamt: 0,
+      })),
+    }));
+  const b2csaLines = b2csa.reduce((n, a) => n + a.itms.length, 0);
 
   // ── HSN summary. One SAC for the whole module. ───────────────────────────
   // Built off Table 7 only: the HSN summary covers supplies invoiced in the
-  // period, and an advance has no invoice behind it yet.
-  const hsnData = bucketByRate(of('Table 7')).map((b, i) => ({
+  // period, and an advance has no invoice behind it yet. Written to hsn_b2c:
+  // GSTN split Table 12 into B2B and B2C from May 2025, and every buyer here
+  // is unregistered (Table 7), so the old single hsn.data list is the wrong
+  // shape for any period this module files.
+  const hsnB2c = bucketByRate(of('Table 7')).map((b, i) => ({
     num: i + 1,
     hsn_sc: BUILDER_SAC,
     desc: 'Construction services of buildings',
     uqc: 'NA', // a service (SAC 99…) carries NA and qty 0; any other unit is RET191353
     qty: 0,
-    txval: b.txval,
     rt: b.rt,
+    txval: b.txval,
     iamt: 0,
     camt: b.camt,
     samt: b.samt,
@@ -341,7 +350,7 @@ export function buildBuilderGstr1(params: {
   if (at.length) json.at = at;
   if (txpd.length) json.txpd = txpd;
   if (b2csa.length) json.b2csa = b2csa;
-  if (hsnData.length) json.hsn = { data: hsnData };
+  if (hsnB2c.length) json.hsn = { hsn_b2c: hsnB2c };
   const nilInv = landTotal !== 0
     ? [{ sply_ty: 'INTRAB2C', nil_amt: 0, expt_amt: 0, ngsup_amt: landTotal }]
     : [];
@@ -376,7 +385,7 @@ export function buildBuilderGstr1(params: {
   return {
     json,
     warnings,
-    counts: { b2cs: b2cs.length, at: at.length, txpd: txpd.length, b2csa: b2csa.length, nil: nilInv.length },
+    counts: { b2cs: b2cs.length, at: at.length, txpd: txpd.length, b2csa: b2csaLines, nil: nilInv.length },
     totalTax,
     nonGstTotal: landTotal,
     docSeries,

@@ -174,10 +174,12 @@ function computeOutward(g: any, periodMonth: string, alreadyFiled: boolean) {
         else addDet(i.itm_det || {}, sign);
       });
     });
-    // Table 10 — amendments to earlier B2CS entries. Same shape as b2cs, and
-    // they carry a real liability (a retrospective re-rating is reported here,
-    // not as a debit note), so they belong in 3.1(a) like any other outward row.
-    (g.b2csa || []).forEach((i: Record<string, unknown>) => addDet(i));
+    // Table 10 — amendments to earlier B2CS entries. They carry a real
+    // liability (a retrospective re-rating is reported here, not as a debit
+    // note), so they belong in 3.1(a) like any other outward row. Rates sit
+    // under itms[] in the portal's shape (Builder's), flat in older files.
+    (g.b2csa || []).forEach((a: Record<string, unknown>) =>
+      (Array.isArray(a.itms) && a.itms.length ? (a.itms as Record<string, unknown>[]) : [a]).forEach((i) => addDet(i)));
     // Advances. The advance amount IS the value being offered to tax when the
     // supply is a service — construction is, so Notification 66/2017 does not
     // apply and tax falls due on receipt. Carrying only the tax and not the
