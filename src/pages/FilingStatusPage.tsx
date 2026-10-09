@@ -1635,8 +1635,11 @@ const FilingStatusPage: React.FC = () => {
 
   // Row badge for a GSTR-1 / IFF held back by the direct-filing rule. The
   // popover shows the request, and the superadmin's note on a rejection.
+  // Shown only once a request exists. A not-yet-pushed return that nobody has
+  // tried to file is normal work in progress (it will simply be pushed), so it
+  // carries no badge — choosing Filed or Pull on it opens the request dialog.
   const DirectFilingRowBadge = ({ record, state }: { record: FilingRecord; state: DirectFilingState }) => {
-    if (!isDirectFilingBlocked(state)) return null;
+    if (state !== 'pending' && state !== 'rejected') return null;
     const current = pickApproval(approvalsFor(record));
     const label = state === 'pending' ? 'Awaiting superadmin' : state === 'rejected' ? 'Rejected' : 'Approval needed';
     const variant = state === 'pending' ? 'info' : state === 'rejected' ? 'destructive' : 'warning';
