@@ -46,6 +46,10 @@
   // pass per client every 7 days, so a change in a closed case is still caught.
   const FULL_FOLDER_PASS_MS = 7 * 24 * 60 * 60 * 1000;
   const REFUND_FOLDER_LABELS = { APLCN: 'Applications', NOTAC: 'Notice/Acknowledgement', REPLY: 'Replies', ORDRS: 'Orders', AUDIT: 'Audit History' };
+  // The NIL GSTR-1 push (handleGstr1Nil): a fallback label, any "nil" that is
+  // not the Nil Rated / exempt supplies table, and whether a toggle is on.
+  const NIL_LOOSE = /^(?![\s\S]*(rated|exempt))[\s\S]*\bnil\b/i;
+  const nilToggleOn = (el) => !!(el && (el.checked || el.getAttribute('aria-checked') === 'true'));
   // 0.8.0: the officer, the DIN and the reply date a notice row takes from its
   // case-folder item (noticeFieldsFromItem, further down). Declared up here
   // with every other constant a step handler reads, for the same reason: the
@@ -247,7 +251,13 @@
   const now = Date.now();
   const idleMs = now - (job.lastActivityAt || job.startedAt || now);
   const totalMs = now - (job.startedAt || now);
-  if (!job.runId && (idleMs > 10 * 60 * 1000 || totalMs > 3 * 60 * 60 * 1000)) { await clearJob(); return; }
+  if (!job.runId && (idleMs > 10 * 60 * 1000 || totalMs > 3 * 60 * 60 * 1000)) {
+    // 0.8.6: a push's page is waiting for a result; a dropped push says so.
+    const failPush = pushFailer(job);
+    if (failPush) await failPush(job, 'The push sat idle for more than 10 minutes (CAPTCHA not typed, or the tab left alone) and was stopped. Nothing more was sent to the portal; push again.');
+    else await clearJob();
+    return;
+  }
   // Right after the extension is reloaded, any ALREADY-OPEN gst.gov.in tab's
   // content script becomes orphaned — its chrome.runtime.sendMessage calls
   // reject ("Extension context invalidated"). whoami() then resolves to null
@@ -286,6 +296,20 @@
   if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'applications' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
+      // 0.8.6: a GSTR-1 upload, NIL, Refresh errors or GSTR-3B push ends with a
+      // result the page hears (and GSTR-3B with a Push History row), never a
+      // bare advance() that left the page spinning.
+      const failPush = pushFailer(job);
+      if (failPush) {
+        // Refresh errors is named only to a Refresh: an upload's page offers it
+        // for the 6-minute timeout and a closed tab, never for this.
+        await failPush(job, job.mode === 'gstr3b_push'
+          ? 'The portal session kept dropping (sent back to the login or error page 3 times) while filling GSTR-3B. Check what the portal saved, then push again.'
+          : job.mode === 'gstr1_refresh'
+            ? 'The portal session kept dropping (sent back to the login or error page 3 times) before the portal reported a result. Nothing was changed; click Refresh errors again.'
+            : 'The portal session kept dropping (sent back to the login or error page 3 times) before the portal reported a result. Check the portal and push again.');
+        return;
+      }
       // 'filing' jobs run on a backgrounded tab (see startFilingOpen in
       // background.js) — this give-up banner is meaningless if nobody can
       // see it. Every other mode's tab was already foreground, so this is
@@ -393,7 +417,12 @@
     else if (job.step === 'twoadwld') await handleTwoADownload(job, cur, progress);
     else if (job.step === 'filing') await handleFiling(job, cur, progress);
     else if (job.step === 'gstr1_dash') await handleGstr1UploadDashboard(job, cur, progress);
-    else if (job.step === 'gstr1_upload') await handleGstr1Upload(job, cur, progress);
+    // A Refresh errors reloaded on the upload page reads it again; it never
+    // uploads (handleGstr1UploadDashboard routes the same way).
+    else if (job.step === 'gstr1_upload') {
+      if (job.mode !== 'gstr1_refresh') await handleGstr1Upload(job, cur, progress);
+      else if (await onOfflineUploadPageOrRetry(job, progress)) await handleGstr1RefreshErrors(job, cur, progress);
+    }
     else if (job.step === 'gstr1_nil') await handleGstr1Nil(job, cur, progress);
     else if (job.step === 'einvoice_pull') await handleEinvoicePull(job, cur, progress);
     else if (job.step === 'gstr3b_dash') await handleGstr3bDashboard(job, cur, progress);
@@ -408,8 +437,34 @@
       banner('Error on ' + (job.step || '?') + ': ' + reason + ' — moving on.', '#dc2626');
       try { await GSTKdb.logClientSync(cur.clientId, job.step || 'unknown', 'failed', 'Unhandled: ' + reason + ' [ext ' + EXT_VERSION + ']'); } catch (_) {}
       if (ledgerJob(job)) { try { await GSTKdb.logStep(job.runId, cur.clientId, job.step || 'unknown', 'failed', /timed out/.test(reason) ? 'timeout' : 'other', reason); } catch (_) {} }
-      await advance(job);
+      // 0.8.6: a push reports the error to its page (see the bounce above).
+      const failPush = pushFailer(job);
+      if (failPush) await failPush(job, 'Unexpected error on step ' + (job.step || '?') + ': ' + reason + '. Check the portal before pushing again.');
+      else await advance(job);
     }
+  }
+
+  // 0.8.6: the result writer of a push job, or null for every other mode. A
+  // push is one client and one period, and its page waits for a result, so
+  // every way it can end goes through failUpload or failGstr3b.
+  function pushFailer(j) {
+    if (!j) return null;
+    if (j.mode === 'gstr3b_push') return failGstr3b;
+    if (j.mode === 'gstr1_upload' || j.mode === 'gstr1_refresh') return failUpload;
+    return null;
+  }
+  // Which return a push result belongs to, as the page sent it (the job's
+  // client and its 'MM/YYYY' period), so the page and the database never
+  // apply it to whatever client happens to be selected when it arrives.
+  function pushTarget(j) {
+    const c = (j && j.clients && j.clients[j.idx || 0]) || {};
+    return { clientId: c.clientId || (j && j.clientId) || null, period_month: (j && j.period) || null };
+  }
+  // The banner's words without its prefix, or a "moving on" that means
+  // nothing for a one-client push.
+  function bannerWords() {
+    const b = document.getElementById('gstk-banner');
+    return oneLine(b ? b.textContent : '').replace(/^GST Keeper Sync — /, '').replace(/(\s*—\s*(logged;\s*)?|\.\s*)moving\b.*$/i, '').replace(/[.\s]+$/, '');
   }
 
   // Move to the next period for the SAME client first (no logout — the tab
@@ -417,6 +472,11 @@
   // the dashboard for the next period). Only once every period is done does
   // this fall through to the next client (log out first), or finish.
   async function advance(job) {
+    // 0.8.6: a push reaches here only when its login ended it (a refused
+    // password, a CAPTCHA the portal kept rejecting, an unexpected page): the
+    // bounce and error paths above report themselves. Its page still waits.
+    const failPush = pushFailer(job);
+    if (failPush) { await failPush(job, 'The portal login did not complete, so nothing was pushed: ' + (bannerWords() || 'no answer from the portal') + '.'); return; }
     if (job.periodIdx + 1 < job.periods.length) {
       job.periodIdx++;
       job.period = job.periods[job.periodIdx];
@@ -892,6 +952,8 @@
       banner('No saved GST portal password for ' + cur.creds.name + ' — update it in Edit Client.', '#dc2626');
       // Nobody is at a scheduled sync to read the banner: it goes in the run ledger, and the client fails with it.
       if (job.runner) { await logLoginFailure(job, cur, 'No saved GST portal password for this client.'); await advance(job); }
+      // 0.8.6: nor at a push, whose page waits for a result.
+      else if (pushFailer(job)) await advance(job);
       return;
     }
     // 0.8.1: a password the portal already refused is not offered again in a
@@ -1370,12 +1432,89 @@
   // otherwise the app's "pushing…" state on the GSTR-3B page has nothing to
   // resolve it and hangs
   // forever waiting for a __gstkPushGstr3bResult that never arrives.
+  // 0.8.6: a failure after Table 3.1 was saved still reports what 3.1 filled.
+  // The red banner goes up once the result is stored (finishGstr3b).
   async function failGstr3b(job, error) {
+    banner('GSTR-3B push failed: ' + error + ' Recording it in GST Keeper…', '#f59e0b');
+    const g = job.gstr3b || {};
+    const c = classifyGstr3bSkips(g.skipped31 || []);
+    await finishGstr3b(job, { status: 'failed', summary: error, error, filled: (g.filled31 || []).length, skipped: c.skipped, portalFilled: c.portalFilled });
     banner('GSTR-3B push failed: ' + error, '#dc2626');
+  }
+
+  // 0.8.6: every GSTR-3B push ends here. The background worker records it in
+  // gstr3b_push_versions (Push History; a database trigger turns an 'ok' row
+  // into Pushed in Filing Status), so the push is on record even when the
+  // GSTR-3B page was closed, reloaded or moved to another client meanwhile.
+  // It does so in one step in its job slot (finishGstr3bPush: the row, then
+  // the result for the page with `recorded` and the job's client and period,
+  // then the job cleared), so a portal tab closed meanwhile either finds the
+  // push unfinished or finds nothing: never a second row or a wrong reason.
+  // Only if the worker does not answer does this tab publish the result.
+  async function finishGstr3b(job, outcome) {
+    const target = pushTarget(job);
+    const { status, summary, error, filled, skipped, portalFilled } = outcome;
+    const resp = await askBackground('finishGstr3bPush', [{
+      ...target, tabId: job.tabId == null ? null : job.tabId, actorId: job.actorId || null,
+      status, summary, error, filled, skipped, portalFilled,
+      payload: (job.gstr3b && job.gstr3b.json) || null,
+    }], 60000);
+    if (resp || !(await getJob())) return;
     await chrome.storage.local.set({ gstk_gstr3b_push_result: {
-      ok: false, summary: error, error, filled: 0, skipped: [], at: Date.now(),
+      ok: status !== 'failed', status, summary, ...(error ? { error } : {}), filled, skipped, portalFilled,
+      ...target, recorded: false, at: Date.now(),
     } });
     await clearJob();
+  }
+
+  // A message to the background worker whose answer is awaited, at most `ms`:
+  // null when it errs or does not answer in time.
+  function askBackground(fn, args, ms) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), ms);
+      try {
+        chrome.runtime.sendMessage({ gstk: true, fn, args }, (resp) => {
+          clearTimeout(timer);
+          resolve(chrome.runtime.lastError || !resp || resp.error ? null : resp);
+        });
+      } catch (e) { clearTimeout(timer); resolve(null); }
+    });
+  }
+
+  // 0.8.6: what a skipped GSTR-3B entry means for the push. Tolerated, so the
+  // push is still 'filled': a column the portal locks ('portal-locked'), the
+  // 2nd/3rd column of an import row, which has no such input ('no input at
+  // that position'), and 3.1(a)/(b) 'row not found': those rows carry what the
+  // portal filled from GSTR-1 and are listed under portalFilled instead. Any
+  // other entry makes the push 'partial'. The app applies the same rule to
+  // older extensions' results (src/lib/gstr3bPushStatus.ts), so the words of
+  // the skip messages ('— row not found', 'portal-locked', 'no input at that
+  // position') must not change.
+  function classifyGstr3bSkips(entries) {
+    const skipped = [];
+    const portalFilled = [];
+    const problems = [];
+    for (const entry of entries || []) {
+      const s = String(entry);
+      const outward = s.match(/^(3\.1\([ab]\)[^—]*?) — row not found(.*)$/);
+      // The row diagnostic after 'row not found' is kept: it is how the
+      // portal's real labels for these rows reach Push History.
+      if (outward) { portalFilled.push(outward[1] + ' — not typed; the portal keeps the value it filled from GSTR-1' + outward[2]); continue; }
+      skipped.push(s);
+      if (/portal-locked/.test(s)) continue;
+      if (/^4A\([12]\).* col [23] — no input at that position/.test(s)) continue;
+      problems.push(s);
+    }
+    return { skipped, portalFilled, problems, status: problems.length ? 'partial' : 'filled' };
+  }
+  function gstr3bSummary(filledCount, c) {
+    const short = (s) => s.replace(/ \((rows in the open form|no visible rows).*$/, '');
+    const left = c.skipped.length - c.problems.length;
+    return `Filled ${filledCount} field(s).`
+      + (c.problems.length ? ` Could not set ${c.problems.length}: ${c.problems.slice(0, 6).map(short).join('; ')}${c.problems.length > 6 ? '…' : ''}.` : '')
+      + (c.portalFilled.length ? ` Not typed, the portal keeps the value it filled from GSTR-1: ${c.portalFilled.map((s) => s.split(' — ')[0]).join(', ')}.` : '')
+      + (left ? ` ${left} column(s) left as the portal has them (locked, or no such input on the row).` : '')
+      + ' Table 5 was left untouched by design (not computed by the app) — review that (and everything else, including both tiles\' Save) before Confirm / Offset Liability / File.';
   }
 
   async function handleGstr3bDashboard(job, cur, progress) {
@@ -1456,7 +1595,46 @@
   // live). Function declarations are hoisted in full regardless of position,
   // same as findTileButton/filingTileFor elsewhere in this file — matching
   // that existing, working pattern instead of introducing a new one.
-  function gstr3bNum(v) { return v == null ? null : String(v); }
+  // 0.8.6: rounded to 2 decimals — a float such as 3942.4500000000003 from
+  // the draft was typed digit by digit into a 2-decimal portal field.
+  function gstr3bNum(v) {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? String(Math.round(n * 100) / 100) : null;
+  }
+  // Whether the portal kept what was typed (0.8.6): commas and a trailing
+  // '.00' are the portal's formatting, not a change.
+  function gstr3bSameValue(shown, sent) {
+    const clean = (s) => String(s == null ? '' : s).replace(/[,\s]/g, '').replace(/\.00$/, '');
+    const a = clean(shown);
+    const b = clean(sent);
+    if (a === b) return true;
+    return a !== '' && b !== '' && Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && Math.abs(Number(a) - Number(b)) < 0.005;
+  }
+  // When a row is not found (0.8.6): the first visible row labels of the open
+  // form, so the skip message itself says what the portal calls its rows.
+  function gstr3bRowsSeen() {
+    const labels = [];
+    for (const tr of $$('tr')) {
+      if (tr.offsetParent === null) continue;
+      const label = [...tr.querySelectorAll('td, th')].map((c) => oneLine(c.textContent)).find(Boolean) || '';
+      if (label && !labels.includes(label.slice(0, 40))) labels.push(label.slice(0, 40));
+      if (labels.length >= 8) break;
+    }
+    return labels.length ? ' (rows in the open form: ' + labels.join(' | ') + ')' : ' (no visible rows in the open form)';
+  }
+  // 3.1(a)/(b) when their label does not match (0.8.6): the row starting
+  // '(a)' / '(b)' in the open 3.1 form, i.e. the table holding 3.1(c)-(e).
+  // Lower case only, and never a row about ITC: Table 4's rows are '(A) ITC
+  // Available' / '(B) ITC Reversed'.
+  function find31RowByLetter(letter) {
+    const anchor = findGstr3bRow(/other\s+outward\s+supplies|\(d\)\s*inward\s+supplies|non-gst\s+outward/i);
+    const form = anchor && anchor.closest('table');
+    if (!form) return null;
+    const re = new RegExp('^\\(' + letter + '\\)');
+    return [...form.querySelectorAll('tr')].find((tr) => tr.offsetParent !== null && re.test(oneLine(tr.textContent))
+      && !/\bitc\b|import\s+of|reversed/i.test(tr.textContent || '')) || null;
+  }
   // Scoped to VISIBLE rows only. Confirmed live: 3.1(d)'s fill silently
   // landed on the wrong row — most likely Table 4's very similarly-worded
   // "(3) Inward supplies liable to reverse charge…" row, matched instead
@@ -1519,9 +1697,12 @@
   // a digest still in progress or click Save before the last field's digest
   // has actually settled. Give each field, and the Save click after them,
   // real time to land.
-  async function fillGstr3bRow(filled, skipped, name, labelRe, values) {
-    const row = findGstr3bRow(labelRe);
-    if (!row) { skipped.push(name + ' — row not found'); return; }
+  // 0.8.6: `fallback` finds the row another way when the label does not
+  // match; a row still not found lists the rows the form does show; and each
+  // value is read back, so one the portal did not keep is a skip, not a fill.
+  async function fillGstr3bRow(filled, skipped, name, labelRe, values, fallback) {
+    const row = findGstr3bRow(labelRe) || (fallback ? fallback() : null);
+    if (!row) { skipped.push(name + ' — row not found' + gstr3bRowsSeen()); return; }
     const inputs = [...row.querySelectorAll('input')];
     if (!inputs.length) { skipped.push(name + ' — no input elements in the row at all'); return; }
     for (let i = 0; i < values.length; i++) {
@@ -1539,6 +1720,8 @@
       // columns, and 300ms wasn't long enough for that to settle before
       // moving on to the next field. Give it real room.
       await sleep(1500);
+      const kept = el.value;
+      if (!gstr3bSameValue(kept, v)) { skipped.push(name + ' col ' + (i + 1) + ' — portal kept ' + (oneLine(kept) || '(blank)')); continue; }
       filled.push(name + ' col ' + (i + 1));
     }
   }
@@ -1653,8 +1836,12 @@
     const rev = j.sup_details?.isup_rev || {};
     const nongst = j.sup_details?.osup_nongst || {};
     if (await openGstr3bTile(/3\.1\s+tax on outward/i)) {
-      await fillGstr3bRow(filled, skipped, '3.1(a) Outward taxable supplies', /outward taxable supplies\s*\(other than zero rated/i, [gstr3bNum(det.txval), gstr3bNum(det.iamt), gstr3bNum(det.camt), gstr3bNum(det.samt)]);
-      await fillGstr3bRow(filled, skipped, '3.1(b) Zero rated', /outward taxable supplies\s*\(zero rated\)/i, [gstr3bNum(zero.txval), gstr3bNum(zero.iamt)]);
+      // 0.8.6: 3.1(a)/(b) were 'row not found' on every push up to 0.8.5. The
+      // labels now take any whitespace (a line break or a non-breaking space
+      // inside them), then the '(a)' / '(b)' row of this form; a row still not
+      // found lists the labels the form shows, so the next push tells.
+      await fillGstr3bRow(filled, skipped, '3.1(a) Outward taxable supplies', /outward\s+taxable\s+supplies\s*\(\s*other\s+than\s+zero\s+rated/i, [gstr3bNum(det.txval), gstr3bNum(det.iamt), gstr3bNum(det.camt), gstr3bNum(det.samt)], () => find31RowByLetter('a'));
+      await fillGstr3bRow(filled, skipped, '3.1(b) Zero rated', /outward\s+taxable\s+supplies\s*\(\s*zero\s+rated\s*\)/i, [gstr3bNum(zero.txval), gstr3bNum(zero.iamt)], () => find31RowByLetter('b'));
       await fillGstr3bRow(filled, skipped, '3.1(c) Nil/exempt', /other outward supplies/i, [gstr3bNum(nilx.txval)]);
       // Confirmed live: the loose wildcard here was ambiguous with Table
       // 4(A)(3)'s near-identical "Inward supplies liable to reverse charge"
@@ -1703,23 +1890,8 @@
 
     const filled = [];
     const skipped = [];
-    const avl = (ty) => (j.itc_elg?.itc_avl || []).find((r) => r.ty === ty) || {};
-    const rvs = (ty) => (j.itc_elg?.itc_rev || []).find((r) => r.ty === ty) || {};
-    const rclmd = (ty) => (j.itc_elg?.itc_rclmd || []).find((r) => r.ty === ty) || {};
-    const inelg = (ty) => (j.itc_elg?.itc_inelg || []).find((r) => r.ty === ty) || {};
     if (await openGstr3bTile(/4\.\s*eligible itc/i)) {
-      await fillGstr3bRow(filled, skipped, '4A(1) Import of goods', /import of goods/i, [gstr3bNum(avl('IMPG').igst), gstr3bNum(avl('IMPG').cgst), gstr3bNum(avl('IMPG').sgst)]);
-      await fillGstr3bRow(filled, skipped, '4A(2) Import of services', /import of services/i, [gstr3bNum(avl('IMPS').igst), gstr3bNum(avl('IMPS').cgst), gstr3bNum(avl('IMPS').sgst)]);
-      await fillGstr3bRow(filled, skipped, '4A(3) Inward RCM ITC', /inward supplies liable to reverse charge/i, [gstr3bNum(avl('ISRC').igst), gstr3bNum(avl('ISRC').cgst), gstr3bNum(avl('ISRC').sgst)]);
-      await fillGstr3bRow(filled, skipped, '4A(4) ISD', /inward supplies from isd/i, [gstr3bNum(avl('ISD').igst), gstr3bNum(avl('ISD').cgst), gstr3bNum(avl('ISD').sgst)]);
-      await fillGstr3bRow(filled, skipped, '4A(5) All other ITC', /all other itc/i, [gstr3bNum(avl('OTH').igst), gstr3bNum(avl('OTH').cgst), gstr3bNum(avl('OTH').sgst)]);
-      await fillGstr3bRow(filled, skipped, '4B(1) Reversed — rules 38/42/43 & 17(5)', /as per rules?\s*38[\s\S]{0,30}42[\s\S]{0,30}43/i, [gstr3bNum(rvs('RUL').igst), gstr3bNum(rvs('RUL').cgst), gstr3bNum(rvs('RUL').sgst)]);
-      await fillGstr3bRow(filled, skipped, '4B(2) Reversed — others', /\(2\)\s*others/i, [gstr3bNum(rvs('OTH').igst), gstr3bNum(rvs('OTH').cgst), gstr3bNum(rvs('OTH').sgst)]);
-      // 4D(1) — reclaim of ITC reversed under 4(B)(2) in an earlier period.
-      // Computed by the app (job.itc_elg.itc_rclmd, see buildGstr3bJson.ts) —
-      // was skipped here before that field existed; not the case anymore.
-      await fillGstr3bRow(filled, skipped, '4D(1) ITC reclaimed — reversed under 4(B)(2)', /itc reclaimed which was reversed under table 4\(b\)\(2\)/i, [gstr3bNum(rclmd('OTH').igst), gstr3bNum(rclmd('OTH').cgst), gstr3bNum(rclmd('OTH').sgst)]);
-      await fillGstr3bRow(filled, skipped, '4D(2) Ineligible — 16(4) & PoS', /ineligible itc under section 16\(4\)|itc restricted due to (pos|place of supply)/i, [gstr3bNum(inelg('OTH').igst), gstr3bNum(inelg('OTH').cgst), gstr3bNum(inelg('OTH').sgst)]);
+      for (const [name, labelRe, values] of gstr3bTable4Rows(j)) await fillGstr3bRow(filled, skipped, name, labelRe, values);
       await saveGstr3bIfPresent();
     } else {
       skipped.push('Table 4 — could not open the "4. Eligible ITC" tile');
@@ -1727,18 +1899,40 @@
 
     await saveAllGstr3b();
 
+    // 0.8.6: 'filled' or 'partial' (classifyGstr3bSkips), recorded by the
+    // background worker before the page hears it (finishGstr3b). The final
+    // banner goes up only once the result is stored, so a tab closed on
+    // seeing it never loses the result.
     const allFilled = [...(job.gstr3b?.filled31 || []), ...filled];
-    const allSkipped = [...(job.gstr3b?.skipped31 || []), ...skipped];
-    const resultSummary =
-      `Filled ${allFilled.length} field(s).` +
-      (allSkipped.length ? ` Could not set ${allSkipped.length}: ${allSkipped.slice(0, 6).join('; ')}${allSkipped.length > 6 ? '…' : ''}.` : '') +
-      ' Table 5 was left untouched by design (not computed by the app) — review that (and everything else, including both tiles\' Save) before Confirm / Offset Liability / File.';
-    banner(resultSummary, allSkipped.length ? '#f59e0b' : '#16a34a');
+    const c = classifyGstr3bSkips([...(job.gstr3b?.skipped31 || []), ...skipped]);
+    const resultSummary = gstr3bSummary(allFilled.length, c);
+    banner('Recording the push in GST Keeper…' + progress);
+    await finishGstr3b(job, { status: c.status, summary: resultSummary, filled: allFilled.length, skipped: c.skipped, portalFilled: c.portalFilled });
+    banner(resultSummary, c.status === 'filled' ? '#16a34a' : '#f59e0b'); // the human reviews and files.
+  }
 
-    await chrome.storage.local.set({ gstk_gstr3b_push_result: {
-      ok: true, summary: resultSummary, filled: allFilled.length, skipped: allSkipped, at: Date.now(),
-    } });
-    await clearJob(); // stop acting — the human reviews and files.
+  // Table 4's rows: name, label, and the [IGST, CGST, SGST] to type (cess is
+  // never computed). 0.8.6: 4A(1) Import of goods and 4A(2) Import of
+  // services carry IGST only. Those rows render two inputs, IGST and CESS
+  // (seen on every push: 'col 3 — no input at that position'), so the CGST
+  // figure, 0, was typed into the CESS box and could wipe an ICEGATE cess.
+  function gstr3bTable4Rows(j) {
+    const pick = (list, ty) => ((j.itc_elg && j.itc_elg[list]) || []).find((r) => r.ty === ty) || {};
+    const three = (r) => [gstr3bNum(r.igst), gstr3bNum(r.cgst), gstr3bNum(r.sgst)];
+    return [
+      ['4A(1) Import of goods', /import of goods/i, [gstr3bNum(pick('itc_avl', 'IMPG').igst), null, null]],
+      ['4A(2) Import of services', /import of services/i, [gstr3bNum(pick('itc_avl', 'IMPS').igst), null, null]],
+      ['4A(3) Inward RCM ITC', /inward supplies liable to reverse charge/i, three(pick('itc_avl', 'ISRC'))],
+      ['4A(4) ISD', /inward supplies from isd/i, three(pick('itc_avl', 'ISD'))],
+      ['4A(5) All other ITC', /all other itc/i, three(pick('itc_avl', 'OTH'))],
+      ['4B(1) Reversed — rules 38/42/43 & 17(5)', /as per rules?\s*38[\s\S]{0,30}42[\s\S]{0,30}43/i, three(pick('itc_rev', 'RUL'))],
+      ['4B(2) Reversed — others', /\(2\)\s*others/i, three(pick('itc_rev', 'OTH'))],
+      // 4D(1) — reclaim of ITC reversed under 4(B)(2) in an earlier period.
+      // Computed by the app (job.itc_elg.itc_rclmd, see buildGstr3bJson.ts) —
+      // was skipped here before that field existed; not the case anymore.
+      ['4D(1) ITC reclaimed — reversed under 4(B)(2)', /itc reclaimed which was reversed under table 4\(b\)\(2\)/i, three(pick('itc_rclmd', 'OTH'))],
+      ['4D(2) Ineligible — 16(4) & PoS', /ineligible itc under section 16\(4\)|itc restricted due to (pos|place of supply)/i, three(pick('itc_inelg', 'OTH'))],
+    ];
   }
 
   // ── GSTR-1 Upload mode ──────────────────────────────────────────────────
@@ -1826,8 +2020,26 @@
          || findTileButton(/gstr[\s-]*1\b/i, /^upload$/i, excludeOthers)
          || findTileButton(/gstr[\s-]*1\b/i, /prepare\s*online/i, excludeOthers);
     }
-    if (!btn) { await failUpload(job, 'GSTR-1 "Prepare Offline" / "Upload" button not found — return may already be filed or the tile changed'); return; }
-    banner('Opening GSTR-1 offline upload page…');
+    // 0.8.6: a quarterly (QRMP) client has no GSTR-1 tile in months 1 and 2
+    // of the quarter, only IFF (Invoice Furnishing Facility); those pushes
+    // failed here. The IFF tile is tried only once no GSTR-1 tile showed, with
+    // the same Prepare Offline / Upload flow. UNVERIFIED against the live
+    // portal: the tile and its buttons are found by their text, as GSTR-1's
+    // are; refine once an IFF month has been pushed.
+    let tileName = 'GSTR-1';
+    if (!btn) {
+      const iffRe = /\bIFF\b|invoice\s+furnishing\s+facility/i;
+      const t1 = Date.now();
+      while (Date.now() - t1 < 5000 && !btn) {
+        btn = findTileButton(iffRe, /prepare\s*offline/i, excludeOthers)
+           || findTileButton(iffRe, /^upload$/i, excludeOthers)
+           || findTileButton(iffRe, /prepare\s*online/i, excludeOthers);
+        if (btn) tileName = 'IFF';
+        else await sleep(400);
+      }
+    }
+    if (!btn) { await failUpload(job, 'GSTR-1 "Prepare Offline" / "Upload" button not found (no IFF tile either) — return may already be filed or the tile changed'); return; }
+    banner('Opening ' + tileName + ' offline upload page…');
     job.step = 'gstr1_upload';
     await setJob(job);
     btn.click();
@@ -1853,13 +2065,89 @@
     }
   }
 
+  // 0.8.6: what an upload of this app's leaves for Refresh errors. Just before
+  // the file is attached (handleGstr1Upload), the Upload History's top row is
+  // kept per stored gstr1_data row as { key, at }, until that upload's outcome
+  // is recorded (by the poll or by Refresh). A new upload job clears the last
+  // one first (background.js startGstr1Upload), so a push that died before
+  // attaching leaves none, and Refresh then records nothing from the portal.
+  function pretopKey(rowId) { return 'gstk_gstr1_pretop_' + rowId; }
+  async function readPretop(rowId) {
+    if (!rowId) return null;
+    try { return (await store.get(pretopKey(rowId)))[pretopKey(rowId)] || null; } catch (e) { return null; }
+  }
+  async function clearPretop(rowId) {
+    if (!rowId) return;
+    try { await store.remove(pretopKey(rowId)); } catch (e) { /* a later upload replaces it */ }
+  }
+  // Whether the Upload History's top row (readUploadHistoryTop) is the upload
+  // that left `sent`: a different row from the one on top before the attach
+  // and, when its date shows, not uploaded before the attach (2 minutes'
+  // grace for the two clocks). Without `sent` nothing is this app's upload.
+  function uploadRowIsNew(top, sent) {
+    if (!top || !sent || top.key === sent.key) return false;
+    return top.at == null || top.at >= sent.at - 2 * 60 * 1000;
+  }
+
   // "Refresh errors" mode. Same portal page as Upload, but instead of sending
   // a JSON we go to the Download tab and read the (by now hopefully-ready)
   // per-invoice Error Report. GSTN generates it asynchronously up to 20 min
   // after the original "Processed with Error" upload — this handler is what
   // the operator clicks when they come back to check.
   async function handleGstr1RefreshErrors(job, cur, progress) {
-    banner('Checking the portal for the error report…' + progress);
+    banner('Checking the portal for the upload status and error report…' + progress);
+    // 0.8.6: first the Upload History's latest row. Refresh used to write
+    // 'partial' whatever the portal said, so an upload that timed out here
+    // (6 min) but that the portal then Processed could never become accepted,
+    // and the database never recorded its push. Processed with no error is
+    // now 'accepted' (the gstr1_data trigger records Pushed); Error Occurred
+    // is 'failed' with the portal's reason. Both only for a row this app's
+    // upload put there (uploadRowIsNew): an older upload, or one made by hand,
+    // must never be recorded as this push. Processed with errors goes on to
+    // the error report below, as before.
+    const NO_UPLOAD_SINCE_PUSH = 'The portal shows no upload from GST Keeper since this push. Upload the JSON again to record it.';
+    const rowId = job.gstr1.rowId;
+    const sent = await readPretop(rowId);
+    const top = await readUploadHistoryTop(10000);
+    const ours = uploadRowIsNew(top, sent);
+    // Nothing to record yet: the page hears so, and neither gstr1_data nor
+    // the version history is touched.
+    const nothingYet = async (summary) => {
+      banner(summary, '#f59e0b');
+      await chrome.storage.local.set({ gstk_gstr1_upload_result: {
+        ok: false, status: 'pending', summary, error: summary, errors: [], ...pushTarget(job), at: Date.now(),
+      } });
+      await clearJob();
+    };
+    if (top && top.status === null) {
+      await nothingYet('The portal is still processing the latest upload (' + top.statusText + '). Nothing was changed here; click Refresh errors again in a few minutes.');
+      return;
+    }
+    if (top && (top.status === 'accepted' || top.status === 'failed')) {
+      if (!ours) { await nothingYet(NO_UPLOAD_SINCE_PUSH); return; }
+      const reason = top.reason && !isPortalPlaceholder(top.reason) ? top.reason : '';
+      const accepted = top.status === 'accepted';
+      const summary = accepted
+        ? 'The portal shows the upload as Processed, with no errors: all records accepted.'
+        : 'The portal shows the upload as rejected (' + top.statusText + ')' + (reason ? ': ' + reason.slice(0, 300) : '.');
+      const errors = !accepted && reason ? [{ invoiceNo: '', gstin: '', reason }] : [];
+      banner(summary, accepted ? '#16a34a' : '#dc2626');
+      await clearPretop(rowId);
+      try {
+        chrome.runtime.sendMessage({ gstk: true, fn: 'saveGstr1UploadResult', args: [{
+          rowId: job.gstr1.rowId, status: top.status, summary, errors, actorId: job.actorId, actionType: 'REFRESH_ERRORS',
+        }] });
+      } catch (e) { /* the app still hears the result below */ }
+      await chrome.storage.local.set({ gstk_gstr1_upload_result: {
+        ok: accepted, status: top.status, summary, ...(accepted ? {} : { error: summary }), errors, ...pushTarget(job), at: Date.now(),
+      } });
+      await clearJob();
+      return;
+    }
+    // An upload of this app's whose outcome is not recorded yet, with no row
+    // newer than its attach on top (none at all, or an older Processed with
+    // Error): that older row's error report is not this upload's.
+    if (sent && !ours) { await nothingYet(NO_UPLOAD_SINCE_PUSH); return; }
     // Click the Download tab (adjacent to Upload). Both tabs live on the same
     // /offlineupload route in an AngularJS SPA — no navigation, just tab
     // switch — so we don't need to wait for a URL change.
@@ -1877,12 +2165,15 @@
     const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
     let downloadUrl = null;
     let statusText = '';
-    const rows = $$('table tr').filter((r) => r.querySelector('td'));
+    // Visible rows only (0.8.6): the Upload tab's history, read above, can
+    // stay in the page hidden, and its "Generate error report" button is not
+    // a report.
+    const rows = $$('table tr').filter((r) => r.querySelector('td') && r.offsetParent !== null);
     for (const row of rows) {
       const cells = [...row.querySelectorAll('td')].map((td) => norm(td.textContent));
-      const st = cells.find((c) => /generated|ready|error|in\s*progress|processed|available/i.test(c));
+      const st = cells.find((c) => /generated|ready|error|in[\s-]*progress|processed|available/i.test(c));
       const link = row.querySelector('a[href], button');
-      if (st && link && !/in\s*progress|generating|pending|requested/i.test(st)) {
+      if (st && link && !/in[\s-]*progress|generating|pending|requested/i.test(st)) {
         statusText = st;
         downloadUrl = link.getAttribute('href') || '';
         break;
@@ -1891,18 +2182,9 @@
 
     if (!downloadUrl) {
       // No ready report yet — surface a specific message so the operator
-      // knows to come back in a few more minutes.
-      const summary = 'No error report is ready on the portal yet. GSTN can take up to 20 minutes to generate it after an upload. Try Refresh again in a few minutes.';
-      banner(summary, '#f59e0b');
-      try {
-        chrome.runtime.sendMessage({ gstk: true, fn: 'saveGstr1UploadResult', args: [{
-          rowId: job.gstr1.rowId, status: 'partial', summary, errors: null, actorId: job.actorId, actionType: 'REFRESH_ERRORS',
-        }] });
-      } catch (e) {}
-      await chrome.storage.local.set({ gstk_gstr1_upload_result: {
-        ok: false, status: 'partial', summary, errors: [], at: Date.now(),
-      } });
-      await clearJob();
+      // knows to come back in a few more minutes. 0.8.6: nothing is written,
+      // so a 'failed' upload is not turned into 'partial' on no evidence.
+      await nothingYet('No error report is ready on the portal yet. GSTN can take up to 20 minutes to generate it after an upload. Try Refresh again in a few minutes.');
       return;
     }
 
@@ -1932,13 +2214,14 @@
       : 'Error report link found on the portal but no per-invoice rows could be parsed. Download it manually from the Download tab.';
     banner(summary, errors.length ? '#dc2626' : '#f59e0b');
 
+    await clearPretop(rowId);
     try {
       chrome.runtime.sendMessage({ gstk: true, fn: 'saveGstr1UploadResult', args: [{
         rowId: job.gstr1.rowId, status: 'partial', summary, errors, actorId: job.actorId, actionType: 'REFRESH_ERRORS',
       }] });
     } catch (e) {}
     await chrome.storage.local.set({ gstk_gstr1_upload_result: {
-      ok: false, status: 'partial', summary, errors, at: Date.now(),
+      ok: false, status: 'partial', summary, errors, ...pushTarget(job), at: Date.now(),
     } });
     await clearJob();
   }
@@ -1972,9 +2255,9 @@
         const partyGstin = party?.ctin || party?.gstin || '';
         const errMsgRaw = party?.error_msg || party?.err_msg || party?.error || party?.errors;
         const errCd = party?.error_cd ? ' [' + party.error_cd + ']' : '';
-        const partyReason = errMsgRaw
-          ? (Array.isArray(errMsgRaw) ? errMsgRaw.join('; ') : String(errMsgRaw)) + errCd
-          : '';
+        const errText = errMsgRaw ? (Array.isArray(errMsgRaw) ? errMsgRaw.join('; ') : String(errMsgRaw)) : '';
+        // 0.8.6: a portal label or 'NA' is not a reason (isPortalPlaceholder).
+        const partyReason = errText && !isPortalPlaceholder(errText) ? errText + errCd : '';
 
         // Party has an inv[] or nt[] (notes) array — attribute the party
         // reason to each entry.
@@ -2003,6 +2286,24 @@
   // The upload page. This handler runs to completion (attaches the file,
   // waits for the portal to finish processing, reads the result, reports back)
   // without another page navigation, so we can poll inside it with sleep().
+  // The wrong-page guard below, shared with a Refresh errors that reloads onto
+  // step gstr1_upload: it reads whatever page it lands on, so it needs the
+  // same check before trusting that page's Upload History. Returns false when
+  // it has sent the job back to the dashboard (or given up).
+  async function onOfflineUploadPageOrRetry(job, progress) {
+    if (/return\.gst\.gov\.in/i.test(location.href) && /offlineupload/i.test(location.href)) return true;
+    job.wrongPageRetries = (job.wrongPageRetries || 0) + 1;
+    if (job.wrongPageRetries > 3) {
+      await failUpload(job, `Kept landing on the wrong page instead of the GSTR-1 offline-upload page (currently: ${location.hostname}${location.pathname}). The dashboard tile click is picking the wrong element — needs a look at the actual dashboard markup.`);
+      return false;
+    }
+    job.step = 'gstr1_dash';
+    await setJob(job);
+    banner('Landed on the wrong page — retrying from the dashboard…' + progress, '#f59e0b');
+    location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+    return false;
+  }
+
   async function handleGstr1Upload(job, cur, progress) {
     // handleGstr1UploadDashboard marks job.step = 'gstr1_upload' and persists
     // it BEFORE confirming the tile click it just fired actually landed on
@@ -2025,18 +2326,7 @@
     // every real invocation — even ones that had already landed correctly —
     // which is what was actually causing "kept landing on the wrong page"
     // even when the live URL shown in that same failure message was right.
-    if (!/return\.gst\.gov\.in/i.test(location.href) || !/offlineupload/i.test(location.href)) {
-      job.wrongPageRetries = (job.wrongPageRetries || 0) + 1;
-      if (job.wrongPageRetries > 3) {
-        await failUpload(job, `Kept landing on the wrong page instead of the GSTR-1 offline-upload page (currently: ${location.hostname}${location.pathname}). The dashboard tile click is picking the wrong element — needs a look at the actual dashboard markup.`);
-        return;
-      }
-      job.step = 'gstr1_dash';
-      await setJob(job);
-      banner('Landed on the wrong page — retrying from the dashboard…' + progress, '#f59e0b');
-      location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
-      return;
-    }
+    if (!(await onOfflineUploadPageOrRetry(job, progress))) return;
     banner('Looking for the JSON upload control…' + progress);
 
     // The Prepare Offline page has tabs like "Upload" / "Initiate Filing" /
@@ -2084,7 +2374,7 @@
       const m = t.match(/^(.{6,}?)(?: \1)+$/);
       return m ? m[1] : t;
     };
-    const rowKey = (row) => row ? [...row.querySelectorAll('td')].map((td) => norm(td.textContent)).join('|') : '';
+    const rowKey = uploadRowKey;
     // Snapshot the Upload History table's current top row BEFORE this file is
     // attached. The poll loop below waits for that key to change — otherwise,
     // if the portal hasn't rendered the new row yet at the first poll tick,
@@ -2092,9 +2382,13 @@
     // with Error" from a prior attempt) and get misreported as THIS upload's
     // result.
     const prevTopRowKey = rowKey($$('table tr').filter((r) => r.querySelector('td'))[0]);
+    // 0.8.6: and keep it for Refresh errors (pretopKey), from just before the
+    // file can reach the portal until this upload's outcome is recorded.
+    const rowId = job.gstr1.rowId;
+    if (rowId) { try { await store.set({ [pretopKey(rowId)]: { key: prevTopRowKey, at: Date.now() } }); } catch (e) { /* Refresh then records nothing */ } }
 
     const file = buildGstr1File(job);
-    if (!setFileOn(fileInput, file)) { await failUpload(job, 'Could not attach the JSON to the portal file input'); return; }
+    if (!setFileOn(fileInput, file)) { await clearPretop(rowId); await failUpload(job, 'Could not attach the JSON to the portal file input'); return; }
     banner('Uploading the GSTR-1 JSON…', '#2563eb');
 
     // Some portal pages want an explicit "Upload" / "Proceed" click AFTER the
@@ -2108,6 +2402,7 @@
     const errBanner = $$('.alert-danger, .toast-error, .error-msg')
       .map((el) => (el.textContent || '').trim()).filter(Boolean)[0];
     if (errBanner && /invalid|reject|error/i.test(errBanner)) {
+      await clearPretop(rowId); // the portal's answer: nothing left to refresh
       await failUpload(job, errBanner);
       return;
     }
@@ -2132,15 +2427,7 @@
     const pollDeadline = Date.now() + 6 * 60 * 1000;
     let terminal = null;
     let portalReason = '';
-    const classifyStatus = (raw) => {
-      const s = (raw || '').toLowerCase();
-      if (/error\s*occurred/.test(s)) return 'failed';
-      if (/processed\s+with\s+error/.test(s)) return 'partial';
-      if (/^processed$/.test(s.trim()) || /processed(?!\s+with)/.test(s)) return 'accepted';
-      if (/\bfailed\b/.test(s)) return 'failed';
-      if (/in\s*progress|pending|received/.test(s)) return null; // keep polling
-      return null;
-    };
+    const classifyStatus = classifyUploadStatus;
     while (Date.now() < pollDeadline && !terminal) {
       // Only ever look at the CURRENT top row of the Upload History table,
       // and only once it differs from the pre-upload snapshot. Scanning every
@@ -2156,7 +2443,7 @@
       const topKey = rowKey(topRow);
       if (topRow && topKey !== prevTopRowKey) {
         const cells = [...topRow.querySelectorAll('td')].map((td) => norm(td.textContent));
-        const statusCell = cells.find((c) => /error\s*occurred|processed|failed|in\s*progress|pending|received/i.test(c));
+        const statusCell = cells.find((c) => /error\s*occurred|processed|failed|in[\s-]*progress|pending|received/i.test(c));
         if (statusCell) {
           const t = classifyStatus(statusCell);
           if (t) {
@@ -2187,7 +2474,10 @@
       }
       if (!terminal) await sleep(3000);
     }
-    if (!terminal) { await failUpload(job, 'Timed out waiting for the portal to finish processing (6 min). Check the Upload History on the portal manually, or click "Refresh errors" once it shows a result.'); return; }
+    // 0.8.6: the page offers "Refresh errors" for a timed-out upload, and
+    // Refresh now records a file the portal Processed as accepted (Pushed):
+    // the snapshot stays, so Refresh can tell this upload's row.
+    if (!terminal) { await failUpload(job, 'Timed out waiting for the portal to finish processing (6 min). The portal may still take the file: click "Refresh errors" on the GSTR-1 page in a few minutes. A file the portal shows as Processed is then recorded as accepted; otherwise its error report is fetched.'); return; }
 
     // Try to lift a summary count out of the page ("Total records: X | Errored: Y").
     const bodyText = document.body.innerText || '';
@@ -2229,7 +2519,9 @@
     // one level more subtle. Treat those labels as "no real reason yet"
     // (same as reportPending below), not a genuine error entry.
     const isActionLinkLabel = /^(generate|download)\s+error\s+report$/i.test((portalReason || '').trim());
-    const errors = (portalReason && !isActionLinkLabel) ? [{ invoiceNo: '', gstin: '', reason: portalReason }] : [];
+    // 0.8.6: 'Error report generation requested' (and 'NA') was still stored
+    // as an invoice error; no portal label is one (isPortalPlaceholder).
+    const errors = (portalReason && !isPortalPlaceholder(portalReason)) ? [{ invoiceNo: '', gstin: '', reason: portalReason }] : [];
 
     // The portal's "File could not be uploaded! Download the latest offline
     // tool…" is a catch-all message it uses for at least three distinct causes.
@@ -2257,6 +2549,9 @@
     banner(summary, terminal === 'accepted' ? '#16a34a' : '#dc2626');
 
     // Persist to Supabase, then post the result back to the app for its dialog.
+    // 0.8.6: the snapshot goes first, so a tab closed from here on is never
+    // recorded as an upload with an unknown outcome.
+    await clearPretop(rowId);
     try {
       chrome.runtime.sendMessage({ gstk: true, fn: 'saveGstr1UploadResult', args: [{
         rowId: job.gstr1.rowId, status: terminal, summary, errors, actorId: job.actorId,
@@ -2264,9 +2559,80 @@
     } catch (e) { /* the app still hears the message below */ }
 
     await chrome.storage.local.set({ gstk_gstr1_upload_result: {
-      ok: terminal !== 'failed', status: terminal, summary, errors, irnAttached: job.gstr1.irnAttached || 0, at: Date.now(),
+      ok: terminal !== 'failed', status: terminal, summary, errors, irnAttached: job.gstr1.irnAttached || 0, ...pushTarget(job), at: Date.now(),
     } });
     await clearJob();
+  }
+
+  // The Upload History's status, as the poll above and Refresh errors read it.
+  // 0.8.6: the portal also writes "In-Progress".
+  function classifyUploadStatus(raw) {
+    const s = (raw || '').toLowerCase();
+    if (/error\s*occurred/.test(s)) return 'failed';
+    if (/processed\s+with\s+error/.test(s)) return 'partial';
+    if (/^processed$/.test(s.trim()) || /processed(?!\s+with)/.test(s)) return 'accepted';
+    if (/\bfailed\b/.test(s)) return 'failed';
+    if (/in[\s-]*progress|pending|received/.test(s)) return null; // keep polling
+    return null;
+  }
+  // 0.8.6: an Upload History row's key, the same one the upload's poll waits
+  // to change and Refresh errors compares with the snapshot: its cells, each
+  // on one line, joined with '|'.
+  function uploadRowKey(row) {
+    return row ? [...row.querySelectorAll('td')].map((td) => oneLine(td.textContent)).join('|') : '';
+  }
+  // 0.8.6: when an Upload History row says its file was uploaded, in ms since
+  // the epoch: its date (dd/mm/yyyy or dd-mm-yyyy) and time (hh:mm[:ss], 24
+  // hour or AM/PM) as the portal shows them, in IST. A date with no time is
+  // the end of that day; null when no date shows.
+  function uploadRowTime(cells) {
+    const text = (cells || []).join(' | ');
+    const d = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/);
+    if (!d) return null;
+    const [dd, mo, yyyy] = [Number(d[1]), Number(d[2]), Number(d[3])];
+    const day = new Date(Date.UTC(yyyy, mo - 1, dd));
+    if (day.getUTCFullYear() !== yyyy || day.getUTCMonth() !== mo - 1 || day.getUTCDate() !== dd) return null;
+    let [hh, mi, ss] = [23, 59, 59];
+    const t = text.match(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([ap])\.?\s*m\b\.?)?/i);
+    if (t) {
+      [hh, mi, ss] = [Number(t[1]), Number(t[2]), Number(t[3] || 0)];
+      if (t[4]) hh = (hh % 12) + (/p/i.test(t[4]) ? 12 : 0);
+      if (hh > 23 || mi > 59 || ss > 59) return null;
+    }
+    return Date.UTC(yyyy, mo - 1, dd, hh, mi, ss) - 330 * 60 * 1000;
+  }
+  // 0.8.6: what the portal shows in the Error Report column that is a button
+  // or a note, not a reason: 'Generate error report', 'Download error
+  // report', 'Error report generation requested', 'NA'. Never an invoice
+  // error row (the app's isPlaceholderReason drops the same).
+  function isPortalPlaceholder(s) {
+    const t = oneLine(s);
+    return !t || /^(generate|download)\s+error\s+report$/i.test(t) || /^(n\/?a\s*)+$/i.test(t)
+      || /error\s+report\s+generation\s+requested|request\s+for\s+error\s+report\s+has\s+been\s+acknowledged/i.test(t);
+  }
+  // 0.8.6, for Refresh errors: the Upload tab's latest Upload History row —
+  // { status: 'accepted' | 'partial' | 'failed' | null, statusText, reason,
+  // key (uploadRowKey), at (uploadRowTime) } — or null when no row with a
+  // status shows within `ms`.
+  async function readUploadHistoryTop(ms) {
+    const uploadTab = $$('a, button, li, span').find((el) => /^upload$/i.test((el.textContent || '').trim()) && el.offsetParent !== null);
+    if (uploadTab) { try { uploadTab.click(); } catch (e) { /* read whatever shows */ } }
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      await sleep(500);
+      const top = $$('table tr').filter((r) => r.querySelector('td') && r.offsetParent !== null)[0];
+      if (!top) continue;
+      const cells = [...top.querySelectorAll('td')].map((td) => oneLine(td.textContent));
+      const statusText = cells.find((c) => /error\s*occurred|processed|failed|in[\s-]*progress|pending|received/i.test(c));
+      if (!statusText) continue;
+      // The Error Report cell is the last one (see the poll above); a cell
+      // that says the same thing twice is one Angular renders twice.
+      const last = cells[cells.length - 1] !== statusText ? cells[cells.length - 1] : '';
+      const twice = last.match(/^(.{6,}?)(?: \1)+$/);
+      return { status: classifyUploadStatus(statusText), statusText, reason: twice ? twice[1] : last,
+        key: uploadRowKey(top), at: uploadRowTime(cells) };
+    }
+    return null;
   }
 
   // Common failure exit: broadcast a structured error back to the app so the
@@ -2274,7 +2640,9 @@
   async function failUpload(job, error) {
     banner('Upload failed: ' + error, '#dc2626');
     try {
-      if (job && job.gstr1 && job.gstr1.rowId) {
+      // 0.8.6: a Refresh errors that could not reach the portal says nothing
+      // about the upload, so the upload's own status is left as it was.
+      if (job && job.gstr1 && job.gstr1.rowId && job.mode !== 'gstr1_refresh') {
         chrome.runtime.sendMessage({ gstk: true, fn: 'saveGstr1UploadResult', args: [{
           rowId: job.gstr1.rowId, status: 'failed', summary: error, errors: null, actorId: job.actorId,
         }] });
@@ -2282,7 +2650,7 @@
     } catch (e) { /* ignore */ }
     await chrome.storage.local.set({ gstk_gstr1_upload_result: {
       ok: false, status: 'failed', summary: error, error, errors: [],
-      irnAttached: (job && job.gstr1 && job.gstr1.irnAttached) || 0, at: Date.now(),
+      irnAttached: (job && job.gstr1 && job.gstr1.irnAttached) || 0, ...pushTarget(job), at: Date.now(),
     } });
     await clearJob();
   }
@@ -2348,9 +2716,9 @@
     }
     return null;
   }
-  // Fallback label: any "nil" that is not the Nil Rated / exempt supplies table.
-  const NIL_LOOSE = /^(?![\s\S]*(rated|exempt))[\s\S]*\bnil\b/i;
-  const nilToggleOn = (el) => !!(el && (el.checked || el.getAttribute('aria-checked') === 'true'));
+  // NIL_LOOSE and nilToggleOn are declared with the other constants at the
+  // top (0.8.6): down here they were not yet initialised when the dispatcher
+  // reached this handler, so every NIL push stopped at the toggle.
 
   async function handleGstr1Nil(job, cur, progress) {
     if (!/return\.gst\.gov\.in/i.test(location.href) || /returns\/auth\/dashboard/.test(location.href)) {
@@ -2391,14 +2759,17 @@
     if (!nilToggleOn(after)) { await failUpload(job, 'Clicked "File Nil GSTR-1" but the portal did not keep it ticked. Mark it NIL on the portal by hand.'); return; }
 
     const message = '"File Nil GSTR-1" is ticked on the portal for ' + job.period + '. Review it there, then file with DSC / EVC by hand.';
+    // 0.8.6: the result is stored and the job cleared before the banner and
+    // the round trip below, so a tab closed on seeing the banner can no longer
+    // turn a ticked NIL into a failure (the page records NIL itself too).
+    await chrome.storage.local.set({ gstk_gstr1_upload_result: {
+      ok: true, status: 'nil_marked', message, summary: message, errors: [], irnAttached: 0, ...pushTarget(job), at: Date.now(),
+    } });
+    await clearJob(); // stop acting — the human reviews and files.
     banner(message, '#16a34a');
     // 0.8.5: record the push in GST Keeper even if the app page is closed.
     try { await GSTKdb.markGstr1NilPushed({ clientId: cur.clientId, period_month: job.period, actorId: job.actorId || null }); }
     catch (e) { banner(message + ' (Could not mark it Pushed in GST Keeper: ' + ((e && e.message) || e) + ')', '#f59e0b'); }
-    await chrome.storage.local.set({ gstk_gstr1_upload_result: {
-      ok: true, status: 'nil_marked', message, summary: message, errors: [], irnAttached: 0, at: Date.now(),
-    } });
-    await clearJob(); // stop acting — the human reviews and files.
   }
 
   // "Pull GSTR-2B" mode — triggered by the app's Import 2B "Pull from portal"

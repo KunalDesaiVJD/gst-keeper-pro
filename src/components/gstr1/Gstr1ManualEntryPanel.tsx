@@ -19,10 +19,12 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   Gstr1Section, ManualRow, ColumnDef, SECTION_COLUMNS, NIL_SUPPLY_TYPES, DOC_TYPES,
   gstinHomeState, recomputeRowTax, assembleGstr1Json, hydrateManualEntriesFromJson, hasMissingHsnSummary,
-  findInvalidGstinRows, findInvoiceValueMismatchRows, findInvalidAmendmentPeriodRows,
+  findInvalidGstinRows, findInvoiceValueMismatchRows, findInvalidAmendmentPeriodRows, gstr1PosCodes, periodShortToFp,
 } from '@/utils/gstr1ManualBuild';
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
+import { isBuilderGenerated } from '@/utils/builderGstr1';
 import { describeHsnProblems, editableUqc, isServiceHsn, normaliseGstr1Hsn } from '@/lib/gstr1/uqc';
+import { describeGstr1Issues, tidyGstr1Json, validateGstr1Json } from '@/lib/gstr1/validate';
 import { UqcSelect, UqcText } from '@/components/gstr1/UqcSelect';
 
 const INVOICE_SECTIONS: Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>[] = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd', 'ata', 'txpda'];
@@ -124,10 +126,13 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
         // generated once before) — hydrate the grid from it so editing
         // continues from where it left off.
         const { data: existing } = await supabase
-          .from('gstr1_data').select('raw_json')
+          .from('gstr1_data').select('raw_json, file_name')
           .eq('client_id', clientId).eq('period_month', periodShort).maybeSingle();
         if (existing?.raw_json) {
-          const hydrated = hydrateManualEntriesFromJson(existing.raw_json);
+          // Tidied first so a Builder return saved in the old hsn.data shape
+          // opens with its Table 12 rows in B2C, where re-Generate keeps them.
+          const { json: tidied } = tidyGstr1Json(existing.raw_json, { builder: isBuilderGenerated(existing.file_name) });
+          const hydrated = hydrateManualEntriesFromJson(tidied);
           setRowsBySection(hydrated.rowsBySection);
           setNilRows(hydrated.nilRows);
           setDocRows(hydrated.docRows);
@@ -188,7 +193,9 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
         if (field === 'ctin' && typeof value === 'string' && value.length >= 2) {
           next.pos = value.slice(0, 2).toUpperCase();
         }
-        if (['rt', 'txval', 'ad_amt', 'pos', 'typ', 'ctin'].includes(field)) next = recomputeRowTax(section, next, homeState);
+        // inv_typ / expTyp / urTyp move tax too: SEZ and CBW are IGST only, and
+        // an export without payment carries none.
+        if (['rt', 'txval', 'ad_amt', 'pos', 'typ', 'ctin', 'inv_typ', 'expTyp', 'urTyp'].includes(field)) next = recomputeRowTax(section, next, homeState);
         return next;
       }),
     }));
@@ -271,24 +278,28 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       toast.error('This return has taxable value but no HSN summary (Table 12) rows — the portal will reject the upload. Add at least one row on the "12 — HSN-wise Summary" tab first.');
       return;
     }
+    // The file exactly as Generate will write it; every check below reads it.
+    const json = assembleGstr1Json({ gstin: clientGstin, periodShort, rowsBySection, nilRows, docRows, hsnRows });
     // Table 12 rows the portal would reject that only a person can fix: a unit
     // GSTN doesn't know, or an HSN that isn't 4 to 8 digits. Everything with
     // one right answer (NA on services, "Others" → OTH) is corrected by
     // assembleGstr1Json itself.
-    const hsnProblems = normaliseGstr1Hsn(assembleGstr1Json({ gstin: clientGstin, periodShort, rowsBySection, nilRows, docRows, hsnRows })).problems;
+    const hsnProblems = normaliseGstr1Hsn(json).problems;
     if (hsnProblems.length > 0) {
       toast.error(describeHsnProblems(hsnProblems, 'on the "12 — HSN-wise Summary" tab'), { duration: 15000 });
       return;
     }
-    // A single malformed counterparty GSTIN anywhere in the file bounces the
-    // whole upload with the same generic "could not be uploaded" message —
-    // catch it here with a specific reason instead of finding out on the portal.
-    const invalidGstin = findInvalidGstinRows(rowsBySection);
+    // A single bad counterparty GSTIN anywhere in the file bounces the whole
+    // upload with the same generic "could not be uploaded" message — catch it
+    // here, on its row, with a specific reason instead of finding out on the
+    // portal. The client's own GSTIN counts as bad: no one supplies themselves.
+    const invalidGstin = findInvalidGstinRows(rowsBySection, clientGstin);
     if (invalidGstin.length > 0) {
-      const preview = invalidGstin.slice(0, 5).map((m) => `${SECTION_LABELS[m.section]}: ${m.inum} (${m.ctin})`).join('; ');
+      const preview = invalidGstin.slice(0, 5).map((m) => `${SECTION_LABELS[m.section]}: ${m.inum}, ${m.reason}`).join('; ');
       toast.error(
-        `${invalidGstin.length} row(s) have a malformed counterparty GSTIN — the portal will reject the upload. ` +
-        `Fix these first: ${preview}${invalidGstin.length > 5 ? '…' : ''}`
+        `${invalidGstin.length} row(s) have a recipient GSTIN the portal will reject. ` +
+        `Fix these first: ${preview}${invalidGstin.length > 5 ? '…' : ''}`,
+        { duration: 15000 },
       );
       return;
     }
@@ -320,11 +331,19 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       );
       return;
     }
+    // Everything else the portal enforces (document numbers and dates, POS and
+    // rate lists, note and export fields, Table 13 series, the IGST vs CGST/SGST
+    // split): the same check the push runs, so a file Generate accepts is one
+    // the push will too.
+    const fp = periodShortToFp(periodShort);
+    const check = validateGstr1Json(json, { gstin: clientGstin, period: fp ? `${fp.slice(0, 2)}/${fp.slice(2)}` : undefined });
+    if (check.problems.length > 0) {
+      toast.error(describeGstr1Issues(check.problems, 'on the manual entry tabs'), { duration: 15000 });
+      return;
+    }
     setIsGenerating(true);
     try {
       await persistRows();
-
-      const json = assembleGstr1Json({ gstin: clientGstin, periodShort, rowsBySection, nilRows, docRows, hsnRows });
 
       const { data: written, error } = await supabase
         .from('gstr1_data')
@@ -352,6 +371,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
       });
 
       toast.success('GSTR-1 JSON generated from manual entries.');
+      if (check.warnings.length > 0) toast.warning(describeGstr1Issues(check.warnings), { duration: 15000 });
       setCollapsed(true);
       onGenerated();
     } catch (err: any) {
@@ -373,7 +393,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
     if (col.type === 'state') {
       return (
         <SearchableSelect
-          options={[{ value: '', label: '—' }, ...Array.from({ length: 38 }, (_, i) => String(i + 1).padStart(2, '0')).concat(['97', '99']).map((code) => ({ value: code, label: code }))]}
+          options={[{ value: '', label: '—' }, ...gstr1PosCodes(section).map((code) => ({ value: code, label: code }))]}
           value={value}
           onValueChange={(v) => updateRow(section, row.id, col.key, v)}
           placeholder="POS"

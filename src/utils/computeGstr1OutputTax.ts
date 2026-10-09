@@ -110,12 +110,15 @@ export const computeGstr1OutputTax = (rawJson: any, periodMonth: string): Gstr1O
     });
   });
 
-  // Table 10 — amendments to earlier-period B2CS entries. Same flat shape as
-  // b2cs (not nested under itm_det).
-  (rawJson.b2csa || []).forEach((item: any) => {
-    igst += num(item.iamt);
-    cgst += num(item.camt);
-    sgst += num(item.samt);
+  // Table 10 — amendments to earlier-period B2CS entries. Rates under itms[]
+  // in the portal's shape (Builder's), flat like b2cs in older files; never
+  // nested under itm_det.
+  (rawJson.b2csa || []).forEach((entry: Record<string, unknown>) => {
+    (Array.isArray(entry.itms) && entry.itms.length ? (entry.itms as Record<string, unknown>[]) : [entry]).forEach((item) => {
+      igst += num(item.iamt);
+      cgst += num(item.camt);
+      sgst += num(item.samt);
+    });
   });
 
   // AT — advance tax received

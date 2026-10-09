@@ -173,16 +173,20 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     s7.cess += num(r.csamt);
   });
 
-  // 10 — Amendments to earlier B2CS entries. Same shape as b2cs, one row per
-  // (amended month, POS, rate). A retrospective re-rating is reported here
-  // rather than as a debit note, because every buyer is unregistered.
-  (j.b2csa || []).forEach((r: Record<string, unknown>) => {
-    s10.count += 1;
-    s10.value += num(r.txval);
-    s10.igst += num(r.iamt);
-    s10.cgst += num(r.camt);
-    s10.sgst += num(r.samt);
-    s10.cess += num(r.csamt);
+  // 10 — Amendments to earlier B2CS entries, one line per (amended month, POS,
+  // rate). A retrospective re-rating is reported here rather than as a debit
+  // note, because every buyer is unregistered. Two shapes: the portal's, rates
+  // under itms[] (Builder writes it so), and flat b2cs-like rows (older files).
+  (j.b2csa || []).forEach((a: Record<string, unknown>) => {
+    const lines = Array.isArray(a.itms) && a.itms.length ? (a.itms as Record<string, unknown>[]) : [a];
+    lines.forEach((r) => {
+      s10.count += 1;
+      s10.value += num(r.txval);
+      s10.igst += num(r.iamt);
+      s10.cgst += num(r.camt);
+      s10.sgst += num(r.samt);
+      s10.cess += num(r.csamt);
+    });
   });
 
   // 8 — Nil rated / exempted / non-GST. Value only, no tax.

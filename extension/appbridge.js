@@ -11,6 +11,9 @@
 const EXT_VERSION = chrome.runtime.getManifest().version;
 const ALLOWED_ORIGINS = ['https://gst.vjdesai.com', 'https://gst-keeper-pro.vercel.app'];
 
+// 0.8.6: the return a push result belongs to, as the page asked for it.
+const pushTarget = (info) => ({ clientId: info.clientId || null, period_month: info.period_month || null });
+
 function announce() {
   window.postMessage({ __gstkExtensionReady: true, version: EXT_VERSION }, location.origin);
 }
@@ -156,7 +159,7 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startGstr1Upload', args: [info] }, (resp) => {
       if (!(resp && resp.ok)) {
         const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-        window.postMessage({ __gstkUploadGstr1Result: { ok: false, error } }, location.origin);
+        window.postMessage({ __gstkUploadGstr1Result: { ok: false, status: 'failed', error, ...pushTarget(info) } }, location.origin);
       }
       // On resp.ok the portal automation continues asynchronously; the final
       // result is broadcast via the storage listener below.
@@ -174,9 +177,10 @@ window.addEventListener('message', (e) => {
     chrome.runtime.sendMessage({ gstk: true, fn: 'startGstr1RefreshErrors', args: [info] }, (resp) => {
       if (!(resp && resp.ok)) {
         const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-        window.postMessage({ __gstkUploadGstr1Result: { ok: false, error } }, location.origin);
+        window.postMessage({ __gstkUploadGstr1Result: { ok: false, status: 'failed', error, ...pushTarget(info) } }, location.origin);
       }
     });
+    return;
   }
 
   // 0.8.4: the GSTR-1 page's "Pull e-invoices" button. Background opens a
@@ -203,8 +207,11 @@ window.addEventListener('message', (e) => {
     if (!info.clientId || !info.period_month || !info.gstr3bJson) return;
     chrome.runtime.sendMessage({ gstk: true, fn: 'startGstr3bPush', args: [info] }, (resp) => {
       if (!(resp && resp.ok)) {
+        // Never started, so nothing was recorded in Push History (recorded: false).
         const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-        window.postMessage({ __gstkPushGstr3bResult: { ok: false, error } }, location.origin);
+        window.postMessage({ __gstkPushGstr3bResult: {
+          ok: false, status: 'failed', error, summary: error, filled: 0, skipped: [], portalFilled: [], recorded: false, ...pushTarget(info),
+        } }, location.origin);
       }
       // On resp.ok the portal automation continues asynchronously; the final
       // result is broadcast via the storage listener below.
@@ -233,7 +240,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   // Portal upload finished (accepted / partial / failed + per-invoice errors).
   // The content script writes this after reading the portal's post-processing
-  // status + Error Report; we relay it to the app and clear.
+  // status + Error Report; we relay it to the app and clear. 0.8.6: relayed
+  // unchanged, so it carries the job's clientId and period_month through.
   if (changes.gstk_gstr1_upload_result) {
     const v = changes.gstk_gstr1_upload_result.newValue;
     if (v) {
@@ -254,8 +262,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
   }
   // GSTR-3B form-fill finished (or the whole flow errored out before it got
-  // that far — failUpload also stashes its message under this same key via
-  // the shared job machinery's session-bounce/timeout paths).
+  // that far: failGstr3b writes this same key from every dead end, and the
+  // background worker when the portal tab is closed). 0.8.6: relayed
+  // unchanged — status ('filled' / 'partial' / 'failed'), portalFilled, the
+  // job's clientId and period_month, and whether the extension already
+  // recorded it in Push History (recorded).
   if (changes.gstk_gstr3b_push_result) {
     const v = changes.gstk_gstr3b_push_result.newValue;
     if (v) {
