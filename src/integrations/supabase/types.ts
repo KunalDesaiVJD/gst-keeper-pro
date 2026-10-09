@@ -39,6 +39,224 @@ export type Database = {
   }
   public: {
     Tables: {
+      einvoice_docs: {
+        Row: {
+          cess: number
+          cgst: number
+          client_id: string
+          ctin: string
+          doc_date: string | null
+          doc_key: string
+          doc_no: string
+          doc_type: string
+          doc_value: number
+          first_seen_at: string
+          id: string
+          igst: number
+          inv_typ: string | null
+          irn: string
+          irn_date: string | null
+          last_seen_at: string
+          period_month: string
+          pos: string | null
+          raw: Json | null
+          section: string
+          sgst: number
+          source: string
+          taxable: number
+        }
+        Insert: {
+          cess?: number
+          cgst?: number
+          client_id: string
+          ctin?: string
+          doc_date?: string | null
+          doc_key: string
+          doc_no: string
+          doc_type: string
+          doc_value?: number
+          first_seen_at?: string
+          id?: string
+          igst?: number
+          inv_typ?: string | null
+          irn: string
+          irn_date?: string | null
+          last_seen_at?: string
+          period_month: string
+          pos?: string | null
+          raw?: Json | null
+          section: string
+          sgst?: number
+          source?: string
+          taxable?: number
+        }
+        Update: {
+          cess?: number
+          cgst?: number
+          client_id?: string
+          ctin?: string
+          doc_date?: string | null
+          doc_key?: string
+          doc_no?: string
+          doc_type?: string
+          doc_value?: number
+          first_seen_at?: string
+          id?: string
+          igst?: number
+          inv_typ?: string | null
+          irn?: string
+          irn_date?: string | null
+          last_seen_at?: string
+          period_month?: string
+          pos?: string | null
+          raw?: Json | null
+          section?: string
+          sgst?: number
+          source?: string
+          taxable?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "einvoice_docs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      einvoice_pulls: {
+        Row: {
+          client_id: string
+          docs_found: number
+          id: string
+          message: string | null
+          period_month: string
+          pulled_at: string
+          pulled_by: string | null
+          status: string
+        }
+        Insert: {
+          client_id: string
+          docs_found?: number
+          id?: string
+          message?: string | null
+          period_month: string
+          pulled_at?: string
+          pulled_by?: string | null
+          status: string
+        }
+        Update: {
+          client_id?: string
+          docs_found?: number
+          id?: string
+          message?: string | null
+          period_month?: string
+          pulled_at?: string
+          pulled_by?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "einvoice_pulls_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      einvoice_threshold_alerts: {
+        Row: {
+          client_id: string
+          dismissed_at: string | null
+          email_outbox_id: string | null
+          financial_year: string
+          id: string
+          level: string
+          notified_at: string
+          turnover: number
+        }
+        Insert: {
+          client_id: string
+          dismissed_at?: string | null
+          email_outbox_id?: string | null
+          financial_year: string
+          id?: string
+          level: string
+          notified_at?: string
+          turnover: number
+        }
+        Update: {
+          client_id?: string
+          dismissed_at?: string | null
+          email_outbox_id?: string | null
+          financial_year?: string
+          id?: string
+          level?: string
+          notified_at?: string
+          turnover?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "einvoice_threshold_alerts_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gstr1_direct_filing_approvals: {
+        Row: {
+          client_id: string
+          decided_at: string | null
+          decided_by: string | null
+          decision_note: string | null
+          id: string
+          period_month: string
+          reason: string
+          requested_at: string
+          requested_by: string | null
+          return_type: string
+          status: string
+        }
+        Insert: {
+          client_id: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_note?: string | null
+          id?: string
+          period_month: string
+          reason: string
+          requested_at?: string
+          requested_by?: string | null
+          return_type: string
+          status?: string
+        }
+        Update: {
+          client_id?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_note?: string | null
+          id?: string
+          period_month?: string
+          reason?: string
+          requested_at?: string
+          requested_by?: string | null
+          return_type?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr1_direct_filing_approvals_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_audit_log: {
         Row: {
           agent_id: string | null
@@ -4512,6 +4730,9 @@ export type Database = {
       }
       clients: {
         Row: {
+          ai_consent_at: string | null
+          ai_consent_note: string | null
+          ai_opt_out: boolean
           assigned_accountant: string | null
           builder_itc_type: string | null
           cancellation_date: string | null
@@ -4520,8 +4741,11 @@ export type Database = {
           commercial_area: number | null
           created_at: string | null
           created_by: string | null
+          einvoice_applicable: boolean
+          einvoice_exemption: string | null
           email: string | null
           gst_password: string | null
+          gst_password_changed_at: string | null
           gst_user_id: string | null
           gstin: string
           gstr1_import_mode: string
@@ -4531,9 +4755,8 @@ export type Database = {
           liberal_2b_reconciliation: boolean
           mobile: string | null
           name: string
-          notices_sync_excluded: boolean
           notices_handled: boolean
-          gst_password_changed_at: string | null
+          notices_sync_excluded: boolean
           portal_login_issue: string | null
           portal_login_issue_at: string | null
           portal_login_issue_message: string | null
@@ -4546,11 +4769,11 @@ export type Database = {
           target_date_group1: number | null
           target_date_group2: number | null
           updated_at: string | null
-          ai_consent_at: string | null
-          ai_consent_note: string | null
-          ai_opt_out: boolean
         }
         Insert: {
+          ai_consent_at?: string | null
+          ai_consent_note?: string | null
+          ai_opt_out?: boolean
           assigned_accountant?: string | null
           builder_itc_type?: string | null
           cancellation_date?: string | null
@@ -4559,8 +4782,11 @@ export type Database = {
           commercial_area?: number | null
           created_at?: string | null
           created_by?: string | null
+          einvoice_applicable?: boolean
+          einvoice_exemption?: string | null
           email?: string | null
           gst_password?: string | null
+          gst_password_changed_at?: string | null
           gst_user_id?: string | null
           gstin: string
           gstr1_import_mode?: string
@@ -4570,9 +4796,8 @@ export type Database = {
           liberal_2b_reconciliation?: boolean
           mobile?: string | null
           name: string
-          notices_sync_excluded?: boolean
           notices_handled?: boolean
-          gst_password_changed_at?: string | null
+          notices_sync_excluded?: boolean
           portal_login_issue?: string | null
           portal_login_issue_at?: string | null
           portal_login_issue_message?: string | null
@@ -4585,11 +4810,11 @@ export type Database = {
           target_date_group1?: number | null
           target_date_group2?: number | null
           updated_at?: string | null
+        }
+        Update: {
           ai_consent_at?: string | null
           ai_consent_note?: string | null
           ai_opt_out?: boolean
-        }
-        Update: {
           assigned_accountant?: string | null
           builder_itc_type?: string | null
           cancellation_date?: string | null
@@ -4598,8 +4823,11 @@ export type Database = {
           commercial_area?: number | null
           created_at?: string | null
           created_by?: string | null
+          einvoice_applicable?: boolean
+          einvoice_exemption?: string | null
           email?: string | null
           gst_password?: string | null
+          gst_password_changed_at?: string | null
           gst_user_id?: string | null
           gstin?: string
           gstr1_import_mode?: string
@@ -4609,9 +4837,8 @@ export type Database = {
           liberal_2b_reconciliation?: boolean
           mobile?: string | null
           name?: string
-          notices_sync_excluded?: boolean
           notices_handled?: boolean
-          gst_password_changed_at?: string | null
+          notices_sync_excluded?: boolean
           portal_login_issue?: string | null
           portal_login_issue_at?: string | null
           portal_login_issue_message?: string | null
@@ -4624,9 +4851,6 @@ export type Database = {
           target_date_group1?: number | null
           target_date_group2?: number | null
           updated_at?: string | null
-          ai_consent_at?: string | null
-          ai_consent_note?: string | null
-          ai_opt_out?: boolean
         }
         Relationships: []
       }
@@ -4991,6 +5215,7 @@ export type Database = {
           is_locked: boolean | null
           is_nil: boolean
           period_month: string
+          pushed_at: string | null
           remarks: string | null
           return_pdf_url: string | null
           return_type: Database["public"]["Enums"]["return_type"]
@@ -5007,6 +5232,7 @@ export type Database = {
           is_locked?: boolean | null
           is_nil?: boolean
           period_month: string
+          pushed_at?: string | null
           remarks?: string | null
           return_pdf_url?: string | null
           return_type: Database["public"]["Enums"]["return_type"]
@@ -5023,6 +5249,7 @@ export type Database = {
           is_locked?: boolean | null
           is_nil?: boolean
           period_month?: string
+          pushed_at?: string | null
           remarks?: string | null
           return_pdf_url?: string | null
           return_type?: Database["public"]["Enums"]["return_type"]

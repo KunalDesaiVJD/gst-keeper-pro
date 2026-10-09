@@ -1137,6 +1137,18 @@ const GSTR1DataPage: React.FC = () => {
     }));
   }, [json.b2csa]);
 
+  // A document's own value (`val`, incl. tax) repeats on every item line of
+  // a multi-rate document, so the Value footer sums it once per document.
+  const sumDocVal = (rows: any[], key: (r: any) => string): number => {
+    const seen = new Set<string>();
+    return rows.reduce((t, r) => {
+      const k = key(r);
+      if (seen.has(k)) return t;
+      seen.add(k);
+      return t + (Number(r.val) || 0);
+    }, 0);
+  };
+
   // CDNR data
   const cdnrRows = useMemo(() => {
     const rows: any[] = [];
@@ -2125,7 +2137,7 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter className={TFOOT}>
                         <TableRow className={TR_TOTAL}>
                           <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({b2bRows.length} rows)</TableCell>
-                          <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'val'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumDocVal(b2bRows, (r) => `${r.ctin}|${r.inum}`))}</TableCell>
                           <TableCell className={TD} colSpan={4} />
                           <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'iamt'))}</TableCell>
@@ -2175,7 +2187,7 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter className={TFOOT}>
                         <TableRow className={TR_TOTAL}>
                           <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({b2clRows.length} rows)</TableCell>
-                          <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'val'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumDocVal(b2clRows, (r) => `${r.pos}|${r.inum}`))}</TableCell>
                           <TableCell className={TD} />
                           <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'iamt'))}</TableCell>
@@ -2327,7 +2339,7 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter className={TFOOT}>
                         <TableRow className={TR_TOTAL}>
                           <TableCell className={`${TD} font-semibold`} colSpan={5}>Total ({cdnrRows.length} rows)</TableCell>
-                          <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'val'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumDocVal(cdnrRows, (r) => `${r.ctin}|${r.ntNum}`))}</TableCell>
                           <TableCell className={TD} />
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'iamt'))}</TableCell>
@@ -2379,7 +2391,7 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter className={TFOOT}>
                         <TableRow className={TR_TOTAL}>
                           <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({cdnurRows.length} rows)</TableCell>
-                          <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'val'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumDocVal(cdnurRows, (r) => `${r.ntNum}`))}</TableCell>
                           <TableCell className={TD} colSpan={2} />
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'iamt'))}</TableCell>
@@ -2433,7 +2445,7 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter className={TFOOT}>
                         <TableRow className={TR_TOTAL}>
                           <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({expRows.length} rows)</TableCell>
-                          <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'val'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumDocVal(expRows, (r) => `${r.expTyp ?? ''}|${r.inum}`))}</TableCell>
                           <TableCell className={TD} colSpan={4} />
                           <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'iamt'))}</TableCell>
