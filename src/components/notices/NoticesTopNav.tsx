@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { BarChart3, Building2, ChevronDown, FileWarning, ListOrdered, ReceiptIndianRupee, Wallet } from 'lucide-react';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { WS_TAB, WS_TAB_ACTIVE, WS_TABS_LIST } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
@@ -13,19 +13,23 @@ type CountKey = 'queue' | 'open' | 'matters' | 'hearings';
 
 interface NavItem { label: string; to: string; count?: CountKey; match: (p: string) => boolean }
 
-// The target's tabs (audit U-03-1): each label opens the page it names.
+// Five tabs and a "More" menu (the firm's request of 9 October 2026: the menu was too
+// long). Each label opens the page it names; the rest sit under More.
 const NAV: NavItem[] = [
-  { label: 'Command centre', to: '/notices-dashboard', match: (p) => p === '/notices-dashboard' },
+  { label: 'Home', to: '/notices-dashboard', match: (p) => p === '/notices-dashboard' },
   { label: 'Cases', to: '/notices-cases', match: (p) => p === '/notices-cases' || p.startsWith('/notices-case/') },
-  { label: 'Work queue', to: '/notices-queue', count: 'queue', match: (p) => p === '/notices-queue' },
-  { label: 'All notices', to: '/notices-all', count: 'open', match: (p) => p === '/notices-all' || /^\/notices\/[^/]+$/.test(p) },
-  { label: 'Matters', to: '/litigation', count: 'matters', match: (p) => p === '/litigation' || p.startsWith('/litigation/') },
-  { label: 'Hearings', to: '/notices-hearings', count: 'hearings', match: (p) => p === '/notices-hearings' },
+  { label: 'Notices', to: '/notices-all', count: 'open', match: (p) => p === '/notices-all' || /^\/notices\/[^/]+$/.test(p) },
   { label: 'Calendar', to: '/notices-calendar', match: (p) => p === '/notices-calendar' },
   {
     label: 'Clients', to: '/notices-company-list',
     match: (p) => p === '/notices-company-list' || p.startsWith('/notices-company/') || p.startsWith('/notices-case-folder/'),
   },
+];
+
+const MORE: NavItem[] = [
+  { label: 'Work queue', to: '/notices-queue', count: 'queue', match: (p) => p === '/notices-queue' },
+  { label: 'Hearings', to: '/notices-hearings', count: 'hearings', match: (p) => p === '/notices-hearings' },
+  { label: 'Matters', to: '/litigation', count: 'matters', match: (p) => p === '/litigation' || p.startsWith('/litigation/') },
   { label: 'Autopilot', to: '/notices-autopilot', match: (p) => p === '/notices-autopilot' },
   { label: 'Reply Factory', to: '/notices-reply-factory', match: (p) => p === '/notices-reply-factory' },
   { label: 'Settings', to: '/notices-settings', match: (p) => p === '/notices-settings' },
@@ -40,7 +44,7 @@ const REPORTS = [
 ];
 
 export function noticesSectionLabel(pathname: string): string {
-  return NAV.find((n) => n.match(pathname))?.label ?? REPORTS.find((r) => r.to === pathname)?.label ?? 'Notices';
+  return [...NAV, ...MORE].find((n) => n.match(pathname))?.label ?? REPORTS.find((r) => r.to === pathname)?.label ?? 'Notices';
 }
 
 export const NoticesTopNav: React.FC = () => {
@@ -53,7 +57,8 @@ export const NoticesTopNav: React.FC = () => {
   const { user } = useAuth();
   const counts = useNoticesNavCounts(user?.id ?? null);
   const activeReport = REPORTS.find((r) => r.to === pathname);
-  const current = NAV.find((n) => n.match(pathname))?.to ?? activeReport?.to ?? '';
+  const activeMore = MORE.find((n) => n.match(pathname));
+  const current = [...NAV, ...MORE].find((n) => n.match(pathname))?.to ?? activeReport?.to ?? '';
 
   return (
     <>
@@ -64,7 +69,7 @@ export const NoticesTopNav: React.FC = () => {
             <SelectValue placeholder="Section" />
           </SelectTrigger>
           <SelectContent>
-            {NAV.map((n) => (
+            {[...NAV, ...MORE].map((n) => (
               <SelectItem key={n.to} value={n.to}>
                 {n.label}{n.count && counts ? ` (${counts[n.count]})` : ''}
               </SelectItem>
@@ -90,11 +95,23 @@ export const NoticesTopNav: React.FC = () => {
           );
         })}
         <DropdownMenu>
-          <DropdownMenuTrigger className={cn(WS_TAB, 'h-8 px-3 outline-none', activeReport && WS_TAB_ACTIVE)}
-            aria-current={activeReport ? 'page' : undefined}>
-            {activeReport ? `Reports · ${activeReport.label}` : 'Reports'} <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+          <DropdownMenuTrigger className={cn(WS_TAB, 'h-8 px-3 outline-none', (activeReport || activeMore) && WS_TAB_ACTIVE)}
+            aria-current={activeReport || activeMore ? 'page' : undefined}>
+            {activeMore ? activeMore.label : activeReport ? activeReport.label : 'More'} <ChevronDown className="h-3.5 w-3.5" aria-hidden />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
+          <DropdownMenuContent align="end" className="w-56">
+            {MORE.map((n) => {
+              const count = n.count && counts ? counts[n.count] : null;
+              return (
+                <DropdownMenuItem key={n.to} asChild>
+                  <Link to={go(n.to)} className="flex items-center justify-between gap-2 text-sm" aria-current={n.match(pathname) ? 'page' : undefined}>
+                    {n.label}{count ? <span className="text-xs tabular-nums text-muted-foreground">{count.toLocaleString('en-IN')}</span> : null}
+                  </Link>
+                </DropdownMenuItem>
+              );
+            })}
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-[11px] font-medium text-muted-foreground">Reports</DropdownMenuLabel>
             {REPORTS.map((r) => (
               <DropdownMenuItem key={r.to} asChild>
                 <Link to={go(r.to)} className="flex items-center gap-2 text-sm" aria-current={r.to === pathname ? 'page' : undefined}>

@@ -10642,6 +10642,14 @@ export type Database = {
         Args: { p_client_ids: string[]; p_include: boolean; p_actor?: string | null }
         Returns: Json
       }
+      notice_link_suggestions: {
+        Args: { p_notice_id: string }
+        Returns: Json
+      }
+      notice_case_link_set: {
+        Args: { p_client_id: string; p_child_key: string; p_parent_key: string | null; p_kind: string | null; p_by?: string | null }
+        Returns: boolean
+      }
       notices_client_settings: {
         Args: never
         Returns: {

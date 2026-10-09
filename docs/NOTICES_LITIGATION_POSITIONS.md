@@ -586,3 +586,24 @@ fields that do not apply. Migration `20261011100000_notice_cases.sql`.
 - **Lines under a page's title** say something only when something is wrong (the firm:
   "irrelevant on almost every screen"): sync failures by cause, a failed run, the AI
   reader stopped or capped, autopilot paused, failed or waiting.
+
+## 22. Linked cases; link when certain, suggest otherwise (asked by the firm, 9 October 2026)
+
+Migration `20261012100000_notice_case_links.sql`. The firm's rule: "everything should be auto
+linked if 100% confidence, or if it is not then recommendation options".
+
+- **Certain, linked by itself** (`notice_case_links`, source `auto`, rebuilt by the sweep and
+  whenever a case folder item arrives): a case folder item that names a notice of another
+  case (an appeal or waiver application's reference or `orddtl.ordnum`, an order's
+  `orginalOrderNo`) links its case into that notice's case. Every case view uses the root
+  (`notice_case_root`), so an appeal, its hearings, the SCN and the order are one case.
+  A DRC-03 whose cause of payment names a notice's reference is linked to it. An appeal
+  application's pre-deposit is recorded on the order it appeals (`notice_payments.auto_ref`).
+- **The order's clock:** an order with an appeal filed against it moves to the stage
+  *appeal*. It stays open with its demand as exposure, and is never overdue or due in 7.
+  An order whose s.128A waiver was approved (SPL-APPROVED) closes (`auto:waiver_settled`).
+- **Not certain, suggested** (`notice_link_suggestions`): DRC-03s scored on financial year,
+  paid after the notice, a cause mentioning a notice or audit, and an amount matching the
+  demand (shown at 40 and above on the Payments tab). For an appeal case with no link, the
+  client's orders are offered, best first. A person's link (`notice_case_link_set`, source
+  `manual`) survives every refresh.
