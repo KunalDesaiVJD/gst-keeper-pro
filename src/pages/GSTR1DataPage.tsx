@@ -956,6 +956,22 @@ const GSTR1DataPage: React.FC = () => {
       toast.error('No e-invoices pulled for this period — pull e-invoices first, or tick "Upload without IRNs anyway".');
       return;
     }
+    // Check the stored return, not only this page's copy: the extension pushes
+    // the stored row, and the Table 12 correction below writes this copy back.
+    // If another tab or a colleague saved the return since the page loaded,
+    // reload it and let the user look again rather than overwrite their work.
+    const { data: stored, error: readError } = await supabase
+      .from('gstr1_data').select('raw_json').eq('id', gstr1Data.id).maybeSingle();
+    if (readError || !stored) {
+      toast.error('Could not read the stored return, so nothing was uploaded: ' + (readError?.message || 'it is no longer there.'));
+      return;
+    }
+    if (JSON.stringify(stored.raw_json) !== JSON.stringify(gstr1Data.raw_json)) {
+      setUploadDialogOpen(false);
+      await fetchGSTR1Data();
+      toast.warning('This return was changed elsewhere since the page loaded (another tab or a colleague). It has been reloaded: check it and click Upload again.', { duration: 12000 });
+      return;
+    }
     // Pre-flight: the portal only accepts a JSON whose GSTIN matches the
     // logged-in taxpayer. If the imported JSON's GSTIN doesn't match this
     // client's GSTIN, the upload will be rejected with a misleading portal
@@ -1273,8 +1289,11 @@ const GSTR1DataPage: React.FC = () => {
     }
     // Strip this app's own provenance fields (_source/_generated_at) — the
     // portal's upload schema doesn't recognise them, and a strict validator
-    // rejects the whole file over one unexpected key.
-    const portalJson = stripInternalFields(gstr1Data.raw_json);
+    // rejects the whole file over one unexpected key. Table 12 units go as
+    // GSTN codes, the same correction the push applies, so a file uploaded by
+    // hand on the portal isn't rejected with RET191353 either.
+    const hsnFix = normaliseGstr1Hsn(stripInternalFields(gstr1Data.raw_json));
+    const portalJson = hsnFix.json;
     const blob = new Blob([JSON.stringify(portalJson)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1287,6 +1306,8 @@ const GSTR1DataPage: React.FC = () => {
     a.remove();
     URL.revokeObjectURL(url);
     toast.success('GSTR-1 JSON downloaded.');
+    if (hsnFix.changed) toast.info(`${describeHsnFixes(hsnFix)} (in the downloaded file; the saved return is corrected when you upload)`, { duration: 12000 });
+    if (hsnFix.problems.length) toast.warning(describeHsnProblems(hsnFix.problems), { duration: 15000 });
   };
 
   const json = gstr1Data?.raw_json || {};

@@ -1,11 +1,23 @@
 import * as React from 'react';
 import { Check, ChevronsUpDown } from 'lucide-react';
+import { defaultFilter } from 'cmdk';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { classifyUqc, GSTN_UQC, uqcLabel } from '@/lib/gstr1/uqc';
 
 const SERVICE_TITLE = 'A service (HSN/SAC starting 99) always goes to the portal as NA with quantity 0.';
+
+/**
+ * Search the list the way people write units: "Nos.", "pkt", "Kgs" land on
+ * NOS, PAC, KGS through the same reader imports use; anything else is the
+ * usual fuzzy match on "CODE-DESCRIPTION".
+ */
+const searchUnits = (value: string, search: string, keywords?: string[]) => {
+  const hit = classifyUqc(search, '0000'); // read as a goods unit
+  if (hit.kind === 'ok' && hit.code === value.split('-')[0]) return 1;
+  return defaultFilter(value, search.replace(/[.'’`]/g, '').trim(), keywords);
+};
 
 /**
  * Table 12 unit picker. Offers GSTN's own list ("KGS-KILOGRAMS") and stores
@@ -60,10 +72,10 @@ export const UqcSelect: React.FC<{
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-64 p-0" align="start">
-        <Command>
+        <Command filter={searchUnits}>
           <CommandInput placeholder="Search unit (e.g. kilo, box)…" />
           <CommandList>
-            <CommandEmpty>No GSTN unit matches. Use OTH-OTHERS.</CommandEmpty>
+            <CommandEmpty>No unit matches. Try the code (KGS, NOS…); OTH-OTHERS only when no unit fits.</CommandEmpty>
             <CommandGroup>
               {GSTN_UQC.map((u) => (
                 <CommandItem

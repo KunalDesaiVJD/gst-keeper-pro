@@ -268,15 +268,29 @@ export function flattenGstr1(json: unknown): FlatMap {
 
   // Table 12 is hsn.data up to Apr-2025 and hsn_b2b / hsn_b2c since. The unit
   // is keyed as its GSTN code, so "Others" corrected to OTH reads as a change
-  // to that row, not as one row removed and another added.
+  // to that row, not as one row removed and another added. Rows that share a
+  // key (the same HSN, rate and unit, e.g. "Others" beside "OTH") are added
+  // together, as the portal and the pre-push correction treat them, rather
+  // than one silently replacing the other.
   ([['data', ''], ['hsn_b2b', ' (B2B)'], ['hsn_b2c', ' (B2C)']] as const).forEach(([list, tag]) => {
     arr(rec(j.hsn)[list]).forEach((raw) => {
       const r = rec(raw);
       const rt = num(r.rt);
       const unit = normaliseUqc(r.uqc, r.hsn_sc) ?? str(r.uqc).toUpperCase();
-      put(`hsn|${list}|${str(r.hsn_sc)}|${rt}|${unit}`, 'HSN summary (Table 12)',
-        `${str(r.hsn_sc) || '—'} · ${rt}%${tag}`,
-        { ...pick(r, ['desc', 'uqc', 'qty']), ...taxOf(r) });
+      const key = `hsn|${list}|${str(r.hsn_sc)}|${rt}|${unit}`;
+      const values = { ...pick(r, ['desc', 'uqc', 'qty']), ...taxOf(r) };
+      const prev = m.get(key);
+      if (!prev) {
+        put(key, 'HSN summary (Table 12)', `${str(r.hsn_sc) || '—'} · ${rt}%${tag}`, values);
+        return;
+      }
+      for (const f of ['qty', ...TAX_FIELDS]) {
+        if (f in values || f in prev.values) prev.values[f] = Math.round((num(prev.values[f]) + num(values[f])) * 100) / 100;
+      }
+      const units = new Set(str(prev.values.uqc).split(', ').filter(Boolean));
+      if (values.uqc !== undefined) units.add(str(values.uqc));
+      if (units.size) prev.values.uqc = [...units].join(', ');
+      if (!str(prev.values.desc).trim() && values.desc !== undefined) prev.values.desc = values.desc;
     });
   });
 
