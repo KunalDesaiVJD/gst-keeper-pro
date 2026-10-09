@@ -2,7 +2,7 @@ import React from 'react';
 import { AlertTriangle, ArrowRight, CheckCircle2, Lock } from 'lucide-react';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
-import { clientStage, displayName, nextSentence, STAGE_META } from '@/lib/gstr9/signoffFlow';
+import { clientStage, clientView, displayName, nextSentence, STAGE_META } from '@/lib/gstr9/signoffFlow';
 import { useWorkspace } from '../WorkspaceContext';
 import { StageTrack } from '../signoff/StageTrack';
 import CarryForwardCard from '../overview/CarryForwardCard';
@@ -36,7 +36,7 @@ const StatusStrip: React.FC = () => {
     <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-lg border bg-card px-3 py-1.5 text-xs">
       <span className="inline-flex items-center gap-1.5">
         <span className="text-muted-foreground">Sign-off</span>
-        <StageTrack state={st} />
+        <StageTrack state={isStaff ? st : clientView(st)} />
         <Badge variant={meta.tone} className="gap-1 text-[10px]">
           {stage === 'locked' && <Lock className="h-3 w-3" aria-hidden />}
           {meta.label}

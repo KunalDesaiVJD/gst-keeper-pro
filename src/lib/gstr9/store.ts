@@ -382,15 +382,20 @@ export async function loadChangesSince(
   financialYear: string,
   since: string,
   limit = 8,
+  /** Leave out one person's own changes — the signer's, as annual_return_unacked_changes does. */
+  excludeBy?: string,
 ): Promise<{ entries: ChangeLogEntry[]; total: number }> {
-  const { data, error, count } = await supabase
+  let q = supabase
     .from('annual_return_change_log')
     .select(LOG_COLUMNS, { count: 'exact' })
     .eq('client_id', clientId)
     .eq('financial_year', financialYear)
     .gt('changed_at', since)
     .in('kind', ['edit', 'add', 'remove'])
-    .not('doc_key', 'in', '(period,payables,justifications)')
+    .not('doc_key', 'in', '(period,payables,justifications)');
+  // IS DISTINCT FROM: rows with no name stay in, as in the database's count.
+  if (excludeBy) q = q.or(`changed_by.is.null,changed_by.neq.${JSON.stringify(excludeBy)}`);
+  const { data, error, count } = await q
     .order('changed_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(limit);

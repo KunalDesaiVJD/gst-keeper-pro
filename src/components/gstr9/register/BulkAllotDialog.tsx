@@ -6,13 +6,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { StaffMember } from '@/hooks/useStaffList';
 import { signoffStateOf } from '@/lib/gstr9/register';
-import { allotBlock, displayName, SLOT_WORD, type Load, type Slot } from '@/lib/gstr9/signoffFlow';
+import { allotBlock, displayName, SKIP_TEXT, SLOT_WORD, type Load, type Slot } from '@/lib/gstr9/signoffFlow';
 import { allotAnnualReturn } from '@/lib/gstr9/store';
 import { ViewSwitch } from '../reco/StepTabs';
 import { Monogram } from '../signoff/Monogram';
 import { StaffPicker, type StaffPick } from '../signoff/StaffPicker';
 import { useRegisterSignoff, type SignoffRowInfo } from './signoffContext';
-import { SKIP_TEXT } from './SignoffPanel';
 
 type Method = 'one' | 'spread';
 
@@ -31,19 +30,21 @@ const skip = (m: Map<string, SignoffRowInfo[]>, why: string, r: SignoffRowInfo) 
 /**
  * Who gets what. One person: every row they can take. Spread: the rows of a
  * PAN stay together (one person per PAN — the turnover and the workings are
- * the PAN's), the largest groups go first, each to whoever of the chosen staff
- * holds the least of that step now (counting what this run has given them).
+ * the PAN's): a PAN part-held by someone chosen goes on with them; the others,
+ * largest first, go to whoever of the chosen staff holds the least of that
+ * step now (counting what this run has given them).
  */
 export function planAllotment(rows: SignoffRowInfo[], slot: Slot, method: Method, one: StaffMember | null, team: StaffMember[], loads: Map<string, Load>, onlyEmpty: boolean): Plan {
   const give = new Map<string, StaffPick>();
   const skipped = new Map<string, SignoffRowInfo[]>();
-  const todo = rows.filter((r) => {
-    if (onlyEmpty && r.s[slot]) { skip(skipped, `already has a ${SLOT_WORD[slot]}`, r); return false; }
-    return true;
-  });
+  const signedOrLocked = (r: SignoffRowInfo) => {
+    const b = allotBlock(r.s, slot, { id: '', role: 'gst_manager' });
+    return b === 'locked' || b === 'already prepared' || b === 'already verified' ? b : null;
+  };
   if (method === 'one') {
-    if (!one) return { give, skipped };
-    todo.forEach((r) => {
+    rows.forEach((r) => {
+      if (onlyEmpty && r.s[slot]) { skip(skipped, `already has a ${SLOT_WORD[slot]}`, r); return; }
+      if (!one) return;
       if (r.s[slot]?.id === one.userId) { skip(skipped, `already ${displayName(one.name)}`, r); return; }
       const b = allotBlock(r.s, slot, { id: one.userId, role: one.role });
       if (b) skip(skipped, b === 'prepares this' || b === 'verifies this' || b === 'reviews this' ? `${displayName(one.name)} ${b}` : b, r);
@@ -51,28 +52,34 @@ export function planAllotment(rows: SignoffRowInfo[], slot: Slot, method: Method
     });
     return { give, skipped };
   }
-  if (!team.length) return { give, skipped };
+  // Group first (before leaving out rows that already have someone), so a PAN is seen whole.
   const groups = new Map<string, SignoffRowInfo[]>();
-  todo.forEach((r) => {
-    const signed = allotBlock(r.s, slot, { id: '', role: 'gst_manager' });
-    if (signed === 'locked' || signed === 'already prepared' || signed === 'already verified') { skip(skipped, signed, r); return; }
+  rows.forEach((r) => {
     const k = r.pan ?? r.id;
     groups.set(k, [...(groups.get(k) ?? []), r]);
   });
   const given = new Map<string, number>();
   const load = (id: string) => (loads.get(id)?.[LOAD_KEY[slot]] ?? 0) + (given.get(id) ?? 0);
+  const fits = (t: StaffMember, list: SignoffRowInfo[]) => list.every((r) => r.s[slot]?.id === t.userId || !allotBlock(r.s, slot, { id: t.userId, role: t.role }));
   [...groups.values()]
     .sort((a, b) => b.length - a.length || a[0].name.localeCompare(b[0].name))
     .forEach((g) => {
-      const fit = team
-        .filter((t) => g.every((r) => r.s[slot]?.id === t.userId || !allotBlock(r.s, slot, { id: t.userId, role: t.role })))
-        .sort((a, b) => load(a.userId) - load(b.userId) || a.name.localeCompare(b.name))[0];
-      if (!fit) { g.forEach((r) => skip(skipped, 'nobody chosen can take it (three different people sign)', r)); return; }
-      g.forEach((r) => {
+      const open = g.filter((r) => {
+        const b = signedOrLocked(r);
+        if (b) { skip(skipped, b, r); return false; }
+        if (onlyEmpty && r.s[slot]) { skip(skipped, `already has a ${SLOT_WORD[slot]}`, r); return false; }
+        return true;
+      });
+      if (!open.length || !team.length) return;
+      // Someone chosen already holds part of this PAN: the rest goes to them.
+      const holder = team.find((t) => g.some((r) => r.s[slot]?.id === t.userId) && fits(t, open));
+      const fit = holder ?? team.filter((t) => fits(t, open)).sort((a, b) => load(a.userId) - load(b.userId) || a.name.localeCompare(b.name))[0];
+      if (!fit) { open.forEach((r) => skip(skipped, 'nobody chosen can take it (three different people sign)', r)); return; }
+      open.forEach((r) => {
         if (r.s[slot]?.id === fit.userId) { skip(skipped, `already ${displayName(fit.name)}`, r); return; }
         give.set(r.id, { userId: fit.userId, name: fit.name });
+        given.set(fit.userId, (given.get(fit.userId) ?? 0) + 1);
       });
-      given.set(fit.userId, (given.get(fit.userId) ?? 0) + g.length);
     });
   return { give, skipped };
 }
@@ -124,8 +131,15 @@ export const BulkAllotDialog: React.FC<{ open: boolean; onOpenChange: (o: boolea
       res.forEach((x) => { if (x.row) ctx.patchRow(x.clientId, signoffStateOf(x.row)); });
       const done = res.filter((x) => x.applied);
       const notDone = res.filter((x) => !x.applied && x.reason !== 'unchanged');
+      const why = [...new Set(notDone.map((x) => (x.reason ? SKIP_TEXT[x.reason] : 'refused')))].join('; ');
+      if (!done.length) {
+        // Keep the dialog open: what it shows is out of date.
+        toast.error(`Nothing allotted — ${why || 'refused'}.`);
+        return;
+      }
       onOpenChange(false);
-      toast.success(`Allotted ${done.length} ${SLOT_WORD[slot]}${done.length === 1 ? '' : 's'}${notDone.length ? ` · ${notDone.length} skipped (${[...new Set(notDone.map((x) => (x.reason ? SKIP_TEXT[x.reason] : 'refused')))].join('; ')})` : ''}`, {
+      const word = SLOT_WORD[slot].charAt(0).toUpperCase() + SLOT_WORD[slot].slice(1);
+      toast.success(`${word} allotted on ${done.length} working${done.length === 1 ? '' : 's'}${notDone.length ? ` · ${notDone.length} skipped (${why})` : ''}`, {
         action: done.length ? {
           label: 'Undo',
           onClick: () => {
@@ -216,7 +230,7 @@ export const BulkAllotDialog: React.FC<{ open: boolean; onOpenChange: (o: boolea
 
           <div className="min-w-0 space-y-2 rounded-md border bg-muted/30 p-3 text-xs">
             <div className="font-medium">Preview</div>
-            {!plan.give.size && !plan.skipped.size && (
+            {!plan.give.size && (method === 'one' ? !one : !team.size) && (
               <p className="text-muted-foreground">{method === 'one' ? 'Pick a person.' : 'Choose the staff to spread the workings across.'}</p>
             )}
             {perPerson.length > 0 && (

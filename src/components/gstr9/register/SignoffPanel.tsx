@@ -7,12 +7,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { signoffStateOf } from '@/lib/gstr9/register';
 import {
-  allotBlock, can, changesSinceSignoff, currentStep, displayName, nextSentence, SLOT_WORD, STAGE_META,
+  allotBlock, can, changesSinceSignoff, currentStep, displayName, nextSentence, SKIP_TEXT, SLOT_WORD, STAGE_META,
   type SignoffState, type Slot, type Step,
 } from '@/lib/gstr9/signoffFlow';
-import {
-  allotAnnualReturn, setPeriodStatus, signoffAnnualReturn, SignoffStaleError, type AllotSkip, type SignoffRow,
-} from '@/lib/gstr9/store';
+import { allotAnnualReturn, setPeriodStatus, signoffAnnualReturn, SignoffStaleError, type SignoffRow } from '@/lib/gstr9/store';
 import { cn } from '@/lib/utils';
 import { Note } from '../ui';
 import { ChangesList } from '../signoff/ChangesList';
@@ -20,15 +18,6 @@ import { StaffPicker, type StaffPick } from '../signoff/StaffPicker';
 import { AllotChip, SignoffRail } from '../signoff/SignoffRail';
 import { useRegisterSignoff, type SignoffRowInfo } from './signoffContext';
 
-export const SKIP_TEXT: Record<AllotSkip, string> = {
-  locked: 'it is reviewed and locked',
-  changed: 'someone changed the allotment meanwhile',
-  signed: 'that step is already signed',
-  not_staff: 'that person is not on staff',
-  not_manager: 'the reviewer must be a GST manager or the superadmin',
-  same_person: 'three different people must prepare, verify and review',
-  unchanged: 'nothing changed',
-};
 
 const SLOT_VERB: Record<Slot, string> = { preparer: 'prepare', verifier: 'verify', reviewer: 'review & lock' };
 
@@ -51,7 +40,7 @@ const NoteForm: React.FC<{
   const [note, setNote] = useState('');
   const ok = note.trim().length >= min;
   return (
-    <div className="mt-1.5 space-y-1.5 rounded-md border bg-muted/30 p-2">
+    <div data-signoff-substate="" className="mt-1.5 space-y-1.5 rounded-md border bg-muted/30 p-2">
       {children}
       <Label htmlFor={id} className="text-[11px]">{label}</Label>
       <Textarea
@@ -165,14 +154,27 @@ export const SignoffPanel: React.FC<{ row: SignoffRowInfo }> = ({ row: r }) => {
   const clearAllotment = async () => {
     setBusy('clear');
     let cur: SignoffState = s;
+    const refused: string[] = [];
     try {
       const slots = (['reviewer', 'verifier', 'preparer'] as const).filter((slot) =>
         cur[slot] && !(slot === 'preparer' && cur.prepared) && !(slot === 'verifier' && cur.verified));
       for (const slot of slots) {
         const [res] = await allotAnnualReturn(fy, slot, [{ clientId: r.id, userId: null, expectUserId: cur[slot]?.id ?? null }], me.id);
         if (res?.row) { cur = signoffStateOf(res.row); ctx.patchRow(r.id, cur); }
+        if (!res?.applied && res?.reason !== 'unchanged') refused.push(`${SLOT_WORD[slot]}: ${res?.reason ? SKIP_TEXT[res.reason] : 'refused'}`);
       }
-      toast.success(`Allotment cleared for ${r.name}`);
+      if (refused.length) {
+        toast.error(`Not cleared — ${refused.join('; ')}.`);
+      } else {
+        toast.success(`Allotment cleared for ${r.name}`);
+        // Nothing left to show: the cell turns to "—", so close its popover (and hand the keys back to the grid).
+        if (!cur.preparer && !cur.verifier && !cur.reviewer) {
+          const back = ctx.restoreFocusRef.current;
+          ctx.restoreFocusRef.current = null;
+          ctx.setOpenFor(null);
+          back?.();
+        }
+      }
     } catch (e) {
       toast.error(`Could not clear the allotment: ${errText(e)}`);
     } finally {
@@ -280,6 +282,9 @@ export const SignoffPanel: React.FC<{ row: SignoffRowInfo }> = ({ row: r }) => {
       if (cur === 'verify') {
         const c = can(s, me, 'verify');
         const back = can(s, me, 'send_back');
+        // The superadmin may lock without a verification, with a recorded reason (in the working).
+        const skip = can(s, me, 'lock');
+        const override = skip.ok && !!skip.override;
         if (form === 'send_back') {
           return (
             <NoteForm id={`back-${r.id}`} label={`What needs fixing? ${displayName(s.preparer?.name ?? s.prepared?.name ?? 'The preparer')} sees this.`}
@@ -288,7 +293,7 @@ export const SignoffPanel: React.FC<{ row: SignoffRowInfo }> = ({ row: r }) => {
               onConfirm={(note) => void signoff('send_back', note, 'send it back', () => `Sent back to ${displayName(s.preparer?.name ?? s.prepared?.name ?? 'the preparer')}.`, 'preparer')} />
           );
         }
-        if (!c.ok && !back.ok) return why(c.reason);
+        if (!c.ok && !back.ok && !override) return why(c.reason);
         return (
           <>
             {row(
@@ -301,6 +306,11 @@ export const SignoffPanel: React.FC<{ row: SignoffRowInfo }> = ({ row: r }) => {
                 {back.ok && (
                   <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={!!busy} onClick={() => setForm('send_back')}>
                     <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Send back…
+                  </Button>
+                )}
+                {override && (
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={!!busy} onClick={() => openIn('lock')}>
+                    Lock without verification <ArrowRight className="ml-1 h-3 w-3" />
                   </Button>
                 )}
               </>,
@@ -385,7 +395,7 @@ export const SignoffPanel: React.FC<{ row: SignoffRowInfo }> = ({ row: r }) => {
 
   if (picking) {
     return (
-      <div>
+      <div data-signoff-substate="" onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setPicking(null); } }}>
         <div className="flex items-center gap-1.5 border-b px-2 py-1.5">
           <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setPicking(null)} aria-label="Back"><ArrowLeft className="h-3.5 w-3.5" /></Button>
           <span className="min-w-0 truncate text-xs font-medium">Allot {SLOT_WORD[picking]} · {r.name}</span>
@@ -428,7 +438,7 @@ export const SignoffPanel: React.FC<{ row: SignoffRowInfo }> = ({ row: r }) => {
             <Note tone="info">GSTR-9 is not being filed for FY {fy} ({r.returns.toLowerCase()}). The allotment is kept in case that changes.</Note>
             <SignoffRail state={s} meId={me.id} renderChip={renderChip} />
             {me.isManager && (s.preparer || s.verifier || s.reviewer) && s.stage !== 'locked' && (
-              <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!!busy}
+              <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!!busy || checking}
                 onClick={() => void clearAllotment()}>
                 Clear allotment
               </Button>

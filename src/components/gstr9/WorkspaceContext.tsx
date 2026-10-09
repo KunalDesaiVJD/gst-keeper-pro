@@ -19,6 +19,7 @@ import {
   setPeriodStatus,
   signoffAnnualReturn,
   SignoffStaleError,
+  type SignoffRow,
   SourceLockedError,
   YearLockedError,
 } from '@/lib/gstr9/store';
@@ -155,6 +156,8 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const canVerify = role === 'superadmin' || role === 'gst_manager';
   const me = useSignoffActor();
   const [changes, setChanges] = useState<SignoffChanges | null>(null);
+  /** When a sheet was last saved, as loaded (lastSavedAt only covers this session's saves). */
+  const [loadedSavedAt, setLoadedSavedAt] = useState<string | null>(null);
 
   const docsRef = useRef<AnnualReturnDocs | null>(null);
   const versions = useRef<Record<DocKey, number>>(Object.fromEntries(DOC_KEYS.map((k) => [k, 0])) as Record<DocKey, number>);
@@ -196,6 +199,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       pendingActions.current.clear();
       docsRef.current = ws.docs;
       setDocs(ws.docs);
+      setLoadedSavedAt(Object.values(ws.updatedAt).filter((x): x is string => !!x).sort().pop() ?? null);
       applyPeriod(p);
       setSaveState('idle');
     } catch (e) {
@@ -396,6 +400,16 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedOpen, rev, lastSavedAt, client.id, financialYear]);
 
+  /**
+   * After a sign-off the database accepted: move to the row it returned at once
+   * (keeping the payables snapshot, which that row leaves out), then read it all
+   * again. A failed read never turns the accepted sign-off into an error.
+   */
+  const afterSignoff = useCallback(async (row: SignoffRow) => {
+    applyPeriod({ ...(periodRef.current ?? {}), ...row } as AnnualReturnPeriod);
+    await refreshSignoff().catch(() => toast.warning('Saved — but the sign-off could not be refreshed. Reload the page to see it.'));
+  }, [applyPeriod, refreshSignoff]);
+
   /** A stale click or changes the signer has not seen: show what is there now, then say why. */
   const afterRefusal = useCallback(async (e: unknown) => {
     if (e instanceof SignoffStaleError || e instanceof ChangedSinceError) await refreshSignoff().catch(() => undefined);
@@ -419,8 +433,9 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       }
       payables = r.workings.payables;
     }
+    let row: SignoffRow;
     try {
-      await setPeriodStatus(client.id, financialYear, {
+      row = await setPeriodStatus(client.id, financialYear, {
         to, expectedRev: periodRef.current?.signoff_rev ?? 0, actorId: me.id,
         note: opts?.note, checklist: opts?.checklist, payables, changesAck: opts?.changesAck, overrideReason: opts?.overrideReason,
       });
@@ -428,8 +443,8 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       await afterRefusal(e);
       throw e;
     }
-    await refreshSignoff();
-  }, [client.id, financialYear, flush, canVerify, me.id, afterRefusal, refreshSignoff]);
+    await afterSignoff(row);
+  }, [client.id, financialYear, flush, canVerify, me.id, afterRefusal, afterSignoff]);
 
   const signoff = useCallback<WorkspaceValue['signoff']>(async (action, opts) => {
     if (action === 'prepare' || action === 'verify') {
@@ -440,23 +455,24 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
         throw new Error(`${r.workings.openCount} difference${r.workings.openCount === 1 ? ' still needs' : 's still need'} a reason, so it was not verified.`);
       }
     }
+    let row: SignoffRow;
     try {
-      await signoffAnnualReturn(client.id, financialYear, action, {
+      row = await signoffAnnualReturn(client.id, financialYear, action, {
         expectedRev: periodRef.current?.signoff_rev ?? 0, actorId: me.id, note: opts?.note, returnTo: opts?.returnTo, changesAck: opts?.changesAck,
       });
     } catch (e) {
       await afterRefusal(e);
       throw e;
     }
-    await refreshSignoff();
-  }, [client.id, financialYear, flush, me.id, afterRefusal, refreshSignoff]);
+    await afterSignoff(row);
+  }, [client.id, financialYear, flush, me.id, afterRefusal, afterSignoff]);
 
   const workings = useMemo(() => (docs ? compute(docs) : null), [docs, compute]);
   // Sheets saved so far (a version above 0) — "Preparing" as soon as one is.
   const sheets = DOC_KEYS.filter((k) => (versions.current[k] ?? 0) > 0).length;
   const signoffState = useMemo(
-    () => toSignoffState(period, { sheets, lastSavedAt: lastSavedAt?.toISOString() ?? period?.updated_at ?? null, changes }),
-    [period, sheets, lastSavedAt, changes],
+    () => toSignoffState(period, { sheets, lastSavedAt: lastSavedAt?.toISOString() ?? loadedSavedAt, changes }),
+    [period, sheets, lastSavedAt, loadedSavedAt, changes],
   );
 
   if (!docs || !workings) {

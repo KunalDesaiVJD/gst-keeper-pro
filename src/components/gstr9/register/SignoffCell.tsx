@@ -93,7 +93,7 @@ export const signoffTitle = (r: SignoffRowInfo): string | undefined => {
 /** Copy / export text: "Prepared · Amit". */
 export const signoffLabel = (r: SignoffRowInfo): string => {
   const s = r.s;
-  if (!r.inScope) return s.preparer ? 'Not filing' : '';
+  if (!r.inScope) return s.preparer || s.verifier || s.reviewer ? 'Not filing' : '';
   const o = ownerOf(s);
   const who = o.kind === 'person' ? displayName(o.person.name) : o.kind === 'managers' ? 'any GST manager' : o.kind === 'unallotted' ? 'unallotted' : displayName(s.locked?.name);
   return `${STAGE_META[s.stage].label} · ${who}`;
@@ -123,8 +123,8 @@ export const SignoffCell: React.FC<{ row: SignoffRowInfo }> = ({ row: r }) => {
       <span className="w-[28px] shrink-0" />
       <span className="w-[62px] shrink-0 truncate text-muted-foreground">Not filing</span>
       <span className="ml-auto inline-flex min-w-0 items-center gap-1">
-        <Monogram name={s.preparer?.name} muted />
-        <span className="truncate text-muted-foreground">{displayName(s.preparer?.name ?? s.verifier?.name ?? s.reviewer?.name)}</span>
+        <Monogram name={(s.preparer ?? s.verifier ?? s.reviewer)?.name} muted />
+        <span className="truncate text-muted-foreground">{displayName((s.preparer ?? s.verifier ?? s.reviewer)?.name)}</span>
       </span>
     </>
   ) : (
@@ -185,6 +185,8 @@ export const SignoffCell: React.FC<{ row: SignoffRowInfo }> = ({ row: r }) => {
             const back = ctx.restoreFocusRef.current;
             if (back) { e.preventDefault(); ctx.restoreFocusRef.current = null; back(); }
           }}
+          // Escape in a note box or the staff list cancels that, not the whole popover (the panel handles it).
+          onEscapeKeyDown={(e) => { if ((e.target as HTMLElement | null)?.closest?.('[data-signoff-substate]')) e.preventDefault(); }}
         >
           {open && <SignoffPanel row={r} />}
         </PopoverContent>

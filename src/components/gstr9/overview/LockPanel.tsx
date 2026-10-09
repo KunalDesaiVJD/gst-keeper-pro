@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useStaffList } from '@/hooks/useStaffList';
 import { REVIEW_CHECKLIST, ROLE_LABEL } from '@/lib/gstr9/signoff';
 import {
-  allotBlock, can, changesSinceSignoff, clientStage, currentStep, displayName, nextSentence, SLOT_WORD, STAGE_META,
+  allotBlock, can, changesSinceSignoff, clientStage, clientView, currentStep, displayName, nextSentence, SKIP_TEXT, SLOT_WORD, STAGE_META,
   type SignoffState, type Slot, type Step,
 } from '@/lib/gstr9/signoffFlow';
 import { allotAnnualReturn, ChangedSinceError, loadUnackedChanges } from '@/lib/gstr9/store';
@@ -101,14 +101,15 @@ export const LockPanel: React.FC = () => {
     setBusy(`allot-${slot}`);
     try {
       const [res] = await allotAnnualReturn(financialYear, slot, [{ clientId: client.id, userId, expectUserId: s[slot]?.id ?? null }], me.id);
-      await refreshSignoff();
-      if (!res?.applied && res?.reason !== 'unchanged') toast.error(`Not allotted: ${res?.reason?.replace('_', ' ') ?? 'refused'}.`);
+      if (!res?.applied && res?.reason !== 'unchanged') toast.error(`Not allotted: ${res?.reason ? SKIP_TEXT[res.reason] : 'refused'}.`);
       else if (res?.applied) toast.success(userId ? `${displayName(name)} will ${slot === 'preparer' ? 'prepare' : slot === 'verifier' ? 'verify' : 'review & lock'} it.` : `No ${SLOT_WORD[slot]} allotted now.`);
     } catch (e) {
       toast.error(`Could not allot: ${errText(e)}`);
     } finally {
       setBusy(null);
     }
+    // What the database holds now (also after a refusal); a failed read does not undo the allotment.
+    await refreshSignoff().catch(() => toast.warning('Could not refresh the sign-off — reload the page to see it.'));
   };
   const renderChip = (slot: Slot) => {
     const signed = s.stage === 'locked' || (slot === 'preparer' && !!s.prepared) || (slot === 'verifier' && !!s.verified);
@@ -191,7 +192,10 @@ export const LockPanel: React.FC = () => {
       if (cur === 'verify') {
         const c = can(s, me, 'verify');
         const back = can(s, me, 'send_back');
-        if (!c.ok && !back.ok) return why(c.reason);
+        // The superadmin may lock without a verification, with a recorded reason.
+        const skip = can(s, me, 'lock');
+        const override = skip.ok && !!skip.override;
+        if (!c.ok && !back.ok && !override) return why(c.reason);
         return (
           <>
             {row(
@@ -202,6 +206,11 @@ export const LockPanel: React.FC = () => {
                   </Button>
                 )}
                 {back.ok && <Button size="sm" variant="ghost" className="h-7" disabled={!!busy} onClick={() => setDialog('send_back')}><CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Send back…</Button>}
+                {override && (
+                  <Button size="sm" variant="ghost" className="h-7" disabled={!!busy || blockers.length > 0} onClick={() => setDialog('lock')}>
+                    <Lock className="mr-1 h-3.5 w-3.5" /> Lock without verification…
+                  </Button>
+                )}
               </>,
             )}
             {!c.ok && why(c.reason)}
@@ -272,7 +281,7 @@ export const LockPanel: React.FC = () => {
       description="Allotted, prepared, verified, then reviewed and locked — by three different people. Once locked, the database refuses every edit until it is unlocked."
     >
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <StageTrack state={s} size="md" />
+        <StageTrack state={isStaff ? s : clientView(s)} size="md" />
         <Badge variant={meta.tone} className="gap-1 text-[10px]">
           {stage === 'locked' && <Lock className="h-3 w-3" />}
           {meta.label}
@@ -348,8 +357,10 @@ const PrepareDialog: React.FC<{ open: boolean; onOpenChange: (o: boolean) => voi
   open, onOpenChange, busy, again, verifier, onConfirm,
 }) => {
   const [note, setNote] = useState('');
+  // Opened from a button (not a trigger), so start empty each time here — never resubmit an old note.
+  useEffect(() => { if (open) setNote(''); }, [open]);
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (o) setNote(''); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>{again ? 'Mark prepared again' : 'Mark prepared'}</DialogTitle>
@@ -378,6 +389,13 @@ const PrepareDialog: React.FC<{ open: boolean; onOpenChange: (o: boolean) => voi
  */
 const SignDialog: React.FC<{ kind: 'verify' | 'lock'; open: boolean; onOpenChange: (o: boolean) => void; busy: boolean }> = ({ kind, open, onOpenChange, busy: _busy }) => {
   const { client, financialYear, signoffState: s, me, signoff, setStatus, workings: w, userName } = useWorkspace();
+  const [params, setParams] = useSearchParams();
+  const openHistory = () => {
+    onOpenChange(false);
+    const next = new URLSearchParams(params);
+    next.set(REVIEW_TAB_PARAM, 'history');
+    setParams(next, { replace: true });
+  };
   const manual = useMemo(() => REVIEW_CHECKLIST.filter((c) => !c.auto), []);
   const [ticks, setTicks] = useState<Record<string, boolean>>({});
   const [seen, setSeen] = useState(false);
@@ -457,7 +475,7 @@ const SignDialog: React.FC<{ kind: 'verify' | 'lock'; open: boolean; onOpenChang
         ) : unacked > 0 && since ? (
           <Note tone="warn">
             <span className="font-medium">{unacked} figure change{unacked === 1 ? ' was' : 's were'} made by others since {kind === 'verify' ? 'it was prepared' : s.verified ? 'the verification' : 'it was prepared'}. Latest:</span>
-            <div className="mt-1"><ChangesList clientId={client.id} financialYear={financialYear} since={since} /></div>
+            <div className="mt-1"><ChangesList clientId={client.id} financialYear={financialYear} since={since} excludeBy={me.name} onOpenHistory={openHistory} /></div>
             <label className="mt-2 flex cursor-pointer items-start gap-2">
               <Checkbox checked={checkedChanges} onCheckedChange={(v) => setCheckedChanges(v === true)} className="mt-0.5" />
               <span>I have checked {unacked === 1 ? 'this change' : `these ${unacked} changes`}.</span>

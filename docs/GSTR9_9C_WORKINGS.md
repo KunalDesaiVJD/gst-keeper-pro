@@ -238,6 +238,16 @@ sign-off covers GSTR-9 and GSTR-9C together.
 - **Stale clicks.** Every sign-off change bumps `signoff_rev`; each request
   carries the value the user was looking at and is refused if someone else
   changed the sign-off meanwhile.
+- **Saves during a sign-off.** A sheet save and a sign-off on the same
+  working wait for each other: every sheet write takes the period row
+  `FOR SHARE` (`annual_return_docs_guard`, which also creates the row on a
+  working's first save), a sign-off takes it `FOR UPDATE` and stamps the
+  time once it holds it, and change-log rows are timed when written
+  (`clock_timestamp()`). A change saved while someone signs is therefore
+  counted in that sign-off or falls after its stamp — never in between.
+- **Who the slots name.** A sign-off by someone with no allotted slot makes
+  them the allotted one (the preparer, verifier or reviewer) — except a lock
+  under a superadmin override, which leaves the reviewer slot as it was.
 - **Functions.** `annual_return_allot`; `annual_return_signoff` (prepare,
   withdraw, verify, send back); `set_annual_return_status` (review & lock,
   unlock); `annual_return_signoff_row` (the period as the app reads it, with

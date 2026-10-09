@@ -1390,8 +1390,8 @@ export function buildWorkingPapers(input: WorkingPapersInput): PaperSet {
   const lines = docs.justifications?.lines ?? {};
   const printedAt = input.printedAt ?? new Date();
   const forClient = input.audience === 'client';
-  const status = statusText(period, { forClient });
-  const signoff = toSignoffState(period);
+  const status = statusText(period, { forClient, sheets: input.sheets });
+  const signoff = toSignoffState(period, { sheets: input.sheets });
   // "Verified by Amit (GST manager) on 14 Oct 2026", or a line to sign on.
   const preparedText = signedText(signoff.prepared) || SIGN_HERE;
   const verifiedText = signedText(signoff.verified) || SIGN_HERE;

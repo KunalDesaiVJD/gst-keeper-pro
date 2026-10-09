@@ -200,8 +200,12 @@ export const describeChange = (e: ChangeLogEntry, opts: { forClient?: boolean } 
   let from = formatLoggedValue(e.oldValue);
   let to = formatLoggedValue(e.newValue);
   let what = (e.docKey === 'period' && e.action ? LEGACY_ACTION[e.action] : undefined) ?? (e.action || 'Edited');
-  // A superadmin override's reason is the firm's internal note, like the other sign-off notes.
-  if (opts.forClient && e.docKey === 'period') what = what.replace(/\(superadmin override: .*\)$/, '(superadmin override)');
+  if (opts.forClient && e.docKey === 'period') {
+    // A superadmin override's reason is the firm's internal note, like the other sign-off notes (it may span lines).
+    what = what.replace(/\(superadmin override: [\s\S]*\)$/, '(superadmin override)');
+    // Who was allotted is internal too: "Verified for Riya" reads "Verified".
+    what = what.replace(/^(Marked prepared|Verified|Reviewed and locked) for .+?(?=( after checking \d+ changes? since prepared)?$)/, '$1');
+  }
   if (e.kind === 'add') { what = `${what} — row added`; from = '—'; }
   if (e.kind === 'remove') { what = `${what} — row removed`; to = '—'; }
   if (e.kind === 'status' && e.path[0] === 'allot') {
@@ -210,8 +214,16 @@ export const describeChange = (e: ChangeLogEntry, opts: { forClient?: boolean } 
   } else if (e.kind === 'status') {
     // new_value is {stage, role, note, …}; before 11 Oct 2026 it was {status, role, note, checklist}.
     const nv = (e.newValue ?? {}) as { stage?: string; status?: string; role?: string; note?: string };
-    const stage = nv.stage ?? nv.status;
-    from = typeof e.oldValue === 'string' ? STATUS_WORD[e.oldValue] ?? e.oldValue : '—';
+    let stage = nv.stage ?? nv.status;
+    let old = typeof e.oldValue === 'string' ? e.oldValue : null;
+    if (opts.forClient) {
+      // A client never sees a send-back: it reads as the stage the working went back to. Sent back to
+      // the preparer drops "Prepared" (so a later "Marked prepared" was from Preparing); sent back to
+      // the verifier keeps it (every other step out of a send-back was from Prepared).
+      if (old === 'sent_back') old = e.path[0] === 'prepared' && stage === 'prepared' ? 'preparing' : 'prepared';
+      if (stage === 'sent_back') stage = 'prepared';
+    }
+    from = old ? STATUS_WORD[old] ?? old : '—';
     to = [
       stage ? STATUS_WORD[stage] ?? stage : null,
       nv.role ? `as ${(ROLE_LABEL[nv.role] ?? nv.role.replace(/_/g, ' ')).toLowerCase().replace('gst', 'GST')}` : null,

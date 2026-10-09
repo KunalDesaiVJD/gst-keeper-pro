@@ -224,17 +224,25 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
     // The row whose popover is open stays while it is open: acting on it (in "My turn") must not pull it away mid-action.
     [visible, baseIds, stageFilter, personFilter, me.id, openFor],
   );
-  const viewCounts = useMemo(() => ({
-    mine: visible.filter((r) => isMine(r.s, me)).length,
-    turn: visible.filter((r) => r.inScope && isMyTurn(r.s, me)).length,
-  }), [visible, me]);
-  // An employee with work waiting starts on "My turn" (until they choose a view themselves).
+  // Counted on the tab shown, like the rows the switch then shows.
+  const viewCounts = useMemo(() => {
+    const onTab = visible.filter((r) => inFilter(r, filter));
+    return {
+      mine: onTab.filter((r) => isMine(r.s, me)).length,
+      turn: onTab.filter((r) => r.inScope && isMyTurn(r.s, me)).length,
+    };
+  }, [visible, filter, me]);
+  const turnAnywhere = useMemo(() => visible.filter((r) => r.inScope && isMyTurn(r.s, me)).length, [visible, me]);
+  // An employee with work waiting starts on "My turn" — decided once, on the first load; later changes never switch the view.
+  const firstLoadDone = useRef(false);
   useEffect(() => {
-    if (viewChosen.current || loading || me.isManager || !me.id) return;
+    if (loading || firstLoadDone.current || !me.id) return;
+    firstLoadDone.current = true;
+    if (viewChosen.current || me.isManager) return;
     let stored: string | null = null;
     try { stored = localStorage.getItem(VIEW_KEY(me.id)); } catch { /* storage unavailable */ }
-    if (!stored && viewCounts.turn > 0) { viewChosen.current = true; setViewState('turn'); }
-  }, [loading, me.isManager, me.id, viewCounts.turn]);
+    if (!stored && turnAnywhere > 0) { viewChosen.current = true; setFilter('all'); setViewState('turn'); }
+  }, [loading, me.isManager, me.id, turnAnywhere]);
 
   const stageCounts = useMemo(() => {
     const c: Partial<Record<StageFilter, number>> = {};
@@ -251,7 +259,8 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
     });
     return m;
   }, [base]);
-  const loads = useMemo(() => loadsOf(working.values()), [working]);
+  // Open work each person holds, over the workings being prepared this year (not those no longer filed).
+  const loads = useMemo(() => loadsOf(allRows.filter((r) => r.inScope).map((r) => r.s)), [allRows]);
   const staffById = useMemo(() => new Map(staff.map((x) => [x.userId, x])), [staff]);
   const allotScope = useMemo(() => rows.filter((r) => r.inScope && r.s.stage !== 'locked'), [rows]);
 
@@ -513,7 +522,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
   /** The sign-off as spreadsheet columns (no notes — they stay in the working). */
   const signoffExport = (r: Row): Record<string, string | number> => {
     const st = r.s;
-    const out = !r.inScope && !st.preparer;
+    const out = !r.inScope && !st.preparer && !st.verifier && !st.reviewer;
     const o = ownerOf(st);
     const name = (p: { name: string } | null | undefined) => (p ? displayName(p.name) : '');
     return {
@@ -665,7 +674,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
           rowTone={(r) => (r.inactive || r.a.gstr9 === 'not_applicable' ? 'muted' : undefined)}
           pasteOrder={['turnover', 'g9', 'g9c', 'note']}
           maxHeight="max(360px, calc(100vh - 330px))"
-          emptyText={loading ? 'Loading clients…' : needle ? 'No client matches the search.' : stageFilter || personFilter ? 'No working matches these sign-off filters.' : view !== 'all' ? (view === 'turn' ? 'Nothing is waiting on you.' : 'Nothing is allotted to you.') : 'No client in this view.'}
+          emptyText={loading ? 'Loading clients…' : needle ? 'No client matches the search.' : stageFilter || personFilter ? 'No working matches these sign-off filters.' : view !== 'all' ? (filter !== 'all' ? `Nothing ${view === 'turn' ? 'waiting on you' : 'allotted to you'} on this tab — see All.` : view === 'turn' ? 'Nothing is waiting on you.' : 'Nothing is allotted to you.') : 'No client in this view.'}
         />
       </Tabs>
       <BulkAllotDialog open={bulkOpen} onOpenChange={setBulkOpen} rows={allotScope} />

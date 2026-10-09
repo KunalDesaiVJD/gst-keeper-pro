@@ -15,7 +15,7 @@
 //   Unlock   — back to Verified; the superadmin, a GST manager or the
 //              unlock-sheets permission, with a reason.
 
-import type { AnnualReturnPeriod, PeriodStatus } from './store';
+import type { AllotSkip, AnnualReturnPeriod, PeriodStatus } from './store';
 
 export type Stage = 'not_started' | 'preparing' | 'sent_back' | 'prepared' | 'verified' | 'locked';
 export type Slot = 'preparer' | 'verifier' | 'reviewer';
@@ -228,7 +228,11 @@ export const isMyTurn = (s: SignoffState, me: SignoffActor | null): boolean => {
   if (!me?.isStaff) return false;
   const o = ownerOf(s);
   if (o.kind === 'person') return o.person.id === me.id;
-  if (o.kind === 'managers') return me.isManager && can(s, me, o.slot === 'verifier' ? 'verify' : 'lock').ok;
+  if (o.kind === 'managers') {
+    // Only work they may sign as it stands — a superadmin's override on their own work is not their turn.
+    const c = can(s, me, o.slot === 'verifier' ? 'verify' : 'lock');
+    return me.isManager && c.ok && !c.override;
+  }
   return false;
 };
 
@@ -291,6 +295,9 @@ export const STAGE_META: Record<Stage, { label: string; tone: StageTone }> = {
 /** What a client login is shown: a send-back reads as the stage it went back to. */
 export const clientStage = (s: SignoffState): Stage =>
   s.stage === 'sent_back' ? (s.returned?.to === 'verifier' ? 'prepared' : 'preparing') : s.stage;
+
+/** The whole state as a client login sees it: no send-back (stage, ring colour and note alike). */
+export const clientView = (s: SignoffState): SignoffState => ({ ...s, stage: clientStage(s), returned: null });
 
 /** The verb in the cell when it is my turn. */
 export const turnVerb = (s: SignoffState): string => {
@@ -367,6 +374,17 @@ export const loadsOf = (states: Iterable<SignoffState>): Map<string, Load> => {
 };
 
 export const SLOT_WORD: Record<Slot, string> = { preparer: 'preparer', verifier: 'verifier', reviewer: 'reviewer' };
+
+/** Why the database skipped an allotment, in words. */
+export const SKIP_TEXT: Record<AllotSkip, string> = {
+  locked: 'it is reviewed and locked',
+  changed: 'someone changed the allotment meanwhile',
+  signed: 'that step is already signed',
+  not_staff: 'that person is not on staff',
+  not_manager: 'the reviewer must be a GST manager or the superadmin',
+  same_person: 'three different people must prepare, verify and review',
+  unchanged: 'nothing changed',
+};
 
 /**
  * Why a person cannot take this slot (null = they can). Mirrors the database's

@@ -18,7 +18,8 @@ export const CURRENT_RING: Record<Stage, string> = {
 
 /** Prepare · Verify · Review — each done, stale (done, figures changed since), current, skipped or still to come. */
 export const dotStates = (s: SignoffState): [DotState, DotState, DotState] => {
-  if (s.stage === 'locked') return ['done', s.verified ? 'done' : 'skipped', 'done'];
+  // A year locked before the three-stage sign-off may have no Prepared stamp either.
+  if (s.stage === 'locked') return [s.prepared ? 'done' : 'skipped', s.verified ? 'done' : 'skipped', 'done'];
   const step = currentStep(s);
   const at = step ? STEP_INDEX[step] : 0;
   const stale = changesSinceSignoff(s) > 0;

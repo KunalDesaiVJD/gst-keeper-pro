@@ -1,13 +1,13 @@
 import React from 'react';
 import { Check, CornerUpLeft, Minus, AlertTriangle } from 'lucide-react';
 import {
-  clientStage, currentStep, displayName, overrideText, type Person, type SignoffState, type Slot, type Step,
+  clientStage, clientView, currentStep, displayName, overrideText, type Person, type SignoffState, type Slot, type Step,
 } from '@/lib/gstr9/signoffFlow';
 import { ROLE_LABEL } from '@/lib/gstr9/signoff';
 import { cn } from '@/lib/utils';
 import { fmtWhen } from '../overview/steps';
 import { Monogram } from './Monogram';
-import { CURRENT_RING, dotStates } from './StageTrack';
+import { CURRENT_RING, dotStates, type DotState } from './StageTrack';
 
 export const STEPS: { step: Step; slot: Slot; label: string }[] = [
   { step: 'prepare', slot: 'preparer', label: 'Prepare' },
@@ -41,6 +41,15 @@ export const AllotChip: React.FC<{ slot: Slot; person: Person | null; meId?: str
 
 const roleText = (role: string | null | undefined) => (role ? ROLE_LABEL[role] ?? role : '');
 
+/** Each dot's state, read out. */
+const SR_STATE: Record<DotState, string> = {
+  done: 'done',
+  current: 'waiting on this step',
+  todo: 'not yet',
+  stale: 'done, figures changed since',
+  skipped: 'skipped',
+};
+
 /**
  * Prepare → Verify → Review & lock as three steps on a rail: who is allotted
  * to each, who signed it and when, a send-back, and the actions the viewer
@@ -58,7 +67,9 @@ export const SignoffRail: React.FC<{
   /** Under a step's line: e.g. "6 figure changes since". */
   renderExtra?: (step: Step) => React.ReactNode;
   className?: string;
-}> = ({ state: s, meId, forClient, renderChip, renderActions, renderExtra, className }) => {
+}> = ({ state, meId, forClient, renderChip, renderActions, renderExtra, className }) => {
+  // A client login's rail never shows the send-back — not even as the ring's colour.
+  const s = forClient ? clientView(state) : state;
   const dots = dotStates(s);
   const at = currentStep(s);
   const stage = forClient ? clientStage(s) : s.stage;
@@ -78,6 +89,7 @@ export const SignoffRail: React.FC<{
     if (step === 'verify' && stage === 'locked') {
       return legacy ? 'Verified and locked in one step, before the three-stage sign-off' : 'Not verified — locked with a superadmin override';
     }
+    if (step === 'prepare' && stage === 'locked') return 'Not recorded — locked before the three-stage sign-off';
     if (step === 'prepare' && at === 'prepare') {
       if (stage === 'not_started') return 'Not started';
       return s.lastSavedAt ? `In progress · last saved ${ago(s.lastSavedAt)}` : 'In progress';
@@ -110,7 +122,7 @@ export const SignoffRail: React.FC<{
                   : st === 'done' ? 'bg-success text-white'
                     : st === 'stale' ? 'bg-warning text-foreground'
                       : st === 'skipped' ? 'border border-dashed border-muted-foreground/60 bg-card text-muted-foreground'
-                        : st === 'current' ? cn('border-[1.5px] bg-card text-foreground', CURRENT_RING[s.stage])
+                        : st === 'current' ? cn('border-[1.5px] bg-card text-foreground', CURRENT_RING[stage])
                           : 'border border-muted-foreground/40 bg-card text-muted-foreground',
               )}
             >
@@ -120,7 +132,7 @@ export const SignoffRail: React.FC<{
               <div className="flex min-h-[20px] items-center justify-between gap-2">
                 <span className={cn('text-xs font-medium', at === step && 'text-foreground', at !== step && !(st === 'done' || st === 'stale') && 'text-muted-foreground')}>
                   {label}
-                  <span className="sr-only">: {st === 'done' ? 'done' : st === 'current' ? 'waiting on this step' : st}</span>
+                  <span className="sr-only">: {back ? 'sent back' : SR_STATE[st]}</span>
                 </span>
                 {!forClient && (renderChip ? renderChip(slot) : <AllotChip slot={slot} person={s[slot]} meId={meId} />)}
               </div>

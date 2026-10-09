@@ -8,20 +8,26 @@ import { fmtWhen } from '../overview/steps';
 type Loaded = Awaited<ReturnType<typeof loadChangesSince>>;
 
 /** The latest figure changes since a sign-off — who, where, from → to — loaded when shown. */
-export const ChangesList: React.FC<{ clientId: string; financialYear: string; since: string; limit?: number; onOpenHistory?: () => void }> = ({
-  clientId, financialYear, since, limit = 8, onOpenHistory,
-}) => {
+export const ChangesList: React.FC<{
+  clientId: string;
+  financialYear: string;
+  since: string;
+  limit?: number;
+  /** Leave out this person's own changes (the signer's — what the count above the list leaves out). */
+  excludeBy?: string;
+  onOpenHistory?: () => void;
+}> = ({ clientId, financialYear, since, limit = 8, excludeBy, onOpenHistory }) => {
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     setData(null);
     setError(null);
-    loadChangesSince(clientId, financialYear, since, limit)
+    loadChangesSince(clientId, financialYear, since, limit, excludeBy)
       .then((d) => { if (live) setData(d); })
       .catch((e) => { if (live) setError(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
-  }, [clientId, financialYear, since, limit]);
+  }, [clientId, financialYear, since, limit, excludeBy]);
 
   if (error) return <p className="text-[11px] text-destructive-strong">Could not load the changes: {error}</p>;
   if (!data) return <p className="flex items-center gap-1 text-[11px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Loading the changes…</p>;

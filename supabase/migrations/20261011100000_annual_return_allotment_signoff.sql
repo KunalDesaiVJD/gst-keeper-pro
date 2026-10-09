@@ -24,6 +24,13 @@
 -- not the status rows, payables or reasons for differences — made by anyone
 -- but the signer.
 --
+-- A save and a sign-off on the same working wait for each other: every sheet
+-- write takes the period row FOR SHARE (annual_return_docs_guard), every
+-- sign-off takes it FOR UPDATE and stamps clock_timestamp() once it holds it,
+-- and change-log rows are timed when written (clock_timestamp()), not when
+-- their transaction began. So a change saved while someone signs is either
+-- counted in that sign-off or falls after its stamp — never lost in between.
+--
 -- Replaces set_annual_return_status (new signature) and mark_annual_return_prepared.
 
 -- ---------------------------------------------------------------------------
@@ -376,6 +383,7 @@ DECLARE
   v_unacked integer;
   v_action text;
   v_path text;
+  v_now timestamptz;
 BEGIN
   IF p_action NOT IN ('prepare', 'withdraw_prepared', 'verify', 'withdraw_verified', 'send_back') THEN
     RAISE EXCEPTION 'ANNUAL_RETURN_BAD_ACTION: unknown action %', p_action USING ERRCODE = 'P0001';
@@ -392,6 +400,8 @@ BEGIN
   SELECT * INTO v_p FROM public.annual_return_periods
    WHERE client_id = p_client_id AND financial_year = p_financial_year
    FOR UPDATE;
+  -- Held now: a save in flight has committed (and is counted below); a later one waits for this.
+  v_now := clock_timestamp();
   SELECT count(*)::int INTO v_sheets FROM public.annual_return_docs
    WHERE client_id = p_client_id AND financial_year = p_financial_year;
   v_stage := public.annual_return_stage(v_p.status, v_p.returned_at, v_p.verified_at, v_p.prepared_at, v_sheets);
@@ -423,10 +433,10 @@ BEGIN
       ELSE 'Marked prepared' END;
     UPDATE public.annual_return_periods
        SET status = CASE WHEN status = 'not_started' THEN 'in_progress' ELSE status END,
-           prepared_by = p_actor_id, prepared_by_name = v_actor.name, prepared_at = now(), prepared_note = v_note,
+           prepared_by = p_actor_id, prepared_by_name = v_actor.name, prepared_at = v_now, prepared_note = v_note,
            preparer_id = COALESCE(preparer_id, p_actor_id),
            preparer_name = CASE WHEN preparer_id IS NULL THEN v_actor.name ELSE preparer_name END,
-           preparer_allotted_at = COALESCE(preparer_allotted_at, now()),
+           preparer_allotted_at = COALESCE(preparer_allotted_at, v_now),
            returned_to = CASE WHEN returned_to = 'preparer' THEN NULL ELSE returned_to END,
            returned_by_name = CASE WHEN returned_to = 'preparer' THEN NULL ELSE returned_by_name END,
            returned_at = CASE WHEN returned_to = 'preparer' THEN NULL ELSE returned_at END,
@@ -485,7 +495,7 @@ BEGIN
       || CASE WHEN v_unacked > 0 THEN ' after checking ' || v_unacked || ' change' || CASE WHEN v_unacked = 1 THEN '' ELSE 's' END || ' since prepared' ELSE '' END;
     UPDATE public.annual_return_periods
        SET verified_by = p_actor_id, verified_by_name = v_actor.name, verified_role = v_actor.role,
-           verified_at = now(), verified_note = v_note, changes_at_verify = v_unacked,
+           verified_at = v_now, verified_note = v_note, changes_at_verify = v_unacked,
            verifier_id = COALESCE(verifier_id, p_actor_id),
            verifier_name = CASE WHEN verifier_id IS NULL THEN v_actor.name ELSE verifier_name END,
            returned_to = CASE WHEN returned_to = 'verifier' THEN NULL ELSE returned_to END,
@@ -543,7 +553,7 @@ BEGIN
            verified_by = NULL, verified_by_name = NULL, verified_role = NULL, verified_at = NULL,
            verified_note = NULL, changes_at_verify = NULL,
            returned_to = COALESCE(p_return_to, 'preparer'), returned_by_name = v_actor.name,
-           returned_at = now(), returned_note = v_note,
+           returned_at = v_now, returned_note = v_note,
            signoff_rev = signoff_rev + 1, updated_at = now()
      WHERE id = v_p.id;
     v_action := CASE WHEN COALESCE(p_return_to, 'preparer') = 'preparer'
@@ -612,6 +622,7 @@ DECLARE
   v_unacked integer;
   v_action text;
   v_role text;
+  v_now timestamptz;
 BEGIN
   IF p_to NOT IN ('locked', 'in_progress') THEN
     RAISE EXCEPTION 'ANNUAL_RETURN_BAD_ACTION: unknown status %', p_to USING ERRCODE = 'P0001';
@@ -627,6 +638,7 @@ BEGIN
   SELECT * INTO v_p FROM public.annual_return_periods
    WHERE client_id = p_client_id AND financial_year = p_financial_year
    FOR UPDATE;
+  v_now := clock_timestamp();
   SELECT count(*)::int INTO v_sheets FROM public.annual_return_docs
    WHERE client_id = p_client_id AND financial_year = p_financial_year;
   v_stage := public.annual_return_stage(v_p.status, v_p.returned_at, v_p.verified_at, v_p.prepared_at, v_sheets);
@@ -659,7 +671,7 @@ BEGIN
       IF v_reason IS NULL OR length(v_reason) < 5 THEN
         RAISE EXCEPTION 'ANNUAL_RETURN_OVERRIDE_REQUIRED: %', v_problem USING ERRCODE = 'P0001';
       END IF;
-      v_override := jsonb_build_object('kind', v_kind, 'by', v_actor.name, 'at', now(), 'reason', v_reason);
+      v_override := jsonb_build_object('kind', v_kind, 'by', v_actor.name, 'at', v_now, 'reason', v_reason);
     END IF;
 
     v_unacked := public.annual_return_figure_changes(p_client_id, p_financial_year, COALESCE(v_p.verified_at, v_p.prepared_at), v_actor.name);
@@ -674,12 +686,14 @@ BEGIN
       FROM public.annual_return_docs
      WHERE client_id = p_client_id AND financial_year = p_financial_year;
     UPDATE public.annual_return_periods
-       SET status = 'locked', locked_at = now(), locked_by = v_actor.name,
-           reviewed_by = p_actor_id, reviewed_by_name = v_actor.name, reviewed_role = v_actor.role, reviewed_at = now(),
+       SET status = 'locked', locked_at = v_now, locked_by = v_actor.name,
+           reviewed_by = p_actor_id, reviewed_by_name = v_actor.name, reviewed_role = v_actor.role, reviewed_at = v_now,
            review_note = v_note, review_checklist = p_checklist, payables_at_lock = p_payables,
            changes_at_lock = v_unacked,
-           reviewer_id = COALESCE(reviewer_id, p_actor_id),
-           reviewer_name = CASE WHEN reviewer_id IS NULL THEN v_actor.name ELSE reviewer_name END,
+           -- The reviewer becomes the allotted one — not under an override, where they may already
+           -- hold another slot (three different people are allotted; the override is the lock's alone).
+           reviewer_id = CASE WHEN reviewer_id IS NULL AND v_override IS NULL THEN p_actor_id ELSE reviewer_id END,
+           reviewer_name = CASE WHEN reviewer_id IS NULL AND v_override IS NULL THEN v_actor.name ELSE reviewer_name END,
            returned_to = NULL, returned_by_name = NULL, returned_at = NULL, returned_note = NULL,
            signoff_overrides = CASE WHEN v_override IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(v_override) END,
            signoff_rev = signoff_rev + 1, updated_at = now()
@@ -729,7 +743,65 @@ $$;
 GRANT EXECUTE ON FUNCTION public.set_annual_return_status(uuid, text, text, integer, uuid, text, jsonb, jsonb, integer, text) TO anon, authenticated;
 
 -- ---------------------------------------------------------------------------
--- 6. Existing rows (never invent a verification)
+-- 6. A save and a sign-off on one working wait for each other
+-- ---------------------------------------------------------------------------
+-- Change-log rows are timed when they are written, so a save that waited for
+-- a sign-off is logged after that sign-off's stamp.
+ALTER TABLE public.annual_return_change_log ALTER COLUMN changed_at SET DEFAULT clock_timestamp();
+
+-- The lock guard on every sheet write, as before, now taking the period row
+-- FOR SHARE: a sign-off (FOR UPDATE) in flight finishes first, and none starts
+-- until this save commits.
+CREATE OR REPLACE FUNCTION public.annual_return_docs_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_client uuid := COALESCE(NEW.client_id, OLD.client_id);
+  v_fy text := COALESCE(NEW.financial_year, OLD.financial_year);
+  v_forced boolean := current_setting('annual_return.force_history', true) = 'on';
+  v_other_user boolean;
+  v_status text;
+BEGIN
+  -- A row to lock even before anything was allotted or signed (a working's first save).
+  INSERT INTO public.annual_return_periods (client_id, financial_year, status)
+  VALUES (v_client, v_fy, 'not_started')
+  ON CONFLICT (client_id, financial_year) DO NOTHING;
+  SELECT p.status INTO v_status FROM public.annual_return_periods p
+   WHERE p.client_id = v_client AND p.financial_year = v_fy
+   FOR SHARE;
+  IF v_status = 'locked' THEN
+    RAISE EXCEPTION 'ANNUAL_RETURN_LOCKED: FY % is locked for this client. Unlock it before editing.', v_fy
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  IF TG_OP = 'UPDATE' THEN
+    v_other_user := OLD.updated_by IS DISTINCT FROM NEW.updated_by;
+    IF v_forced OR v_other_user OR NOT EXISTS (
+      SELECT 1 FROM public.annual_return_doc_history h
+      WHERE h.doc_id = OLD.id AND h.archived_at > now() - interval '10 minutes'
+    ) THEN
+      INSERT INTO public.annual_return_doc_history
+        (doc_id, client_id, financial_year, doc_key, data, version, updated_by, updated_at, reason)
+      VALUES
+        (OLD.id, OLD.client_id, OLD.financial_year, OLD.doc_key, OLD.data, OLD.version, OLD.updated_by, OLD.updated_at,
+         CASE WHEN v_forced THEN 'Before restore'
+              WHEN v_other_user THEN 'Before ' || COALESCE(NEW.updated_by, 'another user') || '''s edit'
+              ELSE 'Autosave checkpoint' END);
+    END IF;
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 7. Existing rows (never invent a verification)
 -- ---------------------------------------------------------------------------
 -- Who signed, where a stored name matches exactly one staff member.
 WITH s AS (

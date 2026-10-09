@@ -41,6 +41,8 @@ export interface WorkingPapersInput {
    * send-back entries of the revision history (docs/GSTR9_9C_WORKINGS.md §6).
    */
   audience?: 'staff' | 'client';
+  /** Sheets saved for the working — "Preparing" rather than "Not started" once there are any. */
+  sheets?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,11 +234,11 @@ export type StatusPeriod = Pick<AnnualReturnPeriod,
  * 16 Oct 2026 17:45". For a client a send-back reads as the stage it went back
  * to (as clientStage), so the papers never say it was sent back.
  */
-export const statusText = (period: StatusPeriod | null | undefined, opts: { forClient?: boolean } = {}): string => {
-  if (!period) return 'Not started';
+export const statusText = (period: StatusPeriod | null | undefined, opts: { forClient?: boolean; sheets?: number } = {}): string => {
+  if (!period) return opts.sheets ? 'Preparing' : 'Not started';
   const by = (name: string | null | undefined) => (name ? ` by ${displayName(name)}` : '');
   const on = (at: string | null | undefined, fmt: (v: string) => string = fmtDate) => (at ? ` on ${fmt(at)}` : '');
-  switch (stageOf(opts.forClient ? { ...period, returned_at: null } : period, 0)) {
+  switch (stageOf(opts.forClient ? { ...period, returned_at: null } : period, opts.sheets ?? 0)) {
     case 'locked': return `Locked${by(period.locked_by)}${on(period.locked_at, fmtDateTime)}`;
     case 'sent_back': return `Sent back to the ${period.returned_to === 'verifier' ? 'verifier' : 'preparer'}${on(period.returned_at)}`;
     case 'verified': return `Verified${by(period.verified_by_name)}${on(period.verified_at)}`;
