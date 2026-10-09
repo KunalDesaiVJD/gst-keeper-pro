@@ -896,6 +896,10 @@ const API = {
   // the portal to finish processing, and writes the outcome (accepted /
   // partial / failed + per-invoice errors) to chrome.storage — appbridge.js
   // relays it to the app. Filing / signing stays manual.
+  // 0.8.4: info.nil === true is a NIL push — no stored JSON is needed (rowId
+  // stays null); content.js ticks the portal's "File Nil GSTR-1" option
+  // instead of uploading. A JSON push now carries the period's IRNs
+  // (einvoice_docs, attachIrn below) so the upload does not drop them.
   startGstr1Upload: async (info) => {
     const c = await API.getClient(info.clientId);
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
@@ -904,9 +908,27 @@ const API = {
     const [mm, yyyy] = String(info.period_month).split('/').map((n) => parseInt(n, 10));
     if (!mm || !yyyy) throw new Error('Bad period_month.');
     const short = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][mm - 1] + '-' + String(yyyy).slice(-2);
-    const rows = await sel(`gstr1_data?client_id=eq.${c.id}&period_month=eq.${enc(short)}&select=id,raw_json&limit=1`);
-    const stored = rows && rows[0];
-    if (!stored) throw new Error(`No stored GSTR-1 JSON for ${c.name} / ${short}. Import a JSON first.`);
+    const nil = info.nil === true;
+    let stored = null;
+    let json = null;
+    let irnAttached = 0;
+    if (!nil) {
+      const rows = await sel(`gstr1_data?client_id=eq.${c.id}&period_month=eq.${enc(short)}&select=id,raw_json&limit=1`);
+      stored = rows && rows[0];
+      if (!stored) throw new Error(`No stored GSTR-1 JSON for ${c.name} / ${short}. Import a JSON first.`);
+      json = stored.raw_json;
+      // A failed read of einvoice_docs must never block the push: it goes up
+      // as stored, with no IRN attached.
+      try {
+        const einv = await sel(`einvoice_docs?client_id=eq.${c.id}&period_month=eq.${enc(info.period_month)}&select=section,ctin,doc_key,irn,irn_date`);
+        const res = attachIrn(json, Array.isArray(einv) ? einv : []);
+        json = res.json;
+        irnAttached = res.attached;
+      } catch (e) {
+        console.warn('[GSTKeeper] einvoice_docs read failed — pushing without IRNs:', e && e.message);
+        irnAttached = 0;
+      }
+    }
     const job = {
       mode: 'gstr1_upload',
       idx: 0,
@@ -919,16 +941,18 @@ const API = {
         creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
       }],
       gstr1: {
-        rowId: stored.id,
+        rowId: stored ? stored.id : null,
         periodShort: short,
         // Serialize once here — content.js will reconstruct a File from this.
-        json: stored.raw_json,
+        json,
+        irnAttached,
+        nil,
       },
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
     await setActiveJob(job);
-    return { started: true, client: c.name, period: short };
+    return { started: true, client: c.name, period: short, nil, irnAttached };
   },
 
   // From the GSTR-3B "Push to GST Portal" button. Unlike GSTR-1, there is no
@@ -967,6 +991,8 @@ const API = {
   // dialog — one row per portal upload / refresh so the audit trail is
   // complete no matter which path triggered it.
   saveGstr1UploadResult: async ({ rowId, status, summary, errors, actorId, actionType }) => {
+    // 0.8.4: a NIL push has no stored row — nothing to write.
+    if (!rowId) return false;
     // Pull client_id + period_month back from gstr1_data — we need them for
     // the versions insert but the content script only knows the row id.
     const rows = await sel(`gstr1_data?id=eq.${rowId}&select=client_id,period_month,raw_json&limit=1`);
@@ -1036,7 +1062,151 @@ const API = {
     await setActiveJob(job);
     return { started: true, client: c.name, period: short };
   },
+
+  // 0.8.4: from the GSTR-1 page's "Pull e-invoices" button. Logs the client in
+  // like the other single-client pulls; content.js (handleEinvoicePull) then
+  // downloads the portal's own GSTR-1 JSON for the period — the same
+  // offline/download/generate API handleGstr1JsonPull uses — and hands it to
+  // saveEinvoicePull below. Human does the CAPTCHA.
+  startEinvoicePull: async (info) => {
+    const c = await API.getClient(info.clientId);
+    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
+    const [mm, yyyy] = String(info.period_month).split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) throw new Error('Bad period_month.');
+    const job = {
+      mode: 'einvoice_pull',
+      idx: 0,
+      step: 'login',
+      startedAt: Date.now(),
+      period: info.period_month,
+      actorId: info.actorId || null,
+      clients: [{
+        clientId: c.id,
+        creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
+      }],
+    };
+    const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
+    job.tabId = tab.id;
+    await setActiveJob(job);
+    return { started: true, client: c.name, period: info.period_month };
+  },
+
+  // Saves one e-invoice pull. With `json` (the portal's GSTR-1 JSON) its
+  // IRN-bearing documents are upserted into einvoice_docs — never deleted, so
+  // a re-pull only adds or refreshes rows; first_seen_at is not sent, so the
+  // database default stays on insert and is kept on update. Every call
+  // (ok / none / pending / failed) records the attempt in einvoice_pulls.
+  saveEinvoicePull: async ({ clientId, period_month, actorId, json, status, message }) => {
+    let st = status || 'failed';
+    let msg = message || null;
+    let docsFound = 0;
+    if (json) {
+      const now = new Date().toISOString();
+      const docs = extractEinvoiceDocs(json);
+      docsFound = docs.length;
+      try {
+        const rows = dedupeRows(docs.map((d) => ({
+          ...d, client_id: clientId, period_month, source: 'portal_gstr1', last_seen_at: now,
+        })), ['section', 'ctin', 'doc_key']);
+        for (let i = 0; i < rows.length; i += 500) {
+          await upsert('einvoice_docs', 'client_id,period_month,section,ctin,doc_key', rows.slice(i, i + 500));
+        }
+        st = docsFound ? 'ok' : 'none';
+        msg = docsFound
+          ? docsFound + ' e-invoice document(s) with an IRN found in the portal\'s GSTR-1.'
+          : 'No document in the portal\'s GSTR-1 for this period carries an IRN.';
+      } catch (e) {
+        st = 'failed';
+        msg = 'Could not save the e-invoice documents: ' + ((e && e.message) || e);
+      }
+    }
+    try {
+      await upsert('einvoice_pulls', 'client_id,period_month', [{
+        client_id: clientId, period_month, status: st, docs_found: docsFound, message: msg,
+        pulled_by: actorId || null, pulled_at: new Date().toISOString(),
+      }]);
+    } catch (e) {
+      console.warn('[GSTKeeper] einvoice_pulls write failed:', e && e.message);
+    }
+    return { status: st, docsFound, message: msg };
+  },
 };
+
+// ── E-invoice (IRN) documents (0.8.4) ───────────────────────────────────────
+// Plain-JS copy of normDocKey / docMatchKey / extractDocs / attachIrn from
+// src/lib/einvoice/einvoice.ts (no bundler here) — keep the two in step.
+// extractDocs adds `raw` (the document as the portal gave it) for einvoice_docs.
+const einvNum = (v) => { const n = typeof v === 'number' ? v : parseFloat(String(v == null ? '' : v)); return Number.isFinite(n) ? n : 0; };
+const einvStr = (v) => (v == null ? '' : String(v)).trim();
+const einvArr = (v) => (Array.isArray(v) ? v : []);
+const einvRound2 = (n) => Math.round(n * 100) / 100;
+const normDocKey = (docNo) => einvStr(docNo).toUpperCase().replace(/[^A-Z0-9]/g, '');
+const docMatchKey = (d) => d.section + '|' + einvStr(d.ctin).toUpperCase() + '|' + d.doc_key;
+const einvNoteType = (nt) => (einvStr(nt.ntty != null ? nt.ntty : (nt.typ != null ? nt.typ : 'C')).toUpperCase().startsWith('D') ? 'DBN' : 'CRN');
+
+function extractDocs(json) {
+  const j = json || {};
+  const out = [];
+  const push = (section, docType, docNo, ctin, d, date, pos, raw) => {
+    const t = { taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 };
+    einvArr(d.itms).forEach((it) => {
+      const x = (it && it.itm_det) || it || {};
+      t.taxable += einvNum(x.txval); t.igst += einvNum(x.iamt); t.cgst += einvNum(x.camt);
+      t.sgst += einvNum(x.samt); t.cess += einvNum(x.csamt);
+    });
+    out.push({
+      section,
+      doc_type: docType,
+      doc_no: einvStr(docNo),
+      doc_key: normDocKey(docNo),
+      ctin: einvStr(ctin).toUpperCase(),
+      doc_date: einvStr(date) || null,
+      irn: einvStr(d.irn) || null,
+      irn_date: einvStr(d.irngendate) || null,
+      inv_typ: einvStr(d.inv_typ != null ? d.inv_typ : d.typ) || null,
+      pos: einvStr(pos) || null,
+      doc_value: einvRound2(einvNum(d.val)),
+      taxable: einvRound2(t.taxable),
+      igst: einvRound2(t.igst),
+      cgst: einvRound2(t.cgst),
+      sgst: einvRound2(t.sgst),
+      cess: einvRound2(t.cess),
+      raw: raw || d,
+    });
+  };
+  einvArr(j.b2b).forEach((p) => einvArr(p.inv).forEach((inv) => push('b2b', 'INV', inv.inum, p.ctin, inv, inv.idt, inv.pos)));
+  einvArr(j.cdnr).forEach((p) => einvArr(p.nt).forEach((nt) => push('cdnr', einvNoteType(nt), nt.nt_num, p.ctin, nt, nt.nt_dt, nt.pos)));
+  einvArr(j.cdnur).forEach((nt) => push('cdnur', einvNoteType(nt), nt.nt_num, '', nt, nt.nt_dt, nt.pos));
+  einvArr(j.exp).forEach((e) => einvArr(e.inv).forEach((inv) => push('exp', 'INV', inv.inum, '', { ...inv, typ: e.exp_typ }, inv.idt, null, inv)));
+  einvArr(j.b2cl).forEach((s) => einvArr(s.inv).forEach((inv) => push('b2cl', 'INV', inv.inum, '', inv, inv.idt, s.pos)));
+  return out.filter((d) => d.doc_key);
+}
+const extractEinvoiceDocs = (portalJson) => extractDocs(portalJson).filter((d) => !!d.irn);
+
+// Copy of `json` with irn / irngendate / srctyp 'e-Invoice' set on every
+// B2B / CDNR / CDNUR / EXP document that has a stored e-invoice and no IRN of
+// its own. The figures are never changed.
+function attachIrn(json, einv) {
+  const copy = JSON.parse(JSON.stringify(json || {}));
+  const map = new Map();
+  einvArr(einv).forEach((e) => { if (e.irn) map.set(docMatchKey(e), { irn: e.irn, irn_date: e.irn_date != null ? e.irn_date : null }); });
+  let attached = 0;
+  let alreadyHad = 0;
+  const apply = (section, ctin, docNo, d) => {
+    if (einvStr(d.irn)) { alreadyHad += 1; return; }
+    const hit = map.get(docMatchKey({ section, ctin: einvStr(ctin).toUpperCase(), doc_key: normDocKey(docNo) }));
+    if (!hit) return;
+    d.irn = hit.irn;
+    if (hit.irn_date) d.irngendate = hit.irn_date;
+    d.srctyp = 'e-Invoice';
+    attached += 1;
+  };
+  einvArr(copy.b2b).forEach((p) => einvArr(p.inv).forEach((inv) => apply('b2b', p.ctin, inv.inum, inv)));
+  einvArr(copy.cdnr).forEach((p) => einvArr(p.nt).forEach((nt) => apply('cdnr', p.ctin, nt.nt_num, nt)));
+  einvArr(copy.cdnur).forEach((nt) => apply('cdnur', '', nt.nt_num, nt));
+  einvArr(copy.exp).forEach((e) => einvArr(e.inv).forEach((inv) => apply('exp', '', inv.inum, inv)));
+  return { json: copy, attached, alreadyHad };
+}
 
 // ---- GSTR-2B Excel capture (to-disk download) ------------------------------
 // The GSTR-2B Excel downloads via a direct URL (not a JS blob), so the page hook

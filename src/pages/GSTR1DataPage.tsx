@@ -48,6 +48,8 @@ import { markFilingPushed } from '@/lib/markFilingPushed';
 import { diffGstr1, summariseDiff } from '@/utils/gstReturnDiff';
 import ReturnDiffTable from '@/components/dialogs/ReturnDiffTable';
 import Gstr1ManualEntryPanel from '@/components/gstr1/Gstr1ManualEntryPanel';
+import EinvoiceRecoPanel, { type EinvoicePullRow } from '@/components/gstr1/EinvoiceRecoPanel';
+import { attachIrn, extractDocs, isEinvoiceableBookDoc, type EinvoiceDocRow } from '@/lib/einvoice/einvoice';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 
@@ -94,6 +96,10 @@ interface Client {
   // 'json_manual' clients import/upload a JSON as usual but staff can also
   // open the manual entry grid against it and edit every section by hand.
   gstr1_import_mode?: 'json' | 'manual' | 'json_manual' | null;
+  // E-invoice (IRN) client: the portal auto-populates its e-invoices into
+  // GSTR-1, so the page pulls them, reconciles them with the books JSON and
+  // the push carries each document's IRN.
+  einvoice_applicable?: boolean | null;
 }
 
 interface UploadErrorRow {
@@ -238,6 +244,20 @@ const GSTR1DataPage: React.FC = () => {
   const [errorsDialogOpen, setErrorsDialogOpen] = useState(false);
   const [showUploadReport, setShowUploadReport] = useState(false);
   const [extReady, setExtReady] = useState(false);
+  // NIL return push (no JSON needed) — confirmation dialog.
+  const [nilDialogOpen, setNilDialogOpen] = useState(false);
+  // Upload confirmation for an e-invoice client with no IRNs pulled: an
+  // explicit opt-in to upload without IRNs.
+  const [uploadWithoutIrn, setUploadWithoutIrn] = useState(false);
+
+  // E-invoice (IRN) documents + last pull for this client + period.
+  const [einvoiceDocs, setEinvoiceDocs] = useState<EinvoiceDocRow[]>([]);
+  const [einvoicePull, setEinvoicePull] = useState<EinvoicePullRow | null>(null);
+  const [einvLoading, setEinvLoading] = useState(false);
+  const [isPullingEinv, setIsPullingEinv] = useState(false);
+  const einvFetchSeq = useRef(0);
+  // Set while a NIL push is in flight, so a failure result is worded as one.
+  const nilPushRef = useRef(false);
 
   // Manual correction of an imported JSON's HSN (Table 12) and Documents
   // Issued (Table 13) sections. Tally's GSTR-1 export has produced malformed
@@ -329,7 +349,7 @@ const GSTR1DataPage: React.FC = () => {
 
   const fetchClients = useCallback(async () => {
     const { data } = await supabase
-      .from('clients').select('id, name, gstin, regular_sub_type, registration_type, gstr1_import_mode').order('name');
+      .from('clients').select('id, name, gstin, regular_sub_type, registration_type, gstr1_import_mode, einvoice_applicable').order('name');
     setClients((data || []) as Client[]);
   }, []);
 
@@ -364,6 +384,64 @@ const GSTR1DataPage: React.FC = () => {
     () => clients.find((c) => c.id === selectedClient)?.gstr1_import_mode === 'json_manual',
     [clients, selectedClient],
   );
+
+  /** E-invoice client: the reco panel shows and the push carries IRNs. */
+  const isEinvoiceClient = useMemo(
+    () => !!clients.find((c) => c.id === selectedClient)?.einvoice_applicable,
+    [clients, selectedClient],
+  );
+
+  // einvoice_docs / einvoice_pulls use MM/YYYY like the rest of the app. The
+  // extension writes both; this page only reads them (on load and after a pull).
+  const fetchEinvoice = useCallback(async () => {
+    const seq = ++einvFetchSeq.current;
+    if (!selectedClient || !selectedMonth || !isEinvoiceClient) {
+      setEinvoiceDocs([]); setEinvoicePull(null); setEinvLoading(false);
+      return;
+    }
+    setEinvLoading(true);
+    try {
+      const PAGE = 1000;
+      const docs: EinvoiceDocRow[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from('einvoice_docs')
+          .select('id, client_id, period_month, section, doc_type, doc_no, doc_key, ctin, doc_date, irn, irn_date, inv_typ, pos, doc_value, taxable, igst, cgst, sgst, cess, first_seen_at, last_seen_at')
+          .eq('client_id', selectedClient)
+          .eq('period_month', selectedMonth)
+          .order('id')
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        docs.push(...((data || []) as unknown as EinvoiceDocRow[]));
+        if (!data || data.length < PAGE) break;
+      }
+      const { data: pull, error: pullErr } = await supabase
+        .from('einvoice_pulls')
+        .select('status, docs_found, message, pulled_at, pulled_by')
+        .eq('client_id', selectedClient)
+        .eq('period_month', selectedMonth)
+        .maybeSingle();
+      if (pullErr) throw pullErr;
+      if (seq !== einvFetchSeq.current) return;
+      setEinvoiceDocs(docs);
+      setEinvoicePull((pull as EinvoicePullRow | null) ?? null);
+    } catch (err) {
+      if (seq !== einvFetchSeq.current) return;
+      setEinvoiceDocs([]); setEinvoicePull(null);
+      toast.error('Could not load e-invoices: ' + (err instanceof Error ? err.message : (err as { message?: string })?.message || String(err)));
+    } finally {
+      if (seq === einvFetchSeq.current) setEinvLoading(false);
+    }
+  }, [selectedClient, selectedMonth, isEinvoiceClient]);
+
+  // What the upload dialog says about IRNs. Only computed while the dialog is
+  // open — attachIrn deep-copies the whole JSON.
+  const uploadIrnInfo = useMemo(() => {
+    if (!uploadDialogOpen || !isEinvoiceClient || !gstr1Data?.raw_json) return null;
+    const res = attachIrn(gstr1Data.raw_json, einvoiceDocs);
+    const eligible = extractDocs(gstr1Data.raw_json).filter(isEinvoiceableBookDoc).length;
+    return { attached: res.attached, alreadyHad: res.alreadyHad, eligible };
+  }, [uploadDialogOpen, isEinvoiceClient, gstr1Data, einvoiceDocs]);
 
   /** Was the stored return produced by Builder Returns rather than uploaded? */
   const isBuilderGenerated = useMemo(
@@ -570,12 +648,14 @@ const GSTR1DataPage: React.FC = () => {
   useEffect(() => { fetchGSTR1Data(); }, [fetchGSTR1Data]);
   useEffect(() => { fetchVersions(); }, [fetchVersions]);
   useEffect(() => { fetchFilingStatus(); }, [fetchFilingStatus]);
+  useEffect(() => { fetchEinvoice(); }, [fetchEinvoice]);
   // Clear the transient upload banner when the operator switches client/month.
   useEffect(() => {
     setUploadResult(null);
     setShowUploadReport(false);
     setHsnEditMode(false); setHsnEditRows([]);
     setDocEditMode(false); setDocEditRows([]);
+    setIsPullingEinv(false);
   }, [selectedClient, selectedMonth]);
 
   // Extension bridge: detect the GST Keeper browser extension and receive the
@@ -586,17 +666,63 @@ const GSTR1DataPage: React.FC = () => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
       if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkPullEinvoiceStarted) {
+        const r = d.__gstkPullEinvoiceStarted as { ok: boolean; error?: string };
+        if (!r.ok) {
+          setIsPullingEinv(false);
+          toast.error('E-invoice pull could not start: ' + (r.error || 'unknown error'));
+        }
+      }
+      if (d.__gstkEinvoicePullDone) {
+        const r = d.__gstkEinvoicePullDone as {
+          ok: boolean;
+          status?: 'ok' | 'none' | 'pending' | 'failed';
+          docsFound?: number;
+          message?: string;
+          clientId?: string;
+          period_month?: string;
+        };
+        setIsPullingEinv(false);
+        const n = r.docsFound ?? 0;
+        if (r.status === 'ok') toast.success(`E-invoices pulled — ${n.toLocaleString('en-IN')} IRN${n === 1 ? '' : 's'} found.`);
+        else if (r.status === 'none') toast.info(r.message || 'No e-invoices on the portal for this period.');
+        else if (r.status === 'pending') toast.warning(r.message || 'The portal is still preparing the data — pull again in a few minutes.');
+        else toast.error('E-invoice pull failed: ' + (r.message || 'unknown error'));
+        fetchEinvoice();
+      }
       if (d.__gstkUploadGstr1Result) {
         const r = d.__gstkUploadGstr1Result as {
           ok: boolean;
-          status?: 'accepted' | 'partial' | 'failed';
+          status?: 'accepted' | 'partial' | 'failed' | 'nil_marked';
           summary?: string;
+          message?: string;
           errors?: UploadErrorRow[];
           error?: string;
+          irnAttached?: number;
         };
         setIsUploading(false);
-        if (r.ok) {
-          const summary = r.summary || 'Uploaded to portal.';
+        const wasNil = nilPushRef.current;
+        nilPushRef.current = false;
+        if (r.ok && r.status === 'nil_marked') {
+          // NIL push: the extension ticked the portal's "File Nil GSTR-1"
+          // option. Same "Pushed" marker as a clean JSON upload.
+          const msg = r.message || r.summary || 'GSTR-1 marked as NIL on the GST portal. Filing / signing stays manual.';
+          toast.success(msg);
+          setUploadResult({ ok: true, message: msg });
+          if (selectedClient && selectedMonth) {
+            markFilingPushed({
+              clientId: selectedClient,
+              returnType: 'GSTR-1',
+              periodMonth: selectedMonth,
+              actorId: user?.id ?? null,
+            }).then((res) => {
+              if (!res.ok) toast.warning('Marked NIL on the portal, but the filing status could not be updated: ' + ('error' in res ? res.error : ''));
+              fetchFilingStatus();
+            });
+          }
+        } else if (r.ok) {
+          const summary = (r.summary || 'Uploaded to portal.')
+            + (typeof r.irnAttached === 'number' ? ` IRN attached to ${r.irnAttached.toLocaleString('en-IN')} document(s).` : '');
           const realErrors = filterRealErrors(r.errors);
           // Trust the extension's own accepted/partial call over the mere
           // presence of an errors array — GSTN's response can list every
@@ -627,8 +753,8 @@ const GSTR1DataPage: React.FC = () => {
             });
           }
         } else {
-          const msg = r.error || 'Portal upload failed.';
-          toast.error('Upload failed: ' + msg);
+          const msg = r.error || r.message || 'Portal upload failed.';
+          toast.error((wasNil ? 'NIL push failed: ' : 'Upload failed: ') + msg);
           setUploadResult({ ok: false, message: msg, errors: filterRealErrors(r.errors) });
         }
         fetchGSTR1Data();
@@ -645,7 +771,7 @@ const GSTR1DataPage: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [fetchGSTR1Data, fetchVersions, fetchFilingStatus, selectedClient, selectedMonth, user?.id]);
+  }, [fetchGSTR1Data, fetchVersions, fetchFilingStatus, fetchEinvoice, selectedClient, selectedMonth, user?.id]);
 
   // Opens the persistent hidden <input type="file"> below. Using a stable ref
   // (instead of a dynamically-created input with an onchange closure) means
@@ -799,6 +925,10 @@ const GSTR1DataPage: React.FC = () => {
       toast.error('Install / enable the GST Keeper browser extension to upload from this page.');
       return;
     }
+    if (isEinvoiceClient && einvoiceDocs.length === 0 && !uploadWithoutIrn) {
+      toast.error('No e-invoices pulled for this period — pull e-invoices first, or tick "Upload without IRNs anyway".');
+      return;
+    }
     // Pre-flight: the portal only accepts a JSON whose GSTIN matches the
     // logged-in taxpayer. If the imported JSON's GSTIN doesn't match this
     // client's GSTIN, the upload will be rejected with a misleading portal
@@ -872,6 +1002,67 @@ const GSTR1DataPage: React.FC = () => {
       '*'
     );
     toast.info('Opening the GST portal in a new tab — clear the CAPTCHA and let the upload run. Progress will appear here.');
+  };
+
+  // NIL return: no JSON is needed. The extension opens the period's GSTR-1,
+  // ticks the portal's "File Nil GSTR-1" option and confirms; filing / signing
+  // stays manual. None of the JSON pre-flight checks (GSTIN, fp, Table 13,
+  // advance set-off) apply — there is no JSON.
+  const handlePushNil = () => {
+    if (!selectedClient || !selectedMonth) return;
+    if (!isNilReturn) {
+      toast.error('Tick "NIL Return" first — only a NIL period can be pushed without a JSON.');
+      setNilDialogOpen(false);
+      return;
+    }
+    if (isFiled) {
+      toast.error('GSTR-1 for this period is already Filed — portal push is locked.');
+      setNilDialogOpen(false);
+      return;
+    }
+    if (!extReady) {
+      toast.error('Install / enable the GST Keeper browser extension to push from this page.');
+      return;
+    }
+    nilPushRef.current = true;
+    setIsUploading(true);
+    setUploadResult(null);
+    setNilDialogOpen(false);
+    window.postMessage(
+      {
+        __gstkUploadGstr1: {
+          clientId: selectedClient,
+          period_month: selectedMonth,
+          actorId: user?.id ?? null,
+          nil: true,
+        },
+      },
+      '*'
+    );
+    toast.info('Opening the GST portal in a new tab — clear the CAPTCHA and let the NIL marking run. Progress will appear here.');
+  };
+
+  // E-invoice pull: the extension downloads this period's GSTR-1 from the
+  // portal and upserts its IRN-bearing documents into einvoice_docs (and the
+  // outcome into einvoice_pulls). This page just re-reads them on completion.
+  const handlePullEinvoice = () => {
+    if (!selectedClient || !selectedMonth) return;
+    if (!extReady) {
+      toast.error('Install / enable the GST Keeper browser extension to pull e-invoices.');
+      return;
+    }
+    setIsPullingEinv(true);
+    window.postMessage(
+      {
+        __gstkPullEinvoice: {
+          clientId: selectedClient,
+          period_month: selectedMonth,
+          actorId: user?.id ?? null,
+        },
+      },
+      '*'
+    );
+    toast.info('Pulling e-invoices from the GST portal — clear the CAPTCHA in the new tab if asked.');
   };
 
   // Manual fallback for when the extension can't auto-fetch the Error Report
@@ -1136,6 +1327,18 @@ const GSTR1DataPage: React.FC = () => {
       txval: item.txval, iamt: item.iamt, camt: item.camt, samt: item.samt, csamt: item.csamt,
     }));
   }, [json.b2csa]);
+
+  // A document's own value (`val`, incl. tax) repeats on every item line of
+  // a multi-rate document, so the Value footer sums it once per document.
+  const sumDocVal = (rows: any[], key: (r: any) => string): number => {
+    const seen = new Set<string>();
+    return rows.reduce((t, r) => {
+      const k = key(r);
+      if (seen.has(k)) return t;
+      seen.add(k);
+      return t + (Number(r.val) || 0);
+    }, 0);
+  };
 
   // CDNR data
   const cdnrRows = useMemo(() => {
@@ -1568,7 +1771,7 @@ const GSTR1DataPage: React.FC = () => {
             {gstr1Data && canEditFilingStatus() && (
               <Button
                 size="sm"
-                onClick={() => { setUploadResult(null); setUploadDialogOpen(true); }}
+                onClick={() => { setUploadResult(null); setUploadWithoutIrn(false); setUploadDialogOpen(true); }}
                 disabled={isUploading || !extReady || !!gstinMismatch || isFiled}
                 className={cn(WS_BTN, 'px-3 bg-success text-success-foreground hover:bg-success/90')}
                 title={
@@ -1583,6 +1786,26 @@ const GSTR1DataPage: React.FC = () => {
               >
                 {isUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                 Upload to GST Portal
+              </Button>
+            )}
+            {/* NIL period: marks the return NIL on the portal — no JSON needed. */}
+            {selectedClient && selectedMonth && isNilReturn && canEditFilingStatus() && (
+              <Button
+                size="sm"
+                variant={gstr1Data ? 'outline' : 'default'}
+                onClick={() => { setUploadResult(null); setNilDialogOpen(true); }}
+                disabled={isUploading || !extReady || isFiled}
+                className={cn(WS_BTN, 'px-3')}
+                title={
+                  isFiled
+                    ? 'GSTR-1 already Filed — portal push is locked'
+                    : extReady
+                      ? 'Mark this GSTR-1 as NIL on the GST portal — no JSON needed (filing / signing stays manual)'
+                      : 'GST Keeper browser extension not detected — install / enable it and reload this page'
+                }
+              >
+                {isUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                Push NIL return
               </Button>
             )}
           </>
@@ -1919,8 +2142,13 @@ const GSTR1DataPage: React.FC = () => {
             <CardContent className="p-3">
               <TableEmptyState
                 icon={isBuilderClient ? <FileSpreadsheet className="h-6 w-6" /> : <Upload className="h-6 w-6" />}
-                title={`No GSTR-1 data for ${selectedClientName} — ${mmYyyyToShort(selectedMonth)}`}
-                description={!isStaff ? undefined : isBuilderClient
+                title={isStaff && isNilReturn
+                  ? `NIL return for ${selectedClientName} — ${mmYyyyToShort(selectedMonth)}`
+                  : `No GSTR-1 data for ${selectedClientName} — ${mmYyyyToShort(selectedMonth)}`}
+                description={!isStaff ? undefined : isNilReturn
+                  ? 'This period is marked NIL, so no JSON is needed. Click "Push NIL return" above to mark '
+                    + 'the GSTR-1 as NIL on the GST portal (filing / signing stays manual).'
+                  : isBuilderClient
                   ? 'This is a builder client. Open Builder Returns and generate the period — the '
                     + 'figures are computed from bookings, receipts and BU events, not uploaded.'
                   : isManualClient
@@ -2125,7 +2353,7 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter className={TFOOT}>
                         <TableRow className={TR_TOTAL}>
                           <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({b2bRows.length} rows)</TableCell>
-                          <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'val'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumDocVal(b2bRows, (r) => `${r.ctin}|${r.inum}`))}</TableCell>
                           <TableCell className={TD} colSpan={4} />
                           <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2bRows, 'iamt'))}</TableCell>
@@ -2175,7 +2403,7 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter className={TFOOT}>
                         <TableRow className={TR_TOTAL}>
                           <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({b2clRows.length} rows)</TableCell>
-                          <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'val'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumDocVal(b2clRows, (r) => `${r.pos}|${r.inum}`))}</TableCell>
                           <TableCell className={TD} />
                           <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(b2clRows, 'iamt'))}</TableCell>
@@ -2327,7 +2555,7 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter className={TFOOT}>
                         <TableRow className={TR_TOTAL}>
                           <TableCell className={`${TD} font-semibold`} colSpan={5}>Total ({cdnrRows.length} rows)</TableCell>
-                          <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'val'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumDocVal(cdnrRows, (r) => `${r.ctin}|${r.ntNum}`))}</TableCell>
                           <TableCell className={TD} />
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnrRows, 'iamt'))}</TableCell>
@@ -2379,7 +2607,7 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter className={TFOOT}>
                         <TableRow className={TR_TOTAL}>
                           <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({cdnurRows.length} rows)</TableCell>
-                          <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'val'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumDocVal(cdnurRows, (r) => `${r.ntNum}`))}</TableCell>
                           <TableCell className={TD} colSpan={2} />
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(cdnurRows, 'iamt'))}</TableCell>
@@ -2433,7 +2661,7 @@ const GSTR1DataPage: React.FC = () => {
                       <TableFooter className={TFOOT}>
                         <TableRow className={TR_TOTAL}>
                           <TableCell className={`${TD} font-semibold`} colSpan={4}>Total ({expRows.length} rows)</TableCell>
-                          <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'val'))}</TableCell>
+                          <TableCell className={footTd}>{formatNumber(sumDocVal(expRows, (r) => `${r.expTyp ?? ''}|${r.inum}`))}</TableCell>
                           <TableCell className={TD} colSpan={4} />
                           <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'txval'))}</TableCell>
                           <TableCell className={footTd}>{formatNumber(sumBy(expRows, 'iamt'))}</TableCell>
@@ -2931,6 +3159,23 @@ const GSTR1DataPage: React.FC = () => {
         </div>
       )}
 
+      {/* E-invoice (IRN) reconciliation — e-invoice clients only. Without an
+          imported JSON every pulled e-invoice shows as not in books. */}
+      {isStaff && selectedClient && selectedMonth && isEinvoiceClient && !isLoading && (
+        <EinvoiceRecoPanel
+          booksJson={gstr1Data?.raw_json ?? null}
+          einvoiceDocs={einvoiceDocs}
+          lastPull={einvoicePull}
+          loading={einvLoading}
+          canPull={canEditFilingStatus()}
+          extReady={extReady}
+          pulling={isPullingEinv}
+          onPull={handlePullEinvoice}
+          clientName={selectedClientName}
+          periodMonth={selectedMonth}
+        />
+      )}
+
       {/* Consolidated, portal-style GSTR-1 summary (like the system-generated PDF). */}
       <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
         <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
@@ -3049,6 +3294,29 @@ const GSTR1DataPage: React.FC = () => {
                     <span className="font-medium text-right">{derivedFiling?.financialYear}</span>
                   </div>
                 </div>
+                {isEinvoiceClient && (einvoiceDocs.length === 0 ? (
+                  <div className="space-y-2">
+                    <Note tone="warn">
+                      No e-invoices pulled for this period — the upload would replace the portal's
+                      auto-populated e-invoices without their IRN. Pull e-invoices first.
+                    </Note>
+                    <label className="flex items-center gap-2 text-xs font-medium text-foreground">
+                      <Checkbox
+                        checked={uploadWithoutIrn}
+                        onCheckedChange={(v) => setUploadWithoutIrn(!!v)}
+                      />
+                      Upload without IRNs anyway
+                    </label>
+                  </div>
+                ) : uploadIrnInfo && (
+                  <Note tone="info" open>
+                    <span className="font-medium tabular-nums">
+                      {(uploadIrnInfo.attached + uploadIrnInfo.alreadyHad).toLocaleString('en-IN')} of {uploadIrnInfo.eligible.toLocaleString('en-IN')}
+                    </span>{' '}
+                    e-invoiceable documents will be uploaded with their IRN
+                    {uploadIrnInfo.alreadyHad > 0 ? ` (${uploadIrnInfo.alreadyHad.toLocaleString('en-IN')} already carry one in the JSON)` : ''}.
+                  </Note>
+                ))}
                 <p className="text-xs text-muted-foreground">
                   You will need to solve the portal CAPTCHA in the new tab. Preview, Submit and
                   EVC / DSC signing stay manual — this action only populates the return draft
@@ -3063,11 +3331,47 @@ const GSTR1DataPage: React.FC = () => {
             </Button>
             <Button
               onClick={handleUpload}
-              disabled={isUploading || !extReady}
+              disabled={isUploading || !extReady || (isEinvoiceClient && einvoiceDocs.length === 0 && !uploadWithoutIrn)}
               className="bg-success text-success-foreground hover:bg-success/90"
             >
               {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
               {isUploading ? 'Uploading…' : 'Confirm & Upload'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* NIL push confirmation — no JSON involved. */}
+      <AlertDialog open={nilDialogOpen} onOpenChange={(o) => { if (!isUploading) setNilDialogOpen(o); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Push NIL GSTR-1 to the GST portal?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>This marks the GSTR-1 as NIL on the GST portal. Filing / signing stays manual.</p>
+                <div className="rounded-md border bg-muted/40 p-3 text-sm text-foreground space-y-1">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Client</span>
+                    <span className="font-medium text-right">{selectedClientName || '—'}</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Period</span>
+                    <span className="font-medium text-right">{derivedFiling?.period} {selectedMonth?.split('/')[1]}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  You will need to solve the portal CAPTCHA in the new tab.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button variant="outline" onClick={() => setNilDialogOpen(false)} disabled={isUploading}>
+              Cancel
+            </Button>
+            <Button onClick={handlePushNil} disabled={isUploading || !extReady || isFiled || !isNilReturn}>
+              {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+              Confirm &amp; Push NIL
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -195,6 +195,9 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   // "Debit notes − Credit notes", so a credit note reduces the value and tax.
   // Note type lives in `ntty` (or `typ` on some exports); anything starting
   // with "D" is a debit note (+), otherwise it's a credit note (−).
+  // Value is the note's TAXABLE value (sum of itm_det.txval), like every
+  // other table here — not `nt.val`, the note value including GST, which
+  // overstated Table 9B by the tax on every note.
   const noteSign = (nt: any): 1 | -1 =>
     String(nt?.ntty ?? nt?.typ ?? 'C').toUpperCase().startsWith('D') ? 1 : -1;
 
@@ -202,7 +205,7 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     (party.nt || []).forEach((nt: any) => {
       s9BR.count += 1;
       const sign = noteSign(nt);
-      s9BR.value += sign * num(nt.val);
+      s9BR.value += sign * sumTaxable(nt.itms);
       (nt.itms || []).forEach((it: any) => {
         const d = it?.itm_det || it || {};
         s9BR.igst += sign * num(d.iamt);
@@ -217,7 +220,7 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   (j.cdnur || []).forEach((nt: any) => {
     s9BUR.count += 1;
     const sign = noteSign(nt);
-    s9BUR.value += sign * num(nt.val);
+    s9BUR.value += sign * sumTaxable(nt.itms);
     (nt.itms || []).forEach((it: any) => {
       const d = it?.itm_det || it || {};
       s9BUR.igst += sign * num(d.iamt);

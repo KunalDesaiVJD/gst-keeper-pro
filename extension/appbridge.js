@@ -179,6 +179,20 @@ window.addEventListener('message', (e) => {
     });
   }
 
+  // 0.8.4: the GSTR-1 page's "Pull e-invoices" button. Background opens a
+  // portal tab; the outcome (ok / none / pending / failed) comes back later
+  // via chrome.storage.local -> the change listener below.
+  if (d.__gstkPullEinvoice) {
+    const info = d.__gstkPullEinvoice;
+    if (!info.clientId || !info.period_month) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'startEinvoicePull', args: [info] }, (resp) => {
+      const ok = resp && resp.ok;
+      const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
+      window.postMessage({ __gstkPullEinvoiceStarted: ok ? { ok: true } : { ok: false, error } }, location.origin);
+    });
+    return;
+  }
+
   // The GSTR-3B "Push to GST Portal" button. Unlike GSTR-1 this carries the
   // already-computed draft JSON straight in the message (info.gstr3bJson) —
   // there's no stored row to fetch by id, the app computes GSTR-3B fresh
@@ -225,6 +239,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (v) {
       window.postMessage({ __gstkUploadGstr1Result: v }, location.origin);
       chrome.storage.local.remove('gstk_gstr1_upload_result');
+    }
+  }
+  // 0.8.4: e-invoice pull finished — the extension has already saved
+  // einvoice_docs / einvoice_pulls; the app just re-reads them.
+  if (changes.gstk_einvoice_pull_result) {
+    const v = changes.gstk_einvoice_pull_result.newValue;
+    if (v) {
+      window.postMessage({ __gstkEinvoicePullDone: {
+        ok: !!v.ok, status: v.status, docsFound: v.docsFound || 0, message: v.message || '',
+        clientId: v.clientId, period_month: v.period_month,
+      } }, location.origin);
+      chrome.storage.local.remove('gstk_einvoice_pull_result');
     }
   }
   // GSTR-3B form-fill finished (or the whole flow errored out before it got

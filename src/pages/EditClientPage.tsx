@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import ReminderSettingsCard from '@/components/reminders/ReminderSettingsCard';
 import { AnnualTurnoverCard } from '@/components/clients/AnnualTurnoverCard';
+import { EinvoiceClientFields } from '@/components/clients/EinvoiceClientFields';
 import { ArrowLeft, Save, AlertTriangle, History, Loader2, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
@@ -70,6 +71,8 @@ const EditClientPage: React.FC = () => {
     inactiveAtHand: false,
     noticesSyncExcluded: false,
     liberal2BReconciliation: false,
+    einvoiceApplicable: false,
+    einvoiceExemption: '',
     defaultTargetDate: '',
     otherTargetDate: '',
     gstUserId: '',
@@ -129,6 +132,8 @@ const EditClientPage: React.FC = () => {
         inactiveAtHand: !!(data as any).inactive_at_hand,
         noticesSyncExcluded: !!(data as any).notices_sync_excluded,
         liberal2BReconciliation: !!(data as any).liberal_2b_reconciliation,
+        einvoiceApplicable: !!data.einvoice_applicable && !data.einvoice_exemption,
+        einvoiceExemption: data.einvoice_exemption || '',
         defaultTargetDate: defaultTarget,
         otherTargetDate: otherTarget,
         gstUserId: (data as any).gst_user_id || '',
@@ -315,6 +320,8 @@ const EditClientPage: React.FC = () => {
           inactive_at_hand: formData.inactiveAtHand,
           notices_sync_excluded: formData.noticesSyncExcluded,
           liberal_2b_reconciliation: formData.liberal2BReconciliation,
+          einvoice_applicable: formData.einvoiceExemption ? false : formData.einvoiceApplicable,
+          einvoice_exemption: formData.einvoiceExemption || null,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
           // Keep the client's app-login password in sync with the GST password,
@@ -902,6 +909,13 @@ const EditClientPage: React.FC = () => {
                   </div>
                 </label>
               </div>
+
+              <EinvoiceClientFields
+                applicable={formData.einvoiceApplicable}
+                exemption={formData.einvoiceExemption}
+                onChange={({ applicable, exemption }) =>
+                  setFormData(prev => ({ ...prev, einvoiceApplicable: applicable, einvoiceExemption: exemption }))}
+              />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

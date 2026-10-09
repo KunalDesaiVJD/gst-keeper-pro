@@ -30,6 +30,21 @@ import { isBuAgreementConfirmationBlocked } from '@/lib/builderAgreementConfirmD
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 import { markFiledForPeriod } from '@/lib/advanceSetoffOverrides';
+import RequestDirectFilingDialog, { DirectFilingTarget } from '@/components/filing/RequestDirectFilingDialog';
+import DirectFilingApprovalsPanel from '@/components/filing/DirectFilingApprovalsPanel';
+import {
+  DirectFilingApproval,
+  DirectFilingState,
+  approvalKey,
+  directFilingRuleApplies,
+  directFilingState,
+  fetchDirectFilingApprovals,
+  fetchUserNames,
+  groupApprovals,
+  isDirectFilingBlocked,
+  isDirectFilingTriggerError,
+  pickApproval,
+} from '@/lib/directFilingApprovals';
 
 // Previous MM/YYYY period. Kept next to the carry-forward logic it guards:
 // the 2B chain is strictly month-by-month, so "the period before this one" has
@@ -145,6 +160,8 @@ interface FilingRecord {
   arn: string | null;
   return_pdf_url: string | null;
   is_nil?: boolean | null;
+  /** Set when the return was pushed to the portal through GST Keeper. */
+  pushed_at?: string | null;
   // Joined client data
   clientName?: string;
   clientEmail?: string;
@@ -539,6 +556,62 @@ const FilingStatusPage: React.FC = () => {
     loadData();
   }, [fetchClients, fetchFilingRecords, fetchSchemeHistories, fetchGstr1DataClientIds]);
 
+  // GSTR-1 direct-filing approvals (from the Sep-2026 period). A GSTR-1 /
+  // IFF that was not pushed through GST Keeper cannot become Filed until a
+  // superadmin approves a request — a DB trigger enforces it; this keeps
+  // staff on a request dialog instead of the raw trigger error.
+  const isSuperadmin = user?.role === 'superadmin';
+  const [directApprovals, setDirectApprovals] = useState<DirectFilingApproval[]>([]);
+  const [approvalUserNames, setApprovalUserNames] = useState<Record<string, string>>({});
+  const [directFilingTarget, setDirectFilingTarget] = useState<(DirectFilingTarget & { record: FilingRecord; localArn?: string }) | null>(null);
+  const [approvalsPanelKey, setApprovalsPanelKey] = useState(0);
+
+  const fetchDirectApprovals = useCallback(async () => {
+    try {
+      const rows = await fetchDirectFilingApprovals(clients.map((c) => c.id), selectedMonth);
+      setDirectApprovals(rows);
+      setApprovalUserNames(await fetchUserNames(rows.flatMap((r) => [r.requested_by, r.decided_by])));
+    } catch (e) {
+      console.error('Error fetching direct-filing approvals:', e);
+    }
+  }, [clients, selectedMonth]);
+
+  useEffect(() => { void fetchDirectApprovals(); }, [fetchDirectApprovals]);
+
+  const directApprovalsByKey = useMemo(() => groupApprovals(directApprovals), [directApprovals]);
+
+  const approvalsFor = useCallback(
+    (record: FilingRecord) => directApprovalsByKey.get(approvalKey(record.client_id, record.return_type, record.period_month || selectedMonth)) || [],
+    [directApprovalsByKey, selectedMonth],
+  );
+
+  const directFilingStateFor = useCallback((record: FilingRecord, approvals?: DirectFilingApproval[]): DirectFilingState => directFilingState({
+    returnType: record.return_type,
+    periodMonth: record.period_month || selectedMonth,
+    pushedAt: record.pushed_at,
+    alreadyFiled: record.status === 'Filed',
+    approvals: approvals ?? approvalsFor(record),
+  }), [approvalsFor, selectedMonth]);
+
+  const openDirectFilingDialog = (record: FilingRecord, opts?: { fromFiled?: boolean; localArn?: string; approvals?: DirectFilingApproval[] }) => {
+    setDirectFilingTarget({
+      record,
+      localArn: opts?.localArn,
+      fromFiled: opts?.fromFiled,
+      clientId: record.client_id,
+      clientName: record.clientName || clients.find((c) => c.id === record.client_id)?.name || '',
+      returnType: record.return_type,
+      periodMonth: record.period_month || selectedMonth,
+      current: pickApproval(opts?.approvals ?? approvalsFor(record)),
+    });
+  };
+
+  const clientNameMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    clients.forEach((c) => { m[c.id] = c.name; });
+    return m;
+  }, [clients]);
+
   // Real-time subscription
   useEffect(() => {
     const channel = supabase
@@ -552,12 +625,16 @@ const FilingStatusPage: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'gstr1_data' }, () => {
         fetchGstr1DataClientIds();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gstr1_direct_filing_approvals' }, () => {
+        fetchDirectApprovals();
+        setApprovalsPanelKey((k) => k + 1);
+      })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchClients, fetchFilingRecords, fetchGstr1DataClientIds]);
+  }, [fetchClients, fetchFilingRecords, fetchGstr1DataClientIds, fetchDirectApprovals]);
 
   // GSTR-1's is_nil per client for the selected period, keyed off the raw
   // filing_status rows already fetched (filing_status.select('*') already
@@ -729,6 +806,28 @@ const FilingStatusPage: React.FC = () => {
     if (wasFiledBefore && newStatus !== 'Filed') {
       if (!canUnlockSheets()) {
         toast.error('Only GST Manager or Superadmin can change a Filed status.');
+        return;
+      }
+    }
+
+    // Direct-filing gate (GSTR-1 / IFF from Sep-2026): a return that was not
+    // pushed through GST Keeper needs a superadmin-approved request before it
+    // can be marked Filed. Re-read this return's approvals so a decision made
+    // a moment ago elsewhere is honoured.
+    if (newStatus === 'Filed' && !wasFiledBefore && directFilingRuleApplies(record.return_type, record.period_month || selectedMonth) && !record.pushed_at) {
+      let fresh: DirectFilingApproval[];
+      try {
+        fresh = (await fetchDirectFilingApprovals([record.client_id], record.period_month || selectedMonth))
+          .filter((a) => a.return_type === record.return_type);
+      } catch {
+        fresh = approvalsFor(record);
+      }
+      const state = directFilingStateFor(record, fresh);
+      if (isDirectFilingBlocked(state)) {
+        if (state === 'pending' && !isSuperadmin) {
+          toast.info(`A direct-filing request for this ${record.return_type} is already waiting for the superadmin. It can be marked Filed once approved.`);
+        }
+        openDirectFilingDialog(record, { fromFiled: true, localArn, approvals: fresh });
         return;
       }
     }
@@ -1153,6 +1252,13 @@ const FilingStatusPage: React.FC = () => {
       fetchFilingRecords();
     } catch (error: any) {
       console.error('Error updating status:', error);
+      if (isDirectFilingTriggerError(error?.message)) {
+        // The trigger beat the UI check (e.g. an approval was withdrawn).
+        toast.error(error.message, { duration: 10000 });
+        fetchDirectApprovals();
+        fetchFilingRecords();
+        return;
+      }
       toast.error('Failed to update status: ' + error.message);
     }
   };
@@ -1440,6 +1546,10 @@ const FilingStatusPage: React.FC = () => {
     };
   }, []);
   const pullFromPortal = (record: FilingRecord) => {
+    if (isDirectFilingBlocked(directFilingStateFor(record))) {
+      openDirectFilingDialog(record);
+      return;
+    }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
     window.postMessage({ __gstkPullReturn: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month } }, '*');
   };
@@ -1521,6 +1631,63 @@ const FilingStatusPage: React.FC = () => {
     } catch (error: any) {
       toast.error('Failed to remove PDF: ' + error.message);
     }
+  };
+
+  // Row badge for a GSTR-1 / IFF held back by the direct-filing rule. The
+  // popover shows the request, and the superadmin's note on a rejection.
+  // Shown only once a request exists. A not-yet-pushed return that nobody has
+  // tried to file is normal work in progress (it will simply be pushed), so it
+  // carries no badge — choosing Filed or Pull on it opens the request dialog.
+  const DirectFilingRowBadge = ({ record, state }: { record: FilingRecord; state: DirectFilingState }) => {
+    if (state !== 'pending' && state !== 'rejected') return null;
+    const current = pickApproval(approvalsFor(record));
+    const label = state === 'pending' ? 'Awaiting superadmin' : state === 'rejected' ? 'Rejected' : 'Approval needed';
+    const variant = state === 'pending' ? 'info' : state === 'rejected' ? 'destructive' : 'warning';
+    const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+    return (
+      <div className="mt-1 flex items-center gap-1">
+        <Popover>
+          <PopoverTrigger asChild>
+            <button type="button" className="min-w-0" title="Direct-filing approval — click for details">
+              <Badge variant={variant} className="cursor-pointer truncate px-1.5 text-[10px] font-medium">{label}</Badge>
+            </button>
+          </PopoverTrigger>
+          <PopoverContent side="left" className="w-[300px] space-y-1.5 p-3 text-xs">
+            <p className="font-medium text-foreground">Not pushed through GST Keeper</p>
+            <p className="text-muted-foreground">
+              This {record.return_type} cannot be marked Filed or pulled from the portal until a superadmin approves a direct-filing request.
+            </p>
+            {current && current.status !== 'approved' && (
+              <div className="space-y-1 border-t pt-1.5">
+                <p>
+                  <span className="font-medium">{current.status === 'pending' ? 'Requested' : 'Rejected'}</span>
+                  {current.status === 'pending'
+                    ? ` by ${current.requested_by ? approvalUserNames[current.requested_by] || 'Unknown' : 'Unknown'}, ${when(current.requested_at)}`
+                    : ` by ${current.decided_by ? approvalUserNames[current.decided_by] || 'Unknown' : 'Unknown'}, ${when(current.decided_at)}`}
+                </p>
+                <p className="whitespace-pre-wrap text-muted-foreground">Reason: {current.reason}</p>
+                {current.status === 'rejected' && current.decision_note && (
+                  <p className="whitespace-pre-wrap text-foreground">Superadmin's note: {current.decision_note}</p>
+                )}
+              </div>
+            )}
+            <Button size="sm" variant="outline" className={cn(WS_BTN, 'w-full')} onClick={() => openDirectFilingDialog(record)}>
+              {state === 'pending' ? (isSuperadmin ? 'Review request' : 'View request') : state === 'rejected' ? 'Request again' : 'Request approval'}
+            </Button>
+          </PopoverContent>
+        </Popover>
+        {state !== 'pending' && (
+          <button
+            type="button"
+            className="shrink-0 text-[10px] text-primary underline-offset-2 hover:underline"
+            onClick={() => openDirectFilingDialog(record)}
+            title="Explain what happened and send it to the superadmin"
+          >
+            Request
+          </button>
+        )}
+      </div>
+    );
   };
 
   const FilingTable = ({ records, returnType }: { records: FilingRecord[]; returnType: string }) => {
@@ -1815,6 +1982,9 @@ const FilingStatusPage: React.FC = () => {
                       </Popover>
                     )}
                   </div>
+                  {returnType === 'GSTR-1' && (
+                    <DirectFilingRowBadge record={record} state={directFilingStateFor(record)} />
+                  )}
                 </td>
                 <td className={CELL_CONTROL}>
                   <Input
@@ -1856,7 +2026,22 @@ const FilingStatusPage: React.FC = () => {
                     </div>
                   ) : (
                     <div className="flex items-center justify-center gap-2">
-                      {(!record.is_locked || canUnlockSheets()) && (
+                      {(!record.is_locked || canUnlockSheets()) && (isDirectFilingBlocked(directFilingStateFor(record)) ? (
+                        // Disabled buttons swallow hover, so the reason sits on a wrapper.
+                        <span
+                          className="inline-flex cursor-not-allowed"
+                          title={`Pull from portal is blocked: this ${record.return_type} was not pushed through GST Keeper. Pulling marks it Filed, which needs a superadmin-approved direct-filing request first.`}
+                        >
+                          <button
+                            type="button"
+                            disabled
+                            className="pointer-events-none inline-flex items-center gap-1 text-xs text-muted-foreground opacity-50"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            <span>Portal</span>
+                          </button>
+                        </span>
+                      ) : (
                         <button
                           onClick={() => pullFromPortal(record)}
                           className={`inline-flex items-center gap-1 text-xs ${extReady ? 'text-primary hover:text-primary/80' : 'text-muted-foreground hover:text-foreground'}`}
@@ -1867,7 +2052,7 @@ const FilingStatusPage: React.FC = () => {
                           <Download className="h-3.5 w-3.5" />
                           <span>Portal</span>
                         </button>
-                      )}
+                      ))}
                       {(!record.is_locked || canUnlockSheets()) && (
                         <label
                           className="cursor-pointer inline-flex items-center text-muted-foreground/60 hover:text-foreground"
@@ -2197,6 +2382,15 @@ const FilingStatusPage: React.FC = () => {
         Status, frequency, target date and remarks filter from their column headers. Hover a client's name for the accountant and contact details. A typed ARN is saved when the status is set to Filed; remarks save when you leave the box.
       </Note>
 
+      {isSuperadmin && (
+        <DirectFilingApprovalsPanel
+          userId={user?.id ?? null}
+          clientNames={clientNameMap}
+          refreshKey={approvalsPanelKey}
+          onDecided={() => { void fetchDirectApprovals(); }}
+        />
+      )}
+
       {/* Return type tabs */}
       <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-2">
         <TabsList className={TAB_LIST_CLASS} aria-label="Return type">
@@ -2216,6 +2410,24 @@ const FilingStatusPage: React.FC = () => {
       </Tabs>
 
       <AdvanceSetoffGateDialog {...advanceGate.dialogProps} />
+
+      <RequestDirectFilingDialog
+        target={directFilingTarget}
+        onClose={() => setDirectFilingTarget(null)}
+        isSuperadmin={isSuperadmin}
+        userId={user?.id ?? null}
+        userNames={approvalUserNames}
+        onDone={(approval, approved) => {
+          const t = directFilingTarget;
+          setDirectFilingTarget(null);
+          setDirectApprovals((prev) => [approval, ...prev.filter((a) => a.id !== approval.id)]);
+          void fetchDirectApprovals();
+          setApprovalsPanelKey((k) => k + 1);
+          // Superadmin's "Approve now" from the Filed choice carries on with
+          // the normal filing checks (ARN, PDF, dependencies…).
+          if (approved && t?.fromFiled) void handleStatusChange(t.record, 'Filed', t.localArn);
+        }}
+      />
     </div>
   );
 };

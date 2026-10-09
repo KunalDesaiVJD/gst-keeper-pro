@@ -17,6 +17,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { mockPasswords } from '@/data/mockData';
 import ClientCredentialsSection from '@/components/clients/ClientCredentialsSection';
+import { EinvoiceClientFields } from '@/components/clients/EinvoiceClientFields';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import { PageHeader } from '@/components/layout/PageHeader';
 
@@ -48,6 +49,8 @@ const AddClientPage: React.FC = () => {
     cancellationDate: '', // Optional — labeled "GSTR 10 Date" in UI
     registrationCancellationDate: '', // Optional — actual registration cancellation date
     inactiveAtHand: false, // Optional — hides client from Filing Status when true
+    einvoiceApplicable: false, // E-invoice client (IRN on B2B invoices / notes / exports)
+    einvoiceExemption: '', // EINVOICE_EXEMPTIONS value, '' = none
     gstUserId: '', // GST Portal User ID
     gstPassword: '', // GST Portal Password
     // Builder bifurcation for Regular type
@@ -226,6 +229,8 @@ const AddClientPage: React.FC = () => {
           cancellation_date: formData.cancellationDate || null,
           registration_cancellation_date: formData.registrationCancellationDate || null,
           inactive_at_hand: formData.inactiveAtHand,
+          einvoice_applicable: formData.einvoiceExemption ? false : formData.einvoiceApplicable,
+          einvoice_exemption: formData.einvoiceExemption || null,
           gst_user_id: formData.gstUserId || null,
           gst_password: formData.gstPassword || null,
           // Single client password: the app login uses the same value as the GST
@@ -745,6 +750,13 @@ const AddClientPage: React.FC = () => {
                   </div>
                 </label>
               </div>
+
+              <EinvoiceClientFields
+                applicable={formData.einvoiceApplicable}
+                exemption={formData.einvoiceExemption}
+                onChange={({ applicable, exemption }) =>
+                  setFormData(prev => ({ ...prev, einvoiceApplicable: applicable, einvoiceExemption: exemption }))}
+              />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -282,7 +282,7 @@
   // while we expected to be logged in, DON'T keep navigating. Re-login a couple of
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
-  const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4'];
+  const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr1_nil', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4', 'einvoice_pull'];
   if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'applications' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
@@ -323,6 +323,8 @@
         try { await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, [{ client_id: cur.clientId, period_month: job.period, is_debit: false, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Credit Ledger' }]); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr1_json_pull') {
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading the filed GSTR-1 JSON' }); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'einvoice_pull') {
+        await reportEinvoicePull(job, cur, { status: 'failed', message: 'Session kept dropping (bounced to login/error page 3x) while reading the GSTR-1 JSON' });
       } else if (job.step === 'revrclm_pull') {
         const fy = (fyRangeForPull(job.period) || {}).fy || job.period;
         try { await GSTKdb.replaceCreditReversalReclaimEntries(cur.clientId, fy, [{ client_id: cur.clientId, financial_year: fy, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading the Credit Reversal and Re-claimed Statement' }]); } catch (e2) { /* diagnostic only */ }
@@ -392,6 +394,8 @@
     else if (job.step === 'filing') await handleFiling(job, cur, progress);
     else if (job.step === 'gstr1_dash') await handleGstr1UploadDashboard(job, cur, progress);
     else if (job.step === 'gstr1_upload') await handleGstr1Upload(job, cur, progress);
+    else if (job.step === 'gstr1_nil') await handleGstr1Nil(job, cur, progress);
+    else if (job.step === 'einvoice_pull') await handleEinvoicePull(job, cur, progress);
     else if (job.step === 'gstr3b_dash') await handleGstr3bDashboard(job, cur, progress);
     else if (job.step === 'gstr3b_fill31') await handleGstr3bFill31(job, cur, progress);
     else if (job.step === 'gstr3b_fill4') await handleGstr3bFill4(job, cur, progress);
@@ -716,6 +720,11 @@
       } else if (job.mode === 'gstr1_upload') {
         banner('Logged in — opening the returns dashboard for the GSTR-1 upload…' + progress);
         job.step = 'gstr1_dash';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'einvoice_pull') {
+        banner('Logged in — requesting the portal\'s GSTR-1 JSON for e-invoices…' + progress);
+        job.step = 'einvoice_pull';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'gstr1_refresh') {
@@ -1799,6 +1808,10 @@
     if (!search) { await failUpload(job, 'Search button missing'); return; }
     search.click();
 
+    // 0.8.4: a NIL push goes to "Prepare Online" (the File Nil option lives
+    // there, not on the offline upload page) — see handleGstr1Nil.
+    if (job.gstr1 && job.gstr1.nil) { await openGstr1NilPage(job, cur, progress); return; }
+
     // JSON upload lives on the "Prepare Offline" path (or a plain "Upload"
     // button on some tenants). "Prepare Online" opens the manual-entry tiles
     // interface, which has NO file input — clicking it lands the operator on
@@ -2251,7 +2264,7 @@
     } catch (e) { /* the app still hears the message below */ }
 
     await chrome.storage.local.set({ gstk_gstr1_upload_result: {
-      ok: terminal !== 'failed', status: terminal, summary, errors, at: Date.now(),
+      ok: terminal !== 'failed', status: terminal, summary, errors, irnAttached: job.gstr1.irnAttached || 0, at: Date.now(),
     } });
     await clearJob();
   }
@@ -2268,9 +2281,121 @@
       }
     } catch (e) { /* ignore */ }
     await chrome.storage.local.set({ gstk_gstr1_upload_result: {
-      ok: false, status: 'failed', summary: error, error, errors: [], at: Date.now(),
+      ok: false, status: 'failed', summary: error, error, errors: [],
+      irnAttached: (job && job.gstr1 && job.gstr1.irnAttached) || 0, at: Date.now(),
     } });
     await clearJob();
+  }
+
+  // ── 0.8.4: NIL GSTR-1 ───────────────────────────────────────────────────
+  // A NIL push (job.gstr1.nil): the dashboard step above has picked the
+  // period; open the GSTR-1 tile's "Prepare Online", tick "File Nil GSTR-1"
+  // and confirm. Filing / signing stays manual. The result goes to the same
+  // gstk_gstr1_upload_result key as an upload, with status 'nil_marked'.
+  //
+  // UNVERIFIED against the live portal: every selector here is text-based
+  // (the tile button by "Prepare Online", the option by /nil/i near a
+  // checkbox or switch, the dialog button by Yes / OK / Proceed / Confirm),
+  // the same way the tile-matching helpers above work. Refine once seen live.
+  async function openGstr1NilPage(job, cur, progress) {
+    const excludeOthers = [/gstr[\s-]*1a/i, /gstr[\s-]*2/i, /gstr[\s-]*3/i, /gstr[\s-]*6/i, /gstr[\s-]*7/i];
+    let btn = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000 && !btn) {
+      await sleep(400);
+      btn = findTileButton(/gstr[\s-]*1\b/i, /prepare\s*online/i, excludeOthers);
+    }
+    if (!btn) { await failUpload(job, 'GSTR-1 "Prepare Online" button not found — the return may already be filed or the tile changed'); return; }
+    banner('Opening GSTR-1 (Prepare Online) to mark it NIL…' + progress);
+    job.step = 'gstr1_nil';
+    await setJob(job);
+    const before = location.href;
+    btn.click();
+    // Same AngularJS in-place route change as Prepare Offline above: wait for
+    // the address to move off the dashboard, then carry on in this execution.
+    const navDeadline = Date.now() + 15000;
+    while (Date.now() < navDeadline && (location.href === before || /returns\/auth\/dashboard/.test(location.href))) {
+      await sleep(300);
+    }
+    await handleGstr1Nil(job, cur, progress);
+  }
+
+  // The checkbox / switch that belongs to a label matching `re` — its own
+  // <label>, a wrapping label, or the nearest container (up to 4 levels) whose
+  // text matches and which holds exactly one such control.
+  function findNilToggle(re) {
+    const isControl = (el) => el && (el.matches('input[type=checkbox]') || el.getAttribute('role') === 'switch' || el.getAttribute('role') === 'checkbox');
+    const controls = $$('input[type=checkbox], [role=switch], [role=checkbox]');
+    for (const el of controls) {
+      const own = [...(el.labels || [])].map((l) => l.textContent || '').join(' ')
+        + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '');
+      if (re.test(own)) return el;
+      const wrap = el.closest('label');
+      if (wrap && re.test(wrap.textContent || '')) return el;
+    }
+    const texts = $$('label, span, p, div, td, strong, b').filter((n) => {
+      const t = (n.textContent || '').replace(/\s+/g, ' ').trim();
+      return t.length < 200 && re.test(t) && n.offsetParent !== null;
+    });
+    texts.sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
+    for (const n of texts) {
+      let box = n;
+      for (let i = 0; i < 4 && box; i++, box = box.parentElement) {
+        const inside = [...box.querySelectorAll('input[type=checkbox], [role=switch], [role=checkbox]')].filter(isControl);
+        if (inside.length === 1) return inside[0];
+        if (inside.length > 1) break;
+      }
+    }
+    return null;
+  }
+  // Fallback label: any "nil" that is not the Nil Rated / exempt supplies table.
+  const NIL_LOOSE = /^(?![\s\S]*(rated|exempt))[\s\S]*\bnil\b/i;
+  const nilToggleOn = (el) => !!(el && (el.checked || el.getAttribute('aria-checked') === 'true'));
+
+  async function handleGstr1Nil(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/i.test(location.href) || /returns\/auth\/dashboard/.test(location.href)) {
+      // A full reload landed back on the dashboard (or elsewhere): start over
+      // from the period selection, at most three times.
+      job.wrongPageRetries = (job.wrongPageRetries || 0) + 1;
+      if (job.wrongPageRetries > 3) { await failUpload(job, 'Could not open the GSTR-1 Prepare Online page to mark it NIL (currently: ' + location.hostname + location.pathname + ').'); return; }
+      job.step = 'gstr1_dash';
+      await setJob(job);
+      location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      return;
+    }
+    banner('Looking for the "File Nil GSTR-1" option…' + progress);
+    let toggle = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 20000 && !toggle) {
+      await sleep(500);
+      toggle = findNilToggle(/file\s*nil\s*gstr[\s-]*1/i) || findNilToggle(NIL_LOOSE);
+    }
+    if (!toggle) { await failUpload(job, 'The "File Nil GSTR-1" option was not found on the GSTR-1 page — the return may already be filed, or the page changed. Mark it NIL on the portal by hand.'); return; }
+    if (toggle.disabled || toggle.getAttribute('aria-disabled') === 'true') {
+      await failUpload(job, 'The "File Nil GSTR-1" option is disabled on the portal — the return probably already has saved or auto-populated data (e.g. e-invoices). Clear it there, or push the JSON instead.');
+      return;
+    }
+    if (!nilToggleOn(toggle)) { try { toggle.click(); } catch (e) { /* checked below */ } }
+
+    // Confirm whatever dialog the portal raises (Yes / OK / Proceed / Confirm).
+    for (let i = 0; i < 4; i++) {
+      await sleep(800);
+      const dialogBtn = $$('.modal button, [role=dialog] button, .modal-footer button, .swal2-confirm, button')
+        .find((b) => b.offsetParent !== null && /^(yes|ok|proceed|confirm)$/i.test((b.textContent || '').trim())
+          && !!b.closest('.modal, [role=dialog], .swal2-popup, .modal-dialog'));
+      if (!dialogBtn) break;
+      try { dialogBtn.click(); } catch (e) { /* ignore */ }
+    }
+    await sleep(600);
+    const after = findNilToggle(/file\s*nil\s*gstr[\s-]*1/i) || findNilToggle(NIL_LOOSE) || toggle;
+    if (!nilToggleOn(after)) { await failUpload(job, 'Clicked "File Nil GSTR-1" but the portal did not keep it ticked. Mark it NIL on the portal by hand.'); return; }
+
+    const message = '"File Nil GSTR-1" is ticked on the portal for ' + job.period + '. Review it there, then file with DSC / EVC by hand.';
+    banner(message, '#16a34a');
+    await chrome.storage.local.set({ gstk_gstr1_upload_result: {
+      ok: true, status: 'nil_marked', message, summary: message, errors: [], irnAttached: 0, at: Date.now(),
+    } });
+    await clearJob(); // stop acting — the human reviews and files.
   }
 
   // "Pull GSTR-2B" mode — triggered by the app's Import 2B "Pull from portal"
@@ -4833,6 +4958,79 @@
     banner('GSTR-1 filed JSON → saved ✓.' + progress, '#16a34a');
     await sleep(800);
     await advance(job);
+  }
+
+  // ── 0.8.4: e-invoice pull ────────────────────────────────────────────────
+  // The portal's own GSTR-1 JSON carries irn / irngendate on every document
+  // auto-populated from an e-invoice. Same API, polling and unzip as
+  // handleGstr1JsonPull above; background.js (saveEinvoicePull) keeps the
+  // IRN-bearing documents in einvoice_docs and records the attempt in
+  // einvoice_pulls. The app hears the outcome via gstk_einvoice_pull_result.
+  async function reportEinvoicePull(job, cur, info) {
+    let res = { status: info.status, docsFound: 0, message: info.message || '' };
+    try {
+      res = await GSTKdb.saveEinvoicePull({
+        clientId: cur.clientId, period_month: job.period, actorId: job.actorId || null,
+        json: info.json || null, status: info.status, message: info.message || null,
+      });
+    } catch (e) {
+      if (info.json) res = { status: 'failed', docsFound: 0, message: 'Could not save the e-invoice documents: ' + ((e && e.message) || e) };
+    }
+    await chrome.storage.local.set({ gstk_einvoice_pull_result: {
+      ok: res.status === 'ok' || res.status === 'none', status: res.status, docsFound: res.docsFound || 0,
+      message: res.message || '', clientId: cur.clientId, period_month: job.period, at: Date.now(),
+    } });
+    return res;
+  }
+
+  async function handleEinvoicePull(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad e-invoice period.', '#dc2626'); await reportEinvoicePull(job, cur, { status: 'failed', message: 'Bad period ' + job.period }); await clearJob(); return; }
+    const rtnPrd = String(mm).padStart(2, '0') + yyyy;
+    banner('Requesting the portal\'s GSTR-1 JSON for ' + job.period + ' (e-invoices)…' + progress);
+
+    let downloadUrl = null;
+    const MAX_ATTEMPTS = 6; // ~90s of polling in this page load, as handleGstr1JsonPull
+    try {
+      for (let attempt = 0; attempt < MAX_ATTEMPTS && !downloadUrl; attempt++) {
+        const r = await fetch('https://return.gst.gov.in/returns/auth/api/offline/download/generate?flag=0&rtn_prd=' + rtnPrd + '&rtn_typ=GSTR1', { credentials: 'include' });
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' from offline/download/generate');
+        const j = await r.json();
+        if (j && j.status === 1 && j.data && j.data.url) { downloadUrl = j.data.url; break; }
+        if (attempt < MAX_ATTEMPTS - 1) { banner('GSTR-1 JSON still generating on the portal (attempt ' + (attempt + 1) + '/' + MAX_ATTEMPTS + ')…' + progress); await sleep(15000); }
+      }
+    } catch (e) {
+      const message = 'Could not read the portal API (' + ((e && e.message) || 'unknown error') + ').';
+      banner('E-invoices: ' + message, '#dc2626');
+      await reportEinvoicePull(job, cur, { status: 'failed', message });
+      await clearJob();
+      return;
+    }
+
+    if (!downloadUrl) {
+      const message = 'The portal is still generating the GSTR-1 JSON (can take up to 20 min) — pull again shortly.';
+      banner('E-invoices: ' + message, '#f59e0b');
+      await reportEinvoicePull(job, cur, { status: 'pending', message });
+      await clearJob();
+      return;
+    }
+
+    let fullJson = null;
+    try {
+      const { base64 } = await GSTKdb.fetchCrossOriginAsBase64(downloadUrl);
+      fullJson = await extractJsonFromZip(base64ToArrayBuffer(base64));
+    } catch (e) {
+      const message = 'Downloaded the GSTR-1 JSON but could not unzip/parse it (' + ((e && e.message) || 'unknown error') + ').';
+      banner('E-invoices: ' + message, '#dc2626');
+      await reportEinvoicePull(job, cur, { status: 'failed', message });
+      await clearJob();
+      return;
+    }
+
+    const res = await reportEinvoicePull(job, cur, { status: 'ok', json: fullJson });
+    banner('E-invoices: ' + (res.message || res.status) + ' — you can close this tab.', res.status === 'failed' ? '#dc2626' : '#16a34a');
+    await clearJob();
   }
 
   // Minimal ZIP reader — extracts and parses the first entry whose name ends

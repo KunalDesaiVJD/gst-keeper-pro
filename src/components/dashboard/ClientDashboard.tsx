@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/gstr9/badge';
-import { SectionCard } from '@/components/gstr9/ui';
+import { Note, SectionCard } from '@/components/gstr9/ui';
 import { WS_PAGE, WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TR } from '@/components/workspace/theme';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,18 @@ import { supabase } from '@/integrations/supabase/client';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import ClientPasswordResetRequest from '@/components/clients/ClientPasswordResetRequest';
+import { loadEinvoiceData, einvoiceAttention, type EinvoiceAttention } from '@/lib/einvoice/thresholdAlerts';
+import type { EinvoiceAssessment } from '@/lib/einvoice/threshold';
+
+/** What an e-invoice position means for the client, in plain words. */
+const EINV_MEANING: Record<EinvoiceAttention, string> = {
+  approaching:
+    'Once your turnover in a financial year exceeds ₹5 crore, e-invoicing becomes mandatory from the next financial year: every B2B invoice, credit/debit note and export invoice must then be reported to the Invoice Registration Portal and carry an IRN and QR code. We will set it up with you before it applies — please make sure your billing software can generate IRNs.',
+  next_fy:
+    'From 1 April of the next financial year every B2B invoice, credit/debit note and export invoice must be reported to the Invoice Registration Portal and carry an IRN and QR code. An invoice without an IRN is not a valid tax invoice, and your customers cannot claim input tax credit on it. We will help you get ready.',
+  should_tick:
+    'E-invoicing applies to you now: every B2B invoice, credit/debit note and export invoice must be reported to the Invoice Registration Portal and carry an IRN and QR code. An invoice without an IRN is not a valid tax invoice, and your customers cannot claim input tax credit on it. Please contact us if you are not yet generating IRNs.',
+};
 
 interface ClientData {
   id: string;
@@ -44,6 +56,7 @@ const ClientDashboard: React.FC = () => {
   const [client, setClient] = useState<ClientData | null>(null);
   const [filingStatuses, setFilingStatuses] = useState<FilingStatus[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [einv, setEinv] = useState<{ attention: EinvoiceAttention; assessment: EinvoiceAssessment } | null>(null);
 
   const fetchClientData = useCallback(async () => {
     if (!user?.userId) return;
@@ -84,6 +97,21 @@ const ClientDashboard: React.FC = () => {
   useEffect(() => {
     fetchClientData();
   }, [fetchClientData]);
+
+  // E-invoice threshold position for this client (approaching / crossed / must tick).
+  useEffect(() => {
+    if (!client?.id) return;
+    let cancelled = false;
+    loadEinvoiceData([client.id])
+      .then(({ assessments, clientsById }) => {
+        if (cancelled) return;
+        const a = assessments.get(client.id);
+        const attention = einvoiceAttention(a, !!clientsById.get(client.id)?.einvoice_applicable);
+        setEinv(attention && a ? { attention, assessment: a } : null);
+      })
+      .catch(() => { /* informational only */ });
+    return () => { cancelled = true; };
+  }, [client?.id]);
 
   // Real-time subscription
   useEffect(() => {
@@ -167,6 +195,13 @@ const ClientDashboard: React.FC = () => {
         subtitle="Your GST registration details and filing history."
         icon={<LayoutDashboard />}
       />
+
+      {einv && (
+        <Note tone="warn">
+          <span className="font-semibold">E-invoicing: </span>
+          {einv.assessment.message} {EINV_MEANING[einv.attention]}
+        </Note>
+      )}
 
       {/* Client Header */}
       <Card>
