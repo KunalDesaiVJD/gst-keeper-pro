@@ -2392,6 +2392,9 @@
 
     const message = '"File Nil GSTR-1" is ticked on the portal for ' + job.period + '. Review it there, then file with DSC / EVC by hand.';
     banner(message, '#16a34a');
+    // 0.8.5: record the push in GST Keeper even if the app page is closed.
+    try { await GSTKdb.markGstr1NilPushed({ clientId: cur.clientId, period_month: job.period, actorId: job.actorId || null }); }
+    catch (e) { banner(message + ' (Could not mark it Pushed in GST Keeper: ' + ((e && e.message) || e) + ')', '#f59e0b'); }
     await chrome.storage.local.set({ gstk_gstr1_upload_result: {
       ok: true, status: 'nil_marked', message, summary: message, errors: [], irnAttached: 0, at: Date.now(),
     } });
