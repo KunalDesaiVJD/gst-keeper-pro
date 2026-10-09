@@ -24,7 +24,7 @@ import { NoticeTable } from '@/components/notices/NoticeTable';
 import { Pager } from '@/components/notices/Pager';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
 import {
-  defaultSort, fetchNoticePage, fetchNoticeRows, fetchNoticeSum, filterDef, listSearch, parseListParams, PAGE_SIZE,
+  defaultSort, fetchNoticePage, fetchNoticeRows, fetchNoticeSelectable, fetchNoticeSum, filterDef, listSearch, parseListParams, PAGE_SIZE,
   type NoticeListParams, type SortKey, SORTS,
 } from '@/lib/noticeQueries';
 import { stageLabel } from '@/lib/noticeStages';
@@ -142,6 +142,7 @@ const AllClientsNoticesPage: React.FC = () => {
         <>
           <NoticeTable rows={list.data?.rows ?? []} canEdit={canEditNoticeStatus()} sort={sortKey} dir={sortDir} onSort={onSort}
             onChanged={refresh} showClient={!params.client}
+            loadAll={() => fetchNoticeSelectable(params, meId)} total={total} filterKey={`${listSearch({ ...params, page: 1 })}|${meId}`}
             footerTotal={params.filter === 'exposure' && exposureTotal.data !== undefined
               ? { label: `Total exposure across ${total.toLocaleString('en-IN')} notice${total === 1 ? '' : 's'}`, amount: exposureTotal.data } : null} />
           {params.filter === 'exposure' && (

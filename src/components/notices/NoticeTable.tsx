@@ -3,13 +3,21 @@
 // owner changed in place, and a bulk bar that never reflows the filters —
 // closing asks for a reason and every bulk change can be undone. Each row
 // carries its type's reply need (Critical / Optional / Info only, contract §A).
+// Since 9 October 2026 (the firm's request): a Select menu takes the page, every
+// notice matching the filters (all pages), only the open or overdue ones, or one
+// form; and the bar closes them in one go with a reason.
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowDown, ArrowUp, ChevronDown, FileText, Flag, UserPlus, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, CheckSquare, ChevronDown, FileText, Flag, Loader2, Lock, UserPlus, X } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub,
+  DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ReadCloseDialog } from './workspace/ReadCloseDialog';
 import { Badge } from '@/components/gstr9/badge';
 import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
@@ -49,6 +57,12 @@ export function DueCell({ r }: { r: NoticeFact }) {
 
 type Undo = { ids: string[]; prev: Map<string, StageKey> };
 
+/** What the Select menu needs of every notice in the filtered list. */
+export type SelectableRow = Pick<NoticeFact, 'id' | 'stage' | 'form_code' | 'form_label' | 'is_open' | 'is_overdue'>;
+
+const CHUNK = 100;
+const chunks = <T,>(a: T[]): T[][] => Array.from({ length: Math.ceil(a.length / CHUNK) }, (_, i) => a.slice(i * CHUNK, (i + 1) * CHUNK));
+
 const SortHead: React.FC<{ label: string; k: SortKey; sort: SortKey; dir: 'asc' | 'desc'; onSort: (k: SortKey) => void; className?: string }> = ({ label, k, sort, dir, onSort, className }) => (
   <th scope="col" className={cn(WS_TH, className)} aria-sort={sort === k ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
     <button type="button" onClick={() => onSort(k)} className="inline-flex items-center gap-1 rounded hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -67,21 +81,48 @@ export const NoticeTable: React.FC<{
   showClient?: boolean;
   /** A total row under the demand column for the whole list (the exposure drill-down, U-24-1). */
   footerTotal?: { label: string; amount: number } | null;
-}> = ({ rows, canEdit, sort, dir, onSort, onChanged, showClient = true, footerTotal }) => {
+  /** Every notice matching the list's filters (all pages), for the Select menu. */
+  loadAll?: () => Promise<SelectableRow[]>;
+  /** How many notices match the filters. */
+  total?: number;
+  /** Changes when the filters change: a selection across pages is then dropped. */
+  filterKey?: string;
+}> = ({ rows, canEdit, sort, dir, onSort, onChanged, showClient = true, footerTotal, loadAll, total, filterKey }) => {
   const { user } = useAuth();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // 'page': what is ticked on this page; 'filter': chosen from the whole filtered list (kept across pages).
+  const [scope, setScope] = useState<'page' | 'filter'>('page');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
+  const all = useQuery({ queryKey: ['notice-list-all', filterKey], queryFn: () => loadAll!(), enabled: !!loadAll && menuOpen, staleTime: 30_000 });
   const ids = rows.map((r) => r.id as string);
   const allOn = ids.length > 0 && ids.every((id) => selected.has(id));
   const visibleSelected = ids.filter((id) => selected.has(id));
+  const targets = scope === 'filter' ? [...selected] : visibleSelected;
   const toggle = (id: string, on: boolean) => setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
+  const pick = (list: SelectableRow[]) => { setScope('filter'); setSelected(new Set(list.map((r) => r.id as string))); };
 
-  // Rows that left the page (a new filter) leave the selection too (U-31-3).
-  React.useEffect(() => { setSelected((s) => new Set([...s].filter((id) => ids.includes(id)))); }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Rows that left the page leave a page selection (U-31-3); a new filter drops any selection.
+  React.useEffect(() => { if (scope === 'page') setSelected((s) => new Set([...s].filter((id) => ids.includes(id)))); }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => { setSelected(new Set()); setScope('page'); }, [filterKey]);
+
+  const forms = React.useMemo(() => {
+    const m = new Map<string, { label: string; rows: SelectableRow[] }>();
+    for (const r of all.data ?? []) {
+      const k = r.form_code ?? '—';
+      const e = m.get(k) ?? { label: r.form_code ? `${r.form_code}${r.form_label ? ` · ${r.form_label}` : ''}` : 'Form not known', rows: [] };
+      e.rows.push(r); m.set(k, e);
+    }
+    return [...m.values()].sort((a, b) => b.rows.length - a.rows.length);
+  }, [all.data]);
 
   const apply = async (targetIds: string[], payload: Parameters<typeof updateNotices>[1], what: string, undo?: Undo) => {
     if (!user) return;
-    const { error } = await updateNotices(targetIds, payload, user);
-    if (error) { toast.error(`Couldn't update: ${error.message}`); return; }
+    for (const part of chunks(targetIds)) {
+      const { error } = await updateNotices(part, payload, user);
+      if (error) { toast.error(`Couldn't update: ${error.message}`); onChanged(); return; }
+    }
+    setSelected(new Set()); setScope('page');
     onChanged();
     toast.success(`${what} · ${targetIds.length} notice${targetIds.length === 1 ? '' : 's'}`, undo ? {
       action: {
@@ -89,20 +130,69 @@ export const NoticeTable: React.FC<{
         onClick: async () => {
           const groups = new Map<StageKey, string[]>();
           undo.ids.forEach((id) => { const p = undo.prev.get(id); if (p) groups.set(p, [...(groups.get(p) ?? []), id]); });
-          for (const [stage, gIds] of groups) await updateNotices(gIds, { stage }, user);
+          for (const [stage, gIds] of groups) for (const part of chunks(gIds)) await updateNotices(part, { stage }, user);
           onChanged();
         },
       },
     } : undefined);
   };
-  const prevStages = (targetIds: string[]) => new Map(rows.filter((r) => targetIds.includes(r.id as string)).map((r) => [r.id as string, (r.stage ?? 'new') as StageKey]));
+  const prevStages = (targetIds: string[]) => {
+    const want = new Set(targetIds);
+    const src: SelectableRow[] = [...(all.data ?? []), ...rows];
+    return new Map(src.filter((r) => want.has(r.id as string)).map((r) => [r.id as string, (r.stage ?? 'new') as StageKey]));
+  };
 
   const setStageFor = (targetIds: string[]) => async (stage: StageKey, reason?: string) =>
     apply(targetIds, stage === 'closed' ? { stage, close_reason: reason ?? null } : { stage }, stage === 'closed' ? 'Closed' : `Moved to ${stageLabel(stage)}`,
       { ids: targetIds, prev: prevStages(targetIds) });
 
+  const selectMenu = canEdit && (
+    <div className="flex flex-wrap items-center gap-2">
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="outline" className="h-8 gap-1 text-xs"><CheckSquare className="h-3.5 w-3.5" aria-hidden /> Select <ChevronDown className="h-3 w-3" aria-hidden /></Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-72">
+          <DropdownMenuItem onSelect={() => { setScope('page'); setSelected(new Set(ids)); }}>This page ({ids.length})</DropdownMenuItem>
+          {loadAll && (all.isLoading ? (
+            <DropdownMenuLabel className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" aria-hidden /> Counting every page…</DropdownMenuLabel>
+          ) : all.data ? (
+            <>
+              <DropdownMenuItem onSelect={() => pick(all.data)}>All matching the filters ({all.data.length})</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => pick(all.data.filter((r) => r.is_open))}>Open only ({all.data.filter((r) => r.is_open).length})</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => pick(all.data.filter((r) => r.is_open && r.is_overdue))}>Overdue only ({all.data.filter((r) => r.is_open && r.is_overdue).length})</DropdownMenuItem>
+              {forms.length > 1 && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>By form</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="max-h-80 w-80 overflow-y-auto">
+                    {forms.map((f) => {
+                      const open = f.rows.filter((r) => r.is_open);
+                      return (
+                        <DropdownMenuItem key={f.label} onSelect={() => pick(open.length ? open : f.rows)} className="text-xs">
+                          <span className="min-w-0 flex-1 truncate">{f.label}</span>
+                          <span className="ml-2 shrink-0 tabular-nums text-muted-foreground">{open.length ? `${open.length} open` : f.rows.length}</span>
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
+            </>
+          ) : all.error ? <DropdownMenuLabel className="text-xs font-normal text-destructive-strong">Couldn't count the list</DropdownMenuLabel> : null)}
+          {selected.size > 0 && <><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => { setSelected(new Set()); setScope('page'); }}>Clear the selection</DropdownMenuItem></>}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {scope === 'filter' && selected.size > 0 && (
+        <span className="text-xs text-muted-foreground">
+          {selected.size} selected across {total && total > rows.length ? 'every page' : 'the list'}
+        </span>
+      )}
+    </div>
+  );
+
   return (
     <>
+      {selectMenu}
       {/* Phones: cards (U-20-6). */}
       <ul className="space-y-2 lg:hidden">
         {rows.map((r) => (
@@ -208,28 +298,31 @@ export const NoticeTable: React.FC<{
         </table>
       </div>
 
-      {canEdit && visibleSelected.length > 0 && (
+      {canEdit && targets.length > 0 && (
         <div role="toolbar" aria-label="Bulk actions"
           className="fixed inset-x-0 bottom-4 z-40 mx-auto flex w-fit max-w-[calc(100vw-2rem)] flex-wrap items-center gap-2 rounded-full border bg-card px-4 py-2 shadow-lg">
-          <span className="text-xs font-semibold">{visibleSelected.length} selected</span>
-          <StagePicker value={null} onChange={setStageFor(visibleSelected)} align="center"
+          <span className="text-xs font-semibold">{targets.length} selected</span>
+          <Button size="sm" className="h-8 gap-1 rounded-full text-xs" onClick={() => setCloseOpen(true)}><Lock className="h-3.5 w-3.5" aria-hidden /> Close…</Button>
+          <StagePicker value={null} onChange={setStageFor(targets)} align="center"
             trigger={<Button size="sm" variant="outline" className="h-8 gap-1 rounded-full text-xs">Stage <ChevronDown className="h-3 w-3" /></Button>} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button size="sm" variant="outline" className="h-8 gap-1 rounded-full text-xs"><Flag className="h-3.5 w-3.5" /> Priority</Button></DropdownMenuTrigger>
             <DropdownMenuContent align="center">
               {(['High', 'Medium', 'Low'] as const).map((p) => (
-                <DropdownMenuItem key={p} onSelect={() => apply(visibleSelected, { priority: p }, `Priority ${p}`)}>{p}</DropdownMenuItem>
+                <DropdownMenuItem key={p} onSelect={() => apply(targets, { priority: p }, `Priority ${p}`)}>{p}</DropdownMenuItem>
               ))}
-              <DropdownMenuItem onSelect={() => apply(visibleSelected, { priority: null }, 'Priority from the form')}>Form's default</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => apply(targets, { priority: null }, 'Priority from the form')}>Form's default</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <AssignPopover align="center" onAssign={(o) => apply(visibleSelected, { assign_to_user_id: o?.userId ?? null, assign_to: o?.name ?? null }, o ? `Assigned to ${o.name}` : 'Unassigned')}>
+          <AssignPopover align="center" onAssign={(o) => apply(targets, { assign_to_user_id: o?.userId ?? null, assign_to: o?.name ?? null }, o ? `Assigned to ${o.name}` : 'Unassigned')}>
             <Button size="sm" variant="outline" className="h-8 gap-1 rounded-full text-xs"><UserPlus className="h-3.5 w-3.5" /> Assign</Button>
           </AssignPopover>
-          <Button size="sm" variant="ghost" className="h-8 gap-1 rounded-full text-xs" onClick={() => setSelected(new Set())}><X className="h-3.5 w-3.5" /> Clear</Button>
+          <Button size="sm" variant="ghost" className="h-8 gap-1 rounded-full text-xs" onClick={() => { setSelected(new Set()); setScope('page'); }}><X className="h-3.5 w-3.5" /> Clear</Button>
           <Badge variant="secondary" className="hidden text-[10px] sm:inline-flex">changes can be undone</Badge>
         </div>
       )}
+      <ReadCloseDialog open={closeOpen} onOpenChange={setCloseOpen} count={targets.length}
+        onClose={(reason) => setStageFor(targets)('closed', reason)} />
     </>
   );
 };

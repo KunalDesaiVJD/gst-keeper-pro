@@ -216,6 +216,12 @@ export async function fetchNoticeRows(p: NoticeListParams, meId: string | null):
   return fetchAllRows<NoticeFact>('notice_facts', '*', (q: Q) => applySort(applyListFilters(q, p, meId), p, defaultSort(p.filter)));
 }
 
+/** What the list's Select menu needs of every row of a filter (all pages). */
+export async function fetchNoticeSelectable(p: NoticeListParams, meId: string | null) {
+  return fetchAllRows<Pick<NoticeFact, 'id' | 'stage' | 'form_code' | 'form_label' | 'is_open' | 'is_overdue'>>(
+    'notice_facts', 'id, stage, form_code, form_label, is_open, is_overdue', (q: Q) => applyListFilters(q, p, meId).order('id'));
+}
+
 /** The sum of one money column over a whole filter (the exposure list's total, U-24-1). */
 export async function fetchNoticeSum(p: NoticeListParams, meId: string | null, column: 'exposure_amount' | 'amount_of_demand'): Promise<number> {
   const rows = await fetchAllRows<Record<string, number | null>>('notice_facts', column, (q: Q) => applyListFilters(q, p, meId).order('id'));
