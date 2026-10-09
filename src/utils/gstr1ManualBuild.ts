@@ -21,6 +21,8 @@
 //    serial-number continuity, including cancelled numbers) — entered as its
 //    own small fixed-shape table.
 
+import { editableUqc, normaliseGstr1Hsn } from '@/lib/gstr1/uqc';
+
 // 'ata' / 'txpda' are Table 11(2) — amendments to a PRIOR period's Table 11A /
 // 11B. They carry an `omon` (original month, MMYYYY) and restate that month's
 // figure in full; they are not this period's liability. See
@@ -487,7 +489,7 @@ export function assembleGstr1Json(params: {
         num: hsnBuckets[bucket].length + 1,
         hsn_sc: String(r.hsn_sc).trim(),
         desc: r.desc || '',
-        uqc: r.uqc || 'NA',
+        uqc: r.uqc || '',
         qty: num(r.qty),
         rt: num(r.rt),
         txval: num(r.txval),
@@ -542,7 +544,9 @@ export function assembleGstr1Json(params: {
     if (hsnB2c.length) out.hsn.hsn_b2c = hsnB2c;
   }
   if (docDet.length) out.doc_issue = { doc_det: docDet };
-  return out;
+  // Table 12 units as GSTN codes, NA and qty 0 on services, one row per
+  // HSN + rate + unit: the same rules the push applies (src/lib/gstr1/uqc.ts).
+  return normaliseGstr1Hsn(out).json;
 }
 
 /**
@@ -779,8 +783,8 @@ export function hydrateManualEntriesFromJson(json: any): {
   // which bucket it came from so the grid's Type dropdown shows correctly
   // and re-assembly (assembleGstr1Json) puts it back in the same bucket.
   const hsnRows: ManualRow[] = [
-    ...(j.hsn?.hsn_b2b || []).map((h: any) => ({ id: nextId(), _src: 'hsn_b2b', hsn_sc: h.hsn_sc, desc: h.desc, uqc: h.uqc, qty: h.qty, rt: h.rt, txval: h.txval, iamt: h.iamt, camt: h.camt, samt: h.samt, csamt: h.csamt })),
-    ...(j.hsn?.hsn_b2c || []).map((h: any) => ({ id: nextId(), _src: 'hsn_b2c', hsn_sc: h.hsn_sc, desc: h.desc, uqc: h.uqc, qty: h.qty, rt: h.rt, txval: h.txval, iamt: h.iamt, camt: h.camt, samt: h.samt, csamt: h.csamt })),
+    ...(j.hsn?.hsn_b2b || []).map((h: any) => ({ id: nextId(), _src: 'hsn_b2b', hsn_sc: h.hsn_sc, desc: h.desc, uqc: editableUqc(h.uqc, h.hsn_sc), qty: h.qty, rt: h.rt, txval: h.txval, iamt: h.iamt, camt: h.camt, samt: h.samt, csamt: h.csamt })),
+    ...(j.hsn?.hsn_b2c || []).map((h: any) => ({ id: nextId(), _src: 'hsn_b2c', hsn_sc: h.hsn_sc, desc: h.desc, uqc: editableUqc(h.uqc, h.hsn_sc), qty: h.qty, rt: h.rt, txval: h.txval, iamt: h.iamt, camt: h.camt, samt: h.samt, csamt: h.csamt })),
   ];
 
   return { rowsBySection: { b2b, b2cl, b2cs, cdnr, cdnur, exp, at, txpd, ata, txpda }, nilRows, docRows, hsnRows };
