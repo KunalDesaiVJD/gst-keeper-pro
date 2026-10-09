@@ -419,7 +419,10 @@
     else if (job.step === 'gstr1_dash') await handleGstr1UploadDashboard(job, cur, progress);
     // A Refresh errors reloaded on the upload page reads it again; it never
     // uploads (handleGstr1UploadDashboard routes the same way).
-    else if (job.step === 'gstr1_upload') await (job.mode === 'gstr1_refresh' ? handleGstr1RefreshErrors : handleGstr1Upload)(job, cur, progress);
+    else if (job.step === 'gstr1_upload') {
+      if (job.mode !== 'gstr1_refresh') await handleGstr1Upload(job, cur, progress);
+      else if (await onOfflineUploadPageOrRetry(job, progress)) await handleGstr1RefreshErrors(job, cur, progress);
+    }
     else if (job.step === 'gstr1_nil') await handleGstr1Nil(job, cur, progress);
     else if (job.step === 'einvoice_pull') await handleEinvoicePull(job, cur, progress);
     else if (job.step === 'gstr3b_dash') await handleGstr3bDashboard(job, cur, progress);
@@ -2283,6 +2286,24 @@
   // The upload page. This handler runs to completion (attaches the file,
   // waits for the portal to finish processing, reads the result, reports back)
   // without another page navigation, so we can poll inside it with sleep().
+  // The wrong-page guard below, shared with a Refresh errors that reloads onto
+  // step gstr1_upload: it reads whatever page it lands on, so it needs the
+  // same check before trusting that page's Upload History. Returns false when
+  // it has sent the job back to the dashboard (or given up).
+  async function onOfflineUploadPageOrRetry(job, progress) {
+    if (/return\.gst\.gov\.in/i.test(location.href) && /offlineupload/i.test(location.href)) return true;
+    job.wrongPageRetries = (job.wrongPageRetries || 0) + 1;
+    if (job.wrongPageRetries > 3) {
+      await failUpload(job, `Kept landing on the wrong page instead of the GSTR-1 offline-upload page (currently: ${location.hostname}${location.pathname}). The dashboard tile click is picking the wrong element — needs a look at the actual dashboard markup.`);
+      return false;
+    }
+    job.step = 'gstr1_dash';
+    await setJob(job);
+    banner('Landed on the wrong page — retrying from the dashboard…' + progress, '#f59e0b');
+    location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+    return false;
+  }
+
   async function handleGstr1Upload(job, cur, progress) {
     // handleGstr1UploadDashboard marks job.step = 'gstr1_upload' and persists
     // it BEFORE confirming the tile click it just fired actually landed on
@@ -2305,18 +2326,7 @@
     // every real invocation — even ones that had already landed correctly —
     // which is what was actually causing "kept landing on the wrong page"
     // even when the live URL shown in that same failure message was right.
-    if (!/return\.gst\.gov\.in/i.test(location.href) || !/offlineupload/i.test(location.href)) {
-      job.wrongPageRetries = (job.wrongPageRetries || 0) + 1;
-      if (job.wrongPageRetries > 3) {
-        await failUpload(job, `Kept landing on the wrong page instead of the GSTR-1 offline-upload page (currently: ${location.hostname}${location.pathname}). The dashboard tile click is picking the wrong element — needs a look at the actual dashboard markup.`);
-        return;
-      }
-      job.step = 'gstr1_dash';
-      await setJob(job);
-      banner('Landed on the wrong page — retrying from the dashboard…' + progress, '#f59e0b');
-      location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
-      return;
-    }
+    if (!(await onOfflineUploadPageOrRetry(job, progress))) return;
     banner('Looking for the JSON upload control…' + progress);
 
     // The Prepare Offline page has tabs like "Upload" / "Initiate Filing" /

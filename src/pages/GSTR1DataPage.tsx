@@ -75,6 +75,13 @@ const OUTCOME_UNKNOWN_SUMMARIES = [
 ];
 const isOutcomeUnknownFailure = (summary?: string | null) =>
   OUTCOME_UNKNOWN_SUMMARIES.some((p) => (summary || '').startsWith(p));
+/**
+ * Whether the stored JSON is still the one that attempt sent. Refresh records
+ * the stored JSON as what was uploaded, so after a re-import or an edit it
+ * would put a file the portal never received on record as accepted.
+ */
+const jsonUnchangedSinceUpload = (r: { updated_at?: string | null; last_uploaded_at?: string | null }) =>
+  !r.updated_at || !r.last_uploaded_at || Date.parse(r.updated_at) <= Date.parse(r.last_uploaded_at);
 /** An upload or NIL push left without a result this long is given up on (the extension's own idle limit is 10 minutes). */
 const UPLOAD_WATCHDOG_MS = 20 * 60 * 1000;
 
@@ -174,6 +181,8 @@ interface GSTR1Record {
   raw_json: any;
   file_name: string | null;
   imported_at: string;
+  /** Stamped by every writer of raw_json (import, edits, Generate, Builder, Table 11B, the pre-push correction). */
+  updated_at?: string | null;
   // Legacy Humonex "push" columns — kept readable for historical rows, no
   // longer written to. The extension writes the new last_upload_* set below.
   last_pushed_at?: string | null;
@@ -1936,6 +1945,7 @@ const GSTR1DataPage: React.FC = () => {
                 a failed upload offers it only from 0.8.6. */}
             {gstr1Data && canEditFilingStatus() && (gstr1Data.last_upload_status === 'partial'
               || (gstr1Data.last_upload_status === 'failed' && !isFiled && isOutcomeUnknownFailure(gstr1Data.last_upload_summary)
+                && jsonUnchangedSinceUpload(gstr1Data)
                 && !!extVersion && compareVersions(extVersion, REFRESH_HISTORY_MIN_EXTENSION) >= 0)) && (
               <>
                 <Button

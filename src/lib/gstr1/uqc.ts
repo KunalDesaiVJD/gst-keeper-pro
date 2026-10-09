@@ -262,7 +262,10 @@ export function normaliseGstr1Hsn<T>(json: T): HsnNormalised<T> {
     const out: unknown[] = [];
     let mergedHere = 0;
     for (const r of fixed) {
-      if (!isObj(r) || !isValidHsnCode(r.hsn_sc) || normaliseUqc(r.uqc, r.hsn_sc) !== r.uqc) { out.push(r); continue; }
+      // A deletion row (flag 'D') names a portal row to remove; folding it into a
+      // live row would delete that row's figures too.
+      const deletion = isObj(r) && String(r.flag ?? '').trim().toUpperCase() === 'D';
+      if (!isObj(r) || deletion || !isValidHsnCode(r.hsn_sc) || normaliseUqc(r.uqc, r.hsn_sc) !== r.uqc) { out.push(r); continue; }
       const key = `${r.hsn_sc}|${num(r.rt)}|${r.uqc}`;
       const first = firstOf.get(key);
       if (!first) { firstOf.set(key, r); out.push(r); continue; }

@@ -369,10 +369,12 @@ const Gstr3bPage: React.FC = () => {
         // that return: nothing is written for the one shown here.
         if (r.clientId && r.period_month && (r.clientId !== selectedClient || r.period_month !== selectedMonth)) {
           const name = clients.find((x) => x.id === r.clientId)?.name || 'another client';
-          const outcome = c.status === 'ok' ? 'filled' : c.status === 'partial' ? 'partly filled' : 'failed';
+          const outcome = r.tabClosed ? 'outcome unknown: its portal tab was closed' : c.status === 'ok' ? 'filled' : c.status === 'partial' ? 'partly filled' : 'failed';
           toast.warning(
             `The GSTR-3B push for ${name} · ${toShort(r.period_month)} has finished (${outcome}). It belongs to that client and month, not the one shown here. `
-            + (r.recorded
+            + (r.tabClosed
+              ? 'Check that client\'s portal and Push History.'
+              : r.recorded
               ? 'It is recorded in that return\'s Push History.'
               : 'It was NOT recorded: open that client and month, check the portal and Push History.'),
             { duration: 20000 },
