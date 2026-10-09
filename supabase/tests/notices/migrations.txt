@@ -65,3 +65,4 @@
 20261010120000_login_captcha_reason.sql
 20261011100000_notice_cases.sql
 20261011110000_learning_by_client.sql
+20261012100000_notice_case_links.sql

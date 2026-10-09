@@ -10,11 +10,11 @@ import { CLOSE_REASONS } from '@/lib/noticeStages';
 
 const INFORMATIONAL = CLOSE_REASONS.find((r) => r.startsWith('Informational')) ?? '';
 
-const Body: React.FC<{ onCancel: () => void; onClose: (reason: string) => Promise<void> }> = ({ onCancel, onClose }) => {
+const Body: React.FC<{ onCancel: () => void; onClose: (reason: string) => Promise<void>; defaultReason?: string; label?: string }> = ({ onCancel, onClose, defaultReason = INFORMATIONAL, label = 'Close notice' }) => {
   const close = useCloseReason();
   const { setReason } = close;
   const [saving, setSaving] = useState(false);
-  useEffect(() => { setReason(INFORMATIONAL); }, [setReason]);
+  useEffect(() => { if (defaultReason) setReason(defaultReason); }, [setReason, defaultReason]);
   const submit = async () => {
     setSaving(true);
     try { await onClose(close.value); } finally { setSaving(false); }
@@ -25,7 +25,7 @@ const Body: React.FC<{ onCancel: () => void; onClose: (reason: string) => Promis
       <DialogFooter className="gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
         <Button type="button" disabled={!close.valid || saving} onClick={submit}>
-          {saving && <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden />} Close notice
+          {saving && <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden />} {label}
         </Button>
       </DialogFooter>
     </>
@@ -37,14 +37,20 @@ export const ReadCloseDialog: React.FC<{
   onOpenChange: (o: boolean) => void;
   /** Closes the notice with the reason (the page's stage change). */
   onClose: (reason: string) => Promise<void>;
-}> = ({ open, onOpenChange, onClose }) => (
+  /** Many notices at once (the list's bulk bar): its own title, no reason chosen in advance. */
+  count?: number;
+}> = ({ open, onOpenChange, onClose, count }) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="sm:max-w-md">
       <DialogHeader>
-        <DialogTitle>Read and close</DialogTitle>
-        <DialogDescription>This notice type needs no reply. Close it once you have read it; the reason stays with the notice.</DialogDescription>
+        <DialogTitle>{count ? `Close ${count} notice${count === 1 ? '' : 's'}` : 'Read and close'}</DialogTitle>
+        <DialogDescription>
+          {count ? 'Each notice is closed with the reason chosen here, which stays with it. You can undo this right after.'
+            : 'This notice type needs no reply. Close it once you have read it; the reason stays with the notice.'}
+        </DialogDescription>
       </DialogHeader>
-      {open && <Body onCancel={() => onOpenChange(false)} onClose={async (reason) => { await onClose(reason); onOpenChange(false); }} />}
+      {open && <Body onCancel={() => onOpenChange(false)} onClose={async (reason) => { await onClose(reason); onOpenChange(false); }}
+        defaultReason={count ? '' : undefined} label={count ? `Close ${count}` : undefined} />}
     </DialogContent>
   </Dialog>
 );

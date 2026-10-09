@@ -25,11 +25,10 @@ import { NoticesShell } from '@/components/notices/NoticesShell';
 import { SyncNowButton } from '@/components/notices/SyncNowButton';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
 import { KindTabs } from '@/components/notices/cases/KindTabs';
-import { CasesPanel } from '@/components/notices/cases/CasesPanel';
-import { KindDashboard, KindTiles } from '@/components/notices/cases/KindDashboard';
+import { AttentionList, NewFromPortal, StatStrip, Upcoming } from '@/components/notices/cases/HomeParts';
 import { isTrack, useCaseCounts, type Track } from '@/lib/noticeCases';
 import { NoticeTypesSettings } from '@/components/notices/types/NoticeTypesSettings';
-import { AutopilotLine, ClientsAttention, Next14Days, StagePanel } from '@/components/notices/command/CommandCards';
+import { AutopilotLine } from '@/components/notices/command/CommandCards';
 import { masterForRpc, useMaster } from '@/lib/masterFilters';
 
 const TYPE_PARAMS = ['types', 'tq', 'tneed', 'tdash'];
@@ -78,7 +77,7 @@ const NoticesDashboardPage: React.FC = () => {
 
   return (
     <NoticesShell
-      section="Command centre"
+      section="Home"
       status={data ? <AutopilotLine cc={data} /> : null}
       master
       actions={<>
@@ -99,18 +98,14 @@ const NoticesDashboardPage: React.FC = () => {
       )}
 
       <KindTabs value={kind} counts={counts.data} onChange={setKind} />
-
-      {kind !== 'litigation' ? <KindDashboard track={kind} counts={counts.data?.[kind]} master={m} /> : (<>
-      <KindTiles track="litigation" counts={counts.data?.litigation} master={m} />
-
-      <CasesPanel track="litigation" master={m} />
-
-      <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-3">
-        {data ? <StagePanel cc={data} /> : <Skeleton className="h-48" />}
-        {data ? <Next14Days cc={data} /> : <Skeleton className="h-48" />}
-        {data ? <ClientsAttention cc={data} /> : <Skeleton className="h-48" />}
+      <StatStrip track={kind} c={counts.data?.[kind]} master={m} />
+      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <AttentionList track={kind} master={m} />
+        <div className="space-y-3">
+          {kind !== 'other' && <NewFromPortal track={kind} />}
+          {kind === 'litigation' && <Upcoming cc={data} master={m} />}
+        </div>
       </div>
-      </>)}
 
       <Dialog open={typesOpen} onOpenChange={(o) => { if (!o) closeTypes(); }}>
         <DialogContent className="max-h-[90vh] gap-3 overflow-y-auto p-4 sm:max-w-5xl sm:p-6">

@@ -23,36 +23,20 @@ export function nextHint(ws: Workspace): string | null {
 }
 
 /** Portal sync · matter · other notices of the same case, in one line. */
-export const KeyFactsLine: React.FC<{ ws: Workspace }> = ({ ws }) => {
-  const n = ws.notice;
+/** Under the notice's title, only what matters (the firm's request of 9 October 2026: keep it short): a failed sync and the matter. */
+export const KeyFactsLine: React.FC<{ ws: Workspace; children?: React.ReactNode }> = ({ ws, children }) => {
   const notices = ws.sync.find((s) => s.step === 'notices');
   const login = ws.sync.find((s) => s.step === 'login');
   const loginFailedLater = login?.last_status === 'failed' && (!notices?.last_success_at || (login.last_attempt_at ?? '') > notices.last_success_at);
+  const failed = loginFailedLater ? `${REASON[login?.last_reason_class ?? 'other'] ?? 'failed'} ${fmtAgo(login?.last_attempt_at)}`
+    : notices?.last_status === 'failed' ? `${REASON[notices.last_reason_class ?? 'other'] ?? 'failed'} ${fmtAgo(notices.last_attempt_at)}` : null;
   const parts: React.ReactNode[] = [];
-  parts.push(
-    <span key="sync">
-      Portal sync:{' '}
-      {loginFailedLater ? <span className="text-destructive-strong">{REASON[login?.last_reason_class ?? 'other'] ?? 'failed'} {fmtAgo(login?.last_attempt_at)}</span>
-        : notices?.last_success_at ? <>{fmtAgo(notices.last_success_at)}{notices.last_status === 'failed' ? <span className="text-destructive-strong"> · last try {REASON[notices.last_reason_class ?? 'other'] ?? 'failed'}</span> : null}</>
-        : 'none recorded'}
-    </span>,
-  );
+  if (children) parts.push(<React.Fragment key="case">{children}</React.Fragment>);
   if (ws.matter) {
-    parts.push(
-      <span key="matter">Matter <Link to={`/litigation/${ws.matter.id}`} className="text-primary underline underline-offset-2">{ws.matter.matter_no}</Link> · {stageLabel(ws.matter.stage)}</span>,
-    );
+    parts.push(<span key="matter">Matter <Link to={`/litigation/${ws.matter.id}`} className="text-primary underline underline-offset-2">{ws.matter.matter_no}</Link></span>);
   }
-  if (ws.related.length > 0) {
-    parts.push(
-      <span key="related">
-        {n.case_id ? 'Same case' : 'Other open'}:{' '}
-        {ws.related.slice(0, 3).map((r, i) => (
-          <React.Fragment key={r.id}>{i > 0 && ', '}<Link to={`/notices/${r.id}`} className="text-primary underline underline-offset-2">{noticeTitle(r, { fy: false })}</Link></React.Fragment>
-        ))}
-        {ws.related.length > 3 && ` +${ws.related.length - 3}`}
-      </span>,
-    );
-  }
+  if (failed) parts.push(<span key="sync" className="text-destructive-strong">Portal sync: {failed}</span>);
+  if (!parts.length) return null;
   return (
     <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
       {parts.map((p, i) => <React.Fragment key={i}>{i > 0 && <span aria-hidden>·</span>}{p}</React.Fragment>)}

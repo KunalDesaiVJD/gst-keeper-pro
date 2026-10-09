@@ -215,3 +215,25 @@ export const KIND_STEPS: Partial<Record<Track, KindStep[]>> = {
     { key: 'order', label: 'Order (REG-05 / REG-06 / REG-15 / REG-19 / REG-22)', forms: ['REG-05', 'REG-06', 'REG-15', 'REG-19', 'REG-22', 'REG-CANCEL-REJ'] },
   ],
 };
+
+// ── Links that are not certain: suggestions a person accepts (20261012100000) ──
+export interface Drc03Suggestion { arn: string; filed_date: string | null; amount: number; cause: string | null; financial_year: string | null; score: number; reasons: string[] }
+export interface CaseSuggestion { notice_id: string; form_code: string | null; reference: string | null; case_id: string; issue_date: string | null; financial_year: string | null; amount: number | null; score: number; reasons: string[] }
+export interface LinkSuggestions { drc03: Drc03Suggestion[]; cases: CaseSuggestion[]; case_key: string | null }
+
+export async function loadLinkSuggestions(noticeId: string): Promise<LinkSuggestions> {
+  const { data, error } = await supabase.rpc('notice_link_suggestions', { p_notice_id: noticeId });
+  if (error) throw error;
+  const d = (data ?? {}) as Partial<LinkSuggestions>;
+  return { drc03: d.drc03 ?? [], cases: d.cases ?? [], case_key: d.case_key ?? null };
+}
+
+export function useLinkSuggestions(noticeId: string | null | undefined) {
+  return useQuery({ queryKey: ['notice-link-suggestions', noticeId], queryFn: () => loadLinkSuggestions(noticeId as string), enabled: !!noticeId, staleTime: 60_000 });
+}
+
+/** A person links a case into the case it belongs to (kind: appeal, waiver, rectification, related). */
+export async function setCaseLink(clientId: string, childKey: string, parentKey: string | null, kind: string | null, by: string | null): Promise<void> {
+  const { error } = await supabase.rpc('notice_case_link_set', { p_client_id: clientId, p_child_key: childKey, p_parent_key: parentKey, p_kind: kind, p_by: by });
+  if (error) throw error;
+}
