@@ -25,7 +25,7 @@ import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { FilterPill } from '@/components/notices/FilterPill';
 import { useExtensionBridge } from '@/hooks/useExtensionBridge';
-import { AsOfLine, FilterChips, FilterTile, type Chip } from '@/components/notices/reports/ReportBits';
+import { FilterChips, FilterTile, type Chip } from '@/components/notices/reports/ReportBits';
 import { RefundTable, type RefundSort } from '@/components/notices/reports/RefundTable';
 import { useRefundLedger, type RefundRow } from '@/components/notices/reports/ledgerData';
 import { REFUND_GROUPS, matchesRefundShow, parseRefundShow, refundShowLabel, REFUND_SHOW, type RefundShow } from '@/components/notices/reports/ledgerStatus';
@@ -168,7 +168,7 @@ const AllClientsRefundsPage: React.FC = () => {
   };
 
   return (
-    <NoticesShell section="Refunds" status={<AsOfLine at={ledger.dataUpdatedAt} />}
+    <NoticesShell section="Refunds"
       actions={canExportData() && (
         <>
           <Button size="sm" variant="outline" className={WS_BTN} onClick={exportXlsx} disabled={!rows.length}>

@@ -54,6 +54,8 @@ import { PaymentsTab } from '@/components/notices/workspace/PaymentsTab';
 import { HearingsTab } from '@/components/notices/workspace/HearingsTab';
 import { DeadlinesTab } from '@/components/notices/workspace/DeadlinesTab';
 import { KeyFactsLine, nextHint } from '@/components/notices/workspace/SidePanel';
+import { KindFacts } from '@/components/notices/cases/KindFacts';
+import { caseHref, caseKeyOf, loadCase, tabsFor, trackOfCategory, useCaseOverview, type Track } from '@/lib/noticeCases';
 import { cn } from '@/lib/utils';
 
 const TABS: { key: WorkspaceTab; label: string }[] = [
@@ -160,7 +162,18 @@ const NoticeWorkspacePage: React.FC = () => {
     if (wasReading.current && !active) qc.invalidateQueries({ queryKey: ['notice-workspace', id] });
     wasReading.current = active;
   }, [rq.data, id, qc]);
-  const tab = (TABS.some((t) => t.key === sp.get('tab')) ? sp.get('tab') : 'issues') as WorkspaceTab;
+  // The notice's kind of service and its case (20261011100000): a refund,
+  // registration or record-only notice gets the facts and tabs of its kind.
+  const track: Track = trackOfCategory(ws?.fact.category);
+  const caseKey = ws ? caseKeyOf(ws.notice.case_id, ws.fact.category, ws.notice.id) : null;
+  const caseOv = useCaseOverview(clientId, caseKey, ws?.notice.id ?? null);
+  const caseRow = useQuery({ queryKey: ['notice-case', clientId, caseKey], queryFn: () => loadCase(clientId as string, caseKey as string), enabled: !!clientId && !!caseKey, staleTime: 60_000 });
+  const needsReply = ws?.fact.response_need === 'critical';
+  const shownTabs = useMemo(() => {
+    const keys = tabsFor(track, needsReply);
+    return TABS.filter((t) => keys.includes(t.key));
+  }, [track, needsReply]);
+  const tab = (shownTabs.some((t) => t.key === sp.get('tab')) ? sp.get('tab') : shownTabs[0]?.key ?? 'documents') as WorkspaceTab;
   const setTab = (t: string) => { const next = new URLSearchParams(sp); next.set('tab', t); setSp(next, { replace: true }); };
   const ref = useMemo(() => (ws ? toRef(ws) : null), [ws]);
   const portalReply = useMemo(() => (ws ? portalReplyFrom(ws.folder) : null), [ws]);
@@ -176,6 +189,7 @@ const NoticeWorkspacePage: React.FC = () => {
     qc.invalidateQueries({ queryKey: ['notice-plan-top'] });
   };
   const canEdit = canEditNoticeStatus();
+  const lit = track === 'litigation';
 
   if (q.isLoading) {
     return (
@@ -243,6 +257,16 @@ const NoticeWorkspacePage: React.FC = () => {
   const primary = (() => {
     if (!canEdit) return null;
     if (closed) return <Button size="sm" className={WS_BTN} onClick={() => changeStage('triaged')}>Reopen</Button>;
+    // A refund, registration or record-only notice: reply when it asks for one, else read and close.
+    if (!lit) {
+      if (!n.assign_to_user_id && needsReply) {
+        return <AssignPopover currentOwnerId={n.assign_to_user_id} suggestedName={ws.client?.assigned_accountant} onAssign={assign}>
+          <Button size="sm" className={WS_BTN}><UserPlus className="h-3.5 w-3.5" /> Assign</Button></AssignPopover>;
+      }
+      if (needsReply && !f.reply_date) return <Button size="sm" className={WS_BTN} onClick={() => setTab('draft')}>Write the reply</Button>;
+      if (needsReply) return <Button size="sm" className={WS_BTN} onClick={() => setDialog('order')}><Gavel className="h-3.5 w-3.5" /> Log order</Button>;
+      return <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('close')}>Read and close</Button>;
+    }
     const key = f.next_action ?? (f.stage === 'filed' || f.stage === 'hearing' ? 'await_order' : null);
     const def = nextActionDef(key);
     switch (key) {
@@ -325,18 +349,27 @@ const NoticeWorkspacePage: React.FC = () => {
             {nextHint(ws) && <span className="text-xs text-muted-foreground">Next: {nextHint(ws)}</span>}
           </div>
           <KeyFactsLine ws={ws} />
+          {caseKey && caseRow.data && ((caseRow.data.notices ?? 0) > 1 || (caseRow.data.documents ?? 0) > 0) && (
+            <p className="text-xs">
+              <Link to={caseHref(n.client_id, caseKey)} className="font-medium text-primary hover:underline">
+                The whole case: {caseRow.data.notices} notice{caseRow.data.notices === 1 ? '' : 's'}{caseRow.data.documents ? `, ${caseRow.data.documents} document${caseRow.data.documents === 1 ? '' : 's'}` : ''} →
+              </Link>
+              {(caseRow.data.new_items ?? 0) > 0 && <Badge variant="info" className="ml-1.5 text-[10px]">{caseRow.data.new_items} new</Badge>}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {canEdit && !closed && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('docs')}><Mail className="h-3.5 w-3.5" /> Ask client</Button>}
-          {canEdit && !closed && !f.reply_date && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('extension')}><Hourglass className="h-3.5 w-3.5" /> Extension</Button>}
+          {canEdit && !closed && track !== 'other' && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('docs')}><Mail className="h-3.5 w-3.5" /> Ask client</Button>}
+          {canEdit && !closed && !f.reply_date && (lit || needsReply) && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('extension')}><Hourglass className="h-3.5 w-3.5" /> Extension</Button>}
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button size="sm" variant="outline" className={WS_BTN} aria-label="More actions"><MoreHorizontal className="h-3.5 w-3.5" /> More</Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {canEdit && !closed && <DropdownMenuItem onSelect={() => setDialog('reply')}><FileText className="mr-2 h-4 w-4" /> Log reply</DropdownMenuItem>}
-              {canEdit && !closed && <DropdownMenuItem onSelect={() => setDialog('order')}><Gavel className="mr-2 h-4 w-4" /> Log order</DropdownMenuItem>}
-              {canEdit && !closed && <DropdownMenuItem onSelect={() => setDialog('hearing')}><CalendarClock className="mr-2 h-4 w-4" /> {n.hearing_date ? 'Change hearing' : 'Fix a hearing'}</DropdownMenuItem>}
+              {canEdit && !closed && (lit || needsReply) && <DropdownMenuItem onSelect={() => setDialog('reply')}><FileText className="mr-2 h-4 w-4" /> Log reply</DropdownMenuItem>}
+              {canEdit && !closed && (lit || needsReply) && <DropdownMenuItem onSelect={() => setDialog('order')}><Gavel className="mr-2 h-4 w-4" /> Log order</DropdownMenuItem>}
+              {canEdit && !closed && lit && <DropdownMenuItem onSelect={() => setDialog('hearing')}><CalendarClock className="mr-2 h-4 w-4" /> {n.hearing_date ? 'Change hearing' : 'Fix a hearing'}</DropdownMenuItem>}
+              {canEdit && !closed && !lit && <DropdownMenuItem onSelect={() => setDialog('close')}><FileText className="mr-2 h-4 w-4" /> Read and close</DropdownMenuItem>}
               {/* A finished notice gets no new matter (U-44-5); an order can still go to appeal from the next step. */}
-              {canEdit && (!closed || n.matter_id) && <DropdownMenuItem onSelect={() => setDialog('matter')}><Scale className="mr-2 h-4 w-4" /> {n.matter_id ? 'Move to another matter' : 'Create or link a matter'}</DropdownMenuItem>}
+              {canEdit && lit && (!closed || n.matter_id) && <DropdownMenuItem onSelect={() => setDialog('matter')}><Scale className="mr-2 h-4 w-4" /> {n.matter_id ? 'Move to another matter' : 'Create or link a matter'}</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={openPortal} disabled={!bridge.ready}><ExternalLink className="mr-2 h-4 w-4" /> Open on the portal{!bridge.ready ? ' (needs the extension)' : ''}</DropdownMenuItem>
               {n.pdf_url && <DropdownMenuItem asChild><a href={n.pdf_url} target="_blank" rel="noreferrer"><FileText className="mr-2 h-4 w-4" /> Notice PDF</a></DropdownMenuItem>}
@@ -349,16 +382,21 @@ const NoticeWorkspacePage: React.FC = () => {
 
       {!canEdit && <Note tone="info">You can read this notice. Changing it needs the "Edit notice status" permission — ask a GST manager.</Note>}
 
-      <StageRail stage={f.stage ?? 'new'} visited={visited} since={f.stage_changed_at} by={f.stage_changed_by} closeReason={n.close_reason}
-        replyDate={n.reply_date} hearingDate={n.hearing_date} orderDate={n.order_date} />
+      {lit && (
+        <StageRail stage={f.stage ?? 'new'} visited={visited} since={f.stage_changed_at} by={f.stage_changed_by} closeReason={n.close_reason}
+          replyDate={n.reply_date} hearingDate={n.hearing_date} orderDate={n.order_date} />
+      )}
 
-      <FactTiles ws={ws} onAskClient={canEdit && !closed ? () => setDialog('docs') : undefined} />
+      {lit ? <FactTiles ws={ws} onAskClient={canEdit && !closed ? () => setDialog('docs') : undefined} />
+        : <KindFacts track={track} overview={caseOv.data} loading={caseOv.isLoading} forms={caseRow.data?.forms ?? (f.form_code ? [f.form_code] : [])}
+            notice={{ form_label: f.form_label, issue_date: n.issue_date, reference_number: n.reference_number, financial_year: n.financial_year, description: n.description }} />}
 
       <div className="min-w-0 space-y-3">
-          <NoticeReadCard ws={ws} reading={rq.data} loading={rq.isLoading} error={rq.error} canEdit={canEdit} onChanged={reload} />
+          <NoticeReadCard ws={ws} reading={rq.data} loading={rq.isLoading} error={rq.error} canEdit={canEdit} onChanged={reload}
+            caseOverview={caseOv.data} readingOnly={!lit} />
           <Tabs value={tab} onValueChange={setTab} className="min-w-0 space-y-2">
             <TabsList className={cn(TAB_LIST_CLASS, 'w-full sm:w-auto')}>
-              {TABS.map((t) => {
+              {shownTabs.map((t) => {
                 const count = t.key === 'documents' ? ws.documents.length + ws.folder.length + (n.pdf_url ? 1 : 0)
                   : t.key === 'issues' ? ws.issues.length : t.key === 'deadlines' ? ws.deadlines.filter((d) => !d.is_met).length : 0;
                 return (

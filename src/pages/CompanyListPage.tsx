@@ -51,25 +51,15 @@ function parseStatus(v: string | null): StatusFilter {
 }
 
 /** "8 of 12 GSTINs synced in 24 h · last run …" — the command centre's line, for this page (U-50-2). */
-const SyncLine: React.FC<{ c: HealthCounts; run: SyncRun | undefined; polling: boolean }> = ({ c, run, polling }) => {
-  const share = c.all ? c.fresh / c.all : 1;
-  const tone = share >= 0.9 && c.failed === 0 ? 'bg-success' : share >= 0.5 ? 'bg-warning' : 'bg-destructive';
+/** Under the title: only while a sync runs, or when clients are failing. */
+const SyncLine: React.FC<{ c: HealthCounts; run: SyncRun | undefined; polling: boolean }> = ({ c, run }) => {
+  const running = run?.status === 'running';
+  if (!running && c.failed === 0) return null;
   return (
     <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground" aria-live="polite">
-      <span className={cn('inline-block h-2 w-2 rounded-full', tone)} aria-hidden />
-      <span className="font-medium text-foreground">{c.fresh} of {c.all} GSTINs synced in 24 h</span>
-      <InfoTip label="How a client is counted">
-        Counted as on the command centre: synced means a good notices pull in the last 24 hours; a client is failing when its last login
-        failed after its last good pull, or its last notices pull failed. Inactive clients, clients excluded from the notices sync and
-        clients without a portal user ID are not synced by the app and sit under "Not synced by the app".
-      </InfoTip>
-      {run && (
-        <span>· last run {run.status === 'running' ? 'running' : run.status} {fmtAgo(run.started_at)}
-          {run.clients_total ? ` (${run.clients_done} of ${plural(run.clients_total, 'client')}${run.ext_version ? `, extension v${run.ext_version}` : ''})` : ''}</span>
-      )}
-      {polling && <span>· updating every 10 s</span>}
+      {running && <span className="font-medium text-foreground">Sync running{run?.clients_total ? `: ${run.clients_done} of ${plural(run.clients_total, 'client')}` : ''}</span>}
       {c.failed > 0 && (
-        <Link to="/notices-company-list?status=failed" className="font-medium text-destructive-strong underline-offset-2 hover:underline">· {c.failed} failing →</Link>
+        <Link to="/notices-company-list?status=failed" className="font-medium text-destructive-strong underline-offset-2 hover:underline">{plural(c.failed, 'client')} failing →</Link>
       )}
     </p>
   );

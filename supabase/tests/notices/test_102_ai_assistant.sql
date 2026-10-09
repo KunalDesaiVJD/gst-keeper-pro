@@ -24,7 +24,9 @@ SELECT t_eq((SELECT form_code FROM gst_notices WHERE id = '10200000-0000-0000-00
 -- ── Settings ───────────────────────────────────────────────────────────────
 SELECT t_eq((SELECT runner || '/' || consent_scope || '/' || read_backfill || '/' || read_documents || '/' || doc_effort || '/' ||
                     assist_daily_cap_usd || '/' || learning_auto_include FROM ai_settings),
-            'edge/consented/true/true/low/5/false', 'ships: the Edge runner, consent per client, every document, examples picked by an admin');
+            'edge/all_clients/true/true/low/5/false', 'set: the Edge runner, every client (the firm''s choice of 9 October 2026), every document, examples picked by an admin');
+-- Consent per client for what follows.
+UPDATE ai_settings SET consent_scope = 'consented';
 SELECT t_eq(ai_read_allowed('10200000-0000-0000-0000-000000000001'), 'off', 'nothing is read while reading is off');
 UPDATE ai_settings SET read_enabled = true;
 SELECT t_eq(ai_read_allowed('10200000-0000-0000-0000-000000000001'), NULL::text, 'consent on file: may be read');

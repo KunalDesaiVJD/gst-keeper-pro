@@ -23,7 +23,7 @@ export const masterCount = (m: Master) => MASTER_KEYS.filter((k) => !!m[k]).leng
 
 /** The pages that apply the master filters (the others, such as Clients, read the same names differently). */
 export const MASTER_PAGES = [
-  '/notices-dashboard', '/notices-queue', '/notices-all', '/litigation', '/notices-hearings', '/notices-calendar',
+  '/notices-dashboard', '/notices-cases', '/notices-queue', '/notices-all', '/litigation', '/notices-hearings', '/notices-calendar',
   '/notices-report', '/notices-gstin-wise-count', '/litigation-mis',
 ];
 

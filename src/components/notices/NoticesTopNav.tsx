@@ -16,6 +16,7 @@ interface NavItem { label: string; to: string; count?: CountKey; match: (p: stri
 // The target's tabs (audit U-03-1): each label opens the page it names.
 const NAV: NavItem[] = [
   { label: 'Command centre', to: '/notices-dashboard', match: (p) => p === '/notices-dashboard' },
+  { label: 'Cases', to: '/notices-cases', match: (p) => p === '/notices-cases' || p.startsWith('/notices-case/') },
   { label: 'Work queue', to: '/notices-queue', count: 'queue', match: (p) => p === '/notices-queue' },
   { label: 'All notices', to: '/notices-all', count: 'open', match: (p) => p === '/notices-all' || /^\/notices\/[^/]+$/.test(p) },
   { label: 'Matters', to: '/litigation', count: 'matters', match: (p) => p === '/litigation' || p.startsWith('/litigation/') },

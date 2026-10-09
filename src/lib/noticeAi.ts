@@ -13,6 +13,7 @@ export type AssistRun = Tables['ai_assist_runs']['Row'];
 export type AiDocument = Tables['ai_documents']['Row'];
 export type LearningPair = Tables['ai_learning_pairs']['Row'];
 export type LearningResponse = Database['public']['Views']['ai_learning_responses']['Row'];
+export type LearningClient = Database['public']['Views']['ai_learning_clients']['Row'];
 export type AssistMode = 'draft' | 'ask' | 'improve';
 
 export interface AssistParagraph {
@@ -275,4 +276,48 @@ export function runnerWords(r: RunnerStatus | null | undefined, enabled: boolean
   return Date.now() - Date.parse(r.last_tick_at) < 15 * 60_000
     ? { tone: 'success', text: `Ran ${ago}` }
     : { tone: enabled ? 'warning' : 'secondary', text: `Last ran ${ago}` };
+}
+
+// ── Learning, client by client (the firm's request of 9 October 2026) ──────
+export interface LearningClientFilter { q: string; chosen: Chosen }
+
+export async function loadLearningClients(f: LearningClientFilter, page: number, pageSize = 50): Promise<{ rows: LearningClient[]; total: number }> {
+  let q = supabase.from('ai_learning_clients').select('*', { count: 'exact' });
+  if (f.chosen !== 'all') q = q.eq('ai_learning', f.chosen === 'yes');
+  const t = f.q.trim().replace(/[%,()]/g, ' ');
+  if (t) q = q.or(`client_name.ilike.%${t}%,client_gstin.ilike.%${t}%`);
+  const from = (page - 1) * pageSize;
+  const { data, error, count } = await q.order('responses', { ascending: false }).order('client_name').range(from, from + pageSize - 1);
+  if (error) {
+    if (/ai_learning_clients/.test(error.message)) throw new Error('Learning by client needs migration 20261011110000_learning_by_client.sql on the database.');
+    throw error;
+  }
+  return { rows: (data ?? []) as LearningClient[], total: count ?? 0 };
+}
+
+/** Every client the filter matches (all pages), for "choose all shown". */
+export async function learningClientIds(f: LearningClientFilter): Promise<string[]> {
+  let q = supabase.from('ai_learning_clients').select('client_id');
+  if (f.chosen !== 'all') q = q.eq('ai_learning', f.chosen === 'yes');
+  const t = f.q.trim().replace(/[%,()]/g, ' ');
+  if (t) q = q.or(`client_name.ilike.%${t}%,client_gstin.ilike.%${t}%`);
+  const { data, error } = await q.limit(5000);
+  if (error) throw error;
+  return (data ?? []).map((r) => r.client_id as string).filter(Boolean);
+}
+
+/** Choose or leave out clients: every response of theirs, now and as later ones are read. */
+export async function setClientsLearning(clientIds: string[], include: boolean, actor: string | null): Promise<{ clients: number; pairs: number }> {
+  const { data, error } = await supabase.rpc('ai_learning_client_set', { p_client_ids: clientIds, p_include: include, p_actor: actor });
+  if (error) throw error;
+  const d = (data ?? {}) as { clients?: number; pairs?: number };
+  return { clients: d.clients ?? 0, pairs: d.pairs ?? 0 };
+}
+
+/** One client's responses, newest first. */
+export async function loadClientResponses(clientId: string): Promise<LearningResponse[]> {
+  const { data, error } = await supabase.from('ai_learning_responses').select('*').eq('client_id', clientId)
+    .order('response_date', { ascending: false, nullsFirst: false }).limit(500);
+  if (error) throw error;
+  return (data ?? []) as LearningResponse[];
 }

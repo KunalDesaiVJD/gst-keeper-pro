@@ -538,3 +538,51 @@ portal refusal (wrong user ID or password, locked, expired, change required) is
 failures the same way (`login_failure_is_captcha`: a message about the CAPTCHA that
 names neither the user ID nor the password); an unexpected page after Login is
 `portal_error`.
+
+## 21. One case per issue, a dashboard per kind, pages per kind (asked by the firm, 9 October 2026)
+
+The firm asked for notices to be grouped by issue, with "different dashboard view for
+every single issue", the correspondence of an issue merged but every new arrival from
+the department visible, and refund (and other non-demand) pages without the demand
+fields that do not apply. Migration `20261011100000_notice_cases.sql`.
+
+- **Kinds** (`notice_track(category)`): *Notices & demands* (DRC, ASMT, audit,
+  enforcement, recovery, rectification, appeal), *Refunds*, *Registration*, *Other*
+  (LUT, voluntary payments, approvals: record only). The command centre and the new
+  Cases page (`/notices-cases`) have a tab per kind; each kind shows its own tiles.
+  The "Notices & demands" tiles count cases of that kind only.
+- **A case** (`notice_case_key`, view `notice_cases`) is the portal case ID. Registration
+  correspondence, which the portal files under no case, is one case per client (`REG`).
+  A notice with neither is its own case. A case's kind is the most serious kind among
+  its notices (litigation, then refund, then registration). The case is worked on its
+  *lead* notice (the open one due first, else the latest). The master filters apply to
+  the lead.
+- **Correspondence** (view `notice_case_correspondence`, `notice_case_items`) is every
+  notice and every case folder document of the case, each from the department or from
+  the taxpayer. The folder's copy of a notice already listed (same reference) is merged
+  into that notice, not listed again. An item is **new** when it arrived on a later sync
+  than the client's first one (the first sync brings the whole history), in the last
+  30 days, and after the case was last opened (`notice_case_seen`, one row per case for
+  the whole firm). Opening the case page marks it seen.
+- **The overview** (`notice_case_overview`): section, financial year, period, DIN, reply
+  due, hearing, officer and demand. Each value is taken from the notice itself, else from
+  the case's other notices (newest first), else from what the AI read in the case's
+  documents (`ai_documents.overview`, newest document first), and says which. A reply
+  date or hearing older than 30 days in an old document is not offered. A value the PDF
+  reader found but could not check against the page is shown marked "not checked"
+  rather than left blank.
+- **Refunds** show the application as filed (ARN, reason, period and amount from the
+  RFD-01 in the case folder; status from the refund list), the amounts the AI read in
+  the orders (provisional, sanctioned, rejected, net payable, paid), and the steps
+  RFD-01 → 02 → 03/08 → 04 → 06 → 05. A step is ticked when its form is among the case's
+  notices or is named by a file in its case folder. **Registration** shows the
+  application and its step. **Other** shows only what the item is.
+- **The notice page by kind** (`tabsFor`): a notice or demand keeps every tab. A refund
+  or registration notice shows the AI assistant and Draft tabs only when its type needs
+  a reply (critical, e.g. RFD-08, REG-03, REG-17), plus Documents, Activity and
+  Deadlines. Other shows Documents and Activity. The stage rail, the demand tiles,
+  hearings, evidence and matters appear only for notices and demands. A record-only
+  notice's main action is "Read and close".
+- **Lines under a page's title** say something only when something is wrong (the firm:
+  "irrelevant on almost every screen"): sync failures by cause, a failed run, the AI
+  reader stopped or capped, autopilot paused, failed or waiting.

@@ -163,6 +163,15 @@ and in `notices_command_centre(p_user_id, p_filters)`. Module pages use the pane
 `src/components/notices/ui/Panel.tsx` (pairs of equal height, explanations behind (i)).
 Extension 0.8.2 offers a refused portal password once and records it on the client (`clients.portal_login_issue`, skipped by every sync); 0.8.3 files a rejected CAPTCHA as `captcha_failed`, never a password issue. Notices · Settings (`/notices-settings`) switches litigation handling per client (`clients.notices_handled`, off = out of `notice_facts`); closing sweep part 4 closes notices the portal has moved past (§20 of the positions).
 
+**Cases and kinds (9 Oct 2026):** notices are grouped into one case per issue (view
+`notice_cases`: the portal case ID, registration one case per client) with a tab per kind
+(`notice_track`: notices & demands, refunds, registration, other) on the command centre and
+`/notices-cases`; a case's page `/notices-case/:clientId/:caseKey` merges its notices and
+case folder documents and flags what is new. Notice pages show the facts and tabs of their
+kind (`src/lib/noticeCases.ts`, §21 of the positions). Every client's documents are read by
+the AI and fill the overview (`notice_case_overview`); Learning is chosen per client
+(`clients.ai_learning`). Lines under a page title show problems only (`ProblemLine`).
+
 **Read `docs/NOTICES_LITIGATION_POSITIONS.md` before changing auto-close
 logic, tile definitions, due dates, clocks, stages, the plan ranking or alerts.** The positions were
 implemented by engineering judgement, not confirmed in a firm sign-off.

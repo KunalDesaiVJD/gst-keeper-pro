@@ -24,6 +24,7 @@ import { ReadSourceChip, VerifyButtons } from './ReadSourceChip';
 import { DemandTable } from './DemandTable';
 import { PeriodEditor } from './PeriodEditor';
 import { ReadingStatus } from './ReadingStatus';
+import type { CaseOverview, OverviewKey } from '@/lib/noticeCases';
 
 interface Fact {
   key: string;
@@ -34,6 +35,15 @@ interface Fact {
   /** The columns behind the value (Confirm / Clear act on those still to verify). */
   fields: ReadField[];
   mono?: boolean;
+  /** Filled from the notice's case (another notice, or what the AI read in a case document), not the notice itself. */
+  fromCase?: string | null;
+}
+
+/** A blank filled from the case: the value, and where it came from. */
+function fromCase(ov: CaseOverview | undefined, key: OverviewKey, fmt?: (v: string) => string): { value: string; from: string } | null {
+  const v = ov?.fields[key];
+  if (!v?.value) return null;
+  return { value: fmt ? fmt(v.value) : v.value, from: `${v.source === 'ai' ? 'AI, from' : 'From'} ${v.label || 'the case'}` };
 }
 
 /** One chip for a value made of two columns: "verify" wins, then Typed, then the first. */
@@ -58,7 +68,11 @@ export const NoticeReadCard: React.FC<{
   error?: unknown;
   canEdit: boolean;
   onChanged: () => void;
-}> = ({ ws, reading, loading, error, canEdit, onChanged }) => {
+  /** The notice's case: blanks are filled from its other notices and documents (20261011100000). */
+  caseOverview?: CaseOverview;
+  /** Only the reading (summary, status): a refund, registration or record-only notice shows its own facts elsewhere. */
+  readingOnly?: boolean;
+}> = ({ ws, reading, loading, error, canEdit, onChanged, caseOverview, readingOnly }) => {
   const { user } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
   const n = ws.notice;
@@ -92,13 +106,38 @@ export const NoticeReadCard: React.FC<{
       sub: amountGap ? `the demand by head adds up to ${fmtInr(n.demand_total)}` : null,
     },
   ];
+  // Blanks filled from the case (never over what the notice itself says).
+  const fill: [string, OverviewKey, ((v: string) => string)?][] = [
+    ['section', 'section_of_law'], ['fy', 'financial_year', (v) => fmtFy(v)], ['din', 'din'], ['officer', 'officer'],
+    ['hearing', 'hearing_date', (v) => fmtDate(v)], ['amount', 'amount_of_demand', (v) => fmtInr(Number(v))],
+  ];
+  for (const [k, key, fmt] of fill) {
+    const x = facts.find((ff) => ff.key === k);
+    const c = fromCase(caseOverview, key, fmt);
+    if (x && x.value === '—' && c) { x.value = c.value; x.fromCase = c.from; if (k === 'hearing') x.sub = caseOverview?.fields.hearing_note?.value ?? x.sub; }
+  }
+  // A value the PDF reader found but could not check is still better than a blank: shown, marked as unchecked.
+  const unappliedAll = unappliedOf(reading?.aiDone);
+  const UNCHECKED: Record<string, string> = { section: 'section_of_law', fy: 'financial_year', din: 'din', officer: 'issued_by', amount: 'amount_of_demand', hearing: 'hearing_date' };
+  const usedUnchecked = new Set<string>();
+  for (const x of facts) {
+    const u = UNCHECKED[x.key] && unappliedAll.find((v) => v.key === UNCHECKED[x.key]);
+    if (x.value === '—' && u && u.value) { x.value = u.value; x.fromCase = 'AI, from this notice\'s PDF · not checked'; usedUnchecked.add(u.key); }
+  }
+  const period = facts.find((ff) => ff.key === 'period');
+  const pf = caseOverview?.fields.period_from?.value;
+  const pt = caseOverview?.fields.period_to?.value;
+  if (period && period.value === '—' && (pf || pt)) {
+    period.value = fmtPeriod(pf ?? null, pt ?? null) || '—';
+    period.fromCase = `${(caseOverview?.fields.period_from ?? caseOverview?.fields.period_to)?.source === 'ai' ? 'AI, from' : 'From'} ${(caseOverview?.fields.period_from ?? caseOverview?.fields.period_to)?.label || 'the case'}`;
+  }
   const demandProv = provenance(n, 'demand');
   const hasDemand = demandRows(n.demand).length > 0;
   const toVerify = [...facts.flatMap((x) => verifying(x.fields)), ...verifying(['demand'])];
   const valuesToVerify = facts.filter((x) => verifying(x.fields).length).length + (verifying(['demand']).length ? 1 : 0);
 
   const conflicts = [...conflictsOf(reading?.aiDone, n), ...conflictsOf(reading?.portal, n)];
-  const unapplied = unappliedOf(reading?.aiDone);
+  const unapplied = unappliedOf(reading?.aiDone).filter((u) => !usedUnchecked.has(u.key));
   const mismatch = gstinMismatch(reading?.aiDone);
   const officer = portalText(reading?.portal);
   const block = readBlock(reading, !!readableDocument(n, ws.folder));
@@ -127,8 +166,8 @@ export const NoticeReadCard: React.FC<{
     : 'No reader has filled this notice yet: values are as typed or as the portal list shows them.';
 
   return (
-    <SectionCard title="What the notice says" description={description}
-      actions={canEdit && valuesToVerify > 1 && (
+    <SectionCard title={readingOnly ? 'The notice' : 'What the notice says'} description={readingOnly ? undefined : description}
+      actions={!readingOnly && canEdit && valuesToVerify > 1 && (
         <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={busy === 'all'}
           onClick={() => act('all', 'Every value read from the PDF', toVerify, 'confirm')}>
           Confirm all {valuesToVerify}<span className="sr-only"> values read from the PDF</span>
@@ -145,7 +184,7 @@ export const NoticeReadCard: React.FC<{
         </div>
       )}
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-4">
+      {!readingOnly && <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-4">
         {facts.map((x) => {
           const pending = verifying(x.fields);
           const empty = x.value === '—';
@@ -156,6 +195,7 @@ export const NoticeReadCard: React.FC<{
                 {x.value}
               </dd>
               {x.sub && <dd className="break-words text-xs text-muted-foreground">{x.sub}</dd>}
+              {x.fromCase && <dd className="truncate text-[11px] text-muted-foreground" title={x.fromCase}>{x.fromCase}</dd>}
               {x.key === 'period' && missingPeriod && <dd className="text-xs font-medium text-destructive-strong">Tax period not on record. The Evidence tab needs it.</dd>}
               {(x.prov.kind !== 'empty' || (canEdit && x.key === 'period')) && (
                 <dd className="flex flex-wrap items-center gap-1 pt-0.5">
@@ -174,9 +214,9 @@ export const NoticeReadCard: React.FC<{
             </div>
           );
         })}
-      </dl>
+      </dl>}
 
-      {hasDemand && (
+      {!readingOnly && hasDemand && (
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <span className="font-semibold">Demand by head</span>
@@ -191,7 +231,7 @@ export const NoticeReadCard: React.FC<{
         </div>
       )}
 
-      {conflicts.length > 0 && (
+      {!readingOnly && conflicts.length > 0 && (
         <div className="space-y-1 rounded-md border border-warning/60 px-2.5 py-1.5 text-xs">
           <p className="flex items-center gap-1.5 font-semibold">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden /> Different values found — the notice keeps what it had
@@ -202,7 +242,7 @@ export const NoticeReadCard: React.FC<{
         </div>
       )}
 
-      {unapplied.length > 0 && (
+      {!readingOnly && unapplied.length > 0 && (
         <p className="break-words text-xs text-muted-foreground">
           Read from the PDF but not applied: {unapplied.map((u) => `${u.label.toLowerCase()} “${u.value}” (${u.why})`).join('; ')}.
         </p>

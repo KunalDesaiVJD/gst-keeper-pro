@@ -25,7 +25,7 @@ import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { FilterPill } from '@/components/notices/FilterPill';
 import { useExtensionBridge } from '@/hooks/useExtensionBridge';
-import { AsOfLine, FilterChips, FilterTile, type Chip } from '@/components/notices/reports/ReportBits';
+import { FilterChips, FilterTile, type Chip } from '@/components/notices/reports/ReportBits';
 import { Drc03Table, type Drc03Sort } from '@/components/notices/reports/Drc03Table';
 import { periodText, useDrc03Ledger, type Drc03Row, type NoticeRef } from '@/components/notices/reports/ledgerData';
 import { DRC03_GROUPS, DRC03_SHOW, drc03ShowLabel, matchesDrc03Show, parseDrc03Show } from '@/components/notices/reports/ledgerStatus';
@@ -175,7 +175,7 @@ const AllClientsDrc03Page: React.FC = () => {
   };
 
   return (
-    <NoticesShell section="DRC-03 payments" status={<AsOfLine at={ledger.dataUpdatedAt} />}
+    <NoticesShell section="DRC-03 payments"
       actions={canExportData() && (
         <>
           <Button size="sm" variant="outline" className={WS_BTN} onClick={exportXlsx} disabled={!rows.length}>

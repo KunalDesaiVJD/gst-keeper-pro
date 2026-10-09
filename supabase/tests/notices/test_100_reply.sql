@@ -104,6 +104,8 @@ SELECT t_eq(ai_read_allowed('c4100000-0000-0000-0000-000000000001'), 'off', 'rea
 SELECT t_eq((SELECT count(*) FROM notice_extractions WHERE source = 'ai'), 0::bigint, 'nothing was queued while off');
 SELECT t_eq(notice_read_request('c4200000-0000-0000-0000-000000000021', NULL, 'Asha') ->> 'reason', 'off', 'a request while off says so');
 -- The office agent reads here (since 20261009100000 the Edge Function is the default runner).
+-- Consent per client here (every client is read since 20261011100000, the firm's choice).
+UPDATE ai_settings SET consent_scope = 'consented';
 UPDATE ai_settings SET read_enabled = true, runner = 'office_agent';
 SELECT t_eq(notice_read_request('c4200000-0000-0000-0000-000000000021', NULL, 'Asha') ->> 'reason', 'no_consent', 'no consent, nothing queued');
 SELECT t_eq(ai_set_consent(ARRAY['c4100000-0000-0000-0000-000000000001']::uuid[], ist_today(), 'Engagement letter clause'), 1, 'consent recorded');
@@ -154,7 +156,8 @@ SELECT t_eq(notice_read_claim('office-pc-1'), NULL::jsonb, 'no consent: nothing 
 SELECT t_eq((SELECT x.status || ' ' || x.reason_class FROM notice_extractions x JOIN gst_notices g ON g.id = x.notice_id WHERE g.reference_number = 'ZD-ASMT'),
             'cancelled no_consent', 'the queued job is cancelled with the reason');
 SELECT ai_set_consent(ARRAY['c4100000-0000-0000-0000-000000000001']::uuid[], ist_today(), 'Engagement letter clause');
-SELECT t_eq(notice_read_request('c4200000-0000-0000-0000-000000000030') ->> 'queued', 'true', 're-queued after consent');
+SELECT t_eq((SELECT x.status FROM notice_extractions x JOIN gst_notices g ON g.id = x.notice_id WHERE g.reference_number = 'ZD-ASMT'),
+            'queued', 're-queued by the consent itself (20261011100000)');
 -- The day's cap stops claims.
 INSERT INTO ai_audit_log (purpose, status, cost_usd) VALUES ('notice_read', 'ok', 10);
 SELECT t_eq(notice_read_claim('office-pc-1') ->> 'capped', 'true', 'over the daily cap: nothing is claimed');
