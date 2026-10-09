@@ -19,8 +19,10 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // client with a password issue recorded in GST Keeper (Notices · Settings).
 // 0.8.3 records a CAPTCHA the portal kept rejecting as a CAPTCHA failure
 // (captcha_failed, retried), never as a password issue.
-// 0.4.x to 0.8.2 are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.8.3';
+// 0.8.4 pushes a NIL GSTR-1, pulls e-invoices and keeps IRNs on a GSTR-1 push;
+// 0.8.5 records a NIL push in Filing Status itself, even if the page was closed.
+// 0.4.x to 0.8.4 are still allowed (their writes are safe), only nudged to update.
+export const RECOMMENDED_EXTENSION_VERSION = '0.8.5';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -44,24 +46,27 @@ export function isExtensionUpdateRecommended(version: string | null | undefined)
   return !!version && !isExtensionOutdated(version) && compareVersions(version, RECOMMENDED_EXTENSION_VERSION) < 0;
 }
 
+/** What each version added, newest last — the nudge lists what the user's copy is missing. */
+const GAINS: [string, string][] = [
+  ['0.5.0', 'is faster (skips documents already saved) and fills the sync run ledger'],
+  ['0.6.0', 'reads applications on the portal (appeals and others), the registration status and the GSTR-3A period'],
+  ['0.7.0', 'runs the scheduled syncs in the Chrome that has your CAPTCHA extension (tick "Run scheduled syncs in this Chrome" in its popup)'],
+  ['0.7.1', 'reads the documents of new or changed refunds in the notices sync'],
+  ['0.8.0', "links each notice's own PDF, reply date, officer and DIN from its case folder"],
+  ['0.8.1', 'never retries a wrong or changed portal password: the client is logged and the sync moves on'],
+  ['0.8.2', "leaves the portal's change-password page at once and skips every client with a password issue listed in Notices · Settings"],
+  ['0.8.3', 'records a CAPTCHA the portal kept rejecting as a CAPTCHA failure, never as a password issue'],
+  ['0.8.4', 'pushes NIL GSTR-1 returns, pulls e-invoices and keeps IRNs on a GSTR-1 push'],
+  ['0.8.5', 'records a NIL push in Filing Status itself, even if the page was closed'],
+];
+
 export function updateRecommendedMessage(version: string | null | undefined): string {
-  const scheduled = 'runs the scheduled syncs in the Chrome that has your CAPTCHA extension (tick "Run scheduled syncs in this Chrome" in its popup)';
-  const refundDocs = 'reads the documents of new or changed refunds in the notices sync';
-  const passwords = 'never retries a wrong or changed portal password: the client is logged and the sync moves on to the next one';
-  const linking = "links each notice's own PDF, reply date, officer and DIN from its case folder";
-  const gains = version && compareVersions(version, '0.8.1') >= 0
-    ? 'leaves the portal\'s change-password page at once and skips every client with a password issue listed in Notices · Settings'
-    : version && compareVersions(version, '0.8.0') >= 0
-    ? passwords
-    : version && compareVersions(version, '0.7.1') >= 0
-    ? `${linking}, and ${passwords}`
-    : version && compareVersions(version, '0.7.0') >= 0
-    ? `also ${refundDocs}, ${linking}, and ${passwords}`
-    : version && compareVersions(version, '0.6.0') >= 0
-    ? `${scheduled}, and ${refundDocs}`
-    : version && compareVersions(version, '0.5.0') >= 0
-      ? `also reads applications on the portal (appeals and others), the registration status and the GSTR-3A period, and ${scheduled}`
-      : `is faster (skips documents already saved), fills the sync run ledger, reads applications on the portal and the registration status, and ${scheduled}`;
-  return `Browser extension v${version} still syncs, but v${RECOMMENDED_EXTENSION_VERSION} ${gains}. `
+  const missing = GAINS
+    .filter(([v]) => (!version || compareVersions(v, version) > 0) && compareVersions(v, RECOMMENDED_EXTENSION_VERSION) <= 0)
+    .map(([, text]) => text);
+  // The newest three, so the message stays readable for a very old copy.
+  const shown = missing.slice(-3);
+  const list = shown.length > 1 ? `${shown.slice(0, -1).join('; ')}; and ${shown[shown.length - 1]}` : shown[0] ?? 'has the latest fixes';
+  return `Browser extension v${version} still syncs, but v${RECOMMENDED_EXTENSION_VERSION} ${list}${missing.length > 3 ? ', among other fixes' : ''}. `
     + 'Reload it from the updated extension folder (chrome://extensions → Reload) when convenient.';
 }

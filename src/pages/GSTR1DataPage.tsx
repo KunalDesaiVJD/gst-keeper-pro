@@ -52,7 +52,7 @@ import EinvoiceRecoPanel, { type EinvoicePullRow } from '@/components/gstr1/Einv
 import { attachIrn, extractDocs, isEinvoiceableBookDoc, type EinvoiceDocRow } from '@/lib/einvoice/einvoice';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
-import { compareVersions } from '@/lib/extensionVersion';
+import { compareVersions, isExtensionUpdateRecommended, updateRecommendedMessage } from '@/lib/extensionVersion';
 
 /** First extension version that pushes a NIL GSTR-1 (and pulls e-invoices). */
 const NIL_PUSH_MIN_EXTENSION = '0.8.4';
@@ -251,6 +251,7 @@ const GSTR1DataPage: React.FC = () => {
   // The extension's own version (appbridge.js posts it with the ready ping).
   // NIL push and the e-invoice pull exist only from 0.8.4.
   const [extVersion, setExtVersion] = useState<string | null>(null);
+  const extNudged = useRef(false);
   // NIL return push (no JSON needed) — confirmation dialog.
   const [nilDialogOpen, setNilDialogOpen] = useState(false);
   // Upload confirmation for an e-invoice client with no IRNs pulled: an
@@ -672,7 +673,17 @@ const GSTR1DataPage: React.FC = () => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) { setExtReady(true); if (typeof d.version === 'string') setExtVersion(d.version); }
+      if (d.__gstkExtensionReady) {
+        setExtReady(true);
+        if (typeof d.version === 'string') {
+          setExtVersion(d.version);
+          // NIL push and the e-invoice pull need a newer copy than the office may run: say so once.
+          if (!extNudged.current && isExtensionUpdateRecommended(d.version)) {
+            extNudged.current = true;
+            toast.warning(updateRecommendedMessage(d.version), { id: 'ext-update' });
+          }
+        }
+      }
       if (d.__gstkPullEinvoiceStarted) {
         const r = d.__gstkPullEinvoiceStarted as { ok: boolean; error?: string };
         if (!r.ok) {
