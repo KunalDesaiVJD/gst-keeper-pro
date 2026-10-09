@@ -21,8 +21,11 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // (captcha_failed, retried), never as a password issue.
 // 0.8.4 pushes a NIL GSTR-1, pulls e-invoices and keeps IRNs on a GSTR-1 push;
 // 0.8.5 records a NIL push in Filing Status itself, even if the page was closed.
-// 0.4.x to 0.8.4 are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.8.5';
+// 0.8.6 records every GSTR-3B push in Push History itself (filled, partial or
+// failed; a filled one shows Pushed), names the client and period in every push
+// result, and lets Refresh errors record an upload the portal processed.
+// 0.4.x to 0.8.5 are still allowed (their writes are safe), only nudged to update.
+export const RECOMMENDED_EXTENSION_VERSION = '0.8.6';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -58,6 +61,7 @@ const GAINS: [string, string][] = [
   ['0.8.3', 'records a CAPTCHA the portal kept rejecting as a CAPTCHA failure, never as a password issue'],
   ['0.8.4', 'pushes NIL GSTR-1 returns, pulls e-invoices and keeps IRNs on a GSTR-1 push'],
   ['0.8.5', 'records a NIL push in Filing Status itself, even if the page was closed'],
+  ['0.8.6', 'records every GSTR-3B push itself (so a filled one shows Pushed even if the page was closed), says which client and period each push was for, no longer types into the cess box of an import row, and lets Refresh errors record an upload the portal processed'],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

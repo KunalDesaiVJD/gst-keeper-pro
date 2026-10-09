@@ -2,6 +2,59 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-09 — GSTR-3B pushes recorded by the extension; every push result names its return (v0.8.6)
+
+Pairs with the database trigger on `gstr3b_push_versions` (same release) that marks
+the return Pushed in Filing Status from a row with status `ok`. Pulls, notices, the
+login and the popup are as 0.8.5 runs them.
+
+- **Every GSTR-3B push is recorded by the extension.** When a push ends (filled,
+  partly filled or failed, including every early failure), the background worker
+  writes one Push History row (`gstr3b_push_versions`: the job's client and
+  period, who pushed, status `ok` / `partial` / `failed`, the summary, the count
+  filled, what was skipped and the pushed draft). Up to 0.8.5 only an open GSTR-3B
+  page recorded it, against whatever client and month it showed when the result
+  arrived; a closed or reloaded page lost the push. The result the page hears now
+  says whether that write landed (`recorded`). `mark_filing_pushed` is not called
+  for GSTR-3B: the trigger does it.
+- **A GSTR-3B push says how complete it was.** The result has `status`: `filled`,
+  `partial` or `failed` (`ok` stays true for the first two, for older pages). A
+  column the portal locks, the 2nd and 3rd column of an import row (it has no such
+  input) and 3.1(a)/(b) that are not on the form are tolerated; 3.1(a)/(b) are
+  listed under `portalFilled` ("not typed; the portal keeps the value it filled
+  from GSTR-1"). Anything else skipped, or a tile that would not open, is
+  `partial`. The skip wording ('— row not found', 'portal-locked', 'no input at
+  that position') is unchanged, because the app reads older results by it.
+- **Fixed: 0 typed into the cess box of 4A(1) / 4A(2).** Import of goods and
+  import of services have two inputs, IGST and CESS; the CGST figure went into the
+  second. They now get IGST only.
+- **3.1(a) / (b) are looked for harder.** They were "row not found" on every push.
+  Their labels now take any spacing, then the row starting "(a)" / "(b)" in the
+  open 3.1 form (never a Table 4 row). A row still not found lists the first eight
+  row labels the form shows, so the next push tells what the portal calls them.
+- **Each GSTR-3B value is read back.** One the portal did not keep is reported as
+  "col N — portal kept …" and is not counted as filled. Values are rounded to 2
+  decimals before they are typed.
+- **Every push result names its return.** GSTR-1 upload, NIL, Refresh errors and
+  GSTR-3B results carry the job's `clientId` and `period_month` (`MM/YYYY`), so the
+  page can ignore a result for a client or month it no longer shows.
+- **No push ends without a result.** A session that kept dropping, an unexpected
+  error, a refused login, a push left idle for 10 minutes and a closed portal tab
+  now each give the page a failed result (a closed tab writes nothing to the
+  database, because what the portal did is unknown). Before, the page spun until
+  reloaded.
+- **Refresh errors records an upload the portal processed.** It first reads the
+  Upload History's latest row: Processed with no errors is saved as `accepted`
+  (the `gstr1_data` trigger then marks it Pushed), Error Occurred as `failed` with
+  the portal's reason. Before, Refresh always wrote `partial`, so an upload that
+  timed out after 6 minutes could never become Pushed. A Refresh that cannot reach
+  the portal leaves the upload's status alone.
+- **Portal labels are never invoice errors.** "Error report generation requested",
+  "Generate error report" and "NA" are no longer stored as error rows.
+- **IFF months (QRMP, months 1 and 2 of the quarter).** When the dashboard has no
+  GSTR-1 tile, the upload uses the IFF tile with the same Prepare Offline / Upload
+  steps. Not yet confirmed against the live portal.
+
 ## 2026-10-09 — NIL push recorded in Filing Status (v0.8.5)
 
 - **A NIL GSTR-1 push is recorded by the extension itself**: after ticking

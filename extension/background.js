@@ -961,7 +961,8 @@ const API = {
   // draft itself and passes the finished JSON straight through here rather
   // than this function re-deriving it from gstr1_data/itc_summaries/rcm_data
   // a second time (which would duplicate real tax-computation logic in two
-  // languages and risk them drifting apart).
+  // languages and risk them drifting apart). 0.8.6: the outcome is recorded
+  // by recordGstr3bPush below, with this job's client and period.
   startGstr3bPush: async (info) => {
     const c = await API.getClient(info.clientId);
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
@@ -1105,6 +1106,30 @@ const API = {
     return rpc('mark_filing_pushed', {
       p_client_id: clientId, p_return_type: 'GSTR-1', p_period_month: period_month, p_actor: actorId || null,
     });
+  },
+
+  // 0.8.6: every GSTR-3B push (filled, partial or failed) is recorded here, by
+  // the job's own client and period, as a Push History row — before, only an
+  // open GSTR-3B page recorded it, against whatever client it showed. Same
+  // REST path and anon key as gstr1_upload_versions (the table's policy is
+  // open to public). status: 'ok' for 'filled', else 'partial' / 'failed'; a
+  // database trigger turns an 'ok' row into Pushed in Filing Status, so
+  // mark_filing_pushed is not called here. portalFilled entries (3.1(a)/(b),
+  // left to the portal) are kept with the skipped ones. The content script
+  // awaits this and tells the page whether it landed (`recorded`).
+  recordGstr3bPush: async ({ clientId, period_month, actorId, status, summary, filled, skipped, portalFilled, payload }) => {
+    if (!clientId || !period_month) return false;
+    await post('gstr3b_push_versions', [{
+      client_id: clientId,
+      period_month,
+      actor_id: actorId || null,
+      status: status === 'filled' ? 'ok' : status,
+      summary: summary || null,
+      filled_count: Number(filled) || 0,
+      skipped: [...(skipped || []), ...(portalFilled || [])],
+      payload: payload || null,
+    }]);
+    return true;
   },
 
   saveEinvoicePull: async ({ clientId, period_month, actorId, json, status, message }) => {
@@ -1336,6 +1361,32 @@ if (chrome.alarms && chrome.alarms.onAlarm) {
   // Inside the job slot: its read, ledger write and write-back never interleave with a new start.
   chrome.alarms.onAlarm.addListener((a) => { if (a.name === WATCHDOG) jobSlot(watchdogTick).catch(() => {}); });
 }
+// ── A push whose portal tab was closed (0.8.6) ──────────────────────────────
+// A GSTR-1 upload, NIL, Refresh errors or GSTR-3B push reports from its own
+// portal tab; closed before that, the page waited for a result for ever. Now
+// it hears that the tab went. Nothing is written to gstr1_data or
+// gstr3b_push_versions: what the portal did with it is unknown.
+const PUSH_RESULT_KEYS = { gstr1_upload: 'gstk_gstr1_upload_result', gstr1_refresh: 'gstk_gstr1_upload_result', gstr3b_push: 'gstk_gstr3b_push_result' };
+const PUSH_TAB_CLOSED = 'The portal tab was closed before the portal reported a result. Check the portal; for a GSTR-1 upload use Refresh errors.';
+async function pushTabClosed(tabId) {
+  const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
+  const key = job && PUSH_RESULT_KEYS[job.mode];
+  if (!key || job.tabId !== tabId) return;
+  const c = (job.clients && job.clients[job.idx || 0]) || {};
+  const result = {
+    ok: false, status: 'failed', error: PUSH_TAB_CLOSED, summary: PUSH_TAB_CLOSED,
+    clientId: c.clientId || null, period_month: job.period || null, at: Date.now(),
+  };
+  if (job.mode === 'gstr3b_push') Object.assign(result, { filled: 0, skipped: [], portalFilled: [], recorded: false });
+  else result.errors = [];
+  await chrome.storage.local.set({ [key]: result });
+  await chrome.storage.local.remove('gstk_active_job');
+}
+// In the job slot, so it never interleaves with a new start or the watchdog.
+if (chrome.tabs && chrome.tabs.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => { jobSlot(() => pushTabClosed(tabId)).catch(() => {}); });
+}
+
 if (chrome.notifications && chrome.notifications.onClicked) {
   // Clicking the CAPTCHA notice brings the sync tab forward.
   chrome.notifications.onClicked.addListener(async (id) => {
