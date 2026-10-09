@@ -1,11 +1,12 @@
 // E-invoice threshold tracking: loads every client's per-FY turnover, assesses
-// it with assessEinvoice (threshold.ts), and raises a one-off alert — plus an
-// email to the client — when a client approaches or crosses the ₹5 crore limit.
+// it with assessEinvoice (threshold.ts), and lists the clients due a one-off
+// alert email when they approach or cross the ₹5 crore limit.
 //
-// One round of queries for all clients (no per-client requests). Alerts are
-// idempotent: einvoice_threshold_alerts is UNIQUE (client_id, financial_year,
-// level), so a second staff member opening the page at the same time cannot
-// send a second email — whoever loses the insert race skips the email.
+// Sending is manual (the firm's decision, 9 Oct 2026): nothing goes out on a
+// page load; staff press Send on the Clients page. Each alert is claimed by
+// its einvoice_threshold_alerts row, UNIQUE (client_id, financial_year,
+// level), so two staff pressing Send together cannot email the client twice.
+// One round of queries for all clients (no per-client requests).
 
 import { supabase } from '@/integrations/supabase/client';
 import { GST_FIRM, renderTemplate } from '@/lib/gstReminders';
@@ -139,14 +140,21 @@ export async function loadEinvoiceAssessments(clientIds?: string[]): Promise<Map
   return (await loadEinvoiceData(clientIds)).assessments;
 }
 
-export interface EinvoiceAlertSyncResult {
-  /** Clients that needed an alert (approaching / crossed, not ticked, not exempt). */
-  candidates: number;
-  /** New alert rows recorded this run. */
-  created: number;
-  /** Emails queued this run. */
-  emailed: number;
-  /** New alerts for clients with no email on file. */
+/** A client that is due a threshold alert that has not been sent yet. */
+export interface DueEinvoiceAlert {
+  client: EinvoiceClient;
+  att: EinvoiceAttention;
+  level: EinvoiceAlertLevel;
+  fy: string;
+  turnover: number;
+}
+
+export interface EinvoiceAlertSendResult {
+  /** Alerts recorded and emailed this run. */
+  sent: number;
+  /** Skipped: already sent by someone else in the meantime. */
+  alreadySent: number;
+  /** Skipped: no email on file (nothing recorded, so it stays on the list). */
   noEmail: number;
   failed: number;
 }
@@ -160,20 +168,16 @@ const ACTION_LINE: Record<EinvoiceAttention, string> = {
 const fmtRupees = (n: number) => Math.round(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
 /**
- * Records one alert per (client, deciding FY, level) for clients that are
- * approaching or have crossed the limit and are not ticked as e-invoice
- * clients, and emails the client (when an email is on file) through
- * email_outbox. Already-alerted (client, FY, level) pairs are skipped, so this
- * is safe to run on every page load.
+ * Clients due a threshold alert: approaching or past the limit, not ticked as
+ * e-invoice clients, not exempt, and not yet alerted for that (deciding FY,
+ * level). Read-only — nothing is recorded or sent; staff send from the Clients
+ * page (sendEinvoiceThresholdAlerts).
  */
-export async function syncEinvoiceThresholdAlerts(
+export async function listDueEinvoiceAlerts(
   assessments: Map<string, EinvoiceAssessment>,
   clientsById: Map<string, EinvoiceClient>,
-  actor?: { id?: string | null; name?: string | null } | null,
-): Promise<EinvoiceAlertSyncResult> {
-  const res: EinvoiceAlertSyncResult = { candidates: 0, created: 0, emailed: 0, noEmail: 0, failed: 0 };
-
-  const due: { client: EinvoiceClient; att: EinvoiceAttention; level: EinvoiceAlertLevel; fy: string; turnover: number }[] = [];
+): Promise<DueEinvoiceAlert[]> {
+  const due: DueEinvoiceAlert[] = [];
   assessments.forEach((a, clientId) => {
     const client = clientsById.get(clientId);
     if (!client || client.einvoice_exemption) return;
@@ -182,8 +186,7 @@ export async function syncEinvoiceThresholdAlerts(
     if (!att || !level || !a.decidingYear) return;
     due.push({ client, att, level, fy: a.decidingYear.financial_year, turnover: a.decidingYear.turnover });
   });
-  res.candidates = due.length;
-  if (!due.length) return res;
+  if (!due.length) return due;
 
   // One read of the existing alerts for these clients.
   const existing = await readAll<{ client_id: string; financial_year: string; level: string }>((a, b) =>
@@ -195,31 +198,47 @@ export async function syncEinvoiceThresholdAlerts(
       .range(a, b) as unknown as PromiseLike<{ data: { client_id: string; financial_year: string; level: string }[] | null; error: { message: string } | null }>,
   );
   const seen = new Set(existing.map((e) => `${e.client_id}|${e.financial_year}|${e.level}`));
-  const fresh = due.filter((d) => !seen.has(`${d.client.id}|${d.fy}|${d.level}`));
-  if (!fresh.length) return res;
+  return due
+    .filter((d) => !seen.has(`${d.client.id}|${d.fy}|${d.level}`))
+    .sort((x, y) => y.turnover - x.turnover);
+}
+
+/**
+ * Sends the given alerts — only when staff press Send. Each one is claimed by
+ * inserting its alert row (the unique constraint stops a double send), then
+ * the client is emailed through email_outbox. A client with no email is
+ * skipped without recording anything, so it stays due until an email is added.
+ */
+export async function sendEinvoiceThresholdAlerts(
+  items: DueEinvoiceAlert[],
+  actor?: { id?: string | null; name?: string | null } | null,
+): Promise<EinvoiceAlertSendResult> {
+  const res: EinvoiceAlertSendResult = { sent: 0, alreadySent: 0, noEmail: 0, failed: 0 };
+  if (!items.length) return res;
 
   const { data: tpl } = await supabase
     .from('email_templates')
     .select('subject, body, is_active')
     .eq('key', 'einvoice_threshold_alert')
     .maybeSingle();
-  const canEmail = !!tpl && tpl.is_active !== false;
+  if (!tpl || tpl.is_active === false) {
+    res.failed = items.length;
+    return res;
+  }
 
-  for (const d of fresh) {
-    // Claim the alert first: the unique constraint decides who sends the email.
+  for (const d of items) {
+    if (!d.client.email) { res.noEmail += 1; continue; }
+
     const { data: alert, error } = await supabase
       .from('einvoice_threshold_alerts')
       .insert({ client_id: d.client.id, financial_year: d.fy, level: d.level, turnover: d.turnover })
       .select('id')
       .single();
     if (error || !alert) {
-      if (error && error.code !== '23505') res.failed += 1; // 23505 = someone else just raised it
+      if (error?.code === '23505') res.alreadySent += 1; // someone else just sent it
+      else res.failed += 1;
       continue;
     }
-    res.created += 1;
-
-    if (!d.client.email) { res.noEmail += 1; continue; }
-    if (!canEmail) continue;
 
     const vars: Record<string, string> = {
       contact_person: d.client.name,
@@ -249,12 +268,17 @@ export async function syncEinvoiceThresholdAlerts(
       })
       .select('id')
       .single();
-    if (outErr || !out) { res.failed += 1; continue; }
-    res.emailed += 1;
+    if (outErr || !out) {
+      // Release the claim so the client stays on the list and can be retried.
+      await supabase.from('einvoice_threshold_alerts').delete().eq('id', alert.id);
+      res.failed += 1;
+      continue;
+    }
+    res.sent += 1;
     await supabase.from('einvoice_threshold_alerts').update({ email_outbox_id: out.id }).eq('id', alert.id);
   }
 
   // Flush once so the emails go out now; the daily cron is the backstop.
-  if (res.emailed) void supabase.functions.invoke('send-gst-email', { body: {} }).catch(() => {});
+  if (res.sent) void supabase.functions.invoke('send-gst-email', { body: {} }).catch(() => {});
   return res;
 }
