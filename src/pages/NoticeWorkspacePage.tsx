@@ -53,8 +53,9 @@ import { ActivityTab } from '@/components/notices/workspace/ActivityTab';
 import { PaymentsTab } from '@/components/notices/workspace/PaymentsTab';
 import { HearingsTab } from '@/components/notices/workspace/HearingsTab';
 import { DeadlinesTab } from '@/components/notices/workspace/DeadlinesTab';
-import { KeyFactsLine, nextHint } from '@/components/notices/workspace/SidePanel';
+import { KeyFactsLine } from '@/components/notices/workspace/SidePanel';
 import { KindFacts } from '@/components/notices/cases/KindFacts';
+import { CaseLinkSuggest } from '@/components/notices/cases/CaseLinkSuggest';
 import { caseHref, caseKeyOf, loadCase, tabsFor, trackOfCategory, useCaseOverview, type Track } from '@/lib/noticeCases';
 import { cn } from '@/lib/utils';
 
@@ -126,6 +127,8 @@ function DueChip({ ws }: { ws: Workspace }) {
   const f = ws.fact;
   if (f.stage === 'closed') return <Badge variant="secondary" className="text-[11px]">Closed{ws.notice.close_reason ? ` · ${closeReasonText(ws.notice.close_reason).replace('Closed automatically: ', 'auto: ')}` : ''}</Badge>;
   if (f.reply_date) return <Badge variant="success" className="text-[11px]">Replied {fmtDate(f.reply_date)}</Badge>;
+  // An order under appeal has met its clock (20261012100000): the appeal is the task now.
+  if (f.stage === 'appeal') return <Badge variant="info" className="text-[11px]">In appeal</Badge>;
   // A type that needs no reply runs on no reply clock (contract A): no due chip.
   if (f.response_need === 'none') return null;
   if (!f.effective_due) return <Badge variant="secondary" className="text-[11px]">No due date</Badge>;
@@ -312,7 +315,7 @@ const NoticeWorkspacePage: React.FC = () => {
             {n.case_id && <>Case <span className="font-mono">{n.case_id}</span> · </>}
             {n.din && <>DIN <span className="font-mono">{n.din}</span> · </>}
             {n.issue_date ? `issued ${fmtDate(n.issue_date)}` : 'issue date not known'}{n.issued_by ? ` by ${n.issued_by}` : ''}
-            {' · '}{n.portal_key?.startsWith('manual:') ? 'typed in' : 'captured by the portal sync'} {fmtDateTime(n.first_seen_at)}
+            {n.portal_key?.startsWith('manual:') ? ' · typed in' : ''}
             {n.pdf_url && <> · <a href={n.pdf_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-primary hover:underline">PDF <ExternalLink className="h-3 w-3" /></a></>}
           </p>
           {n.description && <p className="line-clamp-2 text-sm" title={n.description}>{sentenceCase(n.description)}</p>}
@@ -346,17 +349,15 @@ const NoticeWorkspacePage: React.FC = () => {
             <StagePicker value={f.stage} since={f.stage_changed_at} by={f.stage_changed_by} disabled={!canEdit} onChange={changeStage} />
             {ws.issues.length > 0 && <Badge variant="info" className="text-[11px]">{ws.issues.length} issue{ws.issues.length === 1 ? '' : 's'} · {fmtInrShort(issuesTotal)}</Badge>}
             {latestDraft && <Badge variant={latestDraft.status === 'approved' ? 'success' : latestDraft.status === 'changes_requested' ? 'warning' : 'secondary'} className="text-[11px]">Draft v{latestDraft.version} · {DRAFT_STATUS[latestDraft.status] ?? latestDraft.status.replace('_', ' ')}</Badge>}
-            {nextHint(ws) && <span className="text-xs text-muted-foreground">Next: {nextHint(ws)}</span>}
           </div>
-          <KeyFactsLine ws={ws} />
-          {caseKey && caseRow.data && ((caseRow.data.notices ?? 0) > 1 || (caseRow.data.documents ?? 0) > 0) && (
-            <p className="text-xs">
+          <KeyFactsLine ws={ws}>
+            {caseKey && caseRow.data && ((caseRow.data.notices ?? 0) > 1 || (caseRow.data.documents ?? 0) > 0) && (
               <Link to={caseHref(n.client_id, caseKey)} className="font-medium text-primary hover:underline">
-                The whole case: {caseRow.data.notices} notice{caseRow.data.notices === 1 ? '' : 's'}{caseRow.data.documents ? `, ${caseRow.data.documents} document${caseRow.data.documents === 1 ? '' : 's'}` : ''} →
+                Case: {caseRow.data.notices} notice{caseRow.data.notices === 1 ? '' : 's'}{caseRow.data.documents ? `, ${caseRow.data.documents} document${caseRow.data.documents === 1 ? '' : 's'}` : ''}
+                {(caseRow.data.new_items ?? 0) > 0 ? ` · ${caseRow.data.new_items} new` : ''} →
               </Link>
-              {(caseRow.data.new_items ?? 0) > 0 && <Badge variant="info" className="ml-1.5 text-[10px]">{caseRow.data.new_items} new</Badge>}
-            </p>
-          )}
+            )}
+          </KeyFactsLine>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canEdit && !closed && track !== 'other' && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('docs')}><Mail className="h-3.5 w-3.5" /> Ask client</Button>}
@@ -379,6 +380,9 @@ const NoticeWorkspacePage: React.FC = () => {
           {primary}
         </div>
       </header>
+
+      <CaseLinkSuggest noticeId={n.id} clientId={n.client_id} caseId={n.case_id} canEdit={canEdit}
+        onLinked={() => { reload(); qc.invalidateQueries({ queryKey: ['notice-case'] }); qc.invalidateQueries({ queryKey: ['notice-case-overview'] }); }} />
 
       {!canEdit && <Note tone="info">You can read this notice. Changing it needs the "Edit notice status" permission — ask a GST manager.</Note>}
 

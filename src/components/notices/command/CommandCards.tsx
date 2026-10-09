@@ -86,17 +86,24 @@ const QUIET_LINK = 'underline underline-offset-2 hover:text-foreground focus-vis
  * (contract §A), which open as their own list (dash=0).
  */
 /** Under the command centre's title: only a problem (syncs failing, the last run failed); nothing on a normal day. */
+const SHORT_REASON: Record<string, string> = {
+  agent_offline: 'Chrome offline', login_failed: 'login failed', captcha_failed: 'CAPTCHA', captcha_timeout: 'CAPTCHA not typed',
+  not_reached: 'not reached', portal_error: 'portal error', stalled: 'stalled', session_mismatch: 'wrong GSTIN',
+};
+
+/** Under the home page's title: one short line, only when clients are not synced or the last run failed. */
 export const AutopilotLine: React.FC<{ cc: CommandCentre; onOpenTypes?: () => void }> = ({ cc }) => {
   const run = cc.health.last_run;
   const reasons = Object.entries(cc.health.failing).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  const total = reasons.reduce((s, [, n]) => s + n, 0);
   return (
     <ProblemLine problems={[
-      ...reasons.map(([reason, n]) => ({
-        key: reason,
-        text: `${plural(n, 'client')} not synced: ${reasonLabel(reason).toLowerCase()}`,
-        to: `/notices-company-list?status=failed&reason=${encodeURIComponent(reason)}`,
-      })),
-      run && run.status === 'failed' && { key: 'run', text: `The last sync run failed ${fmtAgo(run.started_at)}`, to: '/notices-company-list?tab=log' },
+      total > 0 && {
+        key: 'failing',
+        text: `${plural(total, 'client')} not synced (${reasons.map(([r, n]) => `${n} ${SHORT_REASON[r] ?? reasonLabel(r).toLowerCase()}`).join(' · ')})`,
+        to: '/notices-company-list?status=failed',
+      },
+      run && run.status === 'failed' && { key: 'run', text: `Last sync run failed ${fmtAgo(run.started_at)}`, to: '/notices-company-list?tab=log' },
     ]} />
   );
 };

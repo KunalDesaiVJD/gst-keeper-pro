@@ -11,6 +11,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLinkSuggestions, type Drc03Suggestion } from '@/lib/noticeCases';
 import { linkPayment, unlinkPayment, type Workspace } from '@/lib/noticeWorkspace';
 import { istToday } from '@/lib/noticeFacts';
 import { fmtDate, fmtInr } from '@/lib/noticeFormat';
@@ -40,6 +41,14 @@ export const PaymentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged:
     try { await fn(); toast.success(ok); onChanged(); }
     catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
+  };
+
+  const sug = useLinkSuggestions(ws.notice.id);
+  const suggested = (sug.data?.drc03 ?? []).filter((x) => !linked.has(x.arn)).slice(0, 3);
+  const linkSuggested = (x: Drc03Suggestion) => {
+    if (!user) return;
+    run(() => linkPayment(ws.notice.id, { kind: 'drc03', drc03_arn: x.arn, amount: Number(x.amount || 0), paid_on: x.filed_date, note: x.cause }, user), `DRC-03 ${x.arn} linked`)
+      .then(() => sug.refetch());
   };
 
   const linkDrc03 = () => {
@@ -84,6 +93,21 @@ export const PaymentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged:
 
       {canEdit && (
         <div className="grid gap-3 lg:grid-cols-2">
+          {canEdit && suggested.length > 0 && (
+            <SectionCard className="lg:col-span-2" title="Suggested DRC-03s" description="Not certain, so not linked by themselves">
+              <ul className="divide-y">
+                {suggested.map((x) => (
+                  <li key={x.arn} className="flex items-center gap-2 py-1.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs"><span className="font-mono">{x.arn}</span> · {fmtInr(x.amount)}{x.filed_date ? ` · ${fmtDate(x.filed_date)}` : ''}</div>
+                      <div className="truncate text-[11px] text-muted-foreground" title={x.cause ?? undefined}>{x.reasons.join(' · ')}{x.cause ? ` — ${x.cause}` : ''}</div>
+                    </div>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => linkSuggested(x)}>Link</Button>
+                  </li>
+                ))}
+              </ul>
+            </SectionCard>
+          )}
           <SectionCard title="Link a DRC-03" description={candidates.length ? `${candidates.length} of this client's DRC-03s are not linked to it` : 'No unlinked DRC-03 of this client on record'}>
             <div className="flex gap-2">
               <Select value={arn} onValueChange={setArn} disabled={!candidates.length}>
