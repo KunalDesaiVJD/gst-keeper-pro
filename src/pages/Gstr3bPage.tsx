@@ -32,9 +32,11 @@ import type { RecoDiffResult } from '@/lib/suspendedRecoCalc';
 import { computeGstReceivableRecoDiff } from '@/lib/gstReceivableRecoCalc';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
-import { markFilingPushed } from '@/lib/markFilingPushed';
+import { effectiveFilingReturnType } from '@/lib/markFilingPushed';
+import { classifyGstr3bPush, skipLabel, type Gstr3bPushOutcome } from '@/lib/gstr3bPushStatus';
 import { diffGstr3b, summariseDiff } from '@/utils/gstReturnDiff';
 import ReturnDiffTable from '@/components/dialogs/ReturnDiffTable';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null; builder_itc_type?: string | null; registration_type?: string | null }
 
@@ -60,19 +62,107 @@ const inr = (n: number | undefined) =>
   (n || n === 0 ? Number(n) : 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const sum3 = (t?: { igst: number; cgst: number; sgst: number }) => (t ? t.igst + t.cgst + t.sgst : 0);
 
-// The push extension (a separate, unversioned codebase this app doesn't
-// control) reports skipped fields as free-text strings, e.g. "3.1(a) Outward
-// taxable supplies — row not found". Matched with a tolerant regex rather
-// than a bare substring since wording there can drift without any test here
-// catching it. 3.1(a)/3.1(b) are singled out as "critical" because they're
-// the two fields that carry the outward-tax rupees this whole reconciliation
-// is about — a skip there means real tax never reached the portal.
-const CRITICAL_SKIP_PATTERNS = [/3\.1\s*\(\s*a\s*\)/i, /3\.1\s*\(\s*b\s*\)/i];
+// How a push reads, from its status and the free-text skips the extension
+// reports (e.g. "4A(5) All other ITC col 2 — …"). The rule is the
+// extension's own (src/lib/gstr3bPushStatus.ts), applied to every version's
+// words: failed is red; partial, or an older 'ok' row with a skip that is not
+// tolerated, amber; a clean fill green. 3.1(a)/(b) left to the portal are not
+// a fault (the portal keeps what it filled from GSTR-1), so they no longer
+// turn a push red.
 type PushSeverity = 'ok' | 'warning' | 'critical';
-const pushSeverity = (skipped: string[] | null | undefined): PushSeverity => {
-  if (!skipped || skipped.length === 0) return 'ok';
-  const hasCritical = skipped.some((s) => CRITICAL_SKIP_PATTERNS.some((re) => re.test(s)));
-  return hasCritical ? 'critical' : 'warning';
+const pushSeverity = (status: string | null | undefined, skipped: string[] | null | undefined): PushSeverity => {
+  if (status === 'failed') return 'critical';
+  if (status === 'partial') return 'warning';
+  return classifyGstr3bPush({ ok: true, skipped }).realSkips.length ? 'warning' : 'ok';
+};
+
+// The draft as the extension types it: every amount to 2 decimals, the
+// portal's own precision. A figure that is not a number comes from a broken
+// source row and would be typed as text; a negative amount in Table 3.1 or 4
+// is a sign error upstream (credit notes netted past zero, a reversal entered
+// with its sign) that the portal rejects field by field, so neither is pushed.
+// 4(C) is left out of the sign check: the extension never types it (the
+// portal computes it), and reversals above the credit available make it
+// negative legitimately.
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const roundDraft = (v: unknown): unknown => {
+  if (typeof v === 'number') return Number.isFinite(v) ? round2(v) : v;
+  if (Array.isArray(v)) return v.map(roundDraft);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, roundDraft(x)]));
+  return v;
+};
+const DRAFT_ROWS: Record<string, string> = {
+  osup_det: '3.1(a) Outward taxable supplies',
+  osup_zero: '3.1(b) Zero rated supplies',
+  osup_nil_exmp: '3.1(c) Nil rated and exempted supplies',
+  isup_rev: '3.1(d) Inward supplies under reverse charge',
+  osup_nongst: '3.1(e) Non-GST outward supplies',
+  'itc_avl:IMPG': '4A(1) Import of goods',
+  'itc_avl:IMPS': '4A(2) Import of services',
+  'itc_avl:ISRC': '4A(3) Inward supplies under reverse charge',
+  'itc_avl:ISD': '4A(4) Inward supplies from ISD',
+  'itc_avl:OTH': '4A(5) All other ITC',
+  'itc_rev:RUL': '4B(1) ITC reversed under rules 38, 42 and 43 and section 17(5)',
+  'itc_rev:OTH': '4B(2) ITC reversed, others',
+  itc_net: '4C Net ITC',
+  'itc_rclmd:OTH': '4D(1) ITC reclaimed',
+  'itc_inelg:RUL': '4D Ineligible ITC under section 17(5)',
+  'itc_inelg:OTH': '4D(2) Ineligible ITC under section 16(4) and place of supply',
+};
+const DRAFT_FIELDS: Record<string, string> = {
+  txval: 'taxable value', iamt: 'integrated tax', camt: 'central tax', samt: 'state/UT tax', csamt: 'cess',
+  igst: 'integrated tax', cgst: 'central tax', sgst: 'state/UT tax', cess: 'cess',
+};
+const INTER_ROWS: Record<string, string> = {
+  unreg_details: '3.2 Inter-state supplies to unregistered persons',
+  comp_details: '3.2 Inter-state supplies to composition taxable persons',
+  uin_details: '3.2 Inter-state supplies to UIN holders',
+};
+const draftCell = (path: string[]): string => {
+  // itc_elg rows are keyed by their `ty` (itc_avl › IMPG › igst), 3.2 rows by their POS.
+  const field = path[path.length - 1];
+  const fieldWord = DRAFT_FIELDS[field] ?? field;
+  if (path[0] === 'inter_sup' && INTER_ROWS[path[1]]) return `${INTER_ROWS[path[1]]} (${path[2]}), ${fieldWord}`;
+  if (path[0] === 'inward_sup') {
+    return `5 Exempt, nil rated and non-GST inward supplies (${path[2] === 'NONGST' ? 'non-GST' : 'GST'}), ${field === 'inter' ? 'inter-state' : field === 'intra' ? 'intra-state' : fieldWord}`;
+  }
+  const row = path[0] === 'itc_elg' && path.length === 4 ? `${path[1]}:${path[2]}` : path[1];
+  return DRAFT_ROWS[row] ? `${DRAFT_ROWS[row]}, ${fieldWord}` : path.join(' › ');
+};
+const draftProblems = (json: unknown): string[] => {
+  const out: string[] = [];
+  const walk = (v: unknown, path: string[]) => {
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) out.push(`${draftCell(path)} is not a number`);
+      else if (v < 0 && (path[0] === 'sup_details' || path[0] === 'itc_elg') && path[1] !== 'itc_net') {
+        out.push(`${draftCell(path)} is negative (₹${inr(v)})`);
+      }
+    } else if (Array.isArray(v)) {
+      v.forEach((x, i) => {
+        const o = (x && typeof x === 'object' ? x : {}) as { ty?: unknown; pos?: unknown };
+        walk(x, [...path, o.ty !== undefined ? String(o.ty) : o.pos !== undefined ? `POS ${String(o.pos)}` : String(i + 1)]);
+      });
+    } else if (v && typeof v === 'object') {
+      Object.entries(v).forEach(([k, x]) => walk(x, [...path, k]));
+    }
+  };
+  walk(json, []);
+  return out;
+};
+
+/** A push left without a result this long is given up on (the extension's own idle limit is 10 minutes). */
+const PUSH_WATCHDOG_MS = 20 * 60 * 1000;
+
+// 3.1(a) and (b) as a draft has them, for the note that the portal kept its own.
+const draft31 = (json: unknown) => {
+  const sup = (json as { sup_details?: Record<string, Record<string, number> | undefined> } | null)?.sup_details;
+  if (!sup) return null;
+  const a = sup.osup_det || {};
+  const b = sup.osup_zero || {};
+  return {
+    a: { txval: Number(a.txval) || 0, igst: Number(a.iamt) || 0, cgst: Number(a.camt) || 0, sgst: Number(a.samt) || 0 },
+    b: { txval: Number(b.txval) || 0, igst: Number(b.iamt) || 0 },
+  };
 };
 
 // One line of a portal-style table (Particulars + up to four amount columns).
@@ -123,6 +213,61 @@ const Gstr3bPage: React.FC = () => {
   // NIL Return flag, shared with GSTR-1's filing_status.is_nil mechanism.
   const [isNilReturn, setIsNilReturn] = useState(false);
   const [isTogglingNil, setIsTogglingNil] = useState(false);
+  const confirm = useConfirm();
+
+  // Same filing_status row GSTR-1 locks against — 'Filed' disables the push,
+  // same reasoning: don't let the tool alter a draft behind what was already
+  // submitted to GSTN.
+  const [filingStatus, setFilingStatus] = useState<string | null>(null);
+  const isFiled = filingStatus === 'Filed';
+  // GSTR-3B can only genuinely be NIL if GSTR-1 for the same client/period
+  // was also NIL — they cover the same underlying outward/inward activity.
+  // Gate the checkbox on GSTR-1's own is_nil flag so it isn't offered (and
+  // can't be mis-ticked) for a period that plainly has real supplies.
+  const [gstr1IsNil, setGstr1IsNil] = useState(false);
+
+  // The rows Filing Status shows: 'GSTR-3B (Q)' at an IFF client's quarter
+  // end and its 'GSTR-1 (IFF)', else the plain types. Read off the plain rows,
+  // an IFF client's status and NIL ticks were ones Filing Status never shows.
+  const fetchFilingStatus = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) { setIsNilReturn(false); setFilingStatus(null); setGstr1IsNil(false); return; }
+    const [type3b, type1] = await Promise.all([
+      effectiveFilingReturnType(selectedClient, 'GSTR-3B', selectedMonth),
+      effectiveFilingReturnType(selectedClient, 'GSTR-1', selectedMonth),
+    ]);
+    const [gstr3bRes, gstr1Res] = await Promise.all([
+      supabase.from('filing_status').select('status, is_nil')
+        .eq('client_id', selectedClient).eq('return_type', type3b).eq('period_month', selectedMonth).maybeSingle(),
+      supabase.from('filing_status').select('is_nil')
+        .eq('client_id', selectedClient).eq('return_type', type1).eq('period_month', selectedMonth).maybeSingle(),
+    ]);
+    setIsNilReturn(!!(gstr3bRes.data as any)?.is_nil);
+    setFilingStatus(((gstr3bRes.data as any)?.status || null) as string | null);
+    setGstr1IsNil(!!(gstr1Res.data as any)?.is_nil);
+  }, [selectedClient, selectedMonth]);
+  useEffect(() => { fetchFilingStatus(); }, [fetchFilingStatus]);
+
+  const handleToggleNilReturn = async (checked: boolean) => {
+    if (!selectedClient || !selectedMonth) return;
+    setIsTogglingNil(true);
+    setIsNilReturn(checked);
+    try {
+      const returnType = await effectiveFilingReturnType(selectedClient, 'GSTR-3B', selectedMonth);
+      const { error } = await supabase
+        .from('filing_status')
+        .upsert(
+          { client_id: selectedClient, return_type: returnType, period_month: selectedMonth, is_nil: checked, updated_by: user?.id ?? null },
+          { onConflict: 'client_id,return_type,period_month' },
+        );
+      if (error) throw error;
+      toast.success(checked ? 'Marked as NIL Return.' : 'NIL Return unmarked.');
+    } catch (err: any) {
+      setIsNilReturn(!checked);
+      toast.error('Failed to update NIL Return: ' + err.message);
+    } finally {
+      setIsTogglingNil(false);
+    }
+  };
 
   // "Push to GST Portal" — extension-driven, mirrors the GSTR-1 upload bridge.
   // GSTR-3B has no offline-JSON path (it's a live web form), so this fills
@@ -130,7 +275,16 @@ const Gstr3bPage: React.FC = () => {
   // human reviews and submits.
   const [extReady, setExtReady] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
-  const [pushResult, setPushResult] = useState<{ ok: boolean; summary: string; skipped?: string[] } | null>(null);
+  const [pushResult, setPushResult] = useState<{
+    status: Gstr3bPushOutcome;
+    summary: string;
+    /** Skips that are not tolerated: fields the staffer must enter on the portal. */
+    realSkips: string[];
+    /** 3.1(a)/(b): not typed, the portal keeps the values it filled from GSTR-1. */
+    portalFilled: string[];
+    /** The draft that was pushed, when this page pushed it. */
+    draft: unknown;
+  } | null>(null);
   // What the last push actually sent. A ref (not state) because the portal's
   // reply arrives on a window message whose handler must read the payload as it
   // was at push time, without re-rendering to get at it.
@@ -164,9 +318,13 @@ const Gstr3bPage: React.FC = () => {
 
   useEffect(() => { fetchVersions(); }, [fetchVersions]);
 
-  const recordPushVersion = useCallback(async (v: { status: string; summary: string; filledCount?: number; skipped?: string[] | null }) => {
+  // Only for a push the extension did not record itself (before 0.8.6, or its
+  // own write failed). The database trigger on gstr3b_push_versions marks an
+  // 'ok' row's return Pushed, on the row Filing Status shows; this page no
+  // longer calls mark_filing_pushed, which would stamp it twice.
+  const recordPushVersion = useCallback(async (v: { status: Gstr3bPushOutcome; summary: string; filledCount?: number; skipped?: string[] | null }) => {
     if (!selectedClient || !selectedMonth) return;
-    await supabase.from('gstr3b_push_versions').insert({
+    const { error } = await supabase.from('gstr3b_push_versions').insert({
       client_id: selectedClient,
       period_month: selectedMonth,
       actor_id: user?.id ?? null,
@@ -180,8 +338,10 @@ const Gstr3bPage: React.FC = () => {
       // today's data, which is precisely what the audit trail must not do.
       payload: (pushedPayloadRef.current as any) ?? null,
     });
+    if (error) toast.warning('The push could not be saved to Push History, so it is not recorded in Filing Status: ' + error.message);
     fetchVersions();
-  }, [selectedClient, selectedMonth, user?.id, fetchVersions]);
+    fetchFilingStatus();
+  }, [selectedClient, selectedMonth, user?.id, fetchVersions, fetchFilingStatus]);
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
@@ -189,31 +349,54 @@ const Gstr3bPage: React.FC = () => {
       if (!d || typeof d !== 'object') return;
       if (d.__gstkExtensionReady) setExtReady(true);
       if (d.__gstkPushGstr3bResult) {
-        const r = d.__gstkPushGstr3bResult as { ok: boolean; summary?: string; error?: string; skipped?: string[]; filled?: number };
+        const r = d.__gstkPushGstr3bResult as {
+          ok: boolean;
+          status?: 'filled' | 'partial' | 'failed';
+          summary?: string;
+          error?: string;
+          skipped?: string[];
+          portalFilled?: string[];
+          filled?: number;
+          clientId?: string | null;
+          period_month?: string | null;
+          recorded?: boolean;
+        };
         setIsPushing(false);
-        if (r.ok) {
-          toast.success(r.summary || 'GSTR-3B form filled.');
-          setPushResult({ ok: true, summary: r.summary || 'GSTR-3B form filled.', skipped: r.skipped });
-          recordPushVersion({ status: 'ok', summary: r.summary || 'GSTR-3B form filled.', filledCount: r.filled, skipped: r.skipped });
-          // The push landed, so the filing status becomes 'Pushed' — the one
-          // status no one can select by hand. Failing to record it must not
-          // look like the push itself failed, so it only warns.
-          if (selectedClient && selectedMonth) {
-            markFilingPushed({
-              clientId: selectedClient,
-              returnType: 'GSTR-3B',
-              periodMonth: selectedMonth,
-              actorId: user?.id ?? null,
-            }).then((res) => {
-              if (res.ok) setFilingStatus(res.status);
-              else toast.warning('Pushed, but the filing status could not be updated: ' + res.error);
-            });
-          }
+        const c = classifyGstr3bPush(r);
+        // 0.8.6 names the return the push was for. One for another client or
+        // month (the selection changed while the portal tab ran) belongs to
+        // that return: nothing is written for the one shown here.
+        if (r.clientId && r.period_month && (r.clientId !== selectedClient || r.period_month !== selectedMonth)) {
+          const name = clients.find((x) => x.id === r.clientId)?.name || 'another client';
+          const outcome = c.status === 'ok' ? 'filled' : c.status === 'partial' ? 'partly filled' : 'failed';
+          toast.warning(
+            `The GSTR-3B push for ${name} · ${toShort(r.period_month)} has finished (${outcome}). It belongs to that client and month, not the one shown here. `
+            + (r.recorded
+              ? 'It is recorded in that return\'s Push History.'
+              : 'It was NOT recorded: open that client and month, check the portal and Push History.'),
+            { duration: 20000 },
+          );
+          return;
+        }
+        const failed = c.status === 'failed';
+        const summary = failed ? (r.error || r.summary || 'GSTR-3B push failed.') : (r.summary || 'GSTR-3B form filled.');
+        if (c.status === 'ok') toast.success(summary);
+        else if (c.status === 'partial') {
+          toast.warning(`GSTR-3B partly filled: ${c.realSkips.length || 'some'} field(s) could not be set. It is not marked Pushed until a clean push.`, { duration: 15000 });
+        } else toast.error(summary);
+        setPushResult({ status: c.status, summary, realSkips: c.realSkips, portalFilled: c.portalFilled, draft: pushedPayloadRef.current });
+        if (r.recorded) {
+          // 0.8.6 wrote the Push History row itself, and the database trigger
+          // records Pushed from an 'ok' row: read both back.
+          fetchVersions();
+          fetchFilingStatus();
         } else {
-          const msg = r.error || r.summary || 'GSTR-3B push failed.';
-          toast.error(msg);
-          setPushResult({ ok: false, summary: msg });
-          recordPushVersion({ status: 'failed', summary: msg });
+          recordPushVersion({
+            status: c.status,
+            summary,
+            filledCount: r.filled,
+            skipped: [...(r.skipped || []), ...(r.portalFilled || [])],
+          });
         }
       }
     };
@@ -227,55 +410,20 @@ const Gstr3bPage: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [recordPushVersion, selectedClient, selectedMonth, user?.id]);
+  }, [recordPushVersion, fetchVersions, fetchFilingStatus, clients, selectedClient, selectedMonth]);
 
   useEffect(() => { setPushResult(null); }, [selectedClient, selectedMonth]);
 
-  // Same filing_status row GSTR-1 locks against — 'Filed' disables the push,
-  // same reasoning: don't let the tool alter a draft behind what was already
-  // submitted to GSTN.
-  const [filingStatus, setFilingStatus] = useState<string | null>(null);
-  const isFiled = filingStatus === 'Filed';
-  // GSTR-3B can only genuinely be NIL if GSTR-1 for the same client/period
-  // was also NIL — they cover the same underlying outward/inward activity.
-  // Gate the checkbox on GSTR-1's own is_nil flag so it isn't offered (and
-  // can't be mis-ticked) for a period that plainly has real supplies.
-  const [gstr1IsNil, setGstr1IsNil] = useState(false);
-
-  const fetchFilingStatus = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) { setIsNilReturn(false); setFilingStatus(null); setGstr1IsNil(false); return; }
-    const [gstr3bRes, gstr1Res] = await Promise.all([
-      supabase.from('filing_status').select('status, is_nil')
-        .eq('client_id', selectedClient).eq('return_type', 'GSTR-3B').eq('period_month', selectedMonth).maybeSingle(),
-      supabase.from('filing_status').select('is_nil')
-        .eq('client_id', selectedClient).eq('return_type', 'GSTR-1').eq('period_month', selectedMonth).maybeSingle(),
-    ]);
-    setIsNilReturn(!!(gstr3bRes.data as any)?.is_nil);
-    setFilingStatus(((gstr3bRes.data as any)?.status || null) as string | null);
-    setGstr1IsNil(!!(gstr1Res.data as any)?.is_nil);
-  }, [selectedClient, selectedMonth]);
-  useEffect(() => { fetchFilingStatus(); }, [fetchFilingStatus]);
-
-  const handleToggleNilReturn = async (checked: boolean) => {
-    if (!selectedClient || !selectedMonth) return;
-    setIsTogglingNil(true);
-    setIsNilReturn(checked);
-    try {
-      const { error } = await supabase
-        .from('filing_status')
-        .upsert(
-          { client_id: selectedClient, return_type: 'GSTR-3B', period_month: selectedMonth, is_nil: checked, updated_by: user?.id ?? null },
-          { onConflict: 'client_id,return_type,period_month' },
-        );
-      if (error) throw error;
-      toast.success(checked ? 'Marked as NIL Return.' : 'NIL Return unmarked.');
-    } catch (err: any) {
-      setIsNilReturn(!checked);
-      toast.error('Failed to update NIL Return: ' + err.message);
-    } finally {
-      setIsTogglingNil(false);
-    }
-  };
+  // A push that never reports back (a closed tab or a dead end on an
+  // extension before 0.8.6) must not leave the button spinning for ever.
+  useEffect(() => {
+    if (!isPushing) return;
+    const t = setTimeout(() => {
+      setIsPushing(false);
+      toast.warning('No result from the browser extension after 20 minutes. Check the GST portal tab and Push History before pushing again.', { duration: 20000 });
+    }, PUSH_WATCHDOG_MS);
+    return () => clearTimeout(t);
+  }, [isPushing]);
 
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];
@@ -424,6 +572,29 @@ const Gstr3bPage: React.FC = () => {
       toast.error('Resolve the Suspended Reco / GST Receivable Reco difference before pushing to the portal.');
       return;
     }
+    // Every amount to 2 decimals, and nothing the portal would refuse (see roundDraft / draftProblems).
+    const draft = roundDraft(result.json);
+    const bad = draftProblems(draft);
+    if (bad.length) {
+      toast.error(
+        `This GSTR-3B draft cannot be pushed: ${bad.slice(0, 4).join('; ')}${bad.length > 4 ? `; and ${bad.length - 4} more` : ''}. `
+        + 'Correct the source (GSTR-1, ITC Summary, RCM or GSTR-3B Adjustments) and push again.',
+        { duration: 20000 },
+      );
+      return;
+    }
+    // With no ITC Summary, Table 4 is all zero (buildGstr3bJson's flag), and
+    // the extension types those zeros over the ITC the portal filled from
+    // GSTR-2B. Sometimes right (a period with no credit), so it asks.
+    if (result.flags.some((f) => f.startsWith('No ITC Summary'))) {
+      const go = await confirm({
+        title: 'No ITC Summary for this period',
+        description: 'There is no ITC Summary for this period, so Table 4 would be typed as 0 and overwrite the ITC the portal filled from GSTR-2B. Push anyway?',
+        confirmText: 'Push anyway',
+        destructive: true,
+      });
+      if (!go) return;
+    }
     // The check reads the GSTR-1 JSON this 3B was built from — that is where
     // Table 11A/11B live.
     const { data: g1 } = await supabase
@@ -445,14 +616,14 @@ const Gstr3bPage: React.FC = () => {
 
     setIsPushing(true);
     setPushResult(null);
-    pushedPayloadRef.current = result.json;
+    pushedPayloadRef.current = draft;
     window.postMessage(
       {
         __gstkPushGstr3b: {
           clientId: selectedClient,
           period_month: selectedMonth,
           actorId: user?.id ?? null,
-          gstr3bJson: result.json,
+          gstr3bJson: draft,
         },
       },
       '*'
@@ -562,8 +733,8 @@ const Gstr3bPage: React.FC = () => {
                 })}
               </span>
               {versions[0].status && (
-                <Badge variant={versions[0].status === 'ok' ? 'success' : 'destructive'} className="text-[10px] font-medium">
-                  {versions[0].status === 'ok' ? 'succeeded' : 'failed'}
+                <Badge variant={versions[0].status === 'ok' ? 'success' : versions[0].status === 'partial' ? 'warning' : 'destructive'} className="text-[10px] font-medium">
+                  {versions[0].status === 'ok' ? 'succeeded' : versions[0].status === 'partial' ? 'partly filled' : 'failed'}
                 </Badge>
               )}
             </p>
@@ -672,11 +843,13 @@ const Gstr3bPage: React.FC = () => {
       {/* Push-to-portal result — what got filled, what didn't, and the
           standing reminder that Table 5 / 4(D)(1) are never touched. */}
       {pushResult && (() => {
-        // A push that "succeeded" can still have silently dropped the fields
-        // that carry the actual outward-tax rupees (3.1(a)/3.1(b)) — that's
-        // not a success, it's a partial failure the extension doesn't know
-        // to report as one. Never let a non-empty skipped list render green.
-        const severity: PushSeverity = pushResult.ok ? pushSeverity(pushResult.skipped) : 'critical';
+        // Partial (a field the extension could not set) is never green: the
+        // return is not Pushed until a clean push. 3.1(a)/(b) left to the
+        // portal are not a fault, but their figures are the portal's, so the
+        // draft's own are shown beside the note to compare before filing.
+        const severity: PushSeverity = pushResult.status === 'failed' ? 'critical' : pushResult.status === 'partial' ? 'warning' : 'ok';
+        const leftToPortal = Array.from(new Set(pushResult.portalFilled.map((s) => skipLabel(s).split(' ')[0])));
+        const own31 = leftToPortal.length > 0 ? draft31(pushResult.draft ?? result?.json) : null;
         const styles: Record<PushSeverity, string> = {
           ok: 'border-success/40 bg-success/10',
           warning: 'border-warning/40 bg-warning/10',
@@ -689,13 +862,31 @@ const Gstr3bPage: React.FC = () => {
             <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${iconTone[severity]}`} />
             <div className="min-w-0 flex-1">
               <p className="break-words">{pushResult.summary}</p>
-              {severity === 'critical' && pushResult.ok && (
-                <p className="mt-0.5 font-semibold text-destructive">⚠ Outward tax (3.1(a)/3.1(b)) was NOT filled on the portal — enter it manually before Confirm / Offset Liability / File.</p>
+              {pushResult.status === 'partial' && (
+                <p className="mt-0.5 font-semibold text-warning">
+                  {pushResult.realSkips.length || 'Some'} field(s) could not be set: enter {pushResult.realSkips.length === 1 ? 'it' : 'them'} on the portal before Confirm / Offset Liability / File.
+                  {' '}Not marked Pushed in Filing Status until a clean push.
+                </p>
               )}
-              {pushResult.skipped && pushResult.skipped.length > 0 && (
+              {pushResult.realSkips.length > 0 && (
                 <ul className="mt-0.5 list-disc pl-4 text-muted-foreground">
-                  {pushResult.skipped.map((s, i) => <li key={i}>{s}</li>)}
+                  {pushResult.realSkips.map((s, i) => <li key={i}>{s}</li>)}
                 </ul>
+              )}
+              {leftToPortal.length > 0 && (
+                <p className="mt-1 break-words">
+                  <span className="font-medium">{leftToPortal.join(' and ')} {leftToPortal.length === 1 ? 'was' : 'were'} not typed:</span>
+                  {' '}the portal keeps the values it filled from GSTR-1. Compare them with this draft before filing
+                  {own31 ? (
+                    <>
+                      {': '}3.1(a) taxable value <span className="tabular-nums">₹{inr(own31.a.txval)}</span>, tax{' '}
+                      <span className="tabular-nums">₹{inr(own31.a.igst + own31.a.cgst + own31.a.sgst)}</span>{' '}
+                      (IGST ₹{inr(own31.a.igst)}, CGST ₹{inr(own31.a.cgst)}, SGST ₹{inr(own31.a.sgst)});
+                      {' '}3.1(b) taxable value <span className="tabular-nums">₹{inr(own31.b.txval)}</span>, IGST{' '}
+                      <span className="tabular-nums">₹{inr(own31.b.igst)}</span>.
+                    </>
+                  ) : '.'}
+                </p>
               )}
             </div>
             <Button variant="ghost" size="sm" className="h-6 w-6 shrink-0 p-0" onClick={() => setPushResult(null)} aria-label="Dismiss">
@@ -811,15 +1002,15 @@ const Gstr3bPage: React.FC = () => {
               </TableHeader>
               <TableBody className="[&_td]:px-2 [&_td]:py-1.5">
                 {versions.map((v, idx) => {
-                  const severity: PushSeverity = v.status === 'ok' ? pushSeverity(v.skipped) : 'critical';
+                  const severity: PushSeverity = pushSeverity(v.status, v.skipped);
                   // versions are ordered newest first, so the version this one
                   // is compared against is the next entry in the list.
                   const prev = versions[idx + 1];
                   const canDiff = !!v.payload && !!prev?.payload;
                   const diffRows = canDiff ? diffGstr3b(prev.payload, v.payload) : [];
                   const statusVariant = v.status === 'ok'
-                    ? (severity === 'ok' ? 'success' : severity === 'warning' ? 'warning' : 'destructive')
-                    : v.status === 'failed' ? 'destructive' : 'secondary';
+                    ? (severity === 'ok' ? 'success' : 'warning')
+                    : v.status === 'partial' ? 'warning' : v.status === 'failed' ? 'destructive' : 'secondary';
                   const viewButtonClass = severity === 'critical' ? 'text-destructive hover:text-destructive' : severity === 'warning' ? 'text-warning hover:text-warning' : '';
                   return (
                   <React.Fragment key={v.id}>
@@ -833,7 +1024,7 @@ const Gstr3bPage: React.FC = () => {
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusVariant} className="text-[10px] font-medium">
-                          {v.status === 'ok' ? `Filled ${v.filled_count ?? 0}` : v.status || '—'}
+                          {v.status === 'ok' ? `Filled ${v.filled_count ?? 0}` : v.status === 'partial' ? `Partly filled ${v.filled_count ?? 0}` : v.status || '—'}
                         </Badge>
                         {severity === 'critical' && <AlertTriangle className="inline-block h-3.5 w-3.5 ml-1 text-destructive" />}
                       </TableCell>

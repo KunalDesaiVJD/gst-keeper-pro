@@ -189,6 +189,8 @@ const DATA_SECTIONS = [
   'at', 'ata', 'txpd', 'txpda', 'nil', 'hsn', 'doc_issue', 'supeco', 'supecoa',
 ];
 const hasData = (v: unknown): boolean => (Array.isArray(v) ? v.length > 0 : isObj(v) && Object.values(v).some(hasData));
+/** False for a file the portal rejects as "No section data" (the empty-return rule below). */
+export const gstr1HasSectionData = (json: unknown): boolean => isObj(json) && DATA_SECTIONS.some((k) => hasData(json[k]));
 
 /**
  * Checks a GSTR-1 JSON against the portal's rules. `period` is MM/YYYY; the

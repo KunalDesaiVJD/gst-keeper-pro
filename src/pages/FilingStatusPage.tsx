@@ -86,6 +86,12 @@ const filingStatusAccent = (status: string): string => {
   }
 };
 
+// When GST Keeper pushed the return to the portal ("09 Oct, 3:41 pm", IST).
+// Shown under the status whatever it now says, so a push stays in view after
+// staff move the status on or the return is Filed.
+const pushedAtLabel = (iso: string): string =>
+  new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+
 
 // MM/YYYY -> "Jul-26", matching gstr1_data.period_month (same conversion as
 // fetchGstr3b.ts / Gstr3bPage.tsx).
@@ -1983,6 +1989,11 @@ const FilingStatusPage: React.FC = () => {
                       </Popover>
                     )}
                   </div>
+                  {record.pushed_at && (
+                    <p className="mt-0.5 truncate text-[10px] leading-tight text-muted-foreground" title="Pushed to the GST portal through GST Keeper">
+                      Pushed {pushedAtLabel(record.pushed_at)}
+                    </p>
+                  )}
                   {returnType === 'GSTR-1' && (
                     <DirectFilingRowBadge record={record} state={directFilingStateFor(record)} />
                   )}

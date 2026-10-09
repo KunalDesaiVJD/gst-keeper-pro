@@ -44,7 +44,7 @@ import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { isBuilderGenerated as isBuilderSourced, stripInternalFields } from '@/utils/builderGstr1';
-import { markFilingPushed } from '@/lib/markFilingPushed';
+import { effectiveFilingReturnType, markFilingPushed } from '@/lib/markFilingPushed';
 import { diffGstr1, summariseDiff } from '@/utils/gstReturnDiff';
 import ReturnDiffTable from '@/components/dialogs/ReturnDiffTable';
 import Gstr1ManualEntryPanel from '@/components/gstr1/Gstr1ManualEntryPanel';
@@ -54,10 +54,15 @@ import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDial
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 import { compareVersions, isExtensionUpdateRecommended, updateRecommendedMessage } from '@/lib/extensionVersion';
 import { describeHsnFixes, describeHsnProblems, editableUqc, isServiceHsn, normaliseGstr1Hsn, normaliseUqc } from '@/lib/gstr1/uqc';
+import { describeGstr1Issues, gstr1HasSectionData, tidyGstr1Json, validateGstr1Json } from '@/lib/gstr1/validate';
 import { UqcSelect, UqcText } from '@/components/gstr1/UqcSelect';
 
 /** First extension version that pushes a NIL GSTR-1 (and pulls e-invoices). */
 const NIL_PUSH_MIN_EXTENSION = '0.8.4';
+/** First extension version whose Refresh errors reads the Upload History (and can record 'accepted'). */
+const REFRESH_HISTORY_MIN_EXTENSION = '0.8.6';
+/** An upload or NIL push left without a result this long is given up on (the extension's own idle limit is 10 minutes). */
+const UPLOAD_WATCHDOG_MS = 20 * 60 * 1000;
 
 // gstr1_data stores period_month as the short label ("Jun-26"). The rest of
 // the app shares a single MonthContext value in "MM/YYYY" form, so convert
@@ -120,11 +125,17 @@ interface UploadErrorRow {
 // message. Without filtering these out, a fully-accepted upload (extension
 // reports status 'accepted' and a summary like "all accepted") still gets
 // rendered as a partial/failed upload because the errors array isn't empty.
-const isPlaceholderReason = (reason?: string | null) => {
+const isAcceptedRecordReason = (reason?: string | null) => {
   const trimmed = (reason || '').trim();
   if (!trimmed) return true;
   return trimmed.split(/\s+/).every((token) => /^n\/?a$/i.test(token));
 };
+// The portal's own labels and buttons, scraped as a "reason" by extensions
+// before 0.8.6 while the Error Report was still being generated. They say
+// the reasons are NOT in yet, the opposite of an accepted record.
+const isPortalLabelReason = (reason?: string | null) =>
+  /^(generate error report|download error report|error report generation requested|acknowledged)\b/i.test((reason || '').trim());
+const isPlaceholderReason = (reason?: string | null) => isAcceptedRecordReason(reason) || isPortalLabelReason(reason);
 const filterRealErrors = (errors?: UploadErrorRow[] | null): UploadErrorRow[] =>
   (errors || []).filter((row) => !isPlaceholderReason(row.reason));
 
@@ -492,8 +503,15 @@ const GSTR1DataPage: React.FC = () => {
         // placeholder row in last_upload_errors (see isPlaceholderReason)
         // would otherwise keep showing "View errors" / a red status forever,
         // even across refreshes, on a return GSTN actually accepted in full.
-        record.last_upload_errors = filterRealErrors(record.last_upload_errors);
-        if (record.last_upload_status === 'partial' && record.last_upload_errors.length === 0) {
+        // Read as accepted only when GSTN listed records and every one was an
+        // accepted record ("NA NA NA"). A partial with no rows, or only the
+        // portal's "generate error report" labels, is one whose reasons were
+        // never fetched: it stays partial, so Refresh errors and Import Error
+        // Report stay on screen (21 such uploads since Aug-2026 lost them).
+        const storedErrors = record.last_upload_errors || [];
+        record.last_upload_errors = filterRealErrors(storedErrors);
+        if (record.last_upload_status === 'partial' && storedErrors.length > 0
+          && storedErrors.every((row) => isAcceptedRecordReason(row?.reason))) {
           record.last_upload_status = 'accepted';
         }
       }
@@ -527,7 +545,12 @@ const GSTR1DataPage: React.FC = () => {
 
     let rows = await load();
 
-    if (rows.length === 0 && gstr1Data) {
+    // Only from this selection's own row. Right after a client or month
+    // switch gstr1Data still holds the previous one's, and backfilling from
+    // it wrote that client's import and accepted upload into this one's
+    // history (93 phantom rows, quarantined by 20261009200000).
+    if (rows.length === 0 && gstr1Data
+      && gstr1Data.client_id === selectedClient && gstr1Data.period_month === periodMonthKey) {
       const backfill: any[] = [];
       if (gstr1Data.imported_at) {
         backfill.push({
@@ -573,14 +596,17 @@ const GSTR1DataPage: React.FC = () => {
   }, [selectedClient, selectedMonth, gstr1Data]);
 
   // Filing status for the (client, GSTR-1, period). 'Filed' → block edits.
+  // The row Filing Status shows: 'GSTR-1 (IFF)' for an IFF (QRMP) client, so
+  // its status, Filed lock and NIL tick are the ones staff see there.
   const fetchFilingStatus = useCallback(async () => {
     if (!selectedClient || !selectedMonth) { setFilingStatus(null); setIsNilReturn(false); return; }
+    const returnType = await effectiveFilingReturnType(selectedClient, 'GSTR-1', selectedMonth);
     // filing_status.period_month uses MM/YYYY format across the app.
     const { data } = await supabase
       .from('filing_status')
       .select('status, is_nil')
       .eq('client_id', selectedClient)
-      .eq('return_type', 'GSTR-1')
+      .eq('return_type', returnType)
       .eq('period_month', selectedMonth)
       .maybeSingle();
     setFilingStatus(((data as any)?.status || null) as string | null);
@@ -594,10 +620,11 @@ const GSTR1DataPage: React.FC = () => {
     setIsTogglingNil(true);
     setIsNilReturn(checked); // optimistic — matches the rest of this page's UX
     try {
+      const returnType = await effectiveFilingReturnType(selectedClient, 'GSTR-1', selectedMonth);
       const { error } = await supabase
         .from('filing_status')
         .upsert(
-          { client_id: selectedClient, return_type: 'GSTR-1', period_month: selectedMonth, is_nil: checked, updated_by: user?.id ?? null },
+          { client_id: selectedClient, return_type: returnType, period_month: selectedMonth, is_nil: checked, updated_by: user?.id ?? null },
           { onConflict: 'client_id,return_type,period_month' },
         );
       if (error) throw error;
@@ -668,6 +695,19 @@ const GSTR1DataPage: React.FC = () => {
     setIsPullingEinv(false);
   }, [selectedClient, selectedMonth]);
 
+  // An upload, NIL push or Refresh that never reports back (a closed tab or
+  // a dead end on an extension before 0.8.6) must not leave the buttons
+  // spinning for ever.
+  useEffect(() => {
+    if (!isUploading) return;
+    const t = setTimeout(() => {
+      setIsUploading(false);
+      nilPushRef.current = false;
+      toast.warning('No result from the browser extension after 20 minutes. Check the GST portal tab and Version History before uploading again.', { duration: 20000 });
+    }, UPLOAD_WATCHDOG_MS);
+    return () => clearTimeout(t);
+  }, [isUploading]);
+
   // Extension bridge: detect the GST Keeper browser extension and receive the
   // upload result it posts back after driving the portal. Mirrors the pattern
   // used on the reco pages for the "Pull" button.
@@ -719,13 +759,32 @@ const GSTR1DataPage: React.FC = () => {
           errors?: UploadErrorRow[];
           error?: string;
           irnAttached?: number;
+          clientId?: string | null;
+          period_month?: string | null;
         };
         setIsUploading(false);
         const wasNil = nilPushRef.current;
         nilPushRef.current = false;
+        // 0.8.6 names the return the result is for. One for another client or
+        // month (the selection changed while the portal tab ran) belongs to
+        // that return: the extension already wrote it to that return's
+        // gstr1_data row, and nothing is written here for the one shown.
+        if (r.clientId && r.period_month && (r.clientId !== selectedClient || r.period_month !== selectedMonth)) {
+          const name = clients.find((c) => c.id === r.clientId)?.name || 'another client';
+          const outcome = r.status === 'nil_marked' ? 'marked NIL' : r.ok ? (r.status || 'done') : 'failed';
+          toast.warning(
+            `The GSTR-1 result for ${name} · ${mmYyyyToShort(r.period_month)} arrived (${outcome}). It belongs to that client and month, `
+            + 'not the one shown here: open them to see it.',
+            { duration: 20000 },
+          );
+          fetchVersions();
+          return;
+        }
         if (r.ok && r.status === 'nil_marked') {
           // NIL push: the extension ticked the portal's "File Nil GSTR-1"
-          // option. Same "Pushed" marker as a clean JSON upload.
+          // option. Same "Pushed" marker as a clean JSON upload. 0.8.5 records
+          // it itself; 0.8.4 does not, so the page still asks (the server
+          // stamps the client's IFF row when that is the one shown).
           const msg = r.message || r.summary || 'GSTR-1 marked as NIL on the GST portal. Filing / signing stays manual.';
           toast.success(msg);
           setUploadResult({ ok: true, message: msg });
@@ -757,21 +816,12 @@ const GSTR1DataPage: React.FC = () => {
             toast.success(summary);
           }
           setUploadResult({ ok: !isPartial, message: summary, errors: realErrors });
-          // Only a clean upload counts as 'Pushed'. A partial one means GSTN
-          // rejected some invoices, so the portal does NOT hold this return's
-          // data — calling that "Pushed" would overstate what happened and
-          // hide that the staffer still has errors to fix and re-upload.
-          if (!isPartial && selectedClient && selectedMonth) {
-            markFilingPushed({
-              clientId: selectedClient,
-              returnType: 'GSTR-1',
-              periodMonth: selectedMonth,
-              actorId: user?.id ?? null,
-            }).then((res) => {
-              if (!res.ok) toast.warning('Uploaded, but the filing status could not be updated: ' + res.error);
-              fetchFilingStatus();
-            });
-          }
+          // Only a clean upload counts as 'Pushed', and the database records
+          // it: the extension writes 'accepted' to the job's own gstr1_data
+          // row and its trigger marks that client's return Pushed (a partial
+          // upload is not). Marking it from here too stamped whichever client
+          // this page showed when the result arrived.
+          fetchFilingStatus();
         } else {
           const msg = r.error || r.message || 'Portal upload failed.';
           toast.error((wasNil ? 'NIL push failed: ' : 'Upload failed: ') + msg);
@@ -791,7 +841,7 @@ const GSTR1DataPage: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [fetchGSTR1Data, fetchVersions, fetchFilingStatus, fetchEinvoice, selectedClient, selectedMonth, user?.id]);
+  }, [fetchGSTR1Data, fetchVersions, fetchFilingStatus, fetchEinvoice, clients, selectedClient, selectedMonth, user?.id]);
 
   // Opens the persistent hidden <input type="file"> below. Using a stable ref
   // (instead of a dynamically-created input with an onchange closure) means
@@ -851,10 +901,23 @@ const GSTR1DataPage: React.FC = () => {
         );
       }
 
-      // Table 12 units as GSTN codes on the way in ("Others" → OTH, NA on
-      // services), so what is stored, shown and pushed is what the portal takes.
-      const hsnFix = normaliseGstr1Hsn(json);
+      // Corrections with one right answer on the way in (tidyGstr1Json), and
+      // Table 12 units as GSTN codes ("Others" → OTH, NA on services), so what
+      // is stored, shown and pushed is what the portal takes.
+      const tidy = tidyGstr1Json(json, { builder: isBuilderSourced(file.name) });
+      const hsnFix = normaliseGstr1Hsn(tidy.json);
       json = hsnFix.json;
+
+      // A file for another month is refused like one for another GSTIN: the
+      // portal rejects it ("GSTIN or Return period mismatch"), it cannot be
+      // filed for this one. Anything else the portal would refuse is fixable
+      // here (manual entry grid, Edit HSN Summary), so it imports with a
+      // warning and the upload blocks on it.
+      const check = validateGstr1Json(json, { gstin: clientGstin, period: selectedMonth });
+      const wrongPeriod = check.problems.find((p) => p.rule === 'fp');
+      if (wrongPeriod) {
+        throw new Error(`Return period mismatch — the file ${wrongPeriod.message}.`);
+      }
 
       const periodMonthKey = mmYyyyToShort(selectedMonth);
       const { data: written, error } = await supabase
@@ -889,8 +952,11 @@ const GSTR1DataPage: React.FC = () => {
       }
 
       toast.success(`GSTR-1 JSON imported for ${periodMonthKey}.`);
+      if (tidy.changed) toast.info(tidy.notes.join(' '), { duration: 12000 });
       if (hsnFix.changed) toast.info(describeHsnFixes(hsnFix), { duration: 12000 });
       if (hsnFix.problems.length) toast.warning(describeHsnProblems(hsnFix.problems), { duration: 15000 });
+      if (check.problems.length) toast.warning(describeGstr1Issues(check.problems), { duration: 20000 });
+      if (check.warnings.length) toast.warning(describeGstr1Issues(check.warnings), { duration: 15000 });
       await fetchGSTR1Data();
       await recordVersion({
         action_type: 'IMPORT',
@@ -986,19 +1052,18 @@ const GSTR1DataPage: React.FC = () => {
       setUploadDialogOpen(false);
       return;
     }
-    // Similar for period — portal binds the upload to whichever return period
-    // is open on the offline page, but if the JSON's fp doesn't match the
-    // period we selected here, our tracking (last_uploaded_at, etc.) would
-    // record it against the wrong month. Warn but don't block.
-    const jsonFp = String(gstr1Data.raw_json?.fp || '');
-    const expectedFp = (() => {
-      const [mm, yyyy] = selectedMonth.split('/');
-      return `${(mm || '').padStart(2, '0')}${yyyy || ''}`;
-    })();
-    if (jsonFp && expectedFp && jsonFp !== expectedFp) {
-      toast.warning(
-        `Period note: the JSON's fp is ${jsonFp} but this page is filing ${expectedFp}. Uploading anyway.`
-      );
+    // The return period (fp) is checked by the validator below, and blocks:
+    // the portal rejects a file for another month as "GSTIN or Return period
+    // mismatch", it does not file it for this one.
+    //
+    // An empty file is rejected as "No section data". A NIL period has its
+    // own push, which needs no JSON.
+    if (!gstr1HasSectionData(gstr1Data.raw_json)) {
+      toast.error(isNilReturn
+        ? 'This JSON has no section data, which the portal rejects ("No section data"). The period is ticked NIL: use Push NIL, which needs no JSON.'
+        : 'This JSON has no section data, which the portal rejects ("No section data"). Import the return again, or, if the period had no activity, tick "NIL Return" and use Push NIL.');
+      setUploadDialogOpen(false);
+      return;
     }
     // Documents Issued (Table 13) can't be derived from invoice content — it's
     // about serial-number continuity, including cancelled numbers — so it is
@@ -1013,34 +1078,50 @@ const GSTR1DataPage: React.FC = () => {
       return;
     }
 
-    // Table 12 units. The portal rejects a unit outside GSTN's list ("Others",
+    // Corrections with one right answer, saved before the push (the extension
+    // uploads the stored row, so this covers JSONs imported before these
+    // checks existed). tidyGstr1Json: blank shipping bill fields left out,
+    // Table 13 one entry per document type with net issued = total less
+    // cancelled, a Builder Table 12 moved to hsn_b2c. normaliseGstr1Hsn:
+    // Table 12 units, which the portal rejects outside GSTN's list ("Others",
     // "PCS-PIECES": RET191353), any unit but NA on a service, a quantity on a
-    // service (RET191355) and a repeated HSN + rate + unit. Correct what has
-    // one right answer and save it before the push (the extension uploads the
-    // stored row, so this covers JSONs imported before this check existed);
-    // stop on what needs a person.
-    const hsnFix = normaliseGstr1Hsn(gstr1Data.raw_json);
+    // service (RET191355) and a repeated HSN + rate + unit. Stop on what
+    // needs a person.
+    const tidy = tidyGstr1Json(gstr1Data.raw_json, { builder: isBuilderSourced(gstr1Data.file_name) });
+    const hsnFix = normaliseGstr1Hsn(tidy.json);
     if (hsnFix.problems.length) {
       toast.error(describeHsnProblems(hsnFix.problems), { duration: 15000 });
       setUploadDialogOpen(false);
       return;
     }
     let draftJson = gstr1Data.raw_json;
-    if (hsnFix.changed) {
+    if (tidy.changed || hsnFix.changed) {
       const { data: saved, error: saveError } = await supabase
         .from('gstr1_data')
         .update({ raw_json: hsnFix.json, updated_at: new Date().toISOString() })
         .eq('id', gstr1Data.id)
         .select('id');
       if (saveError || !saved || saved.length === 0) {
-        toast.error('Could not save the corrected Table 12 units, so nothing was uploaded: ' + (saveError?.message || 'the database returned no row.'));
+        toast.error('Could not save the corrections for the portal, so nothing was uploaded: ' + (saveError?.message || 'the database returned no row.'));
         return;
       }
       draftJson = hsnFix.json;
-      toast.info(describeHsnFixes(hsnFix), { duration: 12000 });
-      await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: 'Table 12 units set to GSTN codes before upload', payload: hsnFix.json });
+      const fixes = [...tidy.notes, ...(hsnFix.changed ? [describeHsnFixes(hsnFix)] : [])].join(' ');
+      toast.info(fixes, { duration: 12000 });
+      await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: `Corrected for the portal before upload: ${fixes}`, payload: hsnFix.json });
       await fetchGSTR1Data();
     }
+
+    // Every other rule GSTN enforces on a GSTR-1 (src/lib/gstr1/validate.ts):
+    // a fault found here would come back as "File could not be uploaded!" or
+    // a partial upload with no reason captured. Warnings are points to check.
+    const check = validateGstr1Json(draftJson, { gstin: clientGstin, period: selectedMonth, nil: isNilReturn });
+    if (check.problems.length) {
+      toast.error(describeGstr1Issues(check.problems), { duration: 20000 });
+      setUploadDialogOpen(false);
+      return;
+    }
+    if (check.warnings.length) toast.warning(describeGstr1Issues(check.warnings), { duration: 15000 });
 
     // Advance set-off. Last of the pre-flight checks and the only one that can
     // be passed with a manager's recorded approval rather than a correction —
@@ -1289,10 +1370,11 @@ const GSTR1DataPage: React.FC = () => {
     }
     // Strip this app's own provenance fields (_source/_generated_at) — the
     // portal's upload schema doesn't recognise them, and a strict validator
-    // rejects the whole file over one unexpected key. Table 12 units go as
-    // GSTN codes, the same correction the push applies, so a file uploaded by
-    // hand on the portal isn't rejected with RET191353 either.
-    const hsnFix = normaliseGstr1Hsn(stripInternalFields(gstr1Data.raw_json));
+    // rejects the whole file over one unexpected key. The same corrections
+    // the push applies (tidyGstr1Json, and Table 12 units as GSTN codes), so
+    // a file uploaded by hand on the portal isn't rejected (RET191353) either.
+    const tidy = tidyGstr1Json(stripInternalFields(gstr1Data.raw_json), { builder: isBuilderSourced(gstr1Data.file_name) });
+    const hsnFix = normaliseGstr1Hsn(tidy.json);
     const portalJson = hsnFix.json;
     const blob = new Blob([JSON.stringify(portalJson)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1306,6 +1388,7 @@ const GSTR1DataPage: React.FC = () => {
     a.remove();
     URL.revokeObjectURL(url);
     toast.success('GSTR-1 JSON downloaded.');
+    if (tidy.changed) toast.info(`${tidy.notes.join(' ')} (in the downloaded file; the saved return is corrected when you upload)`, { duration: 12000 });
     if (hsnFix.changed) toast.info(`${describeHsnFixes(hsnFix)} (in the downloaded file; the saved return is corrected when you upload)`, { duration: 12000 });
     if (hsnFix.problems.length) toast.warning(describeHsnProblems(hsnFix.problems), { duration: 15000 });
   };
@@ -1403,13 +1486,16 @@ const GSTR1DataPage: React.FC = () => {
     }));
   }, [json.b2cs]);
 
-  // B2CSA — Table 10 amendments. Same shape as B2CS plus `omon`, the original
-  // month being amended, which is the whole point of the table.
+  // B2CSA — Table 10 amendments: `omon`, the original month being amended,
+  // which is the whole point of the table. The portal shape (Builder Returns
+  // writes it) is one entry per month and POS with its rate lines in itms[];
+  // older rows are flat, one per rate, and read as their own single line.
   const b2csaRows = useMemo(() => {
-    return (json.b2csa || []).map((item: any) => ({
-      pos: item.pos, typ: item.typ, omon: item.omon, rt: item.rt,
-      txval: item.txval, iamt: item.iamt, camt: item.camt, samt: item.samt, csamt: item.csamt,
-    }));
+    type Line = { rt?: number; txval?: number; iamt?: number; camt?: number; samt?: number; csamt?: number };
+    return (json.b2csa || []).flatMap((a: any) => ((Array.isArray(a.itms) && a.itms.length ? a.itms : [a]) as Line[]).map((l) => ({
+      pos: a.pos, typ: a.typ, omon: a.omon, rt: l.rt,
+      txval: l.txval, iamt: l.iamt, camt: l.camt, samt: l.samt, csamt: l.csamt,
+    })));
   }, [json.b2csa]);
 
   // A document's own value (`val`, incl. tax) repeats on every item line of
@@ -1804,8 +1890,14 @@ const GSTR1DataPage: React.FC = () => {
               </Button>
             )}
             {/* Only meaningful right after a "Processed with Error" upload,
-                while GSTN is still generating the per-invoice Error Report. */}
-            {gstr1Data && canEditFilingStatus() && gstr1Data.last_upload_status === 'partial' && (
+                while GSTN is still generating the per-invoice Error Report, or
+                a 'failed' one: an upload the portal took over 6 minutes on is
+                saved 'failed', and from 0.8.6 Refresh reads the portal's
+                Upload History and saves a processed one 'accepted'. An older
+                extension's Refresh always wrote 'partial', so a failed upload
+                offers it only from 0.8.6. */}
+            {gstr1Data && canEditFilingStatus() && (gstr1Data.last_upload_status === 'partial'
+              || (gstr1Data.last_upload_status === 'failed' && !!extVersion && compareVersions(extVersion, REFRESH_HISTORY_MIN_EXTENSION) >= 0)) && (
               <>
                 <Button
                   variant="outline"
@@ -1813,21 +1905,25 @@ const GSTR1DataPage: React.FC = () => {
                   className={WS_BTN}
                   onClick={handleRefreshErrors}
                   disabled={isUploading || !extReady}
-                  title="Re-open the portal and fetch the per-invoice Error Report (GSTN takes up to 20 min to generate it)"
+                  title={gstr1Data.last_upload_status === 'failed'
+                    ? 'Re-open the portal and read its Upload History: an upload it processed after this page gave up is recorded as accepted, or its errors fetched'
+                    : 'Re-open the portal and fetch the per-invoice Error Report (GSTN takes up to 20 min to generate it)'}
                 >
                   {isUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                   Refresh errors
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={WS_BTN}
-                  onClick={handleImportErrorReport}
-                  title="Manually import the Error Report JSON you downloaded from the portal's Download tab"
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                  Import Error Report
-                </Button>
+                {gstr1Data.last_upload_status === 'partial' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={WS_BTN}
+                    onClick={handleImportErrorReport}
+                    title="Manually import the Error Report JSON you downloaded from the portal's Download tab"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    Import Error Report
+                  </Button>
+                )}
               </>
             )}
             {gstr1Data && (
@@ -2291,9 +2387,10 @@ const GSTR1DataPage: React.FC = () => {
               >
                 Open Builder Returns
               </button>
-              {(json as { b2csa?: unknown[] }).b2csa?.length ? (
+              {/* Lines, not b2csa entries: an entry is a month and POS with its rate lines in itms[]. */}
+              {b2csaRows.length ? (
                 <>
-                  {' '}This return also carries {(json as { b2csa: unknown[] }).b2csa.length}{' '}
+                  {' '}This return also carries {b2csaRows.length}{' '}
                   Table 10 amendment line(s) from a retrospective re-rating. They are included
                   in the JSON and in the portal push, but there is no Table 10 tile below yet.
                 </>
