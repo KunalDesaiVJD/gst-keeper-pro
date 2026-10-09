@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,12 +21,21 @@ import {
   FileSpreadsheet,
   FileText,
   LogIn,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { describeClientDeleteError } from '@/lib/clientDeleteError';
 import { toast } from 'sonner';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
+import { EinvoiceStatusBadge } from '@/components/clients/EinvoiceStatusBadge';
+import {
+  loadEinvoiceData,
+  syncEinvoiceThresholdAlerts,
+  einvoiceAttention,
+  type EinvoiceClient,
+} from '@/lib/einvoice/thresholdAlerts';
+import type { EinvoiceAssessment } from '@/lib/einvoice/threshold';
 import { useAuth } from '@/contexts/AuthContext';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -55,6 +64,15 @@ interface Client {
 
 type TabId = 'clients' | 'credentials';
 
+/** E-invoice filters behind the e-invoice tiles (also reachable as /clients?einvoice=…). */
+type EinvFilter = 'einv' | 'approaching' | 'should_tick';
+const EINV_FILTERS: EinvFilter[] = ['einv', 'approaching', 'should_tick'];
+const EINV_FILTER_LABEL: Record<EinvFilter, string> = {
+  einv: 'E-invoice clients',
+  approaching: 'Approaching the threshold',
+  should_tick: 'Should be e-invoice (not ticked)',
+};
+
 const ClientsPage: React.FC = () => {
   const navigate = useNavigate();
   const { canAddEditClients, canDeleteClients, user } = useAuth();
@@ -66,6 +84,16 @@ const ClientsPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // E-invoice: per-client assessment + the tile filter.
+  const [searchParams] = useSearchParams();
+  const [einvAssessments, setEinvAssessments] = useState<Map<string, EinvoiceAssessment>>(new Map());
+  const [einvClients, setEinvClients] = useState<Map<string, EinvoiceClient>>(new Map());
+  const [einvFilter, setEinvFilter] = useState<EinvFilter | null>(() => {
+    const q = searchParams.get('einvoice') as EinvFilter | null;
+    return q && EINV_FILTERS.includes(q) ? q : null;
+  });
+  const alertsSynced = useRef(false);
 
   // Credentials tab state.
   const [creds, setCreds] = useState<ClientCredentialRow[]>([]);
@@ -89,9 +117,34 @@ const ClientsPage: React.FC = () => {
     setIsLoading(false);
   }, []);
 
+  // One round of queries for every client's turnover; on first load also raise
+  // any new threshold alerts (emails the client once per FY and level).
+  const loadEinvoice = useCallback(async (syncAlerts: boolean) => {
+    try {
+      const { assessments, clientsById } = await loadEinvoiceData();
+      setEinvAssessments(assessments);
+      setEinvClients(clientsById);
+      if (syncAlerts) {
+        // Signed by the GST team, not whoever happened to open the page.
+        const r = await syncEinvoiceThresholdAlerts(assessments, clientsById, { id: user?.id });
+        if (r.emailed) {
+          toast.info(`E-invoice threshold: ${r.emailed} client${r.emailed === 1 ? '' : 's'} emailed about approaching / crossing ₹5 crore.`);
+        }
+      }
+    } catch (err) {
+      console.error('E-invoice assessment failed:', err);
+    }
+  }, [user?.id]);
+
   const loadCreds = useCallback(() => {
     fetchClientCredentials().then(setCreds).catch(() => { /* surfaced on export */ });
   }, []);
+
+  useEffect(() => {
+    if (alertsSynced.current) return;
+    alertsSynced.current = true;
+    void loadEinvoice(true);
+  }, [loadEinvoice]);
 
   useEffect(() => {
     fetchClients();
@@ -104,13 +157,14 @@ const ClientsPage: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
         fetchClients();
         loadCreds();
+        void loadEinvoice(false);
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchClients, loadCreds]);
+  }, [fetchClients, loadCreds, loadEinvoice]);
 
   // Detect the GST Keeper browser extension (for the Credentials "Login" button).
   useEffect(() => {
@@ -173,9 +227,30 @@ const ClientsPage: React.FC = () => {
     }
   };
 
+  const isTicked = (id: string) => {
+    const c = einvClients.get(id);
+    return !!c?.einvoice_applicable && !c?.einvoice_exemption;
+  };
+  const matchesEinv = (id: string, f: EinvFilter): boolean => {
+    if (f === 'einv') return isTicked(id);
+    const att = einvoiceAttention(einvAssessments.get(id), isTicked(id));
+    if (f === 'should_tick') return att === 'should_tick';
+    return att === 'approaching' || att === 'next_fy';
+  };
+  const einvCounts = {
+    einv: clients.filter((c) => matchesEinv(c.id, 'einv')).length,
+    approaching: clients.filter((c) => matchesEinv(c.id, 'approaching')).length,
+    should_tick: clients.filter((c) => matchesEinv(c.id, 'should_tick')).length,
+  };
+  const toggleEinvFilter = (f: EinvFilter) => {
+    setActiveTab('clients');
+    setEinvFilter((cur) => (cur === f ? null : f));
+  };
+
   const filteredClients = clients.filter(client =>
-    client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    client.gstin.toLowerCase().includes(searchTerm.toLowerCase())
+    (client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.gstin.toLowerCase().includes(searchTerm.toLowerCase())) &&
+    (!einvFilter || matchesEinv(client.id, einvFilter))
   );
 
   const filteredCreds = useMemo(() => {
@@ -271,6 +346,15 @@ const ClientsPage: React.FC = () => {
         <TileButton active={false} onClick={() => setActiveTab('credentials')} title="Show GST portal credentials">
           <KpiTile label="No GST portal login" value={credsMissing} hint="Add it in Edit Client" tone={credsMissing ? 'warn' : 'ok'} />
         </TileButton>
+        <TileButton active={einvFilter === 'einv'} onClick={() => toggleEinvFilter('einv')} title="Show only e-invoice clients">
+          <KpiTile label="E-invoice clients" value={einvCounts.einv} hint="Ticked as e-invoice applicable" tone={einvCounts.einv ? 'ok' : 'neutral'} />
+        </TileButton>
+        <TileButton active={einvFilter === 'approaching'} onClick={() => toggleEinvFilter('approaching')} title="Show clients approaching the ₹5 crore e-invoice limit">
+          <KpiTile label="Approaching threshold" value={einvCounts.approaching} hint="₹4 crore+ or applies next FY" tone={einvCounts.approaching ? 'warn' : 'ok'} />
+        </TileButton>
+        <TileButton active={einvFilter === 'should_tick'} onClick={() => toggleEinvFilter('should_tick')} title="Show clients that must e-invoice but are not ticked">
+          <KpiTile label="Should be e-invoice (not ticked)" value={einvCounts.should_tick} hint="Preceding FY above ₹5 crore" tone={einvCounts.should_tick ? 'error' : 'ok'} />
+        </TileButton>
       </div>
 
       {/* Tab strip */}
@@ -298,8 +382,8 @@ const ClientsPage: React.FC = () => {
         <>
           {/* Search */}
           <Card>
-            <CardContent className="px-3 py-2">
-              <label className="block max-w-md space-y-0.5">
+            <CardContent className="flex flex-wrap items-end gap-2 px-3 py-2">
+              <label className="block w-full max-w-md space-y-0.5">
                 <span className={WS_FILTER_LABEL}>Search</span>
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -311,6 +395,12 @@ const ClientsPage: React.FC = () => {
                   />
                 </div>
               </label>
+              {einvFilter && (
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setEinvFilter(null)}>
+                  {EINV_FILTER_LABEL[einvFilter]}
+                  <X className="h-3.5 w-3.5" aria-label="Clear e-invoice filter" />
+                </Button>
+              )}
             </CardContent>
           </Card>
 
@@ -324,14 +414,16 @@ const ClientsPage: React.FC = () => {
                   description={
                     clients.length === 0
                       ? 'Add your first client to get started.'
-                      : 'No clients found matching your search.'
+                      : einvFilter
+                        ? `No clients match the search and the "${EINV_FILTER_LABEL[einvFilter]}" filter.`
+                        : 'No clients found matching your search.'
                   }
                 />
               </CardContent>
             </Card>
           ) : (
             <div className={cn(WS_TABLE_WRAP, 'max-h-[70vh]')}>
-              <table className={cn(WS_TABLE, 'min-w-[860px]')}>
+              <table className={cn(WS_TABLE, 'min-w-[960px]')}>
                 <thead>
                   <tr>
                     <th className={cn(WS_TH, 'w-10 text-center')}>#</th>
@@ -340,6 +432,7 @@ const ClientsPage: React.FC = () => {
                     <th className={WS_TH}>Contact</th>
                     <th className={WS_TH}>Registration</th>
                     <th className={WS_TH}>Returns</th>
+                    <th className={WS_TH}>E-invoice</th>
                     {(canAddEditClients() || canDeleteClients()) && (
                       <th className={cn(WS_TH, 'w-20 text-center')}>Actions</th>
                     )}
@@ -387,6 +480,13 @@ const ClientsPage: React.FC = () => {
                             </Badge>
                           ))}
                         </div>
+                      </td>
+                      <td className={WS_TD}>
+                        <EinvoiceStatusBadge
+                          ticked={isTicked(client.id)}
+                          exemption={einvClients.get(client.id)?.einvoice_exemption}
+                          assessment={einvAssessments.get(client.id)}
+                        />
                       </td>
                       {(canAddEditClients() || canDeleteClients()) && (
                         <td className={cn(WS_TD, 'py-0.5 text-center')}>

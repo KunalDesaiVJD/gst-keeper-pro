@@ -13,6 +13,7 @@ import {
   Building2,
   ChevronDown,
   ChevronUp,
+  FileWarning,
   LayoutDashboard,
   ListTodo
 } from 'lucide-react';
@@ -26,6 +27,19 @@ import { ReturnType } from '@/types';
 import { generateFilingRecords, DISPLAY_RETURN_TYPES } from '@/lib/filingRecords';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { useState } from 'react';
+import { EinvoiceStatusBadge } from '@/components/clients/EinvoiceStatusBadge';
+import { loadEinvoiceData, einvoiceAttention, type EinvoiceAttention } from '@/lib/einvoice/thresholdAlerts';
+import type { EinvoiceAssessment } from '@/lib/einvoice/threshold';
+
+interface EinvoiceWatchRow {
+  id: string;
+  name: string;
+  exemption: string | null;
+  attention: EinvoiceAttention;
+  assessment: EinvoiceAssessment;
+}
+
+const EINV_ORDER: Record<EinvoiceAttention, number> = { should_tick: 0, next_fy: 1, approaching: 2 };
 
 // Return tabs broken out for the dashboard table (IFF / quarterly shown separately)
 const BREAKDOWN_RETURN_TYPES: ReturnType[] = [
@@ -85,6 +99,29 @@ const StaffDashboard: React.FC = () => {
 
   // Task Reminder dialog — private per staff member (see TaskReminderDialog).
   const [showTaskReminder, setShowTaskReminder] = useState(false);
+
+  // Clients approaching / above the e-invoice limit, or that must e-invoice
+  // but are not ticked. Loaded once; the Clients page raises the alerts.
+  const [einvWatch, setEinvWatch] = useState<EinvoiceWatchRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    loadEinvoiceData()
+      .then(({ assessments, clientsById }) => {
+        if (cancelled) return;
+        const rows: EinvoiceWatchRow[] = [];
+        assessments.forEach((a, id) => {
+          const c = clientsById.get(id);
+          if (!c) return;
+          const attention = einvoiceAttention(a, !!c.einvoice_applicable);
+          if (attention) rows.push({ id, name: c.name, exemption: c.einvoice_exemption, attention, assessment: a });
+        });
+        rows.sort((x, y) => EINV_ORDER[x.attention] - EINV_ORDER[y.attention]
+          || (y.assessment.decidingYear?.turnover ?? 0) - (x.assessment.decidingYear?.turnover ?? 0));
+        setEinvWatch(rows);
+      })
+      .catch((err) => console.error('E-invoice assessment failed:', err));
+    return () => { cancelled = true; };
+  }, []);
 
   const generateMonths = useCallback(() => {
     const monthsSet = new Set<string>();
@@ -417,6 +454,61 @@ const StaffDashboard: React.FC = () => {
           </div>
         )}
       </SectionCard>
+
+      {einvWatch.length > 0 && (
+        <SectionCard
+          title={
+            <span className="flex items-center gap-2">
+              <FileWarning className="h-4 w-4 text-warning" />
+              E-invoice threshold
+            </span>
+          }
+          description="Clients approaching or above the ₹5 crore e-invoice limit, or that must e-invoice but are not ticked."
+          actions={
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/clients')}>
+              Open Clients
+            </Button>
+          }
+        >
+          <div className={cn(WS_TABLE_WRAP, 'max-h-64')}>
+            <table className={WS_TABLE}>
+              <thead>
+                <tr>
+                  <th className={WS_TH}>Client</th>
+                  <th className={WS_TH}>Status</th>
+                  <th className={cn(WS_TH, 'text-right')}>FY</th>
+                  <th className={cn(WS_TH, 'text-right')}>Turnover</th>
+                </tr>
+              </thead>
+              <tbody>
+                {einvWatch.map((r) => (
+                  <tr key={r.id} className={WS_TR}>
+                    <td className={WS_TD}>
+                      <button
+                        type="button"
+                        className="text-left font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => navigate(`/clients?einvoice=${r.attention === 'should_tick' ? 'should_tick' : 'approaching'}`)}
+                        title={r.assessment.message}
+                      >
+                        {r.name}
+                      </button>
+                    </td>
+                    <td className={WS_TD}>
+                      <EinvoiceStatusBadge ticked={false} exemption={r.exemption} assessment={r.assessment} />
+                    </td>
+                    <td className={WS_TD_NUM}>{r.assessment.decidingYear?.financial_year ?? '—'}</td>
+                    <td className={WS_TD_NUM}>
+                      {r.assessment.decidingYear
+                        ? `₹${(r.assessment.decidingYear.turnover / 1_00_00_000).toFixed(2)} cr`
+                        : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
+      )}
 
       {canManageEmployees() && <UserManagementSection />}
       <ClientManagementSection />
