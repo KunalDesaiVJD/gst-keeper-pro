@@ -231,10 +231,17 @@ export function directFilingState(args: {
   periodMonth: string;
   pushedAt: string | null | undefined;
   alreadyFiled?: boolean;
+  /**
+   * A period ticked NIL in GST Keeper has no data that could have been filed
+   * around the app, so it needs no push (mirrors the DB guard, migration
+   * 20261009130000).
+   */
+  isNil?: boolean;
   approvals: DirectFilingApproval[];
 }): DirectFilingState {
   if (!directFilingRuleApplies(args.returnType, args.periodMonth)) return 'not_applicable';
   if (args.alreadyFiled) return 'not_applicable';
+  if (args.isNil) return 'not_applicable';
   if (args.pushedAt) return 'pushed';
   const a = pickApproval(args.approvals);
   if (!a) return 'needs_request';

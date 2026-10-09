@@ -1096,6 +1096,17 @@ const API = {
   // a re-pull only adds or refreshes rows; first_seen_at is not sent, so the
   // database default stays on insert and is kept on update. Every call
   // (ok / none / pending / failed) records the attempt in einvoice_pulls.
+  // 0.8.5: a NIL push is recorded here, not only by the GSTR-1 page — the
+  // page may have been closed while the portal was being driven, and then
+  // the period never showed as Pushed in Filing Status. Same RPC the page
+  // calls (mark_filing_pushed: stamps pushed_at, 'Pushed' unless Filed).
+  markGstr1NilPushed: async ({ clientId, period_month, actorId }) => {
+    if (!clientId || !period_month) return false;
+    return rpc('mark_filing_pushed', {
+      p_client_id: clientId, p_return_type: 'GSTR-1', p_period_month: period_month, p_actor: actorId || null,
+    });
+  },
+
   saveEinvoicePull: async ({ clientId, period_month, actorId, json, status, message }) => {
     let st = status || 'failed';
     let msg = message || null;

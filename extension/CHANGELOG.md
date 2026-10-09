@@ -2,6 +2,14 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-09 — NIL push recorded in Filing Status (v0.8.5)
+
+- **A NIL GSTR-1 push is recorded by the extension itself**: after ticking
+  "File Nil GSTR-1" it calls `mark_filing_pushed`, so Filing Status shows
+  Pushed even if the GST Keeper page was closed meanwhile. Nothing else changed.
+  (A JSON push is recorded by the database from the upload outcome the extension
+  already writes to `gstr1_data` — migration `20261009130000_gstr1_push_recording.sql`.)
+
 ## 2026-10-09 — NIL GSTR-1, e-invoice pull, IRNs kept on push (v0.8.4)
 
 Needs migration `20261009100000_gstr1_einvoice_direct_filing.sql` (`einvoice_docs`,

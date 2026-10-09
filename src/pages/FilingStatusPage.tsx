@@ -590,6 +590,7 @@ const FilingStatusPage: React.FC = () => {
     periodMonth: record.period_month || selectedMonth,
     pushedAt: record.pushed_at,
     alreadyFiled: record.status === 'Filed',
+    isNil: !!record.is_nil,
     approvals: approvals ?? approvalsFor(record),
   }), [approvalsFor, selectedMonth]);
 

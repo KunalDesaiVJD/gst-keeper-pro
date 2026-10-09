@@ -56,6 +56,8 @@
     // 0.8.4: one e-invoice pull — upserts einvoice_docs (from the portal's
     // GSTR-1 JSON, when given) and einvoice_pulls. See background.js.
     saveEinvoicePull: (info) => call('saveEinvoicePull', info),
+    // 0.8.5: records a NIL push as Pushed in Filing Status (see background.js).
+    markGstr1NilPushed: (info) => call('markGstr1NilPushed', info),
     // Records one Sync All attempt's outcome for a client — feeds the
     // Notices Dashboard's Company List "Last Download Date / Status /
     // Status Message" columns. Only called from the 'notices' Sync All job
