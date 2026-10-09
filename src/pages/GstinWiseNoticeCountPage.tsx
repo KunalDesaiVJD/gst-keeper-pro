@@ -25,7 +25,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { WS_BTN, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { FilterPill } from '@/components/notices/FilterPill';
-import { AmountLink, AsOfLine, CountLink, FilterChips, SortHead, type Chip } from '@/components/notices/reports/ReportBits';
+import { AmountLink, CountLink, FilterChips, SortHead, type Chip } from '@/components/notices/reports/ReportBits';
 import { loadCountRows, emptyCounts, type Counts } from '@/components/notices/reports/noticeCounts';
 import { clientRows, loadClientContext, type ClientReportRow } from '@/components/notices/reports/clientRows';
 import { noticesListHref, type NoticeListParams } from '@/lib/noticeQueries';
@@ -194,7 +194,7 @@ const GstinWiseNoticeCountPage: React.FC = () => {
   );
 
   return (
-    <NoticesShell section="GSTIN-wise count" master status={<AsOfLine at={notices.dataUpdatedAt} />}
+    <NoticesShell section="GSTIN-wise count" master
       actions={canExportData() && (
         <Button size="sm" variant="outline" className={WS_BTN} onClick={exportXlsx} disabled={loading || !visible.length}>
           <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden /> Export to Excel

@@ -176,6 +176,13 @@ export const replyReading = {
     },
   ],
   key_facts: [{ label: 'Financial year', value: '2019-20', page: 1 }],
+  overview: {
+    section_of_law: 'Section 73(1)', financial_year: 'FY 2019-2020', period_from: '2019-04-01', period_to: '2020-03-31',
+    din: 'ZD240525000123A', reply_due: '15/06/2025', hearing_date: '', hearing_time: '', hearing_venue: '',
+    officer: 'R Shah, Assistant Commissioner', demand_tax: 'Rs. 1,20,000', demand_interest: '', demand_penalty: 'nil', demand_total: '120000',
+    refund_claimed: '', refund_provisional: '', refund_sanctioned: '', refund_rejected: '', refund_net_payable: '', refund_paid: '',
+    application_type: '', application_arn: '', application_date: '',
+  },
 };
 
 export const ISSUE_CODES = [

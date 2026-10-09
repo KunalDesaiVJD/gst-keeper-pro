@@ -130,20 +130,15 @@ const LitigationMISPage: React.FC = () => {
     exportButton('pdf', 'PDF pack', FileText),
   ] : null;
 
-  const status = data && report ? (
-    <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-      <span className="font-medium text-foreground">Open matters as at {asAt} IST</span>
-      <span>· {plural(report.open.length, 'open matter')}{filterText ? ` · ${filterText}` : ''}</span>
-      <button type="button" onClick={refetch} disabled={fetching}
-        className="inline-flex items-center gap-1 rounded font-medium text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:no-underline">
-        <RefreshCw className={cn('h-3 w-3', fetching && 'animate-spin')} aria-hidden /> Refresh
-      </button>
-    </p>
-  ) : <Skeleton className="h-4 w-80 max-w-full" />;
+  const refreshButton = (
+    <Button key="refresh" size="sm" variant="outline" className={WS_BTN} onClick={refetch} disabled={fetching} title={`Open matters as at ${asAt} IST`}>
+      <RefreshCw className={cn('h-3.5 w-3.5', fetching && 'animate-spin')} aria-hidden /> Refresh
+    </Button>
+  );
 
   return (
-    <NoticesShell section="Litigation MIS" status={status} master>
-      <MisFilterBar master data={data} filters={filters} onChange={onFilters} actions={exports} />
+    <NoticesShell section="Litigation MIS" master>
+      <MisFilterBar master data={data} filters={filters} onChange={onFilters} actions={[refreshButton, ...(exports ?? [])]} />
 
       {loadError ? (
         <Note tone="warn">

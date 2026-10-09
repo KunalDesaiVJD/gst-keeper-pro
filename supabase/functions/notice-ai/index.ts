@@ -21,7 +21,7 @@ import { cliCaller, cliWithApiForScans } from './cli.ts';
 import { runAssist } from './assist.ts';
 import { runTick, type Db, type Deps } from './runner.ts';
 
-export const VERSION = 'notice-ai 1.1.0';
+export const VERSION = 'notice-ai 1.2.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',

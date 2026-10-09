@@ -24,9 +24,12 @@ import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { SyncNowButton } from '@/components/notices/SyncNowButton';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
-import { TodaysPlan } from '@/components/notices/command/TodaysPlan';
+import { KindTabs } from '@/components/notices/cases/KindTabs';
+import { CasesPanel } from '@/components/notices/cases/CasesPanel';
+import { KindDashboard, KindTiles } from '@/components/notices/cases/KindDashboard';
+import { isTrack, useCaseCounts, type Track } from '@/lib/noticeCases';
 import { NoticeTypesSettings } from '@/components/notices/types/NoticeTypesSettings';
-import { AutopilotLine, ClientsAttention, CommandTiles, Next14Days, StagePanel } from '@/components/notices/command/CommandCards';
+import { AutopilotLine, ClientsAttention, Next14Days, StagePanel } from '@/components/notices/command/CommandCards';
 import { masterForRpc, useMaster } from '@/lib/masterFilters';
 
 const TYPE_PARAMS = ['types', 'tq', 'tneed', 'tdash'];
@@ -37,12 +40,22 @@ const NoticesDashboardPage: React.FC = () => {
   const [sp, setSp] = useSearchParams();
   const { m } = useMaster();
   const cc = useCommandCentre(user?.id ?? null, masterForRpc(m, user?.id ?? null));
+  const counts = useCaseCounts(masterForRpc(m, user?.id ?? null));
+  const kindParam = sp.get('kind');
+  const kind: Track = isTrack(kindParam) ? kindParam : 'litigation';
+  const setKind = (t: Track) => setSp((prev) => {
+    const next = new URLSearchParams(prev);
+    if (t === 'litigation') next.delete('kind'); else next.set('kind', t);
+    return next;
+  }, { replace: true });
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['notices-command-centre'] });
     qc.invalidateQueries({ queryKey: ['notice-plan-top'] });
+    qc.invalidateQueries({ queryKey: ['notice-cases'] });
+    qc.invalidateQueries({ queryKey: ['notice-case-counts'] });
   };
   const canEdit = canEditNoticeStatus();
   const canTypes = canManageNoticeTypes(user?.role);
@@ -66,7 +79,7 @@ const NoticesDashboardPage: React.FC = () => {
   return (
     <NoticesShell
       section="Command centre"
-      status={data ? <AutopilotLine cc={data} onOpenTypes={canTypes ? () => openTypes('listed') : undefined} /> : <Skeleton className="h-4 w-96 max-w-full" />}
+      status={data ? <AutopilotLine cc={data} /> : null}
       master
       actions={<>
         {canTypes && (
@@ -85,21 +98,19 @@ const NoticesDashboardPage: React.FC = () => {
         </Note>
       )}
 
-      {data ? <CommandTiles cc={data} /> : (
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[74px]" />)}
-        </div>
-      )}
+      <KindTabs value={kind} counts={counts.data} onChange={setKind} />
 
-      <div className="grid grid-cols-1 items-stretch gap-3 xl:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]">
-        <TodaysPlan cc={data} master={m} />
-        {data ? <StagePanel cc={data} /> : <Skeleton className="h-80" />}
-      </div>
+      {kind !== 'litigation' ? <KindDashboard track={kind} counts={counts.data?.[kind]} master={m} /> : (<>
+      <KindTiles track="litigation" counts={counts.data?.litigation} master={m} />
 
-      <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2">
+      <CasesPanel track="litigation" master={m} />
+
+      <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-3">
+        {data ? <StagePanel cc={data} /> : <Skeleton className="h-48" />}
         {data ? <Next14Days cc={data} /> : <Skeleton className="h-48" />}
         {data ? <ClientsAttention cc={data} /> : <Skeleton className="h-48" />}
       </div>
+      </>)}
 
       <Dialog open={typesOpen} onOpenChange={(o) => { if (!o) closeTypes(); }}>
         <DialogContent className="max-h-[90vh] gap-3 overflow-y-auto p-4 sm:max-w-5xl sm:p-6">

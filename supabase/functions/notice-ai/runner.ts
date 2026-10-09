@@ -25,9 +25,11 @@ export interface Deps {
   now?: () => number;
 }
 
-// A job is started only with this much of the run left (a notice at high effort
-// can take a minute or more); the call is stopped when the run is.
-export const MIN_JOB_MS = 75_000;
+// A job is started only with this much of the run left; the call is stopped when
+// the run is (and tried again in the next). Through the Claude CLI gateway a
+// document takes 10 to 25 seconds, a notice under 30, so 40 seconds keeps the
+// queue moving (was 75, sized for the API at high effort).
+export const MIN_JOB_MS = 40_000;
 const END_MARGIN_MS = 8_000;
 
 export interface NoticeClaim extends ReaderClaim {
