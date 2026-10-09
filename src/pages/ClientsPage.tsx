@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -31,10 +31,12 @@ import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import { EinvoiceStatusBadge } from '@/components/clients/EinvoiceStatusBadge';
 import {
   loadEinvoiceData,
-  syncEinvoiceThresholdAlerts,
+  listDueEinvoiceAlerts,
   einvoiceAttention,
+  type DueEinvoiceAlert,
   type EinvoiceClient,
 } from '@/lib/einvoice/thresholdAlerts';
+import { EinvoiceAlertsPanel } from '@/components/clients/EinvoiceAlertsPanel';
 import type { EinvoiceAssessment } from '@/lib/einvoice/threshold';
 import { useAuth } from '@/contexts/AuthContext';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -93,7 +95,7 @@ const ClientsPage: React.FC = () => {
     const q = searchParams.get('einvoice') as EinvFilter | null;
     return q && EINV_FILTERS.includes(q) ? q : null;
   });
-  const alertsSynced = useRef(false);
+  const [einvDue, setEinvDue] = useState<DueEinvoiceAlert[]>([]);
 
   // Credentials tab state.
   const [creds, setCreds] = useState<ClientCredentialRow[]>([]);
@@ -117,33 +119,26 @@ const ClientsPage: React.FC = () => {
     setIsLoading(false);
   }, []);
 
-  // One round of queries for every client's turnover; on first load also raise
-  // any new threshold alerts (emails the client once per FY and level).
-  const loadEinvoice = useCallback(async (syncAlerts: boolean) => {
+  // One round of queries for every client's turnover, plus the clients due a
+  // threshold email. Nothing is sent from here — staff press Send in the
+  // "E-invoice alerts to send" panel.
+  const loadEinvoice = useCallback(async () => {
     try {
       const { assessments, clientsById } = await loadEinvoiceData();
       setEinvAssessments(assessments);
       setEinvClients(clientsById);
-      if (syncAlerts) {
-        // Signed by the GST team, not whoever happened to open the page.
-        const r = await syncEinvoiceThresholdAlerts(assessments, clientsById, { id: user?.id });
-        if (r.emailed) {
-          toast.info(`E-invoice threshold: ${r.emailed} client${r.emailed === 1 ? '' : 's'} emailed about approaching / crossing ₹5 crore.`);
-        }
-      }
+      setEinvDue(await listDueEinvoiceAlerts(assessments, clientsById));
     } catch (err) {
       console.error('E-invoice assessment failed:', err);
     }
-  }, [user?.id]);
+  }, []);
 
   const loadCreds = useCallback(() => {
     fetchClientCredentials().then(setCreds).catch(() => { /* surfaced on export */ });
   }, []);
 
   useEffect(() => {
-    if (alertsSynced.current) return;
-    alertsSynced.current = true;
-    void loadEinvoice(true);
+    void loadEinvoice();
   }, [loadEinvoice]);
 
   useEffect(() => {
@@ -157,7 +152,7 @@ const ClientsPage: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
         fetchClients();
         loadCreds();
-        void loadEinvoice(false);
+        void loadEinvoice();
       })
       .subscribe();
 
@@ -356,6 +351,12 @@ const ClientsPage: React.FC = () => {
           <KpiTile label="Should be e-invoice (not ticked)" value={einvCounts.should_tick} hint="Preceding FY above ₹5 crore" tone={einvCounts.should_tick ? 'error' : 'ok'} />
         </TileButton>
       </div>
+
+      <EinvoiceAlertsPanel
+        due={einvDue}
+        actor={{ id: user?.id ?? null, name: user?.firstName ?? null }}
+        onSent={() => void loadEinvoice()}
+      />
 
       {/* Tab strip */}
       <div role="tablist" aria-label="Clients and credentials" className={WS_TABS_LIST}>
