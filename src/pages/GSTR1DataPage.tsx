@@ -53,6 +53,8 @@ import { attachIrn, extractDocs, isEinvoiceableBookDoc, type EinvoiceDocRow } fr
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 import { compareVersions, isExtensionUpdateRecommended, updateRecommendedMessage } from '@/lib/extensionVersion';
+import { describeHsnFixes, describeHsnProblems, editableUqc, isServiceHsn, normaliseGstr1Hsn, normaliseUqc } from '@/lib/gstr1/uqc';
+import { UqcSelect, UqcText } from '@/components/gstr1/UqcSelect';
 
 /** First extension version that pushes a NIL GSTR-1 (and pulls e-invoices). */
 const NIL_PUSH_MIN_EXTENSION = '0.8.4';
@@ -849,6 +851,11 @@ const GSTR1DataPage: React.FC = () => {
         );
       }
 
+      // Table 12 units as GSTN codes on the way in ("Others" → OTH, NA on
+      // services), so what is stored, shown and pushed is what the portal takes.
+      const hsnFix = normaliseGstr1Hsn(json);
+      json = hsnFix.json;
+
       const periodMonthKey = mmYyyyToShort(selectedMonth);
       const { data: written, error } = await supabase
         .from('gstr1_data')
@@ -882,6 +889,8 @@ const GSTR1DataPage: React.FC = () => {
       }
 
       toast.success(`GSTR-1 JSON imported for ${periodMonthKey}.`);
+      if (hsnFix.changed) toast.info(describeHsnFixes(hsnFix), { duration: 12000 });
+      if (hsnFix.problems.length) toast.warning(describeHsnProblems(hsnFix.problems), { duration: 15000 });
       await fetchGSTR1Data();
       await recordVersion({
         action_type: 'IMPORT',
@@ -988,6 +997,35 @@ const GSTR1DataPage: React.FC = () => {
       return;
     }
 
+    // Table 12 units. The portal rejects a unit outside GSTN's list ("Others",
+    // "PCS-PIECES": RET191353), any unit but NA on a service, a quantity on a
+    // service (RET191355) and a repeated HSN + rate + unit. Correct what has
+    // one right answer and save it before the push (the extension uploads the
+    // stored row, so this covers JSONs imported before this check existed);
+    // stop on what needs a person.
+    const hsnFix = normaliseGstr1Hsn(gstr1Data.raw_json);
+    if (hsnFix.problems.length) {
+      toast.error(describeHsnProblems(hsnFix.problems), { duration: 15000 });
+      setUploadDialogOpen(false);
+      return;
+    }
+    let draftJson = gstr1Data.raw_json;
+    if (hsnFix.changed) {
+      const { data: saved, error: saveError } = await supabase
+        .from('gstr1_data')
+        .update({ raw_json: hsnFix.json, updated_at: new Date().toISOString() })
+        .eq('id', gstr1Data.id)
+        .select('id');
+      if (saveError || !saved || saved.length === 0) {
+        toast.error('Could not save the corrected Table 12 units, so nothing was uploaded: ' + (saveError?.message || 'the database returned no row.'));
+        return;
+      }
+      draftJson = hsnFix.json;
+      toast.info(describeHsnFixes(hsnFix), { duration: 12000 });
+      await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: 'Table 12 units set to GSTN codes before upload', payload: hsnFix.json });
+      await fetchGSTR1Data();
+    }
+
     // Advance set-off. Last of the pre-flight checks and the only one that can
     // be passed with a manager's recorded approval rather than a correction —
     // every other failure above is unambiguous, this one has genuine
@@ -997,7 +1035,7 @@ const GSTR1DataPage: React.FC = () => {
       clientName: clients.find((c) => c.id === selectedClient)?.name || '',
       gstin: clientGstin,
       periodMonth: selectedMonth,
-      draftJson: gstr1Data.raw_json,
+      draftJson,
       regularSubType: clients.find((c) => c.id === selectedClient)?.regular_sub_type,
       registrationType: clients.find((c) => c.id === selectedClient)?.registration_type,
     });
@@ -1530,7 +1568,8 @@ const GSTR1DataPage: React.FC = () => {
 
   // --- HSN (Table 12) manual correction ---
   const startHsnEdit = () => {
-    setHsnEditRows(hsnRows.map((r, i) => ({ ...r, _id: i })));
+    // Units as GSTN codes, so the picker shows them; a value GSTN doesn't know stays, shown as "choose".
+    setHsnEditRows(hsnRows.map((r, i) => ({ ...r, uqc: editableUqc(r.uqc, r.hsn_sc), _id: i })));
     setHsnEditMode(true);
   };
   const cancelHsnEdit = () => { setHsnEditMode(false); setHsnEditRows([]); };
@@ -1539,7 +1578,7 @@ const GSTR1DataPage: React.FC = () => {
   const addHsnRow = () =>
     setHsnEditRows((prev) => [
       ...prev,
-      { _id: (prev.at(-1)?._id ?? -1) + 1, _src: 'hsn_b2b', hsn_sc: '', desc: '', uqc: 'NA', qty: 0, rt: 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 },
+      { _id: (prev.at(-1)?._id ?? -1) + 1, _src: 'hsn_b2b', hsn_sc: '', desc: '', uqc: '', qty: 0, rt: 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 },
     ]);
   const removeHsnRow = (id: number) => setHsnEditRows((prev) => prev.filter((r) => r._id !== id));
   // Merge rows sharing the same HSN code + rate + UQC + Type (B2B vs Other)
@@ -1554,7 +1593,8 @@ const GSTR1DataPage: React.FC = () => {
     setHsnEditRows((prev) => {
       const groups = new Map<string, any[]>();
       prev.forEach((r) => {
-        const key = [String(r.hsn_sc || '').trim().toUpperCase(), String(r.rt ?? ''), String(r.uqc || '').trim().toUpperCase(), r._src || 'hsn_b2b'].join('|');
+        const unit = normaliseUqc(r.uqc, r.hsn_sc) ?? String(r.uqc || '').trim().toUpperCase();
+        const key = [String(r.hsn_sc || '').trim().toUpperCase(), String(Number(r.rt) || 0), unit, r._src || 'hsn_b2b'].join('|');
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key)!.push(r);
       });
@@ -1592,7 +1632,7 @@ const GSTR1DataPage: React.FC = () => {
             num: buckets[bucket].length + 1,
             hsn_sc: String(r.hsn_sc).trim(),
             desc: r.desc || '',
-            uqc: r.uqc || 'NA',
+            uqc: r.uqc || '',
             qty: Number(r.qty) || 0,
             rt: Number(r.rt) || 0,
             txval: Number(r.txval) || 0,
@@ -1602,17 +1642,25 @@ const GSTR1DataPage: React.FC = () => {
             csamt: Number(r.csamt) || 0,
           });
         });
-      const newJson = { ...json };
+      const edited = { ...json };
       if (buckets.hsn_b2b.length || buckets.hsn_b2c.length) {
-        newJson.hsn = {};
-        if (buckets.hsn_b2b.length) newJson.hsn.hsn_b2b = buckets.hsn_b2b;
-        if (buckets.hsn_b2c.length) newJson.hsn.hsn_b2c = buckets.hsn_b2c;
+        edited.hsn = {};
+        if (buckets.hsn_b2b.length) edited.hsn.hsn_b2b = buckets.hsn_b2b;
+        if (buckets.hsn_b2c.length) edited.hsn.hsn_b2c = buckets.hsn_b2c;
       } else {
-        delete newJson.hsn;
+        delete edited.hsn;
       }
+      // Same rules the push applies: GSTN units, NA and qty 0 on services, one row per HSN + rate + unit.
+      const hsnFix = normaliseGstr1Hsn(edited);
+      if (hsnFix.problems.length) {
+        toast.error(describeHsnProblems(hsnFix.problems, ''), { duration: 15000 });
+        return;
+      }
+      const newJson = hsnFix.json;
       const { error } = await supabase.from('gstr1_data').update({ raw_json: newJson, updated_at: new Date().toISOString() }).eq('id', gstr1Data.id);
       if (error) throw error;
       toast.success('HSN summary updated.');
+      if (hsnFix.fixes.length || hsnFix.merged) toast.info(describeHsnFixes(hsnFix), { duration: 12000 });
       await fetchGSTR1Data();
       await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: 'Edited HSN summary (Table 12) before upload', payload: newJson });
       setHsnEditMode(false);
@@ -2736,10 +2784,14 @@ const GSTR1DataPage: React.FC = () => {
                               </Select>
                             </TableCell>
                             <TableCell className={`${TD} p-0`}>
-                              <Input className={WS_CELL_INPUT} value={row.uqc || ''} onChange={(e) => updateHsnCell(row._id, 'uqc', e.target.value)} />
+                              <UqcSelect value={row.uqc} hsn={row.hsn_sc} onChange={(code) => updateHsnCell(row._id, 'uqc', code)} />
                             </TableCell>
                             <TableCell className={`${TD} p-0`}>
-                              <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.qty ?? 0} onChange={(e) => updateHsnCell(row._id, 'qty', e.target.value)} />
+                              {isServiceHsn(row.hsn_sc) ? (
+                                <span className="block px-2 py-1.5 text-right text-sm tabular-nums text-muted-foreground" title="A service always goes to the portal with quantity 0.">0</span>
+                              ) : (
+                                <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.qty ?? 0} onChange={(e) => updateHsnCell(row._id, 'qty', e.target.value)} />
+                              )}
                             </TableCell>
                             <TableCell className={`${TD} p-0`}>
                               <Input className={`${WS_CELL_INPUT} text-right`} type="number" value={row.rt ?? 0} onChange={(e) => updateHsnCell(row._id, 'rt', e.target.value)} />
@@ -2812,7 +2864,7 @@ const GSTR1DataPage: React.FC = () => {
                             <TableCell className={`${TD} text-center`}>{i + 1}</TableCell>
                             <TableCell className={`${TD} font-mono`}>{row.hsn_sc}</TableCell>
                             <TableCell className={TD}>{row.desc}</TableCell>
-                            <TableCell className={TD}>{row.uqc}</TableCell>
+                            <TableCell className={TD}><UqcText value={row.uqc} hsn={row.hsn_sc} /></TableCell>
                             <TableCell className={TD_NUM}>{formatNumber(row.qty)}</TableCell>
                             <TableCell className={TD_NUM}>{row.rt}%</TableCell>
                             <TableCell className={TD_NUM}>{formatNumber(row.txval)}</TableCell>

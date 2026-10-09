@@ -22,6 +22,8 @@ import {
   findInvalidGstinRows, findInvoiceValueMismatchRows, findInvalidAmendmentPeriodRows,
 } from '@/utils/gstr1ManualBuild';
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
+import { describeHsnProblems, editableUqc, isServiceHsn, normaliseGstr1Hsn } from '@/lib/gstr1/uqc';
+import { UqcSelect, UqcText } from '@/components/gstr1/UqcSelect';
 
 const INVOICE_SECTIONS: Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>[] = ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exp', 'at', 'txpd', 'ata', 'txpda'];
 
@@ -109,7 +111,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
           const row = { id: r.id, ...r.data };
           if (r.section === 'nil') nil.push(row);
           else if (r.section === 'doc') doc.push(row);
-          else if (r.section === 'hsn') hsn.push(row);
+          else if (r.section === 'hsn') hsn.push({ ...row, uqc: editableUqc(row.uqc, row.hsn_sc) });
           else if (bySection[r.section as Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>]) bySection[r.section as Exclude<Gstr1Section, 'nil' | 'doc' | 'hsn'>].push(row);
         });
         setRowsBySection(bySection);
@@ -160,7 +162,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
   const addRow = (section: Gstr1Section) => {
     if (section === 'nil') setNilRows((prev) => [...prev, { id: newRowId(), sply_ty: 'INTRB2B', nil_amt: 0, expt_amt: 0, ngsup_amt: 0 }]);
     else if (section === 'doc') setDocRows((prev) => [...prev, { id: newRowId(), doc_typ: DOC_TYPES[0].value, from: '', to: '', totnum: 0, cancel: 0 }]);
-    else if (section === 'hsn') setHsnRows((prev) => [...prev, { id: newRowId(), _src: 'hsn_b2b', hsn_sc: '', desc: '', uqc: 'NA', qty: 0, rt: 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 }]);
+    else if (section === 'hsn') setHsnRows((prev) => [...prev, { id: newRowId(), _src: 'hsn_b2b', hsn_sc: '', desc: '', uqc: '', qty: 0, rt: 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 }]);
     else setRowsBySection((prev) => ({ ...prev, [section]: [...prev[section], { id: newRowId() }] }));
   };
 
@@ -267,6 +269,15 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
     // the operator fixes it before wasting a portal round-trip.
     if (hasMissingHsnSummary(rowsBySection, hsnRows)) {
       toast.error('This return has taxable value but no HSN summary (Table 12) rows — the portal will reject the upload. Add at least one row on the "12 — HSN-wise Summary" tab first.');
+      return;
+    }
+    // Table 12 rows the portal would reject that only a person can fix: a unit
+    // GSTN doesn't know, or an HSN that isn't 4 to 8 digits. Everything with
+    // one right answer (NA on services, "Others" → OTH) is corrected by
+    // assembleGstr1Json itself.
+    const hsnProblems = normaliseGstr1Hsn(assembleGstr1Json({ gstin: clientGstin, periodShort, rowsBySection, nilRows, docRows, hsnRows })).problems;
+    if (hsnProblems.length > 0) {
+      toast.error(describeHsnProblems(hsnProblems, 'on the "12 — HSN-wise Summary" tab'), { duration: 15000 });
       return;
     }
     // A single malformed counterparty GSTIN anywhere in the file bounces the
@@ -576,8 +587,9 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
                 {editable && addRowButton('hsn')}
               </div>
               <Note>
-                One row per HSN/SAC + rate combination — this is the aggregate the portal expects, not a per-invoice
-                breakdown. Counts (Qty) are optional for services (leave UQC as NA).
+                One row per HSN/SAC + rate + unit — this is the aggregate the portal expects, not a per-invoice
+                breakdown. Pick the unit (UQC) from GSTN's list; OTH-OTHERS when none fits. A service (SAC 99…)
+                always goes as NA with quantity 0.
               </Note>
               <div className={WS_TABLE_WRAP}>
                 <Table className={WS_TABLE} containerClassName="overflow-visible">
@@ -613,16 +625,16 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
                             </Select>
                           ) : <span className={READ_CELL}>{row._src === 'hsn_b2c' ? 'Other (B2C / Exports)' : 'B2B / CDNR (registered)'}</span>}
                         </TableCell>
-                        {(['uqc'] as const).map((f) => (
-                          <TableCell key={f} className={`${TD} p-0`}>
-                            {editable ? (
-                              <Input value={row[f] || ''} onChange={(e) => updateHsnRow(row.id, f, e.target.value)} className={WS_CELL_INPUT} />
-                            ) : <span className={READ_CELL}>{row[f]}</span>}
-                          </TableCell>
-                        ))}
+                        <TableCell className={`${TD} p-0`}>
+                          {editable ? (
+                            <UqcSelect value={row.uqc} hsn={row.hsn_sc} onChange={(code) => updateHsnRow(row.id, 'uqc', code)} />
+                          ) : <UqcText value={row.uqc} hsn={row.hsn_sc} className={READ_CELL} />}
+                        </TableCell>
                         {(['qty', 'rt', 'txval', 'iamt', 'camt', 'samt', 'csamt'] as const).map((f) => (
                           <TableCell key={f} className={`${TD} p-0`}>
-                            {editable ? (
+                            {f === 'qty' && isServiceHsn(row.hsn_sc) ? (
+                              <span className={READ_NUM} title="A service always goes to the portal with quantity 0.">0</span>
+                            ) : editable ? (
                               <Input type="number" value={row[f] ?? 0} onChange={(e) => updateHsnRow(row.id, f, parseFloat(e.target.value) || 0)} className={`${WS_CELL_INPUT} text-right tabular-nums`} />
                             ) : <span className={READ_NUM}>{Number(row[f] || 0).toLocaleString('en-IN')}</span>}
                           </TableCell>

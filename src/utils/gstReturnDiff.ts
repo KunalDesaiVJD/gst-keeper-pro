@@ -12,6 +12,8 @@
 // tax rate means an edited figure reads as "this line changed", not as one
 // invoice deleted and another added.
 
+import { normaliseUqc } from '@/lib/gstr1/uqc';
+
 export type DiffKind = 'added' | 'removed' | 'changed';
 
 export interface DiffFieldChange {
@@ -264,12 +266,18 @@ export function flattenGstr1(json: unknown): FlatMap {
       str(r.sply_ty) || '—', pick(r, ['nil_amt', 'expt_amt', 'ngsup_amt']));
   });
 
-  arr(rec(j.hsn).data).forEach((raw) => {
-    const r = rec(raw);
-    const rt = num(r.rt);
-    put(`hsn|${str(r.hsn_sc)}|${rt}|${str(r.uqc)}`, 'HSN summary (Table 12)',
-      `${str(r.hsn_sc) || '—'} · ${rt}%`,
-      { ...pick(r, ['desc', 'uqc', 'qty']), ...taxOf(r) });
+  // Table 12 is hsn.data up to Apr-2025 and hsn_b2b / hsn_b2c since. The unit
+  // is keyed as its GSTN code, so "Others" corrected to OTH reads as a change
+  // to that row, not as one row removed and another added.
+  ([['data', ''], ['hsn_b2b', ' (B2B)'], ['hsn_b2c', ' (B2C)']] as const).forEach(([list, tag]) => {
+    arr(rec(j.hsn)[list]).forEach((raw) => {
+      const r = rec(raw);
+      const rt = num(r.rt);
+      const unit = normaliseUqc(r.uqc, r.hsn_sc) ?? str(r.uqc).toUpperCase();
+      put(`hsn|${list}|${str(r.hsn_sc)}|${rt}|${unit}`, 'HSN summary (Table 12)',
+        `${str(r.hsn_sc) || '—'} · ${rt}%${tag}`,
+        { ...pick(r, ['desc', 'uqc', 'qty']), ...taxOf(r) });
+    });
   });
 
   arr(rec(j.doc_issue).doc_det).forEach((rawD) => {

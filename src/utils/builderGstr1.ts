@@ -269,7 +269,7 @@ export function buildBuilderGstr1(params: {
     num: i + 1,
     hsn_sc: BUILDER_SAC,
     desc: 'Construction services of buildings',
-    uqc: 'OTH',
+    uqc: 'NA', // a service (SAC 99…) carries NA and qty 0; any other unit is RET191353
     qty: 0,
     txval: b.txval,
     rt: b.rt,
