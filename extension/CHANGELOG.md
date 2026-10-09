@@ -40,15 +40,41 @@ login and the popup are as 0.8.5 runs them.
   page can ignore a result for a client or month it no longer shows.
 - **No push ends without a result.** A session that kept dropping, an unexpected
   error, a refused login, a push left idle for 10 minutes and a closed portal tab
-  now each give the page a failed result (a closed tab writes nothing to the
-  database, because what the portal did is unknown). Before, the page spun until
-  reloaded.
-- **Refresh errors records an upload the portal processed.** It first reads the
-  Upload History's latest row: Processed with no errors is saved as `accepted`
-  (the `gstr1_data` trigger then marks it Pushed), Error Occurred as `failed` with
-  the portal's reason. Before, Refresh always wrote `partial`, so an upload that
-  timed out after 6 minutes could never become Pushed. A Refresh that cannot reach
-  the portal leaves the upload's status alone.
+  now each give the page a failed result. Before, the page spun until reloaded. A
+  closed tab's result carries `tabClosed: true` (the outcome is unknown, not a
+  failure) and writes nothing to the database, except for a JSON upload whose file
+  was already attached: that is saved `failed` with "Portal tab closed during the
+  upload; outcome unknown. Use Refresh errors once the portal shows a result.", so
+  the GSTR-1 page offers Refresh errors. Every other closed tab says "Check the
+  portal and push again" (a Refresh: "click Refresh errors again"). No message
+  names Refresh errors where the page would not offer it.
+- **Refresh errors records an upload the portal processed, and only one this app
+  sent.** It first reads the Upload History's latest row: Processed with no errors
+  is saved as `accepted` (the `gstr1_data` trigger then marks it Pushed), Error
+  Occurred as `failed` with the portal's reason. Before, Refresh always wrote
+  `partial`, so an upload that timed out after 6 minutes could never become
+  Pushed. Just before an upload attaches its file it keeps the row then on top
+  (`gstk_gstr1_pretop_<row id>`: its cells and the time), until the outcome is
+  recorded; each new upload job drops the last one, so a push that died before
+  attaching leaves none. Refresh takes the top row as this upload's only when it is
+  a different row and, by its date and time (IST), not older than the attach less
+  two minutes. Otherwise, while the portal still shows In Progress / In-Progress /
+  Pending, and when no error report is ready yet, it writes nothing and gives the
+  page `status: 'pending'` ("The portal shows no upload from GST Keeper since this
+  push. Upload the JSON again to record it.", "still processing", "no error report
+  is ready"), so an older or hand upload on top is never recorded as this push and
+  a `failed` upload is never turned into `partial` on no evidence. A Refresh that
+  cannot reach the portal leaves the upload's status alone, and one reloaded on the
+  upload page reads it again instead of uploading.
+- **A finished push never races a closed tab.** A NIL push stores its result and
+  clears its job before it shows the green banner and calls `mark_filing_pushed`.
+  A GSTR-3B push ends in the background worker's job slot (`finishGstr3bPush`: the
+  Push History row, the result with `recorded`, the job cleared), the same slot a
+  closed tab is handled in, so a tab closed on seeing the banner can no longer turn
+  a ticked NIL into a failure or add a second Push History row with the wrong reason.
+- **Fixed: a NIL push stopped at the "File Nil GSTR-1" toggle** with "Cannot
+  access 'nilToggleOn' before initialization" (since 0.8.4): its two constants
+  were declared below the step dispatcher. They now sit with the other constants.
 - **Portal labels are never invoice errors.** "Error report generation requested",
   "Generate error report" and "NA" are no longer stored as error rows.
 - **IFF months (QRMP, months 1 and 2 of the quarter).** When the dashboard has no

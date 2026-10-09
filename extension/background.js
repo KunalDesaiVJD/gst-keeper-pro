@@ -916,6 +916,10 @@ const API = {
       const rows = await sel(`gstr1_data?client_id=eq.${c.id}&period_month=eq.${enc(short)}&select=id,raw_json&limit=1`);
       stored = rows && rows[0];
       if (!stored) throw new Error(`No stored GSTR-1 JSON for ${c.name} / ${short}. Import a JSON first.`);
+      // 0.8.6: an earlier upload's Upload History snapshot (content.js
+      // pretopKey) goes before anything else, so a push that dies before its
+      // file is attached leaves none and Refresh errors records nothing for it.
+      await chrome.storage.local.remove(PRETOP_PREFIX + stored.id);
       json = stored.raw_json;
       // A failed read of einvoice_docs must never block the push: it goes up
       // as stored, with no IRN attached.
@@ -1131,6 +1135,27 @@ const API = {
     }]);
     return true;
   },
+
+  // 0.8.6: how every GSTR-3B push ends (content.js finishGstr3b): its Push
+  // History row (recordGstr3bPush), then the result for the page saying
+  // whether that row landed, then the job cleared, in one step of the job
+  // slot. pushTabClosed runs in the same slot, so a portal tab closed
+  // meanwhile finds either the push unfinished (and reports it) or no job
+  // (and writes nothing): never a second row, or the tab's words for a push
+  // whose own outcome was known.
+  finishGstr3bPush: (outcome) => jobSlot(async () => {
+    const { tabId, status, summary, error, filled, skipped, portalFilled } = outcome || {};
+    const target = { clientId: (outcome && outcome.clientId) || null, period_month: (outcome && outcome.period_month) || null };
+    let recorded = false;
+    try { recorded = (await API.recordGstr3bPush(outcome || {})) === true; } catch (e) { recorded = false; }
+    await chrome.storage.local.set({ gstk_gstr3b_push_result: {
+      ok: status !== 'failed', status, summary, ...(error ? { error } : {}), filled, skipped, portalFilled,
+      ...target, recorded, at: Date.now(),
+    } });
+    const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
+    if (job && job.mode === 'gstr3b_push' && (tabId == null || job.tabId === tabId)) await chrome.storage.local.remove('gstk_active_job');
+    return recorded;
+  }),
 
   saveEinvoicePull: async ({ clientId, period_month, actorId, json, status, message }) => {
     let st = status || 'failed';
@@ -1364,17 +1389,31 @@ if (chrome.alarms && chrome.alarms.onAlarm) {
 // ── A push whose portal tab was closed (0.8.6) ──────────────────────────────
 // A GSTR-1 upload, NIL, Refresh errors or GSTR-3B push reports from its own
 // portal tab; closed before that, the page waited for a result for ever. Now
-// it hears that the tab went. Nothing is written to gstr1_data or
-// gstr3b_push_versions: what the portal did with it is unknown.
+// it hears that the tab went (`tabClosed`: the outcome is unknown, not a
+// failure). Nothing is written to gstr3b_push_versions, and gstr1_data only
+// for a JSON upload whose file was attached (its Upload History snapshot is
+// there): it is saved 'failed' with words the GSTR-1 page offers Refresh
+// errors for, which can then record what the portal did with the file.
 const PUSH_RESULT_KEYS = { gstr1_upload: 'gstk_gstr1_upload_result', gstr1_refresh: 'gstk_gstr1_upload_result', gstr3b_push: 'gstk_gstr3b_push_result' };
-const PUSH_TAB_CLOSED = 'The portal tab was closed before the portal reported a result. Check the portal; for a GSTR-1 upload use Refresh errors.';
+const PRETOP_PREFIX = 'gstk_gstr1_pretop_';
+const PUSH_TAB_CLOSED = 'The portal tab was closed before the push finished. Check the portal and push again.';
+const PUSH_TAB_CLOSED_UPLOAD = 'Portal tab closed during the upload; outcome unknown. Use Refresh errors once the portal shows a result.';
+const REFRESH_TAB_CLOSED = 'The portal tab was closed before Refresh errors finished. Nothing was changed; click Refresh errors again.';
 async function pushTabClosed(tabId) {
   const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
   const key = job && PUSH_RESULT_KEYS[job.mode];
   if (!key || job.tabId !== tabId) return;
   const c = (job.clients && job.clients[job.idx || 0]) || {};
+  const g = job.gstr1 || {};
+  let text = job.mode === 'gstr1_refresh' ? REFRESH_TAB_CLOSED : PUSH_TAB_CLOSED;
+  if (job.mode === 'gstr1_upload' && !g.nil && g.rowId
+    && (await chrome.storage.local.get(PRETOP_PREFIX + g.rowId))[PRETOP_PREFIX + g.rowId]) {
+    const saved = await API.saveGstr1UploadResult({ rowId: g.rowId, status: 'failed', summary: PUSH_TAB_CLOSED_UPLOAD, errors: null, actorId: job.actorId || null })
+      .then(() => true, () => false);
+    if (saved) text = PUSH_TAB_CLOSED_UPLOAD;
+  }
   const result = {
-    ok: false, status: 'failed', error: PUSH_TAB_CLOSED, summary: PUSH_TAB_CLOSED,
+    ok: false, status: 'failed', error: text, summary: text, tabClosed: true,
     clientId: c.clientId || null, period_month: job.period || null, at: Date.now(),
   };
   if (job.mode === 'gstr3b_push') Object.assign(result, { filled: 0, skipped: [], portalFilled: [], recorded: false });

@@ -360,6 +360,7 @@ const Gstr3bPage: React.FC = () => {
           clientId?: string | null;
           period_month?: string | null;
           recorded?: boolean;
+          tabClosed?: boolean;
         };
         setIsPushing(false);
         const c = classifyGstr3bPush(r);
@@ -376,6 +377,20 @@ const Gstr3bPage: React.FC = () => {
               : 'It was NOT recorded: open that client and month, check the portal and Push History.'),
             { duration: 20000 },
           );
+          return;
+        }
+        // 0.8.6: the portal tab was closed before the push reported back, so
+        // what the portal kept is unknown: nothing is written here, and a row
+        // the extension landed meanwhile is read back.
+        if (r.tabClosed) {
+          toast.warning(
+            'The portal tab was closed before the GSTR-3B push reported back, so its outcome is unknown. '
+            + 'Check the GSTR-3B form on the portal and Push History before pushing again.',
+            { duration: 20000 },
+          );
+          setPushResult(null);
+          fetchVersions();
+          fetchFilingStatus();
           return;
         }
         const failed = c.status === 'failed';

@@ -3,9 +3,11 @@
 // 3.1(a)/(b) not on the form) leaves the push 'filled'; anything else makes it
 // 'partial'. 4A(1)/(2) carry IGST only, so nothing lands in their CESS box; a
 // value the portal did not keep is a skip, not a fill; figures go in rounded.
-// Also the GSTR-1 Upload History status and the portal labels that are never
-// invoice errors. Runs the shipped code: each function is cut out of
-// content.js, as 06-login-answers does.
+// Also the GSTR-1 Upload History status (In-Progress with a hyphen is still
+// running), the portal labels that are never invoice errors, and how Refresh
+// errors tells this app's upload row (its key, its date and time in IST, and
+// the snapshot taken before the attach). Runs the shipped code: each function
+// is cut out of content.js, as 06-login-answers does.
 //   node test/07-gstr3b-push.test.mjs
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -21,7 +23,7 @@ function cut(sig) {
   return src.slice(i + 1, src.indexOf('\n  }\n', i) + 4);
 }
 const names = ['oneLine', 'gstr3bNum', 'gstr3bSameValue', 'classifyGstr3bSkips', 'gstr3bSummary', 'gstr3bTable4Rows',
-  'find31RowByLetter', 'classifyUploadStatus', 'isPortalPlaceholder'];
+  'find31RowByLetter', 'classifyUploadStatus', 'isPortalPlaceholder', 'uploadRowKey', 'uploadRowTime', 'uploadRowIsNew'];
 const code = names.map((n) => cut('function ' + n + '(')).join('\n') + '\n' + cut('async function fillGstr3bRow(')
   + '\n' + [...names, 'fillGstr3bRow'].map((n) => 'this.' + n + ' = ' + n + ';').join('\n');
 // What fillGstr3bRow and find31RowByLetter reach outside themselves: the page.
@@ -216,11 +218,41 @@ eq(f.classifyUploadStatus('Processed'), 'accepted', 'Processed is accepted');
 eq(f.classifyUploadStatus('Processed with Error'), 'partial', 'Processed with Error is partial');
 eq(f.classifyUploadStatus('Error Occurred'), 'failed', 'Error Occurred is failed');
 eq(f.classifyUploadStatus('In Progress'), null, 'In Progress is not an outcome yet');
+eq(f.classifyUploadStatus('In-Progress'), null, 'In-Progress (hyphen) is not an outcome yet');
+eq(f.classifyUploadStatus('In-progress'), null, 'In-progress is not an outcome yet');
+eq(f.classifyUploadStatus('Pending'), null, 'Pending is not an outcome yet');
 for (const label of ['Error report generation requested', 'Generate error report', 'Download error report', 'NA', 'NA NA NA', 'N/A', '', 'Request for error report has been acknowledged']) {
   ok(f.isPortalPlaceholder(label), `${JSON.stringify(label)} is never an invoice error`);
 }
 ok(!f.isPortalPlaceholder('The UQC entered is not valid'), 'a real reason is kept');
 ok(!f.isPortalPlaceholder('File could not be uploaded! Download the latest offline tool'), 'a file-level rejection is kept');
+
+// ── Refresh errors: which Upload History row is this app's upload ───────────
+{
+  const tr = (...cells) => ({ querySelectorAll: (s) => (s === 'td' ? cells.map((t) => ({ textContent: t })) : []) });
+  eq(f.uploadRowKey(tr('09/10/2026', ' 13:30:45 ', 'AB1234', 'In\n Progress', 'NA')), '09/10/2026|13:30:45|AB1234|In Progress|NA',
+    'a row\'s key: its cells on one line, joined with |');
+  eq(f.uploadRowKey(undefined), '', 'no row: an empty key');
+  const IST = (y, mo, d, h, mi, s) => Date.UTC(y, mo - 1, d, h, mi, s) - 330 * 60 * 1000;
+  eq(f.uploadRowTime(['09/10/2026', '13:30:45', 'AB1234', 'Processed', 'NA']), IST(2026, 10, 9, 13, 30, 45), 'date and 24-hour time cells, read as IST');
+  eq(f.uploadRowTime(['09/10/2026 01:30 PM', 'AB1234', 'Processed']), IST(2026, 10, 9, 13, 30, 0), 'one cell, AM/PM');
+  eq(f.uploadRowTime(['09-10-2026', '12:05:00 am']), IST(2026, 10, 9, 0, 5, 0), '12 AM is midnight; dd-mm-yyyy');
+  eq(f.uploadRowTime(['09/10/2026', 'AB1234', 'Processed']), IST(2026, 10, 9, 23, 59, 59), 'a date with no time is the end of that day');
+  eq(f.uploadRowTime(['AB1234', 'Processed', 'NA']), null, 'no date: null');
+  eq(f.uploadRowTime(['31/02/2026', '10:00']), null, 'an impossible date: null');
+  eq(f.uploadRowTime(['09/10/2026', '25:61']), null, 'an impossible time: null');
+
+  const at = IST(2026, 10, 9, 13, 30, 0);
+  const sent = { key: '08/10/2026|11:00:00|AB1111|Processed|NA', at };
+  const row = (key, when) => ({ status: 'accepted', key, at: when });
+  ok(f.uploadRowIsNew(row('09/10/2026|13:31:10|AB1234|Processed|NA', at + 70 * 1000), sent), 'a new row uploaded after the attach is this upload\'s');
+  ok(f.uploadRowIsNew(row('09/10/2026|13:29:00|AB1234|Processed|NA', at - 60 * 1000), sent), 'a minute early is within the clocks\' grace');
+  ok(f.uploadRowIsNew(row('no date', null), sent), 'a new row with no date is this upload\'s');
+  ok(!f.uploadRowIsNew(row(sent.key, at - 86400000), sent), 'the row that was on top before the attach is not');
+  ok(!f.uploadRowIsNew(row('08/10/2026|11:00:00|AB1111|Processed|Download', at - 86400000), sent), 'an older row whose cells changed is not (its date)');
+  ok(!f.uploadRowIsNew(row('x', at), null), 'with no snapshot nothing on the portal is this app\'s upload');
+  ok(!f.uploadRowIsNew(null, sent), 'no row is not this upload');
+}
 
 console.log(fail ? '\n' + fail + ' FAILED' : '\nall passed');
 process.exit(fail ? 1 : 0);

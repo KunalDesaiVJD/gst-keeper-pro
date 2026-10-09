@@ -61,6 +61,20 @@ import { UqcSelect, UqcText } from '@/components/gstr1/UqcSelect';
 const NIL_PUSH_MIN_EXTENSION = '0.8.4';
 /** First extension version whose Refresh errors reads the Upload History (and can record 'accepted'). */
 const REFRESH_HISTORY_MIN_EXTENSION = '0.8.6';
+/**
+ * A 'failed' upload whose file reached the portal with its outcome unknown, by
+ * the summary the extension saves (word for word): the 6-minute timeout
+ * (content.js handleGstr1Upload) or its portal tab closed after the file was
+ * attached (background.js PUSH_TAB_CLOSED_UPLOAD). Only these offer Refresh
+ * errors: every other failure never sent the file, so nothing on the portal is
+ * this push's.
+ */
+const OUTCOME_UNKNOWN_SUMMARIES = [
+  'Timed out waiting for the portal to finish processing (6 min).',
+  'Portal tab closed during the upload',
+];
+const isOutcomeUnknownFailure = (summary?: string | null) =>
+  OUTCOME_UNKNOWN_SUMMARIES.some((p) => (summary || '').startsWith(p));
 /** An upload or NIL push left without a result this long is given up on (the extension's own idle limit is 10 minutes). */
 const UPLOAD_WATCHDOG_MS = 20 * 60 * 1000;
 
@@ -753,7 +767,7 @@ const GSTR1DataPage: React.FC = () => {
       if (d.__gstkUploadGstr1Result) {
         const r = d.__gstkUploadGstr1Result as {
           ok: boolean;
-          status?: 'accepted' | 'partial' | 'failed' | 'nil_marked';
+          status?: 'accepted' | 'partial' | 'failed' | 'nil_marked' | 'pending';
           summary?: string;
           message?: string;
           errors?: UploadErrorRow[];
@@ -761,6 +775,7 @@ const GSTR1DataPage: React.FC = () => {
           irnAttached?: number;
           clientId?: string | null;
           period_month?: string | null;
+          tabClosed?: boolean;
         };
         setIsUploading(false);
         const wasNil = nilPushRef.current;
@@ -771,13 +786,34 @@ const GSTR1DataPage: React.FC = () => {
         // gstr1_data row, and nothing is written here for the one shown.
         if (r.clientId && r.period_month && (r.clientId !== selectedClient || r.period_month !== selectedMonth)) {
           const name = clients.find((c) => c.id === r.clientId)?.name || 'another client';
-          const outcome = r.status === 'nil_marked' ? 'marked NIL' : r.ok ? (r.status || 'done') : 'failed';
+          const outcome = r.status === 'nil_marked' ? 'marked NIL'
+            : r.status === 'pending' ? 'nothing recorded yet'
+              : r.tabClosed ? 'outcome unknown, the portal tab was closed'
+                : r.ok ? (r.status || 'done') : 'failed';
           toast.warning(
             `The GSTR-1 result for ${name} · ${mmYyyyToShort(r.period_month)} arrived (${outcome}). It belongs to that client and month, `
             + 'not the one shown here: open them to see it.',
             { duration: 20000 },
           );
           fetchVersions();
+          return;
+        }
+        // 0.8.6: Refresh errors found nothing to record yet (the portal is
+        // still processing, or shows no upload from GST Keeper since this
+        // push). Nothing was written, so nothing failed.
+        if (r.status === 'pending') {
+          toast.info(r.summary || r.error || 'Nothing to record from the portal yet.', { duration: 15000 });
+          fetchVersions();
+          return;
+        }
+        // 0.8.6: the portal tab was closed before a result came back, so the
+        // outcome is unknown. An upload whose file was attached is saved
+        // 'failed' with words that offer Refresh errors; read it back.
+        if (r.tabClosed) {
+          toast.warning((wasNil ? 'NIL push: ' : '') + (r.error || r.summary || 'The portal tab was closed before the push finished. Check the portal.'), { duration: 20000 });
+          fetchGSTR1Data();
+          fetchVersions();
+          fetchFilingStatus();
           return;
         }
         if (r.ok && r.status === 'nil_marked') {
@@ -1891,13 +1927,16 @@ const GSTR1DataPage: React.FC = () => {
             )}
             {/* Only meaningful right after a "Processed with Error" upload,
                 while GSTN is still generating the per-invoice Error Report, or
-                a 'failed' one: an upload the portal took over 6 minutes on is
-                saved 'failed', and from 0.8.6 Refresh reads the portal's
-                Upload History and saves a processed one 'accepted'. An older
-                extension's Refresh always wrote 'partial', so a failed upload
-                offers it only from 0.8.6. */}
+                a 'failed' one whose file reached the portal with its outcome
+                unknown (the 6-minute timeout, or its portal tab closed after
+                the attach): from 0.8.6 Refresh reads the portal's Upload
+                History and saves this app's processed upload 'accepted'. Never
+                for a failure that did not send the file, nor on a Filed
+                return. An older extension's Refresh always wrote 'partial', so
+                a failed upload offers it only from 0.8.6. */}
             {gstr1Data && canEditFilingStatus() && (gstr1Data.last_upload_status === 'partial'
-              || (gstr1Data.last_upload_status === 'failed' && !!extVersion && compareVersions(extVersion, REFRESH_HISTORY_MIN_EXTENSION) >= 0)) && (
+              || (gstr1Data.last_upload_status === 'failed' && !isFiled && isOutcomeUnknownFailure(gstr1Data.last_upload_summary)
+                && !!extVersion && compareVersions(extVersion, REFRESH_HISTORY_MIN_EXTENSION) >= 0)) && (
               <>
                 <Button
                   variant="outline"
