@@ -402,6 +402,7 @@ export type Database = {
       }
       ai_documents: {
         Row: {
+          overview: Json | null
           agent_id: string | null
           attempts: number
           body: string | null
@@ -446,6 +447,7 @@ export type Database = {
           usage: Json | null
         }
         Insert: {
+          overview?: Json | null
           agent_id?: string | null
           attempts?: number
           body?: string | null
@@ -490,6 +492,7 @@ export type Database = {
           usage?: Json | null
         }
         Update: {
+          overview?: Json | null
           agent_id?: string | null
           attempts?: number
           body?: string | null
@@ -953,6 +956,12 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      notice_case_seen: {
+        Row: { client_id: string; case_key: string; seen_at: string; seen_by_name: string | null }
+        Insert: { client_id: string; case_key: string; seen_at?: string; seen_by_name?: string | null }
+        Update: { client_id?: string; case_key?: string; seen_at?: string; seen_by_name?: string | null }
+        Relationships: []
       }
       notice_bell_state: {
         Row: {
@@ -4796,6 +4805,9 @@ export type Database = {
       }
       clients: {
         Row: {
+          ai_learning: boolean
+          ai_learning_at: string | null
+          ai_learning_by_name: string | null
           ai_consent_at: string | null
           ai_consent_note: string | null
           ai_opt_out: boolean
@@ -4837,6 +4849,9 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          ai_learning?: boolean
+          ai_learning_at?: string | null
+          ai_learning_by_name?: string | null
           ai_consent_at?: string | null
           ai_consent_note?: string | null
           ai_opt_out?: boolean
@@ -4878,6 +4893,9 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          ai_learning?: boolean
+          ai_learning_at?: string | null
+          ai_learning_by_name?: string | null
           ai_consent_at?: string | null
           ai_consent_note?: string | null
           ai_opt_out?: boolean
@@ -10227,6 +10245,95 @@ export type Database = {
         }
         Relationships: []
       }
+      notice_cases: {
+        Row: {
+          client_id: string | null
+          client_name: string | null
+          client_gstin: string | null
+          case_key: string | null
+          case_id: string | null
+          track: string | null
+          title: string | null
+          lead_notice_id: string | null
+          id: string | null
+          form_code: string | null
+          form_label: string | null
+          category: string | null
+          reference_number: string | null
+          stage: string | null
+          stage_label: string | null
+          stage_ord: number | null
+          assign_to: string | null
+          assign_to_user_id: string | null
+          effective_priority: string | null
+          financial_year: string | null
+          financial_years: string | null
+          forms: string[] | null
+          notices: number | null
+          open_notices: number | null
+          is_open: boolean | null
+          is_overdue: boolean | null
+          is_due_in_7: boolean | null
+          is_unassigned: boolean | null
+          next_due: string | null
+          next_hearing: string | null
+          first_issue_date: string | null
+          last_issue_date: string | null
+          exposure: number | null
+          amount_of_demand: number | null
+          on_dashboard: boolean | null
+          documents: number | null
+          new_items: number | null
+          new_at: string | null
+          last_arrived_at: string | null
+          seen_at: string | null
+          latest_label: string | null
+          latest_kind: string | null
+          latest_from: string | null
+          latest_date: string | null
+          last_activity_date: string | null
+          today_ist: string | null
+        }
+        Relationships: []
+      }
+      notice_case_correspondence: {
+        Row: {
+          client_id: string | null
+          case_key: string | null
+          kind: string | null
+          item_id: string | null
+          from_party: string | null
+          item_date: string | null
+          first_seen_at: string | null
+          label: string | null
+          reference: string | null
+          folder_section: string | null
+          seen_at: string | null
+          is_new: boolean | null
+        }
+        Relationships: []
+      }
+      ai_learning_clients: {
+        Row: {
+          client_id: string | null
+          client_name: string | null
+          client_gstin: string | null
+          ai_learning: boolean | null
+          ai_learning_by_name: string | null
+          ai_learning_at: string | null
+          responses: number | null
+          responses_included: number | null
+          past: number | null
+          ongoing: number | null
+          read: number | null
+          pairs: number | null
+          pairs_included: number | null
+          last_response_date: string | null
+          forms: string[] | null
+          financial_years: string[] | null
+        }
+        Relationships: []
+      }
       notice_type_overview: {
         Row: {
           category: string | null
@@ -10515,6 +10622,26 @@ export type Database = {
       }
     }
     Functions: {
+      notice_case_items: {
+        Args: { p_client_id: string; p_case_key: string }
+        Returns: Json
+      }
+      notice_case_overview: {
+        Args: { p_client_id: string; p_case_key: string; p_notice_id?: string | null }
+        Returns: Json
+      }
+      notice_cases_counts: {
+        Args: { p_filters?: Json | null }
+        Returns: Json
+      }
+      notice_case_mark_seen: {
+        Args: { p_client_id: string; p_case_key: string; p_by_name?: string | null }
+        Returns: string
+      }
+      ai_learning_client_set: {
+        Args: { p_client_ids: string[]; p_include: boolean; p_actor?: string | null }
+        Returns: Json
+      }
       notices_client_settings: {
         Args: never
         Returns: {

@@ -42,6 +42,8 @@ import NoticesCalendarPage from "@/pages/NoticesCalendarPage";
 import NoticesAutopilotPage from "@/pages/NoticesAutopilotPage";
 import NoticesReplyFactoryPage from "@/pages/NoticesReplyFactoryPage";
 import NoticesSettingsPage from "@/pages/NoticesSettingsPage";
+import NoticeCasesPage from "@/pages/NoticeCasesPage";
+import NoticeCasePage from "@/pages/NoticeCasePage";
 import ClientDocumentsPage from "@/pages/ClientDocumentsPage";
 import AllClientsRefundsPage from "@/pages/AllClientsRefundsPage";
 import AllClientsDrc03Page from "@/pages/AllClientsDrc03Page";
@@ -130,6 +132,8 @@ const App = () => (
                   <Route path="/notices-autopilot" element={<NoticesAutopilotPage />} />
                   <Route path="/notices-reply-factory" element={<NoticesReplyFactoryPage />} />
                   <Route path="/notices-settings" element={<NoticesSettingsPage />} />
+                  <Route path="/notices-cases" element={<NoticeCasesPage />} />
+                  <Route path="/notices-case/:clientId/:caseKey" element={<NoticeCasePage />} />
                   <Route path="/litigation" element={<LitigationMattersPage />} />
                   <Route path="/litigation/:id" element={<LitigationMatterDetailPage />} />
                   <Route path="/litigation-mis" element={<LitigationMISPage />} />

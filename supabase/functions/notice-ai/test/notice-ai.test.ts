@@ -68,6 +68,18 @@ Deno.test('documents come only from the project\'s own storage', () => {
   assert(!documentUrlAllowed(storageUrl('a.pdf').replace('https:', 'http:'), SUPA));
 });
 
+Deno.test('a document\'s overview: dates checked, amounts as digits, the year as 2019-20, nothing guessed', () => {
+  const r = buildDocResult(replyReading, { pages: [], pageCount: 1, textLayer: false, sha256: null }, docClaim(), 'm');
+  assertEquals(r.overview.section_of_law, 'Section 73(1)');
+  assertEquals(r.overview.financial_year, '2019-20');
+  assertEquals(r.overview.reply_due, '', 'a date not as YYYY-MM-DD is dropped');
+  assertEquals(r.overview.demand_tax, '120000', 'rupee signs and commas go');
+  assertEquals(r.overview.demand_penalty, '', '"nil" is not an amount');
+  assertEquals(r.overview.period_to, '2020-03-31');
+  const none = buildDocResult({ doc_kind: 'notice' }, { pages: [], pageCount: 1, textLayer: false, sha256: null }, docClaim(), 'm');
+  assertEquals(Object.values(none.overview).every((v) => v === ''), true, 'no overview: every fact empty');
+});
+
 Deno.test('a reply\'s reading: pairs from its answers, checked against the PDF\'s text', () => {
   const pages = [replyPages[0].join('\n')];
   const r = buildDocResult(replyReading, { pages, pageCount: 1, textLayer: true, sha256: 'abc' }, docClaim(), 'claude-opus-5-5');
@@ -207,7 +219,7 @@ Deno.test('one run stops when too little time is left for another job', async ()
   let t = 0;
   const db = new FakeDb({
     ai_runner_begin: () => ({ lease: true, read_enabled: true, runner: 'edge', seconds: 140, sync_due: false }),
-    ai_claim_next: () => { t += 70_000; return docClaim({ source: 'draft', document_url: null, body: 'Text.' }); },
+    ai_claim_next: () => { t += 100_000; return docClaim({ source: 'draft', document_url: null, body: 'Text.' }); },
     ai_document_finish: () => ({ status: 'done', pairs: 0 }),
   });
   const net = new FakeNet({}, () => jsonReply(replyReading));

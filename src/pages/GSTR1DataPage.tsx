@@ -52,6 +52,10 @@ import EinvoiceRecoPanel, { type EinvoicePullRow } from '@/components/gstr1/Einv
 import { attachIrn, extractDocs, isEinvoiceableBookDoc, type EinvoiceDocRow } from '@/lib/einvoice/einvoice';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
+import { compareVersions } from '@/lib/extensionVersion';
+
+/** First extension version that pushes a NIL GSTR-1 (and pulls e-invoices). */
+const NIL_PUSH_MIN_EXTENSION = '0.8.4';
 
 // gstr1_data stores period_month as the short label ("Jun-26"). The rest of
 // the app shares a single MonthContext value in "MM/YYYY" form, so convert
@@ -244,6 +248,9 @@ const GSTR1DataPage: React.FC = () => {
   const [errorsDialogOpen, setErrorsDialogOpen] = useState(false);
   const [showUploadReport, setShowUploadReport] = useState(false);
   const [extReady, setExtReady] = useState(false);
+  // The extension's own version (appbridge.js posts it with the ready ping).
+  // NIL push and the e-invoice pull exist only from 0.8.4.
+  const [extVersion, setExtVersion] = useState<string | null>(null);
   // NIL return push (no JSON needed) — confirmation dialog.
   const [nilDialogOpen, setNilDialogOpen] = useState(false);
   // Upload confirmation for an e-invoice client with no IRNs pulled: an
@@ -665,7 +672,7 @@ const GSTR1DataPage: React.FC = () => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkExtensionReady) { setExtReady(true); if (typeof d.version === 'string') setExtVersion(d.version); }
       if (d.__gstkPullEinvoiceStarted) {
         const r = d.__gstkPullEinvoiceStarted as { ok: boolean; error?: string };
         if (!r.ok) {
@@ -1017,6 +1024,13 @@ const GSTR1DataPage: React.FC = () => {
     }
     if (isFiled) {
       toast.error('GSTR-1 for this period is already Filed — portal push is locked.');
+      setNilDialogOpen(false);
+      return;
+    }
+    if (extVersion && compareVersions(extVersion, NIL_PUSH_MIN_EXTENSION) < 0) {
+      // 0.8.3 and older ignore the NIL flag and look for a stored JSON, so the
+      // push never reaches the portal and is never recorded as Pushed.
+      toast.error(`The browser extension is v${extVersion}; NIL push needs v${NIL_PUSH_MIN_EXTENSION} or later. Load the updated extension (chrome://extensions → Reload) and try again.`);
       setNilDialogOpen(false);
       return;
     }

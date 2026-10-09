@@ -26,7 +26,7 @@ import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { FilterPill } from '@/components/notices/FilterPill';
 import { useNoticeFilterOptions } from '@/components/notices/NoticeFilterBar';
-import { AsOfLine, FilterChips, FilterTile, type Chip } from '@/components/notices/reports/ReportBits';
+import { FilterChips, FilterTile, type Chip } from '@/components/notices/reports/ReportBits';
 import { SummaryTable } from '@/components/notices/reports/SummaryTable';
 import { groupKey, summaryRows, type SummaryRow, type SummarySort, type SummaryTab } from '@/components/notices/reports/summaryRows';
 import { LedgerSummary } from '@/components/notices/reports/LedgerSummary';
@@ -130,7 +130,6 @@ const NoticeSummaryReportPage: React.FC = () => {
     <NoticesShell
       section="Notice summary"
       master
-      status={<AsOfLine at={q.dataUpdatedAt} />}
       actions={canExportData() && (
         <>
           <Button size="sm" variant="outline" className={WS_BTN} onClick={exportXlsx} disabled={!q.data}>

@@ -4,6 +4,8 @@
 // always agree (supabase/tests/notices/test_95_command_centre.sql); links keep
 // the master filters (lib/masterFilters). The dashboard counts only the notice
 // types shown on it (contract §A), so each list link carries dash=1 (dashListHref).
+import { ProblemLine } from '@/components/notices/ui/ProblemLine';
+import { reasonLabel } from '@/lib/autopilot';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowUpRight } from 'lucide-react';
@@ -83,32 +85,19 @@ const QUIET_LINK = 'underline underline-offset-2 hover:text-foreground focus-vis
  * pages), and what the dashboard leaves out: notices of the types taken off it
  * (contract §A), which open as their own list (dash=0).
  */
-export const AutopilotLine: React.FC<{ cc: CommandCentre; onOpenTypes?: () => void }> = ({ cc, onOpenTypes }) => {
-  const h = cc.health;
-  const { tone, failing } = healthState(cc);
-  const badge = useAutopilotBadge();
-  const autopilotOn = badge.data ? !!badge.data.enabled : null;
-  const d = cc.dashboard;
+/** Under the command centre's title: only a problem (syncs failing, the last run failed); nothing on a normal day. */
+export const AutopilotLine: React.FC<{ cc: CommandCentre; onOpenTypes?: () => void }> = ({ cc }) => {
+  const run = cc.health.last_run;
+  const reasons = Object.entries(cc.health.failing).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
   return (
-    <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground" aria-live="polite">
-      <span className={cn('inline-block h-2 w-2 rounded-full', tone === 'ok' ? 'bg-success' : tone === 'warn' ? 'bg-warning' : 'bg-destructive')} aria-hidden />
-      <Link to="/notices-company-list" className={cn(QUIET_LINK, 'font-medium text-foreground no-underline')}>{h.fresh} of {h.eligible} GSTINs synced in 24 h</Link>
-      <span>· last sync {fmtAgo(h.last_success_at)}</span>
-      <span>· {plural(h.new_today, 'new notice')} today</span>
-      {h.auto_closed_today > 0 && <span>· <Link to={noticesListHref({ filter: 'auto_closed' })} className={QUIET_LINK}>{h.auto_closed_today} closed automatically</Link></span>}
-      <span>· alerts {h.alerts_mode === 'live' ? 'live' : h.alerts_mode === 'off' ? 'off' : 'in preview'}</span>
-      {autopilotOn !== null && <span>· <Link to="/notices-autopilot" className={QUIET_LINK}>autopilot {autopilotOn ? 'on' : 'off'}</Link></span>}
-      {d && d.hidden_open > 0 && (
-        <span>· <Link to={noticesListHref({ dash: '0' })} className={QUIET_LINK}>{plural(d.hidden_open, 'notice')}</Link> of {onOpenTypes
-          ? <button type="button" onClick={onOpenTypes} className={QUIET_LINK}>{plural(d.hidden_types, 'type')}</button>
-          : plural(d.hidden_types, 'type')} off this page</span>
-      )}
-      {failing > 0 && (
-        <Link to="/notices-company-list?status=failed" className="font-medium text-destructive-strong underline-offset-2 hover:underline">
-          · {failing} need{failing === 1 ? 's' : ''} you →
-        </Link>
-      )}
-    </p>
+    <ProblemLine problems={[
+      ...reasons.map(([reason, n]) => ({
+        key: reason,
+        text: `${plural(n, 'client')} not synced: ${reasonLabel(reason).toLowerCase()}`,
+        to: `/notices-company-list?status=failed&reason=${encodeURIComponent(reason)}`,
+      })),
+      run && run.status === 'failed' && { key: 'run', text: `The last sync run failed ${fmtAgo(run.started_at)}`, to: '/notices-company-list?tab=log' },
+    ]} />
   );
 };
 

@@ -320,7 +320,9 @@ export function conflictsOf(x: Extraction | null | undefined, n: NoticeRow): Con
   });
 }
 
-export interface Unapplied { label: string; value: string; why: string }
+export interface Unapplied {
+  /** The reading's field (section_of_law, issued_by, …). */
+  key: string; label: string; value: string; why: string }
 
 /** Fields the PDF reader found but did not apply because they failed a check. */
 export function unappliedOf(x: Extraction | null | undefined): Unapplied[] {
@@ -330,8 +332,8 @@ export function unappliedOf(x: Extraction | null | undefined): Unapplied[] {
     if (k === 'gstin') return [];
     const f = obj(raw);
     const label = (FIELD_LABEL as Record<string, string>)[k] ?? k.replace(/_/g, ' ');
-    if (f.quote_ok !== true) return [{ label, value: fmtField(k, f.value), why: 'its words were not found on the page' }];
-    if (k === 'demand' && sumsFailed) return [{ label, value: fmtField(k, f.value), why: 'the amounts do not add up' }];
+    if (f.quote_ok !== true) return [{ key: k, label, value: fmtField(k, f.value), why: 'its words were not found on the page' }];
+    if (k === 'demand' && sumsFailed) return [{ key: k, label, value: fmtField(k, f.value), why: 'the amounts do not add up' }];
     return [];
   });
 }

@@ -455,3 +455,24 @@ app: Reply Factory → AI and Learning, the notice page's AI assistant tab)
   consent), and whether the assistant's examples may be drawn from any client's
   responses (they are, once chosen; only the reasoning and wording travel) are
   engineering defaults pending a partner's confirmation.
+
+## 14. Every client read; the overview kept; learning by client (asked by the firm, 9 October 2026)
+
+- **Every client's documents are read** (`ai_settings.consent_scope = 'all_clients'`,
+  the firm's instruction: "on any single client AI needs to review all the documents &
+  keep updating the basic overview"). Work cancelled for want of consent is queued again
+  by itself when consent is given, an opt-out is lifted, or the scope widens
+  (`ai_requeue_consent`). Before this, a client whose consent was recorded after its
+  documents were registered never had them read.
+- **The overview**: each document's reading also returns the case facts it states
+  (`overview`: section, year, period, DIN, reply due, hearing, officer, demand by head;
+  refund amounts; registration application). Nothing is guessed from another document.
+  Dates must be YYYY-MM-DD, amounts digits only, else empty. `notice_case_overview` fills
+  a notice's blanks from them (NOTICES_LITIGATION_POSITIONS §21). Documents read before
+  this were queued again, behind the unread ones.
+- **Pace**: a run takes a new job while 40 seconds remain (was 75): through the Claude
+  CLI gateway a document takes 10 to 25 seconds.
+- **Learning is chosen client by client** (migration `20261011110000`):
+  `clients.ai_learning`. Choosing a client chooses all its responses read so far and
+  every one read later (`trg_ai_documents_learning_default`). Leaving it out leaves them
+  all out. A single response or pair can still be left out under its client.
