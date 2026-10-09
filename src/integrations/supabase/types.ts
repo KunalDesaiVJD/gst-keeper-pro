@@ -6706,6 +6706,65 @@ export type Database = {
           },
         ]
       }
+      gstr1_upload_versions_quarantine: {
+        Row: {
+          action_at: string
+          action_type: string
+          actor_id: string | null
+          client_id: string
+          errors: Json | null
+          file_name: string | null
+          id: string
+          payload: Json | null
+          period_month: string
+          quarantined_at: string | null
+          quarantined_reason: string | null
+          status: string | null
+          summary: string | null
+          version_number: number
+        }
+        Insert: {
+          action_at?: string
+          action_type: string
+          actor_id?: string | null
+          client_id: string
+          errors?: Json | null
+          file_name?: string | null
+          id?: string
+          payload?: Json | null
+          period_month: string
+          quarantined_at?: string | null
+          quarantined_reason?: string | null
+          status?: string | null
+          summary?: string | null
+          version_number: number
+        }
+        Update: {
+          action_at?: string
+          action_type?: string
+          actor_id?: string | null
+          client_id?: string
+          errors?: Json | null
+          file_name?: string | null
+          id?: string
+          payload?: Json | null
+          period_month?: string
+          quarantined_at?: string | null
+          quarantined_reason?: string | null
+          status?: string | null
+          summary?: string | null
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gstr1_upload_versions_quarantine_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       gstr2a_import_docs: {
         Row: {
           bucket: string
@@ -11152,6 +11211,10 @@ export type Database = {
       complete_first_login: {
         Args: { new_password: string; target_user_id: string }
         Returns: undefined
+      }
+      filing_effective_return_type: {
+        Args: { p_base: string; p_client_id: string; p_period_month: string }
+        Returns: string
       }
       get_user_role: {
         Args: { _user_id: string }
