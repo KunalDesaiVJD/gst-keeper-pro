@@ -53,6 +53,15 @@ bulk or scheduled sync logs that client, moves on to the next one, and skips it
 until the password is changed in Edit Client (or the client is logged in once
 from GST Keeper).
 
+## GSTR-1: NIL push, e-invoices, IRNs (v0.8.4)
+- **Push NIL** from the GSTR-1 page needs no JSON: the extension opens GSTR-1
+  "Prepare Online" for the period and ticks **File Nil GSTR-1**. You file it on
+  the portal yourself. (Text-based selectors, not yet checked on the live portal.)
+- **Pull e-invoices** downloads the portal's own GSTR-1 JSON for the period and
+  saves every document carrying an IRN (`einvoice_docs`, `einvoice_pulls`).
+- **Push JSON** now puts those IRNs back on the matching documents before the
+  upload, so the portal does not drop them; the result says how many.
+
 ## What a notice carries after a sync (v0.8.0)
 The portal's notice list (`get/notices`) is thin: a reference number, a type, an
 issue date. Everything else a reply needs is in the **case folder** — which this

@@ -2,6 +2,28 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-09 — NIL GSTR-1, e-invoice pull, IRNs kept on push (v0.8.4)
+
+Needs migration `20261009100000_gstr1_einvoice_direct_filing.sql` (`einvoice_docs`,
+`einvoice_pulls`). Every other pull, the login and the popup are as 0.8.3 runs them.
+
+- **IRNs kept on a GSTR-1 push.** Before uploading the stored JSON, the period's
+  e-invoices (`einvoice_docs`) are matched by section, buyer GSTIN and document
+  number, and `irn`, `irngendate` and `srctyp: "e-Invoice"` are set on every
+  B2B / CDNR / CDNUR / EXP document that has none — figures are never changed
+  (plain-JS copy of `attachIrn` in `src/lib/einvoice/einvoice.ts`). The result
+  carries `irnAttached`. A failed read of `einvoice_docs` pushes without IRNs.
+- **NIL GSTR-1 push** (`__gstkUploadGstr1` with `nil: true`): no stored JSON is
+  needed. The extension picks the period, opens GSTR-1 "Prepare Online", ticks
+  "File Nil GSTR-1" and confirms; the result is `status: 'nil_marked'`. Filing and
+  signing stay manual. The option is found by its text — not yet confirmed
+  against the live portal.
+- **E-invoice pull** (`__gstkPullEinvoice`): downloads the portal's GSTR-1 JSON
+  for the period (the same `offline/download/generate` API as the filed GSTR-1
+  JSON pull), keeps every document with an IRN in `einvoice_docs` (upsert, never
+  deleted) and records the attempt in `einvoice_pulls` (ok / none / pending /
+  failed). The app hears `__gstkEinvoicePullDone`.
+
 ## 2026-10-08 — A CAPTCHA failure is not a password issue (v0.8.3)
 
 Pairs with migration `20261010120000_login_captcha_reason.sql` (which also files an

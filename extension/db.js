@@ -53,6 +53,9 @@
     getDnrDebug: () => call('getDnrDebug'),
     uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
     markFiled: (row) => call('markFiled', row),
+    // 0.8.4: one e-invoice pull — upserts einvoice_docs (from the portal's
+    // GSTR-1 JSON, when given) and einvoice_pulls. See background.js.
+    saveEinvoicePull: (info) => call('saveEinvoicePull', info),
     // Records one Sync All attempt's outcome for a client — feeds the
     // Notices Dashboard's Company List "Last Download Date / Status /
     // Status Message" columns. Only called from the 'notices' Sync All job
