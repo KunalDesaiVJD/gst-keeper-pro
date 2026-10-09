@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { describeChange, SHEET_LABEL, type ChangeLogEntry } from '@/lib/gstr9/audit';
+import { describeChange, hiddenFromClients, SHEET_LABEL, type ChangeLogEntry } from '@/lib/gstr9/audit';
 import { loadChangeLog } from '@/lib/gstr9/store';
 import { SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
@@ -17,9 +17,10 @@ const ALL = '__all';
  * Every change to this client's working, newest first: who, when, which sheet
  * and place, the figure before and after. Written by the database on each
  * save (annual_return_change_log) — it cannot be edited or deleted from the app.
+ * A client login is not shown the allotment, the send-backs or any sign-off note.
  */
 export const RevisionHistory: React.FC<{ className?: string; compact?: boolean }> = ({ className, compact }) => {
-  const { client, financialYear, lastSavedAt, period } = useWorkspace();
+  const { client, financialYear, lastSavedAt, period, isStaff } = useWorkspace();
   const [rows, setRows] = useState<ChangeLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [more, setMore] = useState(false);
@@ -54,14 +55,16 @@ export const RevisionHistory: React.FC<{ className?: string; compact?: boolean }
     return () => clearTimeout(t);
   }, [client.id, financialYear, sheet, lastSavedAt, period?.updated_at]);
 
-  const users = useMemo(() => [...new Set(rows.map((r) => r.changedBy).filter((x): x is string => !!x))].sort(), [rows]);
+  // Paging still runs on every row loaded; the rest of the screen reads only what this viewer may see.
+  const visible = useMemo(() => (isStaff ? rows : rows.filter((r) => !hiddenFromClients(r))), [rows, isStaff]);
+  const users = useMemo(() => [...new Set(visible.map((r) => r.changedBy).filter((x): x is string => !!x))].sort(), [visible]);
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return rows
+    return visible
       .filter((r) => who === ALL || r.changedBy === who)
-      .map((r) => ({ r, d: describeChange(r) }))
+      .map((r) => ({ r, d: describeChange(r, { forClient: !isStaff }) }))
       .filter(({ d }) => !needle || `${d.sheet} ${d.place} ${d.from} ${d.to} ${d.what} ${d.who}`.toLowerCase().includes(needle));
-  }, [rows, who, q]);
+  }, [visible, who, q, isStaff]);
 
   return (
     <SectionCard
@@ -127,14 +130,14 @@ export const RevisionHistory: React.FC<{ className?: string; compact?: boolean }
             ))}
             {!shown.length && !loading && (
               <tr><td colSpan={compact ? 5 : 6} className="px-2 py-6 text-center text-muted-foreground">
-                {rows.length ? 'No change matches these filters.' : 'No changes recorded yet. Every edit from now on is listed here.'}
+                {visible.length ? 'No change matches these filters.' : 'No changes recorded yet. Every edit from now on is listed here.'}
               </td></tr>
             )}
           </tbody>
         </table>
       </div>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{rows.length} change{rows.length === 1 ? '' : 's'} loaded{shown.length !== rows.length ? ` · ${shown.length} shown` : ''}</span>
+        <span>{visible.length} change{visible.length === 1 ? '' : 's'} loaded{shown.length !== visible.length ? ` · ${shown.length} shown` : ''}</span>
         {more && (
           <Button type="button" size="sm" variant="ghost" onClick={() => void load(true)} disabled={loading}>
             Load older changes

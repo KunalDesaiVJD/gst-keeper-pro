@@ -6,7 +6,7 @@
 // the working used, the official GSTR-9C tables, payables with their set-offs,
 // and the revision history.
 
-import { describeChange, SHEET_LABEL, type ChangeLogEntry } from '../audit';
+import { describeChange, hiddenFromClients, SHEET_LABEL, type ChangeLogEntry } from '../audit';
 import {
   diffStatus,
   EXPENSE_HEAD_LABEL,
@@ -22,6 +22,7 @@ import {
 import { drc03MatchesFY, METHOD_LABEL, SIDE_LABEL, type Drc03Filing, type SetOff } from '../payables';
 import { ITC_ROWS, MONTH_FIELDS, monthTitle, T5_ROWS, T9_ROWS } from '../portalImport';
 import { REVIEW_CHECKLIST, ROLE_LABEL } from '../signoff';
+import { displayName, overrideText, toSignoffState, type SignoffState, type Stamp } from '../signoffFlow';
 import type { AnnualReturnPeriod } from '../store';
 import {
   FY_MONTHS,
@@ -183,12 +184,18 @@ interface Ctx {
   /** Justification text for a diff line key ('' when none). */
   just: (key: string) => string;
   period: AnnualReturnPeriod | null;
+  /** The allotment and sign-off stamps (signoffFlow.ts). */
+  signoff: SignoffState;
+  /** Papers for a client login: no sign-off notes, no allotment. */
+  forClient: boolean;
   setOffs: SetOff[];
   drc03s: Drc03Filing[];
+  /** The revision log as this audience sees it (hiddenFromClients removed for a client). */
   changeLog: ChangeLogEntry[];
   status: string;
   printed: string;
   preparedText: string;
+  verifiedText: string;
   reviewedText: string;
   /** Open difference lines whose key starts with any of the prefixes. */
   openOn: (prefixes: string[]) => number;
@@ -249,6 +256,7 @@ function cover(c: Ctx): WorkingPaper {
   t.data('OPEN DIFFERENCES', int(w.openCount));
   t.data('TOLERANCE PER HEAD (₹)', w.tolerance);
   t.data('PREPARED BY', c.preparedText);
+  t.data('VERIFIED BY', c.verifiedText);
   t.data('REVIEWED BY', c.reviewedText);
   t.data('EXPORTED ON', c.printed);
   return paper(c, {
@@ -305,42 +313,72 @@ const PHASE_BAND: Record<Phase, string> = {
 };
 const PHASE_WORD: Record<Phase, string> = { summary: 'Summary', collect: 'Collect', reconcile: 'Reconcile', returns: 'Returns', finish: 'Finish' };
 
+/** "Amit (GST manager)" — a signer's name with the role they signed as ("Superadmin" alone, not twice). */
+const signerName = (st: Stamp | null): string => {
+  if (!st) return '';
+  const name = displayName(st.name);
+  const role = st.role ? ROLE_LABEL[st.role] ?? st.role : '';
+  return role && role.toLowerCase() !== name.toLowerCase() ? `${name} (${role})` : name;
+};
+
+/** "Amit (GST manager) on 14 Oct 2026", or '' when not signed. */
+const signedText = (st: Stamp | null): string => (st ? `${signerName(st)} on ${fmtDate(st.at)}` : '');
+
+const SIGN_HERE = '______________________________   Date ______________';
+
 function signOff(c: Ctx): WorkingPaper {
-  const { period, w } = c;
+  const { period, w, signoff: so } = c;
   const p = new PaperBuilder();
   p.h1('Sign-off');
-  const s = p.table([['ROLE', 'NAME', 'DATE', 'NOTE']]);
-  s.data('Prepared by', period?.prepared_by_name ?? '', fmtDate(period?.prepared_at), period?.prepared_note ?? '');
-  const role = period?.reviewed_role ? ROLE_LABEL[period.reviewed_role] ?? period.reviewed_role : '';
-  s.data('Reviewed by', period?.reviewed_by_name ? `${period.reviewed_by_name}${role ? ` (${role})` : ''}` : '', fmtDate(period?.reviewed_at), period?.review_note ?? '');
+  // Columns: ROLE 22 · ALLOTTED 28 · SIGNED BY 52 · DATE 14 · NOTE 60. The tables below run
+  // their text across ALLOTTED + SIGNED BY (80), as the paper's second column was before.
+  const note = (n: string | null | undefined): string => (c.forClient ? '' : n ?? '');
+  const allotted = (person: { name: string } | null): string => (c.forClient || !person ? '' : displayName(person.name));
+  const s = p.table([['ROLE', 'ALLOTTED', 'SIGNED BY', 'DATE', 'NOTE']]);
+  s.data('Prepared', allotted(so.preparer), signerName(so.prepared), fmtDate(so.prepared?.at), note(so.prepared?.note));
+  s.data('Verified', allotted(so.verifier), signerName(so.verified), fmtDate(so.verified?.at), note(so.verified?.note));
+  s.data('Reviewed & locked', allotted(so.reviewer), signerName(so.locked), fmtDate(so.locked?.at), note(so.locked?.note));
 
   p.h2('Review checklist');
   const ticked = period?.review_checklist ?? {};
-  const k = p.table([['#', 'CHECK', 'DONE', 'BASIS']]);
+  const k = p.table([['#', wide('CHECK', 2), 'DONE', 'BASIS']]);
   REVIEW_CHECKLIST.forEach((item, i) => {
     const done = item.auto ? w.openCount === 0 : !!ticked[item.key];
     const basis = item.auto
       ? w.openCount === 0 ? 'Checked by the app: no difference is open' : `Checked by the app: ${w.openCount} difference${w.openCount === 1 ? ' is' : 's are'} open`
       : done ? 'Ticked by the reviewer' : 'Not ticked';
-    k.data(int(i + 1), item.label, { v: done ? '✓' : '✗', tick: true, align: 'center' }, basis);
+    k.data(int(i + 1), wide(item.label, 2), { v: done ? '✓' : '✗', tick: true, align: 'center' }, basis);
   });
 
   p.h2('Status');
+  const locked = so.stage === 'locked';
   const st = p.table([], { plain: true });
-  st.data('Status', c.status);
-  st.data('Locked by', period?.status === 'locked' ? period.locked_by ?? '' : '');
-  st.data('Locked on', period?.status === 'locked' ? fmtDateTime(period.locked_at) : '');
-  st.data('Payables frozen at the lock', period?.payables_at_lock ? 'Yes — see E1' : 'No');
-  st.data('Open differences', int(w.openCount));
+  const kv = (label: string, v: string | WpCell) => st.data(label, { ...(typeof v === 'string' ? { v } : v), span: 2 });
+  kv('Status', c.status);
+  // A client's papers read a send-back as the stage it went back to (statusText), so the row is staff-only.
+  if (so.returned && !c.forClient) {
+    kv('Sent back', `To the ${so.returned.to} by ${displayName(so.returned.by)} on ${fmtDate(so.returned.at)}${so.returned.note ? `: “${so.returned.note}”` : ''}`);
+  }
+  kv('Verified by', signedText(so.verified));
+  kv('Locked by', locked ? `${displayName(period?.locked_by)}${period?.locked_at ? ` on ${fmtDateTime(period.locked_at)}` : ''}` : '');
+  kv('Changes after verification, checked at the lock', locked && so.changesAtLock !== null ? int(so.changesAtLock) : '—');
+  kv('Overrides', so.overrides.length
+    ? so.overrides.map((o) => (c.forClient && o.kind !== 'legacy' ? 'Locked with a superadmin override' : overrideText(o))).join('; ')
+    : 'None');
+  kv('Payables frozen at the lock', period?.payables_at_lock ? 'Yes — see E1' : 'No');
+  kv('Open differences', int(w.openCount));
 
   p.h2('Signatures');
   const g = p.table([], { plain: true, tall: true });
-  g.data('Prepared by', '________________________________________', 'Date', '____________________');
-  g.data('Reviewed by', '________________________________________', 'Date', '____________________');
-  g.data('Partner', '________________________________________', 'Date', '____________________');
+  const line = wide('________________________________________', 2);
+  g.data('Prepared by', line, 'Date', '____________________');
+  g.data('Verified by', line, 'Date', '____________________');
+  g.data('Reviewed by', line, 'Date', '____________________');
+  g.data('Partner', line, 'Date', '____________________');
   return paper(c, {
     ref: 'A3', title: 'Sign-off', sheet: 'A3 SIGN-OFF', phase: 'summary', master: '—',
-    source: 'Source: the preparer’s and reviewer’s sign-off recorded on the working (Review & lock)', widths: [22, 80, 14, 60],
+    source: 'Source: the allotment and the preparer’s, verifier’s and reviewer’s sign-off recorded on the working (Review & lock)',
+    widths: [22, 28, 52, 14, 60],
   }, p);
 }
 
@@ -1312,7 +1350,7 @@ function payables(c: Ctx): WorkingPaper {
 function revisionHistory(c: Ctx): WorkingPaper {
   const log = c.changeLog;
   const p = new PaperBuilder();
-  const described = log.map((e) => ({ e, d: describeChange(e) }));
+  const described = log.map((e) => ({ e, d: describeChange(e, { forClient: c.forClient }) }));
   // Summary: changes per sheet and user (crosstab), plus first and last change.
   const users = [...new Set(described.map(({ d }) => d.who))];
   const shown = users.length > 7 ? users.slice(0, 6) : users;
@@ -1351,14 +1389,17 @@ export function buildWorkingPapers(input: WorkingPapersInput): PaperSet {
   const { docs, workings: w, meta, period } = input;
   const lines = docs.justifications?.lines ?? {};
   const printedAt = input.printedAt ?? new Date();
-  const status = statusText(period);
-  const role = period?.reviewed_role ? ROLE_LABEL[period.reviewed_role] ?? period.reviewed_role : '';
-  const preparedLine = period?.prepared_by_name
-    ? `Prepared by ${period.prepared_by_name}${period.prepared_at ? ` on ${fmtDate(period.prepared_at)}` : ''}`
-    : 'Prepared by ______________________________   Date ______________';
-  const reviewedLine = period?.reviewed_by_name
-    ? `Reviewed by ${period.reviewed_by_name}${role ? ` (${role})` : ''}${period.reviewed_at ? ` on ${fmtDate(period.reviewed_at)}` : ''}`
-    : 'Reviewed by ______________________________   Date ______________';
+  const forClient = input.audience === 'client';
+  const status = statusText(period, { forClient });
+  const signoff = toSignoffState(period);
+  // "Verified by Amit (GST manager) on 14 Oct 2026", or a line to sign on.
+  const preparedText = signedText(signoff.prepared) || SIGN_HERE;
+  const verifiedText = signedText(signoff.verified) || SIGN_HERE;
+  const reviewedText = signedText(signoff.locked) || SIGN_HERE;
+  const preparedLine = `Prepared by ${preparedText}`;
+  const verifiedLine = `Verified by ${verifiedText}`;
+  const reviewedLine = `Reviewed by ${reviewedText}`;
+  const changeLog = (input.changeLog ?? []).filter((e) => !forClient || !hiddenFromClients(e));
   const manual = docs.portal.manual ?? {};
   const monthMeta = docs.portal.monthMeta;
   const gstr9Source = docs.portal.gstr9Meta?.source ?? null;
@@ -1369,13 +1410,16 @@ export function buildWorkingPapers(input: WorkingPapersInput): PaperSet {
     heads: hasCess(w) ? ['i', 'c', 's', 'x'] : ['i', 'c', 's'],
     just: (key) => lines[key]?.text?.trim() ?? '',
     period,
+    signoff,
+    forClient,
     setOffs: input.setOffs ?? [],
     drc03s: input.drc03s ?? [],
-    changeLog: input.changeLog ?? [],
+    changeLog,
     status,
     printed: fmtDateTime(printedAt),
-    preparedText: preparedLine.replace(/^Prepared by /, ''),
-    reviewedText: reviewedLine.replace(/^Reviewed by /, ''),
+    preparedText,
+    verifiedText,
+    reviewedText,
     openOn: (prefixes) => w.diffs.filter((d) => d.open && prefixes.some((pre) => d.key.startsWith(pre))).length,
     portalSrc: (path) => {
       if (manual[path]) return 'typed';
@@ -1405,6 +1449,7 @@ export function buildWorkingPapers(input: WorkingPapersInput): PaperSet {
     status,
     printed: ctx.printed,
     preparedLine,
+    verifiedLine,
     reviewedLine,
     changeCount: ctx.changeLog.length,
   };

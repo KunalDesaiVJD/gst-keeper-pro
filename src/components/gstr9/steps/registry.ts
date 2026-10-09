@@ -58,7 +58,7 @@ export const STEPS: StepDef[] = [
   { key: 'notice', short: 'Notice', label: 'Notice format', phase: 'Returns', excel: 'NOTICE FORMATE', component: NoticeStep,
     intro: 'Outward and inward summary in the format officers ask for.' },
   { key: 'review', short: 'Review', label: 'Review & lock', phase: 'Finish', excel: '—', component: ReviewStep,
-    intro: 'Every difference in one list, the revision history, and sign-off: staff mark it ready, a GST manager or superadmin verifies and locks.' },
+    intro: 'Every difference in one list, the revision history, and sign-off: prepared, verified by a second person, then reviewed and locked by a GST manager or the superadmin.' },
   { key: 'payables', short: 'Payables', label: 'Payables & set-off', phase: 'Finish', excel: 'ANNEXURE-3 · DRC-03', component: PayablesStep,
     intro: 'What is left payable, output-wise and input-wise, and how each part is set off — only by a DRC-03 in the system or a GSTR-3B effect with its copy.' },
 ];

@@ -43,11 +43,23 @@ prepared only if the client wishes — chosen per return in the register
 be filed. Composition (GSTR-4), tax deductors (GSTR-7), ISDs and clients not
 registered during the year are not applicable. Aggregate turnover is the
 PAN's, so GSTINs of one PAN are flagged when their figures differ and a
-figure typed for one is offered to the PAN's blank GSTINs. Each row shows
-the working's status (`annual_return_activity` view, the period's sign-off)
-and opens it; the register exports to Excel. Inside a working, a chip next
-to Save shows the client's applicability, and the 9C step says when 9C is
-not required.
+figure typed for one is offered to the PAN's blank GSTINs. The
+**Sign-off** column shows where each working stands — Not started →
+Preparing → Prepared → Verified → Locked, or Sent back — who has it now and
+for how many days it has been at that stage (the period's allotment and
+sign-off, `annual_return_activity` for the sheets saved, and
+`annual_return_signoff_changes` for figures changed since a sign-off). A
+click opens the row's allotment and sign-off. A GST manager or the
+superadmin allots one row there, or many at once from the column's menu:
+all to one person, or spread across chosen staff by their current load,
+keeping a PAN's GSTINs together. Filters: Everyone, Mine (allotted to me in
+any role) and My turn (waiting on me). Prepare, send back, withdraw and
+unlock can be done from the register; verify and review & lock happen
+only inside the working, which saves everything and checks the open
+differences first — the register links straight to the sign-off dialog
+there. The register exports to Excel. Inside a working, a chip next to
+Save shows the client's applicability, and the 9C step says when 9C is not
+required.
 
 `/annual-return?client=…` is a guided step workspace. The title, client and FY sit on
 one row; the steps are a sticky bar of chips across the top (one row on a
@@ -101,7 +113,7 @@ order). Every entry grid behaves like the Excel sheet:
 | 10 | GSTR-9 | GSTR-9 | 6K–6M, 8E/8F/8H1, Table 9 overrides, 10, 11, 14–18 |
 | 11 | GSTR-9C | (official tables 5–16, Part V) | adjustments, reasons, certification |
 | 12 | Notice format | NOTICE FORMATE | 16B/16C/15G, 16(4), prior-year cells |
-| 13 | Review & lock | — | every open difference, sign-off (ready for review → verify & lock), revision history, snapshots |
+| 13 | Review & lock | — | every open difference, sign-off (prepared → verified → reviewed & locked), revision history, snapshots |
 | 14 | Payables & set-off | ANNEXURE-3 · DRC-03 | output-/input-wise payable, set-off register (DRC-03 / GSTR-3B with evidence) |
 
 ## 3. Storage
@@ -119,16 +131,14 @@ stored doc lacks.
   workspace reloads instead of overwriting it.
 - A trigger rejects any write to a doc while the FY is **locked** in
   `annual_return_periods`, so the lock is enforced by the database, not the
-  UI. The period is select-only for the app; status changes go through
-  `set_annual_return_status` (stale transitions refused). **Locking needs a
-  GST manager or superadmin** who ticks the review checklist
+  UI. The period is select-only for the app; allotment and sign-off go
+  through SECURITY DEFINER functions that refuse a stale or disallowed
+  change. **A year is signed off in three stages by three different
+  people** — prepared, verified, then reviewed and locked by a GST manager
+  or the superadmin who ticks the review checklist
   (`src/lib/gstr9/signoff.ts`); the reviewer, role, checklist, note and the
-  payables at the lock are stored on the period. Staff mark the working
-  "ready for review" first (`mark_annual_return_prepared`). Unlocking needs
-  superadmin / GST manager or the `unlock_sheets` permission and clears the
-  sign-off (the log keeps it). The role is the one the app sends — the app
-  has no auth session, so the database checks the declared role, as every
-  permission in this app is checked.
+  payables at the lock are stored on the period. See *Allotment and
+  sign-off* below.
 - **Figures that come from a source are locked to the superadmin** (firm
   decision, 2 Oct 2026). Two kinds: portal data (the GSTR-9 system-computed
   figures and the as-filed GSTR-3B — on Portal data and wherever they show:
@@ -154,11 +164,11 @@ stored doc lacks.
   it was), old and new value, who, when, and an action label the save RPC
   passes (`p_action`: "Imported as-filed GSTR-3B from the portal",
   "Restored version 12", "Copied the ledger list from FY …"; default
-  "Edited"). Status changes, sign-offs and set-offs are logged too. The log
-  is select-only for the app; only the SECURITY DEFINER trigger/RPCs write
-  it. `src/lib/gstr9/audit.ts` turns a path into words ("Part A (taxable) ›
-  “Sales @18%” › Taxable value"). Autosave runs 0.7 s after a change and at
-  once when the tab is hidden or closed.
+  "Edited"). Allotments, sign-offs, status changes and set-offs are logged
+  too. The log is select-only for the app; only the SECURITY DEFINER
+  trigger/RPCs write it. `src/lib/gstr9/audit.ts` turns a path into words
+  ("Part A (taxable) › “Sales @18%” › Taxable value"). Autosave runs 0.7 s
+  after a change and at once when the tab is hidden or closed.
 - Whole-sheet **snapshots** (restore points) are kept in
   `annual_return_doc_history` (select-only), each with a reason: one per doc
   per 10 minutes of autosaving, one before a different person's edit, one
@@ -170,6 +180,81 @@ stored doc lacks.
   docs, as everywhere in this app (CLAUDE.md). The audit records — change
   log, snapshots, period, set-offs — are `FOR SELECT TO public` and written
   only by SECURITY DEFINER functions, so the app cannot rewrite them.
+
+### Allotment and sign-off
+
+Each client's working for a year is **allotted**, then **signed off in
+three stages by three different people**: Prepared → Verified → Reviewed &
+locked. The rules are in `src/lib/gstr9/signoffFlow.ts`, which decides what
+the screens offer and says in words why not; the database enforces the same
+rules (migration `20261011100000_annual_return_allotment_signoff.sql`). One
+sign-off covers GSTR-9 and GSTR-9C together.
+
+- **Allot.** A GST manager or the superadmin allots a preparer, and
+  optionally a verifier and a reviewer (`annual_return_allot`, one working
+  or many at a time). The reviewer must be a GST manager or the superadmin,
+  and the three must be different people. With no verifier allotted, any
+  GST manager or the superadmin verifies; with no reviewer, any of them
+  reviews. A preparer cannot be changed once the working is prepared, a
+  verifier once it is verified, nor anyone once it is locked. A row that
+  someone else changed meanwhile is skipped, not overwritten.
+- **Prepare.** The allotted preparer marks the working prepared, with an
+  optional note. When no one is allotted, anyone on staff may, and becomes
+  the preparer; a GST manager or the superadmin may mark it for the
+  preparer. The allotted verifier and reviewer may not. Something must have
+  been saved in the working.
+- **Verify.** The allotted verifier, or a GST manager or the superadmin —
+  never whoever prepared it or is allotted to prepare it, nor the allotted
+  reviewer. It needs no open difference, and is done inside the working
+  after its changes are saved, never from the register.
+- **Review & lock.** A GST manager or the superadmin who neither prepared
+  nor verified it ticks the review checklist and locks the year
+  (`set_annual_return_status`); every sheet is snapshotted and the payables
+  are frozen. Only the superadmin may lock a working that was not verified,
+  or one they prepared or verified, and only with a reason — an
+  *override*, recorded on the period (`signoff_overrides`), in the log and
+  on the working papers' sign-off page (A3).
+- **Send back.** With a note saying what needs fixing. At Prepared, the
+  verifier or a GST manager / the superadmin sends it back to the preparer
+  (the prepared stamp is cleared). At Verified, a GST manager or the
+  superadmin sends it back to the verifier (the verification is cleared) or
+  to the preparer (both are).
+- **Withdraw.** Whoever signed a stage, or a GST manager / the superadmin,
+  may withdraw it while the next stage is unsigned.
+- **Unlock.** The superadmin, a GST manager or the `unlock_sheets`
+  permission, with a reason. The year goes back to Verified: the prepared
+  and verified stamps stay, the review is cleared (the log keeps it). A year
+  locked without a verification goes back to Prepared.
+- **Changes since a sign-off.** Figure changes after Prepared or Verified
+  are counted from the change log — changes to the sheets only, not status
+  rows, payables or reasons for differences, and not the signer's own. They
+  are flagged in the register and the working, and must be ticked as
+  checked at the next sign-off: the verification checks those since
+  Prepared, the lock those since Verified (since Prepared when the
+  superadmin locks without a verification). The database refuses the
+  sign-off if more changed than the signer was shown. A change never resets
+  a sign-off. The counts checked are kept (`changes_at_verify`,
+  `changes_at_lock`).
+- **Stale clicks.** Every sign-off change bumps `signoff_rev`; each request
+  carries the value the user was looking at and is refused if someone else
+  changed the sign-off meanwhile.
+- **Functions.** `annual_return_allot`; `annual_return_signoff` (prepare,
+  withdraw, verify, send back); `set_annual_return_status` (review & lock,
+  unlock); `annual_return_signoff_row` (the period as the app reads it, with
+  the sheets saved, the stage and the changes since sign-off);
+  `annual_return_unacked_changes` (the changes a signer must check); the
+  view `annual_return_signoff_changes` (the register's flag). Every
+  allotment and sign-off is a `period` row in `annual_return_change_log`.
+- **Identity.** Who is acting is looked up in the database by user id
+  (`profiles`, `user_roles`, `user_permissions`), not declared by the
+  browser. The app has no server session, so separation of duties prevents
+  mistakes, not a determined insider (§6, position 20).
+- **Years locked before 11 Oct 2026** were verified and locked in one step.
+  They show as "verified and locked in one step" (a `legacy` override); no
+  verification is invented for them.
+- **Client logins** see the stage and the signers, but not the allotment,
+  the send-backs or any sign-off note — on screen, in the revision history
+  and in the working papers.
 
 ### Payables and set-off
 
@@ -325,6 +410,19 @@ screen where it applies.
     when that is a standard slab, else by the nearest slab to the stated
     (or, untyped, implied) rate. Each default can be overridden on the
     9C step.
+20. **Sign-off workflow** (§3, *Allotment and sign-off*) — engineering
+    judgement, not confirmed at a firm sign-off. Three distinct people
+    prepare, verify, and review & lock; only the superadmin may override
+    that, and only with a recorded reason. Verify and review & lock are done
+    only inside the working, never from the register. Figure changes after a
+    sign-off are flagged and must be acknowledged at the next one; a
+    sign-off is never reset automatically. Unlock returns the year to
+    Verified. One sign-off covers GSTR-9 and GSTR-9C together. Sign-off
+    notes and the allotment are hidden from client logins. The superadmin
+    account is treated as one person. There is no e-mail notification yet.
+    The rules are checked in the database against the user id the app
+    sends; with no server session, they prevent mistakes, not a determined
+    insider.
 
 Carried over from the workbook as-is (firm positions, flagged in the UI):
 suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"
@@ -359,6 +457,7 @@ checks the version before starting it.
 | Applicability register (home) | `applicability.ts`, `register.ts`, `components/gstr9/register/*`, migration `20261003100000_annual_return_applicability.sql` |
 | Source lock (superadmin only) | `sourceLock.ts`, migration `20261002100000_annual_return_source_lock.sql` |
 | Sign-off checklist / roles | `signoff.ts`, `components/gstr9/overview/LockPanel.tsx` |
+| Allotment & sign-off (three stages) | `src/lib/gstr9/signoffFlow.ts` (rules), `src/lib/gstr9/store.ts` (RPCs), `src/components/gstr9/signoff/*`, `src/components/gstr9/register/Signoff*.tsx`, migration `20261011100000_annual_return_allotment_signoff.sql` |
 | Payables & set-off | `payables.ts`, `components/gstr9/payables/*`, `steps/PayablesStep.tsx` |
 | Audit / sign-off / set-off schema | `supabase/migrations/20260929100000_annual_return_audit_signoff_payables.sql` |
 | Grid behaviour (keys, paste, `=a+b`, SGST mirror) | `components/gstr9/grid/*` |

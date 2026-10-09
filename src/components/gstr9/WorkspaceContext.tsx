@@ -12,15 +12,18 @@ import {
   loadDrc03s,
   loadPeriod,
   loadSetOffs,
+  loadSignoffRow,
   loadWorkspace,
-  markPrepared,
-  PeriodChangedError,
-  PeriodStatus,
+  ChangedSinceError,
   saveDoc,
   setPeriodStatus,
+  signoffAnnualReturn,
+  SignoffStaleError,
   SourceLockedError,
   YearLockedError,
 } from '@/lib/gstr9/store';
+import { toSignoffState, type SignoffActor, type SignoffChanges, type SignoffState } from '@/lib/gstr9/signoffFlow';
+import { useSignoffActor } from './signoff/useSignoffActor';
 import { lockedChanges, lockedMessage, SOURCE_EDITOR_ROLE } from '@/lib/gstr9/sourceLock';
 
 const DOC_LABEL: Record<DocKey, string> = {
@@ -78,11 +81,27 @@ export interface WorkspaceValue {
   /** A staff login (clients get a read-only view). Staff can record set-offs even after the lock. */
   isStaff: boolean;
   canUnlock: boolean;
-  /** Locking needs canVerify; it records the reviewer, the checklist and the note. */
-  setStatus: (status: PeriodStatus, opts?: { note?: string; checklist?: Record<string, boolean> }) => Promise<void>;
-  /** The preparer's "ready for review" (clear = withdraw). */
-  markReady: (note?: string, clear?: boolean) => Promise<void>;
-  /** GST manager or superadmin — the only roles that can verify and lock. */
+  /**
+   * Review & lock ('locked': saves everything first and refuses with an open
+   * difference; records the reviewer, checklist, note and payables) or unlock
+   * ('in_progress', with the reason as the note: back to Verified).
+   */
+  setStatus: (to: 'locked' | 'in_progress', opts?: { note?: string; checklist?: Record<string, boolean>; changesAck?: number; overrideReason?: string }) => Promise<void>;
+  /**
+   * Prepare / verify / send back, or withdraw a sign-off. Prepare and verify
+   * save everything first; verify also refuses with an open difference.
+   */
+  signoff: (
+    action: 'prepare' | 'withdraw_prepared' | 'verify' | 'withdraw_verified' | 'send_back',
+    opts?: { note?: string; returnTo?: 'preparer' | 'verifier'; changesAck?: number },
+  ) => Promise<void>;
+  /** The signed-in user as the sign-off rules see them. */
+  me: SignoffActor;
+  /** Allotment and sign-off of this working (stage, stamps, changes since). */
+  signoffState: SignoffState;
+  /** Re-read the period and the changes since sign-off. */
+  refreshSignoff: () => Promise<void>;
+  /** GST manager or superadmin — they review & lock, act for others, and remove set-offs after the lock. */
   canVerify: boolean;
   /** The user's role as sent to the database (superadmin | gst_manager | employee | client). */
   role: string;
@@ -134,6 +153,8 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const [drc03s, setDrc03s] = useState<Drc03Filing[]>([]);
   const role: string = user?.role ?? 'employee';
   const canVerify = role === 'superadmin' || role === 'gst_manager';
+  const me = useSignoffActor();
+  const [changes, setChanges] = useState<SignoffChanges | null>(null);
 
   const docsRef = useRef<AnnualReturnDocs | null>(null);
   const versions = useRef<Record<DocKey, number>>(Object.fromEntries(DOC_KEYS.map((k) => [k, 0])) as Record<DocKey, number>);
@@ -357,16 +378,38 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     }, { action: text.trim() ? 'Reason written' : 'Reason cleared' });
   }, [update, userName]);
 
+  /** The period (with the payables snapshot) and the figure changes since sign-off, fresh. */
+  const refreshSignoff = useCallback(async () => {
+    const [p, row] = await Promise.all([loadPeriod(client.id, financialYear), loadSignoffRow(client.id, financialYear)]);
+    applyPeriod(p);
+    const c = row?.changes;
+    setChanges(c ? { sincePrepared: c.since_prepared ?? 0, sinceVerified: c.since_verified ?? 0, lastAt: c.last_change_at, lastBy: c.last_change_by } : null);
+  }, [client.id, financialYear, applyPeriod]);
+
+  // The changes since sign-off: on load, after every sign-off, and a moment after each save.
+  const rev = period?.signoff_rev ?? 0;
+  const signedOpen = !!period?.prepared_at && period?.status !== 'locked';
+  useEffect(() => {
+    if (!signedOpen) { setChanges(null); return; }
+    const t = setTimeout(() => { void refreshSignoff().catch(() => undefined); }, lastSavedAt ? 1500 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedOpen, rev, lastSavedAt, client.id, financialYear]);
+
+  /** A stale click or changes the signer has not seen: show what is there now, then say why. */
+  const afterRefusal = useCallback(async (e: unknown) => {
+    if (e instanceof SignoffStaleError || e instanceof ChangedSinceError) await refreshSignoff().catch(() => undefined);
+  }, [refreshSignoff]);
+
   /**
-   * Change the period status from the one the user is looking at. Locking
-   * first saves everything and re-checks, on the saved figures, that no
-   * difference is open — a failed or overtaken save never locks the year.
+   * Review & lock, or unlock. Locking first saves everything and re-checks,
+   * on the saved figures, that no difference is open — a failed or overtaken
+   * save never locks the year.
    */
-  const setStatus = useCallback<WorkspaceValue['setStatus']>(async (status, opts) => {
-    const from: PeriodStatus = periodRef.current?.status ?? 'not_started';
+  const setStatus = useCallback<WorkspaceValue['setStatus']>(async (to, opts) => {
     let payables: unknown;
-    if (status === 'locked') {
-      if (!canVerify) throw new Error('only a GST manager or a superadmin can verify and lock the year.');
+    if (to === 'locked') {
+      if (!canVerify) throw new Error('only a GST manager or the superadmin can review and lock the year.');
       const r = await flush();
       if (!r.ok || !r.workings) {
         throw new Error('your latest changes could not be saved (or were replaced by someone else\'s), so the year was not locked. Check them and try again.');
@@ -376,29 +419,45 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       }
       payables = r.workings.payables;
     }
-    // Unlocking is also open to a user with the unlock-sheets permission.
-    const sentRole = canVerify ? role : from === 'locked' && canUnlockSheets() ? 'unlock_sheets' : role;
     try {
-      await setPeriodStatus(client.id, financialYear, { from, to: status, by: userName, role: sentRole, note: opts?.note, checklist: opts?.checklist, payables });
+      await setPeriodStatus(client.id, financialYear, {
+        to, expectedRev: periodRef.current?.signoff_rev ?? 0, actorId: me.id,
+        note: opts?.note, checklist: opts?.checklist, payables, changesAck: opts?.changesAck, overrideReason: opts?.overrideReason,
+      });
     } catch (e) {
-      if (e instanceof PeriodChangedError) {
-        applyPeriod(await loadPeriod(client.id, financialYear));
-      }
+      await afterRefusal(e);
       throw e;
     }
-    applyPeriod(await loadPeriod(client.id, financialYear));
-  }, [client.id, financialYear, userName, flush, applyPeriod, canVerify, role, canUnlockSheets]);
+    await refreshSignoff();
+  }, [client.id, financialYear, flush, canVerify, me.id, afterRefusal, refreshSignoff]);
 
-  const markReady = useCallback<WorkspaceValue['markReady']>(async (note, clear = false) => {
-    if (!clear) {
+  const signoff = useCallback<WorkspaceValue['signoff']>(async (action, opts) => {
+    if (action === 'prepare' || action === 'verify') {
       const r = await flush();
-      if (!r.ok) throw new Error('your latest changes could not be saved, so the working was not marked ready. Check them and try again.');
+      const what = action === 'prepare' ? 'marked prepared' : 'verified';
+      if (!r.ok) throw new Error(`your latest changes could not be saved, so it was not ${what}. Check them and try again.`);
+      if (action === 'verify' && r.workings && r.workings.openCount > 0) {
+        throw new Error(`${r.workings.openCount} difference${r.workings.openCount === 1 ? ' still needs' : 's still need'} a reason, so it was not verified.`);
+      }
     }
-    await markPrepared(client.id, financialYear, userName, note, clear);
-    applyPeriod(await loadPeriod(client.id, financialYear));
-  }, [client.id, financialYear, userName, flush, applyPeriod]);
+    try {
+      await signoffAnnualReturn(client.id, financialYear, action, {
+        expectedRev: periodRef.current?.signoff_rev ?? 0, actorId: me.id, note: opts?.note, returnTo: opts?.returnTo, changesAck: opts?.changesAck,
+      });
+    } catch (e) {
+      await afterRefusal(e);
+      throw e;
+    }
+    await refreshSignoff();
+  }, [client.id, financialYear, flush, me.id, afterRefusal, refreshSignoff]);
 
   const workings = useMemo(() => (docs ? compute(docs) : null), [docs, compute]);
+  // Sheets saved so far (a version above 0) — "Preparing" as soon as one is.
+  const sheets = DOC_KEYS.filter((k) => (versions.current[k] ?? 0) > 0).length;
+  const signoffState = useMemo(
+    () => toSignoffState(period, { sheets, lastSavedAt: lastSavedAt?.toISOString() ?? period?.updated_at ?? null, changes }),
+    [period, sheets, lastSavedAt, changes],
+  );
 
   if (!docs || !workings) {
     return (
@@ -429,7 +488,10 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     isStaff,
     canUnlock: canUnlockSheets(),
     setStatus,
-    markReady,
+    signoff,
+    me,
+    signoffState,
+    refreshSignoff,
     canVerify,
     role,
     canEditSource,

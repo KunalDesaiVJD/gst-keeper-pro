@@ -7,6 +7,7 @@
 import type { ChangeLogEntry } from '../audit';
 import type { Workings } from '../engine';
 import type { Drc03Filing, SetOff } from '../payables';
+import { displayName, stageOf } from '../signoffFlow';
 import type { AnnualReturnPeriod } from '../store';
 import type { AnnualReturnDocs } from '../types';
 
@@ -16,7 +17,7 @@ export interface ExportMeta {
   clientName: string;
   gstin: string;
   financialYear: string;
-  /** "Locked by … on …", "In progress" or "Not started" — printed in headers and footers when given. */
+  /** The sign-off stage in words (statusText): "Prepared by … on …", "Locked by … on …" — printed in headers and footers when given. */
   status?: string;
 }
 
@@ -34,6 +35,12 @@ export interface WorkingPapersInput {
   changeLog: ChangeLogEntry[];
   /** Print time (defaults to now) — fixed in tests. */
   printedAt?: Date;
+  /**
+   * Who the papers are for (default staff). For a client login the sign-off
+   * notes and the allotment are left out, and so are the allotment and
+   * send-back entries of the revision history (docs/GSTR9_9C_WORKINGS.md §6).
+   */
+  audience?: 'staff' | 'client';
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +166,7 @@ export interface PaperSet {
   status: string;
   printed: string;
   preparedLine: string;
+  verifiedLine: string;
   reviewedLine: string;
   /** How many revision-log entries exist (the PDF may print only the latest). */
   changeCount: number;
@@ -212,13 +220,30 @@ export const fmtDateTime = (v: string | Date | null | undefined): string => {
   return `${fmtDate(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 };
 
-/** "Locked by X on 28 Sep 2026 17:45" | "In progress" | "Not started". */
-export const statusText = (period: Pick<AnnualReturnPeriod, 'status' | 'locked_by' | 'locked_at'> | null | undefined): string => {
-  if (!period || period.status === 'not_started') return 'Not started';
-  if (period.status === 'locked') {
-    return `Locked${period.locked_by ? ` by ${period.locked_by}` : ''}${period.locked_at ? ` on ${fmtDateTime(period.locked_at)}` : ''}`;
+/** The period columns statusText reads. */
+export type StatusPeriod = Pick<AnnualReturnPeriod,
+  | 'status' | 'locked_by' | 'locked_at' | 'prepared_by_name' | 'prepared_at'
+  | 'verified_by_name' | 'verified_at' | 'returned_to' | 'returned_at'>;
+
+/**
+ * The sign-off stage in words (signoffFlow.ts stageOf): "Not started" |
+ * "Preparing" | "Sent back to the preparer on 13 Oct 2026" | "Prepared by Riya
+ * on 12 Oct 2026" | "Verified by Amit on 14 Oct 2026" | "Locked by Mehul on
+ * 16 Oct 2026 17:45". For a client a send-back reads as the stage it went back
+ * to (as clientStage), so the papers never say it was sent back.
+ */
+export const statusText = (period: StatusPeriod | null | undefined, opts: { forClient?: boolean } = {}): string => {
+  if (!period) return 'Not started';
+  const by = (name: string | null | undefined) => (name ? ` by ${displayName(name)}` : '');
+  const on = (at: string | null | undefined, fmt: (v: string) => string = fmtDate) => (at ? ` on ${fmt(at)}` : '');
+  switch (stageOf(opts.forClient ? { ...period, returned_at: null } : period, 0)) {
+    case 'locked': return `Locked${by(period.locked_by)}${on(period.locked_at, fmtDateTime)}`;
+    case 'sent_back': return `Sent back to the ${period.returned_to === 'verifier' ? 'verifier' : 'preparer'}${on(period.returned_at)}`;
+    case 'verified': return `Verified${by(period.verified_by_name)}${on(period.verified_at)}`;
+    case 'prepared': return `Prepared${by(period.prepared_by_name)}${on(period.prepared_at)}`;
+    case 'preparing': return 'Preparing';
+    default: return 'Not started';
   }
-  return 'In progress';
 };
 
 /** "GSTR9_Working_24AAMCA2528C1Z3_2024-25.xlsx" — safe on every platform, FY hyphen kept. */

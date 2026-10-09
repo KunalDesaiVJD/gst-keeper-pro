@@ -11,21 +11,7 @@ import type { Formulas, Gstr9cDoc } from '@/lib/gstr9/types';
 import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import { enterLine, Figures, FORM_HEAD_LABEL, FormHead, FormLine, fPath, fPaths, lineValue } from './formLines';
 import { PIN_LAST_ROW } from '../gstr9form/helpers';
-
-/**
- * Keeps clicks, keys and pastes inside a cell widget (the justification
- * popover, the reset button) away from the grid's own keyboard handling —
- * React events bubble through portals, so without this the grid would
- * swallow what is typed into the reason box.
- */
-const CellIsland: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
-  return (
-    <span className="inline-flex items-center gap-1" onMouseDown={stop} onKeyDown={stop} onPaste={stop} onDoubleClick={stop}>
-      {children}
-    </span>
-  );
-};
+import { CellIsland } from '../grid/CellIsland';
 
 const StatusCell: React.FC<{ line: FormLine; readOnly: boolean; locked: boolean; onReset: () => void }> = ({ line, readOnly, locked, onReset }) => {
   if (line.diffKey) {

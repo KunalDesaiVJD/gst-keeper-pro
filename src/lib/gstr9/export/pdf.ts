@@ -19,6 +19,8 @@ const FILL_RGB: Record<'bad' | 'info' | 'good', RGB> = { bad: [248, 215, 218], i
 
 const PAD_X = 1.2;
 const PAD_Y = 0.75;
+/** Height (mm) of a row to sign on (A3's signatures). */
+const TALL_ROW = 8;
 /** mm per Excel width unit at 7 pt. */
 const MM_PER_UNIT = 1.45;
 /** The PDF keeps at most this many revision-log entries (the latest); the Excel has all. */
@@ -442,7 +444,7 @@ function renderTable(st: St, t: WpTable, excel: number[], opts: { pageOf?: (c: W
       },
       headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', valign: 'middle' },
       columnStyles,
-      bodyStyles: table.tall ? { minCellHeight: 9, valign: 'bottom' } : {},
+      bodyStyles: table.tall ? { minCellHeight: TALL_ROW, valign: 'bottom' } : {},
       willDrawPage: () => {
         // A page autotable adds belongs to the paper being printed.
         const n = doc.getNumberOfPages();
@@ -512,8 +514,19 @@ function paperTitle(st: St, p: WorkingPaper): void {
   doc.text(pdfText(p.title), PAGE.margin + 13, st.y + 4.6);
   st.y += 7.5;
   para(st, p.source, 7.5, 'italic', GREY, PAGE.margin + 13);
-  const who = `${set.preparedLine}     ${set.reviewedLine}${p.openDiffs === null ? '' : `     Open differences on this paper: ${p.openDiffs}`}`;
-  para(st, who, 7.5, 'normal', GREY, PAGE.margin + 13);
+  // Prepared · Verified · Reviewed (and the open differences) on one line when they fit;
+  // otherwise broken between the parts, never inside one (para still wraps a part too long alone).
+  const x = PAGE.margin + 13;
+  const room = st.W - PAGE.margin - x;
+  const parts = [set.preparedLine, set.verifiedLine, set.reviewedLine, ...(p.openDiffs === null ? [] : [`Open differences on this paper: ${p.openDiffs}`])];
+  setFont(doc, 7.5, 'normal', GREY);
+  const lines: string[] = [];
+  parts.forEach((part) => {
+    const last = lines.length - 1;
+    if (last >= 0 && doc.getTextWidth(pdfText(`${lines[last]}     ${part}`)) <= room) lines[last] = `${lines[last]}     ${part}`;
+    else lines.push(part);
+  });
+  lines.forEach((ln) => para(st, ln, 7.5, 'normal', GREY, x));
   st.y += 1;
   doc.setDrawColor(...RULE);
   doc.setLineWidth(0.2);
@@ -550,7 +563,9 @@ function renderBlocks(st: St, p: WorkingPaper, opts: { skipHeadings?: boolean; p
         st.y += 1.5;
       } else if (b.level === 2) {
         st.y += 1.5;
-        ensure(st, 24);
+        // A table to sign on (A3's signatures) starts on a new page rather than split under its heading.
+        const next = p.blocks[bi + 1];
+        ensure(st, next?.type === 'table' && next.tall ? 6 + next.rows.length * TALL_ROW : 24);
         para(st, b.text, 9, 'bold', INK);
         st.y += 1;
       } else {

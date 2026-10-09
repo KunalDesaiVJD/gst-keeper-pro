@@ -9,7 +9,8 @@ import LockPanel from '../overview/LockPanel';
 import ToleranceSetting from '../overview/ToleranceSetting';
 import RevisionHistory from '../overview/RevisionHistory';
 import VersionHistory from '../overview/VersionHistory';
-import { fmtWhen, periodStatus, REVIEW_TAB_PARAM, type ReviewTab } from '../overview/steps';
+import { clientStage, displayName, STAGE_META } from '@/lib/gstr9/signoffFlow';
+import { fmtWhen, REVIEW_TAB_PARAM, type ReviewTab } from '../overview/steps';
 import { StepTab, StepTabsList } from '../reco/StepTabs';
 
 const TABS: ReviewTab[] = ['differences', 'signoff', 'history', 'snapshots'];
@@ -20,7 +21,7 @@ const TABS: ReviewTab[] = ['differences', 'signoff', 'history', 'snapshots'];
  * tab each. The open tab is kept in the URL (?reviewtab=).
  */
 const ReviewStep: React.FC = () => {
-  const { locked, period, workings: w } = useWorkspace();
+  const { locked, period, workings: w, signoffState, isStaff } = useWorkspace();
   const [params, setParams] = useSearchParams();
   const fromUrl = params.get(REVIEW_TAB_PARAM) as ReviewTab | null;
   const tab: ReviewTab = fromUrl && TABS.includes(fromUrl) ? fromUrl : 'differences';
@@ -30,9 +31,8 @@ const ReviewStep: React.FC = () => {
     setParams(next, { replace: true });
   };
 
-  const status = periodStatus(period);
-  const ready = !locked && !!period?.prepared_by_name;
-  const lockBadge = ready ? { label: 'Ready for review', tone: 'info' as const } : { label: status.label, tone: status.tone };
+  const stage = isStaff ? signoffState.stage : clientStage(signoffState);
+  const lockBadge = STAGE_META[stage];
 
   return (
     <Tabs value={tab} onValueChange={setTab} className="space-y-2">
@@ -45,12 +45,12 @@ const ReviewStep: React.FC = () => {
             <Lock className="h-3 w-3 shrink-0" aria-hidden />
             <span>
               <span className="font-medium text-foreground">Locked</span>
-              {period?.locked_by ? ` by ${period.locked_by}` : ''}{period?.locked_at ? ` on ${fmtWhen(period.locked_at)}` : ''}. Nothing can be edited until the year is unlocked.
+              {period?.locked_by ? ` by ${displayName(period.locked_by)}` : ''}{period?.locked_at ? ` on ${fmtWhen(period.locked_at)}` : ''}. Nothing can be edited until the year is unlocked.
             </span>
           </p>
         ) : (
           <p className="text-[11px] leading-snug text-muted-foreground">
-            Give every open difference a reason (or fix the figure), mark it ready for review; a GST manager or superadmin verifies and locks it.
+            Give every open difference a reason (or fix the figure) and mark it prepared; a second person verifies it, and a GST manager or the superadmin who neither prepared nor verified it reviews and locks it.
           </p>
         )}
       >
@@ -63,7 +63,7 @@ const ReviewStep: React.FC = () => {
         <StepTab value="signoff">
           Sign-off &amp; lock
           <Badge variant={lockBadge.tone} className="h-4 gap-1 px-1.5 text-[10px] leading-none">
-            {status.key === 'locked' && <Lock className="h-2.5 w-2.5" aria-hidden />}
+            {stage === 'locked' && <Lock className="h-2.5 w-2.5" aria-hidden />}
             {lockBadge.label}
           </Badge>
         </StepTab>

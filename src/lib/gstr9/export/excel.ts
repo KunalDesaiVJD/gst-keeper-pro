@@ -107,7 +107,7 @@ function headerBlock(s: SheetState, set: PaperSet): void {
   put(3, `GSTIN: ${set.meta.gstin || '—'}`, {});
   put(4, `Financial year: ${set.meta.financialYear}`, {});
   put(5, `WP ref ${paper.ref} — ${paper.title}`, { bold: true, size: 12, color: { argb: NAVY } }, 17);
-  put(6, set.preparedLine, {});
+  put(6, `${set.preparedLine}     ${set.verifiedLine}`, {});
   put(7, set.reviewedLine, {});
   put(8, paper.source, { italic: true, color: { argb: GREY } });
   setHeight(s, 9, 8);

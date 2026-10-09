@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { statusText } from '@/lib/gstr9/export/model';
+import { statusText, type WorkingPapersInput } from '@/lib/gstr9/export/model';
 import { loadFullChangeLog } from '@/lib/gstr9/store';
 import { useWorkspace } from './WorkspaceContext';
 
@@ -50,12 +50,14 @@ export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default'
         return;
       }
       const { docs, workings, period } = r;
-      const { client, financialYear } = ws;
-      const meta = { clientName: client.name, gstin: client.gstin, financialYear, status: statusText(period) };
+      const { client, financialYear, isStaff } = ws;
+      // A client login's papers leave out the sign-off notes and the allotment (docs/GSTR9_9C_WORKINGS.md §6).
+      const audience: WorkingPapersInput['audience'] = isStaff ? 'staff' : 'client';
+      const meta = { clientName: client.name, gstin: client.gstin, financialYear, status: statusText(period, { forClient: !isStaff }) };
       let file: string;
       if (working) {
         const changeLog = await loadFullChangeLog(client.id, financialYear);
-        const input = { docs, workings, meta, period, setOffs: ws.setOffs, drc03s: ws.drc03s, changeLog };
+        const input: WorkingPapersInput = { docs, workings, meta, period, setOffs: ws.setOffs, drc03s: ws.drc03s, changeLog, audience };
         if (kind === 'excel') {
           const { exportWorkbook } = await import('@/lib/gstr9/exportWorkbook');
           file = await exportWorkbook(input);

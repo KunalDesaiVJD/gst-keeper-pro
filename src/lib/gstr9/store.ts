@@ -22,22 +22,55 @@ export interface AnnualReturnPeriod {
   locked_at: string | null;
   locked_by: string | null;
   updated_at: string;
-  /** "Ready for review" — the preparer's sign-off. */
+  /** Bumped by every sign-off change; sent back with each sign-off so a stale click is refused. */
+  signoff_rev: number;
+  /** Allotment (signoffFlow.ts): the preparer, and optionally a verifier and a reviewer. */
+  preparer_id: string | null;
+  preparer_name: string | null;
+  preparer_allotted_at: string | null;
+  verifier_id: string | null;
+  verifier_name: string | null;
+  reviewer_id: string | null;
+  reviewer_name: string | null;
+  allotted_at: string | null;
+  allotted_by_name: string | null;
+  /** Prepared — the preparer's sign-off. */
+  prepared_by: string | null;
   prepared_by_name: string | null;
   prepared_at: string | null;
   prepared_note: string | null;
-  /** The reviewer who verified and locked (GST manager / superadmin). Cleared on unlock. */
+  /** Verified — a second person. */
+  verified_by: string | null;
+  verified_by_name: string | null;
+  verified_role: string | null;
+  verified_at: string | null;
+  verified_note: string | null;
+  changes_at_verify: number | null;
+  /** Reviewed & locked — a GST manager / superadmin, a third person. Cleared on unlock. */
+  reviewed_by: string | null;
   reviewed_by_name: string | null;
   reviewed_role: string | null;
   reviewed_at: string | null;
   review_note: string | null;
   review_checklist: Record<string, boolean> | null;
+  changes_at_lock: number | null;
+  /** Sent back to the preparer or the verifier, with what needs fixing. */
+  returned_to: 'preparer' | 'verifier' | null;
+  returned_by_name: string | null;
+  returned_at: string | null;
+  returned_note: string | null;
+  /** Superadmin overrides recorded at the lock ([{kind, by, at, reason}]). */
+  signoff_overrides: unknown;
   /** Workings.payables as they stood at the lock. */
   payables_at_lock: unknown;
 }
 
-const PERIOD_COLUMNS =
-  'id, status, locked_at, locked_by, updated_at, prepared_by_name, prepared_at, prepared_note, reviewed_by_name, reviewed_role, reviewed_at, review_note, review_checklist, payables_at_lock';
+export const PERIOD_COLUMNS =
+  'id, status, locked_at, locked_by, updated_at, signoff_rev, preparer_id, preparer_name, preparer_allotted_at, verifier_id, verifier_name, '
+  + 'reviewer_id, reviewer_name, allotted_at, allotted_by_name, prepared_by, prepared_by_name, prepared_at, prepared_note, '
+  + 'verified_by, verified_by_name, verified_role, verified_at, verified_note, changes_at_verify, '
+  + 'reviewed_by, reviewed_by_name, reviewed_role, reviewed_at, review_note, review_checklist, changes_at_lock, '
+  + 'returned_to, returned_by_name, returned_at, returned_note, signoff_overrides, payables_at_lock';
 
 export interface LoadedWorkspace {
   docs: AnnualReturnDocs;
@@ -53,11 +86,35 @@ export class DocConflictError extends Error {
   }
 }
 
-/** The period's status changed since the user last saw it (someone else locked / unlocked it). */
-export class PeriodChangedError extends Error {
-  constructor(public current?: PeriodStatus | null) {
-    super(current ? `The status was changed by someone else (now "${current.replace('_', ' ')}").` : 'The status was changed by someone else.');
-    this.name = 'PeriodChangedError';
+/** The sign-off changed since the user last saw it (someone else signed, sent back, locked or unlocked it). */
+export class SignoffStaleError extends Error {
+  constructor(public stage: string | null) {
+    super('The sign-off was changed by someone else while you were looking. Nothing of yours was applied.');
+    this.name = 'SignoffStaleError';
+  }
+}
+
+/** More figures changed since the previous sign-off than the signer was shown. */
+export class ChangedSinceError extends Error {
+  constructor(public count: number) {
+    super(`${count} figure change${count === 1 ? ' was' : 's were'} made since the previous sign-off — check ${count === 1 ? 'it' : 'them'} and try again.`);
+    this.name = 'ChangedSinceError';
+  }
+}
+
+/** The superadmin is locking without the three-person sign-off and has to give a reason. */
+export class OverrideRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OverrideRequiredError';
+  }
+}
+
+/** The page was built against functions the database no longer has. */
+export class OutdatedAppError extends Error {
+  constructor() {
+    super('This page is out of date — reload it to continue.');
+    this.name = 'OutdatedAppError';
   }
 }
 
@@ -168,61 +225,177 @@ export class NotAllowedError extends Error {
   }
 }
 
-const rpcError = (message: string | undefined): Error | null => {
+const rpcError = (message: string | undefined, code?: string): Error | null => {
   if (!message) return null;
-  const m = /ANNUAL_RETURN_STATUS_CHANGED: (\w+)/.exec(message);
-  if (m) return new PeriodChangedError(m[1] as PeriodStatus);
-  if (message.includes('ANNUAL_RETURN_NOT_ALLOWED')) return new NotAllowedError(message.replace(/^.*ANNUAL_RETURN_NOT_ALLOWED:\s*/, ''));
+  const st = /ANNUAL_RETURN_SIGNOFF_STALE: (\w+)/.exec(message);
+  if (st) return new SignoffStaleError(st[1]);
+  const ch = /ANNUAL_RETURN_CHANGED_SINCE: (\d+)/.exec(message);
+  if (ch) return new ChangedSinceError(Number(ch[1]));
+  const said = (key: string) => message.replace(new RegExp(`^.*${key}:\\s*`), '');
+  const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+  if (message.includes('ANNUAL_RETURN_OVERRIDE_REQUIRED')) return new OverrideRequiredError(cap(said('ANNUAL_RETURN_OVERRIDE_REQUIRED')));
+  if (message.includes('ANNUAL_RETURN_NOT_ALLOWED')) return new NotAllowedError(cap(said('ANNUAL_RETURN_NOT_ALLOWED')));
+  if (message.includes('ANNUAL_RETURN_NOTE_REQUIRED')) return new Error(cap(said('ANNUAL_RETURN_NOTE_REQUIRED')));
+  if (message.includes('ANNUAL_RETURN_BAD_ACTION')) return new Error(cap(said('ANNUAL_RETURN_BAD_ACTION')));
   if (message.includes('ANNUAL_RETURN_LOCKED')) return new YearLockedError();
   const s = /ANNUAL_RETURN_SETOFF_INVALID:\s*(.*)$/.exec(message);
   if (s) return new Error(s[1]);
+  if (code === 'PGRST202' || message.includes('Could not find the function')) return new OutdatedAppError();
   return null;
 };
 
+/** The period row as the sign-off RPCs return it: the period, its sheets, stage and changes since sign-off. */
+export interface SignoffRow extends AnnualReturnPeriod {
+  client_id: string;
+  financial_year: string;
+  sheets: number;
+  last_saved_at: string | null;
+  stage: string;
+  changes: { since_prepared: number; since_verified: number; last_change_at: string | null; last_change_by: string | null } | null;
+}
+
 export interface StatusChange {
-  /** The status the user was looking at — a stale click is refused, never applied. */
-  from: PeriodStatus;
-  to: PeriodStatus;
-  by: string;
-  /** superadmin | gst_manager | employee | unlock_sheets — locking needs superadmin or gst_manager. */
-  role: string;
+  /** 'locked' reviews and locks; 'in_progress' unlocks (back to Verified). */
+  to: 'locked' | 'in_progress';
+  /** signoff_rev the user was looking at — a stale click is refused, never applied. */
+  expectedRev: number;
+  actorId: string;
+  /** Review note at the lock; the reason at an unlock (required). */
   note?: string;
   checklist?: Record<string, boolean>;
   /** Workings.payables at the lock. */
   payables?: unknown;
+  /** How many changes since the verification the reviewer was shown and checked. */
+  changesAck?: number;
+  /** Superadmin only: why the year is locked without the three-person sign-off. */
+  overrideReason?: string;
 }
 
 /**
- * Move the period from `from` to `to` through set_annual_return_status: the
- * database refuses a stale transition (PeriodChangedError) and a lock by
- * anyone but a GST manager / superadmin (NotAllowedError); it records the
- * reviewer, snapshots every sheet at the lock and logs the change.
+ * Review & lock, or unlock, through set_annual_return_status. The database
+ * looks the user up by id, refuses a stale click (SignoffStaleError), a lock
+ * by anyone but a GST manager / superadmin who neither prepared nor verified
+ * it (NotAllowedError; OverrideRequiredError for the superadmin), and
+ * unchecked changes since the verification (ChangedSinceError). It snapshots
+ * every sheet at the lock and logs the change.
  */
-export async function setPeriodStatus(clientId: string, financialYear: string, change: StatusChange): Promise<void> {
-  const { error } = await supabase.rpc('set_annual_return_status', {
+export async function setPeriodStatus(clientId: string, financialYear: string, change: StatusChange): Promise<SignoffRow> {
+  const { data, error } = await supabase.rpc('set_annual_return_status', {
     p_client_id: clientId,
     p_financial_year: financialYear,
-    p_from: change.from,
     p_to: change.to,
-    p_by: change.by,
-    p_role: change.role,
+    p_expected_rev: change.expectedRev,
+    p_actor_id: change.actorId,
     p_note: change.note || undefined,
     p_checklist: (change.checklist ?? undefined) as Json | undefined,
     p_payables: (change.payables ?? undefined) as Json | undefined,
+    p_changes_ack: change.changesAck ?? undefined,
+    p_override_reason: change.overrideReason || undefined,
   });
-  if (error) throw rpcError(error.message) ?? error;
+  if (error) throw rpcError(error.message, error.code) ?? error;
+  return data as unknown as SignoffRow;
 }
 
-/** "Ready for review" by the preparer (clear = withdraw it). */
-export async function markPrepared(clientId: string, financialYear: string, by: string, note?: string, clear = false): Promise<void> {
-  const { error } = await supabase.rpc('mark_annual_return_prepared', {
+/** Prepare / verify / send back, or withdraw a sign-off (annual_return_signoff). */
+export async function signoffAnnualReturn(
+  clientId: string,
+  financialYear: string,
+  action: 'prepare' | 'withdraw_prepared' | 'verify' | 'withdraw_verified' | 'send_back',
+  opts: { expectedRev: number; actorId: string; note?: string; returnTo?: 'preparer' | 'verifier'; changesAck?: number },
+): Promise<SignoffRow> {
+  const { data, error } = await supabase.rpc('annual_return_signoff', {
     p_client_id: clientId,
     p_financial_year: financialYear,
-    p_by: by,
-    p_note: note || undefined,
-    p_clear: clear,
+    p_action: action,
+    p_expected_rev: opts.expectedRev,
+    p_actor_id: opts.actorId,
+    p_note: opts.note || undefined,
+    p_return_to: opts.returnTo ?? undefined,
+    p_changes_ack: opts.changesAck ?? undefined,
   });
-  if (error) throw rpcError(error.message) ?? error;
+  if (error) throw rpcError(error.message, error.code) ?? error;
+  return data as unknown as SignoffRow;
+}
+
+export type AllotSkip = 'locked' | 'changed' | 'signed' | 'not_staff' | 'not_manager' | 'same_person' | 'unchanged';
+
+export interface AllotResult {
+  clientId: string;
+  applied: boolean;
+  reason: AllotSkip | null;
+  previous: { id: string; name: string } | null;
+  row: SignoffRow | null;
+}
+
+/**
+ * Allot (or, with userId null, un-allot) one slot on many workings at once.
+ * `expectUserId` is who the user saw in the slot: a working that changed
+ * meanwhile is skipped, never overwritten. Only a GST manager / superadmin.
+ */
+export async function allotAnnualReturn(
+  financialYear: string,
+  slot: 'preparer' | 'verifier' | 'reviewer',
+  items: { clientId: string; userId: string | null; expectUserId: string | null }[],
+  actorId: string,
+): Promise<AllotResult[]> {
+  const out: AllotResult[] = [];
+  // The database takes at most 500 a call.
+  for (let i = 0; i < items.length; i += 500) {
+    const { data, error } = await supabase.rpc('annual_return_allot', {
+      p_financial_year: financialYear,
+      p_stage: slot,
+      p_items: items.slice(i, i + 500).map((x) => ({ client_id: x.clientId, user_id: x.userId, expect_user_id: x.expectUserId })) as unknown as Json,
+      p_actor_id: actorId,
+    });
+    if (error) throw rpcError(error.message, error.code) ?? error;
+    const results = ((data as { results?: unknown[] } | null)?.results ?? []) as {
+      client_id: string; applied: boolean; reason: AllotSkip | null; previous: { id: string; name: string } | null; row: SignoffRow | null;
+    }[];
+    out.push(...results.map((r) => ({ clientId: r.client_id, applied: r.applied, reason: r.reason, previous: r.previous, row: r.row })));
+  }
+  return out;
+}
+
+/** The working's period, sheets, stage and changes since sign-off, fresh (null when it has no period row yet). */
+export async function loadSignoffRow(clientId: string, financialYear: string): Promise<SignoffRow | null> {
+  const { data, error } = await supabase.rpc('annual_return_signoff_row', { p_client_id: clientId, p_financial_year: financialYear });
+  if (error) throw rpcError(error.message, error.code) ?? error;
+  return (data as unknown as SignoffRow) ?? null;
+}
+
+/**
+ * How many figure changes by others the signer has to check: since Prepared
+ * for a verification, since Verified for the lock. The same count the
+ * database checks the acknowledgement against.
+ */
+export async function loadUnackedChanges(clientId: string, financialYear: string, forWhat: 'verify' | 'lock', actorId: string): Promise<number> {
+  const { data, error } = await supabase.rpc('annual_return_unacked_changes', {
+    p_client_id: clientId, p_financial_year: financialYear, p_for: forWhat, p_actor_id: actorId,
+  });
+  if (error) throw rpcError(error.message, error.code) ?? error;
+  return Number(data ?? 0);
+}
+
+/** The latest figure changes since a moment (sheets only — not status, payables or reasons), newest first. */
+export async function loadChangesSince(
+  clientId: string,
+  financialYear: string,
+  since: string,
+  limit = 8,
+): Promise<{ entries: ChangeLogEntry[]; total: number }> {
+  const { data, error, count } = await supabase
+    .from('annual_return_change_log')
+    .select(LOG_COLUMNS, { count: 'exact' })
+    .eq('client_id', clientId)
+    .eq('financial_year', financialYear)
+    .gt('changed_at', since)
+    .in('kind', ['edit', 'add', 'remove'])
+    .not('doc_key', 'in', '(period,payables,justifications)')
+    .order('changed_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return { entries: (data ?? []).map(toChangeLogEntry), total: count ?? (data ?? []).length };
 }
 
 // ---------------------------------------------------------------------------
