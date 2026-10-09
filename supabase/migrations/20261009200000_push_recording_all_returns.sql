@@ -16,8 +16,11 @@
 --    written, as GSTR-1 has been since 20261009130000. Until now only the
 --    GSTR-3B page recorded it, so a closed or reloaded page lost the push.
 --
--- 4. The direct-filing guard accepts the push marker or NIL flag from either
---    GSTR-1 row of the period (AMADIUS INFRA Sep-26 has NIL on the hidden row).
+-- 4. The direct-filing guard accepts the push marker from either GSTR-1 row of
+--    the period (DINESH PATEL Sep-26's accepted push sits on the hidden row),
+--    but the NIL flag only from the row being filed: the GSTR-1 page unticks
+--    NIL on the visible row alone, so a stale tick on the hidden one must not
+--    open it.
 --
 -- 5. Data fixes: (c) phantom version-history rows are quarantined, then (a)
 --    pushed_at stamps with no accepted upload behind them are cleared, then (b)
@@ -280,12 +283,16 @@ CREATE TRIGGER trg_gstr3b_push_versions_record_push
   FOR EACH ROW EXECUTE FUNCTION public.gstr3b_push_versions_record_push();
 
 -- ---------------------------------------------------------------------------
--- 4. Guard: the marker or NIL flag on either GSTR-1 row counts
+-- 4. Guard: the marker on either GSTR-1 row counts, NIL only on this row
 -- ---------------------------------------------------------------------------
--- Older writers (the GSTR-1 page's NIL tick, push recorders before this
--- migration) put both on the hidden 'GSTR-1' row of an IFF client. The
--- aggregates also keep NEW's own NIL flag when no row is stored yet, which the
--- old single-row SELECT INTO overwrote with NULL.
+-- Push recorders before this migration stamped the hidden 'GSTR-1' row of an
+-- IFF client, and filing_record_push() stamps every row of the family, so the
+-- marker is read from both. The NIL flag is not: the GSTR-1 page ticks and
+-- unticks it on the visible row only, and 5b has already copied the old
+-- page's tick on the hidden row across (AMADIUS INFRA Sep-26). A hidden tick
+-- that outlived an untick would otherwise let the return be Filed with no
+-- push and no approval. The aggregates also keep NEW's own NIL flag when no
+-- row is stored yet, which the old single-row SELECT INTO overwrote with NULL.
 CREATE OR REPLACE FUNCTION public.filing_status_guard_direct_filing()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -302,11 +309,12 @@ BEGIN
 
   -- An upsert (INSERT ... ON CONFLICT DO UPDATE, as the extension's pull
   -- does) reaches BEFORE INSERT with only the incoming columns, so read the
-  -- stored rows' marker and NIL flag as well.
+  -- stored rows' marker, and the stored NIL flag of NEW's own type, as well.
   v_pushed := NEW.pushed_at;
   v_nil := COALESCE(NEW.is_nil, false);
   IF v_pushed IS NULL OR NOT v_nil THEN
-    SELECT COALESCE(v_pushed, max(fs.pushed_at)), v_nil OR COALESCE(bool_or(fs.is_nil), false)
+    SELECT COALESCE(v_pushed, max(fs.pushed_at)),
+           v_nil OR COALESCE(bool_or(fs.is_nil) FILTER (WHERE fs.return_type = NEW.return_type), false)
       INTO v_pushed, v_nil
       FROM public.filing_status fs
      WHERE fs.client_id = NEW.client_id
@@ -351,15 +359,20 @@ $$;
 --   UPLOAD: the backfill writes no file name, so it is tied through its batch
 --     IMPORT (version_number - 1), which must be a proven copy from the same
 --     client, whose gstr1_data last_uploaded_at equals this action_at to the
---     millisecond.
--- On 9 Oct 2026 this moves 66 of 140 backfilled IMPORT rows and 27 of 50
--- backfilled UPLOAD rows (93); 20 client periods are left with no history.
+--     millisecond or, when that client has uploaded again since, whose own
+--     UPLOAD or REFRESH_ERRORS version row has the same status within a second
+--     (the page writes that row just after the stamp the backfill copies: 7
+--     rows, 23 to 494 ms, e.g. ELENZA CALLISTA BUILDCON Jul-26 v2 is VISHVAS
+--     POLYPACK's error refresh of 07 Aug 10:00:32.892).
+-- On 9 Oct 2026 this moves 66 of 140 backfilled IMPORT rows and 34 of 50
+-- backfilled UPLOAD rows (100); 21 client periods are left with no history.
 -- Left in place: 40 IMPORT backfills naming a file of their own client (8 of
 -- them that client's import of another month: a month switch, same bug), 33
--- IMPORT and 22 UPLOAD backfills no gstr1_data row matches any more (genuine,
--- or copied from a source since re-imported or re-uploaded), and SHREE MARUTI
--- INFRA Jul-26 v1/v2, whose times are ELENZA ARISTA's but whose
--- 'Builder Returns — 07/2026' is a name SHREE MARUTI also uses.
+-- IMPORT backfills no gstr1_data row matches any more (genuine, or copied from
+-- a source since re-imported), the 15 UPLOAD backfills batched with one of
+-- those 73, and SHREE MARUTI INFRA Jul-26 v1/v2, whose times are ELENZA
+-- ARISTA's but whose 'Builder Returns — 07/2026' is a name SHREE MARUTI also
+-- uses.
 CREATE TABLE IF NOT EXISTS public.gstr1_upload_versions_quarantine (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id          uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
@@ -415,19 +428,35 @@ imp AS (
                         AND COALESCE(v.summary, '') NOT LIKE '%backfilled from existing record%')
 ),
 upl AS (
-  SELECT u.id, imp.source_client, s.version_number AS import_version
-    FROM bf u
-    JOIN bf s
-      ON s.client_id = u.client_id
-     AND s.period_month = u.period_month
-     AND s.version_number = u.version_number - 1
-     AND s.action_type = 'IMPORT'
-    JOIN imp ON imp.id = s.id
-   WHERE u.action_type = 'UPLOAD'
-     AND EXISTS (SELECT 1 FROM public.gstr1_data g
-                  WHERE g.client_id = imp.source_client
-                    AND g.file_name = s.file_name
-                    AND date_trunc('milliseconds', g.last_uploaded_at) = date_trunc('milliseconds', u.action_at))
+  SELECT t.id, t.source_client, t.import_version, t.by_data
+    FROM (
+      SELECT u.id, imp.source_client, s.version_number AS import_version,
+             EXISTS (SELECT 1 FROM public.gstr1_data g
+                      WHERE g.client_id = imp.source_client
+                        AND g.file_name = s.file_name
+                        AND date_trunc('milliseconds', g.last_uploaded_at) = date_trunc('milliseconds', u.action_at)
+             ) AS by_data,
+             -- The source has uploaded again since, so its gstr1_data no
+             -- longer holds this time; its own version row of that upload or
+             -- error refresh still does.
+             EXISTS (SELECT 1 FROM public.gstr1_upload_versions w
+                      WHERE w.client_id = imp.source_client
+                        AND w.action_type IN ('UPLOAD', 'REFRESH_ERRORS')
+                        AND COALESCE(w.summary, '') NOT LIKE '%backfilled from existing record%'
+                        AND w.status IS NOT DISTINCT FROM u.status
+                        AND w.action_at BETWEEN u.action_at - interval '1 second'
+                                            AND u.action_at + interval '1 second'
+             ) AS by_version
+        FROM bf u
+        JOIN bf s
+          ON s.client_id = u.client_id
+         AND s.period_month = u.period_month
+         AND s.version_number = u.version_number - 1
+         AND s.action_type = 'IMPORT'
+        JOIN imp ON imp.id = s.id
+       WHERE u.action_type = 'UPLOAD'
+    ) t
+   WHERE t.by_data OR t.by_version
 ),
 moved AS (
   SELECT imp.id,
@@ -436,8 +465,11 @@ moved AS (
     FROM imp
   UNION ALL
   SELECT upl.id,
-         format('Copy of client %s''s upload (same time to the millisecond), backfilled with the copied import v%s',
-                upl.source_client, upl.import_version)
+         format('Copy of client %s''s upload (%s), backfilled with the copied import v%s',
+                upl.source_client,
+                CASE WHEN upl.by_data THEN 'same time to the millisecond'
+                     ELSE 'its own upload version within a second, same status' END,
+                upl.import_version)
     FROM upl
 )
 INSERT INTO public.gstr1_upload_versions_quarantine

@@ -17,6 +17,11 @@
  * Every rule was swept over every stored gstr1_data.raw_json and every
  * accepted upload payload: a return the portal accepted produces no problem.
  *
+ * A deletion entry (flag 'D', as in the offline tool's or the accounting
+ * software's '<GSTIN>_GSTR1(Delete)_…' file) only names the document the
+ * portal is to remove, so only what identifies it is checked: the recipient
+ * GSTIN where the section has one, the number and the date.
+ *
  * Table 12 units and repeats are normaliseGstr1Hsn's (./uqc.ts); nothing here
  * touches them.
  */
@@ -295,6 +300,8 @@ export function validateGstr1Json(
     warn(section, ref, 'value', `value ${v.toFixed(2)} differs from taxable value + tax ${full.toFixed(2)}; check the document value`);
   };
   const itemDetails = (itms: unknown): Obj[] => objs(itms).map((i) => (isObj(i.itm_det) ? i.itm_det : i));
+  /** A document the file asks the portal to delete: it carries no POS, type, rate or value. */
+  const isDeletion = (o: Obj) => str(o.flag).trim().toUpperCase() === 'D';
 
   // ── B2B and its amendments ──
   for (const section of ['b2b', 'b2ba'] as const) {
@@ -305,6 +312,7 @@ export function validateGstr1Json(
         if (gstinWhy) problem(section, ref, gstinWhy.rule, gstinWhy.message);
         docNumber(section, ref, inv.inum, 'invoice');
         docDate(section, ref, inv.idt, 'invoice');
+        if (isDeletion(inv)) continue;
         const pos = placeOfSupply(section, ref, inv.pos, true);
         const invTyp = str(inv.inv_typ);
         if (!INV_TYPES.has(invTyp)) {
@@ -329,6 +337,7 @@ export function validateGstr1Json(
         if (gstinWhy) problem(section, ref, gstinWhy.rule, gstinWhy.message);
         docNumber(section, ref, nt.nt_num, 'note');
         docDate(section, ref, nt.nt_dt, 'note');
+        if (isDeletion(nt)) continue;
         const ntty = str(nt.ntty);
         if (ntty !== 'C' && ntty !== 'D') problem(section, ref, 'note-type', `note type ${shown(ntty)} must be C (credit) or D (debit); choose one`);
         const pos = placeOfSupply(section, ref, nt.pos, true);
@@ -352,6 +361,7 @@ export function validateGstr1Json(
       const ref = str(inv.inum) || '(no number)';
       docNumber('b2cl', ref, inv.inum, 'invoice');
       docDate('b2cl', ref, inv.idt, 'invoice');
+      if (isDeletion(inv)) continue;
       const pos = placeOfSupply('b2cl', ref, group.pos, false);
       if (pos && home && pos === home) {
         problem('b2cl', ref, 'b2cl-pos', `place of supply ${pos} is the client's own state; B2CL is only for inter-state sales, so report it in B2CS`);
@@ -370,6 +380,7 @@ export function validateGstr1Json(
     const ref = str(nt.nt_num) || '(no number)';
     docNumber('cdnur', ref, nt.nt_num, 'note');
     docDate('cdnur', ref, nt.nt_dt, 'note');
+    if (isDeletion(nt)) continue;
     const ntty = str(nt.ntty);
     if (ntty !== 'C' && ntty !== 'D') problem('cdnur', ref, 'note-type', `note type ${shown(ntty)} must be C (credit) or D (debit); choose one`);
     const typ = str(nt.typ);
@@ -392,11 +403,13 @@ export function validateGstr1Json(
     const expTyp = str(group.exp_typ);
     for (const inv of objs(group.inv)) {
       const ref = str(inv.inum) || '(no number)';
-      if (expTyp !== 'WPAY' && expTyp !== 'WOPAY') {
+      const deletion = isDeletion(inv);
+      if (!deletion && expTyp !== 'WPAY' && expTyp !== 'WOPAY') {
         problem('exp', ref, 'exp-typ', `export type ${shown(expTyp)} must be WPAY (with payment of tax) or WOPAY (without); choose one`);
       }
       docNumber('exp', ref, inv.inum, 'invoice');
       docDate('exp', ref, inv.idt, 'invoice');
+      if (deletion) continue;
       const port = str(inv.sbpcode).trim();
       if (port && !/^[A-Za-z0-9]{6}$/.test(port)) {
         problem('exp', ref, 'port-code', `port code ${shown(port)} must be the 6 character code on the shipping bill (e.g. INAMD4); correct it or leave it blank`);
