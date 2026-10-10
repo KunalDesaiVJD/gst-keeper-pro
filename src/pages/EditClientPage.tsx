@@ -20,6 +20,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { fetchSchemeHistory, SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { format } from 'date-fns';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { cleanPortalPassword, portalPasswordProblem } from '@/lib/portalPassword';
 
 /** Consistent required-field marker used across the Add / Edit client forms. */
 const Req: React.FC = () => (
@@ -303,6 +304,14 @@ const EditClientPage: React.FC = () => {
         }
       }
 
+      const gstPassword = cleanPortalPassword(formData.gstPassword);
+      const pwProblem = portalPasswordProblem(gstPassword);
+      if (pwProblem) {
+        toast.error(pwProblem);
+        setIsSaving(false);
+        return;
+      }
+
       const { error } = await supabase
         .from('clients')
         .update({
@@ -322,12 +331,12 @@ const EditClientPage: React.FC = () => {
           liberal_2b_reconciliation: formData.liberal2BReconciliation,
           einvoice_applicable: formData.einvoiceExemption ? false : formData.einvoiceApplicable,
           einvoice_exemption: formData.einvoiceExemption || null,
-          gst_user_id: formData.gstUserId || null,
-          gst_password: formData.gstPassword || null,
+          gst_user_id: formData.gstUserId.trim() || null,
+          gst_password: gstPassword || null,
           // Keep the client's app-login password in sync with the GST password,
           // so updating it here updates it everywhere (app login + extension).
           // Only when a password is present, so we never blank an existing one.
-          ...(formData.gstPassword ? { client_password: formData.gstPassword } : {}),
+          ...(gstPassword ? { client_password: gstPassword } : {}),
           regular_sub_type: formData.registrationType === 'Regular' ? formData.regularSubType : null,
           builder_itc_type: formData.regularSubType === 'Builder' ? formData.builderItcType : null,
           commercial_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.commercialArea) || 0 : 0,
