@@ -132,9 +132,19 @@ const einvPullWhy = (p: EinvoicePullRow | null) => (!p ? 'No e-invoice pull for 
     : p.status === 'stale'
       ? `${isTodayIst(p.pulled_at) ? `Today's pull (${fmtEinvWhen(p.pulled_at)})` : `The last pull (${fmtEinvWhen(p.pulled_at)})`} got a GSTR-1 file the portal generated earlier${p.generated_on ? ` (on ${fmtEinvDay(p.generated_on)})` : ''}, so nothing was saved from it. ${EINV_FRESH_FILE_STEPS}`
       : `The last pull (${fmtEinvWhen(p.pulled_at)}) did not finish (${p.status}).`);
-const einvNotFreshText = (p: EinvoicePullRow | null) => (isPullRunning(p) ? einvPullRunningText(p)
-  : `Pull e-invoices first (today). ${einvPullWhy(p)} E-invoices reach the portal two days after their IRN, and one uploaded over first `
-    + 'is never auto-populated, so what is left out must rest on a pull taken today. The e-invoice Excel does not stand in for the pull.');
+const einvNotFreshText = (p: EinvoicePullRow | null, x?: EinvoicePullRow | null) => (isPullRunning(p) ? einvPullRunningText(p)
+  : `Pull e-invoices, or import the e-invoice Excel downloaded from the portal, first (today). ${einvPullWhy(p)}`
+    + (x ? ` The e-invoice Excel was imported ${fmtEinvWhen(x.pulled_at)}, not today.` : '')
+    + ' E-invoices reach the portal two days after their IRN, and one uploaded over first is never auto-populated, so what is left out must rest on today\'s e-invoice status.');
+/**
+ * The firm's decision (10 Oct 2026): an e-invoice Excel imported today lets a
+ * push go just as a pull of today does. Its import time is recorded
+ * (einvoice_pulls, source einvoice_excel) and shown on the push.
+ */
+const isExcelFresh = (x: EinvoicePullRow | null | undefined): boolean => !!x && x.status === 'ok' && isTodayIst(x.pulled_at);
+/** What a plan rests on: the pull of today, else the Excel imported today (null: neither). */
+const einvPlanBasis = (p: EinvoicePullRow | null, x: EinvoicePullRow | null) => (isPullFresh(p) ? { kind: 'pull' as const, at: p!.pulled_at }
+  : isExcelFresh(x) ? { kind: 'excel' as const, at: x!.pulled_at } : null);
 /** A pull started or ended while the records were being read, or since (§4.3, §8). */
 const EINV_PULL_MOVED = 'A pull of e-invoices saved new records while this push was being prepared, so nothing was uploaded. '
   + 'Check the e-invoice reconciliation, then click Upload again.';
@@ -691,12 +701,14 @@ const GSTR1DataPage: React.FC = () => {
     }
     // A pull still saving (its row says 'running', or this page started one
     // that has not reported back) is waited for, never planned on (§4.3).
-    if (isPullingEinv || isPullRunning(einvoicePull)) blocks.push({ key: 'pull', text: einvPullRunningText(einvoicePull) });
-    else if (!isPullFresh(einvoicePull)) blocks.push({ key: 'pull', text: einvNotFreshText(einvoicePull) });
+    // An Excel imported today stands in for the pull, even while one waits on the portal.
+    const excelFresh = isExcelFresh(einvoiceExcel);
+    if (isPullRunning(einvoicePull) || (isPullingEinv && !excelFresh)) blocks.push({ key: 'pull', text: einvPullRunningText(einvoicePull) });
+    else if (!isPullFresh(einvoicePull) && !excelFresh) blocks.push({ key: 'pull', text: einvNotFreshText(einvoicePull, einvoiceExcel) });
     if (einvPlan.blockers.length) blocks.push({ key: 'blockers', text: einvBlockersText(einvPlan.blockers) });
     if (einvPlan.pendingBlockers.length && !einvPendingAcked) blocks.push({ key: 'pending', text: einvPendingText(einvPlan.pendingBlockers) });
     return blocks;
-  }, [einvGate, extVersion, einvoicePull, einvPlan, einvPendingAcked, isPullingEinv]);
+  }, [einvGate, extVersion, einvoicePull, einvoiceExcel, einvPlan, einvPendingAcked, isPullingEinv]);
 
   /**
    * A push that reached the portal with no successful pull since: when it
@@ -1391,7 +1403,7 @@ const GSTR1DataPage: React.FC = () => {
       // A pull saving its records now (its row says 'running', or this page
       // started one), or one that started or ended while they were read:
       // they may be half one pull's, so nothing is planned on them (§4.3, §8).
-      if (isPullingEinv || isPullRunning(einvRecords.pull)) {
+      if (isPullRunning(einvRecords.pull) || (isPullingEinv && !isExcelFresh(einvRecords.excel))) {
         toast.error(einvPullRunningText(einvRecords.pull), { duration: 20000 });
         return;
       }
@@ -1400,8 +1412,8 @@ const GSTR1DataPage: React.FC = () => {
         fetchEinvoice();
         return;
       }
-      if (!isPullFresh(einvRecords.pull)) {
-        toast.error(einvNotFreshText(einvRecords.pull), { duration: 20000 });
+      if (!einvPlanBasis(einvRecords.pull, einvRecords.excel)) {
+        toast.error(einvNotFreshText(einvRecords.pull, einvRecords.excel), { duration: 20000 });
         return;
       }
     }
@@ -4250,12 +4262,16 @@ const GSTR1DataPage: React.FC = () => {
                     {!einvPushBlocks.some((b) => b.key === 'pull') && (
                       <Note tone="info" open>
                         <span className="font-medium tabular-nums">{einvPlan.keepCount.toLocaleString('en-IN')}</span>{' '}
-                        document{einvPlan.keepCount === 1 ? '' : 's'} on the portal as e-invoices (seen on the draft by the pull, or
-                        carrying {einvPlan.keepCount === 1 ? 'its' : 'their'} own IRN) will be left out so the portal keeps{' '}
+                        document{einvPlan.keepCount === 1 ? '' : 's'} on the portal as e-invoices (seen on the draft by the pull, shown as
+                        auto-populated by the e-invoice Excel, or carrying {einvPlan.keepCount === 1 ? 'its' : 'their'} own IRN) will be left out so the portal keeps{' '}
                         {einvPlan.keepCount === 1 ? 'its' : 'their'} IRN;{' '}
                         <span className="font-medium tabular-nums">{Math.max(0, einvBooksDocs.length - einvPlan.keepCount).toLocaleString('en-IN')}</span>{' '}
                         will be uploaded. Table 12 (HSN) and Table 13 go in full.
-                        {einvPulledAt ? ` Planned on the pull of ${fmtEinvWhen(einvPulledAt)}.` : ''}
+                        {(() => {
+                          const basis = einvPlanBasis(einvoicePull, einvoiceExcel);
+                          if (basis?.kind === 'excel') return ` Planned on the e-invoice Excel imported ${fmtEinvWhen(basis.at)} (no portal pull today): documents the Excel shows as auto-populated are left out.`;
+                          return einvPulledAt ? ` Planned on the pull of ${fmtEinvWhen(einvPulledAt)}.` : '';
+                        })()}
                       </Note>
                     )}
                     {(() => {
