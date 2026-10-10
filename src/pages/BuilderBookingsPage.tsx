@@ -43,7 +43,7 @@ import {
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, RATE_CODE_LABEL, classifyUnit, computeTds194IA,
-  formatINR, isTds194IAApplicable, testRrep,
+  computeTax, formatINR, isTds194IAApplicable, testRrep,
   type BuilderRateCode, type ChargeInclusionSettings, type UnitType,
 } from '@/utils/builderRates';
 import {
@@ -950,13 +950,50 @@ const BuilderBookingsPage: React.FC = () => {
     setInvoiceDialog(true);
   };
 
+  /**
+   * The opening balance (as on onboarding) not yet adjusted by an invoice.
+   * It is an open advance like a receipt's: value already taxed before the
+   * app took over, so the next invoice adjusts it in Table 11B rather than
+   * charging GST on it again. Not offered once the unit has a cancellation —
+   * that money belonged to a sale that may no longer exist.
+   */
+  const openingPoolFor = useCallback((unitId: string) => {
+    if ((allCancellations[unitId] || []).length > 0) return 0;
+    const taxed = Number(openings[unitId]?.cumulative_value_taxed) || 0;
+    const used = openingAdjustmentsForUnit(unitId)
+      .reduce((s, a) => s + (Number(a.consideration_adjusted) || 0), 0);
+    return Math.max(0, Math.round((taxed - used + Number.EPSILON) * 100) / 100);
+  }, [allCancellations, openings, openingAdjustmentsForUnit]);
+
   const invoicePlan = useMemo(() => {
     if (!invoiceTarget) return null;
-    return planAdvanceAbsorption(
+    const unit = invoiceTarget.unit;
+    // Receipt advances first (oldest first), then the opening balance — the
+    // same order a BU differential draws them (BUILDER_GST_POSITIONS §6).
+    const receiptPlan = planAdvanceAbsorption(
       parseFloat(invoiceForm.consideration) || 0,
-      openAdvancesFor(invoiceTarget.unit.id),
+      openAdvancesFor(unit.id),
     );
-  }, [invoiceTarget, invoiceForm.consideration, openAdvancesFor]);
+    const openingAvailable = openingPoolFor(unit.id);
+    const openingTake = Math.round((Math.min(receiptPlan.unabsorbed, openingAvailable) + Number.EPSILON) * 100) / 100;
+    const rateCode = classifyFor(unit).rateCode;
+    const openingTax = openingTake > 0 ? computeTax(openingTake, rateCode) : null;
+    const opening = openingTax
+      ? {
+        rateCode, ratePct: openingTax.ratePct, consideration: openingTake,
+        taxableValue: openingTax.taxableValue, cgst: openingTax.cgst, sgst: openingTax.sgst,
+      }
+      : null;
+    const receiptAvailable = openAdvancesFor(unit.id).reduce((s, a) => s + a.available, 0);
+    return {
+      ...receiptPlan,
+      opening,
+      receiptAvailable: Math.round((receiptAvailable + Number.EPSILON) * 100) / 100,
+      openingAvailable,
+      absorbed: Math.round((receiptPlan.absorbed + openingTake + Number.EPSILON) * 100) / 100,
+      unabsorbed: Math.round((receiptPlan.unabsorbed - openingTake + Number.EPSILON) * 100) / 100,
+    };
+  }, [invoiceTarget, invoiceForm.consideration, openAdvancesFor, openingPoolFor, classifyFor]);
 
   const handleSaveInvoice = async () => {
     if (!invoiceTarget || !invoicePlan) return;
@@ -965,7 +1002,6 @@ const BuilderBookingsPage: React.FC = () => {
     setIsSaving(true);
     try {
       const cls = classifyFor(invoiceTarget.unit);
-      const { computeTax } = await import('@/utils/builderRates');
       // Delay interest follows the client's election. Under the flat 18% it is
       // a supply separate from construction, so no 1/3rd land deduction — the
       // whole amount is the taxable value.
@@ -1022,9 +1058,26 @@ const BuilderBookingsPage: React.FC = () => {
         );
         if (aErr) throw aErr;
       }
+      // …then the opening balance, under the same Table 11B (OPENING_11B).
+      if (!isDelayInterest && invoicePlan.opening) {
+        const o = invoicePlan.opening;
+        const { error: oErr } = await supabase.from('builder_opening_balance_adjustments').insert({
+          invoice_id: data.id,
+          unit_id: invoiceTarget.unit.id,
+          consideration_adjusted: o.consideration,
+          taxable_value_adjusted: o.taxableValue,
+          cgst: o.cgst,
+          sgst: o.sgst,
+          rate_code: o.rateCode,
+          rate_pct: o.ratePct,
+          period_month: period,
+          created_by: user?.id ?? null,
+        });
+        if (oErr) throw oErr;
+      }
       toast.success(
-        invoicePlan.absorbed > 0
-          ? `Invoice raised; ${formatINR(invoicePlan.absorbed)} of advances adjusted in Table 11B`
+        !isDelayInterest && invoicePlan.absorbed > 0
+          ? `Invoice raised; ${formatINR(invoicePlan.absorbed)} of advances${invoicePlan.opening ? ` (incl. ${formatINR(invoicePlan.opening.consideration)} opening balance)` : ''} adjusted in Table 11B`
           : 'Invoice raised',
       );
       setInvoiceDialog(false);
@@ -1938,7 +1991,12 @@ const BuilderBookingsPage: React.FC = () => {
                               </span>
                             )}
                           </td>
-                          <td className={WS_TD_NUM}>
+                          <td
+                            className={WS_TD_NUM}
+                            title={led.openingOpenAdvance > 0
+                              ? `Receipts ${formatINR(led.receiptOpenAdvance)} + opening balance ${formatINR(led.openingOpenAdvance)}`
+                              : undefined}
+                          >
                             {led.openAdvance > 0 ? formatINR(led.openAdvance) : '—'}
                           </td>
                           <td className={WS_TD}>
@@ -2866,8 +2924,13 @@ const BuilderBookingsPage: React.FC = () => {
                 <div>
                   <p className="text-xs text-muted-foreground">Open advance available</p>
                   <p className="font-semibold">
-                    {formatINR(openAdvancesFor(invoiceTarget.unit.id).reduce((s, a) => s + a.available, 0))}
+                    {formatINR(invoicePlan.receiptAvailable + invoicePlan.openingAvailable)}
                   </p>
+                  {invoicePlan.openingAvailable > 0 && (
+                    <p className="text-[11px] text-muted-foreground">
+                      incl. opening balance {formatINR(invoicePlan.openingAvailable)}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">To be adjusted (Table 11B)</p>
@@ -2881,7 +2944,14 @@ const BuilderBookingsPage: React.FC = () => {
               {invoicePlan.adjustments.length > 0 && (
                 <p className="text-xs text-muted-foreground">
                   Absorbing {invoicePlan.adjustments.length} advance
-                  {invoicePlan.adjustments.length > 1 ? 's' : ''}, oldest first.
+                  {invoicePlan.adjustments.length > 1 ? 's' : ''}, oldest first
+                  {invoicePlan.opening ? ', then the opening balance' : ''}.
+                </p>
+              )}
+              {invoicePlan.adjustments.length === 0 && invoicePlan.opening && (
+                <p className="text-xs text-muted-foreground">
+                  Adjusting {formatINR(invoicePlan.opening.consideration)} of the opening balance (as on
+                  onboarding), already taxed before.
                 </p>
               )}
               <p className="text-xs text-muted-foreground">

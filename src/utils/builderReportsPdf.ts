@@ -73,7 +73,7 @@ export const buWorkingPdf = (ctx: ReportContext, r: BuWorkingReport): void => {
     numericFrom: 4,
     head: [[
       'Unit', 'Type', 'Cut-off', 'Status at cut-off', 'Rate %', 'Agreement',
-      'Taxed to opening', 'Invoiced before', 'Open advance', 'Differential',
+      'Taxed to opening', 'Invoiced before', 'Open advance (incl. opening)', 'Differential',
       'Taxable value', 'CGST', 'SGST', 'Interest', 'Tie-out',
     ]],
     body: r.rows.map((u) => [

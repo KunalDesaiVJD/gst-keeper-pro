@@ -130,7 +130,11 @@ export const isBookedAtCutOff = (
 export interface DifferentialInput {
   agreementValue: number;
   rateCode: BuilderRateCode;
-  /** Opening balance carried in at onboarding. */
+  /**
+   * Opening balance carried in at onboarding, less whatever of it earlier
+   * invoices already adjusted in Table 11B (builder_opening_balance_adjustments
+   * before the BU month).
+   */
   openingValueTaxed?: number;
   /** Advances that posted to 11A in periods BEFORE the BU month. */
   advancesBefore?: number;
@@ -145,7 +149,16 @@ export interface Differential {
   /** opening + advances + invoices − adjustments, all up to the BU month's opening. */
   valueTaxedUptoOpening: number;
   invoicedBefore: number;
+  /**
+   * Open advance at the BU month's opening, INCLUDING the unabsorbed opening
+   * balance (as on onboarding) — the whole pool the Table 11B leg draws on.
+   * Always valueTaxedUptoOpening − invoicedBefore.
+   */
   openAdvanceBefore: number;
+  /** The receipt-backed part of openAdvanceBefore. */
+  receiptOpenAdvanceBefore: number;
+  /** The opening-balance part of openAdvanceBefore. */
+  openingOpenAdvanceBefore: number;
 
   /** The NET incremental liability: agreement − value taxed. */
   differentialValue: number;
@@ -215,7 +228,9 @@ export const computeDifferential = (input: DifferentialInput): Differential => {
     agreementValue: agreement,
     valueTaxedUptoOpening: valueTaxed,
     invoicedBefore: invoiced,
-    openAdvanceBefore: openAdvance,
+    openAdvanceBefore: round2(openAdvance + opening),
+    receiptOpenAdvanceBefore: openAdvance,
+    openingOpenAdvanceBefore: opening,
     differentialValue,
     differentialTaxableValue: tax.taxableValue,
     differentialCgst: tax.cgst,

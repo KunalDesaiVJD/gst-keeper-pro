@@ -143,6 +143,22 @@ real advances drawn down first. **Net new tax owed is unchanged** —
 `differentialValue` is the same figure either way — only the gross-vs-net
 *presentation* changed.
 
+**The opening balance is an open advance (firm decision, 10/10/2026).** The
+value taxed before onboarding (`builder_opening_balances.cumulative_value_taxed`,
+as on 30/06/2026) less whatever of it invoices have already adjusted in Table 11B
+is an open advance like a receipt's. It counts in the unit's **Open advance**
+(`computeUnitLedger().openAdvance`, split as `receiptOpenAdvance` +
+`openingOpenAdvance`) and in the BU working's **Open advance** column
+(`openAdvanceBefore` = value taxed to opening − invoiced before). A **milestone
+invoice** raised after onboarding now absorbs it too — receipt advances first,
+oldest first, then the opening balance — writing a
+`builder_opening_balance_adjustments` row (Table 11B, `OPENING_11B`) at the
+unit's class rate; before this, a milestone invoice drew on receipts only and
+GST was charged again on the full invoice. A BU event nets those earlier
+opening adjustments off the opening it carries in. Not offered on a unit with a
+cancellation (that money belonged to a sale that may no longer exist), nor to
+delay interest (a separate supply).
+
 Units **unbooked at the cut-off** fall under **Schedule III para 5** — sale of a
 building after completion is not a supply — and are omitted from GSTR-1 and 3B
 entirely.

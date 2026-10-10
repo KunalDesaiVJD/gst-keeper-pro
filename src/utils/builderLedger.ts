@@ -158,8 +158,15 @@ export interface UnitLedger {
   valueTaxed: number;
   cgstDischarged: number;
   sgstDischarged: number;
-  /** Received but not yet absorbed by an invoice — what a milestone draws down. */
+  /**
+   * Taxed but not yet absorbed by an invoice — what a milestone draws down:
+   * receipt advances plus the unabsorbed opening balance (as on onboarding).
+   */
   openAdvance: number;
+  /** The receipt-backed part of openAdvance. */
+  receiptOpenAdvance: number;
+  /** The opening-balance part of openAdvance: cumulative value taxed less its 11B adjustments. */
+  openingOpenAdvance: number;
   totalReceived: number;
   totalTds194ia: number;
   /** Agreement value less value taxed: what a BU event would still have to tax. */
@@ -198,10 +205,15 @@ export interface UnitLedger {
  * (see computeDifferential in builderBuEvent.ts, 13/08/2026), and whatever
  * slice of that gross was already reflected in the opening balance's own
  * cumulative_value_taxed snapshot would otherwise be counted twice — once
- * via the opening balance, once via the new invoice's gross. They must NOT
- * feed openAdvance: that field is the receipt-sourced open-advance pool a
- * milestone invoice draws down, and opening-balance money was never a
- * receipt in this app — there is no receipt row for it to sit "open" against.
+ * via the opening balance, once via the new invoice's gross.
+ *
+ * openAdvance includes the opening balance (firm decision, 10/10/2026): the
+ * consideration already taxed before onboarding is an open advance like any
+ * other until an invoice absorbs it, so a milestone invoice raised after
+ * onboarding adjusts it in Table 11B instead of charging GST again on the
+ * full invoice. Receipt advances are drawn first, then the opening balance
+ * (same order as the BU differential). The two parts are reported
+ * separately as receiptOpenAdvance / openingOpenAdvance.
  */
 export const computeUnitLedger = (params: {
   agreementValue: number;
@@ -245,6 +257,8 @@ export const computeUnitLedger = (params: {
     (Number(ob.cumulative_value_taxed) || 0) + advCons + invCons - adjCons - openingAdjCons,
   );
   const agreementValue = Number(params.agreementValue) || 0;
+  const receiptOpenAdvance = round2(advCons - adjCons);
+  const openingOpenAdvance = round2(Math.max(0, (Number(ob.cumulative_value_taxed) || 0) - openingAdjCons));
 
   return {
     valueTaxed,
@@ -254,7 +268,9 @@ export const computeUnitLedger = (params: {
     sgstDischarged: round2(
       (Number(ob.cumulative_sgst) || 0) + advSgst + invSgst - adjSgst - openingAdjSgst,
     ),
-    openAdvance: round2(advCons - adjCons),
+    openAdvance: round2(receiptOpenAdvance + openingOpenAdvance),
+    receiptOpenAdvance,
+    openingOpenAdvance,
     totalReceived: round2((Number(ob.cumulative_receipts) || 0) + received),
     totalTds194ia: round2((Number(ob.cumulative_tds_194ia) || 0) + tds),
     balanceToTax: round2(agreementValue - valueTaxed),

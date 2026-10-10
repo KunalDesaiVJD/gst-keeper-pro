@@ -75,7 +75,7 @@ export const buWorkingExcel = (ctx: ReportContext, r: BuWorkingReport): void => 
   const rows: Sheet = [
     ...head,
     ['Unit', 'Type', 'Cut-off date', 'Cut-off via', 'Status at cut-off', 'Rate %',
-      'Agreement value', 'Value taxed to opening', 'Invoiced before', 'Open advance',
+      'Agreement value', 'Value taxed to opening', 'Invoiced before', 'Open advance (incl. opening)',
       'Received to cut-off', 'Differential', 'Taxable value', 'CGST', 'SGST',
       'Interest days', 'Interest', 'Tie-out'],
     ...r.rows.map((u): Cell[] => [
