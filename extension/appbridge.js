@@ -154,9 +154,12 @@ window.addEventListener('message', (e) => {
   // tab; the final result (accepted / partial / failed + per-invoice errors)
   // comes back later via chrome.storage.local -> the change listener below.
   // 0.8.7: info.einvoice ({ keep: [{ section, ctin, doc_type, doc_no }],
-  // planAt }) is passed through as sent: the documents named in keep are left
-  // out of the upload so the portal keeps their IRN, and the result carries
-  // einvoiceKept and einvoiceKeepUnmatched.
+  // planAt, basisUpdatedAt }) is passed through as sent: the documents named
+  // in keep are left out of the upload so the portal keeps their IRN, and the
+  // result carries einvoiceKept and einvoiceKeepUnmatched. basisUpdatedAt is
+  // the gstr1_data.updated_at the plan was made on; a stored return with
+  // another one is refused before a portal tab opens (a failed result below,
+  // "This return changed after the e-invoice plan was made...").
   if (d.__gstkUploadGstr1) {
     const info = d.__gstkUploadGstr1;
     if (!info.clientId || !info.period_month) return;
@@ -188,7 +191,7 @@ window.addEventListener('message', (e) => {
   }
 
   // 0.8.4: the GSTR-1 page's "Pull e-invoices" button. Background opens a
-  // portal tab; the outcome (ok / none / pending / failed) comes back later
+  // portal tab; the outcome (ok / none / stale / pending / failed) comes back later
   // via chrome.storage.local -> the change listener below.
   if (d.__gstkPullEinvoice) {
     const info = d.__gstkPullEinvoice;
@@ -255,14 +258,20 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   // 0.8.4: e-invoice pull finished — the extension has already saved
   // einvoice_docs / einvoice_pulls; the app just re-reads them. 0.8.7: also
-  // how many stale e-invoices the pull removed, and tabClosed when the portal
-  // tab was closed first (a failed pull that wrote nothing). clientId and
+  // how many e-invoices saved by an earlier pull are no longer on the portal
+  // (goneMarked: marked gone, never deleted; staleRemoved is the same count
+  // under its earlier name), the day the portal generated the file
+  // (generatedOn, yyyy-mm-dd, or null), status 'stale' for a file generated
+  // before today (nothing saved), and tabClosed when the portal tab was
+  // closed first (a failed pull that wrote nothing). clientId and
   // period_month are the job's, so the page can ignore another return's pull.
   if (changes.gstk_einvoice_pull_result) {
     const v = changes.gstk_einvoice_pull_result.newValue;
     if (v) {
+      const gone = v.goneMarked != null ? v.goneMarked : v.staleRemoved;
       window.postMessage({ __gstkEinvoicePullDone: {
-        ok: !!v.ok, status: v.status, docsFound: v.docsFound || 0, staleRemoved: v.staleRemoved || 0, message: v.message || '',
+        ok: !!v.ok, status: v.status, docsFound: v.docsFound || 0, goneMarked: gone || 0, staleRemoved: gone || 0,
+        generatedOn: v.generatedOn || null, message: v.message || '',
         clientId: v.clientId || null, period_month: v.period_month || null, ...(v.tabClosed ? { tabClosed: true } : {}),
       } }, location.origin);
       chrome.storage.local.remove('gstk_einvoice_pull_result');

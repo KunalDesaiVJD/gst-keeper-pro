@@ -59,13 +59,30 @@ from GST Keeper).
   the portal yourself. (Text-based selectors, not yet checked on the live portal.)
 - **Pull e-invoices** downloads the portal's own GSTR-1 JSON for the period and
   saves every document carrying an IRN (`einvoice_docs`, `einvoice_pulls`). From
-  v0.8.7 the file must carry this client's GSTIN and period, and e-invoices the
-  portal no longer holds are removed.
+  v0.8.7:
+  - the file must carry this client's GSTIN and period, or nothing is saved;
+  - it must be one the portal generated **today** (IST), read from the name of
+    the JSON inside the ZIP (`returns_<ddmmyyyy>_...`). An older file ends the
+    pull as `stale` and nothing is saved. To get a fresh one: on the portal,
+    GSTR-1 for the period, Prepare Offline → Download → Generate JSON file to
+    download, wait until it is generated (up to 20 minutes), then pull again.
+    A name with no date is taken as today's, with a warning. The date is kept
+    in `einvoice_pulls.generated_on`;
+  - e-invoices an earlier pull saved that are no longer on the portal are
+    marked gone (`einvoice_docs.gone_at`), never deleted, so their IRN stays on
+    record and the page shows them as "IRN lost on the portal". The pull
+    stamps one time on `last_seen_at`, `gone_at` and `einvoice_pulls.pulled_at`;
+  - the save, the result and the end of the job are one step of the
+    extension's job slot, so a portal tab closed during the save waits for it
+    and the page hears one result.
 - **Push JSON** (v0.8.7) leaves out every document the page lists as already on
   the portal as an e-invoice with the same figures, so the portal keeps its own
   record with the IRN; an uploaded copy would replace it and lose the IRN. The
   rest of the JSON, HSN and Table 13 go up as stored. No IRN field is ever
   written into an upload; the result says how many e-invoices were left out.
+  The page also sends the version of the return its plan was made on
+  (`basisUpdatedAt`); if the stored return has changed since, the push is
+  refused before a portal tab opens ("Reload it and click Upload again").
 
 ## What a notice carries after a sync (v0.8.0)
 The portal's notice list (`get/notices`) is thin: a reference number, a type, an

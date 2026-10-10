@@ -17,13 +17,28 @@
 //   - the UPLOAD version row carries einvoice_kept and ext_version, its payload
 //     is still the stored books JSON, and a database without those columns
 //     gets the row without them
+//   - a plan made on another version of the return (basisUpdatedAt is not
+//     the stored gstr1_data.updated_at) is refused before the Upload History
+//     snapshot is cleared and before a portal tab opens; the same instant
+//     written another way goes ahead
 //   - the e-invoice pull refuses a JSON for another GSTIN or period and saves
-//     nothing; an ok / none pull upserts on the new key and deletes the
-//     period's rows it did not see; a closed tab or an idle pull gives the
-//     page a failed result naming its return
+//     nothing; a file the portal generated before today (returns_<ddmmyyyy>_
+//     in its name) is recorded 'stale' and nothing is saved or marked; a name
+//     with no date is taken as today's, with a warning; generated_on is kept
+//   - an ok / none pull upserts on the new key with gone_at null and
+//     last_seen_at = now, then marks (never deletes) the period's rows it did
+//     not see, by identity and id, in chunks; einvoice_pulls.pulled_at is the
+//     same now
+//   - the save, the result and the job clear are one step of the job slot
+//     (finishEinvoicePull): a tab closed after it hears nothing more, a tab
+//     closed before it means nothing is saved; either way, one result
+//   - content.js reads the file's name from the ZIP and the whole pull runs
+//     end to end; a closed tab or an idle pull gives the page a failed
+//     result naming its return
 //   node test/10-einvoice-keep.test.mjs
 import fs from 'node:fs';
 import vm from 'node:vm';
+import zlib from 'node:zlib';
 
 const extDir = new URL('../', import.meta.url);
 const read = (f) => fs.readFileSync(new URL(f, extDir), 'utf8');
@@ -82,9 +97,18 @@ const KEEP = [
 // ── The fake database ─────────────────────────────────────────────────────
 const calls = [];
 let rawJson = clone(BOOKS);
+const STORED_UPDATED_AT = '2026-10-10T06:59:58.123456+00:00'; // gstr1_data.updated_at as PostgREST gives it
+let storedUpdatedAt = STORED_UPDATED_AT;
 let oldVersionsSchema = false; // gstr1_upload_versions without einvoice_kept / ext_version
 let oldEinvSchema = false; // einvoice_docs without the 0.8.7 unique key
-let staleRows = [];
+let oldPullsSchema = false; // einvoice_pulls without generated_on
+let rowCap = 1000; // the server's max rows per GET
+// einvoice_docs as the database holds it: an upsert merges on the identity
+// (client, period, section, ctin, doc_type, doc_key, source), a PATCH by id
+// sets what it names, and a DELETE would remove rows (none is expected).
+let einvDb = [];
+let nextId = 1;
+const idKey = (r) => [r.client_id, r.period_month, r.section, r.ctin, r.doc_type, r.doc_key, r.source].join('|');
 async function dbFetch(url, init = {}) {
   const u = String(url);
   const method = init.method || 'GET';
@@ -97,7 +121,9 @@ async function dbFetch(url, init = {}) {
     return new Response(JSON.stringify([{ id: 'c2', name: 'NO GSTIN', gstin: null, gst_user_id: 'u', selected_returns: [] }]), { status: 200 });
   }
   if (u.startsWith(DB + '/rest/v1/gstr1_data?client_id=eq.c1') && method === 'GET') {
-    return new Response(JSON.stringify([{ id: 'r1', raw_json: rawJson }]), { status: 200 });
+    const row = { id: 'r1', raw_json: rawJson };
+    if (/select=[^&]*updated_at/.test(u)) row.updated_at = storedUpdatedAt;
+    return new Response(JSON.stringify([row]), { status: 200 });
   }
   if (u.startsWith(DB + '/rest/v1/gstr1_data?id=eq.') && method === 'GET') {
     return new Response(JSON.stringify([{ client_id: 'c1', period_month: 'Sep-26', raw_json: rawJson }]), { status: 200 });
@@ -112,20 +138,48 @@ async function dbFetch(url, init = {}) {
   }
   if (u.startsWith(DB + '/rest/v1/einvoice_docs') && method === 'POST') {
     if (oldEinvSchema) return new Response(JSON.stringify({ code: '42P10', message: 'there is no unique or exclusion constraint matching the ON CONFLICT specification' }), { status: 400 });
+    for (const r of body) {
+      const hit = einvDb.find((x) => idKey(x) === idKey(r));
+      if (hit) Object.assign(hit, r); else einvDb.push({ id: 'n' + (nextId++), ...r });
+    }
     return new Response(null, { status: 201 });
   }
-  if (u.startsWith(DB + '/rest/v1/einvoice_docs') && method === 'DELETE') return new Response(JSON.stringify(staleRows), { status: 200 });
-  if (u.startsWith(DB + '/rest/v1/einvoice_pulls') && method === 'POST') return new Response(null, { status: 201 });
+  if (u.startsWith(DB + '/rest/v1/einvoice_docs?') && method === 'GET') {
+    const q = new URL(u).searchParams;
+    const want = (k) => (q.get(k) || '').replace(/^eq\./, '');
+    const rows = einvDb.filter((r) => r.client_id === want('client_id') && r.period_month === want('period_month') && r.source === want('source'))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const offset = Number(q.get('offset') || 0);
+    const limit = Math.min(Number(q.get('limit') || rowCap), rowCap);
+    const cols = (q.get('select') || '').split(',');
+    return new Response(JSON.stringify(rows.slice(offset, offset + limit).map((r) => Object.fromEntries(cols.map((c) => [c, r[c]])))), { status: 200 });
+  }
+  if (u.startsWith(DB + '/rest/v1/einvoice_docs?') && method === 'PATCH') {
+    const q = new URL(u).searchParams;
+    const ids = ((q.get('id') || '').match(/^in\.\((.*)\)$/) || [, ''])[1].split(',').filter(Boolean);
+    const src = (q.get('source') || '').replace(/^eq\./, '');
+    einvDb.filter((r) => ids.includes(r.id) && (!src || r.source === src)).forEach((r) => Object.assign(r, body));
+    return new Response(null, { status: 204 });
+  }
+  if (u.startsWith(DB + '/rest/v1/einvoice_docs') && method === 'DELETE') return new Response(JSON.stringify([]), { status: 200 });
+  if (u.startsWith(DB + '/rest/v1/einvoice_pulls') && method === 'POST') {
+    if (oldPullsSchema && body && body[0] && 'generated_on' in body[0]) {
+      return new Response(JSON.stringify({ code: 'PGRST204', message: 'Could not find the \'generated_on\' column of \'einvoice_pulls\' in the schema cache' }), { status: 400 });
+    }
+    return new Response(null, { status: 201 });
+  }
   throw new Error('fake database has no route for ' + method + ' ' + u);
 }
 const posts = (table) => calls.filter((c) => c.method === 'POST' && c.url.startsWith(DB + '/rest/v1/' + table));
 const dels = (table) => calls.filter((c) => c.method === 'DELETE' && c.url.startsWith(DB + '/rest/v1/' + table));
 const gets = (table) => calls.filter((c) => c.method === 'GET' && c.url.startsWith(DB + '/rest/v1/' + table));
+const patches = (table) => calls.filter((c) => c.method === 'PATCH' && c.url.startsWith(DB + '/rest/v1/' + table));
 
 // ── chrome.* shared by the background worker and every page ─────────────────
 const storage = {};
 let bgListener = null;
 let tabRemoved = null;
+let tabsCreated = 0;
 const local = {
   get: async (k) => {
     if (k == null) return clone(storage);
@@ -146,7 +200,7 @@ const chromeFor = (tabId, onChanged) => ({
   },
   alarms: { create() {}, clear() {}, onAlarm: { addListener() {} } },
   notifications: { create() {}, onClicked: { addListener() {} } },
-  tabs: { create: async () => ({ id: 1 }), update: async () => ({ id: 1, windowId: 1 }), onRemoved: { addListener: (fn) => { tabRemoved = fn; } } },
+  tabs: { create: async () => { tabsCreated++; return { id: 1 }; }, update: async () => ({ id: 1, windowId: 1 }), onRemoved: { addListener: (fn) => { tabRemoved = fn; } } },
   windows: { update: async () => ({}) },
   declarativeNetRequest: { updateDynamicRules: async () => {} },
 });
@@ -184,8 +238,8 @@ function makeDocument(opts) {
 }
 async function runPage(href, opts = {}) {
   const document = makeDocument(opts);
-  const toBg = (fn) => (info) => new Promise((resolve, reject) => bgListener({ gstk: true, fn, args: [info] }, { tab: { id: 1 } },
-    (r) => (r && r.ok ? resolve(r.data) : reject(new Error((r && r.error) || 'failed')))));
+  // No GSTKdb.saveEinvoicePull: since 0.8.7 the pull's tab saves only through
+  // the worker's finishEinvoicePull (chrome.runtime.sendMessage below).
   const sandbox = {
     console, setTimeout, clearTimeout, setInterval, clearInterval, Promise, JSON, Math, Date, Number, String, Object, Array,
     Map, Set, RegExp, Error, isFinite, parseInt, parseFloat, URL, encodeURIComponent, Blob: class {}, File: class {},
@@ -198,9 +252,10 @@ async function runPage(href, opts = {}) {
       whoami: async () => ({ tabId: 1 }), logClientSync: async () => null, logStep: async () => null,
       getPortalPassword: async () => null, focusTab: async () => true, backgroundTab: async () => true,
       pwRefusalClear: async () => null, loginIssueSet: async () => null, clearCaptchaNotice: async () => null,
-      saveEinvoicePull: toBg('saveEinvoicePull'),
+      ...(opts.db || {}),
     },
     jspdf: {},
+    ...(opts.globals || {}),
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox; sandbox.self = sandbox;
   await vm.runInNewContext(contentSrc, vm.createContext(sandbox), { filename: 'content.js' });
@@ -212,7 +267,8 @@ let fail = 0;
 const ok = (cond, name) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fail++; };
 const reset = () => {
   calls.length = 0; for (const k of Object.keys(storage)) delete storage[k];
-  rawJson = clone(BOOKS); oldVersionsSchema = false; oldEinvSchema = false; staleRows = [];
+  rawJson = clone(BOOKS); oldVersionsSchema = false; oldEinvSchema = false; oldPullsSchema = false;
+  storedUpdatedAt = STORED_UPDATED_AT; rowCap = 1000; einvDb = []; nextId = 1; tabsCreated = 0;
 };
 const hasIrnField = (j) => /"(irn|irngendate|srctyp)"/.test(JSON.stringify(j));
 const now = Date.now();
@@ -223,8 +279,9 @@ const UPLOAD_PAGE = 'https://return.gst.gov.in/returns/auth/gstr1/offlineupload'
 // ── 1. The upload leaves out exactly the documents named ───────────────────
 reset();
 {
-  const resp = await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', actorId: 'u-1', einvoice: { keep: KEEP, planAt: PLAN_AT } });
-  ok(resp && resp.ok && resp.data.started, 'the upload job starts');
+  const resp = await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', actorId: 'u-1', einvoice: { keep: KEEP, planAt: PLAN_AT, basisUpdatedAt: STORED_UPDATED_AT } });
+  ok(resp && resp.ok && resp.data.started, 'the upload job starts (the plan names the stored version of the return)');
+  ok(gets('gstr1_data')[0] && /select=id,raw_json,updated_at&/.test(gets('gstr1_data')[0].url), 'the stored return is read with its updated_at');
   ok(resp.data.einvoiceKept === 6 && resp.data.einvoiceKeepUnmatched === 2, 'start answers 6 left out, 2 unmatched');
   const job = storage.gstk_active_job;
   const g = job.gstr1;
@@ -303,6 +360,44 @@ reset();
   await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', nil: true, einvoice: { keep: KEEP, planAt: PLAN_AT } });
   const g = storage.gstk_active_job.gstr1;
   ok(g.nil === true && g.json === null && g.einvoiceKept === null, 'a NIL push ignores an e-invoice plan');
+}
+
+// ── 4b. The plan must rest on the stored version of the return (E14) ─────────
+// The return was saved again after the plan (a colleague's edit): refused
+// before the Upload History snapshot is cleared and before any tab opens.
+reset();
+storage.gstk_gstr1_pretop_r1 = { key: 'old', at: now };
+storedUpdatedAt = '2026-10-10T07:00:03.000001+00:00';
+{
+  const resp = await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', actorId: 'u-1', einvoice: { keep: KEEP, planAt: PLAN_AT, basisUpdatedAt: STORED_UPDATED_AT } });
+  ok(resp && !resp.ok && resp.error === 'This return changed after the e-invoice plan was made. Reload it and click Upload again.',
+    'basis changed: the push is refused with words that say to reload and upload again');
+  ok(!!storage.gstk_gstr1_pretop_r1, 'basis changed: refused before the Upload History snapshot is cleared');
+  ok(tabsCreated === 0 && !storage.gstk_active_job, 'basis changed: no portal tab is opened and no job is set');
+  ok(calls.every((c) => c.method === 'GET'), 'basis changed: nothing is written');
+}
+// The same instant written another way (PostgREST's +00:00 vs the page's
+// +05:30): the push goes ahead.
+reset();
+storage.gstk_gstr1_pretop_r1 = { key: 'old', at: now };
+{
+  const resp = await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', actorId: 'u-1', einvoice: { keep: KEEP, planAt: PLAN_AT, basisUpdatedAt: '2026-10-10T12:29:58.123456+05:30' } });
+  ok(resp && resp.ok && resp.data.started && resp.data.einvoiceKept === 6, 'basis the same instant: the push starts and leaves out the 6 documents');
+  ok(!storage.gstk_gstr1_pretop_r1 && tabsCreated === 1 && storage.gstk_active_job && storage.gstk_active_job.mode === 'gstr1_upload',
+    'basis the same instant: the old snapshot is cleared, the tab opens and the job is set');
+}
+// A basis that is not a time at all is never taken for a match.
+reset();
+{
+  const resp = await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', einvoice: { keep: [], planAt: PLAN_AT, basisUpdatedAt: 'yesterday' } });
+  ok(resp && !resp.ok && /changed after the e-invoice plan/.test(resp.error) && tabsCreated === 0, 'an unreadable basis is refused, even with nothing kept');
+}
+// No basis (an older page): no check, as before.
+reset();
+storedUpdatedAt = '2026-10-10T07:00:03.000001+00:00';
+{
+  const resp = await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', einvoice: { keep: KEEP, planAt: PLAN_AT } });
+  ok(resp && resp.ok && resp.data.started, 'no basis sent: the push starts as before');
 }
 
 // ── 5. The upload's result and its version row ─────────────────────────────
@@ -406,32 +501,58 @@ const PORTAL = {
   exp: [{ exp_typ: 'WOPAY', inv: [{ inum: 'EXP/9', idt: '07-09-2026', val: 500, irn: IRN('f'), irngendate: '07-09-2026', srctyp: 'E-Invoice', itms: [{ rt: 0, txval: 500 }] }] }],
 };
 const pullRow = () => { const p = posts('einvoice_pulls'); return p.length ? p[p.length - 1] : null; };
+// The day the portal generated a file, as its ZIP entry names it
+// (returns_<ddmmyyyy>_R1_<gstin>_offline...), in IST like the portal.
+const istYmd = (ms) => new Date(ms + 330 * 60 * 1000).toISOString().slice(0, 10);
+const TODAY = istYmd(Date.now());
+const YESTERDAY = istYmd(Date.now() - 86400000);
+const TOMORROW = istYmd(Date.now() + 86400000);
+const dmy = (ymd) => ymd.slice(8, 10) + '-' + ymd.slice(5, 7) + '-' + ymd.slice(0, 4);
+const fileFor = (ymd) => 'returns_' + ymd.slice(8, 10) + ymd.slice(5, 7) + ymd.slice(0, 4) + '_R1_24AAAAA0000A1Z5_offline_others_0.json';
+const einvCalls = () => calls.filter((c) => c.url.includes('/einvoice_docs'));
+const save = (extra) => bgCall('saveEinvoicePull', { clientId: 'c1', period_month: '09/2026', actorId: 'u-1', json: PORTAL, fileName: fileFor(TODAY), status: 'ok', ...extra })
+  .then((r) => r.data);
+// Rows a pull saved earlier for c1 / 09/2026.
+const seed = (rows) => rows.forEach((r) => einvDb.push({
+  client_id: 'c1', period_month: '09/2026', source: 'portal_gstr1', irn: IRN('z'), last_seen_at: '2026-10-09T05:00:00.000Z', gone_at: null, ...r,
+}));
 
-for (const [label, json, re] of [
+for (const [label, json, re, fileName = fileFor(TODAY)] of [
   ['another GSTIN', { ...PORTAL, gstin: '24ZZZZZ9999Z1Z9' }, /for GSTIN 24ZZZZZ9999Z1Z9, not this client's 24AAAAA0000A1Z5/],
   ['another period', { ...PORTAL, fp: '082026' }, /for period 082026, not 092026/],
   ['no GSTIN in the file', { ...PORTAL, gstin: undefined }, /for GSTIN \(none\)/],
+  // the wrong client is the graver fault: it is what the pull says
+  ['another GSTIN in an old file', { ...PORTAL, gstin: '24ZZZZZ9999Z1Z9' }, /for GSTIN 24ZZZZZ9999Z1Z9/, fileFor(YESTERDAY)],
 ]) {
   reset();
-  const resp = await bgCall('saveEinvoicePull', { clientId: 'c1', period_month: '09/2026', actorId: 'u-1', json, status: 'ok' });
-  const d = resp.data;
+  const d = await save({ json, fileName });
   ok(d.status === 'failed' && re.test(d.message) && /Nothing was saved/.test(d.message) && d.docsFound === 0, 'pull of ' + label + ': failed, saying why');
-  ok(posts('einvoice_docs').length === 0 && dels('einvoice_docs').length === 0, 'pull of ' + label + ': no document saved or removed');
+  ok(einvCalls().length === 0, 'pull of ' + label + ': einvoice_docs untouched (nothing saved, read or marked)');
   const p = pullRow();
   ok(p && p.body[0].status === 'failed' && p.body[0].source === 'portal_gstr1' && /on_conflict=client_id,period_month,source$/.test(p.url),
     'pull of ' + label + ': the failed attempt is recorded in einvoice_pulls');
 }
 reset();
 {
-  const d = (await bgCall('saveEinvoicePull', { clientId: 'c2', period_month: '09/2026', json: { ...PORTAL } })).data;
+  const d = (await bgCall('saveEinvoicePull', { clientId: 'c2', period_month: '09/2026', json: { ...PORTAL }, fileName: fileFor(TODAY) })).data;
   ok(d.status === 'failed' && /no GSTIN saved/.test(d.message) && posts('einvoice_docs').length === 0, 'a client with no GSTIN: nothing is saved');
 }
 
-// An ok pull: the new key, the exact number, both notes, the stale rows removed.
+// An ok pull: the new key, the exact number, both notes; rows not seen are
+// marked gone by identity and id, never deleted (E6, E7, E11).
 reset();
-staleRows = [{ id: 'old-1' }, { id: 'old-2' }];
+seed([
+  { id: 'a-1', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/001', irn: IRN('a') }, // still on the draft
+  { id: 'a-2', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/002', irn: IRN('c') }, // no longer on the draft
+  { id: 'a-3', section: 'cdnr', ctin: '24BBBBB1111B1Z1', doc_type: 'DBN', doc_key: '1', irn: IRN('e'), gone_at: '2026-10-09T05:00:00.000Z' }, // gone before, back now
+  // stamped by a PC whose clock ran ahead (later than this pull): still gone, as it is not in this pull
+  { id: 'a-4', section: 'exp', ctin: '', doc_type: 'INV', doc_key: 'EXP/8', irn: IRN('g'), last_seen_at: '2099-01-01T00:00:00.000Z' },
+]);
+einvDb.push({ id: 'x-1', client_id: 'c1', period_month: '08/2026', source: 'portal_gstr1', section: 'b2b', ctin: 'X', doc_type: 'INV', doc_key: 'Q', irn: IRN('1'), gone_at: null });
+einvDb.push({ id: 'x-2', client_id: 'c1', period_month: '09/2026', source: 'einvoice_excel', section: 'b2b', ctin: 'X', doc_type: 'INV', doc_key: 'Q', irn: IRN('2'), gone_at: null });
+einvDb.push({ id: 'x-3', client_id: 'c9', period_month: '09/2026', source: 'portal_gstr1', section: 'b2b', ctin: 'X', doc_type: 'INV', doc_key: 'Q', irn: IRN('3'), gone_at: null });
 {
-  const d = (await bgCall('saveEinvoicePull', { clientId: 'c1', period_month: '09/2026', actorId: 'u-1', json: PORTAL, status: 'ok' })).data;
+  const d = await save();
   const up = posts('einvoice_docs');
   const rows = up.flatMap((c) => c.body);
   ok(up.length === 1 && /on_conflict=client_id,period_month,section,ctin,doc_type,doc_key,source$/.test(up[0].url), 'ok pull: upserted on (client, period, section, ctin, doc_type, doc_key, source)');
@@ -443,50 +564,203 @@ staleRows = [{ id: 'old-1' }, { id: 'old-2' }];
   ok(b3 && b3.doc_key === 'INV / 003' && b3.doc_no === 'inv  /  003' && b3.ctin === '24BBBBB1111B1Z1', 'ok pull: doc_key is the exact number, upper case, spaces collapsed');
   ok(rows.every((r) => r.source === 'portal_gstr1' && r.client_id === 'c1' && r.period_month === '09/2026'), 'ok pull: every row is source portal_gstr1 for its client and period');
   const lastSeen = rows[0].last_seen_at;
-  ok(rows.every((r) => r.last_seen_at === lastSeen), 'ok pull: every row carries the pull time');
-  const del = dels('einvoice_docs');
-  ok(del.length === 1, 'ok pull: one delete of rows not seen');
-  const q = del[0] && new URL(del[0].url).searchParams;
-  ok(q && q.get('client_id') === 'eq.c1' && q.get('period_month') === 'eq.09/2026' && q.get('source') === 'eq.portal_gstr1' && q.get('last_seen_at') === 'lt.' + lastSeen,
-    'ok pull: the delete is this client and period\'s portal_gstr1 rows older than the pull');
-  ok(calls.indexOf(del[0]) > calls.indexOf(up[0]), 'ok pull: the delete runs after the upsert');
-  ok(d.status === 'ok' && d.staleRemoved === 2 && /2 e-invoice\(s\) saved by an earlier pull are no longer on the portal/.test(d.message), 'ok pull: status ok, 2 stale rows removed');
+  ok(rows.every((r) => r.last_seen_at === lastSeen && 'gone_at' in r && r.gone_at === null), 'ok pull: every row carries the pull time and gone_at null');
+  ok(dels('einvoice_docs').length === 0, 'ok pull: nothing is deleted');
+  const rd = gets('einvoice_docs');
+  const q = rd[0] && new URL(rd[0].url).searchParams;
+  ok(rd.length === 2 && q.get('client_id') === 'eq.c1' && q.get('period_month') === 'eq.09/2026' && q.get('source') === 'eq.portal_gstr1'
+    && q.get('select') === 'id,section,ctin,doc_type,doc_key', 'ok pull: the period\'s portal_gstr1 rows are read by identity (one page, then an empty one)');
+  const pt = patches('einvoice_docs');
+  const pq = pt[0] && new URL(pt[0].url).searchParams;
+  ok(pt.length === 1 && pq.get('id') === 'in.(a-2,a-4)' && pq.get('source') === 'eq.portal_gstr1' && JSON.stringify(pt[0].body) === JSON.stringify({ gone_at: lastSeen }),
+    'ok pull: the two rows not seen (one stamped by a clock ahead of this one) are patched gone_at = the pull time, by id');
+  ok(calls.indexOf(up[0]) < calls.indexOf(rd[0]) && calls.indexOf(rd[0]) < calls.indexOf(pt[0]), 'ok pull: upsert, then read, then mark');
+  const byId = (id) => einvDb.find((r) => r.id === id);
+  ok(byId('a-2') && byId('a-2').irn === IRN('c') && byId('a-2').gone_at === lastSeen && byId('a-4').gone_at === lastSeen,
+    'ok pull: the rows gone keep their IRN, marked with the pull time');
+  ok(byId('a-1').gone_at === null && byId('a-1').last_seen_at === lastSeen, 'ok pull: a row seen again carries the pull time, not gone');
+  ok(byId('a-3').gone_at === null && byId('a-3').last_seen_at === lastSeen, 'ok pull: a row marked gone earlier and seen again is no longer gone');
+  ok(['x-1', 'x-2', 'x-3'].every((id) => byId(id).gone_at === null), 'ok pull: another period, the Excel\'s records and another client are never marked');
+  ok(d.status === 'ok' && d.goneMarked === 2 && d.staleRemoved === 2 && d.generatedOn === TODAY, 'ok pull: status ok, 2 marked gone (staleRemoved the same), generated today');
+  ok(/2 e-invoice\(s\) saved by an earlier pull are no longer on the portal as e-invoices\./.test(d.message) && !/removed|Warning/.test(d.message),
+    'ok pull: the message says the 2 are no longer on the portal as e-invoices');
   const p = pullRow();
   ok(p && p.body[0].status === 'ok' && p.body[0].docs_found === 5 && p.body[0].source === 'portal_gstr1' && /on_conflict=client_id,period_month,source$/.test(p.url),
     'ok pull: einvoice_pulls written with source portal_gstr1 on (client, period, source)');
+  ok(p && p.body[0].pulled_at === lastSeen && p.body[0].generated_on === TODAY, 'ok pull: pulled_at is exactly the last_seen_at it stamped, and generated_on is today');
 }
 
-// A pull with no IRN at all: status none, and every stored row for the period goes.
+// Many rows gone under a server row cap: read page by page, marked in chunks.
 reset();
-staleRows = [{ id: 'old-1' }];
+rowCap = 70;
+for (let k = 0; k < 250; k++) seed([{ id: 'g' + String(k).padStart(3, '0'), section: 'b2b', ctin: '24ZZZZZ9999Z1Z9', doc_type: 'INV', doc_key: 'OLD-' + k }]);
 {
-  const d = (await bgCall('saveEinvoicePull', { clientId: 'c1', period_month: '09/2026', json: { gstin: '24AAAAA0000A1Z5', fp: '092026', b2b: [{ ctin: 'X', inv: [{ inum: '1', val: 1 }] }] } })).data;
-  ok(d.status === 'none' && d.docsFound === 0 && posts('einvoice_docs').length === 0, 'none pull: nothing upserted');
-  ok(dels('einvoice_docs').length === 1 && d.staleRemoved === 1, 'none pull: the period\'s stored e-invoices are removed');
+  const d = await save();
+  const pt = patches('einvoice_docs');
+  const ids = pt.flatMap((c) => new URL(c.url).searchParams.get('id').replace(/^in\.\(|\)$/g, '').split(','));
+  ok(gets('einvoice_docs').length === 5, 'row cap 70: 255 rows read in 4 pages and an empty one');
+  ok(pt.length === 3 && ids.length === 250 && new Set(ids).size === 250 && pt.every((c) => c.url.length < 4000), 'row cap 70: 250 rows marked in chunks of 100');
+  ok(d.goneMarked === 250 && einvDb.filter((r) => r.id.startsWith('g')).every((r) => r.gone_at && r.gone_at === pullRow().body[0].pulled_at),
+    'row cap 70: every one of them is marked, none missed');
+  ok(einvDb.filter((r) => r.id.startsWith('n')).every((r) => r.gone_at === null), 'row cap 70: the 5 rows this pull saw are not marked');
 }
 
-// The new key is not in the database yet: the pull fails and removes nothing.
+// A pull with no IRN at all: status none, and every stored row for the period is marked gone.
+reset();
+seed([{ id: 'a-1', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/001' }, { id: 'a-2', section: 'exp', ctin: '', doc_type: 'INV', doc_key: 'EXP/9' }]);
+{
+  const d = await save({ json: { gstin: '24AAAAA0000A1Z5', fp: '092026', b2b: [{ ctin: 'X', inv: [{ inum: '1', val: 1 }] }] } });
+  ok(d.status === 'none' && d.docsFound === 0 && posts('einvoice_docs').length === 0, 'none pull: nothing upserted');
+  ok(d.goneMarked === 2 && einvDb.every((r) => r.gone_at === pullRow().body[0].pulled_at) && dels('einvoice_docs').length === 0,
+    'none pull: the period\'s stored e-invoices are marked gone, not deleted');
+}
+
+// ── 6b. The file must be today's (E2) ─────────────────────────────────────────
+// Generated before today: 'stale', nothing saved or marked.
+reset();
+seed([{ id: 'a-2', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/002' }]);
+{
+  const d = await save({ fileName: fileFor(YESTERDAY) });
+  ok(d.status === 'stale' && d.docsFound === 0 && d.goneMarked === 0 && d.generatedOn === YESTERDAY, 'old file: status stale, nothing found, nothing marked');
+  ok(d.message.includes('generated on ' + dmy(YESTERDAY) + ', not today') && /Nothing was saved\./.test(d.message)
+    && d.message.includes('Prepare Offline → Download → Generate JSON file to download') && /wait until the portal has generated it/.test(d.message)
+    && /then pull e-invoices again\.$/.test(d.message), 'old file: the message gives the date and how to generate a fresh file');
+  ok(einvCalls().length === 0, 'old file: einvoice_docs untouched (nothing saved, read or marked)');
+  ok(einvDb[0].gone_at === null && einvDb[0].last_seen_at === '2026-10-09T05:00:00.000Z', 'old file: the stored rows are as they were');
+  const p = pullRow().body[0];
+  ok(p.status === 'stale' && p.docs_found === 0 && p.generated_on === YESTERDAY && p.message === d.message && !!p.pulled_at, 'old file: recorded in einvoice_pulls as stale, with its generation date');
+}
+// "Today" is the IST day: at 01:30 IST on 11 Oct (20:00 UTC on 10 Oct) a
+// file generated on 10 Oct is old, and one generated on 11 Oct is today's.
+{
+  const FIXED = Date.parse('2026-10-10T20:00:00.000Z');
+  class FixedDate extends Date {
+    constructor(...a) { super(...(a.length ? a : [FIXED])); }
+    static now() { return FIXED; }
+  }
+  bg.Date = FixedDate;
+  try {
+    reset();
+    const old = await save({ fileName: 'returns_10102026_R1_24AAAAA0000A1Z5_offline_others_0.json' });
+    reset();
+    const fresh = await save({ fileName: 'returns_11102026_R1_24AAAAA0000A1Z5_offline_others_0.json' });
+    ok(old.status === 'stale' && old.generatedOn === '2026-10-10', 'IST day: at 01:30 IST on 11 Oct, a file of 10 Oct is stale');
+    ok(fresh.status === 'ok' && fresh.generatedOn === '2026-10-11' && pullRow().body[0].pulled_at === '2026-10-10T20:00:00.000Z', 'IST day: a file of 11 Oct is today\'s');
+  } finally {
+    bg.Date = Date;
+  }
+}
+// Generated today, or a day ahead of this PC's clock: an ordinary pull.
+for (const [label, ymd] of [['today', TODAY], ['tomorrow (this PC\'s clock behind)', TOMORROW]]) {
+  reset();
+  const d = await save({ fileName: fileFor(ymd) });
+  ok(d.status === 'ok' && d.docsFound === 5 && d.generatedOn === ymd && posts('einvoice_docs').length === 1 && pullRow().body[0].generated_on === ymd,
+    'file generated ' + label + ': ok, saved, generated_on ' + ymd);
+}
+// No date in the name, no name, an impossible date: today's behaviour with a warning.
+for (const [label, fileName, shown] of [
+  ['a name with no date', 'GSTR1_092026.json', 'GSTR1_092026.json'],
+  ['no name at all', undefined, 'none'],
+  ['an impossible date', 'returns_31022026_R1_24AAAAA0000A1Z5_offline_others_0.json', 'returns_31022026_R1_24AAAAA0000A1Z5_offline_others_0.json'],
+]) {
+  reset();
+  const d = await save({ fileName });
+  ok(d.status === 'ok' && d.docsFound === 5 && d.generatedOn === null && posts('einvoice_docs').length === 1, label + ': saved as an ordinary pull');
+  ok(d.message.includes('Warning: the portal\'s file name (' + shown + ') carries no generation date') && d.message.includes('Prepare Offline → Download'),
+    label + ': the message warns that the file\'s date could not be checked');
+  ok(pullRow().body[0].status === 'ok' && pullRow().body[0].generated_on === null, label + ': recorded ok with generated_on null');
+}
+
+// The new key is not in the database yet: the pull fails and marks nothing.
 reset();
 oldEinvSchema = true;
 {
-  const d = (await bgCall('saveEinvoicePull', { clientId: 'c1', period_month: '09/2026', json: PORTAL })).data;
-  ok(d.status === 'failed' && /Could not save the e-invoice documents/.test(d.message) && dels('einvoice_docs').length === 0, 'old einvoice_docs key: failed, nothing removed');
+  const d = await save();
+  ok(d.status === 'failed' && /Could not save the e-invoice documents/.test(d.message) && patches('einvoice_docs').length === 0 && dels('einvoice_docs').length === 0,
+    'old einvoice_docs key: failed, nothing marked or removed');
+}
+// einvoice_pulls without generated_on: the attempt is still recorded.
+reset();
+oldPullsSchema = true;
+{
+  const d = await save();
+  const p = posts('einvoice_pulls');
+  ok(d.status === 'ok' && p.length === 2 && 'generated_on' in p[0].body[0] && !('generated_on' in p[1].body[0]) && p[1].body[0].status === 'ok',
+    'einvoice_pulls without generated_on: refused, then written without it');
 }
 
 // A pending or failed pull with no JSON never touches einvoice_docs.
 reset();
 {
   const d = (await bgCall('saveEinvoicePull', { clientId: 'c1', period_month: '09/2026', status: 'pending', message: 'still generating' })).data;
-  ok(d.status === 'pending' && calls.every((c) => !c.url.includes('einvoice_docs')), 'pending pull: einvoice_docs untouched');
+  ok(d.status === 'pending' && einvCalls().length === 0, 'pending pull: einvoice_docs untouched');
+  ok(pullRow().body[0].generated_on === null && !!pullRow().body[0].pulled_at, 'pending pull: recorded, with no generation date');
 }
 
-// ── 7. The pull's page always hears a result naming its return ─────────────
+// ── 7. The save, the result and the job: one step of the job slot (E8) ───────
 const pullJob = (extra) => ({ mode: 'einvoice_pull', idx: 0, step: 'einvoice_pull', startedAt: now, lastActivityAt: now, period: '09/2026',
   actorId: 'u-1', tabId: 1, clients: [client], ...extra });
+const tick = () => new Promise((r) => setTimeout(r, 20));
+const finishInfo = (tabId, extra) => ({ clientId: 'c1', period_month: '09/2026', tabId, actorId: 'u-1', json: PORTAL, fileName: fileFor(TODAY), status: 'ok', ...extra });
+
+// The save first, the tab closed while it is in flight.
+reset();
+seed([{ id: 'a-2', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/002' }]);
+storage.gstk_active_job = pullJob({ tabId: 31 });
+{
+  const inFlight = bgCall('finishEinvoicePull', finishInfo(31));
+  tabRemoved(31);
+  const resp = await inFlight;
+  await tick();
+  const r = storage.gstk_einvoice_pull_result;
+  ok(resp.ok && resp.data.saved === true && resp.data.status === 'ok' && resp.data.goneMarked === 1, 'save first: the worker answers the save\'s outcome');
+  ok(r && r.ok === true && r.status === 'ok' && r.docsFound === 5 && r.goneMarked === 1 && r.staleRemoved === 1 && r.generatedOn === TODAY && !('tabClosed' in r),
+    'save first: the page hears the save\'s own outcome, not the closed tab');
+  ok(r && r.clientId === 'c1' && r.period_month === '09/2026', 'save first: the result names its return');
+  ok(posts('einvoice_docs').length === 1 && patches('einvoice_docs').length === 1 && pullRow().body[0].status === 'ok', 'save first: the documents, the marks and the pull are saved');
+  ok(!storage.gstk_active_job, 'save first: the job is cleared');
+}
+// The tab closed first, the save's message still in flight.
+reset();
+seed([{ id: 'a-2', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/002' }]);
+storage.gstk_active_job = pullJob({ tabId: 32 });
+{
+  tabRemoved(32);
+  const resp = await bgCall('finishEinvoicePull', finishInfo(32));
+  await tick();
+  const r = storage.gstk_einvoice_pull_result;
+  ok(r && r.ok === false && r.status === 'failed' && r.tabClosed === true && /Nothing was saved; pull e-invoices again/.test(r.message) && r.goneMarked === 0,
+    'tab closed first: the page hears the closed tab\'s failed result');
+  ok(resp.ok && resp.data.saved === false && resp.data.status === 'failed' && /Nothing was saved/.test(resp.data.message), 'tab closed first: the worker saves nothing and says so');
+  ok(calls.length === 0, 'tab closed first: nothing is written (no document saved or marked, no pull recorded), so "Nothing was saved" holds');
+  ok(einvDb[0].gone_at === null, 'tab closed first: the stored rows are as they were');
+  ok(!storage.gstk_active_job, 'tab closed first: the job is cleared');
+}
+// Another sync took the slot meanwhile: the pull is still saved and reported,
+// and the other job is left alone.
+reset();
+storage.gstk_active_job = { mode: 'gstr1_upload', idx: 0, step: 'login', startedAt: now, period: '09/2026', tabId: 40, clients: [client] };
+{
+  const resp = await bgCall('finishEinvoicePull', finishInfo(33));
+  ok(resp.data.saved === true && resp.data.status === 'ok' && storage.gstk_einvoice_pull_result.status === 'ok', 'another job in the slot: the pull is saved and reported');
+  ok(storage.gstk_active_job && storage.gstk_active_job.mode === 'gstr1_upload' && storage.gstk_active_job.tabId === 40, 'another job in the slot: it is left alone');
+}
+// A stale file through the slot: reported stale, the job cleared, nothing saved.
+reset();
+storage.gstk_active_job = pullJob({ tabId: 34 });
+{
+  const resp = await bgCall('finishEinvoicePull', finishInfo(34, { fileName: fileFor(YESTERDAY) }));
+  const r = storage.gstk_einvoice_pull_result;
+  ok(resp.data.status === 'stale' && r.ok === false && r.status === 'stale' && r.generatedOn === YESTERDAY && /Generate JSON file to download/.test(r.message),
+    'stale through the slot: the page hears status stale with the steps');
+  ok(einvCalls().length === 0 && !storage.gstk_active_job, 'stale through the slot: nothing saved, the job cleared');
+}
+
+// ── 7b. The pull's page always hears a result naming its return ────────────
 reset();
 storage.gstk_active_job = pullJob({ tabId: 21 });
 tabRemoved(21);
-await new Promise((r) => setTimeout(r, 20));
+await tick();
 {
   const r = storage.gstk_einvoice_pull_result;
   ok(r && r.ok === false && r.status === 'failed' && r.tabClosed === true && r.docsFound === 0, 'pull tab closed: a failed result marked tabClosed');
@@ -500,9 +774,9 @@ await runPage(LOGIN);
 {
   const r = storage.gstk_einvoice_pull_result;
   ok(r && r.status === 'failed' && /e-invoice pull sat idle/.test(r.message) && r.clientId === 'c1' && r.period_month === '09/2026', 'idle pull: a failed result for its return');
-  ok(posts('einvoice_docs').length === 0 && dels('einvoice_docs').length === 0, 'idle pull: no document saved or removed');
+  ok(einvCalls().length === 0, 'idle pull: no document saved or marked');
   ok(pullRow() && pullRow().body[0].status === 'failed', 'idle pull: the failed attempt is recorded');
-  ok(!storage.gstk_active_job, 'idle pull: the job is cleared');
+  ok(!storage.gstk_active_job, 'idle pull: the job is cleared (by the worker)');
 }
 reset();
 storage.gstk_active_job = pullJob({ retries: 2 });
@@ -511,6 +785,95 @@ await runPage(LOGIN);
   const r = storage.gstk_einvoice_pull_result;
   ok(r && r.status === 'failed' && /kept dropping/.test(r.message) && r.clientId === 'c1', 'pull session kept dropping: a failed result for its return');
   ok(!storage.gstk_active_job, 'pull session kept dropping: the job is cleared');
+}
+
+// ── 7c. content.js end to end: the portal's ZIP, its file name, the save ────
+// A ZIP as the portal serves it: one JSON entry, deflated (method 8) or stored.
+function zipOf(name, obj, method) {
+  const nameB = Buffer.from(name, 'utf8');
+  const raw = Buffer.from(JSON.stringify(obj), 'utf8');
+  const data = method === 8 ? zlib.deflateRawSync(raw) : raw;
+  const lh = Buffer.alloc(30);
+  lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(method, 8);
+  lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(raw.length, 22); lh.writeUInt16LE(nameB.length, 26);
+  const local = Buffer.concat([lh, nameB, data]);
+  const cd = Buffer.alloc(46);
+  cd.writeUInt32LE(0x02014b50, 0); cd.writeUInt16LE(20, 4); cd.writeUInt16LE(20, 6); cd.writeUInt16LE(method, 10);
+  cd.writeUInt32LE(data.length, 20); cd.writeUInt32LE(raw.length, 24); cd.writeUInt16LE(nameB.length, 28); cd.writeUInt32LE(0, 42);
+  const central = Buffer.concat([cd, nameB]);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(1, 8); eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(central.length, 12); eocd.writeUInt32LE(local.length, 16);
+  return Buffer.concat([local, central, eocd]).toString('base64');
+}
+const RETURNS = 'https://return.gst.gov.in/returns/auth/dashboard';
+async function runPortalPull(name, method, jobExtra) {
+  const portalCalls = [];
+  const filed = [];
+  const globals = {
+    fetch: async (u) => { portalCalls.push(String(u)); return new Response(JSON.stringify({ status: 1, data: { url: 'https://files.gst.gov.in/f.zip' } }), { status: 200 }); },
+    TextDecoder, atob, Blob, Response, DecompressionStream,
+  };
+  const db = {
+    fetchCrossOriginAsBase64: async () => ({ base64: zipOf(name, PORTAL, method) }),
+    upsertFiledReturn: async (clientId, period, rt, patchObj) => { filed.push({ clientId, period, rt, patchObj }); return true; },
+  };
+  const doc = await runPage(RETURNS, { globals, db });
+  return { doc, portalCalls, filed };
+}
+reset();
+storage.gstk_active_job = pullJob();
+{
+  const { doc, portalCalls } = await runPortalPull(fileFor(TODAY), 8);
+  const r = storage.gstk_einvoice_pull_result;
+  ok(portalCalls.length === 1 && portalCalls[0].includes('offline/download/generate?flag=0&rtn_prd=092026&rtn_typ=GSTR1'), 'end to end: the portal\'s GSTR-1 JSON is requested for 092026');
+  ok(r && r.ok === true && r.status === 'ok' && r.docsFound === 5 && r.generatedOn === TODAY && r.clientId === 'c1', 'end to end (deflated, today\'s file): ok, 5 found, generated today');
+  ok(posts('einvoice_docs').length === 1 && pullRow().body[0].generated_on === TODAY, 'end to end: saved, with the file\'s date on the pull');
+  ok(!storage.gstk_active_job && /You can close this tab/.test(doc.banner()), 'end to end: the worker cleared the job; the banner says the tab can close');
+}
+reset();
+storage.gstk_active_job = pullJob();
+{
+  const { doc } = await runPortalPull(fileFor(YESTERDAY), 0);
+  const r = storage.gstk_einvoice_pull_result;
+  ok(r && r.ok === false && r.status === 'stale' && r.generatedOn === YESTERDAY && r.message.includes(dmy(YESTERDAY)), 'end to end (stored, yesterday\'s file): stale, naming its date');
+  ok(einvCalls().length === 0 && pullRow().body[0].status === 'stale', 'end to end: an old file saves nothing and is recorded stale');
+  ok(!storage.gstk_active_job && /Generate JSON file to download/.test(doc.banner()), 'end to end: the job is cleared; the banner gives the steps');
+}
+// The worker does not answer the save: the tab tells the page itself, while
+// the job is still this pull's, and never touches another job.
+{
+  const real = bgListener;
+  bgListener = (msg, sender, cb) => (msg && msg.fn === 'finishEinvoicePull' ? cb({ error: 'worker gone' }) : real(msg, sender, cb));
+  try {
+    reset();
+    storage.gstk_active_job = pullJob();
+    await runPortalPull(fileFor(TODAY), 8);
+    const r = storage.gstk_einvoice_pull_result;
+    ok(r && r.ok === false && r.status === 'failed' && /background worker did not answer/.test(r.message) && r.clientId === 'c1' && r.period_month === '09/2026',
+      'worker silent: the tab reports a failed pull for its return');
+    ok(!storage.gstk_active_job, 'worker silent: the tab clears its own job');
+    reset();
+    storage.gstk_active_job = pullJob();
+    const other = { mode: 'gstr1_upload', idx: 0, step: 'login', startedAt: now, period: '09/2026', tabId: 40, clients: [client] };
+    bgListener = (msg, sender, cb) => {
+      if (msg && msg.fn === 'finishEinvoicePull') { storage.gstk_active_job = clone(other); return cb({ error: 'worker gone' }); }
+      return real(msg, sender, cb);
+    };
+    await runPortalPull(fileFor(TODAY), 8);
+    ok(!storage.gstk_einvoice_pull_result && storage.gstk_active_job && storage.gstk_active_job.tabId === 40,
+      'worker silent, another job in the slot: the tab writes nothing and leaves that job alone');
+  } finally {
+    bgListener = real;
+  }
+}
+// The filed GSTR-1 JSON pull reads the same ZIP through the same reader.
+reset();
+storage.gstk_active_job = { mode: 'gstr1_json_pull', idx: 0, step: 'gstr1_json_pull', startedAt: now, lastActivityAt: now, period: '09/2026', tabId: 1, clients: [client] };
+{
+  const { filed } = await runPortalPull(fileFor(TODAY), 8);
+  const f = filed.find((x) => x.rt === 'GSTR1' && x.patchObj && x.patchObj.full_json);
+  ok(f && JSON.stringify(f.patchObj.full_json) === JSON.stringify(PORTAL), 'filed GSTR-1 JSON pull: saves the JSON itself (not the { json, name } pair)');
 }
 
 // ── 8. appbridge passes the plan through and relays the results ────────────
@@ -531,16 +894,23 @@ await runPage(LOGIN);
     },
   });
   vm.runInContext(read('appbridge.js'), ctx, { filename: 'appbridge.js' });
-  const plan = { keep: KEEP.slice(0, 2), planAt: PLAN_AT };
+  const plan = { keep: KEEP.slice(0, 2), planAt: PLAN_AT, basisUpdatedAt: STORED_UPDATED_AT };
   onMsg({ source: win, origin: 'https://gst.vjdesai.com', data: { __gstkUploadGstr1: { clientId: 'c1', period_month: '09/2026', einvoice: plan } } });
   ok(sent[0] && sent[0].fn === 'startGstr1Upload' && JSON.stringify(sent[0].args[0].einvoice) === JSON.stringify(plan), 'appbridge: the e-invoice plan reaches startGstr1Upload as sent');
   changed({ gstk_einvoice_pull_result: { newValue: { ok: false, status: 'failed', docsFound: 0, message: 'm', tabClosed: true, clientId: 'c1', period_month: '09/2026' } } }, 'local');
   const done = posted.find((m) => m.__gstkEinvoicePullDone);
   ok(done && done.__gstkEinvoicePullDone.tabClosed === true && done.__gstkEinvoicePullDone.clientId === 'c1' && done.__gstkEinvoicePullDone.period_month === '09/2026',
     'appbridge: the pull result carries tabClosed, clientId and period_month');
-  changed({ gstk_einvoice_pull_result: { newValue: { ok: true, status: 'ok', docsFound: 5, staleRemoved: 2, message: 'm', clientId: 'c1', period_month: '09/2026' } } }, 'local');
+  changed({ gstk_einvoice_pull_result: { newValue: { ok: true, status: 'ok', docsFound: 5, goneMarked: 2, staleRemoved: 2, generatedOn: '2026-10-10', message: 'm', clientId: 'c1', period_month: '09/2026' } } }, 'local');
   const done2 = posted.filter((m) => m.__gstkEinvoicePullDone).pop().__gstkEinvoicePullDone;
-  ok(done2.staleRemoved === 2 && !('tabClosed' in done2), 'appbridge: an ok pull carries staleRemoved and no tabClosed');
+  ok(done2.goneMarked === 2 && done2.staleRemoved === 2 && done2.generatedOn === '2026-10-10' && !('tabClosed' in done2),
+    'appbridge: an ok pull carries goneMarked (and staleRemoved, its alias), generatedOn and no tabClosed');
+  changed({ gstk_einvoice_pull_result: { newValue: { ok: false, status: 'stale', docsFound: 0, goneMarked: 0, generatedOn: '2026-10-08', message: 'old file', clientId: 'c1', period_month: '09/2026' } } }, 'local');
+  const done3 = posted.filter((m) => m.__gstkEinvoicePullDone).pop().__gstkEinvoicePullDone;
+  ok(done3.ok === false && done3.status === 'stale' && done3.generatedOn === '2026-10-08' && done3.message === 'old file', 'appbridge: a stale pull reaches the page as stale, with its date');
+  changed({ gstk_einvoice_pull_result: { newValue: { ok: true, status: 'ok', docsFound: 5, staleRemoved: 3, message: 'm', clientId: 'c1', period_month: '09/2026' } } }, 'local');
+  const done4 = posted.filter((m) => m.__gstkEinvoicePullDone).pop().__gstkEinvoicePullDone;
+  ok(done4.goneMarked === 3 && done4.staleRemoved === 3 && done4.generatedOn === null, 'appbridge: a result with only staleRemoved still gives goneMarked');
   changed({ gstk_gstr1_upload_result: { newValue: { ok: true, status: 'accepted', einvoiceKept: 6, einvoiceKeepUnmatched: 2, clientId: 'c1', period_month: '09/2026' } } }, 'local');
   const up = posted.find((m) => m.__gstkUploadGstr1Result);
   ok(up && up.__gstkUploadGstr1Result.einvoiceKept === 6 && up.__gstkUploadGstr1Result.einvoiceKeepUnmatched === 2, 'appbridge: the upload result reaches the page with einvoiceKept');
