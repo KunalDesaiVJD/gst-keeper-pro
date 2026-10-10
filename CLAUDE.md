@@ -84,6 +84,10 @@ reach the ledger) and ITC Summary row 5.1's auto-link are elected positions,
 not settled law — and were implemented without a firm sign-off conversation,
 so treat them as reversible defaults pending confirmation, not fixed rules.
 
+## GSTR-1 e-invoices (IRN)
+
+**Read `docs/GSTR1_EINVOICE_POSITIONS.md` before changing any e-invoice code** (`src/lib/einvoice/einvoice.ts`, `excel.ts`, the GSTR-1 page's e-invoice parts, the extension's GSTR-1 upload or e-invoice pull): the elected mechanism is "keep, don't re-send" (e-invoices already on the portal with the same figures are left out of the upload; the app never writes irn / irngendate / srctyp), matching is by exact document identity only, and e-invoice clients are found by evidence, PAN-wide.
+
 ## Notices module
 
 Data from the GST portal's notices, refunds, and LUT cases, synced by a

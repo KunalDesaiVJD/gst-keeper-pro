@@ -2,6 +2,113 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-10 — E-invoices kept on the portal, not re-sent (v0.8.7)
+
+Needs the GSTR-1 page update that sends the e-invoice plan (with the version
+of the return it was made on) and reads `goneMarked` and the `stale` status, and
+the migration that adds `doc_type` and `source` to the `einvoice_docs` key,
+`einvoice_docs.gone_at`, `source` to the `einvoice_pulls` key,
+`einvoice_pulls.generated_on` and `recorded_at`, and `einvoice_kept` / `ext_version` to
+`gstr1_upload_versions`. Without the page update a push uploads the stored JSON
+whole, with no IRN on it. Without the migration a pull that finds e-invoices
+fails and saves none of them, and no pull is recorded in `einvoice_pulls`; a
+push still works and its Version History row is written without the two new
+columns. Every other pull, the login and the popup are as 0.8.6 runs them.
+
+- **Why.** GSTN's advisory on e-invoices in GSTR-1 (para 6) and its offline
+  tool's FAQ say an uploaded document replaces the one the portal filled in
+  from the e-invoice, and the portal then deletes its Source, IRN and IRN date.
+  0.8.4 to 0.8.6 tried to keep the IRN by writing `irn`, `irngendate` and
+  `srctyp` into the uploaded JSON. Nothing GSTN publishes says the portal
+  accepts those fields in an upload, it was never tried live, and it wrote
+  `srctyp` as "e-Invoice" where the portal writes "E-Invoice". So that is gone:
+  the extension never writes an IRN field into an upload.
+- **E-invoices are left out of the upload.** The page now sends, with the push,
+  the books documents that are already on the portal's GSTR-1 as e-invoices
+  with the same figures (`einvoice.keep`: section, buyer GSTIN, document type
+  and number, as in the stored JSON). The extension removes exactly those
+  documents from the copy it uploads, so the portal keeps its own record, with
+  the IRN. A buyer, export or B2CL group left with no document is dropped, and
+  so is a section left empty. Everything else goes up as stored: other
+  documents, B2CS, NIL, HSN (Table 12) and documents issued (Table 13).
+- **Exact numbers only.** A document is matched on its section, buyer GSTIN,
+  type (invoice, credit note or debit note) and its number exactly as written,
+  ignoring only case and extra spaces. "INV-001" never stands for "INV/001",
+  and a credit note and a debit note with the same number are two documents.
+- **A plan for another version of the return is refused.** The page sends,
+  with the plan, the `gstr1_data.updated_at` it made the plan on
+  (`einvoice.basisUpdatedAt`). The extension reads the stored return with its
+  `updated_at`, and if the two are not the same instant (the return was edited,
+  re-imported or regenerated after the plan) it refuses the push before
+  anything else, before the Upload History snapshot is cleared and before a
+  portal tab opens: "This return changed after the e-invoice plan was made.
+  Reload it and click Upload again." A kept document whose figures changed in
+  between would otherwise be left out, and its new figures never sent. Both
+  times are the database's, so no PC's clock is involved. A page that sends no
+  `basisUpdatedAt` is not checked.
+- **What the push says.** The result tells the page how many e-invoices were
+  left out (`einvoiceKept`) and how many of the page's entries named no
+  document in the stored JSON (`einvoiceKeepUnmatched`; the push still goes
+  ahead). `irnAttached` is no longer sent. The Version History row of an upload
+  records the count (`einvoice_kept`) and the extension version that pushed
+  (`ext_version`); its payload is still the stored books JSON. A database
+  without those columns gets the row without them.
+- **The e-invoice pull checks whose file it got.** The portal's GSTR-1 JSON
+  must carry this client's GSTIN and this period. A portal session still open
+  for another client, or a file for another month, ends the pull as failed and
+  saves nothing.
+- **Only a file generated today counts.** The portal's download API
+  (`flag=0`) can hand back a GSTR-1 JSON it generated days ago, which lacks
+  every e-invoice auto-populated since. The portal names the file inside the
+  ZIP after the day it generated it (`returns_<ddmmyyyy>_R1_<GSTIN>_offline...`),
+  and the extension now reads that name. A file generated before today (IST)
+  ends the pull as `stale`: no document is saved or marked, and the message
+  gives the date and the way to a fresh file (on the portal, GSTR-1 for the
+  period, Prepare Offline → Download → Generate JSON file to download, wait
+  until it is generated, then pull again). A stale pull is not a successful
+  pull, so it does not open the push gate. Every pull records the file's date
+  in `einvoice_pulls.generated_on`. A name with no date is taken as today's,
+  with a warning in the message. The date is a day, so a file generated
+  earlier the same day is not told apart.
+- **The pull mirrors the portal's draft, and keeps what left it.** Each
+  document is stored once per section, buyer, type and exact number (credit
+  and debit notes no longer overwrite each other), with `gone_at` cleared. Once
+  every document is saved, the period's stored e-invoices this pull did not see
+  are marked gone (`gone_at`), never deleted: the IRN stays on record, and the
+  page shows the document as "IRN lost on the portal" (uploaded, with a
+  warning) rather than as one that was never e-invoiced, and never plans it as
+  kept. Which documents went is decided by identity against this pull's own
+  documents and marked by id, so no PC's clock is compared with another's. The
+  pull stamps one time on everything: `last_seen_at` of every document it saw,
+  `gone_at` of every one it did not, and `einvoice_pulls.pulled_at`. The
+  result says how many are no longer on the portal as e-invoices
+  (`goneMarked`; `staleRemoved` carries the same number for a page written
+  against it) and names its client and period.
+- **A pull says while it is saving.** Before it writes its first document,
+  the pull records itself in `einvoice_pulls` as status `running` ("Pull in
+  progress", `pulled_at` = the pull's time), and its final status (`ok`,
+  `none` or `failed`) replaces that after the last write. The page refuses to
+  push or download the JSON while a pull is running, and a push reads the
+  pull row before and after the documents, and again just before it starts,
+  so it never plans on documents half-way through a save (where one pull's
+  rows read against another's time could make every e-invoice look lost and
+  be re-sent). If `running` cannot be written, nothing is saved or marked and
+  the pull is `failed`; a failure part-way through the save ends `failed`,
+  never `running`. A file for another client or period, or one generated
+  before today, writes no document and goes straight to its final status.
+  The database stamps its own time on the row (`recorded_at`).
+- **No pull ends without a result, and only one.** The save, the result for
+  the page and the job's end are one step of the extension's job slot (as a
+  GSTR-3B push's end is since 0.8.6). A portal tab closed while the pull is
+  saving waits for the save; the page then hears the save's real outcome, and
+  the closed tab writes nothing. A tab closed before the save gives the page a
+  failed pull marked `tabClosed`, and the save that follows saves nothing, so
+  "Nothing was saved" stays true. A pull left idle for 10 minutes, one whose
+  session kept dropping, or one that hit an unexpected error is reported
+  failed instead of leaving the button spinning. The portal tab no longer
+  writes the result or clears the job itself, unless the extension's
+  background worker does not answer at all.
+
 ## 2026-10-09 — GSTR-3B pushes recorded by the extension; every push result names its return (v0.8.6)
 
 Pairs with the database trigger on `gstr3b_push_versions` (same release) that marks

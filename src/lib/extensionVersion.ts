@@ -19,13 +19,18 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // client with a password issue recorded in GST Keeper (Notices · Settings).
 // 0.8.3 records a CAPTCHA the portal kept rejecting as a CAPTCHA failure
 // (captcha_failed, retried), never as a password issue.
-// 0.8.4 pushes a NIL GSTR-1, pulls e-invoices and keeps IRNs on a GSTR-1 push;
+// 0.8.4 pushes a NIL GSTR-1 and pulls e-invoices (its IRN attach on a push is
+// dropped in 0.8.7);
 // 0.8.5 records a NIL push in Filing Status itself, even if the page was closed.
 // 0.8.6 records every GSTR-3B push in Push History itself (filled, partial or
 // failed; a filled one shows Pushed), names the client and period in every push
 // result, and lets Refresh errors record an upload the portal processed.
-// 0.4.x to 0.8.5 are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.8.6';
+// 0.8.7 keeps every e-invoice's IRN on the portal: the GSTR-1 push leaves out
+// the documents already there as e-invoices (the page's einvoice.keep) instead
+// of re-sending them, never writes an IRN field, and the e-invoice pull checks
+// the file's GSTIN and period and drops e-invoices the portal no longer holds.
+// 0.4.x to 0.8.6 are still allowed (their writes are safe), only nudged to update.
+export const RECOMMENDED_EXTENSION_VERSION = '0.8.7';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -59,9 +64,10 @@ const GAINS: [string, string][] = [
   ['0.8.1', 'never retries a wrong or changed portal password: the client is logged and the sync moves on'],
   ['0.8.2', "leaves the portal's change-password page at once and skips every client with a password issue listed in Notices · Settings"],
   ['0.8.3', 'records a CAPTCHA the portal kept rejecting as a CAPTCHA failure, never as a password issue'],
-  ['0.8.4', 'pushes NIL GSTR-1 returns, pulls e-invoices and keeps IRNs on a GSTR-1 push'],
+  ['0.8.4', 'pushes NIL GSTR-1 returns and pulls e-invoices'],
   ['0.8.5', 'records a NIL push in Filing Status itself, even if the page was closed'],
   ['0.8.6', 'records every GSTR-3B push itself (so a filled one shows Pushed even if the page was closed), says which client and period each push was for, no longer types into the cess box of an import row, and lets Refresh errors record an upload the portal processed'],
+  ['0.8.7', "keeps every e-invoice's IRN on the portal by leaving e-invoices out of the upload"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

@@ -898,8 +898,24 @@ const API = {
   // relays it to the app. Filing / signing stays manual.
   // 0.8.4: info.nil === true is a NIL push — no stored JSON is needed (rowId
   // stays null); content.js ticks the portal's "File Nil GSTR-1" option
-  // instead of uploading. A JSON push now carries the period's IRNs
-  // (einvoice_docs, attachIrn below) so the upload does not drop them.
+  // instead of uploading.
+  // 0.8.7: e-invoices are kept, not re-sent. The page sends
+  // info.einvoice = { keep: [{ section, ctin, doc_type, doc_no }], planAt }:
+  // the books documents already on the portal's GSTR-1 as e-invoices with the
+  // same figures. Each is left out of the copy uploaded (keepEinvoices below),
+  // so the portal keeps its own record with the Source, IRN and IRN date; an
+  // uploaded copy would overwrite it and lose them (GSTN advisory para 6).
+  // Every other document, HSN (Table 12) and Table 13 go up as stored. The
+  // IRN fields themselves are never written into an upload any more.
+  // The plan also names the version of the return it was made on
+  // (basisUpdatedAt: gstr1_data.updated_at as the page read it). The stored
+  // row is read with its updated_at, and a different one (the return was
+  // edited, re-imported or regenerated after the plan) refuses the push
+  // before anything else: before the Upload History snapshot is cleared and
+  // before a portal tab opens. A kept document edited meanwhile would
+  // otherwise be left out with its new figures never sent. Compared by
+  // instant (Date.parse), and only against the database's own timestamp, so
+  // no PC's clock is involved.
   startGstr1Upload: async (info) => {
     const c = await API.getClient(info.clientId);
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
@@ -911,26 +927,27 @@ const API = {
     const nil = info.nil === true;
     let stored = null;
     let json = null;
-    let irnAttached = 0;
+    // null when the page sent no e-invoice plan (an older page): nothing is
+    // left out, and the version row records no count.
+    let einvoiceKept = null;
+    let einvoiceKeepUnmatched = 0;
+    const plan = !nil && info.einvoice && Array.isArray(info.einvoice.keep) ? info.einvoice : null;
+    const basis = plan && plan.basisUpdatedAt != null && String(plan.basisUpdatedAt).trim() ? String(plan.basisUpdatedAt) : null;
     if (!nil) {
-      const rows = await sel(`gstr1_data?client_id=eq.${c.id}&period_month=eq.${enc(short)}&select=id,raw_json&limit=1`);
+      const rows = await sel(`gstr1_data?client_id=eq.${c.id}&period_month=eq.${enc(short)}&select=id,raw_json,updated_at&limit=1`);
       stored = rows && rows[0];
       if (!stored) throw new Error(`No stored GSTR-1 JSON for ${c.name} / ${short}. Import a JSON first.`);
+      if (basis && Date.parse(stored.updated_at) !== Date.parse(basis)) throw new Error(EINVOICE_BASIS_CHANGED);
       // 0.8.6: an earlier upload's Upload History snapshot (content.js
       // pretopKey) goes before anything else, so a push that dies before its
       // file is attached leaves none and Refresh errors records nothing for it.
       await chrome.storage.local.remove(PRETOP_PREFIX + stored.id);
       json = stored.raw_json;
-      // A failed read of einvoice_docs must never block the push: it goes up
-      // as stored, with no IRN attached.
-      try {
-        const einv = await sel(`einvoice_docs?client_id=eq.${c.id}&period_month=eq.${enc(info.period_month)}&select=section,ctin,doc_key,irn,irn_date`);
-        const res = attachIrn(json, Array.isArray(einv) ? einv : []);
+      if (plan) {
+        const res = keepEinvoices(json, plan.keep);
         json = res.json;
-        irnAttached = res.attached;
-      } catch (e) {
-        console.warn('[GSTKeeper] einvoice_docs read failed — pushing without IRNs:', e && e.message);
-        irnAttached = 0;
+        einvoiceKept = res.kept;
+        einvoiceKeepUnmatched = res.unmatched;
       }
     }
     const job = {
@@ -949,14 +966,16 @@ const API = {
         periodShort: short,
         // Serialize once here — content.js will reconstruct a File from this.
         json,
-        irnAttached,
+        einvoiceKept,
+        einvoiceKeepUnmatched,
+        einvoicePlanAt: plan && plan.planAt ? String(plan.planAt) : null,
         nil,
       },
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
     await setActiveJob(job);
-    return { started: true, client: c.name, period: short, nil, irnAttached };
+    return { started: true, client: c.name, period: short, nil, einvoiceKept: einvoiceKept || 0, einvoiceKeepUnmatched };
   },
 
   // From the GSTR-3B "Push to GST Portal" button. Unlike GSTR-1, there is no
@@ -995,7 +1014,12 @@ const API = {
   // Also records the attempt in gstr1_upload_versions for the Version History
   // dialog — one row per portal upload / refresh so the audit trail is
   // complete no matter which path triggered it.
-  saveGstr1UploadResult: async ({ rowId, status, summary, errors, actorId, actionType }) => {
+  // 0.8.7: an UPLOAD row also says which extension pushed (ext_version) and
+  // how many e-invoices it left out so the portal keeps their IRN
+  // (einvoice_kept; only when the page sent an e-invoice plan). A database
+  // without those columns refuses the row; it is then written without them,
+  // so a push is never recorded worse than before over them.
+  saveGstr1UploadResult: async ({ rowId, status, summary, errors, actorId, actionType, einvoiceKept }) => {
     // 0.8.4: a NIL push has no stored row — nothing to write.
     if (!rowId) return false;
     // Pull client_id + period_month back from gstr1_data — we need them for
@@ -1014,22 +1038,35 @@ const API = {
     if (row) {
       // action_type defaults to UPLOAD; content.js passes 'REFRESH_ERRORS'
       // when this write comes from the refresh flow.
+      const action = actionType || 'UPLOAD';
+      const version = {
+        client_id: row.client_id,
+        period_month: row.period_month,
+        action_type: action,
+        actor_id: actorId || null,
+        status: status || null,
+        summary: summary || null,
+        errors: errors || null,
+        // Snapshot of the stored books JSON (not the copy with e-invoices left
+        // out), so Version History can diff two attempts down to the
+        // individual invoice and figure.
+        payload: row.raw_json || null,
+      };
+      const extra = {};
+      if (action === 'UPLOAD') {
+        extra.ext_version = EXT_VERSION;
+        if (Number.isInteger(einvoiceKept) && einvoiceKept >= 0) extra.einvoice_kept = einvoiceKept;
+      }
       try {
-        await post('gstr1_upload_versions', [{
-          client_id: row.client_id,
-          period_month: row.period_month,
-          action_type: actionType || 'UPLOAD',
-          actor_id: actorId || null,
-          status: status || null,
-          summary: summary || null,
-          errors: errors || null,
-          // Snapshot of the JSON as uploaded, so Version History can diff two
-          // attempts down to the individual invoice and figure.
-          payload: row.raw_json || null,
-        }]);
+        await post('gstr1_upload_versions', [{ ...version, ...extra }]);
       } catch (e) {
-        // Don't fail the whole write if the versions table isn't there yet
-        // (migration not applied); the main row update still succeeds.
+        // A database without migration 0.8.7's columns (PGRST204, "Could not
+        // find the 'einvoice_kept' column"): the row goes in without them.
+        // Any other failure is tried the same way once; if the versions table
+        // isn't there at all, the main row update above still stands.
+        if (Object.keys(extra).length) {
+          try { await post('gstr1_upload_versions', [version]); } catch (e2) { /* ignore */ }
+        }
       }
     }
     return true;
@@ -1096,11 +1133,6 @@ const API = {
     return { started: true, client: c.name, period: info.period_month };
   },
 
-  // Saves one e-invoice pull. With `json` (the portal's GSTR-1 JSON) its
-  // IRN-bearing documents are upserted into einvoice_docs — never deleted, so
-  // a re-pull only adds or refreshes rows; first_seen_at is not sent, so the
-  // database default stays on insert and is kept on update. Every call
-  // (ok / none / pending / failed) records the attempt in einvoice_pulls.
   // 0.8.5: a NIL push is recorded here, not only by the GSTR-1 page — the
   // page may have been closed while the portal was being driven, and then
   // the period never showed as Pushed in Filing Status. Same RPC the page
@@ -1157,52 +1189,251 @@ const API = {
     return recorded;
   }),
 
-  saveEinvoicePull: async ({ clientId, period_month, actorId, json, status, message }) => {
+  // Saves one e-invoice pull. With `json` (the portal's GSTR-1 JSON):
+  //   - 0.8.7: the JSON must be this client's (gstin) and this period's (fp,
+  //     MMYYYY). A portal session left open for another client, or a file for
+  //     another month, is 'failed' and no document is saved or marked.
+  //   - 0.8.7: the file must have been generated today (IST). The portal
+  //     names it returns_<ddmmyyyy>_..., the day it generated the file, and
+  //     flag=0 can hand back a file generated days ago, which lacks every
+  //     e-invoice auto-populated since. A file from an earlier day is recorded
+  //     as status 'stale' with the steps to generate a fresh one, and no
+  //     document is saved or marked. A name with no date is taken as today's,
+  //     with a warning in the message. einvoice_pulls.generated_on keeps the
+  //     date (null when the name gives none).
+  //   - its IRN-bearing documents are upserted into einvoice_docs (source
+  //     'portal_gstr1'), one row per section, buyer GSTIN, document type and
+  //     exact document number (doc_key: upper case, spaces collapsed), so a
+  //     credit note and a debit note with the same number are two rows.
+  //     first_seen_at is not sent, so the database default stays on insert
+  //     and is kept on update. Each carries last_seen_at = now and
+  //     gone_at = null (a document back on the draft is no longer gone).
+  //   - 0.8.7: once every upsert has succeeded, that client and period's
+  //     'portal_gstr1' rows this pull did not see are marked gone_at = now,
+  //     never deleted: the IRN stays on record, and the page reads the
+  //     document as "IRN lost on the portal" rather than as never e-invoiced.
+  //     Which rows went is decided by identity (section, buyer, type, number)
+  //     against this pull's own rows, then patched by id, so no PC's clock is
+  //     compared with another's.
+  //   - 0.8.7: before its first write to einvoice_docs, the pull records
+  //     itself in einvoice_pulls as status 'running' ('Pull in progress',
+  //     pulled_at = now), and its final status replaces that at the end. The
+  //     page refuses to push (or download the JSON) on a running pull, and a
+  //     push re-reads the row before it starts, so it never plans on records
+  //     half-way through a save. If 'running' cannot be written, nothing is
+  //     saved or marked and the pull is 'failed'. A failure part-way through
+  //     the save ends 'failed', never left 'running'.
+  // Every call (ok / none / stale / pending / failed) records the attempt in
+  // einvoice_pulls (source 'portal_gstr1'), with pulled_at = the same `now`
+  // the pull stamped on last_seen_at and gone_at. A file for another client
+  // or period, or a stale one, writes no document, so it goes straight to
+  // its final status.
+  // Written for migration 0.8.7's schema (doc_type in the unique key, source
+  // in both keys, gone_at, generated_on); an older database refuses the
+  // upsert and the pull is 'failed', never saved on the old key.
+  // Not in the job slot by itself: content.js reaches it through
+  // finishEinvoicePull below, which is.
+  saveEinvoicePull: async ({ clientId, period_month, actorId, json, status, message, fileName }) => {
+    const now = new Date().toISOString();
     let st = status || 'failed';
     let msg = message || null;
     let docsFound = 0;
+    let goneMarked = 0;
+    let generatedOn = null;
     if (json) {
-      const now = new Date().toISOString();
-      const docs = extractEinvoiceDocs(json);
-      docsFound = docs.length;
+      generatedOn = einvoiceFileDate(fileName);
       try {
-        const rows = dedupeRows(docs.map((d) => ({
-          ...d, client_id: clientId, period_month, source: 'portal_gstr1', last_seen_at: now,
-        })), ['section', 'ctin', 'doc_key']);
-        for (let i = 0; i < rows.length; i += 500) {
-          await upsert('einvoice_docs', 'client_id,period_month,section,ctin,doc_key', rows.slice(i, i + 500));
+        const wrong = await einvoicePullMismatch(clientId, period_month, json);
+        if (wrong) {
+          st = 'failed';
+          msg = wrong;
+        } else if (generatedOn && generatedOn < istDay(now)) {
+          st = 'stale';
+          msg = einvoiceStaleText(generatedOn, period_month);
+        } else {
+          const rows = dedupeRows(extractEinvoiceDocs(json).map((d) => ({
+            ...d, client_id: clientId, period_month, source: 'portal_gstr1', last_seen_at: now, gone_at: null,
+          })), ['section', 'ctin', 'doc_type', 'doc_key']);
+          // 'running' first: a push that reads the records from here until
+          // the final status is written is refused (it throws if not saved).
+          await writeEinvoicePullRow({
+            client_id: clientId, period_month, source: 'portal_gstr1', status: 'running', docs_found: 0,
+            message: EINVOICE_PULL_RUNNING, pulled_by: actorId || null, pulled_at: now, generated_on: generatedOn,
+          });
+          docsFound = rows.length;
+          for (let i = 0; i < rows.length; i += 500) {
+            await upsert('einvoice_docs', 'client_id,period_month,section,ctin,doc_type,doc_key,source', rows.slice(i, i + 500));
+          }
+          goneMarked = await markEinvoicesGone(clientId, period_month, rows, now);
+          st = docsFound ? 'ok' : 'none';
+          msg = (docsFound
+            ? docsFound + ' e-invoice document(s) with an IRN found in the portal\'s GSTR-1.'
+            : 'No document in the portal\'s GSTR-1 for this period carries an IRN.')
+            + (goneMarked ? ' ' + goneMarked + ' e-invoice(s) saved by an earlier pull are no longer on the portal as e-invoices.' : '')
+            + (generatedOn ? '' : ' ' + einvoiceNoDateText(fileName));
         }
-        st = docsFound ? 'ok' : 'none';
-        msg = docsFound
-          ? docsFound + ' e-invoice document(s) with an IRN found in the portal\'s GSTR-1.'
-          : 'No document in the portal\'s GSTR-1 for this period carries an IRN.';
       } catch (e) {
         st = 'failed';
+        docsFound = 0;
+        goneMarked = 0;
         msg = 'Could not save the e-invoice documents: ' + ((e && e.message) || e);
       }
     }
+    const pull = {
+      client_id: clientId, period_month, source: 'portal_gstr1', status: st, docs_found: docsFound, message: msg,
+      pulled_by: actorId || null, pulled_at: now, generated_on: generatedOn,
+    };
     try {
-      await upsert('einvoice_pulls', 'client_id,period_month', [{
-        client_id: clientId, period_month, status: st, docs_found: docsFound, message: msg,
-        pulled_by: actorId || null, pulled_at: new Date().toISOString(),
-      }]);
+      await writeEinvoicePullRow(pull);
     } catch (e) {
       console.warn('[GSTKeeper] einvoice_pulls write failed:', e && e.message);
     }
-    return { status: st, docsFound, message: msg };
+    // staleRemoved: the same count under its first 0.8.7 name, for a page
+    // written against it.
+    return { status: st, docsFound, goneMarked, staleRemoved: goneMarked, generatedOn, message: msg };
   },
+
+  // 0.8.7: how every e-invoice pull ends (content.js reportEinvoicePull): the
+  // save (saveEinvoicePull), the result for the page, and the job cleared, in
+  // one step of the job slot, as finishGstr3bPush does for GSTR-3B.
+  // pushTabClosed runs in the same slot, so whichever comes first decides,
+  // and the page hears one result:
+  //   - the save first: it is done, the page hears its real outcome and the
+  //     job is cleared; the closed tab then finds no job and writes nothing.
+  //   - the closed tab first: the page hears "Nothing was saved" and the job
+  //     is cleared; this then finds no job and saves nothing, so that stays
+  //     true (also when the sync was stopped from the popup).
+  // A job of another tab or mode (another sync took the slot meanwhile): the
+  // pull is still saved (it was checked against its own client and period)
+  // and its result written, and that other job is left alone. Never throws.
+  finishEinvoicePull: (info) => jobSlot(async () => {
+    const i = info || {};
+    const target = { clientId: i.clientId || null, period_month: i.period_month || null };
+    const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
+    if (!job) {
+      return { status: 'failed', docsFound: 0, goneMarked: 0, staleRemoved: 0, generatedOn: null, message: EINVOICE_ENDED, saved: false, ...target };
+    }
+    let res;
+    try {
+      res = await API.saveEinvoicePull(i);
+    } catch (e) {
+      res = { status: 'failed', docsFound: 0, goneMarked: 0, staleRemoved: 0, generatedOn: null, message: 'Could not save the e-invoice documents: ' + ((e && e.message) || e) };
+    }
+    const gone = Number(res.goneMarked) || 0;
+    await chrome.storage.local.set({ gstk_einvoice_pull_result: {
+      ok: res.status === 'ok' || res.status === 'none', status: res.status, docsFound: res.docsFound || 0,
+      goneMarked: gone, staleRemoved: gone, generatedOn: res.generatedOn || null, message: res.message || '',
+      ...target, at: Date.now(),
+    } });
+    if (job.mode === 'einvoice_pull' && (i.tabId == null || job.tabId === i.tabId)) await chrome.storage.local.remove('gstk_active_job');
+    return { ...res, saved: true, ...target };
+  }),
 };
 
-// ── E-invoice (IRN) documents (0.8.4) ───────────────────────────────────────
-// Plain-JS copy of normDocKey / docMatchKey / extractDocs / attachIrn from
-// src/lib/einvoice/einvoice.ts (no bundler here) — keep the two in step.
-// extractDocs adds `raw` (the document as the portal gave it) for einvoice_docs.
+// What a pull's einvoice_pulls row says while it saves (status 'running').
+const EINVOICE_PULL_RUNNING = 'Pull in progress';
+// 0.8.7: one einvoice_pulls row (client, period, source). A database without
+// generated_on (PGRST204) gets the row without the date; any other failure
+// is tried once more the same way. Throws when neither write lands.
+async function writeEinvoicePullRow(pull) {
+  try {
+    await upsert('einvoice_pulls', 'client_id,period_month,source', [pull]);
+  } catch (e) {
+    const older = { ...pull };
+    delete older.generated_on;
+    await upsert('einvoice_pulls', 'client_id,period_month,source', [older]);
+  }
+}
+
+// 0.8.7: the day an e-invoice pull's file was generated, as yyyy-mm-dd, from
+// the name of the JSON inside the portal's ZIP (returns_<ddmmyyyy>_R1_
+// <gstin>_offline..., the day the portal generated it); null when the name
+// carries no such date, or an impossible one.
+function einvoiceFileDate(name) {
+  const m = /returns_(\d{2})(\d{2})(\d{4})_/i.exec(einvStr(name));
+  if (!m) return null;
+  const dd = Number(m[1]), mm = Number(m[2]), yyyy = Number(m[3]);
+  if (yyyy < 2017 || yyyy > 2100 || mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const d = new Date(Date.UTC(yyyy, mm - 1, dd));
+  if (d.getUTCFullYear() !== yyyy || d.getUTCMonth() !== mm - 1 || d.getUTCDate() !== dd) return null;
+  return yyyy + '-' + String(mm).padStart(2, '0') + '-' + String(dd).padStart(2, '0');
+}
+// The IST calendar day (yyyy-mm-dd) of an ISO instant.
+const istDay = (iso) => new Date(Date.parse(iso) + 330 * 60 * 1000).toISOString().slice(0, 10);
+const einvDmy = (ymd) => ymd.slice(8, 10) + '-' + ymd.slice(5, 7) + '-' + ymd.slice(0, 4);
+// How staff make the portal generate a fresh GSTR-1 JSON for the period.
+const EINVOICE_FRESH_STEPS = 'open GSTR-1 for the period on the portal and choose Prepare Offline → Download → Generate JSON file to download';
+function einvoiceStaleText(generatedOn, period_month) {
+  return 'The portal gave a GSTR-1 JSON generated on ' + einvDmy(generatedOn) + ', not today, so it lacks every e-invoice'
+    + ' auto-populated since. Nothing was saved. To get a fresh file, ' + EINVOICE_FRESH_STEPS + ' (' + einvStr(period_month) + '),'
+    + ' wait until the portal has generated it (up to 20 minutes), then pull e-invoices again.';
+}
+function einvoiceNoDateText(fileName) {
+  return 'Warning: the portal\'s file name (' + (einvStr(fileName) || 'none') + ') carries no generation date, so GST Keeper could'
+    + ' not check that the file is today\'s. If e-invoices were added since it was last generated, ' + EINVOICE_FRESH_STEPS
+    + ', wait, then pull again.';
+}
+// 0.8.7: marks gone_at = now on the client and period's 'portal_gstr1' rows
+// whose identity is not among `seen` (this pull's rows, already upserted).
+// Read by identity, patched by id in chunks: no timestamp from any PC is
+// compared, and a row this pull saw is never marked. Read page by page until
+// an empty page, so a server row cap cannot hide a row. Returns how many.
+async function markEinvoicesGone(clientId, period_month, seen, now) {
+  const keyOf = (r) => einvDocKey(r.section, r.ctin, r.doc_type, r.doc_key);
+  const seenKeys = new Set(seen.map(keyOf));
+  const scope = 'einvoice_docs?client_id=eq.' + enc(clientId) + '&period_month=eq.' + enc(period_month) + '&source=eq.portal_gstr1';
+  const gone = [];
+  for (let offset = 0; ;) {
+    const page = await sel(scope + '&select=id,section,ctin,doc_type,doc_key&order=id&limit=1000&offset=' + offset);
+    if (!Array.isArray(page) || !page.length) break;
+    page.forEach((r) => { if (r && r.id && !seenKeys.has(keyOf(r))) gone.push(r.id); });
+    offset += page.length;
+  }
+  for (let i = 0; i < gone.length; i += 100) {
+    await patch('einvoice_docs?id=in.(' + gone.slice(i, i + 100).map(enc).join(',') + ')&source=eq.portal_gstr1', { gone_at: now });
+  }
+  return gone.length;
+}
+
+// 0.8.7: why a downloaded GSTR-1 JSON is not this client's or this period's,
+// or null when it is. The client's GSTIN is read from the database, not from
+// the portal session (which may still be another client's).
+async function einvoicePullMismatch(clientId, period_month, json) {
+  const [mm, yyyy] = String(period_month || '').split('/');
+  const wantFp = String(parseInt(mm, 10) || '').padStart(2, '0') + String(yyyy || '').trim();
+  const c = await API.getClient(clientId);
+  const wantGstin = einvStr(c && c.gstin).toUpperCase();
+  if (!wantGstin) return 'This client has no GSTIN saved in GST Keeper, so the portal\'s GSTR-1 JSON could not be checked. Nothing was saved.';
+  const gotGstin = einvStr(json && json.gstin).toUpperCase();
+  const gotFp = einvStr(json && json.fp);
+  if (gotGstin !== wantGstin) {
+    return 'The portal\'s GSTR-1 JSON is for GSTIN ' + (gotGstin || '(none)') + ', not this client\'s ' + wantGstin
+      + ' (the portal session may still be another client\'s). Nothing was saved; log out of the portal and pull again.';
+  }
+  if (gotFp !== wantFp) {
+    return 'The portal\'s GSTR-1 JSON is for period ' + (gotFp || '(none)') + ', not ' + wantFp + '. Nothing was saved; pull again.';
+  }
+  return null;
+}
+
+// ── E-invoice (IRN) documents (0.8.4; keep, don't re-send since 0.8.7) ──────
+// Plain-JS copy of extractDocs from src/lib/einvoice/einvoice.ts (no bundler
+// here) — keep the two in step. extractDocs adds `raw` (the document as the
+// portal gave it) for einvoice_docs.
+// 0.8.7: a document's identity is its section, buyer GSTIN (upper case; ''
+// for exp, cdnur and b2cl), type (INV, or CRN / DBN from ntty) and its number
+// exactly as in the JSON, trimmed, upper case, with runs of spaces made one
+// (einvExactNo). That number is einvoice_docs.doc_key. The page's normalised
+// number (separators and case stripped) only finds "number differs" pairs; it
+// never decides what is left out of an upload. attachIrn is gone: the IRN
+// fields are never written into an upload.
 const einvNum = (v) => { const n = typeof v === 'number' ? v : parseFloat(String(v == null ? '' : v)); return Number.isFinite(n) ? n : 0; };
 const einvStr = (v) => (v == null ? '' : String(v)).trim();
 const einvArr = (v) => (Array.isArray(v) ? v : []);
 const einvRound2 = (n) => Math.round(n * 100) / 100;
-const normDocKey = (docNo) => einvStr(docNo).toUpperCase().replace(/[^A-Z0-9]/g, '');
-const docMatchKey = (d) => d.section + '|' + einvStr(d.ctin).toUpperCase() + '|' + d.doc_key;
+const einvExactNo = (docNo) => einvStr(docNo).replace(/\s+/g, ' ').toUpperCase();
+const einvDocKey = (section, ctin, docType, docNo) =>
+  [einvStr(section).toLowerCase(), einvStr(ctin).toUpperCase(), einvStr(docType).toUpperCase(), einvExactNo(docNo)].join('|');
 const einvNoteType = (nt) => (einvStr(nt.ntty != null ? nt.ntty : (nt.typ != null ? nt.typ : 'C')).toUpperCase().startsWith('D') ? 'DBN' : 'CRN');
 
 function extractDocs(json) {
@@ -1219,7 +1450,7 @@ function extractDocs(json) {
       section,
       doc_type: docType,
       doc_no: einvStr(docNo),
-      doc_key: normDocKey(docNo),
+      doc_key: einvExactNo(docNo),
       ctin: einvStr(ctin).toUpperCase(),
       doc_date: einvStr(date) || null,
       irn: einvStr(d.irn) || null,
@@ -1244,29 +1475,55 @@ function extractDocs(json) {
 }
 const extractEinvoiceDocs = (portalJson) => extractDocs(portalJson).filter((d) => !!d.irn);
 
-// Copy of `json` with irn / irngendate / srctyp 'e-Invoice' set on every
-// B2B / CDNR / CDNUR / EXP document that has a stored e-invoice and no IRN of
-// its own. The figures are never changed.
-function attachIrn(json, einv) {
-  const copy = JSON.parse(JSON.stringify(json || {}));
-  const map = new Map();
-  einvArr(einv).forEach((e) => { if (e.irn) map.set(docMatchKey(e), { irn: e.irn, irn_date: e.irn_date != null ? e.irn_date : null }); });
-  let attached = 0;
-  let alreadyHad = 0;
-  const apply = (section, ctin, docNo, d) => {
-    if (einvStr(d.irn)) { alreadyHad += 1; return; }
-    const hit = map.get(docMatchKey({ section, ctin: einvStr(ctin).toUpperCase(), doc_key: normDocKey(docNo) }));
-    if (!hit) return;
-    d.irn = hit.irn;
-    if (hit.irn_date) d.irngendate = hit.irn_date;
-    d.srctyp = 'e-Invoice';
-    attached += 1;
+// 0.8.7: a copy of the books `json` with every document named in `keep` left
+// out — { section, ctin, doc_type, doc_no } as the page read them from the
+// stored JSON, matched on the exact identity above (b2b inv[].inum, cdnr
+// nt[].nt_num with its ntty, cdnur[].nt_num, exp inv[].inum, b2cl inv[].inum).
+// A buyer, export or B2CL group left with no document goes, and so does a
+// section left empty. Nothing else changes: other documents, other sections,
+// HSN (Table 12) and Table 13 go up exactly as stored, and no IRN field is
+// added. kept: documents left out. unmatched: keep entries that named no
+// document here (the push still goes ahead; the page is told how many).
+function keepEinvoices(json, keep) {
+  const wanted = new Set();
+  einvArr(keep).forEach((k) => {
+    if (k && typeof k === 'object') wanted.add(einvDocKey(k.section, k.ctin, k.doc_type, k.doc_no));
+  });
+  if (!wanted.size || !json || typeof json !== 'object') return { json, kept: 0, unmatched: wanted.size };
+  const copy = JSON.parse(JSON.stringify(json));
+  const hit = new Set();
+  let kept = 0;
+  const leaveOut = (key) => {
+    if (!wanted.has(key)) return false;
+    hit.add(key);
+    kept += 1;
+    return true;
   };
-  einvArr(copy.b2b).forEach((p) => einvArr(p.inv).forEach((inv) => apply('b2b', p.ctin, inv.inum, inv)));
-  einvArr(copy.cdnr).forEach((p) => einvArr(p.nt).forEach((nt) => apply('cdnr', p.ctin, nt.nt_num, nt)));
-  einvArr(copy.cdnur).forEach((nt) => apply('cdnur', '', nt.nt_num, nt));
-  einvArr(copy.exp).forEach((e) => einvArr(e.inv).forEach((inv) => apply('exp', '', inv.inum, inv)));
-  return { json: copy, attached, alreadyHad };
+  // Grouped sections: drop matched documents from each group's list, then a
+  // group that lost documents and has none left, then the section if empty.
+  const grouped = (section, listKey, ctinOf, typeOf, noOf) => {
+    if (!Array.isArray(copy[section])) return;
+    let touched = false;
+    copy[section] = copy[section].filter((g) => {
+      if (!g || !Array.isArray(g[listKey])) return true;
+      const before = g[listKey].length;
+      g[listKey] = g[listKey].filter((d) => !(d && leaveOut(einvDocKey(section, ctinOf(g), typeOf(d), noOf(d)))));
+      if (g[listKey].length === before) return true;
+      touched = true;
+      return g[listKey].length > 0;
+    });
+    if (touched && !copy[section].length) delete copy[section];
+  };
+  grouped('b2b', 'inv', (g) => g.ctin, () => 'INV', (d) => d.inum);
+  grouped('cdnr', 'nt', (g) => g.ctin, (d) => einvNoteType(d), (d) => d.nt_num);
+  grouped('exp', 'inv', () => '', () => 'INV', (d) => d.inum);
+  grouped('b2cl', 'inv', () => '', () => 'INV', (d) => d.inum);
+  if (Array.isArray(copy.cdnur)) {
+    const before = copy.cdnur.length;
+    copy.cdnur = copy.cdnur.filter((d) => !(d && leaveOut(einvDocKey('cdnur', '', einvNoteType(d), d.nt_num))));
+    if (copy.cdnur.length !== before && !copy.cdnur.length) delete copy.cdnur;
+  }
+  return { json: kept ? copy : json, kept, unmatched: wanted.size - hit.size };
 }
 
 // ---- GSTR-2B Excel capture (to-disk download) ------------------------------
@@ -1394,30 +1651,56 @@ if (chrome.alarms && chrome.alarms.onAlarm) {
 // for a JSON upload whose file was attached (its Upload History snapshot is
 // there): it is saved 'failed' with words the GSTR-1 page offers Refresh
 // errors for, which can then record what the portal did with the file.
-const PUSH_RESULT_KEYS = { gstr1_upload: 'gstk_gstr1_upload_result', gstr1_refresh: 'gstk_gstr1_upload_result', gstr3b_push: 'gstk_gstr3b_push_result' };
+// 0.8.7: an e-invoice pull too. Its page hears a failed pull marked
+// tabClosed, and nothing is written (einvoice_docs and einvoice_pulls keep
+// the last pull that finished). Its save runs in this same slot
+// (finishEinvoicePull), so a tab closed while it is saving waits for it,
+// then finds no job and writes nothing: the page hears the save's outcome.
+const PUSH_RESULT_KEYS = {
+  gstr1_upload: 'gstk_gstr1_upload_result', gstr1_refresh: 'gstk_gstr1_upload_result', gstr3b_push: 'gstk_gstr3b_push_result',
+  einvoice_pull: 'gstk_einvoice_pull_result',
+};
 const PRETOP_PREFIX = 'gstk_gstr1_pretop_';
 const PUSH_TAB_CLOSED = 'The portal tab was closed before the push finished. Check the portal and push again.';
 const PUSH_TAB_CLOSED_UPLOAD = 'Portal tab closed during the upload; outcome unknown. Use Refresh errors once the portal shows a result.';
 const REFRESH_TAB_CLOSED = 'The portal tab was closed before Refresh errors finished. Nothing was changed; click Refresh errors again.';
+const EINVOICE_TAB_CLOSED = 'The portal tab was closed before the e-invoice pull finished. Nothing was saved; pull e-invoices again.';
+// startGstr1Upload: the stored return is not the version the e-invoice plan
+// was made on (0.8.7, basisUpdatedAt).
+const EINVOICE_BASIS_CHANGED = 'This return changed after the e-invoice plan was made. Reload it and click Upload again.';
+// What finishEinvoicePull answers when the pull's job was already gone (its
+// tab closed first, or the sync stopped from the popup): nothing is saved.
+const EINVOICE_ENDED = 'The e-invoice pull ended (its portal tab was closed, or the sync was stopped) before its documents were saved. Nothing was saved; pull e-invoices again.';
+// What a GSTR-1 upload's result says about e-invoices left out (0.8.7).
+const einvoiceTally = (g) => ({ einvoiceKept: Number(g && g.einvoiceKept) || 0, einvoiceKeepUnmatched: Number(g && g.einvoiceKeepUnmatched) || 0 });
 async function pushTabClosed(tabId) {
   const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
   const key = job && PUSH_RESULT_KEYS[job.mode];
   if (!key || job.tabId !== tabId) return;
   const c = (job.clients && job.clients[job.idx || 0]) || {};
+  const target = { clientId: c.clientId || null, period_month: job.period || null };
+  if (job.mode === 'einvoice_pull') {
+    await chrome.storage.local.set({ [key]: {
+      ok: false, status: 'failed', docsFound: 0, goneMarked: 0, staleRemoved: 0, generatedOn: null, message: EINVOICE_TAB_CLOSED, tabClosed: true, ...target, at: Date.now(),
+    } });
+    await chrome.storage.local.remove('gstk_active_job');
+    return;
+  }
   const g = job.gstr1 || {};
   let text = job.mode === 'gstr1_refresh' ? REFRESH_TAB_CLOSED : PUSH_TAB_CLOSED;
   if (job.mode === 'gstr1_upload' && !g.nil && g.rowId
     && (await chrome.storage.local.get(PRETOP_PREFIX + g.rowId))[PRETOP_PREFIX + g.rowId]) {
-    const saved = await API.saveGstr1UploadResult({ rowId: g.rowId, status: 'failed', summary: PUSH_TAB_CLOSED_UPLOAD, errors: null, actorId: job.actorId || null })
+    const saved = await API.saveGstr1UploadResult({ rowId: g.rowId, status: 'failed', summary: PUSH_TAB_CLOSED_UPLOAD, errors: null,
+      actorId: job.actorId || null, einvoiceKept: g.einvoiceKept })
       .then(() => true, () => false);
     if (saved) text = PUSH_TAB_CLOSED_UPLOAD;
   }
   const result = {
-    ok: false, status: 'failed', error: text, summary: text, tabClosed: true,
-    clientId: c.clientId || null, period_month: job.period || null, at: Date.now(),
+    ok: false, status: 'failed', error: text, summary: text, tabClosed: true, ...target, at: Date.now(),
   };
   if (job.mode === 'gstr3b_push') Object.assign(result, { filled: 0, skipped: [], portalFilled: [], recorded: false });
   else result.errors = [];
+  if (job.mode === 'gstr1_upload' && !g.nil) Object.assign(result, einvoiceTally(g));
   await chrome.storage.local.set({ [key]: result });
   await chrome.storage.local.remove('gstk_active_job');
 }

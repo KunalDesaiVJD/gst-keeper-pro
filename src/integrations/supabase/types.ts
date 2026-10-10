@@ -41,6 +41,8 @@ export type Database = {
     Tables: {
       einvoice_docs: {
         Row: {
+          autopop_date: string | null
+          autopop_status: string | null
           cess: number
           cgst: number
           client_id: string
@@ -50,12 +52,15 @@ export type Database = {
           doc_no: string
           doc_type: string
           doc_value: number
+          error: string | null
           first_seen_at: string
+          gone_at: string | null
           id: string
           igst: number
           inv_typ: string | null
           irn: string
           irn_date: string | null
+          irn_status: string | null
           last_seen_at: string
           period_month: string
           pos: string | null
@@ -66,6 +71,8 @@ export type Database = {
           taxable: number
         }
         Insert: {
+          autopop_date?: string | null
+          autopop_status?: string | null
           cess?: number
           cgst?: number
           client_id: string
@@ -75,12 +82,15 @@ export type Database = {
           doc_no: string
           doc_type: string
           doc_value?: number
+          error?: string | null
           first_seen_at?: string
+          gone_at?: string | null
           id?: string
           igst?: number
           inv_typ?: string | null
           irn: string
           irn_date?: string | null
+          irn_status?: string | null
           last_seen_at?: string
           period_month: string
           pos?: string | null
@@ -91,6 +101,8 @@ export type Database = {
           taxable?: number
         }
         Update: {
+          autopop_date?: string | null
+          autopop_status?: string | null
           cess?: number
           cgst?: number
           client_id?: string
@@ -100,12 +112,15 @@ export type Database = {
           doc_no?: string
           doc_type?: string
           doc_value?: number
+          error?: string | null
           first_seen_at?: string
+          gone_at?: string | null
           id?: string
           igst?: number
           inv_typ?: string | null
           irn?: string
           irn_date?: string | null
+          irn_status?: string | null
           last_seen_at?: string
           period_month?: string
           pos?: string | null
@@ -129,31 +144,40 @@ export type Database = {
         Row: {
           client_id: string
           docs_found: number
+          generated_on: string | null
           id: string
           message: string | null
           period_month: string
           pulled_at: string
           pulled_by: string | null
+          recorded_at: string | null
+          source: string
           status: string
         }
         Insert: {
           client_id: string
           docs_found?: number
+          generated_on?: string | null
           id?: string
           message?: string | null
           period_month: string
           pulled_at?: string
           pulled_by?: string | null
+          recorded_at?: string | null
+          source?: string
           status: string
         }
         Update: {
           client_id?: string
           docs_found?: number
+          generated_on?: string | null
           id?: string
           message?: string | null
           period_month?: string
           pulled_at?: string
           pulled_by?: string | null
+          recorded_at?: string | null
+          source?: string
           status?: string
         }
         Relationships: [
@@ -6659,7 +6683,9 @@ export type Database = {
           action_type: string
           actor_id: string | null
           client_id: string
+          einvoice_kept: number | null
           errors: Json | null
+          ext_version: string | null
           file_name: string | null
           id: string
           period_month: string
@@ -6673,7 +6699,9 @@ export type Database = {
           action_type: string
           actor_id?: string | null
           client_id: string
+          einvoice_kept?: number | null
           errors?: Json | null
+          ext_version?: string | null
           file_name?: string | null
           id?: string
           period_month: string
@@ -6687,7 +6715,9 @@ export type Database = {
           action_type?: string
           actor_id?: string | null
           client_id?: string
+          einvoice_kept?: number | null
           errors?: Json | null
+          ext_version?: string | null
           file_name?: string | null
           id?: string
           period_month?: string
@@ -10732,6 +10762,39 @@ export type Database = {
       client_login_issue_set: {
         Args: { p_client_id: string; p_reason: string | null; p_message?: string | null }
         Returns: boolean
+      }
+      client_einvoice_evidence: {
+        Args: { p_client_id: string }
+        Returns: {
+          issues_einvoices: boolean
+          reason: string
+        }[]
+      }
+      client_einvoice_evidence_all: {
+        Args: never
+        Returns: {
+          client_id: string
+          issues_einvoices: boolean
+          reason: string
+        }[]
+      }
+      einvoice_evidence_rows: {
+        Args: { p_client_id: string | null }
+        Returns: {
+          client_id: string
+          issues_einvoices: boolean
+          reason: string
+        }[]
+      }
+      einvoice_excel_replace: {
+        Args: {
+          p_actor: string | null
+          p_client_id: string
+          p_docs: Json
+          p_message: string
+          p_period_month: string
+        }
+        Returns: number
       }
       ai_sync: {
         Args: Record<PropertyKey, never>

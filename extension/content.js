@@ -254,8 +254,11 @@
   if (!job.runId && (idleMs > 10 * 60 * 1000 || totalMs > 3 * 60 * 60 * 1000)) {
     // 0.8.6: a push's page is waiting for a result; a dropped push says so.
     const failPush = pushFailer(job);
-    if (failPush) await failPush(job, 'The push sat idle for more than 10 minutes (CAPTCHA not typed, or the tab left alone) and was stopped. Nothing more was sent to the portal; push again.');
-    else await clearJob();
+    if (failPush) {
+      await failPush(job, job.mode === 'einvoice_pull'
+        ? 'The e-invoice pull sat idle for more than 10 minutes (CAPTCHA not typed, or the tab left alone) and was stopped. Nothing was saved; pull e-invoices again.'
+        : 'The push sat idle for more than 10 minutes (CAPTCHA not typed, or the tab left alone) and was stopped. Nothing more was sent to the portal; push again.');
+    } else await clearJob();
     return;
   }
   // Right after the extension is reloaded, any ALREADY-OPEN gst.gov.in tab's
@@ -307,7 +310,9 @@
           ? 'The portal session kept dropping (sent back to the login or error page 3 times) while filling GSTR-3B. Check what the portal saved, then push again.'
           : job.mode === 'gstr1_refresh'
             ? 'The portal session kept dropping (sent back to the login or error page 3 times) before the portal reported a result. Nothing was changed; click Refresh errors again.'
-            : 'The portal session kept dropping (sent back to the login or error page 3 times) before the portal reported a result. Check the portal and push again.');
+            : job.mode === 'einvoice_pull'
+              ? 'Session kept dropping (bounced to login/error page 3x) while reading the GSTR-1 JSON. Nothing was saved; pull e-invoices again.'
+              : 'The portal session kept dropping (sent back to the login or error page 3 times) before the portal reported a result. Check the portal and push again.');
         return;
       }
       // 'filing' jobs run on a backgrounded tab (see startFilingOpen in
@@ -347,8 +352,6 @@
         try { await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, [{ client_id: cur.clientId, period_month: job.period, is_debit: false, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Credit Ledger' }]); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr1_json_pull') {
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading the filed GSTR-1 JSON' }); } catch (e2) { /* diagnostic only */ }
-      } else if (job.step === 'einvoice_pull') {
-        await reportEinvoicePull(job, cur, { status: 'failed', message: 'Session kept dropping (bounced to login/error page 3x) while reading the GSTR-1 JSON' });
       } else if (job.step === 'revrclm_pull') {
         const fy = (fyRangeForPull(job.period) || {}).fy || job.period;
         try { await GSTKdb.replaceCreditReversalReclaimEntries(cur.clientId, fy, [{ client_id: cur.clientId, financial_year: fy, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading the Credit Reversal and Re-claimed Statement' }]); } catch (e2) { /* diagnostic only */ }
@@ -439,18 +442,23 @@
       if (ledgerJob(job)) { try { await GSTKdb.logStep(job.runId, cur.clientId, job.step || 'unknown', 'failed', /timed out/.test(reason) ? 'timeout' : 'other', reason); } catch (_) {} }
       // 0.8.6: a push reports the error to its page (see the bounce above).
       const failPush = pushFailer(job);
-      if (failPush) await failPush(job, 'Unexpected error on step ' + (job.step || '?') + ': ' + reason + '. Check the portal before pushing again.');
-      else await advance(job);
+      if (failPush) {
+        await failPush(job, 'Unexpected error on step ' + (job.step || '?') + ': ' + reason
+          + (job.mode === 'einvoice_pull' ? '. Nothing was saved; pull e-invoices again.' : '. Check the portal before pushing again.'));
+      } else await advance(job);
     }
   }
 
   // 0.8.6: the result writer of a push job, or null for every other mode. A
   // push is one client and one period, and its page waits for a result, so
   // every way it can end goes through failUpload or failGstr3b.
+  // 0.8.7: an e-invoice pull's page waits too: an idle or broken pull is
+  // reported failed (failEinvoicePull), never left spinning.
   function pushFailer(j) {
     if (!j) return null;
     if (j.mode === 'gstr3b_push') return failGstr3b;
     if (j.mode === 'gstr1_upload' || j.mode === 'gstr1_refresh') return failUpload;
+    if (j.mode === 'einvoice_pull') return failEinvoicePull;
     return null;
   }
   // Which return a push result belongs to, as the page sent it (the job's
@@ -2551,15 +2559,18 @@
     // Persist to Supabase, then post the result back to the app for its dialog.
     // 0.8.6: the snapshot goes first, so a tab closed from here on is never
     // recorded as an upload with an unknown outcome.
+    // 0.8.7: the version row says how many e-invoices this upload left out
+    // (einvoice_kept) and the result tells the page (einvoiceKept, and
+    // einvoiceKeepUnmatched for keep entries that named no document).
     await clearPretop(rowId);
     try {
       chrome.runtime.sendMessage({ gstk: true, fn: 'saveGstr1UploadResult', args: [{
-        rowId: job.gstr1.rowId, status: terminal, summary, errors, actorId: job.actorId,
+        rowId: job.gstr1.rowId, status: terminal, summary, errors, actorId: job.actorId, einvoiceKept: job.gstr1.einvoiceKept,
       }] });
     } catch (e) { /* the app still hears the message below */ }
 
     await chrome.storage.local.set({ gstk_gstr1_upload_result: {
-      ok: terminal !== 'failed', status: terminal, summary, errors, irnAttached: job.gstr1.irnAttached || 0, ...pushTarget(job), at: Date.now(),
+      ok: terminal !== 'failed', status: terminal, summary, errors, ...einvoiceTally(job), ...pushTarget(job), at: Date.now(),
     } });
     await clearJob();
   }
@@ -2644,15 +2655,25 @@
       // about the upload, so the upload's own status is left as it was.
       if (job && job.gstr1 && job.gstr1.rowId && job.mode !== 'gstr1_refresh') {
         chrome.runtime.sendMessage({ gstk: true, fn: 'saveGstr1UploadResult', args: [{
-          rowId: job.gstr1.rowId, status: 'failed', summary: error, errors: null, actorId: job.actorId,
+          rowId: job.gstr1.rowId, status: 'failed', summary: error, errors: null, actorId: job.actorId, einvoiceKept: job.gstr1.einvoiceKept,
         }] });
       }
     } catch (e) { /* ignore */ }
     await chrome.storage.local.set({ gstk_gstr1_upload_result: {
-      ok: false, status: 'failed', summary: error, error, errors: [],
-      irnAttached: (job && job.gstr1 && job.gstr1.irnAttached) || 0, ...pushTarget(job), at: Date.now(),
+      ok: false, status: 'failed', summary: error, error, errors: [], ...einvoiceTally(job), ...pushTarget(job), at: Date.now(),
     } });
     await clearJob();
+  }
+
+  // 0.8.7: what a JSON upload's result says about the e-invoices it left out
+  // so the portal keeps their IRN (background.js keepEinvoices): how many, and
+  // how many of the page's keep entries named no document in the stored JSON.
+  // Nothing for a NIL push or a Refresh errors, which upload no JSON. The
+  // result no longer carries irnAttached: no IRN is ever attached.
+  function einvoiceTally(j) {
+    const g = (j && j.gstr1) || {};
+    if (!j || j.mode !== 'gstr1_upload' || g.nil) return {};
+    return { einvoiceKept: Number(g.einvoiceKept) || 0, einvoiceKeepUnmatched: Number(g.einvoiceKeepUnmatched) || 0 };
   }
 
   // ── 0.8.4: NIL GSTR-1 ───────────────────────────────────────────────────
@@ -2763,7 +2784,7 @@
     // the round trip below, so a tab closed on seeing the banner can no longer
     // turn a ticked NIL into a failure (the page records NIL itself too).
     await chrome.storage.local.set({ gstk_gstr1_upload_result: {
-      ok: true, status: 'nil_marked', message, summary: message, errors: [], irnAttached: 0, ...pushTarget(job), at: Date.now(),
+      ok: true, status: 'nil_marked', message, summary: message, errors: [], ...pushTarget(job), at: Date.now(),
     } });
     await clearJob(); // stop acting — the human reviews and files.
     banner(message, '#16a34a');
@@ -5313,7 +5334,7 @@
     let fullJson = null;
     try {
       const { base64 } = await GSTKdb.fetchCrossOriginAsBase64(downloadUrl);
-      fullJson = await extractJsonFromZip(base64ToArrayBuffer(base64));
+      fullJson = (await extractJsonFromZip(base64ToArrayBuffer(base64))).json;
     } catch (e) {
       banner('GSTR-1 JSON: downloaded but could not unzip/parse it (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       await sleep(1500);
@@ -5340,27 +5361,53 @@
   // handleGstr1JsonPull above; background.js (saveEinvoicePull) keeps the
   // IRN-bearing documents in einvoice_docs and records the attempt in
   // einvoice_pulls. The app hears the outcome via gstk_einvoice_pull_result.
+  // 0.8.7: saveEinvoicePull refuses a JSON that is not this client's GSTIN
+  // and period (fp), or one the portal generated before today (status
+  // 'stale', with the steps to generate a fresh one), and saves nothing from
+  // it; an ok / none pull marks the period's e-invoices the portal no longer
+  // holds as gone (goneMarked; never deleted). The result always names the
+  // job's client and period.
+  // 0.8.7: the background worker saves the pull, writes the page's result and
+  // clears the job in one step of its job slot (finishEinvoicePull), so a
+  // portal tab closed meanwhile either finds the pull unfinished (and says
+  // nothing was saved) or finds no job (and writes nothing). This tab writes
+  // neither the result nor the job itself, except when the worker does not
+  // answer at all, and then only while the job is still this pull's.
   async function reportEinvoicePull(job, cur, info) {
-    let res = { status: info.status, docsFound: 0, message: info.message || '' };
-    try {
-      res = await GSTKdb.saveEinvoicePull({
-        clientId: cur.clientId, period_month: job.period, actorId: job.actorId || null,
-        json: info.json || null, status: info.status, message: info.message || null,
-      });
-    } catch (e) {
-      if (info.json) res = { status: 'failed', docsFound: 0, message: 'Could not save the e-invoice documents: ' + ((e && e.message) || e) };
-    }
-    await chrome.storage.local.set({ gstk_einvoice_pull_result: {
-      ok: res.status === 'ok' || res.status === 'none', status: res.status, docsFound: res.docsFound || 0,
-      message: res.message || '', clientId: cur.clientId, period_month: job.period, at: Date.now(),
-    } });
+    const target = { clientId: (cur && cur.clientId) || null, period_month: (job && job.period) || null };
+    const tabId = job && job.tabId != null ? job.tabId : null;
+    const resp = await askBackground('finishEinvoicePull', [{
+      ...target, tabId, actorId: (job && job.actorId) || null,
+      json: info.json || null, fileName: info.fileName || null, status: info.status, message: info.message || null,
+    }], 180000);
+    if (resp && resp.data) return resp.data;
+    const res = {
+      status: 'failed', docsFound: 0, goneMarked: 0, staleRemoved: 0, generatedOn: null,
+      message: info.json
+        ? 'GST Keeper\'s background worker did not answer while saving the e-invoice documents. Check the GSTR-1 page, then pull e-invoices again.'
+        : (info.message || 'The e-invoice pull failed.'),
+    };
+    const held = await getJob();
+    if (!held || held.mode !== 'einvoice_pull' || (tabId != null && held.tabId !== tabId)) return res;
+    await chrome.storage.local.set({ gstk_einvoice_pull_result: { ok: false, ...res, ...target, at: Date.now() } });
+    await clearJob();
     return res;
+  }
+
+  // 0.8.7: an e-invoice pull that went idle, kept bouncing or broke tells its
+  // page so (a failed pull, recorded in einvoice_pulls) instead of leaving
+  // the Pull button spinning; no document is saved or marked. The worker
+  // clears the job (finishEinvoicePull).
+  async function failEinvoicePull(j, error) {
+    banner('E-invoices: ' + error, '#dc2626');
+    const c = (j && j.clients && j.clients[j.idx || 0]) || {};
+    await reportEinvoicePull(j, c, { status: 'failed', message: error });
   }
 
   async function handleEinvoicePull(job, cur, progress) {
     if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
     const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
-    if (!mm || !yyyy) { banner('Bad e-invoice period.', '#dc2626'); await reportEinvoicePull(job, cur, { status: 'failed', message: 'Bad period ' + job.period }); await clearJob(); return; }
+    if (!mm || !yyyy) { banner('Bad e-invoice period.', '#dc2626'); await reportEinvoicePull(job, cur, { status: 'failed', message: 'Bad period ' + job.period }); return; }
     const rtnPrd = String(mm).padStart(2, '0') + yyyy;
     banner('Requesting the portal\'s GSTR-1 JSON for ' + job.period + ' (e-invoices)…' + progress);
 
@@ -5378,7 +5425,6 @@
       const message = 'Could not read the portal API (' + ((e && e.message) || 'unknown error') + ').';
       banner('E-invoices: ' + message, '#dc2626');
       await reportEinvoicePull(job, cur, { status: 'failed', message });
-      await clearJob();
       return;
     }
 
@@ -5386,25 +5432,30 @@
       const message = 'The portal is still generating the GSTR-1 JSON (can take up to 20 min) — pull again shortly.';
       banner('E-invoices: ' + message, '#f59e0b');
       await reportEinvoicePull(job, cur, { status: 'pending', message });
-      await clearJob();
       return;
     }
 
+    // 0.8.7: the JSON and the name of its file inside the ZIP, whose date
+    // (returns_<ddmmyyyy>_...) tells the worker whether the portal generated
+    // it today; an older file is recorded 'stale' and nothing is saved.
     let fullJson = null;
+    let fileName = null;
     try {
       const { base64 } = await GSTKdb.fetchCrossOriginAsBase64(downloadUrl);
-      fullJson = await extractJsonFromZip(base64ToArrayBuffer(base64));
+      const file = await extractJsonFromZip(base64ToArrayBuffer(base64));
+      fullJson = file.json;
+      fileName = file.name;
     } catch (e) {
       const message = 'Downloaded the GSTR-1 JSON but could not unzip/parse it (' + ((e && e.message) || 'unknown error') + ').';
       banner('E-invoices: ' + message, '#dc2626');
       await reportEinvoicePull(job, cur, { status: 'failed', message });
-      await clearJob();
       return;
     }
 
-    const res = await reportEinvoicePull(job, cur, { status: 'ok', json: fullJson });
-    banner('E-invoices: ' + (res.message || res.status) + ' — you can close this tab.', res.status === 'failed' ? '#dc2626' : '#16a34a');
-    await clearJob();
+    banner('E-invoices: saving the documents with an IRN…' + progress);
+    const res = await reportEinvoicePull(job, cur, { status: 'ok', json: fullJson, fileName });
+    const colour = res.status === 'failed' ? '#dc2626' : res.status === 'stale' ? '#f59e0b' : '#16a34a';
+    banner('E-invoices: ' + (res.message || res.status) + ' You can close this tab.', colour);
   }
 
   // Minimal ZIP reader — extracts and parses the first entry whose name ends
@@ -5413,6 +5464,9 @@
   // content script has no bundler to pull one in. The GST portal's own
   // "Offline Download" ZIPs contain exactly one JSON file, so this doesn't
   // need to handle multi-entry archives or nested folders.
+  // 0.8.7: answers { json, name }: the entry's name too, which the portal
+  // stamps with the day it generated the file (returns_<ddmmyyyy>_R1_...),
+  // so the e-invoice pull can tell an old file from today's.
   async function extractJsonFromZip(arrayBuffer) {
     const view = new DataView(arrayBuffer);
     const bytes = new Uint8Array(arrayBuffer);
@@ -5451,7 +5505,7 @@
         } else {
           throw new Error('unsupported ZIP compression method ' + compressionMethod + ' for ' + fileName);
         }
-        return JSON.parse(jsonText);
+        return { json: JSON.parse(jsonText), name: fileName };
       }
       ptr += 46 + fileNameLen + extraLen + commentLen;
     }
