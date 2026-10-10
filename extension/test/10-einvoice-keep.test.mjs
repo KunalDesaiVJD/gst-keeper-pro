@@ -460,7 +460,7 @@ await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', acto
   const v = posts('gstr1_upload_versions');
   const row = v[0] && v[0].body[0];
   ok(v.length === 1 && row.action_type === 'UPLOAD' && row.status === 'accepted', 'one UPLOAD version row');
-  ok(row && row.einvoice_kept === 6 && row.ext_version === MANIFEST_VERSION && MANIFEST_VERSION === '0.8.7', 'the UPLOAD row carries einvoice_kept 6 and ext_version 0.8.7');
+  ok(row && row.einvoice_kept === 6 && row.ext_version === MANIFEST_VERSION && MANIFEST_VERSION === '0.8.8', 'the UPLOAD row carries einvoice_kept 6 and ext_version 0.8.8 (the manifest)');
   ok(row && JSON.stringify(row.payload) === JSON.stringify(BOOKS), 'its payload is still the stored books JSON');
 }
 
@@ -1030,6 +1030,59 @@ storage.gstk_active_job = { mode: 'gstr1_json_pull', idx: 0, step: 'gstr1_json_p
   changed({ gstk_gstr1_upload_result: { newValue: { ok: true, status: 'accepted', einvoiceKept: 6, einvoiceKeepUnmatched: 2, clientId: 'c1', period_month: '09/2026' } } }, 'local');
   const up = posted.find((m) => m.__gstkUploadGstr1Result);
   ok(up && up.__gstkUploadGstr1Result.einvoiceKept === 6 && up.__gstkUploadGstr1Result.einvoiceKeepUnmatched === 2, 'appbridge: the upload result reaches the page with einvoiceKept');
+}
+
+// ── 0.8.8: the pull waits for the portal to build the file ──────────────────
+// A period the portal never generated takes up to 20 minutes. The pull polls
+// every 30 seconds for up to 22 minutes (0.8.7 gave up after ~90 seconds and
+// recorded "pending"). The page's clock and timers are faked so the wait runs
+// at once: every sleep moves the clock on by its length.
+async function runWaitingPull(readyAfter) {
+  const clock = { now: Date.now() };
+  class FakeDate extends Date {
+    constructor(...a) { if (a.length) super(...a); else super(clock.now); }
+    static now() { return clock.now; }
+  }
+  const portalCalls = [];
+  const callAt = [];
+  const globals = {
+    Date: FakeDate,
+    setTimeout: (f, ms, ...rest) => { clock.now += ms || 0; return setTimeout(f, 0, ...rest); },
+    fetch: async (u) => {
+      portalCalls.push(String(u)); callAt.push(clock.now);
+      const ready = readyAfter != null && portalCalls.length > readyAfter;
+      return new Response(JSON.stringify(ready ? { status: 1, data: { url: 'https://files.gst.gov.in/f.zip' } } : { status: 0 }), { status: 200 });
+    },
+    TextDecoder, atob, Blob, Response, DecompressionStream,
+  };
+  const db = {
+    fetchCrossOriginAsBase64: async () => ({ base64: zipOf(fileFor(TODAY), PORTAL, 8) }),
+    upsertFiledReturn: async () => true,
+  };
+  const doc = await runPage(RETURNS, { globals, db });
+  // The wait itself: from the first request to the portal to the last.
+  return { doc, portalCalls, waitedMs: callAt[callAt.length - 1] - callAt[0] };
+}
+reset();
+storage.gstk_active_job = pullJob();
+{
+  const { portalCalls, waitedMs } = await runWaitingPull(8);
+  const r = storage.gstk_einvoice_pull_result;
+  ok(portalCalls.length === 9 && waitedMs === 8 * 30000, 'wait: the portal was asked 9 times, 30 seconds apart, until the file was ready (' + portalCalls.length + ' calls, ' + Math.round(waitedMs / 1000) + ' s)');
+  ok(r && r.ok === true && r.status === 'ok' && r.docsFound === 5, 'wait: a file ready after 4 minutes is pulled and saved in the same run (no "pull again")');
+  ok(posts('einvoice_docs').length === 1 && pullRow().body[0].status === 'ok', 'wait: recorded ok in einvoice_pulls');
+}
+reset();
+storage.gstk_active_job = pullJob();
+{
+  const { doc, portalCalls, waitedMs } = await runWaitingPull(null);
+  const r = storage.gstk_einvoice_pull_result;
+  ok(waitedMs <= 22 * 60 * 1000 && waitedMs >= 21 * 60 * 1000 && portalCalls.length === 45,
+    'wait: a file never ready is polled for up to 22 minutes, then given up (' + portalCalls.length + ' calls, ' + Math.round(waitedMs / 60000) + ' min)');
+  ok(r && r.ok === false && r.status === 'pending' && /had not finished the GSTR-1 file after 22 minutes/.test(r.message) && /Nothing was saved/.test(r.message),
+    'wait: given up, the pull is recorded pending with a message that says how long it waited');
+  ok(einvCalls().length === 0 && pullRow().body[0].status === 'pending', 'wait: nothing saved, the pull row says pending');
+  ok(!storage.gstk_active_job && /had not finished/.test(doc.banner()), 'wait: the job is cleared and the banner says so');
 }
 
 console.log(fail ? '\n' + fail + ' FAILED' : '\nall passed');

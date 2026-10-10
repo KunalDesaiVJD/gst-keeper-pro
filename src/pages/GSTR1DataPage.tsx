@@ -68,8 +68,9 @@ import { UqcSelect, UqcText } from '@/components/gstr1/UqcSelect';
 
 /** First extension version that pushes a NIL GSTR-1. */
 const NIL_PUSH_MIN_EXTENSION = '0.8.4';
-/** An e-invoice pull left without a result this long is given up on (the extension's own idle limit is 10 minutes). */
-const EINVOICE_PULL_WATCHDOG_MS = 15 * 60 * 1000;
+/** An e-invoice pull left without a result this long is given up on. From 0.8.8 the extension waits up to 22 minutes
+ *  for the portal to build the GSTR-1 file (its own idle limit is 10 minutes, kept off by a heartbeat while it waits). */
+const EINVOICE_PULL_WATCHDOG_MS = 30 * 60 * 1000;
 /** First extension version whose Refresh errors reads the Upload History (and can record 'accepted'). */
 const REFRESH_HISTORY_MIN_EXTENSION = '0.8.6';
 /**
@@ -966,7 +967,7 @@ const GSTR1DataPage: React.FC = () => {
     if (!isPullingEinv) return;
     const t = setTimeout(() => {
       setIsPullingEinv(false);
-      toast.warning('No e-invoice pull result from the browser extension after 15 minutes. Check the GST portal tab, then pull again.', { duration: 20000 });
+      toast.warning('No e-invoice pull result from the browser extension after 30 minutes. Check the GST portal tab, then pull again.', { duration: 20000 });
     }, EINVOICE_PULL_WATCHDOG_MS);
     return () => clearTimeout(t);
   }, [isPullingEinv]);
