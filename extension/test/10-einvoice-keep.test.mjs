@@ -215,11 +215,17 @@ const local = {
     for (const key of (Array.isArray(k) ? k : [k])) if (key in storage) out[key] = clone(storage[key]);
     return out;
   },
-  set: async (o) => { for (const [k, v] of Object.entries(o)) storage[k] = clone(v); },
+  // 0.9.0: a write is heard by chrome.storage.onChanged listeners, as in Chrome.
+  set: async (o) => {
+    const changes = {};
+    for (const [k, v] of Object.entries(o)) { storage[k] = clone(v); changes[k] = { newValue: clone(v) }; }
+    for (const fn of [...storageListeners]) fn(changes, 'local');
+  },
   remove: async (k) => { for (const key of (Array.isArray(k) ? k : [k])) delete storage[key]; },
 };
+const storageListeners = new Set();
 const chromeFor = (tabId, onChanged) => ({
-  storage: { local, onChanged: onChanged || { addListener() {}, removeListener() {} } },
+  storage: { local, onChanged: onChanged || { addListener: (fn) => storageListeners.add(fn), removeListener: (fn) => storageListeners.delete(fn) } },
   runtime: {
     getManifest: () => JSON.parse(read('manifest.json')),
     sendMessage: (msg, cb) => { bgListener(msg, { tab: { id: tabId } }, (resp) => cb && cb(resp)); },
@@ -256,6 +262,7 @@ function makeDocument(opts) {
     querySelectorAll: (s) => {
       if (s === 'table tr' && opts.rows) return opts.rows();
       if (s === 'input[type=file]' && opts.fileInput) return [opts.fileInput];
+      if (s === 'button, a' && opts.buttons) return opts.buttons;
       return [];
     },
     documentElement: { appendChild: (e) => { if (e && e.id) byId[e.id] = e; } },
@@ -462,7 +469,7 @@ await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', acto
   const v = posts('gstr1_upload_versions');
   const row = v[0] && v[0].body[0];
   ok(v.length === 1 && row.action_type === 'UPLOAD' && row.status === 'accepted', 'one UPLOAD version row');
-  ok(row && row.einvoice_kept === 6 && row.ext_version === MANIFEST_VERSION && MANIFEST_VERSION === '0.8.9', 'the UPLOAD row carries einvoice_kept 6 and ext_version 0.8.9 (the manifest)');
+  ok(row && row.einvoice_kept === 6 && row.ext_version === MANIFEST_VERSION && MANIFEST_VERSION === '0.9.0', 'the UPLOAD row carries einvoice_kept 6 and ext_version 0.9.0 (the manifest)');
   ok(row && JSON.stringify(row.payload) === JSON.stringify(BOOKS), 'its payload is still the stored books JSON');
 }
 
@@ -1106,6 +1113,90 @@ storage.gstk_active_job = pullJob();
     'wait: given up, the pull is recorded pending with a message that says how long it waited');
   ok(einvCalls().length === 0 && pullRow().body[0].status === 'pending', 'wait: nothing saved, the pull row says pending');
   ok(!storage.gstk_active_job && /had not finished/.test(doc.banner()), 'wait: the job is cleared and the banner says so');
+}
+
+// ── 0.9.0: the pull opens the month's GSTR-1 and takes its e-invoice details ──
+// Logged in, the pull goes to the returns dashboard (step einvoice_dash), not
+// straight to the file.
+reset();
+storage.gstk_active_job = pullJob({ step: 'login' });
+{
+  const globals = { fetch: async (u) => new Response(JSON.stringify(/profile\/detail/.test(String(u)) ? { gstin: '24AAAAA0000A1Z5' } : {}), { status: 200 }) };
+  await runPage('https://services.gst.gov.in/services/auth/fowelcome', { globals });
+  ok(storage.gstk_active_job && storage.gstk_active_job.step === 'einvoice_dash', 'after login the pull opens the returns dashboard for the month (einvoice_dash)');
+}
+// On the month's GSTR-1 page: the portal's own button, the file it builds, the
+// page's import, then the GSTR-1 file, all in one run.
+const XLSX_URL = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,UEsDBBQAAAAIAAAAIQ' + 'A'.repeat(400);
+async function runExcelStep({ withButton = true, imported = true, blob = XLSX_URL } = {}) {
+  const clock = { now: Date.now() };
+  class FakeDate extends Date {
+    constructor(...a) { if (a.length) super(...a); else super(clock.now); }
+    static now() { return clock.now; }
+  }
+  const winListeners = new Set();
+  const clicked = [];
+  const btn = { textContent: 'DOWNLOAD DETAILS FROM E-INVOICES (EXCEL)', offsetParent: {}, disabled: false, getAttribute: () => null,
+    click() { clicked.push('btn'); setTimeout(() => { for (const fn of [...winListeners]) fn({ data: { __gstkPdf: blob } }); }, 0); } };
+  let importCalls = 0;
+  const globals = {
+    Date: FakeDate,
+    // A thousand times faster, in the same order: the 60-second wait for the
+    // file still outlasts the file's arrival.
+    setTimeout: (f, ms, ...rest) => setTimeout(() => { clock.now += ms || 0; f(...rest); }, Math.ceil((ms || 0) / 1000)),
+    addEventListener: (t, fn) => { if (t === 'message') winListeners.add(fn); },
+    removeEventListener: (t, fn) => { if (t === 'message') winListeners.delete(fn); },
+    fetch: async (u) => new Response(JSON.stringify({ status: 1, data: { url: 'https://files.gst.gov.in/f.zip' } }), { status: 200 }),
+    TextDecoder, atob, Blob, Response, DecompressionStream,
+  };
+  const db = {
+    fetchCrossOriginAsBase64: async () => ({ base64: zipOf(fileFor(TODAY), PORTAL, 8) }),
+    upsertFiledReturn: async () => true,
+    einvoiceExcelImportedSince: async () => { importCalls += 1; return imported && importCalls >= 2 ? { status: 'ok', docs_found: 5, pulled_at: new Date(clock.now).toISOString(), message: 'm' } : null; },
+  };
+  const doc = await runPage('https://return.gst.gov.in/returns/auth/gstr1', { globals, db, buttons: withButton ? [btn] : [] });
+  return { doc, clicked, importCalls };
+}
+reset();
+storage.gstk_active_job = pullJob({ step: 'einvoice_excel' });
+{
+  const seen = [];
+  const spy = (changes) => { if (changes.gstk_einvoice_excel_result) seen.push(changes.gstk_einvoice_excel_result.newValue); };
+  storageListeners.add(spy);
+  const { clicked, importCalls } = await runExcelStep();
+  storageListeners.delete(spy);
+  const r = storage.gstk_einvoice_pull_result;
+  ok(clicked.length === 1, 'GSTR-1 page: the portal\'s "Download details from e-invoices (Excel)" is pressed once');
+  ok(seen.length === 1 && seen[0].fileB64 === XLSX_URL && seen[0].clientId === 'c1' && seen[0].period_month === '09/2026' && seen[0].via === 'page',
+    'GSTR-1 page: the file the portal built goes to GST Keeper for the job\'s client and month');
+  ok(importCalls === 2, 'GSTR-1 page: the pull waits for GST Keeper\'s import of it');
+  ok(r && r.status === 'ok' && /^Opened GSTR-1 for September 2026 on the portal and downloaded its e-invoice details \(Excel\); GST Keeper imported 5 e-invoices from them at \d\d:\d\d IST\. The portal's GSTR-1 for 09\/2026/.test(r.message),
+    'the pull\'s message says GSTR-1 for September 2026 was opened, its e-invoice details imported (how many, when), then what the file held: ' + (r && r.message));
+}
+reset();
+storage.gstk_active_job = pullJob({ step: 'einvoice_excel' });
+{
+  const { clicked } = await runExcelStep({ withButton: false });
+  const r = storage.gstk_einvoice_pull_result;
+  ok(clicked.length === 0 && r && r.status === 'ok'
+    && /^Could not take the e-invoice details from the portal: GSTR-1 for September 2026 shows no "Download details from e-invoices \(Excel\)" button\. The portal's GSTR-1/.test(r.message),
+    'no button: the pull still reads the GSTR-1 file, and says why the e-invoice details were not taken: ' + (r && r.message));
+}
+reset();
+storage.gstk_active_job = pullJob({ step: 'einvoice_excel' });
+{
+  const r0 = await runExcelStep({ imported: false });
+  const r = storage.gstk_einvoice_pull_result;
+  ok(r0.importCalls === 15 && r && /downloaded its e-invoice details \(Excel\), but GST Keeper did not import them/.test(r.message),
+    'no import (GST Keeper\'s page not open): said so, and the pull goes on: ' + (r && r.message));
+}
+reset();
+storage.gstk_active_job = pullJob({ step: 'einvoice_excel' });
+{
+  await runExcelStep({ blob: 'data:application/pdf;base64,JVBERi0xLjQK' });
+  const r = storage.gstk_einvoice_pull_result;
+  ok(r && /no file came from "Download details from e-invoices \(Excel\)" on GSTR-1 for September 2026 within a minute/.test(r.message),
+    'a file that is not a workbook is not taken: ' + (r && r.message));
 }
 
 console.log(fail ? '\n' + fail + ' FAILED' : '\nall passed');

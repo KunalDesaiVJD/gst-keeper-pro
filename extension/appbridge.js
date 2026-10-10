@@ -277,6 +277,19 @@ chrome.storage.onChanged.addListener((changes, area) => {
       chrome.storage.local.remove('gstk_einvoice_pull_result');
     }
   }
+  // 0.9.0: the e-invoice details (Excel) the pull downloaded from the month's
+  // GSTR-1 on the portal. The GSTR-1 page imports them for the job's client
+  // and month, as if chosen by hand; the pull waits for that import.
+  if (changes.gstk_einvoice_excel_result) {
+    const v = changes.gstk_einvoice_excel_result.newValue;
+    if (v && v.fileB64) {
+      window.postMessage({ __gstkEinvoiceExcel: {
+        clientId: v.clientId || null, gstin: v.gstin || null, period_month: v.period_month || null,
+        fileB64: v.fileB64, fileName: v.fileName || null, at: v.at || null,
+      } }, location.origin);
+      chrome.storage.local.remove('gstk_einvoice_excel_result');
+    }
+  }
   // GSTR-3B form-fill finished (or the whole flow errored out before it got
   // that far: failGstr3b writes this same key from every dead end, and the
   // background worker when the portal tab is closed). 0.8.6: relayed

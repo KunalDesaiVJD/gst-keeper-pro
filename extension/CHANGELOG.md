@@ -2,6 +2,36 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-10 — E-invoice pull opens the month's GSTR-1 and takes its e-invoice details (v0.9.0)
+
+Needs the GSTR-1 page update that imports the file (`__gstkEinvoiceExcel`).
+No database change.
+
+- **Why.** Staff could not accept "no document carries an IRN" without the
+  month's GSTR-1 opened, and still had to download the e-invoice details
+  (Excel) from it and import them by hand.
+- **Now.** After login the pull goes to the returns dashboard, chooses the
+  financial year, quarter and month of the pull, presses Search and opens
+  GSTR-1 (Prepare Online) for that month. There it presses the portal's own
+  "Download details from e-invoices (Excel)" and takes the file the portal
+  gives (a Blob the page builds, via inject.js, or a direct download the
+  background re-fetches), and hands it to GST Keeper's GSTR-1 page, which
+  imports it for the pull's client and month as if it had been chosen by hand
+  (its time recorded in `einvoice_pulls`, source `einvoice_excel`). The pull
+  waits up to 45 seconds for that import, then reads the GSTR-1 file as
+  before. Its message starts with what it did: "Opened GSTR-1 for September
+  2026 on the portal and downloaded its e-invoice details (Excel); GST Keeper
+  imported 55 e-invoices from them at 19:36 IST." and then gives the file's
+  counts and the comparison with the e-invoices just imported.
+- **Never in the way.** A dashboard that does not load, a month without a
+  Prepare Online button, no download button, no file within a minute, a file
+  that is not a workbook, or no GST Keeper page to import it: each is said in
+  the message ("Could not take the e-invoice details from the portal: …") and
+  the pull goes on to the GSTR-1 file.
+- More than 500 e-invoices: the portal prepares those under "E-invoice
+  download history"; the message says what the portal answered, and the ZIP
+  is imported by hand as before.
+
 ## 2026-10-10 — E-invoice pull says exactly what it read (v0.8.9)
 
 No database change. The GSTR-1 page shows the new message on the panel.

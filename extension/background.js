@@ -1233,7 +1233,7 @@ const API = {
   // upsert and the pull is 'failed', never saved on the old key.
   // Not in the job slot by itself: content.js reaches it through
   // finishEinvoicePull below, which is.
-  saveEinvoicePull: async ({ clientId, period_month, actorId, json, status, message, fileName }) => {
+  saveEinvoicePull: async ({ clientId, period_month, actorId, json, status, message, fileName, excelStep }) => {
     const now = new Date().toISOString();
     let st = status || 'failed';
     let msg = message || null;
@@ -1283,6 +1283,8 @@ const API = {
         msg = 'Could not save the e-invoice documents: ' + ((e && e.message) || e);
       }
     }
+    // 0.9.0: what the pull did on the month's GSTR-1 first (its e-invoice details).
+    if (excelStep) msg = einvoiceExcelStepText(excelStep, period_month) + (msg ? ' ' + msg : '');
     const pull = {
       client_id: clientId, period_month, source: 'portal_gstr1', status: st, docs_found: docsFound, message: msg,
       pulled_by: actorId || null, pulled_at: now, generated_on: generatedOn,
@@ -1310,6 +1312,16 @@ const API = {
   // A job of another tab or mode (another sync took the slot meanwhile): the
   // pull is still saved (it was checked against its own client and period)
   // and its result written, and that other job is left alone. Never throws.
+  // 0.9.0: the e-invoice Excel import GST Keeper's page recorded for this
+  // client and month at or after `sinceIso` (einvoice_pulls, source
+  // einvoice_excel), or null. The pull waits for it after handing the page
+  // the file it downloaded from the month's GSTR-1.
+  einvoiceExcelImportedSince: async (clientId, period_month, sinceIso) => {
+    const rows = await sel(`einvoice_pulls?client_id=eq.${clientId}&period_month=eq.${enc(period_month)}&source=eq.einvoice_excel&select=status,docs_found,pulled_at,message&limit=1`);
+    const r = rows && rows[0];
+    return r && r.status === 'ok' && Date.parse(r.pulled_at) >= Date.parse(sinceIso) ? r : null;
+  },
+
   finishEinvoicePull: (info) => jobSlot(async () => {
     const i = info || {};
     const target = { clientId: i.clientId || null, period_month: i.period_month || null };
@@ -1367,6 +1379,22 @@ const istDay = (iso) => new Date(Date.parse(iso) + 330 * 60 * 1000).toISOString(
 const einvDmy = (ymd) => ymd.slice(8, 10) + '-' + ymd.slice(5, 7) + '-' + ymd.slice(0, 4);
 // How staff make the portal generate a fresh GSTR-1 JSON for the period.
 const EINVOICE_FRESH_STEPS = 'open GSTR-1 for the period on the portal and choose Prepare Offline → Download → Generate JSON file to download';
+// 0.9.0: what the pull did on the month's GSTR-1 before reading its file:
+// opened it and downloaded its e-invoice details (and whether GST Keeper
+// imported them, when, and how many), or why it could not.
+function einvoiceExcelStepText(step, period_month) {
+  const [mm, yyyy] = String(period_month || '').split('/').map((n) => parseInt(n, 10));
+  const names = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const label = mm && yyyy ? names[mm - 1] + ' ' + yyyy : einvStr(period_month);
+  const ist = (iso) => { const t = Date.parse(iso); return Number.isFinite(t) ? new Date(t + 330 * 60000).toISOString().slice(11, 16) + ' IST' : ''; };
+  if (!step.ok) return 'Could not take the e-invoice details from the portal: ' + (step.note || 'unknown reason') + '.';
+  const opened = 'Opened GSTR-1 for ' + label + ' on the portal and downloaded its e-invoice details (Excel)';
+  if (!step.imported) {
+    return opened + ', but GST Keeper did not import them (its GSTR-1 page was not open, or the file was not this client\'s for this month): import the Excel by hand.';
+  }
+  const n = Number(step.imported.docs) || 0;
+  return opened + '; GST Keeper imported ' + n + ' e-invoice' + (n === 1 ? '' : 's') + ' from them' + (step.imported.at ? ' at ' + ist(step.imported.at) : '') + '.';
+}
 // 0.8.9: how many documents a GSTR-1 JSON holds, per table the pull reads.
 function gstr1DocCounts(json) {
   const n = { b2b: 0, cdnr: 0, cdnur: 0, exp: 0 };
@@ -1586,6 +1614,25 @@ chrome.downloads.onCreated.addListener(async (item) => {
   try {
     const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
     if (!job || !job.clients) return;
+    // 0.9.0: the e-invoice details (Excel) the pull downloads from the month's GSTR-1.
+    if (job.mode === 'einvoice_pull') {
+      if (job.step !== 'einvoice_excel') return;
+      const url0 = item.finalUrl || item.url || '';
+      if (!/^https?:/i.test(url0) || !/\.(xlsx|xls|zip)(\?|$)|einv|e-invoice/i.test((item.filename || '') + ' ' + url0)) return;
+      const r0 = await fetch(url0, { credentials: 'include' });
+      if (!r0.ok) return;
+      const b0 = await r0.arrayBuffer();
+      if (!b0 || b0.byteLength < 100) return;
+      const c0 = job.clients[job.idx || 0];
+      if (!c0) return;
+      const mime0 = r0.headers.get('content-type') || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      await chrome.storage.local.set({ gstk_einvoice_excel_result: {
+        clientId: c0.clientId, gstin: (c0.creds && c0.creds.gstin) || '', period_month: job.period,
+        fileB64: 'data:' + mime0 + ';base64,' + abToBase64(b0), fileName: (item.filename || '').split(/[\\/]/).pop() || ('EINV_' + c0.clientId + '.xlsx'),
+        at: Date.now(), via: 'download',
+      } });
+      return;
+    }
     if (job.mode !== 'twob' && job.mode !== 'twoa') return;
     const is2a = job.mode === 'twoa';
     const fileUrl = item.finalUrl || item.url || '';
