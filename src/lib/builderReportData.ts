@@ -108,7 +108,11 @@ export async function fetchBuWorking(buEventId: string): Promise<BuWorkingReport
     agreementValue: Number(r.agreement_value) || 0,
     valueTaxedUptoOpening: Number(r.value_taxed_upto_opening) || 0,
     invoicedBefore: Number(r.invoiced_before) || 0,
-    openAdvanceBefore: Number(r.open_advance_before) || 0,
+    // Value taxed less invoiced = open advances INCLUDING the opening
+    // balance. Derived rather than read, because events saved before
+    // 10/10/2026 stored the receipt-backed part only.
+    openAdvanceBefore: Math.max(0, Math.round((
+      (Number(r.value_taxed_upto_opening) || 0) - (Number(r.invoiced_before) || 0) + Number.EPSILON) * 100) / 100),
     receivedUptoCutOff: Number(r.received_upto_cutoff) || 0,
     differentialValue: Number(r.differential_value) || 0,
     differentialTaxableValue: Number(r.differential_taxable_value) || 0,

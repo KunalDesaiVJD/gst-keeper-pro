@@ -60,12 +60,16 @@ export async function prepareBuEvent(params: {
     };
   }
 
-  const [{ data: bookings }, { data: receipts }, { data: invoices }, { data: openings }] =
+  const [
+    { data: bookings }, { data: receipts }, { data: invoices }, { data: openings }, { data: openingAdjustments },
+  ] =
     await Promise.all([
       supabase.from('builder_bookings').select('*').in('unit_id', unitIds),
       supabase.from('builder_receipts').select('*').in('unit_id', unitIds).order('receipt_date'),
       supabase.from('builder_invoices').select('*').in('unit_id', unitIds),
       supabase.from('builder_opening_balances').select('*').in('unit_id', unitIds),
+      supabase.from('builder_opening_balance_adjustments')
+        .select('unit_id, consideration_adjusted, period_month').in('unit_id', unitIds),
     ]);
 
   const invoiceIds = ((invoices || []) as { id: string }[]).map((i) => i.id);
@@ -92,6 +96,9 @@ export async function prepareBuEvent(params: {
   const adjs = (adjustments || []) as unknown as Adj[];
   const bkgs = (bookings || []) as unknown as Bkg[];
   const opns = (openings || []) as unknown as Opn[];
+  const opnAdjs = (openingAdjustments || []) as unknown as {
+    unit_id: string; consideration_adjusted: number; period_month: string;
+  }[];
 
   const invoiceUnit = new Map(invs.map((i) => [i.id, i.unit_id]));
   const receiptsInBuMonth: PreparedEvent['receiptsInBuMonth'] = {};
@@ -167,7 +174,14 @@ export async function prepareBuEvent(params: {
       dastavejDate: u.dastavej_date,
       bookingId: booking?.id ?? null,
       bookingDate: booking?.booking_date ?? (hasOpeningActivity ? opening!.as_at_date : null),
-      openingValueTaxed: Number(opening?.cumulative_value_taxed) || 0,
+      // The opening balance less what earlier invoices (milestone invoices
+      // raised after onboarding) already adjusted from it in Table 11B.
+      openingValueTaxed: Math.max(0, Math.round((
+        (Number(opening?.cumulative_value_taxed) || 0)
+        - opnAdjs
+          .filter((a) => a.unit_id === u.id && isPeriodBefore(a.period_month, buPeriod))
+          .reduce((s, a) => s + (Number(a.consideration_adjusted) || 0), 0)
+        + Number.EPSILON) * 100) / 100),
       advancesBefore,
       invoicesBefore,
       adjustmentsBefore,
@@ -588,12 +602,8 @@ export async function autoPostDastavejDifferential(params: {
     return { action: 'SCHEDULE_III' };
   }
 
-  // opening = valueTaxedUptoOpening - openAdvanceBefore - invoicedBefore
-  // (computeDifferential's own identity, in reverse — WorkingUnit doesn't
-  // carry the raw opening figure, only what's derived from it).
-  const openingContribution = Math.round(
-    (wu.valueTaxedUptoOpening - wu.openAdvanceBefore - wu.invoicedBefore + Number.EPSILON) * 100,
-  ) / 100;
+  // The opening balance still unabsorbed at the BU month's opening.
+  const openingContribution = wu.openingOpenAdvanceBefore;
   if (wu.differentialValue <= 0 && openingContribution <= 0.005) {
     // The normal case the Dastavej page already assumes: ordinary advances
     // already cover the agreement value by the time the deed is executed.
