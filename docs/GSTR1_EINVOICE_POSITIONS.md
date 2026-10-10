@@ -4,7 +4,7 @@ How the app keeps each e-invoice's IRN on the GST portal when it pushes a
 client's GSTR-1. Read this before changing `src/lib/einvoice/einvoice.ts`,
 `src/lib/einvoice/excel.ts`, the e-invoice parts of the GSTR-1 page, the
 extension's GSTR-1 upload or e-invoice pull, or
-`supabase/migrations/20261010100000_einvoice_keep_irn.sql`.
+`supabase/migrations/20261013100000_einvoice_keep_irn.sql`.
 
 **Engineering wrote these positions on 10 Oct 2026 from GSTN's own documents
 and an audit of the live data. The firm has not signed them off yet, and
