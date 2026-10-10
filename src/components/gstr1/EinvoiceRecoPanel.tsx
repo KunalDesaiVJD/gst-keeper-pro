@@ -195,7 +195,11 @@ const pullLine = (p: EinvoicePullRow | null, x: EinvoicePullRow | null): { text:
     case 'ok':
       return { text: `Pulled ${when} · ${p.docs_found.toLocaleString('en-IN')} IRN${p.docs_found === 1 ? '' : 's'} on the portal${file}${age}`, tone: fresh ? 'muted' : 'warn' };
     case 'none':
-      return { text: `Pulled ${when} · no e-invoices on the portal for this period${file}${age}`, tone: fresh ? 'muted' : 'warn' };
+      // Extension 0.8.9 writes the file's document counts and the Excel's comparison in the message.
+      return {
+        text: `Pulled ${when} · ${/^The portal's GSTR-1/.test(p.message || '') ? p.message : 'no document in the portal\'s GSTR-1 for this period carries an IRN'}${/file generated/.test(p.message || '') ? '' : file}${age}`,
+        tone: fresh ? 'muted' : 'warn',
+      };
     case 'stale':
       return {
         text: `Last pull (${when}): the portal served an old file${p.generated_on ? `, generated ${fmtDay(p.generated_on)}` : ''}: generate a fresh one. `

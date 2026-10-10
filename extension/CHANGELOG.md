@@ -2,6 +2,27 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-10 — E-invoice pull says exactly what it read (v0.8.9)
+
+No database change. The GSTR-1 page shows the new message on the panel.
+
+- **Why.** For TAMNNA INFRASTRUCTURE (Sep-26) the pull said "No document in
+  the portal's GSTR-1 for this period carries an IRN", which read as "there
+  are no e-invoices", while the e-invoice Excel listed 2, auto-populated on
+  01-10-2026. Both were true: two uploads that day (17:51 and 17:57 IST, before
+  the client was marked an e-invoice client) had replaced them on GSTR-1, so
+  the portal no longer showed their IRN. The message did not say that.
+- **Now.** The pull's message gives the period, the date the portal generated
+  the file, how many documents it holds per table (B2B, CDNR, CDNUR, Exports)
+  and how many carry an IRN. When an e-invoice Excel was imported for the
+  month it adds how many of the Excel's e-invoices GSTR-1 holds with their IRN,
+  and that the rest were replaced by an upload or are not auto-populated yet.
+  For example: "The portal's GSTR-1 for 09/2026 (file generated 10-10-2026)
+  holds 2 documents (B2B 2); none carries an IRN, so none is on the portal as
+  an e-invoice. The e-invoice Excel imported for this month lists 2
+  e-invoices: 2 are not on GSTR-1 with an IRN (an upload replaced them, or
+  auto-population has not run yet)."
+
 ## 2026-10-10 — Never inside another client's session; impossible passwords; e-invoice pull waits (v0.8.8)
 
 No database or page change is needed for the extension; the GSTR-1 page's

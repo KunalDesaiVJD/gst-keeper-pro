@@ -199,6 +199,8 @@ async function dbFetch(url, init = {}) {
 const posts = (table) => calls.filter((c) => c.method === 'POST' && c.url.startsWith(DB + '/rest/v1/' + table));
 const dels = (table) => calls.filter((c) => c.method === 'DELETE' && c.url.startsWith(DB + '/rest/v1/' + table));
 const gets = (table) => calls.filter((c) => c.method === 'GET' && c.url.startsWith(DB + '/rest/v1/' + table));
+// The pull's own reads of the period's pulled rows (0.8.9 also reads the Excel's, once).
+const portalGets = () => gets('einvoice_docs').filter((c) => new URL(c.url).searchParams.get('source') === 'eq.portal_gstr1');
 const patches = (table) => calls.filter((c) => c.method === 'PATCH' && c.url.startsWith(DB + '/rest/v1/' + table));
 
 // ── chrome.* shared by the background worker and every page ─────────────────
@@ -460,7 +462,7 @@ await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', acto
   const v = posts('gstr1_upload_versions');
   const row = v[0] && v[0].body[0];
   ok(v.length === 1 && row.action_type === 'UPLOAD' && row.status === 'accepted', 'one UPLOAD version row');
-  ok(row && row.einvoice_kept === 6 && row.ext_version === MANIFEST_VERSION && MANIFEST_VERSION === '0.8.8', 'the UPLOAD row carries einvoice_kept 6 and ext_version 0.8.8 (the manifest)');
+  ok(row && row.einvoice_kept === 6 && row.ext_version === MANIFEST_VERSION && MANIFEST_VERSION === '0.8.9', 'the UPLOAD row carries einvoice_kept 6 and ext_version 0.8.9 (the manifest)');
   ok(row && JSON.stringify(row.payload) === JSON.stringify(BOOKS), 'its payload is still the stored books JSON');
 }
 
@@ -593,7 +595,7 @@ einvDb.push({ id: 'x-3', client_id: 'c9', period_month: '09/2026', source: 'port
   const lastSeen = rows[0].last_seen_at;
   ok(rows.every((r) => r.last_seen_at === lastSeen && 'gone_at' in r && r.gone_at === null), 'ok pull: every row carries the pull time and gone_at null');
   ok(dels('einvoice_docs').length === 0, 'ok pull: nothing is deleted');
-  const rd = gets('einvoice_docs');
+  const rd = portalGets();
   const q = rd[0] && new URL(rd[0].url).searchParams;
   ok(rd.length === 2 && q.get('client_id') === 'eq.c1' && q.get('period_month') === 'eq.09/2026' && q.get('source') === 'eq.portal_gstr1'
     && q.get('select') === 'id,section,ctin,doc_type,doc_key', 'ok pull: the period\'s portal_gstr1 rows are read by identity (one page, then an empty one)');
@@ -625,7 +627,7 @@ for (let k = 0; k < 250; k++) seed([{ id: 'g' + String(k).padStart(3, '0'), sect
   const d = await save();
   const pt = patches('einvoice_docs');
   const ids = pt.flatMap((c) => new URL(c.url).searchParams.get('id').replace(/^in\.\(|\)$/g, '').split(','));
-  ok(gets('einvoice_docs').length === 5, 'row cap 70: 255 rows read in 4 pages and an empty one');
+  ok(portalGets().length === 5, 'row cap 70: 255 rows read in 4 pages and an empty one');
   ok(pt.length === 3 && ids.length === 250 && new Set(ids).size === 250 && pt.every((c) => c.url.length < 4000), 'row cap 70: 250 rows marked in chunks of 100');
   ok(d.goneMarked === 250 && einvDb.filter((r) => r.id.startsWith('g')).every((r) => r.gone_at && r.gone_at === pullRow().body[0].pulled_at),
     'row cap 70: every one of them is marked, none missed');
@@ -640,6 +642,27 @@ seed([{ id: 'a-1', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc
   ok(d.status === 'none' && d.docsFound === 0 && posts('einvoice_docs').length === 0, 'none pull: nothing upserted');
   ok(d.goneMarked === 2 && einvDb.every((r) => r.gone_at === pullRow().body[0].pulled_at) && dels('einvoice_docs').length === 0,
     'none pull: the period\'s stored e-invoices are marked gone, not deleted');
+  ok(/^The portal's GSTR-1 for 09\/2026 \(file generated \d\d-\d\d-\d{4}\) holds 1 document \(B2B 1\); none carries an IRN, so none is on the portal as an e-invoice\./.test(d.message),
+    'none pull (0.8.9): the message gives the period, the file date, the documents per table and that none carries an IRN: ' + d.message);
+}
+// 0.8.9: the Excel imported for the month is compared with what the file holds.
+reset();
+seed([{ id: 'x-1', source: 'einvoice_excel', section: 'b2b', ctin: '24AIMPR8057L1ZJ', doc_type: 'INV', doc_key: 'TI/SGM/26-27/02' },
+  { id: 'x-2', source: 'einvoice_excel', section: 'b2b', ctin: '24AIMPR8057L1ZJ', doc_type: 'INV', doc_key: 'TI/SGM/26-27/03' }]);
+{
+  const d = await save({ json: { gstin: '24AAAAA0000A1Z5', fp: '092026', b2b: [{ ctin: '24AIMPR8057L1ZJ', inv: [{ inum: 'TI/SGM/26-27/02', val: 1 }, { inum: 'TI/SGM/26-27/03', val: 1 }] }],
+    cdnr: [{ ctin: '24AIMPR8057L1ZJ', nt: [{ nt_num: 'CN/1', val: 1 }] }] } });
+  ok(d.status === 'none' && /holds 3 documents \(B2B 2, CDNR 1\); none carries an IRN/.test(d.message)
+    && /The e-invoice Excel imported for this month lists 2 e-invoices: 2 are not on GSTR-1 with an IRN \(an upload replaced them, or auto-population has not run yet\)\./.test(d.message),
+    'Excel compared: 2 e-invoices in the Excel, neither on GSTR-1 with an IRN, said in numbers: ' + d.message);
+  ok(einvDb.filter((r) => r.source === 'einvoice_excel').every((r) => !r.gone_at), 'Excel compared: the Excel\'s records are never marked gone by a pull');
+}
+reset();
+seed([{ id: 'x-1', source: 'einvoice_excel', section: 'b2b', ctin: '24AIMPR8057L1ZJ', doc_type: 'INV', doc_key: 'TI/SGM/26-27/02' }]);
+{
+  const d = await save({ json: { gstin: '24AAAAA0000A1Z5', fp: '092026', b2b: [{ ctin: '24AIMPR8057L1ZJ', inv: [{ inum: 'TI/SGM/26-27/02', idt: '30-09-2026', val: 1, irn: 'abc', irngendate: '30-09-2026', srctyp: 'E-Invoice', itms: [] }] }] } });
+  ok(d.status === 'ok' && /holds 1 document \(B2B 1\); 1 carries an IRN \(on the portal as an e-invoice\)\. The e-invoice Excel imported for this month lists 1 e-invoice, on GSTR-1 with its IRN\./.test(d.message),
+    'Excel compared: the one e-invoice is on GSTR-1 with its IRN: ' + d.message);
 }
 
 // ── 6b. The file must be today's (E2) ─────────────────────────────────────────
