@@ -49,6 +49,7 @@ import { diffGstr1, summariseDiff } from '@/utils/gstReturnDiff';
 import ReturnDiffTable from '@/components/dialogs/ReturnDiffTable';
 import Gstr1ManualEntryPanel from '@/components/gstr1/Gstr1ManualEntryPanel';
 import EinvoiceRecoPanel from '@/components/gstr1/EinvoiceRecoPanel';
+import { ProblemLine } from '@/components/notices/ui/ProblemLine';
 import {
   extractDocs, isPullFresh, leaveOutKept, planEinvoiceUpload, reconcileEinvoice,
   type EinvRecoRow, type EinvUploadPlan, type EinvoiceDocRow,
@@ -102,10 +103,21 @@ const einvExtensionTooOldText = (v: string | null) =>
   `The browser extension is ${v ? `v${v}` : 'an older version'}; pushing an e-invoice client needs v${EINVOICE_MIN_EXTENSION} or later. `
   + 'An older copy ignores the plan and uploads every document, which would overwrite the e-invoices on the portal and drop their IRNs. '
   + 'Load the updated extension (chrome://extensions → Reload) and try again.';
+/** yyyy-mm-dd → "9 Oct 2026". */
+const fmtEinvDay = (iso: string) => {
+  const t = Date.parse(`${iso}T00:00:00Z`);
+  return Number.isFinite(t)
+    ? new Date(t).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+    : iso;
+};
+/** How staff make the portal generate today's GSTR-1 file, which a pull of an older one needs (§4.3). */
+const EINV_FRESH_FILE_STEPS = 'On the portal: Prepare Offline → Download → Generate JSON file to download, wait for the file to be generated, then pull again.';
 const einvNotFreshText = (p: EinvoicePullRow | null) => {
   const why = !p ? 'No e-invoice pull for this period yet.'
     : p.status === 'ok' || p.status === 'none' ? `The last pull was ${fmtEinvWhen(p.pulled_at)}, not today.`
-      : `The last pull (${fmtEinvWhen(p.pulled_at)}) did not finish (${p.status}).`;
+      : p.status === 'stale'
+        ? `The last pull (${fmtEinvWhen(p.pulled_at)}) got a GSTR-1 file the portal generated earlier${p.generated_on ? ` (on ${fmtEinvDay(p.generated_on)})` : ''}, so nothing was saved from it. ${EINV_FRESH_FILE_STEPS}`
+        : `The last pull (${fmtEinvWhen(p.pulled_at)}) did not finish (${p.status}).`;
   return `Pull e-invoices first (today). ${why} E-invoices reach the portal two days after their IRN, and one uploaded over first `
     + 'is never auto-populated, so what is left out must rest on a pull taken today. The e-invoice Excel does not stand in for the pull.';
 };
@@ -116,6 +128,52 @@ const einvBlockersText = (rows: EinvRecoRow[]) => {
   return `${rows.length} document${rows.length === 1 ? ' blocks' : 's block'} the push (changed after IRN, or number differs from the e-invoice): `
     + `${list}${rows.length > 6 ? `; and ${rows.length - 6} more` : ''}. Correct the books to the e-invoice (or the IRN on the IRP), then push.`;
 };
+const einvDocList = (rows: EinvRecoRow[], max = 6) =>
+  rows.slice(0, max).map(einvDocLabel).join('; ') + (rows.length > max ? `; and ${rows.length - max} more` : '');
+/** The push refused over documents whose e-invoice is pending auto-population (§4.5). */
+const einvPendingText = (rows: EinvRecoRow[]) =>
+  `${rows.length} document${rows.length === 1 ? ' is' : 's are'} in the books with an e-invoice still pending auto-population, not on the `
+  + `portal's draft yet: ${einvDocList(rows)}. Nothing was uploaded. Tick the box in the upload dialog to upload `
+  + `${rows.length === 1 ? 'it' : 'them'} now without the IRN (GSTN para 3(c)), or pull again once the portal shows ${rows.length === 1 ? 'it' : 'them'}, then push.`;
+/** What Version History records on the push's UPLOAD row when staff override the pending block (§4.5). */
+const einvPendingOverrideNote = (rows: EinvRecoRow[]) =>
+  `E-invoice override: ${rows.length} document${rows.length === 1 ? '' : 's'} pending auto-population uploaded from the books, `
+  + `so ${rows.length === 1 ? 'its' : 'their'} IRN is not linked (GSTN para 3(c)): ${einvDocList(rows, 10)}.`;
+/** Could not tell whether the client issues e-invoices (§4.6, §7): refuse rather than push it as one that does not. */
+const EINV_EVIDENCE_FAILED = 'Could not check whether this client issues e-invoices, so nothing was uploaded. Try again.';
+
+/**
+ * Appends `note` to the summary of the UPLOAD row a push wrote (the first
+ * one after `afterVersion`). The extension writes that row just before the
+ * result reaches the page, so it is looked for a few times. True when the
+ * row carries the note.
+ */
+async function noteOnUploadVersion(
+  o: { clientId: string; periodShort: string; afterVersion: number; note: string },
+  attempts = 8,
+): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    if (i) await new Promise((res) => setTimeout(res, 1500));
+    const { data, error } = await supabase
+      .from('gstr1_upload_versions')
+      .select('id, summary')
+      .eq('client_id', o.clientId)
+      .eq('period_month', o.periodShort)
+      .eq('action_type', 'UPLOAD')
+      .gt('version_number', o.afterVersion)
+      .order('version_number', { ascending: true })
+      .limit(1);
+    const row = !error && data ? data[0] : null;
+    if (!row) continue;
+    if ((row.summary || '').includes(o.note)) return true;
+    const { error: upError } = await supabase
+      .from('gstr1_upload_versions')
+      .update({ summary: row.summary ? `${row.summary} ${o.note}` : o.note })
+      .eq('id', row.id);
+    return !upError;
+  }
+  return false;
+}
 
 // gstr1_data stores period_month as the short label ("Jun-26"). The rest of
 // the app shares a single MonthContext value in "MM/YYYY" form, so convert
@@ -196,6 +254,9 @@ const filterRealErrors = (errors?: UploadErrorRow[] | null): UploadErrorRow[] =>
 
 interface UploadVersion {
   id: string;
+  client_id: string;
+  /** Short label ("Aug-26"), as gstr1_data. */
+  period_month: string;
   version_number: number;
   action_type: 'IMPORT' | 'UPLOAD' | 'REFRESH_ERRORS';
   actor_id: string | null;
@@ -350,6 +411,14 @@ const GSTR1DataPage: React.FC = () => {
   // Set while a push that carries an e-invoice plan is in flight, so its
   // result says how many e-invoices were left out, even none.
   const einvPlanSentRef = useRef(false);
+  // The upload dialog's override for documents whose e-invoice is pending
+  // auto-population (§4.5): the reconciliation keys staff ticked to upload
+  // without their IRN. A push re-reads the records, and any pending document
+  // not ticked here still blocks it.
+  const [einvPendingAck, setEinvPendingAck] = useState<string[] | null>(null);
+  // Set while a push that used that override is in flight: its UPLOAD row in
+  // Version History gets the note once the extension has written it.
+  const einvOverrideRef = useRef<{ clientId: string; periodMonth: string; periodShort: string; afterVersion: number; note: string } | null>(null);
 
   // Manual correction of an imported JSON's HSN (Table 12) and Documents
   // Issued (Table 13) sections. Tally's GSTR-1 export has produced malformed
@@ -506,6 +575,30 @@ const GSTR1DataPage: React.FC = () => {
   const einvoiceReason = einvEvidence?.clientId === selectedClient && einvEvidence.issues
     ? einvEvidence.reason
     : isEinvoiceTicked ? 'Ticked "E-invoice applicable"' : null;
+  /**
+   * The evidence read failed for a client that is not ticked: nobody knows
+   * whether it issues e-invoices, so the panel is hidden for want of an
+   * answer, not because it issues none. Push and Download JSON re-read it
+   * and refuse while it still fails (§7).
+   */
+  const einvEvidenceFailed = !isEinvoiceTicked && einvEvidence?.clientId === selectedClient && !!einvEvidence.failed
+    ? (einvEvidence.error || 'the read failed')
+    : null;
+
+  /**
+   * The evidence for a push or a download: the tick, or a fresh read
+   * whenever the cached answer is another client's or was not read from the
+   * evidence (a failed read is never trusted). null when the read failed and
+   * the client is not ticked: the caller refuses.
+   */
+  const einvoiceClientNow = useCallback(async (clientId: string): Promise<boolean | null> => {
+    if (isEinvoiceTicked) return true;
+    if (einvEvidence?.clientId === clientId && einvEvidence.fromEvidence) return einvEvidence.issues;
+    const seq = ++einvEvidenceSeq.current;
+    const ev = await fetchEinvoiceEvidence(clientId, false);
+    if (seq === einvEvidenceSeq.current && selectionRef.current.client === clientId) setEinvEvidence({ ...ev, clientId });
+    return ev.failed ? null : ev.issues;
+  }, [isEinvoiceTicked, einvEvidence]);
 
   // einvoice_docs / einvoice_pulls use MM/YYYY like the rest of the app. The
   // extension writes the pull; the page writes the Excel import.
@@ -546,6 +639,9 @@ const GSTR1DataPage: React.FC = () => {
   const einvPlan = useMemo<EinvUploadPlan>(() => planEinvoiceUpload(einvRows), [einvRows]);
   /** The push gate applies: an e-invoice client whose books have e-invoiceable documents. */
   const einvGate = isEinvoiceClient && booksHaveEinvoiceable(einvBooksDocs);
+  /** Every document whose e-invoice is pending is ticked for upload in the dialog (§4.5). */
+  const einvPendingAcked = einvPlan.pendingBlockers.length > 0
+    && einvPlan.pendingBlockers.every((r) => !!einvPendingAck?.includes(r.key));
 
   /**
    * Why the push is refused for an e-invoice client (§4), in the order staff
@@ -558,23 +654,40 @@ const GSTR1DataPage: React.FC = () => {
     if (!extVersion || compareVersions(extVersion, EINVOICE_MIN_EXTENSION) < 0) {
       blocks.push({ key: 'ext', text: einvExtensionTooOldText(extVersion) });
     }
-    if (!isPullFresh(einvPulledAt)) blocks.push({ key: 'pull', text: einvNotFreshText(einvoicePull) });
+    if (!isPullFresh(einvoicePull)) blocks.push({ key: 'pull', text: einvNotFreshText(einvoicePull) });
     if (einvPlan.blockers.length) blocks.push({ key: 'blockers', text: einvBlockersText(einvPlan.blockers) });
+    if (einvPlan.pendingBlockers.length && !einvPendingAcked) blocks.push({ key: 'pending', text: einvPendingText(einvPlan.pendingBlockers) });
     return blocks;
-  }, [einvGate, extVersion, einvPulledAt, einvoicePull, einvPlan]);
+  }, [einvGate, extVersion, einvoicePull, einvPlan, einvPendingAcked]);
 
   /**
-   * A push that reached the portal (accepted or partial) with no pull since:
-   * when it was pushed, so the panel asks for a pull to confirm the IRNs.
+   * A push that reached the portal with no successful pull since: when it
+   * was pushed, so the panel asks for a pull to confirm the IRNs. Read from
+   * Version History, not gstr1_data.last_uploaded_at (Refresh errors
+   * rewrites that): the newest UPLOAD row from extension 0.8.7 or later (or
+   * one that records einvoice_kept) that was accepted or partial, or a
+   * failed one whose outcome a later Refresh errors found accepted or
+   * partial.
    */
   const einvPushedWithoutRepull = useMemo(() => {
-    if (!isEinvoiceClient || !gstr1Data?.last_uploaded_at) return null;
-    if (gstr1Data.last_upload_status !== 'accepted' && gstr1Data.last_upload_status !== 'partial') return null;
-    const pushed = Date.parse(gstr1Data.last_uploaded_at);
-    const pulled = einvoicePull ? Date.parse(einvoicePull.pulled_at) : NaN;
-    if (Number.isFinite(pulled) && pulled > pushed && (einvoicePull?.status === 'ok' || einvoicePull?.status === 'none')) return null;
-    return gstr1Data.last_uploaded_at;
-  }, [isEinvoiceClient, gstr1Data, einvoicePull]);
+    if (!isEinvoiceClient || !selectedClient || !selectedMonth) return null;
+    const short = mmYyyyToShort(selectedMonth);
+    const mine = versions.filter((v) => v.client_id === selectedClient && v.period_month === short); // newest first
+    const reached = (s: string | null) => s === 'accepted' || s === 'partial';
+    let pushedAt: string | null = null;
+    for (let i = 0; i < mine.length && !pushedAt; i++) {
+      const v = mine[i];
+      if (v.action_type !== 'UPLOAD') continue;
+      const keepAware = v.einvoice_kept != null || (!!v.ext_version && compareVersions(v.ext_version, EINVOICE_MIN_EXTENSION) >= 0);
+      if (!keepAware) continue;
+      const after = i > 0 ? mine[i - 1] : null;
+      if (reached(v.status) || (v.status === 'failed' && after?.action_type === 'REFRESH_ERRORS' && reached(after.status))) pushedAt = v.action_at;
+    }
+    if (!pushedAt) return null;
+    const pulledAt = successfulPullAt(einvoicePull);
+    if (pulledAt && Date.parse(pulledAt) > Date.parse(pushedAt)) return null;
+    return pushedAt;
+  }, [isEinvoiceClient, selectedClient, selectedMonth, versions, einvoicePull]);
 
   /** Was the stored return produced by Builder Returns rather than uploaded? */
   const isBuilderGenerated = useMemo(
@@ -806,7 +919,10 @@ const GSTR1DataPage: React.FC = () => {
     setHsnEditMode(false); setHsnEditRows([]);
     setDocEditMode(false); setDocEditRows([]);
     setIsPullingEinv(false);
+    setEinvPendingAck(null);
   }, [selectedClient, selectedMonth]);
+  // The pending override is ticked afresh each time the upload dialog opens.
+  useEffect(() => { if (!uploadDialogOpen) setEinvPendingAck(null); }, [uploadDialogOpen]);
 
   // An upload, NIL push or Refresh that never reports back (a closed tab or
   // a dead end on an extension before 0.8.6) must not leave the buttons
@@ -817,6 +933,11 @@ const GSTR1DataPage: React.FC = () => {
       setIsUploading(false);
       nilPushRef.current = false;
       einvPlanSentRef.current = false;
+      // No result, but the push may have reached the portal: one last look
+      // for its UPLOAD row to record the pending override on.
+      const ov = einvOverrideRef.current;
+      einvOverrideRef.current = null;
+      if (ov) void noteOnUploadVersion(ov, 1);
       toast.warning('No result from the browser extension after 20 minutes. Check the GST portal tab and Version History before uploading again.', { duration: 20000 });
     }, UPLOAD_WATCHDOG_MS);
     return () => clearTimeout(t);
@@ -859,7 +980,8 @@ const GSTR1DataPage: React.FC = () => {
       if (d.__gstkEinvoicePullDone) {
         const r = d.__gstkEinvoicePullDone as {
           ok: boolean;
-          status?: 'ok' | 'none' | 'pending' | 'failed';
+          // 'stale': the portal served a file generated before today; nothing was saved or marked.
+          status?: 'ok' | 'none' | 'pending' | 'failed' | 'stale';
           docsFound?: number;
           staleRemoved?: number;
           message?: string;
@@ -881,13 +1003,17 @@ const GSTR1DataPage: React.FC = () => {
         }
         setIsPullingEinv(false);
         const n = r.docsFound ?? 0;
+        // From 0.8.7 the pull marks (gone_at), never deletes, the records an
+        // earlier pull saved that this one no longer saw on the draft.
         const stale = r.staleRemoved
-          ? ` ${r.staleRemoved.toLocaleString('en-IN')} e-invoice${r.staleRemoved === 1 ? '' : 's'} saved by an earlier pull ${r.staleRemoved === 1 ? 'is' : 'are'} no longer on the portal and ${r.staleRemoved === 1 ? 'was' : 'were'} removed.`
+          ? ` ${r.staleRemoved.toLocaleString('en-IN')} e-invoice${r.staleRemoved === 1 ? '' : 's'} saved by an earlier pull ${r.staleRemoved === 1 ? 'is' : 'are'} no longer on the portal's draft: kept with ${r.staleRemoved === 1 ? 'its' : 'their'} IRN and shown as IRN lost.`
           : '';
         if (r.tabClosed) toast.warning(r.message || 'The portal tab was closed before the e-invoice pull finished. Nothing was saved; pull again.', { duration: 15000 });
-        else if (r.status === 'ok') toast.success(`E-invoices pulled — ${n.toLocaleString('en-IN')} IRN${n === 1 ? '' : 's'} on the portal.${stale}`);
-        else if (r.status === 'none') toast.info(`No e-invoices on the portal for this period.${stale}`);
-        else if (r.status === 'pending') toast.warning(r.message || 'The portal is still preparing the data — pull again in a few minutes.');
+        else if (r.status === 'ok') toast.success(`E-invoices pulled — ${n.toLocaleString('en-IN')} IRN${n === 1 ? '' : 's'} on the portal.${stale}`, stale ? { duration: 15000 } : undefined);
+        else if (r.status === 'none') toast.info(`No e-invoices on the portal for this period.${stale}`, stale ? { duration: 15000 } : undefined);
+        else if (r.status === 'stale') {
+          toast.warning(r.message || `The portal served a GSTR-1 file generated before today, so nothing was saved from it. ${EINV_FRESH_FILE_STEPS}`, { duration: 25000 });
+        } else if (r.status === 'pending') toast.warning(r.message || 'The portal is still preparing the data — pull again in a few minutes.');
         else toast.error('E-invoice pull failed: ' + (r.message || 'unknown error'));
         fetchEinvoice();
         fetchEinvoiceEvidenceForClient();
@@ -913,6 +1039,22 @@ const GSTR1DataPage: React.FC = () => {
         nilPushRef.current = false;
         const sentPlan = einvPlanSentRef.current;
         einvPlanSentRef.current = false;
+        // A push that uploaded pending e-invoices on the override (§4.5): its
+        // UPLOAD row says so. Only a result that wrote a row (the portal
+        // answered, or the tab closed after the file was attached) has one.
+        const override = einvOverrideRef.current;
+        if (override && !wasNil && r.status !== 'pending'
+          && (!r.clientId || (r.clientId === override.clientId && r.period_month === override.periodMonth))) {
+          einvOverrideRef.current = null;
+          if (r.ok || r.tabClosed || r.summary) {
+            void noteOnUploadVersion(override).then((noted) => {
+              if (!noted && r.ok) {
+                toast.warning(`Version History could not record the e-invoice override on this upload. For the record: ${override.note}`, { duration: 20000 });
+              }
+              fetchVersions();
+            });
+          }
+        }
         // 0.8.6 names the return the result is for. One for another client or
         // month (the selection changed while the portal tab ran) belongs to
         // that return: the extension already wrote it to that return's
@@ -1197,13 +1339,17 @@ const GSTR1DataPage: React.FC = () => {
       return;
     }
     // E-invoice client (§7), decided now: the evidence may still be loading,
-    // or be another client's. The gate applies when the books have
-    // e-invoiceable documents: extension 0.8.7 or later, and a pull taken
-    // today, read afresh (§4). Clients that are not e-invoice clients go up
-    // exactly as before.
-    let einvClient = isEinvoiceClient;
-    if (!einvClient && einvEvidence?.clientId !== selectedClient) {
-      einvClient = isEinvoiceTicked || (await fetchEinvoiceEvidence(selectedClient, isEinvoiceTicked)).issues;
+    // be another client's, or have failed. It is read again unless the tick
+    // or a successful read of the evidence for this client decides; if that
+    // read fails too, a client that is not ticked is not pushed (it may
+    // issue e-invoices, and the push would overwrite them). The gate applies
+    // when the books have e-invoiceable documents: extension 0.8.7 or later,
+    // and a pull taken today, read afresh (§4). Clients that are not
+    // e-invoice clients go up exactly as before.
+    const einvClient = await einvoiceClientNow(selectedClient);
+    if (einvClient == null) {
+      toast.error(EINV_EVIDENCE_FAILED, { duration: 15000 });
+      return;
     }
     const einvApplies = einvClient && booksHaveEinvoiceable(extractDocs(gstr1Data.raw_json));
     let einvRecords: EinvoiceRecords | null = null;
@@ -1221,7 +1367,7 @@ const GSTR1DataPage: React.FC = () => {
       setEinvoiceDocs(einvRecords.docs);
       setEinvoicePull(einvRecords.pull);
       setEinvoiceExcel(einvRecords.excel);
-      if (!isPullFresh(successfulPullAt(einvRecords.pull))) {
+      if (!isPullFresh(einvRecords.pull)) {
         toast.error(einvNotFreshText(einvRecords.pull), { duration: 20000 });
         return;
       }
@@ -1230,8 +1376,10 @@ const GSTR1DataPage: React.FC = () => {
     // the stored row, and the Table 12 correction below writes this copy back.
     // If another tab or a colleague saved the return since the page loaded,
     // reload it and let the user look again rather than overwrite their work.
+    // Its updated_at is the version the e-invoice plan rests on: extension
+    // 0.8.7 refuses the push if the stored row has changed since (§1).
     const { data: stored, error: readError } = await supabase
-      .from('gstr1_data').select('raw_json').eq('id', gstr1Data.id).maybeSingle();
+      .from('gstr1_data').select('raw_json, updated_at').eq('id', gstr1Data.id).maybeSingle();
     if (readError || !stored) {
       toast.error('Could not read the stored return, so nothing was uploaded: ' + (readError?.message || 'it is no longer there.'));
       return;
@@ -1299,17 +1447,19 @@ const GSTR1DataPage: React.FC = () => {
       return;
     }
     let draftJson = gstr1Data.raw_json;
+    let basisUpdatedAt: string | null = stored.updated_at ?? null;
     if (tidy.changed || hsnFix.changed) {
       const { data: saved, error: saveError } = await supabase
         .from('gstr1_data')
         .update({ raw_json: hsnFix.json, updated_at: new Date().toISOString() })
         .eq('id', gstr1Data.id)
-        .select('id');
+        .select('id, updated_at');
       if (saveError || !saved || saved.length === 0) {
         toast.error('Could not save the corrections for the portal, so nothing was uploaded: ' + (saveError?.message || 'the database returned no row.'));
         return;
       }
       draftJson = hsnFix.json;
+      basisUpdatedAt = saved[0].updated_at ?? null;
       const fixes = [...tidy.notes, ...(hsnFix.changed ? [describeHsnFixes(hsnFix)] : [])].join(' ');
       toast.info(fixes, { duration: 12000 });
       await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: `Corrected for the portal before upload: ${fixes}`, payload: hsnFix.json });
@@ -1328,20 +1478,31 @@ const GSTR1DataPage: React.FC = () => {
     if (check.warnings.length) toast.warning(describeGstr1Issues(check.warnings), { duration: 15000 });
 
     // E-invoices (§1, §4): the plan, on the JSON the extension will upload and
-    // the records just read. Changed after IRN and number differs block; the
-    // rest of the plan names, by exact identity, the documents to leave out
-    // so the portal keeps its own record with the IRN. An e-invoice client
-    // with no e-invoiceable document sends an empty plan, recorded as 0.
-    let einvoicePlan: { keep: EinvUploadPlan['keep']; planAt: string } | null = null;
+    // the records just read. Changed after IRN and number differs block; so
+    // do documents whose e-invoice is pending auto-population, unless every
+    // one of them was ticked in the dialog to go up without its IRN. The rest
+    // of the plan names, by exact identity, the documents to leave out so the
+    // portal keeps its own record with the IRN. basisUpdatedAt is the stored
+    // row's version the plan was made on. An e-invoice client with no
+    // e-invoiceable document sends an empty plan, recorded as 0.
+    let einvoicePlan: { keep: EinvUploadPlan['keep']; planAt: string; basisUpdatedAt: string | null } | null = null;
+    let pendingOverridden: EinvRecoRow[] = [];
     if (einvApplies && einvRecords) {
       const plan = planEinvoiceUpload(reconcileEinvoice(extractDocs(draftJson), einvRecords.docs, { pulledAt: successfulPullAt(einvRecords.pull) }));
       if (plan.blockers.length) {
         toast.error(einvBlockersText(plan.blockers), { duration: 20000 });
         return;
       }
-      einvoicePlan = { keep: plan.keep, planAt: new Date().toISOString() };
+      const ticked = new Set(einvPendingAck || []);
+      const unticked = plan.pendingBlockers.filter((r) => !ticked.has(r.key));
+      if (unticked.length) {
+        toast.error(einvPendingText(unticked), { duration: 20000 });
+        return;
+      }
+      pendingOverridden = plan.pendingBlockers;
+      einvoicePlan = { keep: plan.keep, planAt: new Date().toISOString(), basisUpdatedAt };
     } else if (einvClient) {
-      einvoicePlan = { keep: [], planAt: new Date().toISOString() };
+      einvoicePlan = { keep: [], planAt: new Date().toISOString(), basisUpdatedAt };
     }
 
     // Advance set-off. Last of the pre-flight checks and the only one that can
@@ -1362,6 +1523,25 @@ const GSTR1DataPage: React.FC = () => {
       return;
     }
 
+    // The override goes on record on this push's UPLOAD row: the first one
+    // after the newest version now (the corrections above wrote theirs).
+    einvOverrideRef.current = null;
+    if (pendingOverridden.length) {
+      const periodShort = mmYyyyToShort(selectedMonth);
+      const { data: lastV } = await supabase
+        .from('gstr1_upload_versions')
+        .select('version_number')
+        .eq('client_id', selectedClient)
+        .eq('period_month', periodShort)
+        .order('version_number', { ascending: false })
+        .limit(1);
+      const afterVersion = lastV?.[0]?.version_number
+        ?? versions.reduce((m, v) => Math.max(m, v.version_number || 0), 0);
+      einvOverrideRef.current = {
+        clientId: selectedClient, periodMonth: selectedMonth, periodShort, afterVersion, note: einvPendingOverrideNote(pendingOverridden),
+      };
+    }
+
     setIsUploading(true);
     setUploadResult(null);
     setUploadDialogOpen(false);
@@ -1372,7 +1552,8 @@ const GSTR1DataPage: React.FC = () => {
           clientId: selectedClient,
           period_month: selectedMonth,
           actorId: user?.id ?? null,
-          // 0.8.7: documents to leave out so the portal keeps their IRN.
+          // 0.8.7: documents to leave out so the portal keeps their IRN, and
+          // the stored row's updated_at the plan was made on.
           ...(einvoicePlan ? { einvoice: einvoicePlan } : {}),
         },
       },
@@ -1382,6 +1563,9 @@ const GSTR1DataPage: React.FC = () => {
       'Opening the GST portal in a new tab — clear the CAPTCHA and let the upload run. Progress will appear here.'
       + (einvoicePlan && einvoicePlan.keep.length
         ? ` ${einvoicePlan.keep.length.toLocaleString('en-IN')} e-invoice${einvoicePlan.keep.length === 1 ? '' : 's'} will be left out so the portal keeps ${einvoicePlan.keep.length === 1 ? 'its' : 'their'} IRN.`
+        : '')
+      + (pendingOverridden.length
+        ? ` ${pendingOverridden.length.toLocaleString('en-IN')} document${pendingOverridden.length === 1 ? '' : 's'} pending auto-population will be uploaded without ${pendingOverridden.length === 1 ? 'its' : 'their'} IRN, as you chose; Version History records it.`
         : ''),
     );
   };
@@ -1489,7 +1673,6 @@ const GSTR1DataPage: React.FC = () => {
     const label = mmYyyyToShort(periodMonth);
     const n = (x: number) => x.toLocaleString('en-IN');
     setIsImportingEinvExcel(true);
-    let saved = false;
     try {
       const files = await readEinvoiceExcelFile(file);
       const parsed = parseEinvoiceExcelFiles(files, client?.gstin || null);
@@ -1535,17 +1718,19 @@ const GSTR1DataPage: React.FC = () => {
       const message = `${n(parsed.docs.length)} e-invoice(s) from ${file.name}: ${n(parsed.cancelled)} cancelled skipped, `
         + `${n(parsed.pending)} pending, ${n(parsed.failed)} failed, ${n(parsed.sheetsSkipped.length)} sheet(s) and ${n(parsed.rowsSkipped.length)} row(s) skipped.`;
       const { inserted } = await saveEinvoiceExcelImport({ clientId, periodMonth, actorId: user?.id ?? null, docs: parsed.docs, message });
-      saved = true;
       toast.success(`E-invoice Excel imported — ${n(inserted)} document${inserted === 1 ? '' : 's'} for ${client?.name || 'the client'} · ${label}.`);
       if (parsed.failed) toast.warning(`${n(parsed.failed)} e-invoice${parsed.failed === 1 ? '' : 's'} failed auto-population: ${parsed.failed === 1 ? 'that document goes' : 'those documents go'} up from the books without the IRN.`, { duration: 15000 });
     } catch (err) {
       toast.error('Could not import the e-invoice Excel: ' + (err instanceof Error ? err.message : (err as { message?: string })?.message || String(err)), { duration: 15000 });
     } finally {
       setIsImportingEinvExcel(false);
-      // Re-read only if the page still shows that return (the import can
-      // outlast a change of client or month; this closure's fetchers would
-      // load the old one's records over the new one's).
-      if (saved && selectionRef.current.client === clientId && selectionRef.current.month === periodMonth) {
+      // Re-read whatever happened, so the panel and the upload dialog never
+      // show records that are gone (the import replaces them in one
+      // transaction, so a failure leaves the earlier set). Only if the page
+      // still shows that return: the import can outlast a change of client or
+      // month, and this closure's fetchers would load the old one's records
+      // over the new one's.
+      if (selectionRef.current.client === clientId && selectionRef.current.month === periodMonth) {
         fetchEinvoice();
         fetchEinvoiceEvidenceForClient();
       }
@@ -1690,10 +1875,34 @@ const GSTR1DataPage: React.FC = () => {
 
   // Re-download the stored GSTR-1 JSON exactly as imported — this is the same
   // file format the GST portal accepts for upload.
-  const handleDownloadJson = () => {
+  const handleDownloadJson = async () => {
     if (!gstr1Data?.raw_json) {
       toast.error('No GSTR-1 JSON to download.');
       return;
+    }
+    const clientId = selectedClient;
+    const periodMonth = selectedMonth;
+    // E-invoice client (§7), as the push decides it: a failed evidence read
+    // is read again, and a client that is not ticked is refused while it
+    // still fails (the file would carry every e-invoice).
+    const einvClient = clientId ? await einvoiceClientNow(clientId) : false;
+    if (einvClient == null) {
+      toast.error(EINV_EVIDENCE_FAILED.replace('uploaded', 'downloaded'), { duration: 15000 });
+      return;
+    }
+    // Its e-invoice records, read afresh like the push's.
+    let einvRecords: EinvoiceRecords | null = null;
+    if (einvClient && clientId && periodMonth) {
+      try {
+        einvRecords = await loadEinvoiceRecords(clientId, periodMonth);
+      } catch (err) {
+        toast.error('Could not read the e-invoice records, so nothing was downloaded: ' + (err instanceof Error ? err.message : (err as { message?: string })?.message || String(err)));
+        return;
+      }
+      if (selectionRef.current.client !== clientId || selectionRef.current.month !== periodMonth) return;
+      setEinvoiceDocs(einvRecords.docs);
+      setEinvoicePull(einvRecords.pull);
+      setEinvoiceExcel(einvRecords.excel);
     }
     // Strip this app's own provenance fields (_source/_generated_at) — the
     // portal's upload schema doesn't recognise them, and a strict validator
@@ -1705,14 +1914,36 @@ const GSTR1DataPage: React.FC = () => {
     let portalJson: unknown = hsnFix.json;
     // An e-invoice client's file leaves out, like the push, the documents the
     // portal already holds as e-invoices (§1): uploaded by hand, a copy would
-    // overwrite the e-invoice and drop its IRN.
-    let einvLeftOut: number | null = null;
-    if (isEinvoiceClient) {
-      const plan = planEinvoiceUpload(reconcileEinvoice(extractDocs(portalJson), einvoiceDocs, { pulledAt: einvPulledAt }));
+    // overwrite the e-invoice and drop its IRN. It plans on whatever records
+    // there are, even without a pull today (leaving out nothing would wipe
+    // every auto-populated IRN), and the toast says on what evidence (§5, Download JSON).
+    let einvLeftOut: { removed: number; byPull: number; byExcel: number; byBooksIrn: number; fresh: boolean; pulledAt: string | null } | null = null;
+    let einvFileWarnings: string[] = [];
+    if (einvRecords) {
+      const pulledAt = successfulPullAt(einvRecords.pull);
+      const rows = reconcileEinvoice(extractDocs(portalJson), einvRecords.docs, { pulledAt });
+      const plan = planEinvoiceUpload(rows);
       const res = leaveOutKept(portalJson, plan.keep);
       portalJson = res.json;
-      einvLeftOut = res.removed;
+      const kept = rows.filter((r) => r.books && (r.status === 'matched' || r.status === 'books_irn'));
+      einvLeftOut = {
+        removed: res.removed,
+        byBooksIrn: kept.filter((r) => r.status === 'books_irn').length,
+        byExcel: kept.filter((r) => r.status === 'matched' && r.einv?.source === 'einvoice_excel').length,
+        byPull: kept.filter((r) => r.status === 'matched' && r.einv?.source !== 'einvoice_excel').length,
+        fresh: isPullFresh(einvRecords.pull),
+        pulledAt,
+      };
       if (plan.blockers.length) toast.warning(`${einvBlockersText(plan.blockers)} The file carries ${plan.blockers.length === 1 ? 'it' : 'them'} as in the books.`, { duration: 20000 });
+      const n = (x: number) => x.toLocaleString('en-IN');
+      einvFileWarnings = [
+        plan.pendingBlockers.length > 0
+          && `${n(plan.pendingBlockers.length)} document${plan.pendingBlockers.length === 1 ? '' : 's'} whose e-invoice is pending auto-population ${plan.pendingBlockers.length === 1 ? 'is' : 'are'} in the file: uploaded, ${plan.pendingBlockers.length === 1 ? 'its' : 'their'} IRN will not be linked (GSTN para 3(c)). To keep it, pull again once the portal shows ${plan.pendingBlockers.length === 1 ? 'it' : 'them'} and download again.`,
+        plan.warnings.missingFromReturn.length > 0
+          && `${n(plan.warnings.missingFromReturn.length)} e-invoice${plan.warnings.missingFromReturn.length === 1 ? ' is' : 's are'} in neither the books nor the portal draft and will be missing from GSTR-1 unless added to the books (or the IRN was cancelled).`,
+        plan.warnings.shippingBill.length > 0
+          && `${n(plan.warnings.shippingBill.length)} export${plan.warnings.shippingBill.length === 1 ? '' : 's'} left out to keep the IRN ${plan.warnings.shippingBill.length === 1 ? 'has' : 'have'} a shipping bill in the books that the e-invoice lacks: add it on the portal or through Table 9A.`,
+      ].filter(Boolean) as string[];
     }
     const blob = new Blob([JSON.stringify(portalJson)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1726,11 +1957,35 @@ const GSTR1DataPage: React.FC = () => {
     a.remove();
     URL.revokeObjectURL(url);
     toast.success('GSTR-1 JSON downloaded.');
-    if (einvLeftOut != null && einvGate) {
-      toast.info(`${einvLeftOut.toLocaleString('en-IN')} e-invoice${einvLeftOut === 1 ? '' : 's'} left out of the file so the portal keeps ${einvLeftOut === 1 ? 'its' : 'their'} IRN.`, { duration: 12000 });
-      if (!isPullFresh(einvPulledAt)) {
-        toast.warning('E-invoices were not pulled today, so the file leaves out only what the last pull (if any) showed. Pull e-invoices and download again before uploading it on the portal.', { duration: 20000 });
+    if (einvLeftOut && einvRecords && booksHaveEinvoiceable(extractDocs(gstr1Data.raw_json))) {
+      // Exactly what was left out, and on whose word (§5, Download JSON).
+      const { removed, byPull, byExcel, byBooksIrn, fresh, pulledAt } = einvLeftOut;
+      const n = (x: number) => x.toLocaleString('en-IN');
+      const docs = (x: number) => `${n(x)} document${x === 1 ? '' : 's'}`;
+      const evidence = [
+        byPull > 0 && `${fresh ? "today's pull" : 'the last pull'}${pulledAt ? ` of ${fmtEinvWhen(pulledAt)}` : ''} (${n(byPull)})`,
+        byExcel > 0 && `the e-invoice Excel (${n(byExcel)})`,
+        byBooksIrn > 0 && `the IRN in the books JSON (${n(byBooksIrn)})`,
+      ].filter(Boolean).join(', ');
+      if (fresh) {
+        toast.info(removed
+          ? `${docs(removed)} left out of the file so the portal keeps ${removed === 1 ? 'its' : 'their'} IRN, on the word of ${evidence}.`
+          : `Nothing left out of the file: today's pull${pulledAt ? ` of ${fmtEinvWhen(pulledAt)}` : ''} showed no document of the books on the portal's draft as an e-invoice.`,
+        { duration: 15000 });
+      } else if (removed) {
+        toast.warning(
+          `E-invoices were not pulled today. The file leaves out ${docs(removed)} on the word of ${evidence}. A document edited or deleted `
+          + 'on the portal since then would be missing from the return. Pull e-invoices and download again before uploading it on the portal.',
+          { duration: 25000 },
+        );
+      } else {
+        toast.warning(
+          'E-invoices were not pulled today and the file leaves nothing out: uploaded on the portal, it would overwrite every e-invoice '
+          + 'already there and drop its IRN. Pull e-invoices and download again before uploading it on the portal.',
+          { duration: 25000 },
+        );
       }
+      if (einvFileWarnings.length) toast.warning(einvFileWarnings.join(' '), { duration: 25000 });
     }
     if (tidy.changed) toast.info(`${tidy.notes.join(' ')} (in the downloaded file; the saved return is corrected when you upload)`, { duration: 12000 });
     if (hsnFix.changed) toast.info(`${describeHsnFixes(hsnFix)} (in the downloaded file; the saved return is corrected when you upload)`, { duration: 12000 });
@@ -2363,6 +2618,18 @@ const GSTR1DataPage: React.FC = () => {
         className="hidden"
         onChange={handleErrorReportChange}
       />
+      {isStaff && selectedClient && einvEvidenceFailed && (
+        <div className="flex flex-wrap items-center gap-2" data-testid="einvoice-evidence-failed">
+          <ProblemLine problems={[{
+            key: 'einv-evidence',
+            text: `Could not check whether this client issues e-invoices (${einvEvidenceFailed}): the e-invoice panel is hidden and Upload and Download JSON refuse until the check runs.`,
+          }]}
+          />
+          <Button variant="outline" size="sm" className={cn(WS_BTN, 'h-6 px-2 text-[11px]')} onClick={() => fetchEinvoiceEvidenceForClient()}>
+            Retry
+          </Button>
+        </div>
+      )}
       <input
         ref={einvExcelInputRef}
         type="file"
@@ -3855,7 +4122,7 @@ const GSTR1DataPage: React.FC = () => {
                 </div>
                 {einvGate && (
                   <div className="space-y-2" data-testid="einvoice-upload-plan">
-                    {einvPushBlocks.map((b) => (
+                    {einvPushBlocks.filter((b) => b.key !== 'pending').map((b) => (
                       <Note key={b.key} tone="warn">
                         {b.key === 'blockers' ? (
                           <>
@@ -3873,11 +4140,41 @@ const GSTR1DataPage: React.FC = () => {
                         ) : b.text}
                       </Note>
                     ))}
+                    {!einvPushBlocks.some((b) => b.key === 'pull') && einvPlan.pendingBlockers.length > 0 && (
+                      <Note tone="warn">
+                        <span className="font-medium">
+                          {einvPlan.pendingBlockers.length.toLocaleString('en-IN')} document{einvPlan.pendingBlockers.length === 1 ? ' is' : 's are'} in
+                          the books with an e-invoice still pending auto-population
+                        </span>
+                        : the portal&apos;s draft does not have {einvPlan.pendingBlockers.length === 1 ? 'it' : 'them'} yet, so{' '}
+                        {einvPlan.pendingBlockers.length === 1 ? 'it' : 'they'} cannot be left out, and the push is blocked until you choose.
+                        <span className="mt-1 block max-h-28 overflow-auto">
+                          {einvPlan.pendingBlockers.map((r) => (
+                            <span key={r.key} className="block">{einvDocLabel(r)}{r.einv?.irn_date ? ` · IRN of ${r.einv.irn_date}` : ''}</span>
+                          ))}
+                        </span>
+                        <label className="mt-2 flex cursor-pointer items-start gap-2 font-medium" data-testid="einvoice-pending-override">
+                          <Checkbox
+                            className="mt-0.5"
+                            checked={einvPendingAcked}
+                            onCheckedChange={(v) => setEinvPendingAck(v ? einvPlan.pendingBlockers.map((r) => r.key) : null)}
+                          />
+                          <span>
+                            {einvPlan.pendingBlockers.length === 1
+                              ? 'Upload this document now; its IRN'
+                              : `Upload these ${einvPlan.pendingBlockers.length.toLocaleString('en-IN')} documents now; their IRN`}
+                            {' '}will not be linked (GSTN para 3(c)). To keep the IRN, cancel, pull again once the portal
+                            shows {einvPlan.pendingBlockers.length === 1 ? 'it' : 'them'}, then push.
+                          </span>
+                        </label>
+                      </Note>
+                    )}
                     {!einvPushBlocks.some((b) => b.key === 'pull') && (
                       <Note tone="info" open>
                         <span className="font-medium tabular-nums">{einvPlan.keepCount.toLocaleString('en-IN')}</span>{' '}
-                        document{einvPlan.keepCount === 1 ? '' : 's'} already on the portal as e-invoices will be left out so the
-                        portal keeps {einvPlan.keepCount === 1 ? 'its' : 'their'} IRN;{' '}
+                        document{einvPlan.keepCount === 1 ? '' : 's'} on the portal as e-invoices (seen on the draft by the pull, or
+                        carrying {einvPlan.keepCount === 1 ? 'its' : 'their'} own IRN) will be left out so the portal keeps{' '}
+                        {einvPlan.keepCount === 1 ? 'its' : 'their'} IRN;{' '}
                         <span className="font-medium tabular-nums">{Math.max(0, einvBooksDocs.length - einvPlan.keepCount).toLocaleString('en-IN')}</span>{' '}
                         will be uploaded. Table 12 (HSN) and Table 13 go in full.
                         {einvPulledAt ? ` Planned on the pull of ${fmtEinvWhen(einvPulledAt)}.` : ''}
@@ -3885,12 +4182,14 @@ const GSTR1DataPage: React.FC = () => {
                     )}
                     {(() => {
                       const w = einvPlan.warnings;
-                      const pendingInBooks = w.pending.filter((r) => r.books).length;
+                      const n = (x: number) => x.toLocaleString('en-IN');
                       const lines = [
-                        w.notInBooks.length > 0 && `${w.notInBooks.length.toLocaleString('en-IN')} IRN not in books: the e-invoice stays on the portal and is filed with the return. The books miss a document, or the IRN should have been cancelled on the IRP.`,
-                        w.pending.length > 0 && `${w.pending.length.toLocaleString('en-IN')} pending auto-population: ${pendingInBooks.toLocaleString('en-IN')} in the books ${pendingInBooks === 1 ? 'is' : 'are'} left out and the portal adds ${pendingInBooks === 1 ? 'it' : 'them'} with the IRN; any not in the books will appear in GSTR-1 once auto-populated.`,
-                        w.autopopFailed.length > 0 && `${w.autopopFailed.length.toLocaleString('en-IN')} auto-population failed: the books document goes up without its IRN (see the error in the reconciliation).`,
-                        w.irnLost.length > 0 && `${w.irnLost.length.toLocaleString('en-IN')} IRN lost on the portal: the books document goes up; an upload cannot restore the IRN.`,
+                        w.notInBooks.length > 0 && `${n(w.notInBooks.length)} IRN not in books: the e-invoice stays on the portal and is filed with the return. The books miss a document, or the IRN should have been cancelled on the IRP.`,
+                        w.pending.length > 0 && `${n(w.pending.length)} e-invoice${w.pending.length === 1 ? ' is' : 's are'} pending auto-population and in neither the books nor the portal's draft yet: if GSTR-1 is filed before a pull shows ${w.pending.length === 1 ? 'it' : 'them'} on the draft, ${w.pending.length === 1 ? 'it is' : 'they are'} missing from it. Do not file until a pull shows ${w.pending.length === 1 ? 'it' : 'them'}, or add ${w.pending.length === 1 ? 'it' : 'them'} to the books.`,
+                        w.autopopFailed.length > 0 && `${n(w.autopopFailed.length)} auto-population failed: the books document goes up without its IRN (see the error in the reconciliation).`,
+                        w.irnLost.length > 0 && `${n(w.irnLost.length)} IRN lost on the portal: the books document goes up; an upload cannot restore the IRN.`,
+                        w.missingFromReturn.length > 0 && `${n(w.missingFromReturn.length)} e-invoice${w.missingFromReturn.length === 1 ? ' is' : 's are'} in neither the books nor the portal draft and will be missing from GSTR-1 unless added to the books (or the IRN was cancelled): ${einvDocList(w.missingFromReturn)}.`,
+                        w.shippingBill.length > 0 && `${n(w.shippingBill.length)} export${w.shippingBill.length === 1 ? '' : 's'} left out to keep the IRN ${w.shippingBill.length === 1 ? 'has' : 'have'} a shipping bill in the books that the e-invoice lacks (or differs): add the shipping bill on the portal or through Table 9A. ${w.shippingBill.map((r) => `${einvDocLabel(r)}: ${r.notes.join('; ')}`).join(' · ')}`,
                       ].filter(Boolean) as string[];
                       return lines.length > 0 && (
                         <Note tone="warn">

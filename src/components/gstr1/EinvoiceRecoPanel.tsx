@@ -13,7 +13,7 @@ import {
   isPullFresh, summariseReco,
   type EinvDoc, type EinvRecoRow, type EinvRecoStatus, type EinvUploadPlan, type EinvoiceDocRow,
 } from '@/lib/einvoice/einvoice';
-import { successfulPullAt, type EinvoicePullRow } from '@/lib/einvoice/einvoiceData';
+import type { EinvoicePullRow } from '@/lib/einvoice/einvoiceData';
 
 export type { EinvoicePullRow } from '@/lib/einvoice/einvoiceData';
 
@@ -50,11 +50,11 @@ const STATUS_LOOK: Record<EinvRecoStatus, {
   },
   pending: {
     tile: 'Pending auto-population',
-    atPush: 'Left out if in books; else added later',
+    atPush: 'Not on the draft yet: blocks the push',
     badge: 'Pending auto-population',
-    full: 'Pending auto-population — left out of the upload if the books have it with the same figures; if not, the portal adds it with its IRN',
-    variant: 'info',
-    tone: 'neutral',
+    full: 'Pending auto-population — the IRN is generated but the portal\'s draft does not have it yet. In the books, it blocks the push until a later pull shows it on the draft (or is uploaded without its IRN if you tick that in the upload dialog); not in the books, it is missing from GSTR-1 if the return is filed first',
+    variant: 'warning',
+    tone: 'warn',
   },
   not_einvoiced: {
     tile: 'No IRN found',
@@ -84,7 +84,7 @@ const STATUS_LOOK: Record<EinvRecoStatus, {
     tile: 'Auto-population failed',
     atPush: 'Uploaded without IRN',
     badge: 'Auto-population failed',
-    full: 'Auto-population failed — uploaded without IRN',
+    full: 'Auto-population failed — the books document is uploaded without its IRN; with no books copy it is in neither the upload nor the draft, so missing from GSTR-1',
     variant: 'warning',
     tone: 'warn',
   },
@@ -92,7 +92,7 @@ const STATUS_LOOK: Record<EinvRecoStatus, {
     tile: 'IRN lost on the portal',
     atPush: 'Uploaded; the IRN is not restored',
     badge: 'IRN lost on portal',
-    full: 'IRN lost on the portal — the latest pull no longer shows it as an e-invoice; uploaded from the books, which cannot restore the IRN',
+    full: 'IRN lost on the portal — the latest pull no longer shows it as an e-invoice; the books document is uploaded, which cannot restore the IRN; with no books copy it is missing from GSTR-1',
     variant: 'warning',
     tone: 'warn',
   },
@@ -108,11 +108,26 @@ const STATUS_LOOK: Record<EinvRecoStatus, {
 
 /** What the push does with one row, in a few words. */
 const atPushOf = (r: EinvRecoRow): string => {
-  if (r.status === 'pending') return r.books ? 'Left out (portal adds it)' : 'Added by the portal later';
+  if (r.status === 'pending') {
+    return r.books ? 'Blocks the push (or uploaded without its IRN)' : 'Not in books, not on the draft yet: do not file until a pull shows it';
+  }
   if (r.status === 'not_in_books') return 'Stays on the portal';
   if (r.status === 'mismatch' || r.status === 'number_differs') return 'Blocks the push';
   if (r.status === 'matched' || r.status === 'books_irn') return 'Left out (IRN kept)';
+  if ((r.status === 'autopop_failed' || r.status === 'irn_lost') && !r.books) return 'Not in books or on the draft: missing from GSTR-1';
   return 'Uploaded';
+};
+
+/** A tile's second line, split where the books decide what happens. */
+const tileHintOf = (s: EinvRecoStatus, rows: EinvRecoRow[], fallback: string): string => {
+  if (s !== 'pending' && s !== 'autopop_failed' && s !== 'irn_lost') return fallback;
+  const mine = rows.filter((r) => r.status === s);
+  const withBooks = mine.filter((r) => r.books).length;
+  const without = mine.length - withBooks;
+  if (!without) return fallback;
+  const n = (x: number) => x.toLocaleString('en-IN');
+  if (s === 'pending') return `${n(withBooks)} block the push · ${n(without)} not in books`;
+  return `${n(withBooks)} uploaded · ${n(without)} missing from GSTR-1`;
 };
 
 const TILE_ORDER: EinvRecoStatus[] = [
@@ -145,16 +160,32 @@ const taxOf = (d: EinvDoc | null) => (d ? d.igst + d.cgst + d.sgst + d.cess : nu
 const fmtWhen = (iso: string) =>
   new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 
+/** yyyy-mm-dd → "9 Oct 2026". */
+const fmtDay = (iso: string) => {
+  const t = Date.parse(`${iso}T00:00:00Z`);
+  return Number.isFinite(t)
+    ? new Date(t).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+    : iso;
+};
+
 const pullLine = (p: EinvoicePullRow | null): { text: string; tone: 'muted' | 'warn' | 'error' } => {
   if (!p) return { text: 'E-invoices not pulled yet for this period: pull them today before pushing.', tone: 'warn' };
   const when = fmtWhen(p.pulled_at);
-  const fresh = isPullFresh(successfulPullAt(p));
+  const fresh = isPullFresh(p);
   const age = fresh ? ' · today' : ' · not today: pull again before pushing';
+  // The date the portal generated the file the pull read (from its name).
+  const file = p.generated_on ? ` · portal file generated ${fmtDay(p.generated_on)}` : '';
   switch (p.status) {
     case 'ok':
-      return { text: `Pulled ${when} · ${p.docs_found.toLocaleString('en-IN')} IRN${p.docs_found === 1 ? '' : 's'} on the portal${age}`, tone: fresh ? 'muted' : 'warn' };
+      return { text: `Pulled ${when} · ${p.docs_found.toLocaleString('en-IN')} IRN${p.docs_found === 1 ? '' : 's'} on the portal${file}${age}`, tone: fresh ? 'muted' : 'warn' };
     case 'none':
-      return { text: `Pulled ${when} · no e-invoices on the portal for this period${age}`, tone: fresh ? 'muted' : 'warn' };
+      return { text: `Pulled ${when} · no e-invoices on the portal for this period${file}${age}`, tone: fresh ? 'muted' : 'warn' };
+    case 'stale':
+      return {
+        text: `Last pull (${when}): the portal served an old file${p.generated_on ? `, generated ${fmtDay(p.generated_on)}` : ''}: generate a fresh one. `
+          + 'On the portal: Prepare Offline → Download → Generate JSON file to download, wait for it, then pull again. Nothing was saved from the old file.',
+        tone: 'error',
+      };
     case 'pending':
       return { text: `Pull pending (${when})${p.message ? ` — ${p.message}` : ' — the portal is still preparing the data; pull again shortly.'}`, tone: 'warn' };
     case 'failed':
@@ -201,9 +232,10 @@ interface Props {
  * E-invoice (IRN) reconciliation for one client + period: the books JSON
  * against the e-invoices on the portal (the pull) and on the IRP (the
  * e-invoice Excel), and what the push does with each document. E-invoices
- * already on the portal with the same figures are left out of the upload,
- * so the portal keeps its own record with the IRN; the app never writes an
- * IRN into an upload.
+ * a pull showed on the portal's draft with the same figures are left out of
+ * the upload, so the portal keeps its own record with the IRN; one pending
+ * auto-population is never left out. The app never writes an IRN into an
+ * upload.
  */
 const EinvoiceRecoPanel: React.FC<Props> = ({
   rows, plan, einvoiceDocs, booksDocCount, lastPull, lastExcel, reason, pushedWithoutRepull,
@@ -238,6 +270,7 @@ const EinvoiceRecoPanel: React.FC<Props> = ({
       'E-invoice tax': r.einv ? taxOf(r.einv) : '',
       Differences: r.differences.join('; '),
       Status: STATUS_LOOK[r.status].full,
+      Notes: r.notes.join('; '),
       'At push': atPushOf(r),
       'E-invoice from': r.einv ? (SOURCE_LABEL[r.einv.source ?? 'portal_gstr1'] ?? r.einv.source ?? '') : (r.books?.irn ? 'Books JSON' : ''),
       IRN: r.einv?.irn || r.books?.irn || '',
@@ -336,7 +369,7 @@ const EinvoiceRecoPanel: React.FC<Props> = ({
           const look = STATUS_LOOK[s];
           const n = sum[SUM_KEY[s]];
           return tile(s, (
-            <KpiTile label={look.tile} value={n.toLocaleString('en-IN')} hint={look.atPush} tone={n ? look.tone : 'neutral'} />
+            <KpiTile label={look.tile} value={n.toLocaleString('en-IN')} hint={tileHintOf(s, rows, look.atPush)} tone={n ? look.tone : 'neutral'} />
           ), `Show: ${look.full}`);
         })}
       </div>
@@ -345,18 +378,39 @@ const EinvoiceRecoPanel: React.FC<Props> = ({
         <Note tone="warn">
           {plan.blockers.length.toLocaleString('en-IN')} document{plan.blockers.length === 1 ? ' blocks' : 's block'} the push.
           Correct the books to the e-invoice (or cancel and re-issue the IRN on the IRP within its window, or record the
-          difference by a credit or debit note), and correct a books number to the e-invoice&apos;s. The app never sends a
-          changed document as if it were the e-invoice.
+          difference by a credit or debit note), and correct a books number to the e-invoice&apos;s. A different reverse
+          charge, invoice type or e-commerce GSTIN counts as a difference: left out, the document would be filed as the
+          e-invoice has it. The app never sends a changed document as if it were the e-invoice.
+        </Note>
+      )}
+
+      {plan.pendingBlockers.length > 0 && (
+        <Note tone="warn">
+          {plan.pendingBlockers.length.toLocaleString('en-IN')} document{plan.pendingBlockers.length === 1 ? ' is' : 's are'} in
+          the books with an e-invoice still pending auto-population: the portal&apos;s draft does not have{' '}
+          {plan.pendingBlockers.length === 1 ? 'it' : 'them'} yet, so the push is blocked. To keep the IRN, pull again once the
+          portal shows {plan.pendingBlockers.length === 1 ? 'it' : 'them'} (two days after the IRN), then push. The upload dialog
+          also lets you upload {plan.pendingBlockers.length === 1 ? 'it' : 'them'} now from the books, without the IRN
+          (GSTN para 3(c)).
+        </Note>
+      )}
+
+      {plan.warnings.missingFromReturn.length > 0 && (
+        <Note tone="warn">
+          {plan.warnings.missingFromReturn.length.toLocaleString('en-IN')} e-invoice{plan.warnings.missingFromReturn.length === 1 ? ' is' : 's are'} in
+          neither the books nor the portal draft and will be missing from GSTR-1 unless added to the books (or the IRN was
+          cancelled).
         </Note>
       )}
 
       <Note tone="info">
-        On push, {plan.keepCount.toLocaleString('en-IN')} document{plan.keepCount === 1 ? '' : 's'} already on the portal as
+        On push, {plan.keepCount.toLocaleString('en-IN')} document{plan.keepCount === 1 ? '' : 's'} on the portal as
         e-invoices {plan.keepCount === 1 ? 'is' : 'are'} left out so the portal keeps {plan.keepCount === 1 ? 'its' : 'their'} IRN
-        {uploaded != null ? `; ${uploaded.toLocaleString('en-IN')} will be uploaded from the books` : ''}. Table 12 (HSN) and
-        Table 13 always go in full. An uploaded copy would overwrite the e-invoice and drop its IRN, so the app never re-sends
-        one and never writes an IRN into an upload. Changed after IRN and number differs block the push; the plan rests on a
-        pull taken today.
+        {uploaded != null ? `; ${uploaded.toLocaleString('en-IN')} will be uploaded from the books` : ''}. Only a document
+        a pull showed on the draft (or one carrying its own IRN) is left out; one still pending auto-population never is.
+        Table 12 (HSN) and Table 13 always go in full. An uploaded copy would overwrite the e-invoice and drop its IRN, so the
+        app never re-sends one and never writes an IRN into an upload. Changed after IRN, number differs and pending
+        auto-population block the push; the plan rests on a pull taken today, of a file the portal generated today.
         {booksDocCount == null ? ' No JSON is imported for this period, so every e-invoice shows as not in books.' : ''}
       </Note>
 
@@ -402,7 +456,7 @@ const EinvoiceRecoPanel: React.FC<Props> = ({
               const look = STATUS_LOOK[r.status];
               const irn = r.einv?.irn || r.books?.irn || '';
               const from = r.einv ? (SOURCE_LABEL[r.einv.source ?? 'portal_gstr1'] ?? r.einv.source) : (r.books?.irn ? 'Books JSON' : null);
-              const notes = [...r.differences, ...(r.einv?.error ? [`Error: ${r.einv.error}`] : [])];
+              const notes = [...r.differences, ...r.notes, ...(r.einv?.error ? [`Error: ${r.einv.error}`] : [])];
               const blocks = r.status === 'mismatch' || r.status === 'number_differs';
               return (
                 <tr key={r.key} className={WS_TR}>

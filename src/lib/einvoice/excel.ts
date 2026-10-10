@@ -33,10 +33,16 @@
 // own columns when the sheet has them; otherwise they are worked out from
 // Rate × Taxable value (× Applicable %), IGST for an inter-state supply,
 // SEZ or export, CGST + SGST halves within the state.
+//
+// "Reverse Charge", "E-Commerce GSTIN" and, on the exp sheet, "Shipping Bill
+// Number", "Shipping Bill Date" and "Port Code" are read too: the
+// reconciliation blocks a document whose reverse charge, type or e-commerce
+// GSTIN differs from the books, and warns about an export whose books
+// shipping bill the e-invoice lacks.
 
 import * as XLSX from 'xlsx';
 import {
-  exactDocNo,
+  exactDocNo, yesNo,
   type EinvAutopopStatus, type EinvDoc, type EinvDocType, type EinvIrnStatus, type EinvSection,
 } from './einvoice';
 
@@ -166,7 +172,8 @@ const normHeader = (h: string): string =>
 type Field =
   | 'irn' | 'irn_date' | 'irn_status' | 'autopop_status' | 'autopop_date' | 'error'
   | 'ctin' | 'doc_no' | 'doc_date' | 'doc_value' | 'pos' | 'diff' | 'inv_type' | 'note_type'
-  | 'rate' | 'taxable' | 'igst' | 'cgst' | 'sgst' | 'cess' | 'shipping';
+  | 'rate' | 'taxable' | 'igst' | 'cgst' | 'sgst' | 'cess'
+  | 'rchrg' | 'etin' | 'sbnum' | 'sbdt' | 'sbpcode';
 
 const DOC = '(invoice|note|document|doc|debit note credit note|credit note debit note|debit credit note|credit debit note|dr cr note|cr dr note|cdn)';
 
@@ -193,7 +200,11 @@ const FIELD_PATTERNS: [Field, (h: string) => boolean][] = [
   ['cgst', (h) => /^(central tax|cgst)( amount| amt| paid)?$/.test(h)],
   ['sgst', (h) => /^(state ut tax|state tax|ut tax|sgst|utgst|sgst utgst)( amount| amt| paid)?$/.test(h)],
   ['cess', (h) => /^cess( amount| amt| paid)?$/.test(h)],
-  ['shipping', (h) => /^(shipping bill|port code)/.test(h)],
+  ['rchrg', (h) => /^reverse charge/.test(h) || h === 'rchrg' || h === 'rcm'],
+  ['etin', (h) => /^(e ?commerce|ecom)( operator)? gstin( uin)?$/.test(h) || h === 'etin'],
+  ['sbnum', (h) => /^shipping bill( no| number| num)?$/.test(h)],
+  ['sbdt', (h) => /^shipping bill date$/.test(h)],
+  ['sbpcode', (h) => /^(port code|shipping port code)$/.test(h)],
 ];
 
 const IRN_HEADER = /^\s*IRN\s*$/i;
@@ -232,7 +243,8 @@ const sectionFromSheetName = (name: string): EinvSection | 'skip_hsn' | 'skip_in
 const sectionFromColumns = (cols: Partial<Record<Field, number>>, headerTexts: string[]): EinvSection | null => {
   const isNote = headerTexts.some((h) => /^(note|debit note credit note|credit note debit note|debit credit note|credit debit note|dr cr note) (number|no)$/.test(h));
   if (isNote) return cols.ctin !== undefined ? 'cdnr' : 'cdnur';
-  if (cols.shipping !== undefined || headerTexts.some((h) => /^export type$/.test(h))) return 'exp';
+  if (cols.sbnum !== undefined || cols.sbdt !== undefined || cols.sbpcode !== undefined
+    || headerTexts.some((h) => /^export type$/.test(h))) return 'exp';
   if (cols.ctin !== undefined) return 'b2b';
   return null;
 };
@@ -338,6 +350,11 @@ interface Line {
   autopop_text: string | null;
   autopop_date: string | null;
   error: string | null;
+  rchrg: string | null;
+  etin: string | null;
+  sbnum: string | null;
+  sbdt: string | null;
+  sbpcode: string | null;
 }
 
 /**
@@ -457,6 +474,11 @@ export function parseEinvoiceExcel(wb: XLSX.WorkBook, opts: EinvExcelOptions = {
           autopop_text: statusText || null,
           autopop_date: cellDate(get(r, 'autopop_date')),
           error: errorText || null,
+          rchrg: yesNo(cellText(get(r, 'rchrg'))),
+          etin: cellText(get(r, 'etin')).toUpperCase() || null,
+          sbnum: section === 'exp' ? docNoText(get(r, 'sbnum')) || null : null,
+          sbdt: section === 'exp' ? cellDate(get(r, 'sbdt')) : null,
+          sbpcode: section === 'exp' ? cellText(get(r, 'sbpcode')).toUpperCase() || null : null,
         };
         const key = `${identity}|${irn.toLowerCase()}`;
         const g = groups.get(key);
@@ -499,6 +521,11 @@ export function parseEinvoiceExcel(wb: XLSX.WorkBook, opts: EinvExcelOptions = {
       autopop_text: first('autopop_text'),
       autopop_date: first('autopop_date'),
       error: first('error'),
+      rchrg: first('rchrg'),
+      etin: first('etin'),
+      sbnum: first('sbnum'),
+      sbdt: first('sbdt'),
+      sbpcode: first('sbpcode'),
       sheet,
       rows: lines.map((l) => l.row),
     });

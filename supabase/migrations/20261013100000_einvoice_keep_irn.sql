@@ -1,13 +1,16 @@
 -- E-invoice: "keep, don't re-send" (docs/GSTR1_EINVOICE_POSITIONS.md).
 --
--- An e-invoice already on the portal's GSTR-1 draft (or due to be
--- auto-populated there) is LEFT OUT of the uploaded JSON, so the portal
--- keeps its own record with Source, IRN and IRN date (GSTN advisory para 6:
--- an edited auto-populated document loses them). The app never writes irn,
--- irngendate or srctyp into an upload any more.
+-- An e-invoice that a same-day pull saw on the portal's GSTR-1 draft is
+-- LEFT OUT of the uploaded JSON, so the portal keeps its own record with
+-- Source, IRN and IRN date (GSTN advisory para 6: an edited auto-populated
+-- document loses them). One still pending auto-population is never left
+-- out. The app never writes irn, irngendate or srctyp into an upload any
+-- more.
 --
 -- a. einvoice_docs: the Excel's columns (irn_status, autopop_status,
---    autopop_date, error), and a unique key that tells a credit note from a
+--    autopop_date, error), gone_at (a pulled record the latest pull no
+--    longer saw is marked, never deleted, so its IRN stays on record and it
+--    reads as "IRN lost"), and a unique key that tells a credit note from a
 --    debit note with the same number and keeps the pull's record and the
 --    Excel's record of one document apart:
 --    (client_id, period_month, section, ctin, doc_type, doc_key, source).
@@ -16,12 +19,16 @@
 --    empty when this was written (0 rows on 10 Oct 2026), so nothing is
 --    rewritten.
 -- b. einvoice_pulls: one row per (client, period, source), so a pull and an
---    Excel import are both recorded.
+--    Excel import are both recorded; generated_on, the date the portal
+--    generated the pulled GSTR-1 file (a file generated before the pull day
+--    is recorded as status 'stale' and nothing is saved from it).
 -- c. gstr1_upload_versions: einvoice_kept (documents left out of the upload)
 --    and ext_version (the extension that pushed). The payload stays the
 --    books JSON.
 -- d. client_einvoice_evidence(client) / client_einvoice_evidence_all(): is
 --    this client an e-invoice issuer, by evidence, PAN-wide.
+-- e. einvoice_excel_replace(): an e-invoice Excel import replaces the
+--    period's Excel records in one transaction.
 --
 -- Extension 0.8.6 and older upsert einvoice_docs on the old key; after this
 -- migration their pull reports "failed" and saves nothing (no data is lost:
@@ -36,7 +43,8 @@ ALTER TABLE public.einvoice_docs
   ADD COLUMN IF NOT EXISTS irn_status     text,
   ADD COLUMN IF NOT EXISTS autopop_status text,
   ADD COLUMN IF NOT EXISTS autopop_date   text,
-  ADD COLUMN IF NOT EXISTS error          text;
+  ADD COLUMN IF NOT EXISTS error          text,
+  ADD COLUMN IF NOT EXISTS gone_at        timestamptz;
 
 ALTER TABLE public.einvoice_docs DROP CONSTRAINT IF EXISTS einvoice_docs_irn_status_check;
 ALTER TABLE public.einvoice_docs ADD CONSTRAINT einvoice_docs_irn_status_check
@@ -77,6 +85,10 @@ COMMENT ON COLUMN public.einvoice_docs.irn_status IS 'einvoice_excel only: valid
 COMMENT ON COLUMN public.einvoice_docs.autopop_status IS 'einvoice_excel only: done | pending | failed (GSTR-1 auto-population status). NULL when the file gives none, and for a pull.';
 COMMENT ON COLUMN public.einvoice_docs.autopop_date IS 'einvoice_excel only: date of auto-population (or deletion), dd-mm-yyyy.';
 COMMENT ON COLUMN public.einvoice_docs.error IS 'einvoice_excel only: error in auto-population / deletion, as the file gives it.';
+COMMENT ON COLUMN public.einvoice_docs.gone_at IS
+  'portal_gstr1 only: when a pull no longer saw this document on the draft with its IRN. The row is kept (never deleted) and reads as "IRN lost"; a later pull that sees it again sets it back to NULL.';
+COMMENT ON COLUMN public.einvoice_docs.last_seen_at IS
+  'When the latest pull (or import) saw the document: the same timestamp as that pull''s einvoice_pulls.pulled_at.';
 
 -- ---------------------------------------------------------------------------
 -- b. einvoice_pulls
@@ -100,6 +112,12 @@ BEGIN
 END $$;
 COMMENT ON COLUMN public.einvoice_pulls.source IS
   'portal_gstr1 = the extension''s pull of the portal''s GSTR-1 JSON; einvoice_excel = an import of the e-invoice Excel.';
+ALTER TABLE public.einvoice_pulls
+  ADD COLUMN IF NOT EXISTS generated_on date;
+COMMENT ON COLUMN public.einvoice_pulls.generated_on IS
+  'portal_gstr1 only: the date the portal generated the GSTR-1 file the pull read (from the ZIP entry name returns_<ddmmyyyy>_...). NULL when the name gave none.';
+COMMENT ON COLUMN public.einvoice_pulls.status IS
+  'ok | none | pending | failed | stale. stale = the portal served a file generated before the pull day: nothing was saved or marked, and the push gate does not accept it.';
 
 -- ---------------------------------------------------------------------------
 -- c. gstr1_upload_versions
@@ -223,3 +241,80 @@ COMMENT ON FUNCTION public.client_einvoice_evidence(uuid) IS
   'Does this client issue e-invoices, by evidence (tick, e-invoice records, IRNs in a stored GSTR-1 JSON), on itself or any registration on its PAN? One row; reason in plain words.';
 COMMENT ON FUNCTION public.client_einvoice_evidence_all() IS
   'client_einvoice_evidence for every client (for the Clients page).';
+
+-- ---------------------------------------------------------------------------
+-- e. The e-invoice Excel import, in one transaction
+-- ---------------------------------------------------------------------------
+-- Deletes the client and period's einvoice_excel rows, inserts p_docs (one
+-- JSON object per document, as src/lib/einvoice/einvoiceData.ts
+-- excelDocPayload builds it) and records the import in einvoice_pulls. Any
+-- error (a CHECK, the unique key, a bad value) rolls all three back, so a
+-- failed import leaves the earlier one exactly as it was. Returns the number
+-- of documents inserted. The pull's rows (portal_gstr1) are never touched.
+CREATE OR REPLACE FUNCTION public.einvoice_excel_replace(
+  p_client_id    uuid,
+  p_period_month text,
+  p_docs         jsonb,
+  p_message      text,
+  p_actor        uuid
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_now timestamptz := now();
+  v_n   integer;
+BEGIN
+  IF p_client_id IS NULL THEN
+    RAISE EXCEPTION 'einvoice_excel_replace: no client' USING ERRCODE = '22023';
+  END IF;
+  IF p_period_month IS NULL OR p_period_month !~ '^(0[1-9]|1[0-2])/[0-9]{4}$' THEN
+    RAISE EXCEPTION 'einvoice_excel_replace: period must be MM/YYYY, got %', p_period_month USING ERRCODE = '22023';
+  END IF;
+  IF p_docs IS NULL OR jsonb_typeof(p_docs) <> 'array' THEN
+    RAISE EXCEPTION 'einvoice_excel_replace: p_docs must be a JSON array' USING ERRCODE = '22023';
+  END IF;
+
+  DELETE FROM public.einvoice_docs
+   WHERE client_id = p_client_id
+     AND period_month = p_period_month
+     AND source = 'einvoice_excel';
+
+  INSERT INTO public.einvoice_docs (
+    client_id, period_month, source, section, doc_type, doc_no, doc_key, ctin, doc_date,
+    irn, irn_date, inv_typ, pos, doc_value, taxable, igst, cgst, sgst, cess,
+    irn_status, autopop_status, autopop_date, error, raw, first_seen_at, last_seen_at, gone_at
+  )
+  SELECT p_client_id, p_period_month, 'einvoice_excel', d.section, d.doc_type, d.doc_no, d.doc_key,
+         COALESCE(d.ctin, ''), d.doc_date, d.irn, d.irn_date, d.inv_typ, d.pos,
+         COALESCE(d.doc_value, 0), COALESCE(d.taxable, 0), COALESCE(d.igst, 0), COALESCE(d.cgst, 0),
+         COALESCE(d.sgst, 0), COALESCE(d.cess, 0),
+         d.irn_status, d.autopop_status, d.autopop_date, d.error, d.raw, v_now, v_now, NULL
+    FROM jsonb_to_recordset(p_docs) AS d(
+      section text, doc_type text, doc_no text, doc_key text, ctin text, doc_date text,
+      irn text, irn_date text, inv_typ text, pos text,
+      doc_value numeric, taxable numeric, igst numeric, cgst numeric, sgst numeric, cess numeric,
+      irn_status text, autopop_status text, autopop_date text, error text, raw jsonb
+    );
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  INSERT INTO public.einvoice_pulls (client_id, period_month, source, status, docs_found, message, pulled_by, pulled_at)
+  VALUES (p_client_id, p_period_month, 'einvoice_excel', 'ok', v_n, p_message, p_actor, v_now)
+  ON CONFLICT (client_id, period_month, source) DO UPDATE
+     SET status = EXCLUDED.status,
+         docs_found = EXCLUDED.docs_found,
+         message = EXCLUDED.message,
+         pulled_by = EXCLUDED.pulled_by,
+         pulled_at = EXCLUDED.pulled_at,
+         generated_on = NULL;
+
+  RETURN v_n;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.einvoice_excel_replace(uuid, text, jsonb, text, uuid) TO anon, authenticated, service_role;
+
+COMMENT ON FUNCTION public.einvoice_excel_replace(uuid, text, jsonb, text, uuid) IS
+  'E-invoice Excel import: replaces the client and period''s einvoice_excel records with p_docs and records the import in einvoice_pulls, in one transaction. Returns the documents inserted.';

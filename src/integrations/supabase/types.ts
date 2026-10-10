@@ -54,6 +54,7 @@ export type Database = {
           doc_value: number
           error: string | null
           first_seen_at: string
+          gone_at: string | null
           id: string
           igst: number
           inv_typ: string | null
@@ -83,6 +84,7 @@ export type Database = {
           doc_value?: number
           error?: string | null
           first_seen_at?: string
+          gone_at?: string | null
           id?: string
           igst?: number
           inv_typ?: string | null
@@ -112,6 +114,7 @@ export type Database = {
           doc_value?: number
           error?: string | null
           first_seen_at?: string
+          gone_at?: string | null
           id?: string
           igst?: number
           inv_typ?: string | null
@@ -141,6 +144,7 @@ export type Database = {
         Row: {
           client_id: string
           docs_found: number
+          generated_on: string | null
           id: string
           message: string | null
           period_month: string
@@ -152,6 +156,7 @@ export type Database = {
         Insert: {
           client_id: string
           docs_found?: number
+          generated_on?: string | null
           id?: string
           message?: string | null
           period_month: string
@@ -163,6 +168,7 @@ export type Database = {
         Update: {
           client_id?: string
           docs_found?: number
+          generated_on?: string | null
           id?: string
           message?: string | null
           period_month?: string
@@ -10776,6 +10782,16 @@ export type Database = {
           issues_einvoices: boolean
           reason: string
         }[]
+      }
+      einvoice_excel_replace: {
+        Args: {
+          p_actor: string | null
+          p_client_id: string
+          p_docs: Json
+          p_message: string
+          p_period_month: string
+        }
+        Returns: number
       }
       ai_sync: {
         Args: Record<PropertyKey, never>

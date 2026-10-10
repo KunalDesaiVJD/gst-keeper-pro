@@ -7,8 +7,13 @@ extension's GSTR-1 upload or e-invoice pull, or
 `supabase/migrations/20261013100000_einvoice_keep_irn.sql`.
 
 **Engineering wrote these positions on 10 Oct 2026 from GSTN's own documents
-and an audit of the live data. The firm has not signed them off yet, and
-the mechanism has not yet been seen working on the live portal (§9).**
+and an audit of the live data, and revised them the same day after a review
+(pending documents no longer left out, the reverse-charge / type /
+e-commerce GSTIN check, the shipping-bill warning, documents missing from
+the return, pulled records marked rather than deleted, the stale-file rule,
+the evidence-failure refusal, the one-transaction Excel import and the
+plan's row version). The firm has not signed them off yet, and the
+mechanism has not yet been seen working on the live portal (§9).**
 
 ---
 
@@ -35,9 +40,13 @@ by **leaving every e-invoice that the portal already holds out of the upload.**
   auto-population does not overwrite it. The Excel then notes this against
   the document. (Advisory para 3(c).)
 
-So, at push time, every books document in B2B, CDNR, CDNUR or EXP that
-matches an e-invoice record with the same figures is **left out** of the
-uploaded JSON. The portal keeps its own record, with the IRN. Everything
+So, at push time, every books document in B2B, CDNR, CDNUR or EXP that a
+pull taken that day saw **on the draft** as an e-invoice, with the same
+figures, type, reverse charge and e-commerce GSTIN, is **left out** of the
+uploaded JSON. The portal keeps its own record, with the IRN. A document
+whose e-invoice is still pending auto-population is **never** left out: it
+blocks the push until a later pull shows it on the draft, or staff tick an
+override and it goes up from the books without its IRN (§4.5). Everything
 else is uploaded as before. **Table 12 (HSN) and Table 13 (documents
 issued) always go in full**, because a summary section is overwritten as a
 whole by each upload (FAQ Q35). The advisory v3 also lists HSN among the
@@ -53,9 +62,20 @@ writes "E-Invoice" (77 of 77 live documents).
 ### The contract between the page and the extension
 
 - The page plans the push (`reconcileEinvoice`, then `planEinvoiceUpload`).
-  It sends `einvoice: { keep, planAt }` in `__gstkUploadGstr1`. `keep` lists
-  the books documents to leave out, using the exact `section`, `ctin`,
-  `doc_type` and `doc_no` from the stored raw_json.
+  It sends `einvoice: { keep, planAt, basisUpdatedAt }` in
+  `__gstkUploadGstr1`. `keep` lists the books documents to leave out, using
+  the exact `section`, `ctin`, `doc_type` and `doc_no` from the stored
+  raw_json. `basisUpdatedAt` is the exact `gstr1_data.updated_at` string of
+  the stored row the plan was made on (the one the page just compared with
+  its own copy, or the one the pre-push corrections save returned).
+- The extension (0.8.7) reads `updated_at` with `raw_json`. When
+  `basisUpdatedAt` is set and `Date.parse(stored.updated_at) !==
+  Date.parse(basisUpdatedAt)`, it refuses the push before anything else
+  (before it clears the Upload History snapshot or opens a tab): "This
+  return changed after the e-invoice plan was made. Reload it and click
+  Upload again." Equality, not a later-than test, so no PC clock is
+  compared with another, and a document added after the plan is caught
+  too.
 - The extension honours this from **0.8.7**. It removes exactly those
   documents from the copy it uploads. It drops buyer or export-type groups
   left with no documents, and sections left empty. It never touches any
@@ -100,16 +120,40 @@ be amended on the IRP, so a books amendment goes up as before.
 
 | Status | Meaning | At push |
 |---|---|---|
-| `matched` | On the draft as an e-invoice. Figures (±₹1), date and place of supply are the same. | **Left out** |
+| `matched` | On the draft as an e-invoice. Figures (±₹1), date, place of supply, invoice type (export type for EXP), reverse charge and e-commerce GSTIN are the same. | **Left out** (an export whose books shipping bill the e-invoice lacks warns, §5) |
 | `books_irn` | The books document carries its own IRN (a portal download) and there is no record against it. | **Left out** |
-| `pending` | From the Excel: IRN generated, auto-population not done yet. | **Left out** if the books have it with the same figures. If the books do not have it, a warning (§5). |
-| `mismatch` | Same document, but its figures, date, place of supply or IRN changed after the IRN. Also a document that appears twice in the books. | **Blocks** |
+| `pending` | IRN generated, not on the draft yet: the Excel says pending (or gives no status), and IRN date + 2 days is not before the pull day. | In the books: **blocks**, unless staff tick the override; then **uploaded** without its IRN (§4.5). Not in the books: a warning (§5). |
+| `mismatch` | Same document, but its figures, date, place of supply, invoice type, reverse charge, e-commerce GSTIN or IRN differ from the e-invoice. Also a document that appears twice in the books. | **Blocks** |
 | `number_differs` | No exact match, but the number differs only in separators or case from an e-invoice that is, or will be, on the draft. | **Blocks** |
 | `not_einvoiced` | E-invoiceable, but no IRN was found. | Uploaded |
-| `autopop_failed` | The Excel says auto-population failed or gave an error. | Uploaded, with a warning |
-| `irn_lost` | It was an e-invoice, but the latest pull no longer shows it with its IRN. | Uploaded, with a warning |
+| `autopop_failed` | The Excel says auto-population failed or gave an error. | In the books: uploaded, with a warning. Not in the books: missing from GSTR-1, warning (§5) |
+| `irn_lost` | It was an e-invoice, but the latest pull no longer shows it with its IRN. | In the books: uploaded, with a warning. Not in the books: missing from GSTR-1, warning (§5) |
 | `not_in_books` | On the draft as an e-invoice, but missing from the books. | Warning |
 
+**Leaving out is only for what a pull saw.** Before 10 Oct 2026 (review
+E1) a pending document was left out too, on the promise that the portal
+would add it. Nothing ensures that happens before the return is filed: an
+e-invoice whose return is filed first is never auto-populated afterwards
+(advisory para 3(b)), so a pending document left out of a return filed
+before its T+2 would be missing from GSTR-1, with its tax. A pending
+document is therefore never left out. The firm still wants every IRN kept,
+so the default is to **block** and wait for the pull that shows it on the
+draft; uploading it now (the document is then in GSTR-1, without the IRN,
+para 3(c)) is a deliberate, recorded choice (§4.5).
+
+**Type, reverse charge and e-commerce GSTIN** (review E3, E13). A document
+left out is filed exactly as the e-invoice has it. If the books say reverse
+charge N and the e-invoice says Y (every one of SUNRISE GUJ's Aug-26
+e-invoices is Y), or R against SEWP, or another e-commerce operator, the
+filed return would differ from the books with nothing to say so. So any of
+these differences makes the pair `mismatch`, with the same remedy as a
+figure difference: correct the books, or re-issue the IRN. Each is compared
+only when both sides give a value, so a source that does not carry one
+never blocks. The books carry them in the JSON (`rchrg`, `inv_typ` or the
+export's `exp_typ`, `etin`); a pulled record keeps them in `raw` (the
+document as the portal gave it); an Excel record from its "Reverse Charge",
+"Invoice Type" / "Export Type" and "E-Commerce GSTIN" columns. Export types
+compare as WPAY / WOPAY whatever the source's wording.
 Rules applied before the statuses:
 
 - A cancelled IRN (Excel status Cancelled) is never used for anything.
@@ -118,19 +162,38 @@ Rules applied before the statuses:
 - A books document whose e-invoice **failed** auto-population is always
   uploaded. Leaving it out would drop it from GSTR-1.
 
-`irn_lost` is an addition to the first contract. It applies only when the
-page passes `pulledAt`, the time of the latest successful pull. The
-document reads as lost in three cases:
+`irn_lost` is an addition to the first contract. The document reads as
+lost when:
 
-- a pulled record that the latest pull did not see (`last_seen_at` more
-  than 15 minutes before `pulledAt`);
+- a pulled record carries `gone_at`: a later pull did not see it on the
+  draft (§8). This holds with or without `pulledAt`;
+- a pulled record's `last_seen_at` is earlier than `pulledAt`, the time of
+  the latest successful pull. The pull writes `pulled_at` and the
+  `last_seen_at` of every row it saw from **one** timestamp, so the compare
+  is exact; the 15-minute window over client clocks is gone (review E7). It
+  also covers a row from before `gone_at` existed;
 - an Excel record that says it was auto-populated before the pull day, but
   is not in the pull;
+- an Excel record that says pending (or gives no status) whose IRN date + 2
+  days is before the pull day, but is not in the pull: auto-population
+  should have run by then, whatever the Excel says;
 - a books document with its own IRN that the pull does not show.
 
 The portal no longer holds any of these as an e-invoice. Leaving them out
 would keep a stale uploaded copy, or no copy at all, so they go up from
-the books. Without `pulledAt`, each record is taken at its word.
+the books. Without `pulledAt`, each Excel record is taken at its word.
+
+**Exports and the shipping bill** (review E3). The e-invoice may carry no
+shipping bill (FAQ Q28: shipping details are optional at upload). When an
+export is left out to keep its IRN but the books have a shipping bill the
+e-invoice lacks, or a different one (number, date or port code), the plan
+warns (`warnings.shippingBill`) and the upload dialog lists it. The firm's
+choice is to **keep the IRN**: the document stays left out, and staff add
+the shipping bill on the portal or through Table 9A. Without it, Table 6A
+is filed with no shipping bill, and the IGST refund on a with-payment export
+is not sent to ICEGATE until it is added. (A portal edit of the
+auto-populated record drops its IRN, para 6; Table 9A in a later return does
+not.)
 
 ## 4. What blocks a push
 
@@ -145,13 +208,52 @@ these hold:
 2. **Number differs.** If the books number went up, the portal would hold
    two documents: the e-invoice and the books copy. Staff correct the books
    number to the e-invoice's.
-3. **No fresh pull.** E-invoices reach the draft two days after the IRN, and
-   one uploaded first is never auto-populated (para 3(c)). So the plan must
-   rest on a pull taken on the day of the push. `isPullFresh` checks the
-   same IST calendar day. A pull from the extension in the same session,
-   just before the upload, is best.
+3. **No fresh pull, or a pull of an old file.** E-invoices reach the draft
+   two days after the IRN, and one uploaded first is never auto-populated
+   (para 3(c)). So the plan must rest on a pull taken on the day of the
+   push, of a file the portal generated that day. `isPullFresh` takes the
+   `einvoice_pulls` row and accepts only status `ok` or `none` on the same
+   IST calendar day. The portal can answer the pull's request
+   (`offline/download/generate?flag=0`) at once with a file it generated
+   earlier (review E2), so the extension reads the generation date from the
+   ZIP entry's name (`returns_<ddmmyyyy>_...`) and stores it as
+   `einvoice_pulls.generated_on`. A file generated before today (IST) is
+   recorded as status **`stale`**: nothing is saved and nothing is marked
+   gone, and the message tells staff how to get a fresh one: on the portal,
+   Prepare Offline → Download → Generate JSON file to download, wait for it,
+   then pull again. A stale pull is never fresh, so the push stays blocked.
+   A name with no date keeps the old behaviour, with a warning added to the
+   message. The date is day-precise only, so a file generated earlier the
+   same day passes. A pull from the extension in the same session, just
+   before the upload, is best.
 4. **Extension below 0.8.7.** Older versions ignore `einvoice.keep` and
    would upload every document.
+5. **Pending auto-population, in the books** (`plan.pendingBlockers`). The
+   e-invoice is not on the draft yet, so the document cannot be left out
+   (§3). The upload dialog lists them with a checkbox: "Upload these N
+   documents now; their IRN will not be linked (GSTN para 3(c)). To keep the
+   IRN, cancel, pull again once the portal shows them, then push." Unticked,
+   the push is refused. Ticked, they go up from the books and the push's
+   UPLOAD row in Version History gets an "E-invoice override" note naming
+   them (the page appends it once the extension has written the row; if the
+   row never appears, for example because the page was closed mid-push, the
+   note is lost and the toast at the start of the push is the only record).
+   The push re-reads the records, and a pending document that was not in the
+   dialog when it was ticked blocks again. The panel and the dialog never
+   say that a pending document is already on the portal, or that the portal
+   will add it.
+6. **The evidence could not be read** (review E9, E15). For a client that
+   is not ticked "E-invoice applicable", the protection rests on
+   `client_einvoice_evidence` (§7). Only when that function does not exist
+   (PGRST202 / 42883: the migration is not applied) does the tick alone
+   decide. Any other error (a network drop, a timeout, a server error) is a
+   failed read, not a "no": Upload and Download JSON read the evidence again
+   whenever the cached answer is another client's or was not read from the
+   evidence, and if it still fails they refuse: "Could not check whether
+   this client issues e-invoices, so nothing was uploaded. Try again." The
+   page shows a problem line with a Retry button while the read is failing.
+7. **The return changed after the plan.** The extension refuses a push
+   whose stored row's `updated_at` differs from `basisUpdatedAt` (§1).
 
 ## 5. What warns
 
@@ -160,13 +262,42 @@ The upload dialog lists these. Staff go on deliberately:
 - **IRN not in books** (`not_in_books`). The e-invoice stays on the portal
   and will be filed with the return. Either the books are missing a
   document, or the IRN should have been cancelled on the IRP.
-- **Pending** (`pending`). If the books have it, it is left out and the
-  portal adds it with its IRN. If not, it will appear in GSTR-1 anyway once
-  auto-populated.
-- **Auto-population failed** (`autopop_failed`). The books document goes up
-  without its IRN. The Excel's error text says why.
-- **IRN lost on the portal** (`irn_lost`). The books document goes up. An
-  upload cannot restore the IRN (§10).
+- **Pending, not in the books** (`warnings.pending`). Not on the draft yet
+  and not in the upload: if GSTR-1 is filed before a pull shows it on the
+  draft, it is missing from the return. Do not file until a pull shows it,
+  or add it to the books. (A pending document that *is* in the books
+  blocks, §4.5.)
+- **Auto-population failed** (`warnings.autopopFailed`, books copy present).
+  The books document goes up without its IRN. The Excel's error text says
+  why.
+- **IRN lost on the portal** (`warnings.irnLost`, books copy present). The
+  books document goes up. An upload cannot restore the IRN (§10).
+- **Missing from the return** (`warnings.missingFromReturn`, review E5).
+  Auto-population failed, or the IRN was lost, and the books do not have the
+  document: it is in neither the upload nor the draft. "N e-invoice(s) are
+  in neither the books nor the portal draft and will be missing from GSTR-1
+  unless added to the books (or the IRN was cancelled)." The panel shows such
+  a row as "Not in books or on the draft: missing from GSTR-1". It warns
+  rather than blocks: a cancelled IRN can look the same.
+- **Shipping bill** (`warnings.shippingBill`). An export left out to keep its
+  IRN whose books shipping bill the e-invoice lacks: add it on the portal or
+  through Table 9A (§3).
+
+### Download JSON
+
+The manual "Download JSON" path plans like the push: it reads the evidence
+and the records afresh, refuses a client whose evidence read fails (§4.6),
+and leaves out the same documents. It does **not** leave out nothing when
+there is no pull of the day (review E4): such a file, uploaded by hand,
+would overwrite every auto-populated e-invoice and drop its IRN. Instead the
+toast says exactly what was left out and on whose word: the pull (today's,
+or the last one with its time), the e-invoice Excel, or the IRN in the books
+JSON, each with its count. Without a pull of the day it adds: "A document
+edited or deleted on the portal since then would be missing from the return.
+Pull e-invoices and download again before uploading it on the portal." A
+file that leaves nothing out without such a pull says so too. Pending
+documents in the books are in the file (their IRN will not be linked), and
+the missing-from-return and shipping-bill warnings are repeated.
 
 ## 6. The Excel import
 
@@ -213,8 +344,20 @@ The Excel is the only source for these cases:
   state. Supplies without payment of tax carry no tax.
 - **Unreadable data.** A sheet or row the parser cannot read goes in
   `skipped` with a reason. The parser never throws.
-- **Saving.** The import writes `einvoice_docs` with `source =
-  'einvoice_excel'`, and an `einvoice_pulls` row with the same source.
+- **Reverse charge, type, e-commerce GSTIN, shipping bill.** "Reverse
+  Charge" (Y / N), "Invoice Type" / "Note Supply Type" / "Export Type",
+  "E-Commerce GSTIN" and, on the exp sheet, "Shipping Bill Number",
+  "Shipping Bill Date" and "Port Code" are read for the checks in §3. They
+  are saved in the record's `raw`, where the page also finds them for a
+  pulled record.
+- **Saving.** One call, `einvoice_excel_replace(client, period, docs,
+  message, actor)`, in **one transaction**: it deletes the period's
+  `einvoice_excel` rows, inserts the new ones and upserts the
+  `einvoice_pulls` row with the same source (review E10, E16). Any error (a
+  CHECK, the unique key, a bad value) rolls all three back, so a failed
+  import leaves the earlier one exactly as it was. Whatever happens, the
+  page then re-reads the records, so the panel and the dialog never show
+  records that are gone.
 
 **Verified:**
 
@@ -228,7 +371,9 @@ The Excel is the only source for these cases:
 - the exact text of the auto-population headers;
 - whether tax amounts have their own columns;
 - the label of a pending status. A blank status with a valid IRN is read
-  as "unknown", which counts as pending or lost by the IRN date (§3).
+  as "unknown", which counts as pending or lost by the IRN date (§3). An
+  explicit pending status is also read as lost once IRN date + 2 days is
+  before the pull day.
 
 ## 7. Who is an e-invoice client: evidence, PAN-wide
 
@@ -246,6 +391,10 @@ characters 3 to 12), meets any of these:
 
 E-invoicing follows the PAN's aggregate turnover (rule 48(4)), so one
 registration's IRNs make every registration on the PAN an e-invoice client.
+
+When the evidence cannot be read for a client that is not ticked, the app
+does not guess: Upload and Download JSON refuse until it can (§4.6). Only a
+database without the function lets the tick decide alone.
 Evidence on the client itself is preferred to a sister registration's.
 `client_einvoice_evidence_all()` gives the same for every client, for the
 Clients page.
@@ -271,9 +420,31 @@ Tick them by hand once the firm confirms.
 
 - `einvoice_docs`: one row per document per source. `irn_status`,
   `autopop_status`, `autopop_date` and `error` come from the Excel. A pull
-  refreshes `last_seen_at` on every document it sees.
+  upserts every document it sees with `last_seen_at = now` and `gone_at =
+  null`. Only after every upsert succeeds does it select the period's
+  `portal_gstr1` rows (id and identity), work out in the extension which
+  ones this pull did not see, and set `gone_at = now` on those, by id, in
+  chunks. It **never deletes** them (review E6, E11): the row keeps the only
+  copy of that IRN in the app, and reads as `irn_lost` ("IRN lost on the
+  portal") instead of "No IRN found". Selecting by identity rather than by
+  `last_seen_at < now` uses no clock at all, so two PCs' clocks, or two pulls
+  of the same period, cannot mark a row the other just saw (review E7). A
+  stale pull (§4.3) saves nothing and marks nothing.
 - `einvoice_pulls`: the last pull or import per (client, period, source).
-- `gstr1_upload_versions`: `einvoice_kept` and `ext_version` on UPLOAD rows.
+  `pulled_at` is exactly the `now` the pull stamped on `last_seen_at`.
+  `generated_on` is the date the portal generated the pulled file. `status`
+  is `ok`, `none`, `pending`, `failed` or `stale`.
+- `gstr1_upload_versions`: `einvoice_kept` and `ext_version` on UPLOAD rows;
+  the pending override note in the summary (§4.5).
+
+**"Pull again to confirm"** (review E12). After a push that reached the
+portal, the panel asks for a pull to confirm the IRNs are intact. The push
+time comes from Version History: the newest UPLOAD row from extension 0.8.7
+or later (or one that records `einvoice_kept`) that was accepted or partial,
+or a failed one whose outcome a later Refresh errors found accepted or
+partial. It is not `gstr1_data.last_uploaded_at`, which Refresh errors
+rewrites. A successful pull after that time clears it. "Already on the
+portal" counts only `matched` and `books_irn` documents.
 
 ## 9. What has NOT been verified live
 
@@ -293,7 +464,12 @@ firm relies on it:
    drops the IRN. No live push has shown it either way (the audit found
    none conclusive).
 4. **Whether `flag=0` returns a cached older generation** of the GSTR-1
-   JSON. That would make a same-day pull stale.
+   JSON. The extension's own notes say a period generated before answers
+   at once with the cached file. The stale-file rule (§4.3) now refuses a
+   file generated on an earlier day; one generated earlier the same day
+   still passes. Every pull that confirms a push (9.1, §10(b)) must be of a
+   file generated after that push: generate a fresh file on the portal
+   first.
 5. **IFF months for QRMP clients.** The pull asks `rtn_typ=GSTR1`.
 
 ## 10. Remediation: returns already pushed without IRNs
@@ -324,7 +500,8 @@ longer on the draft. For each of the two returns:
      auto-population to run again.** GSTN does not document whether a
      deleted document is auto-populated again. Para 3(c) covers only
      documents that already exist. Try it on one document first, and file
-     only after a pull shows the IRN back.
+     only after a pull of a freshly generated file (§4.3) shows the IRN
+     back.
 
 Returns already filed without IRNs cannot be changed. The audit inferred
 these as e-invoice issuers: ACCURATE PMS, SBL-GJ and VISHVAS POLYPACK,

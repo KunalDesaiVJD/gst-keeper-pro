@@ -8,10 +8,13 @@
 // GSTN's advisory (para 6) says an edited auto-populated document loses
 // those three fields and counts as the taxpayer's own upload, and the
 // offline-tool FAQ says an uploaded record overwrites the earlier one. So a
-// books document that is already on the draft as an e-invoice (or is about
-// to be auto-populated) with the same figures is LEFT OUT of the uploaded
-// JSON, and the portal keeps its own record with the IRN. Everything else
-// is uploaded as before; Table 12 and Table 13 always go in full.
+// books document that a pull taken today saw on the draft as an e-invoice,
+// with the same figures, is LEFT OUT of the uploaded JSON, and the portal
+// keeps its own record with the IRN. A document whose e-invoice is still
+// pending auto-population is never left out: it blocks the push until a
+// later pull shows it on the draft, or goes up from the books (its IRN not
+// linked, para 3(c)) when staff override. Everything else is uploaded as
+// before; Table 12 and Table 13 always go in full.
 //
 // Where the e-invoice records come from (einvoice_docs.source):
 //   'portal_gstr1'   the extension's pull of the portal's GSTR-1 JSON (the
@@ -28,6 +31,9 @@
 //
 // extension/background.js carries a plain-JS copy of extractDocs, exactKey
 // and the leave-out step (the extension has no bundler). Keep them in step.
+// The reverse-charge flag, e-commerce GSTIN and shipping bill are compared
+// only here: a pulled record keeps them in `raw` (the document as the portal
+// gave it), so the extension's copy does not need them.
 
 export type EinvSection = 'b2b' | 'cdnr' | 'cdnur' | 'exp' | 'b2cl';
 export type EinvDocType = 'INV' | 'CRN' | 'DBN';
@@ -77,6 +83,21 @@ export interface EinvDoc extends EinvDocIdentity {
   error?: string | null;
   /** Stored rows: when the latest pull last saw the document. */
   last_seen_at?: string | null;
+  /**
+   * Pulled records only: set by the pull that no longer saw the document on
+   * the draft (the row is kept, with its IRN, and reads as 'irn_lost').
+   */
+  gone_at?: string | null;
+  /** Reverse charge, 'Y' or 'N' (B2B and notes); null when the source does not say. */
+  rchrg?: string | null;
+  /** E-commerce operator's GSTIN, upper-cased; null when none. */
+  etin?: string | null;
+  /** Exports: shipping bill number, date (dd-mm-yyyy) and port code; null when none. */
+  sbnum?: string | null;
+  sbdt?: string | null;
+  sbpcode?: string | null;
+  /** Stored rows: the document as the portal gave it (pull), or the Excel's own fields. */
+  raw?: unknown;
 }
 
 /** Stored row (einvoice_docs). */
@@ -95,6 +116,11 @@ const num = (v: unknown): number => {
 };
 const str = (v: unknown): string => (v == null ? '' : String(v)).trim();
 const round2 = (n: number) => Math.round(n * 100) / 100;
+/** 'Y' / 'Yes' → 'Y', 'N' / 'No' → 'N', anything else → null. */
+export const yesNo = (v: unknown): 'Y' | 'N' | null => {
+  const s = str(v).toUpperCase();
+  return s.startsWith('Y') ? 'Y' : s.startsWith('N') ? 'N' : null;
+};
 
 /** Sections whose documents can be left out of an upload (GSTN auto-populates these). */
 export const KEEPABLE_SECTIONS: readonly EinvSection[] = ['b2b', 'cdnr', 'cdnur', 'exp'];
@@ -174,6 +200,11 @@ export function extractDocs(json: unknown): EinvDoc[] {
       cgst: round2(t.cgst),
       sgst: round2(t.sgst),
       cess: round2(t.cess),
+      rchrg: yesNo(d.rchrg),
+      etin: str(d.etin).toUpperCase() || null,
+      sbnum: str(d.sbnum) || null,
+      sbdt: str(d.sbdt) || null,
+      sbpcode: str(d.sbpcode).toUpperCase() || null,
     });
   };
   arr(j.b2b).forEach((p) => arr(p.inv).forEach((inv) => push('b2b', 'INV', inv.inum, p.ctin, inv, inv.idt, inv.pos)));
@@ -201,15 +232,15 @@ export const isEinvoiceableBookDoc = (d: EinvDoc): boolean =>
 // ---------------------------------------------------------------------------
 
 export type EinvRecoStatus =
-  | 'matched'         // on the draft as an e-invoice, same figures: left out of the upload
-  | 'mismatch'        // same document, figures changed after the IRN: blocks the push
+  | 'matched'         // on the draft as an e-invoice; same figures, type, reverse charge and e-commerce GSTIN: left out of the upload
+  | 'mismatch'        // same document, but figures, date, place of supply, type, reverse charge, e-commerce GSTIN or IRN differ: blocks the push
   | 'number_differs'  // books number differs from the e-invoice's only in separators or case: blocks the push
   | 'books_irn'       // the books document carries its own IRN and no e-invoice record was found: left out
   | 'not_einvoiced'   // in the books, e-invoiceable, no IRN found: uploaded
   | 'not_in_books'    // on the draft as an e-invoice but missing from the books: warning
-  | 'pending'         // Excel: IRN generated, auto-population still pending: left out if in books, warning
-  | 'autopop_failed'  // Excel: auto-population failed or errored: books document uploaded, warning
-  | 'irn_lost';       // was an e-invoice, but the latest pull no longer shows it with its IRN: uploaded, warning
+  | 'pending'         // IRN generated, not on the draft yet: in the books it blocks the push (override uploads it); not in the books, a warning
+  | 'autopop_failed'  // Excel: auto-population failed or errored: books document uploaded; with no books copy, missing from GSTR-1
+  | 'irn_lost';       // was an e-invoice, but the latest pull no longer shows it with its IRN: books document uploaded; with no books copy, missing from GSTR-1
 
 export interface EinvRecoRow {
   /** exactKey of the document. */
@@ -223,28 +254,34 @@ export interface EinvRecoRow {
   einv: EinvDoc | null;
   /** Books − e-invoice, per figure (only when both sides exist). */
   diff: { doc_value: number; taxable: number; igst: number; cgst: number; sgst: number; cess: number } | null;
-  /** Human-readable list of what differs (number, figures, date, place of supply, IRN). */
+  /**
+   * Human-readable list of what differs (number, figures, date, place of
+   * supply, invoice / export type, reverse charge, e-commerce GSTIN, IRN).
+   * Any entry on an exact pair makes it 'mismatch'.
+   */
   differences: string[];
+  /** Points that do not block, such as an export's shipping bill the e-invoice lacks. */
+  notes: string[];
+  /** A matched export whose books shipping bill is not on the e-invoice (plan warning shippingBill). */
+  shippingBill?: boolean;
 }
 
 /** Differences of ₹1 or less are rounding, not a change. */
 export const EINV_TOLERANCE = 1;
 
-/**
- * A pulled record whose last_seen_at is this much older than the latest
- * successful pull was not in that pull.
- */
-export const EINV_STALE_MINUTES = 15;
-
 export interface ReconcileOptions {
   /**
    * pulled_at of the latest successful pull for the period (einvoice_pulls
-   * row with source 'portal_gstr1' and status 'ok' or 'none'; never the
-   * Excel import's row). With it, a pulled record the latest pull did
-   * not see, an Excel record that says "auto-populated" before that pull
-   * but is not in it, and a books IRN the pull does not show, all read as
+   * row with source 'portal_gstr1' and status 'ok' or 'none'; never a
+   * 'stale' pull, never the Excel import's row). The pull writes that
+   * pulled_at and the last_seen_at of every row it saw from one timestamp,
+   * so a pulled record with an earlier last_seen_at was not in that pull.
+   * With it, such a record, an Excel record that should be on the draft by
+   * the pull day (auto-populated, or IRN date + 2 days, before it) but is
+   * not in the pull, and a books IRN the pull does not show, all read as
    * 'irn_lost' (no longer on the draft as an e-invoice) and are uploaded.
-   * Without it, those records are taken at their word.
+   * Without it, those records are taken at their word. A pulled record
+   * with gone_at set reads as lost either way.
    */
   pulledAt?: string | null;
 }
@@ -264,8 +301,18 @@ const addDays = (isoDay: string, n: number): string => {
   return new Date(t).toISOString().slice(0, 10);
 };
 
-/** Is a pull taken at `pulledAt` fresh enough to push on? Same IST calendar day as `now`. */
-export const isPullFresh = (pulledAt: string | null | undefined, now: Date = new Date()): boolean => {
+/**
+ * Is a pull fresh enough to push on? Same IST calendar day as `now`. Takes
+ * the einvoice_pulls row, of which only status 'ok' or 'none' counts (a
+ * 'stale', 'pending' or 'failed' pull is never fresh), or a pulled_at
+ * already known to be a successful pull's.
+ */
+export const isPullFresh = (
+  pull: string | { status: string; pulled_at: string } | null | undefined,
+  now: Date = new Date(),
+): boolean => {
+  if (!pull) return false;
+  const pulledAt = typeof pull === 'string' ? pull : (pull.status === 'ok' || pull.status === 'none' ? pull.pulled_at : null);
   if (!pulledAt) return false;
   const d = istDay(pulledAt);
   return !!d && d === istDay(now.toISOString());
@@ -277,16 +324,26 @@ type EinvState = 'on_draft' | 'pending' | 'failed' | 'lost';
 function einvState(e: EinvDoc, opts: ReconcileOptions): EinvState {
   const pullDay = opts.pulledAt ? istDay(opts.pulledAt) : null;
   if ((e.source ?? 'portal_gstr1') !== 'einvoice_excel') {
-    // A pulled record: on the draft, unless the latest pull did not see it.
+    // A pulled record: on the draft, unless a pull has marked it gone, or the
+    // latest pull did not see it. The pull stamps pulled_at and the
+    // last_seen_at of every row it saw from one timestamp, so the compare is
+    // exact (no allowance for clock skew between PCs). A row from before
+    // gone_at existed falls to the last_seen_at test alone.
+    if (e.gone_at) return 'lost';
     if (opts.pulledAt && e.last_seen_at) {
       const seen = Date.parse(e.last_seen_at);
       const pulled = Date.parse(opts.pulledAt);
-      if (Number.isFinite(seen) && Number.isFinite(pulled) && seen < pulled - EINV_STALE_MINUTES * 60_000) return 'lost';
+      if (Number.isFinite(seen) && Number.isFinite(pulled) && seen < pulled) return 'lost';
     }
     return 'on_draft';
   }
+  // Auto-population runs two days after the IRN: once that is before the
+  // latest pull's day and the pull does not have the record, it is not on
+  // the draft, whatever the Excel says about it still being pending.
+  const irnDay = dmyToIso(e.irn_date);
+  const overdue = !!(pullDay && irnDay && addDays(irnDay, 2) < pullDay);
   if (e.autopop_status === 'failed') return 'failed';
-  if (e.autopop_status === 'pending') return 'pending';
+  if (e.autopop_status === 'pending') return overdue ? 'lost' : 'pending';
   if (e.autopop_status === 'done') {
     // Auto-populated before the latest pull, yet not in it: edited,
     // overwritten by an upload, or deleted on the portal since.
@@ -294,15 +351,63 @@ function einvState(e: EinvDoc, opts: ReconcileOptions): EinvState {
     if (pullDay && at && at < pullDay) return 'lost';
     return 'on_draft';
   }
-  // No auto-population status in the file. Auto-population runs two days
-  // after the IRN; if that was before the latest pull and the pull does not
-  // have it, it is not on the draft.
-  const irnDay = dmyToIso(e.irn_date);
-  if (pullDay && irnDay && addDays(irnDay, 2) < pullDay) return 'lost';
+  // No auto-population status in the file.
+  if (overdue) return 'lost';
   return pullDay ? 'pending' : 'on_draft';
 }
 
 const STATE_RANK: Record<EinvState, number> = { on_draft: 0, pending: 1, lost: 2, failed: 3 };
+
+/**
+ * A field the typed record may lack: a pulled record keeps the reverse
+ * charge, e-commerce GSTIN and shipping bill in `raw` (the document as the
+ * portal gave it).
+ */
+const extra = (d: EinvDoc, k: 'rchrg' | 'etin' | 'sbnum' | 'sbdt' | 'sbpcode'): string | null => {
+  const own = str(d[k]);
+  if (own) return own;
+  const raw = d.raw && typeof d.raw === 'object' && !Array.isArray(d.raw) ? (d.raw as Record<string, unknown>)[k] : undefined;
+  return str(raw) || null;
+};
+const rchrgOf = (d: EinvDoc) => yesNo(extra(d, 'rchrg'));
+const etinOf = (d: EinvDoc) => (extra(d, 'etin') || '').toUpperCase() || null;
+
+/**
+ * The type code both sides are compared on: B2B and notes R, SEWP, SEWOP,
+ * DE, CBW (excel.ts maps the Excel's words to these); exports WPAY / WOPAY
+ * (the Excel may say EXPWP / EXPWOP, or "with payment").
+ */
+const invTypeKey = (section: EinvSection, v: string | null | undefined): string | null => {
+  const s = str(v).toUpperCase().replace(/[^A-Z]/g, '');
+  if (!s) return null;
+  if (section === 'exp') {
+    if (/WOP|WITHOUT/.test(s)) return 'WOPAY';
+    if (/WP|WITH/.test(s)) return 'WPAY';
+    return s;
+  }
+  if (s === 'REGULAR' || s === 'REGULARB2B' || s === 'B2B') return 'R';
+  return s;
+};
+
+/**
+ * An export left out to keep its IRN whose books shipping bill is not on
+ * the e-invoice: filed that way, Table 6A carries the e-invoice's (none, or
+ * another), and the IGST refund on a with-payment export waits for it.
+ */
+const shippingBillNote = (b: EinvDoc, e: EinvDoc): string | null => {
+  if (b.section !== 'exp') return null;
+  const bn = extra(b, 'sbnum');
+  if (!bn) return null;
+  const bd = extra(b, 'sbdt');
+  const bp = (extra(b, 'sbpcode') || '').toUpperCase() || null;
+  const en = extra(e, 'sbnum');
+  const ed = extra(e, 'sbdt');
+  const ep = (extra(e, 'sbpcode') || '').toUpperCase() || null;
+  const show = (n: string, d: string | null, p: string | null) => `${n}${d ? ` of ${d}` : ''}${p ? ` (${p})` : ''}`;
+  if (!en) return `Shipping bill ${show(bn, bd, bp)} in the books; the e-invoice has none`;
+  const differs = en.toUpperCase() !== bn.toUpperCase() || (!!bd && !!ed && bd !== ed) || (!!bp && !!ep && bp !== ep);
+  return differs ? `Shipping bill ${show(bn, bd, bp)} in the books; ${show(en, ed, ep)} on the e-invoice` : null;
+};
 
 function compare(b: EinvDoc, e: EinvDoc) {
   const diff = {
@@ -322,6 +427,19 @@ function compare(b: EinvDoc, e: EinvDoc) {
   });
   if (b.doc_date && e.doc_date && b.doc_date !== e.doc_date) differences.push(`Date ${b.doc_date} vs ${e.doc_date}`);
   if (b.pos && e.pos && b.pos !== e.pos) differences.push(`Place of supply ${b.pos} vs ${e.pos}`);
+  // Who pays the tax, the kind of supply and the e-commerce operator are
+  // filed as the e-invoice has them when the books copy is left out.
+  // Compared only when both sides say, so a source that does not carry one
+  // never blocks.
+  const bt = invTypeKey(b.section, b.inv_typ);
+  const et = invTypeKey(e.section, e.inv_typ);
+  if (bt && et && bt !== et) differences.push(`${b.section === 'exp' ? 'Export type' : 'Invoice type'} ${b.inv_typ} vs ${e.inv_typ}`);
+  const br = rchrgOf(b);
+  const er = rchrgOf(e);
+  if (br && er && br !== er) differences.push(`Reverse charge ${br} vs ${er}`);
+  const be = etinOf(b);
+  const ee = etinOf(e);
+  if (be && ee && be !== ee) differences.push(`E-commerce GSTIN ${be} vs ${ee}`);
   if (b.irn && e.irn && b.irn.toLowerCase() !== e.irn.toLowerCase()) differences.push('IRN in the books differs from the e-invoice');
   return { diff, differences };
 }
@@ -363,7 +481,7 @@ export function reconcileEinvoice(books: EinvDoc[], einv: EinvDoc[], opts: Recon
   const unmatchedBooks: { k: string; b: EinvDoc; count: number }[] = [];
   const row = (key: string, status: EinvRecoStatus, b: EinvDoc | null, e: EinvDoc | null, differences: string[] = [], diff: EinvRecoRow['diff'] = null): EinvRecoRow => {
     const ref = (b || e)!;
-    return { key, section: ref.section, doc_type: ref.doc_type, doc_no: (b || e)!.doc_no, ctin: ref.ctin, status, books: b, einv: e, diff, differences };
+    return { key, section: ref.section, doc_type: ref.doc_type, doc_no: (b || e)!.doc_no, ctin: ref.ctin, status, books: b, einv: e, diff, differences, notes: [] };
   };
   const dupNote = (count: number) => `The books have this document ${count} times`;
 
@@ -377,7 +495,11 @@ export function reconcileEinvoice(books: EinvDoc[], einv: EinvDoc[], opts: Recon
     if (hit.state === 'lost') { rows.push(row(k, 'irn_lost', b, hit.e, differences, diff)); return; }
     if (count > 1) differences.unshift(dupNote(count));
     if (differences.length) { rows.push(row(k, 'mismatch', b, hit.e, differences, diff)); return; }
-    rows.push(row(k, hit.state === 'pending' ? 'pending' : 'matched', b, hit.e, [], diff));
+    if (hit.state === 'pending') { rows.push(row(k, 'pending', b, hit.e, [], diff)); return; }
+    const r = row(k, 'matched', b, hit.e, [], diff);
+    const sb = shippingBillNote(b, hit.e);
+    if (sb) { r.notes.push(sb); r.shippingBill = true; }
+    rows.push(r);
   });
 
   // 4. "Number differs": same section, buyer, type and number but for
@@ -453,32 +575,49 @@ export const summariseReco = (rows: EinvRecoRow[]) => {
 export interface EinvUploadPlan {
   /** Books documents to LEAVE OUT of the upload (the upload job's einvoice.keep). */
   keep: EinvDocIdentity[];
-  /** Rows that must be resolved before a push: 'mismatch' and 'number_differs'. */
+  /** Rows that must be resolved before a push: 'mismatch' and 'number_differs'. No override. */
   blockers: EinvRecoRow[];
+  /**
+   * Books documents whose e-invoice is pending auto-population: not on the
+   * draft yet, so leaving them out would leave them out of GSTR-1. They
+   * block the push unless staff tick the override, which uploads them from
+   * the books; their IRN is then not linked (advisory para 3(c)). To keep the
+   * IRN, staff pull again once the portal shows them, then push.
+   */
+  pendingBlockers: EinvRecoRow[];
   warnings: {
     /** On the draft as an e-invoice but not in the books: it stays and is filed. */
     notInBooks: EinvRecoRow[];
-    /** Auto-population pending: left out of the upload if in the books; added by the portal later if not. */
+    /** Pending auto-population and not in the books: not on the draft yet, so missing from GSTR-1 if it is filed first. */
     pending: EinvRecoRow[];
-    /** Auto-population failed: the books document is uploaded (without its IRN). */
+    /** Auto-population failed, books copy present: the books document is uploaded (without its IRN). */
     autopopFailed: EinvRecoRow[];
-    /** No longer on the draft as an e-invoice: the books document is uploaded (the IRN is not restored). */
+    /** No longer on the draft as an e-invoice, books copy present: the books document is uploaded (the IRN is not restored). */
     irnLost: EinvRecoRow[];
+    /**
+     * Auto-population failed or IRN lost, and NOT in the books: in neither
+     * the upload nor the draft, so missing from GSTR-1 unless added to the
+     * books (or the IRN was cancelled on the IRP).
+     */
+    missingFromReturn: EinvRecoRow[];
+    /** Exports left out to keep the IRN whose books shipping bill is not on the e-invoice. */
+    shippingBill: EinvRecoRow[];
   };
-  /** Books documents in the reconciliation that still go up. */
+  /** Books documents in the reconciliation that are not left out (pending ones go up only with the override). */
   uploadCount: number;
   /** keep.length */
   keepCount: number;
 }
 
-const KEEP_STATUSES: readonly EinvRecoStatus[] = ['matched', 'books_irn', 'pending'];
+const KEEP_STATUSES: readonly EinvRecoStatus[] = ['matched', 'books_irn'];
 
 /**
- * What to leave out of the upload. A books document is kept out when it is
- * matched, carries its own IRN with no record against it, or matches a
- * pending e-invoice with the same figures. A books document whose e-invoice
- * failed auto-population is never kept out (it would be missing from
- * GSTR-1).
+ * What to leave out of the upload. A books document is kept out only when
+ * a pull showed it on the draft with the same figures ('matched'), or it
+ * carries its own IRN with no record against it ('books_irn'). A document
+ * whose e-invoice is pending is never kept out (it blocks the push unless
+ * overridden), and one whose e-invoice failed auto-population or was lost
+ * is uploaded: left out, it would be missing from GSTR-1.
  */
 export function planEinvoiceUpload(rows: EinvRecoRow[]): EinvUploadPlan {
   const keep: EinvDocIdentity[] = [];
@@ -493,14 +632,18 @@ export function planEinvoiceUpload(rows: EinvRecoRow[]): EinvUploadPlan {
       uploadCount += 1;
     }
   });
+  const offDraft = (r: EinvRecoRow) => r.status === 'autopop_failed' || r.status === 'irn_lost';
   return {
     keep,
     blockers: rows.filter((r) => r.status === 'mismatch' || r.status === 'number_differs'),
+    pendingBlockers: rows.filter((r) => r.status === 'pending' && !!r.books),
     warnings: {
       notInBooks: rows.filter((r) => r.status === 'not_in_books'),
-      pending: rows.filter((r) => r.status === 'pending'),
-      autopopFailed: rows.filter((r) => r.status === 'autopop_failed'),
-      irnLost: rows.filter((r) => r.status === 'irn_lost'),
+      pending: rows.filter((r) => r.status === 'pending' && !r.books),
+      autopopFailed: rows.filter((r) => r.status === 'autopop_failed' && !!r.books),
+      irnLost: rows.filter((r) => r.status === 'irn_lost' && !!r.books),
+      missingFromReturn: rows.filter((r) => offDraft(r) && !r.books),
+      shippingBill: rows.filter((r) => !!r.shippingBill && !!r.books && KEEP_STATUSES.includes(r.status)),
     },
     uploadCount,
     keepCount: keep.length,
