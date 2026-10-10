@@ -30,7 +30,7 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // of re-sending them, never writes an IRN field, and the e-invoice pull checks
 // the file's GSTIN and period and drops e-invoices the portal no longer holds.
 // 0.4.x to 0.8.6 are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.8.7';
+export const RECOMMENDED_EXTENSION_VERSION = '0.8.8';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -68,6 +68,7 @@ const GAINS: [string, string][] = [
   ['0.8.5', 'records a NIL push in Filing Status itself, even if the page was closed'],
   ['0.8.6', 'records every GSTR-3B push itself (so a filled one shows Pushed even if the page was closed), says which client and period each push was for, no longer types into the cess box of an import row, and lets Refresh errors record an upload the portal processed'],
   ['0.8.7', "keeps every e-invoice's IRN on the portal by leaving e-invoices out of the upload"],
+  ['0.8.8', "never pushes inside another client's portal session, flags a saved password the portal cannot accept, and waits for the portal's GSTR-1 file on an e-invoice pull"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

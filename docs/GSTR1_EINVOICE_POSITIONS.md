@@ -224,7 +224,15 @@ these hold:
 2. **Number differs.** If the books number went up, the portal would hold
    two documents: the e-invoice and the books copy. Staff correct the books
    number to the e-invoice's.
-3. **No fresh pull, or a pull of an old file.** E-invoices reach the draft
+3. **No fresh pull, or a pull of an old file** (and no e-invoice Excel
+   imported today). **Firm's decision, 10 Oct 2026:** an e-invoice Excel
+   imported today stands in for the pull. Staff downloading the Excel from
+   the portal and importing it must not be blocked from pushing; the plan then
+   rests on the Excel (documents it shows as auto-populated are left out), its
+   import time is recorded in `einvoice_pulls` (source `einvoice_excel`) and
+   the upload dialog says "Planned on the e-invoice Excel imported …". A pull
+   of today still decides over the Excel where both have a document (§3).
+   Without either: E-invoices reach the draft
    two days after the IRN, and one uploaded first is never auto-populated
    (para 3(c)). So the plan must rest on a pull taken on the day of the
    push, of a file the portal generated that day. `isPullFresh` takes the

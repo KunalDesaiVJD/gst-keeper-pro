@@ -168,11 +168,19 @@ const fmtDay = (iso: string) => {
     : iso;
 };
 
-const pullLine = (p: EinvoicePullRow | null): { text: string; tone: 'muted' | 'warn' | 'error' } => {
-  if (!p) return { text: 'E-invoices not pulled yet for this period: pull them today before pushing.', tone: 'warn' };
+/** An e-invoice Excel imported today stands in for the pull on a push (firm's decision, 10 Oct 2026). */
+const excelToday = (x: EinvoicePullRow | null) => !!x && x.status === 'ok' && isPullFresh(x.pulled_at);
+
+const pullLine = (p: EinvoicePullRow | null, x: EinvoicePullRow | null): { text: string; tone: 'muted' | 'warn' | 'error' } => {
+  const byExcel = excelToday(x) && !isPullFresh(p) && p?.status !== 'running';
+  if (byExcel) {
+    return { text: `No portal pull today: the push uses the e-invoice Excel imported ${fmtWhen(x!.pulled_at)}.`
+      + (p ? ` Last pull: ${fmtWhen(p.pulled_at)} (${p.status}).` : ''), tone: 'muted' };
+  }
+  if (!p) return { text: 'E-invoices not pulled yet for this period: pull them, or import the e-invoice Excel, today before pushing.', tone: 'warn' };
   const when = fmtWhen(p.pulled_at);
   const fresh = isPullFresh(p);
-  const age = fresh ? ' · today' : ' · not today: pull again before pushing';
+  const age = fresh ? ' · today' : ' · not today: pull again, or import the e-invoice Excel, before pushing';
   // The date the portal generated the file the pull read (from its name).
   const file = p.generated_on ? ` · portal file generated ${fmtDay(p.generated_on)}` : '';
   switch (p.status) {
@@ -262,7 +270,7 @@ const EinvoiceRecoPanel: React.FC<Props> = ({
     return { pulled, excel: einvoiceDocs.length - pulled };
   }, [einvoiceDocs]);
 
-  const pull = pullLine(lastPull);
+  const pull = pullLine(lastPull, lastExcel);
   const toggle = (f: Filter) => setFilter((cur) => (cur === f ? 'all' : f));
   const uploaded = booksDocCount == null ? null : Math.max(0, booksDocCount - plan.keepCount);
 

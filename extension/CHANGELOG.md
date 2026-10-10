@@ -2,6 +2,40 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-10 — Never inside another client's session; impossible passwords; e-invoice pull waits (v0.8.8)
+
+No database or page change is needed for the extension; the GSTR-1 page's
+e-invoice pull watchdog is raised to 30 minutes to match the longer wait.
+
+- **Why.** On 10 Oct 2026 MAHIL INFRA's GSTR-1 push could not go through and
+  ran with BAPA SITARAM's login. MAHIL's saved portal password was 17
+  characters; the portal takes 8 to 15, so its form was never sent, the portal
+  said nothing, and 0.8.7 logged "CAPTCHA not accepted". Staff then logged in
+  by hand, Chrome offered BAPA's saved login (or BAPA's session from an earlier
+  job was still open), and the push went on in BAPA's session: nothing checked
+  whose session a job was in.
+- **Whose session.** Every job that reaches a logged-in page at its login step
+  reads the session's GSTIN (`profile/detail` on services.gst.gov.in, the
+  header on other portal pages) before doing anything for the client. Another
+  taxpayer's session is logged out and the client logged in again, twice at
+  most; then the job stops: "The GST portal keeps logging in as …". A push
+  whose session cannot be read is stopped with nothing sent; a pull goes on as
+  before. The GSTR-1 and GSTR-3B dashboards, and the NIL step just before it
+  ticks "File Nil", stop a push when the header shows another GSTIN.
+- **The form.** Just before the automatic Login press the user ID and
+  password are set again if anything (Chrome's password manager, another
+  extension) changed them since they were filled.
+- **Impossible passwords.** A saved password shorter than 8 or longer than 15
+  characters is never typed. The client gets a password issue that says so
+  (and that the portal probably kept the first 15 of a longer one), and a push
+  fails with the same words. (MAHIL INFRA 17, AMADIUS REALTY 18 on 10 Oct.)
+- **E-invoice pull waits.** The portal builds the GSTR-1 file of a period it
+  has not generated before in up to 20 minutes; 0.8.7 gave up after about 90
+  seconds and staff had to pull again. The pull now asks every 30 seconds for
+  up to 22 minutes, with the heartbeat keeping the job alive.
+- Tests: `test/11-session-identity.test.mjs` (new), and the wait in
+  `test/10-einvoice-keep.test.mjs`.
+
 ## 2026-10-10 — E-invoices kept on the portal, not re-sent (v0.8.7)
 
 Needs the GSTR-1 page update that sends the e-invoice plan (with the version

@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { WS_BTN } from '@/components/workspace/theme';
+import { cleanPortalPassword, portalPasswordProblem } from '@/lib/portalPassword';
 
 export const PortalLoginPopover: React.FC<{
   client: { id: string; name: string; gst_user_id: string | null };
@@ -32,9 +33,12 @@ export const PortalLoginPopover: React.FC<{
 
   const changed = userId.trim() !== (client.gst_user_id ?? '') || password !== '';
   const save = async () => {
+    const cleaned = cleanPortalPassword(password);
+    const pwProblem = portalPasswordProblem(cleaned);
+    if (pwProblem) { toast.error(pwProblem); return; }
     setSaving(true);
     const patch: { gst_user_id: string | null; gst_password?: string } = { gst_user_id: userId.trim() || null };
-    if (password) patch.gst_password = password;
+    if (cleaned) patch.gst_password = cleaned;
     const { error } = await supabase.from('clients').update(patch).eq('id', client.id);
     setSaving(false);
     if (error) { toast.error(`Couldn't save the portal login: ${error.message}`); return; }

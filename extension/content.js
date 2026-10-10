@@ -749,6 +749,9 @@
 
   async function handleLogin(job, cur, progress) {
     if (isLoggedIn()) {
+      // 0.8.8: whose session is this? Another taxpayer's is logged out first.
+      banner('Checking which taxpayer the GST portal is logged in as…' + progress);
+      if ((await confirmSessionIdentity(job, cur, progress)) !== 'ok') return;
       job.retries = 0;
       delete job.captchaRetry;
       delete job.captchaWaitSince;
@@ -964,6 +967,25 @@
       else if (pushFailer(job)) await advance(job);
       return;
     }
+    // 0.8.8: the portal takes passwords of 8 to 15 characters, and its own
+    // password box stops at 15. A longer saved password (MAHIL INFRA, 17, saved
+    // when the portal asked for a new one) is never accepted: the form is not
+    // even sent, the portal says nothing, and 0.8.7 read the silence as a
+    // CAPTCHA the portal kept rejecting. It is not tried: the client is marked
+    // with a password issue that says what to fix.
+    if (portalPass.length < 8 || portalPass.length > 15) {
+      const message = 'The GST portal password saved for ' + cur.creds.name + ' is ' + portalPass.length + ' characters long; the portal accepts 8 to 15, so it cannot log in. '
+        + (portalPass.length > 15 ? 'The portal\'s password box stops at 15 characters, so the password set on the portal is probably the first 15 of the saved one. ' : '')
+        + 'Log in by hand once, then save the correct password in Edit Client.';
+      banner(message + progress, '#dc2626');
+      try { await GSTKdb.loginIssueSet(cur.clientId, 'wrong_password', message); } catch (e) { /* older database */ }
+      await logLoginFailure(job, cur, message, 'wrong_password');
+      const failPush = pushFailer(job);
+      if (failPush) { await failPush(job, message); return; }
+      if (job.runner || job.agent || bulkJob(job)) { await sleep(1500); await advance(job); return; }
+      await clearJob();
+      return;
+    }
     // 0.8.1: a password the portal already refused is not offered again in a
     // bulk or scheduled run: the client is logged and the run moves on, until
     // the password saved in GST Keeper changes.
@@ -1086,6 +1108,13 @@
       // fresh CAPTCHA, pointlessly, and stalled the run behind it. 0.8.1 reads
       // the answer as soon as it appears, from more of the page, and never
       // offers a refused password again.
+      // 0.8.8: Chrome's password manager (or another extension) may have put
+      // another client's login into the form since it was filled: the form
+      // goes up with this client's user ID and password, never another's.
+      const userEl = $('#username');
+      const passEl = $('#user_pass');
+      if (userEl && userEl.value !== cur.creds.user) setVal(userEl, cur.creds.user);
+      if (passEl && passEl.value !== portalPass) setVal(passEl, portalPass);
       const before = loginMessages();
       notePress(cur);
       btn.click();
@@ -1528,6 +1557,7 @@
   async function handleGstr3bDashboard(job, cur, progress) {
     if (!/returns\/auth\/dashboard/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
     if (!(await waitFor('select', 20000))) { await failGstr3b(job, 'Returns dashboard did not load.'); return; }
+    if (await headerShowsOther(job, cur, progress)) return;
     const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
     if (!mm || !yyyy) { await failGstr3b(job, 'Bad period.'); return; }
@@ -1991,6 +2021,7 @@
   async function handleGstr1UploadDashboard(job, cur, progress) {
     if (!/returns\/auth\/dashboard/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
     if (!(await waitFor('select', 20000))) { await failUpload(job, 'Dashboard did not load'); return; }
+    if (await headerShowsOther(job, cur, progress)) return;
     const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
     if (!mm || !yyyy) { await failUpload(job, 'Bad period'); return; }
@@ -2764,6 +2795,7 @@
       await failUpload(job, 'The "File Nil GSTR-1" option is disabled on the portal — the return probably already has saved or auto-populated data (e.g. e-invoices). Clear it there, or push the JSON instead.');
       return;
     }
+    if (await headerShowsOther(job, cur, progress)) return;
     if (!nilToggleOn(toggle)) { try { toggle.click(); } catch (e) { /* checked below */ } }
 
     // Confirm whatever dialog the portal raises (Yes / OK / Proceed / Confirm).
@@ -3535,6 +3567,16 @@
   async function sessionGstinMismatch(cur) {
     const expected = String((cur.creds && cur.creds.gstin) || '').trim().toUpperCase();
     if (!expected) return null;
+    const found = await readSessionGstin();
+    if (found && found !== expected) {
+      return 'Portal session belongs to ' + found + ', not ' + expected + ' — nothing was saved for this client.';
+    }
+    return null;
+  }
+  // The GSTIN of the taxpayer this Chrome's portal session belongs to, from
+  // the portal's own profile API (services.gst.gov.in pages only: the call is
+  // same-origin there). Null when it cannot be read.
+  async function readSessionGstin() {
     try {
       const r = await withTimeout(fetch('https://services.gst.gov.in/services/auth/profile/detail', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
@@ -3542,11 +3584,98 @@
       if (!r.ok) return null;
       const j = await r.json();
       const found = String((j && (j.gstin || j.gstIn || j.gstinId)) || '').trim().toUpperCase();
-      if (/^[0-9A-Z]{15}$/.test(found) && found !== expected) {
-        return 'Portal session belongs to ' + found + ', not ' + expected + ' — nothing was saved for this client.';
+      return /^[0-9A-Z]{15}$/.test(found) ? found : null;
+    } catch (e) { return null; }
+  }
+  // The GSTIN the portal's page header shows next to the taxpayer's name (every
+  // logged-in page, any portal host). Null unless exactly one is shown there.
+  function headerGstin() {
+    const seen = new Set();
+    for (const el of $$('header *, nav *, .navbar *, [class*="header"] *, [class*="Header"] *')) {
+      if (el.children && el.children.length) continue;
+      const t = String(el.textContent || '').trim().toUpperCase();
+      if (/^[0-9]{2}[0-9A-Z]{13}$/.test(t)) seen.add(t);
+    }
+    return seen.size === 1 ? [...seen][0] : null;
+  }
+
+  // ── 0.8.8: never act inside another taxpayer's portal session ────────────
+  // The portal keeps one session per Chrome profile. A tab opened for one
+  // client could land in another's: a session left open by an earlier job, or
+  // a person who picked another client's login saved in Chrome on the form
+  // (10 Oct 2026: a MAHIL INFRA push ran in BAPA SITARAM's session). Before
+  // anything is done for cur, the session's GSTIN must be cur's.
+  //   'ok'      the session is cur's (or a pull whose session cannot be read:
+  //             pulls check what they save, as before);
+  //   'moving'  this page is leaving (to be checked on services.gst.gov.in, or
+  //             logged out so cur logs in afresh);
+  //   'stopped' the job ended for this client, with a message.
+  // A different GSTIN is logged out and cur logged in again, twice at most. A
+  // push whose session cannot be read is stopped: nothing is sent to a return
+  // without knowing whose it is.
+  async function confirmSessionIdentity(job, cur, progress) {
+    const expected = String((cur.creds && cur.creds.gstin) || '').trim().toUpperCase();
+    if (!expected) return 'ok';
+    const push = !!pushFailer(job);
+    let found = null;
+    if (/(^|\.)services\.gst\.gov\.in$/.test(location.hostname)) {
+      for (let i = 0; i < 3 && !found; i++) {
+        found = await readSessionGstin();
+        if (!found && i < 2) await sleep(1500);
       }
-    } catch (e) { /* cannot verify — do not block */ }
-    return null;
+    } else {
+      found = headerGstin();
+      if (!found && !job.idCheckHop) {
+        job.idCheckHop = true;
+        await setJob(job);
+        location.href = 'https://services.gst.gov.in/services/auth/fowelcome';
+        return 'moving';
+      }
+    }
+    delete job.idCheckHop;
+    if (found === expected) { delete job.identityLogouts; return 'ok'; }
+    if (!found) {
+      if (!push) return 'ok';
+      return stopForIdentity(job, cur, progress, 'Could not confirm that the GST portal is logged in as ' + cur.creds.name + ' (' + expected
+        + '), so nothing was pushed. Log out of the GST portal in this Chrome and push again.');
+    }
+    job.identityLogouts = (job.identityLogouts || 0) + 1;
+    if (job.identityLogouts > 2) {
+      return stopForIdentity(job, cur, progress, 'The GST portal keeps logging in as ' + found + ', not ' + cur.creds.name + ' (' + expected
+        + '), so nothing was done for this client. Check the user ID on the portal login form: Chrome may be filling another client\'s saved login. Remove GST logins saved in Chrome (chrome://password-manager) and try again.');
+    }
+    banner('The GST portal is logged in as ' + found + ', not ' + cur.creds.name + ' (' + expected + '): logging out and logging in as ' + cur.creds.name + '…' + progress, '#d97706');
+    try { await GSTKdb.logClientSync(cur.clientId, 'login', 'failed', 'Portal session was ' + found + ', not ' + expected + ': logged out and logged in again.'); } catch (e) { /* diagnostic only */ }
+    job.step = 'logout';
+    await setJob(job);
+    await sleep(1500);
+    location.href = 'https://services.gst.gov.in/services/logout';
+    return 'moving';
+  }
+  // 0.8.8: on a returns page, just before a push acts: the header's GSTIN, when
+  // it shows one, must be the job's client's (a session can change under a job
+  // if someone logs another client in elsewhere in this Chrome). True when the
+  // push was stopped.
+  async function headerShowsOther(job, cur, progress) {
+    const expected = String((cur.creds && cur.creds.gstin) || '').trim().toUpperCase();
+    const shown = headerGstin();
+    if (!expected || !shown || shown === expected) return false;
+    await stopForIdentity(job, cur, progress, 'The GST portal is logged in as ' + shown + ', not ' + cur.creds.name + ' (' + expected
+      + '), so nothing was pushed. Someone may have logged another client in, in this Chrome: push again.');
+    return true;
+  }
+  async function stopForIdentity(job, cur, progress, message) {
+    banner(message + progress, '#dc2626');
+    delete job.identityLogouts;
+    delete job.idCheckHop;
+    await logLoginFailure(job, cur, message, 'session_mismatch');
+    const failPush = pushFailer(job);
+    if (failPush) { await failPush(job, message); return 'stopped'; }
+    // A one-client pull a person started: the banner stays and the job ends.
+    if (!job.runner && !job.agent && !bulkJob(job)) { await clearJob(); return 'stopped'; }
+    await sleep(2500);
+    await skipClient(job);
+    return 'stopped';
   }
 
   // Skip the rest of this client's steps (all periods) and move to the next.
@@ -5411,25 +5540,44 @@
     const rtnPrd = String(mm).padStart(2, '0') + yyyy;
     banner('Requesting the portal\'s GSTR-1 JSON for ' + job.period + ' (e-invoices)…' + progress);
 
+    // 0.8.8: the portal builds the file of a period it has not generated
+    // before in up to 20 minutes, and 0.8.7 gave up after ~90 seconds, so the
+    // first pull of a month usually ended "still generating" and staff had to
+    // come back and pull again. The pull now waits for the file itself:
+    // every 30 seconds for up to EINVOICE_WAIT_MS, with the heartbeat keeping
+    // the job's lastActivityAt fresh so the 10-minute idle rule (and the
+    // watchdog) never takes the wait for a stalled tab. The page's own
+    // watchdog (GSTR1DataPage EINVOICE_PULL_WATCHDOG_MS) is longer still.
     let downloadUrl = null;
-    const MAX_ATTEMPTS = 6; // ~90s of polling in this page load, as handleGstr1JsonPull
+    const EINVOICE_WAIT_MS = 22 * 60 * 1000;
+    const EINVOICE_POLL_MS = 30000;
+    const waitStart = Date.now();
+    const stopHeartbeat = startHeartbeat();
     try {
-      for (let attempt = 0; attempt < MAX_ATTEMPTS && !downloadUrl; attempt++) {
+      for (;;) {
         const r = await fetch('https://return.gst.gov.in/returns/auth/api/offline/download/generate?flag=0&rtn_prd=' + rtnPrd + '&rtn_typ=GSTR1', { credentials: 'include' });
         if (!r.ok) throw new Error('HTTP ' + r.status + ' from offline/download/generate');
         const j = await r.json();
         if (j && j.status === 1 && j.data && j.data.url) { downloadUrl = j.data.url; break; }
-        if (attempt < MAX_ATTEMPTS - 1) { banner('GSTR-1 JSON still generating on the portal (attempt ' + (attempt + 1) + '/' + MAX_ATTEMPTS + ')…' + progress); await sleep(15000); }
+        const waited = Date.now() - waitStart;
+        if (waited + EINVOICE_POLL_MS > EINVOICE_WAIT_MS) break;
+        const mins = Math.floor(waited / 60000);
+        banner('The portal is building the GSTR-1 file for ' + job.period + ' (it can take up to 20 minutes). Waiting'
+          + (mins ? ', ' + mins + ' min so far' : '') + ': keep this tab open.' + progress, '#f59e0b');
+        await sleep(EINVOICE_POLL_MS);
       }
     } catch (e) {
+      stopHeartbeat();
       const message = 'Could not read the portal API (' + ((e && e.message) || 'unknown error') + ').';
       banner('E-invoices: ' + message, '#dc2626');
       await reportEinvoicePull(job, cur, { status: 'failed', message });
       return;
     }
+    stopHeartbeat();
 
     if (!downloadUrl) {
-      const message = 'The portal is still generating the GSTR-1 JSON (can take up to 20 min) — pull again shortly.';
+      const message = 'The portal had not finished the GSTR-1 file after ' + Math.round(EINVOICE_WAIT_MS / 60000)
+        + ' minutes of waiting. Nothing was saved; pull e-invoices again in a few minutes.';
       banner('E-invoices: ' + message, '#f59e0b');
       await reportEinvoicePull(job, cur, { status: 'pending', message });
       return;

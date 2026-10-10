@@ -20,6 +20,7 @@ import ClientCredentialsSection from '@/components/clients/ClientCredentialsSect
 import { EinvoiceClientFields } from '@/components/clients/EinvoiceClientFields';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { cleanPortalPassword, portalPasswordProblem } from '@/lib/portalPassword';
 
 /** Consistent required-field marker used across the Add / Edit client forms. */
 const Req: React.FC = () => (
@@ -206,6 +207,12 @@ const AddClientPage: React.FC = () => {
       toast.error('Please fix the errors in the form.');
       return;
     }
+    const gstPassword = cleanPortalPassword(formData.gstPassword);
+    const pwProblem = portalPasswordProblem(gstPassword);
+    if (pwProblem) {
+      toast.error(pwProblem);
+      return;
+    }
 
     setIsSaving(true);
 
@@ -231,12 +238,12 @@ const AddClientPage: React.FC = () => {
           inactive_at_hand: formData.inactiveAtHand,
           einvoice_applicable: formData.einvoiceExemption ? false : formData.einvoiceApplicable,
           einvoice_exemption: formData.einvoiceExemption || null,
-          gst_user_id: formData.gstUserId || null,
-          gst_password: formData.gstPassword || null,
+          gst_user_id: formData.gstUserId.trim() || null,
+          gst_password: gstPassword || null,
           // Single client password: the app login uses the same value as the GST
           // portal password so one change works everywhere. Falls back to the
           // GSTIN when no GST password is entered.
-          client_password: formData.gstPassword || formData.gstin,
+          client_password: gstPassword || formData.gstin,
           is_first_login: true,
           regular_sub_type: formData.registrationType === 'Regular' ? formData.regularSubType : null,
           builder_itc_type: formData.regularSubType === 'Builder' ? formData.builderItcType : null,
