@@ -150,6 +150,7 @@ export type Database = {
           period_month: string
           pulled_at: string
           pulled_by: string | null
+          recorded_at: string | null
           source: string
           status: string
         }
@@ -162,6 +163,7 @@ export type Database = {
           period_month: string
           pulled_at?: string
           pulled_by?: string | null
+          recorded_at?: string | null
           source?: string
           status: string
         }
@@ -174,6 +176,7 @@ export type Database = {
           period_month?: string
           pulled_at?: string
           pulled_by?: string | null
+          recorded_at?: string | null
           source?: string
           status?: string
         }

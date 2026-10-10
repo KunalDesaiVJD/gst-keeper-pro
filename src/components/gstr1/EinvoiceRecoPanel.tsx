@@ -84,7 +84,7 @@ const STATUS_LOOK: Record<EinvRecoStatus, {
     tile: 'Auto-population failed',
     atPush: 'Uploaded without IRN',
     badge: 'Auto-population failed',
-    full: 'Auto-population failed — the books document is uploaded without its IRN; with no books copy it is in neither the upload nor the draft, so missing from GSTR-1',
+    full: 'Auto-population failed — the books document is uploaded without its IRN; with no books copy it is not among the IRN documents on the draft and not in the upload, so missing from GSTR-1 (unless it is on the portal without its IRN)',
     variant: 'warning',
     tone: 'warn',
   },
@@ -92,7 +92,7 @@ const STATUS_LOOK: Record<EinvRecoStatus, {
     tile: 'IRN lost on the portal',
     atPush: 'Uploaded; the IRN is not restored',
     badge: 'IRN lost on portal',
-    full: 'IRN lost on the portal — the latest pull no longer shows it as an e-invoice; the books document is uploaded, which cannot restore the IRN; with no books copy it is missing from GSTR-1',
+    full: 'IRN lost on the portal — the latest pull no longer shows it as an e-invoice; the books document is uploaded, which cannot restore the IRN; with no books copy it is missing from GSTR-1 (unless it is on the portal without its IRN)',
     variant: 'warning',
     tone: 'warn',
   },
@@ -114,7 +114,7 @@ const atPushOf = (r: EinvRecoRow): string => {
   if (r.status === 'not_in_books') return 'Stays on the portal';
   if (r.status === 'mismatch' || r.status === 'number_differs') return 'Blocks the push';
   if (r.status === 'matched' || r.status === 'books_irn') return 'Left out (IRN kept)';
-  if ((r.status === 'autopop_failed' || r.status === 'irn_lost') && !r.books) return 'Not in books or on the draft: missing from GSTR-1';
+  if ((r.status === 'autopop_failed' || r.status === 'irn_lost') && !r.books) return 'Not in books, not on the draft with its IRN: missing from GSTR-1';
   return 'Uploaded';
 };
 
@@ -176,6 +176,14 @@ const pullLine = (p: EinvoicePullRow | null): { text: string; tone: 'muted' | 'w
   // The date the portal generated the file the pull read (from its name).
   const file = p.generated_on ? ` · portal file generated ${fmtDay(p.generated_on)}` : '';
   switch (p.status) {
+    case 'running':
+      // A pull writes 'running' before its first record and its final status
+      // after its last (extension 0.8.7): the push waits for it.
+      return {
+        text: `Pull in progress (started ${when}): wait for it to finish before pushing. If it was interrupted (its portal tab closed, `
+          + 'or the connection dropped), pull again.',
+        tone: 'warn',
+      };
     case 'ok':
       return { text: `Pulled ${when} · ${p.docs_found.toLocaleString('en-IN')} IRN${p.docs_found === 1 ? '' : 's'} on the portal${file}${age}`, tone: fresh ? 'muted' : 'warn' };
     case 'none':
@@ -395,13 +403,17 @@ const EinvoiceRecoPanel: React.FC<Props> = ({
         </Note>
       )}
 
-      {plan.warnings.missingFromReturn.length > 0 && (
-        <Note tone="warn">
-          {plan.warnings.missingFromReturn.length.toLocaleString('en-IN')} e-invoice{plan.warnings.missingFromReturn.length === 1 ? ' is' : 's are'} in
-          neither the books nor the portal draft and will be missing from GSTR-1 unless added to the books (or the IRN was
-          cancelled).
-        </Note>
-      )}
+      {plan.warnings.missingFromReturn.length > 0 && (() => {
+        const k = plan.warnings.missingFromReturn.length;
+        return (
+          <Note tone="warn">
+            {k.toLocaleString('en-IN')} e-invoice{k === 1 ? ' is' : 's are'} not among the IRN documents on the portal draft and
+            not in the books: {k === 1 ? 'it' : 'they'} will be missing from GSTR-1 unless added to the books (or the IRN was
+            cancelled). If {k === 1 ? 'it is' : 'they are'} on the portal without {k === 1 ? 'its' : 'their'} IRN,{' '}
+            {k === 1 ? 'it' : 'they'} will be filed as uploaded.
+          </Note>
+        );
+      })()}
 
       <Note tone="info">
         On push, {plan.keepCount.toLocaleString('en-IN')} document{plan.keepCount === 1 ? '' : 's'} on the portal as

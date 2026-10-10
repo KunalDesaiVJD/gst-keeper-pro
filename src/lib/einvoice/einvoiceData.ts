@@ -21,23 +21,85 @@ export const EINVOICE_MIN_EXTENSION = '0.8.7';
 /** einvoice_pulls row: the last pull (portal_gstr1) or Excel import (einvoice_excel) for a client and period. */
 export interface EinvoicePullRow {
   /**
-   * ok | none | pending | failed | stale. 'stale': the portal served a
-   * GSTR-1 file generated before the pull day; nothing was saved or marked.
+   * running | ok | none | pending | failed | stale. 'running': a pull
+   * (extension 0.8.7) is saving its records now; it wrote this before its
+   * first record and writes its final status at the end, so the push and
+   * Download JSON wait for it. 'stale': the portal served a GSTR-1 file
+   * generated before the pull day; nothing was saved or marked.
    */
   status: string;
   docs_found: number;
   message: string | null;
-  /** The same timestamp the pull wrote on last_seen_at of every row it saw. */
+  /** The pull's own time (the PC's clock): the same timestamp it wrote on last_seen_at and gone_at. */
   pulled_at: string;
   pulled_by?: string | null;
   source?: string | null;
   /** Pulls: the date (yyyy-mm-dd) the portal generated the GSTR-1 file, from its name; null when unknown. */
   generated_on?: string | null;
+  /**
+   * When the database last wrote this row (its own clock, set by a trigger on
+   * every insert and update). For a finished pull: when it finished. The
+   * "Pull again to confirm" banner compares it with the push's action_at,
+   * which is the database's clock too (review N3). Null before the migration.
+   */
+  recorded_at?: string | null;
 }
 
-/** pulled_at of a pull that finished (ok / none): the time the plan may rest on. A 'stale' pull never counts. */
+/** pulled_at of a pull that finished (ok / none): the time the plan may rest on. A 'stale' or 'running' pull never counts. */
 export const successfulPullAt = (p: EinvoicePullRow | null | undefined): string | null =>
   (p && (p.status === 'ok' || p.status === 'none') ? p.pulled_at : null);
+
+/** A pull is saving its records now (status 'running'): nothing may be planned on the records until it ends. */
+export const isPullRunning = (p: EinvoicePullRow | null | undefined): boolean => p?.status === 'running';
+
+/**
+ * The same pull row: both absent, or the same status and the same pulled_at
+ * instant. Every pull writes its own pulled_at (first as 'running', then
+ * with its final status), so a pull that started or ended between two reads
+ * always differs.
+ */
+export const samePull = (a: EinvoicePullRow | null | undefined, b: EinvoicePullRow | null | undefined): boolean => {
+  if (!a || !b) return !a && !b;
+  const ta = Date.parse(a.pulled_at);
+  const tb = Date.parse(b.pulled_at);
+  return a.status === b.status && (Number.isFinite(ta) && Number.isFinite(tb) ? ta === tb : a.pulled_at === b.pulled_at);
+};
+
+/** The Version History fields the "Pull again to confirm" banner reads. */
+export interface EinvoicePushVersion {
+  action_type: string;
+  status: string | null;
+  /** The database's now() when the row was written. */
+  action_at: string;
+  einvoice_kept?: number | null;
+}
+
+/**
+ * "Pull again to confirm" (§8): when the latest push that carried an
+ * e-invoice plan reached the portal, if no successful pull finished after
+ * it; null otherwise. `versions` are one return's Version History rows,
+ * newest first. A push counts when its UPLOAD row records einvoice_kept (a
+ * plan was sent; the extension version alone is not enough, review N8) and
+ * it was accepted or partial, or failed and a later Refresh errors found it
+ * accepted or partial. Both times are the database's (review N3): the row's
+ * action_at, and the pull row's recorded_at (when the pull finished), or
+ * its pulled_at for a row from before recorded_at.
+ */
+export function pushAwaitingRepull(versions: EinvoicePushVersion[], pull: EinvoicePullRow | null | undefined): string | null {
+  const reached = (s: string | null) => s === 'accepted' || s === 'partial';
+  let pushedAt: string | null = null;
+  for (let i = 0; i < versions.length && !pushedAt; i++) {
+    const v = versions[i];
+    if (v.action_type !== 'UPLOAD' || v.einvoice_kept == null) continue;
+    const after = i > 0 ? versions[i - 1] : null;
+    if (reached(v.status) || (v.status === 'failed' && after?.action_type === 'REFRESH_ERRORS' && reached(after.status))) pushedAt = v.action_at;
+  }
+  if (!pushedAt) return null;
+  const pulledAt = successfulPullAt(pull);
+  const pullDone = pulledAt ? (pull?.recorded_at || pulledAt) : null;
+  if (pullDone && Date.parse(pullDone) > Date.parse(pushedAt)) return null;
+  return pushedAt;
+}
 
 /** Do the books hold any document an e-invoice could cover (or that carries its own IRN)? */
 export const booksHaveEinvoiceable = (books: EinvDoc[]): boolean =>
@@ -108,10 +170,16 @@ export async function fetchEinvoiceEvidence(clientId: string, ticked: boolean): 
 
 export interface EinvoiceRecords {
   docs: EinvoiceDocRow[];
-  /** The last portal pull (source portal_gstr1). */
+  /** The last portal pull (source portal_gstr1), read BEFORE the records. */
   pull: EinvoicePullRow | null;
   /** The last e-invoice Excel import (source einvoice_excel). */
   excel: EinvoicePullRow | null;
+  /**
+   * The portal pull row, read again AFTER the records, was not the one read
+   * before them: a pull started or ended while they were read, so they may
+   * mix two pulls. Nothing may be planned on them; read again.
+   */
+  pullMoved: boolean;
 }
 
 // The reverse charge, e-commerce GSTIN and shipping bill are read out of
@@ -123,7 +191,7 @@ const DOC_COLS = 'id, client_id, period_month, section, doc_type, doc_no, doc_ke
 /** Columns of migration 20261013100000. */
 const NEW_DOC_COLS = ', irn_status, autopop_status, autopop_date, error, gone_at';
 const PULL_COLS = 'status, docs_found, message, pulled_at, pulled_by';
-const NEW_PULL_COLS = ', generated_on';
+const NEW_PULL_COLS = ', generated_on, recorded_at';
 
 /** A query that names a column the database does not have yet (migration 20261013100000 not applied). */
 const isMissingColumn = (e: unknown): boolean => {
@@ -136,7 +204,47 @@ const toNum = (v: unknown) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** Every e-invoice record of a client and period (MM/YYYY), with the last pull and the last Excel import. */
+/**
+ * One einvoice_pulls row. Before migration 20261013100000 the table has no
+ * source (one row per period), generated_on or recorded_at: the columns it
+ * lacks are left out, and `legacy` says the source could not be filtered on.
+ */
+async function readPullRow(clientId: string, periodMonth: string, source: 'portal_gstr1' | 'einvoice_excel'): Promise<{ row: EinvoicePullRow | null; legacy: boolean }> {
+  const read = async (cols: string, bySource: boolean) => {
+    let q = supabase.from('einvoice_pulls').select(cols).eq('client_id', clientId).eq('period_month', periodMonth);
+    if (bySource) q = q.eq('source', source);
+    return q.maybeSingle();
+  };
+  let legacy = false;
+  let { data, error } = await read(PULL_COLS + NEW_PULL_COLS, true);
+  if (error && isMissingColumn(error)) {
+    ({ data, error } = await read(PULL_COLS, true));
+    if (error && isMissingColumn(error)) {
+      legacy = true;
+      ({ data, error } = await read(PULL_COLS, false));
+    }
+  }
+  if (error) throw error;
+  if (legacy && source !== 'portal_gstr1') return { row: null, legacy };
+  return { row: data ? { ...(data as unknown as EinvoicePullRow), source } : null, legacy };
+}
+
+/**
+ * The last portal pull of a client and period, read now. The push reads it
+ * again just before it starts and refuses if it is not the row its records
+ * were read with (samePull), or if a pull is running (§4.3, §8).
+ */
+export async function readEinvoicePull(clientId: string, periodMonth: string): Promise<EinvoicePullRow | null> {
+  return (await readPullRow(clientId, periodMonth, 'portal_gstr1')).row;
+}
+
+/**
+ * Every e-invoice record of a client and period (MM/YYYY), with the last pull
+ * and the last Excel import. The pull row is read before the records and
+ * again after them (pullMoved): a pull writes its row as 'running' before its
+ * first record and its final status after its last, so records read while a
+ * pull saves never pass for a finished pull's.
+ */
 export async function loadEinvoiceRecords(clientId: string, periodMonth: string): Promise<EinvoiceRecords> {
   const readDocs = async (cols: string): Promise<EinvoiceDocRow[]> => {
     const PAGE = 1000;
@@ -161,31 +269,30 @@ export async function loadEinvoiceRecords(clientId: string, periodMonth: string)
     return out;
   };
 
-  let legacy = false;
+  // 1. The pull row (and the Excel import's), before any record.
+  const [before, excelRead] = await Promise.all([
+    readPullRow(clientId, periodMonth, 'portal_gstr1'),
+    readPullRow(clientId, periodMonth, 'einvoice_excel'),
+  ]);
+
+  // 2. The records.
   let docs: EinvoiceDocRow[];
   try {
     docs = await readDocs(DOC_COLS + NEW_DOC_COLS);
   } catch (e) {
     if (!isMissingColumn(e)) throw e;
-    // Before the migration: no Excel columns, no gone_at and one pull row per period.
-    legacy = true;
+    // Before the migration: no Excel columns and no gone_at.
     docs = await readDocs(DOC_COLS);
   }
 
-  const readPull = async (source: string | null): Promise<EinvoicePullRow | null> => {
-    const read = async (cols: string) => {
-      let q = supabase.from('einvoice_pulls').select(cols).eq('client_id', clientId).eq('period_month', periodMonth);
-      if (source) q = q.eq('source', source);
-      return q.maybeSingle();
-    };
-    let { data, error } = await read(legacy ? PULL_COLS : PULL_COLS + NEW_PULL_COLS);
-    if (error && !legacy && isMissingColumn(error)) ({ data, error } = await read(PULL_COLS));
-    if (error) throw error;
-    return data ? { ...(data as unknown as EinvoicePullRow), source: source ?? 'portal_gstr1' } : null;
+  // 3. The pull row again: a pull that started or ended meanwhile changed it.
+  const after = await readPullRow(clientId, periodMonth, 'portal_gstr1');
+  return {
+    docs,
+    pull: before.row,
+    excel: before.legacy ? null : excelRead.row,
+    pullMoved: !samePull(before.row, after.row),
   };
-  if (legacy) return { docs, pull: await readPull(null), excel: null };
-  const [pull, excel] = await Promise.all([readPull('portal_gstr1'), readPull('einvoice_excel')]);
-  return { docs, pull, excel };
 }
 
 // ---------------------------------------------------------------------------

@@ -21,7 +21,11 @@
 -- b. einvoice_pulls: one row per (client, period, source), so a pull and an
 --    Excel import are both recorded; generated_on, the date the portal
 --    generated the pulled GSTR-1 file (a file generated before the pull day
---    is recorded as status 'stale' and nothing is saved from it).
+--    is recorded as status 'stale' and nothing is saved from it); status
+--    'running' while a pull saves its records (written before its first
+--    record, replaced by its final status after its last); recorded_at, the
+--    database's own time of the row's last write (a trigger), which the
+--    "Pull again to confirm" banner compares with the push's action_at.
 -- c. gstr1_upload_versions: einvoice_kept (documents left out of the upload)
 --    and ext_version (the extension that pushed). The payload stays the
 --    books JSON.
@@ -117,7 +121,31 @@ ALTER TABLE public.einvoice_pulls
 COMMENT ON COLUMN public.einvoice_pulls.generated_on IS
   'portal_gstr1 only: the date the portal generated the GSTR-1 file the pull read (from the ZIP entry name returns_<ddmmyyyy>_...). NULL when the name gave none.';
 COMMENT ON COLUMN public.einvoice_pulls.status IS
-  'ok | none | pending | failed | stale. stale = the portal served a file generated before the pull day: nothing was saved or marked, and the push gate does not accept it.';
+  'running | ok | none | pending | failed | stale. running = a pull is saving its records (written before its first record; its final status replaces it after its last): the push and Download JSON wait. stale = the portal served a file generated before the pull day: nothing was saved or marked, and the push gate does not accept it.';
+COMMENT ON COLUMN public.einvoice_pulls.pulled_at IS
+  'The pull''s own time (the pulling PC''s clock): the same timestamp it wrote on last_seen_at and gone_at. For an Excel import, the database''s now().';
+
+-- recorded_at: the database's time of the row's last write, whatever the
+-- writer sends (pulled_at is the pulling PC's clock). Set on insert and on
+-- every update, so a finished pull's row says when it finished.
+ALTER TABLE public.einvoice_pulls
+  ADD COLUMN IF NOT EXISTS recorded_at timestamptz;
+COMMENT ON COLUMN public.einvoice_pulls.recorded_at IS
+  'When the database last wrote this row (now(), set by trigger einvoice_pulls_recorded_at on insert and update; a value sent by the writer is ignored). Compared with gstr1_upload_versions.action_at, both the database''s clock.';
+CREATE OR REPLACE FUNCTION public.einvoice_pulls_set_recorded_at()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  NEW.recorded_at := now();
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS einvoice_pulls_recorded_at ON public.einvoice_pulls;
+CREATE TRIGGER einvoice_pulls_recorded_at
+  BEFORE INSERT OR UPDATE ON public.einvoice_pulls
+  FOR EACH ROW EXECUTE FUNCTION public.einvoice_pulls_set_recorded_at();
 
 -- ---------------------------------------------------------------------------
 -- c. gstr1_upload_versions
@@ -251,6 +279,9 @@ COMMENT ON FUNCTION public.client_einvoice_evidence_all() IS
 -- error (a CHECK, the unique key, a bad value) rolls all three back, so a
 -- failed import leaves the earlier one exactly as it was. Returns the number
 -- of documents inserted. The pull's rows (portal_gstr1) are never touched.
+-- Two imports of the same return run one after the other (an advisory lock
+-- on the client and period), so they never mix. Every document's section
+-- must be b2b, cdnr, cdnur, exp or b2cl.
 CREATE OR REPLACE FUNCTION public.einvoice_excel_replace(
   p_client_id    uuid,
   p_period_month text,
@@ -266,6 +297,7 @@ AS $$
 DECLARE
   v_now timestamptz := now();
   v_n   integer;
+  v_bad jsonb;
 BEGIN
   IF p_client_id IS NULL THEN
     RAISE EXCEPTION 'einvoice_excel_replace: no client' USING ERRCODE = '22023';
@@ -275,6 +307,22 @@ BEGIN
   END IF;
   IF p_docs IS NULL OR jsonb_typeof(p_docs) <> 'array' THEN
     RAISE EXCEPTION 'einvoice_excel_replace: p_docs must be a JSON array' USING ERRCODE = '22023';
+  END IF;
+
+  -- One import of a return at a time: a second waits for the first to
+  -- commit, then replaces it whole (never a mix of the two files).
+  PERFORM pg_advisory_xact_lock(hashtext('einvoice_excel_replace:' || p_client_id::text || ':' || p_period_month));
+
+  SELECT d.value INTO v_bad
+    FROM jsonb_array_elements(p_docs) AS d
+   WHERE jsonb_typeof(d.value) <> 'object'
+      OR d.value ->> 'section' IS NULL
+      OR d.value ->> 'section' NOT IN ('b2b', 'cdnr', 'cdnur', 'exp', 'b2cl')
+   LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION 'einvoice_excel_replace: every document''s section must be b2b, cdnr, cdnur, exp or b2cl; got %',
+      COALESCE(CASE WHEN jsonb_typeof(v_bad) = 'object' THEN quote_nullable(v_bad ->> 'section') END, 'a document that is not a JSON object')
+      USING ERRCODE = '22023';
   END IF;
 
   DELETE FROM public.einvoice_docs
@@ -317,4 +365,4 @@ $$;
 GRANT EXECUTE ON FUNCTION public.einvoice_excel_replace(uuid, text, jsonb, text, uuid) TO anon, authenticated, service_role;
 
 COMMENT ON FUNCTION public.einvoice_excel_replace(uuid, text, jsonb, text, uuid) IS
-  'E-invoice Excel import: replaces the client and period''s einvoice_excel records with p_docs and records the import in einvoice_pulls, in one transaction. Returns the documents inserted.';
+  'E-invoice Excel import: replaces the client and period''s einvoice_excel records with p_docs and records the import in einvoice_pulls, in one transaction, one import of a return at a time (advisory lock). Every section must be b2b, cdnr, cdnur, exp or b2cl. Returns the documents inserted.';

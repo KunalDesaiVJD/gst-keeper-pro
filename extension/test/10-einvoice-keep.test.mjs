@@ -29,6 +29,12 @@
 //     last_seen_at = now, then marks (never deletes) the period's rows it did
 //     not see, by identity and id, in chunks; einvoice_pulls.pulled_at is the
 //     same now
+//   - before its first einvoice_docs write the pull records itself as
+//     'running' ('Pull in progress', pulled_at = now), and its final status
+//     replaces that at the end: every document write and mark happens while
+//     the row says running; a failure part-way (the upsert, the read or the
+//     mark) leaves the row 'failed', never 'running'; if 'running' cannot be
+//     written nothing is saved; a wrong or stale file writes no 'running'
 //   - the save, the result and the job clear are one step of the job slot
 //     (finishEinvoicePull): a tab closed after it hears nothing more, a tab
 //     closed before it means nothing is saved; either way, one result
@@ -102,6 +108,17 @@ let storedUpdatedAt = STORED_UPDATED_AT;
 let oldVersionsSchema = false; // gstr1_upload_versions without einvoice_kept / ext_version
 let oldEinvSchema = false; // einvoice_docs without the 0.8.7 unique key
 let oldPullsSchema = false; // einvoice_pulls without generated_on
+// einvoice_pulls as the database holds it, merged on (client, period, source).
+let pullsDb = [];
+let pullsDown = false; // every einvoice_pulls write fails (a dropped connection)
+let failDocsGet = false; // the period's rows cannot be read (marking fails)
+let failDocsPatch = false; // the gone marks cannot be written
+// The pull row's status at each einvoice_docs write or mark, as a push
+// reading the records at that moment would see it.
+let pullStatusAtDocWrite = [];
+const pullKey = (r) => [r.client_id, r.period_month, r.source].join('|');
+const storedPull = (clientId = 'c1', period = '09/2026', source = 'portal_gstr1') =>
+  pullsDb.find((r) => pullKey(r) === [clientId, period, source].join('|')) || null;
 let rowCap = 1000; // the server's max rows per GET
 // einvoice_docs as the database holds it: an upsert merges on the identity
 // (client, period, section, ctin, doc_type, doc_key, source), a PATCH by id
@@ -137,6 +154,7 @@ async function dbFetch(url, init = {}) {
     return new Response(null, { status: 201 });
   }
   if (u.startsWith(DB + '/rest/v1/einvoice_docs') && method === 'POST') {
+    pullStatusAtDocWrite.push(storedPull() && storedPull().status);
     if (oldEinvSchema) return new Response(JSON.stringify({ code: '42P10', message: 'there is no unique or exclusion constraint matching the ON CONFLICT specification' }), { status: 400 });
     for (const r of body) {
       const hit = einvDb.find((x) => idKey(x) === idKey(r));
@@ -145,6 +163,7 @@ async function dbFetch(url, init = {}) {
     return new Response(null, { status: 201 });
   }
   if (u.startsWith(DB + '/rest/v1/einvoice_docs?') && method === 'GET') {
+    if (failDocsGet) return new Response('upstream timeout', { status: 504 });
     const q = new URL(u).searchParams;
     const want = (k) => (q.get(k) || '').replace(/^eq\./, '');
     const rows = einvDb.filter((r) => r.client_id === want('client_id') && r.period_month === want('period_month') && r.source === want('source'))
@@ -155,6 +174,8 @@ async function dbFetch(url, init = {}) {
     return new Response(JSON.stringify(rows.slice(offset, offset + limit).map((r) => Object.fromEntries(cols.map((c) => [c, r[c]])))), { status: 200 });
   }
   if (u.startsWith(DB + '/rest/v1/einvoice_docs?') && method === 'PATCH') {
+    pullStatusAtDocWrite.push(storedPull() && storedPull().status);
+    if (failDocsPatch) return new Response('upstream timeout', { status: 504 });
     const q = new URL(u).searchParams;
     const ids = ((q.get('id') || '').match(/^in\.\((.*)\)$/) || [, ''])[1].split(',').filter(Boolean);
     const src = (q.get('source') || '').replace(/^eq\./, '');
@@ -163,8 +184,13 @@ async function dbFetch(url, init = {}) {
   }
   if (u.startsWith(DB + '/rest/v1/einvoice_docs') && method === 'DELETE') return new Response(JSON.stringify([]), { status: 200 });
   if (u.startsWith(DB + '/rest/v1/einvoice_pulls') && method === 'POST') {
+    if (pullsDown) return new Response('upstream timeout', { status: 504 });
     if (oldPullsSchema && body && body[0] && 'generated_on' in body[0]) {
       return new Response(JSON.stringify({ code: 'PGRST204', message: 'Could not find the \'generated_on\' column of \'einvoice_pulls\' in the schema cache' }), { status: 400 });
+    }
+    for (const r of body) {
+      const hit = pullsDb.find((x) => pullKey(x) === pullKey(r));
+      if (hit) Object.assign(hit, r); else pullsDb.push({ ...r });
     }
     return new Response(null, { status: 201 });
   }
@@ -269,6 +295,7 @@ const reset = () => {
   calls.length = 0; for (const k of Object.keys(storage)) delete storage[k];
   rawJson = clone(BOOKS); oldVersionsSchema = false; oldEinvSchema = false; oldPullsSchema = false;
   storedUpdatedAt = STORED_UPDATED_AT; rowCap = 1000; einvDb = []; nextId = 1; tabsCreated = 0;
+  pullsDb = []; pullsDown = false; failDocsGet = false; failDocsPatch = false; pullStatusAtDocWrite = [];
 };
 const hasIrnField = (j) => /"(irn|irngendate|srctyp)"/.test(JSON.stringify(j));
 const now = Date.now();
@@ -685,8 +712,10 @@ oldPullsSchema = true;
 {
   const d = await save();
   const p = posts('einvoice_pulls');
-  ok(d.status === 'ok' && p.length === 2 && 'generated_on' in p[0].body[0] && !('generated_on' in p[1].body[0]) && p[1].body[0].status === 'ok',
-    'einvoice_pulls without generated_on: refused, then written without it');
+  ok(d.status === 'ok' && p.length === 4 && 'generated_on' in p[0].body[0] && !('generated_on' in p[1].body[0]) && p[1].body[0].status === 'running'
+    && 'generated_on' in p[2].body[0] && !('generated_on' in p[3].body[0]) && p[3].body[0].status === 'ok',
+    'einvoice_pulls without generated_on: running and the final status are each refused, then written without it');
+  ok(storedPull().status === 'ok' && !('generated_on' in storedPull()), 'einvoice_pulls without generated_on: the row ends ok');
 }
 
 // A pending or failed pull with no JSON never touches einvoice_docs.
@@ -695,6 +724,93 @@ reset();
   const d = (await bgCall('saveEinvoicePull', { clientId: 'c1', period_month: '09/2026', status: 'pending', message: 'still generating' })).data;
   ok(d.status === 'pending' && einvCalls().length === 0, 'pending pull: einvoice_docs untouched');
   ok(pullRow().body[0].generated_on === null && !!pullRow().body[0].pulled_at, 'pending pull: recorded, with no generation date');
+}
+
+// ── 6c. 'running' while the pull saves (second review N1) ───────────────────
+// An ok pull: 'running' first, every document write and mark under it, then ok.
+reset();
+seed([{ id: 'a-2', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/002' }]);
+{
+  const d = await save();
+  const p = posts('einvoice_pulls');
+  const first = p[0] && p[0].body[0];
+  const lastSeen = posts('einvoice_docs')[0].body[0].last_seen_at;
+  ok(p.length === 2 && first.status === 'running' && first.message === 'Pull in progress' && first.docs_found === 0
+    && first.source === 'portal_gstr1' && first.client_id === 'c1' && first.period_month === '09/2026' && /on_conflict=client_id,period_month,source$/.test(p[0].url),
+    'running: the pull row is written as running, "Pull in progress", on (client, period, source)');
+  ok(first.pulled_at === lastSeen && p[1].body[0].pulled_at === lastSeen && first.pulled_by === 'u-1' && first.generated_on === TODAY,
+    'running: pulled_at is the pull\'s own now, the same as the final row\'s and every last_seen_at');
+  ok(calls.indexOf(p[0]) < calls.indexOf(posts('einvoice_docs')[0]) && calls.indexOf(p[1]) > calls.indexOf(patches('einvoice_docs')[0]),
+    'running: written before the first document write; the final status after the last mark');
+  ok(pullStatusAtDocWrite.length === 2 && pullStatusAtDocWrite.every((st) => st === 'running'),
+    'running: every document write and mark happens while the stored row says running (a push reading then is refused)');
+  ok(d.status === 'ok' && storedPull().status === 'ok' && storedPull().docs_found === 5 && storedPull().pulled_at === lastSeen,
+    'running: the stored row ends ok, with 5 documents and the same pulled_at');
+}
+// A none pull (no IRN in the file) still marks rows, so it is running too.
+reset();
+seed([{ id: 'a-1', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/001' }]);
+{
+  const d = await save({ json: { gstin: '24AAAAA0000A1Z5', fp: '092026', b2b: [{ ctin: 'X', inv: [{ inum: '1', val: 1 }] }] } });
+  const p = posts('einvoice_pulls');
+  ok(d.status === 'none' && p.length === 2 && p[0].body[0].status === 'running' && pullStatusAtDocWrite.every((st) => st === 'running')
+    && storedPull().status === 'none', 'none pull: running while it marks, then none');
+}
+// A file for another client or period, or a stale one: no document is
+// written, so no 'running', only the final status.
+for (const [label, extra, want] of [
+  ['another GSTIN', { json: { ...PORTAL, gstin: '24ZZZZZ9999Z1Z9' } }, 'failed'],
+  ['a stale file', { fileName: fileFor(YESTERDAY) }, 'stale'],
+]) {
+  reset();
+  const d = await save(extra);
+  const p = posts('einvoice_pulls');
+  ok(d.status === want && p.length === 1 && p[0].body[0].status === want && storedPull().status === want && einvCalls().length === 0,
+    label + ': no running row, only the final ' + want);
+}
+// A pending pull (no JSON): only its own status.
+reset();
+{
+  await bgCall('saveEinvoicePull', { clientId: 'c1', period_month: '09/2026', status: 'pending', message: 'still generating' });
+  ok(posts('einvoice_pulls').length === 1 && storedPull().status === 'pending', 'pending pull (no JSON): no running row');
+}
+// A failure part-way leaves the row failed, never running.
+for (const [label, setup, re] of [
+  ['the document upsert fails', () => { oldEinvSchema = true; }, /UPSERT einvoice_docs -> 400/],
+  ['the read of the period\'s rows fails', () => { failDocsGet = true; }, /GET einvoice_docs.* -> 504/],
+  ['the gone marks fail', () => { failDocsPatch = true; }, /PATCH einvoice_docs.* -> 504/],
+]) {
+  reset();
+  seed([{ id: 'a-2', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/002' }]);
+  setup();
+  const d = await save();
+  const p = posts('einvoice_pulls');
+  ok(d.status === 'failed' && re.test(d.message) && d.docsFound === 0 && d.goneMarked === 0, label + ': the pull is failed, saying why');
+  ok(p.length === 2 && p[0].body[0].status === 'running' && p[1].body[0].status === 'failed' && p[1].body[0].docs_found === 0,
+    label + ': running, then failed');
+  ok(storedPull().status === 'failed' && storedPull().message === d.message, label + ': the stored row ends failed, not running');
+}
+// The same through the job slot (finishEinvoicePull): the page hears failed, the row says failed.
+reset();
+storage.gstk_active_job = { mode: 'einvoice_pull', idx: 0, step: 'einvoice_pull', startedAt: now, lastActivityAt: now, period: '09/2026',
+  actorId: 'u-1', tabId: 35, clients: [client] };
+failDocsPatch = true;
+seed([{ id: 'a-2', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/002' }]);
+{
+  const resp = await bgCall('finishEinvoicePull', { clientId: 'c1', period_month: '09/2026', tabId: 35, actorId: 'u-1', json: PORTAL, fileName: fileFor(TODAY), status: 'ok' });
+  const r = storage.gstk_einvoice_pull_result;
+  ok(resp.data.status === 'failed' && r.ok === false && r.status === 'failed' && storedPull().status === 'failed' && !storage.gstk_active_job,
+    'through the slot, a failure part-way: the page hears failed, the row says failed, the job is cleared');
+}
+// 'running' cannot be written: nothing is saved or marked, and the pull is failed.
+reset();
+seed([{ id: 'a-2', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc_key: 'INV/002' }]);
+pullsDown = true;
+{
+  const d = await save();
+  ok(d.status === 'failed' && /einvoice_pulls -> 504/.test(d.message) && d.docsFound === 0, 'running not written: the pull is failed, saying why');
+  ok(einvCalls().length === 0 && einvDb[0].gone_at === null, 'running not written: no document saved, read or marked');
+  ok(posts('einvoice_pulls').length === 4 && storedPull() === null, 'running not written: running and the final status each tried twice, none stored');
 }
 
 // ── 7. The save, the result and the job: one step of the job slot (E8) ───────

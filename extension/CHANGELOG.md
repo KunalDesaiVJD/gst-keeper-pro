@@ -8,7 +8,7 @@ Needs the GSTR-1 page update that sends the e-invoice plan (with the version
 of the return it was made on) and reads `goneMarked` and the `stale` status, and
 the migration that adds `doc_type` and `source` to the `einvoice_docs` key,
 `einvoice_docs.gone_at`, `source` to the `einvoice_pulls` key,
-`einvoice_pulls.generated_on`, and `einvoice_kept` / `ext_version` to
+`einvoice_pulls.generated_on` and `recorded_at`, and `einvoice_kept` / `ext_version` to
 `gstr1_upload_versions`. Without the page update a push uploads the stored JSON
 whole, with no IRN on it. Without the migration a pull that finds e-invoices
 fails and saves none of them, and no pull is recorded in `einvoice_pulls`; a
@@ -84,6 +84,19 @@ columns. Every other pull, the login and the popup are as 0.8.6 runs them.
   result says how many are no longer on the portal as e-invoices
   (`goneMarked`; `staleRemoved` carries the same number for a page written
   against it) and names its client and period.
+- **A pull says while it is saving.** Before it writes its first document,
+  the pull records itself in `einvoice_pulls` as status `running` ("Pull in
+  progress", `pulled_at` = the pull's time), and its final status (`ok`,
+  `none` or `failed`) replaces that after the last write. The page refuses to
+  push or download the JSON while a pull is running, and a push reads the
+  pull row before and after the documents, and again just before it starts,
+  so it never plans on documents half-way through a save (where one pull's
+  rows read against another's time could make every e-invoice look lost and
+  be re-sent). If `running` cannot be written, nothing is saved or marked and
+  the pull is `failed`; a failure part-way through the save ends `failed`,
+  never `running`. A file for another client or period, or one generated
+  before today, writes no document and goes straight to its final status.
+  The database stamps its own time on the row (`recorded_at`).
 - **No pull ends without a result, and only one.** The save, the result for
   the page and the job's end are one step of the extension's job slot (as a
   GSTR-3B push's end is since 0.8.6). A portal tab closed while the pull is

@@ -1215,9 +1215,19 @@ const API = {
   //     Which rows went is decided by identity (section, buyer, type, number)
   //     against this pull's own rows, then patched by id, so no PC's clock is
   //     compared with another's.
+  //   - 0.8.7: before its first write to einvoice_docs, the pull records
+  //     itself in einvoice_pulls as status 'running' ('Pull in progress',
+  //     pulled_at = now), and its final status replaces that at the end. The
+  //     page refuses to push (or download the JSON) on a running pull, and a
+  //     push re-reads the row before it starts, so it never plans on records
+  //     half-way through a save. If 'running' cannot be written, nothing is
+  //     saved or marked and the pull is 'failed'. A failure part-way through
+  //     the save ends 'failed', never left 'running'.
   // Every call (ok / none / stale / pending / failed) records the attempt in
   // einvoice_pulls (source 'portal_gstr1'), with pulled_at = the same `now`
-  // the pull stamped on last_seen_at and gone_at.
+  // the pull stamped on last_seen_at and gone_at. A file for another client
+  // or period, or a stale one, writes no document, so it goes straight to
+  // its final status.
   // Written for migration 0.8.7's schema (doc_type in the unique key, source
   // in both keys, gone_at, generated_on); an older database refuses the
   // upsert and the pull is 'failed', never saved on the old key.
@@ -1244,6 +1254,12 @@ const API = {
           const rows = dedupeRows(extractEinvoiceDocs(json).map((d) => ({
             ...d, client_id: clientId, period_month, source: 'portal_gstr1', last_seen_at: now, gone_at: null,
           })), ['section', 'ctin', 'doc_type', 'doc_key']);
+          // 'running' first: a push that reads the records from here until
+          // the final status is written is refused (it throws if not saved).
+          await writeEinvoicePullRow({
+            client_id: clientId, period_month, source: 'portal_gstr1', status: 'running', docs_found: 0,
+            message: EINVOICE_PULL_RUNNING, pulled_by: actorId || null, pulled_at: now, generated_on: generatedOn,
+          });
           docsFound = rows.length;
           for (let i = 0; i < rows.length; i += 500) {
             await upsert('einvoice_docs', 'client_id,period_month,section,ctin,doc_type,doc_key,source', rows.slice(i, i + 500));
@@ -1258,6 +1274,8 @@ const API = {
         }
       } catch (e) {
         st = 'failed';
+        docsFound = 0;
+        goneMarked = 0;
         msg = 'Could not save the e-invoice documents: ' + ((e && e.message) || e);
       }
     }
@@ -1266,18 +1284,9 @@ const API = {
       pulled_by: actorId || null, pulled_at: now, generated_on: generatedOn,
     };
     try {
-      await upsert('einvoice_pulls', 'client_id,period_month,source', [pull]);
+      await writeEinvoicePullRow(pull);
     } catch (e) {
-      // A database without generated_on (PGRST204): the attempt is still
-      // recorded, without the date. Any other failure is tried once more the
-      // same way.
-      try {
-        const older = { ...pull };
-        delete older.generated_on;
-        await upsert('einvoice_pulls', 'client_id,period_month,source', [older]);
-      } catch (e2) {
-        console.warn('[GSTKeeper] einvoice_pulls write failed:', e2 && e2.message);
-      }
+      console.warn('[GSTKeeper] einvoice_pulls write failed:', e && e.message);
     }
     // staleRemoved: the same count under its first 0.8.7 name, for a page
     // written against it.
@@ -1320,6 +1329,21 @@ const API = {
     return { ...res, saved: true, ...target };
   }),
 };
+
+// What a pull's einvoice_pulls row says while it saves (status 'running').
+const EINVOICE_PULL_RUNNING = 'Pull in progress';
+// 0.8.7: one einvoice_pulls row (client, period, source). A database without
+// generated_on (PGRST204) gets the row without the date; any other failure
+// is tried once more the same way. Throws when neither write lands.
+async function writeEinvoicePullRow(pull) {
+  try {
+    await upsert('einvoice_pulls', 'client_id,period_month,source', [pull]);
+  } catch (e) {
+    const older = { ...pull };
+    delete older.generated_on;
+    await upsert('einvoice_pulls', 'client_id,period_month,source', [older]);
+  }
+}
 
 // 0.8.7: the day an e-invoice pull's file was generated, as yyyy-mm-dd, from
 // the name of the JSON inside the portal's ZIP (returns_<ddmmyyyy>_R1_

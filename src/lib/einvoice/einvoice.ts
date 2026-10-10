@@ -81,11 +81,12 @@ export interface EinvDoc extends EinvDocIdentity {
   autopop_date?: string | null;
   /** E-invoice Excel only: error in auto-population / deletion. */
   error?: string | null;
-  /** Stored rows: when the latest pull last saw the document. */
+  /** Stored rows: when the latest pull last saw the document (a record only; never compared). */
   last_seen_at?: string | null;
   /**
    * Pulled records only: set by the pull that no longer saw the document on
-   * the draft (the row is kept, with its IRN, and reads as 'irn_lost').
+   * the draft (the row is kept, with its IRN, and reads as 'irn_lost'). The
+   * only thing that marks a pulled record lost.
    */
   gone_at?: string | null;
   /** Reverse charge, 'Y' or 'N' (B2B and notes); null when the source does not say. */
@@ -273,17 +274,20 @@ export interface ReconcileOptions {
   /**
    * pulled_at of the latest successful pull for the period (einvoice_pulls
    * row with source 'portal_gstr1' and status 'ok' or 'none'; never a
-   * 'stale' pull, never the Excel import's row). The pull writes that
-   * pulled_at and the last_seen_at of every row it saw from one timestamp,
-   * so a pulled record with an earlier last_seen_at was not in that pull.
-   * With it, such a record, an Excel record that should be on the draft by
-   * the pull day (auto-populated, or IRN date + 2 days, before it) but is
-   * not in the pull, and a books IRN the pull does not show, all read as
-   * 'irn_lost' (no longer on the draft as an e-invoice) and are uploaded.
-   * Without it, those records are taken at their word. A pulled record
-   * with gone_at set reads as lost either way.
+   * 'stale' or 'running' pull, never the Excel import's row). With it, an
+   * Excel record the pull did not see is never on the draft: pending while
+   * IRN date + 2 days is not before the pull day (IST), else 'irn_lost';
+   * a books IRN the pull does not show reads 'irn_lost' too. Without it,
+   * an Excel record with no status or 'pending' is judged the same way
+   * against today, and one that says auto-populated is taken at its word
+   * (only Download JSON plans without a pull; the push needs one). A pulled
+   * record reads as lost only when gone_at is set, whatever this is: no
+   * timestamp is compared with it, so a pull row and records read from two
+   * moments can never turn every record lost (review N1/N2).
    */
   pulledAt?: string | null;
+  /** "Today" for the rule above when there is no pull; defaults to now. */
+  now?: Date;
 }
 
 /** dd-mm-yyyy (optionally followed by a time) → yyyy-mm-dd; null when not a date. */
@@ -304,8 +308,9 @@ const addDays = (isoDay: string, n: number): string => {
 /**
  * Is a pull fresh enough to push on? Same IST calendar day as `now`. Takes
  * the einvoice_pulls row, of which only status 'ok' or 'none' counts (a
- * 'stale', 'pending' or 'failed' pull is never fresh), or a pulled_at
- * already known to be a successful pull's.
+ * 'running', 'stale', 'pending' or 'failed' pull is never fresh: 'running'
+ * is a pull still saving its records), or a pulled_at already known to be a
+ * successful pull's.
  */
 export const isPullFresh = (
   pull: string | { status: string; pulled_at: string } | null | undefined,
@@ -320,40 +325,36 @@ export const isPullFresh = (
 
 type EinvState = 'on_draft' | 'pending' | 'failed' | 'lost';
 
-/** Where an e-invoice record stands on the GSTR-1 draft. Cancelled records are dropped before this. */
+const isPulledRecord = (e: EinvDoc): boolean => (e.source ?? 'portal_gstr1') !== 'einvoice_excel';
+
+/**
+ * Where an e-invoice record stands on the GSTR-1 draft. Cancelled records
+ * are dropped before this. A pulled record is decided by gone_at alone; an
+ * Excel record by its status and IRN date (positions §3).
+ */
 function einvState(e: EinvDoc, opts: ReconcileOptions): EinvState {
-  const pullDay = opts.pulledAt ? istDay(opts.pulledAt) : null;
-  if ((e.source ?? 'portal_gstr1') !== 'einvoice_excel') {
-    // A pulled record: on the draft, unless a pull has marked it gone, or the
-    // latest pull did not see it. The pull stamps pulled_at and the
-    // last_seen_at of every row it saw from one timestamp, so the compare is
-    // exact (no allowance for clock skew between PCs). A row from before
-    // gone_at existed falls to the last_seen_at test alone.
-    if (e.gone_at) return 'lost';
-    if (opts.pulledAt && e.last_seen_at) {
-      const seen = Date.parse(e.last_seen_at);
-      const pulled = Date.parse(opts.pulledAt);
-      if (Number.isFinite(seen) && Number.isFinite(pulled) && seen < pulled) return 'lost';
-    }
-    return 'on_draft';
+  if (isPulledRecord(e)) {
+    // On the draft unless a later pull marked it gone. No clock is compared:
+    // a pull's records and its pull row read at two moments (a pull saving
+    // meanwhile, or two overlapping pulls) must not make every record lost.
+    return e.gone_at ? 'lost' : 'on_draft';
   }
-  // Auto-population runs two days after the IRN: once that is before the
-  // latest pull's day and the pull does not have the record, it is not on
-  // the draft, whatever the Excel says about it still being pending.
-  const irnDay = dmyToIso(e.irn_date);
-  const overdue = !!(pullDay && irnDay && addDays(irnDay, 2) < pullDay);
+  // The Excel's word. Auto-population failed: never on the draft.
   if (e.autopop_status === 'failed') return 'failed';
-  if (e.autopop_status === 'pending') return overdue ? 'lost' : 'pending';
-  if (e.autopop_status === 'done') {
-    // Auto-populated before the latest pull, yet not in it: edited,
-    // overwritten by an upload, or deleted on the portal since.
-    const at = dmyToIso(e.autopop_date);
-    if (pullDay && at && at < pullDay) return 'lost';
-    return 'on_draft';
-  }
-  // No auto-population status in the file.
-  if (overdue) return 'lost';
-  return pullDay ? 'pending' : 'on_draft';
+  const pullDay = opts.pulledAt ? istDay(opts.pulledAt) : null;
+  // Auto-populated, and no successful pull to say otherwise: taken at its
+  // word (Download JSON only; the push needs a pull of the day).
+  if (e.autopop_status === 'done' && !pullDay) return 'on_draft';
+  // Pending, no status, or (with a pull) auto-populated but not in the
+  // pull: auto-population runs two days after the IRN, so once IRN date + 2
+  // is before the pull day (or today, without a pull) it is not coming, and
+  // the record is lost; until then it is pending. An IRN date that cannot be
+  // read stays pending (it blocks in the books until a pull shows it, or
+  // staff override).
+  const refDay = pullDay ?? istDay((opts.now ?? new Date()).toISOString());
+  const irnDay = dmyToIso(e.irn_date);
+  if (irnDay && refDay && addDays(irnDay, 2) < refDay) return 'lost';
+  return 'pending';
 }
 
 const STATE_RANK: Record<EinvState, number> = { on_draft: 0, pending: 1, lost: 2, failed: 3 };
@@ -378,7 +379,8 @@ const etinOf = (d: EinvDoc) => (extra(d, 'etin') || '').toUpperCase() || null;
  * (the Excel may say EXPWP / EXPWOP, or "with payment").
  */
 const invTypeKey = (section: EinvSection, v: string | null | undefined): string | null => {
-  const s = str(v).toUpperCase().replace(/[^A-Z]/g, '');
+  // Letters and digits only: 'B2B' must stay 'B2B' (review N7).
+  const s = str(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!s) return null;
   if (section === 'exp') {
     if (/WOP|WITHOUT/.test(s)) return 'WOPAY';
@@ -448,12 +450,17 @@ function compare(b: EinvDoc, e: EinvDoc) {
  * Books documents against e-invoice records. Pairs by exactKey only.
  *
  * Cancelled IRNs (Excel 'Cancelled') are ignored. When the same document
- * comes from both the pull and the Excel, the pull wins (it is on the draft).
- * Books documents outside the e-invoice sections that have no e-invoice
- * (B2CL, CDNUR other than exports) get no row.
+ * comes from both the pull and the Excel, the pull's record decides,
+ * whatever the Excel says (on the draft, or lost once marked gone): the pull
+ * shows what is on the draft, the Excel only what the IRP sent (review N1 /
+ * N2). The Excel fills in only documents the pull has no record of. Books
+ * documents outside the e-invoice sections that have no e-invoice (B2CL,
+ * CDNUR other than exports) get no row.
  */
 export function reconcileEinvoice(books: EinvDoc[], einv: EinvDoc[], opts: ReconcileOptions = {}): EinvRecoRow[] {
-  // 1. E-invoice records: drop cancelled ones, one per exact identity (pull wins).
+  // 1. E-invoice records: drop cancelled ones, one per exact identity. A
+  //    pulled record always beats an Excel one; between two of the same
+  //    source (the keys keep them unique, so only in tests) the better state.
   const einvBest = new Map<string, { e: EinvDoc; state: EinvState }>();
   einv.forEach((e) => {
     if (e.irn_status === 'cancelled') return;
@@ -461,9 +468,7 @@ export function reconcileEinvoice(books: EinvDoc[], einv: EinvDoc[], opts: Recon
     const state = einvState(e, opts);
     const cur = einvBest.get(k);
     const better = !cur
-      || STATE_RANK[state] < STATE_RANK[cur.state]
-      || (STATE_RANK[state] === STATE_RANK[cur.state]
-        && (cur.e.source ?? 'portal_gstr1') === 'einvoice_excel' && (e.source ?? 'portal_gstr1') !== 'einvoice_excel');
+      || (isPulledRecord(e) !== isPulledRecord(cur.e) ? isPulledRecord(e) : STATE_RANK[state] < STATE_RANK[cur.state]);
     if (better) einvBest.set(k, { e, state });
   });
 
@@ -595,9 +600,11 @@ export interface EinvUploadPlan {
     /** No longer on the draft as an e-invoice, books copy present: the books document is uploaded (the IRN is not restored). */
     irnLost: EinvRecoRow[];
     /**
-     * Auto-population failed or IRN lost, and NOT in the books: in neither
-     * the upload nor the draft, so missing from GSTR-1 unless added to the
-     * books (or the IRN was cancelled on the IRP).
+     * Auto-population failed or IRN lost, and NOT in the books: not among
+     * the IRN documents on the portal draft and not in the upload, so
+     * missing from GSTR-1 unless added to the books (or the IRN was
+     * cancelled on the IRP). One that is on the portal without its IRN (the
+     * pull stores only documents carrying one) is filed as uploaded.
      */
     missingFromReturn: EinvRecoRow[];
     /** Exports left out to keep the IRN whose books shipping bill is not on the e-invoice. */

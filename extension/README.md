@@ -72,6 +72,11 @@ from GST Keeper).
     marked gone (`einvoice_docs.gone_at`), never deleted, so their IRN stays on
     record and the page shows them as "IRN lost on the portal". The pull
     stamps one time on `last_seen_at`, `gone_at` and `einvoice_pulls.pulled_at`;
+  - while it saves, the pull's `einvoice_pulls` row says `running` ("Pull in
+    progress"): written before the first document, replaced by the final
+    status (`ok`, `none`, `failed`) after the last. The page does not push or
+    download the JSON on a running pull, and a failed save ends `failed`, not
+    `running`;
   - the save, the result and the end of the job are one step of the
     extension's job slot, so a portal tab closed during the save waits for it
     and the page hears one result.
