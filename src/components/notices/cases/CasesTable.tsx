@@ -46,10 +46,8 @@ export const CasesTable: React.FC<{ rows: CaseRow[]; track: Track | 'all'; compa
           <tr>
             <th scope="col" className={WS_TH}>Client</th>
             <th scope="col" className={WS_TH}>Case</th>
-            {lit && <th scope="col" className={WS_TH}>FY</th>}
             {lit && <th scope="col" className={WS_TH}>Stage</th>}
             {track !== 'other' && <th scope="col" className={WS_TH}>Next due</th>}
-            {lit && !compact && <th scope="col" className={WS_TH}>Hearing</th>}
             {lit && <th scope="col" className={cn(WS_TH, 'text-right')}>Exposure</th>}
             <th scope="col" className={WS_TH}>Latest correspondence</th>
             {!compact && track !== 'other' && <th scope="col" className={WS_TH}>Owner</th>}
@@ -60,7 +58,7 @@ export const CasesTable: React.FC<{ rows: CaseRow[]; track: Track | 'all'; compa
             const href = caseHref(r.client_id as string, r.case_key as string);
             return (
               <tr key={`${r.client_id}:${r.case_key}`} className={cn(WS_TR, r.new_items ? 'bg-info/5' : '')}>
-                <td className={cn(WS_TD, 'max-w-[14rem]')}>
+                <td className={cn(WS_TD, 'max-w-[14rem] border-l-[3px]', r.is_overdue ? 'border-l-destructive' : r.is_due_in_7 ? 'border-l-warning' : r.new_items ? 'border-l-info' : 'border-l-transparent')}>
                   <div className="truncate text-sm font-medium">{r.client_name}</div>
                   <div className="font-mono text-[11px] text-muted-foreground">{r.client_gstin}</div>
                 </td>
@@ -70,15 +68,19 @@ export const CasesTable: React.FC<{ rows: CaseRow[]; track: Track | 'all'; compa
                   </Link>
                   <div className="truncate text-[11px] text-muted-foreground">
                     {r.case_id ? <span className="font-mono">{r.case_id}</span> : r.case_key === 'REG' ? 'All registration correspondence' : <span className="font-mono">{r.reference_number}</span>}
+                    {lit && r.financial_years ? ` · FY ${r.financial_years.split(', ').map(fmtFy).join(', ')}` : ''}
                     {' · '}{plural(r.notices ?? 0, 'notice')}{r.documents ? `, ${plural(r.documents, 'document')}` : ''}
                   </div>
                 </td>
-                {lit && <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>{r.financial_years ? r.financial_years.split(', ').map(fmtFy).join(', ') : '—'}</td>}
                 {lit && <td className={WS_TD}>{r.is_open ? <StageBadge stage={r.stage} /> : <span className="text-xs text-muted-foreground">closed</span>}</td>}
-                {track !== 'other' && <td className={WS_TD}><DueCell r={r} /></td>}
-                {lit && !compact && <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>{r.next_hearing ? fmtDate(r.next_hearing) : '—'}</td>}
+                {track !== 'other' && (
+                  <td className={WS_TD}>
+                    <DueCell r={r} />
+                    {lit && r.next_hearing && <div className="whitespace-nowrap text-[11px] text-muted-foreground">hearing {fmtDate(r.next_hearing)}</div>}
+                  </td>
+                )}
                 {lit && <td className={WS_TD_NUM}>{Number(r.exposure) > 0 ? fmtInrShort(r.exposure) : '—'}</td>}
-                <td className={cn(WS_TD, 'max-w-[18rem]')}><Latest r={r} /></td>
+                <td className={cn(WS_TD, 'max-w-[16rem]')}><Latest r={r} /></td>
                 {!compact && track !== 'other' && <td className={WS_TD}>{r.is_open ? <OwnerChip name={r.assign_to} showName /> : null}</td>}
               </tr>
             );
