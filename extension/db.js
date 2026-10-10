@@ -25,7 +25,7 @@
     backgroundTab: () => call('backgroundTab'),
     getClients: () => call('getClients'),
     getClient: (id) => call('getClient', id),
-    einvoiceExcelImportedSince: (clientId, period, sinceIso) => call('einvoiceExcelImportedSince', clientId, period, sinceIso),
+    einvoiceExcelLatest: (clientId, period) => call('einvoiceExcelLatest', clientId, period),
     upsertFilingStatus: (rows) => call('upsertFilingStatus', rows),
     upsertReco: (table, clientId, period, patchObj) => call('upsertReco', table, clientId, period, patchObj),
     replaceTwob: (clientId, period, rows) => call('replaceTwob', clientId, period, rows),

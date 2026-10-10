@@ -30,7 +30,7 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // of re-sending them, never writes an IRN field, and the e-invoice pull checks
 // the file's GSTIN and period and drops e-invoices the portal no longer holds.
 // 0.4.x to 0.8.6 are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.9.0';
+export const RECOMMENDED_EXTENSION_VERSION = '0.9.1';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -71,6 +71,7 @@ const GAINS: [string, string][] = [
   ['0.8.8', "never pushes inside another client's portal session, flags a saved password the portal cannot accept, and waits for the portal's GSTR-1 file on an e-invoice pull"],
   ['0.8.9', "says in exact numbers what an e-invoice pull read: the GSTR-1 file's documents, how many carry an IRN, and how they compare with the e-invoice Excel"],
   ['0.9.0', "the e-invoice pull opens the month's GSTR-1 on the portal and downloads and imports its e-invoice details (Excel) by itself"],
+  ['0.9.1', "says only what the GSTR-1 file and the month's e-invoice details show, and checks the e-invoice import by the database's clock"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

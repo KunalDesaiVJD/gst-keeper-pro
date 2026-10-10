@@ -183,6 +183,11 @@ async function dbFetch(url, init = {}) {
     return new Response(null, { status: 204 });
   }
   if (u.startsWith(DB + '/rest/v1/einvoice_docs') && method === 'DELETE') return new Response(JSON.stringify([]), { status: 200 });
+  if (u.startsWith(DB + '/rest/v1/einvoice_pulls?') && method === 'GET') {
+    const q = new URL(u).searchParams;
+    const want = (k) => (q.get(k) || '').replace(/^eq\./, '');
+    return new Response(JSON.stringify(pullsDb.filter((r) => r.client_id === want('client_id') && r.period_month === want('period_month') && (r.source || 'portal_gstr1') === want('source'))), { status: 200 });
+  }
   if (u.startsWith(DB + '/rest/v1/einvoice_pulls') && method === 'POST') {
     if (pullsDown) return new Response('upstream timeout', { status: 504 });
     if (oldPullsSchema && body && body[0] && 'generated_on' in body[0]) {
@@ -469,7 +474,7 @@ await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', acto
   const v = posts('gstr1_upload_versions');
   const row = v[0] && v[0].body[0];
   ok(v.length === 1 && row.action_type === 'UPLOAD' && row.status === 'accepted', 'one UPLOAD version row');
-  ok(row && row.einvoice_kept === 6 && row.ext_version === MANIFEST_VERSION && MANIFEST_VERSION === '0.9.0', 'the UPLOAD row carries einvoice_kept 6 and ext_version 0.9.0 (the manifest)');
+  ok(row && row.einvoice_kept === 6 && row.ext_version === MANIFEST_VERSION && MANIFEST_VERSION === '0.9.1', 'the UPLOAD row carries einvoice_kept 6 and ext_version 0.9.1 (the manifest)');
   ok(row && JSON.stringify(row.payload) === JSON.stringify(BOOKS), 'its payload is still the stored books JSON');
 }
 
@@ -649,7 +654,7 @@ seed([{ id: 'a-1', section: 'b2b', ctin: '24BBBBB1111B1Z1', doc_type: 'INV', doc
   ok(d.status === 'none' && d.docsFound === 0 && posts('einvoice_docs').length === 0, 'none pull: nothing upserted');
   ok(d.goneMarked === 2 && einvDb.every((r) => r.gone_at === pullRow().body[0].pulled_at) && dels('einvoice_docs').length === 0,
     'none pull: the period\'s stored e-invoices are marked gone, not deleted');
-  ok(/^The portal's GSTR-1 for 09\/2026 \(file generated \d\d-\d\d-\d{4}\) holds 1 document \(B2B 1\); none carries an IRN, so none is on the portal as an e-invoice\./.test(d.message),
+  ok(/^The portal's GSTR-1 file for 09\/2026 \(generated \d\d-\d\d-\d{4}\) holds 1 document \(B2B 1\); none of them carries an IRN\./.test(d.message) && !/none is on the portal/.test(d.message),
     'none pull (0.8.9): the message gives the period, the file date, the documents per table and that none carries an IRN: ' + d.message);
 }
 // 0.8.9: the Excel imported for the month is compared with what the file holds.
@@ -659,8 +664,8 @@ seed([{ id: 'x-1', source: 'einvoice_excel', section: 'b2b', ctin: '24AIMPR8057L
 {
   const d = await save({ json: { gstin: '24AAAAA0000A1Z5', fp: '092026', b2b: [{ ctin: '24AIMPR8057L1ZJ', inv: [{ inum: 'TI/SGM/26-27/02', val: 1 }, { inum: 'TI/SGM/26-27/03', val: 1 }] }],
     cdnr: [{ ctin: '24AIMPR8057L1ZJ', nt: [{ nt_num: 'CN/1', val: 1 }] }] } });
-  ok(d.status === 'none' && /holds 3 documents \(B2B 2, CDNR 1\); none carries an IRN/.test(d.message)
-    && /The e-invoice Excel imported for this month lists 2 e-invoices: 2 are not on GSTR-1 with an IRN \(an upload replaced them, or auto-population has not run yet\)\./.test(d.message),
+  ok(d.status === 'none' && /holds 3 documents \(B2B 2, CDNR 1\); none of them carries an IRN\./.test(d.message)
+    && /The month's e-invoice details list 2 e-invoices: 2 have no IRN in the GSTR-1 file \(an upload replaced them, or auto-population has not run yet\)\./.test(d.message),
     'Excel compared: 2 e-invoices in the Excel, neither on GSTR-1 with an IRN, said in numbers: ' + d.message);
   ok(einvDb.filter((r) => r.source === 'einvoice_excel').every((r) => !r.gone_at), 'Excel compared: the Excel\'s records are never marked gone by a pull');
 }
@@ -668,7 +673,7 @@ reset();
 seed([{ id: 'x-1', source: 'einvoice_excel', section: 'b2b', ctin: '24AIMPR8057L1ZJ', doc_type: 'INV', doc_key: 'TI/SGM/26-27/02' }]);
 {
   const d = await save({ json: { gstin: '24AAAAA0000A1Z5', fp: '092026', b2b: [{ ctin: '24AIMPR8057L1ZJ', inv: [{ inum: 'TI/SGM/26-27/02', idt: '30-09-2026', val: 1, irn: 'abc', irngendate: '30-09-2026', srctyp: 'E-Invoice', itms: [] }] }] } });
-  ok(d.status === 'ok' && /holds 1 document \(B2B 1\); 1 carries an IRN \(on the portal as an e-invoice\)\. The e-invoice Excel imported for this month lists 1 e-invoice, on GSTR-1 with its IRN\./.test(d.message),
+  ok(d.status === 'ok' && /holds 1 document \(B2B 1\); 1 of them carries an IRN\. The month's e-invoice details list 1 e-invoice, in the GSTR-1 file with its IRN\./.test(d.message),
     'Excel compared: the one e-invoice is on GSTR-1 with its IRN: ' + d.message);
 }
 
@@ -1152,7 +1157,15 @@ async function runExcelStep({ withButton = true, imported = true, blob = XLSX_UR
   const db = {
     fetchCrossOriginAsBase64: async () => ({ base64: zipOf(fileFor(TODAY), PORTAL, 8) }),
     upsertFiledReturn: async () => true,
-    einvoiceExcelImportedSince: async () => { importCalls += 1; return imported && importCalls >= 2 ? { status: 'ok', docs_found: 5, pulled_at: new Date(clock.now).toISOString(), message: 'm' } : null; },
+    // The month's Excel row: an earlier import (the baseline, read before the
+    // press), then this file's import from the third read when `imported`.
+    // Its pulled_at is the database's: deliberately far from the PC's clock.
+    einvoiceExcelLatest: async () => {
+      importCalls += 1;
+      return imported && importCalls >= 3
+        ? { status: 'ok', docs_found: 5, pulled_at: '2026-10-10T14:20:00.123+00:00', message: 'm' }
+        : { status: 'ok', docs_found: 2, pulled_at: '2026-10-10T08:00:00+00:00', message: 'earlier' };
+    },
   };
   const doc = await runPage('https://return.gst.gov.in/returns/auth/gstr1', { globals, db, buttons: withButton ? [btn] : [] });
   return { doc, clicked, importCalls };
@@ -1169,8 +1182,8 @@ storage.gstk_active_job = pullJob({ step: 'einvoice_excel' });
   ok(clicked.length === 1, 'GSTR-1 page: the portal\'s "Download details from e-invoices (Excel)" is pressed once');
   ok(seen.length === 1 && seen[0].fileB64 === XLSX_URL && seen[0].clientId === 'c1' && seen[0].period_month === '09/2026' && seen[0].via === 'page',
     'GSTR-1 page: the file the portal built goes to GST Keeper for the job\'s client and month');
-  ok(importCalls === 2, 'GSTR-1 page: the pull waits for GST Keeper\'s import of it');
-  ok(r && r.status === 'ok' && /^Opened GSTR-1 for September 2026 on the portal and downloaded its e-invoice details \(Excel\); GST Keeper imported 5 e-invoices from them at \d\d:\d\d IST\. The portal's GSTR-1 for 09\/2026/.test(r.message),
+  ok(importCalls === 3, 'GSTR-1 page: the pull reads the month\'s Excel row before the press, then waits for it to change (database time only)');
+  ok(r && r.status === 'ok' && /^Opened GSTR-1 for September 2026 on the portal and downloaded its e-invoice details \(Excel\); GST Keeper imported 5 e-invoices from them at 19:50 IST\. The portal's GSTR-1 file for 09\/2026/.test(r.message),
     'the pull\'s message says GSTR-1 for September 2026 was opened, its e-invoice details imported (how many, when), then what the file held: ' + (r && r.message));
 }
 reset();
@@ -1179,7 +1192,7 @@ storage.gstk_active_job = pullJob({ step: 'einvoice_excel' });
   const { clicked } = await runExcelStep({ withButton: false });
   const r = storage.gstk_einvoice_pull_result;
   ok(clicked.length === 0 && r && r.status === 'ok'
-    && /^Could not take the e-invoice details from the portal: GSTR-1 for September 2026 shows no "Download details from e-invoices \(Excel\)" button\. The portal's GSTR-1/.test(r.message),
+    && /^Could not take the e-invoice details from the portal: GSTR-1 for September 2026 shows no "Download details from e-invoices \(Excel\)" button\. The portal's GSTR-1 file/.test(r.message),
     'no button: the pull still reads the GSTR-1 file, and says why the e-invoice details were not taken: ' + (r && r.message));
 }
 reset();
@@ -1187,8 +1200,28 @@ storage.gstk_active_job = pullJob({ step: 'einvoice_excel' });
 {
   const r0 = await runExcelStep({ imported: false });
   const r = storage.gstk_einvoice_pull_result;
-  ok(r0.importCalls === 15 && r && /downloaded its e-invoice details \(Excel\), but GST Keeper did not import them/.test(r.message),
+  ok(r0.importCalls === 16 && r && /downloaded its e-invoice details \(Excel\), but GST Keeper did not import them/.test(r.message),
     'no import (GST Keeper\'s page not open): said so, and the pull goes on: ' + (r && r.message));
+}
+// 0.9.1: an import that lands after the pull stopped waiting is found when the pull ends.
+reset();
+storage.gstk_active_job = pullJob({ step: 'einvoice_excel' });
+pullsDb.push({ client_id: 'c1', period_month: '09/2026', source: 'einvoice_excel', status: 'ok', docs_found: 7, pulled_at: '2026-10-10T14:25:00+00:00', message: 'late' });
+{
+  await runExcelStep({ imported: false });
+  const r = storage.gstk_einvoice_pull_result;
+  ok(r && /GST Keeper imported 7 e-invoices from them at 19:55 IST/.test(r.message) && !/did not import/.test(r.message),
+    'a late import (after the 45 s wait) is found when the pull ends, and named: ' + (r && r.message));
+}
+// 0.9.1: the portal tab closed after the e-invoice details were imported.
+reset();
+storage.gstk_active_job = pullJob({ step: 'einvoice_pull', einvExcel: { ok: true, kb: 9, imported: { docs: 55, at: '2026-10-10T14:06:00+00:00' }, baseline: null } });
+{
+  await tabRemoved(1);
+  await tick();
+  const r = storage.gstk_einvoice_pull_result;
+  ok(r && r.tabClosed && /^Opened GSTR-1 for September 2026 .* GST Keeper imported 55 e-invoices from them at 19:36 IST\. The portal tab was closed before the e-invoice pull finished\. Nothing from the GSTR-1 file was saved/.test(r.message),
+    'tab closed after the import: the import is said, "Nothing was saved" is about the GSTR-1 file only: ' + (r && r.message));
 }
 reset();
 storage.gstk_active_job = pullJob({ step: 'einvoice_excel' });

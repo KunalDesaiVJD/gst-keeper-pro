@@ -5596,6 +5596,11 @@
     if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
       return einvoiceGoPull(job, cur, progress, { ok: false, note: 'the "Download details from e-invoices (Excel)" button is disabled on GSTR-1 for ' + label });
     }
+    // 0.9.1: the month's Excel import as it stands before the press (database
+    // time); the page's import of this file is a row that is not this one.
+    let baseline = null;
+    let baselineKnown = true;
+    try { const b = await GSTKdb.einvoiceExcelLatest(cur.clientId, job.period); baseline = b ? b.pulled_at : null; } catch (e) { baselineKnown = false; }
     const captureAt = Date.now();
     // Two ways the file arrives, both writing gstk_einvoice_excel_result (as
     // the GSTR-2B pull does): a Blob the page builds (inject.js posts it), or
@@ -5647,16 +5652,19 @@
     const kb = Math.max(1, Math.round((got.fileB64.length * 3) / 4 / 1024));
     banner('E-invoice details downloaded from GSTR-1 for ' + label + ' (' + kb + ' KB): GST Keeper is importing them…' + progress);
     // GST Keeper's GSTR-1 page imports it (appbridge → the page) and records
-    // the import in einvoice_pulls (source einvoice_excel): wait for that row.
+    // the import in einvoice_pulls (source einvoice_excel): wait for that row
+    // to change. The background looks once more when the pull ends.
     let imported = null;
-    const sinceIso = new Date(captureAt - 60000).toISOString();
-    for (let i = 0; i < 15 && !imported; i++) {
+    for (let i = 0; i < 15 && !imported && baselineKnown; i++) {
       await sleep(3000);
-      try { imported = await GSTKdb.einvoiceExcelImportedSince(cur.clientId, job.period, sinceIso); } catch (e) { imported = null; }
+      let row = null;
+      try { row = await GSTKdb.einvoiceExcelLatest(cur.clientId, job.period); } catch (e) { row = null; }
+      if (row && row.status === 'ok' && row.pulled_at !== baseline) imported = row;
     }
     return einvoiceGoPull(job, cur, progress, {
       ok: true, kb, at: new Date(captureAt).toISOString(),
       imported: imported ? { docs: imported.docs_found, at: imported.pulled_at, message: imported.message || '' } : null,
+      ...(baselineKnown ? { baseline } : {}),
     });
   }
 

@@ -1013,9 +1013,12 @@ const GSTR1DataPage: React.FC = () => {
         toast.error(`The e-invoice details downloaded from the portal for ${who} were not imported: ${wrong}`, { duration: 20000 });
         return;
       }
-      if (parsed.docs.length === 0 && parsed.cancelled === 0 && parsed.metas.length === 0) {
+      // As a file chosen by hand: one with no e-invoice read from it is never
+      // saved (it would replace this month's earlier Excel records with none).
+      if (parsed.docs.length === 0 && parsed.cancelled === 0) {
         const why = parsed.sheetsSkipped.map((x) => `${x.sheet}: ${x.reason}`).join('; ');
-        toast.error(`The file downloaded from the portal for ${who} is not an e-invoice Excel, so nothing was imported.${why ? ` ${why}.` : ''}`, { duration: 20000 });
+        toast.error(`No e-invoice could be read from the e-invoice details downloaded from the portal for ${who}, so nothing was imported`
+          + `${einvoiceExcel && selectionRef.current.client === clientId && selectionRef.current.month === periodMonth ? ' (the earlier import stays)' : ''}.${why ? ` ${why}.` : ''}`, { duration: 20000 });
         return;
       }
       const message = `${n(parsed.docs.length)} e-invoice(s) from the portal's e-invoice details for ${label}, downloaded from GSTR-1 by the pull (${name}): `
@@ -1042,7 +1045,10 @@ const GSTR1DataPage: React.FC = () => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
-      if (d.__gstkEinvoiceExcel) void portalExcelImportRef.current?.(d.__gstkEinvoiceExcel as PortalEinvoiceExcel);
+      // Only from this window (appbridge posts it here): the import writes without a confirm.
+      if (d.__gstkEinvoiceExcel && e.source === window && e.origin === window.location.origin) {
+        void portalExcelImportRef.current?.(d.__gstkEinvoiceExcel as PortalEinvoiceExcel);
+      }
       if (d.__gstkExtensionReady) {
         setExtReady(true);
         if (typeof d.version === 'string') {
@@ -1093,7 +1099,12 @@ const GSTR1DataPage: React.FC = () => {
           ? ` ${r.staleRemoved.toLocaleString('en-IN')} e-invoice${r.staleRemoved === 1 ? '' : 's'} saved by an earlier pull ${r.staleRemoved === 1 ? 'is' : 'are'} no longer on the portal's draft: kept with ${r.staleRemoved === 1 ? 'its' : 'their'} IRN and shown as IRN lost.`
           : '';
         if (r.tabClosed) toast.warning(r.message || 'The portal tab was closed before the e-invoice pull finished. Nothing was saved; pull again.', { duration: 15000 });
-        else if (r.status === 'ok') toast.success(`E-invoices pulled — ${n.toLocaleString('en-IN')} IRN${n === 1 ? '' : 's'} on the portal.${stale}`, stale ? { duration: 15000 } : undefined);
+        else if (r.status === 'ok') {
+          toast.success(`E-invoices pulled — ${n.toLocaleString('en-IN')} IRN${n === 1 ? '' : 's'} in the portal's GSTR-1 file.${stale}`, stale ? { duration: 15000 } : undefined);
+          // 0.9.1: what happened to the month's e-invoice details is said too when they were not imported.
+          const step = (r.message || '').match(/^(Could not take the e-invoice details[^.]*\.|Opened GSTR-1[^.]*but GST Keeper did not import them[^.]*\.)/);
+          if (step) toast.warning(step[1], { duration: 20000 });
+        }
         // 0.8.9: the message says what the GSTR-1 file held and how it compares with the e-invoice Excel.
         else if (r.status === 'none') toast.info(`${r.message || 'No document in the portal\'s GSTR-1 for this period carries an IRN.'}${stale}`, { duration: 20000 });
         else if (r.status === 'stale') {
