@@ -365,6 +365,13 @@ missing-from-return and shipping-bill warnings are repeated.
 
 ## 6. The Excel import
 
+**Since extension 0.9.0 the pull downloads it.** The e-invoice pull opens the
+month's GSTR-1 (Prepare Online), presses "Download details from e-invoices
+(Excel)" and hands the file to the GSTR-1 page, which imports it as below for
+the pull's client and month, without the confirmation a hand-chosen file gets
+(the pull was the request). Up to 500 e-invoices only: a larger month comes
+through "E-invoice download history" and is imported by hand.
+
 GSTN's **"Download details from e-invoices (Excel)"** is on the GSTR-1
 dashboard: Returns dashboard → period → GSTR-1 → Prepare Online. It is
 built from the IRP's data and lists every e-invoice of the period,

@@ -2,6 +2,57 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-10 — E-invoice pull opens the month's GSTR-1 and takes its e-invoice details (v0.9.0)
+
+Needs the GSTR-1 page update that imports the file (`__gstkEinvoiceExcel`).
+No database change.
+
+- **Why.** Staff could not accept "no document carries an IRN" without the
+  month's GSTR-1 opened, and still had to download the e-invoice details
+  (Excel) from it and import them by hand.
+- **Now.** After login the pull goes to the returns dashboard, chooses the
+  financial year, quarter and month of the pull, presses Search and opens
+  GSTR-1 (Prepare Online) for that month. There it presses the portal's own
+  "Download details from e-invoices (Excel)" and takes the file the portal
+  gives (a Blob the page builds, via inject.js, or a direct download the
+  background re-fetches), and hands it to GST Keeper's GSTR-1 page, which
+  imports it for the pull's client and month as if it had been chosen by hand
+  (its time recorded in `einvoice_pulls`, source `einvoice_excel`). The pull
+  waits up to 45 seconds for that import, then reads the GSTR-1 file as
+  before. Its message starts with what it did: "Opened GSTR-1 for September
+  2026 on the portal and downloaded its e-invoice details (Excel); GST Keeper
+  imported 55 e-invoices from them at 19:36 IST." and then gives the file's
+  counts and the comparison with the e-invoices just imported.
+- **Never in the way.** A dashboard that does not load, a month without a
+  Prepare Online button, no download button, no file within a minute, a file
+  that is not a workbook, or no GST Keeper page to import it: each is said in
+  the message ("Could not take the e-invoice details from the portal: …") and
+  the pull goes on to the GSTR-1 file.
+- More than 500 e-invoices: the portal prepares those under "E-invoice
+  download history"; the message says what the portal answered, and the ZIP
+  is imported by hand as before.
+
+## 2026-10-10 — E-invoice pull says exactly what it read (v0.8.9)
+
+No database change. The GSTR-1 page shows the new message on the panel.
+
+- **Why.** For TAMNNA INFRASTRUCTURE (Sep-26) the pull said "No document in
+  the portal's GSTR-1 for this period carries an IRN", which read as "there
+  are no e-invoices", while the e-invoice Excel listed 2, auto-populated on
+  01-10-2026. Both were true: two uploads that day (17:51 and 17:57 IST, before
+  the client was marked an e-invoice client) had replaced them on GSTR-1, so
+  the portal no longer showed their IRN. The message did not say that.
+- **Now.** The pull's message gives the period, the date the portal generated
+  the file, how many documents it holds per table (B2B, CDNR, CDNUR, Exports)
+  and how many carry an IRN. When an e-invoice Excel was imported for the
+  month it adds how many of the Excel's e-invoices GSTR-1 holds with their IRN,
+  and that the rest were replaced by an upload or are not auto-populated yet.
+  For example: "The portal's GSTR-1 for 09/2026 (file generated 10-10-2026)
+  holds 2 documents (B2B 2); none carries an IRN, so none is on the portal as
+  an e-invoice. The e-invoice Excel imported for this month lists 2
+  e-invoices: 2 are not on GSTR-1 with an IRN (an upload replaced them, or
+  auto-population has not run yet)."
+
 ## 2026-10-10 — Never inside another client's session; impossible passwords; e-invoice pull waits (v0.8.8)
 
 No database or page change is needed for the extension; the GSTR-1 page's

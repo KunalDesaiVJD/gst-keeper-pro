@@ -1233,7 +1233,7 @@ const API = {
   // upsert and the pull is 'failed', never saved on the old key.
   // Not in the job slot by itself: content.js reaches it through
   // finishEinvoicePull below, which is.
-  saveEinvoicePull: async ({ clientId, period_month, actorId, json, status, message, fileName }) => {
+  saveEinvoicePull: async ({ clientId, period_month, actorId, json, status, message, fileName, excelStep }) => {
     const now = new Date().toISOString();
     let st = status || 'failed';
     let msg = message || null;
@@ -1266,9 +1266,13 @@ const API = {
           }
           goneMarked = await markEinvoicesGone(clientId, period_month, rows, now);
           st = docsFound ? 'ok' : 'none';
-          msg = (docsFound
-            ? docsFound + ' e-invoice document(s) with an IRN found in the portal\'s GSTR-1.'
-            : 'No document in the portal\'s GSTR-1 for this period carries an IRN.')
+          // 0.8.9: say exactly what the file held, and how it compares with
+          // the e-invoice Excel imported for the month (10 Oct 2026: "no
+          // document carries an IRN" read as "no e-invoices", when uploads
+          // had replaced them on GSTR-1).
+          let excel = null;
+          try { excel = await einvoiceExcelOnDraft(clientId, period_month, rows); } catch (e) { excel = null; }
+          msg = einvoicePullText(period_month, generatedOn, gstr1DocCounts(json), docsFound, excel)
             + (goneMarked ? ' ' + goneMarked + ' e-invoice(s) saved by an earlier pull are no longer on the portal as e-invoices.' : '')
             + (generatedOn ? '' : ' ' + einvoiceNoDateText(fileName));
         }
@@ -1279,6 +1283,8 @@ const API = {
         msg = 'Could not save the e-invoice documents: ' + ((e && e.message) || e);
       }
     }
+    // 0.9.0: what the pull did on the month's GSTR-1 first (its e-invoice details).
+    if (excelStep) msg = einvoiceExcelStepText(excelStep, period_month) + (msg ? ' ' + msg : '');
     const pull = {
       client_id: clientId, period_month, source: 'portal_gstr1', status: st, docs_found: docsFound, message: msg,
       pulled_by: actorId || null, pulled_at: now, generated_on: generatedOn,
@@ -1306,6 +1312,16 @@ const API = {
   // A job of another tab or mode (another sync took the slot meanwhile): the
   // pull is still saved (it was checked against its own client and period)
   // and its result written, and that other job is left alone. Never throws.
+  // 0.9.0: the e-invoice Excel import GST Keeper's page recorded for this
+  // client and month at or after `sinceIso` (einvoice_pulls, source
+  // einvoice_excel), or null. The pull waits for it after handing the page
+  // the file it downloaded from the month's GSTR-1.
+  einvoiceExcelImportedSince: async (clientId, period_month, sinceIso) => {
+    const rows = await sel(`einvoice_pulls?client_id=eq.${clientId}&period_month=eq.${enc(period_month)}&source=eq.einvoice_excel&select=status,docs_found,pulled_at,message&limit=1`);
+    const r = rows && rows[0];
+    return r && r.status === 'ok' && Date.parse(r.pulled_at) >= Date.parse(sinceIso) ? r : null;
+  },
+
   finishEinvoicePull: (info) => jobSlot(async () => {
     const i = info || {};
     const target = { clientId: i.clientId || null, period_month: i.period_month || null };
@@ -1363,6 +1379,60 @@ const istDay = (iso) => new Date(Date.parse(iso) + 330 * 60 * 1000).toISOString(
 const einvDmy = (ymd) => ymd.slice(8, 10) + '-' + ymd.slice(5, 7) + '-' + ymd.slice(0, 4);
 // How staff make the portal generate a fresh GSTR-1 JSON for the period.
 const EINVOICE_FRESH_STEPS = 'open GSTR-1 for the period on the portal and choose Prepare Offline → Download → Generate JSON file to download';
+// 0.9.0: what the pull did on the month's GSTR-1 before reading its file:
+// opened it and downloaded its e-invoice details (and whether GST Keeper
+// imported them, when, and how many), or why it could not.
+function einvoiceExcelStepText(step, period_month) {
+  const [mm, yyyy] = String(period_month || '').split('/').map((n) => parseInt(n, 10));
+  const names = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const label = mm && yyyy ? names[mm - 1] + ' ' + yyyy : einvStr(period_month);
+  const ist = (iso) => { const t = Date.parse(iso); return Number.isFinite(t) ? new Date(t + 330 * 60000).toISOString().slice(11, 16) + ' IST' : ''; };
+  if (!step.ok) return 'Could not take the e-invoice details from the portal: ' + (step.note || 'unknown reason') + '.';
+  const opened = 'Opened GSTR-1 for ' + label + ' on the portal and downloaded its e-invoice details (Excel)';
+  if (!step.imported) {
+    return opened + ', but GST Keeper did not import them (its GSTR-1 page was not open, or the file was not this client\'s for this month): import the Excel by hand.';
+  }
+  const n = Number(step.imported.docs) || 0;
+  return opened + '; GST Keeper imported ' + n + ' e-invoice' + (n === 1 ? '' : 's') + ' from them' + (step.imported.at ? ' at ' + ist(step.imported.at) : '') + '.';
+}
+// 0.8.9: how many documents a GSTR-1 JSON holds, per table the pull reads.
+function gstr1DocCounts(json) {
+  const n = { b2b: 0, cdnr: 0, cdnur: 0, exp: 0 };
+  for (const p of (json && json.b2b) || []) n.b2b += ((p && p.inv) || []).length;
+  for (const p of (json && json.cdnr) || []) n.cdnr += ((p && p.nt) || []).length;
+  n.cdnur = ((json && json.cdnur) || []).length;
+  for (const e of (json && json.exp) || []) n.exp += ((e && e.inv) || []).length;
+  return n;
+}
+// The e-invoices the Excel imported for this month lists (cancelled ones are
+// never saved), and how many of them the portal's GSTR-1 holds with an IRN
+// (same identity as a pulled row). Null when no Excel was imported.
+async function einvoiceExcelOnDraft(clientId, period_month, rows) {
+  const xs = await sel(`einvoice_docs?client_id=eq.${clientId}&period_month=eq.${enc(period_month)}&source=eq.einvoice_excel&select=section,ctin,doc_type,doc_key&limit=5000`);
+  if (!xs || !xs.length) return null;
+  const key = (d) => einvDocKey(d.section, d.ctin, d.doc_type, d.doc_key);
+  const onDraft = new Set(rows.map(key));
+  return { count: xs.length, onDraft: xs.filter((d) => onDraft.has(key(d))).length };
+}
+// The pull's result in exact numbers: the period, the file's date, its
+// documents per table, how many carry an IRN, and the Excel's e-invoices.
+function einvoicePullText(period_month, generatedOn, c, withIrn, excel) {
+  const total = c.b2b + c.cdnr + c.cdnur + c.exp;
+  const parts = [['B2B', c.b2b], ['CDNR', c.cdnr], ['CDNUR', c.cdnur], ['Exports', c.exp]].filter((x) => x[1]).map((x) => x[0] + ' ' + x[1]).join(', ');
+  let t = 'The portal\'s GSTR-1 for ' + einvStr(period_month) + (generatedOn ? ' (file generated ' + einvDmy(generatedOn) + ')' : '')
+    + ' holds ' + total + ' document' + (total === 1 ? '' : 's') + (parts ? ' (' + parts + ')' : '') + '; '
+    + (withIrn ? withIrn + (withIrn === 1 ? ' carries an IRN (on the portal as an e-invoice).' : ' carry an IRN (on the portal as e-invoices).')
+      : (total ? 'none carries an IRN, so none is on the portal as an e-invoice.' : 'none is an e-invoice.'));
+  if (excel && excel.count) {
+    const missing = excel.count - excel.onDraft;
+    t += ' The e-invoice Excel imported for this month lists ' + excel.count + ' e-invoice' + (excel.count === 1 ? '' : 's')
+      + (missing
+        ? ': ' + missing + (missing === 1 ? ' is' : ' are') + ' not on GSTR-1 with an IRN (an upload replaced ' + (missing === 1 ? 'it' : 'them')
+          + ', or auto-population has not run yet).'
+        : (excel.count === 1 ? ', on GSTR-1 with its IRN.' : ', all on GSTR-1 with their IRN.'));
+  }
+  return t;
+}
 function einvoiceStaleText(generatedOn, period_month) {
   return 'The portal gave a GSTR-1 JSON generated on ' + einvDmy(generatedOn) + ', not today, so it lacks every e-invoice'
     + ' auto-populated since. Nothing was saved. To get a fresh file, ' + EINVOICE_FRESH_STEPS + ' (' + einvStr(period_month) + '),'
@@ -1544,6 +1614,25 @@ chrome.downloads.onCreated.addListener(async (item) => {
   try {
     const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
     if (!job || !job.clients) return;
+    // 0.9.0: the e-invoice details (Excel) the pull downloads from the month's GSTR-1.
+    if (job.mode === 'einvoice_pull') {
+      if (job.step !== 'einvoice_excel') return;
+      const url0 = item.finalUrl || item.url || '';
+      if (!/^https?:/i.test(url0) || !/\.(xlsx|xls|zip)(\?|$)|einv|e-invoice/i.test((item.filename || '') + ' ' + url0)) return;
+      const r0 = await fetch(url0, { credentials: 'include' });
+      if (!r0.ok) return;
+      const b0 = await r0.arrayBuffer();
+      if (!b0 || b0.byteLength < 100) return;
+      const c0 = job.clients[job.idx || 0];
+      if (!c0) return;
+      const mime0 = r0.headers.get('content-type') || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      await chrome.storage.local.set({ gstk_einvoice_excel_result: {
+        clientId: c0.clientId, gstin: (c0.creds && c0.creds.gstin) || '', period_month: job.period,
+        fileB64: 'data:' + mime0 + ';base64,' + abToBase64(b0), fileName: (item.filename || '').split(/[\\/]/).pop() || ('EINV_' + c0.clientId + '.xlsx'),
+        at: Date.now(), via: 'download',
+      } });
+      return;
+    }
     if (job.mode !== 'twob' && job.mode !== 'twoa') return;
     const is2a = job.mode === 'twoa';
     const fileUrl = item.finalUrl || item.url || '';

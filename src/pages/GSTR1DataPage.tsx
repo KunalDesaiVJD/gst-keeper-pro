@@ -145,6 +145,8 @@ const isExcelFresh = (x: EinvoicePullRow | null | undefined): boolean => !!x && 
 /** What a plan rests on: the pull of today, else the Excel imported today (null: neither). */
 const einvPlanBasis = (p: EinvoicePullRow | null, x: EinvoicePullRow | null) => (isPullFresh(p) ? { kind: 'pull' as const, at: p!.pulled_at }
   : isExcelFresh(x) ? { kind: 'excel' as const, at: x!.pulled_at } : null);
+/** The e-invoice details (Excel) extension 0.9.0's pull downloaded from the month's GSTR-1 (appbridge __gstkEinvoiceExcel). */
+type PortalEinvoiceExcel = { clientId: string | null; gstin?: string | null; period_month: string | null; fileB64: string; fileName?: string | null; at?: number };
 /** A pull started or ended while the records were being read, or since (§4.3, §8). */
 const EINV_PULL_MOVED = 'A pull of e-invoices saved new records while this push was being prepared, so nothing was uploaded. '
   + 'Check the e-invoice reconciliation, then click Upload again.';
@@ -984,6 +986,55 @@ const GSTR1DataPage: React.FC = () => {
     return () => clearTimeout(t);
   }, [isPullingEinv]);
 
+  // Extension 0.9.0: the e-invoice details (Excel) the pull downloaded from the
+  // month's GSTR-1 on the portal. Imported as if chosen by hand, for the
+  // pull's client and month (not whatever is selected now), with no confirm:
+  // the pull was the staff's request. The import is recorded in
+  // einvoice_pulls (source einvoice_excel) with its time, which the pull waits
+  // for and names in its message. A ref, so the listener below always calls
+  // the latest closure (clients, user).
+  const portalExcelImportRef = useRef<((v: PortalEinvoiceExcel) => Promise<void>) | null>(null);
+  portalExcelImportRef.current = async (v: PortalEinvoiceExcel) => {
+    const clientId = v.clientId;
+    const periodMonth = v.period_month;
+    if (!clientId || !periodMonth || !v.fileB64) return;
+    const client = clients.find((c) => c.id === clientId);
+    const gstin = client?.gstin || v.gstin || null;
+    const label = mmYyyyToShort(periodMonth);
+    const who = `${client?.name || 'the client'} · ${label}`;
+    const n = (x: number) => x.toLocaleString('en-IN');
+    try {
+      const blob = await (await fetch(v.fileB64)).blob();
+      const name = v.fileName || `EINV_${gstin || clientId}.xlsx`;
+      const files = await readEinvoiceExcelFile(new File([blob], name, { type: blob.type }));
+      const parsed = parseEinvoiceExcelFiles(files, gstin);
+      const wrong = einvoiceExcelMismatch(parsed.metas, { gstin: gstin || '', periodMonth, label });
+      if (wrong) {
+        toast.error(`The e-invoice details downloaded from the portal for ${who} were not imported: ${wrong}`, { duration: 20000 });
+        return;
+      }
+      if (parsed.docs.length === 0 && parsed.cancelled === 0 && parsed.metas.length === 0) {
+        const why = parsed.sheetsSkipped.map((x) => `${x.sheet}: ${x.reason}`).join('; ');
+        toast.error(`The file downloaded from the portal for ${who} is not an e-invoice Excel, so nothing was imported.${why ? ` ${why}.` : ''}`, { duration: 20000 });
+        return;
+      }
+      const message = `${n(parsed.docs.length)} e-invoice(s) from the portal's e-invoice details for ${label}, downloaded from GSTR-1 by the pull (${name}): `
+        + `${n(parsed.cancelled)} cancelled skipped, ${n(parsed.pending)} pending, ${n(parsed.failed)} failed, `
+        + `${n(parsed.sheetsSkipped.length)} sheet(s) and ${n(parsed.rowsSkipped.length)} row(s) skipped.`;
+      const { inserted } = await saveEinvoiceExcelImport({ clientId, periodMonth, actorId: user?.id ?? null, docs: parsed.docs, message });
+      toast.success(`E-invoice details for ${who} downloaded from the portal's GSTR-1 and imported: ${n(inserted)} e-invoice${inserted === 1 ? '' : 's'}`
+        + `${parsed.pending ? `, ${n(parsed.pending)} pending auto-population` : ''}${parsed.failed ? `, ${n(parsed.failed)} failed auto-population` : ''}.`, { duration: 12000 });
+    } catch (err) {
+      toast.error(`Could not import the e-invoice details downloaded from the portal for ${who}: `
+        + (err instanceof Error ? err.message : (err as { message?: string })?.message || String(err)), { duration: 20000 });
+    } finally {
+      if (selectionRef.current.client === clientId && selectionRef.current.month === periodMonth) {
+        fetchEinvoice();
+        fetchEinvoiceEvidenceForClient();
+      }
+    }
+  };
+
   // Extension bridge: detect the GST Keeper browser extension and receive the
   // upload result it posts back after driving the portal. Mirrors the pattern
   // used on the reco pages for the "Pull" button.
@@ -991,6 +1042,7 @@ const GSTR1DataPage: React.FC = () => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
+      if (d.__gstkEinvoiceExcel) void portalExcelImportRef.current?.(d.__gstkEinvoiceExcel as PortalEinvoiceExcel);
       if (d.__gstkExtensionReady) {
         setExtReady(true);
         if (typeof d.version === 'string') {
@@ -1042,7 +1094,8 @@ const GSTR1DataPage: React.FC = () => {
           : '';
         if (r.tabClosed) toast.warning(r.message || 'The portal tab was closed before the e-invoice pull finished. Nothing was saved; pull again.', { duration: 15000 });
         else if (r.status === 'ok') toast.success(`E-invoices pulled — ${n.toLocaleString('en-IN')} IRN${n === 1 ? '' : 's'} on the portal.${stale}`, stale ? { duration: 15000 } : undefined);
-        else if (r.status === 'none') toast.info(`No e-invoices on the portal for this period.${stale}`, stale ? { duration: 15000 } : undefined);
+        // 0.8.9: the message says what the GSTR-1 file held and how it compares with the e-invoice Excel.
+        else if (r.status === 'none') toast.info(`${r.message || 'No document in the portal\'s GSTR-1 for this period carries an IRN.'}${stale}`, { duration: 20000 });
         else if (r.status === 'stale') {
           toast.warning(r.message || `The portal served a GSTR-1 file generated before today, so nothing was saved from it. ${EINV_FRESH_FILE_STEPS}`, { duration: 25000 });
         } else if (r.status === 'pending') toast.warning(r.message || 'The portal is still preparing the data — pull again in a few minutes.');

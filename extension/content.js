@@ -295,7 +295,7 @@
   // while we expected to be logged in, DON'T keep navigating. Re-login a couple of
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
-  const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr1_nil', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4', 'einvoice_pull'];
+  const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr1_nil', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4', 'einvoice_dash', 'einvoice_excel', 'einvoice_pull'];
   if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'applications' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
@@ -427,6 +427,8 @@
       else if (await onOfflineUploadPageOrRetry(job, progress)) await handleGstr1RefreshErrors(job, cur, progress);
     }
     else if (job.step === 'gstr1_nil') await handleGstr1Nil(job, cur, progress);
+    else if (job.step === 'einvoice_dash') await handleEinvoiceDashboard(job, cur, progress);
+    else if (job.step === 'einvoice_excel') await handleEinvoiceExcel(job, cur, progress);
     else if (job.step === 'einvoice_pull') await handleEinvoicePull(job, cur, progress);
     else if (job.step === 'gstr3b_dash') await handleGstr3bDashboard(job, cur, progress);
     else if (job.step === 'gstr3b_fill31') await handleGstr3bFill31(job, cur, progress);
@@ -794,8 +796,9 @@
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'einvoice_pull') {
-        banner('Logged in — requesting the portal\'s GSTR-1 JSON for e-invoices…' + progress);
-        job.step = 'einvoice_pull';
+        // 0.9.0: the month's GSTR-1 is opened first, for its e-invoice details.
+        banner('Logged in — opening GSTR-1 for ' + job.period + ' on the returns dashboard…' + progress);
+        job.step = 'einvoice_dash';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'gstr1_refresh') {
@@ -5502,12 +5505,168 @@
   // nothing was saved) or finds no job (and writes nothing). This tab writes
   // neither the result nor the job itself, except when the worker does not
   // answer at all, and then only while the job is still this pull's.
+  // ── 0.9.0: the month's GSTR-1, and its e-invoice details ────────────────
+  // 10 Oct 2026: staff could not take the pull's word for "no document carries
+  // an IRN" without the month's GSTR-1 opened, and had to download the
+  // e-invoice details (Excel) from it by hand. The pull now opens GSTR-1 for
+  // job.period (returns dashboard → FY, quarter, month → Search → GSTR-1
+  // Prepare Online), presses the portal's own "Download details from
+  // e-invoices (Excel)" there, and hands the file to GST Keeper, which imports
+  // it as if it had been chosen by hand. Then it reads the GSTR-1 file as
+  // before (handleEinvoicePull). Nothing here may stop the pull: whatever
+  // fails is noted (job.einvExcel) and said in the pull's message.
+  function einvMonthLabel(period) {
+    const [mm, yyyy] = String(period || '').split('/').map((n) => parseInt(n, 10));
+    const names = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return mm && yyyy ? names[mm - 1] + ' ' + yyyy : String(period || '');
+  }
+  async function einvoiceGoPull(job, cur, progress, step) {
+    job.einvExcel = step;
+    delete job.einvExcelRetry;
+    job.step = 'einvoice_pull';
+    await setJob(job);
+    await handleEinvoicePull(job, cur, progress);
+  }
+  async function handleEinvoiceDashboard(job, cur, progress) {
+    if (!/returns\/auth\/dashboard/.test(location.href)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    const label = einvMonthLabel(job.period);
+    const skip = (note) => einvoiceGoPull(job, cur, progress, { ok: false, note });
+    if (!(await waitFor('select', 20000))) return skip('the returns dashboard did not load');
+    if (await headerShowsOther(job, cur, progress)) return;
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) return skip('bad period ' + job.period);
+    const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+    const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
+    const monthName = label.split(' ')[0];
+    const q = mm >= 4 ? Math.ceil((mm - 3) / 3) : 4;
+    banner('Selecting ' + label + ' on the returns dashboard…' + progress);
+    if (!(await selectWhereOption(fyShort))) return skip('could not choose the financial year ' + fyShort + ' on the returns dashboard');
+    await sleep(700);
+    await selectWhereOption('Quarter ' + q, { startsWith: true, timeout: 8000 });
+    await sleep(700);
+    if (!(await selectWhereOption(monthName, { timeout: 12000 }))) return skip('could not choose ' + label + ' on the returns dashboard');
+    await sleep(300);
+    const search = $('button.srchbtn') || $$('button').find((b) => /^search$/i.test((b.textContent || '').trim()));
+    if (!search) return skip('the returns dashboard has no Search button');
+    search.click();
+    const excludeOthers = [/gstr[\s-]*1a/i, /gstr[\s-]*2/i, /gstr[\s-]*3/i, /gstr[\s-]*6/i, /gstr[\s-]*7/i];
+    let btn = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000 && !btn) {
+      await sleep(400);
+      btn = findTileButton(/gstr[\s-]*1\b/i, /prepare\s*online/i, excludeOthers)
+         || findTileButton(/\bIFF\b|invoice\s+furnishing\s+facility/i, /prepare\s*online/i, excludeOthers)
+         || findTileButton(/gstr[\s-]*1\b/i, /^view$/i, excludeOthers);
+    }
+    if (!btn) return skip('GSTR-1 for ' + label + ' has no "Prepare Online" (or View) button on the returns dashboard');
+    banner('Opening GSTR-1 for ' + label + ' to download its e-invoice details…' + progress);
+    job.step = 'einvoice_excel';
+    await setJob(job);
+    const before = location.href;
+    btn.click();
+    const navDeadline = Date.now() + 15000;
+    while (Date.now() < navDeadline && (location.href === before || /returns\/auth\/dashboard/.test(location.href))) await sleep(300);
+    await handleEinvoiceExcel(job, cur, progress);
+  }
+  async function handleEinvoiceExcel(job, cur, progress) {
+    const label = einvMonthLabel(job.period);
+    if (!/return\.gst\.gov\.in/i.test(location.href) || /returns\/auth\/dashboard/.test(location.href)) {
+      // A reload landed back on the dashboard (or elsewhere): once more from
+      // the period selection, then on with the pull without the Excel.
+      if (!job.einvExcelRetry) {
+        job.einvExcelRetry = 1;
+        job.step = 'einvoice_dash';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+        return;
+      }
+      return einvoiceGoPull(job, cur, progress, { ok: false, note: 'GSTR-1 for ' + label + ' did not open' });
+    }
+    banner('GSTR-1 for ' + label + ' is open on the portal: downloading its e-invoice details…' + progress);
+    // Local, not a module-level const: the dispatcher reaches this handler
+    // before a const declared down here is initialised (see NIL_LOOSE, 0.8.6).
+    const EINV_EXCEL_BTN = /download\s*details\s*from\s*e[\s-]*invoices?/i;
+    let btn = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 20000 && !btn) {
+      btn = $$('button, a').find((x) => x.offsetParent !== null && EINV_EXCEL_BTN.test(oneLine(x.textContent)));
+      if (!btn) await sleep(500);
+    }
+    if (!btn) return einvoiceGoPull(job, cur, progress, { ok: false, note: 'GSTR-1 for ' + label + ' shows no "Download details from e-invoices (Excel)" button' });
+    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
+      return einvoiceGoPull(job, cur, progress, { ok: false, note: 'the "Download details from e-invoices (Excel)" button is disabled on GSTR-1 for ' + label });
+    }
+    const captureAt = Date.now();
+    // Two ways the file arrives, both writing gstk_einvoice_excel_result (as
+    // the GSTR-2B pull does): a Blob the page builds (inject.js posts it), or
+    // a direct download the background re-fetches (chrome.downloads hook).
+    const written = new Promise((resolve) => {
+      const onChg = (changes, area) => {
+        const v = area === 'local' && changes.gstk_einvoice_excel_result && changes.gstk_einvoice_excel_result.newValue;
+        if (v && v.at >= captureAt) { chrome.storage.onChanged.removeListener(onChg); resolve(v); }
+      };
+      chrome.storage.onChanged.addListener(onChg);
+      setTimeout(() => { chrome.storage.onChanged.removeListener(onChg); resolve(null); }, 60000);
+    });
+    const onBlob = (e) => {
+      const d = e.data && e.data.__gstkPdf;
+      // An Excel workbook or a ZIP: both start with "PK" (base64 "UEsDB").
+      if (!d || !/^data:[^,]*;base64,UEsDB/.test(d)) return;
+      window.removeEventListener('message', onBlob);
+      store.set({ gstk_einvoice_excel_result: {
+        clientId: cur.clientId, gstin: (cur.creds && cur.creds.gstin) || '', period_month: job.period, fileB64: d,
+        fileName: 'EINV_' + ((cur.creds && cur.creds.gstin) || cur.clientId) + '_' + String(job.period).replace('/', '') + '.xlsx',
+        at: Date.now(), via: 'page',
+      } }).catch(() => {});
+    };
+    window.addEventListener('message', onBlob);
+    btn.click();
+    // The portal may ask to confirm, or answer in words instead of a file (no
+    // e-invoices, or more than 500: prepared under "E-invoice download history").
+    let portalSaid = '';
+    let done = false;
+    (async () => {
+      for (let i = 0; i < 40 && !done; i++) {
+        await sleep(1500);
+        const dialogBtn = $$('.modal button, [role=dialog] button, .modal-footer button, .swal2-confirm')
+          .find((b) => b.offsetParent !== null && /^(yes|ok|proceed|confirm|download)$/i.test((b.textContent || '').trim())
+            && !!b.closest('.modal, [role=dialog], .swal2-popup, .modal-dialog'));
+        const said = $$('.alert, .modal-body, [role=alert], .swal2-html-container, .swal2-content')
+          .filter((n) => n.offsetParent !== null).map((n) => oneLine(n.textContent)).find((t) => /e[\s-]*invoice|download|request|record/i.test(t) && t.length < 400);
+        if (said) portalSaid = said;
+        if (dialogBtn) { try { dialogBtn.click(); } catch (e) { /* ignore */ } }
+      }
+    })();
+    const got = await written;
+    done = true;
+    window.removeEventListener('message', onBlob);
+    if (!got) {
+      return einvoiceGoPull(job, cur, progress, { ok: false, note: 'no file came from "Download details from e-invoices (Excel)" on GSTR-1 for ' + label + ' within a minute'
+        + (portalSaid ? ' (the portal said: "' + portalSaid.slice(0, 200) + '")' : '') });
+    }
+    const kb = Math.max(1, Math.round((got.fileB64.length * 3) / 4 / 1024));
+    banner('E-invoice details downloaded from GSTR-1 for ' + label + ' (' + kb + ' KB): GST Keeper is importing them…' + progress);
+    // GST Keeper's GSTR-1 page imports it (appbridge → the page) and records
+    // the import in einvoice_pulls (source einvoice_excel): wait for that row.
+    let imported = null;
+    const sinceIso = new Date(captureAt - 60000).toISOString();
+    for (let i = 0; i < 15 && !imported; i++) {
+      await sleep(3000);
+      try { imported = await GSTKdb.einvoiceExcelImportedSince(cur.clientId, job.period, sinceIso); } catch (e) { imported = null; }
+    }
+    return einvoiceGoPull(job, cur, progress, {
+      ok: true, kb, at: new Date(captureAt).toISOString(),
+      imported: imported ? { docs: imported.docs_found, at: imported.pulled_at, message: imported.message || '' } : null,
+    });
+  }
+
   async function reportEinvoicePull(job, cur, info) {
     const target = { clientId: (cur && cur.clientId) || null, period_month: (job && job.period) || null };
     const tabId = job && job.tabId != null ? job.tabId : null;
     const resp = await askBackground('finishEinvoicePull', [{
       ...target, tabId, actorId: (job && job.actorId) || null,
       json: info.json || null, fileName: info.fileName || null, status: info.status, message: info.message || null,
+      excelStep: (job && job.einvExcel) || null,
     }], 180000);
     if (resp && resp.data) return resp.data;
     const res = {
