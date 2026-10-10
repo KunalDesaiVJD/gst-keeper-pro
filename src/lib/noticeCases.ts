@@ -44,7 +44,7 @@ export function caseKeyOf(caseId: string | null | undefined, category: string | 
 export const caseHref = (clientId: string, caseKey: string) => `/notices-case/${clientId}/${encodeURIComponent(caseKey)}`;
 
 // ── Lists and counts ───────────────────────────────────────────────────────
-export type CaseShow = 'open' | 'new' | 'all';
+export type CaseShow = 'open' | 'new' | 'all' | 'overdue' | 'due7';
 export interface CaseQuery { track: Track | 'all'; show: CaseShow; q: string; master: Master; meId: string | null }
 
 export async function loadCases(c: CaseQuery, page: number, pageSize: number): Promise<{ rows: CaseRow[]; total: number }> {
@@ -52,6 +52,8 @@ export async function loadCases(c: CaseQuery, page: number, pageSize: number): P
   if (c.track !== 'all') q = q.eq('track', c.track);
   if (c.show === 'open') q = q.eq('is_open', true);
   if (c.show === 'new') q = q.gt('new_items', 0);
+  if (c.show === 'overdue') q = q.eq('is_overdue', true);
+  if (c.show === 'due7') q = q.eq('is_due_in_7', true);
   q = applyMasterToQuery(q, c.master, c.meId);
   const t = c.q.trim().replace(/[%,()]/g, ' ');
   if (t) q = q.or(`client_name.ilike.%${t}%,client_gstin.ilike.%${t}%,case_key.ilike.%${t}%,reference_number.ilike.%${t}%,title.ilike.%${t}%`);
@@ -70,8 +72,16 @@ export async function loadCases(c: CaseQuery, page: number, pageSize: number): P
   return { rows: (data ?? []) as CaseRow[], total: count ?? 0 };
 }
 
-export interface TrackCounts { cases: number; open: number; new: number; new_items: number; overdue: number; due7: number; hearings: number; unassigned: number; exposure: number }
-const ZERO: TrackCounts = { cases: 0, open: 0, new: 0, new_items: 0, overdue: 0, due7: 0, hearings: 0, unassigned: 0, exposure: 0 };
+export interface TrackCounts {
+  cases: number; open: number; new: number; new_items: number; overdue: number; due7: number; hearings: number; unassigned: number; exposure: number;
+  /** 20261012110000 */
+  in_appeal: number; next_due: string | null; next_hearing: string | null; oldest_overdue_days: number | null;
+  overdue_age: { d30: number; d90: number; d365: number; older: number };
+}
+const ZERO: TrackCounts = {
+  cases: 0, open: 0, new: 0, new_items: 0, overdue: 0, due7: 0, hearings: 0, unassigned: 0, exposure: 0,
+  in_appeal: 0, next_due: null, next_hearing: null, oldest_overdue_days: null, overdue_age: { d30: 0, d90: 0, d365: 0, older: 0 },
+};
 
 export async function loadCaseCounts(filters: Record<string, string> | null): Promise<Record<Track, TrackCounts>> {
   const { data, error } = await supabase.rpc('notice_cases_counts', { p_filters: filters });
