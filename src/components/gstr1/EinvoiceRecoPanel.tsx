@@ -193,13 +193,15 @@ const pullLine = (p: EinvoicePullRow | null, x: EinvoicePullRow | null): { text:
         tone: 'warn',
       };
     case 'ok':
-      return { text: `Pulled ${when} · ${p.docs_found.toLocaleString('en-IN')} IRN${p.docs_found === 1 ? '' : 's'} on the portal${file}${age}`, tone: fresh ? 'muted' : 'warn' };
-    case 'none':
-      // Extension 0.8.9 writes the file's document counts and the Excel's comparison in the message.
-      return {
-        text: `Pulled ${when} · ${/^The portal's GSTR-1/.test(p.message || '') ? p.message : 'no document in the portal\'s GSTR-1 for this period carries an IRN'}${/file generated/.test(p.message || '') ? '' : file}${age}`,
-        tone: fresh ? 'muted' : 'warn',
-      };
+    case 'none': {
+      // Extension 0.8.9+ writes the exact message (what it did on the month's
+      // GSTR-1, the file's counts, the e-invoice details): shown whole.
+      const exact = /^(Opened GSTR-1|Could not take the e-invoice details|The portal's GSTR-1)/.test(p.message || '') ? p.message : null;
+      const plain = p.status === 'ok'
+        ? `${p.docs_found.toLocaleString('en-IN')} IRN${p.docs_found === 1 ? '' : 's'} in the portal's GSTR-1 file${file}`
+        : `no document in the portal's GSTR-1 file for this period carries an IRN${file}`;
+      return { text: `Pulled ${when} · ${exact || plain}${age}`, tone: fresh ? 'muted' : 'warn' };
+    }
     case 'stale':
       return {
         text: `Last pull (${when}): the portal served an old file${p.generated_on ? `, generated ${fmtDay(p.generated_on)}` : ''}: generate a fresh one. `

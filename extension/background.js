@@ -1284,7 +1284,17 @@ const API = {
       }
     }
     // 0.9.0: what the pull did on the month's GSTR-1 first (its e-invoice details).
-    if (excelStep) msg = einvoiceExcelStepText(excelStep, period_month) + (msg ? ' ' + msg : '');
+    // 0.9.1: an import that landed after the pull stopped waiting is found here
+    // (database time against database time: the row is not the baseline one).
+    if (excelStep && excelStep.ok && !excelStep.imported && 'baseline' in excelStep) {
+      try {
+        const latest = await API.einvoiceExcelLatest(clientId, period_month);
+        if (latest && latest.status === 'ok' && latest.pulled_at !== excelStep.baseline) {
+          excelStep.imported = { docs: latest.docs_found, at: latest.pulled_at, message: latest.message || '' };
+        }
+      } catch (e) { /* said as not imported */ }
+    }
+    if (excelStep) msg = einvoiceEndText(excelStep, period_month, msg);
     const pull = {
       client_id: clientId, period_month, source: 'portal_gstr1', status: st, docs_found: docsFound, message: msg,
       pulled_by: actorId || null, pulled_at: now, generated_on: generatedOn,
@@ -1312,14 +1322,14 @@ const API = {
   // A job of another tab or mode (another sync took the slot meanwhile): the
   // pull is still saved (it was checked against its own client and period)
   // and its result written, and that other job is left alone. Never throws.
-  // 0.9.0: the e-invoice Excel import GST Keeper's page recorded for this
-  // client and month at or after `sinceIso` (einvoice_pulls, source
-  // einvoice_excel), or null. The pull waits for it after handing the page
-  // the file it downloaded from the month's GSTR-1.
-  einvoiceExcelImportedSince: async (clientId, period_month, sinceIso) => {
+  // 0.9.0: the e-invoice Excel import recorded for this client and month
+  // (einvoice_pulls, source einvoice_excel: one row, replaced by each import,
+  // pulled_at = the database's now()), or null. 0.9.1: the pull reads it
+  // before pressing the portal's download button and waits for a row that is
+  // not that one, so no PC clock is compared with the database's.
+  einvoiceExcelLatest: async (clientId, period_month) => {
     const rows = await sel(`einvoice_pulls?client_id=eq.${clientId}&period_month=eq.${enc(period_month)}&source=eq.einvoice_excel&select=status,docs_found,pulled_at,message&limit=1`);
-    const r = rows && rows[0];
-    return r && r.status === 'ok' && Date.parse(r.pulled_at) >= Date.parse(sinceIso) ? r : null;
+    return (rows && rows[0]) || null;
   },
 
   finishEinvoicePull: (info) => jobSlot(async () => {
@@ -1390,10 +1400,18 @@ function einvoiceExcelStepText(step, period_month) {
   if (!step.ok) return 'Could not take the e-invoice details from the portal: ' + (step.note || 'unknown reason') + '.';
   const opened = 'Opened GSTR-1 for ' + label + ' on the portal and downloaded its e-invoice details (Excel)';
   if (!step.imported) {
-    return opened + ', but GST Keeper did not import them (its GSTR-1 page was not open, or the file was not this client\'s for this month): import the Excel by hand.';
+    return opened + ', but GST Keeper did not import them (its GSTR-1 page was not open, or the file held no e-invoice of this client for this month; the GSTR-1 page says which): import the Excel by hand if the month has e-invoices.';
   }
   const n = Number(step.imported.docs) || 0;
   return opened + '; GST Keeper imported ' + n + ' e-invoice' + (n === 1 ? '' : 's') + ' from them' + (step.imported.at ? ' at ' + ist(step.imported.at) : '') + '.';
+}
+// The pull's message with what it did on the month's GSTR-1 in front. Once the
+// e-invoice details were imported, "Nothing was saved" (a pull that then
+// failed, stalled or lost its tab) is about the GSTR-1 file only.
+function einvoiceEndText(step, period_month, text) {
+  let t = text || '';
+  if (step && step.ok && step.imported) t = t.replace(/Nothing was saved/g, 'Nothing from the GSTR-1 file was saved');
+  return einvoiceExcelStepText(step, period_month) + (t ? ' ' + t : '');
 }
 // 0.8.9: how many documents a GSTR-1 JSON holds, per table the pull reads.
 function gstr1DocCounts(json) {
@@ -1408,8 +1426,15 @@ function gstr1DocCounts(json) {
 // never saved), and how many of them the portal's GSTR-1 holds with an IRN
 // (same identity as a pulled row). Null when no Excel was imported.
 async function einvoiceExcelOnDraft(clientId, period_month, rows) {
-  const xs = await sel(`einvoice_docs?client_id=eq.${clientId}&period_month=eq.${enc(period_month)}&source=eq.einvoice_excel&select=section,ctin,doc_type,doc_key&limit=5000`);
-  if (!xs || !xs.length) return null;
+  // In pages: the server caps a read at 1,000 rows (as markEinvoicesGone does).
+  const xs = [];
+  for (let offset = 0; ; offset += 1000) {
+    const page = await sel(`einvoice_docs?client_id=eq.${clientId}&period_month=eq.${enc(period_month)}&source=eq.einvoice_excel&select=id,section,ctin,doc_type,doc_key&order=id&limit=1000&offset=${offset}`);
+    if (!page || !page.length) break;
+    xs.push(...page);
+    if (page.length < 1000) break;
+  }
+  if (!xs.length) return null;
   const key = (d) => einvDocKey(d.section, d.ctin, d.doc_type, d.doc_key);
   const onDraft = new Set(rows.map(key));
   return { count: xs.length, onDraft: xs.filter((d) => onDraft.has(key(d))).length };
@@ -1419,17 +1444,21 @@ async function einvoiceExcelOnDraft(clientId, period_month, rows) {
 function einvoicePullText(period_month, generatedOn, c, withIrn, excel) {
   const total = c.b2b + c.cdnr + c.cdnur + c.exp;
   const parts = [['B2B', c.b2b], ['CDNR', c.cdnr], ['CDNUR', c.cdnur], ['Exports', c.exp]].filter((x) => x[1]).map((x) => x[0] + ' ' + x[1]).join(', ');
-  let t = 'The portal\'s GSTR-1 for ' + einvStr(period_month) + (generatedOn ? ' (file generated ' + einvDmy(generatedOn) + ')' : '')
+  // 0.9.1: only what the file shows, never more: "none carries an IRN" is about
+  // the GSTR-1 file, and the month's e-invoice details (when imported) say how
+  // many e-invoices there are and how many of them the file holds with an IRN.
+  let t = 'The portal\'s GSTR-1 file for ' + einvStr(period_month) + (generatedOn ? ' (generated ' + einvDmy(generatedOn) + ')' : '')
     + ' holds ' + total + ' document' + (total === 1 ? '' : 's') + (parts ? ' (' + parts + ')' : '') + '; '
-    + (withIrn ? withIrn + (withIrn === 1 ? ' carries an IRN (on the portal as an e-invoice).' : ' carry an IRN (on the portal as e-invoices).')
-      : (total ? 'none carries an IRN, so none is on the portal as an e-invoice.' : 'none is an e-invoice.'));
+    + (withIrn ? withIrn + (withIrn === 1 ? ' of them carries an IRN.' : ' of them carry an IRN.')
+      : (total ? 'none of them carries an IRN.' : 'it holds no document.'));
   if (excel && excel.count) {
     const missing = excel.count - excel.onDraft;
-    t += ' The e-invoice Excel imported for this month lists ' + excel.count + ' e-invoice' + (excel.count === 1 ? '' : 's')
+    t += ' The month\'s e-invoice details list ' + excel.count + ' e-invoice' + (excel.count === 1 ? '' : 's')
       + (missing
-        ? ': ' + missing + (missing === 1 ? ' is' : ' are') + ' not on GSTR-1 with an IRN (an upload replaced ' + (missing === 1 ? 'it' : 'them')
+        ? (excel.onDraft ? ': ' + excel.onDraft + ' in the GSTR-1 file with ' + (excel.onDraft === 1 ? 'its' : 'their') + ' IRN, ' + missing : ': ' + missing)
+          + (missing === 1 ? ' has' : ' have') + ' no IRN in the GSTR-1 file (an upload replaced ' + (missing === 1 ? 'it' : 'them')
           + ', or auto-population has not run yet).'
-        : (excel.count === 1 ? ', on GSTR-1 with its IRN.' : ', all on GSTR-1 with their IRN.'));
+        : (excel.count === 1 ? ', in the GSTR-1 file with its IRN.' : ', all in the GSTR-1 file with their IRN.'));
   }
   return t;
 }
@@ -1618,11 +1647,18 @@ chrome.downloads.onCreated.addListener(async (item) => {
     if (job.mode === 'einvoice_pull') {
       if (job.step !== 'einvoice_excel') return;
       const url0 = item.finalUrl || item.url || '';
-      if (!/^https?:/i.test(url0) || !/\.(xlsx|xls|zip)(\?|$)|einv|e-invoice/i.test((item.filename || '') + ' ' + url0)) return;
+      // 0.9.1: only the portal's own download, from the GSTR-1 page, and only a workbook or ZIP.
+      let host0 = '';
+      try { host0 = new URL(url0).hostname; } catch (e) { return; }
+      if (!/^https?:/i.test(url0) || !/(^|\.)gst\.gov\.in$/i.test(host0)) return;
+      if (item.referrer && !/^https:\/\/return\.gst\.gov\.in\//i.test(item.referrer)) return;
+      if (!/\.(xlsx|xls|zip)(\?|$)|einv|e-invoice/i.test((item.filename || '') + ' ' + url0)) return;
       const r0 = await fetch(url0, { credentials: 'include' });
       if (!r0.ok) return;
       const b0 = await r0.arrayBuffer();
       if (!b0 || b0.byteLength < 100) return;
+      const head0 = new Uint8Array(b0, 0, 2);
+      if (head0[0] !== 0x50 || head0[1] !== 0x4b) return; // "PK": an .xlsx or a ZIP
       const c0 = job.clients[job.idx || 0];
       if (!c0) return;
       const mime0 = r0.headers.get('content-type') || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -1769,8 +1805,10 @@ async function pushTabClosed(tabId) {
   const c = (job.clients && job.clients[job.idx || 0]) || {};
   const target = { clientId: c.clientId || null, period_month: job.period || null };
   if (job.mode === 'einvoice_pull') {
+    // 0.9.1: an e-invoice Excel already imported by this pull is said, not denied.
+    const message = job.einvExcel ? einvoiceEndText(job.einvExcel, job.period, EINVOICE_TAB_CLOSED) : EINVOICE_TAB_CLOSED;
     await chrome.storage.local.set({ [key]: {
-      ok: false, status: 'failed', docsFound: 0, goneMarked: 0, staleRemoved: 0, generatedOn: null, message: EINVOICE_TAB_CLOSED, tabClosed: true, ...target, at: Date.now(),
+      ok: false, status: 'failed', docsFound: 0, goneMarked: 0, staleRemoved: 0, generatedOn: null, message, tabClosed: true, ...target, at: Date.now(),
     } });
     await chrome.storage.local.remove('gstk_active_job');
     return;
