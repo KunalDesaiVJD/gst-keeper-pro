@@ -420,11 +420,14 @@ const API = {
   // What is already stored for a client, so a run skips PDFs and attachments it
   // already has and fetches case folders only for new / open cases.
   knownDocs: async (clientId) => {
-    const out = { noticePdf: {}, openCases: [], knownCases: [], itemDocs: {}, drc03Pdf: {}, refundDocs: {} };
+    // 0.10.0: seen = every notice already stored, with its portal status, so a
+    // run fetches only what is fresh (a new notice, or one whose status moved).
+    const out = { noticePdf: {}, openCases: [], knownCases: [], itemDocs: {}, drc03Pdf: {}, refundDocs: {}, seen: {} };
     try {
-      const notices = await sel(`gst_notices?client_id=eq.${clientId}&source=eq.notices&deleted_at=is.null&select=portal_key,pdf_url,case_id,staff_status`);
+      const notices = await sel(`gst_notices?client_id=eq.${clientId}&source=eq.notices&deleted_at=is.null&select=portal_key,pdf_url,case_id,staff_status,status`);
       const closedRe = /^(closed|withdrawn|dropped|disposed|deleted|adjudged)/i;
       for (const n of notices) {
+        out.seen[n.portal_key] = n.status || '';
         if (n.pdf_url) out.noticePdf[n.portal_key] = n.pdf_url;
         if (n.case_id) {
           out.knownCases.push(n.case_id);

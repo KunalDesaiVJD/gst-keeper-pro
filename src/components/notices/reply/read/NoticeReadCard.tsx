@@ -5,6 +5,7 @@
 // Values the PDF reader filled are confirmed or cleared in one click; values a
 // reader found that differ from the record are listed (the record is kept);
 // the officer's own facts and grounds; the AI reader's state.
+import { OfficerContact } from '@/components/notices/OfficerContact';
 import React, { useState } from 'react';
 import { AlertTriangle, ChevronRight, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -195,6 +196,7 @@ export const NoticeReadCard: React.FC<{
                 {x.value}
               </dd>
               {x.sub && <dd className="break-words text-xs text-muted-foreground">{x.sub}</dd>}
+              {x.key === 'officer' && !empty && <dd><OfficerContact name={x.value} canEdit={canEdit} /></dd>}
               {x.fromCase && <dd className="truncate text-[11px] text-muted-foreground" title={x.fromCase}>{x.fromCase}</dd>}
               {x.key === 'period' && missingPeriod && <dd className="text-xs font-medium text-destructive-strong">Tax period not on record. The Evidence tab needs it.</dd>}
               {(x.prov.kind !== 'empty' || (canEdit && x.key === 'period')) && (

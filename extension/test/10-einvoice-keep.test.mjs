@@ -469,7 +469,7 @@ await bgCall('startGstr1Upload', { clientId: 'c1', period_month: '09/2026', acto
   const v = posts('gstr1_upload_versions');
   const row = v[0] && v[0].body[0];
   ok(v.length === 1 && row.action_type === 'UPLOAD' && row.status === 'accepted', 'one UPLOAD version row');
-  ok(row && row.einvoice_kept === 6 && row.ext_version === MANIFEST_VERSION && MANIFEST_VERSION === '0.9.0', 'the UPLOAD row carries einvoice_kept 6 and ext_version 0.9.0 (the manifest)');
+  ok(row && row.einvoice_kept === 6 && row.ext_version === MANIFEST_VERSION && /^\d+\.\d+\.\d+$/.test(MANIFEST_VERSION), 'the UPLOAD row carries einvoice_kept 6 and ext_version (the manifest, ' + MANIFEST_VERSION + ')');
   ok(row && JSON.stringify(row.payload) === JSON.stringify(BOOKS), 'its payload is still the stored books JSON');
 }
 

@@ -21,6 +21,7 @@ import { KindFacts } from '@/components/notices/cases/KindFacts';
 import { NextStepCard } from '@/components/notices/cases/NextStepCard';
 import { CaseAdminActions } from '@/components/notices/cases/CaseAdminActions';
 import { WaitingChip } from '@/components/notices/cases/WaitingChip';
+import { OfficerContact } from '@/components/notices/OfficerContact';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   loadCase, loadCaseItems, markCaseSeen, trackDef, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
@@ -55,6 +56,7 @@ export const CaseFactsGrid: React.FC<{ ov: CaseOverview | undefined }> = ({ ov }
             {v?.source === 'ai' && <Sparkles className="ml-1 inline h-3 w-3 align-baseline text-primary/60" aria-label="read by the AI" />}
           </dd>
           {f.key === 'hearing_date' && ov?.fields.hearing_note && <dd className="text-[11px] text-muted-foreground">{ov.fields.hearing_note.value}</dd>}
+          {f.key === 'officer' && v && <dd><OfficerContact name={v.value} /></dd>}
         </div>
       );
     })}

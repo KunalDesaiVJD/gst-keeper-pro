@@ -70,3 +70,4 @@
 20261013100000_notice_case_advice.sql
 20261013110000_notice_case_ownership.sql
 20261013120000_ai_tokens_shown.sql
+20261014100000_notice_officers.sql

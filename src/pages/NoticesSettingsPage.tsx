@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { KeyRound, Search } from 'lucide-react';
 import { excludeCase, loadExcludedCases, TRACKS, trackDef, type ExcludedCase, type Track } from '@/lib/noticeCases';
 import { canManageNoticeTypes } from '@/lib/noticeTypes';
+import { OfficersPanel } from '@/components/notices/OfficersPanel';
 import { supabase } from '@/integrations/supabase/client';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { Panel } from '@/components/notices/ui/Panel';
@@ -249,6 +250,8 @@ const NoticesSettingsPage: React.FC = () => {
           )}
           {!canEdit && <p className="pt-2 text-[11px] text-muted-foreground">Changing these needs the permission to add and edit clients.</p>}
         </Panel>
+
+        <OfficersPanel canEdit={canEdit || canManageNoticeTypes(user?.role)} />
 
         <Panel title={`Cases handled elsewhere · ${excluded.data?.length ?? 0}`}
           info="Cases a superadmin or GST manager marked as handled by another CA or by the client (Handled elsewhere, on the case page). They are in no list, count or e-mail; notices that arrive in them later are left out too.">

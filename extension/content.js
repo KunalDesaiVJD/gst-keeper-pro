@@ -40,11 +40,21 @@
   // Same rule for every constant below: the dispatcher awaits the step handlers
   // inside this IIFE, so a const declared further down is still uninitialized
   // when a handler reads it ("Cannot access … before initialization").
-  // A notices run re-reads everything the portal lists, but only DOWNLOADS what
-  // is new: PDFs and folder attachments already stored are skipped, and a case's
-  // folder is fetched only when the case is new or still open — plus one full
-  // pass per client every 7 days, so a change in a closed case is still caught.
-  const FULL_FOLDER_PASS_MS = 7 * 24 * 60 * 60 * 1000;
+  // A notices run reads the portal's list (one call), but FETCHES only what is
+  // fresh (0.10.0, the firm's request of 12 October 2026: "only fresh notices &
+  // documents to be fetched, not the old notices"):
+  //  - a notice's PDF only when the notice is new (not stored yet); an old one
+  //    still missing its PDF is tried by the gap fill at most once a week;
+  //  - a case's folder only when the case is new, a notice or task in it is new
+  //    or changed status, or its notice still lacks PDF / date / officer (gap
+  //    fill, once a week) — an open case with nothing new is looked at once a
+  //    week (OPEN_CASE_RECHECK_MS), no longer on every run;
+  //  - one full pass per client every 30 days, so a silent change in an old
+  //    case is still caught in the end.
+  // PDFs and folder attachments already stored are never downloaded again.
+  const FULL_FOLDER_PASS_MS = 30 * 24 * 60 * 60 * 1000;
+  const OPEN_CASE_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+  const GAP_FILL_MS = 7 * 24 * 60 * 60 * 1000;
   const REFUND_FOLDER_LABELS = { APLCN: 'Applications', NOTAC: 'Notice/Acknowledgement', REPLY: 'Replies', ORDRS: 'Orders', AUDIT: 'Audit History' };
   // The NIL GSTR-1 push (handleGstr1Nil): a fallback label, any "nil" that is
   // not the Nil Rated / exempt supplies table, and whether a toggle is on.
@@ -3792,7 +3802,15 @@
     const triedKey = 'gstk_fill_tried_' + cur.clientId;
     const fillTried = ((await store.get(triedKey))[triedKey]) || {};
     const needsFill = (row) => !!row && (!row.pdf_url || !row.due_date || !row.issued_by);
-    const mayForceFill = (ref) => !!ref && !(fillTried[ref] && Date.now() - fillTried[ref] < FULL_FOLDER_PASS_MS);
+    const mayForceFill = (ref) => !!ref && !(fillTried[ref] && Date.now() - fillTried[ref] < GAP_FILL_MS);
+    // 0.10.0: what is fresh. With no record of the stored notices (the database
+    // could not be read) every notice counts as fresh: the old, full behaviour.
+    const seen = (known && known.seen) || null;
+    const isFresh = (key, status) => !seen || !Object.prototype.hasOwnProperty.call(seen, key) || (seen[key] || '') !== (status || '');
+    const freshRefs = new Set();
+    let freshNotices = 0, oldNoticesSkipped = 0, foldersOpenRecheck = 0;
+    const caseSeenKey = 'gstk_case_checked_' + cur.clientId;
+    const caseChecked = ((await store.get(caseSeenKey))[caseSeenKey]) || {};
 
     let pdfOk = 0, pdfFail = 0, pdfSkipped = 0, foldersFetched = 0, foldersSkipped = 0, attachSkipped = 0;
     let foldersForFill = 0, linkedPdf = 0, linkedDue = 0, linkedOfficer = 0, linkedDin = 0;
@@ -3811,6 +3829,10 @@
         status: n.status || null, issued_by: n.issuedBy || null, case_id: null, pdf_url: null,
       };
       const havePdf = !!(known && known.noticePdf && known.noticePdf[row.portal_key]);
+      const fresh = isFresh(row.portal_key, row.status);
+      if (fresh) { freshNotices++; if (refNo) freshRefs.add(refNo); }
+      // An old notice with no PDF yet: only the weekly gap fill tries it again.
+      const tryPdf = !havePdf && (!seen || !Object.prototype.hasOwnProperty.call(seen, row.portal_key) || mayForceFill(refNo));
       // 0.8.0: carry the stored URL on the row rather than leaving it null.
       // The row is upserted, so a null here is written over a PDF that is
       // already in storage whenever the ingest RPC is unavailable and the
@@ -3819,6 +3841,8 @@
       if (havePdf) row.pdf_url = known.noticePdf[row.portal_key];
       if (havePdf && (n.docId || n.pdfDownloadURL)) {
         pdfSkipped++;
+      } else if (!tryPdf && (n.docId || n.pdfDownloadURL)) {
+        oldNoticesSkipped++;
       } else if (n.docId && n.applnId) {
         try {
           const pdfR = await withTimeout(fetch('https://services.gst.gov.in/document/' + n.docId + '/' + n.applnId, { credentials: 'include' }), 30000, 'notice pdf');
@@ -3917,9 +3941,12 @@
       // officer, so the gap is closed on the next run instead of waiting for
       // that weekly pass — once, then not again for a week (mayForceFill).
       const fillThis = needsFill(row) && mayForceFill(refId);
-      const needFolders = fullFolderPass || !knownCases.has(t.arn) || openCases.has(t.arn) || fillThis;
+      const caseFresh = (refId && freshRefs.has(refId)) || (!isDuplicate && isFresh(row.portal_key, row.status)) || !seen;
+      const openDue = openCases.has(t.arn) && !(caseChecked[t.arn] && Date.now() - caseChecked[t.arn] < OPEN_CASE_RECHECK_MS);
+      const needFolders = fullFolderPass || !knownCases.has(t.arn) || caseFresh || fillThis || openDue;
       if (!needFolders) { foldersSkipped++; continue; }
       if (fillThis) foldersForFill++;
+      if (openDue && !caseFresh && !fullFolderPass && knownCases.has(t.arn)) foldersOpenRecheck++;
       let folders = [];
       try {
         const fr = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
@@ -3931,6 +3958,7 @@
       } catch (e) { folders = []; folderPassOk = false; }
       if (!Array.isArray(folders) || !folders.length) continue;
       foldersFetched++;
+      caseChecked[t.arn] = Date.now();
 
       // The task row's own PDF (e.g. an LUT's RFD-11A order) — only when not stored yet.
       const haveTaskPdf = isDuplicate || !!(known && known.noticePdf && known.noticePdf[row.portal_key]);
@@ -4054,6 +4082,7 @@
       if (needsFill(row)) fillTried[ref] = Date.now(); else if (fillTried[ref]) delete fillTried[ref];
     }
     try { await store.set({ [triedKey]: fillTried }); } catch (e) { /* only costs a repeat folder fetch */ }
+    try { await store.set({ [caseSeenKey]: caseChecked }); } catch (e) { /* only costs an earlier recheck */ }
 
     // Folder items first (a new reply / order on a known case is logged
     // against its notice), then the notice list, then the server-side sweep.
@@ -4087,7 +4116,8 @@
         'STEP: View Notices and Orders  (' + location.pathname + ')',
         'rows read         : ' + rows.length + ' (' + (rows.length - taskRows) + ' notices, ' + taskRows + ' case/task)' + counts,
         'PDFs              : ' + pdfOk + ' downloaded, ' + pdfSkipped + ' already stored, ' + pdfFail + ' failed/not applicable',
-        'case folders      : ' + foldersFetched + ' fetched (' + (fullFolderPass ? 'weekly full pass' : 'new or open cases') + (foldersForFill ? ', ' + foldersForFill + ' to fill a gap' : '') + '), ' + foldersSkipped + ' skipped, ' + foldersSaved + ' saved',
+        'fresh only        : ' + freshNotices + ' new or changed notice(s); ' + oldNoticesSkipped + ' old notice PDF(s) not fetched again',
+        'case folders      : ' + foldersFetched + ' fetched (' + (fullFolderPass ? 'monthly full pass' : 'new or changed cases' + (foldersOpenRecheck ? ', ' + foldersOpenRecheck + ' open case(s) on the weekly check' : '')) + (foldersForFill ? ', ' + foldersForFill + ' to fill a gap' : '') + '), ' + foldersSkipped + ' skipped, ' + foldersSaved + ' saved',
         'attachments       : ' + attachSkipped + ' already stored',
         'linked from folder: ' + linkedPdf + ' notice PDFs, ' + linkedDue + ' reply dates, ' + linkedOfficer + ' officers, ' + linkedDin + ' DINs'
           + (dinFailed ? ' (' + dinFailed + ' DIN writes failed' + (dinGaveUp ? ', gave up — no din column in this database?' : '') + ')' : ''),
