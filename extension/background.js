@@ -804,11 +804,10 @@ const API = {
     if (scoped) {
       const idSet = new Set(info.clientIds);
       withCreds = withCreds.filter((c) => idSet.has(c.id));
-    } else if (info.mode === 'notices' || info.mode === 'notices_bundle') {
-      // An unscoped Sync All skips clients marked inactive (Edit Client);
-      // a hand-picked selection still syncs them.
-      withCreds = withCreds.filter((c) => !c.inactive_at_hand);
     }
+    // 0.10.1: an inactive client (Edit Client) is still synced for notices: an
+    // inactive registration still gets notices. Only "not handled" clients
+    // (notices_sync_excluded, above) are left out.
     // 0.8.2: a client whose portal login was refused (Notices · Settings,
     // "Portal password issues") is skipped until its password is fixed.
     const passwordIssues = withCreds.filter((c) => c.portal_login_issue);

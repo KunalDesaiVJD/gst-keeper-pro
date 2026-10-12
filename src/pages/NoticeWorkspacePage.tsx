@@ -9,11 +9,13 @@
 // the page. Replaces the read-only drawer. Phase 4b: how much the notice type
 // needs a reply (Critical / Optional / Info only), reply options on the Draft
 // tab, and "Read and close" for types that need no reply.
+import { NoticeExcludeDialog } from '@/components/notices/NoticeExcludeDialog';
+import { canManageNoticeTypes } from '@/lib/noticeTypes';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  CalendarClock, ChevronDown, ExternalLink, FileText, Gavel, Hourglass, Loader2, Mail, MoreHorizontal, RefreshCw, Scale, UserPlus,
+  CalendarClock, ChevronDown, ExternalLink, EyeOff, FileText, Gavel, Hourglass, Loader2, Mail, MoreHorizontal, RefreshCw, Scale, UserPlus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -144,9 +146,11 @@ const NoticeWorkspacePage: React.FC = () => {
   const { id = '' } = useParams();
   const [sp, setSp] = useSearchParams();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const { user, isStaffRole, canEditNoticeStatus, canApproveNoticeReplies } = useAuth();
   const bridge = useExtensionBridge();
   const [dialog, setDialog] = useState<DialogKey>(null);
+  const [hiding, setHiding] = useState(false);
   const [busy, setBusy] = useState(false);
   const q = useQuery({ queryKey: ['notice-workspace', id], queryFn: () => loadWorkspace(id), enabled: !!id, retry: (n, e) => !(e instanceof NoticeNotFound) && n < 2 });
   const ws = q.data;
@@ -371,6 +375,7 @@ const NoticeWorkspacePage: React.FC = () => {
               {canEdit && !closed && !lit && <DropdownMenuItem onSelect={() => setDialog('close')}><FileText className="mr-2 h-4 w-4" /> Read and close</DropdownMenuItem>}
               {/* A closed notice offers no matter or appeal (the firm's request of 12 October 2026). */}
               {canEdit && lit && !closed && <DropdownMenuItem onSelect={() => setDialog('matter')}><Scale className="mr-2 h-4 w-4" /> {n.matter_id ? 'Move to another matter' : 'Create or link a matter'}</DropdownMenuItem>}
+              {canManageNoticeTypes(user?.role) && <DropdownMenuItem onSelect={() => setHiding(true)}><EyeOff className="mr-2 h-4 w-4" /> Not required (hide)</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={openPortal} disabled={!bridge.ready}><ExternalLink className="mr-2 h-4 w-4" /> Open on the portal{!bridge.ready ? ' (needs the extension)' : ''}</DropdownMenuItem>
               {n.pdf_url && <DropdownMenuItem asChild><a href={n.pdf_url} target="_blank" rel="noreferrer"><FileText className="mr-2 h-4 w-4" /> Notice PDF</a></DropdownMenuItem>}
@@ -380,6 +385,9 @@ const NoticeWorkspacePage: React.FC = () => {
           {primary}
         </div>
       </header>
+
+      <NoticeExcludeDialog noticeId={n.id} open={hiding} onOpenChange={setHiding}
+        onDone={() => { qc.invalidateQueries(); navigate('/notices-all'); }} />
 
       <CaseLinkSuggest noticeId={n.id} clientId={n.client_id} caseId={n.case_id} canEdit={canEdit}
         onLinked={() => { reload(); qc.invalidateQueries({ queryKey: ['notice-case'] }); qc.invalidateQueries({ queryKey: ['notice-case-overview'] }); }} />

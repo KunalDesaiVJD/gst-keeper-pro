@@ -504,7 +504,7 @@
     if (!data) return showError(err, manual);
     $('errorPanel').hidden = true;
     clients = data.cl || [];
-    eligible = clients.filter((c) => (c.gst_user_id || '') !== '' && !c.inactive_at_hand && !c.notices_sync_excluded);
+    eligible = clients.filter((c) => (c.gst_user_id || '') !== '' && !c.notices_sync_excluded);  // 0.10.1: inactive clients too
     pickable = clients.filter((c) => (c.gst_user_id || '') !== '' && !c.notices_sync_excluded);
     const st = computeStatus(data.rows, data.lastRun);
     staleOrFailed = st.staleOrFailed;

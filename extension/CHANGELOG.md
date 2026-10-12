@@ -2,6 +2,13 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-12 — Inactive clients are synced for notices (v0.10.1)
+
+Needs migration 20261014110000 (applied).
+
+- **Why.** A client marked inactive (Edit Client) may still get notices on the portal, yet Sync All left it out, so it showed as never synced.
+- **Now.** Sync All and the popup's eligible list keep inactive clients for the notices sync. Only clients the firm does not handle (Notices · Settings, so `notices_sync_excluded`) are left out, along with clients with a password issue (as before). Returns pulls are unchanged.
+
 ## 2026-10-12 — Fresh only: a sync fetches what is new, not the old notices again (v0.10.0)
 
 No database or app change needed.
