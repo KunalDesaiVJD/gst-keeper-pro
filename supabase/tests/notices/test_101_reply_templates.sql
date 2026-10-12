@@ -23,15 +23,15 @@ SELECT t_eq((SELECT count(*) FROM reply_issue_types
                  OR para_contest ~ '\{\{' OR para_accept ~ '\{\{'), 0::bigint,
             'no dash and no placeholder in any issue paragraph');
 SELECT t_eq((SELECT string_agg(DISTINCT f, ',') FROM reply_templates t CROSS JOIN LATERAL unnest(t.forms) f
-              WHERE NOT EXISTS (SELECT 1 FROM notice_type_settings s WHERE s.form_code = f AND s.response_need <> 'none')),
-            NULL::text, 'templates only for notice types that need a reply');
+              WHERE t.is_active AND NOT EXISTS (SELECT 1 FROM notice_type_settings s WHERE s.form_code = f AND s.response_need <> 'none')),
+            NULL::text, 'active templates only for notice types that need a reply');
 SELECT t_eq((SELECT string_agg(s.form_code || '=' || n, ',' ORDER BY s.form_code) FROM notice_type_settings s
               CROSS JOIN LATERAL (SELECT count(*) AS n FROM reply_templates t WHERE t.is_active AND s.form_code = ANY (t.forms)) c
               WHERE s.response_need <> 'none' AND c.n NOT BETWEEN 2 AND 5),
             NULL::text, 'two to five templates for every type that needs a reply');
 SELECT t_eq((SELECT count(*) FROM reply_templates t, notice_type_settings s
-              WHERE s.response_need = 'none' AND s.form_code = ANY (t.forms)), 0::bigint,
-            'none for the information only types');
+              WHERE t.is_active AND s.response_need = 'none' AND s.form_code = ANY (t.forms)), 0::bigint,
+            'none active for the information only types (DRC-01B / 01C switched off, 20261014120000)');
 
 -- ── A synthetic notice of every form: every fact, and none ────────────────
 INSERT INTO clients (id, name, gstin, gst_user_id, inactive_at_hand) VALUES
@@ -119,8 +119,8 @@ SELECT t_eq((SELECT min(c.n) >= 2 FROM gst_notices g
 SELECT t_eq((SELECT count(*) FROM opts WHERE need = 'none'), 0::bigint, 'no options for the information only types');
 SELECT t_eq((SELECT string_agg(DISTINCT template_key, ',' ORDER BY template_key) FROM opts WHERE form_code IS NULL),
             'general_comply,general_reply,general_time', 'a notice without a form gets the general replies');
-SELECT t_eq((SELECT string_agg(t.key, ',') FROM reply_templates t WHERE NOT EXISTS (SELECT 1 FROM opts o WHERE o.template_key = t.key)),
-            NULL::text, 'every template is rendered for some notice');
+SELECT t_eq((SELECT string_agg(t.key, ',') FROM reply_templates t WHERE t.is_active AND NOT EXISTS (SELECT 1 FROM opts o WHERE o.template_key = t.key)),
+            NULL::text, 'every active template is rendered for some notice');
 
 -- ── What every rendered reply looks like ───────────────────────────────────
 SELECT t_eq((SELECT count(*) FROM opts WHERE reply_has_dash(body) OR reply_has_dash(title) OR reply_has_dash(summary)),
