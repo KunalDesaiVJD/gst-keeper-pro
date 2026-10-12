@@ -37,6 +37,15 @@ export const NextStepCard: React.FC<{
   };
 
   if (q.isLoading) return <Skeleton className="h-28 w-full" />;
+  // A closed case: nothing to do, no advice, no appeal.
+  if (!open) {
+    return (
+      <section aria-label="What to do now" className="flex items-center gap-3 rounded-xl border bg-muted/40 p-3">
+        <CheckCircle2 className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
+        <div className="text-sm"><span className="font-semibold">Closed.</span> <span className="text-muted-foreground">Nothing to do on this case. Reopen it if the department writes again.</span></div>
+      </section>
+    );
+  }
   const usual = usualStep(form, track, overdue);
   const tone = a?.can_close ? 'success' : overdue ? 'destructive' : 'primary';
 

@@ -10,6 +10,8 @@ import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { KeyRound, Search } from 'lucide-react';
+import { excludeCase, loadExcludedCases, TRACKS, trackDef, type ExcludedCase, type Track } from '@/lib/noticeCases';
+import { canManageNoticeTypes } from '@/lib/noticeTypes';
 import { supabase } from '@/integrations/supabase/client';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { Panel } from '@/components/notices/ui/Panel';
@@ -45,6 +47,8 @@ export const LOGIN_ISSUE: Record<string, string> = {
   password_change_required: 'Portal asks for a new password',
 };
 
+const TRACK_SHORT: Record<Track, string> = { litigation: 'Demands', refund: 'Refunds', registration: 'Regn.', other: 'Other' };
+
 function useClientSettings() {
   return useQuery({
     queryKey: ['notices-client-settings'],
@@ -56,11 +60,26 @@ function useClientSettings() {
   });
 }
 
+// Per client, the kinds of work the firm does (clients.notices_tracks_off, migration 20261013110000).
+function useTracksOff() {
+  return useQuery({
+    queryKey: ['notices-client-tracks'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('clients').select('id, notices_tracks_off');
+      if (error) throw error;
+      return new Map((data ?? []).map((c) => [c.id as string, (c.notices_tracks_off ?? []) as string[]]));
+    },
+  });
+}
+
 const NoticesSettingsPage: React.FC = () => {
   const { canAddEditClients } = useAuth();
   const canEdit = canAddEditClients();
   const qc = useQueryClient();
   const q = useClientSettings();
+  const tracks = useTracksOff();
+  const { user } = useAuth();
+  const excluded = useQuery({ queryKey: ['notice-cases-excluded'], queryFn: loadExcludedCases });
   const [search, setSearch] = useState('');
   const [show, setShow] = useState<'all' | 'on' | 'off'>('all');
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -88,6 +107,27 @@ const NoticesSettingsPage: React.FC = () => {
     toast.success(`${ids.length === 1 ? 'Client' : `${ids.length} clients`} ${handled ? 'handled again: back in every list and sync' : 'switched off: left out of every task, list and sync'}.`);
     setPicked(new Set());
     refresh();
+  };
+  const setTrack = async (ids: string[], track: Track, handled: boolean) => {
+    setBusy(true);
+    const { error } = await supabase.rpc('notices_client_tracks_set', { p_client_ids: ids, p_track: track, p_handled: handled });
+    setBusy(false);
+    if (error) { toast.error(`Could not save: ${error.message}`); return; }
+    toast.success(`${trackDef(track).label}: ${handled ? 'handled' : 'not handled, left out of every list'} for ${ids.length === 1 ? 'the client' : `${ids.length} clients`}.`);
+    qc.invalidateQueries({ queryKey: ['notices-client-tracks'] });
+    qc.invalidateQueries({ queryKey: ['notice-case-counts'] });
+    qc.invalidateQueries({ queryKey: ['notice-cases'] });
+    refresh();
+  };
+  const bringBack = async (c: ExcludedCase) => {
+    if (!user) return;
+    try {
+      await excludeCase(c.client_id, c.case_key, false, null, { id: user.id, firstName: user.firstName });
+      toast.success(`${c.client_name}: the case is back in the lists.`);
+      qc.invalidateQueries({ queryKey: ['notice-cases-excluded'] });
+      qc.invalidateQueries({ queryKey: ['notice-case-counts'] });
+      refresh();
+    } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
   };
   const markFixed = async (r: ClientSetting) => {
     const { error } = await supabase.rpc('client_login_issue_set', { p_client_id: r.id, p_reason: null, p_message: null });
@@ -138,7 +178,7 @@ const NoticesSettingsPage: React.FC = () => {
         </Panel>
 
         <Panel
-          title={`Clients whose litigation we handle · ${handledCount} of ${rows.length}`}
+          title={`Clients we handle · ${handledCount} of ${rows.length}`}
           info="Switched off: the client's notices leave the command centre, the work queue, every list, report and alert, and the notices sync skips the client. Switch it back on and everything returns, with nothing lost."
           actions={canEdit && picked.size > 0 ? (
             <>
@@ -164,6 +204,7 @@ const NoticesSettingsPage: React.FC = () => {
                   <th scope="col" className={WS_TH}>Client</th>
                   <th scope="col" className={cn(WS_TH, 'text-right')}>Open notices</th>
                   <th scope="col" className={WS_TH}>Notes</th>
+                  <th scope="col" className={WS_TH}>Kinds we handle</th>
                   <th scope="col" className={cn(WS_TH, 'text-right')}>We handle it</th>
                 </tr></thead>
                 <tbody>
@@ -180,18 +221,52 @@ const NoticesSettingsPage: React.FC = () => {
                         {[!r.gst_user_id && 'no portal user ID', r.inactive_at_hand && 'inactive', r.portal_login_issue && (LOGIN_ISSUE[r.portal_login_issue] ?? 'password issue'),
                           r.notices_handled && r.notices_sync_excluded && 'not synced'].filter(Boolean).join(' · ') || '—'}
                       </td>
+                      <td className={WS_TD}>
+                        <div className="flex flex-nowrap gap-1">
+                          {TRACKS.map((t) => {
+                            const on = !(tracks.data?.get(r.id) ?? []).includes(t.key);
+                            return (
+                              <button key={t.key} type="button" disabled={!canEdit || busy || !r.notices_handled} aria-pressed={on}
+                                onClick={() => setTrack([r.id], t.key, !on)} title={`${t.label}: ${on ? 'handled by the firm; click if someone else handles them' : 'not handled, left out of every list'}`}
+                                className={cn('rounded-full border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-50',
+                                  on && r.notices_handled ? 'border-primary/40 bg-primary/10 text-primary' : 'text-muted-foreground line-through')}>
+                                {TRACK_SHORT[t.key]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </td>
                       <td className={cn(WS_TD, 'text-right')}>
                         <Switch checked={r.notices_handled} disabled={!canEdit || busy} onCheckedChange={(v) => setHandled([r.id], v)}
                           aria-label={`We handle ${r.name}'s litigation`} />
                       </td>
                     </tr>
                   ))}
-                  {shown.length === 0 && <tr><td colSpan={5} className={cn(WS_TD, 'text-center text-sm text-muted-foreground')}>No client matches.</td></tr>}
+                  {shown.length === 0 && <tr><td colSpan={6} className={cn(WS_TD, 'text-center text-sm text-muted-foreground')}>No client matches.</td></tr>}
                 </tbody>
               </table>
             </div>
           )}
           {!canEdit && <p className="pt-2 text-[11px] text-muted-foreground">Changing these needs the permission to add and edit clients.</p>}
+        </Panel>
+
+        <Panel title={`Cases handled elsewhere · ${excluded.data?.length ?? 0}`}
+          info="Cases a superadmin or GST manager marked as handled by another CA or by the client (Handled elsewhere, on the case page). They are in no list, count or e-mail; notices that arrive in them later are left out too.">
+          {excluded.isLoading ? <Skeleton className="h-12 w-full" />
+            : !excluded.data?.length ? <p className="text-sm text-muted-foreground">None. Every case is handled by the firm.</p>
+            : (
+              <ul className="divide-y">
+                {excluded.data.map((c) => (
+                  <li key={`${c.client_id}:${c.case_key}`} className="flex flex-wrap items-center gap-2 py-2 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">{c.client_name} <span className="font-mono text-[11px] font-normal text-muted-foreground">{c.case_key.startsWith('N:') ? '' : c.case_key}</span></div>
+                      <div className="text-xs text-muted-foreground">{c.forms ?? 'Notice'} · {c.notices} notice{c.notices === 1 ? '' : 's'} · {c.excluded_reason ?? 'Handled elsewhere'}{c.excluded_by_name ? ` · by ${c.excluded_by_name}` : ''}</div>
+                    </div>
+                    {canManageNoticeTypes(user?.role) && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => bringBack(c)}>Bring back</Button>}
+                  </li>
+                ))}
+              </ul>
+            )}
         </Panel>
       </div>
     </NoticesShell>

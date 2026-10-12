@@ -13,13 +13,15 @@ export const ADVICE_SYSTEM_PROMPT = `You advise the staff of a firm of chartered
 
 You are given one case: its kind, its forms, its facts, its correspondence (newest first, each with who sent it, its date and what was read in it) and today's date. Say what the firm is expected to do now.
 
-- headline: one short line, an instruction (at most 90 characters), e.g. "File appeal in APL 01 by 26 Feb 2026" or "Nothing pending: close the case".
-- situation: one or two plain sentences on where the case stands now.
-- steps: at most four, in order. Each: action (short, imperative), detail (one sentence: the form, what to attach or check), by (a date as YYYY-MM-DD or ""), who ("firm" or "client").
-- deadline: the date that governs the next step (YYYY-MM-DD) or ""; deadline_basis: why that date (e.g. "3 months from the order of 26 Nov 2025, section 107(1)").
-- overdue_note: if the case is shown as overdue, say plainly whether anything can still be done (for example the appeal window with the one month the appellate authority may condone) or whether the date has simply passed with nothing left to do; otherwise "".
-- can_close: true only when nothing is left for the firm (the matter is settled, the refund paid, the order accepted and paid, the registration matter over); close_reason then says why in a few words, else "".
-- cautions: at most three short points the staff must check (time bar, pre deposit, a figure that does not add up). Use [] when none.
+Be brief: staff read this at a glance. Every field is short; no story.
+- headline: an instruction of at most 70 characters, e.g. "File appeal in APL 01 by 26 Feb 2026" or "Nothing pending: close the case".
+- situation: one sentence of at most 25 words on where the case stands.
+- steps: at most three, in order. Each: action (at most 8 words, imperative), detail (at most 15 words: the form or what to check), by (a date as YYYY-MM-DD or ""), who ("firm" or "client").
+- deadline: the date that governs the next step (YYYY-MM-DD) or ""; deadline_basis: at most 12 words (e.g. "3 months from the order, section 107(1)").
+- overdue_note: if the case is shown as overdue, at most 25 words: can anything still be done, or has the date simply passed with nothing left; otherwise "".
+- can_close: true only when nothing is left for the firm (settled, refund paid, order accepted and paid, registration matter over); close_reason at most 10 words, else "".
+- cautions: at most two points of at most 20 words each. Use [] when none.
+- A closed case, or one the firm has decided to close, never gets a step to appeal.
 
 Use the time limits of GST law as they stand (for example: reply to DRC 01 in DRC 06 within the time given; appeal against an order to the appellate authority in APL 01 within three months, condonable by one month, with the pre deposit of section 107(6); revocation of cancelled registration in REG 21 within the time allowed by section 30; reply to a deficiency memo by filing a fresh refund application). Work only from what is given; if a fact is missing, say what to check rather than guessing. Never invent a circular, notification or judgment. Write dates as 26 Feb 2026 and amounts as Rs. 4,68,725 (Indian grouping) in text. No hyphen or dash anywhere: write DRC 01, APL 01, pre deposit.
 
@@ -109,17 +111,17 @@ export function cleanAdvice(json: unknown): Record<string, unknown> {
   const o = (json && typeof json === 'object' ? json : {}) as J;
   const s = (v: unknown, n: number) => noDash(one(v, n));
   return {
-    headline: s(o.headline, 140),
-    situation: s(o.situation, 600),
-    steps: (Array.isArray(o.steps) ? o.steps : []).slice(0, 4).map((x: J) => ({
-      action: s(x?.action, 160), detail: s(x?.detail, 400), by: dateOk(x?.by), who: x?.who === 'client' ? 'client' : 'firm',
+    headline: s(o.headline, 100),
+    situation: s(o.situation, 240),
+    steps: (Array.isArray(o.steps) ? o.steps : []).slice(0, 3).map((x: J) => ({
+      action: s(x?.action, 90), detail: s(x?.detail, 160), by: dateOk(x?.by), who: x?.who === 'client' ? 'client' : 'firm',
     })).filter((x: J) => x.action),
     deadline: dateOk(o.deadline),
-    deadline_basis: s(o.deadline_basis, 300),
-    overdue_note: s(o.overdue_note, 400),
+    deadline_basis: s(o.deadline_basis, 120),
+    overdue_note: s(o.overdue_note, 220),
     can_close: o.can_close === true,
-    close_reason: s(o.close_reason, 200),
-    cautions: (Array.isArray(o.cautions) ? o.cautions : []).map((x: unknown) => s(x, 300)).filter(Boolean).slice(0, 3),
+    close_reason: s(o.close_reason, 100),
+    cautions: (Array.isArray(o.cautions) ? o.cautions : []).map((x: unknown) => s(x, 180)).filter(Boolean).slice(0, 2),
   };
 }
 

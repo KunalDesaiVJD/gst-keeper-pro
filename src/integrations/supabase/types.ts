@@ -708,6 +708,7 @@ export type Database = {
           read_backfill: boolean
           read_documents: boolean
           doc_effort: string
+          doc_model: string
           doc_max_pages: number
           assist_effort: string
           assist_daily_cap_usd: number
@@ -732,6 +733,7 @@ export type Database = {
           read_backfill?: boolean
           read_documents?: boolean
           doc_effort?: string
+          doc_model?: string
           doc_max_pages?: number
           assist_effort?: string
           assist_daily_cap_usd?: number
@@ -756,6 +758,7 @@ export type Database = {
           read_backfill?: boolean
           read_documents?: boolean
           doc_effort?: string
+          doc_model?: string
           doc_max_pages?: number
           assist_effort?: string
           assist_daily_cap_usd?: number
@@ -4868,6 +4871,7 @@ export type Database = {
           mobile: string | null
           name: string
           notices_handled: boolean
+          notices_tracks_off: string[]
           notices_sync_excluded: boolean
           portal_login_issue: string | null
           portal_login_issue_at: string | null
@@ -5924,6 +5928,9 @@ export type Database = {
           assign_to: string | null
           assign_to_user_id: string | null
           case_id: string | null
+          excluded_at: string | null
+          excluded_by_name: string | null
+          excluded_reason: string | null
           client_id: string
           created_at: string
           deleted_at: string | null
@@ -10392,6 +10399,7 @@ export type Database = {
           latest_date: string | null
           last_activity_date: string | null
           today_ist: string | null
+          waiting_on: string | null
         }
         Relationships: []
       }
@@ -10744,6 +10752,23 @@ export type Database = {
       notice_link_suggestions: {
         Args: { p_notice_id: string }
         Returns: Json
+      }
+      notice_case_close: {
+        Args: { p_client_id: string; p_case_key: string; p_reason: string; p_actor_id: string; p_actor_name: string | null }
+        Returns: Json
+      }
+      notice_case_reopen: {
+        Args: { p_client_id: string; p_case_key: string; p_actor_id: string; p_actor_name: string | null }
+        Returns: Json
+      }
+      notice_case_exclude: {
+        Args: { p_client_id: string; p_case_key: string; p_exclude: boolean; p_reason: string | null; p_actor_id: string; p_actor_name: string | null }
+        Returns: Json
+      }
+      notice_cases_excluded: { Args: never; Returns: Json }
+      notices_client_tracks_set: {
+        Args: { p_client_ids: string[]; p_track: string; p_handled: boolean }
+        Returns: number
       }
       notice_case_advice_request: {
         Args: { p_client_id: string; p_case_key: string; p_actor?: string | null }

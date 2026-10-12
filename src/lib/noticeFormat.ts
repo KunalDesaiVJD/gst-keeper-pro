@@ -167,3 +167,15 @@ export function initials(name: string | null | undefined): string {
   if (!words.length) return '?';
   return (words[0][0] + (words.length > 1 ? words[words.length - 1][0] : '')).toUpperCase();
 }
+
+/** The tokens one AI read took, as staff see it: "≈ 3.2k tokens · Haiku" (≈ when only estimated). */
+export function fmtAiTokens(usage: unknown, model?: string | null): string | null {
+  const u = (usage && typeof usage === 'object' ? usage : {}) as Record<string, unknown>;
+  const n = (k: string) => Number(u[k]) || 0;
+  const total = (n('tokens_in') + n('tokens_out')) || (n('input_tokens') + n('output_tokens'));
+  if (!total) return null;
+  const size = total >= 1000 ? `${(total / 1000).toFixed(total >= 10_000 ? 0 : 1)}k` : String(total);
+  const m = String(model ?? u.model ?? '').toLowerCase();
+  const name = m.includes('haiku') ? 'Haiku' : m.includes('sonnet') ? 'Sonnet' : m.includes('opus') ? 'Opus' : '';
+  return `${u.estimated ? '≈ ' : ''}${size} tokens${name ? ` · ${name}` : ''}`;
+}

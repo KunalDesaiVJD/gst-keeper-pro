@@ -14,7 +14,7 @@ import { WS_BTN, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/componen
 import { FilterPill } from '@/components/notices/FilterPill';
 import { EmptyBox, INLINE_LINK, LoadError, ToneBadge } from '@/components/notices/autopilot/parts';
 import { Pager } from '@/components/notices/Pager';
-import { fmtAgo } from '@/lib/noticeFormat';
+import { fmtAgo, fmtAiTokens } from '@/lib/noticeFormat';
 import { DOC_ROLE, DOC_STATUS, retryDocuments, type AiDocument } from '@/lib/noticeAi';
 import { cn } from '@/lib/utils';
 
@@ -47,7 +47,7 @@ export const AiDocumentsCard: React.FC<{ canEdit: boolean }> = ({ canEdit }) => 
     queryKey: ['ai-documents', filter, page],
     queryFn: async () => {
       let x = supabase.from('ai_documents')
-        .select('id, client_id, notice_id, source, role, label, title, summary, status, reason_class, error, doc_kind, outcome, pages, finished_at, created_at, updated_at, clients(name)', { count: 'exact' })
+        .select('id, client_id, notice_id, source, role, label, title, summary, status, reason_class, error, doc_kind, outcome, pages, usage, model, finished_at, created_at, updated_at, clients(name)', { count: 'exact' })
         .neq('source', 'workspace');
       if (filter === 'reply') x = x.eq('role', 'reply');
       else if (filter !== 'all') x = x.eq('status', filter === 'queued' ? 'queued' : filter);
@@ -84,7 +84,7 @@ export const AiDocumentsCard: React.FC<{ canEdit: boolean }> = ({ canEdit }) => 
         : (
           <div className={WS_TABLE_WRAP}>
             <table className={WS_TABLE}>
-              <thead><tr><th className={WS_TH}>Client</th><th className={WS_TH}>Document</th><th className={WS_TH}>What it is</th><th className={WS_TH}>State</th><th className={WS_TH}>When</th></tr></thead>
+              <thead><tr><th className={WS_TH}>Client</th><th className={WS_TH}>Document</th><th className={WS_TH}>What it is</th><th className={WS_TH}>State</th><th className={cn(WS_TH, 'text-right')}>Tokens</th><th className={WS_TH}>When</th></tr></thead>
               <tbody>
                 {q.data.rows.map((r) => (
                   <tr key={r.id} className={WS_TR}>
@@ -99,6 +99,7 @@ export const AiDocumentsCard: React.FC<{ canEdit: boolean }> = ({ canEdit }) => 
                       <ToneBadge tone={TONE[r.status] ?? 'secondary'}>{DOC_STATUS[r.status] ?? r.status}</ToneBadge>
                       {r.reason_class && <div className="text-[11px] text-muted-foreground" title={r.error ?? undefined}>{REASON[r.reason_class] ?? r.reason_class}</div>}
                     </td>
+                    <td className={cn(WS_TD, 'whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground')}>{fmtAiTokens(r.usage, r.model) ?? '—'}</td>
                     <td className={cn(WS_TD, 'whitespace-nowrap text-xs text-muted-foreground')}>{fmtAgo(r.finished_at ?? r.updated_at)}</td>
                   </tr>
                 ))}

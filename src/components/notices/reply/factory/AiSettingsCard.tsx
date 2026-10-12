@@ -20,7 +20,7 @@ import { AI_EFFORTS, AI_MODELS, saveAiSettings, type Actor, type AiSettings } fr
 import { cn } from '@/lib/utils';
 
 const KEYS = [
-  'runner', 'consent_scope', 'auto_read_new', 'read_backfill', 'read_documents', 'model', 'effort', 'doc_effort', 'assist_effort',
+  'runner', 'consent_scope', 'auto_read_new', 'read_backfill', 'read_documents', 'model', 'doc_model', 'effort', 'doc_effort', 'assist_effort',
   'daily_cap_usd', 'assist_daily_cap_usd', 'max_pages', 'doc_max_pages', 'edge_seconds', 'learning_auto_include',
   'price_in_per_mtok', 'price_out_per_mtok', 'usd_inr',
 ] as const;
@@ -115,6 +115,16 @@ export const AiSettingsCard: React.FC<{ settings: AiSettings; canEdit: boolean; 
           </Group>
           <Group title="Care and assistant">
             <Row id={id('effort')} label="Notices: effort" info="How carefully a notice is read; higher is more thorough and costs more.">{effort('effort')}</Row>
+            <Row id={id('doc_model')} label="Documents: model" info="The model that reads attachments, replies and orders. Haiku (the firm's choice) uses the fewest tokens; notices and the assistant keep the model under Model and prices.">
+              <Select value={draft.doc_model} onValueChange={(v) => set('doc_model', v)} disabled={!canEdit}>
+                <SelectTrigger id={id('doc_model')} className={cn(WS_CONTROL, 'w-28')}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="claude-haiku-4-5" className="text-xs">Haiku</SelectItem>
+                  <SelectItem value="claude-sonnet-5-5" className="text-xs">Sonnet</SelectItem>
+                  <SelectItem value="claude-opus-5-5" className="text-xs">Opus</SelectItem>
+                </SelectContent>
+              </Select>
+            </Row>
             <Row id={id('doc_effort')} label="Documents: effort" info="Attachments and replies are many; Low keeps the cost down.">{effort('doc_effort')}</Row>
             <Row id={id('assist_effort')} label="Assistant: effort">{effort('assist_effort')}</Row>
             <Row id={id('assist_daily_cap_usd')} label="Assistant cap (USD)" info="The assistant's own spend per day, apart from reading.">{num('assist_daily_cap_usd', 0.5)}</Row>

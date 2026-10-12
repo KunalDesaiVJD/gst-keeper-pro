@@ -369,8 +369,8 @@ const NoticeWorkspacePage: React.FC = () => {
               {canEdit && !closed && (lit || needsReply) && <DropdownMenuItem onSelect={() => setDialog('order')}><Gavel className="mr-2 h-4 w-4" /> Log order</DropdownMenuItem>}
               {canEdit && !closed && lit && <DropdownMenuItem onSelect={() => setDialog('hearing')}><CalendarClock className="mr-2 h-4 w-4" /> {n.hearing_date ? 'Change hearing' : 'Fix a hearing'}</DropdownMenuItem>}
               {canEdit && !closed && !lit && <DropdownMenuItem onSelect={() => setDialog('close')}><FileText className="mr-2 h-4 w-4" /> Read and close</DropdownMenuItem>}
-              {/* A finished notice gets no new matter (U-44-5); an order can still go to appeal from the next step. */}
-              {canEdit && lit && (!closed || n.matter_id) && <DropdownMenuItem onSelect={() => setDialog('matter')}><Scale className="mr-2 h-4 w-4" /> {n.matter_id ? 'Move to another matter' : 'Create or link a matter'}</DropdownMenuItem>}
+              {/* A closed notice offers no matter or appeal (the firm's request of 12 October 2026). */}
+              {canEdit && lit && !closed && <DropdownMenuItem onSelect={() => setDialog('matter')}><Scale className="mr-2 h-4 w-4" /> {n.matter_id ? 'Move to another matter' : 'Create or link a matter'}</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={openPortal} disabled={!bridge.ready}><ExternalLink className="mr-2 h-4 w-4" /> Open on the portal{!bridge.ready ? ' (needs the extension)' : ''}</DropdownMenuItem>
               {n.pdf_url && <DropdownMenuItem asChild><a href={n.pdf_url} target="_blank" rel="noreferrer"><FileText className="mr-2 h-4 w-4" /> Notice PDF</a></DropdownMenuItem>}

@@ -25,7 +25,7 @@ import { runAssist } from './assist.ts';
 import { runAdvise, runAdviseNext } from './advise.ts';
 import { runTick, type Db, type Deps } from './runner.ts';
 
-export const VERSION = 'notice-ai 1.3.0';
+export const VERSION = 'notice-ai 1.4.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',

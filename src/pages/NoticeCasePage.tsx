@@ -19,6 +19,8 @@ import { OwnerChip } from '@/components/notices/OwnerChip';
 import { CaseTimeline } from '@/components/notices/cases/CaseTimeline';
 import { KindFacts } from '@/components/notices/cases/KindFacts';
 import { NextStepCard } from '@/components/notices/cases/NextStepCard';
+import { CaseAdminActions } from '@/components/notices/cases/CaseAdminActions';
+import { WaitingChip } from '@/components/notices/cases/WaitingChip';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   loadCase, loadCaseItems, markCaseSeen, trackDef, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
@@ -117,7 +119,8 @@ const NoticeCasePage: React.FC = () => {
           </p>
           <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
             <Badge variant="secondary" className="text-[11px]">{def.label}</Badge>
-            {r.is_open ? <StageBadge stage={r.stage} /> : <Badge variant="secondary" className="text-[11px]">Closed</Badge>}
+            <WaitingChip r={r} long />
+            {r.is_open && <StageBadge stage={r.stage} />}
             {r.is_open && r.next_due && (
               <Badge variant={r.is_overdue ? 'destructive' : r.is_due_in_7 ? 'warning' : 'secondary'} className="text-[11px]">
                 {r.is_overdue ? 'Overdue' : 'Due'} {fmtDate(r.next_due)}
@@ -130,6 +133,7 @@ const NoticeCasePage: React.FC = () => {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <CaseAdminActions clientId={clientId} caseKey={r.case_key as string} open={!!r.is_open} />
           {r.case_id && (
             <Button size="sm" variant="outline" className={WS_BTN} asChild>
               <Link to={`/notices-case-folder/${clientId}/${encodeURIComponent(r.case_id)}`}><FolderOpen className="h-3.5 w-3.5" aria-hidden /> Portal case folder</Link>

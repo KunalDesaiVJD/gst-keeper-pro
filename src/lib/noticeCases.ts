@@ -44,7 +44,18 @@ export function caseKeyOf(caseId: string | null | undefined, category: string | 
 export const caseHref = (clientId: string, caseKey: string) => `/notices-case/${clientId}/${encodeURIComponent(caseKey)}`;
 
 // ── Lists and counts ───────────────────────────────────────────────────────
-export type CaseShow = 'open' | 'new' | 'all' | 'overdue' | 'due7';
+export type CaseShow = 'open' | 'new' | 'all' | 'overdue' | 'due7' | 'with_us' | 'with_dept' | 'closed';
+export const CASE_SHOWS: readonly CaseShow[] = ['open', 'new', 'all', 'overdue', 'due7', 'with_us', 'with_dept', 'closed'];
+
+/** Whose move it is on a case (notice_cases.waiting_on, migration 20261013110000). */
+export type WaitingOn = 'us' | 'department' | 'closed';
+export const WAITING: Record<WaitingOn, { label: string; short: string; tone: 'warning' | 'info' | 'secondary'; hint: string }> = {
+  us: { label: 'With us', short: 'With us', tone: 'warning', hint: 'The next move is the firm\'s: reply, pay, file or decide.' },
+  department: { label: 'With the department', short: 'With dept', tone: 'info', hint: 'We have replied, filed or appealed: waiting for the officer.' },
+  closed: { label: 'Closed', short: 'Closed', tone: 'secondary', hint: 'Nothing more to do.' },
+};
+export const waitingOf = (r: { waiting_on?: string | null; is_open?: boolean | null }): WaitingOn =>
+  r.waiting_on === 'department' || r.waiting_on === 'closed' || r.waiting_on === 'us' ? r.waiting_on : r.is_open === false ? 'closed' : 'us';
 export interface CaseQuery { track: Track | 'all'; show: CaseShow; q: string; master: Master; meId: string | null }
 
 export async function loadCases(c: CaseQuery, page: number, pageSize: number): Promise<{ rows: CaseRow[]; total: number }> {
@@ -54,6 +65,9 @@ export async function loadCases(c: CaseQuery, page: number, pageSize: number): P
   if (c.show === 'new') q = q.gt('new_items', 0);
   if (c.show === 'overdue') q = q.eq('is_overdue', true);
   if (c.show === 'due7') q = q.eq('is_due_in_7', true);
+  if (c.show === 'with_us') q = q.eq('waiting_on', 'us');
+  if (c.show === 'with_dept') q = q.eq('waiting_on', 'department');
+  if (c.show === 'closed') q = q.eq('waiting_on', 'closed');
   q = applyMasterToQuery(q, c.master, c.meId);
   const t = c.q.trim().replace(/[%,()]/g, ' ');
   if (t) q = q.or(`client_name.ilike.%${t}%,client_gstin.ilike.%${t}%,case_key.ilike.%${t}%,reference_number.ilike.%${t}%,title.ilike.%${t}%`);
@@ -77,10 +91,13 @@ export interface TrackCounts {
   /** 20261012110000 */
   in_appeal: number; next_due: string | null; next_hearing: string | null; oldest_overdue_days: number | null;
   overdue_age: { d30: number; d90: number; d365: number; older: number };
+  /** 20261013110000: whose move it is. */
+  with_us: number; with_dept: number; closed: number;
 }
 const ZERO: TrackCounts = {
   cases: 0, open: 0, new: 0, new_items: 0, overdue: 0, due7: 0, hearings: 0, unassigned: 0, exposure: 0,
   in_appeal: 0, next_due: null, next_hearing: null, oldest_overdue_days: null, overdue_age: { d30: 0, d90: 0, d365: 0, older: 0 },
+  with_us: 0, with_dept: 0, closed: 0,
 };
 
 export async function loadCaseCounts(filters: Record<string, string> | null): Promise<Record<Track, TrackCounts>> {
@@ -118,8 +135,8 @@ export interface CaseItem {
   is_open: boolean | null;
   pdf_url: string | null;
   attachments: { label?: string; url?: string }[] | null;
-  ai: { title: string | null; summary: string | null; doc_kind: string | null; outcome: string | null; doc_date: string | null; status: string; reason_class: string | null } | null;
-  notice_read: { status: string; outcome: string | null; summary: string | null } | null;
+  ai: { title: string | null; summary: string | null; doc_kind: string | null; outcome: string | null; doc_date: string | null; status: string; reason_class: string | null; usage?: unknown; model?: string | null } | null;
+  notice_read: { status: string; outcome: string | null; summary: string | null; usage?: unknown; model?: string | null } | null;
 }
 
 export async function loadCaseItems(clientId: string, caseKey: string): Promise<CaseItem[]> {
@@ -249,4 +266,33 @@ export function useLinkSuggestions(noticeId: string | null | undefined) {
 export async function setCaseLink(clientId: string, childKey: string, parentKey: string | null, kind: string | null, by: string | null): Promise<void> {
   const { error } = await supabase.rpc('notice_case_link_set', { p_client_id: clientId, p_child_key: childKey, p_parent_key: parentKey, p_kind: kind, p_by: by });
   if (error) throw error;
+}
+
+// ── Closing, reopening, handled elsewhere (superadmin and GST manager) ────
+interface Actor { id: string; firstName?: string | null }
+const rpcResult = (data: unknown) => (data && typeof data === 'object' ? data : {}) as { error?: string };
+
+export async function closeCase(clientId: string, caseKey: string, reason: string, actor: Actor): Promise<void> {
+  const { data, error } = await supabase.rpc('notice_case_close', { p_client_id: clientId, p_case_key: caseKey, p_reason: reason, p_actor_id: actor.id, p_actor_name: actor.firstName ?? null });
+  if (error) throw error;
+  if (rpcResult(data).error) throw new Error(rpcResult(data).error);
+}
+export async function reopenCase(clientId: string, caseKey: string, actor: Actor): Promise<void> {
+  const { data, error } = await supabase.rpc('notice_case_reopen', { p_client_id: clientId, p_case_key: caseKey, p_actor_id: actor.id, p_actor_name: actor.firstName ?? null });
+  if (error) throw error;
+  if (rpcResult(data).error) throw new Error(rpcResult(data).error);
+}
+export async function excludeCase(clientId: string, caseKey: string, exclude: boolean, reason: string | null, actor: Actor): Promise<void> {
+  const { data, error } = await supabase.rpc('notice_case_exclude', { p_client_id: clientId, p_case_key: caseKey, p_exclude: exclude, p_reason: reason, p_actor_id: actor.id, p_actor_name: actor.firstName ?? null });
+  if (error) throw error;
+  if (rpcResult(data).error) throw new Error(rpcResult(data).error);
+}
+export interface ExcludedCase {
+  client_id: string; client_name: string; client_gstin: string; case_key: string; excluded_at: string;
+  excluded_by_name: string | null; excluded_reason: string | null; notices: number; forms: string | null;
+}
+export async function loadExcludedCases(): Promise<ExcludedCase[]> {
+  const { data, error } = await supabase.rpc('notice_cases_excluded');
+  if (error) throw error;
+  return (Array.isArray(data) ? data : []) as unknown as ExcludedCase[];
 }
