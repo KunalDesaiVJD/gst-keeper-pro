@@ -111,7 +111,7 @@ const convertToFilingMonth = (month: string): string => {
 };
 
 const RCMSummaryPage: React.FC = () => {
-  const { user, isStaffRole, canUnlockSheets } = useAuth();
+  const { user, isStaffRole, canUnlockSheets, canExportData, canClearData, canViewVersionHistory } = useAuth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const navigate = useNavigate();
   const [clients, setClients] = useState<Client[]>([]);
@@ -136,7 +136,7 @@ const RCMSummaryPage: React.FC = () => {
 
   const isStaff = isStaffRole();
   const canUnlock = canUnlockSheets();
-  const canViewVersions = user?.role === 'superadmin' || user?.role === 'gst_manager';
+  const canViewVersions = canViewVersionHistory();
 
   // Check if all months are locked
   const allMonthsLocked = months.length > 0 && months.every(m => lockedMonths.has(m));
@@ -551,6 +551,7 @@ const RCMSummaryPage: React.FC = () => {
   };
 
   const handleExportExcel = () => {
+    if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
     if (!selectedClientData) {
       toast.error('Please select a client');
       return;
@@ -560,6 +561,7 @@ const RCMSummaryPage: React.FC = () => {
   };
 
   const handleExportPDF = () => {
+    if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
     if (!selectedClientData) {
       toast.error('Please select a client');
       return;
@@ -733,15 +735,29 @@ const RCMSummaryPage: React.FC = () => {
                 <span className="hidden sm:inline">History</span>
               </Button>
             )}
-            <Button variant="outline" size="sm" className={WS_BTN} onClick={handleExportPDF}>
+            <Button
+              variant="outline"
+              size="sm"
+              className={WS_BTN}
+              onClick={handleExportPDF}
+              disabled={!canExportData()}
+              title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+            >
               <FileText className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Export PDF</span>
             </Button>
-            <Button variant="outline" size="sm" className={WS_BTN} onClick={handleExportExcel}>
+            <Button
+              variant="outline"
+              size="sm"
+              className={WS_BTN}
+              onClick={handleExportExcel}
+              disabled={!canExportData()}
+              title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+            >
               <FileSpreadsheet className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Export Excel</span>
             </Button>
-            {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
+            {canClearData() && selectedClient && (
               <Button variant="outline" size="sm" className={cn(WS_BTN, 'text-destructive hover:text-destructive')} onClick={() => setShowClearData(true)}>
                 <Trash2 className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Clear Data</span>
@@ -910,7 +926,7 @@ const RCMSummaryPage: React.FC = () => {
 
       {/* Version History Dialog */}
       <GenericVersionHistoryDialog
-        open={showVersionHistory}
+        open={showVersionHistory && canViewVersions}
         onOpenChange={setShowVersionHistory}
         versions={versions}
         onRestore={handleRestoreVersion}
@@ -924,7 +940,7 @@ const RCMSummaryPage: React.FC = () => {
       
       {selectedClient && selectedClientData && (
         <ClearDataDialog
-          open={showClearData}
+          open={showClearData && canClearData()}
           onOpenChange={setShowClearData}
           module="RCM Summary"
           clientId={selectedClient}

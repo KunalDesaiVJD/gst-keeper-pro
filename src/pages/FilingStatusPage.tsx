@@ -179,7 +179,7 @@ interface FilingRecord {
 }
 
 const FilingStatusPage: React.FC = () => {
-  const { canUnlockSheets, isStaffRole, user } = useAuth();
+  const { canUnlockSheets, isStaffRole, user, canEditFilingStatus, canExportData } = useAuth();
   const { selectedMonth: contextMonth, setSelectedMonth: setContextMonth } = useMonth();
   const [searchParams] = useSearchParams();
   const [selectedMonth, setSelectedMonth] = useState<string>(contextMonth);
@@ -669,6 +669,10 @@ const FilingStatusPage: React.FC = () => {
   };
 
   const handleExportPDF = () => {
+    if (!canExportData()) {
+      toast.error('Needs the Export data permission — ask a GST Manager to add it to your position');
+      return;
+    }
     const returnTypeMap: Record<string, ReturnType> = {
       'gstr1': 'GSTR-1',
       'gstr3b': 'GSTR-3B',
@@ -797,6 +801,10 @@ const FilingStatusPage: React.FC = () => {
   });
 
   const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType, localArn?: string) => {
+    if (!canEditFilingStatus()) {
+      toast.error('Needs the Filing status & portal push permission — ask a GST Manager to add it to your position');
+      return;
+    }
     const isNewRecord = record.id.startsWith('temp-');
 
     // 'Pushed' is evidence that this app pushed the return to the GST portal
@@ -1913,10 +1921,13 @@ const FilingStatusPage: React.FC = () => {
                   <div className="flex items-center gap-1">
                     <Select
                       value={record.status}
-                      disabled={record.is_locked && !canUnlockSheets()}
+                      disabled={(record.is_locked && !canUnlockSheets()) || !canEditFilingStatus()}
                       onValueChange={(value) => handleStatusChange(record, value as FilingStatusType, editingArn[record.id])}
                     >
-                      <SelectTrigger className={cn('h-7 w-full px-2 text-xs [appearance:none]', filingStatusAccent(record.status))}>
+                      <SelectTrigger
+                        className={cn('h-7 w-full px-2 text-xs [appearance:none]', filingStatusAccent(record.status))}
+                        title={canEditFilingStatus() ? undefined : 'Needs the Filing status & portal push permission — ask a GST Manager to add it to your position'}
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -2011,7 +2022,7 @@ const FilingStatusPage: React.FC = () => {
                     placeholder="AA1234567890123"
                     className="h-7 w-full px-2 font-mono text-xs md:text-xs"
                     maxLength={15}
-                    disabled={record.is_locked && !canUnlockSheets()}
+                    disabled={(record.is_locked && !canUnlockSheets()) || !canEditFilingStatus()}
                   />
                 </td>
                 <td className={cn(WS_TD, 'text-center')}>
@@ -2272,7 +2283,14 @@ const FilingStatusPage: React.FC = () => {
         subtitle="GST return filing status for all clients"
         icon={<ClipboardCheck />}
         actions={
-          <Button variant="outline" size="sm" className={WS_BTN} onClick={handleExportPDF}>
+          <Button
+            variant="outline"
+            size="sm"
+            className={WS_BTN}
+            onClick={handleExportPDF}
+            disabled={!canExportData()}
+            title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+          >
             <Download className="h-3.5 w-3.5" />
             Export PDF
           </Button>

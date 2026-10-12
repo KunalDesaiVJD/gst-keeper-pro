@@ -386,7 +386,7 @@ interface B2BInvoice {
 }
 
 const GSTR1DataPage: React.FC = () => {
-  const { user, isStaffRole, canEditFilingStatus } = useAuth();
+  const { user, isStaffRole, canEditFilingStatus, canDeleteReturnData, canExportData } = useAuth();
   const confirm = useConfirm();
   // Shared selections so opening this page after picking a client/month on
   // another page (e.g. ITC Summary, Suspended Reco) preserves the context.
@@ -1391,6 +1391,7 @@ const GSTR1DataPage: React.FC = () => {
 
   const handleDelete = async () => {
     if (!gstr1Data) return;
+    if (!canDeleteReturnData()) { toast.error('Needs the Delete return data permission — ask a GST Manager to add it to your position'); return; }
     if (isFiled) {
       toast.error('GSTR-1 for this period is already Filed — the imported JSON is locked and cannot be deleted.');
       return;
@@ -2004,6 +2005,7 @@ const GSTR1DataPage: React.FC = () => {
   // Re-download the stored GSTR-1 JSON exactly as imported — this is the same
   // file format the GST portal accepts for upload.
   const handleDownloadJson = async () => {
+    if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
     if (!gstr1Data?.raw_json) {
       toast.error('No GSTR-1 JSON to download.');
       return;
@@ -2689,8 +2691,8 @@ const GSTR1DataPage: React.FC = () => {
                 size="sm"
                 className={cn(WS_BTN, 'text-destructive hover:bg-destructive/10 hover:text-destructive')}
                 onClick={handleDelete}
-                disabled={isUploading || isFiled}
-                title={isFiled ? 'GSTR-1 already Filed — delete is locked' : undefined}
+                disabled={isUploading || isFiled || !canDeleteReturnData()}
+                title={isFiled ? 'GSTR-1 already Filed — delete is locked' : !canDeleteReturnData() ? 'Needs the Delete return data permission — ask a GST Manager to add it to your position' : undefined}
               >
                 <Trash2 className="h-3.5 w-3.5" /> Delete
               </Button>
@@ -4171,22 +4173,32 @@ const GSTR1DataPage: React.FC = () => {
                 </DialogDescription>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <Button variant="outline" size="sm" className={WS_BTN} onClick={handleDownloadJson}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={WS_BTN}
+                  onClick={handleDownloadJson}
+                  disabled={!canExportData()}
+                  title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+                >
                   <FileJson className="h-3.5 w-3.5" /> Download JSON
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
                   className={WS_BTN}
-                  onClick={() =>
+                  disabled={!canExportData()}
+                  title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+                  onClick={() => {
+                    if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
                     exportGstr1SummaryToPDF({
                       summary,
                       clientName: selectedClientName || 'Client',
                       gstin: clients.find((c) => c.id === selectedClient)?.gstin || '',
                       monthLabel: mmYyyyToShort(selectedMonth),
                       fileName: gstr1Data?.file_name,
-                    })
-                  }
+                    });
+                  }}
                 >
                   <Download className="h-3.5 w-3.5" /> Download PDF
                 </Button>

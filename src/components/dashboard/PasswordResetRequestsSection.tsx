@@ -86,20 +86,25 @@ const PasswordResetRequestsSection: React.FC = () => {
     setIsSubmitting(true);
     try {
       // First try to reset as employee password
-      const { error: employeeError } = await supabase.rpc('reset_employee_password', {
-        target_user_id: selectedRequest.user_id,
-        new_password: newPassword,
+      const { error: employeeError } = await supabase.rpc('staff_set_password', {
+        p_actor_id: user?.id ?? '',
+        p_target_user_id: selectedRequest.user_id,
+        p_new_password: newPassword,
       });
 
       // If employee reset fails, try client reset
       if (employeeError) {
-        const { error: clientError } = await supabase.rpc('reset_client_password', {
-          target_client_id: selectedRequest.user_id,
-          new_password: newPassword,
+        const { error: clientError } = await supabase.rpc('staff_set_client_password', {
+          p_actor_id: user?.id ?? '',
+          p_client_id: selectedRequest.user_id,
+          p_new_password: newPassword,
         });
 
         if (clientError) {
-          throw new Error('Failed to reset password. User not found as employee or client.');
+          // A refusal (not allowed / no such client) says why; otherwise the staff error does.
+          throw new Error(
+            employeeError.message.includes('No staff account') ? clientError.message : employeeError.message,
+          );
         }
       }
 

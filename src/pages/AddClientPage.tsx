@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,7 +32,7 @@ const Req: React.FC = () => (
 
 const AddClientPage: React.FC = () => {
   const navigate = useNavigate();
-  const { canEditGstr1ImportMode } = useAuth();
+  const { canEditGstr1ImportMode, canAddEditClients } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -315,6 +315,9 @@ const AddClientPage: React.FC = () => {
       setIsSaving(false);
     }
   };
+
+  // The Clients page hides Add without add_edit_clients; the route is guarded too.
+  if (!canAddEditClients()) return <Navigate to="/clients" replace />;
 
   return (
     <div className="space-y-6 animate-fade-in max-w-3xl mx-auto">

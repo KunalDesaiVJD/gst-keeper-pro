@@ -52,7 +52,7 @@ const RequiredMark: React.FC = () => (
 );
 
 const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = false }) => {
-  const { user, canManageEmployees } = useAuth();
+  const { user, canManageEmployees, canManagePositions } = useAuth();
   const confirm = useConfirm();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -62,7 +62,15 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
   const [newEmployee, setNewEmployee] = useState({
     firstName: '',
     role: 'employee' as 'gst_manager' | 'employee',
+    positionId: '',
   });
+  const [positions, setPositions] = useState<{ id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    if (!canManagePositions()) return;
+    void supabase.from('staff_positions').select('id, name').eq('is_active', true).order('sort_order').order('name')
+      .then(({ data }) => setPositions(data || []));
+  }, [canManagePositions]);
 
   // Fetch employees from Supabase
   const fetchEmployees = useCallback(async () => {
@@ -168,13 +176,19 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
         throw roleError;
       }
 
-      // Employees are now fully managed in Supabase - no mock data needed
+      // An employee's controls come from their position (User Control).
+      if (newEmployee.role === 'employee' && newEmployee.positionId) {
+        const { error: posError } = await supabase.rpc('staff_assign_position', {
+          p_user_id: tempUserId, p_position_id: newEmployee.positionId, p_actor_id: user?.id ?? '',
+        });
+        if (posError) toast.error(`Added, but the position was not set: ${posError.message}`);
+      }
 
       toast.success(
         `${newEmployee.firstName} has been added as ${newEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}. Login: ${newEmployee.firstName} / 2026`
       );
 
-      setNewEmployee({ firstName: '', role: 'employee' });
+      setNewEmployee({ firstName: '', role: 'employee', positionId: '' });
       setShowValidation(false);
       setShowAddDialog(false);
       fetchEmployees();
@@ -218,9 +232,9 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
 
   const nameInvalid = showValidation && !newEmployee.firstName.trim();
 
-  // Only Superadmin can access this page (unless embedded).
+  // Gated even when embedded — the embedding page is not the only way in.
   // Kept after all hook declarations so hook order stays stable (Rules of Hooks).
-  if (!embedded && !canManageEmployees()) {
+  if (!canManageEmployees()) {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -299,11 +313,33 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="gst_manager">GST Manager</SelectItem>
+                      <SelectItem value="gst_manager" disabled={!canManagePositions()}>GST Manager</SelectItem>
                       <SelectItem value="employee">Employee</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+                {newEmployee.role === 'employee' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="employeePosition">Position</Label>
+                    {canManagePositions() ? (
+                      <Select
+                        value={newEmployee.positionId}
+                        onValueChange={(value) => setNewEmployee(prev => ({ ...prev, positionId: value }))}
+                      >
+                        <SelectTrigger id="employeePosition">
+                          <SelectValue placeholder="Choose the position — it decides what they can do" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {positions.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        A GST Manager gives them a position in Settings → User Control. Until then they have no permissions.
+                      </p>
+                    )}
+                  </div>
+                )}
                 <div className="bg-muted/50 p-3 rounded-lg">
                   <p className="text-sm font-medium">Auto-generated Credentials:</p>
                   <p className="text-xs text-muted-foreground mt-1">

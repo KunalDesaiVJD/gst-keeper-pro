@@ -93,7 +93,7 @@ const needsItcSrNo = (u: { update_type: string; remarks: string; itc_section: st
   ITC_SR_NO_REQUIRED_TYPES.includes(u.update_type) && !!u.remarks?.trim() && (!u.itc_section || !u.itc_sr_no);
 
 const GSTRunningUpdatePage: React.FC = () => {
-  const { user, isStaffRole, canEditUpdateSheet } = useAuth();
+  const { user, isStaffRole, canEditUpdateSheet, canDeleteReturnData, canViewVersionHistory, canExportData } = useAuth();
   const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [updates, setUpdates] = useState<GSTUpdate[]>([]);
@@ -122,8 +122,8 @@ const GSTRunningUpdatePage: React.FC = () => {
 
   const isStaff = isStaffRole();
   const canEdit = canEditUpdateSheet();
-  const canDeleteGSTRows = user?.role === 'superadmin' || user?.role === 'gst_manager';
-  const canViewVersions = user?.role === 'superadmin' || user?.role === 'gst_manager';
+  const canDeleteGSTRows = canDeleteReturnData();
+  const canViewVersions = canViewVersionHistory();
 
   // Generate month options with blank option for effect month
   const monthOptions = useMemo(() => {
@@ -308,6 +308,7 @@ const GSTRunningUpdatePage: React.FC = () => {
   };
 
   const handleDeleteRow = (index: number) => {
+    if (!canDeleteGSTRows) { toast.error('Needs the Delete return data permission — ask a GST Manager to add it to your position'); return; }
     const newUpdates = updates.filter((_, i) => i !== index);
     setUpdates(newUpdates);
   };
@@ -597,7 +598,10 @@ const GSTRunningUpdatePage: React.FC = () => {
               variant="outline"
               size="sm"
               className="h-8 gap-1 px-2.5 text-xs"
+              disabled={!canExportData()}
+              title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
               onClick={() => {
+                if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
                 exportGSTUpdateToPDF(filteredUpdates, {
                   client: filterClient ? clients.find(c => c.id === filterClient)?.name : undefined,
                   updateEffectMonth: filterUpdateEffectMonth || undefined,
@@ -715,7 +719,7 @@ const GSTRunningUpdatePage: React.FC = () => {
 
       {/* Version History Dialog */}
       <GenericVersionHistoryDialog
-        open={showVersionHistory}
+        open={showVersionHistory && canViewVersions}
         onOpenChange={setShowVersionHistory}
         versions={versions}
         onRestore={async (version) => {

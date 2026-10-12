@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { useAuth } from '@/contexts/AuthContext';
 import { Badge } from '@/components/gstr9/badge';
 import { SectionCard } from '@/components/gstr9/ui';
 import { WS_BTN, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR } from '@/components/workspace/theme';
@@ -42,11 +43,14 @@ export const EinvoiceAlertsPanel: React.FC<{
 }> = ({ due, actor, onSent }) => {
   const confirm = useConfirm();
   const [busy, setBusy] = useState<string | 'all' | null>(null);
+  const { canSendClientEmails } = useAuth();
+  const canSend = canSendClientEmails();
   if (!due.length) return null;
 
   const withEmail = due.filter((d) => !!d.client.email);
 
   const send = async (items: DueEinvoiceAlert[], busyKey: string) => {
+    if (!canSendClientEmails()) { toast.error('Needs the Send client e-mails permission — ask a GST Manager to add it to your position'); return; }
     setBusy(busyKey);
     try {
       const r = await sendEinvoiceThresholdAlerts(items, actor);
@@ -88,7 +92,13 @@ export const EinvoiceAlertsPanel: React.FC<{
       }
       description="Clients approaching or past the ₹5 crore e-invoice limit who have not been told for that year. Nothing is emailed until you press Send."
       actions={
-        <Button size="sm" className={WS_BTN} onClick={sendAll} disabled={!!busy || !withEmail.length}>
+        <Button
+          size="sm"
+          className={WS_BTN}
+          onClick={sendAll}
+          disabled={!!busy || !withEmail.length || !canSend}
+          title={canSend ? undefined : 'Needs the Send client e-mails permission — ask a GST Manager to add it to your position'}
+        >
           {busy === 'all' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
           Send all ({withEmail.length})
         </Button>
@@ -123,9 +133,9 @@ export const EinvoiceAlertsPanel: React.FC<{
                     variant="outline"
                     size="sm"
                     className={WS_BTN}
-                    disabled={!!busy || !d.client.email}
+                    disabled={!!busy || !d.client.email || !canSend}
                     onClick={() => sendOne(d)}
-                    title={d.client.email ? `Email ${d.client.email}` : 'No email on file'}
+                    title={!canSend ? 'Needs the Send client e-mails permission — ask a GST Manager to add it to your position' : d.client.email ? `Email ${d.client.email}` : 'No email on file'}
                   >
                     {busy === key(d) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
                     Send

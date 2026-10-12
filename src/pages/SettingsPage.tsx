@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { SectionCard } from '@/components/gstr9/ui';
+import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
+import { WS_PAGE } from '@/components/workspace/theme';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Settings, Lock, Users, AlertCircle, Check, X, Loader2, Database, Shield, Mail } from 'lucide-react';
@@ -40,7 +42,7 @@ const RequiredMark: React.FC = () => (
 );
 
 const SettingsPage: React.FC = () => {
-  const { user, canManageEmployees, isStaffRole } = useAuth();
+  const { user, canManageEmployees, canManagePositions, isStaffRole } = useAuth();
 
   // Password change state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -140,10 +142,12 @@ const SettingsPage: React.FC = () => {
         return;
       }
 
-      // Use the reset_employee_password RPC for staff users (bypasses auth session requirement)
-      const { data: result, error } = await supabase.rpc('reset_employee_password', {
-        target_user_id: user.id,
-        new_password: newPassword,
+      // The database checks the current password before changing it.
+      const { error } = await supabase.rpc('staff_set_password', {
+        p_actor_id: user.id,
+        p_target_user_id: user.id,
+        p_new_password: newPassword,
+        p_current_password: currentPassword,
       });
 
       if (error) {
@@ -181,9 +185,11 @@ const SettingsPage: React.FC = () => {
       const employee = employees.find(e => e.user_id === selectedEmployee);
       if (employee) {
         // Use the SECURITY DEFINER function to reset password
-        const { error } = await supabase.rpc('reset_employee_password', {
-          target_user_id: selectedEmployee,
-          new_password: employeeNewPassword,
+        // The database checks the caller may reset this account's password.
+        const { error } = await supabase.rpc('staff_set_password', {
+          p_actor_id: user?.id ?? '',
+          p_target_user_id: selectedEmployee,
+          p_new_password: employeeNewPassword,
         });
 
         if (error) {
@@ -243,39 +249,40 @@ const SettingsPage: React.FC = () => {
     employeeNewPassword.length > 0 && employeeNewPassword.length < 8;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className={WS_PAGE}>
       <PageHeader
+        compact
         title="Settings"
         subtitle="Manage your account and system settings"
-        icon={<Settings className="h-6 w-6" />}
+        icon={<Settings />}
       />
 
-      <Tabs defaultValue="password" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="password" className="flex items-center gap-2">
+      <Tabs defaultValue="password" className="space-y-3">
+        <TabsList className={TAB_LIST_CLASS}>
+          <TabsTrigger value="password" className={TAB_TRIGGER_CLASS}>
             <Lock className="h-4 w-4" />
             My Password
           </TabsTrigger>
           {canManageEmployees() && (
-            <TabsTrigger value="employees" className="flex items-center gap-2">
+            <TabsTrigger value="employees" className={TAB_TRIGGER_CLASS}>
               <Users className="h-4 w-4" />
               Employee Passwords
             </TabsTrigger>
           )}
-          {canManageEmployees() && (
-            <TabsTrigger value="user-control" className="flex items-center gap-2">
+          {canManagePositions() && (
+            <TabsTrigger value="user-control" className={TAB_TRIGGER_CLASS}>
               <Shield className="h-4 w-4" />
               User Control
             </TabsTrigger>
           )}
           {isStaffRole() && (
-            <TabsTrigger value="masters" className="flex items-center gap-2">
+            <TabsTrigger value="masters" className={TAB_TRIGGER_CLASS}>
               <Database className="h-4 w-4" />
               Masters
             </TabsTrigger>
           )}
           {isStaffRole() && (
-            <TabsTrigger value="templates" className="flex items-center gap-2">
+            <TabsTrigger value="templates" className={TAB_TRIGGER_CLASS}>
               <Mail className="h-4 w-4" />
               GST Reminders
             </TabsTrigger>
@@ -283,14 +290,11 @@ const SettingsPage: React.FC = () => {
         </TabsList>
 
         <TabsContent value="password">
-          <Card className="max-w-2xl">
-            <CardHeader>
-              <CardTitle>Change My Password</CardTitle>
-              <CardDescription>
-                Update your account password
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+          <SectionCard
+            className="max-w-2xl"
+            title="Change My Password"
+            description="Update your account password"
+          >
               <form onSubmit={handleChangeOwnPassword} className="space-y-4 max-w-md">
                 <div className="space-y-2">
                   <Label htmlFor="currentPassword">
@@ -368,30 +372,29 @@ const SettingsPage: React.FC = () => {
                   )}
                 </Button>
               </form>
-            </CardContent>
-          </Card>
+          </SectionCard>
         </TabsContent>
 
         {canManageEmployees() && (
-          <TabsContent value="employees" className="space-y-4">
+          <TabsContent value="employees" className="space-y-3">
             {/* Password Reset Requests */}
             {resetRequests.length > 0 && (
-              <Card className="border-warning/50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <AlertCircle className="h-5 w-5 text-warning" />
+              <SectionCard
+                className="max-w-2xl border-warning/50"
+                title={
+                  <span className="flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-warning" />
                     Pending Password Reset Requests
-                  </CardTitle>
-                  <CardDescription>
-                    Employees who have requested password resets
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
+                    <Badge variant="warning">{resetRequests.length}</Badge>
+                  </span>
+                }
+                description="Employees who have requested password resets"
+              >
+                  <div className="space-y-2">
                     {resetRequests.map((request) => (
                       <div
                         key={request.id}
-                        className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
+                        className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2"
                       >
                         <div>
                           <p className="font-medium">{request.requested_by_name}</p>
@@ -420,19 +423,15 @@ const SettingsPage: React.FC = () => {
                       </div>
                     ))}
                   </div>
-                </CardContent>
-              </Card>
+              </SectionCard>
             )}
 
             {/* Reset Employee Password */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Reset Employee Password</CardTitle>
-                <CardDescription>
-                  Select an employee and set a new password for them
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
+            <SectionCard
+              className="max-w-2xl"
+              title="Reset Employee Password"
+              description="Select an employee and set a new password for them"
+            >
                 <div className="space-y-4 max-w-md">
                   <div className="space-y-2">
                     <Label htmlFor="employeeSelect">
@@ -499,12 +498,11 @@ const SettingsPage: React.FC = () => {
                     )}
                   </Button>
                 </div>
-              </CardContent>
-            </Card>
+            </SectionCard>
           </TabsContent>
         )}
 
-        {canManageEmployees() && (
+        {canManagePositions() && (
           <TabsContent value="user-control">
             <UserControlPage embedded />
           </TabsContent>

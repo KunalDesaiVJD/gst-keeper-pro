@@ -36,6 +36,11 @@ interface UserPermissions {
   view_builder_reports: boolean;
   edit_gstr1_import_mode: boolean;
   edit_notice_status: boolean;
+  delete_return_data: boolean;
+  work_2b_import: boolean;
+  clear_data: boolean;
+  send_client_emails: boolean;
+  manage_email_templates: boolean;
 }
 
 const DEFAULT_PERMISSIONS: UserPermissions = {
@@ -62,6 +67,11 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   view_builder_reports: false,
   edit_gstr1_import_mode: false,
   edit_notice_status: false,
+  delete_return_data: false,
+  work_2b_import: false,
+  clear_data: false,
+  send_client_emails: false,
+  manage_email_templates: false,
 };
 
 interface AppUser {
@@ -112,6 +122,18 @@ interface AuthContextType {
   canViewBuilderReports: () => boolean;
   canEditGstr1ImportMode: () => boolean;
   canEditNoticeStatus: () => boolean;
+  /** Delete a period's GSTR-1 data / GST Running Update rows. */
+  canDeleteReturnData: () => boolean;
+  /** Import 2B: import, pull from portal, Post to Reconciliation. */
+  canWork2BImport: () => boolean;
+  /** Clear Data on 2B / ITC / RCM / Suspended Reco. */
+  canClearData: () => boolean;
+  /** Send reminders and e-invoice threshold letters to clients. */
+  canSendClientEmails: () => boolean;
+  /** Edit e-mail templates and switch reminder rules. */
+  canManageEmailTemplates: () => boolean;
+  /** Positions and who holds them; promoting to GST Manager. Role only. */
+  canManagePositions: () => boolean;
   hasPermission: (permission: keyof UserPermissions) => boolean;
 }
 
@@ -583,6 +605,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user.role === 'superadmin' || user.role === 'gst_manager';
   }, [user]);
 
+  const keyOrManager = useCallback((key: keyof UserPermissions): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return hasPermission(key);
+  }, [user, hasPermission]);
+  const canDeleteReturnData = useCallback(() => keyOrManager('delete_return_data'), [keyOrManager]);
+  const canWork2BImport = useCallback(() => keyOrManager('work_2b_import'), [keyOrManager]);
+  const canClearData = useCallback(() => keyOrManager('clear_data'), [keyOrManager]);
+  const canSendClientEmails = useCallback(() => keyOrManager('send_client_emails'), [keyOrManager]);
+  const canManageEmailTemplates = useCallback(() => keyOrManager('manage_email_templates'), [keyOrManager]);
+  // Positions decide every employee's controls, so they stay with the roles
+  // that already hold everything: an employee with manage_employees must not
+  // be able to give themselves a stronger position.
+  const canManagePositions = useCallback((): boolean => {
+    return user?.role === 'superadmin' || user?.role === 'gst_manager';
+  }, [user]);
+
   // ── Advance set-off gate (docs/ADVANCE_SETOFF_POSITIONS.md §6) ───────────
   // Two separate powers, deliberately not one helper: raising a request and
   // deciding it are the whole point of the control. An employee may ask, with
@@ -710,6 +749,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canViewBuilderReports,
         canEditGstr1ImportMode,
         canEditNoticeStatus,
+        canDeleteReturnData,
+        canWork2BImport,
+        canClearData,
+        canSendClientEmails,
+        canManageEmailTemplates,
+        canManagePositions,
         hasPermission,
       }}
     >
