@@ -21,7 +21,7 @@ INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, descrip
  ('a0000000-0000-0000-0000-00000000000c', '11111111-0000-0000-0000-000000000001', 'notices', 'k12', 'Order', 'Summary of the demand after issue of order by the Appellate Authority (APL-04)', ist_today() - 3, NULL, NULL);
 
 SELECT t_eq((SELECT count(*) FROM notice_facts WHERE client_id = '11111111-0000-0000-0000-000000000001'), 12::bigint, 'all fixtures visible');
-SELECT t_eq(form_code, 'DRC-01B', 'DRC-01B code'), t_eq(priority, 'High', 'DRC-01B default priority')
+SELECT t_eq(form_code, 'DRC-01B', 'DRC-01B code'), t_eq(priority, 'Low', 'DRC-01B default priority (Low since 20261014110000: no urgent reply)')
   FROM gst_notices WHERE id = 'a0000000-0000-0000-0000-000000000001';
 SELECT t_eq(form_code, 'DRC-01C', 'DRC-01C code') FROM gst_notices WHERE id = 'a0000000-0000-0000-0000-000000000002';
 SELECT t_eq(form_code, 'GSTR-3A', 'GSTR-3A code') FROM gst_notices WHERE id = 'a0000000-0000-0000-0000-000000000003';

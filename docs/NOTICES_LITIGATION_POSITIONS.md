@@ -637,3 +637,10 @@ linked if 100% confidence, or if it is not then recommendation options".
   - Staff add a mobile with **Add mobile** under the Officer field, on the case page or the notice page. It then shows on every case of that officer as call, WhatsApp and e-mail links.
   - Notices · Settings lists the book, to edit or remove an entry.
   - The portal's `issued_by` is mostly a state name or "System Generated", so the contact is offered only for a real name.
+
+## 26. Sync scope, what is failing, hiding one notice (asked by the firm, 12 October 2026)
+
+- **Inactive clients are synced for notices.** An inactive registration still gets notices, so `inactive_at_hand` no longer leaves a client out of the notices sync, the "not synced" count or Sync All (extension 0.10.1, `sync_queue`, `autopilot_enqueue` for notices jobs, `notices_command_centre`, the Clients page). Returns pulls still skip inactive clients. A client the firm does not handle stays out (`notices_handled`).
+- **Failing means something staff can fix.** Only a refused login or password, a CAPTCHA, or the wrong GSTIN in the session counts as failing (`sync_reason_actionable`). "The scheduled Chrome was offline", a portal error, or a client whose portal list simply has no notices is no longer shown as failing or "not synced". The home line reads, for example, "19 clients not synced (19 login failed)".
+- **One notice can be hidden.** A superadmin or GST manager can hide a single notice with More → Not required (hide) on the notice page (`notice_exclude`, `excluded_scope = 'notice'`). The rest of its case stays. Only a whole case hidden as handled elsewhere (`excluded_scope = 'case'`) also hides notices that arrive in it later. Notices · Settings → Hidden cases and notices brings either back.
+- **DRC-01B and DRC-01C need no urgent reply.** Their reply is optional and their default priority is Low. The firm explains or pays these intimations at its convenience.

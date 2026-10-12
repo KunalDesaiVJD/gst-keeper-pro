@@ -18,12 +18,15 @@ INSERT INTO sync_run_items (run_id, client_id, step, status, created_at)
 VALUES ('99999999-0000-0000-0000-0000000000f1', '99999999-0000-0000-0000-00000000000c', 'notices', 'ok', now() - interval '1 hour');
 
 -- Only these test clients matter here.
-UPDATE clients SET inactive_at_hand = true WHERE id::text NOT LIKE '99999999-%';
+-- (An inactive client is still synced for notices since 20261014110000, so the others are left out of the notices sync.)
+UPDATE clients SET notices_sync_excluded = true WHERE id::text NOT LIKE '99999999-%';
 -- This file tests the Phase 3 office agent with its CAPTCHA wall; since 20261008170000 the
 -- default runner is the firm's Chrome (test_99b_chrome_runner.sql).
 UPDATE autopilot_settings SET runner = 'office_agent';
 
 -- ── Enqueue ────────────────────────────────────────────────────────────────
+-- This file follows the three active clients; Sleeping LLP (inactive) is checked at the end.
+UPDATE clients SET notices_sync_excluded = true WHERE id = '99999999-0000-0000-0000-00000000000e';
 SELECT t_eq((autopilot_enqueue(NULL, 'PULL_NOTICES_BUNDLE', '{}', 'schedule_morning') ->> 'queued')::int, 3, 'every active client with credentials is queued once');
 SELECT t_eq((SELECT string_agg(c.name || ':' || j.priority, ', ' ORDER BY j.queue_rank)
                FROM portal_jobs j JOIN clients c ON c.id = j.client_id WHERE j.active_key = 'PULL_NOTICES_BUNDLE'),
@@ -236,4 +239,10 @@ SELECT t_eq((autopilot_ask_client('99999999-0000-0000-0000-00000000000b', 'passw
 SELECT t_eq((autopilot_ask_client('99999999-0000-0000-0000-00000000000a', 'account_locked') ->> 'sent')::boolean, false,
             'with the rule off, nothing is e-mailed');
 SELECT t_eq((autopilot_badge() ->> 'live')::int, 0, 'the badge counts live CAPTCHAs');
+-- 20261014110000: an inactive client is still synced for notices (not for returns).
+UPDATE clients SET notices_sync_excluded = false WHERE id = '99999999-0000-0000-0000-00000000000e';
+DELETE FROM portal_jobs WHERE client_id = '99999999-0000-0000-0000-00000000000e';
+SELECT autopilot_enqueue(NULL, 'PULL_NOTICES_BUNDLE', '{}', 'schedule_morning');
+SELECT t_eq((SELECT count(*) FROM portal_jobs WHERE client_id = '99999999-0000-0000-0000-00000000000e' AND job_type = 'PULL_NOTICES_BUNDLE'), 1::bigint,
+            'an inactive client is queued for notices');
 ROLLBACK;
