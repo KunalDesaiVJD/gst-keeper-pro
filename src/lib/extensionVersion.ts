@@ -72,6 +72,8 @@ const GAINS: [string, string][] = [
   ['0.8.9', "says in exact numbers what an e-invoice pull read: the GSTR-1 file's documents, how many carry an IRN, and how they compare with the e-invoice Excel"],
   ['0.9.0', "the e-invoice pull opens the month's GSTR-1 on the portal and downloads and imports its e-invoice details (Excel) by itself"],
   ['0.9.1', "says only what the GSTR-1 file and the month's e-invoice details show, and checks the e-invoice import by the database's clock"],
+  ['0.10.0', 'fetches only fresh notices and documents in a sync (new or changed), so all clients finish much sooner'],
+  ['0.10.1', 'syncs inactive clients for notices too'],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {
