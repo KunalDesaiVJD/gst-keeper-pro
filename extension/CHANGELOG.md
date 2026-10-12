@@ -2,6 +2,21 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-12 — Fresh only: a sync fetches what is new, not the old notices again (v0.10.0)
+
+No database or app change needed.
+
+- **Why.** Every run fetched far more than was new. It re-read the folder of every open case. It retried old notices whose PDF the portal never gave, which is hundreds of calls for a client with many GSTR-3A notices. It also did a full pass every week. A sync of every client took far longer than it needed.
+- **Now.** The notices list is still read in one call, and every notice is still saved, so the counts stay right. What the run *fetches* is only what is fresh:
+  - **Notice PDFs.** A notice's PDF is fetched only when the notice is new. An old notice still missing its PDF is tried by the gap fill at most once a week.
+  - **Case folders.** A case's folder is fetched only when the case is new, when a notice or task in it is new or changed status on the portal, or when the gap fill is due.
+  - **Open cases.** An open case with nothing new is checked once a week (`OPEN_CASE_RECHECK_MS`), not on every run. The time of each check is kept per case in `gstk_case_checked_<client>`.
+  - **Full pass.** A client's full pass is every 30 days instead of 7, so a silent change in an old case is still caught.
+  - **Stored files.** PDFs and attachments already stored are never downloaded again (as before).
+- **Fallback.** If the stored notices cannot be read (the database is unreachable), every notice counts as fresh: the old, full behaviour.
+- **Debug panel.** It shows "fresh only: N new or changed notice(s); M old notice PDF(s) not fetched again", and how many open cases were on the weekly check.
+- **Tests.** `test/12-fresh-only.test.mjs`. `04-stored-pdf-e2e` now gives the stored notices' status, as the background does.
+
 ## 2026-10-10 — E-invoice pull opens the month's GSTR-1 and takes its e-invoice details (v0.9.0)
 
 Needs the GSTR-1 page update that imports the file (`__gstkEinvoiceExcel`).

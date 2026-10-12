@@ -624,3 +624,16 @@ linked if 100% confidence, or if it is not then recommendation options".
 - **Closing a case for good.** Only a superadmin or GST manager can close a case or reopen it (`notice_case_close`, `notice_case_reopen`; the role is checked in the database against `user_roles`). Closing needs a reason and closes every open notice of the case. A closed notice offers no reply option, no appeal clock and no new matter. A closed case gets no AI advice, and the advice never suggests an appeal on a case that is closed or being closed.
 - **Whose move.** Every case is *with us*, *with the department* or *closed* (`notice_cases.waiting_on`). A case is with the department when its stage is filed, hearing or appeal, when every open notice is replied, or when the latest paper in it is ours. A case with the department is neither overdue nor due: we have answered. On 12 October 2026 this took litigation overdue from 30 to 14. Home, the kind cards, the Cases tabs and every row show it.
 - **AI.** Documents are read by `ai_settings.doc_model`, Haiku by default (Reply Factory → AI → Documents: model). Calls through the CLI gateway record their tokens as `tokens_in` / `tokens_out`, estimated at about four characters a token when the gateway reports none. These are kept apart from the billed `input_tokens` / `output_tokens`, so they never count against the daily cap. They show per document on the case timeline and in the AI Documents list. The case advice is about half as long: at most 3 steps and 2 cautions, with word limits per field.
+
+## 25. Fresh only, and the officers' book (asked by the firm, 12 October 2026)
+
+- **A sync fetches only what is fresh** (extension 0.10.0). The notices list is read in one call and saved whole, so the counts and soft deletes stay right. A notice's PDF is fetched only when the notice is new. A case's folder is fetched only when:
+  - the case is new;
+  - a notice or task in it is new or changed status on the portal; or
+  - the weekly gap fill is due.
+
+  An open case with nothing new is looked at once a week, and every client gets a full pass every 30 days so a silent change in an old case is still caught in the end. The trade-off, accepted for speed, is that a document an officer uploads into an existing case with nothing else changing can take up to a week to appear. If anything about the stored notices cannot be read, the run fetches everything, as before.
+- **Officers' book** (`notice_officers`). There is one row per officer, keyed by the name as the case shows it, normalised by `notice_officer_key` so the same officer written twice is one row. It holds a mobile (checked to be a phone number), an e-mail, the office and a note.
+  - Staff add a mobile with **Add mobile** under the Officer field, on the case page or the notice page. It then shows on every case of that officer as call, WhatsApp and e-mail links.
+  - Notices · Settings lists the book, to edit or remove an entry.
+  - The portal's `issued_by` is mostly a state name or "System Generated", so the contact is offered only for a real name.

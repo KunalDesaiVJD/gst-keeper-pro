@@ -37,7 +37,7 @@ store['gstk_folder_full_'+CLIENT]=Date.now()-1000;
 sandbox.GSTKdb={
   knownDocs:async()=>({noticePdf:{},openCases:[],knownCases:[ARN],
     itemDocs:{[ARN+'|NOTCS:'+REF]:[{label:'DOT_NOTICE_'+REF+'_20240528033335.pdf',url:'https://store/old/DOC_NOTICE.pdf'}]},
-    drc03Pdf:{},refundDocs:{}}),
+    drc03Pdf:{},refundDocs:{},seen:{[REF]:'Closed'}}),
   uploadPdf:async(p)=>'https://store/'+p,
   ingest:async(c,r,step,rows)=>{seen.ingest.push({step,rows:JSON.parse(JSON.stringify(rows))});return{status:'ok',new:0,changed:1,removed:0}},
   patchNoticeFields:async(c,k,p)=>{seen.patch.push({k,p});return true},

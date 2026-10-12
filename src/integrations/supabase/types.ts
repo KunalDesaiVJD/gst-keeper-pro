@@ -984,6 +984,15 @@ export type Database = {
           },
         ]
       }
+      notice_officers: {
+        Row: {
+          id: string; name_key: string; name: string; mobile: string | null; email: string | null; office: string | null
+          notes: string | null; updated_by_name: string | null; created_at: string; updated_at: string
+        }
+        Insert: { id?: string; name_key: string; name: string; mobile?: string | null; email?: string | null; office?: string | null; notes?: string | null }
+        Update: { mobile?: string | null; email?: string | null; office?: string | null; notes?: string | null }
+        Relationships: []
+      }
       notice_case_advice: {
         Row: {
           client_id: string; case_key: string; status: string; advice: Json | null; inputs_hash: string | null
@@ -10751,6 +10760,10 @@ export type Database = {
       }
       notice_link_suggestions: {
         Args: { p_notice_id: string }
+        Returns: Json
+      }
+      notice_officer_save: {
+        Args: { p_name: string; p_mobile: string; p_email?: string | null; p_office?: string | null; p_notes?: string | null; p_actor?: string | null }
         Returns: Json
       }
       notice_case_close: {

@@ -114,6 +114,7 @@ export async function runLinkPass(ctx){
       if (needsFill(row)) fillTried[ref] = Date.now(); else if (fillTried[ref]) delete fillTried[ref];
     }
     try { await store.set({ [triedKey]: fillTried }); } catch (e) { /* only costs a repeat folder fetch */ }
+    try { await store.set({ [caseSeenKey]: caseChecked }); } catch (e) { /* only costs an earlier recheck */ }
 
   return {linkedPdf, linkedDue, linkedOfficer, linkedDin, dinByKey};
 }
