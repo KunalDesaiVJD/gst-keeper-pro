@@ -10,7 +10,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { EmptyBox } from '@/components/notices/autopilot/parts';
 import { StageBadge } from '@/components/notices/StageBadge';
 import type { CaseItem } from '@/lib/noticeCases';
-import { fmtDateTime } from '@/lib/noticeFormat';
+import { fmtAiTokens, fmtDateTime } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -40,6 +40,7 @@ function Reading({ it }: { it: CaseItem }) {
   const reading = (it.notice_read && ['queued', 'running'].includes(it.notice_read.status)) || (it.ai && ['queued', 'running'].includes(it.ai.status));
   if (text) {
     const long = text.length > 220;
+    const tokens = it.notice_read?.summary ? fmtAiTokens(it.notice_read.usage, it.notice_read.model) : fmtAiTokens(it.ai?.usage, it.ai?.model);
     return (
       <div className="flex gap-1.5 rounded-md bg-muted/40 px-2.5 py-1.5">
         <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/70" aria-label="Read by the AI" />
@@ -48,6 +49,7 @@ function Reading({ it }: { it: CaseItem }) {
           {long && more && <button type="button" onClick={() => setMore(false)} className="ml-1 text-xs font-medium text-primary hover:underline">Less</button>}
         </p>
         {long && !more && <button type="button" onClick={() => setMore(true)} className="shrink-0 self-end text-xs font-medium text-primary hover:underline">More</button>}
+        {tokens && <span className="shrink-0 self-end whitespace-nowrap text-[10px] tabular-nums text-muted-foreground" title="Tokens the AI used to read it">{tokens}</span>}
       </div>
     );
   }

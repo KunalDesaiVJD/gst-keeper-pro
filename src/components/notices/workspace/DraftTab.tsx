@@ -136,7 +136,8 @@ export const DraftTab: React.FC<{ ws: Workspace; canEdit: boolean; canApprove: b
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const replyOptions = (
+  // A closed notice offers no reply or appeal option.
+  const replyOptions = ws.fact.is_open === false ? null : (
     <ReplyOptions noticeId={ws.notice.id} responseNeed={ws.fact.response_need} drafts={drafts} canEdit={canEdit} dirty={dirty}
       onStarted={(v) => { setOpening(v); onChanged(); }} />
   );

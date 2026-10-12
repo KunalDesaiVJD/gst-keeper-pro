@@ -55,6 +55,11 @@ export interface CallUsage {
   model: string;
   calls: number;
   fallback?: { from: string; to: string };
+  // Tokens of an unbilled call (the CLI gateway), shown to staff but never priced;
+  // estimated when the gateway does not report them.
+  tokens_in?: number;
+  tokens_out?: number;
+  estimated?: boolean;
 }
 
 export type CallOutcome =

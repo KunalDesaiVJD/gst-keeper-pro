@@ -66,7 +66,9 @@ const OverrideButton: React.FC<{ d: Deadline; onDone: () => void }> = ({ d, onDo
 export const DeadlinesTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged: () => void }> = ({ ws, canEdit, onChanged }) => {
   const { user } = useAuth();
   const today = istToday();
-  const rows = ws.deadlines;
+  // A closed notice has no appeal left to run (the firm's request of 12 October 2026).
+  const closed = ws.fact.is_open === false;
+  const rows = closed ? ws.deadlines.filter((d) => !String(d.deadline_type ?? '').startsWith('appeal')) : ws.deadlines;
   const exportIcs = () => downloadIcs(rows.filter((d) => !d.is_met).map((d) => ({
     uid: d.id, date: d.deadline_date,
     title: `${DEADLINE_LABELS[d.deadline_type] ?? d.deadline_type} — ${ws.client?.name ?? ''}`,

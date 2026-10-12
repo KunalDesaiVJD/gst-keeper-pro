@@ -6,8 +6,8 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  AlarmClock, Archive, ArrowDownLeft, ArrowUpRight, Building2, CalendarClock, ChevronRight, Gavel, Inbox, IndianRupee,
-  ReceiptIndianRupee, Scale, type LucideIcon,
+  AlarmClock, Archive, ArrowDownLeft, ArrowUpRight, Building2, CheckCircle2, ChevronRight, Gavel, Hourglass, Inbox, IndianRupee,
+  ReceiptIndianRupee, UserRound, type LucideIcon,
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/gstr9/badge';
@@ -48,9 +48,14 @@ export const KindCards: React.FC<{ value: Track; counts: Record<Track, TrackCoun
             <span className="block truncate text-sm font-semibold">{t.label}</span>
             {c ? (
               <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                <span><span className="font-semibold tabular-nums text-foreground">{t.key === 'other' ? c.cases : c.open}</span> {t.key === 'other' ? 'on record' : 'open'}</span>
-                {c.new > 0 && <span className="font-medium text-info">{c.new} new</span>}
+                {t.key === 'other' ? (
+                  <span><span className="font-semibold tabular-nums text-foreground">{c.cases}</span> on record</span>
+                ) : (<>
+                  <span title="The next move is the firm's"><span className="font-semibold tabular-nums text-warning">{c.with_us}</span> with us</span>
+                  <span title="Replied, filed or appealed: waiting for the officer"><span className="font-semibold tabular-nums text-info">{c.with_dept}</span> with dept</span>
+                </>)}
                 {c.overdue > 0 && t.key !== 'other' && <span className="font-medium text-destructive-strong">{c.overdue} overdue</span>}
+                {c.new > 0 && <span className="font-medium text-info">{c.new} new</span>}
               </span>
             ) : <Skeleton className="mt-1 h-3 w-24" />}
           </span>
@@ -68,28 +73,29 @@ const TONE: Record<Kpi['tone'], string> = {
 };
 
 export const KpiCards: React.FC<{ track: Track; c: TrackCounts | undefined; master: Master }> = ({ track, c, master }) => {
-  if (!c) return <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-5">{Array.from({ length: track === 'litigation' ? 5 : 4 }).map((_, i) => <Skeleton key={i} className="h-[88px]" />)}</div>;
+  if (!c) return <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">{Array.from({ length: track === 'litigation' ? 6 : 5 }).map((_, i) => <Skeleton key={i} className="h-[88px]" />)}</div>;
   const kpis: Kpi[] = track === 'other' ? [
     { label: 'On record', value: String(c.cases), sub: 'LUT, payments, approvals', to: casesHref(track, 'all', master), icon: Archive, tone: 'neutral' },
     { label: 'New', value: String(c.new), sub: plural(c.new_items, 'item') + ' since last opened', to: casesHref(track, 'new', master), icon: Inbox, tone: 'info', hot: c.new > 0 },
   ] : [
-    { label: 'Open cases', value: String(c.open), sub: `of ${c.cases}${c.unassigned ? ` · ${c.unassigned} unassigned` : ''}`, to: casesHref(track, '', master), icon: Scale, tone: 'primary' },
-    { label: 'New from the portal', value: String(c.new), sub: c.new ? plural(c.new_items, 'item') + ' to look at' : 'nothing new', to: casesHref(track, 'new', master), icon: Inbox, tone: 'info', hot: c.new > 0 },
-    { label: 'Due this week', value: String(c.due7), sub: c.next_due ? `next ${fmtDate(c.next_due)}` : 'nothing due ahead', to: casesHref(track, 'due7', master), icon: CalendarClock, tone: 'warning', hot: c.due7 > 0 },
+    { label: 'With us', value: String(c.with_us), sub: [c.overdue && `${c.overdue} overdue`, c.due7 && `${c.due7} due this week`, c.unassigned && `${c.unassigned} unassigned`].filter(Boolean).join(' · ') || 'nothing late', to: casesHref(track, 'with_us', master), icon: UserRound, tone: 'warning', hot: c.with_us > 0 },
+    { label: 'With the department', value: String(c.with_dept), sub: c.in_appeal ? `${c.in_appeal} in appeal` : 'replied or filed, awaiting the officer', to: casesHref(track, 'with_dept', master), icon: Hourglass, tone: 'info' },
     { label: 'Overdue', value: String(c.overdue), sub: c.oldest_overdue_days ? `oldest ${c.oldest_overdue_days > 365 ? `${Math.floor(c.oldest_overdue_days / 365)} y` : `${c.oldest_overdue_days} d`}` : 'none', to: casesHref(track, 'overdue', master), icon: AlarmClock, tone: 'destructive', hot: c.overdue > 0 },
+    { label: 'New from the portal', value: String(c.new), sub: c.new ? plural(c.new_items, 'item') + ' to look at' : 'nothing new', to: casesHref(track, 'new', master), icon: Inbox, tone: 'info', hot: c.new > 0 },
+    { label: 'Closed', value: String(c.closed), sub: `of ${c.cases} cases`, to: casesHref(track, 'closed', master), icon: CheckCircle2, tone: 'neutral' },
     ...(track === 'litigation'
-      ? [{ label: 'Open exposure', value: fmtInrShort(c.exposure), sub: c.in_appeal ? `${c.in_appeal} in appeal` : 'demand still open', to: casesHref(track, '', master), icon: IndianRupee, tone: 'neutral' } as Kpi]
+      ? [{ label: 'Open exposure', value: fmtInrShort(c.exposure), sub: 'demands still open', to: casesHref(track, '', master), icon: IndianRupee, tone: 'neutral' } as Kpi]
       : []),
   ];
   return (
-    <div className={cn('grid grid-cols-2 gap-2', kpis.length > 4 ? 'md:grid-cols-3 xl:grid-cols-5' : 'md:grid-cols-4')}>
+    <div className={cn('grid grid-cols-2 gap-2', kpis.length > 5 ? 'md:grid-cols-3 xl:grid-cols-6' : kpis.length > 4 ? 'md:grid-cols-3 xl:grid-cols-5' : 'md:grid-cols-4')}>
       {kpis.map((k) => (
         <Link key={k.label} to={k.to} className="group rounded-xl border bg-card p-3 transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <div className="flex items-center justify-between gap-2">
             <span className="truncate text-xs font-medium text-muted-foreground">{k.label}</span>
             <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-md', TONE[k.tone])}><k.icon className="h-4 w-4" aria-hidden /></span>
           </div>
-          <div className={cn('mt-1 text-2xl font-bold tabular-nums leading-none', k.hot && k.tone === 'destructive' && 'text-destructive-strong', k.hot && k.tone === 'info' && 'text-info')}>{k.value}</div>
+          <div className={cn('mt-1 text-2xl font-bold tabular-nums leading-none', k.hot && k.tone === 'destructive' && 'text-destructive-strong', k.hot && k.tone === 'info' && 'text-info', k.hot && k.tone === 'warning' && 'text-warning')}>{k.value}</div>
           <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
             <span className="truncate">{k.sub}</span>
             <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />
@@ -129,8 +135,9 @@ export const WorkList: React.FC<{ track: Track; master: Master; counts: TrackCou
     : [
         { key: 'overdue', label: 'Overdue', n: counts?.overdue },
         { key: 'due7', label: 'Due this week', n: counts?.due7 },
+        { key: 'with_us', label: 'With us', n: counts?.with_us },
+        { key: 'with_dept', label: 'With dept', n: counts?.with_dept },
         { key: 'new', label: 'New', n: counts?.new },
-        { key: 'open', label: 'All open', n: counts?.open },
       ];
   const [picked, setPicked] = useState<CaseShow | null>(null);
   const firstWithWork = segs.find((s) => (s.n ?? 0) > 0)?.key ?? segs[segs.length - 1].key;

@@ -16,7 +16,7 @@ import { KindCards } from '@/components/notices/cases/HomeParts';
 import { CasesTable } from '@/components/notices/cases/CasesTable';
 import { useAuth } from '@/contexts/AuthContext';
 import { masterForRpc, useMaster } from '@/lib/masterFilters';
-import { isTrack, loadCases, trackDef, useCaseCounts, type CaseShow, type Track } from '@/lib/noticeCases';
+import { CASE_SHOWS, isTrack, loadCases, trackDef, useCaseCounts, type CaseShow, type Track } from '@/lib/noticeCases';
 
 const PAGE = 50;
 
@@ -27,7 +27,8 @@ const NoticeCasesPage: React.FC = () => {
   const kindParam = sp.get('kind');
   const track: Track = isTrack(kindParam) ? kindParam : 'litigation';
   const showParam = sp.get('show');
-  const show: CaseShow = (['new', 'all', 'overdue', 'due7'] as string[]).includes(showParam ?? '') && !(track === 'other' && (showParam === 'overdue' || showParam === 'due7'))
+  const show: CaseShow = (CASE_SHOWS as readonly string[]).includes(showParam ?? '') && showParam !== 'open'
+    && !(track === 'other' && !['all', 'new'].includes(showParam ?? ''))
     ? showParam as CaseShow : track === 'other' ? 'all' : 'open';
   const page = Math.max(1, Number(sp.get('p')) || 1);
   const [q, setQ] = useState(sp.get('q') ?? '');
@@ -50,9 +51,12 @@ const NoticeCasesPage: React.FC = () => {
     ? [{ key: 'all', label: 'All', n: c?.cases }, { key: 'new', label: 'New correspondence', n: c?.new }]
     : [
         { key: 'open', label: 'Open', n: c?.open },
+        { key: 'with_us', label: 'With us', n: c?.with_us, tone: c?.with_us ? 'text-warning' : '' },
+        { key: 'with_dept', label: 'With the department', n: c?.with_dept, tone: c?.with_dept ? 'text-info' : '' },
         { key: 'overdue', label: 'Overdue', n: c?.overdue, tone: c?.overdue ? 'text-destructive-strong' : '' },
         { key: 'due7', label: 'Due this week', n: c?.due7 },
-        { key: 'new', label: 'New correspondence', n: c?.new },
+        { key: 'new', label: 'New', n: c?.new },
+        { key: 'closed', label: 'Closed', n: c?.closed },
         { key: 'all', label: 'All', n: c?.cases },
       ];
   const rows = list.data?.rows ?? [];

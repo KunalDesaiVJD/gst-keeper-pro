@@ -285,7 +285,7 @@ Deno.test('the assistant: begin, ask the API, finish; no key says so', async () 
 });
 
 // ── The Claude CLI gateway (the firm's subscription, as in its other project) ──
-Deno.test('CLI: a reply PDF goes as its text, the JSON comes back, no tokens billed', async () => {
+Deno.test('CLI: a reply PDF goes as its text, the JSON comes back, no tokens billed, tokens counted', async () => {
   const pdf = await buildPdf(replyPages);
   const net = new FakeNet({ 'reply.pdf': pdf }, () => jsonReply(replyReading));
   net.gateway = () => ({ body: { text: '```json\n' + JSON.stringify(replyReading) + '\n```', model: 'opus' } });
@@ -304,7 +304,10 @@ Deno.test('CLI: a reply PDF goes as its text, the JSON comes back, no tokens bil
   const r = f.result as J;
   assertEquals(r.pairs.length, 2);
   assertEquals(r.pairs[0].verified, true, 'quotes checked against the same text, on a second try too');
-  assertEquals([f.usage?.input_tokens, f.usage?.output_tokens, f.usage?.model], [0, 0, 'claude-cli:opus']);
+  // No tokens billed, but counted (an estimate, as the gateway sends none) so staff see what a read takes.
+  assertEquals([f.usage?.input_tokens, f.usage?.output_tokens], [0, 0]);
+  assert((f.usage?.tokens_in ?? 0) > 0 && (f.usage?.tokens_out ?? 0) > 0);
+  assertEquals([f.usage?.estimated, f.usage?.model], [true, 'claude-cli:opus']);
 });
 
 Deno.test('CLI: a scan goes to the API when there is a key, else waits for one; a refused secret pauses', async () => {
@@ -375,7 +378,7 @@ Deno.test('advice: kept trimmed, dates checked, no dashes', () => {
   assertEquals(a.headline, 'File appeal in APL 01 by 26 Feb 2026');
   assertEquals(a.situation, 'Order, rejected');
   assertEquals(a.can_close, false);
-  assertEquals((a.cautions as string[]).length, 3);
+  assertEquals((a.cautions as string[]).length, 2);
   assertEquals(a.steps, [{ action: 'File APL 01', detail: 'with pre deposit', by: '', who: 'firm' }]);
 });
 

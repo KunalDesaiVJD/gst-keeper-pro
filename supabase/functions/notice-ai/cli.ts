@@ -82,7 +82,10 @@ export function cliCaller(opts: { url: string; secret: string; fetch?: typeof fe
       return { ok: false, status: 'retry', reason: 'connection', error: `The Claude CLI gateway could not be reached: ${scrub(String((e as Error)?.message ?? e)).slice(0, 200)}`, usage };
     }
     usage.duration_ms = Date.now() - started;
-    const body = await res.json().catch(() => ({})) as { text?: string; error?: string; truncated?: boolean; model?: string };
+    const body = await res.json().catch(() => ({})) as {
+      text?: string; error?: string; truncated?: boolean; model?: string;
+      usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
+    };
     if (res.status === 401 || res.status === 403) {
       usage.status = 'error';
       return { ok: false, status: 'retry', reason: 'cli_auth', error: 'The Claude CLI gateway refused the CLAUDE_CLI_GATEWAY_SECRET.', usage, pause: 'cli_auth' };
@@ -94,6 +97,17 @@ export function cliCaller(opts: { url: string; secret: string; fetch?: typeof fe
       return { ok: false, status: retry ? 'retry' : 'failed', reason: retry ? 'cli_unavailable' : 'cli_error', error: `The Claude CLI gateway: ${msg}`, usage };
     }
     if (body.model) usage.model = `claude-cli:${body.model}`;
+    // Tokens: the gateway's own count when it sends one, else an estimate (about 4 characters a token).
+    const u = body.usage;
+    // Kept apart from input_tokens / output_tokens, which price a call: the subscription bills nothing.
+    if (u && (Number(u.input_tokens) > 0 || Number(u.output_tokens) > 0)) {
+      usage.tokens_in = (Number(u.input_tokens) || 0) + (Number(u.cache_read_input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0);
+      usage.tokens_out = Number(u.output_tokens) || 0;
+    } else {
+      usage.tokens_in = Math.ceil((cliSystem(req).length + JSON.stringify(parts).length) / 4);
+      usage.tokens_out = Math.ceil((body.text?.length ?? 0) / 4);
+      usage.estimated = true;
+    }
     if (body.truncated) {
       usage.status = 'error';
       return { ok: false, status: 'failed', reason: 'max_tokens', error: 'The answer from the Claude CLI was cut off.', usage };

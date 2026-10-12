@@ -9,6 +9,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { StageBadge } from '@/components/notices/StageBadge';
 import { OwnerChip } from '@/components/notices/OwnerChip';
 import { NextStepLine } from '@/components/notices/cases/NextStepLine';
+import { WaitingChip } from '@/components/notices/cases/WaitingChip';
 import { adviceOf, useAdviceMap } from '@/lib/noticeAdvice';
 import { caseHref, type CaseRow, type Track } from '@/lib/noticeCases';
 import { fmtDate, fmtFy, fmtInrShort, plural } from '@/lib/noticeFormat';
@@ -49,6 +50,7 @@ export const CasesTable: React.FC<{ rows: CaseRow[]; track: Track | 'all'; compa
           <tr>
             <th scope="col" className={WS_TH}>Client</th>
             <th scope="col" className={WS_TH}>Case</th>
+            <th scope="col" className={WS_TH}>Status</th>
             {lit && <th scope="col" className={WS_TH}>Stage</th>}
             {track !== 'other' && <th scope="col" className={WS_TH}>Next due</th>}
             {lit && <th scope="col" className={cn(WS_TH, 'text-right')}>Exposure</th>}
@@ -76,7 +78,8 @@ export const CasesTable: React.FC<{ rows: CaseRow[]; track: Track | 'all'; compa
                   </div>
                   {track !== 'other' && <NextStepLine r={r} advice={adviceOf(advice.data, r.client_id as string, r.case_key as string)} className="mt-0.5 max-w-[22rem]" />}
                 </td>
-                {lit && <td className={WS_TD}>{r.is_open ? <StageBadge stage={r.stage} /> : <span className="text-xs text-muted-foreground">closed</span>}</td>}
+                <td className={WS_TD}><WaitingChip r={r} /></td>
+                {lit && <td className={WS_TD}>{r.is_open ? <StageBadge stage={r.stage} /> : <span className="text-xs text-muted-foreground">—</span>}</td>}
                 {track !== 'other' && (
                   <td className={WS_TD}>
                     <DueCell r={r} />
