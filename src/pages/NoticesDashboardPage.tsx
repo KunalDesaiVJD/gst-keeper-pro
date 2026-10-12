@@ -24,8 +24,7 @@ import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { SyncNowButton } from '@/components/notices/SyncNowButton';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
-import { KindTabs } from '@/components/notices/cases/KindTabs';
-import { AttentionList, NewFromPortal, StatStrip, Upcoming } from '@/components/notices/cases/HomeParts';
+import { KindCards, KpiCards, NewFromPortal, OverdueByAge, Upcoming, WorkList } from '@/components/notices/cases/HomeParts';
 import { isTrack, useCaseCounts, type Track } from '@/lib/noticeCases';
 import { NoticeTypesSettings } from '@/components/notices/types/NoticeTypesSettings';
 import { AutopilotLine } from '@/components/notices/command/CommandCards';
@@ -97,13 +96,14 @@ const NoticesDashboardPage: React.FC = () => {
         </Note>
       )}
 
-      <KindTabs value={kind} counts={counts.data} onChange={setKind} />
-      <StatStrip track={kind} c={counts.data?.[kind]} master={m} />
+      <KindCards value={kind} counts={counts.data} onChange={setKind} />
+      <KpiCards track={kind} c={counts.data?.[kind]} master={m} />
       <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <AttentionList track={kind} master={m} />
+        <div><WorkList track={kind} master={m} counts={counts.data?.[kind]} /></div>
         <div className="space-y-3">
-          {kind !== 'other' && <NewFromPortal track={kind} />}
+          {kind !== 'other' && <OverdueByAge c={counts.data?.[kind]} track={kind} master={m} />}
           {kind === 'litigation' && <Upcoming cc={data} master={m} />}
+          {kind !== 'other' && <NewFromPortal track={kind} />}
         </div>
       </div>
 
