@@ -644,3 +644,17 @@ linked if 100% confidence, or if it is not then recommendation options".
 - **Failing means something staff can fix.** Only a refused login or password, a CAPTCHA, or the wrong GSTIN in the session counts as failing (`sync_reason_actionable`). "The scheduled Chrome was offline", a portal error, or a client whose portal list simply has no notices is no longer shown as failing or "not synced". The home line reads, for example, "19 clients not synced (19 login failed)".
 - **One notice can be hidden.** A superadmin or GST manager can hide a single notice with More → Not required (hide) on the notice page (`notice_exclude`, `excluded_scope = 'notice'`). The rest of its case stays. Only a whole case hidden as handled elsewhere (`excluded_scope = 'case'`) also hides notices that arrive in it later. Notices · Settings → Hidden cases and notices brings either back.
 - **DRC-01B and DRC-01C need no urgent reply.** Their reply is optional and their default priority is Low. The firm explains or pays these intimations at its convenience.
+
+## 27. Not important notices, and the date on every paper (asked by the firm, 12 October 2026)
+
+- **Not important.** A notice the portal issues as "System generated", and every DRC-01B and DRC-01C, is not relevant for a reply (`notice_is_system_generated`; `notice_facts.system_generated`):
+  - it needs no reply, so it is never overdue or due;
+  - it stays off the dashboard and sits under Other (`notice_cases.track`);
+  - its reply templates are switched off (kept, so they can be switched back on).
+
+  It stays on record and can still be opened. On 12 October 2026 this moved 13 cases to Other and took litigation overdue from 30 to 19.
+- **The date on the paper.** Every item of a case's correspondence is dated, in this order:
+  - the date on the paper: a notice's date of issue, or for a document the date the AI read printed on it (`notice_doc_date_ok`: between July 2017 and today);
+  - otherwise the date the portal gives (`notice_folder_item_date`, which now also reads a reply's date and declaration, a payment's date, a filing date and a draft's date).
+
+  It is never the day it was synced. On 12 October 2026 every one of the 1,326 items had a date.

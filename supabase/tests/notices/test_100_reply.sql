@@ -93,10 +93,10 @@ SELECT notice_clocks_refresh('c4200000-0000-0000-0000-000000000002');
 SELECT t_eq((SELECT string_agg(g.reference_number || '=' || c.kind, ' ' ORDER BY g.reference_number)
                FROM notice_due_coverage() c JOIN gst_notices g ON g.id = c.notice_id
               WHERE g.client_id = 'c4100000-0000-0000-0000-000000000001'),
-            'ZA-3=hearing ZA-4=informational ZA-5=missing ZD-01B=reply ZD-01C=reply ZD-SCN-10=hearing ZD-SCN-11=missing ZR-1=informational ZR-2=appeal',
+            'ZA-3=hearing ZA-4=informational ZA-5=missing ZD-01B=informational ZD-01C=informational ZD-SCN-10=hearing ZD-SCN-11=missing ZR-1=informational ZR-2=appeal',
             'each open notice runs on a reply date, a hearing, an appeal clock, closes by itself, or is missing');
 SELECT t_eq((SELECT c.source FROM notice_due_coverage() c WHERE c.notice_id = 'c4200000-0000-0000-0000-000000000020'),
-            'portal notice list', 'a reply date says where it came from');
+            'no reply needed for this notice type', 'a DRC-01B needs no reply since 20261014120000, and says so');
 
 -- ── AI reading: switches and consent ───────────────────────────────────────
 UPDATE gst_notices SET pdf_url = 'https://example.test/storage/v1/object/public/notice-pdfs/notice-01c.pdf' WHERE id = 'c4200000-0000-0000-0000-000000000021';

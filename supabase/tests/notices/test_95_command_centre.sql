@@ -6,7 +6,7 @@ INSERT INTO clients (id, name, gstin) VALUES ('95959595-0000-0000-0000-000000000
 -- n5 filed, hearing in 5 d · n6 order with an appeal clock · n7 closed · n8 new, no date · n9 filed, nothing pending
 INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, due_date, reference_number, case_id, amount_of_demand) VALUES
  ('e9500000-0000-0000-0000-000000000001', '95959595-0000-0000-0000-000000000001', 'notices', 'c1', 'Notice', 'ASMT-10 scrutiny of returns', ist_today() - 20, ist_today() - 3, 'ZD-CC-1', NULL, 500000),
- ('e9500000-0000-0000-0000-000000000002', '95959595-0000-0000-0000-000000000001', 'notices', 'c2', 'Notice', 'DRC-01C intimation', ist_today() - 4, ist_today() + 3, 'ZD-CC-2', NULL, 100000),
+ ('e9500000-0000-0000-0000-000000000002', '95959595-0000-0000-0000-000000000001', 'notices', 'c2', 'Notice', 'ASMT-10 scrutiny notice', ist_today() - 4, ist_today() + 3, 'ZD-CC-2', NULL, 100000),
  ('e9500000-0000-0000-0000-000000000003', '95959595-0000-0000-0000-000000000001', 'notices', 'c3', 'Notice', 'ASMT-10 scrutiny', ist_today() - 10, ist_today() + 10, 'ZD-CC-3', NULL, NULL),
  ('e9500000-0000-0000-0000-000000000004', '95959595-0000-0000-0000-000000000001', 'notices', 'c4', 'Notice', 'ASMT-10 scrutiny', ist_today() - 10, ist_today() + 12, 'ZD-CC-4', NULL, NULL),
  ('e9500000-0000-0000-0000-000000000005', '95959595-0000-0000-0000-000000000001', 'notices', 'c5', 'Determination Of Tax', 'Show Cause Notice', ist_today() - 40, ist_today() - 10, NULL, 'AD-CC-5', 2000000),

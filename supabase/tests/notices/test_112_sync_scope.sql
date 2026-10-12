@@ -4,7 +4,7 @@ SELECT t_eq(sync_reason_actionable('login_failed'), true, 'a refused login is fa
 SELECT t_eq(sync_reason_actionable('captcha_timeout'), true, 'a CAPTCHA not typed is failing');
 SELECT t_eq(sync_reason_actionable('agent_offline'), false, 'the scheduled Chrome offline is not');
 SELECT t_eq(sync_reason_actionable('portal_error'), false, 'nor a portal hiccup');
-SELECT t_eq((SELECT response_need FROM notice_type_settings WHERE form_code = 'DRC-01C'), 'optional', 'DRC-01C: reply optional');
+SELECT t_eq((SELECT response_need FROM notice_type_settings WHERE form_code = 'DRC-01C'), 'none', 'DRC-01C: no reply needed (20261014120000)');
 
 INSERT INTO user_roles (user_id, role) VALUES ('11200000-0000-0000-0000-0000000000aa', 'superadmin');
 INSERT INTO clients (id, name, gstin, gst_user_id, gst_password, inactive_at_hand) VALUES
