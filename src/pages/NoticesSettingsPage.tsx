@@ -253,17 +253,17 @@ const NoticesSettingsPage: React.FC = () => {
 
         <OfficersPanel canEdit={canEdit || canManageNoticeTypes(user?.role)} />
 
-        <Panel title={`Cases handled elsewhere · ${excluded.data?.length ?? 0}`}
-          info="Cases a superadmin or GST manager marked as handled by another CA or by the client (Handled elsewhere, on the case page). They are in no list, count or e-mail; notices that arrive in them later are left out too.">
+        <Panel title={`Hidden cases and notices · ${excluded.data?.length ?? 0}`}
+          info="Cases a superadmin or GST manager marked as handled elsewhere (case page), and single notices marked Not required (notice page, More). They are in no list, count or e-mail; a hidden case also hides notices that arrive in it later.">
           {excluded.isLoading ? <Skeleton className="h-12 w-full" />
-            : !excluded.data?.length ? <p className="text-sm text-muted-foreground">None. Every case is handled by the firm.</p>
+            : !excluded.data?.length ? <p className="text-sm text-muted-foreground">Nothing hidden.</p>
             : (
               <ul className="divide-y">
                 {excluded.data.map((c) => (
                   <li key={`${c.client_id}:${c.case_key}`} className="flex flex-wrap items-center gap-2 py-2 text-sm">
                     <div className="min-w-0 flex-1">
                       <div className="font-medium">{c.client_name} <span className="font-mono text-[11px] font-normal text-muted-foreground">{c.case_key.startsWith('N:') ? '' : c.case_key}</span></div>
-                      <div className="text-xs text-muted-foreground">{c.forms ?? 'Notice'} · {c.notices} notice{c.notices === 1 ? '' : 's'} · {c.excluded_reason ?? 'Handled elsewhere'}{c.excluded_by_name ? ` · by ${c.excluded_by_name}` : ''}</div>
+                      <div className="text-xs text-muted-foreground">{c.single_notices ? `Notice ${c.references ?? ''} only · ` : ''}{c.forms ?? 'Notice'} · {c.notices} notice{c.notices === 1 ? '' : 's'} · {c.excluded_reason ?? 'Handled elsewhere'}{c.excluded_by_name ? ` · by ${c.excluded_by_name}` : ''}</div>
                     </div>
                     {canManageNoticeTypes(user?.role) && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => bringBack(c)}>Bring back</Button>}
                   </li>

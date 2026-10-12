@@ -62,11 +62,15 @@ export function tsCmp(a: string, b: string): number {
   return micro(a) - micro(b);
 }
 
+/** Same as public.sync_reason_actionable. */
+export const isActionableReason = (r: string | null | undefined): boolean =>
+  !!r && (['login_failed', 'captcha_failed', 'captcha_timeout', 'session_mismatch'].includes(r) || r.includes('password'));
+
 export function classify(client: ClientBase, steps: Partial<Record<Step, StepStatus>>, now = Date.now()): ClientHealth {
   const userId = client.gst_user_id ?? '';
-  const eligible = userId !== '' && !client.inactive_at_hand && !client.notices_sync_excluded;
-  const off: OffReason | null = eligible ? null
-    : client.notices_sync_excluded ? 'excluded' : client.inactive_at_hand ? 'inactive' : 'no_user_id';
+  // 20261014110000: an inactive client is still synced for notices (it may get them).
+  const eligible = userId !== '' && !client.notices_sync_excluded;
+  const off: OffReason | null = eligible ? null : client.notices_sync_excluded ? 'excluded' : 'no_user_id';
   const notices = steps.notices;
   const login = steps.login;
   const lastSuccessAt = notices?.last_success_at ?? null;
@@ -97,6 +101,10 @@ export function classify(client: ClientBase, steps: Partial<Record<Step, StepSta
       failMessage = notices.last_message ?? null;
       failAt = notices.last_attempt_at ?? null;
     }
+    // Only what staff can act on is failing (a password or a CAPTCHA), as the
+    // command centre counts it (sync_reason_actionable, 20261014110000): the
+    // scheduled Chrome offline or a portal hiccup is not a failing client.
+    if (failReason && !isActionableReason(failReason)) failReason = null;
     if (!failReason) { failStep = null; failMessage = null; failAt = null; }
   }
   const state: SyncState = !eligible ? 'off' : failReason ? 'failed' : never ? 'never' : fresh ? 'fresh' : 'stale';

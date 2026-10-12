@@ -98,10 +98,10 @@ UPDATE sync_run_items SET created_at = now() - interval '2 days' WHERE client_id
 SELECT sync_run_finish((SELECT (v #>> '{}')::uuid FROM r WHERE k = 'run'));
 SELECT t_eq((SELECT status || '/' || clients_done FROM sync_runs), 'done/1', 'run finished with its client count');
 
--- Queue: urgent first (overdue notice), then never synced, then stalest; inactive left out.
+-- Queue: urgent first (overdue notice), then never synced, then stalest; an inactive client is synced for notices too (20261014110000).
 INSERT INTO gst_notices (client_id, source, portal_key, notice_type, description, issue_date, due_date)
 VALUES ('44444444-0000-0000-0000-000000000002', 'notices', 'URG', 'Notice', 'Urgent', ist_today() - 10, ist_today() - 1);
 SELECT t_eq((SELECT string_agg(name, ' > ' ORDER BY ord) FROM (SELECT name, row_number() OVER () AS ord FROM sync_queue(NULL)) q),
-            'Zeta Ltd > Eta Ltd > Epsilon Ltd', 'risk order');
+            'Zeta Ltd > Eta Ltd > Theta Ltd (inactive) > Epsilon Ltd', 'risk order');
 SELECT t_eq((SELECT count(*) FROM sync_queue(ARRAY['44444444-0000-0000-0000-000000000004'::uuid])), 1::bigint, 'inactive client syncs when picked by hand');
 ROLLBACK;

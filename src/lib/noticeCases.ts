@@ -290,9 +290,18 @@ export async function excludeCase(clientId: string, caseKey: string, exclude: bo
 export interface ExcludedCase {
   client_id: string; client_name: string; client_gstin: string; case_key: string; excluded_at: string;
   excluded_by_name: string | null; excluded_reason: string | null; notices: number; forms: string | null;
+  /** Only single notices hidden (not the whole case), and their references. */
+  single_notices?: boolean; references?: string | null;
 }
 export async function loadExcludedCases(): Promise<ExcludedCase[]> {
   const { data, error } = await supabase.rpc('notice_cases_excluded');
   if (error) throw error;
   return (Array.isArray(data) ? data : []) as unknown as ExcludedCase[];
+}
+
+/** One notice that is not required: out of every list, the rest of its case stays (20261014110000). */
+export async function excludeNotice(noticeId: string, exclude: boolean, reason: string | null, actor: Actor): Promise<void> {
+  const { data, error } = await supabase.rpc('notice_exclude', { p_notice_id: noticeId, p_exclude: exclude, p_reason: reason, p_actor_id: actor.id, p_actor_name: actor.firstName ?? null });
+  if (error) throw error;
+  if (rpcResult(data).error) throw new Error(rpcResult(data).error);
 }

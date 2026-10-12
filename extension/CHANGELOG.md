@@ -2,6 +2,20 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-12 — 0.9.1 and 0.10.x together (v0.10.2)
+
+No database change beyond 0.10.1's.
+
+- One build with everything since 0.9.0. It has 0.9.1's review fixes to the e-invoice pull, which shipped from their own branch on 10 October. It also has 0.10.0's fresh-only sync and 0.10.1's inactive clients. Install this one in place of 0.9.1, 0.10.0 or 0.10.1.
+- The version goes up to 0.10.2, not 0.9.2. Chrome compares versions number by number, so 0.10 comes after 0.9 (10 is more than 9), and this build carries more than 0.9.1.
+
+## 2026-10-12 — Inactive clients are synced for notices (v0.10.1)
+
+Needs migration 20261014110000 (applied).
+
+- **Why.** A client marked inactive (Edit Client) may still get notices on the portal, yet Sync All left it out, so it showed as never synced.
+- **Now.** Sync All and the popup's eligible list keep inactive clients for the notices sync. Only clients the firm does not handle (Notices · Settings, so `notices_sync_excluded`) are left out, along with clients with a password issue (as before). Returns pulls are unchanged.
+
 ## 2026-10-12 — Fresh only: a sync fetches what is new, not the old notices again (v0.10.0)
 
 No database or app change needed.
@@ -16,6 +30,28 @@ No database or app change needed.
 - **Fallback.** If the stored notices cannot be read (the database is unreachable), every notice counts as fresh: the old, full behaviour.
 - **Debug panel.** It shows "fresh only: N new or changed notice(s); M old notice PDF(s) not fetched again", and how many open cases were on the weekly check.
 - **Tests.** `test/12-fresh-only.test.mjs`. `04-stored-pdf-e2e` now gives the stored notices' status, as the background does.
+
+## 2026-10-10 — Review fixes to the e-invoice pull (v0.9.1)
+
+Needs the GSTR-1 page update shipped with it. No database change.
+
+- **Wording.** The message no longer says "so none is on the portal as an
+  e-invoice": it says what the GSTR-1 file holds ("none of them carries an
+  IRN") and, with the month's e-invoice details imported, how many e-invoices
+  they list and how many have no IRN in the file.
+- **The import is checked by the database's clock.** The pull reads the
+  month's e-invoice Excel row before pressing the portal's button and waits
+  for it to change (0.9.0 compared the PC's clock with the database's). One
+  that lands after the pull stops waiting is found when the pull ends.
+- **A closed tab or a failed pull after the import** says the import was made;
+  "Nothing was saved" is then about the GSTR-1 file only.
+- **The download hook** takes only a workbook or ZIP from a gst.gov.in address
+  opened from return.gst.gov.in.
+- **The comparison** reads the month's e-invoice records in pages of 1,000.
+- **GSTR-1 page:** shows the pull's whole message for an ok or none pull, warns
+  when the e-invoice details were not taken or not imported, never saves a
+  downloaded file from which no e-invoice was read (the earlier import stays),
+  and accepts the file only from its own window.
 
 ## 2026-10-10 — E-invoice pull opens the month's GSTR-1 and takes its e-invoice details (v0.9.0)
 

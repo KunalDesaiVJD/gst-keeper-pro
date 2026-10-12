@@ -10869,6 +10869,10 @@ export type Database = {
         Returns: Json
       }
       notice_cases_excluded: { Args: never; Returns: Json }
+      notice_exclude: {
+        Args: { p_notice_id: string; p_exclude: boolean; p_reason: string | null; p_actor_id: string; p_actor_name: string | null }
+        Returns: Json
+      }
       notices_client_tracks_set: {
         Args: { p_client_ids: string[]; p_track: string; p_handled: boolean }
         Returns: number
