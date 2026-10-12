@@ -180,7 +180,7 @@ interface ReversalTotals {
 }
 
 const ITCSummaryPage: React.FC = () => {
-  const { canUnlockSheets, user, isStaffRole } = useAuth();
+  const { canUnlockSheets, user, isStaffRole, canExportData, canClearData, canViewVersionHistory } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const selectedClient = selectedClientId;
@@ -202,7 +202,7 @@ const ITCSummaryPage: React.FC = () => {
   const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string; version: number } | null>(null);
   const [showClearData, setShowClearData] = useState(false);
 
-  const canViewVersions = user?.role === 'superadmin' || user?.role === 'gst_manager';
+  const canViewVersions = canViewVersionHistory();
 
   // Editable ITC data state
   const [itcData, setItcData] = useState<ITCData>(getDefaultITCData());
@@ -1191,6 +1191,7 @@ const ITCSummaryPage: React.FC = () => {
   };
 
   const handleExportPDF = () => {
+    if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
     if (!selectedClientData) {
       toast.error('Please select a client first');
       return;
@@ -1332,12 +1333,19 @@ const ITCSummaryPage: React.FC = () => {
               </span>
             )}
             {selectedClient && (
-              <Button variant="outline" size="sm" className={WS_BTN} onClick={handleExportPDF}>
+              <Button
+                variant="outline"
+                size="sm"
+                className={WS_BTN}
+                onClick={handleExportPDF}
+                disabled={!canExportData()}
+                title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+              >
                 <FileText className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Export PDF</span>
               </Button>
             )}
-            {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClient && (
+            {canClearData() && selectedClient && (
               <Button variant="outline" size="sm" className={cn(WS_BTN, 'text-destructive hover:text-destructive')} onClick={() => setShowClearData(true)}>
                 <Trash2 className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Clear Data</span>
@@ -1400,7 +1408,7 @@ const ITCSummaryPage: React.FC = () => {
 
       {/* Version History Dialog */}
       <GenericVersionHistoryDialog
-        open={showVersionHistory}
+        open={showVersionHistory && canViewVersions}
         onOpenChange={setShowVersionHistory}
         versions={versions}
         onRestore={handleRestoreVersion}
@@ -1670,7 +1678,7 @@ const ITCSummaryPage: React.FC = () => {
       
       {selectedClient && selectedClientData && (
         <ClearDataDialog
-          open={showClearData}
+          open={showClearData && canClearData()}
           onOpenChange={setShowClearData}
           module="ITC Summary"
           clientId={selectedClient}

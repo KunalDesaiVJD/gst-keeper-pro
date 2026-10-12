@@ -7,6 +7,7 @@ import { WS_BTN, WS_CONTROL, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, W
 import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface TurnoverRow {
   id: string;
@@ -40,6 +41,7 @@ const fyOptions = (): string[] => {
  * tracks turnover, so this is entered by hand, one row per financial year.
  */
 export const AnnualTurnoverCard: React.FC<AnnualTurnoverCardProps> = ({ clientId }) => {
+  const { canAddEditClients } = useAuth();
   const [rows, setRows] = useState<TurnoverRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -99,6 +101,7 @@ export const AnnualTurnoverCard: React.FC<AnnualTurnoverCardProps> = ({ clientId
   };
 
   const deleteRow = async (row: TurnoverRow) => {
+    if (!canAddEditClients()) { toast.error('Needs the Add / edit clients permission — ask a GST Manager to add it to your position'); return; }
     const { error } = await supabase.from('client_annual_turnover').delete().eq('id', row.id);
     if (error) { toast.error('Delete failed: ' + error.message); return; }
     toast.success(`FY ${row.financial_year} turnover removed.`);
@@ -151,7 +154,15 @@ export const AnnualTurnoverCard: React.FC<AnnualTurnoverCardProps> = ({ clientId
                     <td className={cn(WS_TD, 'py-0.5')}>
                       <div className="flex gap-1 justify-end">
                         <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => startEdit(row)}>Edit</Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteRow(row)} aria-label={`Delete FY ${row.financial_year}`}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive"
+                          onClick={() => deleteRow(row)}
+                          disabled={!canAddEditClients()}
+                          title={canAddEditClients() ? undefined : 'Needs the Add / edit clients permission — ask a GST Manager to add it to your position'}
+                          aria-label={`Delete FY ${row.financial_year}`}
+                        >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>

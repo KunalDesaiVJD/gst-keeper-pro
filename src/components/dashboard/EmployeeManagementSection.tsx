@@ -35,7 +35,7 @@ interface EmployeeManagementSectionProps {
 }
 
 const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ filterRole = 'all' }) => {
-  const { canManageEmployees } = useAuth();
+  const { canManageEmployees, canManagePositions } = useAuth();
   const confirm = useConfirm();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -203,6 +203,10 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
   };
 
   const handleUpdateRole = async () => {
+    if (!canManagePositions()) {
+      toast.error('Only a GST Manager or the superadmin can change a staff role.');
+      return;
+    }
     if (!editingEmployee) return;
 
     try {
@@ -288,7 +292,7 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="gst_manager">GST Manager</SelectItem>
+                      <SelectItem value="gst_manager" disabled={!canManagePositions()}>GST Manager</SelectItem>
                       <SelectItem value="employee">Employee</SelectItem>
                     </SelectContent>
                   </Select>
@@ -400,7 +404,7 @@ const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps> = ({ f
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="gst_manager">GST Manager</SelectItem>
+                      <SelectItem value="gst_manager" disabled={!canManagePositions()}>GST Manager</SelectItem>
                       <SelectItem value="employee">Employee</SelectItem>
                     </SelectContent>
                   </Select>

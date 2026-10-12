@@ -8831,6 +8831,7 @@ export type Database = {
           first_name: string
           id: string
           password: string | null
+          position_id: string | null
           updated_at: string | null
           user_id: string
         }
@@ -8840,6 +8841,7 @@ export type Database = {
           first_name: string
           id?: string
           password?: string | null
+          position_id?: string | null
           updated_at?: string | null
           user_id: string
         }
@@ -8849,6 +8851,7 @@ export type Database = {
           first_name?: string
           id?: string
           password?: string | null
+          position_id?: string | null
           updated_at?: string | null
           user_id?: string
         }
@@ -9313,6 +9316,93 @@ export type Database = {
           return_type?: Database["public"]["Enums"]["return_type"]
           updated_at?: string
           updated_by?: string | null
+        }
+        Relationships: []
+      }
+      staff_position_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          at: string
+          id: number
+          permission_key: string | null
+          position_id: string | null
+          position_name: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          at?: string
+          id?: number
+          permission_key?: string | null
+          position_id?: string | null
+          position_name?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          at?: string
+          id?: number
+          permission_key?: string | null
+          position_id?: string | null
+          position_name?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      staff_position_permissions: {
+        Row: {
+          granted_at: string
+          granted_by: string | null
+          permission_key: string
+          position_id: string
+        }
+        Insert: {
+          granted_at?: string
+          granted_by?: string | null
+          permission_key: string
+          position_id: string
+        }
+        Update: {
+          granted_at?: string
+          granted_by?: string | null
+          permission_key?: string
+          position_id?: string
+        }
+        Relationships: []
+      }
+      staff_positions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          sort_order?: number
+          updated_at?: string
         }
         Relationships: []
       }
@@ -11371,6 +11461,23 @@ export type Database = {
       }
       reset_client_password: {
         Args: { new_password: string; target_client_id: string }
+        Returns: boolean
+      }
+      staff_assign_position: {
+        Args: { p_actor_id: string; p_position_id: string | null; p_user_id: string }
+        Returns: undefined
+      }
+      staff_set_client_password: {
+        Args: { p_actor_id: string; p_client_id: string; p_new_password: string }
+        Returns: boolean
+      }
+      staff_set_password: {
+        Args: {
+          p_actor_id: string
+          p_current_password?: string
+          p_new_password: string
+          p_target_user_id: string
+        }
         Returns: boolean
       }
       reset_employee_password: {

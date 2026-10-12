@@ -1,15 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SectionCard } from '@/components/gstr9/ui';
+import { Badge } from '@/components/gstr9/badge';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+  WS_PAGE, WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR,
+} from '@/components/workspace/theme';
 import {
   Select,
   SelectContent,
@@ -224,35 +220,38 @@ const ManageMastersPage: React.FC<ManageMastersPageProps> = ({ embedded = false 
   const inactiveMasters = masters.filter((m) => !m.is_active);
 
   return (
-    <div className={embedded ? 'space-y-6' : 'space-y-6 animate-fade-in'}>
+    <div className={embedded ? 'space-y-3' : WS_PAGE}>
       {/* Header */}
-      <div className="flex items-start gap-2">
+      <div className="flex items-center gap-1">
         {!embedded && (
           <Button
             variant="ghost"
             size="icon"
             aria-label="Back to RCM Summary"
             onClick={() => navigate('/rcm-summary')}
-            className="mt-1 shrink-0"
+            className="h-8 w-8 shrink-0"
           >
-            <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className="h-4 w-4" />
           </Button>
         )}
         <PageHeader
           className="flex-1"
+          compact
           embedded={embedded}
           title="Manage RCM Masters"
           subtitle="Add, edit, or delete expense masters"
-          icon={<Settings className="h-6 w-6" />}
+          icon={<Settings />}
           actions={
             hasPermission ? (
               <Button
+                size="sm"
+                className={WS_BTN}
                 onClick={() => {
                   resetForm();
                   setShowAddDialog(true);
                 }}
               >
-                <Plus className="h-4 w-4 mr-2" />
+                <Plus className="h-3.5 w-3.5" />
                 Add Master
               </Button>
             ) : undefined
@@ -261,105 +260,107 @@ const ManageMastersPage: React.FC<ManageMastersPageProps> = ({ embedded = false 
       </div>
 
       {/* Active Masters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Active Masters ({activeMasters.length})</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader className="sticky top-0 z-10">
-                  <TableRow className="bg-primary hover:bg-primary">
-                    <TableHead className="text-primary-foreground">Expense Name</TableHead>
-                    <TableHead className="text-primary-foreground">Rate</TableHead>
-                    <TableHead className="text-primary-foreground">Supply Type</TableHead>
-                    <TableHead className="w-24 text-center text-primary-foreground">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {activeMasters.length === 0 ? (
-                    <TableEmptyState
-                      colSpan={4}
-                      icon={<Settings className="h-6 w-6" />}
-                      title="No active masters"
-                      description="Add an expense master to make it available in the RCM dropdown."
-                    />
-                  ) : (
-                    activeMasters.map((master) => (
-                      <TableRow key={master.id}>
-                        <TableCell className="font-medium">{master.expense_name}</TableCell>
-                        <TableCell className="text-right tabular-nums">{master.rate}</TableCell>
-                        <TableCell className="capitalize">{master.supply_type}</TableCell>
-                        <TableCell>
-                          {hasPermission && (
-                            <div className="flex items-center justify-center gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={`Edit ${master.expense_name}`}
-                                onClick={() => openEditDialog(master)}
-                                className="h-8 w-8"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={`Delete ${master.expense_name}`}
-                                onClick={() => openDeleteDialog(master)}
-                                className="h-8 w-8 text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <SectionCard
+        title={
+          <span className="flex items-center gap-2">
+            Active Masters
+            <Badge variant="success">{activeMasters.length}</Badge>
+          </span>
+        }
+      >
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        ) : (
+          <div className={WS_TABLE_WRAP}>
+            <table className={WS_TABLE}>
+              <thead>
+                <tr>
+                  <th className={WS_TH}>Expense Name</th>
+                  <th className={cn(WS_TH, 'w-28 text-right')}>Rate</th>
+                  <th className={cn(WS_TH, 'w-40')}>Supply Type</th>
+                  <th className={cn(WS_TH, 'w-24 text-center')}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeMasters.length === 0 ? (
+                  <TableEmptyState
+                    colSpan={4}
+                    icon={<Settings className="h-6 w-6" />}
+                    title="No active masters"
+                    description="Add an expense master to make it available in the RCM dropdown."
+                  />
+                ) : (
+                  activeMasters.map((master) => (
+                    <tr key={master.id} className={WS_TR}>
+                      <td className={cn(WS_TD, 'font-medium')}>{master.expense_name}</td>
+                      <td className={WS_TD_NUM}>{master.rate}</td>
+                      <td className={cn(WS_TD, 'capitalize')}>{master.supply_type}</td>
+                      <td className={cn(WS_TD, 'py-0.5')}>
+                        {hasPermission && (
+                          <div className="flex items-center justify-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`Edit ${master.expense_name}`}
+                              onClick={() => openEditDialog(master)}
+                              className="h-8 w-8"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`Delete ${master.expense_name}`}
+                              onClick={() => openDeleteDialog(master)}
+                              className="h-8 w-8 text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SectionCard>
 
       {/* Inactive Masters (if any) */}
       {inactiveMasters.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg text-muted-foreground">
-              Inactive Masters ({inactiveMasters.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader className="sticky top-0 z-10">
-                  <TableRow className="bg-primary hover:bg-primary">
-                    <TableHead className="text-primary-foreground">Expense Name</TableHead>
-                    <TableHead className="text-primary-foreground">Rate</TableHead>
-                    <TableHead className="text-primary-foreground">Supply Type</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {inactiveMasters.map((master) => (
-                    <TableRow key={master.id} className="opacity-60">
-                      <TableCell className="font-medium">{master.expense_name}</TableCell>
-                      <TableCell className="text-right tabular-nums">{master.rate}</TableCell>
-                      <TableCell className="capitalize">{master.supply_type}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
+        <SectionCard
+          title={
+            <span className="flex items-center gap-2 text-muted-foreground">
+              Inactive Masters
+              <Badge variant="secondary">{inactiveMasters.length}</Badge>
+            </span>
+          }
+        >
+          <div className={WS_TABLE_WRAP}>
+            <table className={WS_TABLE}>
+              <thead>
+                <tr>
+                  <th className={WS_TH}>Expense Name</th>
+                  <th className={cn(WS_TH, 'w-28 text-right')}>Rate</th>
+                  <th className={cn(WS_TH, 'w-40')}>Supply Type</th>
+                </tr>
+              </thead>
+              <tbody>
+                {inactiveMasters.map((master) => (
+                  <tr key={master.id} className={cn(WS_TR, 'opacity-60')}>
+                    <td className={cn(WS_TD, 'font-medium')}>{master.expense_name}</td>
+                    <td className={WS_TD_NUM}>{master.rate}</td>
+                    <td className={cn(WS_TD, 'capitalize')}>{master.supply_type}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
       )}
 
       {/* Add Dialog */}

@@ -184,7 +184,7 @@ const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string
 );
 
 const Import2BTab: React.FC = () => {
-  const { user, isStaffRole } = useAuth();
+  const { user, isStaffRole, canWork2BImport, canDelete2BRows } = useAuth();
   const { selectedClientId: selectedClient, setSelectedClientId: setSelectedClient } = useClient();
   const { selectedMonth, setSelectedMonth } = useMonth();
 
@@ -356,6 +356,7 @@ const Import2BTab: React.FC = () => {
 
   // ---- Import ----------------------------------------------------------------
   const handleImportClick = () => {
+    if (!canWork2BImport()) { toast.error('Needs the Import 2B & post permission — ask a GST Manager to add it to your position'); return; }
     if (!selectedClient || !selectedMonth) { toast.error('Select a client and month first'); return; }
     if (isLocked) { toast.error('The return is filed — this sheet is locked.'); return; }
     fileInputRef.current?.click();
@@ -365,6 +366,7 @@ const Import2BTab: React.FC = () => {
   // "Pull from portal" hand-off (a portal-downloaded .xlsx, reconstructed to a File).
   const importFile = async (file: File) => {
     if (!file || !selectedClient || !selectedMonth) return;
+    if (!canWork2BImport()) { toast.error('Needs the Import 2B & post permission — ask a GST Manager to add it to your position'); return; }
 
     setIsImporting(true);
     try {
@@ -490,6 +492,7 @@ const Import2BTab: React.FC = () => {
   }, [selectedClient, selectedMonth]);
 
   const pull2BFromPortal = () => {
+    if (!canWork2BImport()) { toast.error('Needs the Import 2B & post permission — ask a GST Manager to add it to your position'); return; }
     if (!selectedClient || !selectedMonth) { toast.error('Select a client and month first'); return; }
     if (isLocked) { toast.error('The return is filed — this sheet is locked.'); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension, then reload this page.'); return; }
@@ -499,6 +502,7 @@ const Import2BTab: React.FC = () => {
 
   const deleteImported2B = async () => {
     if (readOnly || !selectedClient || !selectedMonth || twoBDocs.length === 0) return;
+    if (!canDelete2BRows()) { toast.error('Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'); return; }
     if (!(await confirm({ title: 'Delete imported 2B?', description: `Delete ALL imported GSTR-2B for ${selectedClientName} — ${selectedMonth}? Books entries are kept.`, destructive: true, confirmText: 'Delete' }))) return;
     const { error } = await supabase.from('twob_import_docs')
       .delete().eq('client_id', selectedClient).eq('period_month', selectedMonth);
@@ -717,6 +721,7 @@ const Import2BTab: React.FC = () => {
 
   const deleteBookRow = async (id: string) => {
     if (readOnly) return;
+    if (!canDelete2BRows()) { toast.error('Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'); return; }
     const row = books.find((r) => r.id === id);
     if (row?.matched_2b_id) {
       await supabase.from('twob_import_docs')
@@ -737,6 +742,7 @@ const Import2BTab: React.FC = () => {
 
   const handlePostToReconciliation = async () => {
     if (readOnly || !selectedClient || !selectedMonth) return;
+    if (!canWork2BImport()) { toast.error('Needs the Import 2B & post permission — ask a GST Manager to add it to your position'); return; }
     setIsPosting(true);
     try {
       const plan = await planImport2BPost(selectedClient, selectedMonth);
@@ -890,9 +896,9 @@ const Import2BTab: React.FC = () => {
               variant="outline"
               size="sm"
               onClick={pull2BFromPortal}
-              disabled={isImporting || !selectedClient || !selectedMonth || isLocked}
+              disabled={isImporting || !selectedClient || !selectedMonth || isLocked || !canWork2BImport()}
               className={cn(WS_BTN, !extReady && 'text-muted-foreground')}
-              title={extReady
+              title={!canWork2BImport() ? 'Needs the Import 2B & post permission — ask a GST Manager to add it to your position' : extReady
                 ? 'Pull this client\'s GSTR-2B from the portal via the browser extension'
                 : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
             >
@@ -904,8 +910,8 @@ const Import2BTab: React.FC = () => {
               size="sm"
               className={cn(WS_BTN, 'text-muted-foreground hover:text-foreground')}
               onClick={handleImportClick}
-              disabled={isImporting || !selectedClient || !selectedMonth || isLocked}
-              title="Manual fallback — import a GSTR-2B Excel file if the portal pull didn't work"
+              disabled={isImporting || !selectedClient || !selectedMonth || isLocked || !canWork2BImport()}
+              title={canWork2BImport() ? "Manual fallback — import a GSTR-2B Excel file if the portal pull didn't work" : 'Needs the Import 2B & post permission — ask a GST Manager to add it to your position'}
             >
               <Upload className="h-3.5 w-3.5" />
               Import file
@@ -915,8 +921,8 @@ const Import2BTab: React.FC = () => {
                 size="sm"
                 className={WS_BTN}
                 onClick={handlePostToReconciliation}
-                disabled={isPosting || readOnly || pendingCount > 0}
-                title={pendingCount > 0
+                disabled={isPosting || readOnly || pendingCount > 0 || !canWork2BImport()}
+                title={!canWork2BImport() ? 'Needs the Import 2B & post permission — ask a GST Manager to add it to your position' : pendingCount > 0
                   ? 'Save your row-action changes first — Post to Reconciliation reads the saved classifications.'
                   : 'Write NOT_IN_BOOKS / NOT_IN_2B classifications through to the live 2B Reconciliation ledger'}
               >
@@ -925,7 +931,14 @@ const Import2BTab: React.FC = () => {
               </Button>
             )}
             {twoBDocs.length > 0 && (
-              <Button variant="destructive" size="sm" className={WS_BTN} onClick={deleteImported2B} disabled={readOnly}>
+              <Button
+                variant="destructive"
+                size="sm"
+                className={WS_BTN}
+                onClick={deleteImported2B}
+                disabled={readOnly || !canDelete2BRows()}
+                title={canDelete2BRows() ? undefined : 'Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'}
+              >
                 <Trash2 className="h-3.5 w-3.5" />Delete 2B
               </Button>
             )}
@@ -1303,6 +1316,8 @@ const Import2BTab: React.FC = () => {
                             <td className="border-b border-r px-1 text-center">
                               <Button
                                 variant="ghost"
+                                disabled={!canDelete2BRows()}
+                                title={canDelete2BRows() ? undefined : 'Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'}
                                 size="icon"
                                 className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive-strong focus-visible:opacity-100 group-hover:opacity-100"
                                 onClick={() => deleteBookRow(b.id)}

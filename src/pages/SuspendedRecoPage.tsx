@@ -36,7 +36,7 @@ interface Client {
 }
 
 const SuspendedRecoPage: React.FC = () => {
-  const { user, isStaffRole, canManualOverride } = useAuth();
+  const { user, isStaffRole, canManualOverride, canExportData, canClearData } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const [clients, setClients] = useState<Client[]>([]);
@@ -723,7 +723,14 @@ const SuspendedRecoPage: React.FC = () => {
             )}
 
             {selectedClientId && (
-              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => {
+              <Button
+                variant="outline"
+                size="sm"
+                className={WS_BTN}
+                disabled={!canExportData()}
+                title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+                onClick={() => {
+                if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
                 if (!selectedClientData) return;
                 exportSuspendedRecoToExcel({
                   clientName: selectedClientData.name,
@@ -748,7 +755,7 @@ const SuspendedRecoPage: React.FC = () => {
               </Button>
             )}
 
-            {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClientId && (
+            {canClearData() && selectedClientId && (
               <Button variant="destructive" size="sm" className={WS_BTN} onClick={() => setShowClearData(true)}>
                 <Trash2 className="h-3.5 w-3.5" />
                 Clear Data
@@ -995,7 +1002,7 @@ const SuspendedRecoPage: React.FC = () => {
 
       {selectedClientId && selectedClientData && (
         <ClearDataDialog
-          open={showClearData}
+          open={showClearData && canClearData()}
           onOpenChange={setShowClearData}
           module="Suspended Reco"
           clientId={selectedClientId}

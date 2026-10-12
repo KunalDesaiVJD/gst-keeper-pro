@@ -86,7 +86,8 @@ const SAMPLE: Record<string, string> = {
 const renderPreview = (s: string) => s.replace(/\{\{(\w+)\}\}/g, (_m, k) => SAMPLE[k] ?? `{{${k}}}`);
 
 const EmailTemplatesEditor: React.FC = () => {
-  const { user } = useAuth();
+  const { user, canManageEmailTemplates } = useAuth();
+  const canEdit = canManageEmailTemplates();
   const [templates, setTemplates] = useState<Tpl[]>([]);
   const [selKey, setSelKey] = useState<string>('');
   const [subject, setSubject] = useState('');
@@ -118,6 +119,7 @@ const EmailTemplatesEditor: React.FC = () => {
   const dirty = !!current && (current.subject !== subject || current.body !== body);
 
   function insertVar(v: string) {
+    if (!canEdit) return;
     const token = `{{${v}}}`;
     const el = bodyRef.current;
     if (!el) { setBody(b => b + token); return; }
@@ -129,6 +131,7 @@ const EmailTemplatesEditor: React.FC = () => {
 
   async function save() {
     if (!current) return;
+    if (!canManageEmailTemplates()) { toast.error('Needs the E-mail templates & reminder rules permission — ask a GST Manager to add it to your position'); return; }
     setSaving(true);
     const { error } = await supabase
       .from('email_templates')
@@ -200,20 +203,20 @@ const EmailTemplatesEditor: React.FC = () => {
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="tpl-subject">Subject</Label>
-                <Input id="tpl-subject" value={subject} onChange={e => setSubject(e.target.value)} />
+                <Input id="tpl-subject" value={subject} onChange={e => setSubject(e.target.value)} disabled={!canEdit} />
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="tpl-body">Message</Label>
                 <p className="text-xs text-muted-foreground">Just the wording. The letterhead, details box, signature and colours are added automatically — you can't break the layout. Leave a blank line between paragraphs.</p>
-                <Textarea id="tpl-body" ref={bodyRef} value={body} onChange={e => setBody(e.target.value)} rows={9} className="text-[13px] leading-relaxed" />
+                <Textarea id="tpl-body" ref={bodyRef} value={body} onChange={e => setBody(e.target.value)} disabled={!canEdit} rows={9} className="text-[13px] leading-relaxed" />
               </div>
 
               <div className="space-y-1.5">
                 <p className="text-xs text-muted-foreground">Click a variable to insert it into the body at the cursor:</p>
                 <div className="flex flex-wrap gap-1.5">
                   {activeVars.map(v => (
-                    <button key={v} type="button" onClick={() => insertVar(v)}>
+                    <button key={v} type="button" onClick={() => insertVar(v)} disabled={!canEdit}>
                       <Badge variant="secondary" className="cursor-pointer hover:bg-primary/10 font-mono text-[11px]">{`{{${v}}}`}</Badge>
                     </button>
                   ))}
@@ -235,8 +238,14 @@ const EmailTemplatesEditor: React.FC = () => {
               </div>
 
               <div className="flex items-center justify-end gap-2">
+                {!canEdit && <span className="text-xs text-muted-foreground">Read only</span>}
                 {dirty && <span className="text-xs text-amber-600">Unsaved changes</span>}
-                <Button onClick={save} disabled={saving || !dirty} className="gap-1.5">
+                <Button
+                  onClick={save}
+                  disabled={saving || !dirty || !canEdit}
+                  title={canEdit ? undefined : 'Needs the E-mail templates & reminder rules permission — ask a GST Manager to add it to your position'}
+                  className="gap-1.5"
+                >
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                   Save template
                 </Button>

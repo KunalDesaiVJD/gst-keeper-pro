@@ -8,9 +8,15 @@ import { buildEmailHtml } from '@/lib/emailTemplate';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import EmailTemplatesEditor from '@/components/reminders/EmailTemplatesEditor';
 import ReturnReminderScheduleCard from '@/components/reminders/ReturnReminderScheduleCard';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/gstr9/badge';
+import { SectionCard } from '@/components/gstr9/ui';
+import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
+import { PageHeader } from '@/components/layout/PageHeader';
+import {
+  WS_PAGE, WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TR, WS_FILTER_LABEL, WS_CONTROL,
+} from '@/components/workspace/theme';
+import { cn } from '@/lib/utils';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
@@ -65,14 +71,15 @@ const fmtWhen = (iso: string | null): string => {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 
-const STATUS_META: Record<OutboxStatus, { label: string; className: string; icon: React.ReactNode }> = {
-  pending: { label: 'Queued', className: 'bg-amber-100 text-amber-800 border-amber-200', icon: <Clock className="h-3 w-3" /> },
-  sent: { label: 'Sent', className: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: <CheckCircle2 className="h-3 w-3" /> },
-  failed: { label: 'Failed', className: 'bg-red-100 text-red-800 border-red-200', icon: <XCircle className="h-3 w-3" /> },
-  skipped: { label: 'Skipped', className: 'bg-slate-100 text-slate-600 border-slate-200', icon: <Ban className="h-3 w-3" /> },
-  cancelled: { label: 'Cancelled', className: 'bg-slate-100 text-slate-600 border-slate-200', icon: <Ban className="h-3 w-3" /> },
+type StatusVariant = 'warning' | 'success' | 'destructive' | 'secondary' | 'info';
+const STATUS_META: Record<OutboxStatus, { label: string; variant: StatusVariant; icon: React.ReactNode }> = {
+  pending: { label: 'Queued', variant: 'warning', icon: <Clock className="h-3 w-3" /> },
+  sent: { label: 'Sent', variant: 'success', icon: <CheckCircle2 className="h-3 w-3" /> },
+  failed: { label: 'Failed', variant: 'destructive', icon: <XCircle className="h-3 w-3" /> },
+  skipped: { label: 'Skipped', variant: 'secondary', icon: <Ban className="h-3 w-3" /> },
+  cancelled: { label: 'Cancelled', variant: 'secondary', icon: <Ban className="h-3 w-3" /> },
   // Notice alerts written while the engine is in preview mode: never sent.
-  preview: { label: 'Preview', className: 'bg-violet-100 text-violet-800 border-violet-200', icon: <Eye className="h-3 w-3" /> },
+  preview: { label: 'Preview', variant: 'info', icon: <Eye className="h-3 w-3" /> },
 };
 
 const FILTERS = ['all', 'pending', 'sent', 'failed', 'preview'] as const;
@@ -93,7 +100,7 @@ interface RemindersPageProps {
 }
 
 const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
-  const { user, isStaffRole, canManageNoticeAlerts } = useAuth();
+  const { user, isStaffRole, canManageNoticeAlerts, canSendClientEmails, canManageEmailTemplates } = useAuth();
   const { selectedMonth } = useMonth();
 
   const [rows, setRows] = useState<OutboxRow[]>([]);
@@ -131,6 +138,7 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
   useEffect(() => { void load(); }, [load]);
 
   const queueDue = async () => {
+    if (!canSendClientEmails()) { toast.error('Needs the Send client e-mails permission — ask a GST Manager to add it to your position'); return; }
     setQueueing(true);
     const { data, error } = await supabase.functions.invoke('queue-gst-reminders', {
       body: { period, staffName: user?.firstName ?? null },
@@ -144,6 +152,7 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
   };
 
   const sendNow = async () => {
+    if (!canSendClientEmails()) { toast.error('Needs the Send client e-mails permission — ask a GST Manager to add it to your position'); return; }
     setSending(true);
     const { data, error } = await supabase.functions.invoke('send-gst-email', { body: {} });
     setSending(false);
@@ -184,33 +193,41 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className={embedded ? 'space-y-3' : WS_PAGE}>
       {/* Header */}
-      <div className={`flex flex-col gap-3 sm:flex-row sm:items-center ${embedded ? 'sm:justify-end' : 'sm:justify-between'}`}>
-        {!embedded && (
-          <div>
-            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-              <BellRing className="h-6 w-6 text-primary" /> GST Reminders
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Data-request reminders and filing confirmations for clients. Choose who gets them per client on their edit
-              page; edit the wording in the Email templates section below.
-            </p>
-          </div>
-        )}
-        <div className="flex items-center gap-2 self-start">
-          <Button size="sm" onClick={sendNow} disabled={sending} className="gap-1.5">
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Send queued now
-          </Button>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading} className="gap-1.5">
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        compact
+        embedded={embedded}
+        title="GST Reminders"
+        subtitle={embedded ? undefined : 'Data-request reminders and filing confirmations'}
+        icon={<BellRing />}
+        actions={
+          <>
+            <Button
+              size="sm"
+              onClick={sendNow}
+              disabled={sending || !canSendClientEmails()}
+              title={canSendClientEmails() ? undefined : 'Needs the Send client e-mails permission — ask a GST Manager to add it to your position'}
+              className={WS_BTN}
+            >
+              {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send queued now
+            </Button>
+            <Button variant="outline" size="sm" onClick={load} disabled={loading} className={WS_BTN}>
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
+            </Button>
+          </>
+        }
+      />
+      {!embedded && (
+        <p className="text-sm text-muted-foreground">
+          Data-request reminders and filing confirmations for clients. Choose who gets them per client on their edit
+          page; edit the wording in the Email templates section below.
+        </p>
+      )}
 
       {/* Sending status */}
-      <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-        <Mail className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm text-foreground">
+        <Mail className="mt-0.5 h-4 w-4 shrink-0 text-success-strong" />
         <span>
           Sending is <strong>live</strong> from <strong>gst@vjdesai.com</strong>. Filing confirmations queue automatically
           when a return is marked <em>Filed</em>; reminders queue when due. Queued mail goes out on the daily run — or
@@ -222,81 +239,87 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
       <ReturnReminderScheduleCard />
 
       {/* Queue-due action */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Queue due reminders</CardTitle>
-          <CardDescription>
+      <SectionCard
+        title="Queue due reminders"
+        description={
+          <>
             For every client with reminders enabled whose return is still <strong>Data Pending</strong> this period,
             queue the next reminder if it's due — the fixed schedule above for GSTR-1 / GSTR-3B / GSTR-6 / GSTR-7,
             or the interval-based ladder (under the cap) for any other return type.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Return period</label>
-              <input
-                type="month"
-                value={toInputMonth(period)}
-                onChange={(e) => setPeriod(fromInputMonth(e.target.value))}
-                className="block h-9 rounded-md border border-input bg-background px-3 text-sm"
-              />
-            </div>
-            <Button onClick={queueDue} disabled={queueing} className="gap-1.5">
-              {queueing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Queue due reminders
-            </Button>
-            <span className="pb-2 text-xs text-muted-foreground">{prettyPeriod(period)}</span>
+          </>
+        }
+      >
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-0.5">
+            <label htmlFor="reminder-period" className={WS_FILTER_LABEL}>Return period</label>
+            <input
+              id="reminder-period"
+              type="month"
+              value={toInputMonth(period)}
+              onChange={(e) => setPeriod(fromInputMonth(e.target.value))}
+              className={cn('block rounded-md border border-input bg-background px-2.5', WS_CONTROL, 'text-sm')}
+            />
           </div>
-        </CardContent>
-      </Card>
+          <Button
+            size="sm"
+            onClick={queueDue}
+            disabled={queueing || !canSendClientEmails()}
+            title={canSendClientEmails() ? undefined : 'Needs the Send client e-mails permission — ask a GST Manager to add it to your position'}
+            className={WS_BTN}
+          >
+            {queueing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            Queue due reminders
+          </Button>
+          <span className="pb-1.5 text-sm text-muted-foreground">{prettyPeriod(period)}</span>
+        </div>
+      </SectionCard>
 
       {/* Outbox */}
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle className="text-base">Email outbox</CardTitle>
-            <CardDescription>
-              {counts.pending} queued · {counts.sent} sent · {counts.failed} failed
-              {counts.preview > 0 ? ` · ${counts.preview} notice-alert previews (not sent)` : ''}
-            </CardDescription>
-          </div>
+      <SectionCard
+        title="Email outbox"
+        description={
+          <>
+            {counts.pending} queued · {counts.sent} sent · {counts.failed} failed
+            {counts.preview > 0 ? ` · ${counts.preview} notice-alert previews (not sent)` : ''}
+          </>
+        }
+        actions={
           <Tabs value={filter} onValueChange={(v) => setFilter(v as FilterKey)}>
-            <TabsList>
+            <TabsList className={TAB_LIST_CLASS}>
               {FILTERS.map((f) => (
-                <TabsTrigger key={f} value={f} className="capitalize">{f === 'all' ? 'All' : STATUS_META[f].label}</TabsTrigger>
+                <TabsTrigger key={f} value={f} className={cn(TAB_TRIGGER_CLASS, 'capitalize')}>{f === 'all' ? 'All' : STATUS_META[f].label}</TabsTrigger>
               ))}
             </TabsList>
           </Tabs>
-        </CardHeader>
-        <CardContent>
+        }
+      >
           {loading ? (
             <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : visible.length === 0 ? (
             <div className="py-12 text-center text-sm text-muted-foreground">Nothing queued yet.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className={cn(WS_TABLE_WRAP, 'max-h-[60vh]')}>
+              <table className={WS_TABLE}>
                 <thead>
-                  <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="py-2 pr-3 font-medium">Client</th>
-                    <th className="py-2 pr-3 font-medium">Type</th>
-                    <th className="py-2 pr-3 font-medium">Return · Period</th>
-                    <th className="py-2 pr-3 font-medium">Subject</th>
-                    <th className="py-2 pr-3 font-medium">Status</th>
-                    <th className="py-2 pr-3 font-medium whitespace-nowrap">Queued</th>
+                  <tr>
+                    <th className={WS_TH}>Client</th>
+                    <th className={WS_TH}>Type</th>
+                    <th className={WS_TH}>Return · Period</th>
+                    <th className={WS_TH}>Subject</th>
+                    <th className={WS_TH}>Status</th>
+                    <th className={WS_TH}>Queued</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visible.map((r) => {
                     const meta = STATUS_META[r.status] ?? STATUS_META.pending;
                     return (
-                      <tr key={r.id} className="border-b last:border-0 align-top hover:bg-muted/40">
-                        <td className="py-2.5 pr-3">
+                      <tr key={r.id} className={cn(WS_TR, 'align-top')}>
+                        <td className={WS_TD}>
                           <div className="font-medium">{names[r.client_id] ?? '—'}</div>
                           <div className="text-xs text-muted-foreground">{r.to_email}</div>
                         </td>
-                        <td className="py-2.5 pr-3 whitespace-nowrap">
+                        <td className={cn(WS_TD, 'whitespace-nowrap')}>
                           {r.kind === 'confirmation' ? (
                             <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> Confirmation</span>
                           ) : r.kind === 'notice_alert' ? (
@@ -307,11 +330,11 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
                             </span>
                           )}
                         </td>
-                        <td className="py-2.5 pr-3 whitespace-nowrap">
+                        <td className={cn(WS_TD, 'whitespace-nowrap')}>
                           <div>{r.return_type}</div>
                           <div className="text-xs text-muted-foreground">{prettyPeriod(r.period_month)}</div>
                         </td>
-                        <td className="max-w-[22rem] truncate py-2.5 pr-3" title={r.subject}>
+                        <td className={cn(WS_TD, 'max-w-[22rem] truncate')} title={r.subject}>
                           {r.kind === 'notice_alert' ? (
                             <button
                               type="button"
@@ -322,13 +345,13 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
                             </button>
                           ) : r.subject}
                         </td>
-                        <td className="py-2.5 pr-3">
-                          <Badge variant="outline" className={`gap-1 ${meta.className}`}>{meta.icon}{meta.label}</Badge>
+                        <td className={WS_TD}>
+                          <Badge variant={meta.variant} className="gap-1">{meta.icon}{meta.label}</Badge>
                           {r.status === 'failed' && r.error && (
-                            <div className="mt-1 max-w-[16rem] truncate text-xs text-red-600" title={r.error}>{r.error}</div>
+                            <div className="mt-1 max-w-[16rem] truncate text-xs text-destructive-strong" title={r.error}>{r.error}</div>
                           )}
                         </td>
-                        <td className="py-2.5 pr-3 whitespace-nowrap text-xs text-muted-foreground">{fmtWhen(r.created_at)}</td>
+                        <td className={cn(WS_TD, 'whitespace-nowrap text-muted-foreground tabular-nums')}>{fmtWhen(r.created_at)}</td>
                       </tr>
                     );
                   })}
@@ -336,27 +359,40 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
               </table>
             </div>
           )}
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       {/* Notice Alerts — E1–E13 alert rules and manual trigger */}
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Shield className="h-4 w-4" /> Notice Alerts
-            </CardTitle>
-            <CardDescription>
-              Written by the database: new notices and assignments every 15 minutes, each owner's morning list at 09:30 IST, the weekly MIS on Mondays. Toggle individual rules or run them now — an alert is never written twice.
-            </CardDescription>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+      <SectionCard
+        title={<span className="flex items-center gap-2"><Shield className="h-4 w-4" /> Notice Alerts</span>}
+        description="Written by the database: new notices and assignments every 15 minutes, each owner's morning list at 09:30 IST, the weekly MIS on Mondays. Toggle individual rules or run them now — an alert is never written twice."
+        actions={
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={runningAlerts}
+            className={WS_BTN}
+            onClick={async () => {
+              setRunningAlerts(true);
+              const result = await runNoticeAlerts('all');
+              setRunningAlerts(false);
+              if (result.error) { toast.error(result.error); return; }
+              toast.success(describeAlertRun(result));
+              void load();
+            }}
+          >
+            {runningAlerts ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+            Run notice alerts
+          </Button>
+        }
+      >
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="font-medium text-muted-foreground">Mode:</span>
               {ALERT_MODES.map((m) => (
                 <Button
                   key={m.value}
                   size="sm"
                   variant={alertsMode === m.value ? 'default' : 'outline'}
-                  className="h-7 px-2.5 text-xs"
+                  className={WS_BTN}
                   disabled={savingMode || !canManageNoticeAlerts() || alertsMode === null}
                   title={m.hint}
                   onClick={async () => {
@@ -376,40 +412,21 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
               {alertsMode === null && <span className="text-muted-foreground">(alert engine not installed yet)</span>}
               {alertsMode && <span className="text-muted-foreground">{ALERT_MODES.find((m) => m.value === alertsMode)?.hint}</span>}
             </div>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={runningAlerts}
-            className="gap-1.5 self-start"
-            onClick={async () => {
-              setRunningAlerts(true);
-              const result = await runNoticeAlerts('all');
-              setRunningAlerts(false);
-              if (result.error) { toast.error(result.error); return; }
-              toast.success(describeAlertRun(result));
-              void load();
-            }}
-          >
-            {runningAlerts ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
-            Run notice alerts
-          </Button>
-        </CardHeader>
-        <CardContent>
+
           {alertRules.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">No alert rules configured.</div>
           ) : (
             <div className="space-y-1">
               {alertRules.map((rule) => (
-                <div key={rule.id} className="flex items-center justify-between rounded-md border px-3 py-2.5 hover:bg-muted/40">
+                <div key={rule.id} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 transition-colors hover:bg-muted/30">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-xs text-muted-foreground">{rule.alert_key.split('_')[0]}</span>
                       <span className="text-sm font-medium">{rule.name}</span>
-                      <Badge variant="outline" className={
-                        rule.priority === 'critical' ? 'border-red-200 bg-red-50 text-red-700' :
-                        rule.priority === 'low' ? 'border-slate-200 bg-slate-50 text-slate-600' :
-                        'border-blue-200 bg-blue-50 text-blue-700'
+                      <Badge variant={
+                        rule.priority === 'critical' ? 'destructive' :
+                        rule.priority === 'low' ? 'secondary' :
+                        'info'
                       }>
                         {rule.priority}
                       </Badge>
@@ -423,7 +440,10 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
                   </div>
                   <Switch
                     checked={rule.is_active}
+                    disabled={!canManageEmailTemplates()}
+                    title={canManageEmailTemplates() ? undefined : 'Needs the E-mail templates & reminder rules permission — ask a GST Manager to add it to your position'}
                     onCheckedChange={async (checked) => {
+                      if (!canManageEmailTemplates()) { toast.error('Needs the E-mail templates & reminder rules permission — ask a GST Manager to add it to your position'); return; }
                       const { error } = await supabase.from('notice_alert_rules').update({ is_active: checked }).eq('id', rule.id);
                       if (error) { toast.error('Failed to update rule'); return; }
                       setAlertRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, is_active: checked } : r));
@@ -434,8 +454,7 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       <Dialog open={!!previewRow} onOpenChange={(o) => { if (!o) setPreviewRow(null); }}>
         <DialogContent className="max-w-3xl">
@@ -455,11 +474,11 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
       </Dialog>
 
       {/* Email templates — edit the wording right here (also under Settings). */}
-      <div className="pt-2">
-        <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold tracking-tight">
-          <Mail className="h-5 w-5 text-primary" /> Email templates
+      <div className="pt-1">
+        <h2 className="flex items-center gap-2 text-base font-semibold leading-snug">
+          <Mail className="h-4 w-4 text-primary" /> Email templates
         </h2>
-        <p className="mb-3 text-sm text-muted-foreground">
+        <p className="mb-2 text-sm text-muted-foreground">
           Edit the wording of each reminder, confirmation, and notice alert. The letterhead, details box and signature are applied automatically.
         </p>
         <EmailTemplatesEditor />

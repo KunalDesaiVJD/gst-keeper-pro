@@ -205,7 +205,7 @@ const Gstr3bPage: React.FC = () => {
   const navigate = useNavigate();
   const { selectedClientId: selectedClient, setSelectedClientId: setSelectedClient } = useClient();
   const { selectedMonth, setSelectedMonth } = useMonth();
-  const { user, isStaffRole, canEditFilingStatus } = useAuth();
+  const { user, isStaffRole, canEditFilingStatus, canExportData } = useAuth();
   const isStaff = isStaffRole();
   const [clients, setClients] = useState<Client[]>([]);
   const [result, setResult] = useState<Gstr3bResult | null>(null);
@@ -543,6 +543,7 @@ const Gstr3bPage: React.FC = () => {
   const s = result?.summary;
 
   const handleDownloadJson = () => {
+    if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
     if (!result) return;
     const blob = new Blob([JSON.stringify(result.json, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -558,6 +559,7 @@ const Gstr3bPage: React.FC = () => {
 
   const handleDownloadPdf = () => {
     if (!result) return;
+    if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
     exportGstr3bToPDF({
       result,
       clientName: selectedClientName || 'Client',
@@ -577,6 +579,7 @@ const Gstr3bPage: React.FC = () => {
 
   const handlePush = async () => {
     if (!result || !selectedClient || !selectedMonth) return;
+    if (!canEditFilingStatus()) { toast.error('Needs the Filing status & portal push permission — ask a GST Manager to add it to your position'); return; }
     if (!extReady) {
       toast.error('Install / enable the GST Keeper browser extension to push from this page.');
       return;
@@ -657,20 +660,36 @@ const Gstr3bPage: React.FC = () => {
         icon={<FileCheck2 />}
         actions={result ? (
           <>
-            <Button variant="outline" size="sm" className={WS_BTN} onClick={handleDownloadJson}>
+            <Button
+              variant="outline"
+              size="sm"
+              className={WS_BTN}
+              onClick={handleDownloadJson}
+              disabled={!canExportData()}
+              title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+            >
               <FileJson className="h-3.5 w-3.5" /> JSON
             </Button>
-            <Button variant="outline" size="sm" className={WS_BTN} onClick={handleDownloadPdf}>
+            <Button
+              variant="outline"
+              size="sm"
+              className={WS_BTN}
+              onClick={handleDownloadPdf}
+              disabled={!canExportData()}
+              title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+            >
               <Download className="h-3.5 w-3.5" /> PDF
             </Button>
             {isStaff && (
               <Button
                 onClick={handlePush}
                 size="sm"
-                disabled={isPushing || !extReady || isFiled || recoCheckLoading || hasRecoDiff}
+                disabled={isPushing || !extReady || isFiled || recoCheckLoading || hasRecoDiff || !canEditFilingStatus()}
                 className={WS_BTN}
                 title={
-                  isFiled
+                  !canEditFilingStatus()
+                    ? 'Needs the Filing status & portal push permission — ask a GST Manager to add it to your position'
+                    : isFiled
                     ? 'GSTR-3B already Filed for this period — push is locked'
                     : recoCheckLoading
                       ? 'Checking Suspended Reco / GST Receivable Reco…'

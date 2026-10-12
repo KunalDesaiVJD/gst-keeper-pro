@@ -101,7 +101,7 @@ interface LastSavedInfo {
 }
 
 const TwoBReconciliationPage: React.FC = () => {
-  const { canViewVersionHistory, canUnlockSheets, canDelete2BRows, canImportExcel, user, isStaffRole } = useAuth();
+  const { canViewVersionHistory, canUnlockSheets, canDelete2BRows, canImportExcel, user, isStaffRole, canExportData, canClearData } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -571,6 +571,7 @@ const TwoBReconciliationPage: React.FC = () => {
   }), { taxableValue: 0, igst: 0, cgst: 0, sgst: 0, bookEntryCount: 0, in2BCount: 0 });
 
   const handleExportExcel = () => {
+    if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
     if (!selectedClientData) {
       toast.error('Please select a client first');
       return;
@@ -1346,11 +1347,18 @@ const TwoBReconciliationPage: React.FC = () => {
                 Import Excel
               </Button>
             )}
-            <Button variant="outline" size="sm" className={WS_BTN} onClick={handleExportExcel}>
+            <Button
+              variant="outline"
+              size="sm"
+              className={WS_BTN}
+              onClick={handleExportExcel}
+              disabled={!canExportData()}
+              title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+            >
               <FileSpreadsheet className="h-3.5 w-3.5" />
               Export Excel
             </Button>
-            {(user?.role === 'superadmin' || user?.role === 'gst_manager') && selectedClientId && (
+            {canClearData() && selectedClientId && (
               <Button variant="destructive" size="sm" onClick={() => setShowClearData(true)} className={WS_BTN}>
                 <Trash2 className="h-3.5 w-3.5" />
                 Clear Data
@@ -1941,7 +1949,7 @@ const TwoBReconciliationPage: React.FC = () => {
       {/* Clear Data Dialog */}
       {selectedClientId && selectedClientData && (
         <ClearDataDialog
-          open={showClearData}
+          open={showClearData && canClearData()}
           onOpenChange={setShowClearData}
           module="2B Reconciliation"
           clientId={selectedClientId}
