@@ -607,3 +607,12 @@ linked if 100% confidence, or if it is not then recommendation options".
   demand (shown at 40 and above on the Payments tab). For an appeal case with no link, the
   client's orders are offered, best first. A person's link (`notice_case_link_set`, source
   `manual`) survives every refresh.
+
+## 23. What to do now on every case (asked by the firm, 12 October 2026)
+
+"In refund it says overdue, then using AI a suggestion or recommendation to be mentioned here: what is expected from the user?"
+
+- **Where it shows.** Every open case, except *other*, carries one next step. It shows at the top of the case page as a card with the headline, where the case stands, up to four steps (each marked firm or client, with a date), the date that governs it and why, and whether the case can simply be closed. If the case shows overdue, the card also says why: whether anything can still be done, or whether the date has passed with nothing left to do. The home work list and the Cases table show the headline in one line.
+- **Who writes it.** The notice assistant (Edge Function `notice-ai`, actions `advise` and `advise_next`, `advise.ts`) writes it. It reads the case's facts, its correspondence as read (newest 20) and today's date, and the answer is kept in `notice_case_advice`. pg_cron `notice-ai-advise` runs every five minutes and handles up to four cases a run, in this order: cases someone asked for, then cases never advised, then overdue, due this week, and with something new. A case is advised again when its stage, due date, hearing, notices, documents or the number of them read changes (`notice_case_advice_hash`). "Ask again" on the card asks the assistant now; it answers in about half a minute.
+- **Until the AI has answered.** The usual step for the form under GST law shows, marked as such (`usualStep` in `src/lib/noticeAdvice.ts`). For example: DRC-01 → reply in DRC-06; DRC-07 → appeal in APL-01 within three months or pay; RFD-06 → appeal a rejection or close once paid; REG-19 → revocation in REG-21 or close.
+- **Guidance only.** Nothing is filed, paid or closed by it, and a partner decides. Advice runs under the reader's switch (`ai_settings.read_enabled`). Like the reader, it never adds a hyphen or dash to what staff read.

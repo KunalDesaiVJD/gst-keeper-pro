@@ -8,6 +8,8 @@ import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR } from '@/compo
 import { Badge } from '@/components/gstr9/badge';
 import { StageBadge } from '@/components/notices/StageBadge';
 import { OwnerChip } from '@/components/notices/OwnerChip';
+import { NextStepLine } from '@/components/notices/cases/NextStepLine';
+import { adviceOf, useAdviceMap } from '@/lib/noticeAdvice';
 import { caseHref, type CaseRow, type Track } from '@/lib/noticeCases';
 import { fmtDate, fmtFy, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
@@ -39,6 +41,7 @@ function Latest({ r }: { r: CaseRow }) {
 
 export const CasesTable: React.FC<{ rows: CaseRow[]; track: Track | 'all'; compact?: boolean }> = ({ rows, track, compact }) => {
   const lit = track === 'litigation' || track === 'all';
+  const advice = useAdviceMap(rows);
   return (
     <div className={WS_TABLE_WRAP}>
       <table className={WS_TABLE}>
@@ -71,6 +74,7 @@ export const CasesTable: React.FC<{ rows: CaseRow[]; track: Track | 'all'; compa
                     {lit && r.financial_years ? ` · FY ${r.financial_years.split(', ').map(fmtFy).join(', ')}` : ''}
                     {' · '}{plural(r.notices ?? 0, 'notice')}{r.documents ? `, ${plural(r.documents, 'document')}` : ''}
                   </div>
+                  {track !== 'other' && <NextStepLine r={r} advice={adviceOf(advice.data, r.client_id as string, r.case_key as string)} className="mt-0.5 max-w-[22rem]" />}
                 </td>
                 {lit && <td className={WS_TD}>{r.is_open ? <StageBadge stage={r.stage} /> : <span className="text-xs text-muted-foreground">closed</span>}</td>}
                 {track !== 'other' && (

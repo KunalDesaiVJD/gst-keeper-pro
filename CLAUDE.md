@@ -174,7 +174,7 @@ Extension 0.8.2 offers a refused portal password once and records it on the clie
 case folder documents and flags what is new. Notice pages show the facts and tabs of their
 kind (`src/lib/noticeCases.ts`, §21 of the positions). Every client's documents are read by
 the AI and fill the overview (`notice_case_overview`); Learning is chosen per client
-(`clients.ai_learning`). Lines under a page title show problems only (`ProblemLine`).
+(`clients.ai_learning`). Lines under a page title show problems only (`ProblemLine`). Every open case gets an AI "What to do now" (`notice_case_advice`, notice-ai `advise`, pg_cron `notice-ai-advise`; the usual step per form until then, `src/lib/noticeAdvice.ts`; §23).
 
 **Read `docs/NOTICES_LITIGATION_POSITIONS.md` before changing auto-close
 logic, tile definitions, due dates, clocks, stages, the plan ranking or alerts.** The positions were

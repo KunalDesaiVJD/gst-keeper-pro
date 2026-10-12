@@ -981,6 +981,16 @@ export type Database = {
           },
         ]
       }
+      notice_case_advice: {
+        Row: {
+          client_id: string; case_key: string; status: string; advice: Json | null; inputs_hash: string | null
+          requested_by: string | null; requested_at: string | null; started_at: string | null; finished_at: string | null
+          agent: string | null; model: string | null; usage: Json | null; error: string | null; reason_class: string | null; updated_at: string
+        }
+        Insert: { client_id: string; case_key: string; status?: string; advice?: Json | null; requested_by?: string | null }
+        Update: { status?: string; advice?: Json | null; requested_by?: string | null }
+        Relationships: []
+      }
       notice_case_seen: {
         Row: { client_id: string; case_key: string; seen_at: string; seen_by_name: string | null }
         Insert: { client_id: string; case_key: string; seen_at?: string; seen_by_name?: string | null }
@@ -10734,6 +10744,10 @@ export type Database = {
       notice_link_suggestions: {
         Args: { p_notice_id: string }
         Returns: Json
+      }
+      notice_case_advice_request: {
+        Args: { p_client_id: string; p_case_key: string; p_actor?: string | null }
+        Returns: boolean
       }
       notice_case_link_set: {
         Args: { p_client_id: string; p_child_key: string; p_parent_key: string | null; p_kind: string | null; p_by?: string | null }

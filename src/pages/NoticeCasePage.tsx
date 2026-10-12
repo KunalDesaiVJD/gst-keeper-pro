@@ -7,7 +7,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, FolderOpen, Loader2 } from 'lucide-react';
+import { ArrowRight, FolderOpen, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/gstr9/badge';
@@ -18,6 +18,7 @@ import { StageBadge } from '@/components/notices/StageBadge';
 import { OwnerChip } from '@/components/notices/OwnerChip';
 import { CaseTimeline } from '@/components/notices/cases/CaseTimeline';
 import { KindFacts } from '@/components/notices/cases/KindFacts';
+import { NextStepCard } from '@/components/notices/cases/NextStepCard';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   loadCase, loadCaseItems, markCaseSeen, trackDef, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
@@ -46,8 +47,11 @@ export const CaseFactsGrid: React.FC<{ ov: CaseOverview | undefined }> = ({ ov }
       return (
         <div key={f.key} className="min-w-0 space-y-0.5">
           <dt className="text-[11px] font-medium text-muted-foreground">{f.label}</dt>
-          <dd className={cn('break-words text-sm font-semibold', f.mono && 'break-all font-mono text-[13px]', !shown && 'font-normal text-muted-foreground')}>{shown || '—'}</dd>
-          {v && <dd className="truncate text-[11px] text-muted-foreground" title={v.label ?? undefined}>{v.source === 'ai' ? 'AI, from ' : 'from '}{v.label || 'the case'}</dd>}
+          <dd className={cn('break-words text-sm font-semibold', f.mono && 'break-all font-mono text-[13px]', !shown && 'font-normal text-muted-foreground')}
+            title={v ? `${v.source === 'ai' ? 'Read by the AI from ' : 'From '}${v.label || 'the case'}` : undefined}>
+            {shown || '—'}
+            {v?.source === 'ai' && <Sparkles className="ml-1 inline h-3 w-3 align-baseline text-primary/60" aria-label="read by the AI" />}
+          </dd>
           {f.key === 'hearing_date' && ov?.fields.hearing_note && <dd className="text-[11px] text-muted-foreground">{ov.fields.hearing_note.value}</dd>}
         </div>
       );
@@ -139,11 +143,14 @@ const NoticeCasePage: React.FC = () => {
         </div>
       </header>
 
+      <NextStepCard clientId={clientId} caseKey={r.case_key as string} track={track} form={r.form_code ?? null}
+        overdue={!!r.is_overdue} open={!!r.is_open} />
+
       {track === 'litigation' ? (
         <SectionCard title="What the case is about"
           description={(ov.data?.reading?.queued ?? 0) > 0
             ? <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" aria-hidden /> The AI is reading {ov.data?.reading?.queued} of the case's documents</span>
-            : ov.data?.reading?.documents ? `From the case's notices and the AI's reading of ${ov.data.reading.done} of its ${ov.data.reading.documents} documents` : 'From the case\'s notices'}>
+            : ov.data?.reading?.documents ? `AI read ${ov.data.reading.done} of ${ov.data.reading.documents} documents` : undefined}>
           {ov.isLoading ? <Skeleton className="h-20 w-full" /> : <CaseFactsGrid ov={ov.data} />}
         </SectionCard>
       ) : (
@@ -151,7 +158,7 @@ const NoticeCasePage: React.FC = () => {
           notice={{ form_label: r.form_label, issue_date: r.last_issue_date, reference_number: r.reference_number, financial_year: r.financial_year }} />
       )}
 
-      <SectionCard title="Correspondence" description={items.data ? `${items.data.length} items, newest first` : undefined}>
+      <SectionCard title="Correspondence" description={items.data ? `${items.data.length} items, newest first${newCount ? ` · ${newCount} new` : ''}` : undefined}>
         {items.error ? <Note tone="warn">Couldn't load the correspondence: {items.error instanceof Error ? items.error.message : String(items.error)}</Note>
           : items.isLoading ? <Skeleton className="h-64 w-full" />
           : <CaseTimeline items={items.data ?? []} />}

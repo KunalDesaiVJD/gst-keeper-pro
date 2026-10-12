@@ -202,9 +202,12 @@ export const REFUND_REASONS: Record<string, string> = {
 
 /** "042024" (MMYYYY) → "Apr 2024". */
 export function fmtReturnPeriod(p: string | null | undefined): string {
-  const m = /^(\d{2})(\d{4})$/.exec(p ?? '');
-  if (!m) return p ?? '';
-  const d = new Date(Number(m[2]), Number(m[1]) - 1, 1);
+  // The portal writes MMYYYY (012024) in some places and YYYYMM (202401) in others.
+  const v = p ?? '';
+  const ym = /^(20\d{2})(0[1-9]|1[0-2])$/.exec(v);
+  const my = /^(0[1-9]|1[0-2])(\d{4})$/.exec(v);
+  if (!ym && !my) return v;
+  const d = ym ? new Date(Number(ym[1]), Number(ym[2]) - 1, 1) : new Date(Number(my![2]), Number(my![1]) - 1, 1);
   return Number.isNaN(d.getTime()) ? p ?? '' : d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
 }
 

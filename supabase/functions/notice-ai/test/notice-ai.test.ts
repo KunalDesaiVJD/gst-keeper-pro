@@ -349,3 +349,67 @@ Deno.test('CLI helpers: model names and JSON out of words', () => {
   assertEquals(jsonFromText('Here it is:\n{"a": [1, {"b": 2}]}\nDone.'), { a: [1, { b: 2 }] });
   assertEquals(GATEWAY.startsWith('https://'), true);
 });
+
+// ── What to do now on a case (advise.ts) ─────────────────────────────────────
+import { adviceUserText, cleanAdvice, runAdvise, runAdviseNext } from '../advise.ts';
+
+Deno.test('advice: the case is read with today, the facts and the correspondence', () => {
+  const t = adviceUserText({
+    today: '2026-10-12',
+    case: { track: 'refund', title: 'Refund order', forms: ['RFD-06'], next_due: '2025-11-26', is_overdue: true, is_open: true },
+    overview: { fields: {}, refund: { refund_rejected: { value: 50000 }, reason: 'Export without payment' } },
+    items: [{ from: 'department', date: '2025-08-26', label: 'RFD-06', summary: 'Rejected in part' }],
+  });
+  assertStringIncludes(t, 'Today: 2026-10-12');
+  assertStringIncludes(t, 'due 2025-11-26 (overdue)');
+  assertStringIncludes(t, 'refund rejected: 50000');
+  assertStringIncludes(t, 'from the department: RFD-06');
+});
+
+Deno.test('advice: kept trimmed, dates checked, no dashes', () => {
+  const a = cleanAdvice({
+    headline: 'File appeal in APL-01 by 26 Feb 2026', situation: 'Order — rejected', deadline: '2026-02-26', deadline_basis: 'x',
+    overdue_note: '', can_close: 'yes', close_reason: '', cautions: ['a', '', 'b', 'c', 'd'],
+    steps: [{ action: 'File APL-01', detail: 'with pre-deposit', by: '26/02/2026', who: 'boss' }, { action: '', detail: '', by: '', who: '' }],
+  });
+  assertEquals(a.headline, 'File appeal in APL 01 by 26 Feb 2026');
+  assertEquals(a.situation, 'Order, rejected');
+  assertEquals(a.can_close, false);
+  assertEquals((a.cautions as string[]).length, 3);
+  assertEquals(a.steps, [{ action: 'File APL 01', detail: 'with pre deposit', by: '', who: 'firm' }]);
+});
+
+function adviceDeps(claims: unknown[], answer: unknown) {
+  const calls: { fn: string; args?: Record<string, unknown> }[] = [];
+  const deps = {
+    db: {
+      async rpc<T>(fn: string, args?: Record<string, unknown>): Promise<T> {
+        calls.push({ fn, args });
+        if (fn === 'notice_case_advice_claim') return (claims.shift() ?? null) as T;
+        if (fn === 'notice_case_advice_begin') return { client_id: args?.p_client_id, case_key: args?.p_case_key, hash: 'h', context: {}, settings: {} } as T;
+        if (fn === 'notice_case_advice_finish') return { status: args?.p_status === 'done' ? 'done' : 'failed' } as T;
+        throw new Error(`unexpected ${fn}`);
+      },
+    },
+    claude: async () => ({ ok: true, json: answer, model: 'm', usage: { input_tokens: 1, output_tokens: 1, duration_ms: 1, request_id: null, status: 'ok', model: 'm', calls: 1 } }),
+    supabaseUrl: '', agentId: 'edge:t', version: 't',
+  } as unknown as Deps;
+  return { deps, calls };
+}
+
+Deno.test('advice: one case on request is kept with its hash', async () => {
+  const { deps, calls } = adviceDeps([], { headline: 'Close it', steps: [], cautions: [], can_close: true });
+  const r = await runAdvise(deps, { client_id: '00000000-0000-0000-0000-000000000001', case_key: 'AV-1', actor: 'P' });
+  assertEquals(r.status, 'done');
+  const fin = calls.find((c) => c.fn === 'notice_case_advice_finish')!;
+  assertEquals(fin.args?.p_hash, 'h');
+  assertEquals((fin.args?.p_advice as Record<string, unknown>).can_close, true);
+  assertEquals((await runAdvise(deps, { client_id: 'x', case_key: 'y' })).error, 'bad_request');
+});
+
+Deno.test('advice: the scheduled run takes the next cases until none is left', async () => {
+  const claim = (k: string) => ({ client_id: '00000000-0000-0000-0000-000000000001', case_key: k, hash: 'h', context: {}, settings: {} });
+  const { deps } = adviceDeps([claim('A'), claim('B'), null], { headline: 'x', steps: [], cautions: [] });
+  const r = await runAdviseNext(deps, { seconds: 120 });
+  assertEquals((r.advised as unknown[]).length, 2);
+});

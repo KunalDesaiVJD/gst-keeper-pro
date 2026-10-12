@@ -15,6 +15,8 @@ import { Panel } from '@/components/notices/ui/Panel';
 import { EmptyBox, LoadError } from '@/components/notices/autopilot/parts';
 import { StageBadge } from '@/components/notices/StageBadge';
 import { OwnerChip } from '@/components/notices/OwnerChip';
+import { NextStepLine } from '@/components/notices/cases/NextStepLine';
+import { adviceOf, useAdviceMap } from '@/lib/noticeAdvice';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { hrefWithMaster, type Master } from '@/lib/masterFilters';
@@ -139,6 +141,7 @@ export const WorkList: React.FC<{ track: Track; master: Master; counts: TrackCou
     staleTime: 60_000,
   });
   const total = q.data?.total ?? 0;
+  const advice = useAdviceMap(q.data?.rows);
   return (
     <Panel title="Work list" bodyClassName="px-0 pb-0"
       actions={total > limit && <Link to={casesHref(track, show === 'open' ? '' : show, master)} className="text-xs font-medium text-primary hover:underline">All {total} →</Link>}>
@@ -161,7 +164,7 @@ export const WorkList: React.FC<{ track: Track; master: Master; counts: TrackCou
               <li key={`${r.client_id}:${r.case_key}`}>
                 <Link to={caseHref(r.client_id as string, r.case_key as string)}
                   className="group flex items-center gap-3 py-2.5 pl-0 pr-3.5 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-                  <span className={cn('h-10 w-1 shrink-0 rounded-r', urgency(r))} aria-hidden />
+                  <span className={cn('h-12 w-1 shrink-0 rounded-r', urgency(r))} aria-hidden />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="truncate text-sm font-semibold">{r.client_name}</span>
@@ -171,6 +174,7 @@ export const WorkList: React.FC<{ track: Track; master: Master; counts: TrackCou
                       {r.form_code ? <span className="font-medium text-foreground/80">{r.form_code}</span> : null}{r.form_code ? ' · ' : ''}{r.title}
                       {r.financial_year ? ` · FY ${r.financial_year}` : ''}{(r.notices ?? 0) > 1 ? ` · ${r.notices} notices` : ''}
                     </div>
+                    {track !== 'other' && <NextStepLine r={r} advice={adviceOf(advice.data, r.client_id as string, r.case_key as string)} className="mt-0.5" />}
                   </div>
                   {track !== 'other' && <span className="hidden shrink-0 md:block"><OwnerChip name={r.assign_to} /></span>}
                   {track === 'litigation' && r.is_open && <span className="hidden shrink-0 lg:block"><StageBadge stage={r.stage} /></span>}
