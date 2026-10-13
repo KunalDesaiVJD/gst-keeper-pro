@@ -519,6 +519,7 @@ export function validateGstr1Json(
 
 /**
  * Corrects what has exactly one right answer, before a check or a push:
+ *  - old Offline Tool header fields (version, hash, gt, cur_gt) are left out;
  *  - blank sbpcode / sbnum / sbdt on export invoices are left out (the portal
  *    validates them when present, and an offline-tool export omits them);
  *  - net_issue is totnum - cancel;
@@ -535,6 +536,19 @@ export function tidyGstr1Json<T>(json: T, opts: { builder?: boolean } = {}): { j
   const notes: string[] = [];
   const out: Obj = { ...json };
   let changed = false;
+
+  // Header fields from an old Offline Tool. The portal reads "version" as the
+  // tool that made the file and rejects one from an outdated tool ("File could
+  // not be uploaded! Download the latest version of Offline tool …" —
+  // Bapa Sitaram, Sep-26, 13 Oct 2026, version GST3.2.2); "hash" goes with
+  // it, and "gt" / "cur_gt" (turnover) left the GSTR-1 schema long ago. Every
+  // file the portal accepts carries none of them.
+  const stale = ['version', 'hash', 'gt', 'cur_gt'].filter((k) => k in json);
+  if (stale.length) {
+    stale.forEach((k) => delete out[k]);
+    changed = true;
+    notes.push(`Old Offline Tool header fields left out (${stale.join(', ')}); the portal rejects a file stamped with an outdated tool version.`);
+  }
 
   // Exports: blank shipping bill fields.
   if (Array.isArray(json.exp)) {
