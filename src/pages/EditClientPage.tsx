@@ -11,6 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import ReminderSettingsCard from '@/components/reminders/ReminderSettingsCard';
 import { AnnualTurnoverCard } from '@/components/clients/AnnualTurnoverCard';
 import { EinvoiceClientFields } from '@/components/clients/EinvoiceClientFields';
+import { EinvoiceAlertCard } from '@/components/clients/EinvoiceAlertCard';
 import { ArrowLeft, Save, AlertTriangle, History, Loader2, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
 import { RegistrationType, ReturnType, RETURN_TYPES_BY_REGISTRATION } from '@/types';
@@ -920,6 +921,7 @@ const EditClientPage: React.FC = () => {
                 setFormData(prev => ({ ...prev, einvoiceApplicable: applicable, einvoiceExemption: exemption }))}
             />
           </div>
+          {clientId && <div className="mt-3"><EinvoiceAlertCard clientId={clientId} /></div>}
         </SectionCard>
 
         <SectionCard

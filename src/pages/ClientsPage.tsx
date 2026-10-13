@@ -31,12 +31,9 @@ import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import { EinvoiceStatusBadge } from '@/components/clients/EinvoiceStatusBadge';
 import {
   loadEinvoiceData,
-  listDueEinvoiceAlerts,
   einvoiceAttention,
-  type DueEinvoiceAlert,
   type EinvoiceClient,
 } from '@/lib/einvoice/thresholdAlerts';
-import { EinvoiceAlertsPanel } from '@/components/clients/EinvoiceAlertsPanel';
 import type { EinvoiceAssessment } from '@/lib/einvoice/threshold';
 import { useAuth } from '@/contexts/AuthContext';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -95,7 +92,6 @@ const ClientsPage: React.FC = () => {
     const q = searchParams.get('einvoice') as EinvFilter | null;
     return q && EINV_FILTERS.includes(q) ? q : null;
   });
-  const [einvDue, setEinvDue] = useState<DueEinvoiceAlert[]>([]);
 
   // Credentials tab state.
   const [creds, setCreds] = useState<ClientCredentialRow[]>([]);
@@ -119,15 +115,13 @@ const ClientsPage: React.FC = () => {
     setIsLoading(false);
   }, []);
 
-  // One round of queries for every client's turnover, plus the clients due a
-  // threshold email. Nothing is sent from here — staff press Send in the
-  // "E-invoice alerts to send" panel.
+  // One round of queries for every client's turnover, for the e-invoice tiles,
+  // filters and badges. Threshold alerts are sent from Edit Client → E-invoicing.
   const loadEinvoice = useCallback(async () => {
     try {
       const { assessments, clientsById } = await loadEinvoiceData();
       setEinvAssessments(assessments);
       setEinvClients(clientsById);
-      setEinvDue(await listDueEinvoiceAlerts(assessments, clientsById));
     } catch (err) {
       console.error('E-invoice assessment failed:', err);
     }
@@ -351,12 +345,6 @@ const ClientsPage: React.FC = () => {
           <KpiTile label="Should be e-invoice (not ticked)" value={einvCounts.should_tick} hint="Preceding FY above ₹5 crore" tone={einvCounts.should_tick ? 'error' : 'ok'} />
         </TileButton>
       </div>
-
-      <EinvoiceAlertsPanel
-        due={einvDue}
-        actor={{ id: user?.id ?? null, name: user?.firstName ?? null }}
-        onSent={() => void loadEinvoice()}
-      />
 
       {/* Tab strip */}
       <div role="tablist" aria-label="Clients and credentials" className={WS_TABS_LIST}>
