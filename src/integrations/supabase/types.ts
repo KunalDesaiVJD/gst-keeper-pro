@@ -3827,6 +3827,135 @@ export type Database = {
           },
         ]
       }
+      builder_itc_reversal_workings: {
+        Row: {
+          adjustment_ids: string[]
+          approved_at: string | null
+          approved_by: string | null
+          basis_note: string | null
+          bu_event_id: string | null
+          bu_fy: string
+          client_id: string
+          completion_date: string
+          created_at: string
+          created_by: string | null
+          exempt_carpet_sqm: number
+          id: string
+          include_interest: boolean
+          notes: string | null
+          posting_period: string
+          project_id: string
+          result: Json | null
+          start_fy: string
+          status: string
+          submitted_at: string | null
+          submitted_by: string | null
+          total_carpet_sqm: number
+          updated_at: string
+        }
+        Insert: {
+          adjustment_ids?: string[]
+          approved_at?: string | null
+          approved_by?: string | null
+          basis_note?: string | null
+          bu_event_id?: string | null
+          bu_fy: string
+          client_id: string
+          completion_date: string
+          created_at?: string
+          created_by?: string | null
+          exempt_carpet_sqm?: number
+          id?: string
+          include_interest?: boolean
+          notes?: string | null
+          posting_period: string
+          project_id: string
+          result?: Json | null
+          start_fy: string
+          status?: string
+          submitted_at?: string | null
+          submitted_by?: string | null
+          total_carpet_sqm?: number
+          updated_at?: string
+        }
+        Update: {
+          adjustment_ids?: string[]
+          approved_at?: string | null
+          approved_by?: string | null
+          basis_note?: string | null
+          bu_event_id?: string | null
+          bu_fy?: string
+          client_id?: string
+          completion_date?: string
+          created_at?: string
+          created_by?: string | null
+          exempt_carpet_sqm?: number
+          id?: string
+          include_interest?: boolean
+          notes?: string | null
+          posting_period?: string
+          project_id?: string
+          result?: Json | null
+          start_fy?: string
+          status?: string
+          submitted_at?: string | null
+          submitted_by?: string | null
+          total_carpet_sqm?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      builder_itc_reversal_years: {
+        Row: {
+          capital_goods: Json
+          financial_year: string
+          gstr9_arn: string | null
+          gstr9_filed_on: string | null
+          gstr9_match: string
+          id: string
+          inputs_services: Json
+          is_bu_year: boolean
+          remarks: string | null
+          reversed_r42: Json
+          reversed_r43: Json
+          updated_at: string
+          updated_by: string | null
+          working_id: string
+        }
+        Insert: {
+          capital_goods?: Json
+          financial_year: string
+          gstr9_arn?: string | null
+          gstr9_filed_on?: string | null
+          gstr9_match?: string
+          id?: string
+          inputs_services?: Json
+          is_bu_year?: boolean
+          remarks?: string | null
+          reversed_r42?: Json
+          reversed_r43?: Json
+          updated_at?: string
+          updated_by?: string | null
+          working_id: string
+        }
+        Update: {
+          capital_goods?: Json
+          financial_year?: string
+          gstr9_arn?: string | null
+          gstr9_filed_on?: string | null
+          gstr9_match?: string
+          id?: string
+          inputs_services?: Json
+          is_bu_year?: boolean
+          remarks?: string | null
+          reversed_r42?: Json
+          reversed_r43?: Json
+          updated_at?: string
+          updated_by?: string | null
+          working_id?: string
+        }
+        Relationships: []
+      }
       builder_projects: {
         Row: {
           carpet_area_source: string
@@ -11416,6 +11545,14 @@ export type Database = {
       builder_bu_agreement_override: {
         Args: { p_actor_id: string; p_bu_event_id: string; p_reason: string; p_unit_id: string }
         Returns: string
+      }
+      builder_itc_reversal_approve: {
+        Args: { p_actor_id: string; p_lines: Json; p_working_id: string }
+        Returns: string[]
+      }
+      builder_itc_reversal_withdraw: {
+        Args: { p_actor_id: string; p_working_id: string }
+        Returns: undefined
       }
       builder_bu_agreement_confirmation_blocked: {
         Args: { _client_id: string; _period_month: string }
