@@ -1,16 +1,17 @@
 // E-invoice threshold tracking: loads every client's per-FY turnover, assesses
 // it with assessEinvoice (threshold.ts), and lists the clients due a one-off
-// alert email when they approach or cross the ₹5 crore limit.
+// alert email when they approach the ₹5 crore limit
+// (₹4 crore up, still below ₹5 crore — clients past it already e-invoice).
 //
 // Sending is manual (the firm's decision, 9 Oct 2026): nothing goes out on a
-// page load; staff press Send on the Clients page. Each alert is claimed by
+// page load; staff press Send in Edit Client → E-invoicing. Each alert is claimed by
 // its einvoice_threshold_alerts row, UNIQUE (client_id, financial_year,
 // level), so two staff pressing Send together cannot email the client twice.
 // One round of queries for all clients (no per-client requests).
 
 import { supabase } from '@/integrations/supabase/client';
 import { GST_FIRM, renderTemplate } from '@/lib/gstReminders';
-import { assessEinvoice, type EinvoiceAssessment, type FyTurnover } from '@/lib/einvoice/threshold';
+import { EINVOICE_THRESHOLD, assessEinvoice, type EinvoiceAssessment, type FyTurnover } from '@/lib/einvoice/threshold';
 
 export interface EinvoiceClient {
   id: string;
@@ -168,10 +169,11 @@ const ACTION_LINE: Record<EinvoiceAttention, string> = {
 const fmtRupees = (n: number) => Math.round(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
 /**
- * Clients due a threshold alert: approaching or past the limit, not ticked as
+ * Clients due a threshold alert: approaching the ₹5 crore limit (₹4 crore up,
+ * still below ₹5 crore — clients past it already e-invoice), not ticked as
  * e-invoice clients, not exempt, and not yet alerted for that (deciding FY,
- * level). Read-only — nothing is recorded or sent; staff send from the Clients
- * page (sendEinvoiceThresholdAlerts).
+ * level). Read-only — nothing is recorded or sent; staff send from Edit Client
+ * → E-invoicing (sendEinvoiceThresholdAlerts).
  */
 export async function listDueEinvoiceAlerts(
   assessments: Map<string, EinvoiceAssessment>,
@@ -184,6 +186,9 @@ export async function listDueEinvoiceAlerts(
     const att = einvoiceAttention(a, !!client.einvoice_applicable);
     const level = alertLevelFor(att);
     if (!att || !level || !a.decidingYear) return;
+    // Only clients still below ₹5 crore are alerted (firm's decision, 13 Oct
+    // 2026): those at or above it already follow e-invoicing.
+    if (att !== 'approaching' || a.decidingYear.turnover >= EINVOICE_THRESHOLD) return;
     due.push({ client, att, level, fy: a.decidingYear.financial_year, turnover: a.decidingYear.turnover });
   });
   if (!due.length) return due;
