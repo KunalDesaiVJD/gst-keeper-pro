@@ -186,6 +186,10 @@ const ITCSummaryPage: React.FC = () => {
   const selectedClient = selectedClientId;
   const setSelectedClient = setSelectedClientId;
   const [isLocked, setIsLocked] = useState(false);
+  // The superadmin may edit every working sheet (firm's decision, 13 Oct
+  // 2026), a filed period included; the lock still shows.
+  const isSuperadmin = user?.role === 'superadmin';
+  const editLocked = isLocked && !isSuperadmin;
   const [clients, setClients] = useState<Client[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [itcSummaryId, setItcSummaryId] = useState<string | null>(null);
@@ -781,7 +785,7 @@ const ITCSummaryPage: React.FC = () => {
 
   // Handle cell value change with CGST/SGST sync
   const handleCellChange = (section: keyof ITCData, rowIndex: number, field: 'igst' | 'cgst' | 'sgst', value: string) => {
-    if (isLocked) return;
+    if (editLocked) return;
 
     const numValue = parseFloat(value) || 0;
     
@@ -818,7 +822,7 @@ const ITCSummaryPage: React.FC = () => {
 
   // Handle reasons change
   const handleReasonsChange = (section: keyof ITCData, rowIndex: number, value: string) => {
-    if (isLocked) return;
+    if (editLocked) return;
     
     setItcData(prev => {
       const newData = { ...prev };
@@ -1163,7 +1167,7 @@ const ITCSummaryPage: React.FC = () => {
   // One figure cell (IGST / CGST / SGST): an inline input on rows staff type
   // into, plain right-aligned text everywhere else.
   const renderEditableCell = (section: keyof ITCData, rowIndex: number, row: ITCRow, field: 'igst' | 'cgst' | 'sgst') => {
-    const canEdit = row.editable && !isLocked && !row.isAutoLinked;
+    const canEdit = row.editable && !editLocked && !row.isAutoLinked;
     
     if (canEdit) {
       return (
@@ -1235,7 +1239,7 @@ const ITCSummaryPage: React.FC = () => {
         placeholder="Reason…"
         aria-label={`Reason for ${row.srNo || row.particular}`}
         className={WS_CELL_INPUT}
-        disabled={isLocked}
+        disabled={editLocked}
       />
     </td>
   );
@@ -1351,7 +1355,7 @@ const ITCSummaryPage: React.FC = () => {
                 <span className="hidden sm:inline">Clear Data</span>
               </Button>
             )}
-            {selectedClient && !isLocked && (
+            {selectedClient && !editLocked && (
               <Button size="sm" className={cn(WS_BTN, 'px-3')} onClick={handleSave} disabled={isSaving}>
                 {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 {isSaving ? 'Saving…' : 'Save changes'}
@@ -1484,7 +1488,9 @@ const ITCSummaryPage: React.FC = () => {
           {isLocked && (
             <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-foreground">
               <Lock className="h-3.5 w-3.5 shrink-0 text-warning" />
-              This sheet is locked because the return has been filed.
+              {isSuperadmin
+                ? 'The return for this period has been filed. You can still edit as superadmin — changes do not reach the filed return.'
+                : 'This sheet is locked because the return has been filed.'}
             </div>
           )}
 

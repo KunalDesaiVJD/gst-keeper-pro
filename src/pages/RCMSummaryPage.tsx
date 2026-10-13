@@ -140,6 +140,9 @@ const RCMSummaryPage: React.FC = () => {
 
   // Check if all months are locked
   const allMonthsLocked = months.length > 0 && months.every(m => lockedMonths.has(m));
+  // The superadmin may edit filed months too (firm's decision, 13 Oct 2026).
+  const isSuperadmin = user?.role === 'superadmin';
+  const editAllLocked = allMonthsLocked && !isSuperadmin;
 
   // Set default financial year
   useEffect(() => {
@@ -883,7 +886,7 @@ const RCMSummaryPage: React.FC = () => {
           ? `${selectedClientData.name} · FY ${financialYear}`
           : 'Select a client to view RCM data'}
         description={selectedClientData ? 'Taxable value of inward supplies under reverse charge, by expense head and month; the tax rows below are worked from the rate and supply type.' : undefined}
-        actions={hasChanges && isStaff && !allMonthsLocked ? (
+        actions={hasChanges && isStaff && !editAllLocked ? (
           <Button size="sm" className={cn(WS_BTN, 'px-3')} onClick={handleSave} disabled={isSaving}>
             {isSaving ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -909,9 +912,9 @@ const RCMSummaryPage: React.FC = () => {
               data={data}
               masters={masters}
               months={months}
-              lockedMonths={lockedMonths}
+              lockedMonths={isSuperadmin ? new Set<string>() : lockedMonths}
               onDataChange={handleDataChange}
-              isLocked={allMonthsLocked}
+              isLocked={editAllLocked}
               isStaff={isStaff}
             />
           )}

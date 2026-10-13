@@ -157,7 +157,10 @@ const TwoBReconciliationPage: React.FC = () => {
   // client's edit page) that restores the full directly-editable page. Either
   // way a filed period (isLocked) is always read-only on top of this.
   const isLiberalClient = !!selectedClientData?.liberal_2b_reconciliation;
-  const readOnly = isLocked || !isLiberalClient;
+  // The superadmin may add, edit and delete on every working sheet (firm's
+  // decision, 13 Oct 2026): neither Strict mode nor a filed period stops them.
+  const isSuperadmin = user?.role === 'superadmin';
+  const readOnly = !isSuperadmin && (isLocked || !isLiberalClient);
 
   // Check if client requires quarterly months only (IFF or Composition)
   const isQuarterlyClient = selectedClientData?.registration_type === 'IFF' || selectedClientData?.registration_type === 'Composition';
@@ -227,11 +230,11 @@ const TwoBReconciliationPage: React.FC = () => {
   }, [selectedMonth]);
 
   const isRestrictedPeriod = useMemo(() => {
-    if (!selectedMonth) return false;
+    if (!selectedMonth || isSuperadmin) return false;
     const [mm, yy] = selectedMonth.split('/').map(Number);
     if (!mm || !yy) return false;
     return yy * 100 + mm >= RESTRICT_MONTHS_FROM;
-  }, [selectedMonth]);
+  }, [selectedMonth, isSuperadmin]);
 
   // Generate month dropdown options for reversal/reclaim - from April 2024, future limited to +2 months
   // Shows all historical months so existing saved data is preserved (prospective restriction only)
@@ -1176,7 +1179,7 @@ const TwoBReconciliationPage: React.FC = () => {
     maxDate?: string
   ) => {
     // Carried forward rows are non-editable (display only) - except columns marked as editable for CF
-    const shouldBeReadOnly = readOnly || (isCarriedForward && !isEditableForCF);
+    const shouldBeReadOnly = readOnly || (isCarriedForward && !isEditableForCF && !isSuperadmin);
     
     if (shouldBeReadOnly) {
       if (type === 'date' && value) {
@@ -1227,7 +1230,7 @@ const TwoBReconciliationPage: React.FC = () => {
     onSubtypeChange?: (subtype: string | null) => void
   ) => {
     // Carried forward rows are non-editable - except columns marked as editable for CF (Reclaim, Book Entry, In 2B)
-    const shouldBeReadOnly = readOnly || (isCarriedForward && !isEditableForCF);
+    const shouldBeReadOnly = readOnly || (isCarriedForward && !isEditableForCF && !isSuperadmin);
     
     if (shouldBeReadOnly) {
       const displayVal = value || '-';
@@ -1486,7 +1489,11 @@ const TwoBReconciliationPage: React.FC = () => {
           {/* Lock indicator - No unlock button here, only on Filing Status page */}
           {isLocked && (
             <Note tone="warn">
-              <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> This sheet is locked because the return has been filed.</span>
+              <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5" />
+                {isSuperadmin
+                  ? 'The return for this period has been filed. You can still edit as superadmin — changes do not reach the filed return.'
+                  : 'This sheet is locked because the return has been filed.'}
+              </span>
             </Note>
           )}
 
