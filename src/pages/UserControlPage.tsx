@@ -37,6 +37,8 @@ interface Position {
   description: string | null;
   sort_order: number;
   is_active: boolean;
+  /** Carried over from per-person permissions on 12 Oct; being retired. */
+  is_legacy: boolean;
 }
 
 interface Staff {
@@ -87,7 +89,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
     setLoading(true);
     try {
       const [pos, perms, roles, profiles, logRows] = await Promise.all([
-        supabase.from('staff_positions').select('id, name, description, sort_order, is_active').order('sort_order').order('name'),
+        supabase.from('staff_positions').select('id, name, description, sort_order, is_active, is_legacy').order('sort_order').order('name'),
         supabase.from('staff_position_permissions').select('position_id, permission_key'),
         supabase.from('user_roles').select('user_id, role').in('role', ['gst_manager', 'employee']),
         supabase.from('profiles').select('user_id, first_name, email, position_id'),
@@ -250,7 +252,9 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
 
   const employees = staff.filter((s) => s.role === 'employee');
   const unassigned = employees.filter((s) => !s.position_id).length;
-  const activePositions = positions.filter((p) => p.is_active);
+  const activePositions = positions.filter((p) => p.is_active && !p.is_legacy);
+  const legacyIds = new Set(positions.filter((p) => p.is_legacy).map((p) => p.id));
+  const onLegacy = employees.filter((s) => s.position_id && legacyIds.has(s.position_id)).length;
 
   return (
     <div className={embedded ? 'space-y-3' : WS_PAGE}>
@@ -262,11 +266,14 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
         icon={<Shield />}
       />
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <KpiTile label="Roles" value={activePositions.length} hint={positions.length > activePositions.length ? `${positions.length - activePositions.length} retired` : undefined} />
+      <div className={cn('grid grid-cols-2 gap-2', onLegacy > 0 ? 'sm:grid-cols-5' : 'sm:grid-cols-4')}>
+        <KpiTile label="Roles" value={activePositions.length} hint={positions.some((p) => !p.is_active && !p.is_legacy) ? `${positions.filter((p) => !p.is_active && !p.is_legacy).length} retired` : undefined} />
         <KpiTile label="Employees" value={employees.length} />
         <KpiTile label="Without a role" value={unassigned} tone={unassigned ? 'warn' : 'ok'} hint={unassigned ? 'they have no permissions' : undefined} />
         <KpiTile label="GST Managers" value={staff.length - employees.length} hint="every permission, by role" />
+        {onLegacy > 0 && (
+          <KpiTile label="Still on a legacy role" value={onLegacy} tone="warn" hint="pick a role for each on the People tab" />
+        )}
       </div>
 
       <div className={WS_TABS_LIST} role="tablist">
@@ -308,9 +315,16 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
               {positions.length === 0 && (
                 <p className="p-3 text-sm text-muted-foreground">No roles yet. Add one above.</p>
               )}
-              {positions.map((p) => {
+              {[...positions.filter((p) => !p.is_legacy), ...positions.filter((p) => p.is_legacy)].map((p, idx, arr) => {
                 const n = holders(p.id).length;
+                const firstLegacy = p.is_legacy && (idx === 0 || !arr[idx - 1].is_legacy);
                 return (
+                  <React.Fragment key={p.id}>
+                  {firstLegacy && (
+                    <p className="bg-muted/50 px-3 py-1.5 text-[11px] font-medium text-muted-foreground">
+                      Legacy roles — being retired. Each goes when its last person moves to one of your roles.
+                    </p>
+                  )}
                   <button
                     key={p.id} type="button"
                     onClick={() => setSelectedId(p.id)}
@@ -326,8 +340,11 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
                         {grants[p.id]?.size || 0} permission{(grants[p.id]?.size || 0) === 1 ? '' : 's'} · {n} {n === 1 ? 'person' : 'people'}
                       </span>
                     </span>
-                    {!p.is_active && <Badge variant="outline" className="text-[10px]">Retired</Badge>}
+                    {p.is_legacy
+                      ? <Badge variant="warning" className="text-[10px]">Legacy</Badge>
+                      : !p.is_active && <Badge variant="outline" className="text-[10px]">Retired</Badge>}
                   </button>
+                  </React.Fragment>
                 );
               })}
             </div>
@@ -339,7 +356,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
             description={selected
               ? `${holders(selected.id).map((s) => s.first_name).join(', ') || 'Nobody holds this role yet'}`
               : 'Select a role on the left'}
-            actions={selected && draft ? (
+            actions={selected && draft && !selected.is_legacy ? (
               <>
                 <Button variant="outline" size="sm" className={WS_BTN} onClick={() => void toggleActive()}>
                   {selected.is_active ? 'Retire' : 'Reactivate'}
@@ -356,7 +373,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
             {!selected || !draft ? (
               <div className="flex flex-col items-center justify-center py-10 text-center text-sm text-muted-foreground">
                 <BriefcaseBusiness className="mb-3 h-10 w-10 opacity-40" />
-                Select or add a position to set what its holders can do.
+                Select or add a role to set what its holders can do.
               </div>
             ) : (
               <div className="space-y-3">
@@ -372,7 +389,13 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
                       onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
                   </div>
                 </div>
-                {!selected.is_active && (
+                {selected.is_legacy && (
+                  <Note tone="warn">
+                    Legacy role, being retired: it keeps working for the people still on it, but cannot be changed or given
+                    to anyone. Move each of them to one of your roles on the People tab — it is deleted when the last one moves.
+                  </Note>
+                )}
+                {!selected.is_active && !selected.is_legacy && (
                   <Note tone="warn">Retired: its holders have none of these permissions until it is reactivated.</Note>
                 )}
                 {PERMISSION_GROUPS.map((g) => {
@@ -460,8 +483,10 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
                           <SelectTrigger className={WS_CONTROL}><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value={NONE}>No role</SelectItem>
-                            {positions.filter((p) => p.is_active || p.id === s.position_id).map((p) => (
-                              <SelectItem key={p.id} value={p.id}>{p.name}{p.is_active ? '' : ' (retired)'}</SelectItem>
+                            {positions.filter((p) => (p.is_active && !p.is_legacy) || p.id === s.position_id).map((p) => (
+                              <SelectItem key={p.id} value={p.id} disabled={p.is_legacy}>
+                                {p.name}{p.is_legacy ? ' (legacy — choose a new role)' : p.is_active ? '' : ' (retired)'}
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>

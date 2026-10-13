@@ -699,7 +699,7 @@ const EditClientPage: React.FC = () => {
             </div>
           )}
 
-          {formData.registrationType && formData.selectedReturns.includes('GSTR-1') && (
+          {formData.registrationType && formData.selectedReturns.some((r) => r === 'GSTR-1' || r === 'GSTR-1 (IFF)') && (
             <div className="space-y-3">
               <Label>GSTR-1 Import Mode</Label>
               {!canEditGstr1ImportMode() && (

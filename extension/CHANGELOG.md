@@ -2,6 +2,11 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-13 — Says why the filed GSTR-9 could not be read (v0.10.4)
+
+- When the filed-GSTR-9 read gets no data, the extension now records a `GSTR9_FILED` row with `PULL FAILED: <what the portal answered>`. A good earlier copy keeps its figures.
+- The first live fetch (Bapa Sitaram, 13 October) returned only the system-computed figures. The app now fills past years from those figures, or from the filed GSTR-3Bs, until the filed-return read is fixed.
+
 ## 2026-10-13 — Reads the filed GSTR-9 (v0.10.3)
 
 No database change; the rows go into `gst_filed_returns` as `GSTR9_FILED`.

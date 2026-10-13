@@ -5033,13 +5033,17 @@
     // (reversals: rule42, rule43 …), which the Builder ITC reversal working
     // (Rule 42/43) reads per past year. Saved as return_type 'GSTR9_FILED'.
     let filed = null;
+    let filedErr = '';
     try {
       const r = await fetch('https://return.gst.gov.in/returns2/auth/api/gstr9/details?ret_period=' + retPeriod + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include', headers: { Accept: 'application/json' } });
       const text = await r.text();
       let j = null;
       try { j = JSON.parse(text); } catch (e) { /* HTML (login / error page) */ }
       if (r.ok && j && j.status === 1 && j.data && typeof j.data === 'object') filed = j.data;
-    } catch (e) { /* the calc read below decides whether to retry */ }
+      // 0.10.4: say why, so the read can be fixed from what the portal answered.
+      else if (j && j.error) filedErr = String(j.error.message || j.error.errorCode || JSON.stringify(j.error)).slice(0, 200);
+      else filedErr = 'HTTP ' + r.status + (j ? ' (status ' + j.status + ', keys ' + Object.keys(j).join('/') + ')' : ', not JSON: ' + text.slice(0, 80).replace(/\s+/g, ' '));
+    } catch (e) { filedErr = (e && e.message) || 'network error'; }
 
     let calc = null;
     let calcErr = '';
@@ -5093,6 +5097,7 @@
     try {
       if (calc) await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', patchObj);
       if (filed) await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_FILED', { ...patchObj, summary: filed });
+      else await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_FILED', { status: 'PULL FAILED: ' + (filedErr || 'no data'), updated_at: new Date().toISOString() });
     } catch (e) {
       banner('GSTR-9: read from the portal but could not be saved (' + ((e && e.message) || 'unknown error') + ').' + progress, '#dc2626');
       await sleep(2000);

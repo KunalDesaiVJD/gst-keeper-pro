@@ -247,35 +247,95 @@ export async function withdrawWorking(id: string, actorId: string): Promise<void
 /** 'YYYY-YY' → the GSTR-9 period the extension uses, '03/YYYY' (the closing March). */
 export const gstr9PeriodOf = (fy: string) => `03/${Number(fy.slice(0, 4)) + 1}`;
 
+/** Where a past year's figures came from, best first. */
+export type PortalSource = 'GSTR9_FILED' | 'GSTR9_COMPUTED' | 'GSTR3B_AS_FILED';
+export const PORTAL_SOURCE_LABEL: Record<PortalSource, string> = {
+  GSTR9_FILED: 'From the filed GSTR-9 (portal)',
+  GSTR9_COMPUTED: 'From GSTR-9 Table 6A (portal)',
+  GSTR3B_AS_FILED: 'From the GSTR-3Bs filed (GSTR-9 not filed yet)',
+};
+
 export interface FiledGstr9 {
   financialYear: string;
+  source: PortalSource;
   itc: FiledGstr9Itc;
   arn: string | null;
   filedDate: string | null;
   status: string | null;
   pulledAt: string | null;
+  /** What the source could not give, said on the year. */
+  note: string | null;
 }
 
+/**
+ * Each past year's credit, from what the portal gave, best first:
+ *  1. the filed GSTR-9 (extension 0.10.3+, 'GSTR9_FILED'): Table 6 by type and
+ *     Table 7C/7D;
+ *  2. the GSTR-9 the portal computes ('GSTR9_CALC') of a year whose GSTR-9 is
+ *     filed: Table 6A (ITC availed through GSTR-3B) and the ARN. It carries no
+ *     split by type and no Table 7, so the whole of 6A is taken as Rule 42/43
+ *     common credit (the same exempt share applies to both, so the split does
+ *     not change the reversal) and nothing as reversed earlier;
+ *  3. a year whose GSTR-9 is not filed yet: the GSTR-3Bs filed for it, as the
+ *     app holds them month by month (4A total availed, 4B(1) reversed).
+ */
 export async function fetchFiledGstr9(clientId: string, fys: string[]): Promise<Record<string, FiledGstr9>> {
   const out: Record<string, FiledGstr9> = {};
   if (!fys.length) return out;
   const byPeriod = new Map(fys.map((fy) => [gstr9PeriodOf(fy), fy]));
-  const { data, error } = await supabase.from('gst_filed_returns')
-    .select('period_month, summary, arn, filed_date, status, updated_at')
-    .eq('client_id', clientId).eq('return_type', 'GSTR9_FILED').in('period_month', [...byPeriod.keys()]);
+  const [{ data, error }, { data: docs }] = await Promise.all([
+    supabase.from('gst_filed_returns')
+      .select('return_type, period_month, summary, arn, filed_date, status, updated_at')
+      .eq('client_id', clientId).in('return_type', ['GSTR9_FILED', 'GSTR9_CALC']).in('period_month', [...byPeriod.keys()]),
+    supabase.from('annual_return_docs')
+      .select('financial_year, data').eq('client_id', clientId).eq('doc_key', 'portal').in('financial_year', fys),
+  ]);
   if (error) throw error;
-  type Row = { period_month: string; summary: unknown; arn: string | null; filed_date: string | null; status: string | null; updated_at: string | null };
-  for (const r of (data || []) as unknown as Row[]) {
+  type Row = { return_type: string; period_month: string; summary: unknown; arn: string | null; filed_date: string | null; status: string | null; updated_at: string | null };
+  const rowsFor = (rt: string) => ((data || []) as unknown as Row[]).filter((r) => r.return_type === rt && !!r.summary);  // a later failed read only rewrites the status
+
+  for (const r of rowsFor('GSTR9_FILED')) {
     const fy = byPeriod.get(r.period_month);
-    if (!fy || !r.summary) continue;
     const itc = parseFiledGstr9(r.summary);
-    if (!itc.found) continue;
-    out[fy] = { financialYear: fy, itc, arn: r.arn, filedDate: r.filed_date, status: r.status, pulledAt: r.updated_at };
+    if (!fy || !itc.found) continue;
+    out[fy] = { financialYear: fy, source: 'GSTR9_FILED', itc, arn: r.arn, filedDate: r.filed_date, status: r.status, pulledAt: r.updated_at, note: null };
+  }
+  for (const r of rowsFor('GSTR9_CALC')) {
+    const fy = byPeriod.get(r.period_month);
+    if (!fy || out[fy] || r.status !== 'Filed') continue;
+    const t6 = (r.summary as { table6?: { itc_3b?: Record<string, unknown> } }).table6;
+    if (!t6?.itc_3b) continue;
+    const a = t6.itc_3b;
+    const availed = tax({ i: Number(a.iamt) || 0, c: Number(a.camt) || 0, s: Number(a.samt) || 0, x: Number(a.csamt) || 0 });
+    out[fy] = {
+      financialYear: fy, source: 'GSTR9_COMPUTED',
+      itc: { inputsServices: availed, capitalGoods: ZERO, reversedR42: ZERO, reversedR43: ZERO, availed, found: true },
+      arn: r.arn, filedDate: r.filed_date, status: r.status, pulledAt: r.updated_at,
+      note: 'Table 6A only: Table 7C/7D was not read, so nothing is taken as reversed earlier. Check it against the filed GSTR-9.',
+    };
+  }
+  type Doc = { financial_year: string; data: { months?: Record<string, { itc4aTotal?: Tax; itc4b1?: Tax }> } };
+  for (const d of (docs || []) as unknown as Doc[]) {
+    const fy = d.financial_year;
+    if (out[fy]) continue;
+    const calc = ((data || []) as unknown as Row[]).find((r) => r.return_type === 'GSTR9_CALC' && byPeriod.get(r.period_month) === fy);
+    // Only for a year whose GSTR-9 the portal says is not filed yet.
+    if (!calc || calc.status === 'Filed') continue;
+    const months = Object.values(d.data?.months || {}).filter((m) => m?.itc4aTotal);
+    if (!months.length) continue;
+    const availed = months.reduce((a, m) => add(a, tax(m.itc4aTotal)), ZERO);
+    const reversed = months.reduce((a, m) => add(a, tax(m.itc4b1)), ZERO);
+    out[fy] = {
+      financialYear: fy, source: 'GSTR3B_AS_FILED',
+      itc: { inputsServices: availed, capitalGoods: ZERO, reversedR42: reversed, reversedR43: ZERO, availed, found: true },
+      arn: null, filedDate: null, status: calc.status, pulledAt: calc.updated_at,
+      note: `GSTR-9 not filed yet: ${months.length} month(s) of GSTR-3B as filed — 4A as credit availed, 4B(1) as reversed earlier.`,
+    };
   }
   return out;
 }
 
-/** Fill a past year exactly from its filed GSTR-9. */
+/** Fill a past year exactly from what the portal gave. */
 export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId: string | null): Promise<void> {
   await saveYear(yearId, {
     inputs_services: f.itc.inputsServices,
@@ -285,6 +345,6 @@ export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId:
     gstr9_arn: f.arn,
     gstr9_filed_on: f.filedDate,
     gstr9_match: 'MATCHED_DATA',
-    remarks: 'From the GSTR-9 filed on the portal (Tables 6 and 7).',
+    remarks: `${PORTAL_SOURCE_LABEL[f.source]}.${f.note ? ` ${f.note}` : ''}`,
   }, actorId);
 }

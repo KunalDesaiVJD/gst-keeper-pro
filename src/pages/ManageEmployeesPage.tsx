@@ -68,7 +68,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
 
   useEffect(() => {
     if (!canManagePositions()) return;
-    void supabase.from('staff_positions').select('id, name').eq('is_active', true).order('sort_order').order('name')
+    void supabase.from('staff_positions').select('id, name').eq('is_active', true).eq('is_legacy', false).order('sort_order').order('name')
       .then(({ data }) => setPositions(data || []));
   }, [canManagePositions]);
 
