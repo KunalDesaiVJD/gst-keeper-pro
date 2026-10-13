@@ -859,8 +859,15 @@ const TwoBReconciliationPage: React.FC = () => {
   // Validation for mandatory fields
   const validationErrors = useMemo(() => {
     const errors: string[] = [];
+    // Only rows added or changed here are checked: a row that came in from
+    // Import 2B without a GSTIN must not stop anyone saving (or deleting)
+    // something else on the sheet.
+    const touched2B = (b: BillRecord) => b.id.startsWith('temp-')
+      || JSON.stringify(billsNotIn2B.find((o) => o.id === b.id)) !== JSON.stringify(b);
+    const touchedBooks = (b: BillRecord) => b.id.startsWith('temp-')
+      || JSON.stringify(billsNotInBooks.find((o) => o.id === b.id)) !== JSON.stringify(b);
     localBills2B.forEach((b, idx) => {
-      if (b.is_carried_forward) return; // Skip CF rows
+      if (b.is_carried_forward || !touched2B(b)) return; // Skip CF and untouched rows
       const rowNum = idx + 1;
       if (!b.date) errors.push(`Bills Not in 2B - Row ${rowNum}: Date is required`);
       if (!b.supplier_name || b.supplier_name.trim() === '') errors.push(`Bills Not in 2B - Row ${rowNum}: Supplier Name is required`);
@@ -868,7 +875,7 @@ const TwoBReconciliationPage: React.FC = () => {
       if (!b.supplier_gstin || b.supplier_gstin.trim() === '') errors.push(`Bills Not in 2B - Row ${rowNum}: GSTIN is required`);
     });
     localBillsBooks.forEach((b, idx) => {
-      if (b.is_carried_forward) return;
+      if (b.is_carried_forward || !touchedBooks(b)) return;
       const rowNum = idx + 1;
       if (!b.date) errors.push(`Bills Not in Books - Row ${rowNum}: Date is required`);
       if (!b.supplier_name || b.supplier_name.trim() === '') errors.push(`Bills Not in Books - Row ${rowNum}: Supplier Name is required`);
@@ -876,7 +883,7 @@ const TwoBReconciliationPage: React.FC = () => {
       if (!b.supplier_gstin || b.supplier_gstin.trim() === '') errors.push(`Bills Not in Books - Row ${rowNum}: GSTIN is required`);
     });
     return errors;
-  }, [localBills2B, localBillsBooks]);
+  }, [localBills2B, localBillsBooks, billsNotIn2B, billsNotInBooks]);
 
   const hasMandatoryFieldErrors = validationErrors.length > 0;
 
@@ -909,12 +916,57 @@ const TwoBReconciliationPage: React.FC = () => {
 
       // First, apply database changes (inserts/updates/deletes)
       // Delete removed rows
+      const fail = (what: string, e: { message: string } | null) => {
+        if (e) throw new Error(`${what}: ${e.message}`);
+      };
+      // Deleting an invoice here also removes the copies the carry-forward
+      // made of it in later months whose GSTR-3B is not filed — otherwise it
+      // would still sit in those months' pending list.
+      const removeLaterCopies = async (table: 'bills_not_in_2b' | 'bills_not_in_books', rows: BillRecord[]) => {
+        if (!rows.length) return 0;
+        const { data: filed } = await supabase.from('filing_status').select('period_month')
+          .eq('client_id', selectedClientId).in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']).eq('status', 'Filed');
+        const filedSet = new Set(((filed || []) as { period_month: string }[]).map((f) => f.period_month));
+        const key = (p: string) => { const [m, y] = p.split('/'); return Number(y) * 100 + Number(m); };
+        const { data: copies, error } = await supabase.from(table).select('*')
+          .eq('client_id', selectedClientId).eq('is_carried_forward', true);
+        fail('Could not read later months', error);
+        const same = (a: BillRecord, b: BillRecord) => a.date === b.date && a.supplier_name === b.supplier_name
+          && (a.supplier_invoice_number || '') === (b.supplier_invoice_number || '')
+          && (a.supplier_gstin || '') === (b.supplier_gstin || '')
+          && Number(a.taxable_value || 0) === Number(b.taxable_value || 0)
+          && Number(a.input_igst || 0) === Number(b.input_igst || 0)
+          && Number(a.input_cgst || 0) === Number(b.input_cgst || 0)
+          && Number(a.input_sgst || 0) === Number(b.input_sgst || 0);
+        const ids: string[] = [];
+        for (const r of rows) {
+          const perPeriod = new Map<string, string>();
+          for (const c of (copies || []) as BillRecord[]) {
+            if (key(c.period_month) <= key(r.period_month) || filedSet.has(c.period_month)) continue;
+            if (!perPeriod.has(c.period_month) && same(c, r) && !ids.includes(c.id)) perPeriod.set(c.period_month, c.id);
+          }
+          ids.push(...perPeriod.values());
+        }
+        if (ids.length) {
+          const { error: dErr } = await supabase.from(table).delete().in('id', ids);
+          fail('Could not remove later copies', dErr);
+        }
+        return ids.length;
+      };
+      let laterCopies = 0;
       if (deletedRows2B.length > 0) {
-        await supabase.from('bills_not_in_2b').delete().in('id', deletedRows2B);
+        const gone = billsNotIn2B.filter((b) => deletedRows2B.includes(b.id));
+        const { error } = await supabase.from('bills_not_in_2b').delete().in('id', deletedRows2B);
+        fail('Could not delete', error);
+        laterCopies += await removeLaterCopies('bills_not_in_2b', gone.filter((b) => !b.is_carried_forward));
       }
       if (deletedRowsBooks.length > 0) {
-        await supabase.from('bills_not_in_books').delete().in('id', deletedRowsBooks);
+        const gone = billsNotInBooks.filter((b) => deletedRowsBooks.includes(b.id));
+        const { error } = await supabase.from('bills_not_in_books').delete().in('id', deletedRowsBooks);
+        fail('Could not delete', error);
+        laterCopies += await removeLaterCopies('bills_not_in_books', gone.filter((b) => !b.is_carried_forward));
       }
+      if (laterCopies) toast.info(`Also removed ${laterCopies} carried-forward cop${laterCopies === 1 ? 'y' : 'ies'} in later months`);
 
       // Process bills not in 2B
       const savedBills2B: BillRecord[] = [];
@@ -922,7 +974,8 @@ const TwoBReconciliationPage: React.FC = () => {
         if (bill.id.startsWith('temp-')) {
           // Insert new record
           const { id, ...billData } = bill;
-          const { data: inserted } = await supabase.from('bills_not_in_2b').insert([billData]).select().single();
+          const { data: inserted, error: insErr } = await supabase.from('bills_not_in_2b').insert([billData]).select().single();
+          fail('Could not add a row', insErr);
           if (inserted) {
             savedBills2B.push(inserted);
           } else {
@@ -933,10 +986,11 @@ const TwoBReconciliationPage: React.FC = () => {
           const original = billsNotIn2B.find(b => b.id === bill.id);
           if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
             const { id, ...updates } = bill;
-            await supabase
+            const { error: updErr } = await supabase
               .from('bills_not_in_2b')
               .update({ ...updates, updated_at: new Date().toISOString() })
               .eq('id', id);
+            fail('Could not update a row', updErr);
           }
           savedBills2B.push(bill);
         }
@@ -948,7 +1002,8 @@ const TwoBReconciliationPage: React.FC = () => {
         if (bill.id.startsWith('temp-')) {
           // Insert new record
           const { id, ...billData } = bill;
-          const { data: inserted } = await supabase.from('bills_not_in_books').insert([billData]).select().single();
+          const { data: inserted, error: insErr } = await supabase.from('bills_not_in_books').insert([billData]).select().single();
+          fail('Could not add a row', insErr);
           if (inserted) {
             savedBillsBooks.push(inserted);
           } else {
@@ -959,10 +1014,11 @@ const TwoBReconciliationPage: React.FC = () => {
           const original = billsNotInBooks.find(b => b.id === bill.id);
           if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
             const { id, ...updates } = bill;
-            await supabase
+            const { error: updErr } = await supabase
               .from('bills_not_in_books')
               .update({ ...updates, updated_at: new Date().toISOString() })
               .eq('id', id);
+            fail('Could not update a row', updErr);
           }
           savedBillsBooks.push(bill);
         }
@@ -1210,6 +1266,7 @@ const TwoBReconciliationPage: React.FC = () => {
           }
         }}
         min={type === 'number' ? 0 : undefined}
+        step={type === 'number' ? 'any' : undefined}
         max={type === 'date' && maxDate ? maxDate : undefined}
         className={`h-7 px-2 text-xs md:text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${type === 'number' ? 'w-28 text-right tabular-nums' : ''} ${className}`}
       />
