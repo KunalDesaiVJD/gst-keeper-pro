@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
-import { Outlet, Navigate, useLocation } from 'react-router-dom';
+import { Outlet, Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar, { SidebarContents } from './Sidebar';
-import QuickActionsButton from './QuickActionsButton';
-import ChatWidget from '@/components/chat/ChatWidget';
 import NotificationBell from '@/components/notices/NotificationBell';
 import SearchPalette from '@/components/notices/SearchPalette';
 import AutopilotBadge from '@/components/notices/autopilot/AutopilotBadge';
@@ -15,10 +13,6 @@ import logo from '@/assets/logo.png';
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, isStaffRole } = useAuth();
-  const { pathname } = useLocation();
-  // The two floating buttons covered the Notices & Litigation lists' owner and
-  // action columns (audit cross-cutting finding): those pages go without them.
-  const noFabs = /^\/(notices|litigation|refunds-all|drc03-all)/.test(pathname);
   const [isSidebarMinimized, setIsSidebarMinimized] = useState(true);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
@@ -87,8 +81,6 @@ const MainLayout: React.FC = () => {
       {isStaffRole() && <SearchPalette />}
 
       {/* Quick actions floating button - only for staff */}
-      {isStaffRole() && !noFabs && <QuickActionsButton />}
-      {isStaffRole() && !noFabs && <ChatWidget />}
     </div>
   );
 };
