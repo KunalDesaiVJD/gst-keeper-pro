@@ -1369,7 +1369,7 @@ const GSTR1DataPage: React.FC = () => {
       }
 
       toast.success(`GSTR-1 JSON imported for ${periodMonthKey}.`);
-      if (tidy.changed) toast.info(tidy.notes.join(' '), { duration: 12000 });
+      if (tidy.changed) toast.info(tidy.notes.join(' '), { duration: 2000 });
       if (hsnFix.changed) toast.info(describeHsnFixes(hsnFix), { duration: 12000 });
       if (hsnFix.problems.length) toast.warning(describeHsnProblems(hsnFix.problems), { duration: 15000 });
       if (check.problems.length) toast.warning(describeGstr1Issues(check.problems), { duration: 20000 });
@@ -1571,7 +1571,7 @@ const GSTR1DataPage: React.FC = () => {
       draftJson = hsnFix.json;
       basisUpdatedAt = saved[0].updated_at ?? null;
       const fixes = [...tidy.notes, ...(hsnFix.changed ? [describeHsnFixes(hsnFix)] : [])].join(' ');
-      toast.info(fixes, { duration: 12000 });
+      toast.info(fixes, { duration: 2000 });
       await recordVersion({ action_type: 'IMPORT', status: 'edited', summary: `Corrected for the portal before upload: ${fixes}`, payload: hsnFix.json });
       await fetchGSTR1Data();
     }
@@ -2143,7 +2143,7 @@ const GSTR1DataPage: React.FC = () => {
       }
       if (einvFileWarnings.length) toast.warning(einvFileWarnings.join(' '), { duration: 25000 });
     }
-    if (tidy.changed) toast.info(`${tidy.notes.join(' ')} (in the downloaded file; the saved return is corrected when you upload)`, { duration: 12000 });
+    if (tidy.changed) toast.info(`${tidy.notes.join(' ')} (in the downloaded file; the saved return is corrected when you upload)`, { duration: 2000 });
     if (hsnFix.changed) toast.info(`${describeHsnFixes(hsnFix)} (in the downloaded file; the saved return is corrected when you upload)`, { duration: 12000 });
     if (hsnFix.problems.length) toast.warning(describeHsnProblems(hsnFix.problems), { duration: 15000 });
   };
