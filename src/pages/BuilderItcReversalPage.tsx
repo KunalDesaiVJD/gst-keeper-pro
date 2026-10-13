@@ -24,7 +24,7 @@ import {
 } from '@/utils/builderItcReversal';
 import {
   approveWorking, createWorking, fetchBuEvents, fetchCarpetBasis, fetchFiledGstr9, fetchReferences, fetchWorking,
-  fillYearFromPortal, gstr9PeriodOf, saveWorking, saveYear, setStartFy, submitWorking, toYearInput, withdrawWorking,
+  PORTAL_SOURCE_LABEL, fillYearFromPortal, gstr9PeriodOf, saveWorking, saveYear, setStartFy, submitWorking, toYearInput, withdrawWorking,
   type BuEventOption, type CarpetBasis, type FiledGstr9, type WorkingRow, type YearRow,
 } from '@/lib/builderItcReversalData';
 
@@ -114,7 +114,12 @@ const BuilderItcReversalPage: React.FC = () => {
       // The filed GSTR-9 is the reference wherever the portal gave it.
       const merged = { ...appRefs };
       for (const f of Object.values(portal)) {
-        merged[f.financialYear] = { financialYear: f.financialYear, availed: f.itc.availed, source: 'GSTR-9 as filed (portal)', months: 12 };
+        merged[f.financialYear] = {
+          financialYear: f.financialYear,
+          availed: f.itc.availed,
+          source: f.source === 'GSTR9_FILED' ? 'GSTR-9 as filed (portal)' : f.source === 'GSTR9_COMPUTED' ? 'GSTR-9 Table 6A' : 'GSTR-3B Table 4A (as filed)',
+          months: 12,
+        };
       }
       setRefs(merged);
       setFiled(portal);
@@ -373,8 +378,9 @@ const BuilderItcReversalPage: React.FC = () => {
                 const yr = result.years.find((r) => r.financialYear === y.financial_year);
                 const ref = refs[y.financial_year];
                 const portal = !y.is_bu_year ? filed[y.financial_year] : undefined;
-                // A past year with its filed GSTR-9 on record is the portal's, not typed.
-                const cellsEditable = editable && !portal;
+                // A past year fetched from the portal is the portal's, not typed;
+                // only the superadmin may correct it.
+                const cellsEditable = editable && (!portal || isSuperadmin);
                 return (
                   <div key={y.id} className="rounded-md border">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/50 px-3 py-1.5">
@@ -384,7 +390,9 @@ const BuilderItcReversalPage: React.FC = () => {
                       </span>
                       {portal && (
                         <span className="flex items-center gap-2">
-                          <Badge variant="success" className="text-[10px]">From the filed GSTR-9 (portal){portal.arn ? ` · ARN ${portal.arn}` : ''}</Badge>
+                          <Badge variant={portal.source === 'GSTR9_FILED' ? 'success' : 'warning'} className="text-[10px]">
+                            {PORTAL_SOURCE_LABEL[portal.source]}{portal.arn ? ` · ARN ${portal.arn}` : ''}
+                          </Badge>
                           {editable && yr?.referenceDiff && HEADS.some((h) => Math.abs(yr.referenceDiff![h]) > 1) && (
                             <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy}
                               onClick={() => void run(() => fillYearFromPortal(y.id, portal, user?.id ?? null), 'Filled from the portal')}>
@@ -448,6 +456,11 @@ const BuilderItcReversalPage: React.FC = () => {
                         </tbody>
                       </table>
                     </div>
+                    {portal?.note && (
+                      <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+                        {portal.note}{isSuperadmin && editable ? ' As superadmin you can correct the figures above.' : ''}
+                      </p>
+                    )}
                     {!y.is_bu_year && !portal && (
                       <div className="grid gap-2 p-3 sm:grid-cols-4">
                         <div className="space-y-1">
