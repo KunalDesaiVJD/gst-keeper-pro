@@ -289,6 +289,19 @@ figure) goes back as a re-credit in **4(A)(5)**.
   remarks.
 - **The BU year** (April to the BU month) is entered by hand.
 
+**Past years come from the portal (13/10/2026).**
+- *Fetch past years from portal* has the extension (0.10.3+) read each year's
+  **filed** GSTR-9. It saves the return as `gst_filed_returns` `GSTR9_FILED`.
+- Each year is filled from it (`src/utils/gstr9Filed.ts`):
+  - **Rule 42 base:** Table 6B–6D and 6E of types inputs and input services,
+    plus 6F, 6G, 6H and 6M;
+  - **Rule 43 base:** capital goods from 6B–6E;
+  - **already reversed:** 7C (Rule 42) and 7D (Rule 43).
+- TRAN-1 and TRAN-2 credit (6K/6L) is left out.
+- A year filled this way is read-only and counts as matched with its GSTR-9.
+  A year the portal did not return is entered by hand and confirmed against
+  the filed GSTR-9's ARN, as before.
+
 **First year.** The project's registration or 01/04/2019, whichever is later.
 This is the start of the construction scheme and its carpet-area key. The
 working can move it.

@@ -3,6 +3,7 @@
 // 20261015110000_builder_itc_reversal.sql the schema).
 
 import { supabase } from '@/integrations/supabase/client';
+import { parseFiledGstr9, type FiledGstr9Itc } from '@/utils/gstr9Filed';
 import {
   ZERO, add, fyOfDate, fyRange, tax, defaultStartFy,
   type Gstr9Match, type Tax, type WorkingResult, type YearInput, type YearReference,
@@ -239,4 +240,51 @@ export async function approveWorking(id: string, actorId: string, result: Workin
 export async function withdrawWorking(id: string, actorId: string): Promise<void> {
   const { error } = await supabase.rpc('builder_itc_reversal_withdraw', { p_working_id: id, p_actor_id: actorId });
   if (error) throw error;
+}
+
+// ─── Filed GSTR-9 from the portal (extension 0.10.3, 'GSTR9_FILED') ─────────
+
+/** 'YYYY-YY' → the GSTR-9 period the extension uses, '03/YYYY' (the closing March). */
+export const gstr9PeriodOf = (fy: string) => `03/${Number(fy.slice(0, 4)) + 1}`;
+
+export interface FiledGstr9 {
+  financialYear: string;
+  itc: FiledGstr9Itc;
+  arn: string | null;
+  filedDate: string | null;
+  status: string | null;
+  pulledAt: string | null;
+}
+
+export async function fetchFiledGstr9(clientId: string, fys: string[]): Promise<Record<string, FiledGstr9>> {
+  const out: Record<string, FiledGstr9> = {};
+  if (!fys.length) return out;
+  const byPeriod = new Map(fys.map((fy) => [gstr9PeriodOf(fy), fy]));
+  const { data, error } = await supabase.from('gst_filed_returns')
+    .select('period_month, summary, arn, filed_date, status, updated_at')
+    .eq('client_id', clientId).eq('return_type', 'GSTR9_FILED').in('period_month', [...byPeriod.keys()]);
+  if (error) throw error;
+  type Row = { period_month: string; summary: unknown; arn: string | null; filed_date: string | null; status: string | null; updated_at: string | null };
+  for (const r of (data || []) as unknown as Row[]) {
+    const fy = byPeriod.get(r.period_month);
+    if (!fy || !r.summary) continue;
+    const itc = parseFiledGstr9(r.summary);
+    if (!itc.found) continue;
+    out[fy] = { financialYear: fy, itc, arn: r.arn, filedDate: r.filed_date, status: r.status, pulledAt: r.updated_at };
+  }
+  return out;
+}
+
+/** Fill a past year exactly from its filed GSTR-9. */
+export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId: string | null): Promise<void> {
+  await saveYear(yearId, {
+    inputs_services: f.itc.inputsServices,
+    capital_goods: f.itc.capitalGoods,
+    reversed_r42: f.itc.reversedR42,
+    reversed_r43: f.itc.reversedR43,
+    gstr9_arn: f.arn,
+    gstr9_filed_on: f.filedDate,
+    gstr9_match: 'MATCHED_DATA',
+    remarks: 'From the GSTR-9 filed on the portal (Tables 6 and 7).',
+  }, actorId);
 }
