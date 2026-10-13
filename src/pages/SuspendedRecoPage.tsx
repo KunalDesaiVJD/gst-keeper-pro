@@ -911,7 +911,7 @@ const SuspendedRecoPage: React.FC = () => {
                           >
                             Not Applicable
                           </Button>
-                          {openingSource !== 'manual' && canManualOverride() && (
+                          {(openingSource !== 'manual' || user?.role === 'superadmin') && canManualOverride() && (
                             <Button
                               size="sm"
                               variant="outline"

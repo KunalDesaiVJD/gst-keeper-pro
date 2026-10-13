@@ -515,3 +515,40 @@ A stale comment above `recoCheck` claiming the check was "advisory only,
 doesn't block Push" was corrected at the same time — it had been untrue since
 the `disabled=` binding was added, and it sends anyone debugging a stuck Push
 button to the wrong place.
+
+## §9. The superadmin edits every working sheet (firm decision, 13 Oct 2026)
+
+The superadmin can add, edit and delete on every GST Working sheet, whatever
+would otherwise stop them. The superadmin is the only role this applies to;
+everyone else keeps the rules as they are.
+
+**What no longer stops the superadmin:**
+
+- **2B Reconciliation:**
+  - Strict mode;
+  - a filed period;
+  - carried-forward rows, whose columns are all editable;
+  - the current-month-only restriction on the Reversal / Reclaim / Book Entry /
+    In-2B month lists.
+- **Import 2B:** a filed period. Import, pull, post, classify and delete all
+  work.
+- **ITC Summary:** a filed period.
+- **RCM Summary:** filed months and a fully filed year.
+- **Suspended Reco:** Override is offered even when the opening was set by
+  hand.
+
+**What the screens show:**
+
+- A filed period still shows its lock note. For the superadmin the note says
+  edits do not reach the filed return.
+- Nothing is re-filed. A change after filing has to be carried to the portal by
+  amendment or in a later return, as for any other correction.
+
+**Still fixed, even for the superadmin:**
+
+- **ITC Summary auto-linked rows** (5.1, 5.4, 4B(2)(i), 4D(1), partial ITC).
+  They are recomputed from their sources on every load, so a typed value would
+  not survive a reload. Change the source rows instead.
+- **2B document figures on Import 2B** (portal data).
+- **Edit / delete of recorded advance set-off legs and opening advances.** The
+  app has no screen for these yet.

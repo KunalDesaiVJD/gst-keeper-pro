@@ -232,7 +232,11 @@ const Import2BTab: React.FC = () => {
   pendingActionsRef.current = pendingActions;
 
   const isStaff = isStaffRole();
-  const readOnly = isLocked || !isStaff;
+  // The superadmin may add, edit and delete on every working sheet (firm's
+  // decision, 13 Oct 2026), a filed period included.
+  const isSuperadmin = user?.role === 'superadmin';
+  const editLocked = isLocked && !isSuperadmin;
+  const readOnly = editLocked || !isStaff;
   const confirm = useConfirm();
 
   const monthOptions = useMemo(() => {
@@ -358,7 +362,7 @@ const Import2BTab: React.FC = () => {
   const handleImportClick = () => {
     if (!canWork2BImport()) { toast.error('Needs the Import 2B & post permission — ask a GST Manager to add it to your position'); return; }
     if (!selectedClient || !selectedMonth) { toast.error('Select a client and month first'); return; }
-    if (isLocked) { toast.error('The return is filed — this sheet is locked.'); return; }
+    if (editLocked) { toast.error('The return is filed — this sheet is locked.'); return; }
     fileInputRef.current?.click();
   };
 
@@ -494,7 +498,7 @@ const Import2BTab: React.FC = () => {
   const pull2BFromPortal = () => {
     if (!canWork2BImport()) { toast.error('Needs the Import 2B & post permission — ask a GST Manager to add it to your position'); return; }
     if (!selectedClient || !selectedMonth) { toast.error('Select a client and month first'); return; }
-    if (isLocked) { toast.error('The return is filed — this sheet is locked.'); return; }
+    if (editLocked) { toast.error('The return is filed — this sheet is locked.'); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension, then reload this page.'); return; }
     window.postMessage({ __gstkPull2B: { clientId: selectedClient, period_month: selectedMonth } }, '*');
     toast.info('Opening the portal in a new tab — type the CAPTCHA there; the GSTR-2B will import here automatically when it finishes.');
@@ -896,7 +900,7 @@ const Import2BTab: React.FC = () => {
               variant="outline"
               size="sm"
               onClick={pull2BFromPortal}
-              disabled={isImporting || !selectedClient || !selectedMonth || isLocked || !canWork2BImport()}
+              disabled={isImporting || !selectedClient || !selectedMonth || editLocked || !canWork2BImport()}
               className={cn(WS_BTN, !extReady && 'text-muted-foreground')}
               title={!canWork2BImport() ? 'Needs the Import 2B & post permission — ask a GST Manager to add it to your position' : extReady
                 ? 'Pull this client\'s GSTR-2B from the portal via the browser extension'
@@ -910,7 +914,7 @@ const Import2BTab: React.FC = () => {
               size="sm"
               className={cn(WS_BTN, 'text-muted-foreground hover:text-foreground')}
               onClick={handleImportClick}
-              disabled={isImporting || !selectedClient || !selectedMonth || isLocked || !canWork2BImport()}
+              disabled={isImporting || !selectedClient || !selectedMonth || editLocked || !canWork2BImport()}
               title={canWork2BImport() ? "Manual fallback — import a GSTR-2B Excel file if the portal pull didn't work" : 'Needs the Import 2B & post permission — ask a GST Manager to add it to your position'}
             >
               <Upload className="h-3.5 w-3.5" />
@@ -986,7 +990,7 @@ const Import2BTab: React.FC = () => {
 
       {isLocked && (
         <Note tone="warn">
-          <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> This sheet is locked because the return has been filed.</span>
+          <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> {isSuperadmin ? 'The return for this period has been filed. You can still edit as superadmin — changes do not reach the filed return.' : 'This sheet is locked because the return has been filed.'}</span>
         </Note>
       )}
 
@@ -1111,7 +1115,7 @@ const Import2BTab: React.FC = () => {
                 <TableEmptyState
                   icon={<FileSpreadsheet className="h-5 w-5" />}
                   title="No GSTR-2B imported"
-                  description={`Nothing imported for ${selectedClientName} — ${selectedMonth}.${isStaff && !isLocked ? ' Use "Pull from portal" to fetch it.' : ''}`}
+                  description={`Nothing imported for ${selectedClientName} — ${selectedMonth}.${isStaff && !editLocked ? ' Use "Pull from portal" to fetch it.' : ''}`}
                 />
               ) : (
                 <ScrollArea className={SCROLL_CLS}>
