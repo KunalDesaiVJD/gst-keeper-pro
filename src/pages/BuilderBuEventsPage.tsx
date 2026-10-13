@@ -23,7 +23,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import {
-  ArrowLeft, Loader2, Plus, CalendarCheck, Send, Undo2, Trash2,
+  ArrowLeft, Loader2, Plus, CalendarCheck, CheckCircle2, Send, Undo2, Trash2,
 } from 'lucide-react';
 import {
   DEFAULT_CHARGE_INCLUSIONS, classifyUnit, formatINR, formatSqM, testRrep,
@@ -36,7 +36,7 @@ import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import { postBuEvent, prepareBuEvent, unpostBuEvent, type PreparedEvent } from '@/lib/builderBuPosting';
 import {
-  isBuAgreementConfirmationBlocked, requestAgreementConfirmations,
+  isAgreementCleared, isBuAgreementConfirmationBlocked, overrideAgreementValue, requestAgreementConfirmations,
   type AgreementConfirmStatus,
 } from '@/lib/builderAgreementConfirmData';
 
@@ -88,7 +88,7 @@ const BuilderBuEventsPage: React.FC = () => {
   const projectId = useBuilderProjectId();
   const embedded = useBuilderEmbedded();
   const navigate = useNavigate();
-  const { canPostBuEvent, user } = useAuth();
+  const { canPostBuEvent, canOverrideBuAgreement, user } = useAuth();
 
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [units, setUnits] = useState<UnitRow[]>([]);
@@ -341,10 +341,61 @@ const BuilderBuEventsPage: React.FC = () => {
     }
   };
 
+  /**
+   * Accept agreement values without the client's confirmation (superadmin,
+   * GST Manager, or the override_bu_agreement permission). The superadmin may
+   * leave the reason blank; everyone else gives one, which is kept on the row.
+   */
+  const handleAcceptAgreement = async (ev: EventRow, unitIds: string[]) => {
+    if (!user?.id || !unitIds.length) return;
+    const isSuperadmin = user.role === 'superadmin';
+    const what = unitIds.length === 1
+      ? `unit ${units.find((u) => u.id === unitIds[0])?.unit_no || ''}`
+      : `${unitIds.length} units`;
+    const reason = window.prompt(
+      `Accept the agreement value for ${what} without the client's confirmation?\n\n`
+      + (isSuperadmin
+        ? 'Reason (optional for the superadmin):'
+        : 'Reason (required, at least 10 characters) — e.g. "Client confirmed on call 13/10, mail to follow":'),
+      '',
+    );
+    if (reason === null) return;
+    if (!isSuperadmin && reason.trim().length < 10) {
+      toast.error('Give a reason of at least 10 characters.');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      for (const unitId of unitIds) {
+        await overrideAgreementValue({ buEventId: ev.id, unitId, actorId: user.id, reason: reason.trim() });
+      }
+      toast.success(`Agreement value accepted for ${what} — the event can be posted`);
+      await load();
+    } catch (e) {
+      toast.error(`Could not accept: ${(e as Error).message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handlePost = async (ev: EventRow) => {
     if (!project) return;
     const rows0 = eventUnits[ev.id] || [];
     const taxable0 = rows0.filter((r) => r.booked_at_cutoff);
+    // Every taxable unit needs the client's confirmation or the firm's
+    // acceptance — including units whose request was never sent, which the
+    // DB gate (rows only) does not see.
+    const cf0 = new Map((confirmations[ev.id] || []).map((c) => [c.unitId, c.status]));
+    const uncleared = taxable0.filter((r) => !isAgreementCleared(cf0.get(r.unit_id)));
+    if (uncleared.length) {
+      toast.error(
+        `Blocked: ${uncleared.length} taxable unit(s) have no confirmed or accepted agreement value. `
+        + (canOverrideBuAgreement()
+          ? 'Wait for the client, or use Accept on the unit (or Accept all outstanding).'
+          : 'Wait for the client, or ask someone with the "Accept BU agreement value" permission.'),
+      );
+      return;
+    }
     if (taxable0.length && await isBuAgreementConfirmationBlocked(project.client_id, ev.posting_period)) {
       toast.error(
         'Blocked: one or more taxable units\' agreement value has not been confirmed by the client yet. '
@@ -368,6 +419,26 @@ const BuilderBuEventsPage: React.FC = () => {
         units: scopeUnits,
         classification,
       });
+      // Post only the figures that were confirmed or accepted: if a unit's
+      // agreement value or differential moved since the event was prepared
+      // (a receipt, invoice or opening balance changed), stop and re-prepare.
+      const moved = prepared.working.taxable.filter((wu) => {
+        const stored = rows.find((r) => r.unit_id === wu.unitId);
+        return !stored
+          || Math.abs(Number(stored.agreement_value) - wu.agreementValue) > 1
+          || Math.abs(Number(stored.differential_value) - wu.differentialValue) > 1;
+      });
+      if (moved.length) {
+        const u = moved[0];
+        const stored = rows.find((r) => r.unit_id === u.unitId);
+        toast.error(
+          `The figures changed since this event was prepared (unit ${u.unitNo}: differential `
+          + `${formatINR(Number(stored?.differential_value || 0))} then, ${formatINR(u.differentialValue)} now`
+          + `${moved.length > 1 ? `, and ${moved.length - 1} more` : ''}). Delete the event and prepare it again `
+          + 'so the confirmed figures match what posts.',
+        );
+        return;
+      }
       const res = await postBuEvent({
         eventId: ev.id,
         projectId: projectId!,
@@ -490,7 +561,7 @@ const BuilderBuEventsPage: React.FC = () => {
           const isOpen = openEvent === ev.id;
           const cfRows = confirmations[ev.id] || [];
           const cfByUnit = new Map(cfRows.map((c) => [c.unitId, c]));
-          const cfConfirmed = taxable.filter((r) => cfByUnit.get(r.unit_id)?.status === 'CONFIRMED').length;
+          const cfConfirmed = taxable.filter((r) => isAgreementCleared(cfByUnit.get(r.unit_id)?.status)).length;
           const cfOutstanding = taxable.length - cfConfirmed;
 
           return (
@@ -532,6 +603,18 @@ const BuilderBuEventsPage: React.FC = () => {
                         ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                         : <Send className="h-3.5 w-3.5" />}
                       {cfRows.length ? 'Re-send confirmations' : 'Send confirmation requests'}
+                    </Button>
+                  )}
+                  {ev.status !== 'POSTED' && cfOutstanding > 0 && canOverrideBuAgreement() && (
+                    <Button
+                      variant="outline" size="sm" className={WS_BTN} disabled={isSaving}
+                      onClick={() => void handleAcceptAgreement(
+                        ev,
+                        taxable.filter((r) => !isAgreementCleared(cfByUnit.get(r.unit_id)?.status)).map((r) => r.unit_id),
+                      )}
+                      title="Accept the agreement value without the client's confirmation"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Accept all outstanding ({cfOutstanding})
                     </Button>
                   )}
                   {canPost && ev.status !== 'POSTED' && (
@@ -618,7 +701,7 @@ const BuilderBuEventsPage: React.FC = () => {
                             ) : (() => {
                               const cf = cfByUnit.get(r.unit_id);
                               const status = cf?.status || 'NOT_SENT';
-                              const variant = status === 'CONFIRMED'
+                              const variant = status === 'CONFIRMED' || status === 'OVERRIDDEN'
                                 ? 'success'
                                 : status === 'DISPUTED'
                                   ? 'destructive'
@@ -627,7 +710,23 @@ const BuilderBuEventsPage: React.FC = () => {
                                     : 'secondary';
                               return (
                                 <>
-                                  <Badge variant={variant} className="text-[10px] font-medium">{status === 'NOT_SENT' ? 'Not sent' : status}</Badge>
+                                  <Badge variant={variant} className="text-[10px] font-medium">
+                                    {status === 'NOT_SENT' ? 'Not sent' : status === 'OVERRIDDEN' ? 'Accepted by firm' : status}
+                                  </Badge>
+                                  {status === 'OVERRIDDEN' && cf?.overrideReason && (
+                                    <span className="mt-0.5 block text-[11px] text-muted-foreground" title={cf.overrideReason}>
+                                      {cf.overrideReason}
+                                    </span>
+                                  )}
+                                  {ev.status !== 'POSTED' && !isAgreementCleared(status) && canOverrideBuAgreement() && (
+                                    <button
+                                      type="button" disabled={isSaving}
+                                      className="mt-0.5 block text-[11px] font-medium text-primary hover:underline"
+                                      onClick={() => void handleAcceptAgreement(ev, [r.unit_id])}
+                                    >
+                                      Accept without confirmation
+                                    </button>
+                                  )}
                                   {status === 'DISPUTED' && cf?.disputeNotes && (
                                     <span className="mt-0.5 block text-[11px] text-muted-foreground" title={cf.disputeNotes}>
                                       {cf.disputeNotes}

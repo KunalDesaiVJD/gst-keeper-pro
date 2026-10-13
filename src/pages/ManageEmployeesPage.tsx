@@ -181,7 +181,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
         const { error: posError } = await supabase.rpc('staff_assign_position', {
           p_user_id: tempUserId, p_position_id: newEmployee.positionId, p_actor_id: user?.id ?? '',
         });
-        if (posError) toast.error(`Added, but the position was not set: ${posError.message}`);
+        if (posError) toast.error(`Added, but the role was not set: ${posError.message}`);
       }
 
       toast.success(
@@ -320,14 +320,14 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
                 </div>
                 {newEmployee.role === 'employee' && (
                   <div className="space-y-2">
-                    <Label htmlFor="employeePosition">Position</Label>
+                    <Label htmlFor="employeePosition">Role</Label>
                     {canManagePositions() ? (
                       <Select
                         value={newEmployee.positionId}
                         onValueChange={(value) => setNewEmployee(prev => ({ ...prev, positionId: value }))}
                       >
                         <SelectTrigger id="employeePosition">
-                          <SelectValue placeholder="Choose the position — it decides what they can do" />
+                          <SelectValue placeholder="Choose the role — it decides what they can do" />
                         </SelectTrigger>
                         <SelectContent>
                           {positions.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}

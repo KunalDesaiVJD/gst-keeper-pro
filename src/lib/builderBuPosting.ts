@@ -215,7 +215,69 @@ export async function prepareBuEvent(params: {
  * The invoice is the GROSS leg while the working shows the NET differential;
  * the two agree because 11B reverses the advances the invoice re-covers.
  */
-export async function postBuEvent(params: {
+/** The invoice date must fall in the return period it is reported in. */
+const dateWithinPeriod = (date: string, period: string): string => {
+  const m = /^(\d{2})\/(\d{4})$/.exec(period);
+  if (!m) return date;
+  const first = `${m[2]}-${m[1]}-01`;
+  const lastDay = new Date(Date.UTC(Number(m[2]), Number(m[1]), 0)).getUTCDate();
+  const last = `${m[2]}-${m[1]}-${String(lastDay).padStart(2, '0')}`;
+  return date < first ? first : date > last ? last : date;
+};
+
+/**
+ * Post a prepared event — all of it or none of it. There is no DB
+ * transaction across these writes, so a failure part-way unposts whatever
+ * was written (unpostBuEvent) before the error is shown, and an event that is
+ * already POSTED is refused, so a retry can never post a second invoice.
+ */
+export async function postBuEvent(params: Parameters<typeof postBuEventRows>[0]): ReturnType<typeof postBuEventRows> {
+  const { data: ev, error: evErr } = await supabase
+    .from('builder_bu_events').select('status').eq('id', params.eventId).single();
+  if (evErr || !ev) throw new Error(evErr?.message || 'Could not load the event');
+  if ((ev as { status: string }).status === 'POSTED') {
+    throw new Error('This event is already posted. Unpost it first to post again.');
+  }
+
+  // Receipts the differential subsumes must not sit in a filed GSTR-1: they
+  // were reported in Table 11A there, and taking them out now would change a
+  // filed return. Refuse before writing anything.
+  const subsumeIds = Object.values(params.prepared.receiptsInBuMonth).flat();
+  if (subsumeIds.length) {
+    const { data: rc } = await supabase.from('builder_receipts').select('period_month').in('id', subsumeIds);
+    const periods = [...new Set(((rc || []) as { period_month: string }[]).map((r) => r.period_month))];
+    const { data: proj } = await supabase.from('builder_projects').select('client_id').eq('id', params.projectId).single();
+    const clientId = (proj as { client_id: string } | null)?.client_id;
+    if (clientId && periods.length) {
+      const { data: filed } = await supabase.from('filing_status').select('period_month')
+        .eq('client_id', clientId).in('return_type', ['GSTR-1', 'GSTR-1 (IFF)'])
+        .in('period_month', periods).eq('status', 'Filed');
+      if (filed && filed.length) {
+        throw new Error(
+          `GSTR-1 for ${(filed as { period_month: string }[]).map((f) => f.period_month).join(', ')} is filed, and it `
+          + 'reports receipts this BU differential would take over. Post the event in the BU month before filing it, '
+          + 'or ask for the filed return to be amended first.',
+        );
+      }
+    }
+  }
+
+  try {
+    return await postBuEventRows({ ...params, postingDate: dateWithinPeriod(params.postingDate, params.postingPeriod) });
+  } catch (e) {
+    try {
+      await unpostBuEvent(params.eventId);
+    } catch (undoErr) {
+      throw new Error(
+        `Posting failed part-way (${(e as Error).message}) and the partial posting could not be undone `
+        + `(${(undoErr as Error).message}). Use Unpost on the event before trying again.`,
+      );
+    }
+    throw new Error(`${(e as Error).message} — nothing was posted.`);
+  }
+}
+
+async function postBuEventRows(params: {
   eventId: string;
   projectId: string;
   prepared: PreparedEvent;
@@ -246,10 +308,18 @@ export async function postBuEvent(params: {
       sgst: tax.sgst,
       period_month: params.postingPeriod,
       doc_series: params.docSeries,
+      // A document number, so the invoice counts in Table 13 (documents issued).
+      doc_no: `${params.docSeries || ''}BU/${wu.unitNo}`,
       created_by: params.userId,
     }).select('id').single();
     if (error) throw error;
     invoicesCreated += 1;
+
+    // Link at once, so an undo (unpostBuEvent) can find this invoice even if
+    // a later step fails.
+    const { error: linkErr } = await supabase.from('builder_bu_event_units')
+      .update({ invoice_id: inv.id }).eq('unit_id', wu.unitId).eq('bu_event_id', params.eventId);
+    if (linkErr) throw linkErr;
 
     // Close out the advances this invoice re-covers.
     let toAdjust = wu.advanceToAdjust;
@@ -317,24 +387,23 @@ export async function postBuEvent(params: {
       if (sErr) throw sErr;
       receiptsSubsumed += subsume.length;
     }
-
-    await supabase.from('builder_bu_event_units')
-      .update({ invoice_id: inv.id }).eq('unit_id', wu.unitId).eq('bu_event_id', params.eventId);
   }
 
   // Every unit in the event is now closed against it, taxable or not — an
   // unbooked unit is still covered, it simply carries no GST.
   const allUnitIds = params.prepared.working.units.map((u) => u.unitId);
   if (allUnitIds.length) {
-    await supabase.from('builder_units')
+    const { error: uErr } = await supabase.from('builder_units')
       .update({ bu_event_id: params.eventId }).in('id', allUnitIds);
+    if (uErr) throw uErr;
   }
 
-  await supabase.from('builder_bu_events').update({
+  const { error: stErr } = await supabase.from('builder_bu_events').update({
     status: 'POSTED',
     posted_at: new Date().toISOString(),
     posted_by: params.userId,
   }).eq('id', params.eventId);
+  if (stErr) throw stErr;
 
   return { invoicesCreated, adjustmentsCreated, receiptsSubsumed, openingAdjustmentsCreated };
 }
@@ -357,16 +426,19 @@ export async function unpostBuEvent(eventId: string): Promise<void> {
     if (error) throw error;
   }
 
-  await supabase.from('builder_receipts')
-    .update({ subsumed_by_bu_event_id: null }).eq('subsumed_by_bu_event_id', eventId);
-
+  const steps = [
+    await supabase.from('builder_receipts')
+      .update({ subsumed_by_bu_event_id: null }).eq('subsumed_by_bu_event_id', eventId),
+  ];
   const unitIds = rows.map((r) => r.unit_id);
   if (unitIds.length) {
-    await supabase.from('builder_units').update({ bu_event_id: null }).in('id', unitIds);
+    steps.push(await supabase.from('builder_units').update({ bu_event_id: null }).in('id', unitIds));
   }
-  await supabase.from('builder_bu_event_units').update({ invoice_id: null }).eq('bu_event_id', eventId);
-  await supabase.from('builder_bu_events')
-    .update({ status: 'PREPARED', posted_at: null, posted_by: null }).eq('id', eventId);
+  steps.push(await supabase.from('builder_bu_event_units').update({ invoice_id: null }).eq('bu_event_id', eventId));
+  steps.push(await supabase.from('builder_bu_events')
+    .update({ status: 'PREPARED', posted_at: null, posted_by: null }).eq('id', eventId));
+  const failed = steps.find((r) => r.error);
+  if (failed?.error) throw failed.error;
 }
 
 /**
