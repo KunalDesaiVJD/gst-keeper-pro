@@ -86,7 +86,7 @@ export interface YearReference {
   financialYear: string;
   /** Total ITC availed per the app's data, and where it came from. */
   availed: Tax | null;
-  source: 'GSTR-9 Table 6A' | 'GSTR-3B Table 4A (as filed)' | null;
+  source: 'GSTR-9 as filed (portal)' | 'GSTR-9 Table 6A' | 'GSTR-3B Table 4A (as filed)' | null;
   months: number;
 }
 

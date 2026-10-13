@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { CheckCircle2, Loader2, Plus, Save, Send, Undo2 } from 'lucide-react';
+import { CheckCircle2, CloudDownload, Loader2, Plus, Save, Send, Undo2 } from 'lucide-react';
+import { useExtensionBridge } from '@/components/gstr9/portal/useExtensionBridge';
+import { compareVersions } from '@/lib/extensionVersion';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -21,9 +23,9 @@ import {
   type Tax, type YearReference,
 } from '@/utils/builderItcReversal';
 import {
-  approveWorking, createWorking, fetchBuEvents, fetchCarpetBasis, fetchReferences, fetchWorking, saveWorking,
-  saveYear, setStartFy, submitWorking, toYearInput, withdrawWorking,
-  type BuEventOption, type CarpetBasis, type WorkingRow, type YearRow,
+  approveWorking, createWorking, fetchBuEvents, fetchCarpetBasis, fetchFiledGstr9, fetchReferences, fetchWorking,
+  fillYearFromPortal, gstr9PeriodOf, saveWorking, saveYear, setStartFy, submitWorking, toYearInput, withdrawWorking,
+  type BuEventOption, type CarpetBasis, type FiledGstr9, type WorkingRow, type YearRow,
 } from '@/lib/builderItcReversalData';
 
 /**
@@ -41,6 +43,14 @@ const FIELDS: { key: Field; label: string; hint: string }[] = [
   { key: 'reversed_r43', label: 'Already reversed — Rule 43', hint: 'GSTR-9 Table 7D' },
 ];
 const STATUS_VARIANT = { DRAFT: 'secondary', SUBMITTED: 'warning', APPROVED: 'success' } as const;
+/** First extension version that reads the filed GSTR-9 (Tables 6 and 7). */
+const FILED_GSTR9_MIN_VERSION = '0.10.3';
+const POLL_MS = 10_000;
+const POLL_MAX = 36;
+
+/** A year nobody has entered yet. */
+const isBlank = (y: YearRow) => y.gstr9_match === 'UNVERIFIED'
+  && [y.inputs_services, y.capital_goods, y.reversed_r42, y.reversed_r43].every((t) => total(tax(t)) === 0);
 
 const BuilderItcReversalPage: React.FC = () => {
   const projectId = useBuilderProjectId();
@@ -57,6 +67,8 @@ const BuilderItcReversalPage: React.FC = () => {
   const [working, setWorking] = useState<WorkingRow | null>(null);
   const [years, setYears] = useState<YearRow[]>([]);
   const [refs, setRefs] = useState<Record<string, YearReference>>({});
+  const [filed, setFiled] = useState<Record<string, FiledGstr9>>({});
+  const [polling, setPolling] = useState<number | null>(null);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -94,13 +106,68 @@ const BuilderItcReversalPage: React.FC = () => {
       setWorking(w.working);
       setYears(w.years);
       setDirty(new Set());
-      setRefs(await fetchReferences(project.client_id, w.years.map((y) => y.financial_year)));
+      const fys = w.years.map((y) => y.financial_year);
+      const [appRefs, portal] = await Promise.all([
+        fetchReferences(project.client_id, fys),
+        fetchFiledGstr9(project.client_id, fys.filter((fy) => fy !== w.working?.bu_fy)),
+      ]);
+      // The filed GSTR-9 is the reference wherever the portal gave it.
+      const merged = { ...appRefs };
+      for (const f of Object.values(portal)) {
+        merged[f.financialYear] = { financialYear: f.financialYear, availed: f.itc.availed, source: 'GSTR-9 as filed (portal)', months: 12 };
+      }
+      setRefs(merged);
+      setFiled(portal);
+      // Past years not entered yet are filled from the filed GSTR-9 at once.
+      if (w.working?.status === 'DRAFT') {
+        const blanks = w.years.filter((y) => !y.is_bu_year && portal[y.financial_year] && isBlank(y));
+        if (blanks.length) {
+          for (const y of blanks) await fillYearFromPortal(y.id, portal[y.financial_year], user?.id ?? null);
+          toast.success(`Filled ${blanks.length} year(s) from the GSTR-9 filed on the portal`);
+          const again = await fetchWorking(projectId, eventId);
+          setYears(again.years);
+        }
+      }
     } catch (e) {
       toast.error('Could not load the working: ' + (e as Error).message);
     }
-  }, [projectId, eventId, project]);
+  }, [projectId, eventId, project, user?.id]);
 
   useEffect(() => { void loadProject(); }, [loadProject]);
+
+  // ── Fetch past years' GSTR-9 from the portal through the extension ──────
+  const bridge = useExtensionBridge(project?.client_id || '');
+  const pastYears = useMemo(() => years.filter((y) => !y.is_bu_year), [years]);
+  const fetchFromPortal = () => {
+    if (!project || !pastYears.length) return;
+    if (!bridge.ready) {
+      toast.error('The GST Keeper browser extension was not detected. Install or enable it, then try again.');
+      return;
+    }
+    if (!bridge.version || compareVersions(bridge.version, FILED_GSTR9_MIN_VERSION) < 0) {
+      toast.error(`Extension ${bridge.version ? `v${bridge.version}` : '(old)'} reads only the system-computed GSTR-9. Update it to v${FILED_GSTR9_MIN_VERSION} (chrome://extensions → Reload), then try again.`);
+      return;
+    }
+    const periods = pastYears.map((y) => gstr9PeriodOf(y.financial_year));
+    bridge.start({ mode: 'gstr9_pull', period_month: periods[0], period_months: periods }, (ok, err) => {
+      if (ok) toast.success(`A GST portal tab is opening for ${periods.length} year(s) — type the CAPTCHA there. The figures fill in here when they arrive.`);
+      else { toast.error(`Could not start the pull: ${err || 'the extension did not answer'}`); setPolling(null); }
+    });
+    setPolling(0);
+  };
+  useEffect(() => {
+    if (polling === null || !project) return;
+    if (polling >= POLL_MAX) { setPolling(null); toast.message('Stopped waiting for the portal. Years that came back are filled; fetch again for the rest.'); return; }
+    const t = setTimeout(async () => {
+      try {
+        const got = await fetchFiledGstr9(project.client_id, pastYears.map((y) => y.financial_year));
+        if (Object.keys(got).length > Object.keys(filed).length) await loadWorking();
+        if (pastYears.every((y) => got[y.financial_year])) { setPolling(null); return; }
+      } catch { /* keep waiting */ }
+      setPolling((n) => (n === null ? null : n + 1));
+    }, POLL_MS);
+    return () => clearTimeout(t);
+  }, [polling, project, pastYears, filed, loadWorking]);
   useEffect(() => { void loadWorking(); }, [loadWorking]);
 
   const result = useMemo(() => {
@@ -288,17 +355,26 @@ const BuilderItcReversalPage: React.FC = () => {
 
           <SectionCard
             title="Credit by financial year"
-            description="Past years exactly as in that year's GSTR-9; the BU year (April to the BU month) by hand"
+            description="Past years come from each year's filed GSTR-9 on the portal; only the BU year (April to the BU month) is entered by hand"
             actions={editable ? (
-              <Button size="sm" className={WS_BTN} onClick={() => void saveAll()} disabled={busy || !dirty.size}>
-                <Save className="h-3.5 w-3.5" /> Save{dirty.size ? ` (${dirty.size})` : ''}
-              </Button>
+              <>
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={fetchFromPortal} disabled={busy || polling !== null || !pastYears.length}>
+                  {polling !== null ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CloudDownload className="h-3.5 w-3.5" />}
+                  {polling !== null ? 'Waiting for the portal…' : 'Fetch past years from portal'}
+                </Button>
+                <Button size="sm" className={WS_BTN} onClick={() => void saveAll()} disabled={busy || !dirty.size}>
+                  <Save className="h-3.5 w-3.5" /> Save{dirty.size ? ` (${dirty.size})` : ''}
+                </Button>
+              </>
             ) : undefined}
           >
             <div className="space-y-3">
               {years.map((y) => {
                 const yr = result.years.find((r) => r.financialYear === y.financial_year);
                 const ref = refs[y.financial_year];
+                const portal = !y.is_bu_year ? filed[y.financial_year] : undefined;
+                // A past year with its filed GSTR-9 on record is the portal's, not typed.
+                const cellsEditable = editable && !portal;
                 return (
                   <div key={y.id} className="rounded-md border">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/50 px-3 py-1.5">
@@ -306,7 +382,18 @@ const BuilderItcReversalPage: React.FC = () => {
                         {fyLabel(y.financial_year)}
                         {y.is_bu_year && <Badge variant="warning" className="ml-2 text-[10px]">BU year · enter by hand</Badge>}
                       </span>
-                      {!y.is_bu_year && (
+                      {portal && (
+                        <span className="flex items-center gap-2">
+                          <Badge variant="success" className="text-[10px]">From the filed GSTR-9 (portal){portal.arn ? ` · ARN ${portal.arn}` : ''}</Badge>
+                          {editable && yr?.referenceDiff && HEADS.some((h) => Math.abs(yr.referenceDiff![h]) > 1) && (
+                            <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy}
+                              onClick={() => void run(() => fillYearFromPortal(y.id, portal, user?.id ?? null), 'Filled from the portal')}>
+                              Fill from portal
+                            </Button>
+                          )}
+                        </span>
+                      )}
+                      {!y.is_bu_year && !portal && (
                         <Badge
                           variant={y.gstr9_match === 'UNVERIFIED' ? 'destructive' : 'success'}
                           className="text-[10px]"
@@ -332,7 +419,7 @@ const BuilderItcReversalPage: React.FC = () => {
                               </td>
                               {HEADS.map((h) => (
                                 <td key={h} className={cn(WS_TD, 'p-0')}>
-                                  {editable ? (
+                                  {cellsEditable ? (
                                     <Input
                                       type="number" step="0.01" inputMode="decimal"
                                       className="h-9 rounded-none border-0 bg-transparent text-right tabular-nums shadow-none"
@@ -361,7 +448,7 @@ const BuilderItcReversalPage: React.FC = () => {
                         </tbody>
                       </table>
                     </div>
-                    {!y.is_bu_year && (
+                    {!y.is_bu_year && !portal && (
                       <div className="grid gap-2 p-3 sm:grid-cols-4">
                         <div className="space-y-1">
                           <Label className="text-xs">GSTR-9 ARN</Label>

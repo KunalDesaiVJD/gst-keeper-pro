@@ -5027,6 +5027,20 @@
     if (job.gstr9Warmed) await sleep(3000);
     banner('Reading GSTR-9 system-computed figures for FY ' + fyLabel + '…' + progress);
 
+    // 0.10.3: also the FILED return — the details the portal's own GSTR-9
+    // form loads (same path without /calc). After filing it carries the
+    // return as filed: table6 (ITC availed by type: ip / cg / is) and table7
+    // (reversals: rule42, rule43 …), which the Builder ITC reversal working
+    // (Rule 42/43) reads per past year. Saved as return_type 'GSTR9_FILED'.
+    let filed = null;
+    try {
+      const r = await fetch('https://return.gst.gov.in/returns2/auth/api/gstr9/details?ret_period=' + retPeriod + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include', headers: { Accept: 'application/json' } });
+      const text = await r.text();
+      let j = null;
+      try { j = JSON.parse(text); } catch (e) { /* HTML (login / error page) */ }
+      if (r.ok && j && j.status === 1 && j.data && typeof j.data === 'object') filed = j.data;
+    } catch (e) { /* the calc read below decides whether to retry */ }
+
     let calc = null;
     let calcErr = '';
     try {
@@ -5041,7 +5055,7 @@
       calcErr = (e && e.message) || 'network error';
     }
 
-    if (!calc) {
+    if (!calc && !filed) {
       if (!job.gstr9Warmed) {
         job.gstr9Warmed = true;
         await setJob(job);
@@ -5064,8 +5078,9 @@
       if (fr.ok) { const fj = await fr.json(); if (fj && fj.status === 1) form = fj.data; }
     } catch (e) { /* non-fatal: only ARN / filed date / status come from here */ }
 
-    const arn = (form && form.arn) || (typeof calc.arn === 'string' && calc.arn) || null;
-    const filedOn = (form && form.fil_dt) || (typeof calc.arn_dt === 'string' && calc.arn_dt) || null;
+    const src = calc || filed || {};
+    const arn = (form && form.arn) || (typeof src.arn === 'string' && src.arn) || (filed && typeof filed.arn === 'string' && filed.arn) || null;
+    const filedOn = (form && form.fil_dt) || (typeof src.arn_dt === 'string' && src.arn_dt) || null;
     const patchObj = {
       summary: calc,
       arn,
@@ -5076,7 +5091,8 @@
     delete job.gstr9Warmed;
     await setJob(job);
     try {
-      await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', patchObj);
+      if (calc) await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', patchObj);
+      if (filed) await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_FILED', { ...patchObj, summary: filed });
     } catch (e) {
       banner('GSTR-9: read from the portal but could not be saved (' + ((e && e.message) || 'unknown error') + ').' + progress, '#dc2626');
       await sleep(2000);
@@ -5086,11 +5102,12 @@
     debugPanel([
       'STEP: GSTR-9 system computed  (' + location.pathname + ')',
       'ret_period        : ' + retPeriod,
-      'tables            : ' + ['table4', 'table5', 'table6', 'table8', 'table9'].filter((k) => calc[k]).join(', '),
+      'system computed   : ' + (calc ? ['table4', 'table5', 'table6', 'table8', 'table9'].filter((k) => calc[k]).join(', ') : '(not read)'),
+      'filed return      : ' + (filed ? ['table4', 'table5', 'table6', 'table7', 'table8', 'table9'].filter((k) => filed[k]).join(', ') : '(not read)'),
       'ARN               : ' + (patchObj.arn || '(none)'),
       'status            : ' + patchObj.status,
     ]);
-    banner('GSTR-9 FY ' + fyLabel + ' → saved ✓. Review and apply it in GST Keeper (Annual Return → Portal data).' + progress, '#16a34a');
+    banner('GSTR-9 FY ' + fyLabel + ' → saved ✓' + (filed ? ' (with the filed return)' : '') + '. Review and apply it in GST Keeper.' + progress, '#16a34a');
     await sleep(800);
     await advance(job);
   }

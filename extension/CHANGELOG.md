@@ -2,6 +2,20 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-13 — Reads the filed GSTR-9 (v0.10.3)
+
+No database change; the rows go into `gst_filed_returns` as `GSTR9_FILED`.
+
+- A GSTR-9 pull now reads two things for each financial year:
+  - the portal's system-computed figures, as before (`GSTR9_CALC`);
+  - **the return as filed**, which is new (`GSTR9_FILED`).
+- The filed return is read from `/returns2/auth/api/gstr9/details`, the details the portal's own GSTR-9 form loads. That endpoint has not yet been checked against a live portal session.
+- It carries:
+  - Table 6: ITC availed, by type (inputs, capital goods, input services);
+  - Table 7: the reversals, including those under Rules 42 and 43.
+- Builder › ITC Reversal fills each past year from it, so nobody types in past years' ITC.
+- Only GET requests, as before. If one of the two reads fails, the other is still saved.
+
 ## 2026-10-12 — 0.9.1 and 0.10.x together (v0.10.2)
 
 No database change beyond 0.10.1's.
