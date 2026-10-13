@@ -41,6 +41,7 @@ interface UserPermissions {
   clear_data: boolean;
   send_client_emails: boolean;
   manage_email_templates: boolean;
+  override_bu_agreement: boolean;
 }
 
 const DEFAULT_PERMISSIONS: UserPermissions = {
@@ -72,6 +73,7 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   clear_data: false,
   send_client_emails: false,
   manage_email_templates: false,
+  override_bu_agreement: false,
 };
 
 interface AppUser {
@@ -134,6 +136,8 @@ interface AuthContextType {
   canManageEmailTemplates: () => boolean;
   /** Positions and who holds them; promoting to GST Manager. Role only. */
   canManagePositions: () => boolean;
+  /** Accept a BU agreement value without the client's confirmation. */
+  canOverrideBuAgreement: () => boolean;
   hasPermission: (permission: keyof UserPermissions) => boolean;
 }
 
@@ -615,6 +619,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const canClearData = useCallback(() => keyOrManager('clear_data'), [keyOrManager]);
   const canSendClientEmails = useCallback(() => keyOrManager('send_client_emails'), [keyOrManager]);
   const canManageEmailTemplates = useCallback(() => keyOrManager('manage_email_templates'), [keyOrManager]);
+  const canOverrideBuAgreement = useCallback(() => keyOrManager('override_bu_agreement'), [keyOrManager]);
   // Positions decide every employee's controls, so they stay with the roles
   // that already hold everything: an employee with manage_employees must not
   // be able to give themselves a stronger position.
@@ -755,6 +760,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canSendClientEmails,
         canManageEmailTemplates,
         canManagePositions,
+        canOverrideBuAgreement,
         hasPermission,
       }}
     >

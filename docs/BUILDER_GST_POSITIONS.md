@@ -170,6 +170,36 @@ its deadline.
 
 *`src/utils/builderBuEvent.ts`; the working is persisted per unit.*
 
+**Agreement value: confirmed by the client, or accepted by the firm (firm
+decision, 13/10/2026).**
+
+*The rule:*
+- Before a BU event posts, every taxable unit's agreement value must be cleared.
+- A value is cleared when the client confirms it through the emailed link, or
+  when the firm accepts it without the client's confirmation ("Accept without
+  confirmation" on the BU working; status `OVERRIDDEN`).
+- A unit whose request was never sent also blocks posting.
+
+*Who may accept:*
+- The superadmin, who need not give a reason.
+- GST Managers, who must give a reason.
+- Employees whose role carries `override_bu_agreement`, who must give a reason.
+
+The reason is kept on the unit's confirmation row
+(`builder_bu_agreement_override`, migration `20261015100000`). A client's own
+confirmation is never replaced.
+
+*At posting time:*
+- The posted figures must equal the confirmed or accepted ones. If a unit's
+  agreement value or differential moved since the event was prepared, posting
+  stops and the event must be prepared again.
+- A post is all or nothing. A failure part-way unposts what was written, and an
+  already-posted event cannot be posted twice.
+- The invoice is dated inside its posting period and numbered
+  `<series>BU/<unit>` for Table 13.
+- Posting is refused when it would take over receipts that a filed GSTR-1
+  already reported.
+
 ## 7. Partial ITC
 
 For a REP other than an RREP, residential construction is an exempt supply for

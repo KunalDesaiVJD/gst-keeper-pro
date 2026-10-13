@@ -345,13 +345,24 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
     try {
       await persistRows();
 
+      // A builder's return generated from Builder Returns keeps that
+      // provenance when HSN / documents are added here by hand, so it is still
+      // recognised (and regenerated) as a builder return.
+      const { data: prev } = await supabase
+        .from('gstr1_data').select('file_name')
+        .eq('client_id', clientId).eq('period_month', periodShort).maybeSingle();
+      const prevName = (prev as { file_name: string | null } | null)?.file_name ?? null;
+      const fileName = isBuilderGenerated(prevName)
+        ? `${(prevName as string).replace(/ \(edited by hand\)$/, '')} (edited by hand)`
+        : `Manual entry — ${clientName} — ${periodShort}`;
+
       const { data: written, error } = await supabase
         .from('gstr1_data')
         .upsert({
           client_id: clientId,
           period_month: periodShort,
           raw_json: json,
-          file_name: `Manual entry — ${clientName} — ${periodShort}`,
+          file_name: fileName,
           imported_by: actorId,
           imported_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

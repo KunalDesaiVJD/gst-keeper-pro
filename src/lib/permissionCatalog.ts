@@ -1,5 +1,5 @@
 // Every permission key an employee can hold, grouped as User Control shows
-// them. Employees get keys only through their position (staff_positions →
+// them. Employees get keys only through their role (staff_positions →
 // user_permissions, migration 20261014120000_staff_positions.sql);
 // superadmin and gst_manager hold every key by role.
 //
@@ -62,6 +62,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'manage_builder_units', group: 'builder', label: 'Builder units', description: 'Add and edit units, charge heads and opening balances' },
   { key: 'enter_builder_receipts', group: 'builder', label: 'Bookings & receipts', description: 'Record bookings, advances, receipts and milestone invoices' },
   { key: 'post_bu_event', group: 'builder', label: 'Post BU events', description: 'Create BU events and post the unit-wise differential' },
+  { key: 'override_bu_agreement', group: 'builder', label: 'Accept BU agreement value', description: "Accept a unit's agreement value at BU without the client's confirmation (with a reason)" },
   { key: 'post_builder_adjustments', group: 'builder', label: 'Builder adjustments', description: 'Cancellations, conversions, credit notes, refunds and bounce reversals' },
   { key: 'view_builder_reports', group: 'builder', label: 'Builder reports', description: 'Working papers and their Excel / PDF exports' },
 
@@ -69,16 +70,16 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'edit_notice_status', group: 'notices', label: 'Edit notice status', description: 'Open / close notices, priority, and reply / order / submission details' },
 
   // Staff
-  { key: 'manage_employees', group: 'staff', label: 'Manage employees', description: "Add and remove employee accounts and reset employees' passwords. Positions stay with GST Managers" },
+  { key: 'manage_employees', group: 'staff', label: 'Manage employees', description: "Add and remove employee accounts and reset employees' passwords. Roles stay with GST Managers" },
 ];
 
 export const PERMISSION_LABEL: Record<string, string> = Object.fromEntries(PERMISSIONS.map((p) => [p.key, p.label]));
 
 export const permissionsInGroup = (g: PermissionGroupKey) => PERMISSIONS.filter((p) => p.group === g);
 
-/** Controls held by role only — never given through a position. */
+/** Controls held by role only — never given through a role. */
 export const ROLE_ONLY_CONTROLS = [
-  'positions and who holds them',
+  'roles and who holds them',
   'promoting staff to GST Manager',
   'approving direct filing, advance set-off overrides and FSI consent',
   'approving notice replies and switching notice alerts live',

@@ -111,20 +111,45 @@ export async function requestAgreementConfirmations(params: {
 
 export interface AgreementConfirmStatus {
   unitId: string;
-  status: 'PENDING' | 'CONFIRMED' | 'DISPUTED' | 'NOT_SENT';
+  /** OVERRIDDEN = the firm accepted the value without the client's confirmation. */
+  status: 'PENDING' | 'CONFIRMED' | 'DISPUTED' | 'OVERRIDDEN' | 'NOT_SENT';
   disputeNotes: string | null;
+  overrideReason?: string | null;
+}
+
+/** A unit no longer holds up posting or filing. */
+export const isAgreementCleared = (status: AgreementConfirmStatus['status'] | undefined): boolean =>
+  status === 'CONFIRMED' || status === 'OVERRIDDEN';
+
+/**
+ * Accept a unit's agreement value without the client's confirmation. The DB
+ * checks who is acting (superadmin / GST Manager, or the
+ * override_bu_agreement permission) and requires a reason of everyone but the
+ * superadmin. A client's own confirmation is never replaced.
+ */
+export async function overrideAgreementValue(params: {
+  buEventId: string; unitId: string; actorId: string; reason: string;
+}): Promise<void> {
+  const { error } = await supabase.rpc('builder_bu_agreement_override', {
+    p_bu_event_id: params.buEventId,
+    p_unit_id: params.unitId,
+    p_actor_id: params.actorId,
+    p_reason: params.reason,
+  });
+  if (error) throw error;
 }
 
 /** Confirmation status per unit for a BU event — 'NOT_SENT' for a unit no request has gone out for yet. */
 export async function fetchAgreementConfirmationStatus(buEventId: string): Promise<AgreementConfirmStatus[]> {
   const { data, error } = await supabase
     .from('builder_bu_agreement_confirmations')
-    .select('unit_id, status, dispute_notes')
+    .select('unit_id, status, dispute_notes, override_reason')
     .eq('bu_event_id', buEventId);
   if (error) throw error;
-  type Row = { unit_id: string; status: string; dispute_notes: string | null };
+  type Row = { unit_id: string; status: string; dispute_notes: string | null; override_reason: string | null };
   return ((data || []) as unknown as Row[]).map((r) => ({
     unitId: r.unit_id, status: r.status as AgreementConfirmStatus['status'], disputeNotes: r.dispute_notes,
+    overrideReason: r.override_reason,
   }));
 }
 

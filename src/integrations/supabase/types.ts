@@ -2264,6 +2264,9 @@ export type Database = {
           dispute_notes: string | null
           id: string
           outbox_id: string | null
+          override_reason: string | null
+          overridden_at: string | null
+          overridden_by: string | null
           responded_at: string | null
           response_ip: string | null
           sent_at: string | null
@@ -2281,6 +2284,9 @@ export type Database = {
           dispute_notes?: string | null
           id?: string
           outbox_id?: string | null
+          override_reason?: string | null
+          overridden_at?: string | null
+          overridden_by?: string | null
           responded_at?: string | null
           response_ip?: string | null
           sent_at?: string | null
@@ -2298,6 +2304,9 @@ export type Database = {
           dispute_notes?: string | null
           id?: string
           outbox_id?: string | null
+          override_reason?: string | null
+          overridden_at?: string | null
+          overridden_by?: string | null
           responded_at?: string | null
           response_ip?: string | null
           sent_at?: string | null
@@ -11403,6 +11412,10 @@ export type Database = {
       builder_bu_agreement_confirm: {
         Args: { _action: string; _notes: string; _token: string }
         Returns: boolean
+      }
+      builder_bu_agreement_override: {
+        Args: { p_actor_id: string; p_bu_event_id: string; p_reason: string; p_unit_id: string }
+        Returns: string
       }
       builder_bu_agreement_confirmation_blocked: {
         Args: { _client_id: string; _period_month: string }

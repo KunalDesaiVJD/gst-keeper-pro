@@ -116,7 +116,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
       setStaff(list);
       setLog((logRows.data || []) as LogRow[]);
     } catch (e) {
-      toast.error('Could not load positions: ' + (e instanceof Error ? e.message : String(e)));
+      toast.error('Could not load roles: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setLoading(false);
     }
@@ -152,21 +152,21 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
 
   const createPosition = async () => {
     const name = newName.trim();
-    if (!name) { toast.error('Give the position a name'); return; }
+    if (!name) { toast.error('Give the role a name'); return; }
     const { data, error } = await supabase.from('staff_positions')
       .insert({ name, created_by: user?.id ?? null, sort_order: 100 })
       .select('id').single();
-    if (error) { toast.error(error.code === '23505' ? 'A position with that name already exists' : error.message); return; }
+    if (error) { toast.error(error.code === '23505' ? 'A role with that name already exists' : error.message); return; }
     setNewName('');
     await load();
     setSelectedId(data.id);
-    toast.success(`Position "${name}" created — tick its permissions and save`);
+    toast.success(`Role "${name}" created — tick its permissions and save`);
   };
 
   const savePosition = async () => {
     if (!selected || !draft) return;
     const name = draft.name.trim();
-    if (!name) { toast.error('Give the position a name'); return; }
+    if (!name) { toast.error('Give the role a name'); return; }
     setSaving(true);
     try {
       if (name !== selected.name || (draft.description.trim() || null) !== (selected.description || null)) {
@@ -189,7 +189,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
         if (error) throw error;
       }
       const n = holders(selected.id).length;
-      toast.success(`Saved — applies to ${n} ${n === 1 ? 'person' : 'people'} in this position`);
+      toast.success(`Saved — applies to ${n} ${n === 1 ? 'person' : 'people'} in this role`);
       await load();
     } catch (e) {
       toast.error('Could not save: ' + (e instanceof Error ? e.message : String(e)));
@@ -205,8 +205,8 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
       const ok = await confirm({
         title: `Retire "${selected.name}"?`,
         description: n
-          ? `${n} ${n === 1 ? 'person holds' : 'people hold'} this position. They keep it, but lose all its permissions until it is reactivated or they are moved.`
-          : 'It is hidden from the position list for new assignments and can be reactivated later.',
+          ? `${n} ${n === 1 ? 'person holds' : 'people hold'} this role. They keep it, but lose all its permissions until it is reactivated or they are moved.`
+          : 'It is hidden from the role list for new assignments and can be reactivated later.',
         confirmText: 'Retire',
       });
       if (!ok) return;
@@ -223,9 +223,9 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
     const ok = await confirm({
       title: `Delete "${selected.name}"?`,
       description: n
-        ? `${n} ${n === 1 ? 'person' : 'people'} will be left with no position and lose every permission it gave them.`
+        ? `${n} ${n === 1 ? 'person' : 'people'} will be left with no role and lose every permission it gave them.`
         : 'This cannot be undone.',
-      confirmText: 'Delete position',
+      confirmText: 'Delete role',
     });
     if (!ok) return;
     const { error } = await supabase.from('staff_positions').delete().eq('id', selected.id);
@@ -241,7 +241,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
     if (error) { toast.error(error.message); return; }
     toast.success(positionId
       ? `${s.first_name} is now ${positionName.get(positionId)}`
-      : `${s.first_name} has no position — no permissions`);
+      : `${s.first_name} has no role — no permissions`);
     await load();
   };
 
@@ -258,20 +258,20 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
         compact
         embedded={embedded}
         title="User Control"
-        subtitle="Employees get their controls through positions"
+        subtitle="Employees get their controls through roles"
         icon={<Shield />}
       />
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <KpiTile label="Positions" value={activePositions.length} hint={positions.length > activePositions.length ? `${positions.length - activePositions.length} retired` : undefined} />
+        <KpiTile label="Roles" value={activePositions.length} hint={positions.length > activePositions.length ? `${positions.length - activePositions.length} retired` : undefined} />
         <KpiTile label="Employees" value={employees.length} />
-        <KpiTile label="Without a position" value={unassigned} tone={unassigned ? 'warn' : 'ok'} hint={unassigned ? 'they have no permissions' : undefined} />
+        <KpiTile label="Without a role" value={unassigned} tone={unassigned ? 'warn' : 'ok'} hint={unassigned ? 'they have no permissions' : undefined} />
         <KpiTile label="GST Managers" value={staff.length - employees.length} hint="every permission, by role" />
       </div>
 
       <div className={WS_TABS_LIST} role="tablist">
         {([
-          ['positions', 'Positions', <BriefcaseBusiness key="i" className="h-4 w-4" />],
+          ['positions', 'Roles', <BriefcaseBusiness key="i" className="h-4 w-4" />],
           ['people', 'People', <Users key="i" className="h-4 w-4" />],
           ['log', 'Change log', <History key="i" className="h-4 w-4" />],
         ] as const).map(([k, label, icon]) => (
@@ -291,12 +291,12 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
         <div className="grid gap-3 lg:grid-cols-3">
           <SectionCard
             className="lg:col-span-1"
-            title="Positions"
+            title="Roles"
             description="Pick one to edit its permissions. A change applies to everyone in it."
           >
             <div className="flex gap-2">
               <Input
-                className={WS_CONTROL} placeholder="New position, e.g. GST Executive"
+                className={WS_CONTROL} placeholder="New role, e.g. GST Executive"
                 value={newName} onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') void createPosition(); }}
               />
@@ -306,7 +306,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
             </div>
             <div className="divide-y rounded-md border">
               {positions.length === 0 && (
-                <p className="p-3 text-sm text-muted-foreground">No positions yet. Add one above.</p>
+                <p className="p-3 text-sm text-muted-foreground">No roles yet. Add one above.</p>
               )}
               {positions.map((p) => {
                 const n = holders(p.id).length;
@@ -335,10 +335,10 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
 
           <SectionCard
             className="lg:col-span-2"
-            title={draft ? draft.name || 'Position' : 'Permissions'}
+            title={draft ? draft.name || 'Role' : 'Permissions'}
             description={selected
-              ? `${holders(selected.id).map((s) => s.first_name).join(', ') || 'Nobody holds this position yet'}`
-              : 'Select a position on the left'}
+              ? `${holders(selected.id).map((s) => s.first_name).join(', ') || 'Nobody holds this role yet'}`
+              : 'Select a role on the left'}
             actions={selected && draft ? (
               <>
                 <Button variant="outline" size="sm" className={WS_BTN} onClick={() => void toggleActive()}>
@@ -426,16 +426,16 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
         </div>
       ) : tab === 'people' ? (
         <SectionCard
-          title="People and their positions"
-          description="Each employee holds one position and gets exactly its permissions. GST Managers and the Superadmin have every permission by role."
+          title="People and their roles"
+          description="Each employee holds one role and gets exactly its permissions. GST Managers and the Superadmin have every permission by role."
         >
           <div className={WS_TABLE_WRAP}>
-            <table className={WS_TABLE} aria-label="Staff positions">
+            <table className={WS_TABLE} aria-label="Staff roles">
               <thead>
                 <tr>
                   <th className={WS_TH}>Name</th>
+                  <th className={WS_TH}>Level</th>
                   <th className={WS_TH}>Role</th>
-                  <th className={WS_TH}>Position</th>
                   <th className={cn(WS_TH, 'border-r-0')}>Permissions</th>
                 </tr>
               </thead>
@@ -459,7 +459,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
                         >
                           <SelectTrigger className={WS_CONTROL}><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value={NONE}>No position</SelectItem>
+                            <SelectItem value={NONE}>No role</SelectItem>
                             {positions.filter((p) => p.is_active || p.id === s.position_id).map((p) => (
                               <SelectItem key={p.id} value={p.id}>{p.name}{p.is_active ? '' : ' (retired)'}</SelectItem>
                             ))}
@@ -470,9 +470,9 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
                         {s.role === 'gst_manager'
                           ? 'All, by role'
                           : !s.position_id
-                            ? <span className="text-warning">None — assign a position</span>
+                            ? <span className="text-warning">None — assign a role</span>
                             : pos && !pos.is_active
-                              ? <span className="text-warning">None — position retired</span>
+                              ? <span className="text-warning">None — role retired</span>
                               : [...(keys || [])].map((k) => PERMISSION_LABEL[k] || k).join(', ') || 'None'}
                       </td>
                     </tr>
@@ -483,14 +483,14 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
           </div>
         </SectionCard>
       ) : (
-        <SectionCard title="Change log" description="Every position created, renamed, retired, permission granted or revoked, and person moved (latest 200).">
+        <SectionCard title="Change log" description="Every role created, renamed, retired, permission granted or revoked, and person moved (latest 200).">
           <div className={cn(WS_TABLE_WRAP, 'max-h-[60vh]')}>
-            <table className={WS_TABLE} aria-label="Position change log">
+            <table className={WS_TABLE} aria-label="Role change log">
               <thead>
                 <tr>
                   <th className={WS_TH}>When</th>
                   <th className={WS_TH}>Change</th>
-                  <th className={WS_TH}>Position</th>
+                  <th className={WS_TH}>Role</th>
                   <th className={WS_TH}>Person / permission</th>
                   <th className={cn(WS_TH, 'border-r-0')}>By</th>
                 </tr>
