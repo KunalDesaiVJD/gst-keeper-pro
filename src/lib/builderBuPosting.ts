@@ -215,6 +215,16 @@ export async function prepareBuEvent(params: {
  * The invoice is the GROSS leg while the working shows the NET differential;
  * the two agree because 11B reverses the advances the invoice re-covers.
  */
+/**
+ * A BU differential invoice's number: <series>BU/<unit>, in the characters
+ * Rule 46(b) allows (letters, digits, "/" and "-") and at most 16 of them —
+ * "BU/Shed No.-004" made the portal reject Bapa Sitaram's Sep-26 GSTR-1.
+ */
+export const buInvoiceNo = (series: string | null | undefined, unitNo: string): string => {
+  const clean = (x: string) => x.toUpperCase().replace(/[^A-Z0-9/-]/g, '');
+  return `${clean(series || '')}BU/${clean(unitNo)}`.slice(0, 16);
+};
+
 /** The invoice date must fall in the return period it is reported in. */
 const dateWithinPeriod = (date: string, period: string): string => {
   const m = /^(\d{2})\/(\d{4})$/.exec(period);
@@ -309,7 +319,7 @@ async function postBuEventRows(params: {
       period_month: params.postingPeriod,
       doc_series: params.docSeries,
       // A document number, so the invoice counts in Table 13 (documents issued).
-      doc_no: `${params.docSeries || ''}BU/${wu.unitNo}`,
+      doc_no: buInvoiceNo(params.docSeries, wu.unitNo),
       created_by: params.userId,
     }).select('id').single();
     if (error) throw error;

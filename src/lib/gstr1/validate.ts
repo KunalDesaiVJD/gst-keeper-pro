@@ -487,6 +487,14 @@ export function validateGstr1Json(
       const to = str(d.to).trim();
       const ref = from || to ? `${from || '(blank)'} to ${to || '(blank)'}` : label;
       if (!from || !to) problem('doc_issue', ref, 'doc-range', 'needs both the first (From) and last (To) document number of the series; enter them');
+      // Rule 46(b): a document number is at most 16 characters of letters,
+      // digits, "/" and "-". The portal rejects the whole file otherwise, with
+      // its generic "Download the latest version of Offline tool" message.
+      for (const n of [from, to].filter(Boolean)) {
+        if (!/^[A-Za-z0-9/-]{1,16}$/.test(n)) {
+          problem('doc_issue', ref, 'doc-format', `document number "${n}" may have only letters, digits, / and - (at most 16 characters); correct it at its source`);
+        }
+      }
       if (num(d.cancel) > num(d.totnum)) {
         problem('doc_issue', ref, 'doc-cancel', `${num(d.cancel)} cancelled is more than the ${num(d.totnum)} issued; correct the counts`);
       }
