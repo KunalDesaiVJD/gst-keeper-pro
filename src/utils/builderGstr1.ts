@@ -341,10 +341,8 @@ export function buildBuilderGstr1(params: {
   const json: Record<string, unknown> = {
     gstin: (gstin || '').trim(),
     fp: periodToFp(period),
-    version: 'GST3.2.2',
-    hash: 'hash',
-    gt: money(params.grossTurnover || 0),
-    cur_gt: money(params.grossTurnover || 0),
+    // No version / hash / gt / cur_gt: the portal rejects a file stamped with
+    // an outdated Offline Tool version (13 Oct 2026), and accepts one without.
   };
   if (b2cs.length) json.b2cs = b2cs;
   if (at.length) json.at = at;
