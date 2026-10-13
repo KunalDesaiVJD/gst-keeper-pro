@@ -39,7 +39,7 @@ import {
 } from '@/components/ui/select';
 import {
   Building, Layers, CalendarCheck, FileSpreadsheet, AlertTriangle, Settings2, Landmark,
-  Wallet, Loader2, ChevronLeft, ChevronRight,
+  Wallet, Loader2, ChevronLeft, ChevronRight, RotateCcw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { prettyPeriodLabel } from '@/utils/builderLedger';
@@ -53,6 +53,7 @@ import BuilderBookingsPage from './BuilderBookingsPage';
 import BuilderBuEventsPage from './BuilderBuEventsPage';
 import BuilderFsiPage from './BuilderFsiPage';
 import BuilderReturnsPage from './BuilderReturnsPage';
+import BuilderItcReversalPage from './BuilderItcReversalPage';
 import BuilderProjectSettingsDialog, {
   type BuilderProjectFormRow,
 } from '@/components/builder/BuilderProjectSettingsDialog';
@@ -63,6 +64,7 @@ const TABS = [
   { key: 'ledger', label: 'Ledger', icon: <Layers className="h-3.5 w-3.5" /> },
   { key: 'bu', label: 'BU Working', icon: <CalendarCheck className="h-3.5 w-3.5" /> },
   { key: 'fsi', label: 'TDR / FSI', icon: <Landmark className="h-3.5 w-3.5" /> },
+  { key: 'itc', label: 'ITC Reversal', icon: <RotateCcw className="h-3.5 w-3.5" /> },
   { key: 'returns', label: 'Returns', icon: <FileSpreadsheet className="h-3.5 w-3.5" /> },
 ];
 
@@ -430,6 +432,7 @@ const BuilderWorkspacePage: React.FC = () => {
               {tab === 'ledger' && (projectId ? <BuilderBookingsPage /> : <BuilderProjectsPage />)}
               {tab === 'bu' && (projectId ? <BuilderBuEventsPage /> : needsProject)}
               {tab === 'fsi' && (projectId ? <BuilderFsiPage /> : needsProject)}
+              {tab === 'itc' && (projectId ? <BuilderItcReversalPage /> : needsProject)}
               {tab === 'returns' && <BuilderReturnsPage />}
             </div>
           </>

@@ -211,6 +211,10 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
   };
 
   const handleDelete = async (row: AdjustmentRow) => {
+    if (row.source.startsWith('Builder ITC reversal')) {
+      toast.error('This row comes from an approved Builder ITC reversal — withdraw the approval on Builder › ITC Reversal instead.');
+      return;
+    }
     if (!window.confirm(`Remove this adjustment ("${row.label}")? This does not undo anything already pushed or filed.`)) return;
     const { error } = await supabase.from('gstr3b_adjustments').delete().eq('id', row.id);
     if (error) { toast.error('Could not delete: ' + error.message); return; }
@@ -386,9 +390,11 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
                           <TableCell className={WS_TD_NUM}>{inr(r.sgst)}</TableCell>
                           <TableCell className={WS_TD_NUM}>{inr(r.cess)}</TableCell>
                           <TableCell className={`${WS_TD} py-0.5`}>
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDelete(r)}>
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
+                            {!r.source.startsWith('Builder ITC reversal') && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDelete(r)}>
+                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                              </Button>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}

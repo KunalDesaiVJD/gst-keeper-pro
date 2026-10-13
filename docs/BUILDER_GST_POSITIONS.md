@@ -244,6 +244,82 @@ a No-ITC client's invoices like any other client's, flowing straight into row
 5.1 and Net ITC as a real, claimable-looking figure with nothing to suppress
 it (fixed live on Elenza Callista Buildcon).
 
+## 7A. Final ITC reversal at completion — Rules 42 and 43 (13/10/2026)
+
+**Where:** Builder › ITC Reversal, one working per project and BU event.
+- Engine: `src/utils/builderItcReversal.ts`.
+- Data: `src/lib/builderItcReversalData.ts`.
+- Schema: migration `20261015110000_builder_itc_reversal.sql`.
+
+**Why it exists.** At BU or completion, the units still unbooked will be sold
+after completion. Schedule III para 5 keeps that sale outside supply, and
+s.17(3) treats it as exempt for apportionment. Credit taken during
+construction on that share is therefore reversed by a final determination.
+
+**The key is carpet area (Te / Tt)**, taken from the BU event's frozen unit
+snapshot.
+
+*Te (exempt carpet):*
+- every unit unbooked at the cut-off;
+- for a Partial-ITC client only, plus the booked residential carpet, whose
+  share was exempt throughout.
+
+*Tt:* the total carpet area of the units in the event.
+
+**Per financial year, from the project's first FY to the BU FY:**
+
+    Rule 42: (inputs + input services credit) × Te/Tt − already reversed under Rule 42
+    Rule 43: (capital goods credit)           × Te/Tt − already reversed under Rule 43
+
+The year totals are netted per tax head. A positive net goes to GSTR-3B
+**4(B)(1)**. A negative net (more reversed over the years than the final
+figure) goes back as a re-credit in **4(A)(5)**.
+
+**Where the figures come from:**
+- **Past years** are entered exactly as in that year's GSTR-9:
+  - Table 6 for credit availed, split into inputs and input services vs
+    capital goods;
+  - Table 7C / 7D for what was already reversed.
+- Each past year must be **matched with its filed GSTR-9** before
+  submission:
+  - by ticking the check against the app's own figure (GSTR-9 Table 6A
+    when pulled, else the as-filed GSTR-3B 4A months);
+  - or by confirming it with the filed GSTR-9's ARN.
+- A difference from the app's figure is shown and must be explained in the
+  remarks.
+- **The BU year** (April to the BU month) is entered by hand.
+
+**First year.** The project's registration or 01/04/2019, whichever is later.
+This is the start of the construction scheme and its carpet-area key. The
+working can move it.
+
+**Approval.**
+- Staff with *Post BU events* prepare and submit the working. A submitted
+  working is frozen.
+- **Only the superadmin approves.** Approval writes the net amount into that
+  period's GSTR-3B as `gstr3b_adjustments` rows (source "Builder ITC reversal
+  (Rule 42/43)"). The GSTR-3B draft adds these into 4(B)(1) or 4(A)(5).
+- Those rows cannot be edited or deleted except by withdrawing the approval.
+  Withdrawal is superadmin only, and only while the return is unfiled.
+- An approval into an already-filed GSTR-3B is refused.
+
+**Elected positions, not confirmed in a firm sign-off:**
+- **Posting period.** It defaults to the BU event's posting period. A period
+  later than the September following the BU year is flagged, because Rule 42
+  ties the final determination to the year of completion.
+- **Interest u/s 50** is optional. When switched on, it is worked out at 18%
+  on each past year's net reversal, from 1 April after that year to the due
+  date of the posting period's GSTR-3B. It is shown for payment through
+  Table 5.1 or DRC-03 and is **not** written into the return; the GSTR-3B
+  draft has no interest line yet.
+- **Cess** on ITC is shown but not carried by the GSTR-3B draft, so it is paid
+  by hand.
+- **Credit counted.** The working treats the credit entered as the project's
+  common credit. Credit used wholly for taxable supplies, or blocked under
+  s.17(5), should be left out of the entry, and the remarks should say so.
+- **No-ITC clients** have nothing to reverse at completion, because every
+  month's credit is already reversed in full.
+
 ## 8. Retrospective re-rating
 
 **The ₹45L test floors at money already recognised, not just the unit
