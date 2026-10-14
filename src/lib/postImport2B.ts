@@ -23,9 +23,19 @@
 // only bills_not_in_2b/books rows carrying a source_book_id/source_doc_id
 // link are inserted/updated/retracted here. Carried-forward copies and
 // legacy manually-added rows (no link) are never touched.
+//
+// Notes and amendments (firm decision, 14 Oct 2026, §10 of the doc): every
+// figure is read through src/lib/twobDocs.ts. A supplier debit note counts
+// like an invoice (row 5.1, or Not in Books). A supplier credit note reduces
+// ITC through row 5.3 (fetchImport2BCreditNotes) and is never posted to the
+// ledger. An amendment counts only its difference from the version Import 2B
+// already counted (effectFigures), in row 5.1 / 5.3 or as a Not in Books row
+// that may be negative; a HELD amendment counts nowhere.
 
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
+import { fetchAllRows } from '@/lib/fetchAllRows';
+import { COUNTED_ACTIONS, effectFigures, isCreditNote, type TwobDocLike } from '@/lib/twobDocs';
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -38,7 +48,7 @@ export function periodMonthLabel(periodMonth: string): string {
   return `${MONTH_SHORT[mm - 1]} ${String(yyyyStr).slice(-2)}`;
 }
 
-interface TwoBDocRow {
+interface TwoBDocRow extends TwobDocLike {
   id: string;
   date: string | null;
   supplier_name: string | null;
@@ -99,29 +109,39 @@ export interface PostPlan {
   skippedDocs: { row: TwoBDocRow; reason: string }[];
 }
 
-// Dry-run: compute what a post would do, without writing anything. Used to
-// show a confirm dialog with real counts before touching the ledger.
-export async function planImport2BPost(clientId: string, periodMonth: string): Promise<PostPlan> {
-  const [booksRes, docsRes, ledger2BRes, ledgerBooksRes] = await Promise.all([
-    supabase.from('books_register').select('*').eq('client_id', clientId).eq('period_month', periodMonth),
-    supabase.from('twob_import_docs').select('*').eq('client_id', clientId).eq('period_month', periodMonth),
-    supabase.from('bills_not_in_2b').select('id, source_book_id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst')
-      .eq('client_id', clientId).eq('period_month', periodMonth).not('source_book_id', 'is', null),
-    supabase.from('bills_not_in_books').select('id, source_doc_id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst')
-      .eq('client_id', clientId).eq('period_month', periodMonth).not('source_doc_id', 'is', null),
-  ]);
+// The figures a 2B document puts in the Not in Books ledger: what it changes
+// this month (an invoice or debit note its 2B figures, an amendment its
+// difference, which may be negative).
+const ledgerFiguresOf = (d: TwoBDocRow) => {
+  const e = effectFigures(d);
+  return { taxable_value: e.taxable, input_igst: e.igst, input_cgst: e.cgst, input_sgst: e.sgst };
+};
 
-  const books = (booksRes.data || []) as BookRegRow[];
-  const docs = (docsRes.data || []) as TwoBDocRow[];
-  const ledger2B = (ledger2BRes.data || []) as LedgerRow[];
-  const ledgerBooks = (ledgerBooksRes.data || []) as LedgerRow[];
+// Dry-run: compute what a post would do, without writing anything. Used to
+// show a confirm dialog with real counts before touching the ledger. Only the
+// rows that post are read (books NOT_IN_2B, docs NOT_IN_BOOKS), every page of
+// them: PostgREST returns at most 1000 rows a request, and a truncated read
+// here would retract or duplicate ledger rows.
+export async function planImport2BPost(clientId: string, periodMonth: string): Promise<PostPlan> {
+  const LEDGER_COLUMNS = 'id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst';
+  const [books, docs, ledger2B, ledgerBooks] = await Promise.all([
+    fetchAllRows<BookRegRow>('books_register', '*', (q) => q
+      .eq('client_id', clientId).eq('period_month', periodMonth).eq('book_treatment', 'NOT_IN_2B').order('id')),
+    fetchAllRows<TwoBDocRow>('twob_import_docs', '*', (q) => q
+      .eq('client_id', clientId).eq('period_month', periodMonth).eq('itc_action', 'NOT_IN_BOOKS').order('id')),
+    fetchAllRows<LedgerRow>('bills_not_in_2b', `${LEDGER_COLUMNS}, source_book_id`, (q) => q
+      .eq('client_id', clientId).eq('period_month', periodMonth).not('source_book_id', 'is', null).order('id')),
+    fetchAllRows<LedgerRow>('bills_not_in_books', `${LEDGER_COLUMNS}, source_doc_id`, (q) => q
+      .eq('client_id', clientId).eq('period_month', periodMonth).not('source_doc_id', 'is', null).order('id')),
+  ]);
 
   const plan: PostPlan = {
     insertBills2B: [], updateBills2B: [], retractBills2B: [], skippedBooks: [],
     insertBillsBooks: [], updateBillsBooks: [], retractBillsBooks: [], skippedDocs: [],
   };
 
-  // Books not in 2B -> bills_not_in_2b
+  // Books not in 2B -> bills_not_in_2b (books rows are invoices or debit
+  // notes, always positive)
   const notIn2B = books.filter((b) => b.book_treatment === 'NOT_IN_2B');
   const byBookId = new Map(ledger2B.map((l) => [l.source_book_id as string, l]));
   for (const b of notIn2B) {
@@ -143,10 +163,23 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
     if (l.source_book_id && !notIn2BIds.has(l.source_book_id)) plan.retractBills2B.push({ ledgerId: l.id });
   }
 
-  // 2B docs not in books -> bills_not_in_books
+  // 2B docs not in books -> bills_not_in_books. A credit note never sits
+  // here (the portal has already reduced the ITC; Import 2B does not offer
+  // the treatment), so one found with it is skipped and any row it posted
+  // before is retracted. A HELD amendment never has this treatment, so it
+  // is never posted. An amendment that changes no figure (a number or date
+  // correction) has nothing to add beside its original and is not posted.
   const notInBooks = docs.filter((d) => d.itc_action === 'NOT_IN_BOOKS');
+  const kept = new Set<string>();
   const byDocId = new Map(ledgerBooks.map((l) => [l.source_doc_id as string, l]));
   for (const d of notInBooks) {
+    if (isCreditNote(d)) {
+      plan.skippedDocs.push({ row: d, reason: 'A credit note is never Not in Books: choose Matched, Mismatched, Ineligible or ITC of Others' });
+      continue;
+    }
+    const fig = ledgerFiguresOf(d);
+    if (d.is_amendment && [fig.taxable_value, fig.input_igst, fig.input_cgst, fig.input_sgst].every((v) => Math.abs(v) < 0.005)) continue;
+    kept.add(d.id);
     if (!d.date) { plan.skippedDocs.push({ row: d, reason: 'Missing date' }); continue; }
     if (!d.supplier_name || !d.supplier_name.trim()) { plan.skippedDocs.push({ row: d, reason: 'Missing supplier name' }); continue; }
     const existing = byDocId.get(d.id);
@@ -154,15 +187,13 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
       plan.insertBillsBooks.push({ row: d });
     } else if (amountsDiffer(existing, {
       date: d.date, supplier_name: d.supplier_name, supplier_invoice_number: d.supplier_invoice_number,
-      supplier_gstin: d.supplier_gstin, taxable_value: d.taxable_value || 0, input_igst: d.input_igst || 0,
-      input_cgst: d.input_cgst || 0, input_sgst: d.input_sgst || 0,
+      supplier_gstin: d.supplier_gstin, ...fig,
     })) {
       plan.updateBillsBooks.push({ ledgerId: existing.id, row: d });
     }
   }
-  const notInBooksIds = new Set(notInBooks.map((d) => d.id));
   for (const l of ledgerBooks) {
-    if (l.source_doc_id && !notInBooksIds.has(l.source_doc_id)) plan.retractBillsBooks.push({ ledgerId: l.id });
+    if (l.source_doc_id && !kept.has(l.source_doc_id)) plan.retractBillsBooks.push({ ledgerId: l.id });
   }
 
   return plan;
@@ -170,25 +201,57 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
 
 export interface HeadTotals { igst: number; cgst: number; sgst: number }
 
+// The columns effectFigures reads, plus what the totals filter on.
+const COUNTED_COLUMNS = 'id, doc_type, is_amendment, original_doc_type, taxable_value, input_igst, input_cgst, input_sgst, cess, '
+  + 'base_taxable_value, base_input_igst, base_input_cgst, base_input_sgst, base_cess, '
+  + 'ims_reduce_required, declared_igst, declared_cgst, declared_sgst, declared_cess';
+
+// Every counted (MATCHED / MISMATCHED), non-RCM document of one type group,
+// summed by what it changes this month (an amendment its difference). Paged,
+// since a big month runs past PostgREST's 1000-row response.
+async function sumCountedDocs(clientId: string, periodMonth: string, creditNotes: boolean): Promise<HeadTotals> {
+  const rows = await fetchAllRows<TwobDocLike>('twob_import_docs', COUNTED_COLUMNS, (q) => {
+    const base = q.eq('client_id', clientId).eq('period_month', periodMonth)
+      .eq('reverse_charge', false).in('itc_action', [...COUNTED_ACTIONS]);
+    return (creditNotes ? base.eq('doc_type', 'CREDIT_NOTE') : base.neq('doc_type', 'CREDIT_NOTE')).order('id');
+  });
+  const t = rows.reduce((acc, r) => {
+    const e = effectFigures(r);
+    return { igst: acc.igst + e.igst, cgst: acc.cgst + e.cgst, sgst: acc.sgst + e.sgst };
+  }, { igst: 0, cgst: 0, sgst: 0 });
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  return { igst: r2(t.igst), cgst: r2(t.cgst), sgst: r2(t.sgst) };
+}
+
 // The month's eligible ITC as per GSTR-2B — MATCHED (clean match) plus
 // MISMATCHED (still genuinely in 2B; claimed at the 2B figure, the legal
 // ceiling under s.16(2)(aa) — the books-vs-2B differential is a follow-up
 // item, not a claim adjustment). INELIGIBLE and ITC_OF_OTHERS are excluded:
 // the former is blocked credit, the latter isn't the taxpayer's ITC at all.
 // RCM docs are excluded — RCM ITC is claimed via RCM Summary, not here.
+// Invoices and supplier debit notes only (credit notes reduce through row
+// 5.3, below); an amendment adds its difference, which may be negative; a
+// HELD amendment is not counted.
 export async function fetchImport2BEligibleTotal(clientId: string, periodMonth: string): Promise<HeadTotals> {
-  const { data } = await supabase
-    .from('twob_import_docs')
-    .select('input_igst, input_cgst, input_sgst, itc_action, reverse_charge')
-    .eq('client_id', clientId)
-    .eq('period_month', periodMonth)
-    .eq('reverse_charge', false)
-    .in('itc_action', ['MATCHED', 'MISMATCHED']);
-  return (data || []).reduce((acc, r) => ({
-    igst: acc.igst + (Number(r.input_igst) || 0),
-    cgst: acc.cgst + (Number(r.input_cgst) || 0),
-    sgst: acc.sgst + (Number(r.input_sgst) || 0),
-  }), { igst: 0, cgst: 0, sgst: 0 });
+  return sumCountedDocs(clientId, periodMonth, false);
+}
+
+// The month's supplier credit notes as per GSTR-2B, for ITC Summary row 5.3
+// "Debit Note": MATCHED and MISMATCHED, non-RCM, by what each reduces (an
+// amended note its difference). Positive = the reduction. notesRead says
+// whether this month's import read the notes at all (any row with full_2b):
+// an older, invoices-only import has none, and its row 5.3 stays as typed.
+export async function fetchImport2BCreditNotes(
+  clientId: string,
+  periodMonth: string,
+): Promise<{ total: HeadTotals; notesRead: boolean }> {
+  const [total, readRes] = await Promise.all([
+    sumCountedDocs(clientId, periodMonth, true),
+    supabase.from('twob_import_docs').select('id')
+      .eq('client_id', clientId).eq('period_month', periodMonth).eq('full_2b', true).limit(1),
+  ]);
+  if (readRes.error) throw new Error(`Import 2B credit notes: ${readRes.error.message}`);
+  return { total, notesRead: (readRes.data || []).length > 0 };
 }
 
 export const isPostPlanEmpty = (p: PostPlan) =>
@@ -266,10 +329,7 @@ export async function postImport2BToLedger(
       supplier_name: (d.supplier_name || '').trim() || 'Unknown supplier',
       supplier_invoice_number: d.supplier_invoice_number,
       supplier_gstin: d.supplier_gstin,
-      taxable_value: d.taxable_value || 0,
-      input_igst: d.input_igst || 0,
-      input_cgst: d.input_cgst || 0,
-      input_sgst: d.input_sgst || 0,
+      ...ledgerFiguresOf(d),
       bill_in_2b_month: currentLabel,
       book_entry_month: null,
       is_carried_forward: false,
@@ -286,10 +346,7 @@ export async function postImport2BToLedger(
       supplier_name: (d.supplier_name || '').trim() || 'Unknown supplier',
       supplier_invoice_number: d.supplier_invoice_number,
       supplier_gstin: d.supplier_gstin,
-      taxable_value: d.taxable_value || 0,
-      input_igst: d.input_igst || 0,
-      input_cgst: d.input_cgst || 0,
-      input_sgst: d.input_sgst || 0,
+      ...ledgerFiguresOf(d),
       updated_by: userId,
       updated_at: nowIso,
     }).eq('id', ledgerId);

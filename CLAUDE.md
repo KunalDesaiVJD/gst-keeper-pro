@@ -84,6 +84,11 @@ and ITC_OF_OTHERS excluded entirely, NOT_IN_BOOKS/NOT_IN_2B the only rows that
 reach the ledger) and ITC Summary row 5.1's auto-link are elected positions,
 not settled law — and were implemented without a firm sign-off conversation,
 so treat them as reversible defaults pending confirmation, not fixed rules.
+Import 2B reads every B2B sheet of the 2B Excel (§10 of that doc): debit notes
+count like invoices in 5.1; credit notes fill row 5.3 "Debit Note" for Strict
+clients (`full_2b` months only); amendments count only revised minus the
+earlier version's `base_*`, or are HELD; a re-import merges, never wipes.
+Document meaning (type, sign, effect, colour) lives in `src/lib/twobDocs.ts`.
 
 ## GSTR-1 e-invoices (IRN)
 

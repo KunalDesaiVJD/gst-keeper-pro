@@ -1788,6 +1788,7 @@ export type Database = {
       }
       books_register: {
         Row: {
+          doc_type: string
           book_treatment: string
           client_id: string
           created_at: string | null
@@ -1808,6 +1809,7 @@ export type Database = {
           updated_by: string | null
         }
         Insert: {
+          doc_type?: string
           book_treatment?: string
           client_id: string
           created_at?: string | null
@@ -1828,6 +1830,7 @@ export type Database = {
           updated_by?: string | null
         }
         Update: {
+          doc_type?: string
           book_treatment?: string
           client_id?: string
           created_at?: string | null
@@ -9748,6 +9751,24 @@ export type Database = {
       }
       twob_import_docs: {
         Row: {
+          doc_type: string
+          is_amendment: boolean
+          original_doc_number: string | null
+          original_doc_date: string | null
+          original_doc_type: string | null
+          amends_doc_id: string | null
+          amends_period: string | null
+          base_taxable_value: number | null
+          base_input_igst: number | null
+          base_input_cgst: number | null
+          base_input_sgst: number | null
+          base_cess: number | null
+          ims_reduce_required: string | null
+          declared_igst: number | null
+          declared_cgst: number | null
+          declared_sgst: number | null
+          declared_cess: number | null
+          full_2b: boolean
           bucket: string
           cess: number | null
           client_id: string
@@ -9783,6 +9804,24 @@ export type Database = {
           updated_by: string | null
         }
         Insert: {
+          doc_type?: string
+          is_amendment?: boolean
+          original_doc_number?: string | null
+          original_doc_date?: string | null
+          original_doc_type?: string | null
+          amends_doc_id?: string | null
+          amends_period?: string | null
+          base_taxable_value?: number | null
+          base_input_igst?: number | null
+          base_input_cgst?: number | null
+          base_input_sgst?: number | null
+          base_cess?: number | null
+          ims_reduce_required?: string | null
+          declared_igst?: number | null
+          declared_cgst?: number | null
+          declared_sgst?: number | null
+          declared_cess?: number | null
+          full_2b?: boolean
           bucket?: string
           cess?: number | null
           client_id: string
@@ -9818,6 +9857,24 @@ export type Database = {
           updated_by?: string | null
         }
         Update: {
+          doc_type?: string
+          is_amendment?: boolean
+          original_doc_number?: string | null
+          original_doc_date?: string | null
+          original_doc_type?: string | null
+          amends_doc_id?: string | null
+          amends_period?: string | null
+          base_taxable_value?: number | null
+          base_input_igst?: number | null
+          base_input_cgst?: number | null
+          base_input_sgst?: number | null
+          base_cess?: number | null
+          ims_reduce_required?: string | null
+          declared_igst?: number | null
+          declared_cgst?: number | null
+          declared_sgst?: number | null
+          declared_cess?: number | null
+          full_2b?: boolean
           bucket?: string
           cess?: number | null
           client_id?: string

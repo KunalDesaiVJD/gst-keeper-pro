@@ -985,15 +985,24 @@ const Gstr3bPage: React.FC = () => {
 
           {/* 4. Eligible ITC */}
           <SectionCard title="4. Eligible ITC">
-            {/* Option 3 (14 Oct 2026): ITC typed in ITC Summary, not taken from 2B. */}
+            {/* Option 3 (14 Oct 2026): ITC typed in ITC Summary, not taken from 2B.
+                Row 5.3 reduces 4A(5), so it is set against the 2B credit notes. */}
             {(result?.itcTyped?.length ?? 0) > 0 && (
               <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="note">
                 <span className="font-semibold">Typed, not from 2B.</span>{' '}
-                4A(5) includes ITC typed in ITC Summary:
+                4A(5) includes figures typed in ITC Summary:
                 <ul className="mt-1 list-disc space-y-0.5 pl-5">
                   {result!.itcTyped!.map((t) => {
                     const typed = t.typed.igst + t.typed.cgst + t.typed.sgst;
                     const twob = t.twob ? t.twob.igst + t.twob.cgst + t.twob.sgst : null;
+                    if (t.row === '5.3') {
+                      return (
+                        <li key={t.row}>
+                          Row 5.3 {t.label} typed ₹{inr(typed)}; 2B credit notes give ₹{inr(twob ?? 0)}
+                          {Math.abs(typed - (twob ?? 0)) < 1 ? ' (the same)' : ` (difference ₹${inr(typed - (twob ?? 0))})`}
+                        </li>
+                      );
+                    }
                     return (
                       <li key={t.row}>
                         Row {t.row} {t.label}: ₹{inr(typed)}

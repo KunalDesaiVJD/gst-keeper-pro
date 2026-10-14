@@ -46,7 +46,7 @@ export async function fetchGstr3b(
       .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']),
     // Builder Partial-ITC / No-ITC carpet-area apportionment — see
     // docs/BUILDER_GST_POSITIONS.md §7 and builderPartialItc.ts. Also carries
-    // liberal_2b_reconciliation, which gates the row-5.1 auto-link below.
+    // liberal_2b_reconciliation, which gates the row 5.1 / 5.3 auto-links below.
     supabase.from('clients').select('builder_itc_type, commercial_area, residential_area, liberal_2b_reconciliation').eq('id', clientId).maybeSingle(),
     fetchItcAutoLinkTotals(clientId, periodMonth),
   ]);
@@ -73,11 +73,18 @@ export async function fetchGstr3b(
   // entry template — staff type the figure directly in ITC Summary now.
   // Option 3 (14 Oct 2026): what in 4A(5) was typed in ITC Summary rather
   // than taken from 2B: row 5.1 of a Liberal or No-ITC client, and row 5.2.
+  // Row 5.3 "Debit Note" (14 Oct 2026, §10) is the month's 2B credit notes
+  // for a Strict client, patched live like 5.1, but only for a month whose
+  // import read the notes (notesFromImport2B); an older month keeps 5.3 as
+  // saved. A Liberal or No-ITC client's 5.3 stays typed and, once the notes
+  // were read, is listed here beside what 2B gives.
   const itcTyped: Gstr3bItcTyped[] = [];
   if (itc) {
     const isLiberal = !!clientRes.data?.liberal_2b_reconciliation;
     const isNoITC = clientRes.data?.builder_itc_type === 'NO_ITC';
-    const { eligibleFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco } = autoLink;
+    const {
+      eligibleFromImport2B, creditNotesFromImport2B, notesFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco,
+    } = autoLink;
     const amt = (r: ItcRow) => ({ igst: Number(r.igst) || 0, cgst: Number(r.cgst) || 0, sgst: Number(r.sgst) || 0 });
     const sum = (a: { igst: number; cgst: number; sgst: number }) => a.igst + a.cgst + a.sgst;
     for (const r of itc.section4A as ItcRow[]) {
@@ -86,10 +93,17 @@ export async function fetchGstr3b(
         if (Math.abs(sum(amt(r))) >= 0.5 || Math.abs(sum(twob)) >= 0.5) itcTyped.push({ row: '5.1', label: 'ITC for the Month', typed: amt(r), twob });
       }
       if (r.srNo === '5.2' && Math.abs(sum(amt(r))) >= 0.5) itcTyped.push({ row: '5.2', label: r.particular || 'ITC for Previous Month', typed: amt(r) });
+      if (r.srNo === '5.3' && (isLiberal || isNoITC) && notesFromImport2B) {
+        const twob = { ...creditNotesFromImport2B };
+        if (Math.abs(sum(amt(r))) >= 0.5 || Math.abs(sum(twob)) >= 0.5) itcTyped.push({ row: '5.3', label: 'Debit Note', typed: amt(r), twob });
+      }
     }
     itc.section4A = itc.section4A.map((r: ItcRow) => {
       if (r.srNo === '5.1' && !isLiberal && !isNoITC) {
         return { ...r, igst: eligibleFromImport2B.igst + reversalFromReco.igst, cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst, sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst };
+      }
+      if (r.srNo === '5.3' && notesFromImport2B && !isLiberal && !isNoITC) {
+        return { ...r, igst: creditNotesFromImport2B.igst, cgst: creditNotesFromImport2B.cgst, sgst: creditNotesFromImport2B.sgst };
       }
       if (r.srNo === '5.4') return { ...r, igst: reclaimFromReco.igst, cgst: reclaimFromReco.cgst, sgst: reclaimFromReco.sgst };
       return r;
