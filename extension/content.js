@@ -5000,8 +5000,9 @@
   //      loads; the filed return's Tables 6 and 7 come from there. The
   //      address the extension used to guess for the filed return
   //      (api/gstr9/details) is refused by the portal ("Request Rejected").
-  // Read-only: no save / submit / compute / file is pressed. A NIL question
-  // the portal asks before Prepare Online is left to the person.
+  // No save / submit / compute / file is pressed. The NIL question Prepare
+  // Online asks is answered No and NEXT pressed (the firm's decision,
+  // 14 Oct 2026), which only opens the form.
   // Function declarations, not consts: the job runs from the top of this
   // script before these lines are reached (a const here is not initialised yet).
   function G9_KEY() { return '__gstkG9'; }
@@ -5054,6 +5055,32 @@
       else into[k + 'Total'] = t[k];
     }
   }
+  // 0.11.4: the question Prepare Online asks first ("Do you want to file NIL
+  // return for the financial year?"): answered No and NEXT pressed, as the
+  // firm decided (14 Oct: its clients' returns are never NIL). No shows the
+  // GSTR-9 with its figures, which is what makes the portal compute Tables 4
+  // to 6; NEXT only opens the form, nothing is filed.
+  function g9AnswerNilNo() {
+    const q = $$('div, p, span, label, td, li').filter((e) => e.offsetParent !== null
+      && /file\s+nil/i.test(oneLine(e.textContent || '')) && oneLine(e.textContent || '').length < 400);
+    if (!q.length) return false;
+    let box = q.sort((a, b) => oneLine(a.textContent).length - oneLine(b.textContent).length)[0];
+    let radios = [];
+    for (let i = 0; box && i < 6; i++, box = box.parentElement) {
+      radios = [...box.querySelectorAll('input[type=radio]')];
+      if (radios.length >= 2) break;
+    }
+    const labelOf = (r) => oneLine(
+      ((r.id && document.querySelector('label[for="' + r.id + '"]')) || r.closest('label') || {}).textContent
+      || (r.nextSibling && r.nextSibling.textContent) || (r.parentElement && r.parentElement.textContent) || r.value || '');
+    const no = radios.find((r) => /^no\b/i.test(labelOf(r)) || /^(n|no|false)$/i.test(String(r.value || '')));
+    if (!no) return false;
+    if (!no.checked) { no.click(); no.dispatchEvent(new Event('change', { bubbles: true })); }
+    const next = visibleButtons().find((b) => /^NEXT$/.test(btnText(b)));
+    if (next) setTimeout(() => next.click(), 600);
+    return true;
+  }
+
   // The Table 7 tile ("7. Details of ITC reversed and ineligible ITC …").
   function g9Table7Tile() {
     const c = $$('a, button, li, div, span, p, h4, h5, td, label').filter((e) => {
@@ -5212,8 +5239,8 @@
         ticks += 1;
         seen = merged();
         // An unfiled year the summary did not compute: open Prepare Online,
-        // which makes the portal fill Tables 4 to 6. A NIL question it asks
-        // first is the person's to answer (it is saved on the portal).
+        // which makes the portal fill Tables 4 to 6. Its NIL question is
+        // answered No (g9AnswerNilNo) and NEXT pressed.
         if (!isFiled && needCalc() && !g9.prepTried && Date.now() - g9.openedAt > 12000) {
           calcRes = await getJson(calcUrl);
           if (calcRes.data && g9HasCalc(calcRes.data)) { calc = calcRes.data; break; }
@@ -5221,9 +5248,14 @@
           g9.prepTried = true;
           await setJob(job);
           if (prep) {
-            banner('GSTR-9 FY ' + fyLabel + ': opening Prepare Online so the portal computes the figures. If it asks whether to file NIL, answer it here; the figures are read once the form opens.' + progress, '#f59e0b');
+            banner('GSTR-9 FY ' + fyLabel + ': opening Prepare Online so the portal computes the figures…' + progress, '#f59e0b');
             prep.click();
           }
+        }
+        if (!isFiled && needCalc() && g9.prepTried && (g9.nilAnswered || 0) < 3 && g9AnswerNilNo()) {
+          g9.nilAnswered = (g9.nilAnswered || 0) + 1;
+          await setJob(job);
+          banner('GSTR-9 FY ' + fyLabel + ': answered "No" to "file NIL return" and pressed NEXT; waiting for the figures…' + progress);
         }
         if (!isFiled && needCalc() && g9.prepTried && ticks % 4 === 0) {
           const again = await getJson(calcUrl);
@@ -5250,7 +5282,7 @@
     if (!g9HasCalc(calc) && g9HasCalc(seen.calc)) calc = Object.assign({ fp: retPeriod, gstin }, calc || {}, seen.calc);
     const how = 'pressed ' + (g9.clicked || 'nothing (buttons seen: ' + (g9.buttons || 'none') + ')')
       + (isFiled ? ' · Table 7 tile: ' + (g9.tile || 'not tried') : '')
-      + (g9.prepTried ? ' · Prepare Online tried' : '')
+      + (g9.prepTried ? ' · Prepare Online tried' + (g9.nilAnswered ? ' · NIL question answered No' : ' · NIL question not found') : '')
       + ' · page loaded: ' + (seen.urls.join(', ') || 'nothing');
     const hasFiled = ['table6', 'table7', 'table6Total', 'table7Total'].some((k) => seen.filed[k]);
     const rawKept = JSON.stringify(seen.raw).length < 400000 ? seen.raw : seen.raw.map((r) => ({ url: r.url, body: '(too large)' }));

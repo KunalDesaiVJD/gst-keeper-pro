@@ -2,6 +2,12 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-14 — Unfiled GSTR-9: NIL question answered No (v0.11.4)
+
+- 0.11.3 pressed PREPARE-ONLINE for an unfiled year (Accurate PMS 2025-26), and the portal then asked "Do you want to file NIL return?". The pull waited there, so the system-computed Tables 4 to 6 never loaded.
+- The extension now answers **No** and presses **NEXT**, as the firm decided: its clients' returns are never NIL. No only opens the GSTR-9 form with its figures; nothing is filed.
+- The row's status says whether the question was found and answered.
+
 ## 2026-10-14 — Filed GSTR-9 rows from getDetails (v0.11.3)
 
 - 0.11.2's run on Bapa Sitaram showed what the portal's GSTR-9 view loads: `api/gstr9/summary` (each table's total), `api/gstr/questions/get`, `api/gstr9/details/calc` and **`api/gstr9/getDetails`**. The rows of Tables 6 and 7 are in `getDetails`.
