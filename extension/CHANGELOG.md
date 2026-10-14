@@ -2,6 +2,18 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-14 — GSTR-9 read from the portal's own Annual Return page (v0.11.0)
+
+No database change.
+
+- A GSTR-9 pull now goes straight to the **Annual Return** page. It used to open the Returns dashboard, which shows the current FY's return filing (2026-27).
+- There it selects the year, presses SEARCH and opens the GSTR-9:
+  - **VIEW** for a filed return;
+  - the **system-computed summary** for an unfiled one, then **Prepare Online** if the portal still has not computed Tables 4 to 6. A NIL question the portal asks first is left to the person; it is saved on the portal.
+- `inject.js` keeps a copy of every GSTR-9 JSON the page itself loads. **Table 7 of the filed return** comes from there: from the summary, or from the Table 7 tile when the summary lacks it. The address 0.10.3 guessed (`/returns2/auth/api/gstr9/details`) was refused by the portal ("Request Rejected") and is no longer called.
+- When Table 7 still is not loaded, the `GSTR9_FILED` row says which GSTR-9 addresses the page did load, so the read can be fixed from that.
+- Read-only, as before: no save, submit, compute or file is pressed.
+
 ## 2026-10-13 — Says why the filed GSTR-9 could not be read (v0.10.4)
 
 - When the filed-GSTR-9 read gets no data, the extension now records a `GSTR9_FILED` row with `PULL FAILED: <what the portal answered>`. A good earlier copy keeps its figures.
