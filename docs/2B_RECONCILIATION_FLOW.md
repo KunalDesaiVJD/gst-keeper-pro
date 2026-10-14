@@ -176,7 +176,8 @@ directly with the firm, not an engineering guess:
   held back; that client's staff genuinely don't need Import 2B at all if
   they don't want it.
 - **Only superadmin / GST Manager can flip the toggle** (`canManage2BLiberalMode()`
-  in `AuthContext.tsx`) — set from Edit Client. No employee permission grant
+  in `AuthContext.tsx`) — set from Edit Client, or with Make Strict / Make
+  Liberal on a client's row in the Clients page's Liberal / Strict pop-up. No employee permission grant
   exists for this, unlike most other gated actions in this app.
 - **Import 2B stays fully usable for every client regardless of mode.** The
   toggle only controls whether *direct* edits on 2B Reconciliation are also
