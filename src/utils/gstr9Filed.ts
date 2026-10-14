@@ -26,7 +26,8 @@ const findTable = (data: unknown, key: string, depth = 0): Row | null => {
   if (!data || typeof data !== 'object' || depth > 4) return null;
   const o = data as Row;
   if (o[key] && typeof o[key] === 'object') return o[key] as Row;
-  for (const v of Object.values(o)) {
+  for (const [k, v] of Object.entries(o)) {
+    if (k.startsWith('_')) continue; // the extension's kept raw answers (_captures)
     const hit = findTable(v, key, depth + 1);
     if (hit) return hit;
   }
@@ -51,12 +52,14 @@ export interface FiledGstr9Itc {
   detail7: boolean;
   /** 7I as filed, when the return gave Table 7's total (rows or not). */
   reversedTotal: Tax | null;
+  /** Table 6 taken as 6O from Table 7 (its own rows not read), all as inputs and input services. */
+  tab6oFrom7?: boolean;
   /** False when the return carried no Table 6 or 7 at all. */
   found: boolean;
 }
 
 const DETAIL6 = ['supp_non_rchrg', 'supp_rchrg_unreg', 'supp_rchrg_reg', 'iog', 'ios', 'isd', 'itc_clmd'];
-const DETAIL7 = ['rule37', 'rule39', 'rule42', 'rule43', 'sec17', 'revsl_tran1', 'revsl_trans1', 'other'];
+const DETAIL7 = ['rule37', 'rule37A', 'rule38', 'rule39', 'rule42', 'rule43', 'sec17', 'revsl_tran1', 'revsl_trans1', 'other'];
 const isAmount = (o: Row | null) => !!o && ['iamt', 'camt', 'samt', 'csamt'].some((k) => k in o);
 
 /**
@@ -74,7 +77,11 @@ export function parseFiledGstr9(data: unknown): FiledGstr9Itc {
   const total7 = isAmount(raw7) && !detail7 ? raw7 : findTable(data, 'table7Total');
   const t6 = detail6 ? raw6 : null;
   const t7t = detail7 ? raw7 : null;
-  let inputsServices = total6 ? amt(total6) : ZERO;
+  // Table 7's rows carry 6O (tab6o) and 7I (tot_itc_revd) as filed: the
+  // surest totals when Table 6's own rows were not read.
+  const tab6o = t7t && t7t.tab6o && typeof t7t.tab6o === 'object' ? t7t.tab6o as Row : null;
+  const totRevd = t7t && t7t.tot_itc_revd && typeof t7t.tot_itc_revd === 'object' ? t7t.tot_itc_revd as Row : null;
+  let inputsServices = tab6o && !detail6 ? amt(tab6o) : total6 ? amt(total6) : ZERO;
   let capitalGoods = ZERO;
 
   if (t6) {
@@ -97,13 +104,15 @@ export function parseFiledGstr9(data: unknown): FiledGstr9Itc {
     reversedR42: sum('rule42'),
     reversedR43: sum('rule43'),
     otherReversed: t7({
-      a: sum('rule37'), b: sum('rule39'), e: sum('sec17'),
-      f: sum('revsl_tran1', 'revsl_trans1'), g: sum('revsl_tran2', 'revsl_trans2'), h: sum('other'),
+      // 7A takes Rule 37 and 37A; Rule 38 (where the form has it) goes to 7H.
+      a: sum('rule37', 'rule37A'), b: sum('rule39'), e: sum('sec17'),
+      f: sum('revsl_tran1', 'revsl_trans1'), g: sum('revsl_tran2', 'revsl_trans2'), h: sum('other', 'rule38'),
     }),
     availed: add(inputsServices, capitalGoods),
     detail6,
     detail7,
-    reversedTotal: total7 ? amt(total7) : null,
+    reversedTotal: totRevd ? amt(totRevd) : total7 ? amt(total7) : null,
     found: !!(t6 || t7t || total6 || total7),
+    tab6oFrom7: !!(tab6o && !detail6),
   };
 }

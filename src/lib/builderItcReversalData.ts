@@ -370,7 +370,7 @@ export async function fetchFiledGstr9(clientId: string, fys: string[]): Promise<
  * whose GSTR-9 is not filed is only prefilled, from the GSTR-3Bs, and stays
  * editable.
  */
-export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId: string | null): Promise<void> {
+function portalValues(f: FiledGstr9) {
   const values = {
     inputs_services: f.itc.inputsServices,
     capital_goods: f.itc.capitalGoods,
@@ -390,6 +390,11 @@ export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId:
   const portal: PortalLock | null = lockKeys.length
     ? { source: f.source, fields: Object.fromEntries(lockKeys.map((k) => [k, values[k]])), t7i: f.itc.reversedTotal }
     : null;
+  return { values, portal };
+}
+
+export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId: string | null): Promise<void> {
+  const { values, portal } = portalValues(f);
   await saveYear(yearId, {
     ...values,
     portal,
@@ -406,5 +411,10 @@ export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId:
 export const needsPortalFill = (y: YearRow, f: FiledGstr9, blank: boolean): boolean => {
   if (f.source === 'GSTR3B_AS_FILED') return blank;              // prefill only, never over typing
   if (!y.portal) return true;                                      // never locked: take the filed return
-  return SOURCE_RANK[f.source] > SOURCE_RANK[y.portal.source];       // a better read arrived
+  if (SOURCE_RANK[f.source] !== SOURCE_RANK[y.portal.source]) return SOURCE_RANK[f.source] > SOURCE_RANK[y.portal.source];
+  // Same kind of read: refill when the portal's figures (or how they are read) changed.
+  const fresh = portalValues(f).portal;
+  const norm = (v: unknown) => JSON.stringify(v && typeof v === 'object' && 'a' in (v as object) ? t7(v as Partial<T7Other>) : tax(v as Partial<Tax>));
+  return !fresh || Object.keys(fresh.fields).some((k) => norm(fresh.fields[k as LockField]) !== norm(y.portal!.fields[k as LockField]))
+    || JSON.stringify(fresh.t7i ?? null) !== JSON.stringify(y.portal.t7i ?? null);
 };
