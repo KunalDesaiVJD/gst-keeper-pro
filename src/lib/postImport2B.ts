@@ -254,6 +254,21 @@ export async function fetchImport2BCreditNotes(
   return { total, notesRead: (readRes.data || []).length > 0 };
 }
 
+// How many of the month's non-RCM amendments are HELD in Import 2B (no
+// earlier version found, so counted nowhere until staff decide). A head
+// count, so no row limit applies. Throws on a read error.
+export async function fetchImport2BHeld(clientId: string, periodMonth: string): Promise<number> {
+  const { count, error } = await supabase.from('twob_import_docs').select('id', { count: 'exact', head: true })
+    .eq('client_id', clientId).eq('period_month', periodMonth)
+    .eq('reverse_charge', false).eq('itc_action', 'HELD');
+  if (error) throw new Error(`Import 2B held amendments: ${error.message}`);
+  return count || 0;
+}
+
+// The line ITC Summary and GSTR-3B show while any are held.
+export const import2BHeldMessage = (n: number) =>
+  `${n} ${n === 1 ? 'amendment' : 'amendments'} held in Import 2B, not counted: settle ${n === 1 ? 'it' : 'them'} there`;
+
 export const isPostPlanEmpty = (p: PostPlan) =>
   p.insertBills2B.length === 0 && p.updateBills2B.length === 0 && p.retractBills2B.length === 0 &&
   p.insertBillsBooks.length === 0 && p.updateBillsBooks.length === 0 && p.retractBillsBooks.length === 0;

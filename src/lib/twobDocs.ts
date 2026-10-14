@@ -224,37 +224,59 @@ export interface DefaultActionInput {
 export const revisedNotAvailable = (r: Pick<DefaultActionInput, 'docType' | 'itcAvailable' | 'imsReduceRequired'>) =>
   r.docType === 'CREDIT_NOTE' ? r.imsReduceRequired === 'NO' : r.itcAvailable === false;
 
+/** What defaultAction and baseFrom read of the earlier version an amendment amends. */
+export interface EarlierLike extends TwobDocLike {
+  itc_action?: string | null;
+  itc_available?: boolean | null;
+  bucket?: string | null;
+  reverse_charge?: boolean | null;
+}
+
+/**
+ * The portal itself left the version without ITC: rejected in IMS, or by its
+ * own 2B record (ITC Availability No; for a credit note IMS "no ITC to be
+ * reduced"), as opposed to a treatment staff chose.
+ */
+export const portalIneligible = (e: EarlierLike) => e.bucket === 'rejected'
+  || revisedNotAvailable({ docType: docTypeOf(e), itcAvailable: e.itc_available ?? null, imsReduceRequired: e.ims_reduce_required });
+
 /**
  * The treatment a freshly imported document starts with. For an amendment,
- * `earlierAction` is the treatment of the version it amends (undefined when
- * none is in Import 2B, which makes it HELD) and `earlierItcAvailable` that
- * version's ITC Availability.
+ * `earlier` is the version it amends as it stands now (null or undefined
+ * when none is in Import 2B, which makes it HELD).
  *  - Reverse charge: hidden here (RCM Summary), left Matched as before.
  *  - IMS rejected, or Rule 37A ITC reversal: Ineligible (not claimed in 5.1;
  *    a Rule 37A reversal is typed in 4B(2)(ii)).
- *  - Amendment: HELD while the earlier version is missing or itself held.
- *    Ineligible when the revised document gives no ITC (revisedNotAvailable;
- *    the import then names the earlier version's counted figures, which stay
- *    claimed in their month and are reversed by hand). Otherwise the earlier
- *    version's treatment (a reclaim or a mismatch counts as Matched; a debit
- *    note parked Not in Books and revised into a credit note is Matched,
- *    reducing in full: see baseFrom), except that a version the portal had
- *    made ineligible (ITC Availability No) and the revision makes available
- *    is Matched: the usual place of supply correction.
+ *  - Amendment: HELD while the earlier version is missing or itself held,
+ *    and HELD when the earlier version was reverse charge (the supplier
+ *    changed the flag: that version sat in RCM Summary, never in 5.1, so
+ *    staff decide). Ineligible when the revised document gives no ITC
+ *    (revisedNotAvailable; the import then names the earlier version's
+ *    counted figures, which stay claimed in their month and are reversed by
+ *    hand). Otherwise the earlier version's treatment (a reclaim or a
+ *    mismatch counts as Matched; a debit note parked Not in Books and
+ *    revised into a credit note is Matched, reducing in full: see baseFrom),
+ *    except that a version the portal had made ineligible (portalIneligible:
+ *    rejected in IMS, ITC Availability No, or for a credit note IMS "no ITC
+ *    to be reduced") and the revision makes available is Matched, credit
+ *    notes included: the usual place of supply correction, or a rejected
+ *    document the recipient accepts once amended.
  *  - Credit note: reduces ITC (Matched) even when ITC Availability is No (the
  *    2B's instructions keep the reversal on credit notes), unless the
  *    recipient declared in IMS that no ITC is to be reduced.
  *  - Otherwise: Ineligible when ITC Availability is No, else Matched.
  */
-export function defaultAction(r: DefaultActionInput, earlierAction?: string | null, earlierItcAvailable?: boolean | null): string {
+export function defaultAction(r: DefaultActionInput, earlier?: EarlierLike | null): string {
   if (r.reverseCharge) return 'MATCHED';
   if (r.bucket === 'rejected' || r.bucket === 'reversal') return 'INELIGIBLE';
   if (r.isAmendment) {
-    if (!earlierAction || earlierAction === 'HELD') return 'HELD';
+    const earlierAction = earlier?.itc_action;
+    if (!earlier || !earlierAction || earlierAction === 'HELD') return 'HELD';
+    if (earlier.reverse_charge) return 'HELD';
     if (revisedNotAvailable(r)) return 'INELIGIBLE';
     if (earlierAction === 'RECLAIM' || earlierAction === 'MISMATCHED') return 'MATCHED';
     if (earlierAction === 'NOT_IN_BOOKS' && r.docType === 'CREDIT_NOTE') return 'MATCHED';
-    if (earlierAction === 'INELIGIBLE' && earlierItcAvailable === false && r.itcAvailable === true && r.docType !== 'CREDIT_NOTE') return 'MATCHED';
+    if (earlierAction === 'INELIGIBLE' && portalIneligible(earlier) && (r.docType === 'CREDIT_NOTE' || r.itcAvailable === true)) return 'MATCHED';
     return earlierAction;
   }
   if (r.docType === 'CREDIT_NOTE') return r.imsReduceRequired === 'NO' ? 'INELIGIBLE' : 'MATCHED';
@@ -295,8 +317,15 @@ export interface EarlierVersionCandidate extends TwobDocLike {
   date?: string | null;
   itc_action: string;
   itc_available?: boolean | null;
+  bucket?: string | null;
+  reverse_charge?: boolean | null;
   imported_at?: string | null;
 }
+
+/** The columns of twob_import_docs an earlier-version candidate is read with. */
+export const EARLIER_VERSION_COLUMNS = 'id, period_month, date, supplier_gstin, supplier_invoice_number, original_doc_number, '
+  + 'original_doc_date, original_doc_type, doc_type, is_amendment, itc_action, itc_available, bucket, reverse_charge, imported_at, '
+  + 'taxable_value, input_igst, input_cgst, input_sgst, cess, ims_reduce_required, declared_igst, declared_cgst, declared_sgst, declared_cess';
 
 /** Invoices form one family, debit and credit notes another (a note amendment may flip the note type). */
 const docFamily = (t: string | null | undefined) => (docTypeOf({ doc_type: t }) === 'INVOICE' ? 'INVOICE' : 'NOTE');
@@ -359,8 +388,13 @@ export function findEarlierVersion<T extends EarlierVersionCandidate>(
  *    note: its figures sit on the Not in Books ledger, never claimed, so the
  *    credit note reduces in full and the parked entry stays for staff to
  *    clear.
+ *  - the reverse charge flag differs: a reverse charge version sat in RCM
+ *    Summary, never in rows 5.1 / 5.3 (and a revision into reverse charge
+ *    leaves them for RCM Summary).
  * A held earlier version keeps its figures: it is to be counted once settled
- * (the amendment waits for it, HELD).
+ * (the amendment waits for it, HELD). The base follows the version's
+ * treatment as it stands: when that changes, the amendment is brought in
+ * line (Import 2B's save and re-import).
  *
  * The sign. effectFigures adds the base when the 2B's original type differs
  * from the revised type (flipsNoteType) and subtracts it otherwise. What is
@@ -371,14 +405,15 @@ export function findEarlierVersion<T extends EarlierVersionCandidate>(
  * then into a debit note 150 against that debit note gives +50, not +250.
  */
 export function baseFrom(
-  earlier: (TwobDocLike & { itc_action?: string | null }) | null,
-  amend?: { doc_type?: string | null; is_amendment?: boolean | null; original_doc_type?: string | null },
+  earlier: EarlierLike | null,
+  amend?: { doc_type?: string | null; is_amendment?: boolean | null; original_doc_type?: string | null; reverse_charge?: boolean | null },
 ) {
   if (!earlier) {
     return { base_taxable_value: null, base_input_igst: null, base_input_cgst: null, base_input_sgst: null, base_cess: null };
   }
   const zero = { base_taxable_value: 0, base_input_igst: 0, base_input_cgst: 0, base_input_sgst: 0, base_cess: 0 };
   if (countedNothing(earlier.itc_action)) return zero;
+  if (amend && !!earlier.reverse_charge !== !!amend.reverse_charge) return zero;
   if (amend && isCreditNote(amend) && !isCreditNote(earlier) && earlier.itc_action === 'NOT_IN_BOOKS') return zero;
   const f = fullFigures(earlier);
   const reverses = !!amend && itcSign(earlier) !== itcSign(amend);
@@ -388,3 +423,46 @@ export function baseFrom(
     base_input_sgst: k * f.sgst, base_cess: k * f.cess,
   };
 }
+
+export interface BaseLike {
+  base_taxable_value?: number | null; base_input_igst?: number | null; base_input_cgst?: number | null;
+  base_input_sgst?: number | null; base_cess?: number | null;
+}
+
+const BASE_KEYS = ['base_taxable_value', 'base_input_igst', 'base_input_cgst', 'base_input_sgst', 'base_cess'] as const;
+
+/** Two bases agree to the paisa (an unset head reads as zero). */
+export const sameBase = (a: BaseLike, b: BaseLike) => BASE_KEYS.every((k) => Math.abs(n(a[k]) - n(b[k])) < 0.005);
+
+const TREATMENTS = ['MATCHED', 'MISMATCHED', 'RECLAIM', 'NOT_IN_BOOKS', 'INELIGIBLE', 'ITC_OF_OTHERS', 'HELD'];
+
+/**
+ * The treatments of `earlier` under which an amendment would have stored
+ * `base`: what the version's treatment was when the base was taken, for a
+ * re-import, which does not know it.
+ */
+export const treatmentsGiving = (earlier: EarlierLike, amend: Parameters<typeof baseFrom>[1], base: BaseLike) =>
+  TREATMENTS.filter((a) => sameBase(baseFrom({ ...earlier, itc_action: a }, amend), base));
+
+/**
+ * An amendment's treatment once the version it amends is re-treated: when it
+ * still holds what defaultAction gave for one of that version's treatments
+ * before (`before`; a Mismatched amendment reads as Matched, which its books
+ * pairing made it), it takes what the version's treatment now gives. A
+ * treatment staff chose for it otherwise stays.
+ */
+export function refollowAction(r: DefaultActionInput, current: string, earlierNow: EarlierLike, before: string[]): string {
+  const cur = current === 'MISMATCHED' ? 'MATCHED' : current;
+  if (!before.some((a) => defaultAction(r, { ...earlierNow, itc_action: a }) === cur)) return current;
+  const next = defaultAction(r, earlierNow);
+  return next === cur ? current : next;
+}
+
+/** An amendment row's own input to defaultAction. */
+export const actionInputOf = (d: {
+  reverse_charge?: boolean | null; bucket?: string | null; itc_available?: boolean | null; doc_type?: string | null;
+  is_amendment?: boolean | null; ims_reduce_required?: string | null;
+}): DefaultActionInput => ({
+  reverseCharge: !!d.reverse_charge, bucket: d.bucket || 'available', itcAvailable: d.itc_available ?? null,
+  docType: docTypeOf(d), isAmendment: !!d.is_amendment, imsReduceRequired: d.ims_reduce_required ?? null,
+});

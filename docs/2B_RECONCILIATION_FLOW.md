@@ -653,7 +653,21 @@ in one module, `src/lib/twobDocs.ts`.
   are written first, so a failure never empties a month. A filed month is
   refused, except for the superadmin after a warning. One import runs at a
   time per client and month in a browser (Web Locks), since the portal pull's
-  result reaches every open tab.
+  result reaches every open tab, and every write on the page (Save, Link &
+  Reclaim, Post, Delete 2B, Enter counted, the books register, Zone 4) waits
+  while one runs. Delete 2B, Post and Save also hold that lock while they
+  write (taken after their confirm dialogs), so an import refuses while one
+  of them runs and they refuse while an import runs; Post posts only the plan
+  it confirmed, read again under the lock. The merge updates a kept row's
+  figures and links by id (never an upsert) and not its treatment, books
+  pairing or posting stamp, so a change made while it ran (in another
+  session too) stays, and a row deleted meanwhile (Delete 2B in another
+  browser) stays deleted and is named, rather than coming back Matched; a
+  treatment the import itself changes is written only where the row still
+  holds the one it read. A books treatment
+  picked by hand against the matcher (Mismatched with no 2B document paired,
+  or Not in 2B on a row still paired to one) is kept by the re-match and
+  named, never rewritten.
 - **Finding the earlier version.** Among the client's earlier months, or an
   original in the same file (a late filer's invoice and its amendment can sit
   in one 2B): an original of the amended type, number and date (when both
@@ -669,15 +683,31 @@ in one module, `src/lib/twobDocs.ts`.
   the 2B marks ITC Availability No (or, for a credit note, IMS "no ITC to be
   reduced") starts Ineligible, and the import and the row name the earlier
   version's counted figures, which stay claimed in their month and are
-  reversed by hand in 4B(2). A version the portal had made ineligible and the
-  revision makes available starts Matched.
+  reversed by hand in 4B(2); when that version is parked Not in Books (never
+  claimed) they name its ledger entry to clear instead. A version the portal
+  had made ineligible (rejected in IMS, ITC Availability No, or IMS "no ITC
+  to be reduced" on a credit note) and the revision makes available starts
+  Matched, credit notes included. The base and treatment follow the earlier
+  version's treatment as it stands: when staff re-treat it (Save, a books
+  pairing that takes it out of Not in Books, a re-import's sheet move), the
+  amendments counted against it take the base afresh and, where they still
+  followed its old treatment, the new one, down a chain; a re-import does the
+  same for an amendment whose base no longer fits. A filed month is not
+  rewritten: those rows are named and their line warns.
+- **Reverse charge flag changed.** A reverse charge version sat in RCM
+  Summary, never in 5.1 / 5.3, so an amendment that drops the flag has a zero
+  base and is Held for staff (the RCM claim of that month is undone by hand).
+  An amendment into reverse charge goes to RCM Summary; the import names the
+  5.1 / 5.3 claim of the version it amends, to be reversed by hand.
 - **Partial reads.** A B2B-family sheet skipped whole, or with rows skipped,
   is named before importing. The month's credit notes count as read
   (`full_2b`, which lets row 5.3 fill itself) only when B2B-CDNR is in the
   file and neither credit note sheet lost a row.
 - **Negative 4A(5).** When credit notes take a head of Total (5) below zero,
   GSTR-3B puts 0 in 4A(5) and the excess in 4B(2) Others (net ITC unchanged),
-  and ITC Summary marks Total (5).
+  and ITC Summary marks Total (5). For a Partial-ITC builder the carpet-area
+  split then gives a negative 4B(1) in that head: GSTR-3B files it as 0 and
+  takes it off 4B(2) Others (net ITC unchanged again).
 - **Filed months are not rewritten**: 06 to 08/2026 were imported with
   invoices only and keep their typed 5.3. Missed debit notes go into a later
   return within the s.16(4) limit.
@@ -703,6 +733,6 @@ in one module, `src/lib/twobDocs.ts`.
 - **Totals throw on a read error**: `fetchImport2BEligibleTotal` and
   `fetchImport2BCreditNotes` page through every row and throw instead of
   returning zeros, so a failed read can never save a 5.1 or 5.3 of zero (ITC
-  Summary shows an error toast; GSTR-3B and its preview already catch errors
-  from `fetchGstr3b`).
+  Summary shows an error toast and refuses Save until a load succeeds;
+  GSTR-3B and its preview already catch errors from `fetchGstr3b`).
 

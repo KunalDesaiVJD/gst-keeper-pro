@@ -20,12 +20,13 @@ import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { parseGstr2bFile } from '@/utils/parseGstr2b';
 import { classifyBookAgainst2b, invoiceSimilar, TwoBLite, ClassifyResult } from '@/utils/matchTwob';
-import { periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty } from '@/lib/postImport2B';
+import { periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty, fetchImport2BCreditNotes } from '@/lib/postImport2B';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import {
   docTypeOf, isCreditNote, fullFigures, effectFigures, signedEffect, docLabel, docTone, DOC_TYPE_LABEL,
   TONE_LABEL, TONE_ROW, TONE_STRIPE, TONE_BADGE, TWOB_ACTION_LABEL, allowedActions, canEvidenceReclaim,
   defaultAction, docKey, findEarlierVersion, baseFrom, isCountedAction, countedNothing, periodOrder,
+  sameBase, treatmentsGiving, refollowAction, actionInputOf, EARLIER_VERSION_COLUMNS,
   type TwobTone, type EarlierVersionCandidate, type DefaultActionInput,
 } from '@/lib/twobDocs';
 import ReclaimMatchDialog, { ReclaimInvoiceLite } from '@/components/dialogs/ReclaimMatchDialog';
@@ -164,8 +165,8 @@ interface ReclaimDialogState {
 }
 
 type DocInsert = TablesInsert<'twob_import_docs'>;
-/** The version an amendment was counted against, for the line under it. */
-interface EarlierInfo { period_month: string; itc_action: string; doc_type: string }
+/** The version an amendment was counted against, as it stands now, for the line under it. */
+type EarlierInfo = EarlierVersionCandidate;
 type ExistingDoc = Tables<'twob_import_docs'>;
 
 const TWOB_ACTIONS = ['MATCHED', 'INELIGIBLE', 'ITC_OF_OTHERS', 'MISMATCHED', 'NOT_IN_BOOKS', 'RECLAIM', 'HELD']
@@ -210,6 +211,8 @@ const toNum = (v: string) => {
   return isNaN(n) ? 0 : n;
 };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+/** The first five of a list of document numbers, and how many more. */
+const listNos = (nos: string[]) => `${nos.slice(0, 5).join(', ')}${nos.length > 5 ? ` and ${nos.length - 5} more` : ''}`;
 /** Split a list for `.in()` filters, so a long id list never overflows the request URL. */
 const chunk = <T,>(list: T[], size = 100): T[][] => {
   const out: T[][] = [];
@@ -221,6 +224,18 @@ type BaseField = 'taxable' | 'igst' | 'cgst' | 'sgst' | 'cess';
 /** An amendment that has a base: the version Import 2B found, or counted figures staff entered. */
 const hasBase = (d: TwoBDoc) => !!d.amends_doc_id
   || [d.base_taxable_value, d.base_input_igst, d.base_input_cgst, d.base_input_sgst, d.base_cess].some((v) => v !== null && v !== undefined);
+/**
+ * A note amendment whose earlier note type the 2B does not give, or gives as
+ * the other type (a credit note revised into a debit note, or the reverse).
+ * Counted figures entered for it could count with the wrong sign, so Enter
+ * counted is refused and the row stays Held. Invoices and same-type notes
+ * take entered figures as usual.
+ */
+const baseSignUnsure = (d: TwoBDoc) => d.is_amendment && docTypeOf(d) !== 'INVOICE'
+  && (!d.original_doc_type || docTypeOf({ doc_type: d.original_doc_type }) !== docTypeOf(d));
+const BASE_SIGN_MSG = 'Enter counted is not offered for this note amendment: the 2B does not give the earlier note\'s type, or gives the other type '
+  + '(a credit note revised into a debit note, or the reverse), so figures entered here could count with the wrong sign. '
+  + 'Keep it Held and adjust the difference by hand, or choose a treatment to count its full revised value.';
 /** A new row id made here, so a row can be pointed at before it is written. */
 const newDocId = (): string => {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -371,6 +386,10 @@ const Import2BTab: React.FC = () => {
   const isSuperadmin = user?.role === 'superadmin';
   const editLocked = isLocked && !isSuperadmin;
   const readOnly = editLocked || !isStaff;
+  // While an import runs, every control that writes is off (and each write
+  // checks again, importRunning): the merge must not undo a change made since
+  // it read the month.
+  const writeLocked = readOnly || isImporting;
   const confirm = useConfirm();
 
   const monthOptions = useMemo(() => {
@@ -397,7 +416,18 @@ const Import2BTab: React.FC = () => {
     setClients(data || []);
   }, []);
 
+  // The selection as of the latest render, and a counter of loads: a load
+  // asked for by work that began under another client or month (an import
+  // still running when the selection changed) is dropped, and so is a reply
+  // overtaken by a newer load, so one client's rows never show under another.
+  const selectionRef = useRef({ client: selectedClient, month: selectedMonth });
+  selectionRef.current = { client: selectedClient, month: selectedMonth };
+  const loadSeq = useRef(0);
+
   const fetchAll = useCallback(async () => {
+    if (selectionRef.current.client !== selectedClient || selectionRef.current.month !== selectedMonth) return;
+    const seq = ++loadSeq.current;
+    const overtaken = () => seq !== loadSeq.current;
     setSelected(new Set());
     setBulkValue('');
     if (!selectedClient || !selectedMonth) {
@@ -453,14 +483,19 @@ const Import2BTab: React.FC = () => {
         (data || []).forEach((d) => sourceType.set(d.id, { doc_type: d.doc_type, is_amendment: d.is_amendment }));
       }
 
-      // The earlier versions this month's amendments amend.
+      // The earlier versions this month's amendments amend, as they stand now.
       const amendsIds = [...new Set(docs.map((d) => d.amends_doc_id).filter((v): v is string => !!v))];
       const earlier: Record<string, EarlierInfo> = {};
-      for (const part of chunk(amendsIds)) {
-        const { data } = await supabase.from('twob_import_docs').select('id, period_month, itc_action, doc_type').in('id', part);
-        (data || []).forEach((e) => { earlier[e.id] = { period_month: e.period_month, itc_action: e.itc_action, doc_type: e.doc_type }; });
+      try {
+        for (const part of chunk(amendsIds)) {
+          const rows = await fetchAllRows<EarlierInfo>('twob_import_docs', EARLIER_VERSION_COLUMNS, (q) => q.in('id', part).order('id'));
+          rows.forEach((e) => { earlier[e.id] = e; });
+        }
+      } catch {
+        // Only the lines under the amendments read these; the rows still load.
       }
 
+      if (overtaken()) return;
       setTwoBDocs(docs);
       setEarlierById(earlier);
       setRcmHidden(rcmRes.count || 0);
@@ -477,14 +512,14 @@ const Import2BTab: React.FC = () => {
       const importedById = latest?.imported_by ?? null;
       if (importedById) {
         const { data: prof } = await supabase.from('profiles').select('first_name').eq('user_id', importedById).maybeSingle();
-        setImporterName(prof?.first_name ?? null);
+        if (!overtaken()) setImporterName(prof?.first_name ?? null);
       } else {
         setImporterName(null);
       }
     } catch (err: any) {
-      toast.error('Failed to load: ' + err.message);
+      if (!overtaken()) toast.error('Failed to load: ' + err.message);
     } finally {
-      setIsLoading(false);
+      if (!overtaken()) setIsLoading(false);
     }
   }, [selectedClient, selectedMonth]);
 
@@ -526,6 +561,108 @@ const Import2BTab: React.FC = () => {
     return c;
   }, [twoBDocs]);
 
+  // ---- Amendments follow the version they amend -------------------------------
+  // An amendment's base_* and treatment are taken from the version it amends
+  // (amends_doc_id) as that version stood when it was counted. When the
+  // version is re-treated (Save, a books pairing, a re-import's sheet move),
+  // the amendments counted against it are brought in line: the base from its
+  // treatment now (baseFrom), and the treatment re-derived (refollowAction)
+  // when it still follows the version's treatment before, link by link down a
+  // chain. A filed month is not rewritten: its rows are returned to be named,
+  // and their line warns. `before`: earlier version id → its treatment before
+  // the change. `alsoIds`: amendments to bring in line whatever changed
+  // (their base only when in `keepAction`, a treatment staff just chose).
+  // `skip`: rows already written in line. Each write applies only if the row
+  // still holds the treatment read, so a change made meanwhile stays.
+  type SyncedAmendment = { doc: ExistingDoc; action: string };
+  const syncAmendments = async (
+    before: Map<string, string>,
+    opts: { alsoIds?: string[]; keepAction?: Set<string>; skip?: Set<string> } = {},
+  ): Promise<{ changed: SyncedAmendment[]; filed: ExistingDoc[] }> => {
+    const changed: SyncedAmendment[] = [];
+    const filed: ExistingDoc[] = [];
+    const seen = new Set<string>(opts.skip || []);
+    let pending = before;
+    let also = opts.alsoIds || [];
+    for (let depth = 0; depth < 6 && (pending.size > 0 || also.length > 0); depth += 1) {
+      const rows = new Map<string, ExistingDoc>();
+      for (const part of chunk([...pending.keys()])) {
+        (await fetchAllRows<ExistingDoc>('twob_import_docs', '*', (q) => q.in('amends_doc_id', part).order('id')))
+          .forEach((r) => rows.set(r.id, r));
+      }
+      for (const part of chunk(also)) {
+        (await fetchAllRows<ExistingDoc>('twob_import_docs', '*', (q) => q.in('id', part).not('amends_doc_id', 'is', null).order('id')))
+          .forEach((r) => rows.set(r.id, r));
+      }
+      const list = [...rows.values()].filter((r) => !seen.has(r.id) && !!r.amends_doc_id);
+      list.forEach((r) => seen.add(r.id));
+      const earlier = new Map<string, EarlierVersionCandidate>();
+      for (const part of chunk([...new Set(list.map((r) => r.amends_doc_id as string))])) {
+        (await fetchAllRows<EarlierVersionCandidate>('twob_import_docs', EARLIER_VERSION_COLUMNS, (q) => q.in('id', part).order('id')))
+          .forEach((e) => earlier.set(e.id, e));
+      }
+      const filedKeys = new Set<string>();
+      for (const clientId of [...new Set(list.map((r) => r.client_id))]) {
+        const months = [...new Set(list.filter((r) => r.client_id === clientId).map((r) => r.period_month))];
+        const { data, error } = await supabase.from('filing_status').select('period_month, is_locked')
+          .eq('client_id', clientId).in('period_month', months)
+          .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']).eq('status', 'Filed');
+        if (error) throw error;
+        (data || []).filter((f) => f.is_locked).forEach((f) => filedKeys.add(`${clientId}|${f.period_month}`));
+      }
+      const next = new Map<string, string>();
+      for (const a of list) {
+        const e = earlier.get(a.amends_doc_id as string);
+        if (!e) continue;
+        const base = baseFrom(e, a);
+        const was = pending.get(e.id);
+        const action = opts.keepAction?.has(a.id) || was === undefined
+          ? a.itc_action
+          : refollowAction(actionInputOf(a), a.itc_action, e, [was]);
+        if (sameBase(base, a) && action === a.itc_action) continue;
+        if (filedKeys.has(`${a.client_id}|${a.period_month}`)) { filed.push(a); continue; }
+        const { data, error } = await supabase.from('twob_import_docs')
+          .update({ ...base, itc_action: action, updated_by: user?.id, updated_at: new Date().toISOString() })
+          .eq('id', a.id).eq('itc_action', a.itc_action).select('id');
+        if (error) throw error;
+        if (!data || data.length === 0) continue;
+        changed.push({ doc: a, action });
+        if (action !== a.itc_action) next.set(a.id, a.itc_action);
+      }
+      pending = next;
+      also = [];
+    }
+    return { changed, filed };
+  };
+
+  // Names what syncAmendments did: the amendments brought in line (and the
+  // months to post again, where one is Not in Books before or after: it moved
+  // to or from Not in Books, or its base changed, and its posted entry holds
+  // revised minus base), and the ones in a filed month that were left as
+  // counted. Every changed amendment had its treatment or its base rewritten
+  // (syncAmendments skips one that keeps both).
+  const reportSynced = (r: { changed: SyncedAmendment[]; filed: ExistingDoc[] }) => {
+    const label = (d: ExistingDoc) => `${d.supplier_invoice_number || '(no number)'} (${periodMonthLabel(d.period_month) || d.period_month})`;
+    if (r.changed.length > 0) {
+      const repost = [...new Set(r.changed
+        .filter(({ doc, action }) => action === 'NOT_IN_BOOKS' || doc.itc_action === 'NOT_IN_BOOKS')
+        .map(({ doc }) => periodMonthLabel(doc.period_month) || doc.period_month))];
+      toast.info(
+        `${plural(r.changed.length, 'amendment')} counted against a re-treated document now ${r.changed.length === 1 ? 'counts' : 'count'} against its treatment as it stands: `
+        + `${listNos(r.changed.map(({ doc }) => label(doc)))}.`
+        + (repost.length ? ` A Not in Books entry changed: Post to Reconciliation again for ${repost.join(', ')}.` : ''),
+        { duration: 20000 },
+      );
+    }
+    if (r.filed.length > 0) {
+      toast.warning(
+        `${plural(r.filed.length, 'amendment')} counted against a re-treated document ${r.filed.length === 1 ? 'is' : 'are'} in a filed month and ${r.filed.length === 1 ? 'was' : 'were'} not rewritten: `
+        + `${listNos(r.filed.map(label))}. ${r.filed.length === 1 ? 'It still counts' : 'They still count'} against the earlier treatment; adjust the difference by hand in a later return.`,
+        { duration: 30000 },
+      );
+    }
+  };
+
   // ---- Books pairing ---------------------------------------------------------
   // Unpair a 2B document from a books row (the row was deleted, re-matched
   // elsewhere, or found Not in 2B). A document the pairing had made Mismatched
@@ -547,7 +684,10 @@ const Import2BTab: React.FC = () => {
   // Pair a 2B document to a books row that differs from it by more than ₹10.
   // The document turns Mismatched (claimed at the 2B value) unless staff gave
   // it a treatment that does not claim it here (Ineligible, ITC of Others,
-  // Reclaim, Held), which a books entry must not overturn.
+  // Reclaim, Held), which a books entry must not overturn. A document leaving
+  // Not in Books this way brings the amendments counted against it in line
+  // (syncAmendments); Matched and Mismatched read the same to an amendment,
+  // so a pairing between them, or a release (releaseDoc), changes none.
   const pairDoc = async (docId: string, bookId: string, docs: TwoBDoc[]) => {
     const doc = docs.find((d) => d.id === docId);
     const claimable = !doc || ['MATCHED', 'MISMATCHED', 'NOT_IN_BOOKS'].includes(doc.itc_action);
@@ -557,6 +697,13 @@ const Import2BTab: React.FC = () => {
       updated_by: user?.id, updated_at: new Date().toISOString(),
     }).eq('id', docId);
     if (error) throw error;
+    if (doc?.itc_action === 'NOT_IN_BOOKS') {
+      try {
+        reportSynced(await syncAmendments(new Map([[docId, 'NOT_IN_BOOKS']])));
+      } catch (err) {
+        toast.error(`${doc.supplier_invoice_number || 'A document'} left Not in Books, but the amendments counted against it could not be brought in line: ${errMsg(err)}. Re-import their month.`);
+      }
+    }
   };
 
   // Move a books row from its current pairing to `next`: release the old 2B
@@ -594,8 +741,13 @@ const Import2BTab: React.FC = () => {
   // After an import: re-match the month's Not in 2B and Mismatched books rows
   // against the 2B documents now in the month, and save the rows whose
   // treatment or pairing changed. Not Eligible rows are a staff decision that
-  // does not depend on 2B, so they are left alone. `notIn2B` are documents
-  // kept although the file no longer has them: never paired.
+  // does not depend on 2B, so they are left alone, and so is a treatment
+  // staff picked in the Treatment select against the matcher: Mismatched with
+  // no 2B document paired (the matcher always pairs one), or Not in 2B on a
+  // row still paired to a document in the month (staff overruled that
+  // pairing). Those are named when the matcher reads them otherwise, never
+  // rewritten. `notIn2B` are documents kept although the file no longer has
+  // them: never paired.
   const rematchBooks = async (clientId: string, month: string, notIn2B: Set<string> = new Set()) => {
     const [docs, rows] = await Promise.all([
       fetchAllRows<TwoBDoc>('twob_import_docs', '*', (q) => q
@@ -604,9 +756,11 @@ const Import2BTab: React.FC = () => {
         .eq('client_id', clientId).eq('period_month', month).order('id')),
     ]);
     const lites = docs.filter((d) => !notIn2B.has(d.id)).map(toTwoBLite);
+    const live = new Set(lites.map((l) => l.id));
     let changed = 0;
     const nowIn2B: string[] = [];
     const otherType: string[] = [];
+    const keptByHand: string[] = [];
     for (const b of rows) {
       if (b.book_treatment !== 'NOT_IN_2B' && b.book_treatment !== 'MISMATCHED') continue;
       if (!b.supplier_gstin || !b.supplier_invoice_number) continue;
@@ -615,10 +769,17 @@ const Import2BTab: React.FC = () => {
       if (res.otherTypeHint) otherType.push(b.supplier_invoice_number);
       const next = nextPairing(b, res);
       if (next.treatment === b.book_treatment && next.matched2bId === b.matched_2b_id) continue;
+      const byHand = (b.book_treatment === 'MISMATCHED' && !b.matched_2b_id)
+        || (b.book_treatment === 'NOT_IN_2B' && !!b.matched_2b_id && live.has(b.matched_2b_id));
+      if (byHand) {
+        // Overruling the same pairing again is what staff already decided against.
+        if (!(b.book_treatment === 'NOT_IN_2B' && next.matched2bId === b.matched_2b_id)) keptByHand.push(b.supplier_invoice_number);
+        continue;
+      }
       await applyPairing(b, next, docs);
       changed += 1;
     }
-    return { changed, nowIn2B, otherType };
+    return { changed, nowIn2B, otherType, keptByHand };
   };
 
   // ---- Import ----------------------------------------------------------------
@@ -638,27 +799,57 @@ const Import2BTab: React.FC = () => {
   // across this browser's tabs, since the portal pull's result reaches every
   // open tab and two merges of one month would insert every document twice.
   const importingRef = useRef(false);
+  const importLockName = (clientId: string, month: string) => `gstk-import2b:${clientId}:${month}`;
+  // An import of the selected month is running, on this page or in another
+  // tab of this browser. Every write on the page waits for it: the merge
+  // writes what it read at its start, and must not undo a change made since.
+  const importRunning = async () => {
+    if (importingRef.current) return true;
+    if (!selectedClient || !selectedMonth) return false;
+    try {
+      const held = (await navigator.locks?.query?.())?.held || [];
+      return held.some((l) => l.name === importLockName(selectedClient, selectedMonth));
+    } catch {
+      return false;
+    }
+  };
+  const IMPORT_RUNNING_MSG = 'This month is being imported, posted, saved or deleted. Wait for that to finish, then try again.';
+  // One writer of the month at a time: an import, Delete 2B, Post and Save
+  // each hold this page's flag and the month's Web Lock while they write, so
+  // an import refuses while one of them runs, and each of them refuses while
+  // an import runs (taken after their confirm dialogs, so a pull result that
+  // arrives while one is open is not missed). Returns false when refused.
+  const withMonthLock = async (
+    clientId: string, month: string, busyHere: string, busyElsewhere: string, fn: () => Promise<void>,
+  ): Promise<boolean> => {
+    if (importingRef.current) { toast.error(busyHere); return false; }
+    importingRef.current = true;
+    try {
+      const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+      if (!locks?.request) { await fn(); return true; }
+      let ran = false;
+      await locks.request(importLockName(clientId, month), { ifAvailable: true }, async (lock) => {
+        if (!lock) { toast.error(busyElsewhere); return; }
+        ran = true;
+        await fn();
+      });
+      return ran;
+    } finally {
+      importingRef.current = false;
+    }
+  };
   const importFile = async (file: File) => {
     if (!file || !selectedClient || !selectedMonth) return;
     if (!canWork2BImport()) { toast.error('Needs the Import 2B & post permission — ask a GST Manager to add it to your position'); return; }
     if (Object.keys(pendingActionsRef.current).length > 0) { toast.error(UNSAVED_MSG); return; }
-    if (importingRef.current) { toast.error('An import is already running on this page. Wait for it to finish.'); return; }
     const clientId = selectedClient;
     const month = selectedMonth;
-    importingRef.current = true;
-    try {
-      const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
-      if (locks?.request) {
-        await locks.request(`gstk-import2b:${clientId}:${month}`, { ifAvailable: true }, async (lock) => {
-          if (!lock) { toast.error('This month is being imported in another tab. Wait for it to finish, then reload this page.'); return; }
-          await runImport(file, clientId, month);
-        });
-      } else {
-        await runImport(file, clientId, month);
-      }
-    } finally {
-      importingRef.current = false;
-    }
+    await withMonthLock(
+      clientId, month,
+      'An import, post, save or delete of this month is already running on this page. Wait for it to finish, then import again.',
+      'This month is being imported, posted, saved or deleted in another tab. Wait for it to finish, then reload this page and import again.',
+      () => runImport(file, clientId, month),
+    );
   };
 
   const runImport = async (file: File, clientId: string, month: string) => {
@@ -853,8 +1044,7 @@ const Import2BTab: React.FC = () => {
       const candidates: EarlierVersionCandidate[] = [];
       for (const part of chunk(amendSuppliers)) {
         candidates.push(...await fetchAllRows<EarlierVersionCandidate>(
-          'twob_import_docs',
-          'id, period_month, date, supplier_gstin, supplier_invoice_number, original_doc_number, original_doc_date, original_doc_type, doc_type, is_amendment, itc_action, itc_available, imported_at, taxable_value, input_igst, input_cgst, input_sgst, cess, ims_reduce_required, declared_igst, declared_cgst, declared_sgst, declared_cess',
+          'twob_import_docs', EARLIER_VERSION_COLUMNS,
           (q) => q.eq('client_id', clientId).in('supplier_gstin', part).neq('period_month', month).order('id'),
         ));
       }
@@ -870,7 +1060,7 @@ const Import2BTab: React.FC = () => {
           original_doc_date: b.row.original_doc_date ?? null, original_doc_type: b.row.original_doc_type, doc_type: b.row.doc_type,
         }, month, versionPool);
         Object.assign(b.row, { amends_doc_id: earlier?.id ?? null, amends_period: earlier?.period_month ?? null, ...baseFrom(earlier, b.row) });
-        b.row.itc_action = defaultAction(b.input, earlier?.itc_action, earlier?.itc_available);
+        b.row.itc_action = defaultAction(b.input, earlier);
       }
 
       // A paired row takes the file's figures but keeps its id, treatment,
@@ -878,10 +1068,15 @@ const Import2BTab: React.FC = () => {
       // counted against (or the base staff entered), unless a different
       // version is found now: the latest one, imported since (months imported
       // out of order), or the one Import 2B holds for an entered base. Then it
-      // is counted against that one, and named. One still HELD takes the
+      // is counted against that one, and named. Found again, it is counted
+      // against that version as it stands now: when its treatment changed
+      // since the base was taken (a held one settled included), the base is
+      // taken afresh, the row named, and its treatment re-derived if it still
+      // followed the version's (refollowAction). One still HELD takes the
       // found version's treatment.
       let heldResolved = 0;
       const rebased: string[] = [];
+      const recounted: string[] = [];
       const updates = pairs.map(({ b, prev }) => {
         const row = b.row;
         if (!row.is_amendment) {
@@ -895,14 +1090,21 @@ const Import2BTab: React.FC = () => {
         const prevHasBase = !!prev.amends_doc_id || [prev.base_taxable_value, prev.base_input_igst, prev.base_input_cgst, prev.base_input_sgst, prev.base_cess]
           .some((v) => v !== null && v !== undefined);
         let link = prevHasBase ? prevBase : foundBase;
+        let action = prev.itc_action;
+        const found = row.amends_doc_id ? versionById.get(row.amends_doc_id) : undefined;
         if (row.amends_doc_id && row.amends_doc_id !== prev.amends_doc_id) {
           if (prevHasBase) rebased.push(row.supplier_invoice_number || '(no number)');
           link = foundBase;
+        } else if (found) {
+          link = foundBase;
+          if (prevHasBase && !sameBase(prevBase, foundBase)) {
+            recounted.push(row.supplier_invoice_number || '(no number)');
+            if (action !== 'HELD') action = refollowAction(b.input, action, found, treatmentsGiving(found, row, prevBase));
+          }
         }
-        let action = prev.itc_action;
         if (action === 'HELD' && link.amends_doc_id) {
           const earlier = versionById.get(link.amends_doc_id);
-          const next = earlier ? defaultAction(b.input, earlier.itc_action, earlier.itc_available) : 'HELD';
+          const next = earlier ? defaultAction(b.input, earlier) : 'HELD';
           if (next !== 'HELD') { action = next; heldResolved += 1; }
         }
         action = afterBucketMove(b, prev, action);
@@ -919,21 +1121,37 @@ const Import2BTab: React.FC = () => {
       // stamps the whole month), and neither does a books pairing (a soft
       // link: the re-match below turns that books row Not in 2B), so a
       // document that has left 2B stops counting in rows 5.1 and 5.3.
+      // An amendment keeps a stale document only if it stays itself: one in
+      // another month, one of this month the merge still points at it (by the
+      // link it writes, not the stored one), or a stale one kept in turn.
       const pairedIds = new Set(updates.map((u) => u.id));
       const stale = existing.filter((e) => !pairedIds.has(e.id));
+      const staleIds = new Set(stale.map((e) => e.id));
+      const writtenLink = new Map(updates.map((u) => [u.id, u.amends_doc_id ?? null]));
       const keep = new Set(stale.filter((e) => e.itc_action === 'RECLAIM').map((e) => e.id));
+      const dependants: { id: string; amends_doc_id: string }[] = [];
       for (const part of chunk(stale.map((e) => e.id))) {
         const [nib, n2b, later] = await Promise.all([
           supabase.from('bills_not_in_books').select('source_doc_id').in('source_doc_id', part),
           supabase.from('bills_not_in_2b').select('reclaimed_via_doc_id').in('reclaimed_via_doc_id', part),
-          supabase.from('twob_import_docs').select('amends_doc_id').in('amends_doc_id', part),
+          supabase.from('twob_import_docs').select('id, amends_doc_id').in('amends_doc_id', part),
         ]);
         if (nib.error) throw nib.error;
         if (n2b.error) throw n2b.error;
         if (later.error) throw later.error;
         (nib.data || []).forEach((r) => r.source_doc_id && keep.add(r.source_doc_id));
         (n2b.data || []).forEach((r) => r.reclaimed_via_doc_id && keep.add(r.reclaimed_via_doc_id));
-        (later.data || []).forEach((r) => r.amends_doc_id && keep.add(r.amends_doc_id));
+        (later.data || []).forEach((r) => { if (r.amends_doc_id) dependants.push({ id: r.id, amends_doc_id: r.amends_doc_id }); });
+      }
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const r of dependants) {
+          if (keep.has(r.amends_doc_id)) continue;
+          if (writtenLink.has(r.id) && writtenLink.get(r.id) !== r.amends_doc_id) continue;
+          if (staleIds.has(r.id) && !keep.has(r.id)) continue;
+          keep.add(r.amends_doc_id);
+          grew = true;
+        }
       }
       const kept = stale.filter((e) => keep.has(e.id));
       const keptCounted = kept.filter((e) => isCountedAction(e.itc_action) && !e.reverse_charge);
@@ -941,15 +1159,49 @@ const Import2BTab: React.FC = () => {
 
       // Write in an order that never leaves the month empty part-way: new rows
       // first (originals before amendments, which may point at them), then the
-      // paired rows, then the stale ones.
+      // paired rows, then the stale ones. A paired row is written without the
+      // treatment, books pairing and posting stamp it kept: those columns are
+      // left as they stand, so a change made while this import ran (here or
+      // in another session) is not undone by the merge's earlier read. A
+      // treatment the import itself changes (a sheet move, a held amendment
+      // settled, an amendment recounted) is written on its own, only where
+      // the row still holds the treatment read. Paired rows are updated by
+      // id, never upserted: one deleted while this ran (Delete 2B in another
+      // browser) stays deleted, rather than coming back with the column's
+      // default treatment, and is named.
       const freshRows = [...fresh.filter((b) => !b.row.is_amendment), ...fresh.filter((b) => b.row.is_amendment)].map((b) => b.row);
       for (const part of chunk(freshRows, 500)) {
         const { error } = await supabase.from('twob_import_docs').insert(part);
         if (error) throw error;
       }
-      for (const part of chunk(updates, 500)) {
-        const { error } = await supabase.from('twob_import_docs').upsert(part, { onConflict: 'id' });
+      const figures = updates.map(({ itc_action, matched_book_id, posted_at, posted_by, id, ...cols }) => ({ id, cols }));
+      const vanished = new Set<string>();
+      let nextFigure = 0;
+      let figureFailure: unknown = null;
+      const writeFigures = async () => {
+        while (figureFailure === null && nextFigure < figures.length) {
+          const { id, cols } = figures[nextFigure++];
+          try {
+            const { data, error } = await supabase.from('twob_import_docs').update(cols).eq('id', id).select('id');
+            if (error) { figureFailure = error; return; }
+            if (!data || data.length === 0) vanished.add(id);
+          } catch (err) {
+            figureFailure = err;
+            return;
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(8, figures.length) }, writeFigures));
+      if (figureFailure !== null) throw figureFailure;
+      const actionChanges = updates
+        .map((u, i) => ({ id: u.id, from: pairs[i].prev.itc_action, to: u.itc_action }))
+        .filter((c) => c.from !== c.to && !vanished.has(c.id));
+      const treatmentMoved = new Map<string, string>();
+      for (const c of actionChanges) {
+        const { data, error } = await supabase.from('twob_import_docs')
+          .update({ itc_action: c.to }).eq('id', c.id).eq('itc_action', c.from).select('id');
         if (error) throw error;
+        if (data && data.length > 0) treatmentMoved.set(c.id, c.from);
       }
       // Kept rows from an earlier, complete import must not claim this
       // month's notes as read.
@@ -964,13 +1216,14 @@ const Import2BTab: React.FC = () => {
       }
 
       // Counts by kind, as the page shows them (RCM hidden).
-      const written = [...freshRows, ...updates];
+      const landed = updates.filter((u) => !vanished.has(u.id));
+      const written = [...freshRows, ...landed];
       const shown = written.filter((r) => !r.reverse_charge);
       const originals = shown.filter((r) => !r.is_amendment);
       const amendments = shown.filter((r) => r.is_amendment);
       const held = amendments.filter((r) => r.itc_action === 'HELD').length;
       const rcm = result.records.filter((r) => r.reverseCharge).length;
-      const keptCount = updates.filter((u) => !u.reverse_charge).length;
+      const keptCount = landed.filter((u) => !u.reverse_charge).length;
       toast.success(
         `Imported ${plural(originals.filter((r) => r.doc_type === 'INVOICE').length, 'invoice')}, `
         + `${plural(originals.filter((r) => r.doc_type === 'DEBIT_NOTE').length, 'debit note')}, `
@@ -984,13 +1237,21 @@ const Import2BTab: React.FC = () => {
         + (!notesRead ? ' Credit notes not read in full: row 5.3 stays typed for this month.' : ''),
         { duration: 10000 },
       );
-      const list = (nos: string[]) => `${nos.slice(0, 5).join(', ')}${nos.length > 5 ? ` and ${nos.length - 5} more` : ''}`;
+      const list = listNos;
       if (kept.length > 0) {
         toast.warning(
           `${plural(kept.length, 'document')} from the earlier import ${kept.length === 1 ? 'is' : 'are'} not in this file but ${kept.length === 1 ? 'was' : 'were'} kept, because something depends on ${kept.length === 1 ? 'it' : 'them'} (a reclaim, a Not in Books entry on the ledger, or a later amendment): `
           + `${list(kept.map((e) => e.supplier_invoice_number || '(no number)'))}. Their treatment is unchanged`
           + (keptCounted.length ? `, so ${plural(keptCounted.length, 'Matched or Mismatched document')} still ${keptCounted.length === 1 ? 'counts' : 'count'} in ITC Summary` : '')
           + '; change it if they have left 2B.',
+          { duration: 20000 },
+        );
+      }
+      if (vanished.size > 0) {
+        const gone = pairs.filter(({ prev }) => vanished.has(prev.id)).map(({ prev }) => prev.supplier_invoice_number || '(no number)');
+        toast.warning(
+          `${plural(vanished.size, 'document')} of this month ${vanished.size === 1 ? 'was' : 'were'} deleted (in another session) while this import ran, and ${vanished.size === 1 ? 'was' : 'were'} not brought back: `
+          + `${list(gone)}. Import the file again to add ${vanished.size === 1 ? 'it' : 'them'} with ${vanished.size === 1 ? 'its' : 'their'} usual treatment.`,
           { duration: 20000 },
         );
       }
@@ -1007,16 +1268,58 @@ const Import2BTab: React.FC = () => {
           { duration: 20000 },
         );
       }
+      if (recounted.length > 0) {
+        toast.warning(
+          `${plural(recounted.length, 'amendment')} now ${recounted.length === 1 ? 'counts' : 'count'} against the earlier version as it stands, since its treatment changed after ${recounted.length === 1 ? 'it was' : 'they were'} counted: ${list(recounted)}. Check ${recounted.length === 1 ? 'its' : 'their'} treatment.`,
+          { duration: 20000 },
+        );
+      }
       // An amendment the revised record makes ineligible is not claimed, but
-      // the version it amends still counts in its own (often filed) month.
+      // the version it amends still counts in its own (often filed) month,
+      // unless that version is parked Not in Books (never claimed: its ledger
+      // entry is to be cleared instead) or held (counted nowhere yet).
       const prevAction = new Map(pairs.map(({ prev }) => [prev.id, prev.itc_action]));
-      const toReverse = amendments.filter((r) => r.itc_action === 'INELIGIBLE' && prevAction.get(r.id as string) !== 'INELIGIBLE'
-        && r.bucket === 'available' && Math.abs(taxOf({ igst: Number(r.base_input_igst) || 0, cgst: Number(r.base_input_cgst) || 0, sgst: Number(r.base_input_sgst) || 0 })) >= 0.005);
+      const baseTaxOf = (r: { base_input_igst?: number | null; base_input_cgst?: number | null; base_input_sgst?: number | null }) =>
+        Math.abs(taxOf({ igst: Number(r.base_input_igst) || 0, cgst: Number(r.base_input_cgst) || 0, sgst: Number(r.base_input_sgst) || 0 }));
+      const earlierActionOf = (r: { amends_doc_id?: string | null }) => (r.amends_doc_id ? versionById.get(r.amends_doc_id)?.itc_action : undefined);
+      const noLongerDue = amendments.filter((r) => r.itc_action === 'INELIGIBLE' && prevAction.get(r.id as string) !== 'INELIGIBLE'
+        && r.bucket === 'available' && baseTaxOf(r) >= 0.005 && earlierActionOf(r) !== 'HELD');
+      const amountOf = (r: (typeof noLongerDue)[number]) => `${r.supplier_invoice_number || '(no number)'} ₹${num(clean(baseTaxOf(r)))}${r.amends_period ? ` in ${periodMonthLabel(r.amends_period)}` : ''}`;
+      const toReverse = noLongerDue.filter((r) => earlierActionOf(r) !== 'NOT_IN_BOOKS');
+      const toClear = noLongerDue.filter((r) => earlierActionOf(r) === 'NOT_IN_BOOKS');
       if (toReverse.length > 0) {
         toast.warning(
           `${plural(toReverse.length, 'amendment')} ${toReverse.length === 1 ? 'is' : 'are'} not claimed, since the revised document gives no ITC, but the earlier version still counts in its month: `
-          + `${list(toReverse.map((r) => `${r.supplier_invoice_number || '(no number)'} ₹${num(clean(Math.abs(taxOf({ igst: Number(r.base_input_igst) || 0, cgst: Number(r.base_input_cgst) || 0, sgst: Number(r.base_input_sgst) || 0 }))))}${r.amends_period ? ` in ${periodMonthLabel(r.amends_period)}` : ''}`))}. `
+          + `${list(toReverse.map(amountOf))}. `
           + 'Reverse those amounts in 4B(2) by hand (or add back a credit note\'s reduction).',
+          { duration: 30000 },
+        );
+      }
+      if (toClear.length > 0) {
+        toast.warning(
+          `${plural(toClear.length, 'amendment')} ${toClear.length === 1 ? 'is' : 'are'} not claimed, since the revised document gives no ITC, and the earlier version is parked Not in Books, never claimed: `
+          + `${list(toClear.map(amountOf))}. Clear ${toClear.length === 1 ? 'its' : 'their'} entry on the Not in Books ledger rather than claim it when booked; nothing is to be reversed in 4B(2).`,
+          { duration: 30000 },
+        );
+      }
+      // An amendment that turns a document counted in rows 5.1 / 5.3 into
+      // reverse charge goes to RCM Summary (hidden here); the earlier claim
+      // stays in its month unless reversed by hand. Named when first linked.
+      const prevLink = new Map(pairs.map(({ prev }) => [prev.id, prev.amends_doc_id]));
+      const intoRcm = written.filter((r) => {
+        if (!r.is_amendment || !r.reverse_charge || !r.amends_doc_id) return false;
+        if (prevLink.has(r.id as string) && prevLink.get(r.id as string) === r.amends_doc_id) return false;
+        const e = versionById.get(r.amends_doc_id);
+        return !!e && !e.reverse_charge && isCountedAction(e.itc_action);
+      });
+      if (intoRcm.length > 0) {
+        toast.warning(
+          `${plural(intoRcm.length, 'amendment')} ${intoRcm.length === 1 ? 'turns a document' : 'turn documents'} counted in ITC Summary into reverse charge (now in RCM Summary): `
+          + `${list(intoRcm.map((r) => {
+            const e = versionById.get(r.amends_doc_id as string) as EarlierVersionCandidate;
+            return `${r.supplier_invoice_number || '(no number)'} ₹${num(clean(Math.abs(taxOf(fullFigures(e)))))} in ${periodMonthLabel(e.period_month) || e.period_month}`;
+          }))}. `
+          + 'Reverse that claim in 4B(2) by hand (or add back a credit note\'s reduction).',
           { duration: 30000 },
         );
       }
@@ -1053,6 +1356,18 @@ const Import2BTab: React.FC = () => {
         // A check only: the import itself is done.
       }
 
+      // Amendments in other months counted against a document whose
+      // treatment this import changed (a sheet move, a held amendment
+      // settled) are brought in line with it; this month's were just written
+      // in line.
+      if (treatmentMoved.size > 0) {
+        try {
+          reportSynced(await syncAmendments(treatmentMoved, { skip: new Set(written.map((r) => r.id as string)) }));
+        } catch (err) {
+          toast.error('2B imported, but bringing the amendments counted against its re-treated documents in line failed: ' + errMsg(err));
+        }
+      }
+
       // The books register is matched against the month's 2B, which just
       // changed. Documents kept although no longer in the file are left out.
       try {
@@ -1071,8 +1386,50 @@ const Import2BTab: React.FC = () => {
             { duration: 20000 },
           );
         }
+        if (re.keptByHand.length) {
+          toast.warning(
+            `${plural(re.keptByHand.length, 'books row')} ${re.keptByHand.length === 1 ? 'keeps' : 'keep'} the treatment you picked, although the new 2B reads ${re.keptByHand.length === 1 ? 'it' : 'them'} otherwise: ${list(re.keptByHand)}. Check ${re.keptByHand.length === 1 ? 'it' : 'them'}.`,
+            { duration: 20000 },
+          );
+        }
       } catch (err) {
         toast.error('2B imported, but re-matching the books register failed: ' + errMsg(err));
+      }
+
+      // Once the notes are read (full_2b), a Strict client's row 5.3 "Debit
+      // Note" follows the month's 2B credit notes and is no longer typed. A
+      // figure saved there that differs (typed before this import) is
+      // replaced, so it is named with what 2B now gives.
+      if (notesRead) {
+        try {
+          const [clientRes, itcRes, notes] = await Promise.all([
+            supabase.from('clients').select('liberal_2b_reconciliation, builder_itc_type').eq('id', clientId).maybeSingle(),
+            supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', month).maybeSingle(),
+            fetchImport2BCreditNotes(clientId, month),
+          ]);
+          if (clientRes.error) throw clientRes.error;
+          if (itcRes.error) throw itcRes.error;
+          const strict = clientRes.data?.liberal_2b_reconciliation !== true && clientRes.data?.builder_itc_type !== 'NO_ITC';
+          type SavedRow = { srNo?: string; igst?: unknown; cgst?: unknown; sgst?: unknown };
+          const raw = itcRes.data?.data;
+          const saved = (typeof raw === 'string' ? JSON.parse(raw) : raw) as { section4A?: SavedRow[] } | null;
+          const row53 = Array.isArray(saved?.section4A) ? saved.section4A.find((r) => r?.srNo === '5.3') : undefined;
+          if (strict && row53) {
+            const typed = { igst: Number(row53.igst) || 0, cgst: Number(row53.cgst) || 0, sgst: Number(row53.sgst) || 0 };
+            const heads = ['igst', 'cgst', 'sgst'] as const;
+            if (heads.some((h) => Math.abs(typed[h]) >= 0.005) && heads.some((h) => Math.abs(typed[h] - notes.total[h]) > 1)) {
+              const fig = (f: { igst: number; cgst: number; sgst: number }) =>
+                `₹${num(clean(taxOf(f)))} (IGST ${num(clean(f.igst))}, CGST ${num(clean(f.cgst))}, SGST ${num(clean(f.sgst))})`;
+              toast.warning(
+                `Row 5.3 "Debit Note" of ITC Summary was saved as ${fig(typed)}. It now follows this month's 2B credit notes: ${fig(notes.total)}. `
+                + 'Anything else typed there belongs in 4B(2)(ii).',
+                { duration: 30000 },
+              );
+            }
+          }
+        } catch {
+          // A check only: the import itself is done.
+        }
       }
       await fetchAll();
     } catch (err: any) {
@@ -1152,6 +1509,7 @@ const Import2BTab: React.FC = () => {
   const deleteImported2B = async () => {
     if (readOnly || !selectedClient || !selectedMonth || twoBDocs.length === 0) return;
     if (!canDelete2BRows()) { toast.error('Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'); return; }
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     if (!(await confirm({
       title: 'Delete imported 2B?',
       description: `Delete ALL imported GSTR-2B for ${selectedClientName}, ${selectedMonth}? Books entries are kept. `
@@ -1159,35 +1517,56 @@ const Import2BTab: React.FC = () => {
       destructive: true,
       confirmText: 'Delete',
     }))) return;
-    try {
-      const nowIso = new Date().toISOString();
-      const ids = (await fetchAllRows<{ id: string }>('twob_import_docs', 'id', (q) => q
-        .eq('client_id', selectedClient).eq('period_month', selectedMonth).order('id'))).map((r) => r.id);
-      let keptFiled = 0;
-      for (const part of chunk(ids)) {
-        const { error: relErr } = await supabase.from('bills_not_in_2b')
-          .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null, updated_by: user?.id, updated_at: nowIso })
-          .in('reclaimed_via_doc_id', part);
-        if (relErr) throw relErr;
-        const { error: nibErr } = await supabase.from('bills_not_in_books').delete()
-          .in('source_doc_id', part).not('is_locked', 'is', true).not('is_carried_forward', 'is', true);
-        if (nibErr) throw nibErr;
-        const { data: filedRows, error: filedErr } = await supabase.from('bills_not_in_books').select('source_doc_id').in('source_doc_id', part);
-        if (filedErr) throw filedErr;
-        const stay = new Set((filedRows || []).map((r) => r.source_doc_id));
-        const gone = part.filter((id) => !stay.has(id));
-        keptFiled += part.length - gone.length;
-        if (gone.length === 0) continue;
-        const { error } = await supabase.from('twob_import_docs').delete().in('id', gone);
-        if (error) throw error;
+    // Under the month's lock, taken after the confirm: an import that started
+    // while it was open refuses this, and one that arrives while this runs
+    // is refused.
+    const clientId = selectedClient;
+    const month = selectedMonth;
+    const ran = await withMonthLock(clientId, month, IMPORT_RUNNING_MSG, IMPORT_RUNNING_MSG, async () => {
+      try {
+        // Read the filing lock afresh, as an import does: the page's copy is
+        // from its last load, and the return may have been filed since.
+        const { data: filed, error: filedErr } = await supabase.from('filing_status').select('is_locked')
+          .eq('client_id', clientId).eq('period_month', month)
+          .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']).eq('status', 'Filed');
+        if (filedErr) { toast.error(`Could not check whether the return is filed (${filedErr.message}). Nothing was deleted; try again.`); return; }
+        const locked = (filed || []).some((f) => f.is_locked);
+        if (locked && !isSuperadmin) { toast.error(LOCKED_MSG); return; }
+        if (locked && !(await confirm({
+          title: 'Delete from a filed month?',
+          description: `The return for ${periodMonthLabel(month) || month} is filed. Deleting its 2B can change this month's ITC Summary figures, which would then differ from the filed return.`,
+          destructive: true,
+          confirmText: 'Delete anyway',
+        }))) return;
+        const nowIso = new Date().toISOString();
+        const ids = (await fetchAllRows<{ id: string }>('twob_import_docs', 'id', (q) => q
+          .eq('client_id', clientId).eq('period_month', month).order('id'))).map((r) => r.id);
+        let keptFiled = 0;
+        for (const part of chunk(ids)) {
+          const { error: relErr } = await supabase.from('bills_not_in_2b')
+            .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null, updated_by: user?.id, updated_at: nowIso })
+            .in('reclaimed_via_doc_id', part);
+          if (relErr) throw relErr;
+          const { error: nibErr } = await supabase.from('bills_not_in_books').delete()
+            .in('source_doc_id', part).not('is_locked', 'is', true).not('is_carried_forward', 'is', true);
+          if (nibErr) throw nibErr;
+          const { data: filedRows, error: filedErr } = await supabase.from('bills_not_in_books').select('source_doc_id').in('source_doc_id', part);
+          if (filedErr) throw filedErr;
+          const stay = new Set((filedRows || []).map((r) => r.source_doc_id));
+          const gone = part.filter((id) => !stay.has(id));
+          keptFiled += part.length - gone.length;
+          if (gone.length === 0) continue;
+          const { error } = await supabase.from('twob_import_docs').delete().in('id', gone);
+          if (error) throw error;
+        }
+        toast.success(keptFiled
+          ? `Imported 2B cleared, except ${plural(keptFiled, 'document')} whose Not in Books entry is filed (kept with it).`
+          : 'Imported 2B cleared.');
+      } catch (err) {
+        toast.error('Delete failed: ' + errMsg(err));
       }
-      toast.success(keptFiled
-        ? `Imported 2B cleared, except ${plural(keptFiled, 'document')} whose Not in Books entry is filed (kept with it).`
-        : 'Imported 2B cleared.');
-    } catch (err) {
-      toast.error('Delete failed: ' + errMsg(err));
-    }
-    await fetchAll();
+    });
+    if (ran) await fetchAll();
   };
 
   // ---- 2B doc action (single + bulk) ----------------------------------------
@@ -1271,7 +1650,9 @@ const Import2BTab: React.FC = () => {
   };
 
   const confirmReclaim = async (pendingId: string, docId: string) => {
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const nowIso = new Date().toISOString();
+    const doc = twoBDocs.find((d) => d.id === docId);
     const { error: err2B } = await supabase.from('bills_not_in_2b').update({
       reclaim_month: currentLabel, reclaim_subtype: null, reclaimed_via_doc_id: docId,
       updated_by: user?.id, updated_at: nowIso,
@@ -1282,6 +1663,15 @@ const Import2BTab: React.FC = () => {
     }).eq('id', docId);
     if (errDoc) { toast.error('Reclaim failed: ' + errDoc.message); return; }
     toast.success('Reclaim linked and recorded.');
+    // The amendments counted against this document follow its new treatment,
+    // as on Save.
+    if (doc && doc.itc_action !== 'RECLAIM') {
+      try {
+        reportSynced(await syncAmendments(new Map([[docId, doc.itc_action]])));
+      } catch (err) {
+        toast.error(`Reclaim recorded, but the amendments counted against ${doc.supplier_invoice_number || 'this document'} could not be brought in line: ${errMsg(err)}. Re-import their month.`);
+      }
+    }
     await fetchAll();
   };
 
@@ -1336,7 +1726,8 @@ const Import2BTab: React.FC = () => {
   // Books, as if the version it amends was never claimed. Save says so first.
   const saveActions = async () => {
     const entries = Object.entries(pendingActions);
-    if (entries.length === 0 || readOnly) return;
+    if (entries.length === 0 || readOnly || !selectedClient || !selectedMonth) return;
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const fullValue = entries
       .map(([id, action]) => ({ d: twoBDocs.find((x) => x.id === id), action }))
       .filter(({ d, action }) => !!d && d.is_amendment && !hasBase(d) && (isCountedAction(action) || action === 'NOT_IN_BOOKS'))
@@ -1362,62 +1753,86 @@ const Import2BTab: React.FC = () => {
       confirmText: 'Count the full value',
     }))) return;
 
-    setIsSavingActions(true);
-    const savedIds: string[] = [];
-    try {
-      const nowIso = new Date().toISOString();
+    // Written under the month's lock, taken after the confirms: an import
+    // that started while they were open refuses this, and one that arrives
+    // while this runs is refused.
+    await withMonthLock(selectedClient, selectedMonth, IMPORT_RUNNING_MSG, IMPORT_RUNNING_MSG, async () => {
+      setIsSavingActions(true);
+      const savedIds: string[] = [];
+      let wrote = false;
       const savedAction = (id: string) => twoBDocs.find((d) => d.id === id)?.itc_action;
-      // A document leaving Reclaim also releases the pending item it
-      // evidences. One at a time: its new treatment is saved first, then the
-      // item released, and if that fails the document goes back to Reclaim,
-      // so a reclaim is never left claimed twice or unlinked.
-      const leaving = entries.filter(([id, action]) => savedAction(id) === 'RECLAIM' && action !== 'RECLAIM');
-      const rest = entries.filter(([id, action]) => !(savedAction(id) === 'RECLAIM' && action !== 'RECLAIM'));
-      // Group by target action, in chunks, so this is a handful of round-trips
-      // and a long selection never overflows the request URL.
-      const byAction = new Map<string, string[]>();
-      rest.forEach(([id, action]) => {
-        if (!byAction.has(action)) byAction.set(action, []);
-        byAction.get(action)!.push(id);
-      });
-      for (const [action, ids] of byAction) {
-        for (const part of chunk(ids)) {
-          const { error } = await supabase.from('twob_import_docs')
-            .update({ itc_action: action, updated_by: user?.id, updated_at: nowIso })
-            .in('id', part);
-          if (error) throw error;
-          savedIds.push(...part);
+      // The amendments counted against the saved documents follow them, and a
+      // saved amendment counts against its earlier version as it stands now
+      // (its base only: the treatment just chosen stays).
+      const bringAmendmentsInLine = async () => {
+        if (savedIds.length === 0) return;
+        try {
+          reportSynced(await syncAmendments(
+            new Map(savedIds.map((id) => [id, savedAction(id) as string])),
+            { alsoIds: savedIds.filter((id) => !!twoBDocs.find((d) => d.id === id)?.amends_doc_id), keepAction: new Set(savedIds) },
+          ));
+        } catch (err) {
+          toast.error(`Saved, but the amendments counted against these documents could not be brought in line: ${errMsg(err)}. Re-import their month to retry.`);
         }
-      }
-      for (const [id, action] of leaving) {
-        const { error } = await supabase.from('twob_import_docs')
-          .update({ itc_action: action, updated_by: user?.id, updated_at: nowIso }).eq('id', id);
-        if (error) throw error;
-        const { error: relErr } = await supabase.from('bills_not_in_2b')
-          .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null, updated_by: user?.id, updated_at: nowIso })
-          .eq('reclaimed_via_doc_id', id);
-        if (relErr) {
-          await supabase.from('twob_import_docs').update({ itc_action: 'RECLAIM', updated_by: user?.id, updated_at: nowIso }).eq('id', id);
-          throw new Error(`could not unlink the reclaim of ${twoBDocs.find((d) => d.id === id)?.supplier_invoice_number || 'a document'}, so it stays Reclaim (${relErr.message})`);
-        }
-        savedIds.push(id);
-      }
-      toast.success(`Saved ${entries.length} row(s).`);
-      setPendingActions({});
-      await fetchAll();
-    } catch (err) {
-      toast.error(`Save failed${savedIds.length ? ` after ${plural(savedIds.length, 'row')} saved` : ''}: ${errMsg(err)}`);
-      if (savedIds.length) {
-        setPendingActions((prev) => {
-          const next = { ...prev };
-          savedIds.forEach((id) => delete next[id]);
-          return next;
+      };
+      try {
+        const nowIso = new Date().toISOString();
+        // A document leaving Reclaim also releases the pending item it
+        // evidences. One at a time: the item is released first, then the new
+        // treatment saved. A failure in between leaves the document Reclaim
+        // with nothing linked: counted nowhere (an under-claim the page shows),
+        // never claimed twice.
+        const leaving = entries.filter(([id, action]) => savedAction(id) === 'RECLAIM' && action !== 'RECLAIM');
+        const rest = entries.filter(([id, action]) => !(savedAction(id) === 'RECLAIM' && action !== 'RECLAIM'));
+        // Group by target action, in chunks, so this is a handful of round-trips
+        // and a long selection never overflows the request URL.
+        const byAction = new Map<string, string[]>();
+        rest.forEach(([id, action]) => {
+          if (!byAction.has(action)) byAction.set(action, []);
+          byAction.get(action)!.push(id);
         });
+        for (const [action, ids] of byAction) {
+          for (const part of chunk(ids)) {
+            const { error } = await supabase.from('twob_import_docs')
+              .update({ itc_action: action, updated_by: user?.id, updated_at: nowIso })
+              .in('id', part);
+            if (error) throw error;
+            savedIds.push(...part);
+          }
+        }
+        for (const [id, action] of leaving) {
+          const no = twoBDocs.find((d) => d.id === id)?.supplier_invoice_number || 'a document';
+          const { error: relErr } = await supabase.from('bills_not_in_2b')
+            .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null, updated_by: user?.id, updated_at: nowIso })
+            .eq('reclaimed_via_doc_id', id);
+          if (relErr) throw new Error(`could not unlink the reclaim of ${no}, so it stays Reclaim (${relErr.message})`);
+          wrote = true;
+          const { error } = await supabase.from('twob_import_docs')
+            .update({ itc_action: action, updated_by: user?.id, updated_at: nowIso }).eq('id', id);
+          if (error) {
+            throw new Error(`the reclaim of ${no} was unlinked (the item is back in Awaiting reclaim), but its new treatment was not saved, so it counts nowhere until you save it again (${error.message})`);
+          }
+          savedIds.push(id);
+        }
+        await bringAmendmentsInLine();
+        toast.success(`Saved ${entries.length} row(s).`);
+        setPendingActions({});
         await fetchAll();
+      } catch (err) {
+        toast.error(`Save failed${savedIds.length ? ` after ${plural(savedIds.length, 'row')} saved` : ''}: ${errMsg(err)}`);
+        if (savedIds.length) {
+          setPendingActions((prev) => {
+            const next = { ...prev };
+            savedIds.forEach((id) => delete next[id]);
+            return next;
+          });
+          await bringAmendmentsInLine();
+        }
+        if (savedIds.length || wrote) await fetchAll();
+      } finally {
+        setIsSavingActions(false);
       }
-    } finally {
-      setIsSavingActions(false);
-    }
+    });
   };
 
   // ---- Counted figures for an amendment with no earlier version ---------------
@@ -1429,12 +1844,16 @@ const Import2BTab: React.FC = () => {
   const [baseDialog, setBaseDialog] = useState<{ doc: TwoBDoc; values: Record<BaseField, string> } | null>(null);
   const [isSavingBase, setIsSavingBase] = useState(false);
   const openBaseDialog = (d: TwoBDoc) => {
+    // One with figures entered before this check opens, so they can be cleared.
+    if (baseSignUnsure(d) && !hasBase(d)) { toast.error(BASE_SIGN_MSG, { duration: 15000 }); return; }
     const v = (x: number | null) => (x === null || x === undefined ? '' : String(x));
     setBaseDialog({ doc: d, values: { taxable: v(d.base_taxable_value), igst: v(d.base_input_igst), cgst: v(d.base_input_cgst), sgst: v(d.base_input_sgst), cess: v(d.base_cess) } });
   };
   const saveBase = async (clear: boolean) => {
     if (!baseDialog || readOnly) return;
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const { doc, values } = baseDialog;
+    if (!clear && baseSignUnsure(doc)) { toast.error(BASE_SIGN_MSG, { duration: 15000 }); return; }
     const val = (k: BaseField) => (clear ? null : toNum(values[k]));
     if (!clear && (['taxable', 'igst', 'cgst', 'sgst', 'cess'] as BaseField[]).some((k) => toNum(values[k]) < 0)) {
       toast.error('Enter the counted figures as positive amounts, as on the earlier document.');
@@ -1456,6 +1875,7 @@ const Import2BTab: React.FC = () => {
   // ---- Books register --------------------------------------------------------
   const addBookRow = async () => {
     if (readOnly || !selectedClient || !selectedMonth) return;
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const { data, error } = await supabase.from('books_register').insert({
       client_id: selectedClient, period_month: selectedMonth, book_treatment: 'NOT_IN_2B', doc_type: 'INVOICE', updated_by: user?.id,
     }).select('*').single();
@@ -1474,6 +1894,7 @@ const Import2BTab: React.FC = () => {
     if (!found) return;
     const row = { ...found, ...patch };
     let next = { treatment: row.book_treatment, matched2bId: row.matched_2b_id };
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
 
     try {
       if (classify && row.supplier_gstin && row.supplier_invoice_number) {
@@ -1516,6 +1937,7 @@ const Import2BTab: React.FC = () => {
   };
 
   const setBookTreatment = async (id: string, treatment: string) => {
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     updateBookLocal(id, { book_treatment: treatment });
     const { error } = await supabase.from('books_register')
       .update({ book_treatment: treatment, updated_by: user?.id, updated_at: new Date().toISOString() }).eq('id', id);
@@ -1529,6 +1951,7 @@ const Import2BTab: React.FC = () => {
   const deleteBookRow = async (id: string) => {
     if (readOnly) return;
     if (!canDelete2BRows()) { toast.error('Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'); return; }
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const row = books.find((r) => r.id === id);
     const { data: posted, error: postedErr } = await supabase.from('bills_not_in_2b')
       .select('id, is_locked, reclaim_month').eq('source_book_id', id);
@@ -1570,6 +1993,7 @@ const Import2BTab: React.FC = () => {
   const handlePostToReconciliation = async () => {
     if (readOnly || !selectedClient || !selectedMonth) return;
     if (!canWork2BImport()) { toast.error('Needs the Import 2B & post permission — ask a GST Manager to add it to your position'); return; }
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     setIsPosting(true);
     try {
       const plan = await planImport2BPost(selectedClient, selectedMonth);
@@ -1607,13 +2031,27 @@ const Import2BTab: React.FC = () => {
         return;
       }
 
-      const result = await postImport2BToLedger(selectedClient, selectedMonth, user?.id, plan);
-      toast.success(
-        `Posted to Reconciliation${result.versionNumber ? ` — v${result.versionNumber}` : ''}. ` +
-        `${result.inserted2B + result.insertedBooks} new, ${result.updated2B + result.updatedBooks} updated, ${result.retracted2B + result.retractedBooks} removed.` +
-        (result.skipped ? ` ${result.skipped} row(s) skipped.` : ''),
-      );
-      await fetchAll();
+      // Posted under the month's lock, taken after the confirm, and only
+      // what was confirmed: the plan is read again under the lock, and a
+      // month changed while the confirm was open (an import, or a change in
+      // another tab) posts nothing.
+      const clientId = selectedClient;
+      const month = selectedMonth;
+      await withMonthLock(clientId, month, IMPORT_RUNNING_MSG, IMPORT_RUNNING_MSG, async () => {
+        const current = await planImport2BPost(clientId, month);
+        if (JSON.stringify(current) !== JSON.stringify(plan)) {
+          toast.error('This month changed while the confirm was open (an import, or a change in another tab). Nothing was posted; click Post again to see what it would do now.');
+          await fetchAll();
+          return;
+        }
+        const result = await postImport2BToLedger(clientId, month, user?.id, current);
+        toast.success(
+          `Posted to Reconciliation${result.versionNumber ? ` — v${result.versionNumber}` : ''}. ` +
+          `${result.inserted2B + result.insertedBooks} new, ${result.updated2B + result.updatedBooks} updated, ${result.retracted2B + result.retractedBooks} removed.` +
+          (result.skipped ? ` ${result.skipped} row(s) skipped.` : ''),
+        );
+        await fetchAll();
+      });
     } catch (err: any) {
       toast.error('Post failed: ' + (err?.message || 'Unknown error'));
     } finally {
@@ -1626,6 +2064,7 @@ const Import2BTab: React.FC = () => {
   // above) — this is only the "never coming back, write it off" escape hatch,
   // which doesn't need a matching invoice.
   const setPendingExpenseOut = async (id: string) => {
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const row = pendingBills2B.find((r) => r.id === id);
     const { error } = await supabase.from('bills_not_in_2b')
       .update({ reclaim_month: currentLabel, reclaim_subtype: 'EXPENSE_OUT', updated_by: user?.id, updated_at: new Date().toISOString() })
@@ -1638,6 +2077,7 @@ const Import2BTab: React.FC = () => {
 
   // Undo — bring a mistakenly expensed-out item back to "awaiting reclaim".
   const undoExpenseOut = async (id: string) => {
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const row = expensedOutItems.find((r) => r.id === id);
     const { error } = await supabase.from('bills_not_in_2b')
       .update({ reclaim_month: null, reclaim_subtype: null, updated_by: user?.id, updated_at: new Date().toISOString() })
@@ -1649,6 +2089,7 @@ const Import2BTab: React.FC = () => {
   };
 
   const setPendingBookEntry = async (id: string, value: 'blank' | 'current') => {
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const patch = value === 'blank' ? { book_entry_month: null } : { book_entry_month: currentLabel };
     const { error } = await supabase.from('bills_not_in_books')
       .update({ ...patch, updated_by: user?.id, updated_at: new Date().toISOString() }).eq('id', id);
@@ -1710,12 +2151,37 @@ const Import2BTab: React.FC = () => {
         const period = periodMonthLabel(d.amends_period || earlier?.period_month || '') || 'an earlier month';
         const label = earlier ? TWOB_ACTION_LABEL[earlier.itc_action] || earlier.itc_action : '';
         const otherType = earlier && docTypeOf(earlier) !== docTypeOf(d) ? ` (a ${DOC_TYPE_LABEL[docTypeOf(earlier)].toLowerCase()})` : '';
+        const countsHere = isCountedAction(action) || action === 'NOT_IN_BOOKS';
         if (earlier?.itc_action === 'HELD') {
           out.push({ text: `${orig} · amends a held amendment from ${period}: settle that one first, it counts nothing yet`, warn: true });
+        } else if (earlier?.reverse_charge && !d.reverse_charge) {
+          // The supplier dropped the reverse charge flag: that version sat in RCM Summary, never in 5.1 / 5.3.
+          out.push({
+            text: `${orig} · the ${period} version was reverse charge (RCM Summary), never counted here: `
+              + (countsHere ? `revised ₹${num(clean(revised))} counts in full` : `choose a treatment; Matched counts the revised ₹${num(clean(revised))} in full`)
+              + `, and the RCM claim of ${period} stays as it was, to be undone by hand`,
+            warn: true,
+          });
         } else if (baseZero) {
-          out.push({ text: `${orig} · the ${period} version${otherType} counted nothing${label ? ` (${label})` : ''}: revised ₹${num(clean(revised))} counts in full` });
+          out.push(countsHere
+            ? { text: `${orig} · the ${period} version${otherType} counted nothing${label ? ` (${label})` : ''}: revised ₹${num(clean(revised))} counts in full` }
+            : {
+              text: `${orig} · the ${period} version${otherType} counted nothing${label ? ` (${label})` : ''}, and this row is ${TWOB_ACTION_LABEL[action] || action}: revised ₹${num(clean(revised))} counts nowhere`,
+              warn: !earlier || earlier.itc_action !== action,
+            });
         } else {
           out.push({ text: `${orig}${otherType} · counted in ${period}${label ? ` as ${label}` : ''}: ${diff}` });
+        }
+        // The version was re-treated after this row took its base (and the
+        // row was not brought in line: a filed month, or saved before that).
+        if (earlier && earlier.itc_action !== 'HELD' && !sameBase(baseFrom(earlier, d), d)) {
+          const now = baseFrom(earlier, d);
+          const nowTax = taxOf({ igst: Number(now.base_input_igst) || 0, cgst: Number(now.base_input_cgst) || 0, sgst: Number(now.base_input_sgst) || 0 });
+          out.push({
+            text: `The ${period} version is now ${label}, so this row should count against ₹${num(clean(Math.abs(nowTax)))}, not the ₹${num(clean(Math.abs(baseTax)))} it was counted against. `
+              + (isLocked ? 'This month is filed: adjust the difference by hand in a later return.' : 'Re-import this month to bring it in line.'),
+            warn: true,
+          });
         }
       } else if (hasBase(d)) {
         // No link: counted figures staff entered, or the version found at import has since been deleted.
@@ -1729,12 +2195,16 @@ const Import2BTab: React.FC = () => {
           out.push({ text: `No earlier version in Import 2B: counts the full revised ₹${num(clean(revised))}. If it was claimed before, enter what it counted.`, warn: true });
         }
       }
-      // Not claimed here, but the version it amends still counts in its month.
-      if (countedNothing(action) && !baseZero && !(earlier && countedNothing(earlier.itc_action))) {
+      // Not claimed here, but the version it amends still counts in its
+      // month; or, parked Not in Books, was never claimed (its ledger entry is
+      // what to clear). A held version counts nowhere yet (its line says so).
+      if (countedNothing(action) && !baseZero && !(earlier && (countedNothing(earlier.itc_action) || earlier.itc_action === 'HELD'))) {
         out.push({
-          text: isCreditNote(d)
-            ? `Not counted here, but the earlier version still reduces ₹${num(clean(Math.abs(baseTax)))}: add it back by hand if no longer due`
-            : `Not claimed here, but the earlier version still counts ₹${num(clean(Math.abs(baseTax)))}: reverse it in 4B(2) if it is no longer eligible`,
+          text: earlier?.itc_action === 'NOT_IN_BOOKS'
+            ? `Not claimed here; the earlier version is parked Not in Books (₹${num(clean(Math.abs(baseTax)))}), never claimed: clear its entry on the Not in Books ledger if no longer due, nothing to reverse in 4B(2)`
+            : isCreditNote(d)
+              ? `Not counted here, but the earlier version still reduces ₹${num(clean(Math.abs(baseTax)))}: add it back by hand if no longer due`
+              : `Not claimed here, but the earlier version still counts ₹${num(clean(Math.abs(baseTax)))}: reverse it in 4B(2) if it is no longer eligible`,
           warn: true,
         });
       }
@@ -1839,7 +2309,7 @@ const Import2BTab: React.FC = () => {
                 size="sm"
                 className={WS_BTN}
                 onClick={handlePostToReconciliation}
-                disabled={isPosting || readOnly || pendingCount > 0 || !canWork2BImport()}
+                disabled={isPosting || writeLocked || pendingCount > 0 || !canWork2BImport()}
                 title={!canWork2BImport() ? 'Needs the Import 2B & post permission — ask a GST Manager to add it to your position' : pendingCount > 0
                   ? 'Save your row-action changes first — Post to Reconciliation reads the saved classifications.'
                   : 'Write NOT_IN_BOOKS / NOT_IN_2B classifications through to the live 2B Reconciliation ledger'}
@@ -1854,7 +2324,7 @@ const Import2BTab: React.FC = () => {
                 size="sm"
                 className={WS_BTN}
                 onClick={deleteImported2B}
-                disabled={readOnly || !canDelete2BRows()}
+                disabled={writeLocked || !canDelete2BRows()}
                 title={canDelete2BRows() ? undefined : 'Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'}
               >
                 <Trash2 className="h-3.5 w-3.5" />Delete 2B
@@ -2016,7 +2486,7 @@ const Import2BTab: React.FC = () => {
                       >
                         Discard
                       </Button>
-                      <Button size="sm" className="h-7 gap-1 px-2.5 text-xs" onClick={saveActions} disabled={isSavingActions}>
+                      <Button size="sm" className="h-7 gap-1 px-2.5 text-xs" onClick={saveActions} disabled={isSavingActions || isImporting}>
                         {isSavingActions ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                         Save changes
                       </Button>
@@ -2069,7 +2539,7 @@ const Import2BTab: React.FC = () => {
                               <Checkbox
                                 checked={allFilteredSelected}
                                 onCheckedChange={toggleAllFiltered}
-                                disabled={readOnly}
+                                disabled={writeLocked}
                                 aria-label="Select all rows"
                               />
                             </div>
@@ -2142,7 +2612,7 @@ const Import2BTab: React.FC = () => {
                                 <Checkbox
                                   checked={selected.has(d.id)}
                                   onCheckedChange={() => toggleRow(d.id)}
-                                  disabled={readOnly}
+                                  disabled={writeLocked}
                                   aria-label={`Select ${d.supplier_invoice_number || 'row'}`}
                                 />
                               </div>
@@ -2162,7 +2632,8 @@ const Import2BTab: React.FC = () => {
                               {d.is_amendment && !d.amends_doc_id && !readOnly && (
                                 <button
                                   type="button"
-                                  className="text-[11px] font-medium text-primary underline-offset-2 hover:underline"
+                                  className="text-[11px] font-medium text-primary underline-offset-2 hover:underline disabled:opacity-60"
+                                  disabled={isImporting}
                                   onClick={() => openBaseDialog(d)}
                                 >
                                   {hasBase(d) ? 'Edit counted' : 'Enter counted'}
@@ -2183,7 +2654,7 @@ const Import2BTab: React.FC = () => {
                               <select
                                 className={rowSelectCls + (isDirty ? ' border-warning' : '')}
                                 value={action}
-                                disabled={readOnly}
+                                disabled={writeLocked}
                                 title={isDirty ? 'Unsaved — click Save changes above to commit' : undefined}
                                 onChange={(e) => handleDocActionChange(d, e.target.value)}
                               >
@@ -2235,7 +2706,7 @@ const Import2BTab: React.FC = () => {
                   </div>
                 </CollapsibleTrigger>
                 {!readOnly && (
-                  <Button variant="outline" size="sm" className={WS_BTN} onClick={addBookRow}><Plus className="h-3.5 w-3.5" />Add row</Button>
+                  <Button variant="outline" size="sm" className={WS_BTN} onClick={addBookRow} disabled={isImporting}><Plus className="h-3.5 w-3.5" />Add row</Button>
                 )}
               </div>
               <CollapsibleContent>
@@ -2270,14 +2741,14 @@ const Import2BTab: React.FC = () => {
                         return (
                         <tr key={b.id} className={cn(WS_TR, TONE_ROW[tone])}>
                           <td className={cn('border-b border-r p-0', TONE_STRIPE[tone])}>
-                            <input type="date" className={cellInputCls} value={b.date || ''} disabled={readOnly}
+                            <input type="date" className={cellInputCls} value={b.date || ''} disabled={writeLocked}
                               onChange={(e) => updateBookLocal(b.id, { date: e.target.value })} onBlur={() => saveBookRow(b.id, false)} />
                           </td>
                           <td className="border-b border-r p-0">
                             <select
                               className={cn(rowSelectCls, 'm-0.5 w-[calc(100%-4px)]')}
                               value={docTypeOf({ doc_type: b.doc_type }) === 'DEBIT_NOTE' ? 'DEBIT_NOTE' : 'INVOICE'}
-                              disabled={readOnly}
+                              disabled={writeLocked}
                               title="A books row is matched only against 2B documents of its own type"
                               onChange={(e) => setBookDocType(b.id, e.target.value)}
                             >
@@ -2285,35 +2756,35 @@ const Import2BTab: React.FC = () => {
                             </select>
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={cellInputCls} value={b.supplier_name || ''} disabled={readOnly}
+                            <input className={cellInputCls} value={b.supplier_name || ''} disabled={writeLocked}
                               onChange={(e) => updateBookLocal(b.id, { supplier_name: e.target.value })} onBlur={() => saveBookRow(b.id, false)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={cellInputCls} value={b.supplier_invoice_number || ''} disabled={readOnly}
+                            <input className={cellInputCls} value={b.supplier_invoice_number || ''} disabled={writeLocked}
                               onChange={(e) => updateBookLocal(b.id, { supplier_invoice_number: e.target.value })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={`${cellInputCls} font-mono`} value={b.supplier_gstin || ''} disabled={readOnly}
+                            <input className={`${cellInputCls} font-mono`} value={b.supplier_gstin || ''} disabled={writeLocked}
                               onChange={(e) => updateBookLocal(b.id, { supplier_gstin: e.target.value.toUpperCase() })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.taxable_value || ''} disabled={readOnly}
+                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.taxable_value || ''} disabled={writeLocked}
                               onChange={(e) => updateBookLocal(b.id, { taxable_value: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, false)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_igst || ''} disabled={readOnly}
+                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_igst || ''} disabled={writeLocked}
                               onChange={(e) => updateBookLocal(b.id, { input_igst: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_cgst || ''} disabled={readOnly}
+                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_cgst || ''} disabled={writeLocked}
                               onChange={(e) => updateBookLocal(b.id, { input_cgst: toNum(e.target.value), input_sgst: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_sgst || ''} disabled={readOnly}
+                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_sgst || ''} disabled={writeLocked}
                               onChange={(e) => updateBookLocal(b.id, { input_sgst: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <select className={cn(rowSelectCls, 'm-0.5 w-[calc(100%-4px)]')} value={b.book_treatment} disabled={readOnly} onChange={(e) => setBookTreatment(b.id, e.target.value)}>
+                            <select className={cn(rowSelectCls, 'm-0.5 w-[calc(100%-4px)]')} value={b.book_treatment} disabled={writeLocked} onChange={(e) => setBookTreatment(b.id, e.target.value)}>
                               {BOOK_TREATMENTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
                           </td>
@@ -2321,7 +2792,7 @@ const Import2BTab: React.FC = () => {
                             <td className="border-b border-r px-1 text-center">
                               <Button
                                 variant="ghost"
-                                disabled={!canDelete2BRows()}
+                                disabled={!canDelete2BRows() || isImporting}
                                 title={canDelete2BRows() ? undefined : 'Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'}
                                 size="icon"
                                 className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive-strong focus-visible:opacity-100 group-hover:opacity-100"
@@ -2431,7 +2902,7 @@ const Import2BTab: React.FC = () => {
                                       size="sm"
                                       variant="outline"
                                       className="h-7 text-xs"
-                                      disabled={readOnly}
+                                      disabled={writeLocked}
                                       onClick={() => openReclaimFromPending(r)}
                                     >
                                       Link &amp; Reclaim
@@ -2440,7 +2911,7 @@ const Import2BTab: React.FC = () => {
                                       size="sm"
                                       variant="ghost"
                                       className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                                      disabled={readOnly}
+                                      disabled={writeLocked}
                                       onClick={() => setPendingExpenseOut(r.id)}
                                     >
                                       Expense out
@@ -2497,7 +2968,7 @@ const Import2BTab: React.FC = () => {
                                 <td className={WS_TD}>
                                   <select
                                     className={rowSelectCls}
-                                    disabled={readOnly}
+                                    disabled={writeLocked}
                                     value={r.book_entry_month ? 'current' : 'blank'}
                                     onChange={(e) => setPendingBookEntry(r.id, e.target.value as 'blank' | 'current')}
                                   >
@@ -2562,7 +3033,7 @@ const Import2BTab: React.FC = () => {
                                     size="sm"
                                     variant="outline"
                                     className="h-7 text-xs"
-                                    disabled={readOnly}
+                                    disabled={writeLocked}
                                     onClick={() => undoExpenseOut(r.id)}
                                   >
                                     Undo
@@ -2626,12 +3097,12 @@ const Import2BTab: React.FC = () => {
           )}
           <DialogFooter className="gap-2 sm:gap-0">
             {baseDialog && hasBase(baseDialog.doc) && (
-              <Button variant="ghost" size="sm" className="mr-auto text-muted-foreground" disabled={isSavingBase} onClick={() => saveBase(true)}>
+              <Button variant="ghost" size="sm" className="mr-auto text-muted-foreground" disabled={isSavingBase || isImporting} onClick={() => saveBase(true)}>
                 Clear
               </Button>
             )}
             <Button variant="outline" size="sm" disabled={isSavingBase} onClick={() => setBaseDialog(null)}>Cancel</Button>
-            <Button size="sm" disabled={isSavingBase} onClick={() => saveBase(false)}>
+            <Button size="sm" disabled={isSavingBase || isImporting} onClick={() => saveBase(false)}>
               {isSavingBase && <Loader2 className="h-3.5 w-3.5 animate-spin" />}Save
             </Button>
           </DialogFooter>

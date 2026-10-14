@@ -28,7 +28,7 @@ import * as XLSX from 'xlsx';
 import {
   computeNet4C, computePartialItcSplit, computeSection4ATotal5, computeTotal4A, computeTotal4B,
 } from '@/utils/builderPartialItc';
-import { fetchImport2BCreditNotes, fetchImport2BEligibleTotal } from '@/lib/postImport2B';
+import { fetchImport2BCreditNotes, fetchImport2BEligibleTotal, fetchImport2BHeld, import2BHeldMessage } from '@/lib/postImport2B';
 
 // Auto-linked / auto-calculated rows: figures come from elsewhere, not typed.
 const LOCKED_ROW = 'bg-muted/30';
@@ -200,6 +200,11 @@ const ITCSummaryPage: React.FC = () => {
   // Row 5.3: the month's 2B credit notes, and whether its import read notes.
   const [creditNotesFromImport2B, setCreditNotesFromImport2B] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [notesFromImport2B, setNotesFromImport2B] = useState(false);
+  // The Import 2B read for rows 5.1 / 5.3 failed: they show 0, so Save is
+  // refused until a load succeeds (a failed read must never be saved).
+  const [import2BReadFailedRaw, setImport2BReadFailed] = useState(false);
+  // Amendments HELD in Import 2B this month: counted nowhere, named under row 5.1.
+  const [heldInImport2B, setHeldInImport2B] = useState(0);
   const import2BRequest = useRef(0);
   const [rcmTotals, setRcmTotals] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
@@ -238,6 +243,10 @@ const ITCSummaryPage: React.FC = () => {
   // writes to it directly instead of via Import 2B) — only row 5.1's source
   // is Import-2B-exclusive.
   const isLiberalClient = selectedClientData?.liberal_2b_reconciliation === true;
+  // Save is refused after a failed Import 2B read only where a saved figure
+  // comes from it (rows 5.1 / 5.3 of a Strict client); Liberal and No-ITC
+  // clients type those rows, so the read feeds only their red marks.
+  const import2BReadFailed = import2BReadFailedRaw && !isLiberalClient && !isNoItcClient;
   // Row 5.3 "Debit Note" fills itself from the month's 2B credit notes for a
   // Strict client (firm decision, 14 Oct 2026), but only for a month whose
   // import read the notes: an older, invoices-only month keeps 5.3 as typed.
@@ -449,26 +458,33 @@ const ITCSummaryPage: React.FC = () => {
   const fetchImport2BEligible = useCallback(async () => {
     const request = ++import2BRequest.current;
     setNotesFromImport2B(false);
+    setHeldInImport2B(0);
     if (!selectedClient || !selectedMonth) {
       setEligibleFromImport2B({ igst: 0, cgst: 0, sgst: 0 });
       setCreditNotesFromImport2B({ igst: 0, cgst: 0, sgst: 0 });
+      setImport2BReadFailed(false);
       return;
     }
     try {
-      const [totals, notes] = await Promise.all([
+      const [totals, notes, held] = await Promise.all([
         fetchImport2BEligibleTotal(selectedClient, selectedMonth),
         fetchImport2BCreditNotes(selectedClient, selectedMonth),
+        // Only the line under row 5.1 reads this: a failed count hides that line, never the totals.
+        fetchImport2BHeld(selectedClient, selectedMonth).catch(() => 0),
       ]);
       if (request !== import2BRequest.current) return;
       setEligibleFromImport2B(totals);
       setCreditNotesFromImport2B(notes.total);
       setNotesFromImport2B(notes.notesRead);
+      setHeldInImport2B(held);
+      setImport2BReadFailed(false);
     } catch (err) {
       if (request !== import2BRequest.current) return;
       console.error('Error fetching Import 2B totals:', err);
-      toast.error('Could not read the Import 2B totals for rows 5.1 and 5.3. Reload before saving.');
+      toast.error('Could not read the Import 2B totals for rows 5.1 and 5.3. Saving is off until the page is reloaded.');
       setEligibleFromImport2B({ igst: 0, cgst: 0, sgst: 0 });
       setCreditNotesFromImport2B({ igst: 0, cgst: 0, sgst: 0 });
+      setImport2BReadFailed(true);
     }
   }, [selectedClient, selectedMonth]);
 
@@ -819,9 +835,6 @@ const ITCSummaryPage: React.FC = () => {
             if (newData.data && newData.data.section4A) {
               const template = isReversalClient ? getPartialITCData() : getDefaultITCData();
               setItcData(applyStructuralFlags(newData.data as ITCData, template));
-              // Re-run the auto-link effect, so rows 5.1 / 5.3 show the live
-              // Import 2B figures, not the ones in the other user's save.
-              setDataLoadVersion(v => v + 1);
               toast.info('ITC Summary updated by another user');
             }
           }
@@ -887,6 +900,10 @@ const ITCSummaryPage: React.FC = () => {
   // Save to database
   const handleSave = async () => {
     if (!selectedClient || !selectedMonth) return;
+    if (import2BReadFailed) {
+      toast.error('Rows 5.1 and 5.3 could not be read from Import 2B, so they show 0. Reload the page before saving.');
+      return;
+    }
 
     // Validate reasons - minimum 40 characters if any text is entered
     const allRows = [...itcData.section4A, ...itcData.section4B, ...itcData.section4D];
@@ -1058,8 +1075,6 @@ const ITCSummaryPage: React.FC = () => {
     try {
       const versionData = version.versionData as ITCData;
       setItcData(versionData);
-      // Linked rows (5.1, 5.3, 5.4, ...) take the live figures again, not the version's.
-      setDataLoadVersion(v => v + 1);
       // Save as RESTORE
       const { data: maxV } = await supabase.from('itc_versions').select('version_number').eq('client_id', selectedClient).eq('period_month', selectedMonth).order('version_number', { ascending: false }).limit(1);
       const nextV = (maxV?.[0]?.version_number || 0) + 1;
@@ -1386,6 +1401,11 @@ const ITCSummaryPage: React.FC = () => {
             </span>
           )}
           {!auto && typedMark(section, row)}
+          {section === 'section4A' && row.srNo === '5.1' && heldInImport2B > 0 && (
+            <span className="mt-0.5 block text-[11px] font-medium text-destructive">
+              {import2BHeldMessage(heldInImport2B)}
+            </span>
+          )}
         </td>
         {renderEditableCell(section, idx, row, 'igst')}
         {renderEditableCell(section, idx, row, 'cgst')}
@@ -1472,7 +1492,13 @@ const ITCSummaryPage: React.FC = () => {
               </Button>
             )}
             {selectedClient && !editLocked && (
-              <Button size="sm" className={cn(WS_BTN, 'px-3')} onClick={handleSave} disabled={isSaving}>
+              <Button
+                size="sm"
+                className={cn(WS_BTN, 'px-3')}
+                onClick={handleSave}
+                disabled={isSaving || import2BReadFailed}
+                title={import2BReadFailed ? 'Rows 5.1 and 5.3 could not be read from Import 2B. Reload the page before saving.' : undefined}
+              >
                 {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 {isSaving ? 'Saving…' : 'Save changes'}
               </Button>
@@ -1647,6 +1673,7 @@ const ITCSummaryPage: React.FC = () => {
                               <span className="mt-0.5 block text-[11px] font-medium text-destructive">
                                 Negative in {[['IGST', total5.igst], ['CGST', total5.cgst], ['SGST', total5.sgst]].filter(([, v]) => (v as number) < -0.005).map(([h]) => h).join(', ')}:
                                 GSTR-3B shows 0 in 4A(5) and adds the excess to 4B(2) Others.
+                                {isReversalClient && ' A negative 4B(1) below (Total 4A under zero) is likewise filed as 0 and taken off 4B(2) Others; net ITC is the same.'}
                               </span>
                             )}
                           </>,

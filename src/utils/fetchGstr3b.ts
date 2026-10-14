@@ -6,6 +6,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bItcTyped, type Gstr3bResult, type ItcData, type ItcRow, type RcmTotals } from './buildGstr3bJson';
 import { fetchItcAutoLinkTotals } from '@/lib/itcAutoLink';
+import { fetchImport2BHeld, import2BHeldMessage } from '@/lib/postImport2B';
 
 const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const toShort = (mmYyyy: string) => {
@@ -19,7 +20,7 @@ export async function fetchGstr3b(
   periodMonth: string, // MM/YYYY
 ): Promise<Gstr3bResult> {
   const short = toShort(periodMonth);
-  const [g, itcRes, rcmRes, adjRes, fsiRes, filingRes, clientRes, autoLink] = await Promise.all([
+  const [g, itcRes, rcmRes, adjRes, fsiRes, filingRes, clientRes, autoLink, held] = await Promise.all([
     supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', short).maybeSingle(),
     supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle(),
     supabase.from('rcm_data').select('taxable_value, cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', short),
@@ -49,6 +50,9 @@ export async function fetchGstr3b(
     // liberal_2b_reconciliation, which gates the row 5.1 / 5.3 auto-links below.
     supabase.from('clients').select('builder_itc_type, commercial_area, residential_area, liberal_2b_reconciliation').eq('id', clientId).maybeSingle(),
     fetchItcAutoLinkTotals(clientId, periodMonth),
+    // Amendments HELD in Import 2B count in neither 5.1 nor 5.3 until staff
+    // settle them: flagged below. A failed count is flagged, never fatal.
+    fetchImport2BHeld(clientId, periodMonth).catch(() => null),
   ]);
 
   const alreadyFiled = ((filingRes.data as { status: string }[]) || []).some((r) => r.status === 'Filed');
@@ -156,5 +160,8 @@ export async function fetchGstr3b(
     commercialArea: clientRow?.commercial_area ?? null,
     residentialArea: clientRow?.residential_area ?? null,
   });
-  return { ...built, itcTyped };
+  const flags = [...built.flags];
+  if (held === null) flags.push('Could not check Import 2B for held amendments: open Import 2B to see whether any are held.');
+  else if (held > 0) flags.push(`${import2BHeldMessage(held)}.`);
+  return { ...built, flags, itcTyped };
 }

@@ -425,16 +425,36 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   // clients skip both the split AND the plain lookup — (1) is forced to
   // equal itcAvail exactly, guaranteeing Net ITC (4C) is 0 by construction.
   // Non-builder clients fall through to the plain row lookup.
-  const revRul = isNoITC
+  const revRulRaw = isNoITC
     ? round3(itcAvail) // 4B(1) — locked to the whole of 4A, no exceptions
     : partialSplit
     ? round3(add3(partialSplit.row1Reclassified, { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })) // 4B(1) rule 38/42/43 & 17(5)
     : round3(add3(row(B, '(1)'), { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })); // 4B(1) rule 38/42/43 & 17(5)
-  const revOth = isNoITC
+  const revOthRaw = isNoITC
     ? { igst: 0, cgst: 0, sgst: 0 } // 4B(2) others — always 0 for a No-ITC builder
     : partialSplit
     ? round3(add3(partialSplit.row2Reclassified, excess4A5)) // 4B(2) others: 2B-reco / 180-day reversal, plus a negative 4A(5)'s excess
     : round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'), excess4A5)); // 4B(2) others, plus a negative 4A(5)'s excess
+  // A Partial-ITC builder's carpet-area split runs on Total 4A before 4A(5)
+  // is clipped, so credit notes that take a head of Total 4A below zero give
+  // a negative 4B(1), which the portal refuses. That head is 0 in 4B(1) and
+  // its negative part comes off 4B(2) Others (which holds the clipped
+  // excess), so net ITC (4C) is unchanged.
+  // Only a head whose 4A(5) was clipped, and never more than 4B(2) holds: a
+  // negative 4B(1) from typed adjustments in an ordinary month stays as it
+  // was (the draft check flags it for staff to correct).
+  const clipNeg = (h: 'igst' | 'cgst' | 'sgst') =>
+    excess4A5[h] > 0 ? Math.max(Math.min(0, revRulRaw[h]), -Math.max(0, revOthRaw[h])) : 0;
+  const negRul = partialSplit && !isNoITC
+    ? { igst: clipNeg('igst'), cgst: clipNeg('cgst'), sgst: clipNeg('sgst') }
+    : { igst: 0, cgst: 0, sgst: 0 };
+  const revRul = round3(sub3(revRulRaw, negRul));
+  const revOth = round3(add3(revOthRaw, negRul));
+  if (negRul.igst || negRul.cgst || negRul.sgst) {
+    const heads = [['IGST', negRul.igst], ['CGST', negRul.cgst], ['SGST', negRul.sgst]]
+      .filter(([, v]) => v).map(([h, v]) => `${h} ${Number(v).toFixed(2)}`).join(', ');
+    flags.push(`4B(1) Rule 42/43 reversal came out negative (${heads}), since credit notes took Total 4A below zero: set to 0 and taken off 4B(2) Others (net ITC unchanged).`);
+  }
 
   const rclmd1 = row(D, '(1)');                       // 4D(1) ITC reclaimed which was reversed under 4B(2) in an earlier period
   const inelgOth = row(D, '(2)');                     // 4D(2) 16(4) & PoS
