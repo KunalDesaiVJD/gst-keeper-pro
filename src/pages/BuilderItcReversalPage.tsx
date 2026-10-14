@@ -435,12 +435,6 @@ const BuilderItcReversalPage: React.FC = () => {
                           <Badge variant={portal.source === 'GSTR9_FILED' ? 'success' : 'warning'} className="text-[10px]">
                             {PORTAL_SOURCE_LABEL[portal.source]}{portal.arn ? ` · ARN ${portal.arn}` : ''}
                           </Badge>
-                          {editable && yr?.referenceDiff && HEADS.some((h) => Math.abs(yr.referenceDiff![h]) > 1) && (
-                            <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy}
-                              onClick={() => void run(() => fillYearFromPortal(y.id, portal, user?.id ?? null), 'Filled from the portal')}>
-                              Fill from portal
-                            </Button>
-                          )}
                         </span>
                       )}
                       {!y.is_bu_year && !portal && (
