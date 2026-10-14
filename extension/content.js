@@ -5015,18 +5015,29 @@
   // The tables of a captured answer: {status, data: {...}} or the data itself;
   // a single-table answer (rule42 … at the top) is taken as Table 7.
   function g9Tables(body) {
-    const d = body && typeof body === 'object' && body.data && typeof body.data === 'object' ? body.data : body;
-    if (!d || typeof d !== 'object') return {};
+    // Anywhere in the answer (getDetails nests them): tableN objects, and the
+    // rows of Table 6 / Table 7 wherever they sit.
     const out = {};
-    for (const k of Object.keys(d)) if (/^table\d+[A-Z]?$/i.test(k) && d[k] && typeof d[k] === 'object') out[k] = d[k];
-    if (!out.table7 && ['rule37', 'rule39', 'rule42', 'rule43', 'sec17'].some((k) => k in d)) out.table7 = d;
+    const walk = (o, depth) => {
+      if (!o || typeof o !== 'object' || depth > 6) return;
+      if (Array.isArray(o)) { o.forEach((x) => walk(x, depth + 1)); return; }
+      if (g9Detail7(o)) g9Merge(out, { table7: o });
+      if (g9Detail6(o)) g9Merge(out, { table6: o });
+      for (const k of Object.keys(o)) {
+        const v = o[k];
+        if (/^table\d+[A-Z]?$/i.test(k) && v && typeof v === 'object') g9Merge(out, { [k]: v });
+        walk(v, depth + 1);
+      }
+    };
+    walk(body, 0);
     return out;
   }
   function g9ForPeriod(item, retPeriod) {
     const d = item.body && item.body.data && typeof item.body.data === 'object' ? item.body.data : item.body;
     const fp = d && (d.fp || d.ret_period || d.rtn_prd);
     if (fp) return String(fp) === retPeriod;
-    return item.url.indexOf(retPeriod) >= 0;
+    // getDetails answers carry no period: taken when loaded during this year's visit.
+    return item.url.indexOf(retPeriod) >= 0 || !/ret_period=|rtn_prd=/.test(item.url);
   }
   function g9HasCalc(c) { return !!(c && (c.table4 || c.table5 || c.table6)); }
   // The filed return's summary page carries each table's total only
@@ -5129,18 +5140,42 @@
       const calc = {};
       const filed = {};
       const urls = [];
+      const raw = [];
       for (const it of g9Captured(g9.since)) {
         if (!g9ForPeriod(it, retPeriod)) continue;
         urls.push(it.url.replace(/^https:\/\/[^/]+/, '').split('?')[0]);
+        // The page's own answers, kept as they came (not the summary or calc,
+        // which are saved anyway), so a new shape can be read without a new pull.
+        if (!/summary|calc|formdetails|questions/i.test(it.url)) raw.push({ url: it.url.replace(/^https:\/\/[^/]+/, ''), body: it.body });
         const t = g9Tables(it.body);
         if (/calc/i.test(it.url)) Object.assign(calc, t);
         else g9Merge(filed, t);
       }
-      return { calc, filed, urls: [...new Set(urls)] };
+      return { calc, filed, urls: [...new Set(urls)], raw };
     };
 
     let calcRes = await getJson(calcUrl);
     let calc = calcRes.data || null;
+    // 0.11.3: the filed return's rows come from api/gstr9/getDetails (seen on
+    // the portal's own GSTR-9 view, 14 Oct). Ask it directly first; its answer
+    // goes into the same store as the page's own, so it is read the same way.
+    if (isFiled) {
+      for (const q of ['?gstin=' + encodeURIComponent(gstin) + '&ret_period=' + retPeriod, '?ret_period=' + retPeriod + '&gstin=' + encodeURIComponent(gstin)]) {
+        try {
+          const r = await fetch('https://return.gst.gov.in/returns2/auth/api/gstr9/getDetails' + q, { credentials: 'include', headers: { Accept: 'application/json' } });
+          const t = await r.text();
+          let j = null;
+          try { j = JSON.parse(t); } catch (e) { /* HTML */ }
+          if (j && typeof j === 'object') {
+            let list = [];
+            try { list = JSON.parse(sessionStorage.getItem(G9_KEY()) || '[]'); } catch (e) { list = []; }
+            list.push({ url: 'https://return.gst.gov.in/returns2/auth/api/gstr9/getDetails' + q + '&_gstk=direct', at: Date.now(), body: j });
+            sessionStorage.setItem(G9_KEY(), JSON.stringify(list.slice(-40)));
+            if (j.status === 1) break;
+          }
+        } catch (e) { /* the page's own call is the fallback */ }
+      }
+    }
     let seen = merged();
     const needFiled = () => isFiled && !g9Detail7(seen.filed.table7);
     const needCalc = () => !g9HasCalc(calc) && !g9HasCalc(seen.calc);
@@ -5182,7 +5217,7 @@
         if (!isFiled && needCalc() && !g9.prepTried && Date.now() - g9.openedAt > 12000) {
           calcRes = await getJson(calcUrl);
           if (calcRes.data && g9HasCalc(calcRes.data)) { calc = calcRes.data; break; }
-          const prep = g9TileButtons().find((b) => /PREPARE ONLINE/.test(btnText(b)));
+          const prep = g9TileButtons().find((b) => /PREPARE[\s-]*ONLINE/.test(btnText(b)));
           g9.prepTried = true;
           await setJob(job);
           if (prep) {
@@ -5218,7 +5253,8 @@
       + (g9.prepTried ? ' · Prepare Online tried' : '')
       + ' · page loaded: ' + (seen.urls.join(', ') || 'nothing');
     const hasFiled = ['table6', 'table7', 'table6Total', 'table7Total'].some((k) => seen.filed[k]);
-    const filed = hasFiled ? Object.assign({ fp: retPeriod, gstin }, seen.filed, { _read: how }) : null;
+    const rawKept = JSON.stringify(seen.raw).length < 400000 ? seen.raw : seen.raw.map((r) => ({ url: r.url, body: '(too large)' }));
+    const filed = hasFiled ? Object.assign({ fp: retPeriod, gstin }, seen.filed, { _read: how, _captures: rawKept }) : null;
 
     const arn = (form && form.arn) || null;
     const filedOn = (form && form.fil_dt) || null;
@@ -5236,7 +5272,7 @@
     try {
       if (calc) {
         await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', {
-          ...base, summary: calc,
+          ...base, summary: g9HasCalc(calc) ? calc : Object.assign({}, calc, { _captures: seen.raw.slice(0, 20) }),
           status: g9HasCalc(calc) ? status : status + ' · system-computed Tables 4 to 6 not yet available on the portal · ' + how,
         });
       }

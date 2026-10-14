@@ -2,6 +2,14 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-14 — Filed GSTR-9 rows from getDetails (v0.11.3)
+
+- 0.11.2's run on Bapa Sitaram showed what the portal's GSTR-9 view loads: `api/gstr9/summary` (each table's total), `api/gstr/questions/get`, `api/gstr9/details/calc` and **`api/gstr9/getDetails`**. The rows of Tables 6 and 7 are in `getDetails`.
+- 0.11.2 dropped `getDetails` because its answer names no return period. An answer without one is now taken when it was loaded during that year's visit. Tables are looked for anywhere in an answer, not only at its top.
+- For a filed year the extension also asks `getDetails` directly before opening the page.
+- The page's own answers are kept with the row (`_captures`), so a new shape can be read without another pull.
+- The unfiled year's button is `PREPARE-ONLINE` (with a hyphen); 0.11.2 looked for `PREPARE ONLINE` and pressed nothing.
+
 ## 2026-10-14 — Table 7 rows of the filed GSTR-9 (v0.11.2)
 
 - 0.11.1 reached the filed GSTR-9 (Bapa Sitaram 2022-23 to 2024-25). The page it opens gives each table's **total** only: Table 6 as one amount, Table 7 as one amount (7I). 0.11.1 took that total for Table 7's rows and stopped there.
