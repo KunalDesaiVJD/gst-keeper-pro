@@ -28,6 +28,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { describeClientDeleteError } from '@/lib/clientDeleteError';
 import { toast } from 'sonner';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
+import LiberalModeListDialog from '@/components/clients/LiberalModeListDialog';
 import { EinvoiceStatusBadge } from '@/components/clients/EinvoiceStatusBadge';
 import {
   loadEinvoiceData,
@@ -282,15 +283,20 @@ const ClientsPage: React.FC = () => {
         icon={<Users />}
         actions={
           activeTab === 'clients'
-            ? (canAddEditClients() ? (
+            ? (
                 <>
-                  <BulkAddClientsDialog onSuccess={() => fetchClients()} triggerClassName={WS_BTN} />
-                  <Button size="sm" onClick={() => navigate('/add-client')} className={WS_BTN}>
-                    <Plus className="h-3.5 w-3.5" />
-                    Add Client
-                  </Button>
+                  <LiberalModeListDialog triggerClassName={WS_BTN} />
+                  {canAddEditClients() && (
+                    <>
+                      <BulkAddClientsDialog onSuccess={() => fetchClients()} triggerClassName={WS_BTN} />
+                      <Button size="sm" onClick={() => navigate('/add-client')} className={WS_BTN}>
+                        <Plus className="h-3.5 w-3.5" />
+                        Add Client
+                      </Button>
+                    </>
+                  )}
                 </>
-              ) : undefined)
+              )
             : (canExportCreds ? (
               <>
                 <Button

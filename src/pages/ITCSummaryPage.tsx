@@ -1229,6 +1229,43 @@ const ITCSummaryPage: React.FC = () => {
     </Badge>
   );
 
+  // Option 3 (the firm, 14 Oct 2026): ITC that the 2B flow would otherwise give
+  // but that is typed here is marked in red, with what 2B gives. Row 5.1 is
+  // typed for Liberal and No-ITC clients (never computed for them, see the
+  // auto-link effect); row 5.2 has no 2B source for any client. An audit found
+  // Aug-26 ITC typed in 5.1 for 11 Liberal clients with no 2B behind it.
+  const typedNotFrom2B = (section: keyof ITCData, row: ITCRow): { detail: string } | null => {
+    if (section !== 'section4A') return null;
+    const inr = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const typed = row.igst + row.cgst + row.sgst;
+    if (row.srNo === '5.1' && (isLiberalClient || isNoItcClient)) {
+      const g = { igst: eligibleFromImport2B.igst + reversalFromReco.igst, cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst, sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst };
+      const twob = g.igst + g.cgst + g.sgst;
+      if (Math.abs(typed) < 0.5 && Math.abs(twob) < 0.5) return null;
+      const diff = typed - twob;
+      return {
+        detail: `2B gives ₹${inr(twob)} (IGST ${inr(g.igst)}, CGST ${inr(g.cgst)}, SGST ${inr(g.sgst)})`
+          + (Math.abs(diff) < 1 ? ': the typed figure equals it' : `: difference ₹${inr(diff)}`),
+      };
+    }
+    if (row.srNo === '5.2' && Math.abs(typed) >= 0.5) {
+      return { detail: 'No 2B source: check it against the Not in Books list on 2B Reconciliation' };
+    }
+    return null;
+  };
+  const typedMark = (section: keyof ITCData, row: ITCRow) => {
+    const t = typedNotFrom2B(section, row);
+    if (!t) return null;
+    return (
+      <span className="mt-0.5 block text-[11px] font-medium text-destructive" title="Typed in ITC Summary, not taken from 2B">
+        <Badge variant="outline" className="mr-1.5 border-destructive/50 px-1.5 align-middle text-[10px] font-semibold text-destructive">
+          Typed, not from 2B
+        </Badge>
+        {t.detail}
+      </span>
+    );
+  };
+
   // Reasons column: an inline input on every value row.
   const reasonCell = (section: keyof ITCData, idx: number, row: ITCRow) => (
     <td className={cn(WS_TD, 'border-r-0 p-0')}>
@@ -1271,6 +1308,7 @@ const ITCSummaryPage: React.FC = () => {
       <td className={WS_TD}>
         {row.particular}
         {row.isAutoLinked && autoBadge('Auto-linked')}
+        {!row.isAutoLinked && typedMark(section, row)}
       </td>
       {renderEditableCell(section, idx, row, 'igst')}
       {renderEditableCell(section, idx, row, 'cgst')}

@@ -187,6 +187,18 @@ directly with the firm, not an engineering guess:
 - `readOnly` on the reconciliation page is `isLocked || !isLiberalClient` —
   a filed period is always read-only on top of the client's mode, for both
   Strict and Liberal clients alike.
+- **Liberal also makes ITC Summary row 5.1 a typed figure** (since 17 Aug
+  2026; No-ITC builders too, since 19 Aug). Nothing on the Liberal 2B
+  Reconciliation page can feed it: that page holds only the Not in 2B / Not in
+  Books lists. An audit on 14 Oct 2026 found Aug-26 ITC typed there for 11
+  Liberal clients with no 2B behind it (₹1.95 crore). The firm kept the mode
+  (its option 3) on three conditions, built the same day:
+  - a typed 5.1 (Liberal / No-ITC) and any row 5.2 are marked in red, **"Typed,
+    not from 2B"**, on ITC Summary with what 2B gives and the difference, and
+    on GSTR-3B Table 4 (`fetchGstr3b` → `itcTyped`);
+  - every switch is logged with who and when (`clients.liberal_changed_*`,
+    `client_liberal_log`, migration 20261017100000);
+  - Clients → **Liberal / Strict** lists both at a glance, in a pop-up.
 
 ## Row 5.1 auto-link
 
@@ -210,9 +222,10 @@ number. (A carried-forward pending item keeps its *original* `reversal_month`
 across the carry — see §2 — so it is added to 5.1 exactly once, in its
 origination month, never again while it sits in Pending Items.)
 
-Staff can no longer hand-type row 5.1; if a client needs an adjustment outside
-what Import 2B captures, it has to go through Import 2B's classification, not
-a manual override on this row.
+For a **Strict** client staff can no longer hand-type row 5.1; if a client needs
+an adjustment outside what Import 2B captures, it has to go through Import 2B's
+classification, not a manual override on this row. (A Liberal or No-ITC
+client's 5.1 is typed, and marked so: §5.)
 
 **Not wired:** an ineligible-ITC total from INELIGIBLE-classified 2B docs into
 section 4D's ineligible row. That row stays fully manual — it already covers

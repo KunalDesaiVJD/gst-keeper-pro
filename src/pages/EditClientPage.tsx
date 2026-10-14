@@ -60,6 +60,9 @@ const EditClientPage: React.FC = () => {
 
   // Original registration type loaded from DB
   const originalRegType = useRef<RegistrationType | ''>('');
+  // The 2B Reconciliation mode as loaded: a save that changes it stamps who
+  // switched it (the database logs every switch, client_liberal_log).
+  const originalLiberal = useRef<boolean | null>(null);
 
   const [formData, setFormData] = useState({
     gstin: '',
@@ -136,7 +139,7 @@ const EditClientPage: React.FC = () => {
         registrationCancellationDate: (data as any).registration_cancellation_date || '',
         inactiveAtHand: !!(data as any).inactive_at_hand,
         noticesSyncExcluded: !!(data as any).notices_sync_excluded,
-        liberal2BReconciliation: !!(data as any).liberal_2b_reconciliation,
+        liberal2BReconciliation: (originalLiberal.current = !!(data as any).liberal_2b_reconciliation),
         einvoiceApplicable: !!data.einvoice_applicable && !data.einvoice_exemption,
         einvoiceExemption: data.einvoice_exemption || '',
         defaultTargetDate: defaultTarget,
@@ -333,6 +336,11 @@ const EditClientPage: React.FC = () => {
           inactive_at_hand: formData.inactiveAtHand,
           notices_sync_excluded: formData.noticesSyncExcluded,
           liberal_2b_reconciliation: formData.liberal2BReconciliation,
+          // Who switched Strict / Liberal: sent only with a switch; the
+          // database keeps the time and writes the log (migration 20261017100000).
+          ...(originalLiberal.current !== null && formData.liberal2BReconciliation !== originalLiberal.current
+            ? { liberal_changed_at: new Date().toISOString(), liberal_changed_by: user?.id ?? null, liberal_changed_by_name: user?.firstName || user?.email || null }
+            : {}),
           einvoice_applicable: formData.einvoiceExemption ? false : formData.einvoiceApplicable,
           einvoice_exemption: formData.einvoiceExemption || null,
           gst_user_id: formData.gstUserId.trim() || null,
@@ -369,6 +377,7 @@ const EditClientPage: React.FC = () => {
           .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)', 'ITC-04', 'CMP-08']);
       }
 
+      originalLiberal.current = formData.liberal2BReconciliation;
       toast.success(`${formData.name} has been successfully updated.`);
       navigate('/clients');
     } catch (error: any) {
