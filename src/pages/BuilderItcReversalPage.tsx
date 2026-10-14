@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { CheckCircle2, CloudDownload, Loader2, Plus, Save, Send, Undo2 } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, CloudDownload, Loader2, Plus, Save, Send, Undo2 } from 'lucide-react';
 import { useExtensionBridge } from '@/components/gstr9/portal/useExtensionBridge';
 import { compareVersions } from '@/lib/extensionVersion';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
@@ -86,6 +86,10 @@ const BuilderItcReversalPage: React.FC = () => {
   const [filed, setFiled] = useState<Record<string, FiledGstr9>>({});
   const [polling, setPolling] = useState<number | null>(null);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
+  // Year cards start collapsed; the working can show each tax head.
+  const [openYears, setOpenYears] = useState<Set<string>>(new Set());
+  const [byHead, setByHead] = useState(false);
+  const toggleYear = (id: string) => setOpenYears((o) => { const n = new Set(o); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -284,12 +288,17 @@ const BuilderItcReversalPage: React.FC = () => {
   const buFy = working?.bu_fy;
   const fyOptions = buFy ? fyRange('2019-20', buFy) : [];
   const totals = result?.years.reduce((a, y) => ({
-    availed: add(a.availed, y.availed),
-    net7j: add(a.net7j, y.t7j),
     base: add(a.base, add(y.baseR42, y.baseR43)),
     attributable: add(a.attributable, add(y.attributableR42, y.attributableR43)),
-    reversed: add(a.reversed, add(y.reversedR42, y.reversedR43)),
-  }), { availed: ZERO, net7j: ZERO, base: ZERO, attributable: ZERO, reversed: ZERO });
+  }), { base: ZERO, attributable: ZERO });
+  // A working figure: its total, or (By tax head) each head that is not nil.
+  const amt = (t: Tax) => (byHead ? (
+    <span className="block space-y-0.5">
+      {HEADS.filter((h) => h !== 'x' || t.x).map((h) => (
+        <span key={h} className="block whitespace-nowrap"><span className="text-[11px] text-muted-foreground">{HEAD_LABEL[h]}</span> {inr(t[h])}</span>
+      ))}
+    </span>
+  ) : inr(total(t)));
 
   return (
     <div className={WS_PAGE}>
@@ -403,7 +412,6 @@ const BuilderItcReversalPage: React.FC = () => {
             <div className="space-y-3">
               {years.map((y) => {
                 const yr = result.years.find((r) => r.financialYear === y.financial_year);
-                const ref = refs[y.financial_year];
                 const portal = !y.is_bu_year ? filed[y.financial_year] : undefined;
                 // What a filed GSTR-9 gave is the superadmin's to change (the DB
                 // refuses anyone else); a year whose GSTR-9 is not filed stays editable.
@@ -425,9 +433,16 @@ const BuilderItcReversalPage: React.FC = () => {
                 );
                 return (
                   <div key={y.id} className="rounded-md border">
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/50 px-3 py-1.5">
-                      <span className="text-sm font-semibold">
+                    <div
+                      role="button" tabIndex={0} aria-expanded={openYears.has(y.id)}
+                      onClick={() => toggleYear(y.id)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleYear(y.id); } }}
+                      className={cn('flex cursor-pointer flex-wrap items-center justify-between gap-2 bg-muted/50 px-3 py-1.5', openYears.has(y.id) && 'border-b')}
+                    >
+                      <span className="flex items-center gap-1 text-sm font-semibold">
+                        {openYears.has(y.id) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                         {fyLabel(y.financial_year)}
+                        {yr && <span className="ml-2 text-xs font-normal text-muted-foreground">common credit ₹{inr(total(add(yr.baseR42, yr.baseR43)))}</span>}
                         {y.is_bu_year && <Badge variant="warning" className="ml-2 text-[10px]">BU year · enter by hand</Badge>}
                       </span>
                       {portal && (
@@ -446,6 +461,7 @@ const BuilderItcReversalPage: React.FC = () => {
                         </Badge>
                       )}
                     </div>
+                    {openYears.has(y.id) && (<>
                     <div className={cn(WS_TABLE_WRAP, 'rounded-none border-0')}>
                       <table className={WS_TABLE}>
                         <thead>
@@ -488,28 +504,10 @@ const BuilderItcReversalPage: React.FC = () => {
                               </tr>
                             );
                           })}
-                          {ref?.availed && (
-                            <tr className="bg-muted/30 text-xs text-muted-foreground">
-                              <td className={WS_TD}>App's figure: {ref.source}{ref.months < 12 && ref.source !== 'GSTR-9 Table 6A' ? ` (${ref.months} months)` : ''}</td>
-                              {HEADS.map((h) => <td key={h} className={WS_TD_NUM}>{inr(ref.availed![h])}</td>)}
-                            </tr>
-                          )}
-                          {yr?.filed7i && (
+                          {yr?.filed7i && !isLocked(y, 't7_other') && (
                             <tr className={cn(WS_TR, 'text-xs text-muted-foreground')}>
                               <td className={WS_TD}>7I as in the filed GSTR-9 (portal) — the rows above must add up to it</td>
                               {HEADS.map((h) => <td key={h} className={WS_TD_NUM}>{inr(yr.filed7i![h])}</td>)}
-                            </tr>
-                          )}
-                          {yr && (
-                            <tr className={WS_TR}>
-                              <td className={WS_TD}>Attributable to the exempt share ({(result.ratio * 100).toFixed(2)}%)</td>
-                              {HEADS.map((h) => <td key={h} className={WS_TD_NUM}>{inr(add(yr.attributableR42, yr.attributableR43)[h])}</td>)}
-                            </tr>
-                          )}
-                          {yr && (
-                            <tr className={WS_TR_TOTAL}>
-                              <td className={WS_TD}>Net to reverse (attributable − 7C − 7D)</td>
-                              {HEADS.map((h) => <td key={h} className={WS_TD_NUM}>{inr(yr.net[h])}</td>)}
                             </tr>
                           )}
                         </tbody>
@@ -557,6 +555,7 @@ const BuilderItcReversalPage: React.FC = () => {
                         </label>
                       </div>
                     )}
+                    </>)}
                   </div>
                 );
               })}
@@ -566,17 +565,20 @@ const BuilderItcReversalPage: React.FC = () => {
           <SectionCard
             title="Working"
             description="Per year: common credit (GSTR-9 7J + 7C + 7D) × exempt share, less what 7C/7D already reversed"
+            actions={(
+              <label className="flex items-center gap-2 text-xs">
+                <Checkbox checked={byHead} onCheckedChange={(c) => setByHead(!!c)} />
+                IGST / CGST / SGST break-up
+              </label>
+            )}
           >
             <div className={WS_TABLE_WRAP}>
               <table className={WS_TABLE} aria-label="Rule 42/43 working">
                 <thead>
                   <tr>
                     <th className={WS_TH}>Year</th>
-                    <th className={cn(WS_TH, 'text-right')}>6O availed</th>
-                    <th className={cn(WS_TH, 'text-right')}>7J net ITC</th>
                     <th className={cn(WS_TH, 'text-right')}>Common credit (7J + 7C + 7D)</th>
                     <th className={cn(WS_TH, 'text-right')}>Attributable to exempt</th>
-                    <th className={cn(WS_TH, 'text-right')}>Already reversed (7C + 7D)</th>
                     <th className={cn(WS_TH, 'text-right')}>Net now</th>
                     {working.include_interest && <th className={cn(WS_TH, 'text-right')}>Interest (days)</th>}
                   </tr>
@@ -585,25 +587,19 @@ const BuilderItcReversalPage: React.FC = () => {
                   {result.years.map((y) => (
                     <tr key={y.financialYear} className={WS_TR}>
                       <td className={WS_TD}>{fyLabel(y.financialYear)}</td>
-                      <td className={WS_TD_NUM}>{inr(total(y.availed))}</td>
-                      <td className={WS_TD_NUM}>{inr(total(y.t7j))}</td>
-                      <td className={WS_TD_NUM}>{inr(total(add(y.baseR42, y.baseR43)))}</td>
-                      <td className={WS_TD_NUM}>{inr(total(add(y.attributableR42, y.attributableR43)))}</td>
-                      <td className={WS_TD_NUM}>{inr(total(add(y.reversedR42, y.reversedR43)))}</td>
-                      <td className={cn(WS_TD_NUM, 'font-medium')}>{inr(total(y.net))}</td>
-                      {working.include_interest && <td className={WS_TD_NUM}>{inr(total(y.interest))} ({y.interestDays})</td>}
+                      <td className={WS_TD_NUM}>{amt(add(y.baseR42, y.baseR43))}</td>
+                      <td className={WS_TD_NUM}>{amt(add(y.attributableR42, y.attributableR43))}</td>
+                      <td className={cn(WS_TD_NUM, 'font-medium')}>{amt(y.net)}</td>
+                      {working.include_interest && <td className={WS_TD_NUM}>{amt(y.interest)} ({y.interestDays} days)</td>}
                     </tr>
                   ))}
                   {totals && (
                     <tr className={WS_TR_TOTAL}>
                       <td className={WS_TD}>Total</td>
-                      <td className={WS_TD_NUM}>{inr(total(totals.availed))}</td>
-                      <td className={WS_TD_NUM}>{inr(total(totals.net7j))}</td>
-                      <td className={WS_TD_NUM}>{inr(total(totals.base))}</td>
-                      <td className={WS_TD_NUM}>{inr(total(totals.attributable))}</td>
-                      <td className={WS_TD_NUM}>{inr(total(totals.reversed))}</td>
-                      <td className={WS_TD_NUM}>{inr(total(result.totalNet))}</td>
-                      {working.include_interest && <td className={WS_TD_NUM}>{inr(total(result.totalInterest))}</td>}
+                      <td className={WS_TD_NUM}>{amt(totals.base)}</td>
+                      <td className={WS_TD_NUM}>{amt(totals.attributable)}</td>
+                      <td className={WS_TD_NUM}>{amt(result.totalNet)}</td>
+                      {working.include_interest && <td className={WS_TD_NUM}>{amt(result.totalInterest)}</td>}
                     </tr>
                   )}
                 </tbody>
