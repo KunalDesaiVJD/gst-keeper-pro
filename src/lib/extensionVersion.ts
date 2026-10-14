@@ -30,7 +30,7 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // of re-sending them, never writes an IRN field, and the e-invoice pull checks
 // the file's GSTIN and period and drops e-invoices the portal no longer holds.
 // 0.4.x to 0.8.6 are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.11.2';
+export const RECOMMENDED_EXTENSION_VERSION = '0.11.3';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -79,6 +79,7 @@ const GAINS: [string, string][] = [
   ['0.11.0', "reads GSTR-9 from the portal's own Annual Return page for the right year, Table 7 of the filed return included"],
   ['0.11.1', 'fixes the GSTR-9 pull that stopped at once in 0.11.0'],
   ['0.11.2', "opens Table 7 of the filed GSTR-9 for its rows and records what each GSTR-9 pull saw"],
+  ['0.11.3', "reads the filed GSTR-9's rows from the portal's getDetails and presses PREPARE-ONLINE for an unfiled year"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

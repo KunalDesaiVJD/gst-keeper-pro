@@ -44,7 +44,7 @@ export interface PullBridge {
 }
 
 /** First extension version that opens the year on the Annual Return page (older ones open the current FY's return filing and miss unfiled years' figures). */
-const GSTR9_PULL_MIN_VERSION = '0.11.2';
+const GSTR9_PULL_MIN_VERSION = '0.11.3';
 const POLL_MS = 10_000;
 const POLL_MAX = 36;
 
