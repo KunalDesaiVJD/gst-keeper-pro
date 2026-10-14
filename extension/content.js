@@ -5061,24 +5061,35 @@
   // GSTR-9 with its figures, which is what makes the portal compute Tables 4
   // to 6; NEXT only opens the form, nothing is filed.
   function g9AnswerNilNo() {
-    const q = $$('div, p, span, label, td, li').filter((e) => e.offsetParent !== null
-      && /file\s+nil/i.test(oneLine(e.textContent || '')) && oneLine(e.textContent || '').length < 400);
+    const shown = (e) => !!e && e.getClientRects().length > 0;
+    const q = $$('div, p, span, label, td, li, h4, h5, strong').filter((e) => shown(e)
+      && /\bnil\b/i.test(oneLine(e.textContent || '')) && oneLine(e.textContent || '').length < 400);
     if (!q.length) return false;
-    let box = q.sort((a, b) => oneLine(a.textContent).length - oneLine(b.textContent).length)[0];
-    let radios = [];
-    for (let i = 0; box && i < 6; i++, box = box.parentElement) {
-      radios = [...box.querySelectorAll('input[type=radio]')];
-      if (radios.length >= 2) break;
-    }
+    q.sort((a, b) => oneLine(a.textContent).length - oneLine(b.textContent).length);
     const labelOf = (r) => oneLine(
       ((r.id && document.querySelector('label[for="' + r.id + '"]')) || r.closest('label') || {}).textContent
       || (r.nextSibling && r.nextSibling.textContent) || (r.parentElement && r.parentElement.textContent) || r.value || '');
-    const no = radios.find((r) => /^no\b/i.test(labelOf(r)) || /^(n|no|false)$/i.test(String(r.value || '')));
-    if (!no) return false;
-    if (!no.checked) { no.click(); no.dispatchEvent(new Event('change', { bubbles: true })); }
-    const next = visibleButtons().find((b) => /^NEXT$/.test(btnText(b)));
-    if (next) setTimeout(() => next.click(), 600);
-    return true;
+    for (let box = q[0], i = 0; box && i < 7; i++, box = box.parentElement) {
+      // Radios (often hidden behind a styled label) …
+      const radios = [...box.querySelectorAll('input[type=radio]')];
+      const no = radios.find((r) => /^no\b/i.test(labelOf(r)) || /^(n|no|false)$/i.test(String(r.value || '')));
+      // … or Yes / No buttons and labels.
+      const noBtn = no ? null : [...box.querySelectorAll('button, label, a, span, div')]
+        .find((e) => shown(e) && /^no$/i.test(oneLine(e.textContent || '')) && e.children.length === 0);
+      const target = no || noBtn;
+      if (!target) continue;
+      if (no) {
+        const lab = (no.id && document.querySelector('label[for="' + no.id + '"]')) || no.closest('label');
+        (lab || no).click();
+        if (!no.checked) { no.checked = true; no.dispatchEvent(new Event('change', { bubbles: true })); no.dispatchEvent(new Event('click', { bubbles: true })); }
+      } else noBtn.click();
+      setTimeout(() => {
+        const next = visibleButtons().find((b) => /^NEXT\b/.test(btnText(b)));
+        if (next) next.click();
+      }, 800);
+      return true;
+    }
+    return false;
   }
 
   // The Table 7 tile ("7. Details of ITC reversed and ineligible ITC …").
@@ -5183,26 +5194,43 @@
 
     let calcRes = await getJson(calcUrl);
     let calc = calcRes.data || null;
-    // 0.11.3: the filed return's rows come from api/gstr9/getDetails (seen on
-    // the portal's own GSTR-9 view, 14 Oct). Ask it directly first; its answer
-    // goes into the same store as the page's own, so it is read the same way.
-    if (isFiled) {
-      for (const q of ['?gstin=' + encodeURIComponent(gstin) + '&ret_period=' + retPeriod, '?ret_period=' + retPeriod + '&gstin=' + encodeURIComponent(gstin)]) {
+    // 0.11.5: the GSTR-9 form loads each table from
+    //   api/gstr9/getDetails?gstin=…&ret_period=…&sec_name=TABLE7
+    // (seen on the portal's own view, 14 Oct), in the same layout as
+    // details/calc. Asked directly: Tables 6 and 7 of a filed return, and
+    // Tables 4, 5, 6, 8 and 9 of a year whose system-computed calc came back
+    // without them (an unfiled year). Answers also go into the page store,
+    // so they are kept in _captures and read like the page's own.
+    const g9Sections = async (secs) => {
+      const got = {};
+      for (const sec of secs) {
+        const u = 'https://return.gst.gov.in/returns2/auth/api/gstr9/getDetails?gstin=' + encodeURIComponent(gstin) + '&ret_period=' + retPeriod + '&sec_name=' + sec;
         try {
-          const r = await fetch('https://return.gst.gov.in/returns2/auth/api/gstr9/getDetails' + q, { credentials: 'include', headers: { Accept: 'application/json' } });
+          const r = await fetch(u, { credentials: 'include', headers: { Accept: 'application/json' } });
           const t = await r.text();
           let j = null;
           try { j = JSON.parse(t); } catch (e) { /* HTML */ }
-          if (j && typeof j === 'object') {
-            let list = [];
-            try { list = JSON.parse(sessionStorage.getItem(G9_KEY()) || '[]'); } catch (e) { list = []; }
-            list.push({ url: 'https://return.gst.gov.in/returns2/auth/api/gstr9/getDetails' + q + '&_gstk=direct', at: Date.now(), body: j });
-            sessionStorage.setItem(G9_KEY(), JSON.stringify(list.slice(-40)));
-            if (j.status === 1) break;
-          }
+          if (!j || typeof j !== 'object') continue;
+          let list = [];
+          try { list = JSON.parse(sessionStorage.getItem(G9_KEY()) || '[]'); } catch (e) { list = []; }
+          list.push({ url: u + '&_gstk=direct', at: Date.now(), body: j });
+          sessionStorage.setItem(G9_KEY(), JSON.stringify(list.slice(-40)));
+          if (j.status !== 1 || !j.data || typeof j.data !== 'object') continue;
+          const key = 'table' + sec.replace(/^TABLE/i, '');
+          const t2 = g9Tables(j.data);
+          got[key] = t2[key] || j.data[key] || j.data;
         } catch (e) { /* the page's own call is the fallback */ }
       }
-    }
+      return got;
+    };
+    const fromSections = async () => {
+      const got = await g9Sections(['TABLE4', 'TABLE5', 'TABLE6', 'TABLE8', 'TABLE9']);
+      const c = { table4: got.table4, table5: got.table5, table6: got.table6, table8: got.table8, table9: got.table9 };
+      Object.keys(c).forEach((k) => { if (!c[k]) delete c[k]; });
+      return g9HasCalc(c) ? Object.assign({ fp: retPeriod, gstin }, calc || {}, c, { _from: 'getDetails' }) : null;
+    };
+    if (isFiled) await g9Sections(['TABLE6', 'TABLE7']);
+    if (!g9HasCalc(calc)) { const c = await fromSections(); if (c) calc = c; }
     let seen = merged();
     const needFiled = () => isFiled && !g9Detail7(seen.filed.table7);
     const needCalc = () => !g9HasCalc(calc) && !g9HasCalc(seen.calc);
@@ -5260,6 +5288,8 @@
         if (!isFiled && needCalc() && g9.prepTried && ticks % 4 === 0) {
           const again = await getJson(calcUrl);
           if (again.data && g9HasCalc(again.data)) { calc = again.data; break; }
+          const c = await fromSections();
+          if (c) { calc = c; break; }
         }
         // A filed GSTR-9 shows its tables as tiles; the summary carries only
         // Table 7's total, so open the Table 7 tile for its rows (7A to 7H).
@@ -5286,7 +5316,7 @@
       + ' · page loaded: ' + (seen.urls.join(', ') || 'nothing');
     const hasFiled = ['table6', 'table7', 'table6Total', 'table7Total'].some((k) => seen.filed[k]);
     const rawKept = JSON.stringify(seen.raw).length < 400000 ? seen.raw : seen.raw.map((r) => ({ url: r.url, body: '(too large)' }));
-    const filed = hasFiled ? Object.assign({ fp: retPeriod, gstin }, seen.filed, { _read: how, _captures: rawKept }) : null;
+    const filed = isFiled && hasFiled ? Object.assign({ fp: retPeriod, gstin }, seen.filed, { _read: how, _captures: rawKept }) : null;
 
     const arn = (form && form.arn) || null;
     const filedOn = (form && form.fil_dt) || null;

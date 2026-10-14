@@ -2,6 +2,15 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-14 — GSTR-9 tables read straight from the form (v0.11.5)
+
+- The kept answers (0.11.3) show how the GSTR-9 form loads a table: `api/gstr9/getDetails?gstin=…&ret_period=…&sec_name=TABLE7`, in the same layout as `details/calc`.
+- The extension now asks for each table itself:
+  - TABLE6 and TABLE7 of a filed return;
+  - TABLE4, 5, 6, 8 and 9 of a year whose `details/calc` came back with Table 8A only (an unfiled year, Accurate PMS 2025-26). These are saved as its system-computed figures (`_from: getDetails`). It asks again after Prepare Online has opened the form.
+- 0.11.4 did not find the NIL question on Accurate PMS's page. It is now looked for more widely: any visible text with "NIL", then a No radio (often hidden behind its label) or a No button. Then NEXT.
+- An unfiled year never gets a `GSTR9_FILED` row.
+
 ## 2026-10-14 — Unfiled GSTR-9: NIL question answered No (v0.11.4)
 
 - 0.11.3 pressed PREPARE-ONLINE for an unfiled year (Accurate PMS 2025-26), and the portal then asked "Do you want to file NIL return?". The pull waited there, so the system-computed Tables 4 to 6 never loaded.
