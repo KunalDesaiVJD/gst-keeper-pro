@@ -312,8 +312,8 @@ figure) goes back as a re-credit in **4(A)(5)**.
   then Rule 43. 7C/7D remain what was already reversed.
 - **Locks.** What a filed GSTR-9 gave is locked, in the page and in the DB
   (`builder_itc_reversal_years.portal`, trigger
-  `builder_itc_reversal_years_portal_lock`), for everyone: refetch to change
-  it. The filed return read in full locks Tables 6 and 7; a year read only as
+  `builder_itc_reversal_years_portal_lock`). Only a superadmin can change a
+  fetched figure (14/10/2026); for anyone else, refetch to change it. The filed return read in full locks Tables 6 and 7; a year read only as
   the system-computed 6A (`GSTR9_CALC`) locks Table 6, and Table 7 is typed
   from the filed return and ticked as checked.
 - A year whose **GSTR-9 is not filed** is editable: prefilled from the
