@@ -59,7 +59,7 @@ const LINES: Line[] = [
 ];
 const STATUS_VARIANT = { DRAFT: 'secondary', SUBMITTED: 'warning', APPROVED: 'success' } as const;
 /** First extension version that reads the filed GSTR-9's Tables 6 and 7 from the portal's own GSTR-9 page. */
-const FILED_GSTR9_MIN_VERSION = '0.11.1';
+const FILED_GSTR9_MIN_VERSION = '0.11.2';
 const POLL_MS = 10_000;
 const POLL_MAX = 36;
 
@@ -133,7 +133,7 @@ const BuilderItcReversalPage: React.FC = () => {
         merged[f.financialYear] = {
           financialYear: f.financialYear,
           availed: f.itc.availed,
-          source: f.source === 'GSTR9_FILED' ? 'GSTR-9 as filed (portal)' : f.source === 'GSTR9_COMPUTED' ? 'GSTR-9 Table 6A' : 'GSTR-3B Table 4A (as filed)',
+          source: f.source === 'GSTR9_FILED' || f.source === 'GSTR9_FILED_TOTALS' ? 'GSTR-9 as filed (portal)' : f.source === 'GSTR9_COMPUTED' ? 'GSTR-9 Table 6A' : 'GSTR-3B Table 4A (as filed)',
           months: 12,
         };
       }
@@ -500,6 +500,12 @@ const BuilderItcReversalPage: React.FC = () => {
                               {HEADS.map((h) => <td key={h} className={WS_TD_NUM}>{inr(ref.availed![h])}</td>)}
                             </tr>
                           )}
+                          {yr?.filed7i && (
+                            <tr className={cn(WS_TR, 'text-xs text-muted-foreground')}>
+                              <td className={WS_TD}>7I as in the filed GSTR-9 (portal) — the rows above must add up to it</td>
+                              {HEADS.map((h) => <td key={h} className={WS_TD_NUM}>{inr(yr.filed7i![h])}</td>)}
+                            </tr>
+                          )}
                           {yr && (
                             <tr className={WS_TR}>
                               <td className={WS_TD}>Attributable to the exempt share ({(result.ratio * 100).toFixed(2)}%)</td>
@@ -518,7 +524,7 @@ const BuilderItcReversalPage: React.FC = () => {
                     {portal?.note && !lockedAll && (
                       <p className="border-t px-3 py-2 text-xs text-muted-foreground">{portal.note}</p>
                     )}
-                    {!y.is_bu_year && portal?.source === 'GSTR9_COMPUTED' && (
+                    {!y.is_bu_year && (portal?.source === 'GSTR9_COMPUTED' || portal?.source === 'GSTR9_FILED_TOTALS') && (
                       <label className="flex items-center gap-2 border-t px-3 py-2 text-sm">
                         <Checkbox
                           checked={y.gstr9_match !== 'UNVERIFIED'} disabled={!editable}

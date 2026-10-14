@@ -101,6 +101,8 @@ export interface YearInput {
   reversedR42: Tax;      // already reversed (GSTR-9 7C)
   reversedR43: Tax;      // already reversed (GSTR-9 7D)
   otherReversed: T7Other; // GSTR-9 7A, 7B, 7E–7H
+  /** 7I as in the filed GSTR-9, when only Table 7's total was read: the rows typed must add up to it. */
+  filed7i?: Tax | null;
   gstr9Arn: string | null;
   gstr9Match: Gstr9Match;
 }
@@ -199,6 +201,13 @@ export function computeItcReversal(input: WorkingInput): WorkingResult {
     if (!y.isBuYear) {
       if (y.gstr9Match === 'UNVERIFIED') {
         problems.push(`${fyLabel(y.financialYear)}: enter Table 7 from the filed GSTR-9 and tick that it has been checked.`);
+      }
+      if (y.filed7i) {
+        const d = sub(t7i, y.filed7i);
+        const off = HEADS.filter((h) => Math.abs(d[h]) > 1);
+        if (off.length) {
+          problems.push(`${fyLabel(y.financialYear)}: Table 7 rows add up to 7I ${off.map((h) => `${HEAD_LABEL[h]} ${t7i[h].toFixed(2)}`).join(', ')}, but the filed GSTR-9 shows 7I ${off.map((h) => `${HEAD_LABEL[h]} ${y.filed7i![h].toFixed(2)}`).join(', ')}.`);
+        }
       }
       if (y.gstr9Match === 'CONFIRMED' && !(y.gstr9Arn || '').trim()) {
         problems.push(`${fyLabel(y.financialYear)}: give the ARN of the GSTR-9 the figures were matched with.`);

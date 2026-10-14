@@ -72,6 +72,8 @@ export type LockField = 'inputs_services' | 'capital_goods' | 'reversed_r42' | '
 export interface PortalLock {
   source: PortalSource;
   fields: Partial<Record<LockField, unknown>>;
+  /** 7I as in the filed GSTR-9, when the portal gave Table 7's total but not its rows. */
+  t7i?: Tax | null;
 }
 export const isLocked = (y: YearRow, f: LockField) => !!y.portal?.fields && f in y.portal.fields;
 
@@ -83,6 +85,7 @@ export const toYearInput = (y: YearRow): YearInput => ({
   reversedR42: tax(y.reversed_r42),
   reversedR43: tax(y.reversed_r43),
   otherReversed: t7(y.t7_other),
+  filed7i: y.portal?.t7i ? tax(y.portal.t7i) : null,
   gstr9Arn: y.gstr9_arn,
   gstr9Match: y.gstr9_match,
 });
@@ -261,9 +264,12 @@ export async function withdrawWorking(id: string, actorId: string): Promise<void
 export const gstr9PeriodOf = (fy: string) => `03/${Number(fy.slice(0, 4)) + 1}`;
 
 /** Where a past year's figures came from, best first. */
-export type PortalSource = 'GSTR9_FILED' | 'GSTR9_COMPUTED' | 'GSTR3B_AS_FILED';
+export type PortalSource = 'GSTR9_FILED' | 'GSTR9_FILED_TOTALS' | 'GSTR9_COMPUTED' | 'GSTR3B_AS_FILED';
+/** Better reads rank higher; a year is refilled when a better one arrives. */
+const SOURCE_RANK: Record<PortalSource, number> = { GSTR3B_AS_FILED: 0, GSTR9_COMPUTED: 1, GSTR9_FILED_TOTALS: 2, GSTR9_FILED: 3 };
 export const PORTAL_SOURCE_LABEL: Record<PortalSource, string> = {
   GSTR9_FILED: 'From the filed GSTR-9 (portal)',
+  GSTR9_FILED_TOTALS: 'From the filed GSTR-9 (portal): Table 6 total and 7I',
   GSTR9_COMPUTED: 'From GSTR-9 Table 6A (portal)',
   GSTR3B_AS_FILED: 'From the GSTR-3Bs filed (GSTR-9 not filed yet)',
 };
@@ -311,7 +317,14 @@ export async function fetchFiledGstr9(clientId: string, fys: string[]): Promise<
     const fy = byPeriod.get(r.period_month);
     const itc = parseFiledGstr9(r.summary);
     if (!fy || !itc.found) continue;
-    out[fy] = { financialYear: fy, source: 'GSTR9_FILED', itc, arn: r.arn, filedDate: r.filed_date, status: r.status, pulledAt: r.updated_at, note: null };
+    if (itc.detail7) {
+      out[fy] = { financialYear: fy, source: 'GSTR9_FILED', itc, arn: r.arn, filedDate: r.filed_date, status: r.status, pulledAt: r.updated_at, note: null };
+    } else if (itc.reversedTotal || itc.availed) {
+      out[fy] = {
+        financialYear: fy, source: 'GSTR9_FILED_TOTALS', itc, arn: r.arn, filedDate: r.filed_date, status: r.status, pulledAt: r.updated_at,
+        note: 'The portal gave Table 6\'s total (locked) and 7I, the total of Table 7, but not its rows: split 7I into 7A to 7H as in the filed GSTR-9 (the split must add up to 7I), then tick that it has been checked.',
+      };
+    }
   }
   for (const r of rowsFor('GSTR9_CALC')) {
     const fy = byPeriod.get(r.period_month);
@@ -322,7 +335,7 @@ export async function fetchFiledGstr9(clientId: string, fys: string[]): Promise<
     const availed = tax({ i: Number(a.iamt) || 0, c: Number(a.camt) || 0, s: Number(a.samt) || 0, x: Number(a.csamt) || 0 });
     out[fy] = {
       financialYear: fy, source: 'GSTR9_COMPUTED',
-      itc: { inputsServices: availed, capitalGoods: ZERO, reversedR42: ZERO, reversedR43: ZERO, otherReversed: t7(), availed, found: true },
+      itc: { inputsServices: availed, capitalGoods: ZERO, reversedR42: ZERO, reversedR43: ZERO, otherReversed: t7(), availed, detail6: false, detail7: false, reversedTotal: null, found: true },
       arn: r.arn, filedDate: r.filed_date, status: r.status, pulledAt: r.updated_at,
       note: 'The portal gave Table 6A (locked) but not Table 7 of the filed return: enter 7A to 7H from the filed GSTR-9, then tick that it has been checked.',
     };
@@ -341,7 +354,7 @@ export async function fetchFiledGstr9(clientId: string, fys: string[]): Promise<
     const otherRev = months.reduce((a, m) => add(a, tax(m.itc4b2)), ZERO);
     out[fy] = {
       financialYear: fy, source: 'GSTR3B_AS_FILED',
-      itc: { inputsServices: availed, capitalGoods: ZERO, reversedR42: reversed, reversedR43: ZERO, otherReversed: t7({ h: otherRev }), availed, found: true },
+      itc: { inputsServices: availed, capitalGoods: ZERO, reversedR42: reversed, reversedR43: ZERO, otherReversed: t7({ h: otherRev }), availed, detail6: false, detail7: false, reversedTotal: null, found: true },
       arn: null, filedDate: null, status: calc.status, pulledAt: calc.updated_at,
       note: `GSTR-9 not filed yet, so every figure is editable: prefilled from ${months.length} month(s) of GSTR-3B as filed — 4A as credit availed, 4B(1) as 7C, 4B(2) as 7H. Split them as the GSTR-9 will show them.`,
     };
@@ -367,9 +380,15 @@ export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId:
   };
   const lockKeys: LockField[] = f.source === 'GSTR9_FILED'
     ? ['inputs_services', 'capital_goods', 'reversed_r42', 'reversed_r43', 't7_other']
-    : f.source === 'GSTR9_COMPUTED' ? ['inputs_services', 'capital_goods'] : [];
+    : f.source === 'GSTR9_COMPUTED' || f.source === 'GSTR9_FILED_TOTALS' ? ['inputs_services', 'capital_goods'] : [];
+  // Only 7I known: Table 7's rows are typed, so they start empty.
+  if (f.source === 'GSTR9_FILED_TOTALS') {
+    values.reversed_r42 = ZERO;
+    values.reversed_r43 = ZERO;
+    values.t7_other = t7();
+  }
   const portal: PortalLock | null = lockKeys.length
-    ? { source: f.source, fields: Object.fromEntries(lockKeys.map((k) => [k, values[k]])) }
+    ? { source: f.source, fields: Object.fromEntries(lockKeys.map((k) => [k, values[k]])), t7i: f.itc.reversedTotal }
     : null;
   await saveYear(yearId, {
     ...values,
@@ -377,7 +396,8 @@ export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId:
     gstr9_arn: f.arn,
     gstr9_filed_on: f.filedDate,
     // Table 7 of a year read only as 6A still has to be typed and checked.
-    gstr9_match: f.source === 'GSTR9_COMPUTED' ? 'UNVERIFIED' : 'MATCHED_DATA',
+    // Table 7 rows that were not read still have to be typed and checked.
+    gstr9_match: f.source === 'GSTR9_COMPUTED' || f.source === 'GSTR9_FILED_TOTALS' ? 'UNVERIFIED' : 'MATCHED_DATA',
     remarks: `${PORTAL_SOURCE_LABEL[f.source]}.${f.note ? ` ${f.note}` : ''}`,
   }, actorId);
 }
@@ -386,5 +406,5 @@ export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId:
 export const needsPortalFill = (y: YearRow, f: FiledGstr9, blank: boolean): boolean => {
   if (f.source === 'GSTR3B_AS_FILED') return blank;              // prefill only, never over typing
   if (!y.portal) return true;                                      // never locked: take the filed return
-  return y.portal.source !== 'GSTR9_FILED' && f.source === 'GSTR9_FILED'; // a better read arrived
+  return SOURCE_RANK[f.source] > SOURCE_RANK[y.portal.source];       // a better read arrived
 };
