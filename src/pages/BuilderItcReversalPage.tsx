@@ -387,7 +387,7 @@ const BuilderItcReversalPage: React.FC = () => {
 
           <SectionCard
             title="Credit by financial year"
-            description="Figures from a filed GSTR-9 are locked; a year whose GSTR-9 is not filed, and the BU year (April to the BU month), are entered here"
+            description="Figures fetched from a filed GSTR-9 are locked (a superadmin can correct them); a year whose GSTR-9 is not filed, and the BU year (April to the BU month), are entered here"
             actions={editable ? (
               <>
                 <Button variant="outline" size="sm" className={WS_BTN} onClick={fetchFromPortal} disabled={busy || polling !== null || !pastYears.length}>
@@ -405,9 +405,9 @@ const BuilderItcReversalPage: React.FC = () => {
                 const yr = result.years.find((r) => r.financialYear === y.financial_year);
                 const ref = refs[y.financial_year];
                 const portal = !y.is_bu_year ? filed[y.financial_year] : undefined;
-                // What a filed GSTR-9 gave is locked (the DB refuses edits too);
-                // a year whose GSTR-9 is not filed stays editable.
-                const canType = (f: LockField) => editable && !isLocked(y, f);
+                // What a filed GSTR-9 gave is the superadmin's to change (the DB
+                // refuses anyone else); a year whose GSTR-9 is not filed stays editable.
+                const canType = (f: LockField) => editable && (!isLocked(y, f) || isSuperadmin);
                 const lockedAll = !y.is_bu_year && !!y.portal && (['inputs_services', 'capital_goods', 'reversed_r42', 'reversed_r43', 't7_other'] as LockField[]).every((f) => isLocked(y, f));
                 const cell = (value: number, typable: boolean, onChange: (v: string) => void, key: string) => (
                   <td key={key} className={cn(WS_TD, 'p-0')}>
@@ -471,7 +471,7 @@ const BuilderItcReversalPage: React.FC = () => {
                               const typable = canType('t7_other');
                               return (
                                 <tr key={l.key} className={WS_TR}>
-                                  <td className={WS_TD}>{l.label}</td>
+                                  <td className={WS_TD}>{l.label}{isLocked(y, 't7_other') && <span className="block text-[11px] text-muted-foreground">{isSuperadmin ? 'fetched (filed GSTR-9); superadmin may correct' : 'locked (filed GSTR-9); only a superadmin can change it'}</span>}</td>
                                   {HEADS.map((h) => cell(v[h], typable, (val) => setT7(y.id, l.key, h, val), h))}
                                 </tr>
                               );
@@ -482,7 +482,7 @@ const BuilderItcReversalPage: React.FC = () => {
                               <tr key={l.field} className={WS_TR}>
                                 <td className={WS_TD}>
                                   {l.label}
-                                  <span className="block text-[11px] text-muted-foreground">{l.hint}{!typable && isLocked(y, l.field) ? ' · locked (filed GSTR-9)' : ''}</span>
+                                  <span className="block text-[11px] text-muted-foreground">{l.hint}{isLocked(y, l.field) ? (isSuperadmin ? ' · fetched (filed GSTR-9); superadmin may correct' : ' · locked (filed GSTR-9); only a superadmin can change it') : ''}</span>
                                 </td>
                                 {HEADS.map((h) => cell(v[h], typable, (val) => setYearField(y.id, l.field, h, val), h))}
                               </tr>
