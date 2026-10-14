@@ -45,14 +45,36 @@ export interface FiledGstr9Itc {
   otherReversed: T7Other;
   /** Total availed per Table 6 (both of the above). */
   availed: Tax;
+  /** Table 6 came with its rows (by type); false = only its total was read. */
+  detail6: boolean;
+  /** Table 7 came with its rows (7A to 7H); false = only its total (7I) was read. */
+  detail7: boolean;
+  /** 7I as filed, when the return gave Table 7's total (rows or not). */
+  reversedTotal: Tax | null;
   /** False when the return carried no Table 6 or 7 at all. */
   found: boolean;
 }
 
+const DETAIL6 = ['supp_non_rchrg', 'supp_rchrg_unreg', 'supp_rchrg_reg', 'iog', 'ios', 'isd', 'itc_clmd'];
+const DETAIL7 = ['rule37', 'rule39', 'rule42', 'rule43', 'sec17', 'revsl_tran1', 'revsl_trans1', 'other'];
+const isAmount = (o: Row | null) => !!o && ['iamt', 'camt', 'samt', 'csamt'].some((k) => k in o);
+
+/**
+ * Reads Tables 6 and 7. The filed return's own summary page (extension
+ * 0.11.x) gives each table's total only ({iamt, camt, …}, kept as table6 /
+ * table6Total, table7 / table7Total); its tiles give the rows. A total-only
+ * Table 6 is taken as inputs and input services; a total-only Table 7 is 7I.
+ */
 export function parseFiledGstr9(data: unknown): FiledGstr9Itc {
-  const t6 = findTable(data, 'table6');
-  const t7t = findTable(data, 'table7');
-  let inputsServices = ZERO;
+  const raw6 = findTable(data, 'table6');
+  const raw7 = findTable(data, 'table7');
+  const detail6 = !!raw6 && DETAIL6.some((k) => k in raw6);
+  const detail7 = !!raw7 && DETAIL7.some((k) => k in raw7);
+  const total6 = detail6 ? null : (isAmount(raw6) ? raw6 : findTable(data, 'table6Total'));
+  const total7 = isAmount(raw7) && !detail7 ? raw7 : findTable(data, 'table7Total');
+  const t6 = detail6 ? raw6 : null;
+  const t7t = detail7 ? raw7 : null;
+  let inputsServices = total6 ? amt(total6) : ZERO;
   let capitalGoods = ZERO;
 
   if (t6) {
@@ -79,6 +101,9 @@ export function parseFiledGstr9(data: unknown): FiledGstr9Itc {
       f: sum('revsl_tran1', 'revsl_trans1'), g: sum('revsl_tran2', 'revsl_trans2'), h: sum('other'),
     }),
     availed: add(inputsServices, capitalGoods),
-    found: !!(t6 || t7t),
+    detail6,
+    detail7,
+    reversedTotal: total7 ? amt(total7) : null,
+    found: !!(t6 || t7t || total6 || total7),
   };
 }

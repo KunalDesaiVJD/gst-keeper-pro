@@ -5029,6 +5029,32 @@
     return item.url.indexOf(retPeriod) >= 0;
   }
   function g9HasCalc(c) { return !!(c && (c.table4 || c.table5 || c.table6)); }
+  // The filed return's summary page carries each table's total only
+  // ({camt, iamt, …}); its Table 6 / Table 7 tiles carry the rows.
+  function g9Detail7(o) { return !!(o && typeof o === 'object' && ['rule37', 'rule39', 'rule42', 'rule43', 'sec17', 'revsl_tran1', 'revsl_trans1', 'other'].some((k) => k in o)); }
+  function g9Detail6(o) { return !!(o && typeof o === 'object' && ['supp_non_rchrg', 'supp_rchrg_unreg', 'supp_rchrg_reg', 'iog', 'ios', 'isd', 'itc_clmd'].some((k) => k in o)); }
+  // Put one answer's tables into `into`: a detailed Table 6 / 7 is never
+  // replaced by a total, and a total is kept as table6Total / table7Total.
+  function g9Merge(into, t) {
+    for (const k of Object.keys(t)) {
+      const detail = k === 'table7' ? g9Detail7 : k === 'table6' ? g9Detail6 : null;
+      if (!detail) { into[k] = t[k]; continue; }
+      if (detail(t[k])) into[k] = t[k];
+      else into[k + 'Total'] = t[k];
+    }
+  }
+  // The Table 7 tile ("7. Details of ITC reversed and ineligible ITC …").
+  function g9Table7Tile() {
+    const c = $$('a, button, li, div, span, p, h4, h5, td, label').filter((e) => {
+      if (e.offsetParent === null) return false;
+      const t = oneLine(e.textContent || '');
+      return t.length < 220 && /revers/i.test(t) && /(^|[^0-9.])7[\s.)]/.test(' ' + t) && !/\b(9C|9A)\b/.test(t);
+    });
+    c.sort((a, b) => oneLine(a.textContent).length - oneLine(b.textContent).length);
+    const e = c[0];
+    if (!e) return null;
+    return e.closest('a, button, [ng-click], [data-ng-click], .tile, .card, .panel') || e;
+  }
   function visibleButtons() {
     return $$('button, a.btn, input[type=button], a').filter((b) => b.offsetParent !== null && !b.disabled);
   }
@@ -5107,7 +5133,8 @@
         if (!g9ForPeriod(it, retPeriod)) continue;
         urls.push(it.url.replace(/^https:\/\/[^/]+/, '').split('?')[0]);
         const t = g9Tables(it.body);
-        Object.assign(/calc/i.test(it.url) ? calc : filed, t);
+        if (/calc/i.test(it.url)) Object.assign(calc, t);
+        else g9Merge(filed, t);
       }
       return { calc, filed, urls: [...new Set(urls)] };
     };
@@ -5115,7 +5142,7 @@
     let calcRes = await getJson(calcUrl);
     let calc = calcRes.data || null;
     let seen = merged();
-    const needFiled = () => isFiled && !seen.filed.table7;
+    const needFiled = () => isFiled && !g9Detail7(seen.filed.table7);
     const needCalc = () => !g9HasCalc(calc) && !g9HasCalc(seen.calc);
 
     // Open the GSTR-9 on the Annual Return page and let the page load it.
@@ -5137,12 +5164,13 @@
         g9.opened = true;
         g9.openedAt = Date.now();
         g9.clicked = pick ? btnText(pick) : null;
+        g9.buttons = btns.map(btnText).filter(Boolean).slice(0, 14).join(' | ');
         await setJob(job);
         if (pick) pick.click();
       }
       // Wait for the page to load what we need (it may navigate; the job resumes here).
       const until = () => (g9.openedAt || Date.now()) + G9_UI_MS() + (g9.prepTried ? 90000 : 0);
-      let tileTried = !!g9.tileTried;
+      let tileTries = g9.tileTries || 0;
       let ticks = 0;
       while (Date.now() < until() && (needFiled() || needCalc())) {
         await sleep(1500);
@@ -5166,11 +5194,15 @@
           const again = await getJson(calcUrl);
           if (again.data && g9HasCalc(again.data)) { calc = again.data; break; }
         }
-        // A filed GSTR-9 shows its tables as tiles: open Table 7 when the summary lacked it.
-        if (needFiled() && !tileTried && Date.now() - g9.openedAt > 8000) {
-          const t7 = $$('a, button, div, span, p').filter((e) => e.offsetParent !== null && e.children.length < 4
-            && /^\s*7\.?\s*Details of ITC (reversed|Reversed)/i.test(oneLine(e.textContent || ''))).pop();
-          if (t7) { tileTried = true; g9.tileTried = true; await setJob(job); t7.click(); }
+        // A filed GSTR-9 shows its tables as tiles; the summary carries only
+        // Table 7's total, so open the Table 7 tile for its rows (7A to 7H).
+        if (needFiled() && tileTries < 3 && Date.now() - g9.openedAt > 8000 + tileTries * 12000) {
+          const t7 = g9Table7Tile();
+          tileTries += 1;
+          g9.tileTries = tileTries;
+          g9.tile = t7 ? oneLine(t7.textContent || '').slice(0, 80) : 'not found';
+          await setJob(job);
+          if (t7) { banner('GSTR-9 FY ' + fyLabel + ': opening Table 7 for its rows…' + progress); t7.click(); }
         }
       }
       if (needCalc()) {
@@ -5181,8 +5213,12 @@
     }
 
     if (!g9HasCalc(calc) && g9HasCalc(seen.calc)) calc = Object.assign({ fp: retPeriod, gstin }, calc || {}, seen.calc);
-    const filed = seen.filed.table7 || seen.filed.table6 ? Object.assign({ fp: retPeriod, gstin }, seen.filed) : null;
-    const how = 'GSTR-9 page loaded: ' + (seen.urls.join(', ') || 'nothing') + (g9.clicked ? ' (pressed ' + g9.clicked + ')' : ' (no GSTR-9 button found)');
+    const how = 'pressed ' + (g9.clicked || 'nothing (buttons seen: ' + (g9.buttons || 'none') + ')')
+      + (isFiled ? ' · Table 7 tile: ' + (g9.tile || 'not tried') : '')
+      + (g9.prepTried ? ' · Prepare Online tried' : '')
+      + ' · page loaded: ' + (seen.urls.join(', ') || 'nothing');
+    const hasFiled = ['table6', 'table7', 'table6Total', 'table7Total'].some((k) => seen.filed[k]);
+    const filed = hasFiled ? Object.assign({ fp: retPeriod, gstin }, seen.filed, { _read: how }) : null;
 
     const arn = (form && form.arn) || null;
     const filedOn = (form && form.fil_dt) || null;
@@ -5201,10 +5237,15 @@
       if (calc) {
         await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', {
           ...base, summary: calc,
-          status: g9HasCalc(calc) ? status : status + ' · system-computed Tables 4 to 6 not yet available on the portal',
+          status: g9HasCalc(calc) ? status : status + ' · system-computed Tables 4 to 6 not yet available on the portal · ' + how,
         });
       }
-      if (filed) await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_FILED', { ...base, summary: filed });
+      if (filed) {
+        await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_FILED', {
+          ...base, summary: filed,
+          status: g9Detail7(filed.table7) ? status : status + ' · Table 7 total only (its rows did not load) · ' + how,
+        });
+      }
       else if (isFiled) await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_FILED', { status: 'PULL FAILED: Table 7 not loaded · ' + how, updated_at: new Date().toISOString() });
     } catch (e) {
       banner('GSTR-9: read from the portal but could not be saved (' + ((e && e.message) || 'unknown error') + ').' + progress, '#dc2626');
@@ -5219,7 +5260,7 @@
       'filed return      : ' + (filed ? Object.keys(filed).filter((k) => /^table/.test(k)).join(', ') : '(not read)'),
       'page loaded       : ' + (seen.urls.join(', ') || '(nothing)'),
     ]);
-    banner('GSTR-9 FY ' + fyLabel + ' → saved ✓' + (filed && filed.table7 ? ' (with Table 7 of the filed return)' : '') + '. Review it in GST Keeper.' + progress, '#16a34a');
+    banner('GSTR-9 FY ' + fyLabel + ' → saved ✓' + (filed && g9Detail7(filed.table7) ? ' (with Table 7 rows of the filed return)' : filed ? ' (filed return: table totals only)' : '') + '. Review it in GST Keeper.' + progress, '#16a34a');
     await sleep(800);
     await advance(job);
   }

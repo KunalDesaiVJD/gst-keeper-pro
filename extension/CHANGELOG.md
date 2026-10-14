@@ -2,6 +2,12 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-14 — Table 7 rows of the filed GSTR-9 (v0.11.2)
+
+- 0.11.1 reached the filed GSTR-9 (Bapa Sitaram 2022-23 to 2024-25). The page it opens gives each table's **total** only: Table 6 as one amount, Table 7 as one amount (7I). 0.11.1 took that total for Table 7's rows and stopped there.
+- Now a total is kept as `table6Total` / `table7Total`, and the extension opens the **Table 7 tile** (up to three tries) for its rows (7A to 7H).
+- Every GSTR-9 row records what the pull did: the button pressed (or the buttons it saw), the Table 7 tile, whether Prepare Online was tried, and the GSTR-9 addresses the page loaded (`_read` in the filed summary; the status of an unfiled year).
+
 ## 2026-10-14 — GSTR-9 pull runs (v0.11.1)
 
 - 0.11.0's GSTR-9 pull stopped at once with "Cannot access 'btnText' / 'g9HasCalc' before initialization" (logged for Bapa Sitaram and Accurate PMS). Its helpers were `const`s further down the script than the job runner, so they were not set yet when the job ran. They are now function declarations; nothing else changes.
