@@ -4,7 +4,7 @@
 // dialog so both compute the return the exact same way.
 
 import { supabase } from '@/integrations/supabase/client';
-import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bResult, type ItcData, type ItcRow, type RcmTotals } from './buildGstr3bJson';
+import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bItcTyped, type Gstr3bResult, type ItcData, type ItcRow, type RcmTotals } from './buildGstr3bJson';
 import { fetchItcAutoLinkTotals } from '@/lib/itcAutoLink';
 
 const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -71,10 +71,22 @@ export async function fetchGstr3b(
   // necessarily go through Import 2B's classification at all. No-ITC clients
   // get the same carve-out per the 2026-08-19 revert to the plain, manual-
   // entry template — staff type the figure directly in ITC Summary now.
+  // Option 3 (14 Oct 2026): what in 4A(5) was typed in ITC Summary rather
+  // than taken from 2B: row 5.1 of a Liberal or No-ITC client, and row 5.2.
+  const itcTyped: Gstr3bItcTyped[] = [];
   if (itc) {
     const isLiberal = !!clientRes.data?.liberal_2b_reconciliation;
     const isNoITC = clientRes.data?.builder_itc_type === 'NO_ITC';
     const { eligibleFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco } = autoLink;
+    const amt = (r: ItcRow) => ({ igst: Number(r.igst) || 0, cgst: Number(r.cgst) || 0, sgst: Number(r.sgst) || 0 });
+    const sum = (a: { igst: number; cgst: number; sgst: number }) => a.igst + a.cgst + a.sgst;
+    for (const r of itc.section4A as ItcRow[]) {
+      if (r.srNo === '5.1' && (isLiberal || isNoITC)) {
+        const twob = { igst: eligibleFromImport2B.igst + reversalFromReco.igst, cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst, sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst };
+        if (Math.abs(sum(amt(r))) >= 0.5 || Math.abs(sum(twob)) >= 0.5) itcTyped.push({ row: '5.1', label: 'ITC for the Month', typed: amt(r), twob });
+      }
+      if (r.srNo === '5.2' && Math.abs(sum(amt(r))) >= 0.5) itcTyped.push({ row: '5.2', label: r.particular || 'ITC for Previous Month', typed: amt(r) });
+    }
     itc.section4A = itc.section4A.map((r: ItcRow) => {
       if (r.srNo === '5.1' && !isLiberal && !isNoITC) {
         return { ...r, igst: eligibleFromImport2B.igst + reversalFromReco.igst, cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst, sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst };
@@ -124,10 +136,11 @@ export async function fetchGstr3b(
 
   const clientRow = clientRes.data as { builder_itc_type: string | null; commercial_area: number | null; residential_area: number | null } | null;
 
-  return buildGstr3bJson({
+  const built = buildGstr3bJson({
     gstin, periodMonth, gstr1Raw: (g.data as any)?.raw_json ?? null, itc, rcm, adjustments, alreadyFiled,
     builderItcType: clientRow?.builder_itc_type ?? null,
     commercialArea: clientRow?.commercial_area ?? null,
     residentialArea: clientRow?.residential_area ?? null,
   });
+  return { ...built, itcTyped };
 }
