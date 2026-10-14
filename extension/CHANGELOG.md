@@ -2,6 +2,10 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-14 — GSTR-9 pull runs (v0.11.1)
+
+- 0.11.0's GSTR-9 pull stopped at once with "Cannot access 'btnText' / 'g9HasCalc' before initialization" (logged for Bapa Sitaram and Accurate PMS). Its helpers were `const`s further down the script than the job runner, so they were not set yet when the job ran. They are now function declarations; nothing else changes.
+
 ## 2026-10-14 — GSTR-9 read from the portal's own Annual Return page (v0.11.0)
 
 No database change.

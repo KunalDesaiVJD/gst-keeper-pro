@@ -5002,12 +5002,14 @@
   //      (api/gstr9/details) is refused by the portal ("Request Rejected").
   // Read-only: no save / submit / compute / file is pressed. A NIL question
   // the portal asks before Prepare Online is left to the person.
-  const G9_KEY = '__gstkG9';
-  const G9_PAGE = 'https://return.gst.gov.in/returns2/auth/annualreturn';
-  const G9_UI_MS = 90000;
+  // Function declarations, not consts: the job runs from the top of this
+  // script before these lines are reached (a const here is not initialised yet).
+  function G9_KEY() { return '__gstkG9'; }
+  function G9_PAGE() { return 'https://return.gst.gov.in/returns2/auth/annualreturn'; }
+  function G9_UI_MS() { return 90000; }
   function g9Captured(since) {
     let list = [];
-    try { list = JSON.parse(sessionStorage.getItem(G9_KEY) || '[]'); } catch (e) { list = []; }
+    try { list = JSON.parse(sessionStorage.getItem(G9_KEY()) || '[]'); } catch (e) { list = []; }
     return list.filter((x) => x && x.at >= since);
   }
   // The tables of a captured answer: {status, data: {...}} or the data itself;
@@ -5026,11 +5028,11 @@
     if (fp) return String(fp) === retPeriod;
     return item.url.indexOf(retPeriod) >= 0;
   }
-  const g9HasCalc = (c) => !!(c && (c.table4 || c.table5 || c.table6));
+  function g9HasCalc(c) { return !!(c && (c.table4 || c.table5 || c.table6)); }
   function visibleButtons() {
     return $$('button, a.btn, input[type=button], a').filter((b) => b.offsetParent !== null && !b.disabled);
   }
-  const btnText = (b) => oneLine(b.value || b.textContent || '').toUpperCase();
+  function btnText(b) { return oneLine(b.value || b.textContent || '').toUpperCase(); }
   // The GSTR-9 tile's buttons (not 9A / 9C): the smallest box whose heading says GSTR-9.
   function g9TileButtons() {
     const heads = $$('h1,h2,h3,h4,h5,p,span,div,strong,b').filter((e) => e.offsetParent !== null && /^\s*GSTR[\s-]*9\s*$/i.test(e.textContent || ''));
@@ -5045,7 +5047,7 @@
   }
 
   async function handleGstr9Pull(job, cur, progress) {
-    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = G9_PAGE; return; }
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = G9_PAGE(); return; }
     const failGstr9 = async (reason) => {
       try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', { status: 'PULL FAILED: ' + reason, updated_at: new Date().toISOString() }); } catch (e2) { /* diagnostic only */ }
     };
@@ -5067,7 +5069,7 @@
       return;
     }
     if (!/returns2\/auth\/annualreturn/.test(location.pathname) && !(job.g9 && job.g9.period === job.period && job.g9.opened)) {
-      location.href = G9_PAGE;
+      location.href = G9_PAGE();
       return;
     }
     if (!job.g9 || job.g9.period !== job.period) {
@@ -5139,7 +5141,7 @@
         if (pick) pick.click();
       }
       // Wait for the page to load what we need (it may navigate; the job resumes here).
-      const until = () => (g9.openedAt || Date.now()) + G9_UI_MS + (g9.prepTried ? 90000 : 0);
+      const until = () => (g9.openedAt || Date.now()) + G9_UI_MS() + (g9.prepTried ? 90000 : 0);
       let tileTried = !!g9.tileTried;
       let ticks = 0;
       while (Date.now() < until() && (needFiled() || needCalc())) {
