@@ -72,7 +72,8 @@ month-to-month carry-forward already read from. `2B Reconciliation`
 (`TwoBReconciliationPage.tsx`) is **read-only for Strict clients** (the
 default) — display, export, version history/restore, and destructive Clear
 Data only. A per-client `clients.liberal_2b_reconciliation` flag
-(superadmin/gst_manager only, set from Edit Client) opts a specific client
+(superadmin/gst_manager only, set from Edit Client or the Clients page's
+Liberal / Strict pop-up; every switch logged in `client_liberal_log`) opts a specific client
 into Liberal mode, which restores the full directly-editable page for that
 client — see §5 of the doc below before assuming every client behaves the
 same way.
