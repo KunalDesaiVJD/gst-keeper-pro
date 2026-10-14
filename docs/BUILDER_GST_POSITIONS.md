@@ -302,6 +302,24 @@ figure) goes back as a re-credit in **4(A)(5)**.
   A year the portal did not return is entered by hand and confirmed against
   the filed GSTR-9's ARN, as before.
 
+**The whole of Table 7, and 7J (14/10/2026, the firm's request).**
+- Each year carries every head of GSTR-9 Table 7: 7A (Rule 37), 7B (Rule
+  39), 7C (Rule 42), 7D (Rule 43), 7E (s.17(5)), 7F/7G (TRAN), 7H (other).
+  The working shows 6O, 7I (7A to 7H) and **7J (6O − 7I)**.
+- **The Rule 42/43 base is 7J + 7C + 7D**: credit availed less what Table 7
+  reversed under any other head, which was never common credit (blocked,
+  unpaid, ISD, TRAN). Those reversals come out of the Rule 42 base first,
+  then Rule 43. 7C/7D remain what was already reversed.
+- **Locks.** What a filed GSTR-9 gave is locked, in the page and in the DB
+  (`builder_itc_reversal_years.portal`, trigger
+  `builder_itc_reversal_years_portal_lock`), for everyone: refetch to change
+  it. The filed return read in full locks Tables 6 and 7; a year read only as
+  the system-computed 6A (`GSTR9_CALC`) locks Table 6, and Table 7 is typed
+  from the filed return and ticked as checked.
+- A year whose **GSTR-9 is not filed** is editable: prefilled from the
+  GSTR-3Bs as filed (4A as availed, 4B(1) as 7C, 4B(2) as 7H) and split by
+  hand as the GSTR-9 will show it. The BU year is entered by hand.
+
 **First year.** The project's registration or 01/04/2019, whichever is later.
 This is the start of the construction scheme and its carpet-area key. The
 working can move it.
