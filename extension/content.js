@@ -502,7 +502,8 @@
       job.period = job.periods[job.periodIdx];
       await setJob(job);
       banner('Period done — moving to ' + job.period + '…', '#2563eb');
-      location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      // GSTR-9 years go to the Annual Return page, not the current FY's return filing.
+      location.href = job.mode === 'gstr9_pull' ? 'https://return.gst.gov.in/returns2/auth/annualreturn' : 'https://return.gst.gov.in/returns/auth/dashboard';
       return;
     }
     job.idx++;
@@ -884,10 +885,10 @@
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'gstr9_pull') {
-        banner('Logged in — reading the GSTR-9 system-computed figures…' + progress);
+        banner('Logged in — opening the Annual Return page for GSTR-9…' + progress);
         job.step = 'gstr9_pull';
         await setJob(job);
-        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+        location.href = 'https://return.gst.gov.in/returns2/auth/annualreturn';
       } else if (job.mode === 'gstr1_pull') {
         banner('Logged in — reading filed GSTR-1…' + progress);
         job.step = 'gstr1_pull';
@@ -4987,22 +4988,64 @@
   }
 
   // GSTR-9 system-computed (annual) — for the Annual Return workspace's
-  // "Portal data" step (mode 'gstr9_pull', started with __gstkPullSection,
-  // period '03/YYYY' = the FY's closing March). The endpoint is the one the
-  // portal's own GSTR-9 page calls — gstr9ctrl.js getSumData():
-  //   ajax.get("/returns2/auth/api/gstr9/details/calc", { ret_period, gstin })
-  // answering { status: 1, data: { table4, table5, table6, table8, table9, … } }.
-  // It was read from that script, NOT yet exercised live. formdetails
-  // (rtn_typ=GSTR9) gives the ARN / filed date / status, same as GSTR-3B.
-  // GET only — this never calls any save / submit / compute / file endpoint.
-  // On a cold session the returns2 app can answer with HTML / 403 until its
-  // own page has been opened once, so the first failure opens the Annual
-  // Return page (guarded by job.gstr9Warmed, so only once) and retries on
-  // that page's load; a second failure is recorded as 'PULL FAILED: …' so the
-  // app stops waiting and offers Upload instead. The raw JSON is kept as-is
-  // (return_type 'GSTR9_CALC'); the app parses and previews it before use.
+  // 0.11.0 — GSTR-9, read the way the portal's own pages read it.
+  //   1. Straight to the Annual Return page (never the Returns dashboard,
+  //      which opens on the current FY's return filing).
+  //   2. The system-computed figures from details/calc (the page's own GET).
+  //   3. When the year is filed, or calc came back without Tables 4–6 (the
+  //      portal has not computed an unfiled year yet), the extension selects
+  //      the FY on the Annual Return page, presses SEARCH and opens the
+  //      GSTR-9: VIEW for a filed return, the system-computed summary for an
+  //      unfiled one. inject.js keeps a copy of every GSTR-9 JSON the page
+  //      loads; the filed return's Tables 6 and 7 come from there. The
+  //      address the extension used to guess for the filed return
+  //      (api/gstr9/details) is refused by the portal ("Request Rejected").
+  // Read-only: no save / submit / compute / file is pressed. A NIL question
+  // the portal asks before Prepare Online is left to the person.
+  const G9_KEY = '__gstkG9';
+  const G9_PAGE = 'https://return.gst.gov.in/returns2/auth/annualreturn';
+  const G9_UI_MS = 90000;
+  function g9Captured(since) {
+    let list = [];
+    try { list = JSON.parse(sessionStorage.getItem(G9_KEY) || '[]'); } catch (e) { list = []; }
+    return list.filter((x) => x && x.at >= since);
+  }
+  // The tables of a captured answer: {status, data: {...}} or the data itself;
+  // a single-table answer (rule42 … at the top) is taken as Table 7.
+  function g9Tables(body) {
+    const d = body && typeof body === 'object' && body.data && typeof body.data === 'object' ? body.data : body;
+    if (!d || typeof d !== 'object') return {};
+    const out = {};
+    for (const k of Object.keys(d)) if (/^table\d+[A-Z]?$/i.test(k) && d[k] && typeof d[k] === 'object') out[k] = d[k];
+    if (!out.table7 && ['rule37', 'rule39', 'rule42', 'rule43', 'sec17'].some((k) => k in d)) out.table7 = d;
+    return out;
+  }
+  function g9ForPeriod(item, retPeriod) {
+    const d = item.body && item.body.data && typeof item.body.data === 'object' ? item.body.data : item.body;
+    const fp = d && (d.fp || d.ret_period || d.rtn_prd);
+    if (fp) return String(fp) === retPeriod;
+    return item.url.indexOf(retPeriod) >= 0;
+  }
+  const g9HasCalc = (c) => !!(c && (c.table4 || c.table5 || c.table6));
+  function visibleButtons() {
+    return $$('button, a.btn, input[type=button], a').filter((b) => b.offsetParent !== null && !b.disabled);
+  }
+  const btnText = (b) => oneLine(b.value || b.textContent || '').toUpperCase();
+  // The GSTR-9 tile's buttons (not 9A / 9C): the smallest box whose heading says GSTR-9.
+  function g9TileButtons() {
+    const heads = $$('h1,h2,h3,h4,h5,p,span,div,strong,b').filter((e) => e.offsetParent !== null && /^\s*GSTR[\s-]*9\s*$/i.test(e.textContent || ''));
+    for (const h of heads) {
+      let box = h.parentElement;
+      for (let i = 0; box && i < 6; i++, box = box.parentElement) {
+        const btns = [...box.querySelectorAll('button, a.btn, input[type=button]')].filter((b) => b.offsetParent !== null && !b.disabled);
+        if (btns.length) return btns;
+      }
+    }
+    return visibleButtons();
+  }
+
   async function handleGstr9Pull(job, cur, progress) {
-    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = G9_PAGE; return; }
     const failGstr9 = async (reason) => {
       try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', { status: 'PULL FAILED: ' + reason, updated_at: new Date().toISOString() }); } catch (e2) { /* diagnostic only */ }
     };
@@ -5023,81 +5066,144 @@
       await advance(job);
       return;
     }
-    // Second attempt, on the Annual Return page: let its own scripts set the session up first.
-    if (job.gstr9Warmed) await sleep(3000);
-    banner('Reading GSTR-9 system-computed figures for FY ' + fyLabel + '…' + progress);
-
-    // 0.10.3: also the FILED return — the details the portal's own GSTR-9
-    // form loads (same path without /calc). After filing it carries the
-    // return as filed: table6 (ITC availed by type: ip / cg / is) and table7
-    // (reversals: rule42, rule43 …), which the Builder ITC reversal working
-    // (Rule 42/43) reads per past year. Saved as return_type 'GSTR9_FILED'.
-    let filed = null;
-    let filedErr = '';
-    try {
-      const r = await fetch('https://return.gst.gov.in/returns2/auth/api/gstr9/details?ret_period=' + retPeriod + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include', headers: { Accept: 'application/json' } });
-      const text = await r.text();
-      let j = null;
-      try { j = JSON.parse(text); } catch (e) { /* HTML (login / error page) */ }
-      if (r.ok && j && j.status === 1 && j.data && typeof j.data === 'object') filed = j.data;
-      // 0.10.4: say why, so the read can be fixed from what the portal answered.
-      else if (j && j.error) filedErr = String(j.error.message || j.error.errorCode || JSON.stringify(j.error)).slice(0, 200);
-      else filedErr = 'HTTP ' + r.status + (j ? ' (status ' + j.status + ', keys ' + Object.keys(j).join('/') + ')' : ', not JSON: ' + text.slice(0, 80).replace(/\s+/g, ' '));
-    } catch (e) { filedErr = (e && e.message) || 'network error'; }
-
-    let calc = null;
-    let calcErr = '';
-    try {
-      const r = await fetch('https://return.gst.gov.in/returns2/auth/api/gstr9/details/calc?ret_period=' + retPeriod + '&gstin=' + encodeURIComponent(gstin), { credentials: 'include', headers: { Accept: 'application/json' } });
-      const text = await r.text();
-      let j = null;
-      try { j = JSON.parse(text); } catch (e) { /* HTML (login / error page) */ }
-      if (r.ok && j && j.status === 1 && j.data && typeof j.data === 'object') calc = j.data;
-      else if (j && j.error) calcErr = String(j.error.message || j.error.errorCode || JSON.stringify(j.error)).slice(0, 200);
-      else calcErr = 'HTTP ' + r.status + (j ? ' (status ' + j.status + ')' : ', not JSON');
-    } catch (e) {
-      calcErr = (e && e.message) || 'network error';
-    }
-
-    if (!calc && !filed) {
-      if (!job.gstr9Warmed) {
-        job.gstr9Warmed = true;
-        await setJob(job);
-        banner('GSTR-9 not ready on this session yet (' + calcErr + ') — opening the Annual Return page once and retrying…' + progress, '#f59e0b');
-        location.href = 'https://return.gst.gov.in/returns2/auth/annualreturn';
-        return;
-      }
-      delete job.gstr9Warmed;
-      await setJob(job);
-      banner('GSTR-9: could not read the system-computed figures (' + calcErr + ') — use Upload in GST Keeper instead.' + progress, '#dc2626');
-      await failGstr9(calcErr);
-      await sleep(1500);
-      await advance(job);
+    if (!/returns2\/auth\/annualreturn/.test(location.pathname) && !(job.g9 && job.g9.period === job.period && job.g9.opened)) {
+      location.href = G9_PAGE;
       return;
     }
+    if (!job.g9 || job.g9.period !== job.period) {
+      job.g9 = { period: job.period, since: Date.now() };
+      await setJob(job);
+    }
+    const g9 = job.g9;
+    await sleep(2500); // let the page's own scripts set the session up
 
+    const getJson = async (u) => {
+      try {
+        const r = await fetch(u, { credentials: 'include', headers: { Accept: 'application/json' } });
+        const text = await r.text();
+        let j = null;
+        try { j = JSON.parse(text); } catch (e) { /* HTML */ }
+        if (r.ok && j && j.status === 1 && j.data && typeof j.data === 'object') return { data: j.data };
+        if (j && j.error) return { err: String(j.error.message || j.error.errorCode || JSON.stringify(j.error)).slice(0, 200) };
+        return { err: 'HTTP ' + r.status + (j ? ' (status ' + j.status + ')' : ', not JSON') };
+      } catch (e) { return { err: (e && e.message) || 'network error' }; }
+    };
+    const calcUrl = 'https://return.gst.gov.in/returns2/auth/api/gstr9/details/calc?ret_period=' + retPeriod + '&gstin=' + encodeURIComponent(gstin);
     let form = null;
     try {
       const fr = await fetch('https://return.gst.gov.in/returns/auth/api/formdetails?rtn_prd=' + retPeriod + '&rtn_typ=GSTR9', { credentials: 'include' });
       if (fr.ok) { const fj = await fr.json(); if (fj && fj.status === 1) form = fj.data; }
-    } catch (e) { /* non-fatal: only ARN / filed date / status come from here */ }
+    } catch (e) { /* only ARN / filed date / status come from here */ }
+    const isFiled = !!(form && form.status === 'FIL');
 
-    const src = calc || filed || {};
-    const arn = (form && form.arn) || (typeof src.arn === 'string' && src.arn) || (filed && typeof filed.arn === 'string' && filed.arn) || null;
-    const filedOn = (form && form.fil_dt) || (typeof src.arn_dt === 'string' && src.arn_dt) || null;
-    const patchObj = {
-      summary: calc,
-      arn,
-      filed_date: filedOn ? ddmmyyyyToIso(String(filedOn).replace(/-/g, '/')) : null,
-      status: form ? (form.status === 'FIL' ? 'Filed' : (form.status ? String(form.status) : 'Not filed')) : (arn ? 'Filed' : 'Not filed'),
-      updated_at: new Date().toISOString(),
+    // What the page has loaded for this year so far (this visit and any before).
+    const merged = () => {
+      const calc = {};
+      const filed = {};
+      const urls = [];
+      for (const it of g9Captured(g9.since)) {
+        if (!g9ForPeriod(it, retPeriod)) continue;
+        urls.push(it.url.replace(/^https:\/\/[^/]+/, '').split('?')[0]);
+        const t = g9Tables(it.body);
+        Object.assign(/calc/i.test(it.url) ? calc : filed, t);
+      }
+      return { calc, filed, urls: [...new Set(urls)] };
     };
-    delete job.gstr9Warmed;
+
+    let calcRes = await getJson(calcUrl);
+    let calc = calcRes.data || null;
+    let seen = merged();
+    const needFiled = () => isFiled && !seen.filed.table7;
+    const needCalc = () => !g9HasCalc(calc) && !g9HasCalc(seen.calc);
+
+    // Open the GSTR-9 on the Annual Return page and let the page load it.
+    if (needFiled() || needCalc()) {
+      if (!g9.opened) {
+        banner('GSTR-9 FY ' + fyLabel + ': opening it on the Annual Return page…' + progress);
+        const sel = await selectWhereOption(fyLabel, { timeout: 15000 })
+          || await selectWhereOption((yyyy - 1) + '-' + yyyy, { timeout: 3000 });
+        if (sel) {
+          await sleep(500);
+          const search = visibleButtons().find((b) => /^SEARCH$/.test(btnText(b)));
+          if (search) search.click();
+          await sleep(3500);
+        }
+        const btns = g9TileButtons();
+        const pick = isFiled
+          ? (btns.find((b) => /^VIEW( GSTR[\s-]*9)?$/.test(btnText(b))) || btns.find((b) => /VIEW/.test(btnText(b)) && !/9C|9A/.test(btnText(b))))
+          : (btns.find((b) => /SYSTEM COMPUTED/.test(btnText(b)) && !/PDF|EXCEL/.test(btnText(b))) || btns.find((b) => /SYSTEM COMPUTED/.test(btnText(b))));
+        g9.opened = true;
+        g9.openedAt = Date.now();
+        g9.clicked = pick ? btnText(pick) : null;
+        await setJob(job);
+        if (pick) pick.click();
+      }
+      // Wait for the page to load what we need (it may navigate; the job resumes here).
+      const until = () => (g9.openedAt || Date.now()) + G9_UI_MS + (g9.prepTried ? 90000 : 0);
+      let tileTried = !!g9.tileTried;
+      let ticks = 0;
+      while (Date.now() < until() && (needFiled() || needCalc())) {
+        await sleep(1500);
+        ticks += 1;
+        seen = merged();
+        // An unfiled year the summary did not compute: open Prepare Online,
+        // which makes the portal fill Tables 4 to 6. A NIL question it asks
+        // first is the person's to answer (it is saved on the portal).
+        if (!isFiled && needCalc() && !g9.prepTried && Date.now() - g9.openedAt > 12000) {
+          calcRes = await getJson(calcUrl);
+          if (calcRes.data && g9HasCalc(calcRes.data)) { calc = calcRes.data; break; }
+          const prep = g9TileButtons().find((b) => /PREPARE ONLINE/.test(btnText(b)));
+          g9.prepTried = true;
+          await setJob(job);
+          if (prep) {
+            banner('GSTR-9 FY ' + fyLabel + ': opening Prepare Online so the portal computes the figures. If it asks whether to file NIL, answer it here; the figures are read once the form opens.' + progress, '#f59e0b');
+            prep.click();
+          }
+        }
+        if (!isFiled && needCalc() && g9.prepTried && ticks % 4 === 0) {
+          const again = await getJson(calcUrl);
+          if (again.data && g9HasCalc(again.data)) { calc = again.data; break; }
+        }
+        // A filed GSTR-9 shows its tables as tiles: open Table 7 when the summary lacked it.
+        if (needFiled() && !tileTried && Date.now() - g9.openedAt > 8000) {
+          const t7 = $$('a, button, div, span, p').filter((e) => e.offsetParent !== null && e.children.length < 4
+            && /^\s*7\.?\s*Details of ITC (reversed|Reversed)/i.test(oneLine(e.textContent || ''))).pop();
+          if (t7) { tileTried = true; g9.tileTried = true; await setJob(job); t7.click(); }
+        }
+      }
+      if (needCalc()) {
+        // Opening the GSTR-9 makes the portal compute an unfiled year; ask again.
+        calcRes = await getJson(calcUrl);
+        if (calcRes.data && g9HasCalc(calcRes.data)) calc = calcRes.data;
+      }
+    }
+
+    if (!g9HasCalc(calc) && g9HasCalc(seen.calc)) calc = Object.assign({ fp: retPeriod, gstin }, calc || {}, seen.calc);
+    const filed = seen.filed.table7 || seen.filed.table6 ? Object.assign({ fp: retPeriod, gstin }, seen.filed) : null;
+    const how = 'GSTR-9 page loaded: ' + (seen.urls.join(', ') || 'nothing') + (g9.clicked ? ' (pressed ' + g9.clicked + ')' : ' (no GSTR-9 button found)');
+
+    const arn = (form && form.arn) || null;
+    const filedOn = (form && form.fil_dt) || null;
+    const status = form ? (form.status === 'FIL' ? 'Filed' : (form.status ? String(form.status) : 'Not filed')) : (arn ? 'Filed' : 'Not filed');
+    delete job.g9;
     await setJob(job);
+    if (!calc && !filed) {
+      banner('GSTR-9 FY ' + fyLabel + ': the portal gave no figures (' + (calcRes.err || 'empty') + '). ' + how + progress, '#dc2626');
+      await failGstr9((calcRes.err || 'no figures') + ' · ' + how);
+      await sleep(2500);
+      await advance(job);
+      return;
+    }
+    const base = { arn, filed_date: filedOn ? ddmmyyyyToIso(String(filedOn).replace(/-/g, '/')) : null, status, updated_at: new Date().toISOString() };
     try {
-      if (calc) await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', patchObj);
-      if (filed) await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_FILED', { ...patchObj, summary: filed });
-      else await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_FILED', { status: 'PULL FAILED: ' + (filedErr || 'no data'), updated_at: new Date().toISOString() });
+      if (calc) {
+        await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', {
+          ...base, summary: calc,
+          status: g9HasCalc(calc) ? status : status + ' · system-computed Tables 4 to 6 not yet available on the portal',
+        });
+      }
+      if (filed) await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_FILED', { ...base, summary: filed });
+      else if (isFiled) await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_FILED', { status: 'PULL FAILED: Table 7 not loaded · ' + how, updated_at: new Date().toISOString() });
     } catch (e) {
       banner('GSTR-9: read from the portal but could not be saved (' + ((e && e.message) || 'unknown error') + ').' + progress, '#dc2626');
       await sleep(2000);
@@ -5105,14 +5211,13 @@
       return;
     }
     debugPanel([
-      'STEP: GSTR-9 system computed  (' + location.pathname + ')',
-      'ret_period        : ' + retPeriod,
+      'STEP: GSTR-9  (' + location.pathname + ')',
+      'ret_period        : ' + retPeriod + ' · ' + status,
       'system computed   : ' + (calc ? ['table4', 'table5', 'table6', 'table8', 'table9'].filter((k) => calc[k]).join(', ') : '(not read)'),
-      'filed return      : ' + (filed ? ['table4', 'table5', 'table6', 'table7', 'table8', 'table9'].filter((k) => filed[k]).join(', ') : '(not read)'),
-      'ARN               : ' + (patchObj.arn || '(none)'),
-      'status            : ' + patchObj.status,
+      'filed return      : ' + (filed ? Object.keys(filed).filter((k) => /^table/.test(k)).join(', ') : '(not read)'),
+      'page loaded       : ' + (seen.urls.join(', ') || '(nothing)'),
     ]);
-    banner('GSTR-9 FY ' + fyLabel + ' → saved ✓' + (filed ? ' (with the filed return)' : '') + '. Review and apply it in GST Keeper.' + progress, '#16a34a');
+    banner('GSTR-9 FY ' + fyLabel + ' → saved ✓' + (filed && filed.table7 ? ' (with Table 7 of the filed return)' : '') + '. Review it in GST Keeper.' + progress, '#16a34a');
     await sleep(800);
     await advance(job);
   }

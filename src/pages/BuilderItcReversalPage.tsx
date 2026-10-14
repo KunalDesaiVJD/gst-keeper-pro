@@ -58,8 +58,8 @@ const LINES: Line[] = [
   { kind: 'calc', label: 'Common credit for Rules 42/43', hint: '7J + 7C + 7D', value: (r) => add(r.baseR42, r.baseR43) },
 ];
 const STATUS_VARIANT = { DRAFT: 'secondary', SUBMITTED: 'warning', APPROVED: 'success' } as const;
-/** First extension version that reads the filed GSTR-9 (Tables 6 and 7). */
-const FILED_GSTR9_MIN_VERSION = '0.10.3';
+/** First extension version that reads the filed GSTR-9's Tables 6 and 7 from the portal's own GSTR-9 page. */
+const FILED_GSTR9_MIN_VERSION = '0.11.0';
 const POLL_MS = 10_000;
 const POLL_MAX = 36;
 
@@ -167,7 +167,7 @@ const BuilderItcReversalPage: React.FC = () => {
       return;
     }
     if (!bridge.version || compareVersions(bridge.version, FILED_GSTR9_MIN_VERSION) < 0) {
-      toast.error(`Extension ${bridge.version ? `v${bridge.version}` : '(old)'} reads only the system-computed GSTR-9. Update it to v${FILED_GSTR9_MIN_VERSION} (chrome://extensions → Reload), then try again.`);
+      toast.error(`Extension ${bridge.version ? `v${bridge.version}` : '(old)'} cannot read Table 7 of the filed GSTR-9. Update it to v${FILED_GSTR9_MIN_VERSION} (chrome://extensions → Reload), then try again.`);
       return;
     }
     const periods = pastYears.map((y) => gstr9PeriodOf(y.financial_year));

@@ -43,8 +43,8 @@ export interface PullBridge {
   start: (payload: { mode: string; period_month?: string; period_months?: string[] }, onStarted: (ok: boolean, error?: string) => void) => void;
 }
 
-/** First extension version that knows the gstr9_pull mode (older ones would fall through to the ledger pull). */
-const GSTR9_PULL_MIN_VERSION = '0.3.3';
+/** First extension version that opens the year on the Annual Return page (older ones open the current FY's return filing and miss unfiled years' figures). */
+const GSTR9_PULL_MIN_VERSION = '0.11.0';
 const POLL_MS = 10_000;
 const POLL_MAX = 36;
 
@@ -222,7 +222,12 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
           setError(r.status);
           toast.error(`GSTR-9 pull failed — ${r.status}`);
         } else {
-          toast.success('GSTR-9 system-computed figures received from the portal.');
+          const sum = (r.summary ?? {}) as Record<string, unknown>;
+          if (!sum.table4 && !sum.table6) {
+            toast.warning('The portal has not computed Tables 4 to 6 for this year yet (only Table 8A came back). Open the GSTR-9 once on the portal (Prepare Online), then pull again.', { duration: 15000 });
+          } else {
+            toast.success('GSTR-9 system-computed figures received from the portal.');
+          }
           openFromRow(r);
         }
         return;
