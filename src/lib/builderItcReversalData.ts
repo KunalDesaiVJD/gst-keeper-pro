@@ -5,8 +5,8 @@
 import { supabase } from '@/integrations/supabase/client';
 import { parseFiledGstr9, type FiledGstr9Itc } from '@/utils/gstr9Filed';
 import {
-  ZERO, add, fyOfDate, fyRange, tax, defaultStartFy,
-  type Gstr9Match, type Tax, type WorkingResult, type YearInput, type YearReference,
+  ZERO, add, fyOfDate, fyRange, t7, tax, defaultStartFy,
+  type Gstr9Match, type T7Other, type Tax, type WorkingResult, type YearInput, type YearReference,
 } from '@/utils/builderItcReversal';
 
 export interface BuEventOption {
@@ -57,11 +57,23 @@ export interface YearRow {
   capital_goods: Tax;
   reversed_r42: Tax;
   reversed_r43: Tax;
+  /** GSTR-9 Table 7 heads other than 7C / 7D. */
+  t7_other: Partial<T7Other>;
+  /** What was fetched from the portal and is locked: {source, fields: {column: value}}. */
+  portal: PortalLock | null;
   gstr9_arn: string | null;
   gstr9_filed_on: string | null;
   gstr9_match: Gstr9Match;
   remarks: string | null;
 }
+
+/** The columns a portal fetch can lock. */
+export type LockField = 'inputs_services' | 'capital_goods' | 'reversed_r42' | 'reversed_r43' | 't7_other';
+export interface PortalLock {
+  source: PortalSource;
+  fields: Partial<Record<LockField, unknown>>;
+}
+export const isLocked = (y: YearRow, f: LockField) => !!y.portal?.fields && f in y.portal.fields;
 
 export const toYearInput = (y: YearRow): YearInput => ({
   financialYear: y.financial_year,
@@ -70,6 +82,7 @@ export const toYearInput = (y: YearRow): YearInput => ({
   capitalGoods: tax(y.capital_goods),
   reversedR42: tax(y.reversed_r42),
   reversedR43: tax(y.reversed_r43),
+  otherReversed: t7(y.t7_other),
   gstr9Arn: y.gstr9_arn,
   gstr9Match: y.gstr9_match,
 });
@@ -309,12 +322,12 @@ export async function fetchFiledGstr9(clientId: string, fys: string[]): Promise<
     const availed = tax({ i: Number(a.iamt) || 0, c: Number(a.camt) || 0, s: Number(a.samt) || 0, x: Number(a.csamt) || 0 });
     out[fy] = {
       financialYear: fy, source: 'GSTR9_COMPUTED',
-      itc: { inputsServices: availed, capitalGoods: ZERO, reversedR42: ZERO, reversedR43: ZERO, availed, found: true },
+      itc: { inputsServices: availed, capitalGoods: ZERO, reversedR42: ZERO, reversedR43: ZERO, otherReversed: t7(), availed, found: true },
       arn: r.arn, filedDate: r.filed_date, status: r.status, pulledAt: r.updated_at,
-      note: 'Table 6A only: Table 7C/7D was not read, so nothing is taken as reversed earlier. Check it against the filed GSTR-9.',
+      note: 'The portal gave Table 6A (locked) but not Table 7 of the filed return: enter 7A to 7H from the filed GSTR-9, then tick that it has been checked.',
     };
   }
-  type Doc = { financial_year: string; data: { months?: Record<string, { itc4aTotal?: Tax; itc4b1?: Tax }> } };
+  type Doc = { financial_year: string; data: { months?: Record<string, { itc4aTotal?: Tax; itc4b1?: Tax; itc4b2?: Tax }> } };
   for (const d of (docs || []) as unknown as Doc[]) {
     const fy = d.financial_year;
     if (out[fy]) continue;
@@ -325,26 +338,53 @@ export async function fetchFiledGstr9(clientId: string, fys: string[]): Promise<
     if (!months.length) continue;
     const availed = months.reduce((a, m) => add(a, tax(m.itc4aTotal)), ZERO);
     const reversed = months.reduce((a, m) => add(a, tax(m.itc4b1)), ZERO);
+    const otherRev = months.reduce((a, m) => add(a, tax(m.itc4b2)), ZERO);
     out[fy] = {
       financialYear: fy, source: 'GSTR3B_AS_FILED',
-      itc: { inputsServices: availed, capitalGoods: ZERO, reversedR42: reversed, reversedR43: ZERO, availed, found: true },
+      itc: { inputsServices: availed, capitalGoods: ZERO, reversedR42: reversed, reversedR43: ZERO, otherReversed: t7({ h: otherRev }), availed, found: true },
       arn: null, filedDate: null, status: calc.status, pulledAt: calc.updated_at,
-      note: `GSTR-9 not filed yet: ${months.length} month(s) of GSTR-3B as filed — 4A as credit availed, 4B(1) as reversed earlier.`,
+      note: `GSTR-9 not filed yet, so every figure is editable: prefilled from ${months.length} month(s) of GSTR-3B as filed — 4A as credit availed, 4B(1) as 7C, 4B(2) as 7H. Split them as the GSTR-9 will show them.`,
     };
   }
   return out;
 }
 
-/** Fill a past year exactly from what the portal gave. */
+/**
+ * Fill a past year from what the portal gave. A filed GSTR-9 locks what it
+ * gave (the DB refuses edits to it): all of Tables 6 and 7 when the filed
+ * return was read, Table 6 alone when only the system-computed 6A came back
+ * (Table 7 is then typed from the filed return and ticked as checked). A year
+ * whose GSTR-9 is not filed is only prefilled, from the GSTR-3Bs, and stays
+ * editable.
+ */
 export async function fillYearFromPortal(yearId: string, f: FiledGstr9, actorId: string | null): Promise<void> {
-  await saveYear(yearId, {
+  const values = {
     inputs_services: f.itc.inputsServices,
     capital_goods: f.itc.capitalGoods,
     reversed_r42: f.itc.reversedR42,
     reversed_r43: f.itc.reversedR43,
+    t7_other: f.itc.otherReversed,
+  };
+  const lockKeys: LockField[] = f.source === 'GSTR9_FILED'
+    ? ['inputs_services', 'capital_goods', 'reversed_r42', 'reversed_r43', 't7_other']
+    : f.source === 'GSTR9_COMPUTED' ? ['inputs_services', 'capital_goods'] : [];
+  const portal: PortalLock | null = lockKeys.length
+    ? { source: f.source, fields: Object.fromEntries(lockKeys.map((k) => [k, values[k]])) }
+    : null;
+  await saveYear(yearId, {
+    ...values,
+    portal,
     gstr9_arn: f.arn,
     gstr9_filed_on: f.filedDate,
-    gstr9_match: 'MATCHED_DATA',
+    // Table 7 of a year read only as 6A still has to be typed and checked.
+    gstr9_match: f.source === 'GSTR9_COMPUTED' ? 'UNVERIFIED' : 'MATCHED_DATA',
     remarks: `${PORTAL_SOURCE_LABEL[f.source]}.${f.note ? ` ${f.note}` : ''}`,
   }, actorId);
 }
+
+/** Whether a year should be (re)filled from the portal on load. */
+export const needsPortalFill = (y: YearRow, f: FiledGstr9, blank: boolean): boolean => {
+  if (f.source === 'GSTR3B_AS_FILED') return blank;              // prefill only, never over typing
+  if (!y.portal) return true;                                      // never locked: take the filed return
+  return y.portal.source !== 'GSTR9_FILED' && f.source === 'GSTR9_FILED'; // a better read arrived
+};

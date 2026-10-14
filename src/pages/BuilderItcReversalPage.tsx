@@ -19,13 +19,13 @@ import {
   WS_BTN, WS_CONTROL, WS_PAGE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR, WS_TR_TOTAL,
 } from '@/components/workspace/theme';
 import {
-  HEADS, HEAD_LABEL, ZERO, add, computeItcReversal, fyLabel, fyRange, latestPostingPeriod, tax, total,
-  type Tax, type YearReference,
+  HEADS, HEAD_LABEL, T7_KEYS, T7_LABEL, ZERO, add, computeItcReversal, fyLabel, fyRange, latestPostingPeriod, t7, tax, total,
+  type T7Key, type Tax, type YearReference, type YearResult,
 } from '@/utils/builderItcReversal';
 import {
-  approveWorking, createWorking, fetchBuEvents, fetchCarpetBasis, fetchFiledGstr9, fetchReferences, fetchWorking,
+  approveWorking, createWorking, fetchBuEvents, fetchCarpetBasis, fetchFiledGstr9, fetchReferences, fetchWorking, isLocked, needsPortalFill,
   PORTAL_SOURCE_LABEL, fillYearFromPortal, gstr9PeriodOf, saveWorking, saveYear, setStartFy, submitWorking, toYearInput, withdrawWorking,
-  type BuEventOption, type CarpetBasis, type FiledGstr9, type WorkingRow, type YearRow,
+  type BuEventOption, type CarpetBasis, type FiledGstr9, type LockField, type WorkingRow, type YearRow,
 } from '@/lib/builderItcReversalData';
 
 /**
@@ -36,11 +36,26 @@ import {
 
 const inr = (n: number) => new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 type Field = 'inputs_services' | 'capital_goods' | 'reversed_r42' | 'reversed_r43';
-const FIELDS: { key: Field; label: string; hint: string }[] = [
-  { key: 'inputs_services', label: 'Inputs & input services (Rule 42)', hint: 'GSTR-9 Table 6 — common credit' },
-  { key: 'capital_goods', label: 'Capital goods (Rule 43)', hint: 'GSTR-9 Table 6 — capital goods' },
-  { key: 'reversed_r42', label: 'Already reversed — Rule 42', hint: 'GSTR-9 Table 7C' },
-  { key: 'reversed_r43', label: 'Already reversed — Rule 43', hint: 'GSTR-9 Table 7D' },
+/** One line of a year's GSTR-9 Tables 6 and 7: typed (a column, or a Table 7 head) or worked out. */
+type Line =
+  | { kind: 'field'; field: Field; label: string; hint: string }
+  | { kind: 't7'; key: T7Key; label: string }
+  | { kind: 'calc'; label: string; hint?: string; value: (r: YearResult) => Tax; strong?: boolean };
+const LINES: Line[] = [
+  { kind: 'field', field: 'inputs_services', label: 'Inputs & input services', hint: 'Table 6 (ip + is) — Rule 42' },
+  { kind: 'field', field: 'capital_goods', label: 'Capital goods', hint: 'Table 6 (cg) — Rule 43' },
+  { kind: 'calc', label: '6O — Total ITC availed', value: (r) => r.availed, strong: true },
+  { kind: 't7', key: 'a', label: T7_LABEL.a },
+  { kind: 't7', key: 'b', label: T7_LABEL.b },
+  { kind: 'field', field: 'reversed_r42', label: '7C — Rule 42', hint: 'already reversed under Rule 42' },
+  { kind: 'field', field: 'reversed_r43', label: '7D — Rule 43', hint: 'already reversed under Rule 43' },
+  { kind: 't7', key: 'e', label: T7_LABEL.e },
+  { kind: 't7', key: 'f', label: T7_LABEL.f },
+  { kind: 't7', key: 'g', label: T7_LABEL.g },
+  { kind: 't7', key: 'h', label: T7_LABEL.h },
+  { kind: 'calc', label: '7I — Total ITC reversed (7A to 7H)', value: (r) => r.t7i, strong: true },
+  { kind: 'calc', label: '7J — Net ITC available (6O − 7I)', value: (r) => r.t7j, strong: true },
+  { kind: 'calc', label: 'Common credit for Rules 42/43', hint: '7J + 7C + 7D', value: (r) => add(r.baseR42, r.baseR43) },
 ];
 const STATUS_VARIANT = { DRAFT: 'secondary', SUBMITTED: 'warning', APPROVED: 'success' } as const;
 /** First extension version that reads the filed GSTR-9 (Tables 6 and 7). */
@@ -50,7 +65,8 @@ const POLL_MAX = 36;
 
 /** A year nobody has entered yet. */
 const isBlank = (y: YearRow) => y.gstr9_match === 'UNVERIFIED'
-  && [y.inputs_services, y.capital_goods, y.reversed_r42, y.reversed_r43].every((t) => total(tax(t)) === 0);
+  && [y.inputs_services, y.capital_goods, y.reversed_r42, y.reversed_r43].every((t) => total(tax(t)) === 0)
+  && total(Object.values(t7(y.t7_other)).reduce(add, ZERO)) === 0;
 
 const BuilderItcReversalPage: React.FC = () => {
   const projectId = useBuilderProjectId();
@@ -123,12 +139,13 @@ const BuilderItcReversalPage: React.FC = () => {
       }
       setRefs(merged);
       setFiled(portal);
-      // Past years not entered yet are filled from the filed GSTR-9 at once.
+      // Past years are filled from the portal at once: a filed GSTR-9 locks
+      // what it gave; a year not filed yet is only prefilled while blank.
       if (w.working?.status === 'DRAFT') {
-        const blanks = w.years.filter((y) => !y.is_bu_year && portal[y.financial_year] && isBlank(y));
+        const blanks = w.years.filter((y) => !y.is_bu_year && portal[y.financial_year] && needsPortalFill(y, portal[y.financial_year], isBlank(y)));
         if (blanks.length) {
           for (const y of blanks) await fillYearFromPortal(y.id, portal[y.financial_year], user?.id ?? null);
-          toast.success(`Filled ${blanks.length} year(s) from the GSTR-9 filed on the portal`);
+          toast.success(`Filled ${blanks.length} year(s) from the portal`);
           const again = await fetchWorking(projectId, eventId);
           setYears(again.years);
         }
@@ -212,6 +229,14 @@ const BuilderItcReversalPage: React.FC = () => {
     setYears((ys) => ys.map((y) => (y.id === id ? { ...y, [field]: { ...tax(y[field]), [head]: Number(value) || 0 } } : y)));
     setDirty((d) => new Set(d).add(id));
   };
+  const setT7 = (id: string, key: T7Key, head: keyof Tax, value: string) => {
+    setYears((ys) => ys.map((y) => {
+      if (y.id !== id) return y;
+      const cur = t7(y.t7_other);
+      return { ...y, t7_other: { ...cur, [key]: { ...cur[key], [head]: Number(value) || 0 } } };
+    }));
+    setDirty((d) => new Set(d).add(id));
+  };
   const setYearMeta = (id: string, patch: Partial<YearRow>) => {
     setYears((ys) => ys.map((y) => (y.id === id ? { ...y, ...patch } : y)));
     setDirty((d) => new Set(d).add(id));
@@ -221,7 +246,7 @@ const BuilderItcReversalPage: React.FC = () => {
     for (const y of years.filter((yy) => dirty.has(yy.id))) {
       await saveYear(y.id, {
         inputs_services: tax(y.inputs_services), capital_goods: tax(y.capital_goods),
-        reversed_r42: tax(y.reversed_r42), reversed_r43: tax(y.reversed_r43),
+        reversed_r42: tax(y.reversed_r42), reversed_r43: tax(y.reversed_r43), t7_other: t7(y.t7_other),
         gstr9_arn: y.gstr9_arn, gstr9_filed_on: y.gstr9_filed_on, gstr9_match: y.gstr9_match, remarks: y.remarks,
       }, user?.id ?? null);
     }
@@ -259,10 +284,12 @@ const BuilderItcReversalPage: React.FC = () => {
   const buFy = working?.bu_fy;
   const fyOptions = buFy ? fyRange('2019-20', buFy) : [];
   const totals = result?.years.reduce((a, y) => ({
-    availed: add(a.availed, add(tax(y.inputsServices), tax(y.capitalGoods))),
+    availed: add(a.availed, y.availed),
+    net7j: add(a.net7j, y.t7j),
+    base: add(a.base, add(y.baseR42, y.baseR43)),
     attributable: add(a.attributable, add(y.attributableR42, y.attributableR43)),
     reversed: add(a.reversed, add(y.reversedR42, y.reversedR43)),
-  }), { availed: ZERO, attributable: ZERO, reversed: ZERO });
+  }), { availed: ZERO, net7j: ZERO, base: ZERO, attributable: ZERO, reversed: ZERO });
 
   return (
     <div className={WS_PAGE}>
@@ -360,7 +387,7 @@ const BuilderItcReversalPage: React.FC = () => {
 
           <SectionCard
             title="Credit by financial year"
-            description="Past years come from each year's filed GSTR-9 on the portal; only the BU year (April to the BU month) is entered by hand"
+            description="Figures from a filed GSTR-9 are locked; a year whose GSTR-9 is not filed, and the BU year (April to the BU month), are entered here"
             actions={editable ? (
               <>
                 <Button variant="outline" size="sm" className={WS_BTN} onClick={fetchFromPortal} disabled={busy || polling !== null || !pastYears.length}>
@@ -378,9 +405,24 @@ const BuilderItcReversalPage: React.FC = () => {
                 const yr = result.years.find((r) => r.financialYear === y.financial_year);
                 const ref = refs[y.financial_year];
                 const portal = !y.is_bu_year ? filed[y.financial_year] : undefined;
-                // A past year fetched from the portal is the portal's, not typed;
-                // only the superadmin may correct it.
-                const cellsEditable = editable && (!portal || isSuperadmin);
+                // What a filed GSTR-9 gave is locked (the DB refuses edits too);
+                // a year whose GSTR-9 is not filed stays editable.
+                const canType = (f: LockField) => editable && !isLocked(y, f);
+                const lockedAll = !y.is_bu_year && !!y.portal && (['inputs_services', 'capital_goods', 'reversed_r42', 'reversed_r43', 't7_other'] as LockField[]).every((f) => isLocked(y, f));
+                const cell = (value: number, typable: boolean, onChange: (v: string) => void, key: string) => (
+                  <td key={key} className={cn(WS_TD, 'p-0')}>
+                    {typable ? (
+                      <Input
+                        type="number" step="0.01" inputMode="decimal"
+                        className="h-9 rounded-none border-0 bg-transparent text-right tabular-nums shadow-none"
+                        value={value || ''}
+                        onChange={(e) => onChange(e.target.value)}
+                      />
+                    ) : (
+                      <span className="block px-2 py-1.5 text-right tabular-nums">{inr(value)}</span>
+                    )}
+                  </td>
+                );
                 return (
                   <div key={y.id} className="rounded-md border">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/50 px-3 py-1.5">
@@ -414,33 +456,44 @@ const BuilderItcReversalPage: React.FC = () => {
                       <table className={WS_TABLE}>
                         <thead>
                           <tr>
-                            <th className={WS_TH}>{y.is_bu_year ? 'April to the BU month' : 'As in GSTR-9'}</th>
+                            <th className={WS_TH}>{y.is_bu_year ? 'April to the BU month (books / GSTR-3B)' : 'GSTR-9 Tables 6 and 7'}</th>
                             {HEADS.map((h) => <th key={h} className={cn(WS_TH, 'text-right')}>{HEAD_LABEL[h]}</th>)}
                           </tr>
                         </thead>
                         <tbody>
-                          {FIELDS.map((f) => (
-                            <tr key={f.key} className={WS_TR}>
-                              <td className={WS_TD}>
-                                {f.label}
-                                <span className="block text-[11px] text-muted-foreground">{y.is_bu_year ? 'From the books / GSTR-3B' : f.hint}</span>
-                              </td>
-                              {HEADS.map((h) => (
-                                <td key={h} className={cn(WS_TD, 'p-0')}>
-                                  {cellsEditable ? (
-                                    <Input
-                                      type="number" step="0.01" inputMode="decimal"
-                                      className="h-9 rounded-none border-0 bg-transparent text-right tabular-nums shadow-none"
-                                      value={tax(y[f.key])[h] || ''}
-                                      onChange={(e) => setYearField(y.id, f.key, h, e.target.value)}
-                                    />
-                                  ) : (
-                                    <span className="block px-2 py-1.5 text-right tabular-nums">{inr(tax(y[f.key])[h])}</span>
-                                  )}
+                          {LINES.map((l) => {
+                            if (l.kind === 'calc') {
+                              if (!yr) return null;
+                              const v = l.value(yr);
+                              return (
+                                <tr key={l.label} className={cn(WS_TR, 'bg-muted/30', l.strong && 'font-medium')}>
+                                  <td className={WS_TD}>{l.label}{l.hint && <span className="block text-[11px] font-normal text-muted-foreground">{l.hint}</span>}</td>
+                                  {HEADS.map((h) => <td key={h} className={WS_TD_NUM}>{inr(v[h])}</td>)}
+                                </tr>
+                              );
+                            }
+                            if (l.kind === 't7') {
+                              const v = t7(y.t7_other)[l.key];
+                              const typable = canType('t7_other');
+                              return (
+                                <tr key={l.key} className={WS_TR}>
+                                  <td className={WS_TD}>{l.label}</td>
+                                  {HEADS.map((h) => cell(v[h], typable, (val) => setT7(y.id, l.key, h, val), h))}
+                                </tr>
+                              );
+                            }
+                            const v = tax(y[l.field]);
+                            const typable = canType(l.field);
+                            return (
+                              <tr key={l.field} className={WS_TR}>
+                                <td className={WS_TD}>
+                                  {l.label}
+                                  <span className="block text-[11px] text-muted-foreground">{l.hint}{!typable && isLocked(y, l.field) ? ' · locked (filed GSTR-9)' : ''}</span>
                                 </td>
-                              ))}
-                            </tr>
-                          ))}
+                                {HEADS.map((h) => cell(v[h], typable, (val) => setYearField(y.id, l.field, h, val), h))}
+                              </tr>
+                            );
+                          })}
                           {ref?.availed && (
                             <tr className="bg-muted/30 text-xs text-muted-foreground">
                               <td className={WS_TD}>App's figure: {ref.source}{ref.months < 12 && ref.source !== 'GSTR-9 Table 6A' ? ` (${ref.months} months)` : ''}</td>
@@ -448,18 +501,31 @@ const BuilderItcReversalPage: React.FC = () => {
                             </tr>
                           )}
                           {yr && (
+                            <tr className={WS_TR}>
+                              <td className={WS_TD}>Attributable to the exempt share ({(result.ratio * 100).toFixed(2)}%)</td>
+                              {HEADS.map((h) => <td key={h} className={WS_TD_NUM}>{inr(add(yr.attributableR42, yr.attributableR43)[h])}</td>)}
+                            </tr>
+                          )}
+                          {yr && (
                             <tr className={WS_TR_TOTAL}>
-                              <td className={WS_TD}>Net to reverse ({(result.ratio * 100).toFixed(2)}% − already reversed)</td>
+                              <td className={WS_TD}>Net to reverse (attributable − 7C − 7D)</td>
                               {HEADS.map((h) => <td key={h} className={WS_TD_NUM}>{inr(yr.net[h])}</td>)}
                             </tr>
                           )}
                         </tbody>
                       </table>
                     </div>
-                    {portal?.note && (
-                      <p className="border-t px-3 py-2 text-xs text-muted-foreground">
-                        {portal.note}{isSuperadmin && editable ? ' As superadmin you can correct the figures above.' : ''}
-                      </p>
+                    {portal?.note && !lockedAll && (
+                      <p className="border-t px-3 py-2 text-xs text-muted-foreground">{portal.note}</p>
+                    )}
+                    {!y.is_bu_year && portal?.source === 'GSTR9_COMPUTED' && (
+                      <label className="flex items-center gap-2 border-t px-3 py-2 text-sm">
+                        <Checkbox
+                          checked={y.gstr9_match !== 'UNVERIFIED'} disabled={!editable}
+                          onCheckedChange={(c) => setYearMeta(y.id, { gstr9_match: c ? 'CONFIRMED' : 'UNVERIFIED' })}
+                        />
+                        Table 7 above is as in the GSTR-9 filed for {fyLabel(y.financial_year)}
+                      </label>
                     )}
                     {!y.is_bu_year && !portal && (
                       <div className="grid gap-2 p-3 sm:grid-cols-4">
@@ -499,16 +565,18 @@ const BuilderItcReversalPage: React.FC = () => {
 
           <SectionCard
             title="Working"
-            description="Per year: common credit × exempt share, less what was already reversed under Rules 42/43"
+            description="Per year: common credit (GSTR-9 7J + 7C + 7D) × exempt share, less what 7C/7D already reversed"
           >
             <div className={WS_TABLE_WRAP}>
               <table className={WS_TABLE} aria-label="Rule 42/43 working">
                 <thead>
                   <tr>
                     <th className={WS_TH}>Year</th>
-                    <th className={cn(WS_TH, 'text-right')}>Credit availed</th>
+                    <th className={cn(WS_TH, 'text-right')}>6O availed</th>
+                    <th className={cn(WS_TH, 'text-right')}>7J net ITC</th>
+                    <th className={cn(WS_TH, 'text-right')}>Common credit (7J + 7C + 7D)</th>
                     <th className={cn(WS_TH, 'text-right')}>Attributable to exempt</th>
-                    <th className={cn(WS_TH, 'text-right')}>Already reversed</th>
+                    <th className={cn(WS_TH, 'text-right')}>Already reversed (7C + 7D)</th>
                     <th className={cn(WS_TH, 'text-right')}>Net now</th>
                     {working.include_interest && <th className={cn(WS_TH, 'text-right')}>Interest (days)</th>}
                   </tr>
@@ -517,7 +585,9 @@ const BuilderItcReversalPage: React.FC = () => {
                   {result.years.map((y) => (
                     <tr key={y.financialYear} className={WS_TR}>
                       <td className={WS_TD}>{fyLabel(y.financialYear)}</td>
-                      <td className={WS_TD_NUM}>{inr(total(add(y.inputsServices, y.capitalGoods)))}</td>
+                      <td className={WS_TD_NUM}>{inr(total(y.availed))}</td>
+                      <td className={WS_TD_NUM}>{inr(total(y.t7j))}</td>
+                      <td className={WS_TD_NUM}>{inr(total(add(y.baseR42, y.baseR43)))}</td>
                       <td className={WS_TD_NUM}>{inr(total(add(y.attributableR42, y.attributableR43)))}</td>
                       <td className={WS_TD_NUM}>{inr(total(add(y.reversedR42, y.reversedR43)))}</td>
                       <td className={cn(WS_TD_NUM, 'font-medium')}>{inr(total(y.net))}</td>
@@ -528,6 +598,8 @@ const BuilderItcReversalPage: React.FC = () => {
                     <tr className={WS_TR_TOTAL}>
                       <td className={WS_TD}>Total</td>
                       <td className={WS_TD_NUM}>{inr(total(totals.availed))}</td>
+                      <td className={WS_TD_NUM}>{inr(total(totals.net7j))}</td>
+                      <td className={WS_TD_NUM}>{inr(total(totals.base))}</td>
                       <td className={WS_TD_NUM}>{inr(total(totals.attributable))}</td>
                       <td className={WS_TD_NUM}>{inr(total(totals.reversed))}</td>
                       <td className={WS_TD_NUM}>{inr(total(result.totalNet))}</td>

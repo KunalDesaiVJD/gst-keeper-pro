@@ -7,11 +7,12 @@
 //     supp_rchrg_reg (6D), iog (6E) — each a list of {itc_typ: 'ip'|'cg'|'is',
 //     iamt, camt, samt, csamt}; ios (6F, services), isd (6G), itc_clmd (6H),
 //     other (6M) — amounts only.
-//   Table 7 (ITC reversed): rule42, rule43 (and others we do not need).
+//   Table 7 (ITC reversed): rule37 (7A), rule39 (7B), rule42 (7C), rule43
+//     (7D), sec17 (7E), revsl_tran1 (7F), revsl_tran2 (7G), other (7H, a list).
 //
 // Rows can come as a single object or a list; amounts may be strings.
 
-import { ZERO, add, tax, type Tax } from '@/utils/builderItcReversal';
+import { ZERO, add, t7, tax, type T7Other, type Tax } from '@/utils/builderItcReversal';
 
 type Row = Record<string, unknown>;
 
@@ -40,6 +41,8 @@ export interface FiledGstr9Itc {
   /** Reversed under Rule 42 / Rule 43 (Table 7C / 7D). */
   reversedR42: Tax;
   reversedR43: Tax;
+  /** The rest of Table 7: 7A, 7B, 7E, 7F, 7G, 7H. */
+  otherReversed: T7Other;
   /** Total availed per Table 6 (both of the above). */
   availed: Tax;
   /** False when the return carried no Table 6 or 7 at all. */
@@ -48,7 +51,7 @@ export interface FiledGstr9Itc {
 
 export function parseFiledGstr9(data: unknown): FiledGstr9Itc {
   const t6 = findTable(data, 'table6');
-  const t7 = findTable(data, 'table7');
+  const t7t = findTable(data, 'table7');
   let inputsServices = ZERO;
   let capitalGoods = ZERO;
 
@@ -65,12 +68,17 @@ export function parseFiledGstr9(data: unknown): FiledGstr9Itc {
     }
   }
 
+  const sum = (...keys: string[]): Tax => keys.reduce((a, k) => rows(t7t?.[k]).reduce((b, r) => add(b, amt(r)), a), ZERO);
   return {
     inputsServices,
     capitalGoods,
-    reversedR42: amt(rows(t7?.rule42)[0]),
-    reversedR43: amt(rows(t7?.rule43)[0]),
+    reversedR42: sum('rule42'),
+    reversedR43: sum('rule43'),
+    otherReversed: t7({
+      a: sum('rule37'), b: sum('rule39'), e: sum('sec17'),
+      f: sum('revsl_tran1', 'revsl_trans1'), g: sum('revsl_tran2', 'revsl_trans2'), h: sum('other'),
+    }),
     availed: add(inputsServices, capitalGoods),
-    found: !!(t6 || t7),
+    found: !!(t6 || t7t),
   };
 }

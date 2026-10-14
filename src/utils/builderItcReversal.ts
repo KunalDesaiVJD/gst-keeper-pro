@@ -13,6 +13,11 @@
 //   reversal (Rule 43) = common credit on capital goods × Te/Tt
 //                        − already reversed that year under Rule 43
 //
+// Common credit follows GSTR-9 Tables 6 and 7: credit availed (6O) less what
+// Table 7 reversed under any head other than Rules 42/43 (7A Rule 37, 7B
+// Rule 39, 7E s.17(5), 7F/7G TRAN, 7H other) — that credit was never common.
+// So the base is 7J + 7C + 7D, and 7C/7D are what was already reversed.
+//
 // Te = carpet area exempt (unbooked at completion, plus residential carpet for
 // a Partial-ITC REP, whose residential share is exempt throughout), Tt = total
 // carpet area of the project. A negative net (more reversed over the years
@@ -70,6 +75,24 @@ const periodKey = (p: string) => { const [m, y] = p.split('/'); return Number(y)
 
 export type Gstr9Match = 'UNVERIFIED' | 'MATCHED_DATA' | 'CONFIRMED';
 
+/** GSTR-9 Table 7 heads other than 7C (Rule 42) and 7D (Rule 43). */
+export type T7Key = 'a' | 'b' | 'e' | 'f' | 'g' | 'h';
+export type T7Other = Record<T7Key, Tax>;
+export const T7_KEYS: T7Key[] = ['a', 'b', 'e', 'f', 'g', 'h'];
+export const T7_LABEL: Record<T7Key, string> = {
+  a: '7A — Rule 37 (payment not made in 180 days)',
+  b: '7B — Rule 39 (ISD)',
+  e: '7E — Section 17(5) (blocked)',
+  f: '7F — Reversal of TRAN-I credit',
+  g: '7G — Reversal of TRAN-II credit',
+  h: '7H — Other reversals',
+};
+export const t7 = (v?: Partial<Record<T7Key, Partial<Tax>>> | null): T7Other => ({
+  a: tax(v?.a), b: tax(v?.b), e: tax(v?.e), f: tax(v?.f), g: tax(v?.g), h: tax(v?.h),
+});
+export const t7Sum = (v: T7Other): Tax => T7_KEYS.reduce((a, k) => add(a, v[k]), ZERO);
+const floor0 = (a: Tax): Tax => ({ i: Math.max(0, a.i), c: Math.max(0, a.c), s: Math.max(0, a.s), x: Math.max(0, a.x) });
+
 export interface YearInput {
   financialYear: string;
   isBuYear: boolean;
@@ -77,6 +100,7 @@ export interface YearInput {
   capitalGoods: Tax;     // Rule 43 common credit
   reversedR42: Tax;      // already reversed (GSTR-9 7C)
   reversedR43: Tax;      // already reversed (GSTR-9 7D)
+  otherReversed: T7Other; // GSTR-9 7A, 7B, 7E–7H
   gstr9Arn: string | null;
   gstr9Match: Gstr9Match;
 }
@@ -103,6 +127,15 @@ export interface WorkingInput {
 // ─── Result ─────────────────────────────────────────────────────────────────
 
 export interface YearResult extends YearInput {
+  /** 6O: total credit availed. */
+  availed: Tax;
+  /** 7I: total reversed, 7A to 7H. */
+  t7i: Tax;
+  /** 7J: net credit available, 6O − 7I. */
+  t7j: Tax;
+  /** Rule 42 / 43 common credit: 6O less the non-42/43 reversals (= 7J + 7C + 7D). */
+  baseR42: Tax;
+  baseR43: Tax;
   attributableR42: Tax;
   attributableR43: Tax;
   netR42: Tax;
@@ -145,8 +178,15 @@ export function computeItcReversal(input: WorkingInput): WorkingResult {
 
   const buFy = fyOfDate(input.completionDate);
   const years: YearResult[] = input.years.map((y) => {
-    const attributableR42 = scale(y.inputsServices, ratio);
-    const attributableR43 = scale(y.capitalGoods, ratio);
+    const other = t7Sum(y.otherReversed);
+    const availed = add(y.inputsServices, y.capitalGoods);
+    const t7i = add(add(y.reversedR42, y.reversedR43), other);
+    const t7j = sub(availed, t7i);
+    // The non-42/43 reversals come out of inputs first, then capital goods.
+    const baseR42 = floor0(sub(y.inputsServices, other));
+    const baseR43 = floor0(sub(y.capitalGoods, floor0(sub(other, y.inputsServices))));
+    const attributableR42 = scale(baseR42, ratio);
+    const attributableR43 = scale(baseR43, ratio);
     const netR42 = sub(attributableR42, y.reversedR42);
     const netR43 = sub(attributableR43, y.reversedR43);
     const net = add(netR42, netR43);
@@ -154,12 +194,11 @@ export function computeItcReversal(input: WorkingInput): WorkingResult {
     const positive: Tax = { i: Math.max(0, net.i), c: Math.max(0, net.c), s: Math.max(0, net.s), x: Math.max(0, net.x) };
     const interest = scale(positive, (INTEREST_RATE * interestDays) / 365);
     const reference = input.references[y.financialYear] ?? null;
-    const availed = add(y.inputsServices, y.capitalGoods);
     const referenceDiff = reference?.availed ? sub(availed, reference.availed) : null;
 
     if (!y.isBuYear) {
       if (y.gstr9Match === 'UNVERIFIED') {
-        problems.push(`${fyLabel(y.financialYear)}: match the figures with the filed GSTR-9 (enter its ARN and confirm).`);
+        problems.push(`${fyLabel(y.financialYear)}: enter Table 7 from the filed GSTR-9 and tick that it has been checked.`);
       }
       if (y.gstr9Match === 'CONFIRMED' && !(y.gstr9Arn || '').trim()) {
         problems.push(`${fyLabel(y.financialYear)}: give the ARN of the GSTR-9 the figures were matched with.`);
@@ -172,7 +211,7 @@ export function computeItcReversal(input: WorkingInput): WorkingResult {
         );
       }
     }
-    return { ...y, attributableR42, attributableR43, netR42, netR43, net, interestDays, interest, reference, referenceDiff };
+    return { ...y, availed, t7i, t7j, baseR42, baseR43, attributableR42, attributableR43, netR42, netR43, net, interestDays, interest, reference, referenceDiff };
   });
 
   const want = fyRange(years[0]?.financialYear ?? buFy, buFy);
@@ -196,7 +235,7 @@ export function computeItcReversal(input: WorkingInput): WorkingResult {
   if (total(reversal) > 0) {
     lines.push({
       tableRef: '4B(1)', label: 'Rule 42/43 final reversal at completion', amount: reversal,
-      reason: `Builder: ITC on the exempt share (${(ratio * 100).toFixed(4)}% of carpet area unbooked/exempt at completion) for ${span}, net of earlier Rule 42/43 reversals.`,
+      reason: `Builder: ITC on the exempt share (${(ratio * 100).toFixed(4)}% of carpet area unbooked/exempt at completion) of common credit (GSTR-9 7J + 7C + 7D) for ${span}, net of earlier Rule 42/43 reversals.`,
     });
   }
   if (total(recredit) > 0) {
