@@ -85,6 +85,16 @@ export interface Gstr3bResult {
   // seven (e.g. 'Other') — surfaced so the UI can badge the draft.
   adjustmentsApplied: number;
   adjustmentsUnmapped: number;
+  // Option 3 (14 Oct 2026): ITC Summary rows in 4A(5) that were typed rather
+  // than taken from 2B (fetchGstr3b fills it; the page marks Table 4 in red).
+  itcTyped?: Gstr3bItcTyped[];
+}
+export interface Gstr3bItcTyped {
+  row: '5.1' | '5.2';
+  label: string;
+  typed: { igst: number; cgst: number; sgst: number };
+  // Row 5.1 only: what Import 2B and this month's Not-in-2B reversal give.
+  twob?: { igst: number; cgst: number; sgst: number };
 }
 
 const r2 = (n: number) => Math.round((n || 0) * 100) / 100;

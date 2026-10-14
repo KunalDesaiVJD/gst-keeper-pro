@@ -4911,6 +4911,41 @@ export type Database = {
           },
         ]
       }
+      client_liberal_log: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          changed_by_name: string | null
+          client_id: string
+          id: string
+          liberal: boolean
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          changed_by_name?: string | null
+          client_id: string
+          id?: string
+          liberal: boolean
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          changed_by_name?: string | null
+          client_id?: string
+          id?: string
+          liberal?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_liberal_log_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_scheme_history: {
         Row: {
           changed_at: string
@@ -5015,6 +5050,9 @@ export type Database = {
           inactive_at_hand: boolean
           is_first_login: boolean | null
           liberal_2b_reconciliation: boolean
+          liberal_changed_at: string | null
+          liberal_changed_by: string | null
+          liberal_changed_by_name: string | null
           mobile: string | null
           name: string
           notices_handled: boolean
@@ -5060,6 +5098,9 @@ export type Database = {
           inactive_at_hand?: boolean
           is_first_login?: boolean | null
           liberal_2b_reconciliation?: boolean
+          liberal_changed_at?: string | null
+          liberal_changed_by?: string | null
+          liberal_changed_by_name?: string | null
           mobile?: string | null
           name: string
           notices_handled?: boolean
@@ -5104,6 +5145,9 @@ export type Database = {
           inactive_at_hand?: boolean
           is_first_login?: boolean | null
           liberal_2b_reconciliation?: boolean
+          liberal_changed_at?: string | null
+          liberal_changed_by?: string | null
+          liberal_changed_by_name?: string | null
           mobile?: string | null
           name?: string
           notices_handled?: boolean
