@@ -112,7 +112,7 @@ through `src/lib/reportExport/` (`excel.ts` ExcelJS on demand, `pdf.ts` on the `
 lay out any `ReportTable` from `layout.ts` (identification strip from the subtitle's "Label: value" parts, column
 kinds from the values, TOTAL / period / section rows) plus its optional hints (`meta`, `kpis`, `columnGroups`,
 `headerLabels`, `rowTones`, `extraSheets`). Checks: `scripts/verify-report-exports.mjs`, `verify-report-pdf.mjs`,
-`verify-doc-table-model.mjs` (the document lists' filters, `views/documentLineItems/tableModel.ts`).
+`verify-doc-table-model.mjs` (the table kit's filters, `views/tableKit/tableModel.ts`, shared by every view through `useTableKit`).
 
 ## GSTR-1 e-invoices (IRN)
 

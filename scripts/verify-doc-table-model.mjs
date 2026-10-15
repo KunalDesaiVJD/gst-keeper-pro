@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Checks the filter / sort / group / total rules of the document-list preview
-// (src/components/reports/views/documentLineItems/tableModel.ts), the view the
+// Checks the filter / sort / group / total rules of the table kit's pure model
+// (src/components/reports/views/tableKit/tableModel.ts): the document list the
 // GSTR-2A / 2B document reports, the rate-wise and supplier-wise reports and
-// the GSTR-1 family open in.
+// the GSTR-1 family open in, and every other report view built on the kit.
 //
 //   node scripts/verify-doc-table-model.mjs
 //
@@ -13,7 +13,8 @@
 // sort with blanks last; merged-period tables (bands, per-period TOTALs, the
 // Period filter); TOTAL rows never filtered away when nothing is filtered; the
 // layout's TOTAL detection; groups and subtotals; pages; the "filtered" export
-// table; and speed at 5,000 rows. Prints pass / fail; exits 1 on any failure.
+// table; a view's own (custom) filters; the column groups over the columns
+// shown; and speed at 5,000 rows. Prints pass / fail; exits 1 on any failure.
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -31,7 +32,7 @@ const alias = {
 const out = await build({
   stdin: {
     contents: `
-      export * from './src/components/reports/views/documentLineItems/tableModel';
+      export * from './src/components/reports/views/tableKit/tableModel';
       export { guessRowKind } from './src/lib/reportExport/layout';
       export { mergeTables } from './src/lib/reportPeriodMerge';
     `,
@@ -350,6 +351,52 @@ const bm = M.buildModel(big);
   check(g, 'facet list by value', facets === want, facets);
   const grouped = M.buildView(m, view({ groupBy: 0 })).groups.map((x) => x.label).join();
   check(g, 'groups by value', grouped === want, grouped);
+}
+
+// ── 11c. A view's own (custom) filters ─────────────────────────────────────
+{
+  const g = 'custom';
+  const sup = col(bm, 'Supplier Name');
+  const st = col(bm, 'Status');
+  const tv = col(bm, 'Taxable Value');
+  const rejected = { id: 'rej', label: 'Rejected in IMS only', test: (r) => r.cells[st] === 'Rejected in IMS' };
+  const byValues = M.applyFilters(bm, view({ filters: { [st]: { type: 'values', values: ['Rejected in IMS'] } } }));
+  const byCustom = M.applyFilters(bm, view({ custom: [rejected] }));
+  check(g, 'a custom filter narrows the rows like the column filter it mirrors', byCustom.length === byValues.length && byCustom.length > 0, `${byCustom.length} vs ${byValues.length}`);
+  const alphaRejected = big.rows.filter((r) => r[2] === 'Alpha Traders' && r[10] === 'Rejected in IMS').length;
+  const both = M.applyFilters(bm, view({ filters: { [sup]: { type: 'values', values: ['Alpha Traders'] } }, custom: [rejected] }));
+  check(g, 'ANDed with the column filters', both.length === alphaRejected, `${both.length} vs ${alphaRejected}`);
+  const counts = facet(bm, view({ custom: [rejected] }), sup);
+  check(g, 'value counts honour it (every column\'s, its own has none)', counts['Alpha Traders'] === alphaRejected, JSON.stringify(counts));
+  check(g, 'it counts as filtered: a TOTAL recomputed over the rows shown', M.isFiltered(view({ custom: [rejected] })) && M.buildView(bm, view({ custom: [rejected] })).footer?.label === 'TOTAL (filtered)' && near(M.buildView(bm, view({ custom: [rejected] })).footer.sums.get(tv), sumCol(byCustom, tv)));
+  check(g, 'no custom filter, or an empty list, is not filtered', !M.isFiltered(view()) && !M.isFiltered(view({ custom: [] })));
+  const chips = M.activeFilters(bm, view({ search: 'alpha', custom: [rejected] }));
+  check(g, 'a chip named by its label, after the search and the column filters', chips.length === 2 && chips[1].col === 'custom' && chips[1].id === 'rej' && chips[1].text === 'Rejected in IMS only', JSON.stringify(chips));
+  const exp = M.viewToReportTable(big, bm, view({ custom: [rejected] }), new Set());
+  check(g, 'the export strip names it and counts the rows it left', /Filter: Rejected in IMS only/.test(exp.subtitle) && exp.rowKinds.filter((k) => k === 'data').length === byCustom.length, exp.subtitle);
+}
+
+// ── 11d. Column groups over the columns shown, figure helpers ──────────────
+{
+  const g = 'kit';
+  const rec = F.reconciliation();
+  const rm = M.buildModel(rec);
+  const spans = (gs) => (gs ? gs.map((x) => `${x.label}:${x.span}${x.tone ? `:${x.tone}` : ''}`).join('|') : 'null');
+  const all = M.respanColumnGroups(rec, rm, rm.headers.map((_, c) => c));
+  check(g, 'every column shown: the report\'s own groups', spans(all) === 'Document:7|GSTR-2A:2|GSTR-2B:2|Difference (2B minus 2A):1:bad|Reconciliation:2', spans(all));
+  const some = M.respanColumnGroups(rec, rm, [1, 3, 5, 9, 10, 11, 12]);
+  check(g, 'hidden columns leave their group, a group with none shown goes, tones kept', spans(some) === 'Document:3|GSTR-2B:2|Difference (2B minus 2A):1:bad|Reconciliation:1', spans(some));
+  check(g, 'no groups, or groups not spanning the headers: null', M.respanColumnGroups(big, bm, [0, 1]) === null && M.respanColumnGroups({ columnGroups: [{ label: 'x', span: 2 }] }, rm, [0, 1]) === null);
+  const mt = F.merged(M.mergeTables);
+  const mm = M.buildModel(mt);
+  const mg = M.respanColumnGroups({ columnGroups: [{ label: 'Who', span: 3 }, { label: 'Figures', span: mm.headers.length - 3 }] }, mm, [mm.periodCol, 0, 1, 5]);
+  check(g, 'the Period column sits under a blank group', spans(mg) === ':1|Who:2|Figures:1', spans(mg));
+  const names = rm.columns.map((c) => c.name);
+  check(g, 'a short label shared by two columns names them by their full header', names[8] === '2A Total Tax' && names[10] === '2B Total Tax' && names[11] === 'Total Tax Difference (2B minus 2A)' && names[3] === 'Supplier name' && rm.columns[11].label === 'Total tax', names.join(' | '));
+  check(g, '… so a chip says which', M.describeFilter(rm, 11, { type: 'number', min: 1, max: null, nonZero: false }) === 'Total Tax Difference (2B minus 2A) at least 1.00', M.describeFilter(rm, 11, { type: 'number', min: 1, max: null }));
+  check(g, 'unique labels name the column as shown', bm.columns.every((c) => c.name === c.label));
+  const tv = col(bm, 'Taxable Value');
+  check(g, 'figure columns and their house style', M.isFigureColumn(bm, tv) && !M.isFigureColumn(bm, col(bm, 'Supplier Name')) && M.figureText(bm, tv, 123456.5) === '1,23,456.50' && M.figureText(bm, tv, -5) === '(5.00)', M.figureText(bm, tv, 123456.5));
 }
 
 // ── 12. Speed ──────────────────────────────────────────────────────────────

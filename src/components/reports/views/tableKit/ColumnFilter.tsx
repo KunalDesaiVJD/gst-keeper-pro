@@ -1,6 +1,7 @@
-// The per-column menu of the document-list preview: sort, group and filter
-// one column from its header, the way a reviewer works a register in Excel.
-// What a filter does is decided in tableModel.ts; this is only the controls.
+// The per-column menu of the table kit (opened from TableKitHead): sort, group
+// and filter one column from its header, the way a reviewer works a register
+// in Excel. What a filter does is decided in tableModel.ts; this is only the
+// controls.
 import React, { useMemo, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -184,8 +185,8 @@ export const ColumnFilter: React.FC<{
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={`Filter ${c.label}`}
-          title={active ? 'Filtered: change or clear' : `Filter, sort or group by ${c.label}`}
+          aria-label={`Filter ${c.name}`}
+          title={active ? 'Filtered: change or clear' : `Filter, sort or group by ${c.name}`}
           className={cn(
             'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:bg-background hover:text-foreground',
             active && 'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground',
@@ -196,7 +197,7 @@ export const ColumnFilter: React.FC<{
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 space-y-2.5 p-3" onOpenAutoFocus={(e) => { if (c.filter === 'values' && c.distinct <= 8) e.preventDefault(); }}>
         <div className="flex items-start justify-between gap-2">
-          <p className="text-sm font-semibold leading-tight">{c.label}</p>
+          <p className="text-sm font-semibold leading-tight">{c.name}</p>
           {active && (
             <button type="button" className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground hover:text-foreground" onClick={() => { set(undefined); setEpoch((e) => e + 1); }}>
               <X className="h-3 w-3" /> Clear filter

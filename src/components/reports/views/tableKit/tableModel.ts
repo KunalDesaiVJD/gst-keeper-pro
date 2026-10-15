@@ -1,10 +1,12 @@
-// The pure half of the document-list preview (DocumentLineItemsView.tsx): which
-// rows are documents and which are the report's own structure (TOTAL rows, the
-// "— MM/YYYY —" bands of a multi-period merge, section headings), the kind of
-// each column, and the filter, sort, group and total rules. No React and no
-// DOM, so scripts/verify-doc-table-model.mjs runs it under Node.
+// The pure half of the table kit (./index.ts), first written for the document
+// list (DocumentLineItemsView.tsx) and now shared by every report view that
+// filters its rows: which rows are documents and which are the report's own
+// structure (TOTAL rows, the "— MM/YYYY —" bands of a multi-period merge,
+// section headings), the kind of each column, and the filter, sort, group and
+// total rules. No React and no DOM, so scripts/verify-doc-table-model.mjs runs
+// it under Node.
 //
-// Rules the view and its "filtered" exports rely on:
+// Rules the views and their "filtered" exports rely on:
 //   - Only document rows are filtered, sorted and grouped. Bands, headings and
 //     the report's TOTAL rows keep their place and are shown only in the
 //     report's own order: a band between sorted rows would mean nothing.
@@ -31,11 +33,22 @@ export type FilterKind = ColumnFilter['type'];
 
 export interface SortState { col: number; dir: 'asc' | 'desc' }
 
+/**
+ * A view's own quick filter that is not one column's: an "Overdue" tile read
+ * from rowFlags, a "differences only" switch. It narrows the rows like any
+ * other filter (ANDed, honoured by the value counts, the TOTAL and the
+ * export), and its label is printed as a chip and in the export's strip, so a
+ * reader always sees why rows are missing. `test` is given a document row.
+ */
+export interface CustomFilter { id: string; label: string; test: (row: ModelRow) => boolean }
+
 export interface ViewState {
   search: string;
   filters: Record<number, ColumnFilter | undefined>;
   sort: SortState | null;
   groupBy: number | null;
+  /** The view's own quick filters, by id (absent or empty: none). */
+  custom?: CustomFilter[];
 }
 
 export const EMPTY_VIEW: ViewState = { search: '', filters: {}, sort: null, groupBy: null };
@@ -53,7 +66,14 @@ export interface ModelColumn {
   /** Index into a row's cells; the Period column of a merged table is headers.length. */
   index: number;
   header: string;
+  /** The heading shown (the report's short headerLabel when it gave one). */
   label: string;
+  /**
+   * What the column is called away from its heading (filter chips, menus, the
+   * export strip): its label, or the full header when another column shares
+   * that label ("Total tax" under 2A, 2B and the difference).
+   */
+  name: string;
   kind: ColumnKind | 'period';
   filter: FilterKind;
   /** Distinct values among the document rows. */
@@ -118,6 +138,15 @@ export const periodLabel = (key: string): string => {
 const numberKind = (kind: ModelColumn['kind'] | undefined): 'int' | 'rate' | 'amount' =>
   (kind === 'int' || kind === 'rate' ? kind : 'amount');
 
+/** Whether a column holds figures (amounts, counts, rates): right-aligned, summed, ranged. */
+export const isFigureColumn = (model: TableModel, col: number): boolean => {
+  const k = model.columns[col]?.kind;
+  return k === 'amount' || k === 'int' || k === 'rate';
+};
+
+/** A figure in its column's house style (1,23,456.00; counts without decimals; 18.00%). */
+export const figureText = (model: TableModel, col: number, v: number): string => fmtNumber(v, numberKind(model.columns[col]?.kind));
+
 /** The text a cell is shown as: figures in the house style, dates as dd-Mon-yyyy. */
 export function displayText(model: TableModel, row: ModelRow, col: number): string {
   if (col === model.periodCol) return row.period >= 0 ? model.periods[row.period].label : '';
@@ -161,6 +190,7 @@ export function buildModel(table: TableInput): TableModel {
   const kinds = rowKindsOf(table.rows, table.rowKinds);
   const specs = classifyColumns(headers, table.rows, kinds, table.columnWidths, table.headerLabels);
   const colKinds = specs.map((s) => s.kind);
+  const shared = new Set(specs.map((s) => s.label).filter((l, k, all) => all.indexOf(l) !== k));
 
   const periods: PeriodBand[] = [];
   let period = -1;
@@ -205,7 +235,10 @@ export function buildModel(table: TableInput): TableModel {
   const model: TableModel = {
     headers,
     // Provisional (facetKey needs only the kinds); completed below.
-    columns: specs.map((s) => ({ index: s.index, header: s.header, label: s.label, kind: s.kind, filter: 'contains', distinct: 0, groupable: false, summable: false, virtual: false })),
+    columns: specs.map((s) => ({
+      index: s.index, header: s.header, label: s.label, name: shared.has(s.label) ? s.header : s.label, kind: s.kind,
+      filter: 'contains', distinct: 0, groupable: false, summable: false, virtual: false,
+    })),
     rows, data, merged, periods,
     periodCol: merged ? headers.length : -1,
     grandTotal, hasReportTotals: totals.length > 0, summable, labelCol,
@@ -233,7 +266,7 @@ export function buildModel(table: TableInput): TableModel {
   });
   if (merged) {
     model.columns.push({
-      index: model.periodCol, header: 'Period', label: 'Period', kind: 'period', filter: 'values',
+      index: model.periodCol, header: 'Period', label: 'Period', name: 'Period', kind: 'period', filter: 'values',
       distinct: periods.length, groupable: true, summable: false, virtual: true,
     });
   }
@@ -252,9 +285,9 @@ export function isFilterActive(f: ColumnFilter | undefined): boolean {
   }
 }
 
-/** Anything narrowing the rows (a column filter or the search); sorting and grouping do not. */
+/** Anything narrowing the rows (a column filter, the search, a view's own filter); sorting and grouping do not. */
 export const isFiltered = (state: ViewState): boolean =>
-  state.search.trim() !== '' || Object.values(state.filters).some((f) => isFilterActive(f));
+  state.search.trim() !== '' || Object.values(state.filters).some((f) => isFilterActive(f)) || !!state.custom?.length;
 
 const timeOf = (iso: string | null): number | null => (iso ? parseDateCell(iso)?.getTime() ?? null : null);
 
@@ -307,6 +340,7 @@ export function compile(model: TableModel, state: ViewState, except = -1): Pred 
     if (col === except || !isFilterActive(f)) continue;
     preds.push(predicateFor(model, col, f as ColumnFilter));
   }
+  for (const c of state.custom ?? []) preds.push(c.test);
   return preds.length ? (r) => preds.every((p) => p(r)) : () => true;
 }
 
@@ -617,7 +651,7 @@ const listValues = (labels: string[]): string => {
 /** One phrase for a column's filter, e.g. "Taxable Value between 1,000.00 and 5,000.00". */
 export function describeFilter(model: TableModel, col: number, f: ColumnFilter): string {
   const c = model.columns[col];
-  const name = c?.label ?? `Column ${col + 1}`;
+  const name = c?.name ?? `Column ${col + 1}`;
   switch (f.type) {
     case 'values': return `${name} is ${listValues(f.values.map((v) => facetLabel(model, col, v)))}`;
     case 'contains': return `${name} contains "${f.text.trim()}"`;
@@ -637,9 +671,10 @@ export function describeFilter(model: TableModel, col: number, f: ColumnFilter):
   }
 }
 
-export interface ActiveFilter { col: number | 'search'; text: string }
+/** A column's filter (col), the search, or a view's own filter (col 'custom', its id). */
+export interface ActiveFilter { col: number | 'search' | 'custom'; id?: string; text: string }
 
-/** Every active filter (the search first), each as a phrase: the chips and the export's strip. */
+/** Every active filter (the search first, a view's own last), each as a phrase: the chips and the export's strip. */
 export function activeFilters(model: TableModel, state: ViewState): ActiveFilter[] {
   const out: ActiveFilter[] = [];
   if (state.search.trim()) out.push({ col: 'search', text: `Search "${state.search.trim()}"` });
@@ -647,6 +682,7 @@ export function activeFilters(model: TableModel, state: ViewState): ActiveFilter
     if (!f || !isFilterActive(f)) continue;
     out.push({ col: Number(k), text: describeFilter(model, Number(k), f) });
   }
+  for (const c of state.custom ?? []) out.push({ col: 'custom', id: c.id, text: c.label });
   return out;
 }
 
@@ -657,7 +693,7 @@ export function describeSort(model: TableModel, sort: SortState): string {
     : c?.kind === 'amount' || c?.kind === 'int' || c?.kind === 'rate' ? (asc ? 'smallest first' : 'largest first')
       : c?.kind === 'period' ? (asc ? 'earliest first' : 'latest first')
         : asc ? 'A to Z' : 'Z to A';
-  return `sorted by ${c?.label ?? 'a column'}, ${how}`;
+  return `sorted by ${c?.name ?? 'a column'}, ${how}`;
 }
 
 // ── Export what is shown ───────────────────────────────────────────────────
@@ -688,6 +724,27 @@ export function labelPosition(model: TableModel, cols: number[]): number {
   if (first >= 0) return first;
   if (own >= 0 && !model.summable.includes(model.labelCol)) return own;
   return cols.findIndex((c) => !model.summable.includes(c));
+}
+
+/**
+ * The report's column groups (the band above the header) over the columns
+ * shown, in order: a hidden column leaves its group's span, a group with no
+ * column shown goes, and the Period column sits under a blank group. The
+ * screen's two-level header and the "filtered" export both read it. Null when
+ * the report has none, or when they do not span its headers.
+ */
+export function respanColumnGroups(table: Pick<ReportTable, 'columnGroups'>, model: TableModel, cols: number[]): ColumnGroup[] | null {
+  if (!table.columnGroups?.length || table.columnGroups.reduce((s, x) => s + x.span, 0) !== model.headers.length) return null;
+  const owner: number[] = [];
+  table.columnGroups.forEach((x, gi) => { for (let k = 0; k < x.span; k++) owner.push(gi); });
+  const out: (ColumnGroup & { gi: number })[] = [];
+  for (const c of cols) {
+    const gi = c === model.periodCol ? -1 : owner[c];
+    const last = out[out.length - 1];
+    if (last && last.gi === gi) last.span += 1;
+    else out.push(gi < 0 ? { label: '', span: 1, gi } : { ...table.columnGroups[gi], span: 1, gi });
+  }
+  return out.map(({ label, span, tone }) => ({ label, span, ...(tone ? { tone } : {}) }));
 }
 
 const clean = (s: string): string => s.replace(/\|/g, '/').replace(/\s+/g, ' ').trim();
@@ -738,7 +795,7 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
     const own = cols.indexOf(state.groupBy as number);
     const where = own >= 0 && g?.kind === 'text' && !model.summable.includes(g.index) ? own : at;
     for (const grp of view.groups) {
-      push(labelled(`${g?.label ?? 'Group'}: ${grp.label} (${grp.rows.length} ${grp.rows.length === 1 ? 'row' : 'rows'})`), 'section');
+      push(labelled(`${g?.name ?? 'Group'}: ${grp.label} (${grp.rows.length} ${grp.rows.length === 1 ? 'row' : 'rows'})`), 'section');
       for (const r of grp.rows) push(project(r), 'data', toneOf(r));
       if (model.summable.length) push(sumRow(`Subtotal: ${grp.label}`, grp.sums, where), 'subtotal');
     }
@@ -762,8 +819,8 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
   const filters = activeFilters(model, state).map((a) => clean(a.text));
   const how: string[] = [];
   if (state.sort) how.push(describeSort(model, state.sort));
-  if (view.groups && state.groupBy !== null) how.push(`grouped by ${model.columns[state.groupBy]?.label ?? 'a column'}`);
-  const hiddenNames = model.headers.map((h, c) => (hidden.has(c) ? model.columns[c]?.label ?? h : null)).filter((h): h is string => !!h);
+  if (view.groups && state.groupBy !== null) how.push(`grouped by ${model.columns[state.groupBy]?.name ?? 'a column'}`);
+  const hiddenNames = model.headers.map((h, c) => (hidden.has(c) ? model.columns[c]?.name ?? h : null)).filter((h): h is string => !!h);
   const fields = [
     ...(filters.length ? [{ label: 'Filter', value: filters.join('; ') }] : []),
     ...(how.length ? [{ label: 'View', value: how.join('; ') }] : []),
@@ -776,19 +833,7 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
   const headerLabels = table.headerLabels?.length === model.headers.length
     ? cols.map((c) => (c === model.periodCol ? 'Period' : table.headerLabels![c] || model.headers[c]))
     : undefined;
-  let columnGroups: ColumnGroup[] | undefined;
-  if (table.columnGroups && table.columnGroups.reduce((s, x) => s + x.span, 0) === model.headers.length) {
-    const owner: number[] = [];
-    table.columnGroups.forEach((x, gi) => { for (let k = 0; k < x.span; k++) owner.push(gi); });
-    const out: (ColumnGroup & { gi: number })[] = [];
-    for (const c of cols) {
-      const gi = c === model.periodCol ? -1 : owner[c];
-      const last = out[out.length - 1];
-      if (last && last.gi === gi) last.span += 1;
-      else out.push(gi < 0 ? { label: '', span: 1, gi } : { ...table.columnGroups[gi], span: 1, gi });
-    }
-    columnGroups = out.map(({ label, span, tone }) => ({ label, span, ...(tone ? { tone } : {}) }));
-  }
+  const columnGroups = respanColumnGroups(table, model, cols) ?? undefined;
   const pdfColumns = table.pdfColumns?.length
     ? cols.map((c, k) => (c === model.periodCol || table.pdfColumns!.includes(c) ? k : -1)).filter((k) => k >= 0)
     : undefined;
@@ -803,7 +848,7 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
     ...cols.filter((c) => model.summable.includes(c)).slice(0, 7).map((c) => {
       const own = view.footer?.type === 'total' ? view.footer.row.cells[c] : undefined;
       const value = typeof own === 'number' ? own : bandSums.get(c) ?? 0;
-      return { label: model.columns[c]?.label ?? model.headers[c], value: fmtNumber(value, numberKind(model.columns[c]?.kind)) };
+      return { label: model.columns[c]?.name ?? model.headers[c], value: fmtNumber(value, numberKind(model.columns[c]?.kind)) };
     }),
   ];
 
