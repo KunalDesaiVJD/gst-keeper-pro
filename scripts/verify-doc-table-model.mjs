@@ -324,6 +324,32 @@ const bm = M.buildModel(big);
   const sub = twoAG.rows[twoAG.rowKinds.indexOf('subtotal')];
   check(g, 'a subtotal names its group under the grouped column', sub[1] === 'Subtotal: Alpha Traders' && sub[3] === '', JSON.stringify(sub));
   check(g, 'label position skips a hidden Invoice No. back to Supplier Name', M.labelPosition(twoA, [0, 1, 3, 4]) === 1);
+  // A rate-wise shape whose only text column (Rate) is hidden: no label is ever
+  // printed over a figure (the TOTAL keeps every sum; the label is dropped).
+  const rw = { title: 'x', subtitle: '', headers: ['Rate', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Total Tax'], rows: [['5%', 1000, 0, 25, 25, 50], ['18%', 2000, 360, 0, 0, 360], ['TOTAL', 3000, 360, 25, 25, 410]], fileNameBase: 'x', columnWidths: [] };
+  const rwm = M.buildModel(rw);
+  check(g, 'no text column shown: no label position over a figure', M.labelPosition(rwm, [1, 2, 3, 4, 5]) === -1, String(M.labelPosition(rwm, [1, 2, 3, 4, 5])));
+  const rwOwn = M.viewToReportTable(rw, rwm, view(), new Set([0]));
+  const rwOwnTotal = rwOwn.rows[rwOwn.rowKinds.indexOf('total')];
+  check(g, 'own TOTAL with Rate hidden keeps the taxable value', rwOwnTotal && rwOwnTotal[0] === 3000 && rwOwnTotal[4] === 410, JSON.stringify(rwOwnTotal));
+  const rwF = M.viewToReportTable(rw, rwm, view({ search: '18' }), new Set([0]));
+  const rwFTotal = rwF.rows[rwF.rowKinds.indexOf('total')];
+  check(g, 'filtered TOTAL with Rate hidden keeps the taxable value', rwFTotal && rwFTotal[0] === 2000 && rwFTotal[1] === 360, JSON.stringify(rwFTotal));
+}
+
+// ── 11b. Rates written as text order by value ──────────────────────────────
+{
+  const g = 'rates';
+  const rates = ['18%', '0.25%', '1%', '0%', '28%', '1.5%', '0.1%', '12%', '3%', '7.5%', '5%'];
+  const t = { title: 'x', subtitle: '', headers: ['Rate', 'Taxable Value'], rows: rates.map((r, i) => [r, 100 + i]), fileNameBase: 'x', columnWidths: [] };
+  const m = M.buildModel(t);
+  const want = '0%,0.1%,0.25%,1%,1.5%,3%,5%,7.5%,12%,18%,28%';
+  const sorted = M.sortRows(m, m.data, { col: 0, dir: 'asc' }).map((r) => r.cells[0]).join();
+  check(g, 'ascending sort by value', sorted === want, sorted);
+  const facets = M.facetValues(m, view(), 0).map((f) => f.key).join();
+  check(g, 'facet list by value', facets === want, facets);
+  const grouped = M.buildView(m, view({ groupBy: 0 })).groups.map((x) => x.label).join();
+  check(g, 'groups by value', grouped === want, grouped);
 }
 
 // ── 12. Speed ──────────────────────────────────────────────────────────────

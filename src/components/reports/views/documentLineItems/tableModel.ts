@@ -320,10 +320,18 @@ export interface FacetValue { key: string; label: string; count: number }
 
 const collator = new Intl.Collator('en-IN', { numeric: true, sensitivity: 'base' });
 
+// A rate written as text ("0.1%", "18%"): by its value. The collator alone
+// puts "0.1%" before "0%" and "1.5%" before "1%" ('.' sorts before '%').
+const PERCENT_RE = /^-?\d+(\.\d+)?\s*%$/;
+const percentOf = (s: string): number | null => (PERCENT_RE.test(s.trim()) ? parseFloat(s) : null);
+
 const keyOrder = (model: TableModel, col: number) => (a: string, b: string): number => {
   if (col === model.periodCol) return model.periods.findIndex((p) => p.key === a) - model.periods.findIndex((p) => p.key === b);
   if (a === BLANK && b !== BLANK) return 1;
   if (b === BLANK && a !== BLANK) return -1;
+  const pa = percentOf(a);
+  const pb = percentOf(b);
+  if (pa !== null && pb !== null) return pa - pb || collator.compare(a, b);
   return collator.compare(a, b);
 };
 
@@ -372,7 +380,7 @@ function sortKey(model: TableModel, r: ModelRow, col: number): SortKey {
   if (kind === 'date') return parseDateCell(s)?.getTime() ?? null;
   // A word in a figures column ("NOT PULLED") sorts with the blanks.
   if (kind === 'amount' || kind === 'int' || kind === 'rate') return null;
-  return s;
+  return percentOf(s) ?? s;
 }
 
 const cmpKeys = (a: SortKey, b: SortKey): number => {
@@ -666,6 +674,9 @@ export function visibleColumns(model: TableModel, view: Pick<ViewResult, 'showPe
  * report's own place when that is a text column, else the text column before
  * it. The portal lists put TOTAL under Invoice Date; a longer label there
  * ("TOTAL (05/2025, filtered)") would widen a date column that never wraps.
+ * With no text column shown, any shown column that holds no sum (a date, the
+ * period); with none of those either, -1: the row keeps its figures unlabelled
+ * rather than a label printed over a total.
  */
 export function labelPosition(model: TableModel, cols: number[]): number {
   const isText = (c: number) => c !== model.periodCol && !model.summable.includes(c) && model.columns[c]?.kind === 'text';
@@ -674,7 +685,9 @@ export function labelPosition(model: TableModel, cols: number[]): number {
   const upTo = own >= 0 ? own : cols.filter((c) => c !== model.periodCol && c < model.labelCol).length + (cols[0] === model.periodCol ? 1 : 0);
   for (let k = upTo - 1; k >= 0; k--) if (isText(cols[k])) return k;
   const first = cols.findIndex(isText);
-  return first >= 0 ? first : Math.max(0, own);
+  if (first >= 0) return first;
+  if (own >= 0 && !model.summable.includes(model.labelCol)) return own;
+  return cols.findIndex((c) => !model.summable.includes(c));
 }
 
 const clean = (s: string): string => s.replace(/\|/g, '/').replace(/\s+/g, ' ').trim();
@@ -704,7 +717,7 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
   const sumRow = (label: string, sums: Map<number, number>, where = at) => {
     const out = blankRow();
     cols.forEach((c, k) => { if (sums.has(c)) out[k] = sums.get(c) as number; });
-    out[where] = label;
+    if (where >= 0 && typeof out[where] !== 'number') out[where] = label;
     return out;
   };
   const ownTotal = (r: ModelRow) => {
@@ -712,7 +725,8 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
     // The TOTAL label may sit in a hidden column: carry it to a shown one.
     if (!out.some((v) => TOTAL_TEXT_RE.test(str(v)))) {
       const free = out.findIndex((v, k) => str(v) === '' && !model.summable.includes(cols[k]));
-      out[free >= 0 ? free : at] = firstText(r.cells) || 'TOTAL';
+      const to = free >= 0 ? free : at;
+      if (to >= 0 && typeof out[to] !== 'number') out[to] = firstText(r.cells) || 'TOTAL';
     }
     return out;
   };

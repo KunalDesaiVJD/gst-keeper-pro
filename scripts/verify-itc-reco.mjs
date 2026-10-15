@@ -739,6 +739,19 @@ check('merge', 'mergeRows is the shared row merge', R.mergeRows([[['a', 'TOTAL']
   check('cdn', "2A without notes (_meta.sections ['b2b']): the 2B credit note stays not compared, out of the difference", v2?.status === 'not_compared' && v2.reason === 'NOT_COMPARED_SECTION' && !v2.left && v2.diff === null
     && cell(t2, c2, 'Status') === 'Not compared' && cell(t2, c2, DIFF) === '' && cell(t2, c2, '2B Total Tax') === -180 && kpi(t2, 'Not compared') === 1 && near(kpi(t2, 'Net difference (2B minus 2A)'), 0),
     JSON.stringify(v2 && { s: v2.status, r: v2.reason }));
+
+  // A credit note reaching an invoice rule is told to reduce ITC, never to
+  // claim it, and gets no s.16(4) wording (review finding, 0.14.0).
+  const lateCn = F.summary2B('07/2026', '14-08-2026', {
+    b2b: [F.sup2B(F.S.alpha, 'ALPHA', '072026', '10-08-2026', [F.inv2B('A-7', '05-07-2026', F.intra(1000))])],
+    cdnr: [F.sup2B(F.S.alpha, 'ALPHA', '062026', '20-07-2026', [F.nt2B('CN-6', '28-06-2025', 'C', F.intra(500))], 'nt')],
+  });
+  const lateRows = [F.row('2A', '07/2026', twoA(['b2b', 'cdn'])), F.row('2B', '07/2026', lateCn), F.row('2B', '08/2026', F.summary2B('08/2026', '14-09-2026', { b2b: [] }))];
+  const late = recoOf('07/2026', lateRows, F.TODAY);
+  const cn6 = late.result.rows.find((r) => r.right?.number === 'CN-6');
+  check('cdn', 'a 2B credit note for an earlier month: "reduce the ITC", no claim and no s.16(4), no earlier-year note',
+    cn6?.status === 'only_right' && /^Reduce the ITC for this credit note/.test(cn6.action) && !/claim|16\(4\)/i.test(cn6.action)
+    && !cn6.notes.some((n) => n.code === 'EARLIER_YEAR_DOC'), JSON.stringify(cn6 && { s: cn6.status, r: cn6.reason, a: cn6.action, n: cn6.notes }));
 }
 
 // ── N-way matcher ───────────────────────────────────────────────────────────

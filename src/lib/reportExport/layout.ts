@@ -89,7 +89,8 @@ export interface TableLayout {
 
 // ── Rows ───────────────────────────────────────────────────────────────────
 
-const TOTAL_RE = /^(grand\s+)?total(\s*\(.+\))?$|^total\s+(for|of)\b/i;
+// "TOTAL", "Grand Total", "TOTAL (07/2026)", "TOTAL — FY 2026-27", "TOTAL — PAN …", "Total for …".
+const TOTAL_RE = /^(grand\s+)?total(\s*\(.+\)|\s+[—–-]\s+.+)?$|^total\s+(for|of)\b/i;
 const SUBTOTAL_RE = /^sub[\s-]?total\b/i;
 const PERIOD_RE = /^— .+ —$/;
 

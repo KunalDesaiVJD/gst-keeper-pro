@@ -52,7 +52,7 @@ const out = await build({
   stdin: {
     contents: `
       export { buildReportWorkbook, reportToXlsx } from './src/lib/reportExport/excel';
-      export { layoutOf, metaOf, sheetName, kpiText, fileBase, FMT, PALETTE, TONE, FIRM } from './src/lib/reportExport/layout';
+      export { layoutOf, metaOf, sheetName, kpiText, fileBase, guessRowKind, FMT, PALETTE, TONE, FIRM } from './src/lib/reportExport/layout';
       export { mergeTables } from './src/lib/reportPeriodMerge';
     `,
     resolveDir: root, loader: 'ts',
@@ -156,8 +156,10 @@ function checkSheet(g, ws, l, opts) {
   // Period bands are merged across; section rows are soft bands.
   l.kinds.forEach((k, i) => {
     if (k === 'period') {
-      const m = mergesOf(ws).find((x) => x.r1 === body + i && x.c1 === FIRST_COL);
-      check(g, `${ws.name}: period band "${l.rows[i][0]}" merged across the table`, m && m.c2 === FIRST_COL + l.columns.length - 1 && fillOf(rowAt(i).getCell(FIRST_COL)) === R.PALETTE.band, JSON.stringify(m));
+      // Never merged (sorting from the autofilter refuses merged cells); the fill spans the table.
+      const m = mergesOf(ws).find((x) => x.r1 === body + i);
+      const lastCell = rowAt(i).getCell(FIRST_COL + l.columns.length - 1);
+      check(g, `${ws.name}: period band "${l.rows[i][0]}" spans the table unmerged`, !m && rowAt(i).getCell(FIRST_COL).value === l.rows[i][0] && fillOf(rowAt(i).getCell(FIRST_COL)) === R.PALETTE.band && fillOf(lastCell) === R.PALETTE.band, JSON.stringify(m));
     }
     if (k === 'section') {
       const c = rowAt(i).getCell(FIRST_COL);
@@ -319,6 +321,15 @@ for (const [name, table] of cases) timings[name] = (await checkReport(name, tabl
   const m = F.merged(R.mergeTables);
   const l = R.layoutOf(m);
   check('merged', 'two period bands, two renamed totals', l.kinds.filter((k) => k === 'period').length === 2 && l.kinds.filter((k) => k === 'total').length === 2, l.kinds.join(','));
+}
+
+// Every TOTAL label the report builders use is a total row (the FY and PAN
+// statements end with "TOTAL — …"), and a word that only starts like one is not.
+{
+  const kind = (label) => R.guessRowKind([label, 1, 2, 3]);
+  const totals = ['TOTAL', 'Grand Total', 'TOTAL (07/2026)', 'TOTAL — FY 2026-27', 'TOTAL — PAN AAACA1111A', 'Total for the year'];
+  check('layout', 'every builder\'s TOTAL label is a total row', totals.every((t) => kind(t) === 'total'), totals.map((t) => `${t}=${kind(t)}`).join(', '));
+  check('layout', '"Totally exempt supplies" is data', kind('Totally exempt supplies') === 'data');
 }
 
 // The identification strip: parsed from the subtitle, laid across the row.

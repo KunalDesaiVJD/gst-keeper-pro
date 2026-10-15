@@ -1,8 +1,9 @@
 // The one filter state of the reconciliation view. Every tab, the figures
 // across the top and the filtered export read `rows` from here, so a count on
 // any of them is a count of the same documents. Nothing is persisted: a report
-// opens unfiltered. The search box is applied a beat behind the typing
-// (useDeferredValue), so typing stays smooth on a year of documents.
+// opens unfiltered. The whole filter is applied a beat behind the input
+// (useDeferredValue): deferring only the search still re-filtered and
+// re-sorted a year of documents on every keystroke with the old search.
 import { useCallback, useDeferredValue, useMemo, useState } from 'react';
 import {
   EMPTY_FILTERS, activePreset, allFacetCounts, applyFilters, filterChips, isFiltering, presetFilters, removeChip,
@@ -32,8 +33,7 @@ export interface RecoFilterState {
 
 export function useRecoFilters(data: RecoViewData): RecoFilterState {
   const [filters, setFilters] = useState<RecoFilters>(EMPTY_FILTERS);
-  const search = useDeferredValue(filters.search);
-  const applied = useMemo(() => ({ ...filters, search }), [filters, search]);
+  const applied = useDeferredValue(filters);
   const rows = useMemo(() => applyFilters(data.rows, applied), [data.rows, applied]);
   const counts = useMemo(() => allFacetCounts(data.rows, applied), [data.rows, applied]);
   const chips = useMemo(() => filterChips(filters, data), [filters, data]);

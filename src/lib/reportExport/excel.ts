@@ -437,12 +437,14 @@ function renderTable(ws: Worksheet, ctx: Ctx, l: TableLayout, start: number): Pl
       continue;
     }
     if (kind === 'period') {
-      if (n > 1) ws.mergeCells(r, FIRST_COL, r, last);
+      // Not merged: the band sits inside the autofilter range, and Excel will
+      // not sort a range holding merged cells. The label overflows into the
+      // empty cells beside it, and no inner rules keep the band one piece.
       const st = styleOf(ctx, 'period', () => ({
         font: font({ bold: true, color: { argb: PALETTE.navy } }),
         fill: solid(PALETTE.band),
         alignment: { horizontal: 'left', vertical: 'middle', indent: 1 },
-        border: { ...GRID, top: edge(PALETTE.navy) },
+        border: { top: edge(PALETTE.navy), bottom: GRID.bottom },
       }));
       for (let c = FIRST_COL; c <= last; c++) xrow.getCell(c).style = st;
       xrow.getCell(FIRST_COL).value = String(src[0] ?? '');

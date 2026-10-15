@@ -198,6 +198,12 @@ cancelled (document dated on or after the cancellation); document dated in an
 earlier financial year. The PDF prints no notes column, so the summary notes
 count each flag with its documents and tax.
 
+**Credit notes** (read from both sides from extension 0.14.0) take the same
+reasons and timing as invoices, but their instruction is a reduction: "reduce
+the ITC for this credit note in the GSTR-3B of …", never "claim it". The
+s.16(4) time limit bounds a claim, so it is not mentioned for a credit note,
+and the earlier-financial-year note is not raised for one.
+
 ## 6. The 2B cut-off
 
 - A supplier filing **by the 11th** of the next month is in this month's 2B for

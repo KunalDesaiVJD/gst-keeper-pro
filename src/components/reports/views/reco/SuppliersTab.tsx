@@ -15,6 +15,8 @@ import { T, fmtAmt, fmtCount, fmtCountPlain, fmtIso, type SortDir } from './form
 
 type Key = 'name' | 'ctin' | 'rows' | 'leftDocs' | 'rightDocs' | 'matched' | 'only_left' | 'only_right' | 'differs' | 'not_compared' | 'leftTax' | 'rightTax' | 'diff' | 'absDiff';
 
+const TEXT = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
+
 const valueOf = (s: SupplierLine, k: Key): number | string => {
   switch (k) {
     case 'name': return s.name || '￿';
@@ -52,7 +54,7 @@ export const SuppliersTab: React.FC<{
     const dir = sort.dir === 'asc' ? 1 : -1;
     return [...hit].sort((a, b) => {
       const x = valueOf(a, sort.key); const y = valueOf(b, sort.key);
-      const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'en', { sensitivity: 'base', numeric: true });
+      const c = typeof x === 'number' && typeof y === 'number' ? x - y : TEXT.compare(String(x), String(y));
       return c * dir || a.name.localeCompare(b.name);
     });
   }, [lines, q, sort]);
@@ -115,7 +117,7 @@ export const SuppliersTab: React.FC<{
                   <tr
                     tabIndex={0}
                     onClick={() => onPick(k)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onPick(k); } }}
+                    onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter') { e.preventDefault(); onPick(k); } }}
                     title="Show only this supplier's documents"
                     className={cn('cursor-pointer hover:bg-primary/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary', picked && 'bg-primary/[0.07]')}
                   >

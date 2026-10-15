@@ -172,8 +172,14 @@ const noItcAction = (d: RecoDoc): string => {
   const rsn = d.itcReason?.toUpperCase();
   return REASONS[rsn === 'P' ? 'ITC_NA_POS' : rsn === 'C' ? 'ITC_NA_TIME' : 'ITC_NA_OTHER'].action;
 };
-/** A claim action, unless the 2B document gives no ITC: then what the 2B says. */
-const claimOr = (d: RecoDoc | undefined, action: string): string => (d && noItc(d) ? noItcAction(d) : action);
+/**
+ * A claim action, unless the 2B document gives no ITC (then what the 2B says)
+ * or it is a credit note: a credit note reduces ITC, so its instruction is the
+ * reduction (cnAction), and the s.16(4) time limit, which bounds a claim, is
+ * not mentioned for it.
+ */
+const claimOr = (d: RecoDoc | undefined, action: string, cnAction?: string): string =>
+  (d && noItc(d) ? noItcAction(d) : d?.family === 'CN' && cnAction ? cnAction : action);
 
 const laterChecked = (ctx: Ctx2A2B): string => {
   const ready = ctx.later2B.filter((n) => n.index).map((n) => monthLabel(n.period));
@@ -219,7 +225,8 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
       return {
         detail: `${filed}; in the 2B of ${monthLabel(f.period)}`,
         evidence: `Found in the 2B of ${monthLabel(f.period)}`, confirmed: true, refPeriod: f.period,
-        action: claimOr(f.doc, `Do not claim it this month; claim it in the GSTR-3B of ${monthLabel(f.period)}.`),
+        action: claimOr(f.doc, `Do not claim it this month; claim it in the GSTR-3B of ${monthLabel(f.period)}.`,
+          `Not this month: reduce the ITC for this credit note in the GSTR-3B of ${monthLabel(f.period)}.`),
       };
     },
   },
@@ -232,7 +239,8 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
       return {
         detail: `${filedWords(d)}, in time; in the 2B of ${monthLabel(f.period)}`,
         evidence: `Found in the 2B of ${monthLabel(f.period)}`, confirmed: true, refPeriod: f.period,
-        action: claimOr(f.doc, `Claim it in the GSTR-3B of ${monthLabel(f.period)}, not this month.`),
+        action: claimOr(f.doc, `Claim it in the GSTR-3B of ${monthLabel(f.period)}, not this month.`,
+          `Reduce the ITC for this credit note in the GSTR-3B of ${monthLabel(f.period)}, not this month.`),
       };
     },
   },
@@ -360,7 +368,8 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
       const why = n?.meta.state === 'failed' ? `last pull of the 2A of ${monthLabel(sp)} failed` : `2A of ${monthLabel(sp)} not pulled`;
       return {
         detail: `for ${monthLabel(sp)}${d.supplierFiledOn ? `, filed on ${dayLabel(d.supplierFiledOn)}` : ''}; ${why}`,
-        evidence: why, confirmed: false, refPeriod: sp, action: claimOr(d, REASONS.QUARTERLY_2B.action),
+        evidence: why, confirmed: false, refPeriod: sp,
+        action: claimOr(d, REASONS.QUARTERLY_2B.action, "Reduce the ITC for this credit note in this quarter's GSTR-3B; pull that month's 2A to compare it."),
       };
     },
   },
@@ -378,7 +387,8 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
       return {
         detail: `for ${monthLabel(sp)}, filed on ${dayLabel(d.supplierFiledOn)}, in time for the 2B of ${monthLabel(ctx.quarter ? quarterEnd(sp) : sp)}${qrmp}`,
         ...earlierEvidence(ctx, d, sp), refPeriod: sp,
-        action: claimOr(d, `Claim it in this month's GSTR-3B; clear it from the not-in-2B list of ${monthLabel(sp)}.`),
+        action: claimOr(d, `Claim it in this month's GSTR-3B; clear it from the not-in-2B list of ${monthLabel(sp)}.`,
+          "Reduce the ITC for this credit note in this month's GSTR-3B."),
       };
     },
   },
@@ -397,7 +407,8 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
       return {
         detail: `for ${monthLabel(sp)}${filed}; it belongs in the 2A of ${monthLabel(sp)}${qrmp}`,
         ...earlierEvidence(ctx, d, sp), refPeriod: sp,
-        action: claimOr(d, `Claim it in this month's GSTR-3B; clear it from the not-in-2B list of ${monthLabel(sp)}; check the s.16(4) time limit.`),
+        action: claimOr(d, `Claim it in this month's GSTR-3B; clear it from the not-in-2B list of ${monthLabel(sp)}; check the s.16(4) time limit.`,
+          "Reduce the ITC for this credit note in this month's GSTR-3B."),
       };
     },
   },
@@ -567,8 +578,9 @@ export const NOTES_2A_2B: NoteRule<Ctx2A2B>[] = [
     code: 'EARLIER_YEAR_DOC',
     test: (row, ctx) => {
       const d = (row.left ?? row.right) as RecoDoc;
-      // An ITC reversal entry is always of an earlier year: nothing to claim, so no s.16(4) flag.
-      if (!d.date || d.bucket === 'reversal') return null;
+      // An ITC reversal entry is always of an earlier year, and a credit note
+      // reduces ITC: nothing to claim, so no s.16(4) flag for either.
+      if (!d.date || d.bucket === 'reversal' || d.family === 'CN') return null;
       const fy = fyOfDate(d.date);
       return fy < fyOfPeriod(ctx.period) ? `Dated in an earlier financial year (FY ${fy})` : null;
     },

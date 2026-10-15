@@ -20,6 +20,12 @@ export type Facet =
   | 'status' | 'reason' | 'supplier' | 'period' | 'docType' | 'section'
   | 'itc' | 'rate' | 'reverseCharge' | 'flag' | 'confirmation';
 
+// One collator each, built once: localeCompare with options builds a new one
+// on every call, which was most of the cost of sorting a year of documents.
+const TEXT = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
+const NAME = new Intl.Collator('en', { sensitivity: 'base' });
+const NUMBERED = new Intl.Collator('en', { numeric: true });
+
 export const FACETS: Facet[] = ['status', 'reason', 'supplier', 'period', 'docType', 'section', 'itc', 'rate', 'reverseCharge', 'flag', 'confirmation'];
 
 export interface RecoFilters extends Record<Facet, string[]> {
@@ -275,12 +281,12 @@ export function facetOptions(data: RecoViewData, facet: Facet): FacetOption[] {
   });
   const by = (f: (o: FacetOption) => number | string) => (a: FacetOption, b: FacetOption) => {
     const x = f(a); const y = f(b);
-    return typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'en', { sensitivity: 'base', numeric: true });
+    return typeof x === 'number' && typeof y === 'number' ? x - y : TEXT.compare(String(x), String(y));
   };
   switch (facet) {
     case 'status': return opts.sort(by((o) => rank(STATUS_ORDER, o.value)));
     case 'reason': return opts.sort((a, b) => rank(STATUS_ORDER, a.value.split('|')[0]) - rank(STATUS_ORDER, b.value.split('|')[0]) || a.label.localeCompare(b.label));
-    case 'supplier': return opts.sort((a, b) => (a.label || '￿').localeCompare(b.label || '￿', 'en', { sensitivity: 'base' }) || (a.sub ?? '').localeCompare(b.sub ?? ''));
+    case 'supplier': return opts.sort((a, b) => NAME.compare(a.label || '￿', b.label || '￿') || (a.sub ?? '').localeCompare(b.sub ?? ''));
     case 'period': return opts.sort(by((o) => pidx(o.value)));
     case 'docType': return opts.sort(by((o) => rank(FAMILY_ORDER, o.value.replace(/A$/, '')) * 2 + (o.value.endsWith('A') ? 1 : 0)));
     case 'section': return opts.sort((a, b) => rank(SECTION_ORDER, a.value) - rank(SECTION_ORDER, b.value) || a.value.localeCompare(b.value));
@@ -421,9 +427,9 @@ const statusRank = (s: RecoStatus) => STATUS_ORDER.indexOf(s);
 export const defaultOrder = (a: RecoViewRow, b: RecoViewRow): number =>
   pidx(a.period) - pidx(b.period)
   || statusRank(a.status) - statusRank(b.status)
-  || (a.supplierName || '￿').localeCompare(b.supplierName || '￿', 'en', { sensitivity: 'base' })
+  || NAME.compare(a.supplierName || '￿', b.supplierName || '￿')
   || (a.date ?? '').localeCompare(b.date ?? '')
-  || a.number.localeCompare(b.number, 'en', { numeric: true });
+  || NUMBERED.compare(a.number, b.number);
 
 type SortValue = number | string | null;
 const side = (r: RecoViewRow, s: 'left' | 'right', k: 'taxable' | 'igst' | 'cgst' | 'sgst' | 'cess' | 'tax'): SortValue => (r[s] ? (r[s] as NonNullable<RecoViewRow['left']>)[k] : null);
@@ -466,7 +472,7 @@ export function sortRows(rows: RecoViewRow[], sort: SortState | null): RecoViewR
     if (b.v === null || b.v === '') return -1;
     const c = typeof a.v === 'number' && typeof b.v === 'number'
       ? a.v - b.v
-      : String(a.v).localeCompare(String(b.v), 'en', { sensitivity: 'base', numeric: true });
+      : TEXT.compare(String(a.v), String(b.v));
     return c * dir || defaultOrder(a.r, b.r);
   });
   return keyed.map((k) => k.r);
