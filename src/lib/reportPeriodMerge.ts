@@ -35,22 +35,47 @@ export const mergeRows = (blocks: (string | number)[][][], periods: string[], co
  * period's own part (its "as of" dates) leads that period's notes.
  */
 export const mergeTables = (tables: ReportTable[], list: string[]): ReportTable => {
-  const first = tables[0];
+  const first = tables.find((t) => !t.failedReason) ?? tables[0];
+  // A report that knows how to combine its own months (a reconciliation
+  // recomputing its summaries) does so.
+  if (first.merge) return first.merge(tables, list);
   const rows = mergeRows(tables.map((t) => t.rows), list, first.headers.length);
+  // Per-row hints follow their rows; a period band has none.
+  const parallel = <T,>(pick: (t: ReportTable) => (T | null)[] | undefined): (T | null)[] | undefined => {
+    if (!tables.some((t) => pick(t))) return undefined;
+    return tables.flatMap((t) => [null, ...t.rows.map((_, i) => pick(t)?.[i] ?? null)]);
+  };
   const summary = first.summary
     ? {
       ...first.summary,
       rows: mergeRows(tables.map((t) => t.summary?.rows ?? []), list, first.summary.headers.length),
+      rowTones: undefined,
+      rowKinds: undefined,
       notes: tables.flatMap((t, i) => [t.subtitleParts?.period, ...(t.summary?.notes ?? [])]
         .filter((n): n is string => !!n)
         .map((n) => `${list[i]}: ${n}`)),
     }
     : undefined;
+  const extraSheets = first.extraSheets?.map((sheet, k) => ({
+    ...sheet,
+    rows: mergeRows(tables.map((t) => t.extraSheets?.[k]?.rows ?? []), list, sheet.headers.length),
+    rowTones: undefined,
+    rowKinds: undefined,
+  }));
   return {
     ...first,
     subtitle: `${first.subtitleParts?.common ?? first.subtitle}   |   ${list.length} periods combined`,
+    meta: first.meta ? [...first.meta.filter((f) => !/^(period|month|return period)$/i.test(f.label)), { label: 'Periods', value: `${list.length} combined` }] : undefined,
+    // One month's figures do not describe several.
+    kpis: undefined,
     rows,
+    rowTones: parallel((t) => t.rowTones),
+    rowKinds: parallel((t) => t.rowKinds),
+    rowIds: first.rowIds ? parallel((t) => t.rowIds) : undefined,
+    clientIds: first.clientIds ? parallel((t) => t.clientIds) : undefined,
+    rowFlags: first.rowFlags ? parallel((t) => t.rowFlags) : undefined,
     ...(summary ? { summary } : {}),
+    ...(extraSheets ? { extraSheets } : {}),
     fileNameBase: `${first.fileNameBase}_${list.length}periods`,
   };
 };
@@ -64,9 +89,18 @@ const messageOf = (e: unknown): string => (e instanceof Error ? e.message : Stri
  */
 const failedTable = (template: ReportTable, message: string): ReportTable => ({
   ...template,
+  failedReason: message,
+  reco: undefined,
+  kpis: undefined,
+  rowTones: undefined,
+  rowKinds: undefined,
+  rowIds: undefined,
+  clientIds: undefined,
+  rowFlags: undefined,
   subtitleParts: template.subtitleParts ? { common: template.subtitleParts.common, period: '' } : undefined,
   rows: template.summary ? [] : [[`Not built: ${message}`, ...Array(Math.max(template.headers.length - 1, 0)).fill('')]],
-  ...(template.summary ? { summary: { ...template.summary, rows: [], notes: [`Not built: ${message}`] } } : {}),
+  ...(template.summary ? { summary: { ...template.summary, rows: [], rowTones: undefined, rowKinds: undefined, notes: [`Not built: ${message}`] } } : {}),
+  ...(template.extraSheets ? { extraSheets: template.extraSheets.map((x) => ({ ...x, rows: [], rowTones: undefined, rowKinds: undefined })) } : {}),
 });
 
 /**
