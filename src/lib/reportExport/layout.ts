@@ -101,10 +101,13 @@ export function guessRowKind(row: (string | number)[]): RowKind {
   const first = text(row[0]);
   const rest = row.slice(1);
   if (PERIOD_RE.test(first) && rest.every((c) => text(c) === '')) return 'period';
-  // A TOTAL label sits in one of the first three cells (Sr / Name / GSTIN layouts).
+  // A TOTAL label sits in one of the first three cells (Sr / Name / GSTIN
+  // layouts), or is the row's first filled cell wherever that is: the portal
+  // GSTR-2A / 2B document lists put it under Invoice Date, the fourth column.
   const head = row.slice(0, 3).map(text);
-  if (head.some((c) => SUBTOTAL_RE.test(c))) return 'subtotal';
-  if (head.some((c) => TOTAL_RE.test(c))) return 'total';
+  const firstFilled = row.map(text).find((c) => c !== '') ?? '';
+  if (head.some((c) => SUBTOTAL_RE.test(c)) || SUBTOTAL_RE.test(firstFilled)) return 'subtotal';
+  if (head.some((c) => TOTAL_RE.test(c)) || TOTAL_RE.test(firstFilled)) return 'total';
   // A lone label with nothing else: a section heading (e.g. "Table 4(A)").
   if (first && typeof row[0] === 'string' && rest.length >= 2 && rest.every((c) => text(c) === '')) return 'section';
   return 'data';
