@@ -2,6 +2,18 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-15 — GSTR-2A credit and debit notes (v0.14.0)
+
+- The GSTR-2A pull also reads the credit and debit notes (CDN), after the B2B invoices, so the 2A vs 2B report can match the 2B's CDNR documents. Before, they were all "Not compared" (521 of 3,169 documents in one real client's year).
+- **Not confirmed live.** The portal's 2A web API is taken to follow the GSTN 2A JSON (section CDN, notes under `cdn` with `nt` arrays), so each name is tried in turn:
+  - the supplier list: `api/gstr2a/ctin?rtn_prd=MMYYYY&section_name=CDN`, then `section_name=CDNR` when CDN gave no list (an HTTP error, not JSON, or no `cpty` array);
+  - the notes per supplier: `api/gstr2a/cdn?rtn_prd=MMYYYY&ctin=<gstin>`. When the first supplier's call answers 400 or 404, `api/gstr2a/cdnr` is tried once and whichever works is kept for the rest. Notes are accepted under `cdn` or `cdnr`.
+- Saved like the invoices: `summary.cdn` holds one wrapper per supplier (`{ ...portal fields, ctin, trdnm from the list, supfildt: fldtr1, nt }`). `_meta` gains `sections: ['b2b', 'cdn']`, `noteCounterparties`, `cdnFailed`, `cdnFailedCtins`, and the names that worked (`cdnList`, `cdnApi`). An empty list, or a "no data" answer, is a read: that month has no notes.
+- **When the notes cannot be read** (no supplier list under either name, every supplier's notes failing, or any error in the notes read): `summary.cdn` is not saved, `_meta.sections` is `['b2b']` and `_meta.cdnProblem` says why. GST Keeper then keeps the 2B's notes "Not compared" with that reason, instead of calling them "Only in 2B". The invoices are saved exactly as before in every case; one save holds both.
+- A month with no B2B suppliers is no longer saved before the notes are read: it is `Pulled` when it has notes, `NO DATA / NOT FOUND` when it has neither.
+- The banner shows "Reading GSTR-2A credit/debit notes …" while they are read, and after the save the note count (or "notes not read: <reason>").
+- Test `test/15-gstr2a-cdn.test.mjs` covers the fallbacks and failures.
+
 ## 2026-10-15 — GSTR-2A and GSTR-2B pulled together for the 2A vs 2B report (v0.13.0)
 
 - New mode `gstr2a2b_pull`, started by Pull on the Reports Hub's **GSTR-2A vs GSTR-2B Reconciliation**. One login; for each period the job carries `want` (for example `{ "07/2026": ["2A", "2B"], "08/2026": ["2B"] }`) and fetches only that. A period not listed gets both.

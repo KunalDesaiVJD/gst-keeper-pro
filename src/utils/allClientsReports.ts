@@ -11,10 +11,11 @@
 // math stays in lock-step with the on-screen formulas: change them here too
 // if you change them on SuspendedRecoPage or GstReceivableRecoPage.
 
-import * as XLSX from 'xlsx';
 import { supabase } from '@/integrations/supabase/client';
 import { computeGstr1OutputTax } from './computeGstr1OutputTax';
 import { computeTotal4A } from './builderPartialItc';
+import type { RecoViewData } from '@/lib/itcReco/viewTypes';
+import { downloadReportXlsx } from '@/lib/reportExport/excel';
 
 interface ClientRow { id: string; name: string; gstin: string; }
 
@@ -182,6 +183,40 @@ export interface ReportTable {
   // several periods are merged, the subtitle keeps the first and each
   // period's part goes to the summary notes. Undefined for most reports.
   subtitleParts?: { common: string; period: string };
+  // ── Presentation hints for the Big4 Excel / PDF (src/lib/reportExport). All
+  // optional: a report without them is laid out from its headers and rows
+  // (subtitle segments "Label: value" become the identification strip, column
+  // kinds come from the values, TOTAL / "— period —" rows are recognised).
+  /** The identification strip (client, GSTIN, period…); parsed from the subtitle when absent. */
+  meta?: ReportMetaField[];
+  /** A stat band printed above the first table (Excel and PDF). */
+  kpis?: ReportKpi[];
+  /** Short labels printed under `columnGroups` (same length as `headers`); `headers` stay unique. */
+  headerLabels?: string[];
+  /** A band above the header row grouping columns (spans add up to headers.length). */
+  columnGroups?: ColumnGroup[];
+  /** Parallel to `rows`: a tint for the row's status cell (Excel fill, PDF fill, view badge). */
+  rowTones?: (RowTone | null)[];
+  /** Parallel to `rows`: overrides the row-kind guess (total / period band / section / blank). */
+  rowKinds?: (RowKind | null)[];
+  /** The column whose cells carry `rowTones` (default: a header named "Status", else none). */
+  toneColumn?: number;
+  /** Columns frozen at the left in Excel (default 0). */
+  freezeColumns?: number;
+  /** The name of the main sheet in Excel (default "Documents" with a summary, else "Report"). */
+  sheetName?: string;
+  /** Further analysis tables: one Excel sheet each, and a PDF section each unless `pdf` is false. */
+  extraSheets?: ReportSheet[];
+  /** Structured data for a bespoke preview (the reconciliation views); exports ignore it. */
+  reco?: RecoViewData;
+  /**
+   * Combines this report's per-period tables (Reports' multi-period picker)
+   * when the generic merge (period bands + renamed TOTAL rows) would be wrong,
+   * e.g. a reconciliation that recomputes its summaries across the months.
+   */
+  merge?: (tables: ReportTable[], periods: string[]) => ReportTable;
+  /** Set on a period's placeholder table when that period could not be built (reportPeriodMerge). */
+  failedReason?: string;
 }
 
 export interface ReportSummary {
@@ -190,7 +225,34 @@ export interface ReportSummary {
   rows: (string | number)[][];
   columnWidths: number[];
   notes?: string[];
+  headerLabels?: string[];
+  columnGroups?: ColumnGroup[];
+  rowTones?: (RowTone | null)[];
+  rowKinds?: (RowKind | null)[];
+  toneColumn?: number;
 }
+
+/** An extra analysis table: its own Excel sheet (`name`, ≤ 31 characters) and a PDF section. */
+export interface ReportSheet extends ReportSummary {
+  name: string;
+  /** false: Excel only. */
+  pdf?: boolean;
+  /** Columns the PDF prints (Excel has all). */
+  pdfColumns?: number[];
+  freezeColumns?: number;
+}
+
+export interface ReportMetaField { label: string; value: string }
+
+/** One figure of the stat band; `tone` tints it, `note` is a word under it (survives mono print). */
+export interface ReportKpi { label: string; value: string | number; note?: string; tone?: RowTone }
+
+export interface ColumnGroup { label: string; span: number; tone?: RowTone }
+
+/** good = matched / filed, warn = needs a look, bad = a difference, info = neutral, muted = not compared. */
+export type RowTone = 'good' | 'warn' | 'bad' | 'info' | 'muted';
+
+export type RowKind = 'data' | 'total' | 'subtotal' | 'period' | 'section' | 'blank';
 
 // ─────────────────── REPORT 1: Suspended — All Clients ───────────────────
 
@@ -410,26 +472,7 @@ export const buildClientCredentials = async (): Promise<ReportTable> => {
 
 // ─────────────────── Excel renderer (shared) ─────────────────────────────
 
-export const reportToWorkbook = (report: ReportTable): XLSX.WorkBook => {
-  const sheetData = [[report.title], [report.subtitle], [], report.headers, ...report.rows];
-  const sheet = XLSX.utils.aoa_to_sheet(sheetData);
-  sheet['!cols'] = report.columnWidths.map(wch => ({ wch }));
-  const workbook = XLSX.utils.book_new();
-  if (!report.summary) {
-    XLSX.utils.book_append_sheet(workbook, sheet, 'Report');
-    return workbook;
-  }
-  // Summary first (title, subtitle, the summary table, then its notes one per
-  // row), the document list on its own sheet.
-  const s = report.summary;
-  const notes = s.notes && s.notes.length ? [[], ['Notes'], ...s.notes.map((n) => [n])] : [];
-  const summarySheet = XLSX.utils.aoa_to_sheet([[report.title], [report.subtitle], [], [s.title], s.headers, ...s.rows, ...notes]);
-  summarySheet['!cols'] = s.columnWidths.map(wch => ({ wch }));
-  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Documents');
-  return workbook;
-};
-
-export const renderReportToExcel = (report: ReportTable) => {
-  XLSX.writeFile(reportToWorkbook(report), `${report.fileNameBase}.xlsx`);
-};
+// Every Reports Hub download (and the Clients page's) goes out in the firm's
+// Big4 working-paper style: src/lib/reportExport/excel.ts, which loads ExcelJS
+// only when a file is asked for.
+export const renderReportToExcel = (report: ReportTable): Promise<void> => downloadReportXlsx(report);

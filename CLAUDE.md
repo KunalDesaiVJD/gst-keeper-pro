@@ -99,8 +99,20 @@ The report `gstr2a-vs-gstr2b-reco` (`src/utils/gstr2aVs2bReports.ts`) matches th
 `src/lib/itcReco/` is generic over document sources, so GSTR-9 Table 8A (2A vs 8A, 8A vs 2B, all three)
 plugs in as another source with its own rule set (`RULES_2A_8A`, `RULES_8A_2B`, empty for now). Pull uses
 extension 0.13.0's `gstr2a2b_pull` (one login, per-month `want`); older extensions pull one return type per
-click. **Read `docs/GSTR2A_2B_RECO_POSITIONS.md` before changing a reason rule**; run
+click; 0.14.0's 2A pull also reads the credit and debit notes (`summary.cdn`, not confirmed live; a failed read
+leaves them "Not compared" with `_meta.cdnProblem`). **Read `docs/GSTR2A_2B_RECO_POSITIONS.md` before changing a reason rule**; run
 `node scripts/verify-itc-reco.mjs` after any engine change.
+
+The view (`ReasonReconciliationView` + `views/reco/*`) reads `table.reco` (`viewModel.ts`: one signed row per
+pair, aggregates by supplier / month / reason) and filters every facet through `src/lib/itcReco/filters.ts`;
+several months merge through the report's own `merge` hook (a Month column, summaries recomputed), not period bands.
+
+**Every Reports Hub download is a Big4 working paper:** `renderReportToExcel` / `renderReportToPdf` (async) go
+through `src/lib/reportExport/` (`excel.ts` ExcelJS on demand, `pdf.ts` on the `reportTheme` letterhead), which
+lay out any `ReportTable` from `layout.ts` (identification strip from the subtitle's "Label: value" parts, column
+kinds from the values, TOTAL / period / section rows) plus its optional hints (`meta`, `kpis`, `columnGroups`,
+`headerLabels`, `rowTones`, `extraSheets`). Checks: `scripts/verify-report-exports.mjs`, `verify-report-pdf.mjs`,
+`verify-doc-table-model.mjs` (the document lists' filters, `views/documentLineItems/tableModel.ts`).
 
 ## GSTR-1 e-invoices (IRN)
 

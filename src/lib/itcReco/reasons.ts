@@ -24,7 +24,7 @@ export const REASONS: Record<ReasonCode, ReasonInfo> = {
   IMS_PENDING: { label: 'Filed in time but not in this 2B: pending or rejected in IMS', action: 'Check IMS: accept it and recompute the 2B before filing GSTR-3B, or it moves to a later 2B.' },
   ONLY_2A_UNEXPLAINED: { label: 'Only in 2A: no reason found', action: 'Check IMS and ask the supplier.' },
   ITC_REVERSAL: { label: 'ITC reversal (Rule 37A): supplier has not filed GSTR-3B', action: 'Reverse this ITC in Table 4(B)(2) of GSTR-3B; reclaim it in Table 4(A)(5) once the supplier files its GSTR-3B.' },
-  NOT_COMPARED_SECTION: { label: 'Section not read by the 2A pull: not compared', action: 'Nothing for this comparison (the 2A pull reads B2B invoices only); check it against your books.' },
+  NOT_COMPARED_SECTION: { label: 'Section not read by the 2A pull: not compared', action: 'Nothing for this comparison (the 2A pull does not read this section); check it against your books.' },
   QUARTERLY_2B: { label: 'Quarterly 2B: for an earlier month of the quarter', action: "Claim it in this quarter's GSTR-3B; pull that month's 2A to compare it." },
   EARLIER_PERIOD_IN_TIME: { label: 'For an earlier month, filed in time: kept pending in IMS, accepted later', action: "Claim it in this month's GSTR-3B; clear it from that month's not-in-2B list." },
   EARLIER_PERIOD: { label: 'Supplier filed late for an earlier month', action: "Claim it in this month's GSTR-3B; clear it from that month's not-in-2B list; check the s.16(4) time limit." },
@@ -108,6 +108,24 @@ const maybeQuarterMonth = (ctx: Ctx2A2B, sp: string): boolean =>
 /** The 2A a 2B document belongs in, among those compared (M's otherwise). */
 const twoAOf = (ctx: Ctx2A2B, d: RecoDoc): StatementMeta => (d.supplierPeriod && ctx.twoAs.get(d.supplierPeriod)) || ctx.twoA;
 
+/**
+ * Why a 2A holds no credit and debit notes: the portal did not return them to
+ * a 0.14.0 pull (its cdnProblem), or the pull came from an earlier extension,
+ * which reads B2B invoices only. `of` names the 2A when several are compared.
+ */
+const notesNotRead = (a: StatementMeta, of = ''): { evidence: string; action: string; words: string } =>
+  a.cdnProblem
+    ? {
+      evidence: `The portal did not return the notes of the 2A${of} (${a.cdnProblem})`,
+      action: 'Pull 2A again; until its notes are read, check it against your books.',
+      words: `the portal did not return the notes of the 2A${of} (${a.cdnProblem}); pull 2A again`,
+    }
+    : {
+      evidence: `2A${of} pulled by an extension before 0.14.0, which reads B2B invoices only`,
+      action: 'Pull 2A again with extension 0.14.0 or later, which reads the notes; until then, check it against your books.',
+      words: `the 2A${of} was pulled by an extension before 0.14.0, which reads B2B invoices only; pull 2A again with 0.14.0`,
+    };
+
 const neighbourWords = (n: Neighbour | undefined, period: string): string => {
   if (!n) return `2B of ${monthLabel(period)} not checked (beyond the three months read)`;
   if (n.meta.state === 'not_generated') return `2B of ${monthLabel(period)} not generated on the portal when last pulled`;
@@ -154,8 +172,14 @@ const noItcAction = (d: RecoDoc): string => {
   const rsn = d.itcReason?.toUpperCase();
   return REASONS[rsn === 'P' ? 'ITC_NA_POS' : rsn === 'C' ? 'ITC_NA_TIME' : 'ITC_NA_OTHER'].action;
 };
-/** A claim action, unless the 2B document gives no ITC: then what the 2B says. */
-const claimOr = (d: RecoDoc | undefined, action: string): string => (d && noItc(d) ? noItcAction(d) : action);
+/**
+ * A claim action, unless the 2B document gives no ITC (then what the 2B says)
+ * or it is a credit note: a credit note reduces ITC, so its instruction is the
+ * reduction (cnAction), and the s.16(4) time limit, which bounds a claim, is
+ * not mentioned for it.
+ */
+const claimOr = (d: RecoDoc | undefined, action: string, cnAction?: string): string =>
+  (d && noItc(d) ? noItcAction(d) : d?.family === 'CN' && cnAction ? cnAction : action);
 
 const laterChecked = (ctx: Ctx2A2B): string => {
   const ready = ctx.later2B.filter((n) => n.index).map((n) => monthLabel(n.period));
@@ -170,6 +194,11 @@ const laterChecked = (ctx: Ctx2A2B): string => {
 /** An earlier month's 2A lookup: found there, not there, or why it was not read. */
 const earlierEvidence = (ctx: Ctx2A2B, d: RecoDoc, sp: string): { evidence: string; confirmed: boolean } => {
   const n = ctx.earlier2A.get(sp);
+  // A note can only be looked for in a 2A that read the notes (0.14.0): an
+  // older one is no evidence either way.
+  if (n?.index && !n.meta.sectionsRead.includes(d.section)) {
+    return { evidence: `2A of ${monthLabel(sp)} has no ${sectionLabel(d.section)} (${n.meta.cdnProblem ? 'the portal did not return them' : 'pulled before extension 0.14.0'})`, confirmed: false };
+  }
   const found = n?.index ? lookupDoc(n.index, d) : null;
   const missing = n?.meta.state === 'failed' ? `last pull of the 2A of ${monthLabel(sp)} failed` : `2A of ${monthLabel(sp)} not pulled`;
   return { evidence: found ? `Found in the 2A of ${monthLabel(sp)}` : n?.index ? `Not in the 2A of ${monthLabel(sp)} either` : missing, confirmed: !!found };
@@ -196,7 +225,8 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
       return {
         detail: `${filed}; in the 2B of ${monthLabel(f.period)}`,
         evidence: `Found in the 2B of ${monthLabel(f.period)}`, confirmed: true, refPeriod: f.period,
-        action: claimOr(f.doc, `Do not claim it this month; claim it in the GSTR-3B of ${monthLabel(f.period)}.`),
+        action: claimOr(f.doc, `Do not claim it this month; claim it in the GSTR-3B of ${monthLabel(f.period)}.`,
+          `Not this month: reduce the ITC for this credit note in the GSTR-3B of ${monthLabel(f.period)}.`),
       };
     },
   },
@@ -209,7 +239,8 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
       return {
         detail: `${filedWords(d)}, in time; in the 2B of ${monthLabel(f.period)}`,
         evidence: `Found in the 2B of ${monthLabel(f.period)}`, confirmed: true, refPeriod: f.period,
-        action: claimOr(f.doc, `Claim it in the GSTR-3B of ${monthLabel(f.period)}, not this month.`),
+        action: claimOr(f.doc, `Claim it in the GSTR-3B of ${monthLabel(f.period)}, not this month.`,
+          `Reduce the ITC for this credit note in the GSTR-3B of ${monthLabel(f.period)}, not this month.`),
       };
     },
   },
@@ -302,9 +333,15 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
   // ── Not compared (a section the other side does not read) ──
   {
     code: 'NOT_COMPARED_SECTION', when: ['not_compared'],
-    test: (row) => {
+    test: (row, ctx) => {
       const d = (row.right ?? row.left) as RecoDoc;
       const other = row.right ? '2A' : '2B';
+      // Extension 0.14.0 reads the 2A's notes: a 2B note is left out only when
+      // its 2A was pulled before that, or the notes could not be read.
+      if (row.right && d.section === 'CDNR') {
+        const why = notesNotRead(twoAOf(ctx, d));
+        return { detail: sectionLabel(d.section), evidence: why.evidence, confirmed: null, action: claimOr(d, why.action) };
+      }
       return { detail: sectionLabel(d.section), evidence: `The ${other} pull does not read ${sectionLabel(d.section)}`, confirmed: null };
     },
   },
@@ -331,7 +368,8 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
       const why = n?.meta.state === 'failed' ? `last pull of the 2A of ${monthLabel(sp)} failed` : `2A of ${monthLabel(sp)} not pulled`;
       return {
         detail: `for ${monthLabel(sp)}${d.supplierFiledOn ? `, filed on ${dayLabel(d.supplierFiledOn)}` : ''}; ${why}`,
-        evidence: why, confirmed: false, refPeriod: sp, action: claimOr(d, REASONS.QUARTERLY_2B.action),
+        evidence: why, confirmed: false, refPeriod: sp,
+        action: claimOr(d, REASONS.QUARTERLY_2B.action, "Reduce the ITC for this credit note in this quarter's GSTR-3B; pull that month's 2A to compare it."),
       };
     },
   },
@@ -349,7 +387,8 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
       return {
         detail: `for ${monthLabel(sp)}, filed on ${dayLabel(d.supplierFiledOn)}, in time for the 2B of ${monthLabel(ctx.quarter ? quarterEnd(sp) : sp)}${qrmp}`,
         ...earlierEvidence(ctx, d, sp), refPeriod: sp,
-        action: claimOr(d, `Claim it in this month's GSTR-3B; clear it from the not-in-2B list of ${monthLabel(sp)}.`),
+        action: claimOr(d, `Claim it in this month's GSTR-3B; clear it from the not-in-2B list of ${monthLabel(sp)}.`,
+          "Reduce the ITC for this credit note in this month's GSTR-3B."),
       };
     },
   },
@@ -368,7 +407,8 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
       return {
         detail: `for ${monthLabel(sp)}${filed}; it belongs in the 2A of ${monthLabel(sp)}${qrmp}`,
         ...earlierEvidence(ctx, d, sp), refPeriod: sp,
-        action: claimOr(d, `Claim it in this month's GSTR-3B; clear it from the not-in-2B list of ${monthLabel(sp)}; check the s.16(4) time limit.`),
+        action: claimOr(d, `Claim it in this month's GSTR-3B; clear it from the not-in-2B list of ${monthLabel(sp)}; check the s.16(4) time limit.`,
+          "Reduce the ITC for this credit note in this month's GSTR-3B."),
       };
     },
   },
@@ -392,10 +432,19 @@ export const RULES_2A_2B: ReasonRule<Ctx2A2B>[] = [
           evidence: `2A of ${monthLabel(a.period)}: no suppliers, no pull record`, confirmed: false,
         };
       }
+      // 0.14.0: a credit or debit note is missing only if that supplier's notes fetch failed.
+      if (d.section === 'CDNR' && a.cdnFailedCtins) {
+        if (!a.cdnFailedCtins.includes(d.ctin)) return null;
+        return {
+          detail: "the 2A pull failed for this supplier's credit and debit notes",
+          evidence: `2A notes pull: ${plural(a.cdnFailedSuppliers ?? a.cdnFailedCtins.length, 'supplier')} failed`, confirmed: false,
+        };
+      }
       const failed = a.failedSuppliers ?? 0;
-      if (ctx.twoACtins.has(d.ctin)) return null;
-      // 0.13.0 names the suppliers whose fetch failed; older pulls give a count only.
-      if (a.failedCtins ? !a.failedCtins.includes(d.ctin) : failed <= 0) return null;
+      // 0.13.0 names the suppliers whose fetch failed, which settles it even when
+      // the 2A holds that supplier's notes (0.14.0). Older pulls give a count
+      // only: then a supplier found in the 2A is not one that failed.
+      if (a.failedCtins ? !a.failedCtins.includes(d.ctin) : ctx.twoACtins.has(d.ctin) || failed <= 0) return null;
       return {
         detail: a.failedCtins ? 'the 2A pull failed for this supplier' : `the 2A pull failed for ${plural(failed, 'supplier')} and this one is not in the 2A`,
         evidence: `2A pull: ${plural(failed || (a.failedCtins?.length ?? 0), 'supplier')} failed`, confirmed: false,
@@ -529,8 +578,9 @@ export const NOTES_2A_2B: NoteRule<Ctx2A2B>[] = [
     code: 'EARLIER_YEAR_DOC',
     test: (row, ctx) => {
       const d = (row.left ?? row.right) as RecoDoc;
-      // An ITC reversal entry is always of an earlier year: nothing to claim, so no s.16(4) flag.
-      if (!d.date || d.bucket === 'reversal') return null;
+      // An ITC reversal entry is always of an earlier year, and a credit note
+      // reduces ITC: nothing to claim, so no s.16(4) flag for either.
+      if (!d.date || d.bucket === 'reversal' || d.family === 'CN') return null;
       const fy = fyOfDate(d.date);
       return fy < fyOfPeriod(ctx.period) ? `Dated in an earlier financial year (FY ${fy})` : null;
     },
@@ -578,7 +628,15 @@ const explain2A2B = (rows: RecoRow[], ctx: Ctx2A2B): string[] => {
     const rank = (x: string) => (order.indexOf(x) < 0 ? order.length : order.indexOf(x));
     const secs = [...new Set(nc.map((r) => (r.right ?? r.left)!.section))].sort((x, y) => rank(x) - rank(y)).map(sectionLabel);
     const read = ctx.twoA.sectionsRead.length ? ctx.twoA.sectionsRead.map(sectionLabel).join(', ') : 'B2B invoices';
-    out.push(`Compared: ${read}. Not compared: ${plural(nc.length, 'document')} (${secs.join(', ')}), because the 2A pull reads ${read} only.`);
+    const head = `Compared: ${read}. Not compared: ${plural(nc.length, 'document')} (${secs.join(', ')})`;
+    // The 2B's notes are left out only when their 2A holds none (0.14.0 reads
+    // them): say why for each such 2A, so the fix (pull again) is plain.
+    const noteRows = nc.filter((r) => r.right?.section === 'CDNR');
+    const of = (m: StatementMeta) => (ctx.twoAs.size > 1 ? ` of ${monthLabel(m.period)}` : '');
+    const notesWhy = [...new Set(noteRows.map((r) => twoAOf(ctx, r.right as RecoDoc)))].map((m) => notesNotRead(m, of(m)).words);
+    if (!noteRows.length) out.push(`${head}, because the 2A pull reads ${read} only.`);
+    else if (noteRows.length === nc.length) out.push(`${head}, because ${notesWhy.join(', and ')}.`);
+    else out.push(`${head}. Credit and debit notes: ${notesWhy.join(', and ')}. The others: the 2A pull does not read them.`);
   }
 
   // How old the 2A is, and whether its pull was complete.
@@ -591,6 +649,8 @@ const explain2A2B = (rows: RecoRow[], ctx: Ctx2A2B): string[] => {
     const failed = m.failedSuppliers ?? m.failedCtins?.length ?? 0;
     const of = ctx.twoAs.size > 1 ? ` of ${monthLabel(m.period)}` : '';
     if (failed > 0) out.push(`The 2A pull${of} failed for ${plural(failed, 'supplier')}: pull 2A again.`);
+    const notesFailed = m.cdnFailedSuppliers ?? m.cdnFailedCtins?.length ?? 0;
+    if (notesFailed > 0) out.push(`The 2A pull${of} could not read the credit and debit notes of ${plural(notesFailed, 'supplier')}: pull 2A again.`);
     if (m.suspectEmpty) out.push(`The 2A of ${monthLabel(m.period)} was saved by an extension before 0.13.0 and shows no suppliers: it may be a failed pull. Pull it again.`);
   }
   if (ctx.twoB.sectionsUnknown.length) out.push(`Sections in 2B this report does not read: ${ctx.twoB.sectionsUnknown.join(', ')}.`);
@@ -738,7 +798,9 @@ export function reconcile2A2B(input: Input2A2B): Run2A2B {
     earlier2A: new Map(earlier.map((p) => [p, neighbour('2A', p)])),
     twoACtins: new Set(leftDocs.map((d) => d.ctin)),
   };
-  const left: SourceSet = { key: '2A', label: '2A', docs: leftDocs, covers: (d) => a.meta.sectionsRead.includes(d.section) };
+  // A 2B document is compared when the 2A it belongs in reads its section: a
+  // quarterly 2B's 2As may come from different extensions (notes from 0.14.0).
+  const left: SourceSet = { key: '2A', label: '2A', docs: leftDocs, covers: (d) => twoAOf(ctx, d).sectionsRead.includes(d.section) };
   const right: SourceSet = {
     key: '2B', label: '2B', docs: b.docs, covers: (d) => b.meta.sectionsRead.includes(d.section),
     // An ITC reversal entry is not the invoice: listed on its own, never paired.

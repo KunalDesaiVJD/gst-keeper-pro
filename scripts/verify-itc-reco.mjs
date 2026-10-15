@@ -8,7 +8,10 @@
 // scripts/fixtures/itcRecoFixture.mjs (the shapes the extension saves) and
 // checks every reason, both directions, the neighbouring-statement variants,
 // value differences, amendments, duplicates, empty inputs, the totals, the
-// table shape, the Excel sheets, the multi-month merge and the Pull plan.
+// view model (signed rows, aggregates), the report layout (stat band, document
+// list, summary, analysis sheets), the multi-month merge, the view's filters
+// (facets, counts, presets, the filter line of an export), the 2A credit notes
+// and the Pull plan.
 // Prints a pass / fail table; exits 1 on any failure.
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -37,14 +40,15 @@ const out = await build({
       export { STATUS_ORDER } from './src/lib/itcReco/types';
       export { buildForPeriods, mergeRows } from './src/lib/reportPeriodMerge';
       export { flattenGstr2bDocs } from './src/utils/filedReturnReports';
-      export { reportToWorkbook } from './src/utils/allClientsReports';
+      export * as V from './src/lib/itcReco/viewModel';
+      export * as Fl from './src/lib/itcReco/filters';
       export { planPullJobs, describeJob } from './src/utils/gstr2aVs2bReports';
     `,
     resolveDir: root, loader: 'ts',
   },
   bundle: true, format: 'esm', platform: 'node', write: false, plugins: [stub], logLevel: 'error',
   loader: { '.png': 'dataurl' },
-  // SheetJS (for the Excel check) requires Node built-ins at run time.
+  // SheetJS (bundled through allClientsReports) requires Node built-ins at run time.
   banner: { js: `import { createRequire as __cr } from 'node:module'; const require = __cr(${JSON.stringify(path.join(root, 'package.json'))});` },
 });
 const R = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
@@ -61,6 +65,13 @@ const findRowFor = (result, key) => {
   return result.rows.filter((r) => (right ? !r.left && r.right?.number === num : r.left?.number === num));
 };
 const show = (r) => r ? `${r.status}/${r.reason}${r.confirmed === false ? ' (not confirmed)' : r.confirmed ? ' (confirmed)' : ''} ${r.detail} | ${r.evidence} | notes ${r.notes.map((n) => n.code).join(',')}` : 'no row';
+// The report: columns are found by header (the view and the exporters do the same).
+const infoOf = (res, period = F.PERIOD) => ({ client: F.CLIENT, period, left: res.twoA, right: res.twoB });
+const DIFF = R.diffHeader('2A', '2B');
+const cell = (t, row, header) => row[t.headers.indexOf(header)];
+const dataRows = (t) => t.rows.filter((r) => r[1] !== 'TOTAL');
+const totalRow = (t) => t.rows[t.rows.length - 1];
+const metaOf = (t, label) => t.meta?.find((f) => f.label === label)?.value;
 
 // ── 20: dates ───────────────────────────────────────────────────────────────
 check('dates', "parsePortalDate('11-Sep-25') = 2025-09-11", R.parsePortalDate('11-Sep-25') === '2025-09-11', R.parsePortalDate('11-Sep-25'));
@@ -122,8 +133,11 @@ check('case 12', 'K-1102 taxable differs by 0.40: matched within 1 rupee', findR
 check('case 15', 'N-5 in two financial years: not paired', findRowFor(main.result, 'N-5').length === 1 && findRowFor(main.result, '2B:N-5').length === 1);
 check('case 14', 'M-1301 paired with its B2BA amendment M-1301A', findRowFor(main.result, 'M-1301')[0]?.right?.number === 'M-1301A' && findRowFor(main.result, 'M-1301')[0]?.viaAmendment);
 const cn = findRowFor(main.result, '2B:CN-1')[0];
+const cnTable = cn && R.toReportTable({ ...main.result, rows: [cn] }, infoOf(main));
+const cnRow = cnTable && cnTable.rows[0];
 check('case 19', 'credit note: amounts negative in the table, kept out of the difference', cn && cn.diff.tax === 0
-  && R.docRow(cn, '2A', '2B')[22] === -180 && R.docRow(cn, '2A', '2B')[23] === '', JSON.stringify(cn && R.docRow(cn, '2A', '2B').slice(11, 24)));
+  && cell(cnTable, cnRow, '2B Total Tax') === -180 && cell(cnTable, cnRow, '2B Taxable Value') === -1000 && cell(cnTable, cnRow, DIFF) === '' && cell(cnTable, cnRow, 'Taxable Difference') === '',
+  JSON.stringify(cnRow));
 
 // Summary notes.
 const notes = main.result.notes.join('\n');
@@ -223,9 +237,10 @@ const qRes = recoOf('09/2026', qRows, '2026-10-21');
   const good = R.toReportTable(main.result, { client: F.CLIENT, period: '07/2026', left: main.twoA, right: main.twoB });
   const fake = { needs: 'client+month', build: async ({ month }) => { if (month === '04/2026') throw new Error('The portal had no GSTR-2B for Apr 2026.'); return { ...good }; } };
   const m = await R.buildForPeriods(fake, ['04/2026', '07/2026'], F.CLIENT.id);
-  check('findings', 'several months: a month without a 2B shows its reason, the others are built', m.rows.some((r) => r[1] === 'TOTAL (07/2026)') && m.summary.notes.some((n) => n === '04/2026: Not built: The portal had no GSTR-2B for Apr 2026.'), JSON.stringify(m.summary.notes));
-  check('findings', 'several months: the subtitle keeps client and GSTIN, each month its own pull dates in the notes', m.subtitle === 'Client: Fictional Fabrics Pvt Ltd   |   GSTIN: 24ABCDE1234F1Z5   |   2 periods combined'
-    && m.summary.notes.includes('07/2026: As of: 2A pulled 20 Sep 2026; 2B generated 14 Aug 2026.'), m.subtitle);
+  check('findings', 'several months: a month without a 2B shows its reason, the others are built', dataRows(m).length === main.result.rows.length && dataRows(m).every((r) => r[1] === 'Jul 2026')
+    && m.rows.filter((r) => r[1] === 'TOTAL').length === 1 && m.summary.notes.some((n) => n === 'Apr 2026: Not built: The portal had no GSTR-2B for Apr 2026.') && metaOf(m, 'Not built') === 'Apr 2026', JSON.stringify(m.summary.notes));
+  check('findings', 'several months: the subtitle keeps client and GSTIN, the month built its own pull dates', m.subtitle === 'Client: Fictional Fabrics Pvt Ltd   |   GSTIN: 24ABCDE1234F1Z5   |   Jul 2026   |   2A pulled 20 Sep 2026   |   2B generated 14 Aug 2026'
+    && metaOf(m, '2A pulled') === '20 Sep 2026' && metaOf(m, '2B generated') === '14 Aug 2026' && m.fileNameBase.endsWith('_04-2026_2months'), `${m.subtitle} | ${JSON.stringify(m.meta)} | ${m.fileNameBase}`);
   let err = '';
   try { await R.buildForPeriods({ needs: 'client+month', build: async ({ month }) => { throw new Error(`none for ${month}`); } }, ['04/2026', '05/2026'], F.CLIENT.id); } catch (e) { err = e.message; }
   check('findings', 'several months, none built: one error naming each', err === '04/2026: none for 04/2026  05/2026: none for 05/2026', err);
@@ -346,52 +361,398 @@ check('empty', 'empty 2A and 2B: no rows, a zero TOTAL in both parts', empty.res
   && emptyTable.summary.rows.length === 1 && emptyTable.summary.rows[0][2] === 0);
 
 // ── 21: totals ──────────────────────────────────────────────────────────────
-const table = R.toReportTable(main.result, { title: 'GSTR-2A vs GSTR-2B Reconciliation', client: F.CLIENT, period: F.PERIOD, left: main.twoA, right: main.twoB });
-const docTotal = table.rows[table.rows.length - 1];
+const table = R.toReportTable(main.result, { title: 'GSTR-2A vs GSTR-2B Reconciliation', ...infoOf(main) });
+const docTotal = totalRow(table);
 const sumTotal = table.summary.rows[table.summary.rows.length - 1];
 const lines = table.summary.rows.slice(0, -1);
 const col = (rows, c) => rows.reduce((s, r) => s + (typeof r[c] === 'number' ? r[c] : 0), 0);
-const sumCols = [[3, 11], [4, 12], [5, 21], [6, 22], [7, 23]]; // summary column ↔ document column
+// The summary and the document list name these columns alike.
+const AMOUNT_HEADS = ['2A Taxable Value', '2B Taxable Value', '2A Total Tax', '2B Total Tax', DIFF];
+const sh = (h) => table.summary.headers.indexOf(h);
 check('totals', 'summary lines add up to the summary TOTAL', [2, 3, 4, 5, 6, 7].every((c) => near(col(lines, c), sumTotal[c])), JSON.stringify(sumTotal));
-check('totals', 'summary TOTAL = document TOTAL (taxable, tax, difference)', sumCols.every(([s, d]) => near(sumTotal[s], docTotal[d])), JSON.stringify([sumTotal.slice(3, 8), [11, 12, 21, 22, 23].map((c) => docTotal[c])]));
+check('totals', 'summary TOTAL = document TOTAL (taxable, tax, difference)', AMOUNT_HEADS.every((h) => sh(h) >= 0 && near(sumTotal[sh(h)], cell(table, docTotal, h))),
+  JSON.stringify(AMOUNT_HEADS.map((h) => [sumTotal[sh(h)], cell(table, docTotal, h)])));
 check('totals', 'documents counted once each', sumTotal[2] === main.result.rows.length);
 const all2B = s2b.docs.reduce((s, d) => s + R.docSign(d) * R.docTax(d), 0);
-check('totals', '2B tax TOTAL = signed sum of every 2B document', near(docTotal[22], all2B), `${docTotal[22]} vs ${all2B}`);
+check('totals', '2B tax TOTAL = signed sum of every 2B document', near(cell(table, docTotal, '2B Total Tax'), all2B), `${cell(table, docTotal, '2B Total Tax')} vs ${all2B}`);
 const all2A = s2a.docs.reduce((s, d) => s + R.docSign(d) * R.docTax(d), 0);
-check('totals', '2A tax TOTAL = signed sum of every 2A document', near(docTotal[21], all2A), `${docTotal[21]} vs ${all2A}`);
+check('totals', '2A tax TOTAL = signed sum of every 2A document', near(cell(table, docTotal, '2A Total Tax'), all2A), `${cell(table, docTotal, '2A Total Tax')} vs ${all2A}`);
 const compared = main.result.rows.filter((r) => r.status !== 'not_compared');
 const diffCompared = compared.reduce((s, r) => s + R.signedTax(r.right) - R.signedTax(r.left), 0);
-check('totals', 'difference TOTAL = 2B minus 2A over the compared documents', near(docTotal[23], diffCompared), `${docTotal[23]} vs ${diffCompared}`);
-check('totals', 'heads add up to the total tax on every row', table.rows.slice(0, -1).every((r) => near((+r[13] || 0) + (+r[15] || 0) + (+r[17] || 0) + (+r[19] || 0), +r[21] || 0) && near((+r[14] || 0) + (+r[16] || 0) + (+r[18] || 0) + (+r[20] || 0), +r[22] || 0)));
+check('totals', 'difference TOTAL = 2B minus 2A over the compared documents', near(cell(table, docTotal, DIFF), diffCompared), `${cell(table, docTotal, DIFF)} vs ${diffCompared}`);
+const headsOf = (r, s) => ['IGST', 'CGST', 'SGST', 'Cess'].reduce((a, h) => a + (+cell(table, r, `${s} ${h}`) || 0), 0);
+check('totals', 'heads add up to the total tax on every row', dataRows(table).every((r) => ['2A', '2B'].every((s) => near(headsOf(r, s), +cell(table, r, `${s} Total Tax`) || 0))));
 
 // ── 22: table shape ─────────────────────────────────────────────────────────
-check('table', '27 document columns, every row the same length', table.headers.length === 27 && table.rows.every((r) => r.length === 27) && table.columnWidths.length === 27);
+const HEADERS = [
+  'Sr.', 'Month', 'Supplier GSTIN', 'Supplier Name', 'Doc Type', 'Doc No.', 'Doc Date', 'Section',
+  '2A Taxable Value', '2A IGST', '2A CGST', '2A SGST', '2A Cess', '2A Total Tax', '2A Filed On',
+  '2B Taxable Value', '2B IGST', '2B CGST', '2B SGST', '2B Cess', '2B Total Tax', 'ITC in 2B',
+  'Taxable Difference', DIFF,
+  'Status', 'Reason', 'What to do', 'Evidence', 'Reverse Charge', 'Also note',
+];
+check('table', '30 document columns, every row the same length', table.headers.length === 30 && table.rows.every((r) => r.length === 30) && table.columnWidths.length === 30);
+check('table', 'the document columns, in order (Status, Reason and the difference by their exact names)', table.headers.join('|') === HEADERS.join('|'), table.headers.join('|'));
 check('table', 'summary rows the length of its headers', table.summary.rows.every((r) => r.length === table.summary.headers.length) && table.summary.columnWidths.length === table.summary.headers.length);
 check('table', "last row of each part is ['', 'TOTAL', …]", docTotal[0] === '' && docTotal[1] === 'TOTAL' && sumTotal[1] === 'TOTAL');
 const pdfMm = (ws) => ws.reduce((s, w) => s + Math.max(w * 2, 14), 0);
 check('table', 'PDF columns fit 265 mm (documents and summary)', pdfMm(table.pdfColumns.map((i) => table.columnWidths[i])) <= 265 && pdfMm(table.summary.columnWidths) <= 265,
   `${pdfMm(table.pdfColumns.map((i) => table.columnWidths[i]))} / ${pdfMm(table.summary.columnWidths)}`);
-check('table', 'PDF keeps Status and Reason first, TOTAL in its column 1', table.pdfColumns[0] === 0 && table.pdfColumns[1] === 1);
+check('table', 'PDF prints Month (it carries TOTAL), supplier, number, date, both taxes, the difference, Status and Reason',
+  table.pdfColumns.map((i) => table.headers[i]).join('|') === ['Month', 'Supplier Name', 'Doc No.', 'Doc Date', '2A Total Tax', '2B Total Tax', DIFF, 'Status', 'Reason'].join('|') && table.pdfColumns[0] === 1,
+  table.pdfColumns.map((i) => table.headers[i]).join('|'));
 check('table', "no reason label contains the word 'total'", !Object.values(R.REASONS).some((x) => /total/i.test(x.label)));
 check('table', 'only the TOTAL rows hold an exact TOTAL cell', table.rows.filter((r) => r.some((c) => String(c).toUpperCase() === 'TOTAL')).length === 1);
+const ORDER = ['Only in 2A', 'Only in 2B', 'Figures differ', 'ITC differs', 'Not compared', 'Matched'];
 check('table', 'rows sorted: Only in 2A, Only in 2B, Figures differ, ITC differs, Not compared, Matched', (() => {
-  const order = ['Only in 2A', 'Only in 2B', 'Figures differ', 'ITC differs', 'Not compared', 'Matched'];
-  const idx = table.rows.slice(0, -1).map((r) => order.indexOf(r[0]));
+  const idx = dataRows(table).map((r) => ORDER.indexOf(cell(table, r, 'Status')));
   return idx.every((v, i) => v >= 0 && (i === 0 || v >= idx[i - 1]));
 })());
+check('table', 'within a status: by supplier name (imports last), then date; Sr. runs 1, 2, 3…', (() => {
+  const rs = dataRows(table);
+  const key = (r) => (cell(table, r, 'Supplier Name') || '￿').toLowerCase();
+  return rs.every((r, i) => cell(table, r, 'Sr.') === i + 1 && (i === 0 || cell(table, rs[i - 1], 'Status') !== cell(table, r, 'Status') || key(rs[i - 1]).localeCompare(key(r), 'en') <= 0));
+})());
 check('table', 'subtitle short: client, GSTIN, month, pull dates', table.subtitle === 'Client: Fictional Fabrics Pvt Ltd   |   GSTIN: 24ABCDE1234F1Z5   |   Jul 2026   |   2A pulled 20 Sep 2026   |   2B generated 14 Aug 2026', table.subtitle);
-check('table', 'a not-confirmed row says so in the Reason cell (the PDF has no Evidence column)', table.rows.some((r) => /\(not confirmed\)$/.test(String(r[1]))));
-const wb = R.reportToWorkbook(table);
-check('excel', 'workbook sheets: Summary, Documents', wb.SheetNames.join() === 'Summary,Documents', wb.SheetNames.join());
-check('excel', 'a report without a summary keeps one sheet "Report"', R.reportToWorkbook({ ...table, summary: undefined }).SheetNames.join() === 'Report');
+check('table', 'a not-confirmed row says so in the Reason cell (the PDF has no Evidence column)', dataRows(table).some((r) => /\(not confirmed\)$/.test(String(cell(table, r, 'Reason')))));
+check('table', 'amounts blank where a side is absent, the difference blank when not compared; dates DD-MM-YYYY', dataRows(table).every((r) => {
+  const st = cell(table, r, 'Status');
+  const blank = (s) => ['Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Total Tax'].every((h) => cell(table, r, `${s} ${h}`) === '');
+  const filled = (s) => ['Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Total Tax'].every((h) => typeof cell(table, r, `${s} ${h}`) === 'number');
+  const sides = st === 'Only in 2A' ? filled('2A') && blank('2B') : st === 'Only in 2B' ? blank('2A') && filled('2B') : st === 'Not compared' ? (blank('2A') || blank('2B')) : filled('2A') && filled('2B');
+  const diffOk = st === 'Not compared' ? cell(table, r, DIFF) === '' && cell(table, r, 'Taxable Difference') === '' : typeof cell(table, r, DIFF) === 'number';
+  const dateOk = ['Doc Date', '2A Filed On'].every((h) => cell(table, r, h) === '' || /^\d{2}-\d{2}-\d{4}$/.test(cell(table, r, h)));
+  return sides && diffOk && dateOk;
+}));
+
+// ── View model: signed rows and the aggregates ──────────────────────────────
+const view = R.V.toViewData(main.result, infoOf(main));
+const vrow = (num, right = false) => view.rows.find((r) => (right ? !r.left && r.right?.number === num : r.left?.number === num));
+const kpi = (t, label) => t.kpis.find((k) => k.label === label)?.value;
+check('view', 'one view row per reconciled row; ids period|index, unique', view.rows.length === main.result.rows.length && new Set(view.rows.map((r) => r.id)).size === view.rows.length
+  && view.rows.every((r, i) => r.id === `07/2026|${i}` && r.period === '07/2026') && view.periods.join() === '07/2026' && view.tolerance === 1);
+const vcn = vrow('CN-1', true);
+check('view', 'credit note negative in toViewData (CN-1: taxable −1,000, tax −180), no difference (not compared)', vcn && vcn.right.taxable === -1000 && vcn.right.tax === -180 && vcn.right.cgst === -90 && vcn.right.sgst === -90
+  && vcn.right.docValue < 0 && vcn.diff === null && vcn.absTaxDiff === 0 && vcn.family === 'CN' && vcn.docType === 'Credit note' && vcn.section === 'CDNR', JSON.stringify(vcn?.right));
+const vrev = vrow('U-0201', true);
+check('view', 'ITC reversal entry negative, ITC state "reversal" (U-0201)', vrev && vrev.right.tax === -180 && vrev.right.itc === 'reversal' && vrev.diff?.tax === -180, JSON.stringify(vrev?.right));
+const vd401 = vrow('D-401');
+const vs1701 = vrow('S-1701');
+check('view', 'ITC state from the 2B (rejected, not available with its reason, available); none for the 2A', vd401?.right.itc === 'rejected' && vs1701?.right.itc === 'not_available' && vs1701.right.itcReason === 'P'
+  && vrow('A-101')?.right.itc === 'available' && vrow('A-101').left.itc === null
+  && cell(table, dataRows(table).find((r) => cell(table, r, 'Doc No.') === 'S-1701'), 'ITC in 2B') === 'No (place of supply)');
+const vq2 = view.rows.find((r) => r.left && r.right?.number === 'Q-2');
+const oddRow = main.result.rows.find((r) => r.left?.number === 'A-101');
+const odd = R.V.toViewData({ ...main.result, rows: [{ ...oddRow, right: { ...oddRow.right, cgst: 1234.5, sgst: 1234.5 } }] }, infoOf(main)).rows[0];
+check('view', 'rate: snapped to the band within 0.5 (Q-2 2B: 162 on 905 = 17.90 → 18), else 2 decimals (24.69); null without a taxable value (ISD-1)',
+  vrow('A-101')?.left.rate === 18 && vq2?.right.rate === 18 && odd.right.rate === 24.69 && vrow('ISD-1', true)?.right.rate === null && vrow('K-1101')?.left.rate === 18,
+  JSON.stringify([vq2?.right.rate, odd.right.rate, vrow('ISD-1', true)?.right.rate]));
+const vc301 = vrow('C-301');
+const vr1601 = vrow('R-1601');
+check('view', 'reason text, action, evidence and notes as the cells say', vc301?.reasonText.endsWith('(not confirmed)') && vc301.reasonLabel === R.REASONS.IMS_PENDING.label && vc301.statusLabel === 'Only in 2A'
+  && vrow('B-201')?.evidence === 'Found in the 2B of Aug 2026' && vrow('B-201').refPeriod === '08/2026' && vrow('B-201').action === findRowFor(main.result, 'B-201')[0].action && /^Do not claim it this month/.test(vrow('B-201').action)
+  && vc301.action === (findRowFor(main.result, 'C-301')[0].action || R.REASONS.IMS_PENDING.action)
+  && vr1601?.notes.some((n) => n.code === 'RCM' && n.label === 'Reverse charge' && n.text) && vr1601.reverseCharge === true
+  && vrow('M-1301')?.number === 'M-1301 / M-1301A' && vrow('M-1301').viaAmendment && vrow('M-1301').isAmendment && vrow('P-1501')?.dateDiffers, show(main.result.rows.find((r) => r.left?.number === 'C-301')));
+const lt = R.V.sideTotals(view.rows, 'left');
+const rt = R.V.sideTotals(view.rows, 'right');
+const netAll = view.rows.reduce((s, r) => s + (r.diff ? r.diff.tax : 0), 0);
+check('view', 'sideTotals: documents only where that side exists, tax = the signed sums of 2A and 2B', lt.docs === main.result.rows.filter((r) => r.left).length && rt.docs === main.result.rows.filter((r) => r.right).length
+  && near(lt.tax, all2A) && near(rt.tax, all2B) && near(lt.igst + lt.cgst + lt.sgst + lt.cess, lt.tax), JSON.stringify([lt, rt]));
+const sumOf = (xs, k) => xs.reduce((s, x) => s + x[k], 0);
+for (const [name, xs, count] of [['bySupplier', R.V.bySupplier(view.rows), 'rows'], ['byPeriod', R.V.byPeriod(view.rows, view.periods), 'rows'], ['byReason', R.V.byReason(view.rows), 'count']]) {
+  check('view', `${name} totals = sideTotals (documents, taxable, tax, difference)`, sumOf(xs, count) === view.rows.length
+    && near(sumOf(xs, 'leftTaxable'), lt.taxable) && near(sumOf(xs, 'rightTaxable'), rt.taxable) && near(sumOf(xs, 'leftTax'), lt.tax) && near(sumOf(xs, 'rightTax'), rt.tax) && near(sumOf(xs, 'diff'), netAll)
+    && (name === 'byReason' || (sumOf(xs, 'leftDocs') === lt.docs && sumOf(xs, 'rightDocs') === rt.docs)), JSON.stringify({ n: sumOf(xs, count), lt: sumOf(xs, 'leftTax'), rt: sumOf(xs, 'rightTax'), d: sumOf(xs, 'diff') }));
+}
+const sups = R.V.bySupplier(view.rows);
+const counts = R.V.statusCounts(view.rows);
+const reasonsBy = R.V.byReason(view.rows);
+check('view', 'statusCounts add up; byReason in the status order, then the most documents; bySupplier by the largest difference',
+  Object.values(counts).reduce((a, b) => a + b, 0) === view.rows.length && counts.matched === view.rows.filter((r) => r.status === 'matched').length
+  && reasonsBy.every((l, i) => i === 0 || R.STATUS_ORDER.indexOf(reasonsBy[i - 1].status) < R.STATUS_ORDER.indexOf(l.status) || (reasonsBy[i - 1].status === l.status && reasonsBy[i - 1].count >= l.count))
+  && sups.every((s, i) => i === 0 || Math.abs(sups[i - 1].diff) >= Math.abs(s.diff)));
+const bySection = R.V.groupBy(view.rows, (r) => r.section, (r) => r.section);
+check('view', 'groupBy (by section): every row once, counts by status', sumOf(bySection, 'rows') === view.rows.length && bySection.every((g) => Object.values(g.counts).reduce((a, b) => a + b, 0) === g.rows)
+  && near(sumOf(bySection, 'diff'), netAll));
+check('view', 'stat band = sums over the document rows', (() => {
+  const st = (s) => dataRows(table).filter((r) => cell(table, r, 'Status') === s).length;
+  return kpi(table, 'Documents') === dataRows(table).length && kpi(table, 'Matched') === st('Matched') && kpi(table, 'Only in 2A') === st('Only in 2A') && kpi(table, 'Only in 2B') === st('Only in 2B')
+    && kpi(table, 'Figures differ') === st('Figures differ') + st('ITC differs') && kpi(table, 'Not compared') === st('Not compared')
+    && ['Matched', 'Only in 2A', 'Only in 2B', 'Figures differ', 'Not compared'].reduce((a, k) => a + kpi(table, k), 0) === kpi(table, 'Documents')
+    && near(kpi(table, '2A tax'), cell(table, docTotal, '2A Total Tax')) && near(kpi(table, '2B tax'), cell(table, docTotal, '2B Total Tax'))
+    && near(kpi(table, 'Net difference (2B minus 2A)'), cell(table, docTotal, DIFF));
+})(), JSON.stringify(table.kpis));
+check('view', 'stat band tones: matched good, one side only warn, differences bad, not compared muted; Matched carries its %', (() => {
+  const tone = (l) => table.kpis.find((k) => k.label === l)?.tone;
+  return tone('Matched') === 'good' && tone('Only in 2A') === 'warn' && tone('Only in 2B') === 'warn' && tone('Figures differ') === 'bad' && tone('Not compared') === 'muted'
+    && tone('Net difference (2B minus 2A)') === 'bad' && /%$/.test(table.kpis.find((k) => k.label === 'Matched').note);
+})(), JSON.stringify(table.kpis));
+const onlyA = view.rows.filter((r) => r.status === 'only_left');
+const ft = R.V.recoReportTable({ ...view, rows: onlyA }, { filterNote: 'Status: Only in 2A' });
+check('view', 'a filtered view exports its own rows, stat band and summary, with the filter in the strip', dataRows(ft).length === onlyA.length && kpi(ft, 'Documents') === onlyA.length && kpi(ft, 'Only in 2A') === onlyA.length
+  && ft.summary.rows.slice(0, -1).every((r) => r[0] === 'Only in 2A') && ft.meta.some((f) => f.label === 'Filter' && f.value === 'Status: Only in 2A') && ft.title === table.title);
+
+// ── Layout: every sheet well formed ─────────────────────────────────────────
+const sheetsOf = (t) => [
+  { name: t.sheetName, ...t }, { name: 'Summary', ...t.summary },
+  ...(t.extraSheets ?? []),
+];
+const shapeProblems = (t) => {
+  const out = [];
+  const names = new Set();
+  for (const s of sheetsOf(t)) {
+    const n = s.headers.length;
+    const tag = s.name;
+    if (new Set(s.headers).size !== n) out.push(`${tag}: headers not unique`);
+    if (s.headerLabels && s.headerLabels.length !== n) out.push(`${tag}: ${s.headerLabels.length} labels for ${n} headers`);
+    if (s.columnWidths.length !== n) out.push(`${tag}: ${s.columnWidths.length} widths`);
+    if (s.columnGroups && s.columnGroups.reduce((a, g) => a + g.span, 0) !== n) out.push(`${tag}: column groups span ${s.columnGroups.reduce((a, g) => a + g.span, 0)}`);
+    if (s.rowTones && s.rowTones.length !== s.rows.length) out.push(`${tag}: ${s.rowTones.length} tones for ${s.rows.length} rows`);
+    if (s.rowKinds && s.rowKinds.length !== s.rows.length) out.push(`${tag}: ${s.rowKinds.length} kinds for ${s.rows.length} rows`);
+    if (s.rows.some((r) => r.length !== n)) out.push(`${tag}: a row of the wrong length`);
+    if (s.pdfColumns && s.pdfColumns.some((i) => i < 0 || i >= n)) out.push(`${tag}: pdfColumns out of range`);
+    if (s.toneColumn !== undefined && (s.toneColumn < -1 || s.toneColumn >= n)) out.push(`${tag}: toneColumn out of range`);
+    if (s.rowTones && s.toneColumn === -1) out.push(`${tag}: tones without a column`);
+    if (!s.name || s.name.length > 31 || names.has(s.name.toLowerCase())) out.push(`${tag}: sheet name`);
+    names.add(String(s.name).toLowerCase());
+  }
+  return out;
+};
+// TOTAL rows: every column holding figures in the data rows is summed (Sr. aside).
+const totalProblems = (t) => {
+  const out = [];
+  for (const s of sheetsOf(t)) {
+    if (!s.rowKinds || s.rowKinds[s.rowKinds.length - 1] !== 'total') continue;
+    const data = s.rows.filter((_, i) => s.rowKinds[i] === 'data');
+    const tot = s.rows[s.rows.length - 1];
+    if (!tot.some((c) => c === 'TOTAL')) out.push(`${s.name}: no TOTAL label`);
+    s.headers.forEach((h, c) => {
+      if (h === 'Sr.' || !data.some((r) => typeof r[c] === 'number')) return;
+      const sum = data.reduce((a, r) => a + (typeof r[c] === 'number' ? r[c] : 0), 0);
+      if (typeof tot[c] !== 'number' || !near(tot[c], sum)) out.push(`${s.name} / ${h}: TOTAL ${tot[c]} vs ${sum}`);
+    });
+  }
+  return out;
+};
+check('layout', 'headers unique; labels, widths, groups, tones and kinds fit their headers and rows (every sheet)', shapeProblems(table).length === 0, shapeProblems(table).join('; '));
+check('layout', 'every TOTAL row sums its columns (documents, summary, by supplier, by document type)', totalProblems(table).length === 0, totalProblems(table).join('; '));
+check('layout', 'sheets: Documents, the summary by reason, By supplier, By document type, Notes and evidence (Excel only); no By month for one month',
+  table.sheetName === 'Documents' && table.summary.title === 'Summary by reason' && table.extraSheets.map((x) => x.name).join() === 'By supplier,By document type,Notes and evidence'
+  && table.extraSheets.filter((x) => x.pdf === false).map((x) => x.name).join() === 'Notes and evidence', table.extraSheets.map((x) => `${x.name}${x.pdf === false ? ' (no PDF)' : ''}`).join());
+check('layout', 'document list grouped: Document, GSTR-2A, GSTR-2B, Difference (2B minus 2A), Reconciliation, under short labels',
+  table.columnGroups.map((g) => `${g.label}:${g.span}`).join() === 'Document:8,GSTR-2A:7,GSTR-2B:7,Difference (2B minus 2A):2,Reconciliation:6'
+  && table.headerLabels[8] === 'Taxable value' && table.headerLabels[13] === 'Total tax' && table.headerLabels[23] === 'Total tax', JSON.stringify(table.columnGroups));
+const TONE_OF = { Matched: 'good', 'Only in 2A': 'warn', 'Only in 2B': 'warn', 'Figures differ': 'bad', 'ITC differs': 'bad', 'Not compared': 'muted' };
+check('layout', 'tones follow the status, on the Status column; four columns frozen', dataRows(table).every((r, i) => table.rowTones[i] === TONE_OF[cell(table, r, 'Status')])
+  && table.rowTones[table.rowTones.length - 1] === null && table.headers[table.toneColumn] === 'Status' && table.freezeColumns === 4
+  && table.summary.rowTones.slice(0, -1).every((tn, i) => tn === TONE_OF[table.summary.rows[i][0]]));
+check('layout', 'identification strip: client, GSTIN, period, pull dates; the stat band has nine figures', table.meta.map((f) => `${f.label}=${f.value}`).join('|')
+  === 'Client=Fictional Fabrics Pvt Ltd|GSTIN=24ABCDE1234F1Z5|Period=Jul 2026|2A pulled=20 Sep 2026|2B generated=14 Aug 2026' && table.kpis.length === 9, JSON.stringify(table.meta));
+const supSheet = table.extraSheets.find((x) => x.name === 'By supplier');
+const supLine = (name) => supSheet.rows.find((r) => r[1] === name);
+check('layout', 'By supplier: a status word and tint by the worst row (LAMBDA differs, ALPHA matched), the largest difference first, TOTAL', cell(supSheet, supLine('LAMBDA CHEMICALS'), 'Status') === 'Figures differ'
+  && supSheet.rowTones[supSheet.rows.indexOf(supLine('LAMBDA CHEMICALS'))] === 'bad' && cell(supSheet, supLine('ALPHA TRADERS'), 'Status') === 'Matched'
+  && supSheet.rows.length === sups.length + 1 && supSheet.rows[supSheet.rows.length - 1][1] === 'TOTAL' && supSheet.toneColumn === 2,
+  JSON.stringify([supLine('LAMBDA CHEMICALS'), supLine('ALPHA TRADERS')]));
+const typeSheet = table.extraSheets.find((x) => x.name === 'By document type');
+check('layout', 'By document type: invoices first, then the amended, the notes, ISD and imports; every row counted once', typeSheet.rows.slice(0, -1).map((r) => r[0]).join('|') === 'Invoice|Invoice (amended)|Credit note|ISD credit|Bill of entry'
+  && cell(typeSheet, totalRow(typeSheet), 'Rows') === view.rows.length, typeSheet.rows.map((r) => r[0]).join('|'));
+const notesSheet = table.extraSheets.find((x) => x.name === 'Notes and evidence');
+check('layout', 'Notes and evidence: one line per row with a flag or a reason not confirmed', notesSheet.rows.length === view.rows.filter((r) => r.notes.length || r.confirmed === false).length && notesSheet.rows.length > 0 && notesSheet.pdf === false);
 
 // ── 23: several months ──────────────────────────────────────────────────────
-const fake = { needs: 'client+month', build: async ({ month }) => R.toReportTable(main.result, { client: F.CLIENT, period: month, left: main.twoA, right: main.twoB }) };
+const fake = { needs: 'client+month', build: async ({ month }) => R.toReportTable(main.result, infoOf(main, month)) };
 const merged = await R.buildForPeriods(fake, ['06/2026', '07/2026'], F.CLIENT.id);
-check('merge', 'rows carry the period headings and TOTAL (07/2026)', merged.rows.some((r) => r[0] === '— 07/2026 —') && merged.rows.some((r) => r[1] === 'TOTAL (07/2026)') && merged.rows.some((r) => r[1] === 'TOTAL (06/2026)'));
-check('merge', 'summary carries the period headings and TOTAL (07/2026)', merged.summary.rows.some((r) => r[0] === '— 07/2026 —') && merged.summary.rows.some((r) => r[1] === 'TOTAL (07/2026)'));
-check('merge', 'notes prefixed with their period; pdfColumns kept', merged.summary.notes.every((n) => /^0[67]\/2026: /.test(n)) && merged.pdfColumns === table.pdfColumns);
+const n1 = main.result.rows.length;
+check('merge', 'two months: a Month column holding both, no period bands, one TOTAL summing both', merged.headers[1] === 'Month' && dataRows(merged).length === 2 * n1
+  && dataRows(merged).filter((r) => r[1] === 'Jun 2026').length === n1 && dataRows(merged).filter((r) => r[1] === 'Jul 2026').length === n1
+  && merged.rows.filter((r) => r[1] === 'TOTAL').length === 1 && !merged.rows.some((r) => /^— .+ —$/.test(String(r[0])))
+  && AMOUNT_HEADS.every((h) => near(cell(merged, totalRow(merged), h), 2 * cell(table, docTotal, h))));
+check('merge', 'periods [06/2026, 07/2026]; row ids unique across months; rows in month order, Sr. running on', merged.reco.periods.join() === '06/2026,07/2026'
+  && new Set(merged.reco.rows.map((r) => r.id)).size === 2 * n1 && dataRows(merged)[0][1] === 'Jun 2026' && dataRows(merged).every((r, i) => r[0] === i + 1));
+check('merge', 'summary recomputed across both months: each line twice the month\'s, one TOTAL', merged.summary.rows.length === table.summary.rows.length
+  && merged.summary.rows.filter((r) => r[1] === 'TOTAL').length === 1 && !merged.summary.rows.some((r) => /^— .+ —$/.test(String(r[0])))
+  && table.summary.rows.every((r) => { const m = merged.summary.rows.find((x) => x[0] === r[0] && x[1] === r[1]); return m && m[2] === 2 * r[2] && [3, 4, 5, 6, 7].every((c) => r[c] === '' ? m[c] === '' : near(m[c], 2 * r[c])); }));
+check('merge', 'stat band recomputed across both months', kpi(merged, 'Documents') === 2 * n1 && kpi(merged, 'Matched') === 2 * kpi(table, 'Matched')
+  && near(kpi(merged, 'Net difference (2B minus 2A)'), 2 * kpi(table, 'Net difference (2B minus 2A)')) && near(kpi(merged, '2B tax'), 2 * kpi(table, '2B tax')));
+check('merge', 'notes prefixed with their month; pdfColumns kept', merged.summary.notes.length === 2 * table.summary.notes.length && merged.summary.notes.every((n) => /^(Jun|Jul) 2026: /.test(n))
+  && JSON.stringify(merged.pdfColumns) === JSON.stringify(table.pdfColumns), merged.summary.notes.slice(0, 3).join(' | '));
+const byMonth = merged.extraSheets.find((x) => x.name === 'By month');
+check('merge', 'By month: a line per month with its own pull dates, and a TOTAL', byMonth && byMonth.rows.map((r) => r[0]).join() === 'Jun 2026,Jul 2026,TOTAL'
+  && cell(byMonth, byMonth.rows[0], 'Rows') === n1 && cell(byMonth, byMonth.rows[0], '2A Pulled On') === '20-09-2026' && cell(byMonth, byMonth.rows[1], '2B Generated On') === '14-08-2026'
+  && cell(byMonth, byMonth.rows[2], 'Rows') === 2 * n1, JSON.stringify(byMonth?.rows));
+check('merge', 'every sheet of the merged report well formed and its TOTAL rows summed', shapeProblems(merged).length === 0 && totalProblems(merged).length === 0
+  && merged.extraSheets.map((x) => x.name).join() === 'By supplier,By month,By document type,Notes and evidence', [...shapeProblems(merged), ...totalProblems(merged)].join('; '));
+check('merge', 'strip and file name: the span of months', metaOf(merged, 'Period') === 'Jun 2026 to Jul 2026 (2 months)' && merged.fileNameBase === 'GSTR2A_vs_GSTR2B_Reco_Fictional_Fabrics_Pvt_Ltd_06-2026_2months'
+  && merged.subtitle === 'Client: Fictional Fabrics Pvt Ltd   |   GSTIN: 24ABCDE1234F1Z5   |   Jun 2026 to Jul 2026 (2 months)', `${merged.subtitle} | ${merged.fileNameBase}`);
+{
+  const fake3 = { needs: 'client+month', build: async ({ month }) => { if (month === '08/2026') throw new Error('GSTR-2B of Aug 2026 is not pulled.'); return R.toReportTable(main.result, infoOf(main, month)); } };
+  const m3 = await R.buildForPeriods(fake3, ['06/2026', '07/2026', '08/2026'], F.CLIENT.id);
+  check('merge', 'a month that failed: named in the notes (in its place) and the strip; the others merged', m3.summary.notes[m3.summary.notes.length - 1] === 'Aug 2026: Not built: GSTR-2B of Aug 2026 is not pulled.'
+    && metaOf(m3, 'Not built') === 'Aug 2026' && m3.reco.failed.map((f) => f.period).join() === '08/2026' && m3.reco.periods.join() === '06/2026,07/2026'
+    && dataRows(m3).length === 2 * n1 && m3.fileNameBase.endsWith('_06-2026_3months'), JSON.stringify(m3.summary.notes.slice(-2)));
+  const direct = R.V.mergeViewData([R.V.toViewData(main.result, infoOf(main, '07/2026')), R.V.toViewData(main.result, infoOf(main, '06/2026'))], [{ period: '05/2026', reason: 'x' }]);
+  check('merge', 'mergeViewData: months in order whatever the order given, failed months kept apart', direct.periods.join() === '06/2026,07/2026' && direct.rows[0].period === '06/2026'
+    && direct.failed[0].period === '05/2026' && direct.statements.map((s) => s.period).join() === '06/2026,07/2026' && direct.notes[0].period === '06/2026');
+}
 check('merge', 'mergeRows is the shared row merge', R.mergeRows([[['a', 'TOTAL']]], ['07/2026'], 2)[1][1] === 'TOTAL (07/2026)');
+
+// ── The view's filters (src/lib/itcReco/filters.ts) ───────────────────────
+{
+  const Fl = R.Fl;
+  const E = Fl.EMPTY_FILTERS;
+  const rows = view.rows;
+  const num = (xs) => xs.map((r) => r.number).join(',');
+  const sup = (name) => Fl.supplierKey(rows.find((r) => r.supplierName === name));
+  const where = (pred) => rows.filter(pred);
+  check('filters', 'nothing set: every row (the same array), not filtering; each facet counts every row once', Fl.applyFilters(rows, E) === rows && !Fl.isFiltering(E)
+    && Fl.FACETS.filter((f) => f !== 'flag').every((f) => [...Fl.facetCounts(rows, E, f).values()].reduce((a, b) => a + b, 0) === rows.length));
+  const or = Fl.applyFilters(rows, { ...E, status: ['only_left', 'only_right'] });
+  check('filters', 'OR within a facet: Only in 2A or Only in 2B', or.length === where((r) => r.status === 'only_left' || r.status === 'only_right').length && or.length === 19
+    && or.every((r) => r.status === 'only_left' || r.status === 'only_right'), or.length);
+  const and = Fl.applyFilters(rows, { ...E, status: ['only_left'], supplier: [sup('ZETA LOGISTICS'), sup('ETA ENGINEERING')] });
+  check('filters', 'AND across facets: Only in 2A and (ZETA or ETA)', num(and) === 'F-602,F-601,G-702,G-701', num(and));
+  const flags = Fl.applyFilters(rows, { ...E, flag: ['ITC_NA_POS', 'RCM'] });
+  const flagsMatched = Fl.applyFilters(rows, { ...E, flag: ['ITC_NA_POS', 'RCM'], status: ['matched'] });
+  check('filters', 'flags: OR within (place of supply or reverse charge), AND with status', num(flags) === 'T-1801,R-1601,S-1701' && num(flagsMatched) === 'R-1601,S-1701', `${num(flags)} | ${num(flagsMatched)}`);
+  const imports = Fl.applyFilters(rows, { ...E, supplier: [Fl.supplierKey(rows.find((r) => r.number === 'BE-1'))] });
+  check('filters', 'an import without a GSTIN is its own supplier, named "Imports (no GSTIN)"', num(imports) === 'BE-1' && Fl.facetLabel('supplier', '~', view) === 'Imports (no GSTIN)');
+
+  // Faceted counts: a facet ignores its own selection and honours every other filter.
+  const f1 = { ...E, status: ['matched'], supplier: [sup('RHO RESINS')] };
+  const c1 = Fl.allFacetCounts(rows, f1);
+  check('filters', 'counts: status ignores the status filter (RHO: 3 matched), supplier ignores the supplier filter (matched per supplier)',
+    c1.status.get('matched') === 3 && [...c1.status.keys()].join() === 'matched'
+    && c1.supplier.get(sup('UPSILON YARNS')) === 2 && c1.supplier.get(sup('RHO RESINS')) === 3 && c1.supplier.get(sup('ALPHA TRADERS')) === 1
+    && c1.section.get('B2B') === 3 && c1.itc.get('not_available') === 3, JSON.stringify(Object.fromEntries(Object.entries(c1).map(([k, m]) => [k, Object.fromEntries(m)]))));
+  // Brute force: every facet value's count equals the rows the filter would leave with that value alone ticked in that facet.
+  const busy = { ...E, status: ['only_left', 'only_right', 'matched'], section: ['B2B'], docType: ['INV'], minDiff: null, dateFrom: '2026-06-01', search: 'a' };
+  const all = Fl.allFacetCounts(rows, busy);
+  const wrong = [];
+  for (const facet of Fl.FACETS) {
+    for (const o of Fl.facetOptions(view, facet)) {
+      const others = Fl.applyFilters(rows, { ...busy, [facet]: [] });
+      const want = others.filter((r) => Fl.valuesOf(r, facet).includes(o.value)).length;
+      const got = all[facet].get(o.value) ?? 0;
+      if (got !== want) wrong.push(`${facet}=${o.value}: ${got} vs ${want}`);
+      if (facet !== 'flag' && got !== Fl.applyFilters(rows, { ...busy, [facet]: [o.value] }).length) wrong.push(`${facet}=${o.value}: not the rows ticking it would show`);
+    }
+    if (JSON.stringify([...Fl.facetCounts(rows, busy, facet)]) !== JSON.stringify([...all[facet]])) wrong.push(`${facet}: facetCounts differs from allFacetCounts`);
+  }
+  check('filters', 'counts, every facet and value, under a busy filter: the rows ticking that value alone would show', wrong.length === 0, wrong.slice(0, 6).join('; '));
+
+  // The other filters.
+  const big = Fl.applyFilters(rows, { ...E, minDiff: 500 });
+  check('filters', 'tax difference at least ₹500 (not compared rows have none)', num(big) === 'B-201,E-501,T-1801,V-2101,C-301,W-1001,J-901,H-802', num(big));
+  const tol = Fl.applyFilters(rows, { ...E, aboveTolerance: view.tolerance });
+  check('filters', 'above the tolerance: figures differ by more than ₹1 on value or tax; matched, not compared and the date-only row are out',
+    tol.length === where((r) => r.diff && (Math.abs(r.diff.tax) > 1 || Math.abs(r.diff.taxable) > 1)).length
+    && tol.every((r) => r.status !== 'matched' && r.status !== 'not_compared') && !tol.some((r) => r.number === 'P-1501') && tol.some((r) => r.number === 'B-201'), num(tol));
+  const july = Fl.applyFilters(rows, { ...E, dateFrom: '2026-07-01', dateTo: '2026-07-31' });
+  check('filters', 'document date from / to, inclusive (N-5 of 2025, U-0201 of Feb, X-2201 of Aug and the June ones out)', july.length === where((r) => r.date >= '2026-07-01' && r.date <= '2026-07-31').length
+    && !july.some((r) => ['N-5', 'U-0201', 'X-2201', 'H-801', 'P-1501'].includes(r.number)) && july.some((r) => r.number === 'Q-1'), num(july));
+  check('filters', 'search: every word must appear (name, number, GSTIN, reason, evidence), any case',
+    num(Fl.applyFilters(rows, { ...E, search: 'zeta' })) === 'F-602,F-601' && num(Fl.applyFilters(rows, { ...E, search: '  Zeta   602 ' })) === 'F-602'
+    && num(Fl.applyFilters(rows, { ...E, search: '29aaapk' })) === 'K-1101,K-1102' && Fl.applyFilters(rows, { ...E, search: 'found in the 2b of aug 2026' }).some((r) => r.number === 'B-201')
+    && Fl.applyFilters(rows, { ...E, search: 'm-1301a' }).length === 1);
+
+  // Words: chips and the export's filter line.
+  const fD = { ...E, status: ['only_right', 'only_left'], supplier: [sup('THETA THREADS')], itc: ['none'], reverseCharge: ['no'], minDiff: 100, dateFrom: '2026-06-01', search: ' theta ' };
+  const d = Fl.describeFilters(fD, view);
+  check('filters', 'describeFilters: facets in the bar\'s order, values in the facet\'s order, the supplier with its GSTIN, then the bounds and the search',
+    d === 'Status: Only in 2A, Only in 2B; Supplier: THETA THREADS (24AAAPH0008H1Z8); ITC in 2B: Not in 2B; Reverse charge: No; Tax difference at least ₹100.00; Document date from 01-06-2026; Search: "theta"'
+    && Fl.describeFilters(E, view) === '', d);
+  const six = ['ALPHA TRADERS', 'BETA STEEL', 'GAMMA PAPERS', 'DELTA DYES', 'EPSILON PACKAGING', 'ZETA LOGISTICS'].map(sup);
+  const d6 = Fl.describeFilters({ ...E, supplier: six, dateFrom: '2026-07-01', dateTo: '2026-07-31', aboveTolerance: 1 }, view);
+  check('filters', 'describeFilters: a long list is cut ("and 2 more"); a date range; the tolerance', d6 === 'Supplier: ALPHA TRADERS (24AAAPA0001A1Z1), BETA STEEL (27AAAPB0002B1Z2), DELTA DYES (24AAAPD0004D1Z4), EPSILON PACKAGING (24AAAPE0005E1Z5) and 2 more; Differences above ₹1.00; Document date 01-07-2026 to 31-07-2026', d6);
+  const chips = Fl.filterChips(fD, view);
+  const noSup = Fl.removeChip(fD, chips.find((c) => c.kind === 'supplier'));
+  check('filters', 'chips: one per value (in the order ticked) and per bound; removing one leaves the rest', chips.length === 8 && chips[0].label === 'Status: Only in 2B' && chips.some((c) => c.label === 'Supplier: THETA THREADS')
+    && noSup.supplier.length === 0 && noSup.status.length === 2 && Fl.removeChip(fD, chips.find((c) => c.kind === 'search')).search === '' && Fl.removeChip(fD, chips.find((c) => c.kind === 'minDiff')).minDiff === null,
+    chips.map((c) => c.label).join(' | '));
+  check('filters', 'options: reasons grouped by status in the status order; document types invoice first; ITC "Not in 2B" last',
+    Fl.facetOptions(view, 'reason')[0].group === 'Only in 2A' && Fl.facetOptions(view, 'reason').at(-1).group === 'Matched'
+    && Fl.facetOptions(view, 'docType').map((o) => o.label).join() === 'Invoice,Invoice (amended),Credit note,ISD credit,Bill of entry'
+    && Fl.facetOptions(view, 'itc').map((o) => o.label).join() === 'Available,Not available,Rejected in IMS,ITC reversal (Rule 37A),Not in 2B'
+    && Fl.facetOptions(view, 'rate').map((o) => o.value).join() === '18,none', Fl.facetOptions(view, 'docType').map((o) => o.label).join());
+
+  // Presets.
+  const P = (k) => Fl.presetFilters(k, view.tolerance);
+  check('filters', 'presets: Needs action = everything but matched and not compared; Differences only = above the tolerance; Matched; All = nothing set',
+    Fl.applyFilters(rows, P('needs_action')).length === where((r) => r.status !== 'matched' && r.status !== 'not_compared').length
+    && Fl.applyFilters(rows, P('differences')).length === tol.length && Fl.applyFilters(rows, P('matched')).length === where((r) => r.status === 'matched').length
+    && Fl.applyFilters(rows, P('all')) === rows);
+  check('filters', 'activePreset recognises each preset exactly, and none once anything else is set', ['needs_action', 'differences', 'matched', 'all'].every((k) => Fl.activePreset(P(k), view.tolerance) === k)
+    && Fl.activePreset({ ...P('needs_action'), search: 'x' }, view.tolerance) === null && Fl.activePreset({ ...E, status: ['only_left'] }, view.tolerance) === null
+    && Fl.activePreset({ ...E, status: [...P('needs_action').status].reverse() }, view.tolerance) === 'needs_action');
+
+  // Sorting the list.
+  const tblNums = dataRows(table).map((r) => cell(table, r, 'Doc No.')).join(',');
+  const byDiff = Fl.sortRows(rows, { key: 'diffTax', dir: 'desc' });
+  const byDiffAsc = Fl.sortRows(rows, { key: 'diffTax', dir: 'asc' });
+  const vals = (xs) => xs.filter((r) => r.diff).map((r) => r.diff.tax);
+  check('filters', 'sortRows: no sort = the Excel\'s order; figures either way with not compared rows last; text A to Z', num(Fl.sortRows(rows, null)) === tblNums
+    && vals(byDiff).every((v, i, a) => i === 0 || a[i - 1] >= v) && byDiff.slice(-3).every((r) => !r.diff)
+    && vals(byDiffAsc).every((v, i, a) => i === 0 || a[i - 1] <= v) && byDiffAsc.slice(-3).every((r) => !r.diff)
+    && Fl.sortRows(rows, { key: 'supplier', dir: 'asc' })[0].supplierName === 'ALPHA TRADERS' && Fl.sortRows(rows, { key: 'supplier', dir: 'asc' }).at(-1).number === 'BE-1');
+
+  // A filtered export carries its own rows and names the filter.
+  const fx = { ...E, status: ['only_left'], supplier: [sup('ZETA LOGISTICS')] };
+  const tx = R.V.recoReportTable({ ...view, rows: Fl.applyFilters(rows, fx) }, { filterNote: Fl.describeFilters(fx, view) });
+  check('filters', 'an export of the filtered rows: its own documents and figures, the filter in the strip', dataRows(tx).length === 2 && kpi(tx, 'Documents') === 2
+    && tx.meta.find((f) => f.label === 'Filter')?.value === 'Status: Only in 2A; Supplier: ZETA LOGISTICS (24AAAPF0006F1Z6)', JSON.stringify(tx.meta));
+
+  // Several months: the month facet.
+  const mv = merged.reco;
+  check('filters', 'several months: a month facet with both, in order; a month picked leaves its rows; "Month: Jul 2026"',
+    Fl.facetOptions(mv, 'period').map((o) => o.label).join() === 'Jun 2026,Jul 2026'
+    && Fl.applyFilters(mv.rows, { ...E, period: ['07/2026'] }).length === n1 && Fl.describeFilters({ ...E, period: ['07/2026'] }, mv) === 'Month: Jul 2026'
+    && Fl.facetCounts(mv.rows, { ...E, period: ['07/2026'], status: ['matched'] }, 'period').get('06/2026') === where((r) => r.status === 'matched').length);
+}
+
+// ── 2A credit and debit notes (extension 0.14.0: summary.cdn) ──────────────
+{
+  const note2A = { ctin: F.S.alpha, trdnm: 'ALPHA', cfs: 'Y', supfildt: '10-Aug-26', flprdr1: 'Jul-26', nt: [{ ntty: 'C', nt_num: 'CN-7', nt_dt: '25-07-2026', val: 1180, pos: '24', rchrg: 'N', inv_typ: 'R', itms: [{ num: 1, itm_det: { rt: 18, txval: 1000, iamt: 0, camt: 90, samt: 90, csamt: 0 } }] }] };
+  const twoA = (sections) => ({
+    b2b: [A(F.S.alpha, 'ALPHA', '10-Aug-26', [F.inv2A('A-7', '05-07-2026', F.intra(1000))])],
+    ...(sections.includes('cdn') ? { cdn: [note2A] } : {}),
+    _meta: { ...meta0, counterparties: 1, sections },
+  });
+  const twoB = F.summary2B('07/2026', '14-08-2026', {
+    b2b: [F.sup2B(F.S.alpha, 'ALPHA', '072026', '10-08-2026', [F.inv2B('A-7', '05-07-2026', F.intra(1000))])],
+    cdnr: [F.sup2B(F.S.alpha, 'ALPHA', '072026', '10-08-2026', [F.nt2B('CN-7', '25-07-2026', 'C', F.intra(1000))], 'nt')],
+  });
+  const rowsFor = (sections) => [F.row('2A', '07/2026', twoA(sections)), F.row('2B', '07/2026', twoB), F.row('2B', '08/2026', F.summary2B('08/2026', '14-09-2026', { b2b: [] }))];
+  const noteRow = (t) => dataRows(t).find((r) => cell(t, r, 'Doc No.') === 'CN-7');
+  const withCdn = recoOf('07/2026', rowsFor(['b2b', 'cdn']), F.TODAY);
+  const t1 = R.toReportTable(withCdn.result, infoOf(withCdn));
+  const v1 = t1.reco.rows.find((r) => r.right?.number === 'CN-7');
+  const c1 = noteRow(t1);
+  check('cdn', "2A with notes (_meta.sections ['b2b','cdn']): the 2B credit note matches the 2A's, both negative", v1?.status === 'matched' && v1.left?.family === 'CN' && v1.left.tax === -180 && v1.right.tax === -180 && v1.diff?.tax === 0
+    && cell(t1, c1, 'Status') === 'Matched' && cell(t1, c1, 'Section') === 'CDNR' && cell(t1, c1, 'Doc Type') === 'Credit note' && cell(t1, c1, '2A Total Tax') === -180 && cell(t1, c1, '2B Total Tax') === -180
+    && cell(t1, c1, DIFF) === 0 && kpi(t1, 'Not compared') === 0 && kpi(t1, 'Matched') === 2, JSON.stringify(v1 && { s: v1.status, r: v1.reason, l: v1.left, rr: v1.right }));
+  const without = recoOf('07/2026', rowsFor(['b2b']), F.TODAY);
+  const t2 = R.toReportTable(without.result, infoOf(without));
+  const v2 = t2.reco.rows.find((r) => r.right?.number === 'CN-7');
+  const c2 = noteRow(t2);
+  check('cdn', "2A without notes (_meta.sections ['b2b']): the 2B credit note stays not compared, out of the difference", v2?.status === 'not_compared' && v2.reason === 'NOT_COMPARED_SECTION' && !v2.left && v2.diff === null
+    && cell(t2, c2, 'Status') === 'Not compared' && cell(t2, c2, DIFF) === '' && cell(t2, c2, '2B Total Tax') === -180 && kpi(t2, 'Not compared') === 1 && near(kpi(t2, 'Net difference (2B minus 2A)'), 0),
+    JSON.stringify(v2 && { s: v2.status, r: v2.reason }));
+
+  // A credit note reaching an invoice rule is told to reduce ITC, never to
+  // claim it, and gets no s.16(4) wording (review finding, 0.14.0).
+  const lateCn = F.summary2B('07/2026', '14-08-2026', {
+    b2b: [F.sup2B(F.S.alpha, 'ALPHA', '072026', '10-08-2026', [F.inv2B('A-7', '05-07-2026', F.intra(1000))])],
+    cdnr: [F.sup2B(F.S.alpha, 'ALPHA', '062026', '20-07-2026', [F.nt2B('CN-6', '28-06-2025', 'C', F.intra(500))], 'nt')],
+  });
+  const lateRows = [F.row('2A', '07/2026', twoA(['b2b', 'cdn'])), F.row('2B', '07/2026', lateCn), F.row('2B', '08/2026', F.summary2B('08/2026', '14-09-2026', { b2b: [] }))];
+  const late = recoOf('07/2026', lateRows, F.TODAY);
+  const cn6 = late.result.rows.find((r) => r.right?.number === 'CN-6');
+  check('cdn', 'a 2B credit note for an earlier month: "reduce the ITC", no claim and no s.16(4), no earlier-year note',
+    cn6?.status === 'only_right' && /^Reduce the ITC for this credit note/.test(cn6.action) && !/claim|16\(4\)/i.test(cn6.action)
+    && !cn6.notes.some((n) => n.code === 'EARLIER_YEAR_DOC'), JSON.stringify(cn6 && { s: cn6.status, r: cn6.reason, a: cn6.action, n: cn6.notes }));
+}
 
 // ── N-way matcher ───────────────────────────────────────────────────────────
 const mk = (source, number, date) => ({ ...s2b.docs.find((d) => d.number === 'A-101'), source, number, date, ref: `${source}${number}` });
@@ -424,7 +785,7 @@ if (process.argv.includes('--show')) {
   console.log(table.title + '\n' + table.subtitle + '\n');
   for (const r of table.summary.rows) console.log(r.slice(0, 8).join(' | '));
   console.log('\n' + table.summary.notes.map((n) => '* ' + n).join('\n') + '\n');
-  for (const r of table.rows) console.log([r[0], r[7], r[1], r[2], r[3], r[26]].filter(Boolean).join(' | '));
+  for (const r of table.rows) console.log(['Status', 'Doc No.', 'Reason', 'What to do', 'Evidence', 'Also note'].map((h) => cell(table, r, h)).filter(Boolean).join(' | '));
 }
 let fails = 0;
 let group = '';

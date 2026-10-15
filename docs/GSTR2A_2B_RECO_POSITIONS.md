@@ -2,7 +2,7 @@
 
 How the Reports Hub's **GSTR-2A vs GSTR-2B Reconciliation** matches the two
 statements and decides the reason for every difference. Read this before
-changing `src/lib/itcReco/` (engine, adapters, rules, table),
+changing `src/lib/itcReco/` (engine, adapters, rules, view model, table),
 `src/utils/gstr2aVs2bReports.ts` (the report and its Pull plan),
 `src/components/reports/views/ReasonReconciliationView.tsx`, or the
 extension's GSTR-2A / GSTR-2B pulls (`extension/content.js`,
@@ -20,10 +20,9 @@ this was written, so the report has been tested on fictional data only
 
 ## 1. What the report is
 
-One client and one month (several months give one block per month, like every
-other report; a month that cannot be built, such as a quarterly taxpayer's
-month without a 2B, shows its reason in its own block instead of failing the
-others, and each month's pull dates lead its notes). The month's portal 2A and portal 2B (as the extension saved
+One client and one month, or several months merged into one report (§12; a
+month that cannot be built, such as a quarterly taxpayer's month without a 2B,
+is named with its reason instead of failing the others). The month's portal 2A and portal 2B (as the extension saved
 them in `gst_filed_returns`, never the Excel imports) are matched document by
 document. Every row gets a status, a reason, what to do, the evidence for the
 reason, and both sides' figures with the difference (2B minus 2A). A summary
@@ -39,11 +38,27 @@ Nothing is written to the database. Pull fetches only what is missing (§7).
   e-commerce (`ecom` / `ecoma`). Tax is `igst` / `cgst` / `sgst` / `cess` on each
   document (`iamt` / `camt` is the fallback). Any other non-empty section under
   `docdata` is listed in the notes as not read.
-- **GSTR-2A**: the extension's pull, B2B only today (`api/gstr2a/ctin`, then
+- **GSTR-2A**: the extension's pull of B2B invoices (`api/gstr2a/ctin`, then
   `api/gstr2a/b2b` per supplier). From 0.13.0 the supplier wrapper keeps every
   field the portal sends (`cfs`, `cfs3b`, `flprdr1`, `dtcancel`) and the summary
   carries `_meta = { counterparties, failed, failedCtins }`. 2A tax is read from
   the invoice or, failing that, from `itms[].itm_det`.
+- **GSTR-2A credit and debit notes** (extension 0.14.0, **not confirmed
+  live**): after the invoices, the same pull asks for the note suppliers
+  (`api/gstr2a/ctin?section_name=CDN`, then `section_name=CDNR` when CDN gives
+  no list) and each supplier's notes (`api/gstr2a/cdn`, or `api/gstr2a/cdnr`
+  once the first supplier's `cdn` call answers 400 or 404), taking the GSTN
+  2A layout (`cdn: [{ ctin, cfs, …, nt: [{ ntty, nt_num, nt_dt, val, pos,
+  rchrg, itms }] }]`). They are saved as `summary.cdn` with `_meta.sections =
+  ['b2b', 'cdn']`, `cdnFailed` and `cdnFailedCtins`; an empty list or a "no
+  data" answer is a month without notes, and the 2B's notes are then compared.
+  When the notes cannot be read at all (no list under either name, every
+  supplier's notes failing, or any error), nothing is saved for them:
+  `_meta.sections = ['b2b']` and `_meta.cdnProblem` says why, so the 2B's notes
+  stay *Not compared* with that reason rather than becoming *Only in 2B*. The
+  invoices are saved exactly as before in every case. A note's own number and
+  date (`nt_num`, `nt_dt`) are read before an older layout's `inum` / `idt`,
+  the invoice it was raised against.
 - **Neighbours**, when pulled: the 2B of the next three months (a quarterly
   2B: the next quarter's), the 2A of each earlier month a 2B document's
   supplier period points to, and the 2A and 2B of the two months before (to
@@ -119,8 +134,13 @@ and never change the status.
 1. *ITC reversal (Rule 37A)*: an entry of the 2B's ITC reversal section.
    Shown negative (it reduces the ITC), never paired, never "claim"; reverse
    it in Table 4(B)(2).
-2. *Not compared*: a section the 2A pull does not read (today everything but
-   B2B invoices). Kept in the list, kept out of the difference.
+2. *Not compared*: a section the 2A it belongs in does not read (everything
+   but B2B invoices and, from extension 0.14.0, credit and debit notes). Kept
+   in the list, kept out of the difference. For a 2B note, the row and the
+   notes say why its 2A has none: pulled by an extension before 0.14.0 (pull
+   2A again with 0.14.0), or the portal did not return the notes (the pull's
+   `cdnProblem`; pull 2A again). For a quarterly 2B each note is judged by the
+   2A of its own month, which may come from an older extension.
 3. *Rejected in IMS*: in the 2B's rejected section. No ITC.
 4. *Quarterly 2B: for an earlier month of the quarter* (not confirmed): a
    quarterly 2B (§9) holds a document of the quarter's first or second month
@@ -132,11 +152,15 @@ and never change the status.
    month, filed after its cut-off (the 12th or 13th says it could be either).
    Confirmed when found in that month's 2A. At a quarter's end, when it is not
    known whether the client files quarterly, both say "or this quarter's 2B".
+   A note is looked for only in a 2A that read the notes: against an older
+   2A the evidence says it has no notes (not confirmed), never "not in the 2A".
 7. *2A pulled before the supplier filed* (not confirmed).
 8. *The 2A pull failed for this supplier* (not confirmed): the supplier is one
-   of the pull's `failedCtins` (0.13.0+; before that, not in the 2A and the
-   pull recorded failures), or the 2A was saved empty by an extension before
-   0.13.0 (no `_meta`: it may be a failed pull).
+   of the pull's `failedCtins` (0.13.0+, even when the 2A holds its notes;
+   before that, not in the 2A and the pull recorded failures), or the 2A was
+   saved empty by an extension before 0.13.0 (no `_meta`: it may be a failed
+   pull). A credit or debit note is blamed only on its supplier's failed notes
+   fetch (`cdnFailedCtins`, 0.14.0+), never on a failed invoice fetch.
 9. *Only in 2B: no reason found* (says when the supplier period is later than
    this month).
 
@@ -174,6 +198,12 @@ cancelled (document dated on or after the cancellation); document dated in an
 earlier financial year. The PDF prints no notes column, so the summary notes
 count each flag with its documents and tax.
 
+**Credit notes** (read from both sides from extension 0.14.0) take the same
+reasons and timing as invoices, but their instruction is a reduction: "reduce
+the ITC for this credit note in the GSTR-3B of …", never "claim it". The
+s.16(4) time limit bounds a claim, so it is not mentioned for a credit note,
+and the earlier-financial-year note is not raised for one.
+
 ## 6. The 2B cut-off
 
 - A supplier filing **by the 11th** of the next month is in this month's 2B for
@@ -200,7 +230,10 @@ quarter's end, the 2B of the quarter's earlier months when never pulled (to
 tell a quarterly 2B). A 2B the portal did not generate is asked again only
 when nothing else is missing, since it is generated once the previous GSTR-3B
 is filed. Nothing missing: 2A and 2B of the month again (2A changes whenever a
-supplier files).
+supplier files). A usable 2A pulled before 0.14.0 is not counted as missing
+for its notes: the month's own 2A is fetched again when it is stale or by
+that last rule, an earlier month's is not; the notes and the evidence say
+which 2A lacks them.
 
 Extension 0.13.0 or later gets one job (`gstr2a2b_pull`) with a per-month list
 of what to fetch, in one login. An older extension gets one return type per
@@ -225,13 +258,23 @@ extension's ledger chain.
   no records / not found", or a plain success without a list (`{}`,
   `{ status: 1 }`), is saved as NO DATA; a non-200, non-JSON or other error
   answer is a failed pull, whose status carries the portal's words.
+- The 2A credit and debit notes (0.14.0, §2) have never been read live: the
+  section names (CDN or CDNR), the notes endpoint (`cdn` or `cdnr`) and the
+  note layout follow the GSTN 2A JSON. The names that worked are kept in
+  `_meta.cdnList` / `_meta.cdnApi`, and `_meta.cdnProblem` keeps what the
+  portal answered when nothing worked, so the first live pull settles it. A
+  "no data" answer under either name is taken as a month without notes, as
+  for the invoices.
 
 ## 9. Limits
 
-- **Scope**: B2B invoices are compared; everything else in 2B is "Not
+- **Scope**: B2B invoices are compared, and credit and debit notes once the
+  2A was pulled with extension 0.14.0 and its notes were read; everything else
+  in 2B (ISD, imports, amendments not paired with their original) is "Not
   compared" until the 2A pull reads more sections. That is data-driven: once a
-  2A pull stores CDN or amendments, those documents are compared with no
-  engine change.
+  2A pull stores a section, its documents are compared with no engine change.
+  Other readers of the stored 2A (the GSTR-2A report, GSTR-3B vs 2A) still
+  read its B2B invoices only.
 - **QRMP recipients**: a quarterly taxpayer gets a 2B only for the last month of
   the quarter. The report says so for the first two months. For the quarter's
   last month, a 2B is taken as quarterly when the 2B of both earlier months is
@@ -268,3 +311,48 @@ extension's ledger chain.
 3. Before 8A is live, is an "8A as rebuilt from 2B" source wanted?
 4. Should the extension also pull 2A credit notes and amendments? Those
    sections need a live check first.
+
+## 12. Presentation
+
+How the report is laid out; no position above depends on it. Built by
+`recoReportTable` (`src/lib/itcReco/viewModel.ts`) from flat view rows
+(`toViewData`: one row per pair, every figure signed, a credit note and an ITC
+reversal entry negative), so the preview, the Excel and the PDF read the same
+rows and every total, tile and summary line is a sum over them.
+
+- **Identification strip**: client, GSTIN, period ("Jul 2026", or "Apr 2025 to
+  Mar 2026 (12 months)"), when the 2A was pulled and the 2B generated (their
+  span across months), the months that could not be built, and the filter when
+  a filtered view is exported.
+- **Stat band**: documents (and how many are in each statement), matched (with
+  its share), only in 2A, only in 2B, figures differ (ITC differs included),
+  not compared, 2A tax, 2B tax, and the net difference (2B minus 2A, over the
+  compared documents only).
+- **Documents**, the main sheet: one row per pair with both statements side by
+  side, under five bands: Document (Sr., Month, Supplier GSTIN, Supplier Name,
+  Doc Type, Doc No., Doc Date, Section) | GSTR-2A (taxable value, IGST, CGST,
+  SGST, cess, total tax, filed on) | GSTR-2B (the same, and whether the 2B gives
+  ITC) | Difference, 2B minus 2A (taxable value and total tax; blank when not
+  compared) | Reconciliation (Status, Reason, What to do, Evidence, Reverse
+  Charge, Also note). A side that has no document is blank, not zero. Sorted by
+  month, status (in §5's order: only in 2A, only in 2B, figures differ, ITC
+  differs, not compared, matched), supplier name, date and number; a TOTAL row
+  sums every amount column. The status tints its cell (matched green, one side
+  only amber, a difference red, not compared grey) and the word is always
+  there, so a black and white print loses nothing. The PDF prints month,
+  supplier, number, date, both taxes, the difference, status and reason; the
+  Excel has every column.
+- **Summary by reason**: one line per status and reason with the documents,
+  both sides' taxable value and tax, the difference and what to do, and the
+  notes under it (§5, §9), each led by its month when there are several.
+- **Analysis sheets**: By supplier (one line per GSTIN: counts by status, both
+  sides' figures, the difference, the largest difference first, and a status
+  word for its worst row); By month (several months only: the same per month,
+  with that month's pull and generation dates); By document type; Notes and
+  evidence (Excel only: every row with a flag or a reason not confirmed).
+- **Several months are one report, not stitched blocks**: every month's rows
+  are merged (the Month column says which) and the stat band, the summary, the
+  TOTAL and the analysis sheets are recomputed across them. A month that could
+  not be built is named in the strip and in the notes; the others are built.
+- Other code finds the columns 'Status', 'Reason' and 'Total Tax Difference (2B
+  minus 2A)' by name: keep those headers.

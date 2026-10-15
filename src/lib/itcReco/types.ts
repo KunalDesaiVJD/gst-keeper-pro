@@ -85,6 +85,16 @@ export interface StatementMeta {
   /** Their GSTINs (summary._meta.failedCtins, 0.13.0+); null = not recorded (older pulls). */
   failedCtins: string[] | null;
   /**
+   * Why a 2A pull of 0.14.0+ could not read the credit and debit notes
+   * (summary._meta.cdnProblem; the 2A then holds none, so the 2B's notes stay
+   * not compared). Absent or null: read, or a pull before 0.14.0 (never reads them).
+   */
+  cdnProblem?: string | null;
+  /** Suppliers whose 2A notes fetch failed (summary._meta.cdnFailed, 0.14.0+); null = unknown. */
+  cdnFailedSuppliers?: number | null;
+  /** Their GSTINs (summary._meta.cdnFailedCtins, 0.14.0+); null = not recorded. */
+  cdnFailedCtins?: string[] | null;
+  /**
    * A 2A with no documents and no _meta: an extension before 0.13.0 saved a
    * failed supplier-list call this way, so it may not be a real empty month.
    */

@@ -207,8 +207,8 @@ const ClientsPage: React.FC = () => {
     setExporting(format);
     try {
       const table = await buildClientCredentials();
-      if (format === 'xlsx') renderReportToExcel(table);
-      else renderReportToPdf(table);
+      if (format === 'xlsx') await renderReportToExcel(table);
+      else await renderReportToPdf(table);
       toast.success('Client credentials exported.');
     } catch (err: any) {
       toast.error(`Failed: ${err.message || 'Unknown error'}`);

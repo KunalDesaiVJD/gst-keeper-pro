@@ -793,7 +793,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             </Button>
           )}
 
-          <Button variant="outline" size="sm" className={WS_BTN} onClick={() => renderReportToExcel(table)}>
+          <Button variant="outline" size="sm" className={WS_BTN} onClick={() => { renderReportToExcel(table).catch((e) => toast.error(`Excel failed: ${e instanceof Error ? e.message : String(e)}`)); }}>
             <FileSpreadsheet className="h-3.5 w-3.5" />
             Export to Excel
           </Button>

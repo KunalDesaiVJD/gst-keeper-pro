@@ -111,9 +111,9 @@ const NoticeSummaryReportPage: React.FC = () => {
     XLSX.writeFile(wb, `Notice summary ${today}.xlsx`);
     toast.success('Exported the notice summary');
   };
-  const exportPdf = () => {
+  const exportPdf = async () => {
     try {
-      renderReportToPdf({
+      await renderReportToPdf({
         title: `Notice summary · ${tabDef.label.toLowerCase()}`,
         subtitle: `As of ${asOf} · ${filtersText}`,
         headers: [firstHead(tab), ...headers('Rs')],

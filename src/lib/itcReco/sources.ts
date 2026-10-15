@@ -12,6 +12,10 @@
 //    val, pos, rchrg, txval, iamt, camt, samt, csamt, itms, irn }] }] }, plus
 //    (extension 0.13.0) every field the portal sends on the supplier (cfs,
 //    cfs3b, flprdr1, dtcancel) and _meta: { counterparties, failed, failedCtins }.
+//    From 0.14.0 also cdn: [{ ctin, trdnm, supfildt, …, nt: [{ ntty C|D,
+//    nt_num, nt_dt, val, pos, rchrg, itms }] }] with _meta.sections ['b2b',
+//    'cdn'], cdnFailed and cdnFailedCtins; or, when the notes could not be
+//    read, no cdn, _meta.sections ['b2b'] and _meta.cdnProblem.
 import { pnum, unwrap } from '@/lib/gstr9/portalParser';
 import { taxOf2b } from '@/lib/reply/portal';
 import { parsePortalDate, parseSupplierPeriod } from './dates';
@@ -65,7 +69,7 @@ const SECTIONS_2B: Record<string, SectionSpec> = {
 /** GSTR-2B reads every section above, so it covers each of them even when a month has none. */
 export const SECTIONS_READ_2B = [...new Set(Object.values(SECTIONS_2B).map((s) => s.section))];
 
-// 2A section keys (api/gstr2a/<section>): today only b2b is pulled.
+// 2A section keys (api/gstr2a/<section>): b2b, and cdn from extension 0.14.0.
 const SECTIONS_2A: Record<string, SectionSpec> = {
   b2b: { section: 'B2B', amendment: false },
   b2ba: { section: 'B2BA', amendment: true },
@@ -91,10 +95,12 @@ const familyOf = (section: string, doc: AnyObj): DocFamily => {
   return 'INV';
 };
 
+// A note's own number and date come first: the older GSTN 2A note layout also
+// carries inum / idt, the invoice the note was raised against.
 const numberOf = (doc: AnyObj): string =>
-  str(doc.inum) ?? str(doc.ntnum) ?? str(doc.nt_num) ?? str(doc.docnum) ?? str(doc.boenum) ?? '';
+  str(doc.ntnum) ?? str(doc.nt_num) ?? str(doc.inum) ?? str(doc.docnum) ?? str(doc.boenum) ?? '';
 const dateOf = (doc: AnyObj): string | null =>
-  parsePortalDate(doc.dt ?? doc.idt ?? doc.nt_dt ?? doc.docdt ?? doc.boedt);
+  parsePortalDate(doc.nt_dt ?? doc.dt ?? doc.idt ?? doc.docdt ?? doc.boedt);
 const originalOf = (doc: AnyObj): RecoDoc['original'] => {
   const number = str(doc.oinum) ?? str(doc.ontnum) ?? str(doc.ont_num) ?? str(doc.odocnum) ?? str(doc.oboenum);
   const date = parsePortalDate(doc.oidt ?? doc.ontdt ?? doc.ont_dt ?? doc.odocdt ?? doc.oboedt);
@@ -225,6 +231,11 @@ export function docsFrom2A(summary: unknown, period: string): Statement | null {
   const declared = m && Array.isArray(m.sections) ? m.sections.map((s) => SECTIONS_2A[String(s).toLowerCase()]?.section ?? String(s).toUpperCase()) : null;
   const failed = m && typeof m.failed === 'number' && Number.isFinite(m.failed) ? m.failed : null;
   const failedCtins = m && Array.isArray(m.failedCtins) ? m.failedCtins.map(gstin).filter(Boolean) : null;
+  // 0.14.0: the notes' own outcome, so the report can say why they were not
+  // compared, or that a supplier's notes are missing because its fetch failed.
+  const cdnProblem = m ? str(m.cdnProblem) : null;
+  const cdnFailed = m && typeof m.cdnFailed === 'number' && Number.isFinite(m.cdnFailed) ? m.cdnFailed : null;
+  const cdnFailedCtins = m && Array.isArray(m.cdnFailedCtins) ? m.cdnFailedCtins.map(gstin).filter(Boolean) : null;
   return {
     docs,
     meta: {
@@ -233,6 +244,9 @@ export function docsFrom2A(summary: unknown, period: string): Statement | null {
       sectionsRead: declared ?? [...found],
       failedSuppliers: failed,
       failedCtins,
+      cdnProblem,
+      cdnFailedSuppliers: cdnFailed,
+      cdnFailedCtins,
       // Before 0.13.0 a failed supplier-list call was saved as an empty 2A
       // (status NO DATA, or Pulled when every supplier failed), with no _meta.
       suspectEmpty: !m && docs.length === 0,

@@ -32,7 +32,9 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // 0.4.x to 0.8.6 are still allowed (their writes are safe), only nudged to update.
 // 0.13.0 pulls GSTR-2A and GSTR-2B together for the 2A vs 2B report (mode
 // gstr2a2b_pull) and no longer stops a GSTR-2B pull after its first month.
-export const RECOMMENDED_EXTENSION_VERSION = '0.13.0';
+// 0.14.0 also reads the GSTR-2A credit and debit notes, so the report can
+// compare the 2B's notes (not confirmed live; a failed read is recorded).
+export const RECOMMENDED_EXTENSION_VERSION = '0.14.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -89,6 +91,7 @@ const GAINS: [string, string][] = [
   ['0.11.8', 'fixes the GSTR-9 pull that stopped at the NIL question in 0.11.7'],
   ['0.12.0', "drives an unfiled GSTR-9 the way the portal's own pages work: PREPARE-ONLINE, No on the Nil question, NEXT, then the system-computed summary"],
   ['0.13.0', 'pulls GSTR-2A and GSTR-2B together for the 2A vs 2B report, and a GSTR-2B pull over several months no longer stops after the first'],
+  ['0.14.0', "reads the GSTR-2A credit and debit notes, so the 2A vs 2B report compares the 2B's notes too"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

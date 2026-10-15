@@ -92,6 +92,20 @@ export interface StatTile {
   value: string;
   /** Optional qualifier — a word, so it survives mono printing. */
   note?: string;
+  /**
+   * Optional tint: a thin bar at the tile's left edge and the note's ink. Only
+   * ever beside a note word, which is what carries the meaning.
+   */
+  accent?: readonly [number, number, number];
+}
+
+export interface StatBandOptions {
+  /**
+   * Tiles per row. More tiles than this wrap onto further rows of the same
+   * band, every tile keeping one width, so a long band does not shrink each
+   * figure into its neighbour. Default: every tile on one row.
+   */
+  perRow?: number;
 }
 
 const pageWidth = (doc: jsPDF) => doc.internal.pageSize.getWidth();
@@ -148,43 +162,58 @@ export const drawHeader = (doc: jsPDF, meta: DocMeta): number => {
  * rather than by fill. Any qualifier ("Cap applied", "Filing blocked") is set as
  * a word underneath, so nothing depends on colour.
  */
-export const drawStatBand = (doc: jsPDF, tiles: StatTile[], startY: number): number => {
+export const drawStatBand = (doc: jsPDF, tiles: StatTile[], startY: number, opts: StatBandOptions = {}): number => {
   if (!tiles.length) return startY;
   const W = pageWidth(doc);
   const M = 14;
   const bandW = W - 2 * M;
-  const cellW = bandW / tiles.length;
+  const perRow = Math.max(1, Math.min(tiles.length, Math.floor(opts.perRow ?? tiles.length)));
+  const rows = Math.ceil(tiles.length / perRow);
+  const cellW = bandW / perRow;
   const hasNote = tiles.some((t) => t.note);
-  const bandH = hasNote ? 20 : 16;
+  const rowH = hasNote ? 20 : 16;
 
   doc.setDrawColor(...RULE);
   doc.setLineWidth(0.2);
-  doc.rect(M, startY, bandW, bandH);
+  doc.rect(M, startY, bandW, rowH * rows);
 
   tiles.forEach((t, i) => {
-    const x = M + i * cellW;
-    if (i > 0) doc.line(x, startY, x, startY + bandH);
+    const x = M + (i % perRow) * cellW;
+    const top = startY + Math.floor(i / perRow) * rowH;
+    if (i % perRow > 0) doc.line(x, top, x, top + rowH);
+    else if (i > 0) doc.line(M, top, M + bandW, top);
+    if (t.accent) {
+      doc.setFillColor(...t.accent);
+      doc.rect(x + 0.2, top + 0.2, 0.9, rowH - 0.4, 'F');
+    }
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(...INK_MUTED);
-    doc.text(t.label, x + 3, startY + 5.5);
+    doc.text(t.label, x + 3, top + 5.5);
 
-    // Standalone value: normal figures, not column-aligned.
+    // Standalone value: normal figures, not column-aligned. A figure wider
+    // than its tile steps down in size rather than running into the next one.
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
+    for (let size = 10.5; size >= 7 && doc.getTextWidth(t.value) > cellW - 4.5; size -= 0.5) doc.setFontSize(size);
     doc.setTextColor(...INK);
-    doc.text(t.value, x + 3, startY + 12);
+    doc.text(t.value, x + 3, top + 12);
 
     if (t.note) {
-      doc.setFont('helvetica', 'normal');
+      doc.setFont('helvetica', t.accent ? 'bold' : 'normal');
+      doc.setTextColor(...(t.accent ?? INK_MUTED));
+      // A note never runs into the next tile: it steps down, then is cut short.
+      const room = cellW - 4.5;
       doc.setFontSize(6.5);
-      doc.setTextColor(...INK_MUTED);
-      doc.text(t.note, x + 3, startY + 17);
+      for (let size = 6; size >= 5.5 && doc.getTextWidth(t.note) > room; size -= 0.5) doc.setFontSize(size);
+      let note = t.note;
+      while (note.length > 1 && doc.getTextWidth(note) > room) note = note.slice(0, -2).trimEnd() + '…';
+      doc.text(note, x + 3, top + 17);
     }
   });
 
-  return startY + bandH + 6;
+  return startY + rowH * rows + 6;
 };
 
 /** A section heading with a short accent rule beneath it. */
