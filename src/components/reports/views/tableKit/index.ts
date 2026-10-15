@@ -74,6 +74,10 @@
 // rowNoun, transformExport. TableKitTable's headClassName colours or centres
 // one column's heading; columnClassName marks a whole column (a delta, a
 // headline figure) from its heading to its TOTAL.
+// For a report read top to bottom (a return, a working paper):
+// sortWithinSections (a sort keeps rows under their section heading) and
+// sums: false (the report's own TOTAL rows stand under a filter, nothing is
+// added up, since its rows include their own totals or are steps of one sum).
 // The rules (what a filter matches, which rows are structure, when a TOTAL is
 // recomputed) are in ./tableModel.ts, tested by scripts/verify-doc-table-model.mjs.
 export * from './tableModel';

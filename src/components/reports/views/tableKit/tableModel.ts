@@ -122,6 +122,21 @@ export interface TableModel {
   summable: number[];
   /** Where a TOTAL's label goes (the column the report's own TOTAL label sits in). */
   labelCol: number;
+  /**
+   * A sort reorders rows only inside their section (and period), the headings
+   * staying in the report's order: a return or a working paper is read section
+   * by section, so a sorted row must not leave the heading it belongs under.
+   * Set by the hook's `sortWithinSections` option.
+   */
+  sortWithinSections?: boolean;
+  /**
+   * The report's own TOTAL rows stand as printed, filtered or not, and nothing
+   * is added up (no TOTAL recomputed over the rows shown, no group subtotal):
+   * a return's rows include their own totals and a working paper's are the
+   * steps of a computation, so a sum of the rows shown would add a total to its
+   * own parts. Set by the hook's `sums: false` option (summable is then empty).
+   */
+  keepReportTotals?: boolean;
 }
 
 // ── Cells ──────────────────────────────────────────────────────────────────
@@ -576,6 +591,8 @@ export interface ViewResult {
   showBands: boolean;
   /** A merged table shown without its bands names each row's period in a column instead. */
   showPeriodColumn: boolean;
+  /** Sorted, but each row kept under its section heading and period band (model.sortWithinSections). */
+  sortedWithinSections?: boolean;
 }
 
 const firstText = (cells: Row): string => cells.map(str).find((s) => s !== '') ?? '';
@@ -585,7 +602,10 @@ export function buildView(model: TableModel, state: ViewState, collapsed: Readon
   const passing = applyFilters(model, state);
   const groupBy = state.groupBy !== null && model.columns[state.groupBy]?.groupable ? state.groupBy : null;
   const ordered = sortRows(model, passing, state.sort);
-  const showBands = model.merged && !state.sort && groupBy === null;
+  // Sorted inside each section (and period) when the report reads top to bottom.
+  const within = !!state.sort && groupBy === null && !!model.sortWithinSections
+    && (model.merged || model.rows.some((r) => r.kind === 'section'));
+  const showBands = model.merged && (!state.sort || within) && groupBy === null;
   const showPeriodColumn = model.merged && !showBands && groupBy !== model.periodCol;
   const items: DisplayItem[] = [];
   let groups: RowGroup[] | null = null;
@@ -597,10 +617,11 @@ export function buildView(model: TableModel, state: ViewState, collapsed: Readon
       items.push({ type: 'group', key: g.key, label: g.label, count: g.rows.length, sums: g.sums, collapsed: isCollapsed });
       if (!isCollapsed) for (const r of g.rows) items.push({ type: 'data', row: r });
     }
-  } else if (state.sort) {
+  } else if (state.sort && !within) {
     for (const r of ordered) items.push({ type: 'data', row: r });
   } else {
-    // The report's own order: structure rows in place, documents filtered.
+    // The report's own order: structure rows in place, documents filtered
+    // (and, sorted within sections, each section's rows in the sorted order).
     const shown = new Set(passing.map((r) => r.i));
     const perPeriod = new Map<number, ModelRow[]>();
     const perSection = new Map<number, number>();
@@ -608,6 +629,15 @@ export function buildView(model: TableModel, state: ViewState, collapsed: Readon
       if (!perPeriod.has(r.period)) perPeriod.set(r.period, []);
       perPeriod.get(r.period)!.push(r);
       perSection.set(r.section, (perSection.get(r.section) ?? 0) + 1);
+    }
+    const blockOf = (r: ModelRow) => `${r.period}:${r.section}`;
+    const blocks = new Map<string, ModelRow[]>();
+    if (within) {
+      for (const r of ordered) {
+        const list = blocks.get(blockOf(r));
+        if (list) list.push(r);
+        else blocks.set(blockOf(r), [r]);
+      }
     }
     for (const r of model.rows) {
       switch (r.kind) {
@@ -624,13 +654,24 @@ export function buildView(model: TableModel, state: ViewState, collapsed: Readon
         case 'blank':
           if (!filtered) items.push({ type: 'blank', row: r });
           break;
-        case 'data':
-          if (shown.has(r.i)) items.push({ type: 'data', row: r });
+        case 'data': {
+          if (!shown.has(r.i)) break;
+          if (!within) { items.push({ type: 'data', row: r }); break; }
+          // A section's sorted rows go where its first row stood.
+          const block = blocks.get(blockOf(r));
+          if (block) for (const x of block) items.push({ type: 'data', row: x });
+          blocks.delete(blockOf(r));
           break;
+        }
         case 'total':
         case 'subtotal': {
           if (r === model.grandTotal) break;
           if (!filtered) { items.push({ type: 'total', row: r }); break; }
+          if (model.keepReportTotals) {
+            // As printed, unless the filter left its period nothing to stand under.
+            if (r.period < 0 || perPeriod.get(r.period)?.length) items.push({ type: 'total', row: r });
+            break;
+          }
           // Under a filter a period's TOTAL is recomputed over its rows still
           // shown; a report's own subtotal no longer describes them and goes.
           const inPeriod = r.kind === 'total' && r.period >= 0 ? perPeriod.get(r.period) : undefined;
@@ -644,14 +685,17 @@ export function buildView(model: TableModel, state: ViewState, collapsed: Readon
   }
 
   let footer: Footer = null;
-  if (filtered) {
+  if (filtered && !model.keepReportTotals) {
     if (model.summable.length) footer = { type: 'sum', label: 'TOTAL (filtered)', sums: sumRows(model, passing) };
   } else if (model.grandTotal) {
     footer = { type: 'total', row: model.grandTotal };
   } else if (model.merged && model.hasReportTotals && model.summable.length) {
     footer = { type: 'sum', label: `TOTAL (${model.periods.length} periods)`, sums: sumRows(model, model.data) };
   }
-  return { filtered, rows: groups ? groups.flatMap((g) => g.rows) : ordered, items, footer, groups, showBands, showPeriodColumn };
+  const rows = groups ? groups.flatMap((g) => g.rows)
+    : within ? items.flatMap((it) => (it.type === 'data' ? [it.row] : []))
+      : ordered;
+  return { filtered, rows, items, footer, groups, showBands, showPeriodColumn, ...(within ? { sortedWithinSections: true } : {}) };
 }
 
 // ── Pages ──────────────────────────────────────────────────────────────────
@@ -885,7 +929,7 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
   // What the reader needs to know this is a view, not the whole report.
   const filters = activeFilters(model, state).map((a) => clean(a.text));
   const how: string[] = [];
-  if (state.sort) how.push(describeSort(model, state.sort));
+  if (state.sort) how.push(`${describeSort(model, state.sort)}${view.sortedWithinSections ? ' within each section' : ''}`);
   if (view.groups && state.groupBy !== null) how.push(`grouped by ${model.columns[state.groupBy]?.name ?? 'a column'}`);
   const hiddenNames = model.headers.map((h, c) => (hidden.has(c) ? model.columns[c]?.name ?? h : null)).filter((h): h is string => !!h);
   const fields = [
@@ -893,6 +937,10 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
     ...(how.length ? [{ label: 'View', value: how.join('; ') }] : []),
     { label: 'Rows shown', value: `${view.rows.length.toLocaleString('en-IN')} of ${model.data.length.toLocaleString('en-IN')}` },
     ...(hiddenNames.length ? [{ label: 'Columns hidden', value: clean(hiddenNames.join(', ')) }] : []),
+    // A TOTAL kept as printed under a filter describes every row: say so.
+    ...(view.filtered && model.keepReportTotals && kinds.includes('total')
+      ? [{ label: 'Totals', value: 'as printed for the whole report, not recomputed for the rows shown' }]
+      : []),
   ];
 
   const widthOf = (c: number) => (c === model.periodCol ? 10 : table.columnWidths?.[c] ?? 14);

@@ -81,6 +81,19 @@ export interface TableKitOptions {
   rowNoun?: [singular: string, plural: string];
   /** The last say over the "filtered" export (an added sheet, a file name). */
   transformExport?: (t: ReportTable, format: ExportFormat) => ReportTable;
+  /**
+   * A sort reorders rows only inside their section heading (and period band),
+   * the sections staying in the report's order: for a return or a working
+   * paper read top to bottom. Default false (a sort runs over every row).
+   */
+  sortWithinSections?: boolean;
+  /**
+   * false: nothing is added up. No TOTAL is recomputed over the rows shown and
+   * groups carry no subtotal; the report's own TOTAL rows stand as printed,
+   * filtered or not. For a return (its rows include their own totals) or a
+   * working paper (its rows are the steps of one computation). Default true.
+   */
+  sums?: boolean;
 }
 
 /** A summable column's total over every row, and over the rows shown once anything is filtered (else null). */
@@ -193,15 +206,24 @@ export function useTableKit(table: ReportTable, options: TableKitOptions = {}): 
   const g = options.groupable;
   const groupSig = g === undefined ? null : base.columns.map((c) => ((Array.isArray(g) ? g.includes(c.index) : g(c)) ? '1' : '0')).join('');
   // Likewise the summed columns: a list is taken as given, a test narrows
-  // the report's own.
+  // the report's own. A report read top to bottom may also sort within its
+  // sections, or add nothing up at all (sums: false).
   const sm = options.summable;
   const sumSig = sm === undefined ? null
     : Array.isArray(sm) ? sm.join(',')
       : base.summable.filter((c) => sm(base.columns[c])).join(',');
+  const within = !!options.sortWithinSections;
+  const noSums = options.sums === false;
   const model = useMemo<TableModel>(() => {
     const grouped = groupSig === null ? base : { ...base, columns: base.columns.map((c, k) => ({ ...c, groupable: groupSig[k] === '1' })) };
-    return sumSig === null ? grouped : withSummable(grouped, sumSig ? sumSig.split(',').map(Number) : []);
-  }, [base, groupSig, sumSig]);
+    const summed = sumSig === null ? grouped : withSummable(grouped, sumSig ? sumSig.split(',').map(Number) : []);
+    if (!within && !noSums) return summed;
+    return {
+      ...summed,
+      sortWithinSections: within,
+      ...(noSums ? { keepReportTotals: true, summable: [], columns: summed.columns.map((c) => ({ ...c, summable: false })) } : {}),
+    };
+  }, [base, groupSig, sumSig, within, noSums]);
 
   const state = useMemo<ViewState>(
     () => (store.custom.length

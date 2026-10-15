@@ -1,97 +1,44 @@
 // Renders the "as-filed" family of reports (GSTR-3B Liability, GSTR-3B/GSTR-1
 // as filed on the portal, GSTR-1 Summary, Tax Liability & ITC Summary, GSTR-3B
-// Offset Summary) — the single most important report in the app, since it's
+// Offset Summary): the single most important report in the app, since it's
 // the actual return a CA cross-checks against the live portal document.
 //
-// Layout, top to bottom:
-//   1. A header strip built from table.subtitle ("Client | GSTIN | Period |
-//      ARN | Filed | Status" style pieces, "|"-separated) — Status becomes a
-//      colored Badge, ARN renders in a monospace font.
-//   2. A row of KPI cards, pulled by scanning table.rows for recognizable
-//      label rows (Total Liability/Payable, Net ITC, Cash Paid, Interest) —
-//      only rendered when confidently found, never fabricated.
-//   3. A search box that filters by row label/text across every section.
-//   4. The table body itself, split into collapsible sections wherever a
-//      blank spacer row (every cell === '') appears in the source data, each
-//      section keeping its own sticky header. A row whose label is literally
-//      "Filed Return PDF" renders specially as a prominent View button.
-//   5. Any literal grand-total row (a cell that is exactly "TOTAL") is pinned
-//      in its own strip at the bottom, always visible regardless of search.
-import React, { useMemo, useState } from 'react';
-import type { ReportTable } from '@/utils/allClientsReports';
+// A return is read table by table, so the report's own order is the default:
+// its rows under a heading per part of the return (Table 3.1, Table 4, the
+// payment, the filed PDF), its spacer rows, the filed-return PDF row with its
+// button, and its grand TOTAL pinned at the bottom. The table kit (./tableKit)
+// works on top of that: search, a Section filter, a filter and a sort on every
+// column (a sorted row stays under its section heading), "Non-zero rows only",
+// Group by where a column repeats, and the "filtered" Excel / PDF of exactly
+// what is shown.
+//
+// Nothing is added up under a filter: a return's rows include their own
+// totals (3.1(a) and the total output liability, the sections and TOTAL
+// LIABILITY), so a TOTAL of the rows shown would count a figure twice. The
+// return's own TOTAL stays as printed and the view says so.
+//
+// Kept from the first version: the header strip from the subtitle (Status as a
+// badge, ARN in a monospace font), the KPI tiles read from recognisable rows
+// (only when found, never fabricated), "View" links and the "Not pulled" badge.
+import React, { useMemo } from 'react';
+import type { ReportTable, RowKind, RowTone } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { BadgeProps } from '@/components/ui/badge';
 import { Badge } from '@/components/gstr9/badge';
 import { KpiTile } from '@/components/gstr9/ui';
-import { WS_TABLE, WS_TH, WS_TD, WS_TR_TOTAL } from '@/components/workspace/theme';
-import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
+import { fmtNumber } from '@/lib/reportExport/layout';
 import { cn } from '@/lib/utils';
-import {
-  Search,
-  ExternalLink,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Receipt,
-  Wallet,
-  Banknote,
-  Percent,
-  Inbox,
-} from 'lucide-react';
+import { FileText, Inbox } from 'lucide-react';
+import { TableKitPager, TableKitTable, TableKitToolbar, isUrlCell, useTableKit, type ModelRow } from './tableKit';
+import { NonZeroToggle, SectionFilter, TopDownHint } from './TopDownControls';
+import { cellText, splitPeriods, type Row } from './topDownRows';
 
 interface FiledReturnSummaryViewProps {
   table: ReportTable;
   report: ReportDefinition;
 }
-
-type Row = (string | number)[];
-
-// ─────────────────────────── generic cell/row helpers ───────────────────────────
-
-const isUrl = (v: string | number): v is string => typeof v === 'string' && /^https?:\/\//.test(v);
-
-const isSentinelCell = (v: string | number): boolean => {
-  if (typeof v !== 'string') return false;
-  const s = v.trim();
-  if (!s) return false;
-  return s.toUpperCase() === 'NOT PULLED' || /not captured|not pulled/i.test(s);
-};
-
-const isSpacerRow = (row: Row): boolean => row.length > 0 && row.every((c) => c === '');
-
-const isGrandTotalRow = (row: Row): boolean =>
-  row.some((c) => typeof c === 'string' && c.trim().toUpperCase() === 'TOTAL');
-
-/** Every string cell in the row, joined and lowercased — used for keyword matching (KPI / PDF-row / search). */
-const rowText = (row: Row): string =>
-  row
-    .filter((c): c is string => typeof c === 'string')
-    .join(' ')
-    .toLowerCase();
-
-/** First non-empty string cell, original case — used for section headings and the row's own display label. */
-const rowLabel = (row: Row): string => {
-  for (const c of row) {
-    if (typeof c === 'string' && c.trim() !== '') return c.trim();
-  }
-  return '';
-};
-
-const isFiledPdfRow = (row: Row): boolean => /filed return pdf/i.test(rowText(row));
-
-const isNumericHeader = (h: string): boolean =>
-  /CGST|SGST|IGST|TOTAL|VALUE|AMOUNT|CLAIMED|LIABILITY|ITC|CESS|FEE|INTEREST|PAYABLE|PENALTY/i.test(h);
-
-const formatCell = (v: string | number): string => {
-  if (typeof v !== 'number') return String(v ?? '');
-  if (v === 0) return '0';
-  const rounded = Math.round(v * 100) / 100;
-  return rounded.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-};
 
 const statusVariant = (v: string): NonNullable<BadgeProps['variant']> => {
   const s = v.toLowerCase();
@@ -119,114 +66,229 @@ const parseSubtitleParts = (subtitle: string): SubtitlePart[] =>
       return { label: part.slice(0, idx).trim(), value: part.slice(idx + 1).trim() };
     });
 
-// ───────────────────────────── section grouping ─────────────────────────────
+// ───────────────────────────── the return's sections ─────────────────────────────
 
-interface Section {
-  heading: string;
-  rows: Row[];
-}
+const PDF_ROW_RE = /filed return pdf/i;
+const isPdfRow = (row: Row): boolean => row.some((c) => typeof c === 'string' && PDF_ROW_RE.test(c));
 
-const buildSections = (rows: Row[]): { sections: Section[]; grandTotalRows: Row[] } => {
-  const sections: Section[] = [];
-  const grandTotalRows: Row[] = [];
-  let current: Row[] = [];
+const T31 = 'Table 3.1: Outward supplies and inward supplies liable to reverse charge';
+const T4 = 'Table 4: Eligible ITC';
+const T51 = 'Table 5.1: Interest and late fee';
+const PAID = 'Payment of tax (as filed, aggregate)';
+const FILED = 'Filed return';
 
-  const flush = () => {
-    if (current.length === 0) return;
-    const first = rowLabel(current[0]);
-    const last = rowLabel(current[current.length - 1]);
-    const heading = last && last !== first ? `${first} – ${last}` : first;
-    sections.push({ heading, rows: current });
-    current = [];
-  };
-
-  for (const row of rows) {
-    if (isSpacerRow(row)) {
-      flush();
-      continue;
-    }
-    if (isGrandTotalRow(row)) {
-      grandTotalRows.push(row);
-      continue;
-    }
-    current.push(row);
-  }
-  flush();
-
-  return { sections, grandTotalRows };
+/**
+ * The part of the return a row belongs to, per report, by the return's own
+ * table numbers (null: the part above continues, as "Total Output Tax
+ * Liability" does under 3.1). A part must be a run of rows in the report's
+ * order, since a heading is drawn where it starts.
+ */
+const SECTION_OF: Record<string, (row: Row) => string | null> = {
+  'gstr3b-filed': (row) => {
+    const l = cellText(row[0]);
+    if (/^3\.1/.test(l)) return T31;
+    if (/^4\(/.test(l)) return T4;
+    if (/^5\.1/.test(l)) return T51;
+    if (/^total (cash paid|itc utili[sz]ed|payable)/i.test(l)) return PAID;
+    return null;
+  },
+  'gstr3b-liability': (row) => {
+    const code = cellText(row[0]);
+    if (/^3\.1/.test(code)) return T31;
+    if (/^4\(/.test(code)) return T4;
+    if (/as[- ]filed/i.test(cellText(row[1]))) return PAID;
+    return null;
+  },
+  'gstr3b-offset-summary': (row) => (/liability/i.test(cellText(row[0])) ? 'Liability (as filed)' : 'How it was discharged (as filed, aggregate)'),
+  'tax-liability-itc-summary': (row) => {
+    const l = cellText(row[0]);
+    if (/3\.1|output tax liability/i.test(l)) return 'Output tax liability (Table 3.1)';
+    if (/\bitc\b/i.test(l)) return 'Input tax credit (Table 4)';
+    if (/cash paid|payable/i.test(l)) return PAID;
+    return null;
+  },
+  'gstr1-summary': (row) => {
+    const n = parseInt(cellText(row[0]), 10);
+    if (!Number.isFinite(n)) return null;
+    if (n <= 8) return 'Outward supplies (Tables 4 to 8)';
+    if (n <= 10) return 'Credit and debit notes, B2C amendments (Tables 9B and 10)';
+    if (n === 11) return 'Advances (Table 11)';
+    return 'Memo: HSN summary and documents issued (Tables 12 and 13)';
+  },
+  'gstr1-filed': (row) => (/^total liability$/i.test(cellText(row[0])) ? 'Total liability (as filed)' : 'Sections as filed'),
 };
 
-// ───────────────────────────────── KPI cards ─────────────────────────────────
+/** A row's own words: its first text that is not a table number. */
+const rowLabel = (row: Row): string => row.map(cellText).find((s) => s !== '' && !/^\d+(\.\d+)?(\([a-z]\))?$/i.test(s)) ?? cellText(row[0]);
 
-interface KpiDef {
-  title: string;
-  test: RegExp;
-  icon: React.ComponentType<{ className?: string }>;
-}
+/**
+ * Any other report of this kind: the blocks between its spacer rows, each
+ * named by its first and last line (as the first version of this view did),
+ * when there are at least two.
+ */
+const spacerSections = (rows: { cells: Row; kind: RowKind }[]): (string | null)[] => {
+  const out: (string | null)[] = rows.map(() => null);
+  const blocks: number[][] = [];
+  let cur: number[] = [];
+  rows.forEach((r, k) => {
+    if (r.kind === 'blank') { if (cur.length) blocks.push(cur); cur = []; return; }
+    if (r.kind === 'data') cur.push(k);
+  });
+  if (cur.length) blocks.push(cur);
+  if (blocks.length < 2) return out;
+  for (const b of blocks) {
+    const first = rowLabel(rows[b[0]].cells);
+    const last = rowLabel(rows[b[b.length - 1]].cells);
+    out[b[0]] = last && last !== first ? `${first} to ${last}` : first;
+  }
+  return out;
+};
 
-const KPI_DEFS: KpiDef[] = [
-  { title: 'Total Liability', test: /total.*(liability|payable)/i, icon: Receipt },
-  { title: 'Net ITC', test: /net itc/i, icon: Wallet },
-  { title: 'Cash Paid', test: /cash paid/i, icon: Banknote },
-  { title: 'Interest Payable', test: /interest/i, icon: Percent },
+/**
+ * The filed-return PDF row as one cell in the first column: the link (drawn as
+ * a "View filed PDF" button, exported as a "View PDF" link), or why there is
+ * none. Left where the report put it, a link would sit in a figures column and
+ * make it read as a column of links.
+ */
+const pdfRowCells = (cells: Row, width: number): Row => {
+  const out: Row = Array(width).fill('');
+  const url = cells.find((c) => isUrlCell(c));
+  const note = cells.map(cellText).find((s) => s !== '' && !PDF_ROW_RE.test(s) && !isUrlCell(s));
+  out[0] = url ?? `Filed return PDF: ${note || 'not captured yet'}`;
+  return out;
+};
+
+/**
+ * The report with a heading row before each part of the return and every
+ * row's kind given, per month of a merge. The kit filters, sorts and exports
+ * this table, so a "filtered" Excel keeps the same headings.
+ */
+const withSections = (table: ReportTable, key: string): ReportTable => {
+  const width = table.headers.length;
+  const rows: Row[] = [];
+  const kinds: RowKind[] = [];
+  const tones: (RowTone | null)[] = [];
+  const push = (cells: Row, kind: RowKind, from = -1) => {
+    rows.push(cells);
+    kinds.push(kind);
+    tones.push(from >= 0 ? table.rowTones?.[from] ?? null : null);
+  };
+  const rule = SECTION_OF[key];
+  for (const block of splitPeriods(table)) {
+    if (block.band) push(block.band.cells, 'period', block.band.i);
+    const generic = rule ? null : spacerSections(block.rows);
+    let current: string | null = null;
+    block.rows.forEach((r, k) => {
+      if (r.kind !== 'data') { push(r.cells, r.kind, r.i); return; }
+      const pdf = isPdfRow(r.cells);
+      const title = pdf ? FILED : rule ? rule(r.cells) : generic?.[k] ?? null;
+      if (title && title !== current) {
+        push([title, ...Array(Math.max(width - 1, 0)).fill('')], 'section');
+        current = title;
+      }
+      push(pdf ? pdfRowCells(r.cells, width) : r.cells, 'data', r.i);
+    });
+  }
+  return { ...table, rows, rowKinds: kinds, rowTones: table.rowTones ? tones : undefined };
+};
+
+// ───────────────────────────────── KPI tiles ─────────────────────────────────
+
+const KPI_DEFS: { title: string; test: RegExp }[] = [
+  { title: 'Total liability', test: /^total\b.*\bliability\b/i },
+  { title: 'Net ITC', test: /\bnet itc\b/i },
+  { title: 'ITC utilised', test: /\bitc utili[sz]ed\b/i },
+  { title: 'Cash paid', test: /\bcash paid\b/i },
+  { title: 'Total payable', test: /\btotal payable\b/i },
+  { title: 'Interest', test: /^(5\.1\s+)?interest$/i },
+  { title: 'Late fee', test: /^(5\.1\s+)?late fee$/i },
 ];
 
-interface KpiMatch {
-  title: string;
-  value: number;
-  icon: React.ComponentType<{ className?: string }>;
-}
+const HEAD_RE = /^(igst|cgst|sgst|utgst|cess)$/i;
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
-const computeKpis = (rows: Row[]): KpiMatch[] => {
+/**
+ * A row's one figure: its Total / Amount column; else its tax heads added up
+ * (IGST + CGST + SGST + Cess, as a return states a liability or a credit);
+ * else its first amount (an aggregate the portal does not split by head).
+ * Never a count of records.
+ */
+const figureOf = (row: Row, headers: string[]): { value: number; heads: string[] } | null => {
+  const total = headers.findIndex((h) => /^(total|total tax|amount)$/i.test(h.trim()));
+  if (total >= 0 && isNum(row[total])) return { value: row[total] as number, heads: [] };
+  const heads = headers.map((h, i) => (HEAD_RE.test(h.trim()) ? i : -1)).filter((i) => i >= 0 && isNum(row[i]));
+  if (heads.length) return { value: heads.reduce((t, i) => t + (row[i] as number), 0), heads: heads.map((i) => headers[i].trim()) };
+  const k = row.findIndex((c, i) => isNum(c) && !/records|count|docs?\b|documents/i.test(headers[i] ?? ''));
+  return k >= 0 ? { value: row[k] as number, heads: [] } : null;
+};
+
+/** One tile: its figure and the line of the return it was read from (with the heads it adds up). */
+interface KpiMatch { title: string; value: number; from: string }
+
+const computeKpis = (table: ReportTable): KpiMatch[] => {
+  const kinds = table.rowKinds;
   const found: KpiMatch[] = [];
   for (const def of KPI_DEFS) {
-    for (const row of rows) {
-      if (isSpacerRow(row) || isGrandTotalRow(row)) continue;
-      if (!def.test.test(rowText(row))) continue;
-      const numeric = row.find((c): c is number => typeof c === 'number');
-      if (typeof numeric === 'number') {
-        found.push({ title: def.title, value: numeric, icon: def.icon });
-        break;
-      }
+    for (let i = 0; i < table.rows.length; i++) {
+      const row = table.rows[i];
+      if (kinds?.[i] === 'section' || kinds?.[i] === 'period') continue;
+      const words = row.find((c): c is string => typeof c === 'string' && def.test.test(c.trim()));
+      if (!words) continue;
+      const fig = figureOf(row, table.headers);
+      if (fig === null) continue;
+      const how = fig.heads.length > 1 ? ` (${fig.heads.join(' + ')})` : '';
+      found.push({ title: def.title, value: fig.value, from: `${words.trim()}${how}` });
+      break;
     }
   }
   return found;
 };
 
+/** Text longer than this wraps in its cell rather than widening the table. */
+const LONG_TEXT = 48;
+
+/** The kit's scrolling table box, at a page's width. */
+const NARROW_CONTAINER = 'min-h-[160px] max-h-[65vh] max-w-4xl flex-[0_1_auto] rounded-md border bg-card';
+
+const rupees = (v: number): string => `₹${Math.abs(v) < 0.005 ? '0.00' : fmtNumber(v)}`;
+
 // ────────────────────────────────── component ──────────────────────────────────
 
 export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ table, report }) => {
-  const [search, setSearch] = useState('');
-  const [closedSections, setClosedSections] = useState<Set<number>>(new Set());
-
   const subtitleParts = useMemo(() => parseSubtitleParts(table.subtitle), [table.subtitle]);
-  const { sections, grandTotalRows } = useMemo(() => buildSections(table.rows), [table.rows]);
-  const kpis = useMemo(() => computeKpis(table.rows), [table.rows]);
-  const statusColIdx = useMemo(() => table.headers.findIndex((h) => /^status$/i.test(h)), [table.headers]);
+  const sectioned = useMemo(() => withSections(table, report.key), [table, report.key]);
+  // One month's headline figures; a merge of several months has none (as its own export does).
+  const merged = useMemo(() => sectioned.rowKinds?.includes('period') ?? false, [sectioned]);
+  const kpis = useMemo(() => (merged ? [] : computeKpis(sectioned)), [sectioned, merged]);
 
-  const query = search.trim().toLowerCase();
-
-  const visibleSections = useMemo(() => {
-    if (!query) return sections;
-    return sections
-      .map((sec) => ({
-        ...sec,
-        rows: sec.rows.filter((r) => rowText(r).includes(query) || rowLabel(r).toLowerCase().includes(query)),
-      }))
-      .filter((sec) => sec.rows.length > 0);
-  }, [sections, query]);
-
-  const totalRowCount = useMemo(() => sections.reduce((n, s) => n + s.rows.length, 0), [sections]);
-  const matchedRowCount = useMemo(() => visibleSections.reduce((n, s) => n + s.rows.length, 0), [visibleSections]);
-
-  const toggleSection = (idx: number) => {
-    setClosedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
+  // Group by is offered on a column whose values repeat (a Doc Type, a table
+  // number shared by two lines, any line of a merge): grouping unique lines
+  // would only re-list them.
+  const groupable = useMemo(() => {
+    const data = sectioned.rows.filter((r, i) => sectioned.rowKinds?.[i] === 'data' && !isPdfRow(r));
+    return sectioned.headers.map((_, c) => c).filter((c) => {
+      const seen = new Set<string>();
+      for (const r of data) {
+        const s = typeof r[c] === 'string' ? cellText(r[c]) : '';
+        if (!s || /^https?:\/\//i.test(s)) continue;
+        if (seen.has(s)) return true;
+        seen.add(s);
+      }
+      return false;
     });
-  };
+  }, [sectioned]);
+
+  const kit = useTableKit(sectioned, {
+    resetKey: report.key,
+    sortWithinSections: true,
+    sums: false,
+    groupable,
+    statusColumn: null,
+    // Nothing is added up, so the band of figures would only repeat the strip's row count.
+    transformExport: (t) => ({ ...t, kpis: undefined }),
+  });
+  const hasTotal = !!kit.model.grandTotal || kit.model.hasReportTotals;
+  const narrow = kit.cols.length <= 3;
 
   const ReportIcon = report.icon;
 
@@ -241,10 +303,40 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
     );
   }
 
+  const pdfRow = (row: ModelRow) => isUrlCell(row.cells[0]) || cellText(row.cells[0]).toLowerCase().startsWith('filed return pdf');
+
+  const renderCell = (row: ModelRow, col: number): React.ReactNode | undefined => {
+    const text = row.cells[col];
+    // A long description wraps at a readable width (a table cell's own max-width is not honoured).
+    if (!pdfRow(row) && typeof text === 'string' && text.length > LONG_TEXT && !kit.isFigure(col)) {
+      return <span className="block max-w-[36rem] whitespace-normal">{text}</span>;
+    }
+    if (col !== 0 || !pdfRow(row)) return undefined;
+    const v = row.cells[0];
+    return (
+      <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="inline-flex items-center gap-1.5 font-medium not-italic text-foreground">
+          <FileText className="h-3.5 w-3.5 text-primary" />
+          Filed return PDF
+        </span>
+        {isUrlCell(v) ? (
+          <Button asChild size="sm" className="h-7 gap-1 px-2.5 text-xs">
+            <a href={v} target="_blank" rel="noreferrer">
+              <FileText className="h-3.5 w-3.5" />
+              View filed PDF
+            </a>
+          </Button>
+        ) : (
+          <span>{cellText(v).replace(/^filed return pdf:\s*/i, '')}</span>
+        )}
+      </span>
+    );
+  };
+
   return (
-    <div className="space-y-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       {/* Header strip */}
-      <Card>
+      <Card className="shrink-0">
         <CardHeader className="space-y-0 px-4 pb-2 pt-3">
           <div className="flex items-center gap-2">
             <ReportIcon className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -255,9 +347,9 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
           <div className="flex flex-wrap gap-x-6 gap-y-2">
             {subtitleParts.map((part, i) => {
               const isStatus = /^status$/i.test(part.label);
-              const isArn = /^arn$/i.test(part.label);
+              const isArn = /arn$/i.test(part.label);
               return (
-                <div key={i} className="min-w-[100px]">
+                <div key={i} className={cn('min-w-[100px]', !part.label && part.value.length > 60 && 'basis-full text-muted-foreground')}>
                   {part.label && (
                     <div className="text-[11px] font-medium text-muted-foreground">
                       {part.label}
@@ -268,7 +360,7 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
                       {part.value || '—'}
                     </Badge>
                   ) : (
-                    <div className={cn('text-xs font-medium mt-0.5', isArn && 'font-mono tracking-wide')}>
+                    <div className={cn('mt-0.5 text-xs font-medium', isArn && 'font-mono tracking-wide', !part.label && part.value.length > 60 && 'font-normal leading-snug')}>
                       {part.value || '—'}
                     </div>
                   )}
@@ -279,201 +371,40 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
         </CardContent>
       </Card>
 
-      {/* KPI strip */}
+      {/* KPI strip: the return's own headline figures, never the rows a filter leaves. */}
       {kpis.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-          {kpis.map((kpi, i) => (
-            <KpiTile key={i} label={kpi.title} value={`₹${formatCell(kpi.value)}`} />
+        <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+          {kpis.map((kpi) => (
+            <KpiTile key={kpi.title} label={kpi.title} value={rupees(kpi.value)} hint={kpi.from} />
           ))}
         </div>
       )}
 
-      {/* Search */}
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search this return…"
-            className="pl-8 h-8 text-xs"
+      <Card className="flex min-h-0 flex-1 flex-col">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-2.5 px-4 pb-3 pt-3">
+          <TableKitToolbar
+            kit={kit}
+            searchPlaceholder="Search this return: table, description, amount…"
+            left={<><SectionFilter kit={kit} /><NonZeroToggle kit={kit} /></>}
           />
-        </div>
-        <span className="text-xs text-muted-foreground shrink-0">
-          {query ? `${matchedRowCount} of ${totalRowCount}` : totalRowCount} row{totalRowCount === 1 ? '' : 's'}
-        </span>
-      </div>
-
-      {/* Sections */}
-      <div className="space-y-2">
-        {visibleSections.length === 0 && (
-          <Card>
-            <CardContent className="py-6 text-center text-sm text-muted-foreground">
-              No rows match &quot;{search}&quot;.
-            </CardContent>
-          </Card>
-        )}
-
-        {visibleSections.map((section, idx) => {
-          const isOpen = !closedSections.has(idx);
-          const showHeading = !(section.rows.length === 1 && isFiledPdfRow(section.rows[0]));
-          return (
-            <Card key={idx} className="overflow-hidden">
-              <Collapsible open={isOpen} onOpenChange={() => toggleSection(idx)}>
-                {showHeading && (
-                  <CollapsibleTrigger asChild>
-                    <button
-                      type="button"
-                      className="w-full flex items-center justify-between border-b px-3 py-1.5 bg-muted/50 hover:bg-muted transition-colors text-left"
-                    >
-                      <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
-                        {section.heading || `Section ${idx + 1}`}
-                      </span>
-                      {isOpen ? (
-                        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      ) : (
-                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      )}
-                    </button>
-                  </CollapsibleTrigger>
-                )}
-                <CollapsibleContent>
-                  <div className="overflow-x-auto">
-                    <Table className={WS_TABLE}>
-                      <TableHeader className="sticky top-0 z-10">
-                        <TableRow>
-                          {table.headers.map((h, i) => (
-                            <TableHead
-                              key={i}
-                              className={cn(
-                                WS_TH, 'h-auto',
-                                isNumericHeader(h) && 'text-right',
-                              )}
-                            >
-                              {h}
-                            </TableHead>
-                          ))}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {section.rows.map((row, ri) => {
-                          if (isFiledPdfRow(row)) {
-                            const urlCell = row.find((c) => isUrl(c));
-                            return (
-                              <TableRow key={ri} className="bg-primary/5 hover:bg-primary/10">
-                                <TableCell colSpan={table.headers.length || 1} className="border-b px-3 py-2">
-                                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                                    <span className="text-xs font-medium">{rowLabel(row) || 'Filed Return PDF'}</span>
-                                    {urlCell ? (
-                                      <Button asChild size="sm" className="h-8 gap-1 px-2.5 text-xs">
-                                        <a href={String(urlCell)} target="_blank" rel="noreferrer">
-                                          <FileText className="h-3.5 w-3.5" />
-                                          View Filed PDF
-                                        </a>
-                                      </Button>
-                                    ) : (
-                                      <span className="text-xs text-muted-foreground italic">Not captured</span>
-                                    )}
-                                  </div>
-                                </TableCell>
-                              </TableRow>
-                            );
-                          }
-                          return (
-                            <TableRow key={ri} className="hover:bg-muted/30">
-                              {row.map((cell, ci) => {
-                                const header = table.headers[ci] || '';
-                                if (isUrl(cell)) {
-                                  return (
-                                    <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                                      <a
-                                        href={cell}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="inline-flex items-center gap-1 text-primary hover:underline"
-                                      >
-                                        <ExternalLink className="h-3 w-3" /> View
-                                      </a>
-                                    </TableCell>
-                                  );
-                                }
-                                if (ci === statusColIdx && String(cell) !== '') {
-                                  return (
-                                    <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                                      <Badge variant={statusVariant(String(cell))} className="text-[10px] py-0 font-medium">
-                                        {String(cell)}
-                                      </Badge>
-                                    </TableCell>
-                                  );
-                                }
-                                if (isSentinelCell(cell)) {
-                                  return (
-                                    <TableCell key={ci} className={WS_TD}>
-                                      <Badge
-                                        variant="outline"
-                                        className="border-dashed text-muted-foreground font-normal text-[10px]"
-                                      >
-                                        Not pulled
-                                      </Badge>
-                                    </TableCell>
-                                  );
-                                }
-                                return (
-                                  <TableCell
-                                    key={ci}
-                                    className={cn(
-                                      WS_TD,
-                                      isNumericHeader(header)
-                                        ? 'text-right whitespace-nowrap tabular-nums'
-                                        : 'max-w-[320px]',
-                                    )}
-                                  >
-                                    {formatCell(cell)}
-                                  </TableCell>
-                                );
-                              })}
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Pinned grand-total row(s) — always visible, exempt from search */}
-      {grandTotalRows.length > 0 && (
-        <Card className="sticky bottom-0 overflow-hidden shadow-md">
-          <CardContent className="p-0 overflow-x-auto">
-            <Table className={WS_TABLE}>
-              <TableBody>
-                {grandTotalRows.map((row, ri) => (
-                  <TableRow key={ri} className={cn(WS_TR_TOTAL, 'hover:bg-muted')}>
-                    {row.map((cell, ci) => {
-                      const header = table.headers[ci] || '';
-                      return (
-                        <TableCell
-                          key={ci}
-                          className={cn(
-                            WS_TD, 'border-b-0',
-                            isNumericHeader(header) ? 'text-right whitespace-nowrap tabular-nums' : '',
-                          )}
-                        >
-                          {formatCell(cell)}
-                        </TableCell>
-                      );
-                    })}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
+          <TopDownHint
+            kit={kit}
+            filteredNote={hasTotal ? 'The TOTAL is the return\'s own, as printed for every table; it is not recomputed for the rows shown.' : 'Nothing is added up: a return\'s rows include their own totals.'}
+          />
+          <TableKitTable
+            kit={kit}
+            label={table.title}
+            renderCell={renderCell}
+            rowClassName={(row) => (pdfRow(row) ? 'bg-primary/[0.05] hover:bg-primary/10' : undefined)}
+            // A return's descriptions are read in full: they wrap rather than being cut.
+            cellClassName={(row, col) => (!kit.isFigure(col) ? cn('max-w-none whitespace-normal', pdfRow(row) && col === 0 && !isUrlCell(row.cells[0]) && 'italic text-muted-foreground') : undefined)}
+            // A two or three column return reads better at the width of a page than across the screen.
+            containerClassName={narrow ? NARROW_CONTAINER : undefined}
+            noMatchText="No line of this return matches these filters."
+          />
+          <TableKitPager kit={kit} />
+        </CardContent>
+      </Card>
     </div>
   );
 };

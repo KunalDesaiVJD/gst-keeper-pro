@@ -14,7 +14,9 @@
 // Period filter); TOTAL rows never filtered away when nothing is filtered; the
 // layout's TOTAL detection; groups and subtotals; pages; the "filtered" export
 // table; a view's own (custom) filters; the column groups over the columns
-// shown; date-time stamps ordered by their moment; and speed at 5,000 rows. Prints pass / fail; exits 1 on any failure.
+// shown; date-time stamps ordered by their moment; a report read top to bottom
+// (sorted within its sections, its own TOTAL kept as printed and nothing added
+// up); and speed at 5,000 rows. Prints pass / fail; exits 1 on any failure.
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -440,6 +442,72 @@ const bm = M.buildModel(big);
   const said = M.describeSort(m, { col: dt, dir: 'desc' });
   check(g, 'the export strip says "newest first", not "Z to A"', said === 'sorted by Date/Time, newest first', said);
   check(g, 'a text column that is not all stamps still sorts A to Z', M.describeSort(m, { col: col(m, 'Reason'), dir: 'asc' }) === 'sorted by Reason, A to Z');
+}
+
+// ── 11f. A report read top to bottom (a return, a working paper) ───────────
+{
+  const g = 'top-down';
+  // Sections, a spacer and the return's own TOTAL, as the filed-return view lays them out.
+  const ret = {
+    title: 'Return', subtitle: 'Client: X', fileNameBase: 'Return_X',
+    headers: ['Table', 'Description', 'IGST', 'CGST'],
+    rows: [
+      ['Outward supplies', '', '', ''],
+      ['3.1(a)', 'Taxable', 100, 50],
+      ['3.1(b)', 'Zero rated', 300, 0],
+      ['3.1(d)', 'Reverse charge', 200, 10],
+      ['', '', '', ''],
+      ['Eligible ITC', '', '', ''],
+      ['4(A)', 'Available', 500, 40],
+      ['4(B)', 'Reversed', 0, 5],
+      ['', 'TOTAL', 1100, 105],
+    ],
+    rowKinds: ['section', 'data', 'data', 'data', 'blank', 'section', 'data', 'data', 'total'],
+  };
+  const base = M.buildModel(ret);
+  const rm = { ...base, sortWithinSections: true };
+  const igst = col(rm, 'IGST');
+  const cgst = col(rm, 'CGST');
+  const seq = (v) => v.items.map((it) => (it.type === 'data' ? it.row.cells[0] : it.type === 'section' ? `[${it.label}]` : it.type)).join(' ');
+  const sorted = M.buildView(rm, view({ sort: { col: igst, dir: 'desc' } }));
+  check(g, 'sorted within sections: each section\'s rows reordered under its own heading', seq(sorted) === '[Outward supplies] 3.1(b) 3.1(d) 3.1(a) blank [Eligible ITC] 4(A) 4(B)', seq(sorted));
+  check(g, '… the rows shown in that order, and the view says so', sorted.rows.map((r) => r.cells[0]).join(' ') === '3.1(b) 3.1(d) 3.1(a) 4(A) 4(B)' && sorted.sortedWithinSections === true, sorted.rows.map((r) => r.cells[0]).join(' '));
+  const flat = M.buildView(base, view({ sort: { col: igst, dir: 'desc' } }));
+  check(g, 'without the option a sort runs over every row, headings left out', seq(flat) === '4(A) 3.1(b) 3.1(d) 3.1(a) 4(B)' && !flat.sortedWithinSections, seq(flat));
+  const both = M.buildView(rm, view({ sort: { col: igst, dir: 'asc' }, filters: { [cgst]: { type: 'number', min: 1, max: null } } }));
+  check(g, 'filtered and sorted: headings kept for sections with rows, no spacer', seq(both) === '[Outward supplies] 3.1(a) 3.1(d) [Eligible ITC] 4(B) 4(A)', seq(both));
+  check(g, 'grouping still wins over sections', M.buildView(rm, view({ sort: { col: igst, dir: 'desc' }, groupBy: 0 })).items.every((it) => it.type !== 'section'));
+  const exp = M.viewToReportTable(ret, rm, view({ sort: { col: igst, dir: 'desc' } }), new Set());
+  check(g, 'the export keeps the headings and says the sort ran within each section', exp.rowKinds.filter((k) => k === 'section').length === 2 && /View: sorted by IGST, largest first within each section/.test(exp.subtitle), exp.subtitle);
+
+  // sums: false — the return's own TOTAL stands under a filter; nothing is added up.
+  const km = { ...rm, keepReportTotals: true, summable: [], columns: rm.columns.map((c) => ({ ...c, summable: false })) };
+  const kf = M.buildView(km, view({ filters: { [cgst]: { type: 'number', min: 20, max: null } } }));
+  check(g, 'filtered: the report\'s own TOTAL stays pinned, nothing recomputed', kf.footer?.type === 'total' && kf.footer.row.cells[2] === 1100 && !kf.items.some((it) => it.type === 'sum'), JSON.stringify(kf.footer));
+  const recomputed = M.buildView(rm, view({ filters: { [cgst]: { type: 'number', min: 20, max: null } } }));
+  check(g, '… where the default recomputes it over the rows shown', recomputed.footer?.type === 'sum' && recomputed.footer.sums.get(igst) === 600, JSON.stringify(recomputed.footer));
+  const kg = M.buildView(km, view({ groupBy: col(km, 'Description') }));
+  check(g, 'groups carry no subtotal', kg.groups?.length === 5 && kg.groups.every((x) => x.sums.size === 0) && kg.items.filter((it) => it.type === 'group').every((it) => it.sums.size === 0));
+  const kx = M.viewToReportTable(ret, km, view({ filters: { [cgst]: { type: 'number', min: 20, max: null } }, groupBy: col(km, 'Description') }), new Set());
+  check(g, 'the export: no subtotal rows, the TOTAL as printed, the strip says so', !kx.rowKinds.includes('subtotal') && kx.rowKinds[kx.rowKinds.length - 1] === 'total' && kx.rows[kx.rows.length - 1][2] === 1100 && /Totals: as printed for the whole report/.test(kx.subtitle), kx.subtitle);
+  const unf = M.viewToReportTable(ret, km, view(), new Set());
+  check(g, '… and unfiltered it says nothing about totals', !/Totals:/.test(unf.subtitle), unf.subtitle);
+
+  // Two periods of a working paper: each period's result stays in place.
+  const wp = (n) => ({
+    title: 'Working paper', subtitle: 'Client: X', fileNameBase: 'WP', headers: ['Step', 'Item', 'Amount'],
+    rows: [['1', 'Days late', n], ['2', 'Interest', n * 10], ['Result', 'TOTAL (Interest + Late Fee)', n * 10 + 5]],
+    rowKinds: ['data', 'data', 'total'],
+  });
+  const mt = M.mergeTables([wp(1), wp(0)], ['06/2025', '07/2025']);
+  const mbase = M.buildModel(mt);
+  const mk = { ...mbase, keepReportTotals: true, sortWithinSections: true, summable: [] };
+  const amt = col(mk, 'Amount');
+  const nz = M.buildView(mk, view({ filters: { [amt]: { type: 'number', min: null, max: null, nonZero: true } } }));
+  const totals = nz.items.filter((it) => it.type === 'total').map((it) => it.row.cells[2]);
+  check(g, 'merged, filtered: a period\'s own result kept in place; a period left empty shows none', totals.join(',') === '15' && nz.items.filter((it) => it.type === 'band').length === 1 && !nz.footer, JSON.stringify(totals));
+  const ms = M.buildView(mk, view({ sort: { col: amt, dir: 'desc' } }));
+  check(g, 'merged, sorted: still in period bands, no Period column', ms.showBands && !ms.showPeriodColumn && ms.items.filter((it) => it.type === 'band').length === 2 && ms.sortedWithinSections, JSON.stringify({ b: ms.showBands, p: ms.showPeriodColumn }));
 }
 
 // ── 12. Speed ──────────────────────────────────────────────────────────────

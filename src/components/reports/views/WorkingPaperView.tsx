@@ -1,78 +1,52 @@
 // Renders the "working paper" family of reports (Interest and Late Fee
-// Calculator, Short Reversal of ITC — Section 17(2) & Rule 42) — a step-by-
-// step legal computation meant to be read top to bottom like a memo, not
-// filtered like a dataset.
+// Calculator, Short Reversal of ITC — Section 17(2) & Rule 42): a step-by-
+// step legal computation meant to be read top to bottom like a memo, to
+// explain a number to a client or an officer.
 //
-// table.rows here are heuristic and mixed on purpose:
-//   - plain metadata lines (['Return Type', 'GSTR-3B'])
-//   - "section marker" lines that restate the value columns for the
-//     subsection that follows (['Interest (Rule 88B, net of ITC set-off)',
-//     'IGST', 'CGST', 'SGST']) — everything after one of these, until the
-//     next spacer/marker, is a sub-item of it and gets indented
-//   - spacer rows (every cell === '') that become a Separator, never an
-//     empty table row
-//   - a final bottom-line row (the computed answer — total interest, the
-//     floored short reversal, …) that always gets the most emphasis,
-//     regardless of whether it also happens to carry the literal 'TOTAL'
-//     sentinel somewhere in the middle of the document
-//
-// No search box, no pagination — this archetype is a short memo a CA reads
-// once, top to bottom, to explain a number to a client or an officer.
-import React from 'react';
-import type { ReportTable } from '@/utils/allClientsReports';
+// The report's rows are mixed on purpose: plain facts (['Return Type',
+// 'GSTR-3B']), "marker" lines that restate the value columns for the part that
+// follows (['Interest (Rule 88B, net of ITC set-off)', 'IGST', 'CGST', 'SGST']),
+// spacer rows between the parts, and a last line that is the answer (total
+// interest and late fee, the floored short reversal). This view lays them out
+// as a schedule:
+//   - every step is numbered in the report's order (Step 1, 2, …), and the
+//     number belongs to the step, so a filtered or sorted view still shows
+//     "Step 7" for the seventh step and nobody renumbers the working;
+//   - each part gets a heading (a marker line becomes its part's heading);
+//   - where the report puts facts, single amounts and per-head amounts in the
+//     same columns (Days Late and the total interest under "IGST"), the
+//     schedule gives facts a Detail column, single amounts an Amount column and
+//     per-head amounts their IGST / CGST / SGST columns, so no figure sits
+//     under a head it is not;
+//   - the answer is the Result, set apart and pinned: no filter, search or
+//     sort moves or hides it, and a filtered view says it is filtered.
+// The table kit (./tableKit) adds search, the Section filter, a filter and a
+// sort on every column (rows stay under their part's heading), "Non-zero rows
+// only" and the "filtered" Excel / PDF. Nothing is added up: the steps of one
+// computation are not addends of each other.
+import React, { useMemo } from 'react';
+import type { ReportTable, RowKind } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import type { BadgeProps } from '@/components/ui/badge';
 import { Badge } from '@/components/gstr9/badge';
-import { Separator } from '@/components/ui/separator';
+import { fmtNumber } from '@/lib/reportExport/layout';
 import { cn } from '@/lib/utils';
-import { Equal, ExternalLink, Inbox } from 'lucide-react';
+import { Equal, Filter, Inbox } from 'lucide-react';
+import { TableKitPager, TableKitTable, TableKitToolbar, periodLabel, useTableKit, type ModelRow, type TableKit } from './tableKit';
+import { NonZeroToggle, SectionFilter, TopDownHint } from './TopDownControls';
+import { cellText, splitPeriods, type Cell, type Row, type SourceRow } from './topDownRows';
 
 interface WorkingPaperViewProps {
   table: ReportTable;
   report: ReportDefinition;
 }
 
-type Cell = string | number;
-type Row = Cell[];
-
-const NUMERIC_HEADER_RE =
-  /CGST|SGST|IGST|TOTAL|VALUE|AMOUNT|CLAIMED|LIABILITY|ITC|CESS|FEE|INTEREST|PAYABLE|PENALTY/i;
-
-const isUrl = (v: Cell): v is string => typeof v === 'string' && /^https?:\/\//.test(v);
-
-const isSentinelCell = (v: Cell): boolean => {
-  if (typeof v !== 'string') return false;
-  const s = v.trim();
-  if (!s) return false;
-  return s.toUpperCase() === 'NOT PULLED' || /not captured|not pulled/i.test(s);
-};
-
-const isGrandTotalCell = (v: Cell): boolean => typeof v === 'string' && v.trim().toUpperCase() === 'TOTAL';
-
-const cellText = (v: Cell | undefined): string => (v === undefined ? '' : String(v).trim());
-
-const isBlankRow = (row: Row): boolean => row.length === 0 || row.every((c) => cellText(c) === '');
-
-const rowHasGrandTotalCell = (row: Row): boolean => row.some(isGrandTotalCell);
-
-const statusVariant = (v: string): NonNullable<BadgeProps['variant']> => {
-  const s = v.toLowerCase();
-  if (/fail|reject|denied|cancel/.test(s)) return 'destructive';
-  if (/pending|processing/.test(s)) return 'warning';
-  if (/filed|approv|acknowledg|processed/.test(s)) return 'success';
-  return 'secondary';
-};
-
-const formatNumber = (v: number): string => {
-  const rounded = Math.round(v * 100) / 100;
-  return rounded.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-};
+const HEAD_RE = /^(igst|cgst|sgst|utgst|cess)$/i;
+const PERIOD_BAND_RE = /^— (.+) —$/;
 
 // A "section marker" row restates the remaining headers as its own values
 // (e.g. ['Interest (…)', 'IGST', 'CGST', 'SGST'] under headers
-// ['Item','IGST','CGST','SGST']) — it's a subsection heading, not a data
-// line, and everything after it up to the next marker/spacer is its child.
+// ['Item','IGST','CGST','SGST']): a part's heading, not a step.
 const isSectionMarkerRow = (row: Row, headers: string[]): boolean => {
   const values = row.slice(1);
   if (values.length < 2) return false;
@@ -82,119 +56,181 @@ const isSectionMarkerRow = (row: Row, headers: string[]): boolean => {
   });
 };
 
-interface Segment {
-  markerLabel: string | null;
-  markerValues: Cell[];
-  rows: Row[]; // rows that belong to this marker (or top-level rows if markerLabel is null)
+/**
+ * The parts of a known working paper, in order, by spacer block (the answer's
+ * own block, when it stands alone, has none). null: the block's marker line
+ * names it. Any other working paper is named by its marker lines, else by
+ * each block's first and last step.
+ */
+const PARTS: Record<string, (string | null)[]> = {
+  'interest-late-fee-calculator': ['Due date and delay', null, 'Late fee (s.47)'],
+  'rule42-short-reversal': ['ITC and common credit', 'Exempt turnover ratio', 'Reversal under Rule 42'],
+};
+
+interface Schedule {
+  /** The working paper as the kit reads it: Step first, a heading per part, every row's kind given. */
+  table: ReportTable;
+  /** The answer of each month (one for a single month), as laid out in `table`. */
+  results: { period: string | null; cells: Row }[];
+  /** The Detail column (facts beside the amounts), else -1. */
+  detailCol: number;
 }
 
-// Splits one spacer-delimited block of rows into a list of segments: a
-// leading run of top-level rows (markerLabel === null) followed by zero or
-// more (marker row + its indented children).
-const buildSegments = (rows: Row[], headers: string[]): Segment[] => {
-  const segments: Segment[] = [];
-  let current: Segment = { markerLabel: null, markerValues: [], rows: [] };
+const blankRow = (n: number): Row => Array(n).fill('');
 
-  for (const row of rows) {
-    if (isSectionMarkerRow(row, headers)) {
-      if (current.markerLabel !== null || current.rows.length > 0) segments.push(current);
-      const label = cellText(row[0]);
-      current = { markerLabel: label || '', markerValues: row.slice(1), rows: [] };
-      continue;
+const toSchedule = (table: ReportTable, key: string): Schedule => {
+  const src = table.headers;
+  const heads = src.map((h, i) => (i > 0 && HEAD_RE.test(h.trim()) ? i : -1)).filter((i) => i >= 0);
+  const split = heads.length >= 2;
+  const DETAIL = 2;
+  const AMOUNT = 3;
+  const HEAD0 = 4;
+  const headers = split ? ['Step', src[0] || 'Item', 'Detail', 'Amount', ...heads.map((i) => src[i])] : ['Step', ...src];
+  const width = headers.length;
+
+  // One step's cells in the schedule's columns.
+  const lay = (cells: Row, step: string, label: string): Row => {
+    const fix = (v: Cell): Cell => (/^days\b/i.test(label) && typeof v === 'number' && Number.isInteger(v) ? `${v} ${v === 1 ? 'day' : 'days'}` : v);
+    if (!split) {
+      const out = [step, label, ...cells.slice(1).map(fix)];
+      while (out.length < width) out.push('');
+      return out.slice(0, width);
     }
-    current.rows.push(row);
+    const out: Row = [step, label, ...blankRow(width - 2)];
+    const vals = cells.slice(1).map((v, k) => ({ v: fix(v), at: k + 1 })).filter((x) => cellText(x.v) !== '');
+    // "CGST" under the late fee is a CGST figure, whichever column the report put it in.
+    const own = heads.findIndex((i) => src[i].trim().toLowerCase() === label.trim().toLowerCase());
+    const fact = (v: Cell) => { out[DETAIL] = cellText(out[DETAIL]) ? `${out[DETAIL]}; ${v}` : v; };
+    if (vals.length === 1) {
+      const { v } = vals[0];
+      if (typeof v !== 'number') fact(v);
+      else if (own >= 0) out[HEAD0 + own] = v;
+      else out[AMOUNT] = v;
+    } else {
+      for (const x of vals) {
+        const h = heads.indexOf(x.at);
+        if (typeof x.v !== 'number') fact(x.v);
+        else out[h >= 0 ? HEAD0 + h : AMOUNT] = x.v;
+      }
+    }
+    return out;
+  };
+
+  const rows: Row[] = [];
+  const kinds: RowKind[] = [];
+  const results: Schedule['results'] = [];
+  const push = (cells: Row, kind: RowKind) => { rows.push(cells); kinds.push(kind); };
+
+  for (const block of splitPeriods(table)) {
+    const period = block.band ? PERIOD_BAND_RE.exec(cellText(block.band.cells[0]))?.[1] ?? cellText(block.band.cells[0]) : null;
+    if (block.band) push([block.band.cells[0], ...blankRow(width - 1)], 'period');
+    // A month of a merge that could not be built says why, as its heading: it has no steps and no answer.
+    const failed = block.rows.length === 1 && /^not built:/i.test(cellText(block.rows[0].cells[0]));
+    if (failed) { push([cellText(block.rows[0].cells[0]), ...blankRow(width - 1)], 'section'); continue; }
+    // The answer: the last line that is not a spacer.
+    let last = -1;
+    for (let k = block.rows.length - 1; k >= 0; k--) if (block.rows[k].kind !== 'blank') { last = k; break; }
+    // The parts: the runs of lines between spacers, the answer left out.
+    const parts: SourceRow[][] = [];
+    let cur: SourceRow[] = [];
+    block.rows.forEach((r, k) => {
+      if (k === last) return;
+      if (r.kind === 'blank') { if (cur.length) parts.push(cur); cur = []; return; }
+      cur.push(r);
+    });
+    if (cur.length) parts.push(cur);
+
+    const names = PARTS[key];
+    let step = 0;
+    parts.forEach((part, p) => {
+      const marker = isSectionMarkerRow(part[0].cells, src) ? cellText(part[0].cells[0]) : null;
+      const lines = marker !== null ? part.slice(1) : part;
+      const given = names?.[p] ?? null;
+      const firstLast = () => {
+        const a = cellText(lines[0]?.cells[0]);
+        const b = cellText(lines[lines.length - 1]?.cells[0]);
+        return b && b !== a ? `${a} to ${b}` : a;
+      };
+      const title = given ?? marker ?? (parts.length > 1 ? firstLast() : null);
+      if (p > 0) push(blankRow(width), 'blank');
+      if (title) push([title, ...blankRow(width - 1)], 'section');
+      for (const r of lines) {
+        let label = cellText(r.cells[0]);
+        // A line repeating its part's name with words beside it is the part's
+        // basis ("Late Fee (s.47)": "NIL return"), not a figure of it.
+        if (given && label.toLowerCase() === given.toLowerCase() && !r.cells.slice(1).some((v) => typeof v === 'number')) label = 'Basis';
+        // The per-head line under a marker has no label of its own.
+        if (!label && marker) label = `${marker.replace(/\s*\(.*\)\s*$/, '')} by head`;
+        step += 1;
+        push(lay(r.cells, String(step), label), r.kind === 'data' ? 'data' : r.kind);
+      }
+    });
+    if (last >= 0) {
+      const answer = block.rows[last];
+      if (parts.length) push(blankRow(width), 'blank');
+      const cells = lay(answer.cells, 'Result', cellText(answer.cells[0]));
+      push(cells, 'total');
+      results.push({ period, cells });
+    }
   }
-  segments.push(current);
-  return segments.filter((s) => s.markerLabel !== null || s.rows.length > 0);
+
+  return {
+    table: {
+      ...table,
+      headers,
+      headerLabels: undefined,
+      rows,
+      rowKinds: kinds,
+      rowTones: undefined,
+      columnWidths: split ? [8, 40, 34, 16, ...heads.map(() => 14)] : [8, ...(table.columnWidths ?? []).slice(0, width - 1)],
+      columnGroups: undefined,
+      pdfColumns: undefined,
+      toneColumn: undefined,
+    },
+    results,
+    detailCol: split ? DETAIL : -1,
+  };
 };
 
-const NumericValue: React.FC<{ value: Cell; header: string }> = ({ value, header }) => {
-  if (isUrl(value)) {
-    return (
-      <a
-        href={value}
-        target="_blank"
-        rel="noreferrer"
-        className="inline-flex items-center gap-1 text-primary hover:underline"
-      >
-        <ExternalLink className="h-3 w-3" /> View
-      </a>
-    );
-  }
-  if (isSentinelCell(value)) {
-    return (
-      <Badge variant="outline" className="border-dashed font-normal text-muted-foreground text-[10px]">
-        Not pulled
-      </Badge>
-    );
-  }
-  if (/^status$/i.test(header.trim()) && cellText(value) !== '') {
-    return <Badge variant={statusVariant(String(value))} className="text-[10px] font-medium">{String(value)}</Badge>;
-  }
-  if (typeof value === 'number') {
-    return (
-      <span className={cn('tabular-nums', NUMERIC_HEADER_RE.test(header) && 'font-medium')}>
-        {formatNumber(value)}
-      </span>
-    );
-  }
-  return <span>{cellText(value)}</span>;
-};
+/** The kit's scrolling table box, at a page's width. */
+const NARROW_CONTAINER = 'min-h-[160px] max-h-[65vh] max-w-4xl flex-[0_1_auto] rounded-md border bg-card';
 
-// One data line: a label on the left and 0..n value cells on the right,
-// adaptively laid out depending on how many value cells this particular row
-// actually carries (real rows are ragged — a metadata line like
-// ['Return Type','GSTR-3B'] sits in the same table as three-column money
-// rows, so alignment is decided per row rather than forced to one grid).
-const DataRow: React.FC<{ row: Row; headers: string[]; indent: boolean; emphasize: boolean }> = ({
-  row,
-  headers,
-  indent,
-  emphasize,
-}) => {
-  const label = cellText(row[0]);
-  const values = row.slice(1);
-  const isTotal = rowHasGrandTotalCell(row);
+const show = (v: Cell): string => (typeof v === 'number' ? (Math.abs(v) < 0.005 ? '0.00' : fmtNumber(v)) : cellText(v));
 
+/** The answer, set apart under the steps: never filtered, sorted or hidden. */
+const ResultBox: React.FC<{ kit: TableKit; schedule: Schedule; className?: string }> = ({ kit, schedule, className }) => {
+  const { headers } = schedule.table;
   return (
-    <div
-      className={cn(
-        'flex flex-wrap items-baseline justify-between gap-x-6 gap-y-0.5 border-b border-dashed border-border/60 py-1.5 last:border-b-0',
-        indent && 'ml-3 border-l-2 border-l-muted pl-3',
-        isTotal && !emphasize && 'font-semibold',
-      )}
-    >
-      <span
-        className={cn(
-          'text-foreground',
-          indent && 'text-muted-foreground',
-          emphasize ? 'text-[15px] font-bold' : 'text-xs',
+    <div className={cn('shrink-0 rounded-md border border-primary/30 bg-primary/5 px-3 py-2.5', className)}>
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <Equal className="h-4 w-4 shrink-0 text-primary" />
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">Result</span>
+        {kit.view.filtered && (
+          <span className="text-[11px] text-muted-foreground">
+            of the whole working, every step counted: the filter above hides steps from view, it does not change this answer.
+          </span>
         )}
-      >
-        {label || '\u00A0'}
-      </span>
-      {values.length > 0 && (
-        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-          {values.map((v, i) => {
-            const header = headers[i + 1] ?? '';
-            return (
-              <div
-                key={i}
-                className={cn('min-w-[72px] text-right', emphasize ? 'text-[15px]' : 'text-xs')}
-              >
-                {headers.length > 2 && (
-                  <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {header}
-                  </div>
-                )}
-                <span className={cn(emphasize && 'font-bold text-primary')}>
-                  <NumericValue value={v} header={header} />
+      </div>
+      <div className="space-y-0.5">
+        {schedule.results.map((r, k) => (
+          <div key={k} className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-0.5">
+            <span className="text-[15px] font-bold">
+              {r.period && <span className="mr-2 text-[13px] font-semibold text-muted-foreground">{periodLabel(r.period)}</span>}
+              {cellText(r.cells[1])}
+            </span>
+            <span className="flex flex-wrap items-baseline gap-x-6">
+              {r.cells.map((v, c) => (c < 2 || cellText(v) === '' ? null : (
+                <span key={c} className="whitespace-nowrap text-right">
+                  {headers.length > 3 && (
+                    <span className="mr-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{headers[c]}</span>
+                  )}
+                  <span className="text-[15px] font-bold tabular-nums text-primary">{show(v)}</span>
                 </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
+              )))}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
@@ -205,6 +241,26 @@ export const WorkingPaperView: React.FC<WorkingPaperViewProps> = ({ table, repor
     .split('|')
     .map((s) => s.trim())
     .filter(Boolean);
+
+  const schedule = useMemo(() => toSchedule(table, report.key), [table, report.key]);
+  // Group by is offered only where a step repeats (the same step in each month of a merge).
+  const groupable = useMemo(() => {
+    const t = schedule.table;
+    const data = t.rows.filter((_, i) => t.rowKinds?.[i] === 'data');
+    const label = data.map((r) => cellText(r[1]));
+    return new Set(label).size < label.length ? [1] : [];
+  }, [schedule]);
+  const kit = useTableKit(schedule.table, {
+    resetKey: report.key,
+    sortWithinSections: true,
+    sums: false,
+    groupable,
+    statusColumn: null,
+    rowNoun: ['step', 'steps'],
+    // A filtered working paper says so in its title, not only in its strip; the
+    // band of figures would only repeat the strip's row count (nothing is added up).
+    transformExport: (t) => ({ ...t, kpis: undefined, ...(kit.view.filtered ? { title: `${t.title} (filtered view)` } : {}) }),
+  });
 
   if (table.rows.length === 0) {
     return (
@@ -217,39 +273,21 @@ export const WorkingPaperView: React.FC<WorkingPaperViewProps> = ({ table, repor
     );
   }
 
-  // Find the last non-blank row in document order — the bottom-line answer
-  // this whole memo builds up to — and set it aside from normal rendering.
-  let finalIdx = -1;
-  for (let i = table.rows.length - 1; i >= 0; i--) {
-    if (!isBlankRow(table.rows[i])) {
-      finalIdx = i;
-      break;
-    }
-  }
-  const finalRow = finalIdx >= 0 ? table.rows[finalIdx] : null;
-  const bodyRows = finalIdx >= 0 ? table.rows.slice(0, finalIdx) : table.rows.slice();
-
-  // Split the body into spacer-delimited blocks; each block is rendered with
-  // a Separator before it (except the first), and internally split into
-  // marker/child segments.
-  const blocks: Row[][] = [];
-  let currentBlock: Row[] = [];
-  for (const row of bodyRows) {
-    if (isBlankRow(row)) {
-      if (currentBlock.length > 0) blocks.push(currentBlock);
-      currentBlock = [];
-      continue;
-    }
-    currentBlock.push(row);
-  }
-  if (currentBlock.length > 0) blocks.push(currentBlock);
+  // The Result box shows the answer of a single month; the table's pinned copy would repeat it.
+  const tableKit: TableKit = kit.view.footer ? { ...kit, view: { ...kit.view, footer: null } } : kit;
+  const narrow = kit.cols.length <= 3;
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="space-y-0 border-b bg-muted/40 px-4 pb-2 pt-3">
-        <div className="flex items-center gap-2">
+    <Card className="flex h-full min-h-0 flex-col overflow-hidden">
+      <CardHeader className="shrink-0 space-y-0 border-b bg-muted/40 px-4 pb-2 pt-3">
+        <div className="flex flex-wrap items-center gap-2">
           <ReportIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
           <CardTitle className="text-[15px] leading-snug">{table.title}</CardTitle>
+          {kit.view.filtered && (
+            <Badge variant="warning" className="gap-1 text-[10px] font-medium">
+              <Filter className="h-3 w-3" /> Filtered view: {kit.countText} shown
+            </Badge>
+          )}
         </div>
         {subtitleChips.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
@@ -262,53 +300,39 @@ export const WorkingPaperView: React.FC<WorkingPaperViewProps> = ({ table, repor
         )}
       </CardHeader>
 
-      <CardContent className="px-4 pb-3 pt-3">
-        <div className="mx-auto max-w-2xl">
-          {blocks.map((block, bi) => {
-            const segments = buildSegments(block, table.headers);
-            return (
-              <React.Fragment key={bi}>
-                {bi > 0 && <Separator className="my-3" />}
-                <div className="space-y-0.5">
-                  {segments.map((seg, si) => (
-                    <div key={si} className={cn(si > 0 && 'mt-2')}>
-                      {seg.markerLabel !== null && (
-                        <div className="mb-0.5 flex items-baseline justify-between gap-3 rounded-sm bg-muted/50 px-2 py-1">
-                          <span className="text-xs font-semibold text-foreground">{seg.markerLabel}</span>
-                          {seg.markerValues.length > 0 && (
-                            <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                              {seg.markerValues.map(String).join(' · ')}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {seg.rows.map((row, ri) => (
-                        <DataRow
-                          key={ri}
-                          row={row}
-                          headers={table.headers}
-                          indent={seg.markerLabel !== null}
-                          emphasize={false}
-                        />
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </React.Fragment>
-            );
-          })}
-
-          {/* The bottom line — the one number this working paper exists to prove. */}
-          {finalRow && (
-            <div className="mt-4 rounded-md border border-primary/30 bg-primary/5 px-3 py-2.5">
-              <div className="mb-1 flex items-center gap-2">
-                <Equal className="h-4 w-4 shrink-0 text-primary" />
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">Result</span>
-              </div>
-              <DataRow row={finalRow} headers={table.headers} indent={false} emphasize />
-            </div>
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-2.5 px-4 pb-3 pt-3">
+        <TableKitToolbar
+          kit={kit}
+          searchPlaceholder="Search the steps: item, value, amount…"
+          left={<><SectionFilter kit={kit} /><NonZeroToggle kit={kit} /></>}
+        />
+        <TopDownHint
+          kit={kit}
+          filteredNote="Step numbers are the working's own; the Result below is the answer of every step, not of the steps shown."
+        />
+        <TableKitTable
+          kit={tableKit}
+          label={table.title}
+          // A long item or detail wraps at a readable width (a table cell's own max-width is not honoured).
+          renderCell={(row, col) => {
+            const v = row.cells[col];
+            return typeof v === 'string' && v.length > 48 && !kit.isFigure(col)
+              ? <span className="block max-w-[26rem] whitespace-normal">{v}</span>
+              : undefined;
+          }}
+          cellClassName={(row: ModelRow, col: number) => cn(
+            col === 0 && 'w-14 tabular-nums text-muted-foreground',
+            col === 1 && 'max-w-none whitespace-normal',
+            col === schedule.detailCol && 'max-w-none whitespace-normal',
+            // A word among the figures ("Not entered") wraps rather than widen the column.
+            typeof row.cells[col] === 'string' && kit.isFigure(col) && 'whitespace-normal',
           )}
-        </div>
+          noMatchText="No step of this working matches these filters. The Result below is unchanged."
+          // A two or three column working reads better at the width of a page than across the screen.
+          containerClassName={narrow ? NARROW_CONTAINER : undefined}
+        />
+        <TableKitPager kit={kit} />
+        <ResultBox kit={kit} schedule={schedule} className={narrow ? 'max-w-4xl' : undefined} />
       </CardContent>
     </Card>
   );

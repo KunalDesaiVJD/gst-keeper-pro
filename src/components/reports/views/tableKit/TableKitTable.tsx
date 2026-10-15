@@ -128,12 +128,16 @@ export const TableKitTable: React.FC<TableKitTableProps> = ({
   const ownTotalCells = (row: ModelRow) => {
     // Its label may sit in a hidden column: carry it ("TOTAL (04/2025)") to a shown one.
     const shownLabel = cols.some((c) => /total/i.test(String(row.cells[c] ?? '')));
-    const lbl = row.cells.map((v) => String(v ?? '').trim()).find((v) => /total/i.test(v)) ?? 'TOTAL';
+    const own = row.cells.map((v) => String(v ?? '').trim()).find((v) => /total/i.test(v));
     return cols.map((c, k) => {
       const v = c === model.periodCol ? '' : row.cells[c];
+      // A row whose label does not say TOTAL (a working paper's result) keeps its own text.
+      const carry = !shownLabel && k === labelAt && (own !== undefined || String(v ?? '').trim() === '');
+      // A long label of the report's own ("TOTAL (liability-bearing tables only — …)") wraps rather than widen its column.
+      const long = typeof v === 'string' && v.length > 48;
       return (
-        <TableCell key={c} className={figureCell(c)}>
-          {typeof v === 'number' ? kit.figure(c, v) : !shownLabel && k === labelAt ? lbl : String(v ?? '')}
+        <TableCell key={c} className={cn(figureCell(c), long && 'min-w-[16rem] whitespace-normal')}>
+          {typeof v === 'number' ? kit.figure(c, v) : carry ? own ?? 'TOTAL' : String(v ?? '')}
         </TableCell>
       );
     });
