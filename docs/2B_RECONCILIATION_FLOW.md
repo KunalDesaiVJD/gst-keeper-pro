@@ -736,3 +736,31 @@ in one module, `src/lib/twobDocs.ts`.
   Summary shows an error toast and refuses Save until a load succeeds;
   GSTR-3B and its preview already catch errors from `fetchGstr3b`).
 
+
+## §11. E-mailing the client its bills not in books (15 Oct 2026)
+
+Import 2B's **Email bills not in books** button sends the selected client, for
+the selected month, every document its suppliers reported in GSTR-2B that it
+has not yet recorded in its books, as an Excel working paper attached to the
+`bills_not_in_books` template (Reminders → Templates, "Lists to clients").
+`src/lib/billsNotInBooksMail.ts` holds the logic.
+
+- **The list** is the month's open Not in Books ledger rows
+  (`bills_not_in_books` with no `book_entry_month`, which carry earlier months
+  forward), plus this month's 2B documents marked Not in Books but not yet
+  posted. Credit notes are never Not in Books (§10). Amounts are the ledger's:
+  an amendment counts at its difference, so a row can be negative. A ledger
+  row that repeats a listed document (same supplier, number and figures, dated
+  within a day) is sent once and named in the pop-up, so staff can clean the
+  ledger. SWENI's ledger held 27 such pairs, carried from older months.
+- **The working paper** follows the house style of the GSTR-9 papers (Arial 9,
+  navy heads, `#,##0.00` with brackets, totals with a double rule, frozen
+  head, filter, landscape print fitted to width, a "Your remarks" column for
+  the client). It has two sheets: the documents, and a supplier summary.
+- **The e-mail** goes through `email_outbox` (now with `cc_email` and
+  `attachments`) and is sent at once by `send-gst-email`, which since version 5
+  sends Graph file attachments, copies and several recipients. The pop-up fills
+  the client's e-mail, takes a CC and a reply-by date (5 days ahead by
+  default), and shows when it was last sent. The client's name drops the
+  firm's own "NO ITC" / "PARTIAL ITC" marker in everything the client sees.
+- Unsaved row actions block the send, as they block Post to Reconciliation.

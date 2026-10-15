@@ -31,6 +31,7 @@ import {
 } from '@/lib/twobDocs';
 import ReclaimMatchDialog, { ReclaimInvoiceLite } from '@/components/dialogs/ReclaimMatchDialog';
 import Gstr2aImportCard from '@/components/gstr2a/Gstr2aImportCard';
+import EmailBillsNotInBooksDialog from '@/components/import2b/EmailBillsNotInBooksDialog';
 import { cn } from '@/lib/utils';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import {
@@ -2317,6 +2318,17 @@ const Import2BTab: React.FC = () => {
                 {isPosting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                 Post to Reconciliation
               </Button>
+            )}
+            {selectedClient && selectedMonth && (twoBDocs.length > 0 || pendingBillsBooks.length > 0) && (
+              <EmailBillsNotInBooksDialog
+                clientId={selectedClient}
+                clientName={selectedClientName}
+                clientGstin={clients.find((c) => c.id === selectedClient)?.gstin || ''}
+                periodMonth={selectedMonth}
+                triggerClassName={WS_BTN}
+                blockedReason={isImporting ? 'Wait for the import to finish.'
+                  : pendingCount > 0 ? 'Save your row-action changes first: the e-mail lists the saved Not in Books documents.' : null}
+              />
             )}
             {twoBDocs.length > 0 && (
               <Button
