@@ -121,6 +121,8 @@ const AMOUNT_HEADER_RE = /value|amount|igst|cgst|sgst|cess|tax|total|itc|liabili
 const DATE_RE = /^(\d{1,2}[-/.](\d{1,2}|[A-Za-z]{3})[-/.]\d{2,4}|\d{4}-\d{2}-\d{2})(T[\d:.]+Z?)?$/;
 const URL_RE = /^https?:\/\//i;
 const LONG_TEXT_HEADER_RE = /reason|remark|note|what to do|action|evidence|description|narration|particulars|cause|comment|detail|address|subject/i;
+/** A placeholder, not a value: a lone dash or "NOT PULLED". Printed quietly, and never decides a column's kind. */
+export const SENTINEL_RE = /^(not pulled|not available|n\/a|[-–—])$/i;
 
 /** Parse a date cell (DD-MM-YYYY, DD/MM/YYYY, DD-Mon-YYYY, YYYY-MM-DD) to a UTC Date, or null. */
 export function parseDateCell(v: unknown): Date | null {
@@ -146,7 +148,7 @@ const utc = (y: number, m: number, d: number): Date | null => {
 export function classifyColumns(headers: string[], rows: (string | number)[][], kinds: RowKind[], widths?: number[], labels?: string[]): ColumnSpec[] {
   const data = rows.filter((_, i) => kinds[i] === 'data');
   return headers.map((header, index) => {
-    const values = data.map((r) => r[index]).filter((v) => text(v) !== '' && text(v) !== '—' && text(v) !== '-');
+    const values = data.map((r) => r[index]).filter((v) => text(v) !== '' && !SENTINEL_RE.test(text(v)));
     const numbers = values.filter((v) => typeof v === 'number');
     const strings = values.filter((v): v is string => typeof v === 'string');
     let kind: ColumnKind = 'text';
