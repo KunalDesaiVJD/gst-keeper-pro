@@ -5067,8 +5067,8 @@
   // to 6; NEXT only opens the form, nothing is filed.
   // 0.11.7: returns 'answered' (No chosen and NEXT pressed), 'pending' (No
   // chosen, NEXT not yet active) or false (question not on the page). Keeps
-  // what it saw in g9NilSeen for the row's diagnosis.
-  let g9NilSeen = '';
+  // what it saw on the function itself (g9AnswerNilNo.seen) for the row's
+  // diagnosis. No top-level let/const here: the job runs before they are set.
   function g9AnswerNilNo() {
     const shown = (e) => !!e && e.getClientRects().length > 0;
     const q = $$('div, p, span, label, td, li, h4, h5, strong').filter((e) => shown(e)
@@ -5097,7 +5097,7 @@
       } else noBtn.click();
       // NEXT, even while disabled, so its state can be reported.
       const next = $$('button, input[type=button], input[type=submit], a.btn').find((b) => shown(b) && /^NEXT\b/.test(btnText(b)));
-      g9NilSeen = 'No ' + (no ? 'radio checked=' + no.checked + ' value=' + no.value + (no.getAttribute('ng-model') ? ' ng-model=' + no.getAttribute('ng-model') : '') : 'button')
+      g9AnswerNilNo.seen = 'No ' + (no ? 'radio checked=' + no.checked + ' value=' + no.value + (no.getAttribute('ng-model') ? ' ng-model=' + no.getAttribute('ng-model') : '') : 'button')
         + ' · NEXT ' + (next ? (next.disabled || next.getAttribute('disabled') !== null ? 'disabled' : 'active') : 'not found')
         + ' · html: ' + (box.outerHTML || '').replace(/\s+/g, ' ').slice(0, 900);
       if (next && !next.disabled && next.getAttribute('disabled') === null) { next.click(); return 'answered'; }
@@ -5299,7 +5299,7 @@
           if (r) {
             g9.nilAnswered = (g9.nilAnswered || 0) + 1;
             g9.nilState = r;
-            g9.nilSeen = g9NilSeen;
+            g9.nilSeen = g9AnswerNilNo.seen || '';
             await setJob(job);
             banner('GSTR-9 FY ' + fyLabel + (r === 'answered'
               ? ': answered "No" to "file NIL return" and pressed NEXT; waiting for the figures…'

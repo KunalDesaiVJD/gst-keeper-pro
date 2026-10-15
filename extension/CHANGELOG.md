@@ -2,6 +2,12 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-15 — GSTR-9 pull no longer stops at the NIL question (v0.11.8)
+
+- 0.11.7 stopped at the NIL question with "Cannot access 'g9NilSeen' before initialization" (Amber Gum). It never chose No. The cause was the same as in 0.11.0: a top-level `let` placed after the job runner.
+- The value now lives on the function itself.
+- New test `test/13-no-late-bindings.test.mjs` fails on any top-level `const` / `let` / `class` after the job dispatch. It catches this bug in 0.11.7.
+
 ## 2026-10-15 — NIL answer registers, NEXT pressed when active (v0.11.7)
 
 - Amber Gum 2025-26: 0.11.6 chose No on the NIL question, but the GSTR-9 form never opened: the page loaded nothing after it. NEXT was most likely still disabled, because the page had not registered the choice.
