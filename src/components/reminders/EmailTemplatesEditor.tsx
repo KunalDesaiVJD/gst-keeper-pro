@@ -8,14 +8,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Loader2, Save, Bell, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Loader2, Save, Bell, CheckCircle2, AlertTriangle, Mail } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { buildEmailHtml } from '@/lib/emailTemplate';
 
 interface Tpl {
   key: string;
   name: string;
-  kind: 'reminder' | 'confirmation' | 'notice_alert';
+  kind: 'reminder' | 'confirmation' | 'notice_alert' | 'bills_not_in_books';
   step: number | null;
   subject: string;
   body: string;
@@ -41,7 +41,15 @@ const NOTICE_VARS = [
   'document_list', 'next_step', 'staff_status',
   'report_date', 'mis_content', 'anomaly_description',
 ];
+// Import 2B's "Email bills not in books" (the list goes as an Excel attachment).
+const BILLS_VARS = [
+  'contact_person', 'client_name', 'gstin', 'period', 'bill_count', 'itc_total', 'reply_by',
+  'staff_name', 'firm_name', 'firm_email',
+];
 const SAMPLE: Record<string, string> = {
+  bill_count: '12 documents',
+  itc_total: '₹1,84,320.00',
+  reply_by: '20 Oct 2026',
   contact_person: 'Rajesh Shah',
   client_name: 'ABC Enterprises',
   gstin: '24ABCDE1234F1Z5',
@@ -150,7 +158,8 @@ const EmailTemplatesEditor: React.FC = () => {
   const reminders = templates.filter(t => t.kind === 'reminder');
   const confirmations = templates.filter(t => t.kind === 'confirmation');
   const noticeAlerts = templates.filter(t => t.kind === 'notice_alert');
-  const activeVars = current?.kind === 'notice_alert' ? NOTICE_VARS : VARS;
+  const clientLists = templates.filter(t => t.kind === 'bills_not_in_books');
+  const activeVars = current?.kind === 'notice_alert' ? NOTICE_VARS : current?.kind === 'bills_not_in_books' ? BILLS_VARS : VARS;
 
   const listItem = (t: Tpl) => (
     <button
@@ -190,6 +199,12 @@ const EmailTemplatesEditor: React.FC = () => {
               <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><CheckCircle2 className="h-3.5 w-3.5" /> Confirmations</p>
               <div className="space-y-1.5">{confirmations.map(listItem)}</div>
             </div>
+            {clientLists.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Mail className="h-3.5 w-3.5" /> Lists to clients</p>
+                <div className="space-y-1.5">{clientLists.map(listItem)}</div>
+              </div>
+            )}
             {noticeAlerts.length > 0 && (
               <div className="space-y-1.5">
                 <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><AlertTriangle className="h-3.5 w-3.5" /> Notice Alerts</p>

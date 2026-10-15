@@ -2,7 +2,10 @@
 //
 // Drains public.email_outbox (status='pending') by sending each message from
 // gst@vjdesai.com via the Microsoft Graph API (application permission Mail.Send,
-// client-credentials flow). No attachments. Marks each row sent/failed.
+// client-credentials flow). Marks each row sent/failed. to_email and cc_email
+// may hold several addresses (comma or semicolon separated); attachments
+// ([{ name, content_type, content_base64 }], e.g. Import 2B's bills not in
+// books workbook) go out as Graph file attachments.
 //
 // Invoked by:
 //   • the "Send queued now" button on the Reminders page (anon key), and
@@ -44,13 +47,32 @@ async function graphToken(): Promise<string> {
   return j.access_token as string;
 }
 
-async function sendMail(token: string, to: string, subject: string, body: string): Promise<void> {
+interface Attachment { name: string; content_type?: string; content_base64: string }
+
+const recipients = (list: string | null | undefined) =>
+  String(list ?? '').split(/[,;]+/).map((a) => a.trim()).filter(Boolean)
+    .map((address) => ({ emailAddress: { address } }));
+
+async function sendMail(
+  token: string, to: string, subject: string, body: string,
+  extra: { cc?: string | null; attachments?: Attachment[] | null } = {},
+): Promise<void> {
+  const files = (extra.attachments ?? []).filter((a) => a && a.name && a.content_base64);
   const payload = {
     message: {
       subject: subject || '(no subject)',
       // Templates are corporate HTML; send as HTML so the layout renders.
       body: { contentType: 'HTML', content: body ?? '' },
-      toRecipients: [{ emailAddress: { address: to } }],
+      toRecipients: recipients(to),
+      ...(recipients(extra.cc).length ? { ccRecipients: recipients(extra.cc) } : {}),
+      ...(files.length ? {
+        attachments: files.map((a) => ({
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          name: a.name,
+          contentType: a.content_type || 'application/octet-stream',
+          contentBytes: a.content_base64,
+        })),
+      } : {}),
     },
     saveToSentItems: true,
   };
@@ -83,7 +105,7 @@ Deno.serve(async (req) => {
   } catch { /* no body */ }
 
   let q = sb.from('email_outbox')
-    .select('id, to_email, subject, body, kind, template_key, render_vars')
+    .select('id, to_email, cc_email, subject, body, kind, template_key, render_vars, attachments')
     .eq('status', 'pending')
     .order('created_at', { ascending: true })
     .limit(limit);
@@ -109,7 +131,7 @@ Deno.serve(async (req) => {
       .select('id');
     if (!claim?.length) continue; // already claimed elsewhere
 
-    if (!row.to_email) {
+    if (!recipients(row.to_email).length) {
       await sb.from('email_outbox').update({ status: 'skipped', error: 'no recipient email' }).eq('id', row.id);
       skipped++;
       continue;
@@ -120,7 +142,7 @@ Deno.serve(async (req) => {
       const html = row.render_vars
         ? buildEmailHtml({ key: row.template_key, kind: row.kind, message: row.body ?? '', vars: row.render_vars })
         : (row.body ?? '');
-      await sendMail(token, row.to_email, row.subject, html);
+      await sendMail(token, row.to_email, row.subject, html, { cc: row.cc_email, attachments: row.attachments });
       await sb.from('email_outbox')
         .update({ status: 'sent', sent_at: new Date().toISOString(), error: null })
         .eq('id', row.id);

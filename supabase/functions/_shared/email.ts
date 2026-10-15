@@ -20,6 +20,7 @@ const SHELL: Record<string, ShellMeta> = {
   confirmation_nil: { accent: '#16a34a', pill: { text: '&#10003; Nil Return Filed', bg: '#dcfce7', fg: '#166534' }, box: { bg: '#f0fdf4', border: '#bbf7d0', label: '#15803d' } },
   notice_alert: { accent: '#7c3aed', pill: { text: 'Notice Alert', bg: '#ede9fe', fg: '#5b21b6' }, box: { bg: '#faf5ff', border: '#ddd6fe', label: '#6b21a8' } },
   notice_alert_soon: { accent: '#d97706', pill: { text: 'Due soon &middot; Notice Alert', bg: '#fef3c7', fg: '#92400e' }, box: { bg: '#fffbeb', border: '#fde68a', label: '#78716c' } },
+  bills_not_in_books: { accent: '#d97706', pill: { text: 'Action needed &middot; Books update', bg: '#fef3c7', fg: '#92400e' }, box: { bg: '#fffbeb', border: '#fde68a', label: '#78716c' } },
   notice_alert_critical: { accent: '#dc2626', pill: { text: 'Urgent &middot; Notice Alert', bg: '#fee2e2', fg: '#b91c1c' }, box: { bg: '#fef2f2', border: '#fecaca', label: '#7f1d1d' } },
 };
 
@@ -61,6 +62,12 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
       if (g('days_remaining')) rows.push(['Days Remaining', g('days_remaining')]);
       if (g('hearing_date')) rows.push(['Hearing Date', g('hearing_date')]);
       if (g('priority')) rows.push(['Priority', g('priority')]);
+    } else if (kind === 'bills_not_in_books') {
+      // Import 2B's bills not in books: the list itself is the attachment.
+      rows.push(['Period', g('period')]);
+      rows.push(['Documents', g('bill_count')]);
+      rows.push(['ITC involved', g('itc_total')]);
+      rows.push(['Reply by', g('reply_by')]);
     } else {
       rows.push(['Return', key === 'confirmation_nil' ? `NIL ${g('return_type')}`.trim() : g('return_type')]);
       rows.push(['Period', g('period')]);
@@ -74,7 +81,7 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
   }
   const dueColor = key === 'reminder_final' ? '#dc2626' : '#b45309';
   const rowColor = (label: string) =>
-    label === 'Filing due' ? `color:${dueColor};` : label === 'Reply due' && (tone === 'urgent' || tone === 'soon') ? `color:${toneColor};` : '';
+    label === 'Filing due' || label === 'Reply by' ? `color:${dueColor};` : label === 'Reply due' && (tone === 'urgent' || tone === 'soon') ? `color:${toneColor};` : '';
   const detailRows = rows
     .filter(([, val]) => val && val !== '')
     .map(([label, val]) =>
@@ -135,6 +142,7 @@ ${detailRows ? `<table role="presentation" width="100%" cellpadding="0" cellspac
 <tr><td style="padding:14px 16px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;color:#334155;">${detailRows}</table></td></tr>
 </table>` : ''}
 ${paras}
+${kind === 'bills_not_in_books' && vars.table_html ? String(vars.table_html) : ''}
 ${signature}
 </td></tr>
 <tr><td style="background:#f1f5f9;padding:15px 28px;border-top:1px solid #e2e8f0;">

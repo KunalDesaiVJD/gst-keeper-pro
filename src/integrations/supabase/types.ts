@@ -5362,6 +5362,8 @@ export type Database = {
       }
       email_outbox: {
         Row: {
+          attachments: Json | null
+          cc_email: string | null
           body: string
           client_id: string | null
           created_at: string
@@ -5384,6 +5386,8 @@ export type Database = {
           to_email: string
         }
         Insert: {
+          attachments?: Json | null
+          cc_email?: string | null
           body: string
           client_id?: string | null
           created_at?: string
@@ -5406,6 +5410,8 @@ export type Database = {
           to_email: string
         }
         Update: {
+          attachments?: Json | null
+          cc_email?: string | null
           body?: string
           client_id?: string | null
           created_at?: string
