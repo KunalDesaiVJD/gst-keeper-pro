@@ -5040,7 +5040,12 @@
     // getDetails answers carry no period: taken when loaded during this year's visit.
     return item.url.indexOf(retPeriod) >= 0 || !/ret_period=|rtn_prd=/.test(item.url);
   }
-  function g9HasCalc(c) { return !!(c && (c.table4 || c.table5 || c.table6)); }
+  // A table with figures, not the portal's placeholder ({procRecord5: …} or
+  // a bare checksum) that an unopened form answers with (Amber Gum, 15 Oct).
+  function g9Real(t) { return !!t && typeof t === 'object' && Object.keys(t).some((k) => !/^(chksum|procRecord\d*|editable)$/i.test(k)); }
+  // 0.11.6: figures fetched = Table 4 or Table 6 with content; Table 5 alone
+  // (or a placeholder) is not, so the pull goes on to open the form.
+  function g9HasCalc(c) { return !!(c && (g9Real(c.table4) || g9Real(c.table6))); }
   // The filed return's summary page carries each table's total only
   // ({camt, iamt, …}); its Table 6 / Table 7 tiles carry the rows.
   function g9Detail7(o) { return !!(o && typeof o === 'object' && ['rule37', 'rule39', 'rule42', 'rule43', 'sec17', 'revsl_tran1', 'revsl_trans1', 'other'].some((k) => k in o)); }

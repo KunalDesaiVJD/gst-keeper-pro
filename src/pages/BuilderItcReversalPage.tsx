@@ -59,7 +59,7 @@ const LINES: Line[] = [
 ];
 const STATUS_VARIANT = { DRAFT: 'secondary', SUBMITTED: 'warning', APPROVED: 'success' } as const;
 /** First extension version that reads the filed GSTR-9's Tables 6 and 7 from the portal's own GSTR-9 page. */
-const FILED_GSTR9_MIN_VERSION = '0.11.5';
+const FILED_GSTR9_MIN_VERSION = '0.11.6';
 const POLL_MS = 10_000;
 const POLL_MAX = 36;
 

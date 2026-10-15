@@ -2,6 +2,11 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-15 — Placeholder tables are not figures (v0.11.6)
+
+- Amber Gum 2025-26 (unfiled): the form had never been opened, so `getDetails` answered Table 5 with a placeholder (`procRecord5`, all nil) and Tables 4 and 6 not at all. 0.11.5 counted any Table 5 as figures fetched, saved that and stopped.
+- Figures now count as fetched only when Table 4 or Table 6 has content; a placeholder or a bare checksum does not count. Otherwise the pull goes on to Prepare Online (NIL question answered No, NEXT) and asks again.
+
 ## 2026-10-14 — GSTR-9 tables read straight from the form (v0.11.5)
 
 - The kept answers (0.11.3) show how the GSTR-9 form loads a table: `api/gstr9/getDetails?gstin=…&ret_period=…&sec_name=TABLE7`, in the same layout as `details/calc`.
