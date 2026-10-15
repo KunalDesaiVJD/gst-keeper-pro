@@ -30,7 +30,6 @@ import {
   type TwobTone, type EarlierVersionCandidate, type DefaultActionInput,
 } from '@/lib/twobDocs';
 import ReclaimMatchDialog, { ReclaimInvoiceLite } from '@/components/dialogs/ReclaimMatchDialog';
-import Gstr2aImportCard from '@/components/gstr2a/Gstr2aImportCard';
 import EmailBillsNotInBooksDialog from '@/components/import2b/EmailBillsNotInBooksDialog';
 import { cn } from '@/lib/utils';
 import { KpiTile, Note } from '@/components/gstr9/ui';
@@ -2373,16 +2372,6 @@ const Import2BTab: React.FC = () => {
           </div>
         </CardContent>
       </Card>
-
-      {selectedClient && selectedMonth && (
-        <Gstr2aImportCard
-          clientId={selectedClient}
-          clientName={selectedClientName}
-          clientGstin={clients.find((c) => c.id === selectedClient)?.gstin || ''}
-          month={selectedMonth}
-          readOnly={!isStaff}
-        />
-      )}
 
       {isLocked && (
         <Note tone="warn">
