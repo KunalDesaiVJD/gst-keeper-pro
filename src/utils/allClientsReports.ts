@@ -14,6 +14,7 @@
 import * as XLSX from 'xlsx';
 import { supabase } from '@/integrations/supabase/client';
 import { computeGstr1OutputTax } from './computeGstr1OutputTax';
+import { computeTotal4A } from './builderPartialItc';
 
 interface ClientRow { id: string; name: string; gstin: string; }
 
@@ -123,7 +124,11 @@ const computeCreditClosing = (
   const openingCgst = safeNum(gr?.opening_cgst);
   const openingSgst = safeNum(gr?.opening_sgst);
   const openingIgst = safeNum(gr?.opening_igst);
-  const availed = itc ? sumSection(itc.section4A) : { cgst: 0, sgst: 0, igst: 0 };
+  // Total 4A as ITC Summary shows it: rows (1) to (4) plus Total (5), which
+  // subtracts row 5.3 (supplier credit notes) rather than adding it.
+  const availed = itc
+    ? computeTotal4A((itc.section4A || []).map((r: any) => ({ srNo: r?.srNo, igst: safeNum(r?.igst), cgst: safeNum(r?.cgst), sgst: safeNum(r?.sgst) })))
+    : { cgst: 0, sgst: 0, igst: 0 };
   const reversed = itc ? sumSection(itc.section4B) : { cgst: 0, sgst: 0, igst: 0 };
   const reclaimed = itc ? sumSection(itc.section4D) : { cgst: 0, sgst: 0, igst: 0 };
   const output = rawJson ? computeGstr1OutputTax(rawJson, periodMonth) : { igst: 0, cgst: 0, sgst: 0 };

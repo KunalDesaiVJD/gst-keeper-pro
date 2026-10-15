@@ -7,7 +7,8 @@ a firm sign-off conversation** (the clarifying questions asked before this
 build were not answered) — flag it if any of the four below don't match how
 the firm actually wants it to work; each is a one-line change to reverse.
 (§5, the per-client Strict/Liberal toggle, *was* confirmed directly with the
-firm — see that section for the answers.)
+firm — see that section for the answers — and so were §10's two choices on
+credit notes and amendments.)
 
 ---
 
@@ -46,6 +47,9 @@ to Reconciliation" button.
 | Books row: **NOT_IN_2B** | Booked, supplier hasn't filed / not in 2B this period | → `bills_not_in_2b` row; `reversal_month` = this period (see §2), `reclaim_month` blank until resolved. **Also** feeds ITC Summary row 5.1 this period (gross claim), reversed straight back out via 4B(2)(i) at the same amount — see "Row 5.1 auto-link" below |
 | Books row: **MISMATCHED** | Paired to a 2B doc that differs by >₹10 | No ledger row — covered by the 2B doc's own MISMATCHED handling above |
 | Books row: **NOT_ELIGIBLE** | Booked but the firm has determined it's blocked credit | No ledger row — permanently excluded, not a timing gap |
+
+The table is written for invoices. A supplier debit note follows it exactly; a
+credit note and an amendment differ, see §10.
 
 ## §1. Mismatch → claim at the 2B value, not the books value
 
@@ -88,9 +92,10 @@ The link is recorded on `bills_not_in_2b.reclaimed_via_doc_id` (→
 `twob_import_docs.id`). Changing a RECLAIM doc's action to something else
 releases the link (`reclaim_month`/`reclaim_subtype`/`reclaimed_via_doc_id`
 cleared) so the pending item goes back to "awaiting reclaim" rather than
-silently staying marked reclaimed against a doc that no longer says so —
-`handleDocActionChange` and `applyBulk` both do this before writing the new
-action.
+silently staying marked reclaimed against a doc that no longer says so.
+`handleDocActionChange` and `applyBulk` only stage the change; `saveActions`
+releases the links of every staged row leaving RECLAIM before it writes the
+new actions.
 
 **The ₹2 rounding tolerance (added 2026-09-19).** This was an exact match to
 the paisa until the firm asked for it to be relaxed. Exact sounds like the
@@ -134,12 +139,14 @@ rows in their own "Expensed out — Undo" table, and Undo clears
 already works today by changing that 2B doc's action away from RECLAIM in
 Zone 1, per the paragraph above.)
 
-**Known gap:** deleting a period's imported 2B batch (or re-importing over
-it) deletes its `twob_import_docs` rows, which cascades `reclaimed_via_doc_id`
-to `NULL` on any linked `bills_not_in_2b` row (`ON DELETE SET NULL`) but
-leaves `reclaim_month` set — an orphaned "reclaimed" row with no linked
-evidence. Not handled in this pass; re-run Post to Reconciliation and
-manually correct if it comes up.
+**Formerly a known gap (closed 14 Oct 2026, §10):** re-importing a period
+used to delete and re-insert its `twob_import_docs` rows, which reset every
+classification and left linked `bills_not_in_2b` rows "reclaimed" with no
+evidence (`ON DELETE SET NULL` on `reclaimed_via_doc_id`, `reclaim_month`
+left set) and posted `bills_not_in_books` rows unlinked, so the same ITC
+could be claimed twice. A re-import now merges (§10), and "Delete imported
+2B" releases the reclaim links and removes the linked, unlocked Not in Books
+rows before it deletes.
 
 ## §3. 2B Reconciliation is read-only for Strict clients
 
@@ -566,3 +573,166 @@ everyone else keeps the rules as they are.
 - **2B document figures on Import 2B** (portal data).
 - **Edit / delete of recorded advance set-off legs and opening advances.** The
   app has no screen for these yet.
+
+## §10. Debit notes, credit notes and amendments (firm decision, 14 Oct 2026)
+
+Until 14 Oct 2026 Import 2B read only the invoice sheets of the GSTR-2B Excel
+(B2B, B2B (ITC Reversal), B2B(Rejected)). Debit and credit notes and every
+amendment were dropped without a word, so a month with notes reconciled
+wrong. Before Import 2B (until 05/2026) staff had entered credit notes by hand
+as negative rows; since then nothing carried them.
+
+**What is read** (`src/utils/parseGstr2b.ts`): the whole B2B family, twelve
+sheets: B2B, B2BA, B2B-CDNR, B2B-CDNRA in the available bucket; their Rule 37A
+reversal sheets (B2B (ITC Reversal), B2BA (ITC Reversal), B2B-DNR, B2B-DNRA)
+and IMS rejected sheets (B2B(Rejected), B2BA(Rejected), B2B-CDNR(Rejected),
+B2B-CDNRA(Rejected)). Sheet names are matched ignoring spaces and case. Any
+other sheet with rows (ECO, ISD, imports) is named in a warning, to be handled
+by hand. Amounts are stored positive, as on the 2B; `doc_type` (INVOICE /
+DEBIT_NOTE / CREDIT_NOTE) gives the sign. The meaning of every document lives
+in one module, `src/lib/twobDocs.ts`.
+
+**The firm's choices (asked and answered 14 Oct 2026):**
+
+1. **Credit notes fill ITC Summary row 5.3 "Debit Note"** (the firm's own
+   name for the purchase return). For a Strict client, row 5.3 is the month's
+   Matched and Mismatched credit notes and is no longer typed, so a note is
+   never deducted twice. Liberal and No-ITC clients keep typing 5.3, marked in
+   red with what 2B gives (as row 5.1). Other adjustments staff used to park in
+   5.3 belong in 4B(2)(ii). Row 5.3 fills itself only for a month imported
+   with the new parser (`full_2b`); older months keep the 5.3 they were filed
+   with.
+2. **An amendment counts only its difference.** The confirmed original (in an
+   earlier month, often filed) is never touched. The amendment row is linked
+   to the version Import 2B already counted (`amends_doc_id`, `base_*`: that
+   version's figures) and counts revised minus counted this month, following
+   that version's treatment: Matched (or Mismatched or reclaimed) → the
+   difference is claimed in 5.1, or reduced if negative; Not in Books → the
+   difference is posted to Not in Books beside the original (it may be
+   negative); Ineligible / ITC of Others → excluded. A number or date
+   correction shows ₹0. When no earlier version is in Import 2B (imported
+   before Import 2B, or never imported) the row is **Held**: counted nowhere
+   until staff choose its treatment. Matched on such a row would claim the
+   full revised value, as if the original was never claimed, so the row says
+   so, Save asks first, and **Enter counted** on the row records what the
+   earlier version counted (`base_*` with no `amends_doc_id`): the row then
+   counts only the difference. A second amendment counts against the first;
+   one that amends a held amendment stays Held until that one is settled.
+
+**Engineering positions (not asked; reversible):**
+
+- **Debit notes** are claimed like invoices (5.1), with every invoice
+  treatment. Their s.16(4) clock runs from the debit note's own date.
+- **A credit note reduces ITC this month even when it is not in the books
+  yet:** IMS has accepted it (or deemed it accepted) and the portal has
+  already reduced the auto-filled 3B. It is never parked Not in Books and
+  never evidences a reclaim; its treatments are Matched, Mismatched,
+  Ineligible and ITC of Others. A credit note with ITC Availability No still
+  reduces (the GSTR-2B instructions keep the reversal on credit notes), unless
+  the recipient declared in IMS that no ITC is to be reduced (then
+  Ineligible). With "Yes" and a declared amount, the declared tax is what
+  reduces.
+- **A credit note missing from 2B has no entry**: the books register takes
+  invoices and debit notes only, since row 5.3 follows 2B.
+- **Rule 37A reversal rows and IMS rejected rows start Ineligible**, so they
+  never reach 5.1 (before this change they defaulted to Matched; none existed
+  live). A Rule 37A reversal is typed in 4B(2)(ii).
+- **Matching is by type**: a books row is paired only with a 2B document of
+  the same type. A similar-numbered document of the other type gives a
+  warning, never a pairing.
+- **Colours**: invoices plain, debit notes amber, credit notes rose,
+  amendments violet, with a legend that filters.
+- **Re-import merges.** A document is the same one when its type, amendment
+  flag, supplier and normalised number (and amended number) agree. A matched
+  row keeps its id, treatment, pairing and posting; a new one is inserted; a
+  row missing from the file is deleted unless something depends on it (a
+  reclaim, a Not in Books entry on the ledger, or a later amendment), in
+  which case it is kept and named. Neither the posting stamp (Post stamps the
+  whole month) nor a books pairing (the re-match turns that books row Not in
+  2B) keeps a row, so a document that has left 2B stops counting. New rows
+  are written first, so a failure never empties a month. A filed month is
+  refused, except for the superadmin after a warning. One import runs at a
+  time per client and month in a browser (Web Locks), since the portal pull's
+  result reaches every open tab, and every write on the page (Save, Link &
+  Reclaim, Post, Delete 2B, Enter counted, the books register, Zone 4) waits
+  while one runs. Delete 2B, Post and Save also hold that lock while they
+  write (taken after their confirm dialogs), so an import refuses while one
+  of them runs and they refuse while an import runs; Post posts only the plan
+  it confirmed, read again under the lock. The merge updates a kept row's
+  figures and links by id (never an upsert) and not its treatment, books
+  pairing or posting stamp, so a change made while it ran (in another
+  session too) stays, and a row deleted meanwhile (Delete 2B in another
+  browser) stays deleted and is named, rather than coming back Matched; a
+  treatment the import itself changes is written only where the row still
+  holds the one it read. A books treatment
+  picked by hand against the matcher (Mismatched with no 2B document paired,
+  or Not in 2B on a row still paired to one) is kept by the re-match and
+  named, never rewritten.
+- **Finding the earlier version.** Among the client's earlier months, or an
+  original in the same file (a late filer's invoice and its amendment can sit
+  in one 2B): an original of the amended type, number and date (when both
+  dates are known, so a number reused after April is not taken), or an
+  earlier amendment of the same document, matched within its family whatever
+  its note type (an earlier amendment may have flipped it). A re-import counts
+  an amendment against a different version when one is found now (imported
+  since, out of order); an import names later months' amendments that were
+  counted against an older version, to be re-imported.
+- **What the base is.** The earlier version's figures, but zero when it
+  counted nothing (Ineligible or ITC of Others): a revision that makes it
+  eligible, the usual place of supply correction, claims in full. A revision
+  the 2B marks ITC Availability No (or, for a credit note, IMS "no ITC to be
+  reduced") starts Ineligible, and the import and the row name the earlier
+  version's counted figures, which stay claimed in their month and are
+  reversed by hand in 4B(2); when that version is parked Not in Books (never
+  claimed) they name its ledger entry to clear instead. A version the portal
+  had made ineligible (rejected in IMS, ITC Availability No, or IMS "no ITC
+  to be reduced" on a credit note) and the revision makes available starts
+  Matched, credit notes included. The base and treatment follow the earlier
+  version's treatment as it stands: when staff re-treat it (Save, a books
+  pairing that takes it out of Not in Books, a re-import's sheet move), the
+  amendments counted against it take the base afresh and, where they still
+  followed its old treatment, the new one, down a chain; a re-import does the
+  same for an amendment whose base no longer fits. A filed month is not
+  rewritten: those rows are named and their line warns.
+- **Reverse charge flag changed.** A reverse charge version sat in RCM
+  Summary, never in 5.1 / 5.3, so an amendment that drops the flag has a zero
+  base and is Held for staff (the RCM claim of that month is undone by hand).
+  An amendment into reverse charge goes to RCM Summary; the import names the
+  5.1 / 5.3 claim of the version it amends, to be reversed by hand.
+- **Partial reads.** A B2B-family sheet skipped whole, or with rows skipped,
+  is named before importing. The month's credit notes count as read
+  (`full_2b`, which lets row 5.3 fill itself) only when B2B-CDNR is in the
+  file and neither credit note sheet lost a row.
+- **Negative 4A(5).** When credit notes take a head of Total (5) below zero,
+  GSTR-3B puts 0 in 4A(5) and the excess in 4B(2) Others (net ITC unchanged),
+  and ITC Summary marks Total (5). For a Partial-ITC builder the carpet-area
+  split then gives a negative 4B(1) in that head: GSTR-3B files it as 0 and
+  takes it off 4B(2) Others (net ITC unchanged again).
+- **Filed months are not rewritten**: 06 to 08/2026 were imported with
+  invoices only and keep their typed 5.3. Missed debit notes go into a later
+  return within the s.16(4) limit.
+- **A note amendment that flips the type** (B2B-CDNRA: a credit note revised
+  into a debit note, or the reverse) adds the base instead of subtracting it,
+  and the whole change sits in the revised type's row: a credit note of 100
+  revised into a debit note of 100 adds 200 to row 5.1 (the reduction undone
+  and the debit note claimed), not 100 to 5.1 and minus 100 to 5.3. Net ITC is
+  the same either way; one row keeps one treatment. Whether to add or subtract
+  follows the earlier version's own type; where that differs from the type
+  the 2B names as original (a chain already flipped), the base is stored
+  negative. A debit note parked Not in Books and revised into a credit note
+  stores a zero base: it was never claimed, so the credit note reduces in
+  full and the parked entry stays on the ledger for staff to clear
+  (`flipsNoteType`, `baseFrom` in `twobDocs.ts`).
+- **Posting** (`postImport2B.ts`): an amendment marked Not in Books posts its
+  difference (it may be negative); one whose difference is zero (a number or
+  date correction) is not posted, and a ledger row it posted before is
+  retracted, since a ₹0 row would sit in Pending items forever. A credit note
+  found marked Not in Books (only possible from data written outside the page)
+  is not posted, is named in the Post confirmation, and any ledger row it
+  posted before is retracted.
+- **Totals throw on a read error**: `fetchImport2BEligibleTotal` and
+  `fetchImport2BCreditNotes` page through every row and throw instead of
+  returning zeros, so a failed read can never save a 5.1 or 5.3 of zero (ITC
+  Summary shows an error toast and refuses Save until a load succeeds;
+  GSTR-3B and its preview already catch errors from `fetchGstr3b`).
+

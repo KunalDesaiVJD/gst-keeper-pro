@@ -90,10 +90,11 @@ export interface Gstr3bResult {
   itcTyped?: Gstr3bItcTyped[];
 }
 export interface Gstr3bItcTyped {
-  row: '5.1' | '5.2';
+  row: '5.1' | '5.2' | '5.3';
   label: string;
   typed: { igst: number; cgst: number; sgst: number };
-  // Row 5.1 only: what Import 2B and this month's Not-in-2B reversal give.
+  // Row 5.1: what Import 2B and this month's Not-in-2B reversal give.
+  // Row 5.3: what the month's 2B credit notes reduce. None for row 5.2.
   twob?: { igst: number; cgst: number; sgst: number };
 }
 
@@ -355,10 +356,20 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   // 4A(5) "all other ITC" = 5.1 + 5.2 − 5.3 + 5.4 + 5.5, plus any manual
   // 4A(5) adjustment.
   const adj4A5 = sumAdj('4A(5)');
-  const oth4a = round3(add3(
+  const oth4aRaw = round3(add3(
     row(A, '5.1'), row(A, '5.2'), sub3({ igst: 0, cgst: 0, sgst: 0 }, row(A, '5.3')), row(A, '5.4'), row(A, '5.5'),
     { igst: adj4A5.igst, cgst: adj4A5.cgst, sgst: adj4A5.sgst },
   ));
+  // 4A(5) is never negative on the portal. When supplier credit notes (row
+  // 5.3, filled from 2B for a Strict client) or a negative amendment
+  // difference take a head below zero, that head is 0 in 4A(5) and the excess
+  // is reversed in 4B(2), as the portal's own auto-fill does. Net ITC (4C) is
+  // the same either way. A No-ITC builder reverses all of 4A in 4B(1) and has
+  // nothing to reduce, so its excess is dropped.
+  const excess4A5 = {
+    igst: Math.max(0, -oth4aRaw.igst), cgst: Math.max(0, -oth4aRaw.cgst), sgst: Math.max(0, -oth4aRaw.sgst),
+  };
+  const oth4a = round3(add3(oth4aRaw, excess4A5));
   const itcAvail = round3(add3(impg, imps, isrc, isd, oth4a));
 
   // Table 4(B) — Partial-ITC builder clients (docs/BUILDER_GST_POSITIONS.md
@@ -382,6 +393,13 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   // were the 5-row one silently zeroed 4(B)(2) instead.
   const isNoITC = input.builderItcType === 'NO_ITC';
   const isPartialITC = input.builderItcType === 'PARTIAL_ITC';
+  if (excess4A5.igst || excess4A5.cgst || excess4A5.sgst) {
+    const heads = [['IGST', excess4A5.igst], ['CGST', excess4A5.cgst], ['SGST', excess4A5.sgst]]
+      .filter(([, v]) => v).map(([h, v]) => `${h} ${Number(v).toFixed(2)}`).join(', ');
+    flags.push(isNoITC
+      ? `4A(5) All other ITC came out negative (${heads}): set to 0; a No-ITC client reverses all of 4A, so nothing moves to 4B(2).`
+      : `4A(5) All other ITC came out negative (${heads}), mostly supplier credit notes in row 5.3: set to 0 and the excess added to 4B(2) Others.`);
+  }
   const commercialArea = input.commercialArea || 0;
   const residentialArea = input.residentialArea || 0;
   // Keep Total 4A consistent with `itcAvail` above (which uses the live
@@ -407,16 +425,36 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   // clients skip both the split AND the plain lookup — (1) is forced to
   // equal itcAvail exactly, guaranteeing Net ITC (4C) is 0 by construction.
   // Non-builder clients fall through to the plain row lookup.
-  const revRul = isNoITC
+  const revRulRaw = isNoITC
     ? round3(itcAvail) // 4B(1) — locked to the whole of 4A, no exceptions
     : partialSplit
     ? round3(add3(partialSplit.row1Reclassified, { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })) // 4B(1) rule 38/42/43 & 17(5)
     : round3(add3(row(B, '(1)'), { igst: adj4B1.igst, cgst: adj4B1.cgst, sgst: adj4B1.sgst })); // 4B(1) rule 38/42/43 & 17(5)
-  const revOth = isNoITC
+  const revOthRaw = isNoITC
     ? { igst: 0, cgst: 0, sgst: 0 } // 4B(2) others — always 0 for a No-ITC builder
     : partialSplit
-    ? round3(partialSplit.row2Reclassified) // 4B(2) others — 2B-reco / 180-day reversal
-    : round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'))); // 4B(2) others
+    ? round3(add3(partialSplit.row2Reclassified, excess4A5)) // 4B(2) others: 2B-reco / 180-day reversal, plus a negative 4A(5)'s excess
+    : round3(add3(row(B, '(i)'), row(B, '(ii)'), row(B, '(iii)'), excess4A5)); // 4B(2) others, plus a negative 4A(5)'s excess
+  // A Partial-ITC builder's carpet-area split runs on Total 4A before 4A(5)
+  // is clipped, so credit notes that take a head of Total 4A below zero give
+  // a negative 4B(1), which the portal refuses. That head is 0 in 4B(1) and
+  // its negative part comes off 4B(2) Others (which holds the clipped
+  // excess), so net ITC (4C) is unchanged.
+  // Only a head whose 4A(5) was clipped, and never more than 4B(2) holds: a
+  // negative 4B(1) from typed adjustments in an ordinary month stays as it
+  // was (the draft check flags it for staff to correct).
+  const clipNeg = (h: 'igst' | 'cgst' | 'sgst') =>
+    excess4A5[h] > 0 ? Math.max(Math.min(0, revRulRaw[h]), -Math.max(0, revOthRaw[h])) : 0;
+  const negRul = partialSplit && !isNoITC
+    ? { igst: clipNeg('igst'), cgst: clipNeg('cgst'), sgst: clipNeg('sgst') }
+    : { igst: 0, cgst: 0, sgst: 0 };
+  const revRul = round3(sub3(revRulRaw, negRul));
+  const revOth = round3(add3(revOthRaw, negRul));
+  if (negRul.igst || negRul.cgst || negRul.sgst) {
+    const heads = [['IGST', negRul.igst], ['CGST', negRul.cgst], ['SGST', negRul.sgst]]
+      .filter(([, v]) => v).map(([h, v]) => `${h} ${Number(v).toFixed(2)}`).join(', ');
+    flags.push(`4B(1) Rule 42/43 reversal came out negative (${heads}), since credit notes took Total 4A below zero: set to 0 and taken off 4B(2) Others (net ITC unchanged).`);
+  }
 
   const rclmd1 = row(D, '(1)');                       // 4D(1) ITC reclaimed which was reversed under 4B(2) in an earlier period
   const inelgOth = row(D, '(2)');                     // 4D(2) 16(4) & PoS

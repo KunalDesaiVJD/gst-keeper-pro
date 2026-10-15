@@ -6,6 +6,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bItcTyped, type Gstr3bResult, type ItcData, type ItcRow, type RcmTotals } from './buildGstr3bJson';
 import { fetchItcAutoLinkTotals } from '@/lib/itcAutoLink';
+import { fetchImport2BHeld, import2BHeldMessage } from '@/lib/postImport2B';
 
 const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const toShort = (mmYyyy: string) => {
@@ -19,7 +20,7 @@ export async function fetchGstr3b(
   periodMonth: string, // MM/YYYY
 ): Promise<Gstr3bResult> {
   const short = toShort(periodMonth);
-  const [g, itcRes, rcmRes, adjRes, fsiRes, filingRes, clientRes, autoLink] = await Promise.all([
+  const [g, itcRes, rcmRes, adjRes, fsiRes, filingRes, clientRes, autoLink, held] = await Promise.all([
     supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', short).maybeSingle(),
     supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle(),
     supabase.from('rcm_data').select('taxable_value, cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', short),
@@ -46,9 +47,12 @@ export async function fetchGstr3b(
       .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']),
     // Builder Partial-ITC / No-ITC carpet-area apportionment — see
     // docs/BUILDER_GST_POSITIONS.md §7 and builderPartialItc.ts. Also carries
-    // liberal_2b_reconciliation, which gates the row-5.1 auto-link below.
+    // liberal_2b_reconciliation, which gates the row 5.1 / 5.3 auto-links below.
     supabase.from('clients').select('builder_itc_type, commercial_area, residential_area, liberal_2b_reconciliation').eq('id', clientId).maybeSingle(),
     fetchItcAutoLinkTotals(clientId, periodMonth),
+    // Amendments HELD in Import 2B count in neither 5.1 nor 5.3 until staff
+    // settle them: flagged below. A failed count is flagged, never fatal.
+    fetchImport2BHeld(clientId, periodMonth).catch(() => null),
   ]);
 
   const alreadyFiled = ((filingRes.data as { status: string }[]) || []).some((r) => r.status === 'Filed');
@@ -73,11 +77,18 @@ export async function fetchGstr3b(
   // entry template — staff type the figure directly in ITC Summary now.
   // Option 3 (14 Oct 2026): what in 4A(5) was typed in ITC Summary rather
   // than taken from 2B: row 5.1 of a Liberal or No-ITC client, and row 5.2.
+  // Row 5.3 "Debit Note" (14 Oct 2026, §10) is the month's 2B credit notes
+  // for a Strict client, patched live like 5.1, but only for a month whose
+  // import read the notes (notesFromImport2B); an older month keeps 5.3 as
+  // saved. A Liberal or No-ITC client's 5.3 stays typed and, once the notes
+  // were read, is listed here beside what 2B gives.
   const itcTyped: Gstr3bItcTyped[] = [];
   if (itc) {
     const isLiberal = !!clientRes.data?.liberal_2b_reconciliation;
     const isNoITC = clientRes.data?.builder_itc_type === 'NO_ITC';
-    const { eligibleFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco } = autoLink;
+    const {
+      eligibleFromImport2B, creditNotesFromImport2B, notesFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco,
+    } = autoLink;
     const amt = (r: ItcRow) => ({ igst: Number(r.igst) || 0, cgst: Number(r.cgst) || 0, sgst: Number(r.sgst) || 0 });
     const sum = (a: { igst: number; cgst: number; sgst: number }) => a.igst + a.cgst + a.sgst;
     for (const r of itc.section4A as ItcRow[]) {
@@ -86,10 +97,17 @@ export async function fetchGstr3b(
         if (Math.abs(sum(amt(r))) >= 0.5 || Math.abs(sum(twob)) >= 0.5) itcTyped.push({ row: '5.1', label: 'ITC for the Month', typed: amt(r), twob });
       }
       if (r.srNo === '5.2' && Math.abs(sum(amt(r))) >= 0.5) itcTyped.push({ row: '5.2', label: r.particular || 'ITC for Previous Month', typed: amt(r) });
+      if (r.srNo === '5.3' && (isLiberal || isNoITC) && notesFromImport2B) {
+        const twob = { ...creditNotesFromImport2B };
+        if (Math.abs(sum(amt(r))) >= 0.5 || Math.abs(sum(twob)) >= 0.5) itcTyped.push({ row: '5.3', label: 'Debit Note', typed: amt(r), twob });
+      }
     }
     itc.section4A = itc.section4A.map((r: ItcRow) => {
       if (r.srNo === '5.1' && !isLiberal && !isNoITC) {
         return { ...r, igst: eligibleFromImport2B.igst + reversalFromReco.igst, cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst, sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst };
+      }
+      if (r.srNo === '5.3' && notesFromImport2B && !isLiberal && !isNoITC) {
+        return { ...r, igst: creditNotesFromImport2B.igst, cgst: creditNotesFromImport2B.cgst, sgst: creditNotesFromImport2B.sgst };
       }
       if (r.srNo === '5.4') return { ...r, igst: reclaimFromReco.igst, cgst: reclaimFromReco.cgst, sgst: reclaimFromReco.sgst };
       return r;
@@ -142,5 +160,8 @@ export async function fetchGstr3b(
     commercialArea: clientRow?.commercial_area ?? null,
     residentialArea: clientRow?.residential_area ?? null,
   });
-  return { ...built, itcTyped };
+  const flags = [...built.flags];
+  if (held === null) flags.push('Could not check Import 2B for held amendments: open Import 2B to see whether any are held.');
+  else if (held > 0) flags.push(`${import2BHeldMessage(held)}.`);
+  return { ...built, flags, itcTyped };
 }

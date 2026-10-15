@@ -1,10 +1,12 @@
 import { supabase } from '@/integrations/supabase/client';
-import { fetchImport2BEligibleTotal, type HeadTotals } from './postImport2B';
+import { fetchImport2BCreditNotes, fetchImport2BEligibleTotal, type HeadTotals } from './postImport2B';
 
 // The live source figures behind ITC Summary's auto-linked rows — row 5.1
 // ("ITC for the Month" = eligible + this period's reversal, per PR #68's
-// "gross, not netted" fix), row 5.4 / 4(D)(1) reclaim, 4(D)(1.2) expense-out
-// reclaim, and 4(B)'s "current month as per 2B RECO" reversal. ITC Summary
+// "gross, not netted" fix), row 5.3 "Debit Note" (the month's 2B credit
+// notes, only when its import read them: notesFromImport2B), row 5.4 /
+// 4(D)(1) reclaim, 4(D)(1.2) expense-out reclaim, and 4(B)'s "current month
+// as per 2B RECO" reversal. ITC Summary
 // computes these live and only ever persists them into itc_summaries.data on
 // a manual Save — so anything reading that saved snapshot (buildGstr3bJson.ts)
 // silently drifts from what ITC Summary itself displays the moment Import 2B
@@ -15,6 +17,10 @@ import { fetchImport2BEligibleTotal, type HeadTotals } from './postImport2B';
 
 export interface ItcAutoLinkTotals {
   eligibleFromImport2B: HeadTotals;
+  // Row 5.3: Matched / Mismatched non-RCM credit notes (positive = the
+  // reduction), and whether this month's import read notes at all.
+  creditNotesFromImport2B: HeadTotals;
+  notesFromImport2B: boolean;
   reversalFromReco: HeadTotals;
   reclaimFromReco: HeadTotals;
   expenseOutFromReco: HeadTotals;
@@ -50,8 +56,9 @@ const sumHeads = (rows: { input_igst: number | null; input_cgst: number | null; 
 export async function fetchItcAutoLinkTotals(clientId: string, periodMonth: string): Promise<ItcAutoLinkTotals> {
   const patterns = getMonthPatterns(periodMonth);
 
-  const [eligibleFromImport2B, { data: reversalBills }, { data: reclaimBills }] = await Promise.all([
+  const [eligibleFromImport2B, creditNotes, { data: reversalBills }, { data: reclaimBills }] = await Promise.all([
     fetchImport2BEligibleTotal(clientId, periodMonth),
+    fetchImport2BCreditNotes(clientId, periodMonth),
     supabase.from('bills_not_in_2b')
       .select('input_igst, input_cgst, input_sgst, reversal_month')
       .eq('client_id', clientId).eq('period_month', periodMonth)
@@ -67,5 +74,10 @@ export async function fetchItcAutoLinkTotals(clientId: string, periodMonth: stri
   const reclaimFromReco = sumHeads(matchingReclaims.filter((b) => b.reclaim_subtype !== 'EXPENSE_OUT'));
   const expenseOutFromReco = sumHeads(matchingReclaims.filter((b) => b.reclaim_subtype === 'EXPENSE_OUT'));
 
-  return { eligibleFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco };
+  return {
+    eligibleFromImport2B,
+    creditNotesFromImport2B: creditNotes.total,
+    notesFromImport2B: creditNotes.notesRead,
+    reversalFromReco, reclaimFromReco, expenseOutFromReco,
+  };
 }

@@ -119,7 +119,7 @@ const ReclaimMatchDialog: React.FC<Props> = ({
         <DialogHeader>
           <DialogTitle>Link &amp; Reclaim</DialogTitle>
           <DialogDescription>
-            Pick the {candidateLabel} this invoice matches. Every amount must agree, within
+            Pick the {candidateLabel} this document matches. Every amount must agree, within
             ₹{RECLAIM_ROUNDING_TOLERANCE} per head for rounding.
           </DialogDescription>
         </DialogHeader>
@@ -144,7 +144,7 @@ const ReclaimMatchDialog: React.FC<Props> = ({
                 <tr className="bg-muted/60">
                   <th className="border border-border p-2 w-8"></th>
                   <th className="border border-border p-2 text-left">Date</th>
-                  <th className="border border-border p-2 text-left">Supplier / Invoice</th>
+                  <th className="border border-border p-2 text-left">Supplier / Doc no.</th>
                   <th className="border border-border p-2 text-right">Taxable</th>
                   <th className="border border-border p-2 text-right">IGST</th>
                   <th className="border border-border p-2 text-right">CGST</th>

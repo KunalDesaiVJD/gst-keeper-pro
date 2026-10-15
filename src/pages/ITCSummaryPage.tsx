@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +28,7 @@ import * as XLSX from 'xlsx';
 import {
   computeNet4C, computePartialItcSplit, computeSection4ATotal5, computeTotal4A, computeTotal4B,
 } from '@/utils/builderPartialItc';
-import { fetchImport2BEligibleTotal } from '@/lib/postImport2B';
+import { fetchImport2BCreditNotes, fetchImport2BEligibleTotal, fetchImport2BHeld, import2BHeldMessage } from '@/lib/postImport2B';
 
 // Auto-linked / auto-calculated rows: figures come from elsewhere, not typed.
 const LOCKED_ROW = 'bg-muted/30';
@@ -197,6 +197,15 @@ const ITCSummaryPage: React.FC = () => {
   const [reclaimFromReco, setReclaimFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [expenseOutFromReco, setExpenseOutFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [eligibleFromImport2B, setEligibleFromImport2B] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  // Row 5.3: the month's 2B credit notes, and whether its import read notes.
+  const [creditNotesFromImport2B, setCreditNotesFromImport2B] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  const [notesFromImport2B, setNotesFromImport2B] = useState(false);
+  // The Import 2B read for rows 5.1 / 5.3 failed: they show 0, so Save is
+  // refused until a load succeeds (a failed read must never be saved).
+  const [import2BReadFailedRaw, setImport2BReadFailed] = useState(false);
+  // Amendments HELD in Import 2B this month: counted nowhere, named under row 5.1.
+  const [heldInImport2B, setHeldInImport2B] = useState(0);
+  const import2BRequest = useRef(0);
   const [rcmTotals, setRcmTotals] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
   const [dataLoadVersion, setDataLoadVersion] = useState(0);
@@ -234,6 +243,15 @@ const ITCSummaryPage: React.FC = () => {
   // writes to it directly instead of via Import 2B) — only row 5.1's source
   // is Import-2B-exclusive.
   const isLiberalClient = selectedClientData?.liberal_2b_reconciliation === true;
+  // Save is refused after a failed Import 2B read only where a saved figure
+  // comes from it (rows 5.1 / 5.3 of a Strict client); Liberal and No-ITC
+  // clients type those rows, so the read feeds only their red marks.
+  const import2BReadFailed = import2BReadFailedRaw && !isLiberalClient && !isNoItcClient;
+  // Row 5.3 "Debit Note" fills itself from the month's 2B credit notes for a
+  // Strict client (firm decision, 14 Oct 2026), but only for a month whose
+  // import read the notes: an older, invoices-only month keeps 5.3 as typed.
+  // Liberal and No-ITC clients keep typing it, as they type 5.1.
+  const creditNotesLinked = notesFromImport2B && !isLiberalClient && !isNoItcClient;
   // Carpet areas derived from the builder project master. The apportionment
   // key is a fact about the projects, so it is better read from them than
   // hand-keyed onto the client record and left to drift.
@@ -433,14 +451,41 @@ const ITCSummaryPage: React.FC = () => {
 
   // Row 5.1 "ITC for the Month" — auto-linked from Import 2B's classified
   // total (MATCHED + MISMATCHED, claimed at the GSTR-2B figure). See
-  // src/lib/postImport2B.ts for the full GST-law reasoning.
+  // src/lib/postImport2B.ts for the full GST-law reasoning. Row 5.3's credit
+  // notes load with it. "Notes read" is cleared before each load, so a month
+  // never takes the previous month's 5.3 (and a typed 5.3 is never replaced
+  // by it), and a reply for a client or month no longer selected is dropped.
   const fetchImport2BEligible = useCallback(async () => {
+    const request = ++import2BRequest.current;
+    setNotesFromImport2B(false);
+    setHeldInImport2B(0);
     if (!selectedClient || !selectedMonth) {
       setEligibleFromImport2B({ igst: 0, cgst: 0, sgst: 0 });
+      setCreditNotesFromImport2B({ igst: 0, cgst: 0, sgst: 0 });
+      setImport2BReadFailed(false);
       return;
     }
-    const totals = await fetchImport2BEligibleTotal(selectedClient, selectedMonth);
-    setEligibleFromImport2B(totals);
+    try {
+      const [totals, notes, held] = await Promise.all([
+        fetchImport2BEligibleTotal(selectedClient, selectedMonth),
+        fetchImport2BCreditNotes(selectedClient, selectedMonth),
+        // Only the line under row 5.1 reads this: a failed count hides that line, never the totals.
+        fetchImport2BHeld(selectedClient, selectedMonth).catch(() => 0),
+      ]);
+      if (request !== import2BRequest.current) return;
+      setEligibleFromImport2B(totals);
+      setCreditNotesFromImport2B(notes.total);
+      setNotesFromImport2B(notes.notesRead);
+      setHeldInImport2B(held);
+      setImport2BReadFailed(false);
+    } catch (err) {
+      if (request !== import2BRequest.current) return;
+      console.error('Error fetching Import 2B totals:', err);
+      toast.error('Could not read the Import 2B totals for rows 5.1 and 5.3. Saving is off until the page is reloaded.');
+      setEligibleFromImport2B({ igst: 0, cgst: 0, sgst: 0 });
+      setCreditNotesFromImport2B({ igst: 0, cgst: 0, sgst: 0 });
+      setImport2BReadFailed(true);
+    }
   }, [selectedClient, selectedMonth]);
 
   // Fetch ITC Summary data when client/month changes
@@ -635,6 +680,25 @@ const ITCSummaryPage: React.FC = () => {
             isAutoLinked: true,
           };
         }
+        // Row 5.3 "Debit Note": the month's Matched and Mismatched non-RCM
+        // credit notes from Import 2B (positive = the reduction; Total (5)
+        // subtracts 5.3) when creditNotesLinked. Otherwise the row stays as
+        // loaded and typed: a Liberal or No-ITC client, or a month whose
+        // import did not read notes (fetchImport2BEligible clears "notes read"
+        // before each load, so a typed 5.3 is never overwritten in passing).
+        if (row.srNo === '5.3') {
+          if (creditNotesLinked) {
+            return {
+              ...row,
+              igst: creditNotesFromImport2B.igst,
+              cgst: creditNotesFromImport2B.cgst,
+              sgst: creditNotesFromImport2B.sgst,
+              isAutoLinked: true,
+              editable: false,
+            };
+          }
+          return { ...row, isAutoLinked: false, editable: true };
+        }
         return row;
       });
 
@@ -688,7 +752,7 @@ const ITCSummaryPage: React.FC = () => {
       
       return newData;
     });
-  }, [reversalFromReco, reclaimFromReco, expenseOutFromReco, eligibleFromImport2B, rcmTotals, dataLoadVersion, isLiberalClient, isNoItcClient]);
+  }, [reversalFromReco, reclaimFromReco, expenseOutFromReco, eligibleFromImport2B, creditNotesFromImport2B, creditNotesLinked, rcmTotals, dataLoadVersion, isLiberalClient, isNoItcClient]);
 
   // Calculate Partial ITC formula values (used in rendering)
   // FORMULAS as per Excel:
@@ -836,6 +900,10 @@ const ITCSummaryPage: React.FC = () => {
   // Save to database
   const handleSave = async () => {
     if (!selectedClient || !selectedMonth) return;
+    if (import2BReadFailed) {
+      toast.error('Rows 5.1 and 5.3 could not be read from Import 2B, so they show 0. Reload the page before saving.');
+      return;
+    }
 
     // Validate reasons - minimum 40 characters if any text is entered
     const allRows = [...itcData.section4A, ...itcData.section4B, ...itcData.section4D];
@@ -1164,10 +1232,15 @@ const ITCSummaryPage: React.FC = () => {
     return num.toLocaleString('en-IN');
   };
 
+  // Row 5.3 is linked by the auto-link effect; this holds it read-only on data
+  // set without that effect too (another user's save, a restored version).
+  const rowAutoLinked = (section: keyof ITCData, row: ITCRow) =>
+    !!row.isAutoLinked || (creditNotesLinked && section === 'section4A' && row.srNo === '5.3');
+
   // One figure cell (IGST / CGST / SGST): an inline input on rows staff type
   // into, plain right-aligned text everywhere else.
   const renderEditableCell = (section: keyof ITCData, rowIndex: number, row: ITCRow, field: 'igst' | 'cgst' | 'sgst') => {
-    const canEdit = row.editable && !editLocked && !row.isAutoLinked;
+    const canEdit = row.editable && !editLocked && !rowAutoLinked(section, row);
     
     if (canEdit) {
       return (
@@ -1234,6 +1307,8 @@ const ITCSummaryPage: React.FC = () => {
   // typed for Liberal and No-ITC clients (never computed for them, see the
   // auto-link effect); row 5.2 has no 2B source for any client. An audit found
   // Aug-26 ITC typed in 5.1 for 11 Liberal clients with no 2B behind it.
+  // Row 5.3 is typed for Liberal and No-ITC clients too; once the month's
+  // import has read the credit notes it is marked against them.
   const typedNotFrom2B = (section: keyof ITCData, row: ITCRow): { detail: string } | null => {
     if (section !== 'section4A') return null;
     const inr = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1250,6 +1325,16 @@ const ITCSummaryPage: React.FC = () => {
     }
     if (row.srNo === '5.2' && Math.abs(typed) >= 0.5) {
       return { detail: 'No 2B source: check it against the Not in Books list on 2B Reconciliation' };
+    }
+    if (row.srNo === '5.3' && (isLiberalClient || isNoItcClient) && notesFromImport2B) {
+      const g = creditNotesFromImport2B;
+      const twob = g.igst + g.cgst + g.sgst;
+      if (Math.abs(typed) < 0.5 && Math.abs(twob) < 0.5) return null;
+      const diff = typed - twob;
+      return {
+        detail: `2B credit notes give ₹${inr(twob)} (IGST ${inr(g.igst)}, CGST ${inr(g.cgst)}, SGST ${inr(g.sgst)})`
+          + (Math.abs(diff) < 1 ? ': the typed figure equals it' : `: difference ₹${inr(diff)}`),
+      };
     }
     return null;
   };
@@ -1302,21 +1387,34 @@ const ITCSummaryPage: React.FC = () => {
   );
 
   // An ordinary row: editable figures where the row allows it.
-  const lineRow = (key: string, section: keyof ITCData, idx: number, row: ITCRow) => (
-    <tr key={key} className={cn(WS_TR, row.isAutoLinked && LOCKED_ROW)}>
-      <td className={cn(WS_TD, 'text-muted-foreground')}>{row.srNo}</td>
-      <td className={WS_TD}>
-        {row.particular}
-        {row.isAutoLinked && autoBadge('Auto-linked')}
-        {!row.isAutoLinked && typedMark(section, row)}
-      </td>
-      {renderEditableCell(section, idx, row, 'igst')}
-      {renderEditableCell(section, idx, row, 'cgst')}
-      {renderEditableCell(section, idx, row, 'sgst')}
-      <td className={cn(WS_TD_NUM, 'font-medium')}>{inr(row.igst + row.cgst + row.sgst)}</td>
-      {reasonCell(section, idx, row)}
-    </tr>
-  );
+  const lineRow = (key: string, section: keyof ITCData, idx: number, row: ITCRow) => {
+    const auto = rowAutoLinked(section, row);
+    return (
+      <tr key={key} className={cn(WS_TR, auto && LOCKED_ROW)}>
+        <td className={cn(WS_TD, 'text-muted-foreground')}>{row.srNo}</td>
+        <td className={WS_TD}>
+          {row.particular}
+          {auto && autoBadge('Auto-linked')}
+          {auto && section === 'section4A' && row.srNo === '5.3' && (
+            <span className="mt-0.5 block text-[11px] text-muted-foreground">
+              From Import 2B: supplier credit notes for this month, Matched and Mismatched
+            </span>
+          )}
+          {!auto && typedMark(section, row)}
+          {section === 'section4A' && row.srNo === '5.1' && heldInImport2B > 0 && (
+            <span className="mt-0.5 block text-[11px] font-medium text-destructive">
+              {import2BHeldMessage(heldInImport2B)}
+            </span>
+          )}
+        </td>
+        {renderEditableCell(section, idx, row, 'igst')}
+        {renderEditableCell(section, idx, row, 'cgst')}
+        {renderEditableCell(section, idx, row, 'sgst')}
+        <td className={cn(WS_TD_NUM, 'font-medium')}>{inr(row.igst + row.cgst + row.sgst)}</td>
+        {reasonCell(section, idx, row)}
+      </tr>
+    );
+  };
 
   // Sub-heading row inside a section, e.g. 4A (5) "All other ITC".
   const subHeadingRow = (key: string, row: ITCRow) => (
@@ -1394,7 +1492,13 @@ const ITCSummaryPage: React.FC = () => {
               </Button>
             )}
             {selectedClient && !editLocked && (
-              <Button size="sm" className={cn(WS_BTN, 'px-3')} onClick={handleSave} disabled={isSaving}>
+              <Button
+                size="sm"
+                className={cn(WS_BTN, 'px-3')}
+                onClick={handleSave}
+                disabled={isSaving || import2BReadFailed}
+                title={import2BReadFailed ? 'Rows 5.1 and 5.3 could not be read from Import 2B. Reload the page before saving.' : undefined}
+              >
                 {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 {isSaving ? 'Saving…' : 'Save changes'}
               </Button>
@@ -1562,7 +1666,17 @@ const ITCSummaryPage: React.FC = () => {
                         {/* Insert Total (5) row after row 5.5 */}
                         {row.srNo === '5.5' && totalRow(
                           'Total (5)',
-                          <span className="font-normal text-muted-foreground">Total (5) = 5.1+5.2-5.3+5.4+5.5</span>,
+                          <>
+                            <span className="font-normal text-muted-foreground">Total (5) = 5.1+5.2-5.3+5.4+5.5</span>
+                            {/* Credit notes in 5.3 can exceed the month's ITC in a head; the portal takes no negative 4A(5). */}
+                            {(total5.igst < -0.005 || total5.cgst < -0.005 || total5.sgst < -0.005) && (
+                              <span className="mt-0.5 block text-[11px] font-medium text-destructive">
+                                Negative in {[['IGST', total5.igst], ['CGST', total5.cgst], ['SGST', total5.sgst]].filter(([, v]) => (v as number) < -0.005).map(([h]) => h).join(', ')}:
+                                GSTR-3B shows 0 in 4A(5) and adds the excess to 4B(2) Others.
+                                {isReversalClient && ' A negative 4B(1) below (Total 4A under zero) is likewise filed as 0 and taken off 4B(2) Others; net ITC is the same.'}
+                              </span>
+                            )}
+                          </>,
                           total5,
                           'bg-muted/40 font-medium',
                         )}
