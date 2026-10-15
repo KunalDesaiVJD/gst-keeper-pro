@@ -5452,17 +5452,112 @@
     await advance(job);
   }
 
-  // GSTR-2A (B2B only) — same return.gst.gov.in origin as GSTR-3B/1, no tile
-  // click needed. Confirmed live: api/gstr2a/ctin?rtn_prd=MMYYYY&section_name=B2B
+  // GSTR-2A — same return.gst.gov.in origin as GSTR-3B/1, no tile click
+  // needed. Confirmed live: api/gstr2a/ctin?rtn_prd=MMYYYY&section_name=B2B
   // returns the counterparty list (stin/cname/filing status), then
   // api/gstr2a/b2b?rtn_prd=MMYYYY&ctin=<gstin> per counterparty returns its
   // invoices with item-level tax split + IRN. This is a real N+1 fetch loop
   // (one call per counterparty) run synchronously in-page — no navigation
   // between them, so no job-state chaining needed, but a real client with
   // many suppliers means many sequential GETs; the small sleep between them
-  // is deliberate, not a bug. Only the B2B section is covered — CDNR/ISD/TDS/
-  // TCS use the same ctin+section_name pattern per the page's own tabs but
-  // were not separately confirmed live.
+  // is deliberate, not a bug. 0.14.0 also reads the credit and debit notes
+  // the same way (readGstr2aNotes below), best effort: those endpoints were
+  // NOT confirmed live. ISD/TDS/TCS are not read.
+
+  // One section's supplier list (api/gstr2a/ctin): { list } (empty, with
+  // noData, when the portal says the month has none) or { problem }. A fetch
+  // that throws is left to the caller.
+  async function gstr2aSupplierList(rtnPrd, section) {
+    const cr = await fetch('https://return.gst.gov.in/returns/auth/api/gstr2a/ctin?rtn_prd=' + rtnPrd + '&section_name=' + section, { credentials: 'include' });
+    if (!cr.ok) return { problem: 'HTTP ' + cr.status };
+    const cj = await cr.json().catch(() => null);
+    if (cj && Array.isArray(cj.cpty)) return { list: cj.cpty };
+    if (!cj || typeof cj !== 'object') return { problem: 'HTTP ' + cr.status + ', not JSON' };
+    // 0.13.0: an answer without a supplier list is NO DATA when the portal
+    // says there is nothing for the month ("No Data Found", "No Invoices
+    // found for the provided Inputs", "No document found ..." : the live
+    // wording for an empty 2A month has not been seen yet) or is a plain
+    // success without a list ({} or {status: 1}). Any other error answer is
+    // a failure, recorded with the portal's own code and words so the live
+    // wording can be read off the status.
+    const err = cj.error || cj.errors || null;
+    const words = JSON.stringify(cj);
+    const noData = /\bno(?:\s+\w+)?\s+(?:data|records?|invoices?|documents?|details?|suppliers?|counter\s*part(?:y|ies))\b|\bnodata\b|\bnot\s*found\b/i.test(words);
+    const plainSuccess = !err && String(cj.status) !== '0';
+    if (!noData && !plainSuccess) return { problem: 'HTTP ' + cr.status + ', no supplier list: ' + words.slice(0, 160) };
+    return { list: [], noData: true };
+  }
+
+  // 0.14.0: the 2A's credit and debit notes. NOT confirmed live: the portal's
+  // 2A web API is taken to follow the GSTN 2A JSON (section CDN; per supplier
+  // { ctin, cfs, cfs3b, fldtr1, flprdr1, dtcancel, nt: [{ ntty, nt_num, nt_dt,
+  // val, pos, rchrg, inv_typ, irn, itms }] }), so every name is tried in turn:
+  // the supplier list under section_name=CDN, then CDNR when CDN gave no list;
+  // the notes from api/gstr2a/cdn, or api/gstr2a/cdnr once the first
+  // supplier's cdn call answers 400/404. Returns { docs, suppliers, notes,
+  // failedCtins, list, api }, or { problem } when the notes could not be read
+  // at all (no list under either name, or every supplier's notes failed): the
+  // caller then saves no notes, so the app keeps the 2B's notes "Not compared"
+  // rather than calling them "Only in 2B".
+  async function readGstr2aNotes(rtnPrd, period, progress) {
+    banner('Reading GSTR-2A credit/debit notes for ' + period + '…' + progress);
+    const short = (s) => String(s || '').slice(0, 100);
+    let list = null, listName = null, noDataName = null;
+    const tried = [];
+    for (const name of ['CDN', 'CDNR']) {
+      let ans;
+      try { ans = await gstr2aSupplierList(rtnPrd, name); } catch (e) { ans = { problem: (e && e.message) || 'network error' }; }
+      if (ans.list && !ans.noData) { list = ans.list; listName = name; break; }
+      if (ans.noData) noDataName = noDataName || name;
+      else tried.push(name + ' ' + short(ans.problem));
+      await sleep(150);
+    }
+    // A "no data" answer under either name is a month without notes.
+    if (!list) {
+      if (!noDataName) return { problem: 'no supplier list: ' + tried.join('; ') };
+      list = []; listName = noDataName;
+    }
+
+    const base = 'https://return.gst.gov.in/returns/auth/api/gstr2a/';
+    const nameByCtin = new Map(list.map((c) => [c.stin, c.cname]));
+    const docs = [];
+    const failedCtins = [];
+    let api = 'cdn';
+    let firstError = null;
+    let count = 0;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      const url = (a) => base + a + '?rtn_prd=' + rtnPrd + '&ctin=' + encodeURIComponent(c.stin);
+      let ok = false;
+      try {
+        let r = await fetch(url(api), { credentials: 'include' });
+        if (i === 0 && (r.status === 400 || r.status === 404)) {
+          await sleep(150);
+          const r2 = await fetch(url('cdnr'), { credentials: 'include' });
+          if (r2.ok) { api = 'cdnr'; r = r2; } else firstError = 'cdn HTTP ' + r.status + ', cdnr HTTP ' + r2.status;
+        }
+        if (r.ok) {
+          const j = await r.json();
+          const got = j && Array.isArray(j.cdn) ? j.cdn : j && Array.isArray(j.cdnr) ? j.cdnr : null;
+          const wrappers = got ? got.filter((d) => d && typeof d === 'object') : null;
+          // A supplier wrapper without its nt list is a shape not understood: a failure, not "no notes".
+          if (wrappers && wrappers.every((d) => Array.isArray(d.nt))) {
+            ok = true;
+            for (const d of wrappers) {
+              const ctin = d.ctin || c.stin;
+              docs.push({ ...d, ctin, trdnm: nameByCtin.get(ctin) || c.cname || null, supfildt: d.fldtr1 || null, nt: d.nt });
+              count += d.nt.length;
+            }
+          } else firstError = firstError || api + ': no notes in the answer';
+        } else firstError = firstError || api + ' HTTP ' + r.status;
+      } catch (e) { firstError = firstError || short(e && e.message) || 'network error'; }
+      if (!ok) failedCtins.push(c.stin);
+      await sleep(150); // same throttle as the invoices
+    }
+    if (list.length && failedCtins.length === list.length) return { problem: 'the notes of every supplier failed (' + firstError + ')' };
+    return { docs, suppliers: list.length, notes: count, failedCtins, list: listName, api: list.length ? api : null };
+  }
+
   async function handleGstr2aPull(job, cur, progress) {
     if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
     const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
@@ -5473,27 +5568,9 @@
     let ctinList = [];
     let listProblem = null;
     try {
-      const cr = await fetch('https://return.gst.gov.in/returns/auth/api/gstr2a/ctin?rtn_prd=' + rtnPrd + '&section_name=B2B', { credentials: 'include' });
-      if (!cr.ok) listProblem = 'HTTP ' + cr.status;
-      else {
-        const cj = await cr.json().catch(() => null);
-        if (cj && Array.isArray(cj.cpty)) ctinList = cj.cpty;
-        else if (!cj || typeof cj !== 'object') listProblem = 'HTTP ' + cr.status + ', not JSON';
-        else {
-          // 0.13.0: an answer without a supplier list is NO DATA when the portal
-          // says there is nothing for the month ("No Data Found", "No Invoices
-          // found for the provided Inputs", "No document found ..." : the live
-          // wording for an empty 2A month has not been seen yet) or is a plain
-          // success without a list ({} or {status: 1}). Any other error answer is
-          // a failure, recorded with the portal's own code and words so the live
-          // wording can be read off the status.
-          const err = cj.error || cj.errors || null;
-          const words = JSON.stringify(cj);
-          const noData = /\bno(?:\s+\w+)?\s+(?:data|records?|invoices?|documents?|details?|suppliers?|counter\s*part(?:y|ies))\b|\bnodata\b|\bnot\s*found\b/i.test(words);
-          const plainSuccess = !err && String(cj.status) !== '0';
-          if (!noData && !plainSuccess) listProblem = 'HTTP ' + cr.status + ', no supplier list: ' + words.slice(0, 160);
-        }
-      }
+      const ans = await gstr2aSupplierList(rtnPrd, 'B2B');
+      if (ans.problem) listProblem = ans.problem;
+      else ctinList = ans.list;
     } catch (e) {
       banner('GSTR-2A: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', { status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }); } catch (e2) { /* diagnostic only */ }
@@ -5513,14 +5590,8 @@
       return;
     }
 
-    if (ctinList.length === 0) {
-      banner('No GSTR-2A B2B counterparties for ' + job.period + '.' + progress, '#f59e0b');
-      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', { status: 'NO DATA / NOT FOUND', summary: { b2b: [], _meta: { counterparties: 0, failed: 0, failedCtins: [] } }, updated_at: new Date().toISOString() }); } catch (e2) { /* diagnostic only */ }
-      await sleep(1200);
-      await afterGstr2a(job);
-      return;
-    }
-
+    // No B2B suppliers (the portal said so) no longer ends the 2A here: the
+    // month can still have credit or debit notes (0.14.0).
     const nameByCtin = new Map(ctinList.map((c) => [c.stin, c.cname]));
     const docs = [];
     const failedCtins = [];
@@ -5543,17 +5614,38 @@
     }
     const failed = failedCtins.length;
 
+    // 0.14.0: the notes, after the invoices. Whatever goes wrong there, the
+    // invoices are saved as before; one save holds both.
+    let notes;
+    try { notes = await readGstr2aNotes(rtnPrd, job.period, progress); } catch (e) { notes = { problem: 'error: ' + ((e && e.message) || 'unknown') }; }
+    const meta = { counterparties: ctinList.length, failed, failedCtins };
+    const summary = { b2b: docs, _meta: meta };
+    if (notes && !notes.problem) {
+      // An empty list is a read too (no notes that month): the 2B's notes are then compared.
+      summary.cdn = notes.docs;
+      Object.assign(meta, { sections: ['b2b', 'cdn'], noteCounterparties: notes.suppliers, cdnFailed: notes.failedCtins.length, cdnFailedCtins: notes.failedCtins, cdnList: notes.list, cdnApi: notes.api });
+    } else {
+      // Not saved at all, so the app says "not compared" rather than "only in 2B".
+      Object.assign(meta, { sections: ['b2b'], cdnProblem: (notes && notes.problem) || 'not read' });
+    }
+    const noteSuppliers = summary.cdn ? notes.suppliers : 0;
+    const cdnFailed = summary.cdn ? notes.failedCtins.length : 0;
     const patchObj = {
-      status: 'Pulled',
-      summary: { b2b: docs, _meta: { counterparties: ctinList.length, failed, failedCtins } },
+      status: ctinList.length === 0 && noteSuppliers === 0 ? 'NO DATA / NOT FOUND' : 'Pulled',
+      summary,
       updated_at: new Date().toISOString(),
     };
     try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', patchObj); } catch (e) { /* non-fatal */ }
+    const notesWords = summary.cdn
+      ? notes.notes + ' note' + (notes.notes === 1 ? '' : 's') + ' from ' + noteSuppliers + ' supplier' + (noteSuppliers === 1 ? '' : 's') + (cdnFailed ? ', ' + cdnFailed + ' failed' : '')
+      : 'notes not read: ' + meta.cdnProblem;
     debugPanel([
-      'STEP: GSTR-2A (B2B)  (' + location.pathname + ')',
+      'STEP: GSTR-2A (B2B + notes)  (' + location.pathname + ')',
       'counterparties     : ' + ctinList.length + ' (' + failed + ' failed)',
+      'notes (CDN)        : ' + (summary.cdn ? noteSuppliers + ' suppliers (' + cdnFailed + ' failed), list ' + notes.list + ', api ' + (notes.api || '-') : meta.cdnProblem),
     ]);
-    banner('GSTR-2A ' + job.period + ' → saved ✓ (' + ctinList.length + ' counterparties' + (failed ? ', ' + failed + ' failed' : '') + ').' + progress, failed ? '#d97706' : '#16a34a');
+    if (patchObj.status !== 'Pulled') banner('No GSTR-2A B2B counterparties' + (summary.cdn ? ' or notes for ' + job.period : ' for ' + job.period + '; ' + notesWords) + '.' + progress, '#f59e0b');
+    else banner('GSTR-2A ' + job.period + ' → saved ✓ (' + ctinList.length + ' counterparties' + (failed ? ', ' + failed + ' failed' : '') + '; ' + notesWords + ').' + progress, failed || cdnFailed || !summary.cdn ? '#d97706' : '#16a34a');
     await sleep(800);
     await afterGstr2a(job);
   }
