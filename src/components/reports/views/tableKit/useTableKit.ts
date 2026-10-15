@@ -12,7 +12,7 @@ import { renderReportToExcel } from '@/utils/allClientsReports';
 import { renderReportToPdf } from '@/utils/closingBalanceReportsPdf';
 import {
   EMPTY_VIEW, PAGE_THRESHOLD, activeFilters, buildModel, buildView, displayText, figureText, isFigureColumn, isFilterActive,
-  labelPosition, paginate, respanColumnGroups, sumRows, viewToReportTable, visibleColumns,
+  labelPosition, paginate, respanColumnGroups, sumRows, viewToReportTable, visibleColumns, withSummable,
   type ActiveFilter, type ColumnFilter, type ModelColumn, type ModelRow, type Page, type SortState, type TableModel,
   type ViewResult, type ViewState,
 } from './tableModel';
@@ -49,12 +49,14 @@ export interface TableKitOptions {
    */
   groupable?: number[] | ((col: ModelColumn) => boolean);
   /**
-   * Narrows which columns a TOTAL, a subtotal and the KPI totals add up: their
-   * indices, or a test on the column (given the column as the report has it).
-   * A version number or a day count is a figure but adding it up means
-   * nothing, and a ledger leaves out its running balance. Default: the columns
-   * the report's own TOTAL rows add up, else its amounts and counts. It only
-   * ever narrows: a column the report does not sum is never summed.
+   * Which columns a TOTAL, a subtotal and the KPI totals add up. A list
+   * (indices into table.headers): exactly those figure columns, [] for a
+   * statement of unlike measures (no TOTAL is recomputed under a filter and
+   * groups carry no subtotal). A test on the column (given the column as the
+   * report has it): narrows what the report sums, as a version number, a day
+   * count or a ledger's running balance is a figure but adding it up means
+   * nothing. Default: the columns the report's own TOTAL rows add up, else its
+   * amounts and counts.
    */
   summable?: number[] | ((col: ModelColumn) => boolean);
   /** Show a list longer than PAGE_THRESHOLD (500) lines a page at a time. Default true. */
@@ -190,17 +192,15 @@ export function useTableKit(table: ReportTable, options: TableKitOptions = {}): 
   // The groupable columns as a string, so an inline list or test does not rebuild the model.
   const g = options.groupable;
   const groupSig = g === undefined ? null : base.columns.map((c) => ((Array.isArray(g) ? g.includes(c.index) : g(c)) ? '1' : '0')).join('');
-  // Likewise the summed columns, kept to the ones the report sums.
+  // Likewise the summed columns: a list is taken as given, a test narrows
+  // the report's own.
   const sm = options.summable;
-  const sumSig = sm === undefined ? null : base.summable.filter((c) => (Array.isArray(sm) ? sm.includes(c) : sm(base.columns[c]))).join(',');
+  const sumSig = sm === undefined ? null
+    : Array.isArray(sm) ? sm.join(',')
+      : base.summable.filter((c) => sm(base.columns[c])).join(',');
   const model = useMemo<TableModel>(() => {
-    let m = base;
-    if (groupSig !== null) m = { ...m, columns: m.columns.map((c, k) => ({ ...c, groupable: groupSig[k] === '1' })) };
-    if (sumSig !== null) {
-      const keep = sumSig ? sumSig.split(',').map(Number) : [];
-      m = { ...m, summable: keep, columns: m.columns.map((c) => ({ ...c, summable: keep.includes(c.index) })) };
-    }
-    return m;
+    const grouped = groupSig === null ? base : { ...base, columns: base.columns.map((c, k) => ({ ...c, groupable: groupSig[k] === '1' })) };
+    return sumSig === null ? grouped : withSummable(grouped, sumSig ? sumSig.split(',').map(Number) : []);
   }, [base, groupSig, sumSig]);
 
   const state = useMemo<ViewState>(

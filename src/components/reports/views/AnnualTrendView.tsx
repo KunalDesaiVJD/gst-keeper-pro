@@ -15,64 +15,39 @@
 // dashed/open marker — so a real ₹0 shows as a solid dot sitting on the
 // baseline, while "not fetched" shows as a hollow dashed ring, never a
 // silently-dropped gap and never a fabricated zero.
+//
+// The monthly table is drawn by the table kit (./tableKit): sort by any
+// figure, filter the months (or any figure's range), group them by quarter
+// with subtotals (a Quarter column the view adds, hidden until asked for),
+// and "Excel (filtered)" / "PDF (filtered)" of exactly what is shown. The
+// TOTAL and the summary tiles follow the filter; the chart keeps the whole
+// year for context and marks the months the table shows. A month counts as
+// not pulled when any of its cells says so, not only the charted one (the
+// GSTR-3B summary writes it under its first figure and leaves the rest blank).
 import React, { useMemo, useState } from 'react';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
+import { REPORT_STATUS_META } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Badge } from '@/components/gstr9/badge';
 import { KpiTile } from '@/components/gstr9/ui';
-import { WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TR_TOTAL } from '@/components/workspace/theme';
-import { Input } from '@/components/ui/input';
+import { WS_BTN } from '@/components/workspace/theme';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ChartContainer, ChartTooltip, type ChartConfig } from '@/components/ui/chart';
 import { cn } from '@/lib/utils';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis } from 'recharts';
-import {
-  TrendingUp, Search, ExternalLink, Inbox, EyeOff, Eye, BarChart3,
-} from 'lucide-react';
+import { TrendingUp, Inbox, EyeOff, BarChart3 } from 'lucide-react';
+import { TableKitPager, TableKitTable, TableKitToolbar, useTableKit } from './tableKit';
+import { headlineColumn, isNotPulledRow, monthColumn, withQuarterColumn, withoutQuarterNote } from './annualTrendRules';
+import { shortKpiLabels, splitSubtitle } from './varianceRules';
 
 interface AnnualTrendViewProps {
   table: ReportTable;
   report: ReportDefinition;
 }
 
-// ─────────────────────────── cell/header heuristics ───────────────────────────
-
-const NUMERIC_HEADER_RE = /CGST|SGST|IGST|TOTAL|VALUE|AMOUNT|CLAIMED|LIABILITY|ITC|CESS|FEE|INTEREST|PAYABLE|PENALTY/i;
-const MONTH_HEADER_RE = /month|period/i;
-const STATUS_HEADER_RE = /^status$/i;
-const NOT_PULLED_RE = /not\s*pulled|not\s*captured/i;
-
-const isUrlCell = (v: unknown): v is string => typeof v === 'string' && /^https?:\/\//.test(v);
-const isSentinelCell = (v: unknown): boolean => typeof v === 'string' && NOT_PULLED_RE.test(v.trim());
-const isTotalRow = (row: (string | number)[]): boolean =>
-  row.some((c) => typeof c === 'string' && /total/i.test(c));
-
-const STATUS_VARIANT = (v: string): 'success' | 'warning' | 'destructive' | 'secondary' => {
-  const s = v.toUpperCase();
-  if (/ACKNOWLEDG|APPROV|SANCTION|FILED|ACCEPT|PROCESSED/.test(s)) return 'success';
-  if (/PENDING|PROCESSING|SUBMIT/.test(s)) return 'warning';
-  if (/FAIL|REJECT|DENIED|CANCEL/.test(s)) return 'destructive';
-  return 'secondary';
-};
-
-const toNum = (v: string | number): number | null => {
-  if (isSentinelCell(v)) return null;
-  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  const trimmed = String(v ?? '').trim();
-  if (trimmed === '') return null;
-  const n = Number(trimmed.replace(/,/g, ''));
-  return Number.isFinite(n) ? n : null;
-};
-
-const formatNumber = (v: string | number): string => {
-  const n = toNum(v);
-  if (n === null) return String(v ?? '');
-  if (n === 0) return '0';
-  const rounded = Math.round(n * 100) / 100;
-  return rounded.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-};
+const PULLED_ONLY_ID = 'pulled-only';
 
 /** Compact Indian-style axis label: 1,50,00,000 -> 1.5Cr, 3,20,000 -> 3.2L. */
 const formatCompact = (v: number): string => {
@@ -84,44 +59,22 @@ const formatCompact = (v: number): string => {
   return `${sign}${Math.round(abs)}`;
 };
 
-/**
- * The "headline" numeric column: checked in tiers ('Total' beats 'Closing'
- * beats 'Liability', per the design brief), and within a tier the *last*
- * matching header wins — these reports read left-to-right toward a running
- * or final figure (e.g. "Total Liability" ... "Total Payable (as filed)",
- * or "Opening Balance" ... "Closing Balance"), so the rightmost match is the
- * bottom-line number, not an intermediate component of it. Falls back to the
- * first numeric-looking column if nothing matches any tier.
- */
-const detectHeadlineColIndex = (headers: string[]): number => {
-  const tiers = [/total/i, /closing/i, /liability/i];
-  for (const re of tiers) {
-    let found = -1;
-    for (let i = 0; i < headers.length; i++) {
-      if (re.test(headers[i])) found = i;
-    }
-    if (found !== -1) return found;
-  }
-  for (let i = 0; i < headers.length; i++) {
-    if (NUMERIC_HEADER_RE.test(headers[i])) return i;
-  }
-  return -1;
-};
-
 interface ChartPoint {
   month: string;
   value: number | null;
   gapMarker: number | null;
   notPulled: boolean;
+  /** In the table as filtered (always true when nothing is filtered). */
+  shown: boolean;
 }
 
-interface NotPulledDotProps {
+interface DotProps {
   cx?: number;
   cy?: number;
   payload?: ChartPoint;
 }
 
-const NotPulledDot: React.FC<NotPulledDotProps> = ({ cx, cy, payload }) => {
+const NotPulledDot: React.FC<DotProps> = ({ cx, cy, payload }) => {
   if (!payload?.notPulled || cx === undefined || cy === undefined) return null;
   return (
     <circle
@@ -136,14 +89,23 @@ const NotPulledDot: React.FC<NotPulledDotProps> = ({ cx, cy, payload }) => {
   );
 };
 
+/** A month's dot: solid when the table shows it, a faint ring when a filter leaves it out. */
+const MonthDot: React.FC<DotProps> = ({ cx, cy, payload }) => {
+  if (cx === undefined || cy === undefined || !payload || payload.value === null) return null;
+  return payload.shown
+    ? <circle cx={cx} cy={cy} r={3.5} fill="var(--color-value)" />
+    : <circle cx={cx} cy={cy} r={3} fill="hsl(var(--card))" stroke="var(--color-value)" strokeOpacity={0.45} strokeWidth={1.2} />;
+};
+
 interface TrendTooltipProps {
   active?: boolean;
   payload?: { payload: ChartPoint }[];
   label?: string;
   headlineLabel: string;
+  format: (v: number) => string;
 }
 
-const TrendTooltip: React.FC<TrendTooltipProps> = ({ active, payload, label, headlineLabel }) => {
+const TrendTooltip: React.FC<TrendTooltipProps> = ({ active, payload, label, headlineLabel, format }) => {
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
   return (
@@ -154,9 +116,10 @@ const TrendTooltip: React.FC<TrendTooltipProps> = ({ active, payload, label, hea
       ) : (
         <div className="flex items-center justify-between gap-3">
           <span className="text-muted-foreground truncate">{headlineLabel}</span>
-          <span className="font-mono font-medium tabular-nums">{formatNumber(point.value ?? 0)}</span>
+          <span className="font-mono font-medium tabular-nums">{format(point.value ?? 0)}</span>
         </div>
       )}
+      {!point.shown && <div className="mt-0.5 text-[11px] text-muted-foreground">Left out of the table by the filters</div>}
     </div>
   );
 };
@@ -164,87 +127,102 @@ const TrendTooltip: React.FC<TrendTooltipProps> = ({ active, payload, label, hea
 // ────────────────────────────────── view ──────────────────────────────────
 
 export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report }) => {
-  const { headers, rows } = table;
-  const [search, setSearch] = useState('');
-  const [hideNotPulled, setHideNotPulled] = useState(false);
+  const monthCol = useMemo(() => monthColumn(table.headers), [table.headers]);
+  const { table: kitTable, quarterCol } = useMemo(() => withQuarterColumn(table, monthCol), [table, monthCol]);
+  const kit = useTableKit(kitTable, {
+    resetKey: report.key,
+    initialHidden: quarterCol >= 0 ? [quarterCol] : [],
+    // A year's months group by quarter (and a merge by its period); one month per group says nothing.
+    groupable: (c) => c.index === quarterCol || c.virtual,
+    rowNoun: ['month', 'months'],
+    transformExport: (t) => shortKpiLabels(withoutQuarterNote(t)),
+  });
+  const { model, view, state, isFigure } = kit;
 
-  const monthColIdx = useMemo(() => {
-    const idx = headers.findIndex((h) => MONTH_HEADER_RE.test(h));
-    return idx !== -1 ? idx : 0;
-  }, [headers]);
-
-  const headlineColIdx = useMemo(() => detectHeadlineColIndex(headers), [headers]);
-  const statusColIdx = useMemo(() => headers.findIndex((h) => STATUS_HEADER_RE.test(h)), [headers]);
-
-  const isNumericCol = useMemo(
-    () => headers.map((h, i) => i !== monthColIdx && NUMERIC_HEADER_RE.test(h)),
-    [headers, monthColIdx],
+  const headlineCol = useMemo(() => headlineColumn(
+    kitTable.headers, isFigure,
+    (c) => model.data.some((r) => typeof r.cells[c] === 'number' && Math.abs(r.cells[c] as number) >= 0.005),
+  ), [kitTable.headers, isFigure, model]);
+  // The figures the chart can follow: the ones the TOTAL adds up, else every figure column.
+  const chartable = useMemo(
+    () => (model.summable.length ? model.summable : model.columns.filter((c) => isFigure(c.index)).map((c) => c.index)),
+    [model, isFigure],
   );
+  // The reviewer's pick of figure, for this report and column set only.
+  const chartKey = `${report.key}\u0001${kitTable.headers.join('\u0001')}`;
+  const [chartPick, setChartPick] = useState<{ key: string; col: number } | null>(null);
+  const chartCol = chartPick?.key === chartKey && chartable.includes(chartPick.col) ? chartPick.col : headlineCol;
+  const chartHeader = chartCol >= 0 ? model.columns[chartCol].name : '';
 
-  const { dataRows, totalRows } = useMemo(() => {
-    const data: (string | number)[][] = [];
-    const totals: (string | number)[][] = [];
-    rows.forEach((row) => (isTotalRow(row) ? totals : data).push(row));
-    return { dataRows: data, totalRows: totals };
-  }, [rows]);
-
-  const headlineHeader = headlineColIdx !== -1 ? headers[headlineColIdx] : '';
+  // Months not yet pulled, over the whole year (a merge repeats a month once per period).
+  const monthsAll = useMemo(() => {
+    const seen = new Map<string, boolean>();
+    for (const r of model.data) {
+      const m = String(r.cells[monthCol] ?? '').trim();
+      if (m && !seen.has(m)) seen.set(m, isNotPulledRow(r.cells));
+    }
+    return seen;
+  }, [model, monthCol]);
+  const monthCount = monthsAll.size;
+  const pulledCount = [...monthsAll.values()].filter((np) => !np).length;
+  const hasGaps = pulledCount < monthCount;
+  const pulledOnly = !!state.custom?.some((c) => c.id === PULLED_ONLY_ID);
+  const setPulledOnly = (on: boolean) => kit.setCustomFilter(PULLED_ONLY_ID, on
+    ? { label: 'Months not pulled left out', test: (row) => !isNotPulledRow(row.cells) }
+    : null);
 
   // ── Chart data: one point per month, gapped (not zeroed) where NOT PULLED ──
   const chartData: ChartPoint[] = useMemo(() => {
-    if (headlineColIdx === -1) return [];
-    return dataRows.map((row) => {
-      const monthLabel = String(row[monthColIdx] ?? '');
-      const cell = row[headlineColIdx];
-      const notPulled = isSentinelCell(cell);
-      const value = notPulled ? null : toNum(cell);
-      return { month: monthLabel, value, gapMarker: notPulled ? 0 : null, notPulled };
-    });
-  }, [dataRows, headlineColIdx, monthColIdx]);
-
-  const pulledCount = useMemo(() => chartData.filter((p) => !p.notPulled).length, [chartData]);
-  const hasGaps = pulledCount < chartData.length;
+    if (chartCol < 0) return [];
+    const shownMonths = view.filtered ? new Set(view.rows.map((r) => String(r.cells[monthCol] ?? '').trim())) : null;
+    const seen = new Set<string>();
+    const out: ChartPoint[] = [];
+    for (const r of model.data) {
+      const month = String(r.cells[monthCol] ?? '').trim();
+      if (!month || seen.has(month)) continue;
+      seen.add(month);
+      const notPulled = isNotPulledRow(r.cells);
+      const cell = r.cells[chartCol];
+      const value = notPulled || typeof cell !== 'number' || !Number.isFinite(cell) ? null : cell;
+      out.push({ month, value, gapMarker: notPulled ? 0 : null, notPulled, shown: shownMonths ? shownMonths.has(month) : true });
+    }
+    return out;
+  }, [model, view, monthCol, chartCol]);
+  const shownOnChart = chartData.filter((p) => p.shown).length;
 
   const chartConfig = useMemo<ChartConfig>(
-    () => ({ value: { label: headlineHeader || 'Value', color: 'hsl(var(--primary))' } }),
-    [headlineHeader],
+    () => ({ value: { label: chartHeader || 'Value', color: 'hsl(var(--primary))' } }),
+    [chartHeader],
   );
 
-  // ── Summary strip: TOTAL row's numeric columns, or a computed fallback ──
-  const summaryStats = useMemo(() => {
-    const numericIdxs = headers.map((_, i) => i).filter((i) => isNumericCol[i]);
-    const source = totalRows[0];
-    return numericIdxs.map((i) => {
-      let value: number;
-      if (source) {
-        value = toNum(source[i]) ?? 0;
-      } else {
-        value = dataRows.reduce((sum, row) => sum + (toNum(row[i]) ?? 0), 0);
-      }
-      return { header: headers[i], value, isHeadline: i === headlineColIdx };
-    });
-  }, [headers, isNumericCol, totalRows, dataRows, headlineColIdx]);
+  const { parts, notes } = splitSubtitle(table.subtitle, model.merged);
+  const header = (
+    <CardHeader className="space-y-0 px-4 py-3">
+      <div className="flex items-center gap-2">
+        <TrendingUp className="h-4 w-4 shrink-0 text-primary" />
+        <CardTitle className="text-[15px] leading-snug">{table.title || report.title}</CardTitle>
+        <Badge variant={REPORT_STATUS_META[report.status].badgeVariant} className="text-[10px] font-medium">
+          {REPORT_STATUS_META[report.status].shortLabel}
+        </Badge>
+      </div>
+      {parts.length > 0 && (
+        <CardDescription className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+          {parts.map((part, i) => (
+            <span key={i} className="flex items-center gap-2">
+              {i > 0 && <span className="text-muted-foreground/40">•</span>}
+              {part}
+            </span>
+          ))}
+        </CardDescription>
+      )}
+      {notes.length > 0 && <p className="mt-1 max-w-[1100px] text-[11px] leading-snug text-muted-foreground">{notes.join(' ')}</p>}
+    </CardHeader>
+  );
 
-  // ── Table filtering (search + optional "hide not pulled") ──
-  const filteredDataRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return dataRows.filter((row) => {
-      if (hideNotPulled && headlineColIdx !== -1 && isSentinelCell(row[headlineColIdx])) return false;
-      if (q && !row.some((c) => String(c ?? '').toLowerCase().includes(q))) return false;
-      return true;
-    });
-  }, [dataRows, search, hideNotPulled, headlineColIdx]);
-
-  if (rows.length === 0) {
+  if (table.rows.length === 0) {
     return (
       <Card>
-        <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
-          <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            {table.title || report.title}
-          </CardTitle>
-          {table.subtitle && <CardDescription className="whitespace-pre-line text-xs">{table.subtitle}</CardDescription>}
-        </CardHeader>
+        {header}
         <CardContent className="px-4 pb-3">
           <div className="flex flex-col items-center justify-center gap-1.5 py-8 text-center text-muted-foreground">
             <Inbox className="h-5 w-5 opacity-60" />
@@ -255,52 +233,58 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
     );
   }
 
+  const monthsTile = (
+    <KpiTile
+      label="Months Pulled"
+      value={`${pulledCount} / ${monthCount}`}
+      tone={hasGaps ? 'warn' : 'neutral'}
+      hint={hasGaps ? `${monthCount - pulledCount} not pulled yet` : 'every month on record'}
+    />
+  );
+
   return (
     <div className="space-y-3">
-      <Card>
-        <CardHeader className="space-y-0.5 px-4 py-3">
-          <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            {table.title || report.title}
-          </CardTitle>
-          {table.subtitle && <CardDescription className="whitespace-pre-line text-xs">{table.subtitle}</CardDescription>}
-        </CardHeader>
-      </Card>
+      <Card>{header}</Card>
 
-      {/* Totals strip — always the TOTAL row's own figures, unaffected by search/filter below */}
-      {summaryStats.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-          {summaryStats.map((s) => (
-            <KpiTile key={s.header} label={s.header} value={formatNumber(s.value)} />
-          ))}
-          {headlineColIdx !== -1 && hasGaps ? (
-            <TileButton active={hideNotPulled} onClick={() => setHideNotPulled((v) => !v)} title={hideNotPulled ? 'Show all months' : 'Hide not-pulled months'}>
-              <KpiTile
-                label="Months Pulled"
-                value={`${pulledCount} / ${chartData.length}`}
-                tone={pulledCount < chartData.length ? 'warn' : 'neutral'}
-                hint={totalRows[0] ? 'Full FY, unfiltered' : undefined}
-              />
-            </TileButton>
-          ) : (
+      {/* Totals strip — the TOTAL row's own figures, and once filtered, the months shown against the year */}
+      {(kit.totals.length > 0 || monthCount > 0) && (
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2">
+          {kit.totals.map((s) => (
             <KpiTile
-              label="Months Pulled"
-              value={`${pulledCount} / ${chartData.length}`}
-              tone={pulledCount < chartData.length ? 'warn' : 'neutral'}
-              hint={totalRows[0] ? 'Full FY, unfiltered' : undefined}
+              key={s.col}
+              label={model.columns[s.col].name}
+              value={kit.figure(s.col, s.shown ?? s.total)}
+              hint={s.shown === null ? undefined : Math.abs(s.total) < 0.005 ? 'nil for the year' : `of ${kit.figure(s.col, s.total)} for the year`}
             />
-          )}
+          ))}
+          {hasGaps ? (
+            <TileButton active={pulledOnly} onClick={() => setPulledOnly(!pulledOnly)} title={pulledOnly ? 'Show all months' : 'Hide not-pulled months'}>
+              {monthsTile}
+            </TileButton>
+          ) : monthsTile}
         </div>
       )}
 
       {/* Trend chart — the one archetype where a real chart earns its place */}
-      {headlineColIdx !== -1 && chartData.length > 0 && (
+      {chartCol !== -1 && chartData.length > 0 && (
         <Card>
-          <CardHeader className="space-y-0 px-4 pb-1 pt-3">
+          <CardHeader className="flex-row items-center justify-between space-y-0 px-4 pb-1 pt-2.5">
             <CardTitle className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
               <BarChart3 className="h-3.5 w-3.5" />
-              {headlineHeader} — trend across the year
+              {chartHeader} — trend across the year
             </CardTitle>
+            {chartable.length > 1 && (
+              <Select value={String(chartCol)} onValueChange={(v) => setChartPick({ key: chartKey, col: Number(v) })}>
+                <SelectTrigger className="h-7 w-[220px] text-xs" aria-label="Figure charted">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {chartable.map((c) => (
+                    <SelectItem key={c} value={String(c)} className="text-xs">Chart {model.columns[c].name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </CardHeader>
           <CardContent className="px-4 pb-3">
             <ChartContainer config={chartConfig} className="aspect-auto h-[240px] w-full">
@@ -321,16 +305,16 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
                   axisLine={false}
                   tick={{ fontSize: 11 }}
                   width={48}
-                  domain={[0, 'auto']}
+                  domain={[(min: number) => Math.min(0, min), 'auto']}
                   tickFormatter={formatCompact}
                 />
-                <ChartTooltip content={<TrendTooltip headlineLabel={headlineHeader} />} />
+                <ChartTooltip content={<TrendTooltip headlineLabel={chartHeader} format={(v) => kit.figure(chartCol, v)} />} />
                 <Line
                   dataKey="value"
                   stroke="var(--color-value)"
                   strokeWidth={2}
                   connectNulls={false}
-                  dot={{ r: 3, strokeWidth: 0, fill: 'var(--color-value)' }}
+                  dot={<MonthDot />}
                   activeDot={{ r: 5 }}
                   isAnimationActive={false}
                 />
@@ -346,166 +330,56 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
                 />
               </LineChart>
             </ChartContainer>
-            {hasGaps && (
-              <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span className="inline-block h-2 w-2 rounded-full border border-dashed border-muted-foreground" />
-                Dashed marker = month not yet pulled from the portal (not a zero).
-              </p>
-            )}
+            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-muted-foreground">
+              {hasGaps && (
+                <p className="flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-full border border-dashed border-muted-foreground" />
+                  Dashed marker = month not yet pulled from the portal (not a zero).
+                </p>
+              )}
+              {view.filtered && (
+                <p className="flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-full bg-primary" />
+                  Solid dot = one of the {shownOnChart} {shownOnChart === 1 ? 'month' : 'months'} the table shows; a faint ring is filtered out.
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search this report…"
-            className="pl-8 h-8 text-xs"
-          />
-        </div>
-
-        {headlineColIdx !== -1 && hasGaps && (
-          <Button
-            type="button"
-            variant={hideNotPulled ? 'default' : 'outline'}
-            size="sm"
-            aria-pressed={hideNotPulled}
-            onClick={() => setHideNotPulled((v) => !v)}
-            className={WS_BTN}
-          >
-            {hideNotPulled ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-            {hideNotPulled ? 'Show all months' : 'Hide not-pulled months'}
-          </Button>
-        )}
-
-        <span className="text-xs text-muted-foreground ml-auto">
-          {search || hideNotPulled ? `${filteredDataRows.length} of ${dataRows.length}` : dataRows.length}{' '}
-          month{dataRows.length === 1 ? '' : 's'}
-          {totalRows.length > 0 ? ' + total' : ''}
-        </span>
-      </div>
-
-      {/* Monthly table — TOTAL row pinned bottom, never filtered out */}
-      <div className="rounded-md border bg-card max-h-[60vh] overflow-auto">
-        <Table className={WS_TABLE}>
-          <TableHeader className="sticky top-0 z-20">
-            <TableRow>
-              {headers.map((h, i) => (
-                <TableHead
-                  key={i}
-                  className={cn(
-                    WS_TH, 'h-auto',
-                    isNumericCol[i] && 'text-right',
-                    i === headlineColIdx && 'border-l',
-                  )}
-                >
-                  {h}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-
-          <TableBody>
-            {filteredDataRows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={headers.length} className="border-b text-center text-sm text-muted-foreground py-6">
-                  No months match the current search/filter.
-                </TableCell>
-              </TableRow>
+      {/* Monthly table — the kit's filters, sort and quarterly groups; the TOTAL pinned under it */}
+      <Card>
+        <CardContent className="flex flex-col gap-2.5 px-4 py-3">
+          <TableKitToolbar
+            kit={kit}
+            searchPlaceholder="Search month, figure…"
+            left={hasGaps && (
+              <Button
+                type="button"
+                variant={pulledOnly ? 'default' : 'outline'}
+                size="sm"
+                aria-pressed={pulledOnly}
+                onClick={() => setPulledOnly(!pulledOnly)}
+                className={WS_BTN}
+              >
+                <EyeOff className="h-3.5 w-3.5" />
+                Hide not-pulled months
+              </Button>
             )}
-
-            {filteredDataRows.map((row, ri) => (
-              <TableRow key={ri} className="hover:bg-muted/30">
-                {row.map((cell, ci) => {
-                  const numeric = isNumericCol[ci];
-                  const isHeadline = ci === headlineColIdx;
-
-                  if (isUrlCell(cell)) {
-                    return (
-                      <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                        <a
-                          href={cell}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-primary hover:underline"
-                        >
-                          <ExternalLink className="h-3 w-3" /> View
-                        </a>
-                      </TableCell>
-                    );
-                  }
-
-                  if (isSentinelCell(cell)) {
-                    return (
-                      <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                        <Badge variant="outline" className="border-dashed text-muted-foreground text-[10px] py-0 font-normal">
-                          Not pulled
-                        </Badge>
-                      </TableCell>
-                    );
-                  }
-
-                  if (ci === statusColIdx && String(cell ?? '') !== '') {
-                    return (
-                      <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                        <Badge variant={STATUS_VARIANT(String(cell))} className="text-[10px] py-0 font-medium">{String(cell)}</Badge>
-                      </TableCell>
-                    );
-                  }
-
-                  return (
-                    <TableCell
-                      key={ci}
-                      className={cn(
-                        WS_TD,
-                        numeric ? 'text-right whitespace-nowrap tabular-nums' : 'max-w-[240px]',
-                        isHeadline && 'border-l font-medium text-foreground',
-                      )}
-                    >
-                      {numeric ? formatNumber(cell) : String(cell ?? '')}
-                    </TableCell>
-                  );
-                })}
-              </TableRow>
-            ))}
-          </TableBody>
-
-          {totalRows.length > 0 && (
-            <TableBody>
-              {totalRows.map((row, ri) => (
-                <TableRow
-                  key={`total-${ri}`}
-                  className={cn(
-                    WS_TR_TOTAL, 'hover:bg-muted',
-                    ri === totalRows.length - 1 && 'sticky bottom-0 z-10',
-                  )}
-                >
-                  {row.map((cell, ci) => {
-                    const numeric = isNumericCol[ci];
-                    const display = String(cell ?? '') === '' ? '' : numeric ? formatNumber(cell) : String(cell);
-                    return (
-                      <TableCell
-                        key={ci}
-                        className={cn(
-                          WS_TD, 'bg-muted',
-                          numeric && 'text-right whitespace-nowrap tabular-nums',
-                          ci === headlineColIdx && 'border-l',
-                        )}
-                      >
-                        {display}
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
-              ))}
-            </TableBody>
-          )}
-        </Table>
-      </div>
+          />
+          <TableKitTable
+            kit={kit}
+            label={table.title}
+            columnClassName={(c) => (c === headlineCol ? 'border-l-2 border-l-foreground/20' : undefined)}
+            cellClassName={(_row, c) => (c === headlineCol ? 'font-medium text-foreground' : undefined)}
+            rowClassName={(row) => (isNotPulledRow(row.cells) ? 'text-muted-foreground' : undefined)}
+            containerClassName="max-h-[60vh] rounded-md border bg-card"
+            noMatchText="No months match these filters."
+          />
+          <TableKitPager kit={kit} />
+        </CardContent>
+      </Card>
     </div>
   );
 };

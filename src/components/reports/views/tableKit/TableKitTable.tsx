@@ -27,6 +27,11 @@ export interface TableKitTableProps {
   cellClassName?: (row: ModelRow, col: number) => string | undefined;
   /** Extra classes for a column's heading (a severity colour, a centred icon column). */
   headClassName?: (col: number) => string | undefined;
+  /**
+   * Extra classes for every cell of one column, its heading, groups and TOTALs
+   * included: a view marking its delta or headline figure from top to bottom.
+   */
+  columnClassName?: (col: number) => string | undefined;
   /** A document row was clicked (or Enter pressed on it); clicks on its links, buttons and tick boxes are left to them. */
   onRowClick?: (row: ModelRow) => void;
   /** Columns before the report's own (row.i indexes rowIds / clientIds / rowFlags / rowTones). */
@@ -96,7 +101,7 @@ const fromControl = (target: EventTarget | null): boolean =>
   target instanceof Element && !!target.closest('a,button,input,select,textarea,label,[role="checkbox"],[role="menuitem"],[data-row-click-ignore]');
 
 export const TableKitTable: React.FC<TableKitTableProps> = ({
-  kit, renderCell, rowClassName, cellClassName, headClassName, onRowClick, leading = [], trailing = [],
+  kit, renderCell, rowClassName, cellClassName, headClassName, columnClassName, onRowClick, leading = [], trailing = [],
   dense = true, sticky = true, containerClassName, noMatchText, emptyText, label,
 }) => {
   const { model, view, state, cols, labelAt, pageView } = kit;
@@ -111,7 +116,7 @@ export const TableKitTable: React.FC<TableKitTableProps> = ({
   const span = cols.length + extras;
   // Bands and group headings stick under the header: one row of 2rem, or 3.75rem under a column-group band.
   const under = !sticky ? '' : kit.columnGroups ? 'sticky top-[3.75rem] z-[5]' : 'sticky top-8 z-[5]';
-  const figureCell = (c: number) => cn(WS_TD, 'whitespace-nowrap', kit.isFigure(c) && 'text-right tabular-nums');
+  const figureCell = (c: number) => cn(WS_TD, 'whitespace-nowrap', kit.isFigure(c) && 'text-right tabular-nums', columnClassName?.(c));
   const blankExtras = (xs: KitExtraColumn[], cls?: string) => xs.map((x) => <TableCell key={x.key} className={cn(WS_TD, x.className, cls)} />);
 
   // A TOTAL drawn from sums: the label where the report puts it, figures under their columns.
@@ -188,7 +193,7 @@ export const TableKitTable: React.FC<TableKitTableProps> = ({
               </span>
             </TableCell>
             {headSpan < cols.length && cols.slice(headSpan).map((c) => (
-              <TableCell key={c} className={cn(WS_TD, 'bg-muted font-semibold', kit.isFigure(c) && 'whitespace-nowrap text-right tabular-nums')}>
+              <TableCell key={c} className={cn(WS_TD, 'bg-muted font-semibold', kit.isFigure(c) && 'whitespace-nowrap text-right tabular-nums', columnClassName?.(c))}>
                 {it.sums.has(c) ? kit.figure(c, it.sums.get(c) as number) : ''}
               </TableCell>
             ))}
@@ -213,7 +218,7 @@ export const TableKitTable: React.FC<TableKitTableProps> = ({
             {cols.map((c) => (
               <TableCell
                 key={c}
-                className={cn(kitCellClass(kit, c, dense), cellClassName?.(row, c))}
+                className={cn(kitCellClass(kit, c, dense), columnClassName?.(c), cellClassName?.(row, c))}
                 title={typeof row.cells[c] === 'string' && !isUrlCell(row.cells[c]) ? String(row.cells[c]) : undefined}
               >
                 {renderCell?.(row, c) ?? <StandardCell kit={kit} row={row} col={c} />}
@@ -247,7 +252,7 @@ export const TableKitTable: React.FC<TableKitTableProps> = ({
   return (
     // Its own wrapper scrolls, so the header and the TOTAL stay pinned.
     <Table ref={tableRef} className={WS_TABLE} containerClassName={containerClassName ?? DEFAULT_CONTAINER} aria-label={label}>
-      <TableKitHeader kit={kit} leading={leading} trailing={trailing} sticky={sticky} headClassName={headClassName} />
+      <TableKitHeader kit={kit} leading={leading} trailing={trailing} sticky={sticky} headClassName={headClassName} columnClassName={columnClassName} />
 
       <TableBody>
         {view.rows.length === 0 && view.filtered && (

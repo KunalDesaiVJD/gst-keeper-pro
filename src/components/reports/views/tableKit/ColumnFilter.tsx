@@ -95,12 +95,13 @@ const parseNum = (s: string): number | null => {
 };
 
 const NumberPanel: React.FC<{ filter: ColFilter | undefined; onChange: (f: ColFilter | undefined) => void }> = ({ filter, onChange }) => {
-  const f = filter?.type === 'number' ? filter : { type: 'number' as const, min: null, max: null, nonZero: false };
+  const f: Extract<ColFilter, { type: 'number' }> = filter?.type === 'number' ? filter : { type: 'number', min: null, max: null, nonZero: false };
   // Typed text is kept as typed ("1," mid-entry); the filter takes the number.
   const [minText, setMinText] = useState(f.min === null ? '' : String(f.min));
   const [maxText, setMaxText] = useState(f.max === null ? '' : String(f.max));
+  // A view's own tolerance (a mismatch is a variance beyond 0.50) stays with the figures typed here.
   const emit = (next: { min: number | null; max: number | null; nonZero?: boolean }) => {
-    const out: ColFilter = { type: 'number', ...next };
+    const out: ColFilter = { type: 'number', ...next, ...(f.tolerance ? { tolerance: f.tolerance } : {}) };
     onChange(isFilterActive(out) ? out : undefined);
   };
   return (
@@ -123,7 +124,7 @@ const NumberPanel: React.FC<{ filter: ColFilter | undefined; onChange: (f: ColFi
       </div>
       <label className="flex cursor-pointer items-center gap-2 text-xs">
         <Checkbox checked={!!f.nonZero} onCheckedChange={(v) => emit({ min: f.min, max: f.max, nonZero: v === true })} className="h-3.5 w-3.5" />
-        Not nil (leave out zero)
+        {f.tolerance ? `Not nil (leave out amounts within ±${f.tolerance.toFixed(2)})` : 'Not nil (leave out zero)'}
       </label>
     </div>
   );

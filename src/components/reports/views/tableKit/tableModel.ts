@@ -22,11 +22,16 @@ import type { ColumnGroup, ReportTable, RowKind, RowTone } from '@/utils/allClie
 export type Cell = string | number;
 export type Row = Cell[];
 
-/** Ticked values (OR), a text search, a numeric range, a date range (ISO yyyy-mm-dd). */
+/**
+ * Ticked values (OR), a text search, a numeric range, a date range (ISO yyyy-mm-dd).
+ * A number filter's `tolerance` goes with `nonZero`: a figure within plus or
+ * minus that much counts as nil (a variance of a few paise is rounding, not a
+ * mismatch). Without it only a true nil (under 0.005) is left out.
+ */
 export type ColumnFilter =
   | { type: 'values'; values: string[] }
   | { type: 'contains'; text: string }
-  | { type: 'number'; min: number | null; max: number | null; nonZero?: boolean }
+  | { type: 'number'; min: number | null; max: number | null; nonZero?: boolean; tolerance?: number }
   | { type: 'date'; from: string | null; to: string | null };
 
 export type FilterKind = ColumnFilter['type'];
@@ -273,6 +278,22 @@ export function buildModel(table: TableInput): TableModel {
   return model;
 }
 
+/**
+ * The model with the columns a TOTAL adds up narrowed to `cols` ([] for none).
+ * For a statement whose rows are unlike measures (the taxable value above the
+ * tax heads, the liability above the payment), where a sum of the rows shown
+ * would add unlike things: with none, no TOTAL is recomputed under a filter and
+ * groups carry no subtotal. Only figure columns can be summed.
+ */
+export function withSummable(model: TableModel, cols: number[]): TableModel {
+  const keep = new Set(cols.filter((c) => isFigureColumn(model, c)));
+  return {
+    ...model,
+    summable: model.headers.map((_, c) => c).filter((c) => keep.has(c)),
+    columns: model.columns.map((c) => ({ ...c, summable: keep.has(c.index) })),
+  };
+}
+
 // ── Filters ────────────────────────────────────────────────────────────────
 
 export function isFilterActive(f: ColumnFilter | undefined): boolean {
@@ -307,11 +328,11 @@ function predicateFor(model: TableModel, col: number, f: ColumnFilter): Pred {
       };
     }
     case 'number': {
-      const { min, max, nonZero } = f;
+      const { min, max, nonZero, tolerance } = f;
       return (r) => {
         const v = r.cells[col];
         if (typeof v !== 'number' || !Number.isFinite(v)) return false;
-        if (nonZero && Math.abs(v) < 0.005) return false;
+        if (nonZero && (tolerance ? Math.abs(v) <= tolerance : Math.abs(v) < 0.005)) return false;
         if (min !== null && v < min - 1e-9) return false;
         if (max !== null && v > max + 1e-9) return false;
         return true;
@@ -693,7 +714,7 @@ export function describeFilter(model: TableModel, col: number, f: ColumnFilter):
       if (f.min !== null && f.max !== null) parts.push(`between ${fig(f.min, c?.kind)} and ${fig(f.max, c?.kind)}`);
       else if (f.min !== null) parts.push(`at least ${fig(f.min, c?.kind)}`);
       else if (f.max !== null) parts.push(`at most ${fig(f.max, c?.kind)}`);
-      if (f.nonZero) parts.push('not nil');
+      if (f.nonZero) parts.push(f.tolerance ? `not nil (more than ${fig(f.tolerance, 'amount')} either way)` : 'not nil');
       return `${name} ${parts.join(', ')}`;
     }
     case 'date': {
