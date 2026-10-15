@@ -9,7 +9,8 @@
 // checks every reason, both directions, the neighbouring-statement variants,
 // value differences, amendments, duplicates, empty inputs, the totals, the
 // view model (signed rows, aggregates), the report layout (stat band, document
-// list, summary, analysis sheets), the multi-month merge, the 2A credit notes
+// list, summary, analysis sheets), the multi-month merge, the view's filters
+// (facets, counts, presets, the filter line of an export), the 2A credit notes
 // and the Pull plan.
 // Prints a pass / fail table; exits 1 on any failure.
 import { createRequire } from 'node:module';
@@ -40,6 +41,7 @@ const out = await build({
       export { buildForPeriods, mergeRows } from './src/lib/reportPeriodMerge';
       export { flattenGstr2bDocs } from './src/utils/filedReturnReports';
       export * as V from './src/lib/itcReco/viewModel';
+      export * as Fl from './src/lib/itcReco/filters';
       export { planPullJobs, describeJob } from './src/utils/gstr2aVs2bReports';
     `,
     resolveDir: root, loader: 'ts',
@@ -595,6 +597,119 @@ check('merge', 'strip and file name: the span of months', metaOf(merged, 'Period
     && direct.failed[0].period === '05/2026' && direct.statements.map((s) => s.period).join() === '06/2026,07/2026' && direct.notes[0].period === '06/2026');
 }
 check('merge', 'mergeRows is the shared row merge', R.mergeRows([[['a', 'TOTAL']]], ['07/2026'], 2)[1][1] === 'TOTAL (07/2026)');
+
+// ── The view's filters (src/lib/itcReco/filters.ts) ───────────────────────
+{
+  const Fl = R.Fl;
+  const E = Fl.EMPTY_FILTERS;
+  const rows = view.rows;
+  const num = (xs) => xs.map((r) => r.number).join(',');
+  const sup = (name) => Fl.supplierKey(rows.find((r) => r.supplierName === name));
+  const where = (pred) => rows.filter(pred);
+  check('filters', 'nothing set: every row (the same array), not filtering; each facet counts every row once', Fl.applyFilters(rows, E) === rows && !Fl.isFiltering(E)
+    && Fl.FACETS.filter((f) => f !== 'flag').every((f) => [...Fl.facetCounts(rows, E, f).values()].reduce((a, b) => a + b, 0) === rows.length));
+  const or = Fl.applyFilters(rows, { ...E, status: ['only_left', 'only_right'] });
+  check('filters', 'OR within a facet: Only in 2A or Only in 2B', or.length === where((r) => r.status === 'only_left' || r.status === 'only_right').length && or.length === 19
+    && or.every((r) => r.status === 'only_left' || r.status === 'only_right'), or.length);
+  const and = Fl.applyFilters(rows, { ...E, status: ['only_left'], supplier: [sup('ZETA LOGISTICS'), sup('ETA ENGINEERING')] });
+  check('filters', 'AND across facets: Only in 2A and (ZETA or ETA)', num(and) === 'F-602,F-601,G-702,G-701', num(and));
+  const flags = Fl.applyFilters(rows, { ...E, flag: ['ITC_NA_POS', 'RCM'] });
+  const flagsMatched = Fl.applyFilters(rows, { ...E, flag: ['ITC_NA_POS', 'RCM'], status: ['matched'] });
+  check('filters', 'flags: OR within (place of supply or reverse charge), AND with status', num(flags) === 'T-1801,R-1601,S-1701' && num(flagsMatched) === 'R-1601,S-1701', `${num(flags)} | ${num(flagsMatched)}`);
+  const imports = Fl.applyFilters(rows, { ...E, supplier: [Fl.supplierKey(rows.find((r) => r.number === 'BE-1'))] });
+  check('filters', 'an import without a GSTIN is its own supplier, named "Imports (no GSTIN)"', num(imports) === 'BE-1' && Fl.facetLabel('supplier', '~', view) === 'Imports (no GSTIN)');
+
+  // Faceted counts: a facet ignores its own selection and honours every other filter.
+  const f1 = { ...E, status: ['matched'], supplier: [sup('RHO RESINS')] };
+  const c1 = Fl.allFacetCounts(rows, f1);
+  check('filters', 'counts: status ignores the status filter (RHO: 3 matched), supplier ignores the supplier filter (matched per supplier)',
+    c1.status.get('matched') === 3 && [...c1.status.keys()].join() === 'matched'
+    && c1.supplier.get(sup('UPSILON YARNS')) === 2 && c1.supplier.get(sup('RHO RESINS')) === 3 && c1.supplier.get(sup('ALPHA TRADERS')) === 1
+    && c1.section.get('B2B') === 3 && c1.itc.get('not_available') === 3, JSON.stringify(Object.fromEntries(Object.entries(c1).map(([k, m]) => [k, Object.fromEntries(m)]))));
+  // Brute force: every facet value's count equals the rows the filter would leave with that value alone ticked in that facet.
+  const busy = { ...E, status: ['only_left', 'only_right', 'matched'], section: ['B2B'], docType: ['INV'], minDiff: null, dateFrom: '2026-06-01', search: 'a' };
+  const all = Fl.allFacetCounts(rows, busy);
+  const wrong = [];
+  for (const facet of Fl.FACETS) {
+    for (const o of Fl.facetOptions(view, facet)) {
+      const others = Fl.applyFilters(rows, { ...busy, [facet]: [] });
+      const want = others.filter((r) => Fl.valuesOf(r, facet).includes(o.value)).length;
+      const got = all[facet].get(o.value) ?? 0;
+      if (got !== want) wrong.push(`${facet}=${o.value}: ${got} vs ${want}`);
+      if (facet !== 'flag' && got !== Fl.applyFilters(rows, { ...busy, [facet]: [o.value] }).length) wrong.push(`${facet}=${o.value}: not the rows ticking it would show`);
+    }
+    if (JSON.stringify([...Fl.facetCounts(rows, busy, facet)]) !== JSON.stringify([...all[facet]])) wrong.push(`${facet}: facetCounts differs from allFacetCounts`);
+  }
+  check('filters', 'counts, every facet and value, under a busy filter: the rows ticking that value alone would show', wrong.length === 0, wrong.slice(0, 6).join('; '));
+
+  // The other filters.
+  const big = Fl.applyFilters(rows, { ...E, minDiff: 500 });
+  check('filters', 'tax difference at least ₹500 (not compared rows have none)', num(big) === 'B-201,E-501,T-1801,V-2101,C-301,W-1001,J-901,H-802', num(big));
+  const tol = Fl.applyFilters(rows, { ...E, aboveTolerance: view.tolerance });
+  check('filters', 'above the tolerance: figures differ by more than ₹1 on value or tax; matched, not compared and the date-only row are out',
+    tol.length === where((r) => r.diff && (Math.abs(r.diff.tax) > 1 || Math.abs(r.diff.taxable) > 1)).length
+    && tol.every((r) => r.status !== 'matched' && r.status !== 'not_compared') && !tol.some((r) => r.number === 'P-1501') && tol.some((r) => r.number === 'B-201'), num(tol));
+  const july = Fl.applyFilters(rows, { ...E, dateFrom: '2026-07-01', dateTo: '2026-07-31' });
+  check('filters', 'document date from / to, inclusive (N-5 of 2025, U-0201 of Feb, X-2201 of Aug and the June ones out)', july.length === where((r) => r.date >= '2026-07-01' && r.date <= '2026-07-31').length
+    && !july.some((r) => ['N-5', 'U-0201', 'X-2201', 'H-801', 'P-1501'].includes(r.number)) && july.some((r) => r.number === 'Q-1'), num(july));
+  check('filters', 'search: every word must appear (name, number, GSTIN, reason, evidence), any case',
+    num(Fl.applyFilters(rows, { ...E, search: 'zeta' })) === 'F-602,F-601' && num(Fl.applyFilters(rows, { ...E, search: '  Zeta   602 ' })) === 'F-602'
+    && num(Fl.applyFilters(rows, { ...E, search: '29aaapk' })) === 'K-1101,K-1102' && Fl.applyFilters(rows, { ...E, search: 'found in the 2b of aug 2026' }).some((r) => r.number === 'B-201')
+    && Fl.applyFilters(rows, { ...E, search: 'm-1301a' }).length === 1);
+
+  // Words: chips and the export's filter line.
+  const fD = { ...E, status: ['only_right', 'only_left'], supplier: [sup('THETA THREADS')], itc: ['none'], reverseCharge: ['no'], minDiff: 100, dateFrom: '2026-06-01', search: ' theta ' };
+  const d = Fl.describeFilters(fD, view);
+  check('filters', 'describeFilters: facets in the bar\'s order, values in the facet\'s order, the supplier with its GSTIN, then the bounds and the search',
+    d === 'Status: Only in 2A, Only in 2B; Supplier: THETA THREADS (24AAAPH0008H1Z8); ITC in 2B: Not in 2B; Reverse charge: No; Tax difference at least ₹100.00; Document date from 01-06-2026; Search: "theta"'
+    && Fl.describeFilters(E, view) === '', d);
+  const six = ['ALPHA TRADERS', 'BETA STEEL', 'GAMMA PAPERS', 'DELTA DYES', 'EPSILON PACKAGING', 'ZETA LOGISTICS'].map(sup);
+  const d6 = Fl.describeFilters({ ...E, supplier: six, dateFrom: '2026-07-01', dateTo: '2026-07-31', aboveTolerance: 1 }, view);
+  check('filters', 'describeFilters: a long list is cut ("and 2 more"); a date range; the tolerance', d6 === 'Supplier: ALPHA TRADERS (24AAAPA0001A1Z1), BETA STEEL (27AAAPB0002B1Z2), DELTA DYES (24AAAPD0004D1Z4), EPSILON PACKAGING (24AAAPE0005E1Z5) and 2 more; Differences above ₹1.00; Document date 01-07-2026 to 31-07-2026', d6);
+  const chips = Fl.filterChips(fD, view);
+  const noSup = Fl.removeChip(fD, chips.find((c) => c.kind === 'supplier'));
+  check('filters', 'chips: one per value (in the order ticked) and per bound; removing one leaves the rest', chips.length === 8 && chips[0].label === 'Status: Only in 2B' && chips.some((c) => c.label === 'Supplier: THETA THREADS')
+    && noSup.supplier.length === 0 && noSup.status.length === 2 && Fl.removeChip(fD, chips.find((c) => c.kind === 'search')).search === '' && Fl.removeChip(fD, chips.find((c) => c.kind === 'minDiff')).minDiff === null,
+    chips.map((c) => c.label).join(' | '));
+  check('filters', 'options: reasons grouped by status in the status order; document types invoice first; ITC "Not in 2B" last',
+    Fl.facetOptions(view, 'reason')[0].group === 'Only in 2A' && Fl.facetOptions(view, 'reason').at(-1).group === 'Matched'
+    && Fl.facetOptions(view, 'docType').map((o) => o.label).join() === 'Invoice,Invoice (amended),Credit note,ISD credit,Bill of entry'
+    && Fl.facetOptions(view, 'itc').map((o) => o.label).join() === 'Available,Not available,Rejected in IMS,ITC reversal (Rule 37A),Not in 2B'
+    && Fl.facetOptions(view, 'rate').map((o) => o.value).join() === '18,none', Fl.facetOptions(view, 'docType').map((o) => o.label).join());
+
+  // Presets.
+  const P = (k) => Fl.presetFilters(k, view.tolerance);
+  check('filters', 'presets: Needs action = everything but matched and not compared; Differences only = above the tolerance; Matched; All = nothing set',
+    Fl.applyFilters(rows, P('needs_action')).length === where((r) => r.status !== 'matched' && r.status !== 'not_compared').length
+    && Fl.applyFilters(rows, P('differences')).length === tol.length && Fl.applyFilters(rows, P('matched')).length === where((r) => r.status === 'matched').length
+    && Fl.applyFilters(rows, P('all')) === rows);
+  check('filters', 'activePreset recognises each preset exactly, and none once anything else is set', ['needs_action', 'differences', 'matched', 'all'].every((k) => Fl.activePreset(P(k), view.tolerance) === k)
+    && Fl.activePreset({ ...P('needs_action'), search: 'x' }, view.tolerance) === null && Fl.activePreset({ ...E, status: ['only_left'] }, view.tolerance) === null
+    && Fl.activePreset({ ...E, status: [...P('needs_action').status].reverse() }, view.tolerance) === 'needs_action');
+
+  // Sorting the list.
+  const tblNums = dataRows(table).map((r) => cell(table, r, 'Doc No.')).join(',');
+  const byDiff = Fl.sortRows(rows, { key: 'diffTax', dir: 'desc' });
+  const byDiffAsc = Fl.sortRows(rows, { key: 'diffTax', dir: 'asc' });
+  const vals = (xs) => xs.filter((r) => r.diff).map((r) => r.diff.tax);
+  check('filters', 'sortRows: no sort = the Excel\'s order; figures either way with not compared rows last; text A to Z', num(Fl.sortRows(rows, null)) === tblNums
+    && vals(byDiff).every((v, i, a) => i === 0 || a[i - 1] >= v) && byDiff.slice(-3).every((r) => !r.diff)
+    && vals(byDiffAsc).every((v, i, a) => i === 0 || a[i - 1] <= v) && byDiffAsc.slice(-3).every((r) => !r.diff)
+    && Fl.sortRows(rows, { key: 'supplier', dir: 'asc' })[0].supplierName === 'ALPHA TRADERS' && Fl.sortRows(rows, { key: 'supplier', dir: 'asc' }).at(-1).number === 'BE-1');
+
+  // A filtered export carries its own rows and names the filter.
+  const fx = { ...E, status: ['only_left'], supplier: [sup('ZETA LOGISTICS')] };
+  const tx = R.V.recoReportTable({ ...view, rows: Fl.applyFilters(rows, fx) }, { filterNote: Fl.describeFilters(fx, view) });
+  check('filters', 'an export of the filtered rows: its own documents and figures, the filter in the strip', dataRows(tx).length === 2 && kpi(tx, 'Documents') === 2
+    && tx.meta.find((f) => f.label === 'Filter')?.value === 'Status: Only in 2A; Supplier: ZETA LOGISTICS (24AAAPF0006F1Z6)', JSON.stringify(tx.meta));
+
+  // Several months: the month facet.
+  const mv = merged.reco;
+  check('filters', 'several months: a month facet with both, in order; a month picked leaves its rows; "Month: Jul 2026"',
+    Fl.facetOptions(mv, 'period').map((o) => o.label).join() === 'Jun 2026,Jul 2026'
+    && Fl.applyFilters(mv.rows, { ...E, period: ['07/2026'] }).length === n1 && Fl.describeFilters({ ...E, period: ['07/2026'] }, mv) === 'Month: Jul 2026'
+    && Fl.facetCounts(mv.rows, { ...E, period: ['07/2026'], status: ['matched'] }, 'period').get('06/2026') === where((r) => r.status === 'matched').length);
+}
 
 // ── 2A credit and debit notes (extension 0.14.0: summary.cdn) ──────────────
 {
