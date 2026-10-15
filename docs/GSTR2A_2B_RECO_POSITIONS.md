@@ -2,7 +2,7 @@
 
 How the Reports Hub's **GSTR-2A vs GSTR-2B Reconciliation** matches the two
 statements and decides the reason for every difference. Read this before
-changing `src/lib/itcReco/` (engine, adapters, rules, table),
+changing `src/lib/itcReco/` (engine, adapters, rules, view model, table),
 `src/utils/gstr2aVs2bReports.ts` (the report and its Pull plan),
 `src/components/reports/views/ReasonReconciliationView.tsx`, or the
 extension's GSTR-2A / GSTR-2B pulls (`extension/content.js`,
@@ -20,10 +20,9 @@ this was written, so the report has been tested on fictional data only
 
 ## 1. What the report is
 
-One client and one month (several months give one block per month, like every
-other report; a month that cannot be built, such as a quarterly taxpayer's
-month without a 2B, shows its reason in its own block instead of failing the
-others, and each month's pull dates lead its notes). The month's portal 2A and portal 2B (as the extension saved
+One client and one month, or several months merged into one report (§12; a
+month that cannot be built, such as a quarterly taxpayer's month without a 2B,
+is named with its reason instead of failing the others). The month's portal 2A and portal 2B (as the extension saved
 them in `gst_filed_returns`, never the Excel imports) are matched document by
 document. Every row gets a status, a reason, what to do, the evidence for the
 reason, and both sides' figures with the difference (2B minus 2A). A summary
@@ -268,3 +267,48 @@ extension's ledger chain.
 3. Before 8A is live, is an "8A as rebuilt from 2B" source wanted?
 4. Should the extension also pull 2A credit notes and amendments? Those
    sections need a live check first.
+
+## 12. Presentation
+
+How the report is laid out; no position above depends on it. Built by
+`recoReportTable` (`src/lib/itcReco/viewModel.ts`) from flat view rows
+(`toViewData`: one row per pair, every figure signed, a credit note and an ITC
+reversal entry negative), so the preview, the Excel and the PDF read the same
+rows and every total, tile and summary line is a sum over them.
+
+- **Identification strip**: client, GSTIN, period ("Jul 2026", or "Apr 2025 to
+  Mar 2026 (12 months)"), when the 2A was pulled and the 2B generated (their
+  span across months), the months that could not be built, and the filter when
+  a filtered view is exported.
+- **Stat band**: documents (and how many are in each statement), matched (with
+  its share), only in 2A, only in 2B, figures differ (ITC differs included),
+  not compared, 2A tax, 2B tax, and the net difference (2B minus 2A, over the
+  compared documents only).
+- **Documents**, the main sheet: one row per pair with both statements side by
+  side, under five bands: Document (Sr., Month, Supplier GSTIN, Supplier Name,
+  Doc Type, Doc No., Doc Date, Section) | GSTR-2A (taxable value, IGST, CGST,
+  SGST, cess, total tax, filed on) | GSTR-2B (the same, and whether the 2B gives
+  ITC) | Difference, 2B minus 2A (taxable value and total tax; blank when not
+  compared) | Reconciliation (Status, Reason, What to do, Evidence, Reverse
+  Charge, Also note). A side that has no document is blank, not zero. Sorted by
+  month, status (in §5's order: only in 2A, only in 2B, figures differ, ITC
+  differs, not compared, matched), supplier name, date and number; a TOTAL row
+  sums every amount column. The status tints its cell (matched green, one side
+  only amber, a difference red, not compared grey) and the word is always
+  there, so a black and white print loses nothing. The PDF prints month,
+  supplier, number, date, both taxes, the difference, status and reason; the
+  Excel has every column.
+- **Summary by reason**: one line per status and reason with the documents,
+  both sides' taxable value and tax, the difference and what to do, and the
+  notes under it (§5, §9), each led by its month when there are several.
+- **Analysis sheets**: By supplier (one line per GSTIN: counts by status, both
+  sides' figures, the difference, the largest difference first, and a status
+  word for its worst row); By month (several months only: the same per month,
+  with that month's pull and generation dates); By document type; Notes and
+  evidence (Excel only: every row with a flag or a reason not confirmed).
+- **Several months are one report, not stitched blocks**: every month's rows
+  are merged (the Month column says which) and the stat band, the summary, the
+  TOTAL and the analysis sheets are recomputed across them. A month that could
+  not be built is named in the strip and in the notes; the others are built.
+- Other code finds the columns 'Status', 'Reason' and 'Total Tax Difference (2B
+  minus 2A)' by name: keep those headers.
