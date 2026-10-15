@@ -30,7 +30,7 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // of re-sending them, never writes an IRN field, and the e-invoice pull checks
 // the file's GSTIN and period and drops e-invoices the portal no longer holds.
 // 0.4.x to 0.8.6 are still allowed (their writes are safe), only nudged to update.
-export const RECOMMENDED_EXTENSION_VERSION = '0.11.8';
+export const RECOMMENDED_EXTENSION_VERSION = '0.12.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -85,6 +85,7 @@ const GAINS: [string, string][] = [
   ['0.11.6', "opens an unfiled GSTR-9 when the portal answers with placeholders only, so Tables 4 and 6 come through"],
   ['0.11.7', "makes sure the GSTR-9 NIL answer registers and NEXT is pressed once it is active"],
   ['0.11.8', 'fixes the GSTR-9 pull that stopped at the NIL question in 0.11.7'],
+  ['0.12.0', "drives an unfiled GSTR-9 the way the portal's own pages work: PREPARE-ONLINE, No on the Nil question, NEXT, then the system-computed summary"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {
