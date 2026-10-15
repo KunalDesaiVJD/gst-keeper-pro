@@ -2,6 +2,19 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-15 — Unfiled GSTR-9 driven from the portal's own pages (v0.12.0)
+
+- Written against the two portal pages the firm saved (Amber Gum 2025-26).
+- **Questions page** (`form name="questionPage"`): "Do you want to file a Nil return?" is the radio pair `#nilyes` / `#nilno` (`name="nil"`, value Y / N). NEXT is the form's submit button, disabled until the answer is set. The extension clicks `#nilno` (its label if that did not take) and presses NEXT once it is active.
+- 0.11.6 looked for any "NIL" text on any page. It could spend its three tries on the Annual Return page before the questions page loaded.
+- **Dashboard** (`/returns2/auth/gstr9/dashboard`): its tiles read "₹-" until the portal has computed the year. The extension presses **Download GSTR-9 System computed summary (PDF)** (`getPdfData_gstr9_System()`). It then keeps asking `details/calc` and the tables (`getDetails`) for up to about 4 minutes, until Table 4 or Table 6 has figures.
+- An unfiled year now goes straight to PREPARE-ONLINE. The Annual Return tile has no system-computed button.
+- The row says how far it got: Prepare Online, the Nil question (with the radio's and NEXT's state), the dashboard and the summary button.
+- Tested on the saved pages:
+  - No is chosen and NEXT is pressed once active;
+  - a disabled NEXT is reported, not pressed;
+  - the dashboard and its summary button are found.
+
 ## 2026-10-15 — GSTR-9 pull no longer stops at the NIL question (v0.11.8)
 
 - 0.11.7 stopped at the NIL question with "Cannot access 'g9NilSeen' before initialization" (Amber Gum). It never chose No. The cause was the same as in 0.11.0: a top-level `let` placed after the job runner.
