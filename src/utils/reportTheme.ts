@@ -202,9 +202,14 @@ export const drawStatBand = (doc: jsPDF, tiles: StatTile[], startY: number, opts
 
     if (t.note) {
       doc.setFont('helvetica', t.accent ? 'bold' : 'normal');
-      doc.setFontSize(6.5);
       doc.setTextColor(...(t.accent ?? INK_MUTED));
-      doc.text(t.note, x + 3, top + 17);
+      // A note never runs into the next tile: it steps down, then is cut short.
+      const room = cellW - 4.5;
+      doc.setFontSize(6.5);
+      for (let size = 6; size >= 5.5 && doc.getTextWidth(t.note) > room; size -= 0.5) doc.setFontSize(size);
+      let note = t.note;
+      while (note.length > 1 && doc.getTextWidth(note) > room) note = note.slice(0, -2).trimEnd() + '…';
+      doc.text(note, x + 3, top + 17);
     }
   });
 

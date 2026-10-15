@@ -11,11 +11,11 @@
 // math stays in lock-step with the on-screen formulas: change them here too
 // if you change them on SuspendedRecoPage or GstReceivableRecoPage.
 
-import * as XLSX from 'xlsx';
 import { supabase } from '@/integrations/supabase/client';
 import { computeGstr1OutputTax } from './computeGstr1OutputTax';
 import { computeTotal4A } from './builderPartialItc';
 import type { RecoViewData } from '@/lib/itcReco/viewTypes';
+import { downloadReportXlsx } from '@/lib/reportExport/excel';
 
 interface ClientRow { id: string; name: string; gstin: string; }
 
@@ -472,26 +472,7 @@ export const buildClientCredentials = async (): Promise<ReportTable> => {
 
 // ─────────────────── Excel renderer (shared) ─────────────────────────────
 
-export const reportToWorkbook = (report: ReportTable): XLSX.WorkBook => {
-  const sheetData = [[report.title], [report.subtitle], [], report.headers, ...report.rows];
-  const sheet = XLSX.utils.aoa_to_sheet(sheetData);
-  sheet['!cols'] = report.columnWidths.map(wch => ({ wch }));
-  const workbook = XLSX.utils.book_new();
-  if (!report.summary) {
-    XLSX.utils.book_append_sheet(workbook, sheet, 'Report');
-    return workbook;
-  }
-  // Summary first (title, subtitle, the summary table, then its notes one per
-  // row), the document list on its own sheet.
-  const s = report.summary;
-  const notes = s.notes && s.notes.length ? [[], ['Notes'], ...s.notes.map((n) => [n])] : [];
-  const summarySheet = XLSX.utils.aoa_to_sheet([[report.title], [report.subtitle], [], [s.title], s.headers, ...s.rows, ...notes]);
-  summarySheet['!cols'] = s.columnWidths.map(wch => ({ wch }));
-  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Documents');
-  return workbook;
-};
-
-export const renderReportToExcel = (report: ReportTable) => {
-  XLSX.writeFile(reportToWorkbook(report), `${report.fileNameBase}.xlsx`);
-};
+// Every Reports Hub download (and the Clients page's) goes out in the firm's
+// Big4 working-paper style: src/lib/reportExport/excel.ts, which loads ExcelJS
+// only when a file is asked for.
+export const renderReportToExcel = (report: ReportTable): Promise<void> => downloadReportXlsx(report);

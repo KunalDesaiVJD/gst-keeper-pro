@@ -67,8 +67,8 @@ const Workspace: React.FC<{ data: RecoViewData; table: ReportTable }> = ({ data,
       // subtitle rather than the strip (`meta`, which carries it already).
       const t = { ...built, fileNameBase: `${built.fileNameBase}_filtered`, subtitle: note ? `${built.subtitle}   |   Filter: ${note}` : built.subtitle };
       // The Big4 renderers may be async (they load ExcelJS / jsPDF on demand); the old ones are not.
-      if (format === 'xlsx') await Promise.resolve(renderReportToExcel(t));
-      else await Promise.resolve(renderReportToPdf(t));
+      if (format === 'xlsx') await renderReportToExcel(t);
+      else await renderReportToPdf(t);
       toast.success(`${format === 'xlsx' ? 'Excel' : 'PDF'} of ${fmtCountPlain(rows.length)} document${rows.length === 1 ? '' : 's'} downloaded`);
     } catch (e) {
       toast.error(`Could not build the ${format === 'xlsx' ? 'Excel' : 'PDF'}: ${e instanceof Error ? e.message : String(e)}`);

@@ -412,10 +412,10 @@ export function recoReportTable(data: RecoViewData, opts: RecoTableOptions = {})
     { label: `Only in ${L}`, value: counts.only_left, note: pct(counts.only_left), tone: counts.only_left ? 'warn' : 'good' },
     { label: `Only in ${R}`, value: counts.only_right, note: pct(counts.only_right), tone: counts.only_right ? 'warn' : 'good' },
     { label: 'Figures differ', value: differ, note: counts.itc_differs ? `incl. ${counts.itc_differs} ITC differs` : pct(differ), tone: differ ? 'bad' : 'good' },
-    { label: 'Not compared', value: counts.not_compared, note: counts.not_compared ? `sections the ${L} does not read` : undefined, tone: 'muted' },
+    { label: 'Not compared', value: counts.not_compared, note: counts.not_compared ? `not read in ${L}` : undefined, tone: 'muted' },
     { label: `${L} tax`, value: lt.tax, note: `${lt.docs} documents` },
     { label: `${R} tax`, value: rt.tax, note: `${rt.docs} documents` },
-    { label: `Net difference (${R} minus ${L})`, value: net, note: 'over the compared documents', tone: Math.abs(net) > data.tolerance ? 'bad' : 'good' },
+    { label: `Net difference (${R} minus ${L})`, value: net, note: 'compared documents', tone: Math.abs(net) > data.tolerance ? 'bad' : 'good' },
   ];
 
   // ── Document list ──

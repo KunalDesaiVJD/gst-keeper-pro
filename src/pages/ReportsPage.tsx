@@ -214,8 +214,8 @@ const ReportsPage: React.FC = () => {
     setBusy({ key: report.key, format });
     try {
       const table = await buildForPeriods(report, selectedPeriods, selectedClientId);
-      if (format === 'xlsx') renderReportToExcel(table);
-      else renderReportToPdf(table);
+      if (format === 'xlsx') await renderReportToExcel(table);
+      else await renderReportToPdf(table);
       toast.success(`${report.title} downloaded.`);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -253,8 +253,8 @@ const ReportsPage: React.FC = () => {
     if (!previewTable) return;
     setPreviewExportBusy(format);
     try {
-      if (format === 'xlsx') renderReportToExcel(previewTable);
-      else renderReportToPdf(previewTable);
+      if (format === 'xlsx') await renderReportToExcel(previewTable);
+      else await renderReportToPdf(previewTable);
       toast.success(`${previewTable.title} downloaded.`);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';

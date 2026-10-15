@@ -167,8 +167,8 @@ const DocumentLineItemsBody: React.FC<DocumentLineItemsViewProps> = ({ table, re
     await new Promise((r) => setTimeout(r, 30));
     try {
       const t = viewToReportTable(table, model, state, hidden);
-      if (format === 'xlsx') await Promise.resolve(renderReportToExcel(t));
-      else await Promise.resolve(renderReportToPdf(t));
+      if (format === 'xlsx') await renderReportToExcel(t);
+      else await renderReportToPdf(t);
       toast.success(`${format === 'xlsx' ? 'Excel' : 'PDF'} of the ${view.rows.length.toLocaleString('en-IN')} rows shown downloaded.`);
     } catch (err) {
       toast.error(`Could not export: ${err instanceof Error ? err.message : String(err)}`);
