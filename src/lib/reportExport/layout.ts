@@ -221,11 +221,18 @@ export function metaOf(table: Pick<ReportTable, 'subtitle' | 'meta'>): { fields:
   if (table.meta?.length) return { fields: table.meta, rest: '' };
   const fields: ReportMetaField[] = [];
   const rest: string[] = [];
+  // A multi-period merge keeps the first period's subtitle and adds "N periods
+  // combined": that first period is not the report's, so it gives way to a
+  // Periods field (as mergeTables does for a table's own meta).
+  const combined = segments.find((s) => /^\d+ periods combined$/i.test(s));
   for (const seg of segments) {
     const m = /^([A-Za-z][A-Za-z0-9 .()/&-]{0,28}):\s+(.+)$/.exec(seg);
-    if (m && !/https?$/i.test(m[1])) fields.push({ label: m[1].trim(), value: m[2].trim() });
-    else if (MONTH_LABEL_RE.test(seg)) fields.push({ label: 'Period', value: seg });
-    else if (FY_RE.test(seg)) fields.push({ label: 'Financial year', value: seg.replace(/^(fy|f\.y\.?)\s*/i, 'FY ') });
+    if (seg === combined) fields.push({ label: 'Periods', value: seg.replace(/\s*periods\s*/i, ' ') });
+    else if (m && !/https?$/i.test(m[1])) {
+      if (!(combined && /^(period|month|return period)$/i.test(m[1].trim()))) fields.push({ label: m[1].trim(), value: m[2].trim() });
+    } else if (MONTH_LABEL_RE.test(seg)) {
+      if (!combined) fields.push({ label: 'Period', value: seg });
+    } else if (FY_RE.test(seg)) fields.push({ label: 'Financial year', value: seg.replace(/^(fy|f\.y\.?)\s*/i, 'FY ') });
     else rest.push(seg);
   }
   return { fields, rest: rest.join('  ·  ') };
