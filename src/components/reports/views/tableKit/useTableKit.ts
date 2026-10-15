@@ -52,13 +52,19 @@ export interface TableKitOptions {
    * Narrows which columns a TOTAL, a subtotal and the KPI totals add up: their
    * indices, or a test on the column (given the column as the report has it).
    * A version number or a day count is a figure but adding it up means
-   * nothing. Default: the columns the report's own TOTAL rows add up, else its
-   * amounts and counts. It only ever narrows: a column the report does not sum
-   * is never summed.
+   * nothing, and a ledger leaves out its running balance. Default: the columns
+   * the report's own TOTAL rows add up, else its amounts and counts. It only
+   * ever narrows: a column the report does not sum is never summed.
    */
   summable?: number[] | ((col: ModelColumn) => boolean);
   /** Show a list longer than PAGE_THRESHOLD (500) lines a page at a time. Default true. */
   pageable?: boolean;
+  /**
+   * Page a list longer than this many lines instead (default PAGE_THRESHOLD).
+   * A view drawing a live control on every row pages sooner, so a long list
+   * never mounts hundreds of them at once.
+   */
+  pageThreshold?: number;
   /** Lines per page offered (default [100, 250, 500]). */
   pageSizes?: number[];
   /** Lines per page when the view opens (default 250). */
@@ -206,7 +212,7 @@ export function useTableKit(table: ReportTable, options: TableKitOptions = {}): 
   const view = useMemo(() => buildView(model, state, store.collapsed), [model, state, store.collapsed]);
   const cols = useMemo(() => visibleColumns(model, view, store.hidden), [model, view, store.hidden]);
   const pageable = options.pageable ?? true;
-  const paged = pageable && view.items.length > PAGE_THRESHOLD;
+  const paged = pageable && view.items.length > (options.pageThreshold ?? PAGE_THRESHOLD);
   const pageView = useMemo<Page>(
     () => (paged ? paginate(view.items, store.page, store.pageSize) : { items: view.items, page: 0, pages: 1, from: 0, to: view.items.length }),
     [paged, view.items, store.page, store.pageSize],

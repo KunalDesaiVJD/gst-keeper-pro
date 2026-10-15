@@ -68,9 +68,10 @@
 // set starts afresh, a Pull refresh keeps the choices), initialSort,
 // initialGroupBy, initialHidden, groupable (indices or a test; [] for none),
 // summable (narrows what a TOTAL adds up: a version number is a figure, not a
-// sum), pageable, pageSizes, initialPageSize, statusColumn, rowNoun,
-// transformExport. TableKitTable's headClassName colours or centres one
-// column's heading.
+// sum, and a ledger leaves out its running balance), pageable, pageThreshold
+// (page sooner than 500 lines), pageSizes, initialPageSize, statusColumn,
+// rowNoun, transformExport. TableKitTable's headClassName colours or centres
+// one column's heading.
 // The rules (what a filter matches, which rows are structure, when a TOTAL is
 // recomputed) are in ./tableModel.ts, tested by scripts/verify-doc-table-model.mjs.
 export * from './tableModel';

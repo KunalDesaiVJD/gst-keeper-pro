@@ -373,6 +373,17 @@ export const stampOf = (s: string): number | null => {
   return Date.UTC(+y, +mo - 1, +d, hour, +mi, +(sec ?? 0));
 };
 
+// A month written as text ("Apr 2026", "April 2026", "Apr-26", "04/2026"): by
+// the month. The collator alone puts Aug before Jun and Jan 2027 before Apr 2026.
+const MONTH_TEXT_RE = /^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)[\s-]+(\d{4}|\d{2})$/i;
+const monthOf = (s: string): number | null => {
+  const t = s.trim();
+  const m = MONTH_TEXT_RE.exec(t);
+  if (m) return (+m[2] < 100 ? 2000 + +m[2] : +m[2]) * 12 + MONTHS.findIndex((x) => x.toLowerCase() === m[1].slice(0, 3).toLowerCase());
+  const n = /^(\d{2})\/(\d{4})$/.exec(t);
+  return n && +n[1] >= 1 && +n[1] <= 12 ? +n[2] * 12 + +n[1] - 1 : null;
+};
+
 const keyOrder = (model: TableModel, col: number) => (a: string, b: string): number => {
   if (col === model.periodCol) return model.periods.findIndex((p) => p.key === a) - model.periods.findIndex((p) => p.key === b);
   if (a === BLANK && b !== BLANK) return 1;
@@ -383,6 +394,9 @@ const keyOrder = (model: TableModel, col: number) => (a: string, b: string): num
   const sa = stampOf(a);
   const sb = stampOf(b);
   if (sa !== null && sb !== null) return sa - sb || collator.compare(a, b);
+  const ma = monthOf(a);
+  const mb = monthOf(b);
+  if (ma !== null && mb !== null) return ma - mb || collator.compare(a, b);
   return collator.compare(a, b);
 };
 
@@ -431,7 +445,7 @@ function sortKey(model: TableModel, r: ModelRow, col: number): SortKey {
   if (kind === 'date') return parseDateCell(s)?.getTime() ?? null;
   // A word in a figures column ("NOT PULLED") sorts with the blanks.
   if (kind === 'amount' || kind === 'int' || kind === 'rate') return null;
-  return percentOf(s) ?? stampOf(s) ?? s;
+  return percentOf(s) ?? stampOf(s) ?? monthOf(s) ?? s;
 }
 
 const cmpKeys = (a: SortKey, b: SortKey): number => {

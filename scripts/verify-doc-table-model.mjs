@@ -174,6 +174,16 @@ const bm = M.buildModel(big);
   check(g, 'natural order (0.25% < 5% < 12% < 18%), blank last', rs.join(',') === '0.25%,5%,12%,18%,', rs.join(','));
   const rsd = M.sortRows(rate, rate.data, { col: 0, dir: 'desc' }).map((r) => r.cells[0]);
   check(g, 'blank last when descending too', rsd.join(',') === '18%,12%,5%,0.25%,', rsd.join(','));
+  // A ledger's Month column ("Apr 2026"): by the month, never alphabetically.
+  const mon = M.buildModel({
+    headers: ['Month', 'Type', 'IGST'],
+    rows: [['Aug 2026', 'Debit', 1], ['Apr 2026', 'Credit', 2], ['Jan 2027', 'Debit', 3], ['Jun 2026', 'Credit', 4], ['Apr 2026', 'Debit', 5]],
+  });
+  const ms = M.sortRows(mon, mon.data, { col: 0, dir: 'asc' }).map((r) => r.cells[0]);
+  check(g, 'month labels sort by the month (Apr 2026 < Jun 2026 < Aug 2026 < Jan 2027)', ms.join(',') === 'Apr 2026,Apr 2026,Jun 2026,Aug 2026,Jan 2027', ms.join(','));
+  const mf = M.facetValues(mon, view(), 0).map((v) => v.key);
+  const mg = M.groupRows(mon, mon.data, 0, null).map((x) => x.key);
+  check(g, '… and list and group in that order too', mf.join(',') === 'Apr 2026,Jun 2026,Aug 2026,Jan 2027' && mg.join(',') === mf.join(','), `${mf.join(',')} / ${mg.join(',')}`);
   const pcm = M.buildModel(F.perClientMonth());
   const pdfCol = col(pcm, 'PDF');
   const byLink = M.sortRows(pcm, pcm.data, { col: col(pcm, 'Taxable Value'), dir: 'asc' }).map((r) => r.cells[3]);
