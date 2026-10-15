@@ -324,6 +324,8 @@ const RemindersPage: React.FC<RemindersPageProps> = ({ embedded = false }) => {
                             <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> Confirmation</span>
                           ) : r.kind === 'notice_alert' ? (
                             <span className="inline-flex items-center gap-1 text-violet-700"><AlertTriangle className="h-3.5 w-3.5" /> Notice Alert</span>
+                          ) : (r.kind as string) === 'bills_not_in_books' ? (
+                            <span className="inline-flex items-center gap-1 text-amber-700"><AlertTriangle className="h-3.5 w-3.5" /> Bills not in books</span>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-amber-700">
                               <BellRing className="h-3.5 w-3.5" /> Reminder{r.reminder_step ? ` #${r.reminder_step}` : ''}

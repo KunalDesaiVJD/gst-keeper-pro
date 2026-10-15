@@ -48,6 +48,7 @@ const BILLS_VARS = [
 ];
 const SAMPLE: Record<string, string> = {
   bill_count: '12 documents',
+  table_html: '<p style="margin:0 0 8px;font-weight:600;color:#0f2b46;">By supplier</p><p style="margin:0 0 18px;color:#64748b;font-size:12px;">(The supplier table of the client\'s documents appears here; every document is in the attached Excel.)</p>',
   itc_total: '₹1,84,320.00',
   reply_by: '20 Oct 2026',
   contact_person: 'Rajesh Shah',

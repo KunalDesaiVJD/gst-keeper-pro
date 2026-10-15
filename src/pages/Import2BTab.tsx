@@ -2326,7 +2326,8 @@ const Import2BTab: React.FC = () => {
                 clientGstin={clients.find((c) => c.id === selectedClient)?.gstin || ''}
                 periodMonth={selectedMonth}
                 triggerClassName={WS_BTN}
-                blockedReason={pendingCount > 0 ? 'Save your row-action changes first: the e-mail lists the saved Not in Books documents.' : null}
+                blockedReason={isImporting ? 'Wait for the import to finish.'
+                  : pendingCount > 0 ? 'Save your row-action changes first: the e-mail lists the saved Not in Books documents.' : null}
               />
             )}
             {twoBDocs.length > 0 && (

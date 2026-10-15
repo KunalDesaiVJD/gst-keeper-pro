@@ -1,12 +1,14 @@
 // Import 2B → e-mail the client its bills not in books (15 Oct 2026).
 //
 // The list is every document the client's suppliers reported in GSTR-2B that
-// the client has not yet recorded in its books, as Import 2B and 2B
-// Reconciliation hold it for the selected month:
+// the client has not yet recorded in its books, as the ledger will hold it
+// after the next Post to Reconciliation:
 //  - the month's open Not in Books ledger rows (bills_not_in_books with no
-//    book_entry_month), which carry earlier months' items forward, and
-//  - this month's 2B documents marked Not in Books but not yet posted to the
-//    ledger (so a send never has to wait for Post to Reconciliation).
+//    book_entry_month), which carry earlier months' items forward; a row this
+//    month's Import 2B posted follows its document as it is now (left out if
+//    it is no longer Not in Books, at its current figures if they changed);
+//  - this month's 2B documents marked Not in Books that were never posted
+//    (so a send never has to wait for Post to Reconciliation).
 // Amounts are what the ledger holds: an amendment counts at its difference
 // (twobDocs.effectFigures), so a row may be negative.
 //
@@ -37,6 +39,8 @@ export interface BillNotInBooks {
   sgst: number;
   /** Not yet posted to Reconciliation (taken from this month's Import 2B). */
   unposted: boolean;
+  /** Tied to a document of this month's Import 2B (a posted or unposted Import 2B row). */
+  linked: boolean;
 }
 
 export interface BillsSummary {
@@ -54,7 +58,7 @@ export interface BillsSummary {
 const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 const MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
-/** "Sep 26" / "September 2026" / "09/2026" → a number that orders months (0 when unreadable). */
+/** "Sep 26" / "September 2026" / "09/2026" → a number that orders months (0, first, when unreadable or "Earlier"). */
 export function monthOrder(label: string | null | undefined): number {
   const s = String(label || '').toLowerCase().trim();
   const mm = s.match(/^(\d{1,2})\/(\d{4})$/);
@@ -95,9 +99,11 @@ function dropDuplicates(rows: BillNotInBooks[]): BillsList {
   const duplicates: BillNotInBooks[] = [];
   const seen = new Map<string, BillNotInBooks[]>();
   for (const r of rows) {
-    const key = [r.supplierGstin, normalizeInvoiceNo(r.docNo), r.taxable, r.igst, r.cgst, r.sgst].join('|');
+    const key = [r.supplierGstin, r.docType, normalizeInvoiceNo(r.docNo), r.taxable, r.igst, r.cgst, r.sgst].join('|');
     const same = seen.get(key) || [];
-    if (normalizeInvoiceNo(r.docNo) && same.some((k) => Math.abs(dayNo(k.date) - dayNo(r.date)) <= 1)) {
+    // Only an untied ledger row (carried forward or entered by hand) can be a
+    // repeat: a row tied to this month's Import 2B is a document of its own.
+    if (!r.linked && normalizeInvoiceNo(r.docNo) && same.some((k) => Math.abs(dayNo(k.date) - dayNo(r.date)) <= 1)) {
       duplicates.push(r);
       continue;
     }
@@ -120,10 +126,16 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
     doc_type: string | null; is_amendment: boolean | null; itc_action: string;
     base_taxable_value: number | null; base_input_igst: number | null; base_input_cgst: number | null; base_input_sgst: number | null; base_cess: number | null;
   };
-  const [ledger, docs] = await Promise.all([
+  const [ledger, linkedAll, docs] = await Promise.all([
     pageAll<LedgerRow>((a, b) => supabase.from('bills_not_in_books')
       .select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, bill_in_2b_month, source_doc_id')
       .eq('client_id', clientId).eq('period_month', periodMonth).is('book_entry_month', null)
+      .order('id').range(a, b) as never),
+    // Every row this month's Import 2B posted, booked ones included: a booked
+    // document is never offered again as "not yet posted".
+    pageAll<{ source_doc_id: string }>((a, b) => supabase.from('bills_not_in_books')
+      .select('source_doc_id')
+      .eq('client_id', clientId).eq('period_month', periodMonth).not('source_doc_id', 'is', null)
       .order('id').range(a, b) as never),
     pageAll<DocRow>((a, b) => supabase.from('twob_import_docs')
       .select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, cess, doc_type, is_amendment, itc_action, base_taxable_value, base_input_igst, base_input_cgst, base_input_sgst, base_cess')
@@ -131,28 +143,49 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
       .order('id').range(a, b) as never),
   ]);
   const docById = new Map(docs.map((d) => [d.id, d]));
-  const posted = new Set(ledger.map((l) => l.source_doc_id).filter(Boolean) as string[]);
+  const posted = new Set(linkedAll.map((l) => l.source_doc_id));
   const thisMonth = periodMonthLabel(periodMonth);
+  const isOpenDoc = (d: DocRow) => d.itc_action === 'NOT_IN_BOOKS' && d.doc_type !== 'CREDIT_NOTE';
 
-  const out: BillNotInBooks[] = ledger.map((l) => {
+  const out: BillNotInBooks[] = [];
+  for (const l of ledger) {
     const d = l.source_doc_id ? docById.get(l.source_doc_id) : undefined;
+    if (d) {
+      // Posted from this month's Import 2B: as the next Post will leave it.
+      if (!isOpenDoc(d)) continue;
+      const e = effectFigures(d);
+      out.push({
+        monthIn2B: l.bill_in_2b_month || thisMonth,
+        date: d.date ?? l.date,
+        supplierGstin: (d.supplier_gstin || l.supplier_gstin || '').toUpperCase(),
+        supplierName: d.supplier_name || l.supplier_name || '',
+        docNo: d.supplier_invoice_number || l.supplier_invoice_number || '',
+        docType: docLabel(d),
+        taxable: r2(e.taxable), igst: r2(e.igst), cgst: r2(e.cgst), sgst: r2(e.sgst),
+        unposted: false,
+        linked: true,
+      });
+      continue;
+    }
     const taxable = r2(Number(l.taxable_value));
-    return {
-      monthIn2B: l.bill_in_2b_month || thisMonth,
+    out.push({
+      // Older carried rows may have no month: they predate the field.
+      monthIn2B: l.bill_in_2b_month || 'Earlier',
       date: l.date,
       supplierGstin: (l.supplier_gstin || '').toUpperCase(),
       supplierName: l.supplier_name || '',
       docNo: l.supplier_invoice_number || '',
-      docType: d ? docLabel(d) : taxable < 0 ? 'Credit / adjustment' : 'Invoice',
+      docType: taxable < 0 ? 'Credit / adjustment' : 'Invoice',
       taxable,
       igst: r2(Number(l.input_igst)),
       cgst: r2(Number(l.input_cgst)),
       sgst: r2(Number(l.input_sgst)),
       unposted: false,
-    };
-  });
+      linked: false,
+    });
+  }
   for (const d of docs) {
-    if (d.itc_action !== 'NOT_IN_BOOKS' || posted.has(d.id) || d.doc_type === 'CREDIT_NOTE') continue;
+    if (!isOpenDoc(d) || posted.has(d.id)) continue;
     const e = effectFigures(d);
     if (!e.igst && !e.cgst && !e.sgst && !e.taxable) continue;
     out.push({
@@ -164,6 +197,7 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
       docType: docLabel(d),
       taxable: r2(e.taxable), igst: r2(e.igst), cgst: r2(e.cgst), sgst: r2(e.sgst),
       unposted: true,
+      linked: true,
     });
   }
   return dropDuplicates(out.sort((a, b) =>
@@ -226,10 +260,11 @@ const isoToDmy = (iso: string | null) => {
 };
 /**
  * The client's name as the client should read it: the firm marks some client
- * names with its own ITC scheme ("SWENI CORPORATION-NO ITC", "… PARTIAL ITC"),
- * which never goes out.
+ * names with its own ITC scheme ("SWENI CORPORATION-NO ITC", "… PARTIAL ITC",
+ * "… -TAKE ITC", "… - NO ITC (GSTR 1 )"), which never goes out.
  */
-export const clientFacingName = (name: string) => name.replace(/[\s-]+(NO|PARTIAL)[\s-]*ITC\s*$/i, '').trim() || name;
+export const clientFacingName = (name: string) =>
+  name.replace(/[\s-]+(NO|PARTIAL|TAKE)[\s-]*ITC\b.*$/i, '').trim() || name;
 
 const safeName = (s: string) => s.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'Client';
 
@@ -257,7 +292,8 @@ function headerBlock(ws: Worksheet, lastCol: number, title: string, meta: [strin
 }
 
 function printSetup(ws: Worksheet, clientName: string, repeatRow: number) {
-  ws.views = [{ showGridLines: false, state: 'frozen', ySplit: repeatRow, xSplit: 0 }];
+  // The head repeats on every printed page; on screen the filter keeps it at hand.
+  ws.views = [{ showGridLines: false }];
   ws.pageSetup = {
     orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
     margins: { left: 0.4, right: 0.4, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 },
@@ -265,8 +301,9 @@ function printSetup(ws: Worksheet, clientName: string, repeatRow: number) {
   };
   const hf = (s: string) => s.replace(/&/g, '&&').slice(0, 80);
   ws.headerFooter = {
-    oddHeader: `&L&"Arial,Bold"&9${hf(GST_FIRM.name)}&R&"Arial"&8${hf(clientName)}`,
-    oddFooter: '&L&"Arial"&8Confidential: prepared for the client named above&R&"Arial"&8Page &P of &N',
+    // A space after each size code, so a name starting with a digit is not read as part of it.
+    oddHeader: `&L&"Arial,Bold"&9 ${hf(GST_FIRM.name)}&R&"Arial"&8 ${hf(clientName)}`,
+    oddFooter: '&L&"Arial"&8 Confidential: prepared for the client named above&R&"Arial"&8 Page &P of &N',
   };
 }
 
@@ -366,6 +403,7 @@ export async function buildBillsWorkbook(opts: {
       if (COLS[k].num) cell.numFmt = NUM_FMT;
       if (k === 6) cell.numFmt = 'dd-mmm-yy';
       if (k === 0) cell.alignment = { horizontal: 'center' };
+      if (k === 3) cell.alignment = { wrapText: true, vertical: 'top' };
       if (i % 2 === 1) cell.fill = solid(ZEBRA);
       if (k === COLS.length - 1) cell.fill = solid(AMBER);
     });
@@ -396,8 +434,8 @@ export async function buildBillsWorkbook(opts: {
   const notes = [
     'What we need from you',
     '1.  Record each document above in your books, or write in the last column why it should not be recorded (goods or services not received, wrong GSTIN, duplicate, and so on).',
-    '2.  Input tax credit on these documents is claimed only once they are recorded in your books (section 16 of the CGST Act); recording them promptly lets us claim it in the right month.',
-    '3.  Amounts are as your suppliers reported them in GSTR-2B. A negative figure is a downward amendment of a document listed earlier.',
+    '2.  We claim input tax credit on these documents once they are recorded in your books; recording them promptly lets us claim it in the right month.',
+    '3.  Amounts are as your suppliers reported them in GSTR-2B. A negative figure is a credit note or a downward amendment of a document. "Earlier" marks an older item whose GSTR-2B month was not recorded.',
     `4.  Please reply by ${opts.replyBy}. Questions: ${GST_FIRM.email}.`,
   ];
   notes.forEach((t, i) => {
@@ -503,12 +541,16 @@ export async function sendBillsNotInBooks(opts: {
   const { data: tpl, error: tErr } = await supabase.from('email_templates')
     .select('subject, body, is_active').eq('key', 'bills_not_in_books').maybeSingle();
   if (tErr || !tpl) return { ok: false, status: 'error', error: tErr?.message || 'The e-mail template is missing.' };
+  if (tpl.is_active === false) return { ok: false, status: 'error', error: 'The "Bills in GSTR-2B not in your books" template is switched off under Reminders.' };
 
   const bytes = await buildBillsWorkbook({
     clientName: opts.clientName, gstin: opts.gstin, periodMonth: opts.periodMonth, rows: opts.rows,
     preparedBy: opts.staffName, replyBy: opts.replyBy,
   });
   const name = clientFacingName(opts.clientName);
+  const base64 = toBase64(bytes);
+  // Microsoft Graph refuses a message over about 4 MB as JSON.
+  if (base64.length > 3_000_000) return { ok: false, status: 'error', error: 'The Excel is too large to e-mail (over 3 MB). Download it and send it by hand.' };
   const vars: Record<string, string> = {
     contact_person: name,
     client_name: name,
@@ -536,7 +578,7 @@ export async function sendBillsNotInBooks(opts: {
     attachments: [{
       name: billsWorkbookName(opts.clientName, opts.periodMonth),
       content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      content_base64: toBase64(bytes),
+      content_base64: base64,
     }],
     status: 'pending',
     created_by: opts.userId,
@@ -545,9 +587,10 @@ export async function sendBillsNotInBooks(opts: {
 
   // Send it now (the function also drains on its daily run, so a failure here
   // leaves the row pending rather than lost).
-  const { error: fnErr } = await supabase.functions.invoke('send-gst-email', { body: { id: row.id } });
+  const { data: fn, error: fnErr } = await supabase.functions.invoke('send-gst-email', { body: { id: row.id } });
+  if (!fnErr && (fn as { sent?: number } | null)?.sent === 1) return { ok: true, status: 'sent', outboxId: row.id };
   const { data: after } = await supabase.from('email_outbox').select('status, error').eq('id', row.id).maybeSingle();
-  const status = after?.status || (fnErr ? 'pending' : 'unknown');
+  const status = after?.status || 'unknown';
   if (status === 'sent') return { ok: true, status, outboxId: row.id };
   return { ok: false, status, error: after?.error || fnErr?.message || undefined, outboxId: row.id };
 }

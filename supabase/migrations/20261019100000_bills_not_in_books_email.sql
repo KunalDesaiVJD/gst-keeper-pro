@@ -43,7 +43,7 @@ VALUES (
   'Purchase bills in your GSTR-2B not yet in your books · {{period}} | {{client_name}}',
   E'While reconciling your GSTR-2B for {{period}} with your purchase records, we found {{bill_count}} that your suppliers have reported on the GST portal but that are not yet recorded in your books. Together they carry input tax credit of {{itc_total}}.\n\n'
   || E'The attached Excel lists each one with the supplier, the document number and date, and the tax on it. Please record them in your books, or note against each line why it should not be recorded (for example, goods not received, wrong GSTIN, or a duplicate). The last column is left for your remarks.\n\n'
-  || E'Input tax credit on these documents can be claimed only once they are recorded in your books, so a prompt reply lets us claim it in the right month. We would be grateful for your response by {{reply_by}}.\n\n'
+  || E'We claim input tax credit on these documents once they are recorded in your books, so a prompt reply lets us claim it in the right month. We would be grateful for your response by {{reply_by}}.\n\n'
   || E'If anything is unclear, simply reply to this email and we will help.',
   true,
   900

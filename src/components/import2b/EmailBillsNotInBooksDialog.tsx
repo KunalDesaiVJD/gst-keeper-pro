@@ -29,13 +29,14 @@ const longDate = (iso: string) => {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, (m || 1) - 1, d || 1).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const when = (iso: string) => new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
 
 const EmailBillsNotInBooksDialog: React.FC<{
   clientId: string; clientName: string; clientGstin: string; periodMonth: string;
   blockedReason?: string | null; triggerClassName?: string;
 }> = ({ clientId, clientName, clientGstin, periodMonth, blockedReason, triggerClassName }) => {
-  const { user } = useAuth();
+  const { user, canSendClientEmails } = useAuth();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -45,12 +46,17 @@ const EmailBillsNotInBooksDialog: React.FC<{
   const [cc, setCc] = useState('');
   const [replyBy, setReplyBy] = useState(plusDays(5));
   const [last, setLast] = useState<LastSent | null>(null);
+  // The client and month the pop-up was opened for: switching either on the
+  // page while it loads or is open never sends one client's list as another's.
+  const [snap, setSnap] = useState({ clientId, clientName, clientGstin, periodMonth });
 
   const staffName = user?.firstName || '';
   const sum = summariseBills(rows);
 
   const start = async () => {
+    if (!canSendClientEmails()) { toast.error('Needs the Send client e-mails permission: ask a GST Manager to add it to your position'); return; }
     if (blockedReason) { toast.error(blockedReason); return; }
+    const opened = { clientId, clientName, clientGstin, periodMonth };
     setLoading(true);
     try {
       const [bills, clientRes, lastRes] = await Promise.all([
@@ -59,9 +65,10 @@ const EmailBillsNotInBooksDialog: React.FC<{
         lastBillsMail(clientId, periodMonth),
       ]);
       if (bills.rows.length === 0) {
-        toast.info(`No bills not in books for ${clientName}, ${prettyPeriod(periodMonth)}: nothing to send.`);
+        toast.info(`No bills not in books for ${opened.clientName}, ${prettyPeriod(opened.periodMonth)}: nothing to send.`);
         return;
       }
+      setSnap(opened);
       setRows(bills.rows);
       setDuplicates(bills.duplicates);
       setTo(clientRes.data?.email || '');
@@ -69,8 +76,8 @@ const EmailBillsNotInBooksDialog: React.FC<{
       setReplyBy(plusDays(5));
       setLast(lastRes);
       setOpen(true);
-    } catch (e: any) {
-      toast.error('Could not load the bills not in books: ' + (e?.message || e));
+    } catch (e) {
+      toast.error('Could not load the bills not in books: ' + errText(e));
     } finally {
       setLoading(false);
     }
@@ -78,44 +85,51 @@ const EmailBillsNotInBooksDialog: React.FC<{
 
   const download = async () => {
     try {
-      const bytes = await buildBillsWorkbook({ clientName, gstin: clientGstin, periodMonth, rows, preparedBy: staffName || 'GST Team', replyBy: longDate(replyBy) });
+      const bytes = await buildBillsWorkbook({ clientName: snap.clientName, gstin: snap.clientGstin, periodMonth: snap.periodMonth, rows, preparedBy: staffName || 'GST Team', replyBy: replyBy ? longDate(replyBy) : '' });
       const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
       const a = document.createElement('a');
       a.href = url;
-      a.download = billsWorkbookName(clientName, periodMonth);
+      a.download = billsWorkbookName(snap.clientName, snap.periodMonth);
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
-    } catch (e: any) {
-      toast.error('Could not build the Excel: ' + (e?.message || e));
+    } catch (e) {
+      toast.error('Could not build the Excel: ' + errText(e));
     }
   };
 
   const send = async () => {
     if (!isEmailList(to)) { toast.error('Enter the client\'s e-mail address (several can be separated by commas).'); return; }
     if (cc.trim() && !isEmailList(cc)) { toast.error('The CC address is not valid.'); return; }
+    if (!replyBy || replyBy < plusDays(0)) { toast.error('Choose a reply-by date from today on.'); return; }
+    if (!canSendClientEmails()) { toast.error('Needs the Send client e-mails permission.'); return; }
     setSending(true);
     try {
       const res = await sendBillsNotInBooks({
-        clientId, clientName, gstin: clientGstin, periodMonth, to, cc, replyBy: longDate(replyBy), rows,
+        clientId: snap.clientId, clientName: snap.clientName, gstin: snap.clientGstin, periodMonth: snap.periodMonth,
+        to, cc, replyBy: longDate(replyBy), rows,
         staffName: staffName || 'GST Team', userId: user?.id ?? null,
       });
       if (res.ok) {
         toast.success(`Sent to ${to.trim()}: ${sum.count} bill${sum.count === 1 ? '' : 's'} not in books, Excel attached.`);
         setOpen(false);
-      } else if (res.status === 'pending' || res.status === 'sending') {
+      } else if (res.status === 'pending') {
         toast.warning('Queued, but not sent yet: it goes out with the next send run. ' + (res.error || ''));
+        setOpen(false);
+      } else if (res.status === 'sending' || res.status === 'unknown') {
+        // It may have gone: never invite a second click that sends it twice.
+        toast.warning('The send did not report back. Check the e-mail on the Reminders page before sending again.');
         setOpen(false);
       } else {
         toast.error('Not sent: ' + (res.error || res.status));
       }
-    } catch (e: any) {
-      toast.error('Not sent: ' + (e?.message || e));
+    } catch (e) {
+      toast.error('Not sent: ' + errText(e));
     } finally {
       setSending(false);
     }
   };
 
-  const fileName = billsWorkbookName(clientName, periodMonth);
+  const fileName = billsWorkbookName(snap.clientName, snap.periodMonth);
   const months = sum.months.length > 1 ? `${sum.months[0]} to ${sum.months[sum.months.length - 1]}` : sum.months[0] || '';
 
   return (
@@ -125,8 +139,9 @@ const EmailBillsNotInBooksDialog: React.FC<{
         size="sm"
         className={triggerClassName}
         onClick={() => void start()}
-        disabled={loading || !clientId || !periodMonth}
-        title={blockedReason || 'E-mail the client its bills not in books, with the list attached as Excel'}
+        disabled={loading || !clientId || !periodMonth || !canSendClientEmails()}
+        title={!canSendClientEmails() ? 'Needs the Send client e-mails permission: ask a GST Manager to add it to your position'
+          : blockedReason || 'E-mail the client its bills not in books, with the list attached as Excel'}
       >
         {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
         Email bills not in books
@@ -134,7 +149,7 @@ const EmailBillsNotInBooksDialog: React.FC<{
       <Dialog open={open} onOpenChange={(v) => { if (!sending) setOpen(v); }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Email bills not in books to {clientName}</DialogTitle>
+            <DialogTitle>Email bills not in books to {snap.clientName}</DialogTitle>
             <DialogDescription>
               {sum.count} document{sum.count === 1 ? '' : 's'} in GSTR-2B not recorded in the client's books ({months}),
               tax ₹{formatINR(sum.tax)}. The full list goes as an Excel attachment, from gst@vjdesai.com.
@@ -149,7 +164,8 @@ const EmailBillsNotInBooksDialog: React.FC<{
           {duplicates.length > 0 && (
             <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
               {duplicates.length} ledger row{duplicates.length === 1 ? ' repeats' : 's repeat'} a document already listed (same supplier, number and
-              figures, a day apart): each is sent once. Clean the repeats on 2B Reconciliation ({duplicates.slice(0, 3).map((d) => d.docNo).join(', ')}{duplicates.length > 3 ? ', …' : ''}).
+              figures, a day apart): each is sent once. Have the repeats removed from the ledger on 2B Reconciliation (the superadmin can edit a Strict client's)
+              ({duplicates.slice(0, 3).map((d) => d.docNo).join(', ')}{duplicates.length > 3 ? ', …' : ''}).
             </p>
           )}
           {sum.unposted > 0 && (
@@ -161,8 +177,8 @@ const EmailBillsNotInBooksDialog: React.FC<{
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1 sm:col-span-2">
               <Label htmlFor="bnib-to">To</Label>
-              <Input id="bnib-to" value={to} onChange={(e) => setTo(e.target.value)} placeholder="client@example.com" />
-              {!to.trim() && <p className="text-[11px] text-destructive">The client has no e-mail on record: type it here (and add it in Edit Client).</p>}
+              <Input id="bnib-to" value={to} onChange={(e) => setTo(e.target.value)} placeholder="client@example.com" aria-describedby={!to.trim() ? 'bnib-to-hint' : undefined} />
+              {!to.trim() && <p id="bnib-to-hint" className="text-[11px] text-destructive">The client has no e-mail on record: type it here (and add it in Edit Client).</p>}
             </div>
             <div className="space-y-1">
               <Label htmlFor="bnib-cc">CC (optional)</Label>
@@ -170,7 +186,7 @@ const EmailBillsNotInBooksDialog: React.FC<{
             </div>
             <div className="space-y-1">
               <Label htmlFor="bnib-reply">Reply requested by</Label>
-              <Input id="bnib-reply" type="date" value={replyBy} onChange={(e) => setReplyBy(e.target.value)} />
+              <Input id="bnib-reply" type="date" min={plusDays(0)} value={replyBy} onChange={(e) => setReplyBy(e.target.value)} />
             </div>
           </div>
 
