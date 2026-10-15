@@ -48,6 +48,15 @@ export interface TableKitOptions {
    * [] turns grouping off (the Group by control is not drawn).
    */
   groupable?: number[] | ((col: ModelColumn) => boolean);
+  /**
+   * Narrows which columns a TOTAL, a subtotal and the KPI totals add up: their
+   * indices, or a test on the column (given the column as the report has it).
+   * A version number or a day count is a figure but adding it up means
+   * nothing. Default: the columns the report's own TOTAL rows add up, else its
+   * amounts and counts. It only ever narrows: a column the report does not sum
+   * is never summed.
+   */
+  summable?: number[] | ((col: ModelColumn) => boolean);
   /** Show a list longer than PAGE_THRESHOLD (500) lines a page at a time. Default true. */
   pageable?: boolean;
   /** Lines per page offered (default [100, 250, 500]). */
@@ -175,10 +184,18 @@ export function useTableKit(table: ReportTable, options: TableKitOptions = {}): 
   // The groupable columns as a string, so an inline list or test does not rebuild the model.
   const g = options.groupable;
   const groupSig = g === undefined ? null : base.columns.map((c) => ((Array.isArray(g) ? g.includes(c.index) : g(c)) ? '1' : '0')).join('');
-  const model = useMemo<TableModel>(
-    () => (groupSig === null ? base : { ...base, columns: base.columns.map((c, k) => ({ ...c, groupable: groupSig[k] === '1' })) }),
-    [base, groupSig],
-  );
+  // Likewise the summed columns, kept to the ones the report sums.
+  const sm = options.summable;
+  const sumSig = sm === undefined ? null : base.summable.filter((c) => (Array.isArray(sm) ? sm.includes(c) : sm(base.columns[c]))).join(',');
+  const model = useMemo<TableModel>(() => {
+    let m = base;
+    if (groupSig !== null) m = { ...m, columns: m.columns.map((c, k) => ({ ...c, groupable: groupSig[k] === '1' })) };
+    if (sumSig !== null) {
+      const keep = sumSig ? sumSig.split(',').map(Number) : [];
+      m = { ...m, summable: keep, columns: m.columns.map((c) => ({ ...c, summable: keep.includes(c.index) })) };
+    }
+    return m;
+  }, [base, groupSig, sumSig]);
 
   const state = useMemo<ViewState>(
     () => (store.custom.length

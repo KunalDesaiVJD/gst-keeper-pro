@@ -106,8 +106,12 @@ export const TableKitGroupRow: React.FC<{ kit: TableKit; leading?: number; trail
 };
 
 /** The whole header: the column-group band when there is one, then a TableKitHead per column shown. */
-export const TableKitHeader: React.FC<{ kit: TableKit; leading?: KitExtraColumn[]; trailing?: KitExtraColumn[]; sticky?: boolean }> = ({
-  kit, leading = [], trailing = [], sticky = true,
+export const TableKitHeader: React.FC<{
+  kit: TableKit; leading?: KitExtraColumn[]; trailing?: KitExtraColumn[]; sticky?: boolean;
+  /** Extra classes for a column's heading. */
+  headClassName?: (col: number) => string | undefined;
+}> = ({
+  kit, leading = [], trailing = [], sticky = true, headClassName,
 }) => {
   const banded = !!kit.columnGroups;
   // Under a band the column headings stick 1.75rem lower (the band's height).
@@ -120,7 +124,7 @@ export const TableKitHeader: React.FC<{ kit: TableKit; leading?: KitExtraColumn[
       <TableKitGroupRow kit={kit} leading={leading.length} trailing={trailing.length} sticky={sticky} />
       <TableRow>
         {leading.map(extraHead)}
-        {kit.cols.map((c) => <TableKitHead key={c} kit={kit} col={c} className={place} />)}
+        {kit.cols.map((c) => <TableKitHead key={c} kit={kit} col={c} className={cn(place, headClassName?.(c))} />)}
         {trailing.map(extraHead)}
       </TableRow>
     </TableHeader>

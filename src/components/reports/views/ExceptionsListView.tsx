@@ -5,57 +5,29 @@
 // check, plus a pinned TOTAL row — so this view's job isn't to re-derive
 // which rows are exceptions, it's to make the flagged count and the flagged
 // amount impossible to miss, and to read as urgent rather than routine.
-import React, { useMemo, useState } from 'react';
+//
+// The flagged rows are worked from every angle through the table kit
+// (./tableKit): a filter on every header (a figure range on the amount, ticked
+// values, "contains"), sort, Group by a value that repeats (days late), hidden
+// columns, and "Excel (filtered)" / "PDF (filtered)" of exactly what is shown.
+// The severity cues stay: the red frame and badge, the amount column in red
+// with a bar for each row's share of the largest, the TOTAL pinned under the
+// list, largest exposure first.
+import React, { useMemo } from 'react';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/gstr9/badge';
 import { KpiTile } from '@/components/gstr9/ui';
-import { WS_TABLE, WS_TH, WS_TD } from '@/components/workspace/theme';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Search, CheckCircle2, AlertTriangle, ArrowDownWideNarrow, ArrowDownAZ } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { CheckCircle2, AlertTriangle, ArrowDownWideNarrow, ArrowDownAZ } from 'lucide-react';
+import { rowKindsOf } from '@/lib/reportExport/layout';
+import { TableKitPager, TableKitTable, TableKitToolbar, useTableKit, type ModelColumn, type ModelRow } from './tableKit';
 
 interface ExceptionsListViewProps {
   table: ReportTable;
   report: ReportDefinition;
 }
-
-// ─────────────────────── cell/header heuristics (shared contract) ─────────
-
-const isUrlCell = (v: unknown): v is string => typeof v === 'string' && /^https?:\/\//.test(v);
-
-const isSentinelCell = (v: unknown): boolean => {
-  const s = String(v ?? '').trim();
-  if (!s) return false;
-  if (s.toUpperCase() === 'NOT PULLED') return true;
-  return /not captured|not pulled/i.test(s);
-};
-
-const isTotalRow = (row: (string | number)[]): boolean =>
-  row.some((c) => String(c ?? '').trim().toUpperCase() === 'TOTAL');
-
-const NUMERIC_HEADER_RE = /CGST|SGST|IGST|TOTAL|VALUE|AMOUNT|CLAIMED|LIABILITY|ITC|CESS|FEE|INTEREST|PAYABLE|PENALTY/i;
-const isNumericHeader = (h: string): boolean => NUMERIC_HEADER_RE.test(h);
-
-const STATUS_HEADER_RE = /^status$/i;
-const STATUS_VARIANT = (v: string): 'success' | 'warning' | 'destructive' | 'secondary' => {
-  const s = v.toUpperCase();
-  if (/FILED|APPROV|ACKNOWLEDG|ACCEPT|PROCESSED/.test(s)) return 'success';
-  if (/PENDING|PROCESSING/.test(s)) return 'warning';
-  if (/FAIL|REJECT|DENIED|CANCEL/.test(s)) return 'destructive';
-  return 'secondary';
-};
-
-const formatCell = (v: string | number): string => {
-  if (typeof v !== 'number') return String(v ?? '');
-  if (v === 0) return '0';
-  const rounded = Math.round(v * 100) / 100;
-  return rounded.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-};
 
 /**
  * The column this whole report exists to surface — checked in priority order
@@ -90,6 +62,12 @@ const findClientColIdx = (headers: string[]): number => {
   return idx !== -1 ? idx : 0;
 };
 
+// A merge keeps the first month's subtitle; its month is not the list's period.
+const MONTH_LABEL_RE = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s-]+\d{2,4}$/i;
+const subtitleOf = (subtitle: string, merged: boolean): string => (!merged ? subtitle : subtitle.split('|').map((s) => s.trim()).filter(Boolean)
+  .filter((s) => !(MONTH_LABEL_RE.test(s) || /^(period|month|return period):/i.test(s)))
+  .join('   |   '));
+
 const toNumber = (v: string | number | undefined): number => {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
   if (typeof v !== 'string') return 0;
@@ -97,54 +75,62 @@ const toNumber = (v: string | number | undefined): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-type SortMode = 'amount' | 'client';
-
 export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, report }) => {
-  const [search, setSearch] = useState('');
-  const [sortMode, setSortMode] = useState<SortMode>('amount');
-
   const headers = table.headers;
   const Icon = report.icon || AlertTriangle;
 
-  const { dataRows, totalRows } = useMemo(() => {
-    const data: (string | number)[][] = [];
-    const totals: (string | number)[][] = [];
-    for (const row of table.rows) {
-      (isTotalRow(row) ? totals : data).push(row);
-    }
-    return { dataRows: data, totalRows: totals };
-  }, [table.rows]);
+  // The flagged rows (not the TOTAL), read before the kit so its options can use them.
+  const { dataRows, merged } = useMemo(() => {
+    const kinds = rowKindsOf(table.rows, table.rowKinds);
+    return { dataRows: table.rows.filter((_, i) => kinds[i] === 'data'), merged: kinds.includes('period') };
+  }, [table.rows, table.rowKinds]);
+  // Several months merged: a row is a client in one month, and a client late
+  // in both months is two rows, so the rows are counted as flags, not clients.
+  const noun: [string, string] = merged ? ['flag', 'flags'] : ['client', 'clients'];
 
   const amountColIdx = useMemo(() => findAmountColIdx(headers, dataRows), [headers, dataRows]);
   const clientColIdx = useMemo(() => findClientColIdx(headers), [headers]);
-  const statusColIdx = useMemo(() => headers.findIndex((h) => STATUS_HEADER_RE.test(h.trim())), [headers]);
 
-  const flaggedCount = dataRows.length;
+  const kit = useTableKit(table, {
+    resetKey: report.key,
+    // Largest exposure first, as the list always opened. Several months
+    // merged open grouped by month (each with its subtotal, as the report's
+    // own per-month TOTAL), largest first within each: sorted across months,
+    // the month bands and TOTALs would go.
+    initialSort: amountColIdx !== -1 ? { col: amountColIdx, dir: 'desc' } : null,
+    initialGroupBy: merged ? headers.length : null,
+    rowNoun: noun,
+    // Group by a value clients share (days late, the month); a client's name
+    // or GSTIN is one row each, so grouping by it would only add a heading
+    // per row.
+    groupable: (c: ModelColumn) => c.virtual || ((c.groupable || (c.kind === 'int' && !c.summable)) && c.distinct > 1 && c.distinct < dataRows.length),
+  });
+  const { model, view, state } = kit;
 
-  // Prefer the pinned TOTAL row's own figure over a client-side re-sum — it's
-  // the number that was actually computed against, not a recomputation of it.
-  const totalAmount = useMemo(() => {
+  const flaggedCount = model.data.length;
+
+  // The amount's total: the pinned TOTAL row's own figure where the report
+  // printed one (it's the number that was actually computed against, not a
+  // recomputation of it), and once filtered, the rows still shown.
+  const amountTotal = kit.totals.find((t) => t.col === amountColIdx);
+  const amountAll = amountTotal?.total ?? model.data.reduce((sum, r) => sum + toNumber(r.cells[amountColIdx]), 0);
+  const amountShown = view.filtered
+    ? amountTotal?.shown ?? view.rows.reduce((sum, r) => sum + toNumber(r.cells[amountColIdx]), 0)
+    : null;
+
+  // The largest single exposure among the rows shown, and who it is.
+  const largest = useMemo(() => {
     if (amountColIdx === -1) return null;
-    if (totalRows.length > 0) {
-      return totalRows.reduce((sum, r) => sum + toNumber(r[amountColIdx]), 0);
-    }
-    return dataRows.reduce((sum, r) => sum + toNumber(r[amountColIdx]), 0);
-  }, [dataRows, totalRows, amountColIdx]);
-
-  const visibleRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const rows = q
-      ? dataRows.filter((row) => row.some((c) => String(c ?? '').toLowerCase().includes(q)))
-      : dataRows;
-
-    return [...rows].sort((a, b) => {
-      if (sortMode === 'client') {
-        return String(a[clientColIdx] ?? '').localeCompare(String(b[clientColIdx] ?? ''));
-      }
-      if (amountColIdx === -1) return 0;
-      return toNumber(b[amountColIdx]) - toNumber(a[amountColIdx]);
-    });
-  }, [dataRows, search, sortMode, clientColIdx, amountColIdx]);
+    let best: ModelRow | null = null;
+    for (const r of view.rows) if (!best || toNumber(r.cells[amountColIdx]) > toNumber(best.cells[amountColIdx])) best = r;
+    return best ? { amount: toNumber(best.cells[amountColIdx]), who: String(best.cells[clientColIdx] ?? '') } : null;
+  }, [view.rows, amountColIdx, clientColIdx]);
+  // The bar in each amount cell is its share of the largest in the whole list,
+  // so a row's bar does not grow when its neighbours are filtered away.
+  const maxAll = useMemo(
+    () => (amountColIdx === -1 ? 0 : Math.max(0, ...model.data.map((r) => toNumber(r.cells[amountColIdx])))),
+    [model.data, amountColIdx],
+  );
 
   // ── Calm empty state — nothing flagged this period, no table to show ──────
   if (flaggedCount === 0) {
@@ -155,7 +141,7 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
             <Icon className="h-4 w-4 text-muted-foreground" />
             {table.title}
           </CardTitle>
-          <CardDescription className="text-xs">{table.subtitle}</CardDescription>
+          <CardDescription className="text-xs">{subtitleOf(table.subtitle, merged)}</CardDescription>
         </CardHeader>
         <CardContent className="px-4 pb-3">
           <div className="flex flex-col items-center justify-center gap-1.5 rounded-md border border-dashed py-8 text-center">
@@ -170,8 +156,35 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
     );
   }
 
+  const sortMode = state.sort?.col === amountColIdx && state.sort.dir === 'desc' ? 'amount'
+    : state.sort?.col === clientColIdx && state.sort.dir === 'asc' ? 'client' : '';
+
+  const renderCell = (row: ModelRow, col: number): React.ReactNode | undefined => {
+    if (col !== amountColIdx) return undefined;
+    const v = row.cells[col];
+    if (typeof v !== 'number') return undefined;
+    const share = maxAll > 0 ? Math.max(0, Math.min(1, v / maxAll)) : 0;
+    return (
+      <span className="relative inline-flex w-full flex-col items-end">
+        <span>{kit.figure(col, v)}</span>
+        <span className="mt-0.5 h-[3px] w-full max-w-[120px] overflow-hidden rounded-full bg-destructive/10" aria-hidden>
+          <span className="block h-full rounded-full bg-destructive/60" style={{ width: `${(share * 100).toFixed(1)}%`, marginLeft: 'auto' }} />
+        </span>
+      </span>
+    );
+  };
+
+  const cellClassName = (_row: ModelRow, col: number): string | undefined => {
+    if (col === amountColIdx) return 'font-bold text-destructive-strong';
+    if (col === clientColIdx) return 'font-medium text-foreground';
+    return undefined;
+  };
+
+  const amountName = amountColIdx !== -1 ? model.columns[amountColIdx]?.name ?? headers[amountColIdx] : '';
+  const fig = (v: number) => (amountColIdx !== -1 ? kit.figure(amountColIdx, v) : String(v));
+
   return (
-    <Card className="border-destructive/30">
+    <Card className="flex h-full min-h-0 flex-col border-destructive/30">
       <CardHeader className="space-y-0 px-4 pb-2 pt-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-0.5">
@@ -179,183 +192,75 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
               <Icon className="h-4 w-4 text-destructive" />
               {table.title}
             </CardTitle>
-            <CardDescription className="text-xs">{table.subtitle}</CardDescription>
+            <CardDescription className="text-xs">{subtitleOf(table.subtitle, merged)}</CardDescription>
           </div>
           <Badge variant="destructive" className="flex shrink-0 items-center gap-1 text-[10px] font-medium">
             <AlertTriangle className="h-3 w-3 text-destructive" />
-            {flaggedCount} client{flaggedCount === 1 ? '' : 's'} flagged
+            {merged
+              ? `${flaggedCount} flagged across ${model.periods.length} periods`
+              : `${flaggedCount} client${flaggedCount === 1 ? '' : 's'} flagged`}
           </Badge>
         </div>
       </CardHeader>
 
-      <CardContent className="space-y-2.5 px-4 pb-3">
-        {/* Summary strip — the number this report exists to surface, readable before scrolling */}
-        {amountColIdx !== -1 && totalAmount !== null && (
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-            <KpiTile label={`Total ${headers[amountColIdx]}`} value={formatCell(totalAmount)} tone="error" />
-          </div>
-        )}
-
-        {/* Filters + sort */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[200px] max-w-sm flex-1">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search client, GSTIN…"
-              className="h-8 pl-8 text-xs"
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-2.5 px-4 pb-3">
+        {/* Summary strip — the number this report exists to surface, readable before scrolling; once filtered, the rows shown against the whole */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+          <KpiTile
+            label={merged ? 'Client-months flagged' : 'Clients flagged'}
+            value={view.filtered ? view.rows.length.toLocaleString('en-IN') : flaggedCount.toLocaleString('en-IN')}
+            hint={view.filtered ? `of ${flaggedCount.toLocaleString('en-IN')}` : undefined}
+            tone="error"
+          />
+          {amountColIdx !== -1 && (
+            <KpiTile
+              // "Total Interest" is already a total; "Shortfall" is not.
+              label={/^total\b/i.test(amountName) ? amountName : `Total ${amountName}`}
+              value={fig(amountShown ?? amountAll)}
+              hint={amountShown !== null ? `of ${fig(amountAll)}` : undefined}
+              tone="error"
             />
-          </div>
-
-          <ToggleGroup
-            type="single"
-            value={sortMode}
-            onValueChange={(v) => { if (v === 'amount' || v === 'client') setSortMode(v); }}
-            className="justify-start"
-          >
-            <ToggleGroupItem value="amount" size="sm" className="h-8 gap-1.5 px-2.5 text-xs">
-              <ArrowDownWideNarrow className="h-3.5 w-3.5" />
-              Sort by amount
-            </ToggleGroupItem>
-            <ToggleGroupItem value="client" size="sm" className="h-8 gap-1.5 px-2.5 text-xs">
-              <ArrowDownAZ className="h-3.5 w-3.5" />
-              Sort by client
-            </ToggleGroupItem>
-          </ToggleGroup>
-
-          <span className="text-xs text-muted-foreground">
-            {search ? `${visibleRows.length} of ${dataRows.length}` : dataRows.length} shown
-          </span>
+          )}
+          {largest && largest.amount > 0 && (
+            <KpiTile label="Largest single exposure" value={fig(largest.amount)} hint={largest.who} tone="error" />
+          )}
         </div>
 
-        {/* Table */}
-        <div className="max-h-[65vh] overflow-auto rounded-md border bg-card">
-          <Table className={WS_TABLE}>
-            <TableHeader className="sticky top-0 z-10">
-              <TableRow>
-                {headers.map((h, i) => (
-                  <TableHead
-                    key={i}
-                    className={cn(
-                      WS_TH, 'h-auto',
-                      (isNumericHeader(h) || i === amountColIdx) && 'text-right',
-                      i === amountColIdx && 'text-destructive',
-                    )}
-                  >
-                    {h}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-
-            <TableBody>
-              {visibleRows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={headers.length} className="border-b py-6 text-center text-sm text-muted-foreground">
-                    No rows match &quot;{search}&quot;.
-                  </TableCell>
-                </TableRow>
+        <TableKitToolbar
+          kit={kit}
+          searchPlaceholder="Search client, GSTIN…"
+          left={(
+            <ToggleGroup
+              type="single"
+              value={sortMode}
+              onValueChange={(v) => {
+                if (v === 'amount' && amountColIdx !== -1) kit.setSort({ col: amountColIdx, dir: 'desc' });
+                else if (v === 'client') kit.setSort({ col: clientColIdx, dir: 'asc' });
+              }}
+              className="justify-start"
+            >
+              {amountColIdx !== -1 && (
+                <ToggleGroupItem value="amount" size="sm" className="h-8 gap-1.5 px-2.5 text-xs">
+                  <ArrowDownWideNarrow className="h-3.5 w-3.5" />
+                  Sort by amount
+                </ToggleGroupItem>
               )}
-
-              {visibleRows.map((row, ri) => (
-                <TableRow key={ri} className="hover:bg-muted/30">
-                  {row.map((cell, ci) => {
-                    const header = headers[ci] || '';
-
-                    if (isUrlCell(cell)) {
-                      return (
-                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                          <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
-                            <a href={cell as string} target="_blank" rel="noopener noreferrer">View</a>
-                          </Button>
-                        </TableCell>
-                      );
-                    }
-
-                    if (ci === statusColIdx && String(cell ?? '').trim() && !isSentinelCell(cell)) {
-                      return (
-                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                          <Badge variant={STATUS_VARIANT(String(cell))} className="py-0 text-[10px] font-medium">
-                            {String(cell)}
-                          </Badge>
-                        </TableCell>
-                      );
-                    }
-
-                    if (isSentinelCell(cell)) {
-                      return (
-                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                          <Badge variant="outline" className="border-dashed py-0 text-[10px] text-muted-foreground">
-                            {String(cell)}
-                          </Badge>
-                        </TableCell>
-                      );
-                    }
-
-                    if (ci === amountColIdx) {
-                      return (
-                        <TableCell
-                          key={ci}
-                          className={cn(WS_TD, 'whitespace-nowrap text-right font-bold tabular-nums text-destructive-strong')}
-                        >
-                          {formatCell(cell)}
-                        </TableCell>
-                      );
-                    }
-
-                    return (
-                      <TableCell
-                        key={ci}
-                        className={cn(
-                          WS_TD,
-                          isNumericHeader(header) || typeof cell === 'number'
-                            ? 'whitespace-nowrap text-right tabular-nums'
-                            : 'max-w-[280px]',
-                          ci === clientColIdx && 'font-medium text-foreground',
-                        )}
-                      >
-                        {formatCell(cell)}
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
-              ))}
-            </TableBody>
-
-            {totalRows.length > 0 && (
-              <TableBody>
-                {totalRows.map((row, ri) => (
-                  <TableRow
-                    key={`total-${ri}`}
-                    className={cn(
-                      'bg-muted font-semibold hover:bg-muted',
-                      ri === totalRows.length - 1 && 'sticky bottom-0 z-10',
-                    )}
-                  >
-                    {row.map((cell, ci) => {
-                      const header = headers[ci] || '';
-                      return (
-                        <TableCell
-                          key={ci}
-                          className={cn(
-                            WS_TD, 'bg-muted',
-                            isNumericHeader(header) || ci === amountColIdx || typeof cell === 'number'
-                              ? 'whitespace-nowrap text-right tabular-nums'
-                              : '',
-                            ci === amountColIdx && 'font-bold text-destructive-strong',
-                          )}
-                        >
-                          {formatCell(cell)}
-                        </TableCell>
-                      );
-                    })}
-                  </TableRow>
-                ))}
-              </TableBody>
-            )}
-          </Table>
-        </div>
+              <ToggleGroupItem value="client" size="sm" className="h-8 gap-1.5 px-2.5 text-xs">
+                <ArrowDownAZ className="h-3.5 w-3.5" />
+                Sort by client
+              </ToggleGroupItem>
+            </ToggleGroup>
+          )}
+        />
+        <TableKitTable
+          kit={kit}
+          renderCell={renderCell}
+          cellClassName={cellClassName}
+          headClassName={(col) => (col === amountColIdx ? 'text-destructive' : undefined)}
+          label={table.title}
+          noMatchText="No flagged client matches these filters."
+        />
+        <TableKitPager kit={kit} />
       </CardContent>
     </Card>
   );

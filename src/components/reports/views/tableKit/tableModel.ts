@@ -359,6 +359,20 @@ const collator = new Intl.Collator('en-IN', { numeric: true, sensitivity: 'base'
 const PERCENT_RE = /^-?\d+(\.\d+)?\s*%$/;
 const percentOf = (s: string): number | null => (PERCENT_RE.test(s.trim()) ? parseFloat(s) : null);
 
+// A date with its time as en-IN prints it ("15/8/2026, 10:23:45 am"): an
+// upload log's Date/Time. It stays a text column (the time is part of what it
+// says, and the export prints it as written), but it sorts and lists by its
+// moment: by the text alone 2 Sep would come before 15 Aug.
+const STAMP_RE = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([ap])?\.?m?\.?$/i;
+export const stampOf = (s: string): number | null => {
+  const m = STAMP_RE.exec(s.trim());
+  if (!m) return null;
+  const [, d, mo, y, h, mi, sec, ap] = m;
+  const hour = ap ? (+h % 12) + (/p/i.test(ap) ? 12 : 0) : +h;
+  if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31 || hour > 23 || +mi > 59) return null;
+  return Date.UTC(+y, +mo - 1, +d, hour, +mi, +(sec ?? 0));
+};
+
 const keyOrder = (model: TableModel, col: number) => (a: string, b: string): number => {
   if (col === model.periodCol) return model.periods.findIndex((p) => p.key === a) - model.periods.findIndex((p) => p.key === b);
   if (a === BLANK && b !== BLANK) return 1;
@@ -366,6 +380,9 @@ const keyOrder = (model: TableModel, col: number) => (a: string, b: string): num
   const pa = percentOf(a);
   const pb = percentOf(b);
   if (pa !== null && pb !== null) return pa - pb || collator.compare(a, b);
+  const sa = stampOf(a);
+  const sb = stampOf(b);
+  if (sa !== null && sb !== null) return sa - sb || collator.compare(a, b);
   return collator.compare(a, b);
 };
 
@@ -414,7 +431,7 @@ function sortKey(model: TableModel, r: ModelRow, col: number): SortKey {
   if (kind === 'date') return parseDateCell(s)?.getTime() ?? null;
   // A word in a figures column ("NOT PULLED") sorts with the blanks.
   if (kind === 'amount' || kind === 'int' || kind === 'rate') return null;
-  return percentOf(s) ?? s;
+  return percentOf(s) ?? stampOf(s) ?? s;
 }
 
 const cmpKeys = (a: SortKey, b: SortKey): number => {
@@ -466,8 +483,10 @@ export interface RowGroup { key: string; label: string; rows: ModelRow[]; sums: 
 /**
  * Rows under one heading per value of `groupBy`, each with its subtotals.
  * Groups run in the column's natural order; sorted by a figure, they run by
- * their subtotal of it (largest supplier first), and sorted by the grouped
- * column itself, in that direction.
+ * their subtotal of it (largest supplier first), except months, which stay in
+ * calendar order (a working paper reads its months in time; the rows inside
+ * each month follow the sort); sorted by the grouped column itself, in that
+ * direction.
  */
 export function groupRows(model: TableModel, rows: ModelRow[], groupBy: number, sort: SortState | null): RowGroup[] {
   const map = new Map<string, ModelRow[]>();
@@ -480,7 +499,7 @@ export function groupRows(model: TableModel, rows: ModelRow[], groupBy: number, 
   const order = keyOrder(model, groupBy);
   const groups = [...map].map(([key, list]) => ({ key, label: facetLabel(model, groupBy, key), rows: list, sums: sumRows(model, list) }));
   const dir = sort?.dir === 'desc' ? -1 : 1;
-  if (sort && model.summable.includes(sort.col)) {
+  if (sort && model.summable.includes(sort.col) && groupBy !== model.periodCol) {
     groups.sort((a, b) => ((a.sums.get(sort.col) ?? 0) - (b.sums.get(sort.col) ?? 0)) * dir || order(a.key, b.key));
   } else if (sort && sort.col === groupBy) {
     groups.sort((a, b) => {
@@ -686,10 +705,23 @@ export function activeFilters(model: TableModel, state: ViewState): ActiveFilter
   return out;
 }
 
+/** Whether a text column holds only date-time stamps (an upload log's Date/Time), blanks aside. */
+const isStampColumn = (model: TableModel, col: number): boolean => {
+  let seen = false;
+  for (const r of model.data) {
+    const s = str(r.cells[col]);
+    if (isNil(s)) continue;
+    if (stampOf(s) === null) return false;
+    seen = true;
+  }
+  return seen;
+};
+
 export function describeSort(model: TableModel, sort: SortState): string {
   const c = model.columns[sort.col];
   const asc = sort.dir === 'asc';
-  const how = c?.kind === 'date' ? (asc ? 'oldest first' : 'newest first')
+  const when = c?.kind === 'date' || (c?.kind === 'text' && isStampColumn(model, sort.col));
+  const how = when ? (asc ? 'oldest first' : 'newest first')
     : c?.kind === 'amount' || c?.kind === 'int' || c?.kind === 'rate' ? (asc ? 'smallest first' : 'largest first')
       : c?.kind === 'period' ? (asc ? 'earliest first' : 'latest first')
         : asc ? 'A to Z' : 'Z to A';

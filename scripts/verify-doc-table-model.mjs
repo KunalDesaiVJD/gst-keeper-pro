@@ -14,7 +14,7 @@
 // Period filter); TOTAL rows never filtered away when nothing is filtered; the
 // layout's TOTAL detection; groups and subtotals; pages; the "filtered" export
 // table; a view's own (custom) filters; the column groups over the columns
-// shown; and speed at 5,000 rows. Prints pass / fail; exits 1 on any failure.
+// shown; date-time stamps ordered by their moment; and speed at 5,000 rows. Prints pass / fail; exits 1 on any failure.
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -234,6 +234,11 @@ const bm = M.buildModel(big);
   check(g, 'sorted: the TOTAL over both periods still under the list', sorted.footer?.type === 'sum' && near(sorted.footer.sums.get(5), 67001));
   const byPeriod = M.buildView(m, view({ groupBy: m.periodCol }));
   check(g, 'grouped by Period: one group per period with its subtotal, no Period column', byPeriod.groups.length === 2 && byPeriod.groups[1].label === 'Aug 2026' && near(byPeriod.groups[1].sums.get(5), 33500.5) && !byPeriod.showPeriodColumn);
+  // August's subtotal is the larger, sorted both ways: the months stay Jul, Aug; the rows inside follow the sort.
+  const mk = (rows) => ({ title: 'T', subtitle: 'S', headers: ['Name', 'Amount'], rows: [...rows, ['TOTAL', rows.reduce((s, r) => s + r[1], 0)]], fileNameBase: 'T' });
+  const m2 = M.buildModel(M.mergeTables([mk([['A', 10], ['B', 20]]), mk([['C', 500], ['D', 1]])], ['07/2026', '08/2026']));
+  const months = (dir) => M.buildView(m2, view({ groupBy: m2.periodCol, sort: { col: 1, dir } })).groups.map((x) => `${x.label}:${x.rows.map((r) => r.cells[0]).join('')}`).join(',');
+  check(g, 'grouped by Period and sorted by a figure: months stay in calendar order', months('asc') === 'Jul 2026:AB,Aug 2026:DC' && months('desc') === 'Jul 2026:BA,Aug 2026:CD', `${months('asc')} / ${months('desc')}`);
   const sortPeriod = M.sortRows(m, m.data, { col: m.periodCol, dir: 'desc' });
   check(g, 'sorting by Period follows the bands, not the text', m.periods[sortPeriod[0].period].key === '08/2026');
   const exp = M.viewToReportTable(t, m, view({ sort: { col: 5, dir: 'asc' } }), new Set());
@@ -397,6 +402,34 @@ const bm = M.buildModel(big);
   check(g, 'unique labels name the column as shown', bm.columns.every((c) => c.name === c.label));
   const tv = col(bm, 'Taxable Value');
   check(g, 'figure columns and their house style', M.isFigureColumn(bm, tv) && !M.isFigureColumn(bm, col(bm, 'Supplier Name')) && M.figureText(bm, tv, 123456.5) === '1,23,456.50' && M.figureText(bm, tv, -5) === '(5.00)', M.figureText(bm, tv, 123456.5));
+}
+
+// ── 11e. Date-time stamps (an upload log's Date/Time) order by their moment ─
+{
+  const g = 'stamps';
+  const t = {
+    headers: ['Version', 'Date/Time', 'Reason'],
+    rows: [
+      [1, '15/8/2026, 10:23:45 am', 'GSTIN invalid'],
+      [2, '2/9/2026, 9:05:00 am', 'Duplicate invoice'],
+      [3, '15/8/2026, 1:02:03 pm', 'Rate mismatch'],
+      [4, '—', 'No date'],
+      [5, '15/8/2026, 12:10:00 am', 'Past midnight'],
+    ],
+  };
+  const m = M.buildModel(t);
+  const dt = col(m, 'Date/Time');
+  check(g, 'the column stays text (the time is part of what it says)', m.columns[dt].kind === 'text', m.columns[dt].kind);
+  const asc = M.sortRows(m, m.data, { col: dt, dir: 'asc' }).map((r) => r.cells[0]).join(',');
+  check(g, 'oldest first: 12:10 am, 10:23 am, 1:02 pm on 15 Aug, then 2 Sep, blank last', asc === '5,1,3,2,4', asc);
+  const desc = M.sortRows(m, m.data, { col: dt, dir: 'desc' }).map((r) => r.cells[0]).join(',');
+  check(g, 'newest first, blank still last', desc === '2,3,1,5,4', desc);
+  const keys = M.facetValues(m, view(), dt).map((v) => v.key).filter((k) => k !== '—');
+  check(g, 'its value list runs in time order', keys.join(' | ') === '15/8/2026, 12:10:00 am | 15/8/2026, 10:23:45 am | 15/8/2026, 1:02:03 pm | 2/9/2026, 9:05:00 am', keys.join(' | '));
+  check(g, 'stampOf reads am / pm and rejects a plain date', M.stampOf('1/1/2026, 12:00:00 pm') === Date.UTC(2026, 0, 1, 12) && M.stampOf('01/01/2026') === null);
+  const said = M.describeSort(m, { col: dt, dir: 'desc' });
+  check(g, 'the export strip says "newest first", not "Z to A"', said === 'sorted by Date/Time, newest first', said);
+  check(g, 'a text column that is not all stamps still sorts A to Z', M.describeSort(m, { col: col(m, 'Reason'), dir: 'asc' }) === 'sorted by Reason, A to Z');
 }
 
 // ── 12. Speed ──────────────────────────────────────────────────────────────
