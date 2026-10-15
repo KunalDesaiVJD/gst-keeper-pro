@@ -5065,6 +5065,10 @@
   // firm decided (14 Oct: its clients' returns are never NIL). No shows the
   // GSTR-9 with its figures, which is what makes the portal compute Tables 4
   // to 6; NEXT only opens the form, nothing is filed.
+  // 0.11.7: returns 'answered' (No chosen and NEXT pressed), 'pending' (No
+  // chosen, NEXT not yet active) or false (question not on the page). Keeps
+  // what it saw in g9NilSeen for the row's diagnosis.
+  let g9NilSeen = '';
   function g9AnswerNilNo() {
     const shown = (e) => !!e && e.getClientRects().length > 0;
     const q = $$('div, p, span, label, td, li, h4, h5, strong').filter((e) => shown(e)
@@ -5075,24 +5079,29 @@
       ((r.id && document.querySelector('label[for="' + r.id + '"]')) || r.closest('label') || {}).textContent
       || (r.nextSibling && r.nextSibling.textContent) || (r.parentElement && r.parentElement.textContent) || r.value || '');
     for (let box = q[0], i = 0; box && i < 7; i++, box = box.parentElement) {
-      // Radios (often hidden behind a styled label) …
       const radios = [...box.querySelectorAll('input[type=radio]')];
       const no = radios.find((r) => /^no\b/i.test(labelOf(r)) || /^(n|no|false)$/i.test(String(r.value || '')));
-      // … or Yes / No buttons and labels.
       const noBtn = no ? null : [...box.querySelectorAll('button, label, a, span, div')]
         .find((e) => shown(e) && /^no$/i.test(oneLine(e.textContent || '')) && e.children.length === 0);
-      const target = no || noBtn;
-      if (!target) continue;
+      if (!no && !noBtn) continue;
       if (no) {
-        const lab = (no.id && document.querySelector('label[for="' + no.id + '"]')) || no.closest('label');
-        (lab || no).click();
-        if (!no.checked) { no.checked = true; no.dispatchEvent(new Event('change', { bubbles: true })); no.dispatchEvent(new Event('click', { bubbles: true })); }
+        // The input itself first (AngularJS listens to its click/change), then its label.
+        if (!no.checked) no.click();
+        if (!no.checked) {
+          const lab = (no.id && document.querySelector('label[for="' + no.id + '"]')) || no.closest('label');
+          if (lab) lab.click();
+        }
+        if (!no.checked) { no.checked = true; }
+        no.dispatchEvent(new Event('input', { bubbles: true }));
+        no.dispatchEvent(new Event('change', { bubbles: true }));
       } else noBtn.click();
-      setTimeout(() => {
-        const next = visibleButtons().find((b) => /^NEXT\b/.test(btnText(b)));
-        if (next) next.click();
-      }, 800);
-      return true;
+      // NEXT, even while disabled, so its state can be reported.
+      const next = $$('button, input[type=button], input[type=submit], a.btn').find((b) => shown(b) && /^NEXT\b/.test(btnText(b)));
+      g9NilSeen = 'No ' + (no ? 'radio checked=' + no.checked + ' value=' + no.value + (no.getAttribute('ng-model') ? ' ng-model=' + no.getAttribute('ng-model') : '') : 'button')
+        + ' · NEXT ' + (next ? (next.disabled || next.getAttribute('disabled') !== null ? 'disabled' : 'active') : 'not found')
+        + ' · html: ' + (box.outerHTML || '').replace(/\s+/g, ' ').slice(0, 900);
+      if (next && !next.disabled && next.getAttribute('disabled') === null) { next.click(); return 'answered'; }
+      return 'pending';
     }
     return false;
   }
@@ -5285,10 +5294,17 @@
             prep.click();
           }
         }
-        if (!isFiled && needCalc() && g9.prepTried && (g9.nilAnswered || 0) < 3 && g9AnswerNilNo()) {
-          g9.nilAnswered = (g9.nilAnswered || 0) + 1;
-          await setJob(job);
-          banner('GSTR-9 FY ' + fyLabel + ': answered "No" to "file NIL return" and pressed NEXT; waiting for the figures…' + progress);
+        if (!isFiled && needCalc() && g9.prepTried && (g9.nilAnswered || 0) < 8) {
+          const r = g9AnswerNilNo();
+          if (r) {
+            g9.nilAnswered = (g9.nilAnswered || 0) + 1;
+            g9.nilState = r;
+            g9.nilSeen = g9NilSeen;
+            await setJob(job);
+            banner('GSTR-9 FY ' + fyLabel + (r === 'answered'
+              ? ': answered "No" to "file NIL return" and pressed NEXT; waiting for the figures…'
+              : ': chose "No" on the NIL question; waiting for NEXT to become active…') + progress);
+          }
         }
         if (!isFiled && needCalc() && g9.prepTried && ticks % 4 === 0) {
           const again = await getJson(calcUrl);
@@ -5317,7 +5333,7 @@
     if (!g9HasCalc(calc) && g9HasCalc(seen.calc)) calc = Object.assign({ fp: retPeriod, gstin }, calc || {}, seen.calc);
     const how = 'pressed ' + (g9.clicked || 'nothing (buttons seen: ' + (g9.buttons || 'none') + ')')
       + (isFiled ? ' · Table 7 tile: ' + (g9.tile || 'not tried') : '')
-      + (g9.prepTried ? ' · Prepare Online tried' + (g9.nilAnswered ? ' · NIL question answered No' : ' · NIL question not found') : '')
+      + (g9.prepTried ? ' · Prepare Online tried' + (g9.nilAnswered ? ' · NIL question: ' + (g9.nilState === 'answered' ? 'No + NEXT pressed' : 'No chosen, NEXT never active') : ' · NIL question not found') : '')
       + ' · page loaded: ' + (seen.urls.join(', ') || 'nothing');
     const hasFiled = ['table6', 'table7', 'table6Total', 'table7Total'].some((k) => seen.filed[k]);
     const rawKept = JSON.stringify(seen.raw).length < 400000 ? seen.raw : seen.raw.map((r) => ({ url: r.url, body: '(too large)' }));
@@ -5339,7 +5355,7 @@
     try {
       if (calc) {
         await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', {
-          ...base, summary: g9HasCalc(calc) ? calc : Object.assign({}, calc, { _captures: seen.raw.slice(0, 20) }),
+          ...base, summary: g9HasCalc(calc) ? calc : Object.assign({}, calc, { _captures: seen.raw.slice(0, 20), _nil: g9.nilSeen || null }),
           status: g9HasCalc(calc) ? status : status + ' · system-computed Tables 4 to 6 not yet available on the portal · ' + how,
         });
       }

@@ -2,6 +2,13 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-15 — NIL answer registers, NEXT pressed when active (v0.11.7)
+
+- Amber Gum 2025-26: 0.11.6 chose No on the NIL question, but the GSTR-9 form never opened: the page loaded nothing after it. NEXT was most likely still disabled, because the page had not registered the choice.
+- The portal answered every table with "No Records found for the provided inputs" (RT-9AS-1002), which is what an unopened form gives.
+- Now the No input itself is clicked (its label only if that did not take), with input and change fired. NEXT is pressed only once it is active, and the step is retried for up to about a minute.
+- The row says whether NEXT was pressed or never became active, and keeps the question's HTML (`_nil`), so a different page can be handled from what was seen.
+
 ## 2026-10-15 — Placeholder tables are not figures (v0.11.6)
 
 - Amber Gum 2025-26 (unfiled): the form had never been opened, so `getDetails` answered Table 5 with a placeholder (`procRecord5`, all nil) and Tables 4 and 6 not at all. 0.11.5 counted any Table 5 as figures fetched, saved that and stopped.
