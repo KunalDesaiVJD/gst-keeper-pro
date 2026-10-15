@@ -169,6 +169,27 @@ export interface ReportTable {
   // a notices table, so the view's Overdue / Due-in-7 presets use the same
   // definition as the dashboard tiles instead of re-parsing the Due Date cell.
   rowFlags?: ({ overdue: boolean; dueIn7: boolean } | null)[];
+  // A summary table printed before the rows (e.g. the 2A vs 2B reconciliation's
+  // summary by reason), with notes under it. When set, Excel writes it to a
+  // "Summary" sheet and the rows to "Documents"; the PDF prints it first and
+  // starts the rows on a new page. Undefined for every other report.
+  summary?: ReportSummary;
+  // Indices of `headers` the PDF prints (Excel always has every column), for a
+  // report whose full width cannot fit a landscape page.
+  pdfColumns?: number[];
+  // The subtitle split into what holds for every period (client, GSTIN) and
+  // what is this period's alone (e.g. "2A pulled …, 2B generated …"): when
+  // several periods are merged, the subtitle keeps the first and each
+  // period's part goes to the summary notes. Undefined for most reports.
+  subtitleParts?: { common: string; period: string };
+}
+
+export interface ReportSummary {
+  title: string;
+  headers: string[];
+  rows: (string | number)[][];
+  columnWidths: number[];
+  notes?: string[];
 }
 
 // ─────────────────── REPORT 1: Suspended — All Clients ───────────────────
@@ -389,11 +410,26 @@ export const buildClientCredentials = async (): Promise<ReportTable> => {
 
 // ─────────────────── Excel renderer (shared) ─────────────────────────────
 
-export const renderReportToExcel = (report: ReportTable) => {
+export const reportToWorkbook = (report: ReportTable): XLSX.WorkBook => {
   const sheetData = [[report.title], [report.subtitle], [], report.headers, ...report.rows];
   const sheet = XLSX.utils.aoa_to_sheet(sheetData);
   sheet['!cols'] = report.columnWidths.map(wch => ({ wch }));
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Report');
-  XLSX.writeFile(workbook, `${report.fileNameBase}.xlsx`);
+  if (!report.summary) {
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Report');
+    return workbook;
+  }
+  // Summary first (title, subtitle, the summary table, then its notes one per
+  // row), the document list on its own sheet.
+  const s = report.summary;
+  const notes = s.notes && s.notes.length ? [[], ['Notes'], ...s.notes.map((n) => [n])] : [];
+  const summarySheet = XLSX.utils.aoa_to_sheet([[report.title], [report.subtitle], [], [s.title], s.headers, ...s.rows, ...notes]);
+  summarySheet['!cols'] = s.columnWidths.map(wch => ({ wch }));
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Documents');
+  return workbook;
+};
+
+export const renderReportToExcel = (report: ReportTable) => {
+  XLSX.writeFile(reportToWorkbook(report), `${report.fileNameBase}.xlsx`);
 };

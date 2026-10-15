@@ -500,6 +500,12 @@
     if (job.periodIdx + 1 < job.periods.length) {
       job.periodIdx++;
       job.period = job.periods[job.periodIdx];
+      // 0.13.0: a GSTR-2B pull starts each month from the dashboard tile again
+      // (the step stayed 'gstr2b_pull', so the next month landed on the wrong
+      // host and the job was cleared after the first month); the combined 2A +
+      // 2B pull starts each month with whatever that month wants.
+      if (job.mode === 'gstr2b_pull') job.step = 'gstr2b_pull_dash';
+      else if (job.mode === 'gstr2a2b_pull') job.step = stepFor2a2b(job);
       await setJob(job);
       banner('Period done — moving to ' + job.period + '…', '#2563eb');
       // GSTR-9 years go to the Annual Return page, not the current FY's return filing.
@@ -922,6 +928,13 @@
       } else if (job.mode === 'gstr2b_pull') {
         banner('Logged in — opening the returns dashboard for GSTR-2B…' + progress);
         job.step = 'gstr2b_pull_dash';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'gstr2a2b_pull') {
+        // 0.13.0: the 2A vs 2B report's Pull. One login; per period, the 2A
+        // and / or the 2B that job.want asks for (see stepFor2a2b / afterGstr2a).
+        banner('Logged in: reading GSTR-2A and GSTR-2B…' + progress);
+        job.step = stepFor2a2b(job);
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'login') {
@@ -5458,49 +5471,115 @@
     banner('Reading GSTR-2A (B2B) for ' + job.period + '…' + progress);
 
     let ctinList = [];
+    let listProblem = null;
     try {
       const cr = await fetch('https://return.gst.gov.in/returns/auth/api/gstr2a/ctin?rtn_prd=' + rtnPrd + '&section_name=B2B', { credentials: 'include' });
-      if (cr.ok) { const cj = await cr.json(); if (Array.isArray(cj.cpty)) ctinList = cj.cpty; }
+      if (!cr.ok) listProblem = 'HTTP ' + cr.status;
+      else {
+        const cj = await cr.json().catch(() => null);
+        if (cj && Array.isArray(cj.cpty)) ctinList = cj.cpty;
+        else if (!cj || typeof cj !== 'object') listProblem = 'HTTP ' + cr.status + ', not JSON';
+        else {
+          // 0.13.0: an answer without a supplier list is NO DATA when the portal
+          // says there is nothing for the month ("No Data Found", "No Invoices
+          // found for the provided Inputs", "No document found ..." : the live
+          // wording for an empty 2A month has not been seen yet) or is a plain
+          // success without a list ({} or {status: 1}). Any other error answer is
+          // a failure, recorded with the portal's own code and words so the live
+          // wording can be read off the status.
+          const err = cj.error || cj.errors || null;
+          const words = JSON.stringify(cj);
+          const noData = /\bno(?:\s+\w+)?\s+(?:data|records?|invoices?|documents?|details?|suppliers?|counter\s*part(?:y|ies))\b|\bnodata\b|\bnot\s*found\b/i.test(words);
+          const plainSuccess = !err && String(cj.status) !== '0';
+          if (!noData && !plainSuccess) listProblem = 'HTTP ' + cr.status + ', no supplier list: ' + words.slice(0, 160);
+        }
+      }
     } catch (e) {
       banner('GSTR-2A: could not read the portal API (' + (e && e.message) + ') — skipped.' + progress, '#dc2626');
       try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', { status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }); } catch (e2) { /* diagnostic only */ }
       await sleep(1200);
-      await advance(job);
+      await afterGstr2a(job);
+      return;
+    }
+
+    // 0.13.0: a supplier list the portal did not give is recorded as a failure,
+    // status only, so the 2A saved earlier is kept. Before, it was saved as an
+    // empty 2A, which made every 2B document look "only in 2B".
+    if (listProblem) {
+      banner('GSTR-2A ' + job.period + ': the supplier list was not available (' + listProblem + '); skipped, the earlier 2A is kept.' + progress, '#dc2626');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', { status: 'PULL FAILED: GSTR-2A supplier list unavailable (' + listProblem + ')' }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await afterGstr2a(job);
       return;
     }
 
     if (ctinList.length === 0) {
       banner('No GSTR-2A B2B counterparties for ' + job.period + '.' + progress, '#f59e0b');
-      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', { status: 'NO DATA / NOT FOUND', summary: { b2b: [] } }); } catch (e2) { /* diagnostic only */ }
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', { status: 'NO DATA / NOT FOUND', summary: { b2b: [], _meta: { counterparties: 0, failed: 0, failedCtins: [] } }, updated_at: new Date().toISOString() }); } catch (e2) { /* diagnostic only */ }
       await sleep(1200);
-      await advance(job);
+      await afterGstr2a(job);
       return;
     }
 
     const nameByCtin = new Map(ctinList.map((c) => [c.stin, c.cname]));
     const docs = [];
-    let failed = 0;
+    const failedCtins = [];
     for (const c of ctinList) {
+      let ok = false;
       try {
         const r = await fetch('https://return.gst.gov.in/returns/auth/api/gstr2a/b2b?rtn_prd=' + rtnPrd + '&ctin=' + encodeURIComponent(c.stin), { credentials: 'include' });
         if (r.ok) {
           const j = await r.json();
           if (Array.isArray(j.b2b)) {
-            for (const d of j.b2b) docs.push({ ctin: d.ctin, trdnm: nameByCtin.get(d.ctin) || null, supfildt: d.fldtr1 || null, inv: d.inv });
-          } else failed++;
-        } else failed++;
-      } catch (e) { failed++; }
+            ok = true;
+            // 0.13.0: every field the portal sends on the supplier is kept (cfs,
+            // cfs3b, flprdr1, dtcancel: the 2A vs 2B report's reasons read them).
+            for (const d of j.b2b) docs.push({ ...d, ctin: d.ctin, trdnm: nameByCtin.get(d.ctin) || null, supfildt: d.fldtr1 || null, inv: d.inv });
+          }
+        }
+      } catch (e) { ok = false; }
+      if (!ok) failedCtins.push(c.stin);
       await sleep(150); // deliberate throttle — a real client can have dozens of suppliers
     }
+    const failed = failedCtins.length;
 
-    const patchObj = { status: 'Pulled', summary: { b2b: docs }, updated_at: new Date().toISOString() };
+    const patchObj = {
+      status: 'Pulled',
+      summary: { b2b: docs, _meta: { counterparties: ctinList.length, failed, failedCtins } },
+      updated_at: new Date().toISOString(),
+    };
     try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2A', patchObj); } catch (e) { /* non-fatal */ }
     debugPanel([
       'STEP: GSTR-2A (B2B)  (' + location.pathname + ')',
       'counterparties     : ' + ctinList.length + ' (' + failed + ' failed)',
     ]);
-    banner('GSTR-2A ' + job.period + ' → saved ✓ (' + ctinList.length + ' counterparties).' + progress, '#16a34a');
+    banner('GSTR-2A ' + job.period + ' → saved ✓ (' + ctinList.length + ' counterparties' + (failed ? ', ' + failed + ' failed' : '') + ').' + progress, failed ? '#d97706' : '#16a34a');
     await sleep(800);
+    await afterGstr2a(job);
+  }
+
+  // 0.13.0: the combined 2A + 2B pull (mode gstr2a2b_pull, from the 2A vs 2B
+  // report's Pull). job.want lists what to fetch per period, e.g.
+  // { '07/2026': ['2A', '2B'], '08/2026': ['2B'] }; a period it does not list
+  // gets both. Function declarations, not top-level constants: they are used
+  // before this point of the script is reached (test 13).
+  function wants(job, kind) {
+    const w = job && job.want && typeof job.want === 'object' ? job.want[job.period] : null;
+    return !Array.isArray(w) || w.indexOf(kind) !== -1;
+  }
+  function stepFor2a2b(job) {
+    return wants(job, '2A') ? 'gstr2a_pull' : 'gstr2b_pull_dash';
+  }
+  // After a month's 2A (saved, no data or failed): its 2B next when wanted,
+  // otherwise the next period.
+  async function afterGstr2a(job) {
+    if (job.mode === 'gstr2a2b_pull' && wants(job, '2B')) {
+      job.step = 'gstr2b_pull_dash';
+      await setJob(job);
+      banner('GSTR-2A ' + job.period + ' done; opening the returns dashboard for GSTR-2B…', '#2563eb');
+      location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      return;
+    }
     await advance(job);
   }
 
@@ -5685,7 +5764,17 @@
       await sleep(400);
       viewBtn = findTileButton(/gstr[\s-]*2b/i, /^view$/i, [/gstr[\s-]*1\b/i, /gstr[\s-]*2a/i, /gstr[\s-]*3b/i]);
     }
-    if (!viewBtn) { banner('Could not find the GSTR-2B tile / View after Search — is GSTR-2B generated for ' + monthName + ' ' + yyyy + '?', '#dc2626'); await clearJob(); return; }
+    if (!viewBtn) {
+      // 0.13.0: a month without a GSTR-2B (not generated: a quarterly taxpayer's
+      // first two months, or the previous GSTR-3B not filed) is recorded, status
+      // only so an earlier 2B is kept, and the queue moves on. Before, it ended
+      // the whole job.
+      banner('No GSTR-2B tile with View for ' + monthName + ' ' + yyyy + ' (not generated?); moving on.' + progress, '#f59e0b');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR2B', { status: 'NOT GENERATED / NOT FOUND (no GSTR-2B tile)' }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await advance(job);
+      return;
+    }
     job.step = 'gstr2b_pull';
     await setJob(job);
     banner('Opening the GSTR-2B summary page…' + progress);

@@ -10,7 +10,7 @@ import {
   HandCoins, FileWarning, Wallet2, CreditCard, BookOpen, Landmark, PiggyBank, CalendarRange,
   SplitSquareHorizontal, UserSquare2, FileBadge, ReceiptText,
   Calculator, AlarmClock, ShieldAlert, PieChart, Undo2,
-  FileCheck2, FileStack,
+  FileCheck2, FileStack, GitCompareArrows,
 } from 'lucide-react';
 import {
   buildSuspendedClosingAllClients,
@@ -46,6 +46,7 @@ import {
   buildGstr2aSupplierWiseReport,
   buildGstr2aPyInCyReport,
 } from '@/utils/gstr2aReports';
+import { buildGstr2aVs2bRecoReport, planGstr2a2bPull } from '@/utils/gstr2aVs2bReports';
 import {
   buildPanOutputLiabilityReport,
   buildPanLiabilityVsItcClaimedReport,
@@ -600,6 +601,18 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     viewKind: 'document-line-items',
     pull: { mode: 'gstr2a_pull', needsMonth: true },
     build: ({ clientId, month }) => buildGstr2aPyInCyReport(clientId!, month),
+  },
+  {
+    key: 'gstr2a-vs-gstr2b-reco',
+    title: 'GSTR-2A vs GSTR-2B Reconciliation',
+    description: "Matches the month's portal GSTR-2A and GSTR-2B document by document and gives every difference its reason (filed after the 2B cut-off, filed late for an earlier month, pending or rejected in IMS, amended, value difference and more) with what to do. Uses next month's 2B and earlier months' 2A, when pulled, to confirm the reason. Pull fetches whatever is missing.",
+    icon: GitCompareArrows,
+    category: 'gstr2a2b',
+    status: 'extends-login',
+    needs: 'client+month',
+    viewKind: 'reason-reconciliation',
+    pull: { mode: 'gstr2a2b_pull', needsMonth: true, plan: (a) => planGstr2a2bPull(a) },
+    build: ({ clientId, month }) => buildGstr2aVs2bRecoReport(clientId!, month),
   },
   {
     key: 'pan-multiple-company-2a2b',

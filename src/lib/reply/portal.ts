@@ -153,7 +153,7 @@ export interface PortalDoc {
 /** Signed tax: credit notes reduce. */
 export const docSign = (d: PortalDoc): number => (d.type === 'CN' || d.type === 'ISDC' ? -1 : 1);
 
-const taxOf2b = (o: AnyObj): HeadAmounts => {
+export const taxOf2b = (o: AnyObj): HeadAmounts => {
   if (['igst', 'cgst', 'sgst', 'cess'].some((k) => k in o)) return { igst: pnum(o.igst), cgst: pnum(o.cgst), sgst: pnum(o.sgst), cess: pnum(o.cess) };
   if (['iamt', 'camt', 'samt', 'csamt'].some((k) => k in o)) return headsOfAmt(o);
   const items = arr(o.items).length ? arr(o.items) : arr(o.itms).map((i) => (isObj(i.itm_det) ? i.itm_det : i));

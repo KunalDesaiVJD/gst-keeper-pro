@@ -6,7 +6,7 @@
 // view components under ./views/*, one per report data-shape archetype
 // (ledger register, as-filed return summary, variance comparison, document
 // line items, evidence/event list, profile card, all-clients snapshot,
-// annual trend, exceptions list, working paper) — each report declares which
+// annual trend, exceptions list, working paper, reason reconciliation) — each report declares which
 // one fits it via ReportDefinition.viewKind. This shell only owns what every
 // report needs regardless of shape: the Dialog frame, loading/error states,
 // and the Excel/PDF export actions.
@@ -28,6 +28,7 @@ import { AllClientsSnapshotView } from './views/AllClientsSnapshotView';
 import { AnnualTrendView } from './views/AnnualTrendView';
 import { ExceptionsListView } from './views/ExceptionsListView';
 import { WorkingPaperView } from './views/WorkingPaperView';
+import { ReasonReconciliationView } from './views/ReasonReconciliationView';
 
 export interface ReportPreviewDialogProps {
   open: boolean;
@@ -64,6 +65,8 @@ const renderView = (report: ReportDefinition, table: ReportTable): React.ReactNo
       return <ExceptionsListView table={table} report={report} />;
     case 'working-paper':
       return <WorkingPaperView table={table} report={report} />;
+    case 'reason-reconciliation':
+      return <ReasonReconciliationView table={table} report={report} />;
   }
 };
 

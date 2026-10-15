@@ -16,7 +16,23 @@ const formatNumberForPdf = (v: any): string => {
   return rounded.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 };
 
-export const renderReportToPdf = (report: ReportTable) => {
+// A report wider than a landscape page names the columns its PDF keeps
+// (pdfColumns); every column-dependent rule below then runs on that projection.
+const projectForPdf = (report: ReportTable): ReportTable => {
+  const cols = (report.pdfColumns || []).filter((i) => i >= 0 && i < report.headers.length);
+  if (!cols.length) return report;
+  const widthsMatch = Array.isArray(report.columnWidths) && report.columnWidths.length === report.headers.length;
+  return {
+    ...report,
+    headers: cols.map((i) => report.headers[i]),
+    rows: report.rows.map((r) => cols.map((i) => r[i] ?? '')),
+    columnWidths: widthsMatch ? cols.map((i) => report.columnWidths[i]) : report.columnWidths,
+  };
+};
+
+export const renderReportToPdf = (fullReport: ReportTable) => {
+  const report = projectForPdf(fullReport);
+  const fitHeads = !!(fullReport.pdfColumns && fullReport.pdfColumns.length);
   const doc = new jsPDF('l', 'mm', 'a4');
   const pageWidth = doc.internal.pageSize.getWidth();
 
@@ -102,8 +118,62 @@ export const renderReportToPdf = (report: ReportTable) => {
     ci === pdfColIndex ? (pdfUrls[ri] ? 'View PDF' : '—') : formatNumberForPdf(c)
   )));
 
+  // A summary (e.g. the reconciliation's summary by reason) goes first, with
+  // its notes under it; the rows then start on a page of their own.
+  let startY = 48;
+  if (report.summary) {
+    const sm = report.summary;
+    const sHasWidths = Array.isArray(sm.columnWidths) && sm.columnWidths.length === sm.headers.length;
+    const sStyles: Record<number, { halign: 'left' | 'right'; cellWidth?: number }> = {};
+    sm.headers.forEach((h, i) => {
+      sStyles[i] = { halign: isNumericHeader(h) ? 'right' : 'left', ...(sHasWidths ? { cellWidth: Math.max(sm.columnWidths[i] * MM_PER_WCH, MIN_COL_MM) } : {}) };
+    });
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(sm.title, margin.left, 47);
+    autoTable(doc, {
+      startY: 50,
+      head: [sm.headers],
+      body: sm.rows.map((r) => r.map(formatNumberForPdf)),
+      headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 8, halign: 'center' },
+      bodyStyles: { fontSize: 7.5 },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+      columnStyles: sStyles,
+      margin: { ...margin, top: 14 },
+      didParseCell: (data) => {
+        const isLast = data.row.index === sm.rows.length - 1;
+        if (isLast && data.section === 'body' && String(sm.rows[data.row.index]?.[1]).toUpperCase() === 'TOTAL') {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [220, 230, 240];
+        }
+      },
+    });
+    let y = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 60) + 6;
+    if (sm.notes && sm.notes.length) {
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      if (y > doc.internal.pageSize.height - 20) { doc.addPage(); y = 16; }
+      doc.text('Notes', margin.left, y);
+      y += 5;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      for (const note of sm.notes) {
+        const lines: string[] = doc.splitTextToSize(`• ${note}`, availableWidth);
+        if (y + lines.length * 4 > doc.internal.pageSize.height - margin.bottom) { doc.addPage(); y = 16; }
+        doc.text(lines, margin.left, y);
+        y += lines.length * 4 + 1.5;
+      }
+    }
+    doc.addPage();
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Document list', margin.left, 14);
+    doc.setFont('helvetica', 'normal');
+    startY = 18;
+  }
+
   autoTable(doc, {
-    startY: 48,
+    startY,
     head: [report.headers],
     body,
     headStyles: {
@@ -118,11 +188,18 @@ export const renderReportToPdf = (report: ReportTable) => {
     columnStyles,
     horizontalPageBreak: true,
     horizontalPageBreakRepeat: 0,
-    margin,
+    // Pages after the letterhead page need no room for it.
+    margin: report.summary ? { ...margin, top: 14 } : margin,
     // TOTAL row is the last one when we add one — bold it. The PDF column's
     // "View PDF" label is styled like a link; didDrawCell below turns it
     // into an actual clickable link once autoTable has positioned the cell.
     didParseCell: (data) => {
+      // A report that chose its PDF columns (pdfColumns) sized them to fit the
+      // page: its header cells keep those widths and wrap, instead of a long
+      // header forcing a column onto a page of its own.
+      if (fitHeads && data.section === 'head' && typeof columnStyles[data.column.index]?.cellWidth === 'number') {
+        data.cell.styles.cellWidth = columnStyles[data.column.index].cellWidth;
+      }
       const isLast = data.row.index === report.rows.length - 1;
       const looksLikeTotalRow = String(report.rows[data.row.index]?.[1]).toUpperCase() === 'TOTAL';
       if (isLast && looksLikeTotalRow && data.section === 'body') {
