@@ -16,6 +16,7 @@ import { ReportsBrowser } from '@/components/reports/ReportsBrowser';
 import { ReportPreviewDialog } from '@/components/reports/ReportPreviewDialog';
 import type { ReportTable } from '@/utils/allClientsReports';
 import { buildForPeriods } from '@/lib/reportPeriodMerge';
+import { describeJob } from '@/utils/gstr2aVs2bReports';
 
 // Piloted on Notices/Refund/DRC-03 first (the categories that were actively
 // broken); ReportPreviewDialog works off any report's build() call, which
@@ -32,6 +33,10 @@ const ReportsPage: React.FC = () => {
   const [clients, setClients] = useState<ClientLite[]>([]);
   const [busy, setBusy] = useState<{ key: string; format: 'xlsx' | 'pdf' } | null>(null);
   const [extReady, setExtReady] = useState(false);
+  // The extension's version (from its ready message): a report's Pull plan picks
+  // a mode the installed copy understands (an unknown mode would fall through to
+  // the extension's ledger chain).
+  const [extVersion, setExtVersion] = useState<string | null>(null);
   const [pullingKey, setPullingKey] = useState<string | null>(null);
   // Multi-select periods, local to Reports — the global Month context stays
   // a single value for every other page, so this seeds from it once but
@@ -75,7 +80,10 @@ const ReportsPage: React.FC = () => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkExtensionReady) {
+        setExtReady(true);
+        if (typeof d.version === 'string') setExtVersion(d.version);
+      }
       if (d.__gstkPullSectionResult) {
         setPullingKey(null);
         if (d.__gstkPullSectionResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there. Once it finishes, come back and reopen this report\'s Preview (it checks for new data automatically for a few minutes if the preview is already open).');
@@ -97,23 +105,52 @@ const ReportsPage: React.FC = () => {
   // without logging out in between. __gstkPullSectionResult only means "the
   // portal tab opened", not "the pull completed" — CAPTCHA/login/scrape for
   // every queued period still happens asynchronously in that tab afterward.
-  const handlePullSection = useCallback((report: ReportDefinition) => {
+  const handlePullSection = useCallback(async (report: ReportDefinition) => {
     if (!report.pull) return;
     if (!selectedClientId) { toast.error('Select a client first'); return; }
     if (report.pull.needsMonth && selectedPeriods.length === 0) { toast.error('Select a period first'); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
-    if (report.pull.needsMonth && selectedPeriods.length > 1) {
-      toast.info(`Pulling all ${selectedPeriods.length} selected periods in one portal tab — type the CAPTCHA once at login.`);
+    if (report.pull.plan) {
+      // The report decides what to fetch from what is already stored (only what
+      // is missing). The extension runs one job at a time, so a plan with more
+      // than one job starts the first now and the next click fetches the rest.
+      setPullingKey(report.key);
+      let plan;
+      try {
+        plan = await report.pull.plan({ clientId: selectedClientId, periods: selectedPeriods, extVersion });
+      } catch (err) {
+        setPullingKey(null);
+        toast.error('Could not work out what to pull: ' + (err instanceof Error ? err.message : 'unknown error'));
+        return;
+      }
+      const [job, ...rest] = plan.jobs;
+      if (!job) { setPullingKey(null); toast.info(plan.note || 'Nothing to pull.'); return; }
+      if (plan.note) toast.info(plan.note);
+      toast.info(`Pulling ${describeJob(job)} in one portal tab: type the CAPTCHA once at login.`);
+      if (rest.length) toast.info(`After this finishes, click Pull again to fetch ${rest.map(describeJob).join('; ')}.`);
+      window.postMessage({
+        __gstkPullSection: {
+          clientId: selectedClientId,
+          mode: job.mode,
+          period_month: job.periods[0],
+          period_months: job.periods,
+          ...(job.want ? { want: job.want } : {}),
+        },
+      }, '*');
+    } else {
+      if (report.pull.needsMonth && selectedPeriods.length > 1) {
+        toast.info(`Pulling all ${selectedPeriods.length} selected periods in one portal tab — type the CAPTCHA once at login.`);
+      }
+      setPullingKey(report.key);
+      window.postMessage({
+        __gstkPullSection: {
+          clientId: selectedClientId,
+          mode: report.pull.mode,
+          period_month: report.pull.needsMonth ? selectedPeriods[0] : undefined,
+          period_months: report.pull.needsMonth ? selectedPeriods : undefined,
+        },
+      }, '*');
     }
-    setPullingKey(report.key);
-    window.postMessage({
-      __gstkPullSection: {
-        clientId: selectedClientId,
-        mode: report.pull.mode,
-        period_month: report.pull.needsMonth ? selectedPeriods[0] : undefined,
-        period_months: report.pull.needsMonth ? selectedPeriods : undefined,
-      },
-    }, '*');
 
     // If this report's preview is already open, silently re-check for new
     // data every 10s for up to ~6 minutes — covers login+CAPTCHA+scrape time
@@ -136,7 +173,7 @@ const ReportsPage: React.FC = () => {
       }, 10000);
       pollRef.current = { key: report.key, timer };
     }
-  }, [selectedClientId, selectedPeriods, extReady, previewOpen, previewReport, stopPreviewPoll]);
+  }, [selectedClientId, selectedPeriods, extReady, extVersion, previewOpen, previewReport, stopPreviewPoll]);
 
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];

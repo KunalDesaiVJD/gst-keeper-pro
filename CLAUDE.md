@@ -92,6 +92,16 @@ Document meaning (type, sign, effect, colour) lives in `src/lib/twobDocs.ts`.
 "Email bills not in books" (Import 2B header, §11) mails the client its open Not in Books list as an
 Excel working paper via `email_outbox` (`attachments`, `cc_email`) and `send-gst-email` v5 (`src/lib/billsNotInBooksMail.ts`).
 
+## GSTR-2A vs GSTR-2B reconciliation (Reports Hub)
+
+The report `gstr2a-vs-gstr2b-reco` (`src/utils/gstr2aVs2bReports.ts`) matches the portal-pulled 2A and 2B
+(`gst_filed_returns`) document by document and gives each difference a reason and an action. The engine
+`src/lib/itcReco/` is generic over document sources, so GSTR-9 Table 8A (2A vs 8A, 8A vs 2B, all three)
+plugs in as another source with its own rule set (`RULES_2A_8A`, `RULES_8A_2B`, empty for now). Pull uses
+extension 0.13.0's `gstr2a2b_pull` (one login, per-month `want`); older extensions pull one return type per
+click. **Read `docs/GSTR2A_2B_RECO_POSITIONS.md` before changing a reason rule**; run
+`node scripts/verify-itc-reco.mjs` after any engine change.
+
 ## GSTR-1 e-invoices (IRN)
 
 **Read `docs/GSTR1_EINVOICE_POSITIONS.md` before changing any e-invoice code** (`src/lib/einvoice/einvoice.ts`, `excel.ts`, the GSTR-1 page's e-invoice parts, the extension's GSTR-1 upload or e-invoice pull): the elected mechanism is "keep, don't re-send" (e-invoices already on the portal with the same figures are left out of the upload; the app never writes irn / irngendate / srctyp), matching is by exact document identity only, and e-invoice clients are found by evidence, PAN-wide.

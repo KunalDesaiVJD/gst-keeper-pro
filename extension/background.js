@@ -767,6 +767,8 @@ const API = {
     const job = {
       mode: info.mode, period: periods[0], periods, periodIdx: 0, idx: 0, step: 'login', startedAt: Date.now(),
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
+      // 0.13.0: gstr2a2b_pull's per-period list of what to fetch ({ 'MM/YYYY': ['2A', '2B'] }).
+      want: (info.want && typeof info.want === 'object' && !Array.isArray(info.want)) ? info.want : null,
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;

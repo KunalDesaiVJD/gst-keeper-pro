@@ -193,7 +193,7 @@ export const buildGstr3bVsGstr2bItcReport = async (clientId: string, month: stri
   for (const supplier of b2b) {
     for (const inv of supplier.inv || []) {
       if (inv.itcavl !== 'Y') continue;
-      eIgst += num(inv.iamt); eCgst += num(inv.camt); eSgst += num(inv.sgst ?? inv.samt);
+      eIgst += num(inv.igst ?? inv.iamt); eCgst += num(inv.cgst ?? inv.camt); eSgst += num(inv.sgst ?? inv.samt);
     }
   }
   const g2bTotal = eIgst + eCgst + eSgst;

@@ -88,6 +88,8 @@ export interface ReportRunArgs {
  *  - annual-trend: one client's figure across all twelve months of an FY
  *  - exceptions-list: pre-filtered "only the flagged clients" reports
  *  - working-paper: a step-by-step legal computation read top to bottom
+ *  - reason-reconciliation: two sources matched document by document, every
+ *    difference with its reason, under a summary by reason (2A vs 2B; later 8A)
  */
 export type ReportViewKind =
   | 'ledger-register'
@@ -100,7 +102,17 @@ export type ReportViewKind =
   | 'all-clients-snapshot'
   | 'annual-trend'
   | 'exceptions-list'
-  | 'working-paper';
+  | 'working-paper'
+  | 'reason-reconciliation';
+
+/**
+ * One extension job a report's Pull starts: a `mode`, the periods it walks and,
+ * for a combined mode, what to fetch per period (e.g. { '07/2026': ['2A', '2B'],
+ * '08/2026': ['2B'] } for gstr2a2b_pull, extension 0.13.0+).
+ */
+export interface PullJob { mode: string; periods: string[]; want?: Record<string, string[]> }
+/** What a report's Pull fetches: jobs[0] starts now; the rest on the next click (the extension runs one job at a time). */
+export interface PullPlan { jobs: PullJob[]; note?: string }
 
 /**
  * One entry per report. `needs` mirrors the filter shapes the app has
@@ -134,6 +146,12 @@ export interface ReportDefinition {
    * staff to an unrelated page to fetch data for an unrelated report.
    * `needsMonth` is only true for the two Ledger reports (Liability/Cash)
    * that are period-scoped; everything else here is client-lifetime data.
+   * `plan`, when set, decides what to fetch from what is already stored (only
+   * what is missing), and may pick a mode by the extension's version.
    */
-  pull?: { mode: string; needsMonth?: boolean };
+  pull?: {
+    mode: string;
+    needsMonth?: boolean;
+    plan?: (args: { clientId: string; periods: string[]; extVersion: string | null }) => Promise<PullPlan>;
+  };
 }

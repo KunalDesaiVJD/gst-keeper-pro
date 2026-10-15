@@ -16,7 +16,7 @@ interface ClientLite { id: string; name: string; gstin: string; }
 const fileSafe = (s: string) => s.replace(/\s+/g, '_');
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
-const fetchClient = async (clientId: string): Promise<ClientLite> => {
+export const fetchClient = async (clientId: string): Promise<ClientLite> => {
   const { data } = await supabase.from('clients').select('id, name, gstin').eq('id', clientId).maybeSingle();
   return (data || { id: clientId, name: 'Unknown', gstin: '' }) as ClientLite;
 };
@@ -44,14 +44,17 @@ export interface Gstr1Section {
   ttl_igst?: number; ttl_cgst?: number; ttl_sgst?: number; ttl_cess?: number;
 }
 export interface Gstr1Summary { sec_sum?: Gstr1Section[]; }
-export interface Gstr2bInvoice { inum?: string; dt?: string; txval?: number; iamt?: number; camt?: number; sgst?: number; samt?: number; itcavl?: string; }
+// The live GSTR-2B getdata JSON carries igst/cgst/sgst/cess on each invoice
+// (every live row read on 2026-10-15); iamt/camt/samt/csamt are kept as the
+// fallback for an older or differently shaped payload.
+export interface Gstr2bInvoice { inum?: string; dt?: string; txval?: number; igst?: number; cgst?: number; sgst?: number; cess?: number; iamt?: number; camt?: number; samt?: number; csamt?: number; itcavl?: string; }
 export interface Gstr2bSupplier { ctin?: string; trdnm?: string; supfildt?: string; inv?: Gstr2bInvoice[]; }
 export interface Gstr2bSummary { docdata?: { b2b?: Gstr2bSupplier[] } }
 // GSTR-2A's invoice shape differs from 2B's (idt not dt, samt not sgst, no
 // itcavl at all — eligibility isn't part of this payload) — the extension's
 // handleGstr2aPull normalizes the supplier wrapper to match 2B's shape
 // (ctin/trdnm/supfildt) but leaves each invoice exactly as the portal sent it.
-export interface Gstr2aInvoice { inum?: string; idt?: string; txval?: number; iamt?: number; camt?: number; samt?: number; rchrg?: string; }
+export interface Gstr2aInvoice { inum?: string; idt?: string; txval?: number; iamt?: number; camt?: number; samt?: number; csamt?: number; rchrg?: string; }
 export interface Gstr2aSupplier { ctin?: string; trdnm?: string | null; supfildt?: string | null; inv?: Gstr2aInvoice[]; }
 export interface Gstr2aSummary { b2b?: Gstr2aSupplier[] }
 
@@ -197,7 +200,7 @@ export const buildFiledGstr1Report = async (clientId: string, period: string): P
 // gstr2bReports.ts), which used to read the Excel-imported twob_import_docs/
 // gstr2a_import_docs but now read this same portal-pulled document data
 // instead, so every 2A/2B report in the Reports Hub is portal-sourced.
-export interface FlatB2bDoc { ctin: string; trdnm: string; inum: string; date: string; txval: number; igst: number; cgst: number; sgst: number; itcavl?: string; }
+export interface FlatB2bDoc { ctin: string; trdnm: string; inum: string; date: string; txval: number; igst: number; cgst: number; sgst: number; cess: number; itcavl?: string; }
 
 export const flattenGstr2bDocs = (s: Gstr2bSummary): FlatB2bDoc[] => {
   const out: FlatB2bDoc[] = [];
@@ -206,8 +209,8 @@ export const flattenGstr2bDocs = (s: Gstr2bSummary): FlatB2bDoc[] => {
       out.push({
         ctin: supplier.ctin || '—', trdnm: supplier.trdnm || '—',
         inum: inv.inum || '—', date: inv.dt || '—',
-        txval: num(inv.txval), igst: num(inv.iamt), cgst: num(inv.camt), sgst: num(inv.sgst ?? inv.samt),
-        itcavl: inv.itcavl,
+        txval: num(inv.txval), igst: num(inv.igst ?? inv.iamt), cgst: num(inv.cgst ?? inv.camt), sgst: num(inv.sgst ?? inv.samt),
+        cess: num(inv.cess ?? inv.csamt), itcavl: inv.itcavl,
       });
     }
   }
@@ -221,7 +224,7 @@ export const flattenGstr2aDocs = (s: Gstr2aSummary): FlatB2bDoc[] => {
       out.push({
         ctin: supplier.ctin || '—', trdnm: supplier.trdnm || '—',
         inum: inv.inum || '—', date: inv.idt || '—',
-        txval: num(inv.txval), igst: num(inv.iamt), cgst: num(inv.camt), sgst: num(inv.samt),
+        txval: num(inv.txval), igst: num(inv.iamt), cgst: num(inv.camt), sgst: num(inv.samt), cess: num(inv.csamt),
       });
     }
   }
@@ -288,7 +291,7 @@ export const buildFiledGstr2bReport = async (clientId: string, period: string): 
       rows.push([
         supplier.ctin || '—', supplier.trdnm || '—',
         inv.inum || '—', inv.dt || '—',
-        num(inv.txval), num(inv.iamt), num(inv.camt), num(inv.sgst ?? inv.samt),
+        num(inv.txval), num(inv.igst ?? inv.iamt), num(inv.cgst ?? inv.camt), num(inv.sgst ?? inv.samt),
         inv.itcavl === 'Y' ? 'Yes' : inv.itcavl === 'N' ? 'No' : (inv.itcavl || '—'),
         supplier.supfildt || '—',
       ]);

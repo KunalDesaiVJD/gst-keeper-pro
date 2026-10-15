@@ -2,6 +2,17 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-15 — GSTR-2A and GSTR-2B pulled together for the 2A vs 2B report (v0.13.0)
+
+- New mode `gstr2a2b_pull`, started by Pull on the Reports Hub's **GSTR-2A vs GSTR-2B Reconciliation**. One login; for each period the job carries `want` (for example `{ "07/2026": ["2A", "2B"], "08/2026": ["2B"] }`) and fetches only that. A period not listed gets both.
+- After a month's 2A (saved, no data or failed), the job opens the returns dashboard for that month's 2B when it is wanted, otherwise it moves to the next period.
+- **Fix: a GSTR-2B pull over several months stopped after the first.** `advance()` kept the step `gstr2b_pull`, so the next month started on the returns host and the job was cleared. The next month now starts from the dashboard tile again (`gstr2b_pull_dash`).
+- A month with no GSTR-2B tile (not generated: a quarterly taxpayer's first two months, or the previous GSTR-3B not filed) is recorded as `NOT GENERATED / NOT FOUND (no GSTR-2B tile)`, status only, and the queue moves on. Before, it ended the whole job.
+- The 2A pull keeps every field the portal sends on each supplier (`cfs`, `cfs3b`, `flprdr1`, `dtcancel` among them) and records `summary._meta = { counterparties, failed, failedCtins }`. Readers of `b2b` are unaffected.
+- A 2A supplier list the portal does not give (not HTTP 200, not JSON, or an error answer without `cpty` that does not say there is no data) is recorded as `PULL FAILED: GSTR-2A supplier list unavailable (…)`, status only, with the portal's own code and words, so the 2A saved earlier is kept. Before, it was saved as an empty 2A, which made every 2B document look "only in 2B". A month the portal says has no data ("No Data Found", "No Invoices / No document found for the provided Inputs" and the like), or a plain success answer without a list (`{}`, `{ status: 1 }`), is still saved as `NO DATA / NOT FOUND` with an empty `b2b`. The live wording for an empty month has not been seen; a failed status shows it.
+- `background.js` passes `want` into the job.
+- Test `test/14-gstr2a2b-pull.test.mjs` covers these.
+
 ## 2026-10-15 — Unfiled GSTR-9 driven from the portal's own pages (v0.12.0)
 
 - Written against the two portal pages the firm saved (Amber Gum 2025-26).
