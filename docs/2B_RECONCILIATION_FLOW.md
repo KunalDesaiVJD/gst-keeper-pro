@@ -764,3 +764,13 @@ has not yet recorded in its books, as an Excel working paper attached to the
   default), and shows when it was last sent. The client's name drops the
   firm's own "NO ITC" / "PARTIAL ITC" marker in everything the client sees.
 - Unsaved row actions block the send, as they block Post to Reconciliation.
+
+## §12. Import 2B is for GSTR-2B only (15 Oct 2026)
+
+The firm's decision: Import 2B carries only the GSTR-2B pull and import used for
+the return. The GSTR-2A card that sat on it (an Excel import and portal pull into
+`gstr2a_import_docs`) is gone, with its parser. Nothing read that table: the
+GSTR-2A reports on the Reports Hub and the reply recipes read the portal's own
+GSTR-2A pull (`gst_filed_returns`, return type GSTR2A), which is unchanged. The
+table and its 118 rows are kept. The extension's `__gstkPull2A` bridge is left in
+place, unused by the app.
