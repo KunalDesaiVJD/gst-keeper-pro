@@ -241,6 +241,30 @@ export const cashFeeTransferAfterUnsettled = () => {
 };
 
 /**
+ * A day after a day the balances did not settle that chains at every step
+ * from that day's last balance, and nets to nothing (a 3B day: TDS and TCS
+ * credits, a deposit, then the set-offs). `readBack` returns it in another
+ * order (TDS, deposit, set-offs, TCS), whose steps only move the balance
+ * their own way: the chain, fitting strictly better, puts it right.
+ */
+export const cashChainAfterUnsettled = (readBack = false) => {
+  const r = reg('cash-11');
+  const tds = r('08/2026', '2026-08-20', 'TDS Credit', false, { igst: 90000 }, 96200);
+  const tcs = r('08/2026', '2026-08-20', 'TCS Credit', false, { cgst: 20, sgst: 20 }, 96240);
+  const dep = r('08/2026', '2026-08-20', 'Amount deposited CPIN 26080071', false, { sgst: 570000 }, 666240);
+  const orc = r('08/2026', '2026-08-20', 'Other than reverse charge (Aug 20)', true, { sgst: 650000 }, 16240);
+  const rc = r('08/2026', '2026-08-20', 'Reverse charge (Aug 20)', true, { cgst: 5020, sgst: 5020 }, 6200);
+  return [
+    r('08/2026', null, 'Opening Balance', null, {}, 2000),
+    r('08/2026', '2026-08-11', 'Amount deposited CPIN 26080070 (with interest)', false, { igst: 10000 }, 12200),
+    r('08/2026', '2026-08-11', 'Other than reverse charge (Aug 11)', true, { igst: 6000 }, 6200),
+    ...(readBack ? [tds, dep, orc, rc, tcs] : [tds, tcs, dep, orc, rc]),
+    r('08/2026', '2026-08-24', 'Amount deposited CPIN 26080072', false, { igst: 1800 }, 8000),
+    r('08/2026', null, 'Closing Balance', null, {}, 8000),
+  ];
+};
+
+/**
  * A liability register day with no Opening row, the reverse charge carrying
  * interest; `swapped` stores its two liabilities the other way round. Two
  * orders fit as many chains, only one ends on the Closing Balance.

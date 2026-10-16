@@ -355,13 +355,16 @@ function orderWith<T>(lines: LedgerLine<T>[], convention: BalanceConvention): { 
       // A chain opened from an unknown balance (after a day the balances did
       // not settle) proves less than one from a known one: it may open with
       // any entry. Unless it is the stored order itself, it replaces that
-      // order only when the balance as listed before the day contradicts the
-      // stored order and not the chain; otherwise the day is judged as an
+      // order only when, read from the balance as listed before the day, it
+      // is not contradicted and either the stored order is or the chain fits
+      // strictly better (fitScore); otherwise the day is judged as an
       // unsettled one (kept as stored unless the balances prove it wrong).
       if (!serial && ordered && start === null && listed !== null) {
         const asStored = [...day].sort((a, b) => a.at - b.at);
         const same = ordered.every((s, i) => s === asStored[i]);
-        if (!same && (contradicted(ordered, listed, end, convention) || !contradicted(asStored, listed, end, convention))) ordered = null;
+        if (!same && (contradicted(ordered, listed, end, convention)
+          || (!contradicted(asStored, listed, end, convention)
+            && fitScore(ordered, listed, end, convention) <= fitScore(asStored, listed, end, convention)))) ordered = null;
       }
       if (ordered) {
         settled += 1;

@@ -258,6 +258,25 @@ await section("two years: each year's own word", async (g) => {
   check(g, "… and in the Excel the ledger's two notes are one note line wrapped across the whole table, tall enough for its lines",
     !!noteCell && noteCell.alignment?.wrapText === true && across && (wsn.getRow(noteRow).height ?? 0) > 13,
     JSON.stringify({ noteRow, wrap: noteCell?.alignment, across, h: noteRow && wsn.getRow(noteRow).height }));
+  // Three years of long notes: each its own row, whole, as tall as its lines (none capped).
+  const LONG = (y) => `As filed on the portal's GSTR-3B for each month (${y} months pulled, the rest show NOT PULLED). "ITC Set Off" and "Paid in Cash" are the return's own as-filed aggregate figures; the portal does not expose them head by head, so this statement shows them as the return states them and no more.`;
+  const three = await M.buildForPeriods(recorder({ periodScope: 'fy' }, ledgerOf({ 'FY 2024-25': LONG('12/12'), 'FY 2025-26': LONG('9/12'), 'FY 2026-27': LONG('4/12') })).report, ['04/2024', '04/2025', '04/2026'], 'c');
+  const wb3 = new ExcelJS.Workbook();
+  await wb3.xlsx.load(await M.reportToXlsx(three, { now: new Date(Date.UTC(2026, 9, 16, 6, 0)) }));
+  const ws3 = wb3.worksheets[0];
+  const parts3 = [];
+  ws3.eachRow((row, i) => { const v = String(row.getCell(2).value ?? ''); if (/^FY 20\d\d-\d\d: As filed/.test(v)) parts3.push({ i, v, h: ws3.getRow(i).height ?? 0, wrap: row.getCell(2).alignment?.wrapText === true }); });
+  check(g, "… three years' long notes: each year's on its own wrapped row, whole, tall enough for all its lines",
+    parts3.length === 3 && parts3.every((p) => p.wrap && p.v.endsWith('and no more.') && p.h >= 3 * 12), JSON.stringify(parts3.map((p) => [p.i, p.v.length, p.h, p.wrap])));
+  // A table of one column shown (the table kit keeps the last) is too narrow to wrap a note in: it runs on, whole.
+  const oneCol = { ...both, headers: ['Month'], rows: both.rows.map((r) => [r[0]]), columnWidths: undefined };
+  const wb1 = new ExcelJS.Workbook();
+  await wb1.xlsx.load(await M.reportToXlsx(oneCol, { now: new Date(Date.UTC(2026, 9, 16, 6, 0)) }));
+  const ws1 = wb1.worksheets[0];
+  const run1 = [];
+  ws1.eachRow((row, i) => { const v = String(row.getCell(2).value ?? ''); if (/^FY 20\d\d-\d\d: Same-day order/.test(v)) run1.push({ i, v, wrap: row.getCell(2).alignment?.wrapText === true }); });
+  check(g, '… one column shown: the notes run on unwrapped, whole, not wrapped inside the one narrow column',
+    run1.length === 2 && run1.every((p) => !p.wrap && p.v.includes('Same-day order: 1 day')), JSON.stringify(run1));
   const ledgerMeta = M.metaOf(both);
   check(g, "… so is a ledger's long same-day note", !ledgerMeta.fields.some((f) => /Same-day order/.test(`${f.label}: ${f.value}`)) && ledgerMeta.rest.includes(`FY 2026-27: ${NOTE26}`), JSON.stringify(ledgerMeta));
 

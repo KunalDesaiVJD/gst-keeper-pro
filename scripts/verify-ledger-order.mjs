@@ -256,6 +256,10 @@ await run('stored order kept where the balances prove nothing', async (g) => {
     const tt = await M.buildCashLedgerReport(client, '08/2026');
     check(g, name, sameList(dayOf(tt), descs(make())) && /Same-day order: 2 days .*18-Aug-2026, 22-Aug-2026/.test(tt.subtitle), `${dayOf(tt).join(' / ')} | ${tt.subtitle}`);
   }
+  serve('gst_cash_ledger_entries', F.cashChainAfterUnsettled(true));
+  const ca = await M.buildCashLedgerReport('cash-11', '08/2026');
+  check(g, 'after an unsettled day, a day read back out of order that chains at every step from the balance listed before it: put right, only the unsettled day named',
+    sameList(dayOf(ca), descs(F.cashChainAfterUnsettled(false))) && /Same-day order: 1 day .*11-Aug-2026/.test(ca.subtitle), `${dayOf(ca).join(' / ')} | ${ca.subtitle}`);
   const sw = M.orderRegisterRows(F.liabilitySwappedDebits(true), M.LIABILITY_ORDER);
   const swRows = sw.lines.map((l) => l.row);
   check(g, 'a liability day stored with its two liabilities swapped: put right, ending on the Closing Balance (not an order the balances prove wrong)',
