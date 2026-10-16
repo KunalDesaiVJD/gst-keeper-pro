@@ -8,14 +8,14 @@ import { useClient } from '@/contexts/ClientContext';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Navigate } from 'react-router-dom';
-import { renderReportToExcel, fyMonthsForKey } from '@/utils/allClientsReports';
+import { renderReportToExcel } from '@/utils/allClientsReports';
 import { renderReportToPdf } from '@/utils/closingBalanceReportsPdf';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import { REPORTS_CATALOG } from '@/lib/reportsCatalog';
 import { ReportsBrowser } from '@/components/reports/ReportsBrowser';
 import { ReportPreviewDialog } from '@/components/reports/ReportPreviewDialog';
 import type { ReportTable } from '@/utils/allClientsReports';
-import { buildForPeriods } from '@/lib/reportPeriodMerge';
+import { buildForPeriods, oneMonthPerYear } from '@/lib/reportPeriodMerge';
 import { describeJob } from '@/utils/gstr2aVs2bReports';
 
 // Piloted on Notices/Refund/DRC-03 first (the categories that were actively
@@ -194,13 +194,14 @@ const ReportsPage: React.FC = () => {
     });
   }, []);
 
-  // Shown next to the picker so "one FY = 12 periods selected" reads as
-  // deliberate rather than an accident when Suspended/Credit Ledger-style
-  // reports still narrate "the financial year of the selected month".
-  const fyLabel = useMemo(
-    () => (selectedPeriods[0] ? fyMonthsForKey(selectedPeriods[0]).fyLabel : ''),
-    [selectedPeriods],
-  );
+  // Shown next to the picker: a whole-year report (Suspended/Credit Ledger
+  // one client, the portal ledgers, the GSTR-3B annual summary) is built once
+  // per financial year among the months picked, so this names each of those
+  // years, not only the first month's.
+  const fyLabel = useMemo(() => {
+    const years = oneMonthPerYear(selectedPeriods).map((y) => y.year);
+    return years.length > 1 ? `${years.slice(0, -1).join(', ')} and ${years[years.length - 1]}` : years[0] ?? '';
+  }, [selectedPeriods]);
 
   const handleDownload = async (report: ReportDefinition, format: 'xlsx' | 'pdf') => {
     if ((report.needs === 'month' || report.needs === 'client+month') && selectedPeriods.length === 0) {

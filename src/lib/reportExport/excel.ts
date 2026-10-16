@@ -53,6 +53,10 @@ const SUBTOTAL_RULES: Partial<Borders> = { left: edge(), right: edge(), top: edg
 const URL_RE = /^https?:\/\//i;
 // Excel's own limits: past them the file opens with a repair prompt.
 const MAX_CELL_TEXT = 32_000;
+// Excel's tallest row, in points.
+const MAX_ROW_PT = 409;
+// A table narrower than this (width units) does not wrap the header's note.
+const NOTE_MIN_WIDTH = 40;
 const MAX_LINKS = 60_000; // per sheet (Excel stops at 65,530)
 const MAX_URL = 2_000;
 const fitText = (s: string): string => (s.length > MAX_CELL_TEXT ? `${s.slice(0, MAX_CELL_TEXT)}…` : s);
@@ -182,10 +186,25 @@ function headerBlock(ws: Worksheet, ctx: Ctx, widths: number[]): number {
   }
 
   if (ctx.rest) {
-    const c = ws.getCell(r, FIRST_COL);
-    c.value = ctx.rest;
-    c.style = styleOf(ctx, 'hb:rest', () => ({ font: font({ italic: true, color: { argb: PALETTE.muted } }), alignment: { vertical: 'middle' } }));
-    ws.getRow(r++).height = 13;
+    // Each part of the note (metaOf joins them with "  ·  ") on a row of its
+    // own, wrapped across the table's width as the PDF's letterhead wraps it,
+    // and as tall as its lines, so none of it is hidden: a merge's per-year
+    // notes run long, and run on past the table they made the printed sheet
+    // shrink to fit. A table too narrow to wrap a note in (one column shown)
+    // lets each part run on unwrapped into the empty cells beside it.
+    const total = widthOf(widths, 0, n);
+    const wrap = total >= NOTE_MIN_WIDTH;
+    const style = wrap
+      ? styleOf(ctx, 'hb:rest', () => ({ font: font({ italic: true, color: { argb: PALETTE.muted } }), alignment: { vertical: 'top', wrapText: true } }))
+      : styleOf(ctx, 'hb:rest-run', () => ({ font: font({ italic: true, color: { argb: PALETTE.muted } }), alignment: { vertical: 'middle' } }));
+    for (const part of ctx.rest.split('  ·  ')) {
+      if (wrap && n > 1) ws.mergeCells(r, FIRST_COL, r, FIRST_COL + n - 1);
+      const c = ws.getCell(r, FIRST_COL);
+      c.value = fitText(part);
+      c.style = style;
+      const lines = wrap ? linesFor(part, total) : 1;
+      ws.getRow(r++).height = lines > 1 ? Math.min(lines * LINE_PT + 2, MAX_ROW_PT) : 13;
+    }
   }
 
   // The prepared line carries the rule under the block, across the table's width.

@@ -110,6 +110,11 @@ export function parseGstr3b(summary: unknown): Gstr3bFigures | null {
 export interface Gstr1Figures {
   /** TTL_LIAB: the total liability of the return (what the existing DRC-01B report reads). */
   liability: HeadAmounts;
+  /**
+   * TTL_LIAB's ttl_val: the INVOICE value, tax included, not the taxable value
+   * (GSTN names that one ttl_tax; see gstr1Taxable in utils/filedReturnReports).
+   * Read only to tell a nil return, where both are zero, so either would do.
+   */
   value: number;
   /** The summary had a TTL_LIAB section. */
   hasTotal: boolean;

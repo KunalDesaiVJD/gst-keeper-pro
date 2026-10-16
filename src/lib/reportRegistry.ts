@@ -124,8 +124,8 @@ export interface PullPlan { jobs: PullJob[]; note?: string }
  * Master) neither. The `client+month` shape covers two different meanings
  * depending on the report — "one client across the full financial year
  * containing this month" (the Ledger reports) or "one client for this exact
- * period" (the GSTR-1 family) — the build function alone decides which;
- * ReportRunArgs itself doesn't need to know.
+ * period" (the GSTR-1 family) — `periodScope` says which, so several
+ * months picked are not the same year built once per month.
  */
 export interface ReportDefinition {
   key: string;
@@ -137,6 +137,16 @@ export interface ReportDefinition {
   needs: 'month' | 'client+month' | 'client' | 'none';
   /** Which bespoke view component renders this report's preview body — see ReportViewKind. */
   viewKind: ReportViewKind;
+  /**
+   * What one build covers. 'month' (the default): the month it is given, so
+   * several months picked are built one by one and merged. 'fy': the whole
+   * financial year of whichever month it is given (the one client across the
+   * year reports, the portal ledgers and statements), so building it once per
+   * month picked would print the same year, with its own FY TOTAL, once per
+   * month. buildForPeriods builds such a report once per financial year among
+   * the months picked instead (reportPeriodMerge.ts).
+   */
+  periodScope?: 'month' | 'fy';
   build: (args: ReportRunArgs) => Promise<ReportTable>;
   /**
    * Reports fed by the browser extension's single-section pulls (as opposed

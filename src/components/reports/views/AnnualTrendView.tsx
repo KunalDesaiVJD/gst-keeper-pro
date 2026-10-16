@@ -25,7 +25,9 @@
 // not pulled when any of its cells says so, not only the charted one (the
 // GSTR-3B summary writes it under its first figure and leaves the rest blank).
 // Each report builds its whole year from any month of it, so several months
-// of one year picked are that year once, not once per month (oneBlockPerYear).
+// of one year picked are that year once, not once per month: buildForPeriods
+// builds it once per year (periodScope 'fy'), and oneBlockPerYear collapses a
+// table merged month by month all the same.
 import React, { useMemo, useState } from 'react';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
@@ -130,8 +132,9 @@ const TrendTooltip: React.FC<TrendTooltipProps> = ({ active, payload, label, hea
 
 export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report }) => {
   const monthCol = useMemo(() => monthColumn(table.headers), [table.headers]);
-  // Several months of one financial year merged are that year once per month
-  // picked (each report builds its whole year from any month): one block per year.
+  // Several months of one financial year merged month by month are that year
+  // once per month picked (each report builds its whole year from any month):
+  // one block per year. A table built once per year passes through unchanged.
   const yearly = useMemo(() => oneBlockPerYear(table, monthCol).table, [table, monthCol]);
   const { table: kitTable, quarterCol } = useMemo(() => withQuarterColumn(yearly, monthCol), [yearly, monthCol]);
   const kit = useTableKit(kitTable, {

@@ -4,10 +4,41 @@
 // (every report's build() already exists and is unit-tested by use), then
 // stitched into one combined table here. A report that doesn't take a
 // period at all (needs: 'client' | 'none') ignores the selection entirely.
+// A report built for a whole financial year from any month of it
+// (periodScope 'fy') is built once per financial year picked instead.
 import type { ReportDefinition } from '@/lib/reportRegistry';
 import type { ReportTable } from '@/utils/allClientsReports';
 
 const needsPeriod = (r: ReportDefinition) => r.needs === 'month' || r.needs === 'client+month';
+
+/**
+ * The financial year (April to March) of a MM/YYYY period, named as the
+ * builders name it through fyMonthsForKey ("06/2026" is "FY 2026-27"), with
+ * the year it starts in for ordering; null for anything that is not a month.
+ * Kept here rather than imported, so this file stays free of the Supabase
+ * client the builders' module loads.
+ */
+export const financialYearOf = (period: string): { label: string; start: number } | null => {
+  const m = /^(\d{2})\/(\d{4})$/.exec(period.trim());
+  if (!m || +m[1] < 1 || +m[1] > 12) return null;
+  const start = +m[1] >= 4 ? +m[2] : +m[2] - 1;
+  return { label: `FY ${start}-${String(start + 1).slice(-2)}`, start };
+};
+
+/**
+ * One month per financial year among `periods`: the first picked of each
+ * year, the years in calendar order whatever order they were picked in.
+ * Anything that is not a month is its own entry, after the years, as given.
+ */
+export const oneMonthPerYear = (periods: string[]): { period: string; year: string }[] => {
+  const byYear = new Map<string, { period: string; year: string; start: number }>();
+  for (const period of periods) {
+    const fy = financialYearOf(period);
+    const year = fy?.label ?? period;
+    if (!byYear.has(year)) byYear.set(year, { period, year, start: fy?.start ?? Number.MAX_SAFE_INTEGER });
+  }
+  return [...byYear.values()].sort((a, b) => a.start - b.start).map(({ period, year }) => ({ period, year }));
+};
 
 /**
  * Stitches per-period row blocks into one: a blank-filled section header
@@ -91,6 +122,34 @@ export const mergeTables = (tables: ReportTable[], list: string[]): ReportTable 
   };
 };
 
+/**
+ * A merge of whole financial years named by all of them. Each block's
+ * subtitle names its own year, and the merge keeps the first one's, so the
+ * view and the Excel / PDF strip would say "FY 2025-26" over a table holding
+ * FY 2026-27 too: that segment (or a Financial year meta field) lists every
+ * year merged instead. A year's own word (a ledger's "Same-day order: …", a
+ * statement "NOT PULLED") is a segment the other years' subtitles do not
+ * carry: it is kept, named by its year ("FY 2026-27: …"), rather than lost
+ * with every subtitle but the first or shown as if it spoke for every year.
+ * A year that could not be built says so in its own block, not here.
+ */
+const SUBTITLE_SEP = '   |   ';
+const namingEveryYear = (merged: ReportTable, tables: ReportTable[], years: string[]): ReportTable => {
+  const all = years.join(', ');
+  const meta = merged.meta ? { meta: merged.meta.map((f) => (/^(fy|financial year)$/i.test(f.label.trim()) ? { ...f, value: all } : f)) } : {};
+  const template = templateOf(tables);
+  // A report combining its own years (a merge hook) words its own subtitle.
+  if (template.merge) {
+    return { ...merged, subtitle: merged.subtitle.split(SUBTITLE_SEP).map((seg) => (years.includes(seg.trim()) ? all : seg)).join(SUBTITLE_SEP), ...meta };
+  }
+  const segments = (t: ReportTable): string[] => (t.subtitleParts?.common ?? t.subtitle).split(SUBTITLE_SEP).map((seg) => seg.trim()).filter(Boolean);
+  const built = tables.flatMap((t, i) => (t.failedReason ? [] : [{ year: years[i], own: segments(t) }]));
+  const shared = (seg: string): boolean => years.includes(seg) || built.every((b) => b.own.includes(seg));
+  const common = segments(template).filter(shared).map((seg) => (years.includes(seg) ? all : seg));
+  const perYear = built.flatMap((b) => b.own.filter((seg) => !shared(seg)).map((seg) => `${b.year}: ${seg}`));
+  return { ...merged, subtitle: [...common, ...perYear, `${years.length} periods combined`].join(SUBTITLE_SEP), ...meta };
+};
+
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
@@ -119,6 +178,13 @@ const failedTable = (template: ReportTable, message: string): ReportTable => ({
  * (no 2B for a quarterly taxpayer's first two months, a statement not pulled)
  * no longer sinks the rest: it shows its reason in its own block. Only when no
  * period can be built does the whole report fail.
+ *
+ * A whole-year report (periodScope 'fy') builds the same year from any month
+ * of it, so it is built once per financial year picked, from the first month
+ * picked of that year: Apr, May and Jun are that year once, as one month
+ * gives it (no band, its FY TOTAL once), where building each month would
+ * print the year three times over in the view and in every download. Two
+ * years are two blocks, each named by its year ("— FY 2025-26 —"), in order.
  */
 export const buildForPeriods = async (
   report: ReportDefinition,
@@ -127,10 +193,15 @@ export const buildForPeriods = async (
 ): Promise<ReportTable> => {
   if (!needsPeriod(report)) return report.build({ month: '', clientId });
 
-  const list = periods.length ? periods : [''];
-  if (list.length === 1) return report.build({ month: list[0], clientId });
+  const wholeYears = report.periodScope === 'fy' && periods.length > 0;
+  // What is built (`month`) and what its block is named by (`key`).
+  const runs = wholeYears
+    ? oneMonthPerYear(periods).map(({ period, year }) => ({ month: period, key: year }))
+    : (periods.length ? periods : ['']).map((p) => ({ month: p, key: p }));
+  if (runs.length === 1) return report.build({ month: runs[0].month, clientId });
 
-  const settled = await Promise.allSettled(list.map((p) => report.build({ month: p, clientId })));
+  const list = runs.map((r) => r.key);
+  const settled = await Promise.allSettled(runs.map((r) => report.build({ month: r.month, clientId })));
   const built = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
   if (!built.length) {
     throw new Error(settled.map((s, i) => `${list[i]}: ${messageOf((s as PromiseRejectedResult).reason)}`).join('  '));
@@ -138,5 +209,6 @@ export const buildForPeriods = async (
   // A failed period's block takes the merge's own shape (its "Not built" line as wide as the rest).
   const template = templateOf(built);
   const tables = settled.map((s) => (s.status === 'fulfilled' ? s.value : failedTable(template, messageOf(s.reason))));
-  return mergeTables(tables, list);
+  const merged = mergeTables(tables, list);
+  return wholeYears ? namingEveryYear(merged, tables, list) : merged;
 };
