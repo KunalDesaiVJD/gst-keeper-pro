@@ -6,6 +6,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bItcTyped, type Gstr3bResult, type ItcData, type ItcRow, type RcmTotals } from './buildGstr3bJson';
 import { fetchItcAutoLinkTotals } from '@/lib/itcAutoLink';
+import { with4D1Total } from '@/lib/itc4D';
 import { fetchImport2BHeld, import2BHeldMessage } from '@/lib/postImport2B';
 
 const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -60,7 +61,8 @@ export async function fetchGstr3b(
   let itc: ItcData | null = null;
   const rawItc = (itcRes.data as any)?.data;
   const parsed = typeof rawItc === 'string' ? JSON.parse(rawItc) : rawItc;
-  if (parsed) itc = { section4A: parsed.section4A || [], section4B: parsed.section4B || [], section4D: parsed.section4D || [] };
+  // 4(D)(1) = 1.1 + 1.2, whatever the saved summary held there.
+  if (parsed) itc = { section4A: parsed.section4A || [], section4B: parsed.section4B || [], section4D: with4D1Total(parsed.section4D || []) };
 
   // ITC Summary's auto-linked rows (5.1, 5.4, 4B's "current month as per 2B
   // RECO", 4D's reclaim rows) are computed LIVE on that page and only ever
@@ -117,11 +119,11 @@ export async function fetchGstr3b(
         ? { ...r, igst: reversalFromReco.igst, cgst: reversalFromReco.cgst, sgst: reversalFromReco.sgst }
         : r,
     );
-    itc.section4D = itc.section4D.map((r: ItcRow) => {
-      if (r.srNo === '(1)' || r.srNo === '1.1') return { ...r, igst: reclaimFromReco.igst, cgst: reclaimFromReco.cgst, sgst: reclaimFromReco.sgst };
+    itc.section4D = with4D1Total(itc.section4D.map((r: ItcRow) => {
+      if (r.srNo === '1.1') return { ...r, igst: reclaimFromReco.igst, cgst: reclaimFromReco.cgst, sgst: reclaimFromReco.sgst };
       if (r.srNo === '1.2') return { ...r, igst: expenseOutFromReco.igst, cgst: expenseOutFromReco.cgst, sgst: expenseOutFromReco.sgst };
       return r;
-    });
+    }));
   }
 
   const rcmRows = ((rcmRes.data as any[]) || []);
