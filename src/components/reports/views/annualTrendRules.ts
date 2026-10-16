@@ -121,10 +121,13 @@ const listMonths = (labels: string[]): string => labels.map((l, k) => {
 
 /**
  * A merge of several months as one block per financial year. Each annual
- * report builds its whole year from any one month of it, so picking Apr, May
- * and Jun (or "This FY") hands the view the same year once per month picked,
- * each copy with its own FY TOTAL: added up by the kit, every figure would
- * read as that many times the year's. The first block of each year that was
+ * report builds its whole year from any one month of it, so a merge made
+ * month by month (Apr, May and Jun, or "This FY") holds the same year once
+ * per month picked, each copy with its own FY TOTAL: added up by the kit,
+ * every figure would read as that many times the year's. buildForPeriods
+ * already builds a report marked periodScope 'fy' once per year, so this is
+ * the safety net for one that is not: a table with each year once comes back
+ * as it is. The first block of each year that was
  * built is kept, with its own TOTAL; the repeats and their bands go, and the
  * subtitle says so ("Apr, May, Jun 2026 are in the same financial year: shown
  * once"), as does `note`. Two years stay two blocks. One year left reads as
