@@ -188,9 +188,13 @@ export const drawStatBand = (doc: jsPDF, tiles: StatTile[], startY: number, opts
     }
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
     doc.setTextColor(...INK_MUTED);
-    doc.text(t.label, x + 3, top + 5.5);
+    // A long label never runs into the next tile: it steps down, then is cut short.
+    doc.setFontSize(7);
+    for (let size = 6.5; size >= 6 && doc.getTextWidth(t.label) > cellW - 4.5; size -= 0.5) doc.setFontSize(size);
+    let label = t.label;
+    while (label.length > 1 && doc.getTextWidth(label) > cellW - 4.5) label = label.slice(0, -2).trimEnd() + '…';
+    doc.text(label, x + 3, top + 5.5);
 
     // Standalone value: normal figures, not column-aligned. A figure wider
     // than its tile steps down in size rather than running into the next one.

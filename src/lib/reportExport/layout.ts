@@ -121,7 +121,9 @@ export const rowKindsOf = (rows: (string | number)[][], given?: (RowKind | null)
 
 const INT_HEADER_RE = /^(#|sr\.?|s\.?\s?no\.?|sl\.?\s?no\.?|no\.|count|documents?|docs|records|rows|invoices|notices|clients|suppliers|months|days|number of|no\. of)\b/i;
 const RATE_HEADER_RE = /(^|\b)(rate|%|percent|percentage)(\b|$)/i;
-const AMOUNT_HEADER_RE = /value|amount|igst|cgst|sgst|cess|tax|total|itc|liability|payable|paid|balance|debit|credit|interest|fee|penalty|refund|turnover|difference|diff|closing|opening|cash|utili[sz]ed|claimed/i;
+// A rupee column whose values happen to be whole rupees is still money ("Shortfall",
+// "Variance", "2B − 2A"), never a count printed without decimals.
+const AMOUNT_HEADER_RE = /value|amount|igst|cgst|sgst|cess|tax|total|itc|liability|payable|paid|balance|debit|credit|interest|fee|penalty|refund|turnover|difference|diff|closing|opening|cash|utili[sz]ed|claimed|variance|reversal|shortfall|excess|\bminus\b|−|₹/i;
 const DATE_RE = /^(\d{1,2}[-/.](\d{1,2}|[A-Za-z]{3})[-/.]\d{2,4}|\d{4}-\d{2}-\d{2})(T[\d:.]+Z?)?$/;
 const URL_RE = /^https?:\/\//i;
 const LONG_TEXT_HEADER_RE = /reason|remark|note|what to do|action|evidence|description|narration|particulars|cause|comment|detail|address|subject/i;
@@ -156,7 +158,10 @@ export function classifyColumns(headers: string[], rows: (string | number)[][], 
     const numbers = values.filter((v) => typeof v === 'number');
     const strings = values.filter((v): v is string => typeof v === 'string');
     let kind: ColumnKind = 'text';
-    if (values.length && strings.length && strings.every((s) => URL_RE.test(s))) kind = 'url';
+    // A column of links, unless its figures outnumber them: a return's "Filed
+    // Return PDF" row puts one link under a figures column, which stays figures
+    // (that one cell still prints as a link).
+    if (values.length && strings.length && strings.length > numbers.length && strings.every((s) => URL_RE.test(s))) kind = 'url';
     else if (numbers.length && numbers.length >= strings.length) {
       if (RATE_HEADER_RE.test(header) && !AMOUNT_HEADER_RE.test(header.replace(/rate/i, ''))) kind = 'rate';
       else if (INT_HEADER_RE.test(header.trim()) && numbers.every((n) => Number.isInteger(n))) kind = 'int';

@@ -1,10 +1,20 @@
 // NoticeWorkflowListView — "View Notice and Orders" specifically. Same
-// chronological event-list shape as EvidenceEventListView (search/filter/
-// sort/PDF-icon/Type-badge all reused as-is), plus staff case-tracking that
-// writes back to the underlying gst_notices row: an inline Open/Closed
-// status Select, a Priority flag, and an Edit dialog logging the reply
-// filed, order received, and application submitted for that notice — none
-// of which the portal itself ever exposes for these rows.
+// chronological event-list shape as EvidenceEventListView (PDF icon, Type
+// badge), plus staff case-tracking that writes back to the underlying
+// gst_notices row: an inline Open/Closed status Select, a Priority flag, and
+// an Edit dialog logging the reply filed, order received, and application
+// submitted for that notice — none of which the portal itself ever exposes
+// for these rows.
+//
+// The list is worked from every angle through the table kit (./tableKit):
+// every column filters from its header (ticked values with counts, a due-date
+// range, an amount range), sorts and groups (status, type, priority, issued
+// by, financial year, assignee), and the Excel / PDF are of exactly what is
+// shown. The quick filters staff already know (Type / Status / Priority
+// selects, the date presets, the status tiles) set the same kit filters, so
+// each shows as a chip and narrows the counts and the exports too. Every row
+// keeps its index into table.rows through any filter or sort (row.i), so an
+// edit still writes back to the right notice by its row id.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ReportTable } from '@/utils/allClientsReports';
@@ -19,18 +29,20 @@ import { Card, CardContent } from '@/components/ui/card';
 import NoticesCardHeader from '@/components/notices/NoticesCardHeader';
 import { Badge } from '@/components/gstr9/badge';
 import { KpiTile } from '@/components/gstr9/ui';
-import { WS_BTN, WS_CONTROL, WS_TABLE, WS_TH, WS_TD, WS_TR_TOTAL } from '@/components/workspace/theme';
+import { WS_BTN, WS_CONTROL } from '@/components/workspace/theme';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { FileText, Search, DownloadCloud, Inbox, Pencil, Flag, Loader2, FileSpreadsheet, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
+import { FileText, DownloadCloud, Inbox, Pencil, Flag, Loader2, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { renderReportToExcel } from '@/utils/allClientsReports';
 import { isoDateToDMY, dmyToISODate } from '@/utils/formatDate';
+import {
+  TableKitPager, TableKitTable, TableKitToolbar, isFilterActive, useTableKit,
+  type KitCustomFilter, type KitExtraColumn, type ModelRow,
+} from './tableKit';
 
 interface NoticeWorkflowListViewProps {
   table: ReportTable;
@@ -50,9 +62,6 @@ const isSentinel = (v: unknown): boolean => {
   if (s.toUpperCase() === 'NOT PULLED') return true;
   return /not captured|not pulled/i.test(s);
 };
-
-const isTotalRow = (row: (string | number)[]): boolean =>
-  row.some((c) => String(c ?? '').trim().toUpperCase() === 'TOTAL');
 
 const STATUS_HEADER_RE = /^status$/i;
 const TYPE_HEADER_RE = /^type$/i;
@@ -79,7 +88,7 @@ const STATUS_OPEN_CLOSED = ['Open', 'Closed'];
 // confirmed live 2026-09-03 as a genuine main-thread freeze (Chrome's own
 // "Page Unresponsive" dialog), not just sluggishness. Paginating so only one
 // page's worth of rows actually mount is the fix — same convention already
-// used on CompanyListPage.
+// used on CompanyListPage. The kit pages from 50 lines here, not its usual 500.
 const ROWS_PER_PAGE_OPTIONS = [50, 100, 250, 500];
 
 // Matches Notice Alert's own "Filter" dropdown on this exact page (confirmed
@@ -87,6 +96,20 @@ const ROWS_PER_PAGE_OPTIONS = [50, 100, 250, 500];
 // the Status dropdown.
 type DateFilter = 'all' | 'last24h' | 'last15days' | 'due7' | 'overdue';
 const DAY_MS = 24 * 60 * 60 * 1000;
+// As the chip and the export's filter strip print them (plain words: the PDF's font).
+const DATE_PRESET_LABEL: Record<Exclude<DateFilter, 'all'>, string> = {
+  last24h: 'Issued in the last 24 hours',
+  last15days: 'Issued in the last 15 days',
+  due7: 'Due in the next 7 days',
+  overdue: 'Overdue',
+};
+// The kit's ids for the quick filters that are not one column's value.
+const REPLIED_FILTER = 'replied';
+const DATE_FILTER = 'when';
+// A select showing a column filter the reader set from the header (several values ticked).
+const SEVERAL = '__several';
+// Worth grouping by; a reference number or a remark is one row per value.
+const GROUP_HEADER_RE = /^(type|status|priority|issued by|financial year|assign to|case id)$/i;
 
 const STATUS_VARIANT = (v: string): 'success' | 'warning' | 'destructive' | 'secondary' => {
   const s = v.toUpperCase();
@@ -191,13 +214,6 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const canEdit = canEditNoticeStatus();
 
   const [rows, setRows] = useState(table.rows);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [priorityFilter, setPriorityFilter] = useState<string>('all');
-  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(50);
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -242,7 +258,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
-      const d: any = e.data;
+      const d = e.data as { __gstkExtensionReady?: boolean; __gstkOpenNoticeResult?: { ok?: boolean; error?: string } } | null;
       if (!d || typeof d !== 'object') return;
       if (d.__gstkExtensionReady) setExtReady(true);
       if (d.__gstkOpenNoticeResult) {
@@ -281,7 +297,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   // 15-character ids line up down the page.
   const gstinColIdx = useMemo(() => headers.findIndex((h) => /^gstin$/i.test(h.trim())), [headers]);
   // Every "… Date" column (Issue/Due/Extended Due/Reply/Order/Submission)
-  // gets tabular figures so the dd/mm/yyyy values align column-wise.
+  // gets tabular figures so the dates align column-wise.
   const dateCellCols = useMemo(
     () => new Set(headers.map((h, i) => (/date$/i.test(h.trim()) ? i : -1)).filter((i) => i !== -1)),
     [headers],
@@ -304,19 +320,39 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
   const dateColIdx = useMemo(() => findDateColIdx(headers), [headers]);
   const dueDateColIdx = useMemo(() => headers.findIndex((h) => DUE_DATE_HEADER_RE.test(h.trim())), [headers]);
 
-  // Every row carries its original index (into `rows`/`rowIds`) through the
-  // filter/sort pipeline below, so an edit always writes back to the right
-  // DB row regardless of what's currently visible or how it's sorted.
-  type Indexed = { row: (string | number)[]; idx: number };
+  // The kit filters, sorts, groups and pages the rows as edited here (an edit
+  // patches `rows`; the reader's filters stay). Every row carries its original
+  // index (row.i, into `rows`/`rowIds`) through all of it, so an edit always
+  // writes back to the right DB row regardless of what's currently visible or
+  // how it's sorted.
+  const liveTable = useMemo<ReportTable>(() => ({ ...table, rows }), [table, rows]);
+  const kit = useTableKit(liveTable, {
+    resetKey: report.title,
+    // Newest first, as before; a header click now sorts by anything else.
+    initialSort: dateColIdx !== -1 ? { col: dateColIdx, dir: 'desc' } : null,
+    groupable: (c) => c.groupable && GROUP_HEADER_RE.test(c.header.trim()),
+    pageThreshold: ROWS_PER_PAGE_OPTIONS[0],
+    pageSizes: ROWS_PER_PAGE_OPTIONS,
+    initialPageSize: ROWS_PER_PAGE_OPTIONS[0],
+    statusColumn: statusColIdx === -1 ? null : statusColIdx,
+    rowNoun: ['record', 'records'],
+    // Nothing is added up. Amount of Demand is each notice's own figure: a
+    // dispute's notice and its order both carry the demand, and closed notices
+    // carry theirs, so a TOTAL or subtotal of the column would count a demand
+    // twice and count settled ones. The firm's exposure is counted once per
+    // dispute, open notices only, in notice_facts (positions §2).
+    summable: [],
+  });
 
-  const { dataRows, totalRows } = useMemo(() => {
-    const data: Indexed[] = [];
-    const totals: Indexed[] = [];
-    rows.forEach((row, idx) => {
-      (isTotalRow(row) ? totals : data).push({ row, idx });
-    });
-    return { dataRows: data, totalRows: totals };
-  }, [rows]);
+  type Indexed = { row: (string | number)[]; idx: number };
+  // The notices themselves (a TOTAL row, if a report ever has one, is the kit's to pin).
+  const dataRows = useMemo<Indexed[]>(() => kit.model.data.map((r) => ({ row: r.cells, idx: r.i })), [kit.model]);
+  // The rows shown, in the order shown; and the ones on this page (what "select all" ticks).
+  const visibleRows = useMemo<Indexed[]>(() => kit.view.rows.map((r) => ({ row: r.cells, idx: r.i })), [kit.view]);
+  const pagedRows = useMemo<Indexed[]>(
+    () => kit.pageView.items.flatMap((it) => (it.type === 'data' ? [{ row: it.row.cells, idx: it.row.i }] : [])),
+    [kit.pageView],
+  );
 
   const statusOptions = useMemo(() => {
     if (statusColIdx === -1) return [] as string[];
@@ -362,60 +398,58 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
       .sort((a, b) => b.count - a.count);
   }, [dataRows, statusColIdx]);
 
-  const visibleRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    let list = dataRows;
-    if (statusFilter === 'Replied') {
-      list = list.filter(({ row }) => replyDateColIdx !== -1 && !isSentinel(row[replyDateColIdx]) && cellToText(row[replyDateColIdx]));
-    } else if (statusColIdx !== -1 && statusFilter !== 'all') {
-      list = list.filter(({ row }) => String(row[statusColIdx] ?? '').trim() === statusFilter);
+  // ── The quick filters, as kit filters ─────────────────────────────────────
+  // A select on one column's value is that column's filter (a chip, counted
+  // and exported like a header filter); it reads back from the kit, so a
+  // chip removed or "Clear all" resets it too.
+  const { state: kitState } = kit;
+  // What a select shows: its one value, or "several" for a header filter it cannot show.
+  const selectValue = (col: number, options: string[]): string => {
+    if (col === -1) return 'all';
+    const f = kitState.filters[col];
+    if (!isFilterActive(f)) return 'all';
+    return f?.type === 'values' && f.values.length === 1 && options.includes(f.values[0]) ? f.values[0] : SEVERAL;
+  };
+  const setColumnValue = (col: number, v: string) => {
+    if (col === -1 || v === SEVERAL) return;
+    kit.setFilter(col, v === 'all' ? undefined : { type: 'values', values: [v] });
+  };
+  const hasReplyDate = (row: (string | number)[]) => replyDateColIdx !== -1 && !isSentinel(row[replyDateColIdx]) && !!cellToText(row[replyDateColIdx]);
+  // "Replied" isn't a staff_status value (reply_date is a separate field), so
+  // it is a filter of its own, matched against the reply date being set.
+  const repliedOn = !!kitState.custom?.some((c) => c.id === REPLIED_FILTER);
+  const statusValue = repliedOn ? 'Replied' : selectValue(statusColIdx, statusOptions);
+  const setStatusValue = (v: string) => {
+    if (v === SEVERAL) return;
+    if (v === 'Replied') {
+      kit.setFilter(statusColIdx, undefined);
+      kit.setCustomFilter(REPLIED_FILTER, { label: 'Replied (reply date logged)', test: (r) => hasReplyDate(r.cells) });
+      return;
     }
-    if (typeColIdx !== -1 && typeFilter !== 'all') {
-      list = list.filter(({ row }) => String(row[typeColIdx] ?? '').trim() === typeFilter);
-    }
-    if (priorityColIdx !== -1 && priorityFilter !== 'all') {
-      list = list.filter(({ row }) => String(row[priorityColIdx] ?? '').trim() === priorityFilter);
-    }
-    if (dateFilter !== 'all') {
-      const now = Date.now();
-      if (dateFilter === 'last24h' && dateColIdx !== -1) {
-        list = list.filter(({ row }) => { const d = parseDateLoose(row[dateColIdx]); return !Number.isNaN(d) && now - d <= DAY_MS; });
-      } else if (dateFilter === 'last15days' && dateColIdx !== -1) {
-        list = list.filter(({ row }) => { const d = parseDateLoose(row[dateColIdx]); return !Number.isNaN(d) && now - d <= 15 * DAY_MS; });
-      } else if (dateFilter === 'due7' && table.rowFlags) {
-        list = list.filter(({ idx }) => !!table.rowFlags?.[idx]?.dueIn7);
-      } else if (dateFilter === 'overdue' && table.rowFlags) {
-        list = list.filter(({ idx }) => !!table.rowFlags?.[idx]?.overdue);
-      } else if (dateFilter === 'due7' && dueDateColIdx !== -1) {
-        list = list.filter(({ row }) => { const d = parseDateLoose(row[dueDateColIdx]); return !Number.isNaN(d) && d - now >= 0 && d - now <= 7 * DAY_MS; });
-      } else if (dateFilter === 'overdue' && dueDateColIdx !== -1) {
-        list = list.filter(({ row }) => { const d = parseDateLoose(row[dueDateColIdx]); return !Number.isNaN(d) && d - now < 0; });
-      }
-    }
-    if (q) {
-      list = list.filter(({ row }) => row.some((c) => String(c ?? '').toLowerCase().includes(q)));
-    }
-    if (dateColIdx !== -1) {
-      list = [...list].sort((a, b) => {
-        const da = parseDateLoose(a.row[dateColIdx]);
-        const db = parseDateLoose(b.row[dateColIdx]);
-        const aValid = !Number.isNaN(da);
-        const bValid = !Number.isNaN(db);
-        if (aValid && bValid) return db - da; // newest first
-        if (aValid) return -1;
-        if (bValid) return 1;
-        return 0;
-      });
-    }
-    return list;
-  }, [dataRows, search, statusFilter, statusColIdx, typeFilter, typeColIdx, priorityFilter, priorityColIdx, dateFilter, dateColIdx, dueDateColIdx, replyDateColIdx, table.rowFlags]);
+    kit.setCustomFilter(REPLIED_FILTER, null);
+    setColumnValue(statusColIdx, v);
+  };
 
-  useEffect(() => { setPage(0); }, [search, statusFilter, typeFilter, priorityFilter, dateFilter, rowsPerPage]);
-  const pageCount = Math.max(1, Math.ceil(visibleRows.length / rowsPerPage));
-  const pagedRows = useMemo(
-    () => visibleRows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
-    [visibleRows, page, rowsPerPage],
-  );
+  // The date presets. Due in 7 / Overdue read the report's own flags when it
+  // carries them (the dashboard's definition), else the Due Date cell.
+  const presetTest = (preset: Exclude<DateFilter, 'all'>): KitCustomFilter['test'] => (r, t) => {
+    const now = Date.now();
+    if (preset === 'last24h' || preset === 'last15days') {
+      if (dateColIdx === -1) return true;
+      const d = parseDateLoose(r.cells[dateColIdx]);
+      return !Number.isNaN(d) && now - d <= (preset === 'last24h' ? DAY_MS : 15 * DAY_MS);
+    }
+    if (t.rowFlags) return preset === 'due7' ? !!t.rowFlags[r.i]?.dueIn7 : !!t.rowFlags[r.i]?.overdue;
+    if (dueDateColIdx === -1) return true;
+    const d = parseDateLoose(r.cells[dueDateColIdx]);
+    if (Number.isNaN(d)) return false;
+    return preset === 'due7' ? d - now >= 0 && d - now <= 7 * DAY_MS : d - now < 0;
+  };
+  const dateFilter: DateFilter = (Object.keys(DATE_PRESET_LABEL) as Exclude<DateFilter, 'all'>[])
+    .find((k) => kitState.custom?.some((c) => c.id === DATE_FILTER && c.label === DATE_PRESET_LABEL[k])) ?? 'all';
+  const setDateFilter = (v: DateFilter) => {
+    kit.setCustomFilter(DATE_FILTER, v === 'all' ? null : { label: DATE_PRESET_LABEL[v], test: presetTest(v) });
+  };
 
   const handleDownloadAll = () => {
     if (evidenceColIdx === -1) return;
@@ -637,19 +671,172 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     );
   }
 
+  // ── The table: the kit's, with this view's own cells, tick boxes and actions ──
+  // Return undefined for the kit's standard cell (figures and dates in the house style).
+  const renderCell = (r: ModelRow, ci: number): React.ReactNode | undefined => {
+    const cell = r.cells[ci];
+    const idx = r.i;
+    // Evidence column: red vs. neutral PDF icon (see EvidenceEventListView).
+    if (ci === evidenceColIdx) {
+      return isUrl(cell) ? (
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-7 w-7 border-red-200 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
+          title="Open document"
+          asChild
+        >
+          <a href={cell} target="_blank" rel="noopener noreferrer">
+            <FileText className="h-3.5 w-3.5" />
+          </a>
+        </Button>
+      ) : (
+        <Button variant="outline" size="icon" className="h-7 w-7 cursor-not-allowed opacity-40" disabled title="Not captured">
+          <FileText className="h-3.5 w-3.5" />
+        </Button>
+      );
+    }
+
+    // Type column: colored pill.
+    if (ci === typeColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
+      return <Badge variant={TYPE_VARIANT(String(cell))} className="py-0 text-[10px] font-medium">{String(cell)}</Badge>;
+    }
+
+    // Priority column: a flag, colored by tier (Low/Medium/High).
+    if (ci === priorityColIdx) {
+      const tier = String(cell ?? '').trim();
+      const flagCls = tier === 'High' ? 'fill-destructive text-destructive'
+        : tier === 'Medium' ? 'fill-warning text-warning'
+        : tier === 'Low' ? 'fill-info text-info'
+        : 'text-muted-foreground/30';
+      return (
+        <span className="inline-flex px-1" title={tier && tier !== '—' ? tier : 'No priority'}>
+          <Flag className={cn('h-3.5 w-3.5', flagCls)} />
+        </span>
+      );
+    }
+
+    // Status column: editable Select when permitted, badge otherwise.
+    if (ci === statusColIdx) {
+      const current = String(cell ?? '').trim();
+      if (canEdit && rowIds?.[idx]) {
+        return (
+          <Select
+            value={STATUS_OPEN_CLOSED.includes(current) ? current : undefined}
+            onValueChange={(v) => handleStatusChange(idx, v)}
+            disabled={savingIdx === idx}
+          >
+            <SelectTrigger className="h-7 w-[110px] text-xs" aria-label="Status">
+              <SelectValue placeholder="Set status" />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_OPEN_CLOSED.map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        );
+      }
+      if (current && !isSentinel(current)) {
+        return <Badge variant={STATUS_VARIANT(current)} className="py-0 text-[10px] font-medium">{current}</Badge>;
+      }
+    }
+
+    // Reference No. column: links to the Additional Notice Folder page when
+    // this row has a Case ID and we know which client it belongs to — plain
+    // text otherwise.
+    if (ci === referenceColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
+      const caseId = caseIdColIdx !== -1 ? cellToText(r.cells[caseIdColIdx]) : '';
+      const linkClientId = clientIds?.[idx];
+      if (caseId && linkClientId) {
+        return (
+          <Link to={`/notices-case-folder/${linkClientId}/${encodeURIComponent(caseId)}`} className="text-primary hover:underline">
+            {String(cell)}
+          </Link>
+        );
+      }
+    }
+
+    // GSTIN column: monospaced, muted — an identifier, not content.
+    if (ci === gstinColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
+      return <span className="font-mono text-[10px] text-muted-foreground">{formatCell(cell)}</span>;
+    }
+
+    // Generic URL fallback.
+    if (isUrl(cell)) {
+      return (
+        <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
+          <a href={cell} target="_blank" rel="noopener noreferrer">View</a>
+        </Button>
+      );
+    }
+
+    // Sentinel ("NOT PULLED" / "not captured" / "not pulled").
+    if (isSentinel(cell)) {
+      return <Badge variant="outline" className="border-dashed py-0 text-[10px] text-muted-foreground">{String(cell)}</Badge>;
+    }
+    return undefined;
+  };
+
+  const leading: KitExtraColumn[] = canEdit ? [{
+    key: 'pick',
+    className: 'w-10',
+    header: (
+      <Checkbox
+        checked={pagedRows.length > 0 && pagedRows.every(({ idx }) => selectedIdx.has(idx))}
+        onCheckedChange={(checked) => toggleSelectAllOnPage(checked === true)}
+        aria-label="Select all rows on this page"
+      />
+    ),
+    cell: (r) => <Checkbox checked={selectedIdx.has(r.i)} onCheckedChange={() => toggleSelect(r.i)} aria-label="Select row" />,
+  }] : [];
+
+  const trailing: KitExtraColumn[] = canEdit ? [{
+    key: 'actions',
+    header: 'Actions',
+    className: 'text-center',
+    cell: (r) => (
+      <div className="flex items-center justify-center gap-0.5">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          title="Log reply / order / submission"
+          disabled={!rowIds?.[r.i]}
+          onClick={() => openEditDialog(r.i)}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        {clientIds && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="Open this client on the GST portal, logged in"
+            disabled={!clientIds[r.i] || openingIdx === r.i}
+            onClick={() => openInPortal(r.i)}
+          >
+            {openingIdx === r.i ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+          </Button>
+        )}
+      </div>
+    ),
+  }] : [];
+
   return (
-    <Card>
+    // The card fills the preview so the list takes the room left and its pager stays in sight.
+    <Card className="flex h-full min-h-0 flex-col">
       <NoticesCardHeader title={table.title} description={table.subtitle} />
 
-      <CardContent className="pt-3 pb-3 space-y-3">
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-2.5 pt-3 pb-3">
         {/* Summary strip — readable at a glance before scrolling the table */}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
           {statusColIdx !== -1 && statusCounts.length > 0 ? (
-            <TileButton active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} title="Show all statuses">
-              <KpiTile label={dataRows.length === 1 ? 'Event' : 'Events'} value={dataRows.length} />
+            <TileButton active={statusValue === 'all'} onClick={() => setStatusValue('all')} title="Show all statuses">
+              <KpiTile label={dataRows.length === 1 ? 'Event' : 'Events'} value={dataRows.length} hint={kit.view.filtered ? `${visibleRows.length} shown` : undefined} />
             </TileButton>
           ) : (
-            <KpiTile label={dataRows.length === 1 ? 'Event' : 'Events'} value={dataRows.length} />
+            <KpiTile label={dataRows.length === 1 ? 'Event' : 'Events'} value={dataRows.length} hint={kit.view.filtered ? `${visibleRows.length} shown` : undefined} />
           )}
           {evidenceColIdx !== -1 && (
             <KpiTile
@@ -664,8 +851,8 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             return (
               <TileButton
                 key={label}
-                active={statusFilter === label}
-                onClick={() => setStatusFilter(statusFilter === label ? 'all' : label)}
+                active={statusValue === label}
+                onClick={() => setStatusValue(statusValue === label ? 'all' : label)}
                 title={`Show ${label} only`}
               >
                 <KpiTile
@@ -678,21 +865,17 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
           })}
         </div>
 
-        {/* Filters + bulk action */}
+        {/* The quick filters staff know (each sets a kit filter, shown as a
+            chip below) and the bulk actions. The bulk buttons are always
+            visible — matching Notice Alert's own toolbar — rather than only
+            appearing once a row is checked. Confirmed live 2026-09-03: staff
+            hadn't discovered these existed because they'd never happened to
+            check a row first. Disabled (with a hint) until at least one row
+            is selected. */}
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search reference no., description, date…"
-              className={cn(WS_CONTROL, 'pl-8')}
-            />
-          </div>
-
           {typeColIdx !== -1 && typeOptions.length > 0 && (
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className={cn(WS_CONTROL, 'w-[130px]')}>
+            <Select value={selectValue(typeColIdx, typeOptions)} onValueChange={(v) => setColumnValue(typeColIdx, v)}>
+              <SelectTrigger className={cn(WS_CONTROL, 'w-[150px]')} aria-label="Type">
                 <SelectValue placeholder="Type" />
               </SelectTrigger>
               <SelectContent>
@@ -700,13 +883,14 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                 {typeOptions.map((s) => (
                   <SelectItem key={s} value={s}>{s}</SelectItem>
                 ))}
+                <SelectItem value={SEVERAL} className="hidden">Several types</SelectItem>
               </SelectContent>
             </Select>
           )}
 
           {statusColIdx !== -1 && statusOptions.length > 0 && (
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className={cn(WS_CONTROL, 'w-[150px]')}>
+            <Select value={statusValue} onValueChange={setStatusValue}>
+              <SelectTrigger className={cn(WS_CONTROL, 'w-[130px]')} aria-label="Status">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -714,13 +898,14 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                 {statusOptions.map((s) => (
                   <SelectItem key={s} value={s}>{s}</SelectItem>
                 ))}
+                <SelectItem value={SEVERAL} className="hidden">Several statuses</SelectItem>
               </SelectContent>
             </Select>
           )}
 
           {priorityColIdx !== -1 && (
-            <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-              <SelectTrigger className={cn(WS_CONTROL, 'w-[150px]')}>
+            <Select value={selectValue(priorityColIdx, PRIORITY_TIERS)} onValueChange={(v) => setColumnValue(priorityColIdx, v)}>
+              <SelectTrigger className={cn(WS_CONTROL, 'w-[130px]')} aria-label="Priority">
                 <SelectValue placeholder="Priority Status" />
               </SelectTrigger>
               <SelectContent>
@@ -728,12 +913,13 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                 {PRIORITY_TIERS.map((t) => (
                   <SelectItem key={t} value={t}>{t}</SelectItem>
                 ))}
+                <SelectItem value={SEVERAL} className="hidden">Several priorities</SelectItem>
               </SelectContent>
             </Select>
           )}
 
           <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as DateFilter)}>
-            <SelectTrigger className={cn(WS_CONTROL, 'w-[160px]')}>
+            <SelectTrigger className={cn(WS_CONTROL, 'w-[170px]')} aria-label="Date filter">
               <SelectValue placeholder="Filter" />
             </SelectTrigger>
             <SelectContent>
@@ -745,26 +931,9 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
             </SelectContent>
           </Select>
 
-          <span className="text-xs text-muted-foreground">
-            {search || statusFilter !== 'all' || typeFilter !== 'all' || priorityFilter !== 'all' || dateFilter !== 'all' ? `${visibleRows.length} of ${dataRows.length}` : `${dataRows.length}`} shown
-          </span>
-
-          <div className="flex-1" />
-
-          {downloadNotice && (
-            <span className="text-xs text-muted-foreground animate-in fade-in">{downloadNotice}</span>
-          )}
-
-          {/* Always visible — matching Notice Alert's own toolbar — rather
-              than only appearing once a row is checked. Confirmed live
-              2026-09-03: staff hadn't discovered these existed because
-              they'd never happened to check a row first. Disabled (with a
-              hint) until at least one row is selected. */}
           {canEdit && (
             <>
-              {selectedIdx.size > 0 && (
-                <span className="text-xs text-muted-foreground">{selectedIdx.size} selected</span>
-              )}
+              <div className="mx-1 h-5 w-px bg-border" aria-hidden />
               <Button
                 variant="outline" size="sm" className={WS_BTN}
                 disabled={selectedIdx.size === 0}
@@ -780,282 +949,42 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
                   title={selectedIdx.size === 0 ? 'Select one or more rows first' : undefined}
                   onClick={() => setBulkPriorityOpen(true)}
                 >
-                  Priority
+                  Update Priority
                 </Button>
               )}
+              <span className="text-xs text-muted-foreground">
+                {selectedIdx.size > 0 ? `${selectedIdx.size} selected` : 'Tick rows to update them together'}
+              </span>
             </>
           )}
 
+          <div className="flex-1" />
+
+          {downloadNotice && (
+            <span className="text-xs text-muted-foreground animate-in fade-in">{downloadNotice}</span>
+          )}
+
           {evidenceColIdx !== -1 && (
-            <Button variant="outline" size="sm" onClick={handleDownloadAll} className={WS_BTN}>
+            <Button variant="outline" size="sm" onClick={handleDownloadAll} className={WS_BTN} title="Opens the PDF of every row the filters leave, on every page">
               <DownloadCloud className="h-3.5 w-3.5" />
               Download all visible PDFs
             </Button>
           )}
-
-          <Button variant="outline" size="sm" className={WS_BTN} onClick={() => { renderReportToExcel(table).catch((e) => toast.error(`Excel failed: ${e instanceof Error ? e.message : String(e)}`)); }}>
-            <FileSpreadsheet className="h-3.5 w-3.5" />
-            Export to Excel
-          </Button>
         </div>
 
-        {/* Table */}
-        <Table containerClassName="max-h-[65vh] rounded-md border bg-card" className={WS_TABLE}>
-            <TableHeader className="sticky top-0 z-10">
-              <TableRow>
-                {canEdit && (
-                  <TableHead className={cn(WS_TH, 'h-auto w-10')}>
-                    <Checkbox
-                      checked={pagedRows.length > 0 && pagedRows.every(({ idx }) => selectedIdx.has(idx))}
-                      onCheckedChange={(checked) => toggleSelectAllOnPage(checked === true)}
-                      aria-label="Select all rows on this page"
-                    />
-                  </TableHead>
-                )}
-                {headers.map((h, i) => (
-                  <TableHead
-                    key={i}
-                    className={cn(
-                      WS_TH, 'h-auto',
-                      (i === evidenceColIdx || i === priorityColIdx) && 'text-center',
-                      h === 'Amount of Demand' && 'text-right',
-                    )}
-                  >
-                    {h}
-                  </TableHead>
-                ))}
-                {canEdit && (
-                  <TableHead className={cn(WS_TH, 'h-auto text-center')}>
-                    Actions
-                  </TableHead>
-                )}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visibleRows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={headers.length + (canEdit ? 2 : 0)} className="border-b py-6 text-center text-sm text-muted-foreground">
-                    No rows match the current filters.
-                  </TableCell>
-                </TableRow>
-              )}
+        {/* Search, Group by, Columns and the filtered Excel / PDF; the chips under them */}
+        <TableKitToolbar kit={kit} searchPlaceholder="Search reference no., description, date…" />
 
-              {pagedRows.map(({ row, idx }) => (
-                <TableRow key={idx} className="hover:bg-muted/30">
-                  {canEdit && (
-                    <TableCell className={WS_TD}>
-                      <Checkbox checked={selectedIdx.has(idx)} onCheckedChange={() => toggleSelect(idx)} aria-label="Select row" />
-                    </TableCell>
-                  )}
-                  {row.map((cell, ci) => {
-                    // Evidence column: red vs. neutral PDF icon (see EvidenceEventListView).
-                    if (ci === evidenceColIdx) {
-                      return (
-                        <TableCell key={ci} className={cn(WS_TD, 'py-1 text-center')}>
-                          {isUrl(cell) ? (
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="h-7 w-7 border-red-200 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
-                              title="Open document"
-                              asChild
-                            >
-                              <a href={cell as string} target="_blank" rel="noopener noreferrer">
-                                <FileText className="h-3.5 w-3.5" />
-                              </a>
-                            </Button>
-                          ) : (
-                            <Button variant="outline" size="icon" className="h-7 w-7 cursor-not-allowed opacity-40" disabled title="Not captured">
-                              <FileText className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                        </TableCell>
-                      );
-                    }
-
-                    // Type column: colored pill.
-                    if (ci === typeColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
-                      return (
-                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                          <Badge variant={TYPE_VARIANT(String(cell))} className="py-0 text-[10px] font-medium">
-                            {String(cell)}
-                          </Badge>
-                        </TableCell>
-                      );
-                    }
-
-                    // Priority column: a flag, colored by tier (Low/Medium/High).
-                    if (ci === priorityColIdx) {
-                      const tier = String(cell ?? '').trim();
-                      const flagCls = tier === 'High' ? 'fill-destructive text-destructive'
-                        : tier === 'Medium' ? 'fill-warning text-warning'
-                        : tier === 'Low' ? 'fill-info text-info'
-                        : 'text-muted-foreground/30';
-                      return (
-                        <TableCell key={ci} className={cn(WS_TD, 'text-center')} title={tier || undefined}>
-                          <Flag className={cn('mx-auto h-3.5 w-3.5', flagCls)} />
-                        </TableCell>
-                      );
-                    }
-
-                    // Status column: editable Select when permitted, badge otherwise.
-                    if (ci === statusColIdx) {
-                      const current = String(cell ?? '').trim();
-                      if (canEdit && rowIds?.[idx]) {
-                        return (
-                          <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                            <Select
-                              value={STATUS_OPEN_CLOSED.includes(current) ? current : undefined}
-                              onValueChange={(v) => handleStatusChange(idx, v)}
-                              disabled={savingIdx === idx}
-                            >
-                              <SelectTrigger className="h-7 w-[110px] text-xs">
-                                <SelectValue placeholder="Set status" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {STATUS_OPEN_CLOSED.map((s) => (
-                                  <SelectItem key={s} value={s}>{s}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                        );
-                      }
-                      if (current && !isSentinel(current)) {
-                        return (
-                          <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                            <Badge variant={STATUS_VARIANT(current)} className="py-0 text-[10px] font-medium">{current}</Badge>
-                          </TableCell>
-                        );
-                      }
-                    }
-
-                    // Reference No. column: links to the Additional Notice
-                    // Folder page when this row has a Case ID and we know
-                    // which client it belongs to — plain text otherwise.
-                    if (ci === referenceColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
-                      const caseId = caseIdColIdx !== -1 ? cellToText(rows[idx]?.[caseIdColIdx]) : '';
-                      const linkClientId = clientIds?.[idx];
-                      if (caseId && linkClientId) {
-                        return (
-                          <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                            <Link to={`/notices-case-folder/${linkClientId}/${encodeURIComponent(caseId)}`} className="text-primary hover:underline">
-                              {String(cell)}
-                            </Link>
-                          </TableCell>
-                        );
-                      }
-                    }
-
-                    // GSTIN column: monospaced, muted — an identifier, not content.
-                    if (ci === gstinColIdx && String(cell ?? '').trim() && !isSentinel(cell)) {
-                      return (
-                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap font-mono text-[10px] text-muted-foreground')}>
-                          {formatCell(cell)}
-                        </TableCell>
-                      );
-                    }
-
-                    // Generic URL fallback.
-                    if (isUrl(cell)) {
-                      return (
-                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                          <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
-                            <a href={cell as string} target="_blank" rel="noopener noreferrer">View</a>
-                          </Button>
-                        </TableCell>
-                      );
-                    }
-
-                    // Sentinel ("NOT PULLED" / "not captured" / "not pulled").
-                    if (isSentinel(cell)) {
-                      return (
-                        <TableCell key={ci} className={cn(WS_TD, 'whitespace-nowrap')}>
-                          <Badge variant="outline" className="border-dashed py-0 text-[10px] text-muted-foreground">
-                            {String(cell)}
-                          </Badge>
-                        </TableCell>
-                      );
-                    }
-
-                    return (
-                      <TableCell
-                        key={ci}
-                        className={cn(
-                          WS_TD,
-                          headers[ci] === 'Description' && 'max-w-[280px]',
-                          headers[ci] !== 'Description' && 'whitespace-nowrap',
-                          headers[ci] === 'Amount of Demand' && 'text-right tabular-nums',
-                          dateCellCols.has(ci) && 'tabular-nums',
-                        )}
-                      >
-                        {formatCell(cell)}
-                      </TableCell>
-                    );
-                  })}
-                  {canEdit && (
-                    <TableCell className={cn(WS_TD, 'py-1 text-center')}>
-                      <div className="flex items-center justify-center gap-0.5">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          title="Log reply / order / submission"
-                          disabled={!rowIds?.[idx]}
-                          onClick={() => openEditDialog(idx)}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        {clientIds && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            title="Open this client on the GST portal, logged in"
-                            disabled={!clientIds[idx] || openingIdx === idx}
-                            onClick={() => openInPortal(idx)}
-                          >
-                            {openingIdx === idx ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
-
-              {totalRows.map(({ row, idx }) => (
-                <TableRow key={`total-${idx}`} className={cn(WS_TR_TOTAL, 'hover:bg-muted')}>
-                  {canEdit && <TableCell className={WS_TD} />}
-                  {row.map((cell, ci) => (
-                    <TableCell key={ci} className={WS_TD}>
-                      {formatCell(cell)}
-                    </TableCell>
-                  ))}
-                  {canEdit && <TableCell className={WS_TD} />}
-                </TableRow>
-              ))}
-            </TableBody>
-        </Table>
-
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1.5">
-            Rows per page:
-            <Select value={String(rowsPerPage)} onValueChange={(v) => setRowsPerPage(Number(v))}>
-              <SelectTrigger className="h-7 w-[80px] text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {ROWS_PER_PAGE_OPTIONS.map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="tabular-nums">
-              {visibleRows.length === 0 ? '0' : `${page * rowsPerPage + 1}-${Math.min(visibleRows.length, (page + 1) * rowsPerPage)}`} of {visibleRows.length}
-            </span>
-            <Button size="icon" variant="ghost" className="h-6 w-6" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}><ChevronLeft className="h-3.5 w-3.5" /></Button>
-            <Button size="icon" variant="ghost" className="h-6 w-6" disabled={page >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}><ChevronRight className="h-3.5 w-3.5" /></Button>
-          </div>
-        </div>
+        <TableKitTable
+          kit={kit}
+          renderCell={renderCell}
+          cellClassName={(_r, c) => (dateCellCols.has(c) ? 'tabular-nums' : undefined)}
+          leading={leading}
+          trailing={trailing}
+          noMatchText="No rows match the current filters."
+          label="Notices and orders"
+        />
+        <TableKitPager kit={kit} />
       </CardContent>
 
       <Dialog open={bulkStatusOpen} onOpenChange={(open) => { setBulkStatusOpen(open); if (!open) { setBulkStatus(''); setBulkCloseReason(''); } }}>

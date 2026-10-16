@@ -1,41 +1,64 @@
-// The pure half of the document-list preview (DocumentLineItemsView.tsx): which
-// rows are documents and which are the report's own structure (TOTAL rows, the
-// "— MM/YYYY —" bands of a multi-period merge, section headings), the kind of
-// each column, and the filter, sort, group and total rules. No React and no
-// DOM, so scripts/verify-doc-table-model.mjs runs it under Node.
+// The pure half of the table kit (./index.ts), first written for the document
+// list (DocumentLineItemsView.tsx) and now shared by every report view that
+// filters its rows: which rows are documents and which are the report's own
+// structure (TOTAL rows, the "— MM/YYYY —" bands of a multi-period merge,
+// section headings), the kind of each column, and the filter, sort, group and
+// total rules. No React and no DOM, so scripts/verify-doc-table-model.mjs runs
+// it under Node.
 //
-// Rules the view and its "filtered" exports rely on:
+// Rules the views and their "filtered" exports rely on:
 //   - Only document rows are filtered, sorted and grouped. Bands, headings and
 //     the report's TOTAL rows keep their place and are shown only in the
-//     report's own order: a band between sorted rows would mean nothing.
+//     report's own order: a band between sorted rows would mean nothing. Where
+//     nothing is added up instead (keepReportTotals), a grouped or sorted view
+//     lists the report's own TOTAL rows after its rows (view.reportTotals).
 //   - With nothing filtered the report's own TOTAL rows stand. Once anything is
 //     filtered a TOTAL is recomputed over the rows still shown and says so, so
 //     no figure on screen describes rows that are hidden.
 //   - Filters are AND across columns and OR within one column's ticked values;
 //     a column's value counts honour every filter except its own, so ticking a
 //     second supplier is always possible.
+//   - A period of a merge that could not be built is named in every view
+//     (model.failedPeriods), never left to its "Not built" line, which a
+//     grouped, sorted or filtered view does not show.
 import { classifyColumns, fmtDate, fmtNumber, parseDateCell, rowKindsOf, type ColumnKind } from '@/lib/reportExport/layout';
 import type { ColumnGroup, ReportTable, RowKind, RowTone } from '@/utils/allClientsReports';
 
 export type Cell = string | number;
 export type Row = Cell[];
 
-/** Ticked values (OR), a text search, a numeric range, a date range (ISO yyyy-mm-dd). */
+/**
+ * Ticked values (OR), a text search, a numeric range, a date range (ISO yyyy-mm-dd).
+ * A number filter's `tolerance` goes with `nonZero`: a figure within plus or
+ * minus that much counts as nil (a variance of a few paise is rounding, not a
+ * mismatch). Without it only a true nil (under 0.005) is left out.
+ */
 export type ColumnFilter =
   | { type: 'values'; values: string[] }
   | { type: 'contains'; text: string }
-  | { type: 'number'; min: number | null; max: number | null; nonZero?: boolean }
+  | { type: 'number'; min: number | null; max: number | null; nonZero?: boolean; tolerance?: number }
   | { type: 'date'; from: string | null; to: string | null };
 
 export type FilterKind = ColumnFilter['type'];
 
 export interface SortState { col: number; dir: 'asc' | 'desc' }
 
+/**
+ * A view's own quick filter that is not one column's: an "Overdue" tile read
+ * from rowFlags, a "differences only" switch. It narrows the rows like any
+ * other filter (ANDed, honoured by the value counts, the TOTAL and the
+ * export), and its label is printed as a chip and in the export's strip, so a
+ * reader always sees why rows are missing. `test` is given a document row.
+ */
+export interface CustomFilter { id: string; label: string; test: (row: ModelRow) => boolean }
+
 export interface ViewState {
   search: string;
   filters: Record<number, ColumnFilter | undefined>;
   sort: SortState | null;
   groupBy: number | null;
+  /** The view's own quick filters, by id (absent or empty: none). */
+  custom?: CustomFilter[];
 }
 
 export const EMPTY_VIEW: ViewState = { search: '', filters: {}, sort: null, groupBy: null };
@@ -53,7 +76,14 @@ export interface ModelColumn {
   /** Index into a row's cells; the Period column of a merged table is headers.length. */
   index: number;
   header: string;
+  /** The heading shown (the report's short headerLabel when it gave one). */
   label: string;
+  /**
+   * What the column is called away from its heading (filter chips, menus, the
+   * export strip): its label, or the full header when another column shares
+   * that label ("Total tax" under 2A, 2B and the difference).
+   */
+  name: string;
   kind: ColumnKind | 'period';
   filter: FilterKind;
   /** Distinct values among the document rows. */
@@ -78,6 +108,9 @@ export interface ModelRow {
 
 export interface PeriodBand { key: string; label: string; row: number }
 
+/** A period of a merge that could not be built, and why. */
+export interface FailedPeriod { key: string; label: string; reason: string }
+
 export interface TableModel {
   headers: string[];
   /** One per header, then the Period column when the table is a multi-period merge. */
@@ -97,6 +130,37 @@ export interface TableModel {
   summable: number[];
   /** Where a TOTAL's label goes (the column the report's own TOTAL label sits in). */
   labelCol: number;
+  /**
+   * A sort reorders rows only inside their section (and period), the headings
+   * staying in the report's order: a return or a working paper is read section
+   * by section, so a sorted row must not leave the heading it belongs under.
+   * Set by the hook's `sortWithinSections` option.
+   */
+  sortWithinSections?: boolean;
+  /**
+   * The report's own TOTAL rows stand as printed, filtered or not, and nothing
+   * is added up (no TOTAL recomputed over the rows shown, no group subtotal):
+   * a return's rows include their own totals and a working paper's are the
+   * steps of a computation, so a sum of the rows shown would add a total to its
+   * own parts. Set by the hook's `sums: false` option (summable is then empty).
+   */
+  keepReportTotals?: boolean;
+  /**
+   * The periods that could not be built: a merge writes each as its band and
+   * one "Not built: <reason>" line (reportPeriodMerge); a table's own
+   * failedReason counts too. Grouped, sorted or filtered, that line is not
+   * among the rows shown, so a view names these in every mode, or a month
+   * never checked reads as a month with nothing to report.
+   */
+  failedPeriods: FailedPeriod[];
+  /**
+   * 'latest': the summed columns are balances (closing figures), which mean
+   * nothing added across the months of a merge. The totals are then the
+   * latest period's, no TOTAL is computed over several periods, and groups
+   * carry subtotals only when grouped by Period. Set by the hook's
+   * `acrossPeriods` option; an unmerged table is unaffected.
+   */
+  acrossPeriods?: 'sum' | 'latest';
 }
 
 // ── Cells ──────────────────────────────────────────────────────────────────
@@ -117,6 +181,15 @@ export const periodLabel = (key: string): string => {
 
 const numberKind = (kind: ModelColumn['kind'] | undefined): 'int' | 'rate' | 'amount' =>
   (kind === 'int' || kind === 'rate' ? kind : 'amount');
+
+/** Whether a column holds figures (amounts, counts, rates): right-aligned, summed, ranged. */
+export const isFigureColumn = (model: TableModel, col: number): boolean => {
+  const k = model.columns[col]?.kind;
+  return k === 'amount' || k === 'int' || k === 'rate';
+};
+
+/** A figure in its column's house style (1,23,456.00; counts without decimals; 18.00%). */
+export const figureText = (model: TableModel, col: number, v: number): string => fmtNumber(v, numberKind(model.columns[col]?.kind));
 
 /** The text a cell is shown as: figures in the house style, dates as dd-Mon-yyyy. */
 export function displayText(model: TableModel, row: ModelRow, col: number): string {
@@ -146,23 +219,48 @@ export function facetLabel(model: TableModel, col: number, key: string): string 
   return key;
 }
 
-const haystack = (cells: Row, kinds: (ModelColumn['kind'])[]): string => cells.map((v, c) => {
+// `keep`: only these columns are searched (default every one).
+const haystack = (cells: Row, kinds: (ModelColumn['kind'])[], keep?: ReadonlySet<number>): string => cells.map((v, c) => {
+  if (keep && !keep.has(c)) return '';
   if (typeof v === 'number') return `${v} ${fmtNumber(v, numberKind(kinds[c]))}`;
   const s = str(v);
   return kinds[c] === 'date' ? `${s} ${fmtDate(s)}` : s;
 }).join('\u0001').toLowerCase();
 
+// What the search finds a merged row's period by (its key and its month).
+const periodHay = (periods: PeriodBand[], period: number): string =>
+  (period >= 0 ? `\u0001${periods[period].key} ${periods[period].label}`.toLowerCase() : '');
+
+const NOT_BUILT_RE = /^Not built:\s*([\s\S]*)$/;
+/** The reason on a merge's "Not built: <reason>" line (its other cells blank), else null. */
+const notBuiltReason = (cells: Row | undefined): string | null => {
+  const m = cells ? NOT_BUILT_RE.exec(str(cells[0])) : null;
+  return m && cells!.slice(1).every((c) => str(c) === '') ? m[1].trim() : null;
+};
+
 // ── The model ──────────────────────────────────────────────────────────────
 
-type TableInput = Pick<ReportTable, 'headers' | 'rows'> & Partial<Pick<ReportTable, 'rowKinds' | 'columnWidths' | 'headerLabels'>>;
+type TableInput = Pick<ReportTable, 'headers' | 'rows'> & Partial<Pick<ReportTable, 'rowKinds' | 'columnWidths' | 'headerLabels' | 'failedReason'>>;
 
 export function buildModel(table: TableInput): TableModel {
   const { headers } = table;
   const kinds = rowKindsOf(table.rows, table.rowKinds);
+  // A period that could not be built is its band and one "Not built" line.
+  // That line is never a document, whatever the report's width (in a
+  // two-column report it would read as one, and count, and be summed).
+  const failedAt = new Map<number, string>();
+  kinds.forEach((k, i) => {
+    const reason = k === 'period' ? notBuiltReason(table.rows[i + 1]) : null;
+    if (reason === null) return;
+    failedAt.set(i, reason);
+    kinds[i + 1] = 'section';
+  });
   const specs = classifyColumns(headers, table.rows, kinds, table.columnWidths, table.headerLabels);
   const colKinds = specs.map((s) => s.kind);
+  const shared = new Set(specs.map((s) => s.label).filter((l, k, all) => all.indexOf(l) !== k));
 
   const periods: PeriodBand[] = [];
+  const failedPeriods: FailedPeriod[] = [];
   let period = -1;
   let section = -1;
   const rows: ModelRow[] = table.rows.map((cells, i) => {
@@ -172,18 +270,20 @@ export function buildModel(table: TableInput): TableModel {
       periods.push({ key, label: periodLabel(key), row: i });
       period = periods.length - 1;
       section = -1;
+      if (failedAt.has(i)) failedPeriods.push({ key, label: periodLabel(key), reason: failedAt.get(i) as string });
       return { i, kind, cells, period, section: -1, hay: '' };
     }
     if (kind === 'section') {
       section = i;
       return { i, kind, cells, period, section: -1, hay: '' };
     }
-    const hay = kind === 'data' ? haystack(cells, colKinds) + (period >= 0 ? `\u0001${periods[period].key} ${periods[period].label}`.toLowerCase() : '') : '';
+    const hay = kind === 'data' ? haystack(cells, colKinds) + periodHay(periods, period) : '';
     return { i, kind, cells, period, section, hay };
   });
   const data = rows.filter((r) => r.kind === 'data');
   const totals = rows.filter((r) => r.kind === 'total' || r.kind === 'subtotal');
   const merged = periods.length > 0;
+  if (table.failedReason && !failedPeriods.length) failedPeriods.push({ key: '', label: 'This period', reason: table.failedReason });
 
   // The columns a TOTAL adds up are the ones the report's own TOTAL rows add
   // up; a report without one sums its amounts and counts (never a serial number).
@@ -205,10 +305,13 @@ export function buildModel(table: TableInput): TableModel {
   const model: TableModel = {
     headers,
     // Provisional (facetKey needs only the kinds); completed below.
-    columns: specs.map((s) => ({ index: s.index, header: s.header, label: s.label, kind: s.kind, filter: 'contains', distinct: 0, groupable: false, summable: false, virtual: false })),
+    columns: specs.map((s) => ({
+      index: s.index, header: s.header, label: s.label, name: shared.has(s.label) ? s.header : s.label, kind: s.kind,
+      filter: 'contains', distinct: 0, groupable: false, summable: false, virtual: false,
+    })),
     rows, data, merged, periods,
     periodCol: merged ? headers.length : -1,
-    grandTotal, hasReportTotals: totals.length > 0, summable, labelCol,
+    grandTotal, hasReportTotals: totals.length > 0, summable, labelCol, failedPeriods,
   };
   model.columns = model.columns.map((c) => {
     // Counted only up to the grouping limit: past it the exact number does not matter.
@@ -233,11 +336,43 @@ export function buildModel(table: TableInput): TableModel {
   });
   if (merged) {
     model.columns.push({
-      index: model.periodCol, header: 'Period', label: 'Period', kind: 'period', filter: 'values',
+      index: model.periodCol, header: 'Period', label: 'Period', name: 'Period', kind: 'period', filter: 'values',
       distinct: periods.length, groupable: true, summable: false, virtual: true,
     });
   }
   return model;
+}
+
+/**
+ * The model with the columns a TOTAL adds up narrowed to `cols` ([] for none).
+ * For a statement whose rows are unlike measures (the taxable value above the
+ * tax heads, the liability above the payment), where a sum of the rows shown
+ * would add unlike things: with none, no TOTAL is recomputed under a filter and
+ * groups carry no subtotal. Only figure columns can be summed.
+ */
+export function withSummable(model: TableModel, cols: number[]): TableModel {
+  const keep = new Set(cols.filter((c) => isFigureColumn(model, c)));
+  return {
+    ...model,
+    summable: model.headers.map((_, c) => c).filter((c) => keep.has(c)),
+    columns: model.columns.map((c) => ({ ...c, summable: keep.has(c.index) })),
+  };
+}
+
+/**
+ * The model with the search looking only in `cols` (the Period column of a
+ * merge included by its index). For a helper column a view adds to its rows
+ * (the annual trend's hidden Quarter, "FY 2026-27 Q1 (Apr to Jun)"), whose
+ * text would make a search for "Jun 2026" match April and May too. A column's
+ * own filter is unaffected.
+ */
+export function withSearchable(model: TableModel, cols: number[]): TableModel {
+  const keep = new Set(cols);
+  const kinds = model.columns.map((c) => c.kind);
+  const rows = model.rows.map((r) => (r.kind === 'data'
+    ? { ...r, hay: haystack(r.cells, kinds, keep) + (keep.has(model.periodCol) ? periodHay(model.periods, r.period) : '') }
+    : r));
+  return { ...model, rows, data: rows.filter((r) => r.kind === 'data') };
 }
 
 // ── Filters ────────────────────────────────────────────────────────────────
@@ -252,9 +387,9 @@ export function isFilterActive(f: ColumnFilter | undefined): boolean {
   }
 }
 
-/** Anything narrowing the rows (a column filter or the search); sorting and grouping do not. */
+/** Anything narrowing the rows (a column filter, the search, a view's own filter); sorting and grouping do not. */
 export const isFiltered = (state: ViewState): boolean =>
-  state.search.trim() !== '' || Object.values(state.filters).some((f) => isFilterActive(f));
+  state.search.trim() !== '' || Object.values(state.filters).some((f) => isFilterActive(f)) || !!state.custom?.length;
 
 const timeOf = (iso: string | null): number | null => (iso ? parseDateCell(iso)?.getTime() ?? null : null);
 
@@ -274,11 +409,11 @@ function predicateFor(model: TableModel, col: number, f: ColumnFilter): Pred {
       };
     }
     case 'number': {
-      const { min, max, nonZero } = f;
+      const { min, max, nonZero, tolerance } = f;
       return (r) => {
         const v = r.cells[col];
         if (typeof v !== 'number' || !Number.isFinite(v)) return false;
-        if (nonZero && Math.abs(v) < 0.005) return false;
+        if (nonZero && (tolerance ? Math.abs(v) <= tolerance : Math.abs(v) < 0.005)) return false;
         if (min !== null && v < min - 1e-9) return false;
         if (max !== null && v > max + 1e-9) return false;
         return true;
@@ -307,6 +442,7 @@ export function compile(model: TableModel, state: ViewState, except = -1): Pred 
     if (col === except || !isFilterActive(f)) continue;
     preds.push(predicateFor(model, col, f as ColumnFilter));
   }
+  for (const c of state.custom ?? []) preds.push(c.test);
   return preds.length ? (r) => preds.every((p) => p(r)) : () => true;
 }
 
@@ -325,6 +461,31 @@ const collator = new Intl.Collator('en-IN', { numeric: true, sensitivity: 'base'
 const PERCENT_RE = /^-?\d+(\.\d+)?\s*%$/;
 const percentOf = (s: string): number | null => (PERCENT_RE.test(s.trim()) ? parseFloat(s) : null);
 
+// A date with its time as en-IN prints it ("15/8/2026, 10:23:45 am"): an
+// upload log's Date/Time. It stays a text column (the time is part of what it
+// says, and the export prints it as written), but it sorts and lists by its
+// moment: by the text alone 2 Sep would come before 15 Aug.
+const STAMP_RE = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([ap])?\.?m?\.?$/i;
+export const stampOf = (s: string): number | null => {
+  const m = STAMP_RE.exec(s.trim());
+  if (!m) return null;
+  const [, d, mo, y, h, mi, sec, ap] = m;
+  const hour = ap ? (+h % 12) + (/p/i.test(ap) ? 12 : 0) : +h;
+  if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31 || hour > 23 || +mi > 59) return null;
+  return Date.UTC(+y, +mo - 1, +d, hour, +mi, +(sec ?? 0));
+};
+
+// A month written as text ("Apr 2026", "April 2026", "Apr-26", "04/2026"): by
+// the month. The collator alone puts Aug before Jun and Jan 2027 before Apr 2026.
+const MONTH_TEXT_RE = /^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)[\s-]+(\d{4}|\d{2})$/i;
+const monthOf = (s: string): number | null => {
+  const t = s.trim();
+  const m = MONTH_TEXT_RE.exec(t);
+  if (m) return (+m[2] < 100 ? 2000 + +m[2] : +m[2]) * 12 + MONTHS.findIndex((x) => x.toLowerCase() === m[1].slice(0, 3).toLowerCase());
+  const n = /^(\d{2})\/(\d{4})$/.exec(t);
+  return n && +n[1] >= 1 && +n[1] <= 12 ? +n[2] * 12 + +n[1] - 1 : null;
+};
+
 const keyOrder = (model: TableModel, col: number) => (a: string, b: string): number => {
   if (col === model.periodCol) return model.periods.findIndex((p) => p.key === a) - model.periods.findIndex((p) => p.key === b);
   if (a === BLANK && b !== BLANK) return 1;
@@ -332,6 +493,12 @@ const keyOrder = (model: TableModel, col: number) => (a: string, b: string): num
   const pa = percentOf(a);
   const pb = percentOf(b);
   if (pa !== null && pb !== null) return pa - pb || collator.compare(a, b);
+  const sa = stampOf(a);
+  const sb = stampOf(b);
+  if (sa !== null && sb !== null) return sa - sb || collator.compare(a, b);
+  const ma = monthOf(a);
+  const mb = monthOf(b);
+  if (ma !== null && mb !== null) return ma - mb || collator.compare(a, b);
   return collator.compare(a, b);
 };
 
@@ -380,7 +547,7 @@ function sortKey(model: TableModel, r: ModelRow, col: number): SortKey {
   if (kind === 'date') return parseDateCell(s)?.getTime() ?? null;
   // A word in a figures column ("NOT PULLED") sorts with the blanks.
   if (kind === 'amount' || kind === 'int' || kind === 'rate') return null;
-  return percentOf(s) ?? s;
+  return percentOf(s) ?? stampOf(s) ?? monthOf(s) ?? s;
 }
 
 const cmpKeys = (a: SortKey, b: SortKey): number => {
@@ -427,13 +594,62 @@ export function sumRows(model: TableModel, rows: ModelRow[]): Map<number, number
   return sums;
 }
 
+/** Balances of a merge (acrossPeriods 'latest'): never added across its periods. */
+const latestOnly = (model: TableModel): boolean => model.merged && model.acrossPeriods === 'latest';
+
+/**
+ * The latest period among `rows` (by its month when every period is one, else
+ * the last band), or -1 when there are none. The bands run in the order the
+ * months were picked, which need not be the calendar's.
+ */
+export function latestPeriod(model: TableModel, rows: ModelRow[]): number {
+  const months = model.periods.map((p) => monthOf(p.key));
+  const byMonth = months.every((m) => m !== null);
+  const when = (p: number) => (byMonth ? (months[p] as number) : p);
+  let best = -1;
+  for (const r of rows) if (r.period >= 0 && (best < 0 || when(r.period) > when(best))) best = r.period;
+  return best;
+}
+
+/** A summable column's total over every row, and over the rows shown once anything is filtered (else null). */
+export interface ColumnTotal { col: number; total: number; shown: number | null }
+
+/**
+ * The summed columns' totals for a view's KPI tiles: the report's own grand
+ * TOTAL where it printed one, else the rows added up, and once filtered the
+ * rows shown. Balances of a merge (acrossPeriods 'latest') are the latest
+ * period's that has rows shown, named by `asAt`: three month-ends of the same
+ * balance added up would be three times the balance.
+ */
+export function columnTotals(model: TableModel, view: Pick<ViewResult, 'filtered' | 'rows' | 'footer'>): { totals: ColumnTotal[]; asAt: string | null } {
+  if (latestOnly(model)) {
+    const p = latestPeriod(model, view.rows.length ? view.rows : model.data);
+    const all = sumRows(model, model.data.filter((r) => r.period === p));
+    const shown = view.filtered ? sumRows(model, view.rows.filter((r) => r.period === p)) : null;
+    return {
+      totals: model.summable.map((c) => ({ col: c, total: all.get(c) ?? 0, shown: shown ? shown.get(c) ?? 0 : null })),
+      asAt: p >= 0 ? model.periods[p].label : null,
+    };
+  }
+  const all = model.grandTotal ? null : sumRows(model, model.data);
+  const totalOf = (c: number): number => {
+    const own = model.grandTotal?.cells[c];
+    return typeof own === 'number' ? own : all?.get(c) ?? 0;
+  };
+  const shown = view.footer?.type === 'sum' ? view.footer.sums : null;
+  return { totals: model.summable.map((c) => ({ col: c, total: totalOf(c), shown: view.filtered ? shown?.get(c) ?? 0 : null })), asAt: null };
+}
+
 export interface RowGroup { key: string; label: string; rows: ModelRow[]; sums: Map<number, number> }
 
 /**
  * Rows under one heading per value of `groupBy`, each with its subtotals.
  * Groups run in the column's natural order; sorted by a figure, they run by
- * their subtotal of it (largest supplier first), and sorted by the grouped
- * column itself, in that direction.
+ * their subtotal of it (largest supplier first), except months, which stay in
+ * calendar order (a working paper reads its months in time; the rows inside
+ * each month follow the sort); sorted by the grouped column itself, in that
+ * direction. Balances of a merge carry a subtotal only grouped by Period: a
+ * client's subtotal over three month-ends would add a balance to itself.
  */
 export function groupRows(model: TableModel, rows: ModelRow[], groupBy: number, sort: SortState | null): RowGroup[] {
   const map = new Map<string, ModelRow[]>();
@@ -444,9 +660,10 @@ export function groupRows(model: TableModel, rows: ModelRow[], groupBy: number, 
     else map.set(k, [r]);
   }
   const order = keyOrder(model, groupBy);
-  const groups = [...map].map(([key, list]) => ({ key, label: facetLabel(model, groupBy, key), rows: list, sums: sumRows(model, list) }));
+  const noSums = latestOnly(model) && groupBy !== model.periodCol;
+  const groups = [...map].map(([key, list]) => ({ key, label: facetLabel(model, groupBy, key), rows: list, sums: noSums ? new Map<number, number>() : sumRows(model, list) }));
   const dir = sort?.dir === 'desc' ? -1 : 1;
-  if (sort && model.summable.includes(sort.col)) {
+  if (sort && !noSums && model.summable.includes(sort.col) && groupBy !== model.periodCol) {
     groups.sort((a, b) => ((a.sums.get(sort.col) ?? 0) - (b.sums.get(sort.col) ?? 0)) * dir || order(a.key, b.key));
   } else if (sort && sort.col === groupBy) {
     groups.sort((a, b) => {
@@ -462,7 +679,8 @@ export function groupRows(model: TableModel, rows: ModelRow[], groupBy: number, 
 // ── What is shown ──────────────────────────────────────────────────────────
 
 export type DisplayItem =
-  | { type: 'band'; key: string; label: string; count: number; continued?: boolean }
+  /** totalsOnly: the band over a period's own TOTAL rows listed after a grouped or sorted view (ViewResult.reportTotals). */
+  | { type: 'band'; key: string; label: string; count: number; continued?: boolean; totalsOnly?: boolean }
   | { type: 'section'; row: ModelRow; label: string; count: number; continued?: boolean }
   | { type: 'group'; key: string; label: string; count: number; sums: Map<number, number>; collapsed: boolean; continued?: boolean }
   | { type: 'data'; row: ModelRow }
@@ -488,6 +706,15 @@ export interface ViewResult {
   showBands: boolean;
   /** A merged table shown without its bands names each row's period in a column instead. */
   showPeriodColumn: boolean;
+  /** Sorted, but each row kept under its section heading and period band (model.sortWithinSections). */
+  sortedWithinSections?: boolean;
+  /**
+   * The report's own TOTAL rows listed after the rows of a grouped or sorted
+   * view, as printed (model.keepReportTotals): grouped or sorted they have no
+   * place among the rows, and nothing is added up in their stead. A merge's
+   * are listed period by period, each under a band (totalsOnly).
+   */
+  reportTotals?: ModelRow[];
 }
 
 const firstText = (cells: Row): string => cells.map(str).find((s) => s !== '') ?? '';
@@ -497,7 +724,10 @@ export function buildView(model: TableModel, state: ViewState, collapsed: Readon
   const passing = applyFilters(model, state);
   const groupBy = state.groupBy !== null && model.columns[state.groupBy]?.groupable ? state.groupBy : null;
   const ordered = sortRows(model, passing, state.sort);
-  const showBands = model.merged && !state.sort && groupBy === null;
+  // Sorted inside each section (and period) when the report reads top to bottom.
+  const within = !!state.sort && groupBy === null && !!model.sortWithinSections
+    && (model.merged || model.rows.some((r) => r.kind === 'section'));
+  const showBands = model.merged && (!state.sort || within) && groupBy === null;
   const showPeriodColumn = model.merged && !showBands && groupBy !== model.periodCol;
   const items: DisplayItem[] = [];
   let groups: RowGroup[] | null = null;
@@ -509,10 +739,11 @@ export function buildView(model: TableModel, state: ViewState, collapsed: Readon
       items.push({ type: 'group', key: g.key, label: g.label, count: g.rows.length, sums: g.sums, collapsed: isCollapsed });
       if (!isCollapsed) for (const r of g.rows) items.push({ type: 'data', row: r });
     }
-  } else if (state.sort) {
+  } else if (state.sort && !within) {
     for (const r of ordered) items.push({ type: 'data', row: r });
   } else {
-    // The report's own order: structure rows in place, documents filtered.
+    // The report's own order: structure rows in place, documents filtered
+    // (and, sorted within sections, each section's rows in the sorted order).
     const shown = new Set(passing.map((r) => r.i));
     const perPeriod = new Map<number, ModelRow[]>();
     const perSection = new Map<number, number>();
@@ -520,6 +751,15 @@ export function buildView(model: TableModel, state: ViewState, collapsed: Readon
       if (!perPeriod.has(r.period)) perPeriod.set(r.period, []);
       perPeriod.get(r.period)!.push(r);
       perSection.set(r.section, (perSection.get(r.section) ?? 0) + 1);
+    }
+    const blockOf = (r: ModelRow) => `${r.period}:${r.section}`;
+    const blocks = new Map<string, ModelRow[]>();
+    if (within) {
+      for (const r of ordered) {
+        const list = blocks.get(blockOf(r));
+        if (list) list.push(r);
+        else blocks.set(blockOf(r), [r]);
+      }
     }
     for (const r of model.rows) {
       switch (r.kind) {
@@ -536,13 +776,24 @@ export function buildView(model: TableModel, state: ViewState, collapsed: Readon
         case 'blank':
           if (!filtered) items.push({ type: 'blank', row: r });
           break;
-        case 'data':
-          if (shown.has(r.i)) items.push({ type: 'data', row: r });
+        case 'data': {
+          if (!shown.has(r.i)) break;
+          if (!within) { items.push({ type: 'data', row: r }); break; }
+          // A section's sorted rows go where its first row stood.
+          const block = blocks.get(blockOf(r));
+          if (block) for (const x of block) items.push({ type: 'data', row: x });
+          blocks.delete(blockOf(r));
           break;
+        }
         case 'total':
         case 'subtotal': {
           if (r === model.grandTotal) break;
           if (!filtered) { items.push({ type: 'total', row: r }); break; }
+          if (model.keepReportTotals) {
+            // As printed, unless the filter left its period nothing to stand under.
+            if (r.period < 0 || perPeriod.get(r.period)?.length) items.push({ type: 'total', row: r });
+            break;
+          }
           // Under a filter a period's TOTAL is recomputed over its rows still
           // shown; a report's own subtotal no longer describes them and goes.
           const inPeriod = r.kind === 'total' && r.period >= 0 ? perPeriod.get(r.period) : undefined;
@@ -555,15 +806,54 @@ export function buildView(model: TableModel, state: ViewState, collapsed: Readon
     }
   }
 
+  // Grouped or sorted across the report, its own TOTAL rows have no place among
+  // the rows; where nothing is added up in their stead (sums: false), they are
+  // listed after the rows as printed, a merge's under each period's band (with
+  // the rule above: a period the filter left empty shows none). A single
+  // period's grand TOTAL stays pinned as the footer.
+  let reportTotals: ModelRow[] | undefined;
+  if (model.keepReportTotals && (groupBy !== null || (!!state.sort && !within))) {
+    const withRows = new Set(passing.map((r) => r.period));
+    const byPeriod = new Map<number, ModelRow[]>();
+    for (const r of model.rows) {
+      if (r.kind !== 'total' || r === model.grandTotal || (filtered && r.period >= 0 && !withRows.has(r.period))) continue;
+      if (!byPeriod.has(r.period)) byPeriod.set(r.period, []);
+      byPeriod.get(r.period)!.push(r);
+    }
+    reportTotals = [];
+    for (const [p, own] of [...byPeriod].sort((a, b) => a[0] - b[0])) {
+      if (p >= 0) items.push({ type: 'band', key: model.periods[p].key, label: model.periods[p].label, count: 0, totalsOnly: true });
+      for (const r of own) items.push({ type: 'total', row: r });
+      reportTotals.push(...own);
+    }
+    if (!reportTotals.length) reportTotals = undefined;
+  }
+
+  // Balances of a merge are never added across its periods: a TOTAL only over
+  // rows of one period.
+  const latest = latestOnly(model);
+  const shownPeriods = latest ? new Set(passing.map((r) => r.period)) : null;
+  // A period that could not be built adds nothing, so it is not counted.
+  const built = model.periods.length - model.failedPeriods.filter((f) => f.key !== '').length;
   let footer: Footer = null;
-  if (filtered) {
-    if (model.summable.length) footer = { type: 'sum', label: 'TOTAL (filtered)', sums: sumRows(model, passing) };
+  if (filtered && !model.keepReportTotals) {
+    if (model.summable.length && !latest) footer = { type: 'sum', label: 'TOTAL (filtered)', sums: sumRows(model, passing) };
+    else if (model.summable.length && shownPeriods?.size === 1 && passing[0].period >= 0) {
+      footer = { type: 'sum', label: `TOTAL (${model.periods[passing[0].period].key}, filtered)`, sums: sumRows(model, passing) };
+    }
   } else if (model.grandTotal) {
     footer = { type: 'total', row: model.grandTotal };
-  } else if (model.merged && model.hasReportTotals && model.summable.length) {
-    footer = { type: 'sum', label: `TOTAL (${model.periods.length} periods)`, sums: sumRows(model, model.data) };
+  } else if (model.merged && model.hasReportTotals && model.summable.length && !latest) {
+    footer = { type: 'sum', label: `TOTAL (${built} ${built === 1 ? 'period' : 'periods'})`, sums: sumRows(model, model.data) };
   }
-  return { filtered, rows: groups ? groups.flatMap((g) => g.rows) : ordered, items, footer, groups, showBands, showPeriodColumn };
+  const rows = groups ? groups.flatMap((g) => g.rows)
+    : within ? items.flatMap((it) => (it.type === 'data' ? [it.row] : []))
+      : ordered;
+  return {
+    filtered, rows, items, footer, groups, showBands, showPeriodColumn,
+    ...(within ? { sortedWithinSections: true } : {}),
+    ...(reportTotals ? { reportTotals } : {}),
+  };
 }
 
 // ── Pages ──────────────────────────────────────────────────────────────────
@@ -617,7 +907,7 @@ const listValues = (labels: string[]): string => {
 /** One phrase for a column's filter, e.g. "Taxable Value between 1,000.00 and 5,000.00". */
 export function describeFilter(model: TableModel, col: number, f: ColumnFilter): string {
   const c = model.columns[col];
-  const name = c?.label ?? `Column ${col + 1}`;
+  const name = c?.name ?? `Column ${col + 1}`;
   switch (f.type) {
     case 'values': return `${name} is ${listValues(f.values.map((v) => facetLabel(model, col, v)))}`;
     case 'contains': return `${name} contains "${f.text.trim()}"`;
@@ -626,7 +916,7 @@ export function describeFilter(model: TableModel, col: number, f: ColumnFilter):
       if (f.min !== null && f.max !== null) parts.push(`between ${fig(f.min, c?.kind)} and ${fig(f.max, c?.kind)}`);
       else if (f.min !== null) parts.push(`at least ${fig(f.min, c?.kind)}`);
       else if (f.max !== null) parts.push(`at most ${fig(f.max, c?.kind)}`);
-      if (f.nonZero) parts.push('not nil');
+      if (f.nonZero) parts.push(f.tolerance ? `not nil (more than ${fig(f.tolerance, 'amount')} either way)` : 'not nil');
       return `${name} ${parts.join(', ')}`;
     }
     case 'date': {
@@ -637,9 +927,10 @@ export function describeFilter(model: TableModel, col: number, f: ColumnFilter):
   }
 }
 
-export interface ActiveFilter { col: number | 'search'; text: string }
+/** A column's filter (col), the search, or a view's own filter (col 'custom', its id). */
+export interface ActiveFilter { col: number | 'search' | 'custom'; id?: string; text: string }
 
-/** Every active filter (the search first), each as a phrase: the chips and the export's strip. */
+/** Every active filter (the search first, a view's own last), each as a phrase: the chips and the export's strip. */
 export function activeFilters(model: TableModel, state: ViewState): ActiveFilter[] {
   const out: ActiveFilter[] = [];
   if (state.search.trim()) out.push({ col: 'search', text: `Search "${state.search.trim()}"` });
@@ -647,17 +938,31 @@ export function activeFilters(model: TableModel, state: ViewState): ActiveFilter
     if (!f || !isFilterActive(f)) continue;
     out.push({ col: Number(k), text: describeFilter(model, Number(k), f) });
   }
+  for (const c of state.custom ?? []) out.push({ col: 'custom', id: c.id, text: c.label });
   return out;
 }
+
+/** Whether a text column holds only date-time stamps (an upload log's Date/Time), blanks aside. */
+const isStampColumn = (model: TableModel, col: number): boolean => {
+  let seen = false;
+  for (const r of model.data) {
+    const s = str(r.cells[col]);
+    if (isNil(s)) continue;
+    if (stampOf(s) === null) return false;
+    seen = true;
+  }
+  return seen;
+};
 
 export function describeSort(model: TableModel, sort: SortState): string {
   const c = model.columns[sort.col];
   const asc = sort.dir === 'asc';
-  const how = c?.kind === 'date' ? (asc ? 'oldest first' : 'newest first')
+  const when = c?.kind === 'date' || (c?.kind === 'text' && isStampColumn(model, sort.col));
+  const how = when ? (asc ? 'oldest first' : 'newest first')
     : c?.kind === 'amount' || c?.kind === 'int' || c?.kind === 'rate' ? (asc ? 'smallest first' : 'largest first')
       : c?.kind === 'period' ? (asc ? 'earliest first' : 'latest first')
         : asc ? 'A to Z' : 'Z to A';
-  return `sorted by ${c?.label ?? 'a column'}, ${how}`;
+  return `sorted by ${c?.name ?? 'a column'}, ${how}`;
 }
 
 // ── Export what is shown ───────────────────────────────────────────────────
@@ -688,6 +993,27 @@ export function labelPosition(model: TableModel, cols: number[]): number {
   if (first >= 0) return first;
   if (own >= 0 && !model.summable.includes(model.labelCol)) return own;
   return cols.findIndex((c) => !model.summable.includes(c));
+}
+
+/**
+ * The report's column groups (the band above the header) over the columns
+ * shown, in order: a hidden column leaves its group's span, a group with no
+ * column shown goes, and the Period column sits under a blank group. The
+ * screen's two-level header and the "filtered" export both read it. Null when
+ * the report has none, or when they do not span its headers.
+ */
+export function respanColumnGroups(table: Pick<ReportTable, 'columnGroups'>, model: TableModel, cols: number[]): ColumnGroup[] | null {
+  if (!table.columnGroups?.length || table.columnGroups.reduce((s, x) => s + x.span, 0) !== model.headers.length) return null;
+  const owner: number[] = [];
+  table.columnGroups.forEach((x, gi) => { for (let k = 0; k < x.span; k++) owner.push(gi); });
+  const out: (ColumnGroup & { gi: number })[] = [];
+  for (const c of cols) {
+    const gi = c === model.periodCol ? -1 : owner[c];
+    const last = out[out.length - 1];
+    if (last && last.gi === gi) last.span += 1;
+    else out.push(gi < 0 ? { label: '', span: 1, gi } : { ...table.columnGroups[gi], span: 1, gi });
+  }
+  return out.map(({ label, span, tone }) => ({ label, span, ...(tone ? { tone } : {}) }));
 }
 
 const clean = (s: string): string => s.replace(/\|/g, '/').replace(/\s+/g, ' ').trim();
@@ -738,9 +1064,14 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
     const own = cols.indexOf(state.groupBy as number);
     const where = own >= 0 && g?.kind === 'text' && !model.summable.includes(g.index) ? own : at;
     for (const grp of view.groups) {
-      push(labelled(`${g?.label ?? 'Group'}: ${grp.label} (${grp.rows.length} ${grp.rows.length === 1 ? 'row' : 'rows'})`), 'section');
+      push(labelled(`${g?.name ?? 'Group'}: ${grp.label} (${grp.rows.length} ${grp.rows.length === 1 ? 'row' : 'rows'})`), 'section');
       for (const r of grp.rows) push(project(r), 'data', toneOf(r));
-      if (model.summable.length) push(sumRow(`Subtotal: ${grp.label}`, grp.sums, where), 'subtotal');
+      if (grp.sums.size) push(sumRow(`Subtotal: ${grp.label}`, grp.sums, where), 'subtotal');
+    }
+    // The report's own TOTAL rows listed after the groups (view.reportTotals).
+    for (const it of view.items) {
+      if (it.type === 'band') push(labelled(`— ${it.key} —`), 'period');
+      else if (it.type === 'total') push(ownTotal(it.row), 'total');
     }
   } else {
     for (const it of view.items) {
@@ -761,14 +1092,29 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
   // What the reader needs to know this is a view, not the whole report.
   const filters = activeFilters(model, state).map((a) => clean(a.text));
   const how: string[] = [];
-  if (state.sort) how.push(describeSort(model, state.sort));
-  if (view.groups && state.groupBy !== null) how.push(`grouped by ${model.columns[state.groupBy]?.label ?? 'a column'}`);
-  const hiddenNames = model.headers.map((h, c) => (hidden.has(c) ? model.columns[c]?.label ?? h : null)).filter((h): h is string => !!h);
+  if (state.sort) how.push(`${describeSort(model, state.sort)}${view.sortedWithinSections ? ' within each section' : ''}`);
+  if (view.groups && state.groupBy !== null) how.push(`grouped by ${model.columns[state.groupBy]?.name ?? 'a column'}`);
+  const hiddenNames = model.headers.map((h, c) => (hidden.has(c) ? model.columns[c]?.name ?? h : null)).filter((h): h is string => !!h);
+  const totals = columnTotals(model, view);
   const fields = [
+    // A period that could not be built is in none of the rows or totals: say which, in every view.
+    ...(model.failedPeriods.length
+      ? [{ label: 'Not built', value: clean(model.failedPeriods.map((f) => `${f.label} (${f.reason})`).join('; ')) }]
+      : []),
     ...(filters.length ? [{ label: 'Filter', value: filters.join('; ') }] : []),
     ...(how.length ? [{ label: 'View', value: how.join('; ') }] : []),
     { label: 'Rows shown', value: `${view.rows.length.toLocaleString('en-IN')} of ${model.data.length.toLocaleString('en-IN')}` },
     ...(hiddenNames.length ? [{ label: 'Columns hidden', value: clean(hiddenNames.join(', ')) }] : []),
+    // A TOTAL kept as printed under a filter describes every row: say so.
+    ...(view.reportTotals
+      ? [{ label: 'Totals', value: `the report's own, as printed${model.merged ? ' for each period' : ''}, listed after the rows${view.filtered ? '; not recomputed for the rows shown' : ''}` }]
+      : view.filtered && model.keepReportTotals && kinds.includes('total')
+        ? [{ label: 'Totals', value: 'as printed for the whole report, not recomputed for the rows shown' }]
+        : []),
+    // Balances are never added across periods: the figures are one period's.
+    ...(totals.asAt && model.summable.length
+      ? [{ label: 'Totals', value: `as at ${totals.asAt}, the latest period shown; balances are not added across periods` }]
+      : []),
   ];
 
   const widthOf = (c: number) => (c === model.periodCol ? 10 : table.columnWidths?.[c] ?? 14);
@@ -776,19 +1122,7 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
   const headerLabels = table.headerLabels?.length === model.headers.length
     ? cols.map((c) => (c === model.periodCol ? 'Period' : table.headerLabels![c] || model.headers[c]))
     : undefined;
-  let columnGroups: ColumnGroup[] | undefined;
-  if (table.columnGroups && table.columnGroups.reduce((s, x) => s + x.span, 0) === model.headers.length) {
-    const owner: number[] = [];
-    table.columnGroups.forEach((x, gi) => { for (let k = 0; k < x.span; k++) owner.push(gi); });
-    const out: (ColumnGroup & { gi: number })[] = [];
-    for (const c of cols) {
-      const gi = c === model.periodCol ? -1 : owner[c];
-      const last = out[out.length - 1];
-      if (last && last.gi === gi) last.span += 1;
-      else out.push(gi < 0 ? { label: '', span: 1, gi } : { ...table.columnGroups[gi], span: 1, gi });
-    }
-    columnGroups = out.map(({ label, span, tone }) => ({ label, span, ...(tone ? { tone } : {}) }));
-  }
+  const columnGroups = respanColumnGroups(table, model, cols) ?? undefined;
   const pdfColumns = table.pdfColumns?.length
     ? cols.map((c, k) => (c === model.periodCol || table.pdfColumns!.includes(c) ? k : -1)).filter((k) => k >= 0)
     : undefined;
@@ -796,14 +1130,17 @@ export function viewToReportTable(table: ReportTable, model: TableModel, state: 
   const freezeColumns = table.freezeColumns !== undefined
     ? cols.filter((c) => c === model.periodCol || c < (table.freezeColumns as number)).length
     : undefined;
-  // The stat band: the figures of the TOTAL printed under the rows.
+  // The stat band: the figures of the TOTAL printed under the rows (balances:
+  // the latest period's rows shown, as the view's tiles).
   const bandSums = view.footer?.type === 'sum' ? view.footer.sums : sumRows(model, view.rows);
+  const asAt = new Map(totals.totals.map((t) => [t.col, t.shown ?? t.total]));
   const kpis = [
     { label: 'Rows shown', value: `${view.rows.length.toLocaleString('en-IN')} of ${model.data.length.toLocaleString('en-IN')}` },
     ...cols.filter((c) => model.summable.includes(c)).slice(0, 7).map((c) => {
       const own = view.footer?.type === 'total' ? view.footer.row.cells[c] : undefined;
-      const value = typeof own === 'number' ? own : bandSums.get(c) ?? 0;
-      return { label: model.columns[c]?.label ?? model.headers[c], value: fmtNumber(value, numberKind(model.columns[c]?.kind)) };
+      const value = totals.asAt ? asAt.get(c) ?? 0 : typeof own === 'number' ? own : bandSums.get(c) ?? 0;
+      const name = model.columns[c]?.name ?? model.headers[c];
+      return { label: totals.asAt ? `${name} as at ${totals.asAt}` : name, value: fmtNumber(value, numberKind(model.columns[c]?.kind)) };
     }),
   ];
 

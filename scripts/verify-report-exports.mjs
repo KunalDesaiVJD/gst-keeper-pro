@@ -332,6 +332,14 @@ for (const [name, table] of cases) timings[name] = (await checkReport(name, tabl
   check('layout', '"Totally exempt supplies" is data', kind('Totally exempt supplies') === 'data');
 }
 
+// One link under a figures column (a filed return's PDF row) keeps the column
+// figures; a column of links is still a link column.
+{
+  const R2 = R.layoutOf({ title: 't', headers: ['Head', 'Taxable Value', 'PDF'], rows: [['a', 100, 'https://example.invalid/1.pdf'], ['b', 250.5, 'https://example.invalid/2.pdf'], ['Filed Return PDF', 'https://example.invalid/r.pdf', '']], columnWidths: [] });
+  check('layout', 'a stray link keeps a figures column an amount', R2.columns[1].kind === 'amount', R2.columns[1].kind);
+  check('layout', 'a column of links is a link column', R2.columns[2].kind === 'url', R2.columns[2].kind);
+}
+
 // The identification strip: parsed from the subtitle, laid across the row.
 {
   const wb = await R.buildReportWorkbook(F.perClientMonth(), { now: NOW });

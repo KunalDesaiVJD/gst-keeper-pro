@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Checks the filter / sort / group / total rules of the document-list preview
-// (src/components/reports/views/documentLineItems/tableModel.ts), the view the
+// Checks the filter / sort / group / total rules of the table kit's pure model
+// (src/components/reports/views/tableKit/tableModel.ts): the document list the
 // GSTR-2A / 2B document reports, the rate-wise and supplier-wise reports and
-// the GSTR-1 family open in.
+// the GSTR-1 family open in, and every other report view built on the kit.
 //
 //   node scripts/verify-doc-table-model.mjs
 //
@@ -13,7 +13,15 @@
 // sort with blanks last; merged-period tables (bands, per-period TOTALs, the
 // Period filter); TOTAL rows never filtered away when nothing is filtered; the
 // layout's TOTAL detection; groups and subtotals; pages; the "filtered" export
-// table; and speed at 5,000 rows. Prints pass / fail; exits 1 on any failure.
+// table; a view's own (custom) filters; the column groups over the columns
+// shown; date-time stamps ordered by their moment; a report read top to bottom
+// (sorted within its sections, its own TOTAL kept as printed and nothing added
+// up, listed after a grouped or sorted view); a period of a merge that could
+// not be built (named in every mode, never counted); a helper column left out
+// of the search; balances never added across the periods of a merge; the shape
+// a merge takes; the hook itself under a stand-in React (its state keeps its
+// identity across a table refresh); and speed at 5,000 rows. Prints pass /
+// fail; exits 1 on any failure.
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -31,9 +39,9 @@ const alias = {
 const out = await build({
   stdin: {
     contents: `
-      export * from './src/components/reports/views/documentLineItems/tableModel';
+      export * from './src/components/reports/views/tableKit/tableModel';
       export { guessRowKind } from './src/lib/reportExport/layout';
-      export { mergeTables } from './src/lib/reportPeriodMerge';
+      export { mergeTables, buildForPeriods } from './src/lib/reportPeriodMerge';
     `,
     resolveDir: root, loader: 'ts',
   },
@@ -42,9 +50,86 @@ const out = await build({
 const M = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
 const F = await import(pathToFileURL(path.join(root, 'scripts', 'fixtures', 'reportExportFixtures.mjs')).href);
 
+// The hook (useTableKit) under a stand-in React: hooks kept in slots between
+// renders, a render repeated while it set state, no effects. Enough to see
+// what a re-render with a new table keeps; the exports and toasts are no-ops.
+const STUBS = {
+  react: `
+    let slots = []; let cursor = 0; let dirty = false;
+    export const __reset = () => { slots = []; };
+    export function __render(fn) {
+      for (let n = 0; n < 10; n++) { dirty = false; cursor = 0; const out = fn(); if (!dirty) return out; }
+      throw new Error('render loop');
+    }
+    const same = (a, b) => !!a && !!b && a.length === b.length && a.every((x, k) => Object.is(x, b[k]));
+    export function useState(init) {
+      const k = cursor++;
+      if (!(k in slots)) slots[k] = typeof init === 'function' ? init() : init;
+      return [slots[k], (v) => { const next = typeof v === 'function' ? v(slots[k]) : v; if (!Object.is(next, slots[k])) { slots[k] = next; dirty = true; } }];
+    }
+    export function useRef(init) { const k = cursor++; if (!(k in slots)) slots[k] = { current: init }; return slots[k]; }
+    export function useMemo(fn, deps) {
+      const k = cursor++;
+      if (slots[k] && same(slots[k].deps, deps)) return slots[k].value;
+      slots[k] = { value: fn(), deps };
+      return slots[k].value;
+    }
+    export const useCallback = (fn, deps) => useMemo(() => fn, deps);
+    export const useEffect = () => {};
+  `,
+  sonner: 'export const toast = { success() {}, error() {} };',
+  '@/utils/allClientsReports': 'export const renderReportToExcel = async () => {};',
+  '@/utils/closingBalanceReportsPdf': 'export const renderReportToPdf = async () => {};',
+};
+const stubsOf = (filter) => ({
+  name: 'stubs',
+  setup(b) {
+    b.onResolve({ filter }, (a) => ({ path: a.path, namespace: 'stub' }));
+    b.onLoad({ filter: /.*/, namespace: 'stub' }, (a) => ({ contents: STUBS[a.path], loader: 'js' }));
+  },
+});
+const hookOut = await build({
+  stdin: { contents: `export { useTableKit } from './src/components/reports/views/tableKit/useTableKit'; export { __render, __reset } from 'react';`, resolveDir: root, loader: 'ts' },
+  bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'error',
+  plugins: [stubsOf(/^(react|sonner|@\/utils\/allClientsReports|@\/utils\/closingBalanceReportsPdf)$/), alias],
+});
+const H = await import('data:text/javascript;base64,' + Buffer.from(hookOut.outputFiles[0].text).toString('base64'));
+
+// The kit's table drawn by the real React to static HTML (no effects run): what
+// a reviewer sees above and in the rows. `search` is typed in before the HTML.
+const ssrOut = await build({
+  stdin: {
+    contents: `
+      import React from 'react';
+      import { renderToStaticMarkup } from 'react-dom/server';
+      import { useTableKit } from './src/components/reports/views/tableKit/useTableKit';
+      import { TableKitTable } from './src/components/reports/views/tableKit/TableKitTable';
+      export const renderKit = (table, options, search = '') => {
+        const View = () => {
+          const kit = useTableKit(table, options);
+          if (search && kit.state.search !== search) kit.setSearch(search);
+          return React.createElement(TableKitTable, { kit });
+        };
+        return renderToStaticMarkup(React.createElement(View));
+      };
+    `,
+    resolveDir: root, loader: 'tsx',
+  },
+  bundle: true, format: 'esm', platform: 'node', write: false, jsx: 'automatic', logLevel: 'error',
+  plugins: [stubsOf(/^(sonner|@\/utils\/allClientsReports|@\/utils\/closingBalanceReportsPdf)$/), alias],
+  define: { 'process.env.NODE_ENV': '"production"' },
+  // React's server build requires Node's own modules; a data: URL cannot resolve them, the root can.
+  banner: { js: `import { createRequire as __cr } from 'node:module'; const require = __cr(${JSON.stringify(path.join(root, 'package.json'))});` },
+});
+const R = await import('data:text/javascript;base64,' + Buffer.from(ssrOut.outputFiles[0].text).toString('base64'));
+
 // ── Harness ─────────────────────────────────────────────────────────────────
 const results = [];
 const check = (group, name, cond, info = '') => results.push({ group, name, ok: !!cond, info: cond ? '' : String(info) });
+// A section that throws (a function missing, a field undefined) fails, it does not stop the run.
+const section = async (group, fn) => {
+  try { await fn(group); } catch (e) { check(group, 'runs without throwing', false, e?.stack ?? e); }
+};
 const near = (a, b) => Math.abs(a - b) < 0.005;
 const view = (patch = {}) => ({ ...M.EMPTY_VIEW, filters: {}, ...patch });
 const col = (model, header) => model.headers.indexOf(header);
@@ -173,6 +258,16 @@ const bm = M.buildModel(big);
   check(g, 'natural order (0.25% < 5% < 12% < 18%), blank last', rs.join(',') === '0.25%,5%,12%,18%,', rs.join(','));
   const rsd = M.sortRows(rate, rate.data, { col: 0, dir: 'desc' }).map((r) => r.cells[0]);
   check(g, 'blank last when descending too', rsd.join(',') === '18%,12%,5%,0.25%,', rsd.join(','));
+  // A ledger's Month column ("Apr 2026"): by the month, never alphabetically.
+  const mon = M.buildModel({
+    headers: ['Month', 'Type', 'IGST'],
+    rows: [['Aug 2026', 'Debit', 1], ['Apr 2026', 'Credit', 2], ['Jan 2027', 'Debit', 3], ['Jun 2026', 'Credit', 4], ['Apr 2026', 'Debit', 5]],
+  });
+  const ms = M.sortRows(mon, mon.data, { col: 0, dir: 'asc' }).map((r) => r.cells[0]);
+  check(g, 'month labels sort by the month (Apr 2026 < Jun 2026 < Aug 2026 < Jan 2027)', ms.join(',') === 'Apr 2026,Apr 2026,Jun 2026,Aug 2026,Jan 2027', ms.join(','));
+  const mf = M.facetValues(mon, view(), 0).map((v) => v.key);
+  const mg = M.groupRows(mon, mon.data, 0, null).map((x) => x.key);
+  check(g, '… and list and group in that order too', mf.join(',') === 'Apr 2026,Jun 2026,Aug 2026,Jan 2027' && mg.join(',') === mf.join(','), `${mf.join(',')} / ${mg.join(',')}`);
   const pcm = M.buildModel(F.perClientMonth());
   const pdfCol = col(pcm, 'PDF');
   const byLink = M.sortRows(pcm, pcm.data, { col: col(pcm, 'Taxable Value'), dir: 'asc' }).map((r) => r.cells[3]);
@@ -233,6 +328,11 @@ const bm = M.buildModel(big);
   check(g, 'sorted: the TOTAL over both periods still under the list', sorted.footer?.type === 'sum' && near(sorted.footer.sums.get(5), 67001));
   const byPeriod = M.buildView(m, view({ groupBy: m.periodCol }));
   check(g, 'grouped by Period: one group per period with its subtotal, no Period column', byPeriod.groups.length === 2 && byPeriod.groups[1].label === 'Aug 2026' && near(byPeriod.groups[1].sums.get(5), 33500.5) && !byPeriod.showPeriodColumn);
+  // August's subtotal is the larger, sorted both ways: the months stay Jul, Aug; the rows inside follow the sort.
+  const mk = (rows) => ({ title: 'T', subtitle: 'S', headers: ['Name', 'Amount'], rows: [...rows, ['TOTAL', rows.reduce((s, r) => s + r[1], 0)]], fileNameBase: 'T' });
+  const m2 = M.buildModel(M.mergeTables([mk([['A', 10], ['B', 20]]), mk([['C', 500], ['D', 1]])], ['07/2026', '08/2026']));
+  const months = (dir) => M.buildView(m2, view({ groupBy: m2.periodCol, sort: { col: 1, dir } })).groups.map((x) => `${x.label}:${x.rows.map((r) => r.cells[0]).join('')}`).join(',');
+  check(g, 'grouped by Period and sorted by a figure: months stay in calendar order', months('asc') === 'Jul 2026:AB,Aug 2026:DC' && months('desc') === 'Jul 2026:BA,Aug 2026:CD', `${months('asc')} / ${months('desc')}`);
   const sortPeriod = M.sortRows(m, m.data, { col: m.periodCol, dir: 'desc' });
   check(g, 'sorting by Period follows the bands, not the text', m.periods[sortPeriod[0].period].key === '08/2026');
   const exp = M.viewToReportTable(t, m, view({ sort: { col: 5, dir: 'asc' } }), new Set());
@@ -351,6 +451,382 @@ const bm = M.buildModel(big);
   const grouped = M.buildView(m, view({ groupBy: 0 })).groups.map((x) => x.label).join();
   check(g, 'groups by value', grouped === want, grouped);
 }
+
+// ── 11c. A view's own (custom) filters ─────────────────────────────────────
+{
+  const g = 'custom';
+  const sup = col(bm, 'Supplier Name');
+  const st = col(bm, 'Status');
+  const tv = col(bm, 'Taxable Value');
+  const rejected = { id: 'rej', label: 'Rejected in IMS only', test: (r) => r.cells[st] === 'Rejected in IMS' };
+  const byValues = M.applyFilters(bm, view({ filters: { [st]: { type: 'values', values: ['Rejected in IMS'] } } }));
+  const byCustom = M.applyFilters(bm, view({ custom: [rejected] }));
+  check(g, 'a custom filter narrows the rows like the column filter it mirrors', byCustom.length === byValues.length && byCustom.length > 0, `${byCustom.length} vs ${byValues.length}`);
+  const alphaRejected = big.rows.filter((r) => r[2] === 'Alpha Traders' && r[10] === 'Rejected in IMS').length;
+  const both = M.applyFilters(bm, view({ filters: { [sup]: { type: 'values', values: ['Alpha Traders'] } }, custom: [rejected] }));
+  check(g, 'ANDed with the column filters', both.length === alphaRejected, `${both.length} vs ${alphaRejected}`);
+  const counts = facet(bm, view({ custom: [rejected] }), sup);
+  check(g, 'value counts honour it (every column\'s, its own has none)', counts['Alpha Traders'] === alphaRejected, JSON.stringify(counts));
+  check(g, 'it counts as filtered: a TOTAL recomputed over the rows shown', M.isFiltered(view({ custom: [rejected] })) && M.buildView(bm, view({ custom: [rejected] })).footer?.label === 'TOTAL (filtered)' && near(M.buildView(bm, view({ custom: [rejected] })).footer.sums.get(tv), sumCol(byCustom, tv)));
+  check(g, 'no custom filter, or an empty list, is not filtered', !M.isFiltered(view()) && !M.isFiltered(view({ custom: [] })));
+  const chips = M.activeFilters(bm, view({ search: 'alpha', custom: [rejected] }));
+  check(g, 'a chip named by its label, after the search and the column filters', chips.length === 2 && chips[1].col === 'custom' && chips[1].id === 'rej' && chips[1].text === 'Rejected in IMS only', JSON.stringify(chips));
+  const exp = M.viewToReportTable(big, bm, view({ custom: [rejected] }), new Set());
+  check(g, 'the export strip names it and counts the rows it left', /Filter: Rejected in IMS only/.test(exp.subtitle) && exp.rowKinds.filter((k) => k === 'data').length === byCustom.length, exp.subtitle);
+}
+
+// ── 11d. Column groups over the columns shown, figure helpers ──────────────
+{
+  const g = 'kit';
+  const rec = F.reconciliation();
+  const rm = M.buildModel(rec);
+  const spans = (gs) => (gs ? gs.map((x) => `${x.label}:${x.span}${x.tone ? `:${x.tone}` : ''}`).join('|') : 'null');
+  const all = M.respanColumnGroups(rec, rm, rm.headers.map((_, c) => c));
+  check(g, 'every column shown: the report\'s own groups', spans(all) === 'Document:7|GSTR-2A:2|GSTR-2B:2|Difference (2B minus 2A):1:bad|Reconciliation:2', spans(all));
+  const some = M.respanColumnGroups(rec, rm, [1, 3, 5, 9, 10, 11, 12]);
+  check(g, 'hidden columns leave their group, a group with none shown goes, tones kept', spans(some) === 'Document:3|GSTR-2B:2|Difference (2B minus 2A):1:bad|Reconciliation:1', spans(some));
+  check(g, 'no groups, or groups not spanning the headers: null', M.respanColumnGroups(big, bm, [0, 1]) === null && M.respanColumnGroups({ columnGroups: [{ label: 'x', span: 2 }] }, rm, [0, 1]) === null);
+  const mt = F.merged(M.mergeTables);
+  const mm = M.buildModel(mt);
+  const mg = M.respanColumnGroups({ columnGroups: [{ label: 'Who', span: 3 }, { label: 'Figures', span: mm.headers.length - 3 }] }, mm, [mm.periodCol, 0, 1, 5]);
+  check(g, 'the Period column sits under a blank group', spans(mg) === ':1|Who:2|Figures:1', spans(mg));
+  const names = rm.columns.map((c) => c.name);
+  check(g, 'a short label shared by two columns names them by their full header', names[8] === '2A Total Tax' && names[10] === '2B Total Tax' && names[11] === 'Total Tax Difference (2B minus 2A)' && names[3] === 'Supplier name' && rm.columns[11].label === 'Total tax', names.join(' | '));
+  check(g, '… so a chip says which', M.describeFilter(rm, 11, { type: 'number', min: 1, max: null, nonZero: false }) === 'Total Tax Difference (2B minus 2A) at least 1.00', M.describeFilter(rm, 11, { type: 'number', min: 1, max: null }));
+  check(g, 'unique labels name the column as shown', bm.columns.every((c) => c.name === c.label));
+  const tv = col(bm, 'Taxable Value');
+  check(g, 'figure columns and their house style', M.isFigureColumn(bm, tv) && !M.isFigureColumn(bm, col(bm, 'Supplier Name')) && M.figureText(bm, tv, 123456.5) === '1,23,456.50' && M.figureText(bm, tv, -5) === '(5.00)', M.figureText(bm, tv, 123456.5));
+}
+
+// ── 11e. Date-time stamps (an upload log's Date/Time) order by their moment ─
+{
+  const g = 'stamps';
+  const t = {
+    headers: ['Version', 'Date/Time', 'Reason'],
+    rows: [
+      [1, '15/8/2026, 10:23:45 am', 'GSTIN invalid'],
+      [2, '2/9/2026, 9:05:00 am', 'Duplicate invoice'],
+      [3, '15/8/2026, 1:02:03 pm', 'Rate mismatch'],
+      [4, '—', 'No date'],
+      [5, '15/8/2026, 12:10:00 am', 'Past midnight'],
+    ],
+  };
+  const m = M.buildModel(t);
+  const dt = col(m, 'Date/Time');
+  check(g, 'the column stays text (the time is part of what it says)', m.columns[dt].kind === 'text', m.columns[dt].kind);
+  const asc = M.sortRows(m, m.data, { col: dt, dir: 'asc' }).map((r) => r.cells[0]).join(',');
+  check(g, 'oldest first: 12:10 am, 10:23 am, 1:02 pm on 15 Aug, then 2 Sep, blank last', asc === '5,1,3,2,4', asc);
+  const desc = M.sortRows(m, m.data, { col: dt, dir: 'desc' }).map((r) => r.cells[0]).join(',');
+  check(g, 'newest first, blank still last', desc === '2,3,1,5,4', desc);
+  const keys = M.facetValues(m, view(), dt).map((v) => v.key).filter((k) => k !== '—');
+  check(g, 'its value list runs in time order', keys.join(' | ') === '15/8/2026, 12:10:00 am | 15/8/2026, 10:23:45 am | 15/8/2026, 1:02:03 pm | 2/9/2026, 9:05:00 am', keys.join(' | '));
+  check(g, 'stampOf reads am / pm and rejects a plain date', M.stampOf('1/1/2026, 12:00:00 pm') === Date.UTC(2026, 0, 1, 12) && M.stampOf('01/01/2026') === null);
+  const said = M.describeSort(m, { col: dt, dir: 'desc' });
+  check(g, 'the export strip says "newest first", not "Z to A"', said === 'sorted by Date/Time, newest first', said);
+  check(g, 'a text column that is not all stamps still sorts A to Z', M.describeSort(m, { col: col(m, 'Reason'), dir: 'asc' }) === 'sorted by Reason, A to Z');
+}
+
+// ── 11f. A report read top to bottom (a return, a working paper) ───────────
+{
+  const g = 'top-down';
+  // Sections, a spacer and the return's own TOTAL, as the filed-return view lays them out.
+  const ret = {
+    title: 'Return', subtitle: 'Client: X', fileNameBase: 'Return_X',
+    headers: ['Table', 'Description', 'IGST', 'CGST'],
+    rows: [
+      ['Outward supplies', '', '', ''],
+      ['3.1(a)', 'Taxable', 100, 50],
+      ['3.1(b)', 'Zero rated', 300, 0],
+      ['3.1(d)', 'Reverse charge', 200, 10],
+      ['', '', '', ''],
+      ['Eligible ITC', '', '', ''],
+      ['4(A)', 'Available', 500, 40],
+      ['4(B)', 'Reversed', 0, 5],
+      ['', 'TOTAL', 1100, 105],
+    ],
+    rowKinds: ['section', 'data', 'data', 'data', 'blank', 'section', 'data', 'data', 'total'],
+  };
+  const base = M.buildModel(ret);
+  const rm = { ...base, sortWithinSections: true };
+  const igst = col(rm, 'IGST');
+  const cgst = col(rm, 'CGST');
+  const seq = (v) => v.items.map((it) => (it.type === 'data' ? it.row.cells[0] : it.type === 'section' ? `[${it.label}]` : it.type)).join(' ');
+  const sorted = M.buildView(rm, view({ sort: { col: igst, dir: 'desc' } }));
+  check(g, 'sorted within sections: each section\'s rows reordered under its own heading', seq(sorted) === '[Outward supplies] 3.1(b) 3.1(d) 3.1(a) blank [Eligible ITC] 4(A) 4(B)', seq(sorted));
+  check(g, '… the rows shown in that order, and the view says so', sorted.rows.map((r) => r.cells[0]).join(' ') === '3.1(b) 3.1(d) 3.1(a) 4(A) 4(B)' && sorted.sortedWithinSections === true, sorted.rows.map((r) => r.cells[0]).join(' '));
+  const flat = M.buildView(base, view({ sort: { col: igst, dir: 'desc' } }));
+  check(g, 'without the option a sort runs over every row, headings left out', seq(flat) === '4(A) 3.1(b) 3.1(d) 3.1(a) 4(B)' && !flat.sortedWithinSections, seq(flat));
+  const both = M.buildView(rm, view({ sort: { col: igst, dir: 'asc' }, filters: { [cgst]: { type: 'number', min: 1, max: null } } }));
+  check(g, 'filtered and sorted: headings kept for sections with rows, no spacer', seq(both) === '[Outward supplies] 3.1(a) 3.1(d) [Eligible ITC] 4(B) 4(A)', seq(both));
+  check(g, 'grouping still wins over sections', M.buildView(rm, view({ sort: { col: igst, dir: 'desc' }, groupBy: 0 })).items.every((it) => it.type !== 'section'));
+  const exp = M.viewToReportTable(ret, rm, view({ sort: { col: igst, dir: 'desc' } }), new Set());
+  check(g, 'the export keeps the headings and says the sort ran within each section', exp.rowKinds.filter((k) => k === 'section').length === 2 && /View: sorted by IGST, largest first within each section/.test(exp.subtitle), exp.subtitle);
+
+  // sums: false — the return's own TOTAL stands under a filter; nothing is added up.
+  const km = { ...rm, keepReportTotals: true, summable: [], columns: rm.columns.map((c) => ({ ...c, summable: false })) };
+  const kf = M.buildView(km, view({ filters: { [cgst]: { type: 'number', min: 20, max: null } } }));
+  check(g, 'filtered: the report\'s own TOTAL stays pinned, nothing recomputed', kf.footer?.type === 'total' && kf.footer.row.cells[2] === 1100 && !kf.items.some((it) => it.type === 'sum'), JSON.stringify(kf.footer));
+  const recomputed = M.buildView(rm, view({ filters: { [cgst]: { type: 'number', min: 20, max: null } } }));
+  check(g, '… where the default recomputes it over the rows shown', recomputed.footer?.type === 'sum' && recomputed.footer.sums.get(igst) === 600, JSON.stringify(recomputed.footer));
+  const kg = M.buildView(km, view({ groupBy: col(km, 'Description') }));
+  check(g, 'groups carry no subtotal', kg.groups?.length === 5 && kg.groups.every((x) => x.sums.size === 0) && kg.items.filter((it) => it.type === 'group').every((it) => it.sums.size === 0));
+  const kx = M.viewToReportTable(ret, km, view({ filters: { [cgst]: { type: 'number', min: 20, max: null } }, groupBy: col(km, 'Description') }), new Set());
+  check(g, 'the export: no subtotal rows, the TOTAL as printed, the strip says so', !kx.rowKinds.includes('subtotal') && kx.rowKinds[kx.rowKinds.length - 1] === 'total' && kx.rows[kx.rows.length - 1][2] === 1100 && /Totals: as printed for the whole report/.test(kx.subtitle), kx.subtitle);
+  const unf = M.viewToReportTable(ret, km, view(), new Set());
+  check(g, '… and unfiltered it says nothing about totals', !/Totals:/.test(unf.subtitle), unf.subtitle);
+
+  // Two periods of a working paper: each period's result stays in place.
+  const wp = (n) => ({
+    title: 'Working paper', subtitle: 'Client: X', fileNameBase: 'WP', headers: ['Step', 'Item', 'Amount'],
+    rows: [['1', 'Days late', n], ['2', 'Interest', n * 10], ['Result', 'TOTAL (Interest + Late Fee)', n * 10 + 5]],
+    rowKinds: ['data', 'data', 'total'],
+  });
+  const mt = M.mergeTables([wp(1), wp(0)], ['06/2025', '07/2025']);
+  const mbase = M.buildModel(mt);
+  const mk = { ...mbase, keepReportTotals: true, sortWithinSections: true, summable: [] };
+  const amt = col(mk, 'Amount');
+  const nz = M.buildView(mk, view({ filters: { [amt]: { type: 'number', min: null, max: null, nonZero: true } } }));
+  const totals = nz.items.filter((it) => it.type === 'total').map((it) => it.row.cells[2]);
+  check(g, 'merged, filtered: a period\'s own result kept in place; a period left empty shows none', totals.join(',') === '15' && nz.items.filter((it) => it.type === 'band').length === 1 && !nz.footer, JSON.stringify(totals));
+  const ms = M.buildView(mk, view({ sort: { col: amt, dir: 'desc' } }));
+  check(g, 'merged, sorted: still in period bands, no Period column', ms.showBands && !ms.showPeriodColumn && ms.items.filter((it) => it.type === 'band').length === 2 && ms.sortedWithinSections, JSON.stringify({ b: ms.showBands, p: ms.showPeriodColumn }));
+}
+
+// ── 11g. A period of a merge that could not be built ───────────────────────
+// buildForPeriods writes it as its band and one "Not built: <reason>" line. A
+// grouped, sorted or filtered view does not show that line, so the model names
+// the period (failedPeriods) for every mode, and nothing counts it as built.
+await section('not built', async (g) => {
+  const roster = (m) => ({
+    title: 'Interest Scrutiny', subtitle: `Period: ${m}`, meta: [{ label: 'Period', value: m }],
+    headers: ['Client', 'GSTIN', 'Days Late', 'Total Interest'],
+    rows: [['A Ltd', '24AAACA1111A1Z1', 5, 10], ['B Ltd', '24AAACB2222B1Z2', 3, 26], ['TOTAL', '', '', 36]],
+    fileNameBase: 'Interest_Scrutiny', columnWidths: [20, 18, 10, 14],
+  });
+  const report = { needs: 'month', build: async ({ month }) => { if (month === '05/2026') throw new Error('fetch failed'); return roster(month); } };
+  const t = await M.buildForPeriods(report, ['04/2026', '05/2026', '06/2026'], 'c');
+  const m = M.buildModel(t);
+  check(g, 'the failed period named with its reason', JSON.stringify(m.failedPeriods) === JSON.stringify([{ key: '05/2026', label: 'May 2026', reason: 'fetch failed' }]), JSON.stringify(m.failedPeriods));
+  check(g, 'its "Not built" line is never a document', m.data.length === 4 && m.data.every((r) => !/^Not built/.test(String(r.cells[0]))), m.data.length);
+  const amt = col(m, 'Total Interest');
+  const plain = M.buildView(m, view());
+  check(g, 'the footer counts only the periods built: TOTAL (2 periods)', plain.footer?.label === 'TOTAL (2 periods)' && near(plain.footer.sums.get(amt), 72), plain.footer?.label);
+  // The exceptions view opens a merge sorted by the amount and grouped by Period.
+  const st = view({ sort: { col: amt, dir: 'desc' }, groupBy: m.periodCol });
+  const grouped = M.buildView(m, st);
+  check(g, 'grouped and sorted: no May group (it has no rows), the footer still says 2 periods', grouped.groups.map((x) => x.label).join() === 'Apr 2026,Jun 2026' && grouped.footer?.label === 'TOTAL (2 periods)', grouped.footer?.label);
+  const ex = M.viewToReportTable(t, m, st, new Set());
+  check(g, 'the grouped export names the period not built, in the strip and the meta', /Not built: May 2026 \(fetch failed\)/.test(ex.subtitle) && ex.meta?.some((f) => f.label === 'Not built' && /May 2026/.test(f.value)), ex.subtitle);
+  const searched = M.viewToReportTable(t, m, view({ search: 'a ltd' }), new Set());
+  check(g, '… and a filtered one', /Not built: May 2026/.test(searched.subtitle), searched.subtitle);
+  const allBuilt = M.viewToReportTable(F.merged(M.mergeTables), M.buildModel(F.merged(M.mergeTables)), view(), new Set());
+  check(g, 'every period built: nothing said', !/Not built/.test(allBuilt.subtitle) && M.buildModel(F.merged(M.mergeTables)).failedPeriods.length === 0, allBuilt.subtitle);
+  // A two-column report (the interest calculator answers a month with no 3B so):
+  // its "Not built" line would read as a document by its shape alone.
+  const narrow = { title: 'Calc', subtitle: '', headers: ['Item', 'Value'], rows: [], fileNameBase: 'Calc', columnWidths: [30, 14] };
+  const t2 = await M.buildForPeriods({ needs: 'client+month', build: async ({ month }) => { if (month === '05/2026') throw new Error('no 3B'); return narrow; } }, ['04/2026', '05/2026'], 'c');
+  const m2 = M.buildModel(t2);
+  check(g, 'a two-column report: the line is not a document, the period is named', m2.data.length === 0 && m2.failedPeriods.length === 1 && m2.failedPeriods[0].reason === 'no 3B', `${m2.data.length} / ${JSON.stringify(m2.failedPeriods)}`);
+  const own = M.buildModel({ headers: ['Client', 'Amount'], rows: [], failedReason: 'query timed out' });
+  check(g, 'a table\'s own failedReason counts too', own.failedPeriods.length === 1 && own.failedPeriods[0].reason === 'query timed out', JSON.stringify(own.failedPeriods));
+});
+
+// ── 11h. The report's own TOTALs under grouping (sums: false) ──────────────
+// A return or working paper adds nothing up, so grouped or sorted across the
+// report each period's own TOTAL / Result is listed after the rows, as printed.
+await section('own totals kept', async (g) => {
+  const wp = (n) => ({
+    title: 'Working paper', subtitle: 'Client: X', fileNameBase: 'WP', headers: ['Step', 'Item', 'Amount'],
+    rows: [['1', 'Days late', n], ['2', 'Interest', n * 10], ['Result', 'TOTAL (Interest + Late Fee)', n * 10 + 5]],
+    rowKinds: ['data', 'data', 'total'],
+  });
+  const keep = (m) => ({ ...m, keepReportTotals: true, sortWithinSections: true, summable: [], columns: m.columns.map((c) => ({ ...c, summable: false })) });
+  const mt = M.mergeTables([wp(1), wp(2)], ['06/2025', '07/2025']);
+  const mk = keep(M.buildModel(mt));
+  const item = col(mk, 'Item');
+  const amt = col(mk, 'Amount');
+  const seq = (v) => v.items.map((it) => (it.type === 'band' ? `B:${it.key}${it.totalsOnly ? '*' : ''}` : it.type === 'total' ? `T:${it.row.cells[amt]}` : it.type[0])).join(' ');
+  const gv = M.buildView(mk, view({ groupBy: item }));
+  check(g, 'merged, grouped: each period\'s Result after the groups, under its band', seq(gv).endsWith('B:06/2025* T:15 B:07/2025* T:25') && gv.reportTotals?.length === 2, seq(gv));
+  const gx = M.viewToReportTable(mt, mk, view({ groupBy: item }), new Set());
+  const tot = gx.rows.filter((_, k) => gx.rowKinds[k] === 'total').map((r) => r[gx.headers.indexOf('Amount')]);
+  check(g, '… and in the export, the strip saying they are the report\'s own', tot.join() === '15,25' && gx.rowKinds.filter((k) => k === 'period').length === 2 && /Totals: the report's own, as printed for each period, listed after the rows/.test(gx.subtitle), `${tot.join()} | ${gx.subtitle}`);
+  const nz = M.buildView(mk, view({ groupBy: item, filters: { [amt]: { type: 'number', min: 20, max: null } } }));
+  check(g, 'grouped and filtered: a period the filter left empty shows none', seq(nz).endsWith('B:07/2025* T:25') && !seq(nz).includes('T:15'), seq(nz));
+  // A merged return sorted across its rows (no sections to sort within).
+  const ret = (n) => ({ title: 'GSTR-1 Summary', subtitle: 'x', fileNameBase: 'R', headers: ['Doc Type', 'Taxable Value', 'IGST'], rows: [['B2B', 100 * n, 18 * n], ['B2CL', 50 * n, 9 * n], ['TOTAL', 150 * n, 27 * n]] });
+  const rt = M.mergeTables([ret(1), ret(2)], ['04/2026', '05/2026']);
+  const rk = { ...keep(M.buildModel(rt)), sortWithinSections: false };
+  const sv = M.buildView(rk, view({ sort: { col: 1, dir: 'desc' } }));
+  const sk = sv.items.map((it) => it.type).join(',');
+  check(g, 'merged return, sorted: both periods\' TOTALs after the rows', sk === 'data,data,data,data,band,total,band,total' && !sv.footer, sk);
+  // A single period keeps its grand TOTAL pinned, grouped or not.
+  const one = keep(M.buildModel(ret(1)));
+  check(g, 'single period, grouped: the grand TOTAL stays pinned, nothing listed twice', M.buildView(one, view({ groupBy: 0 })).footer?.row?.cells[1] === 150 && !M.buildView(one, view({ groupBy: 0 })).reportTotals);
+  // A single period whose last TOTAL has a line after it (a PDF link): no grand TOTAL to pin.
+  const linked = keep(M.buildModel({ headers: ['Table', 'IGST', 'CGST'], rows: [['3.1(a)', 10, 5], ['3.1(b)', 20, 0], ['TOTAL', 30, 5], ['Filed Return PDF', 'https://x/y.pdf', '']] }));
+  const lv = M.buildView(linked, view({ groupBy: 0 }));
+  check(g, '… with no grand TOTAL, its TOTAL is listed after the groups', linked.grandTotal === null && lv.reportTotals?.length === 1 && lv.items[lv.items.length - 1].type === 'total', lv.items.map((it) => it.type).join());
+  // The default kit (sums on) is unchanged: a TOTAL over both periods.
+  const dm = M.buildModel(rt);
+  check(g, 'sums on: unchanged, the TOTAL over both periods and no list', M.buildView(dm, view({ groupBy: 0 })).footer?.label === 'TOTAL (2 periods)' && !M.buildView(dm, view({ groupBy: 0 })).reportTotals);
+});
+
+// ── 11i. A helper column left out of the search ────────────────────────────
+// The annual trend adds a hidden Quarter ("FY 2026-27 Q1 (Apr to Jun)") to its
+// rows: searched, "Jun 2026" would find April and May by it.
+await section('searchable', async (g) => {
+  const months = ['Apr', 'May', 'Jun', 'Jul'];
+  const t = {
+    title: 'Credit And Liability Statement', subtitle: 'x', fileNameBase: 'C', headers: ['Month', 'Total Liability', 'Quarter'],
+    rows: months.map((mo, k) => [`${mo} 2026`, 1000 * (k + 1), k < 3 ? 'FY 2026-27 Q1 (Apr to Jun)' : 'FY 2026-27 Q2 (Jul to Sep)']),
+  };
+  const m = M.buildModel(t);
+  const found = (model, q) => M.applyFilters(model, view({ search: q })).map((r) => r.cells[0]).join();
+  const s = M.withSearchable(m, [0, 1]);
+  check(g, 'with Quarter left out, "Jun 2026" finds June only', found(s, 'Jun 2026') === 'Jun 2026' && found(m, 'Jun 2026') === 'Apr 2026,May 2026,Jun 2026', `${found(s, 'Jun 2026')} (all columns: ${found(m, 'Jun 2026')})`);
+  check(g, '… figures still found as printed, the column\'s own filter untouched', found(s, '3,000.00') === 'Jun 2026' && M.applyFilters(s, view({ filters: { 2: { type: 'contains', text: 'Q2' } } })).length === 1);
+  const mt = M.buildModel(F.merged(M.mergeTables));
+  const noPeriod = M.withSearchable(mt, mt.headers.map((_, c) => c));
+  check(g, 'a merge\'s Period is searched unless left out', M.applyFilters(mt, view({ search: '08/2026' })).length === 3 && M.applyFilters(noPeriod, view({ search: '08/2026' })).length === 0);
+  check(g, 'the rows and the grand TOTAL are the same rows', s.data.length === m.data.length && s.grandTotal === m.grandTotal && s.rows.filter((r) => r.kind !== 'data').every((r, k) => r === m.rows.filter((x) => x.kind !== 'data')[k]));
+});
+
+// ── 11j. Balances never added across the periods of a merge ────────────────
+// A closing-balance roster (Suspended / Credit Ledger, all clients) over three
+// months: each month-end lists the same balances, so their sum is meaningless.
+await section('balances', async (g) => {
+  const sus = (m, alpha) => ({
+    title: 'Suspended Ledger — Closing Balance — All Clients', subtitle: `Month: ${m}`, fileNameBase: 'Sus',
+    headers: ['Sr No.', 'Client Name', 'GSTIN', 'CGST', 'SGST', 'IGST', 'TOTAL'],
+    rows: [[1, 'Alpha Traders', '24AAACA1111A1Z1', alpha, alpha, 0, 2 * alpha], [2, 'Beta Foods', '24AAACB2222B1Z2', 500, 500, 0, 1000]],
+    columnWidths: [6, 35, 18, 16, 16, 16, 16],
+  });
+  // Picked out of calendar order: the latest is June, though its band is not last.
+  const t = M.mergeTables([sus('Apr 2026', 1000), sus('Jun 2026', 1200), sus('May 2026', 1000)], ['04/2026', '06/2026', '05/2026']);
+  const base = M.buildModel(t);
+  const m = { ...base, acrossPeriods: 'latest' };
+  const TOT = col(m, 'TOTAL');
+  const tile = (model, st) => { const r = M.columnTotals(model, M.buildView(model, st)); return { asAt: r.asAt, ...Object.fromEntries(r.totals.map((x) => [model.headers[x.col], [x.total, x.shown]])) }; };
+  const plain = tile(m, view());
+  check(g, 'tiles: the latest period\'s balances, as at June', plain.asAt === 'Jun 2026' && plain.TOTAL[0] === 3400 && plain.CGST[0] === 1700 && plain.TOTAL[1] === null, JSON.stringify(plain));
+  check(g, '… where by default they are added across the months', tile(base, view()).TOTAL[0] === 9400 && tile(base, view()).asAt === null, JSON.stringify(tile(base, view())));
+  const alpha = M.buildView(m, view({ search: 'alpha' }));
+  const at = tile(m, view({ search: 'alpha' }));
+  check(g, 'searched: the latest month\'s rows shown, no cross-period TOTAL (filtered)', at.TOTAL[1] === 2400 && at.TOTAL[0] === 3400 && alpha.footer === null, `${JSON.stringify(at)} ${JSON.stringify(alpha.footer)}`);
+  const apr = M.buildView(m, view({ filters: { [m.periodCol]: { type: 'values', values: ['04/2026'] } } }));
+  check(g, 'one period shown: its own TOTAL, as at that period', apr.items.some((it) => it.type === 'band') && tile(m, view({ filters: { [m.periodCol]: { type: 'values', values: ['04/2026'] } } })).asAt === 'Apr 2026' && apr.footer?.label === 'TOTAL (04/2026, filtered)' && apr.footer.sums.get(TOT) === 3000, JSON.stringify(apr.footer));
+  const byClient = M.buildView(m, view({ groupBy: col(m, 'Client Name') }));
+  check(g, 'grouped by client: no subtotal (a balance added to itself)', byClient.groups.every((x) => x.sums.size === 0), JSON.stringify(byClient.groups.map((x) => [...x.sums])));
+  const byPeriod = M.buildView(m, view({ groupBy: m.periodCol }));
+  check(g, 'grouped by Period: each month\'s subtotal across clients kept', byPeriod.groups.map((x) => x.sums.get(TOT)).join() === '3000,3400,3000', byPeriod.groups.map((x) => x.sums.get(TOT)).join());
+  const ex = M.viewToReportTable(t, m, view({ groupBy: col(m, 'Client Name') }), new Set());
+  check(g, 'the export: no subtotal, tiles and strip as at June', !ex.rowKinds.includes('subtotal') && /Totals: as at Jun 2026/.test(ex.subtitle) && ex.kpis.some((k) => k.label === 'TOTAL as at Jun 2026' && k.value === '3,400.00'), `${ex.subtitle} ${JSON.stringify(ex.kpis)}`);
+  const withTotals = { ...M.buildModel(F.merged(M.mergeTables)), acrossPeriods: 'latest' };
+  check(g, 'a merge with its own TOTALs: no TOTAL (n periods)', M.buildView(withTotals, view()).footer === null && M.buildView(M.buildModel(F.merged(M.mergeTables)), view()).footer?.label === 'TOTAL (2 periods)');
+  const single = M.buildModel(sus('Jun 2026', 1200));
+  const one = { ...single, acrossPeriods: 'latest' };
+  check(g, 'unmerged: unchanged (balances across clients at one date add up)', JSON.stringify(tile(one, view({ search: 'alpha' }))) === JSON.stringify(tile(single, view({ search: 'alpha' }))) && tile(one, view()).asAt === null && M.buildView(one, view({ search: 'alpha' })).footer?.label === 'TOTAL (filtered)');
+});
+
+// ── 11k. The shape a merge takes ───────────────────────────────────────────
+// A builder may answer an empty month with fewer columns; the merge takes its
+// headers from the first period built with rows, so no row is cut short.
+await section('merge shape', async (g) => {
+  const empty = { title: 'Calc', subtitle: 'Apr', headers: ['Item', 'Value'], rows: [], fileNameBase: 'Calc', columnWidths: [34, 20] };
+  const full = { title: 'Calc', subtitle: 'Jun', headers: ['Item', 'IGST', 'CGST', 'SGST'], rows: [['Interest by head', 30, 20, 20], ['TOTAL', 30, 20, 20]], fileNameBase: 'Calc', columnWidths: [34, 14, 14, 14] };
+  const t = M.mergeTables([empty, empty, full], ['04/2026', '05/2026', '06/2026']);
+  check(g, 'headers and widths from the first period with rows', t.headers.join() === 'Item,IGST,CGST,SGST' && t.columnWidths.join() === '34,14,14,14', t.headers.join());
+  check(g, 'with no rows anywhere, the first built', M.mergeTables([empty, { ...empty, headers: ['A', 'B', 'C'] }], ['04/2026', '05/2026']).headers.join() === 'Item,Value');
+  const report = { needs: 'client+month', build: async ({ month }) => (month === '05/2026' ? Promise.reject(new Error('timeout')) : month === '04/2026' ? empty : full) };
+  const b = await M.buildForPeriods(report, ['04/2026', '05/2026', '06/2026'], 'c');
+  const line = b.rows.find((r) => /^Not built/.test(String(r[0])));
+  check(g, 'a failed period\'s line is as wide as the merge', b.headers.length === 4 && line?.length === 4, JSON.stringify(line));
+});
+
+// ── 11l. The hook: what a re-render with a new table keeps ─────────────────
+await section('hook', async (g) => {
+  const t1 = {
+    title: 'Notices', subtitle: 'x', fileNameBase: 'N', headers: ['Reference', 'Amount'], columnWidths: [20, 14],
+    rows: [['N-1', 100], ['N-2', 200], ['N-3', 300]],
+    rowFlags: [{ overdue: true, dueIn7: false }, { overdue: false, dueIn7: false }, { overdue: true, dueIn7: false }],
+  };
+  let table = t1;
+  let opts = { resetKey: 'notices' };
+  const use = () => H.useTableKit(table, opts);
+  H.__reset();
+  let kit = H.__render(use);
+  kit.setCustomFilter('overdue', { label: 'Overdue', test: (r, tb) => !!tb.rowFlags?.[r.i]?.overdue });
+  kit = H.__render(use);
+  const before = kit.state;
+  check(g, 'a quick filter narrows the rows', kit.view.rows.map((r) => r.cells[0]).join() === 'N-1,N-3');
+  // An inline edit (or a Pull refresh): the same report, a new table object.
+  table = { ...t1, rows: t1.rows.map((r) => [...r]), rowFlags: [{ overdue: true, dueIn7: false }, { overdue: true, dueIn7: false }, { overdue: false, dueIn7: false }] };
+  kit = H.__render(use);
+  check(g, 'a new table keeps the state\'s identity (no jump back to the top)', kit.state === before);
+  check(g, '… and the quick filter reads the new table', kit.view.rows.map((r) => r.cells[0]).join() === 'N-1,N-2', kit.view.rows.map((r) => r.cells[0]).join());
+  kit.setSearch('n-2');
+  kit = H.__render(use);
+  check(g, 'a choice of the reviewer\'s does change it', kit.state !== before && kit.view.rows.length === 1);
+
+  // searchable and acrossPeriods through the hook; the model kept across renders.
+  const months = ['Apr', 'May', 'Jun'];
+  table = { title: 'Trend', subtitle: 'x', fileNameBase: 'T', headers: ['Month', 'Total Liability', 'Quarter'], columnWidths: [12, 14, 20], rows: months.map((mo, k) => [`${mo} 2026`, 1000 * (k + 1), 'FY 2026-27 Q1 (Apr to Jun)']) };
+  opts = { resetKey: 'trend', searchable: (c) => c.header !== 'Quarter' };
+  H.__reset();
+  kit = H.__render(use);
+  const firstModel = kit.model;
+  kit.setSearch('Jun 2026');
+  kit = H.__render(use);
+  check(g, 'searchable: "Jun 2026" finds June only; an inline test does not rebuild the model', kit.view.rows.map((r) => r.cells[0]).join() === 'Jun 2026' && kit.model === firstModel, kit.view.rows.map((r) => r.cells[0]).join());
+
+  const sus = (m, a) => ({ title: 'Sus', subtitle: m, fileNameBase: 'S', headers: ['Client Name', 'CGST', 'TOTAL'], columnWidths: [20, 14, 14], rows: [['Alpha', a, a], ['Beta', 500, 500]] });
+  table = M.mergeTables([sus('Apr', 1000), sus('May', 1200)], ['04/2026', '05/2026']);
+  opts = { resetKey: 'sus', acrossPeriods: 'latest' };
+  H.__reset();
+  kit = H.__render(use);
+  check(g, 'acrossPeriods latest: tiles as at May, the latest month\'s balances', kit.totalsAsAt === 'May 2026' && kit.totals.find((x) => x.col === 2)?.total === 1700, `${kit.totalsAsAt} ${JSON.stringify(kit.totals)}`);
+  opts = { resetKey: 'sus2' };
+  H.__reset();
+  kit = H.__render(use);
+  check(g, '… by default added up, as before', kit.totalsAsAt === null && kit.totals.find((x) => x.col === 2)?.total === 3200, JSON.stringify(kit.totals));
+
+  table = await M.buildForPeriods({ needs: 'month', build: async ({ month }) => { if (month === '05/2026') throw new Error('fetch failed'); return sus(month, 1000); } }, ['04/2026', '05/2026'], 'c');
+  opts = { resetKey: 'failed' };
+  H.__reset();
+  kit = H.__render(use);
+  check(g, 'kit.failedPeriods names the period not built', kit.failedPeriods?.length === 1 && kit.failedPeriods[0].label === 'May 2026', JSON.stringify(kit.failedPeriods));
+});
+
+// ── 11m. The table as drawn ────────────────────────────────────────────────
+await section('drawn', async (g) => {
+  const roster = (m) => ({
+    title: 'Interest Scrutiny', subtitle: `Period: ${m}`, fileNameBase: 'IS', columnWidths: [20, 10, 14],
+    headers: ['Client', 'Days Late', 'Total Interest'],
+    rows: [['A Ltd', 5, 10], ['B Ltd', 3, 26], ['C Ltd', 1, 4], ['TOTAL', '', 40]],
+  });
+  const t = await M.buildForPeriods({ needs: 'month', build: async ({ month }) => { if (month === '05/2026') throw new Error('fetch failed'); return roster(month); } }, ['04/2026', '05/2026', '06/2026'], 'c');
+  const note = (html) => html.includes('May 2026 was not built') && html.includes('fetch failed');
+  const modes = {
+    flat: [{ resetKey: 'x' }],
+    sorted: [{ resetKey: 'x', initialSort: { col: 2, dir: 'desc' } }],
+    grouped: [{ resetKey: 'x', initialSort: { col: 2, dir: 'desc' }, initialGroupBy: 3 }],
+    filtered: [{ resetKey: 'x' }, 'b ltd'],
+    paged: [{ resetKey: 'x', pageThreshold: 2, initialPageSize: 3 }],
+  };
+  for (const [mode, [options, search]] of Object.entries(modes)) {
+    const html = R.renderKit(t, options, search);
+    check(g, `${mode}: the period not built is named above the rows`, note(html) && html.indexOf('was not built') < html.indexOf('<table'), html.slice(0, 300));
+  }
+  check(g, 'every period built: no note', !R.renderKit(M.mergeTables([roster('04/2026'), roster('06/2026')], ['04/2026', '06/2026']), { resetKey: 'y' }).includes('not built'));
+  const wp = (n) => ({
+    title: 'Working paper', subtitle: 'Client: X', fileNameBase: 'WP', headers: ['Step', 'Item', 'Amount'], columnWidths: [8, 30, 14],
+    rows: [['1', 'Days late', n], ['2', 'Interest', n * 10], ['Result', 'TOTAL (Interest + Late Fee)', n * 10 + 5]],
+    rowKinds: ['data', 'data', 'total'],
+  });
+  const html = R.renderKit(M.mergeTables([wp(1), wp(2)], ['06/2025', '07/2025']), { resetKey: 'wp', sums: false, sortWithinSections: true, groupable: [1], initialGroupBy: 1 });
+  check(g, 'a working paper grouped: every period\'s Result drawn after the groups', html.includes('its own TOTAL, as printed') && html.includes('15.00') && html.includes('25.00'), html.slice(-600));
+});
 
 // ── 12. Speed ──────────────────────────────────────────────────────────────
 {

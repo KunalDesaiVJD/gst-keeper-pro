@@ -30,12 +30,23 @@ export const mergeRows = (blocks: (string | number)[][][], periods: string[], co
 };
 
 /**
+ * The table a merge takes its shape from (headers, widths, column groups, its
+ * own merge): the first period that was built and has rows. A builder may
+ * answer an empty month with fewer columns (the interest calculator's
+ * ['Item', 'Value'] when a month has no GSTR-3B), and a merge shaped by it
+ * would cut the other months' rows to that width. Else the first built, else
+ * the first.
+ */
+const templateOf = (tables: ReportTable[]): ReportTable =>
+  tables.find((t) => !t.failedReason && t.rows.length > 0) ?? tables.find((t) => !t.failedReason) ?? tables[0];
+
+/**
  * Several periods' tables as one (see the header comment). A table with
  * subtitleParts keeps only the common part in the merged subtitle; each
  * period's own part (its "as of" dates) leads that period's notes.
  */
 export const mergeTables = (tables: ReportTable[], list: string[]): ReportTable => {
-  const first = tables.find((t) => !t.failedReason) ?? tables[0];
+  const first = templateOf(tables);
   // A report that knows how to combine its own months (a reconciliation
   // recomputing its summaries) does so.
   if (first.merge) return first.merge(tables, list);
@@ -120,10 +131,12 @@ export const buildForPeriods = async (
   if (list.length === 1) return report.build({ month: list[0], clientId });
 
   const settled = await Promise.allSettled(list.map((p) => report.build({ month: p, clientId })));
-  const built = settled.find((s): s is PromiseFulfilledResult<ReportTable> => s.status === 'fulfilled');
-  if (!built) {
+  const built = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
+  if (!built.length) {
     throw new Error(settled.map((s, i) => `${list[i]}: ${messageOf((s as PromiseRejectedResult).reason)}`).join('  '));
   }
-  const tables = settled.map((s) => (s.status === 'fulfilled' ? s.value : failedTable(built.value, messageOf(s.reason))));
+  // A failed period's block takes the merge's own shape (its "Not built" line as wide as the rest).
+  const template = templateOf(built);
+  const tables = settled.map((s) => (s.status === 'fulfilled' ? s.value : failedTable(template, messageOf(s.reason))));
   return mergeTables(tables, list);
 };
