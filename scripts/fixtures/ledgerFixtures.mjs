@@ -74,9 +74,10 @@ export const cashFy2027 = () => {
 };
 
 /**
- * A day the balances cannot order: the deposits' balances carry interest the
- * tax heads do not (as the portal's tot_rng_bal does), so nothing chains. The
- * fallback lists the credits first, as stored, then the debit.
+ * A day the balances do not settle: the first deposit's balance carries
+ * interest the tax heads do not (as the portal's tot_rng_bal does), so it
+ * chains from nothing. The rest chain only in the true order, so that order
+ * fits the balances best whatever order the rows are stored in.
  */
 export const cashUnchained = () => {
   const r = reg('cash-2');
@@ -86,6 +87,60 @@ export const cashUnchained = () => {
     r('08/2026', '2026-08-15', 'Amount deposited CPIN 26080002', false, { igst: 200 }, 1250),
     r('08/2026', '2026-08-15', 'Other than reverse charge (Aug)', true, { igst: 1000 }, 250),
     r('08/2026', null, 'Closing Balance', null, {}, 250),
+  ];
+};
+
+/**
+ * Two shapes of real days the balances do not settle (made-up figures). One
+ * entry's balance carries interest, a fee or other amounts the stored tax
+ * heads leave out, so it chains to nothing; the rest chain only in the true
+ * order, which is the order the pull stores them in.
+ *  - cashLateDeposit: a deposit after the day's set-offs, its balance carrying
+ *    a fee ("credits first" put it ahead of the set-offs it followed);
+ *  - cashTransferPair: a transfer out and back (PMT-09) before the day's
+ *    deposit and set-offs, the transfer out carrying interest ("credits
+ *    first" put the transfer back ahead of the transfer out). The deposit
+ *    chains from the balance before the day too.
+ */
+export const cashLateDeposit = () => {
+  const r = reg('cash-3');
+  return [
+    r('08/2026', null, 'Opening Balance', null, {}, 0),
+    r('08/2026', '2026-08-18', 'Amount deposited CPIN 26080011', false, { igst: 40000 }, 40000),
+    r('08/2026', '2026-08-18', 'Other than reverse charge (Aug)', true, { igst: 39000 }, 1000),
+    r('08/2026', '2026-08-18', 'Reverse charge (Aug)', true, { cgst: 500, sgst: 500 }, 0),
+    r('08/2026', '2026-08-18', 'Amount deposited CPIN 26080012', false, { igst: 12000 }, 14000),
+    r('08/2026', null, 'Closing Balance', null, {}, 14000),
+  ];
+};
+export const cashTransferPair = () => {
+  const r = reg('cash-4');
+  return [
+    r('06/2026', null, 'Opening Balance', null, {}, 50000),
+    r('06/2026', '2026-06-19', 'TDS Credit', false, { igst: 1000 }, 51000),
+    r('06/2026', '2026-06-20', 'Transfer out (PMT-09)', true, { igst: 48000 }, 300),
+    r('06/2026', '2026-06-20', 'Transfer in (PMT-09)', false, { cgst: 25350, sgst: 25350 }, 51000),
+    r('06/2026', '2026-06-20', 'Amount deposited CPIN 26060021', false, { igst: 100000 }, 151000),
+    r('06/2026', '2026-06-20', 'Other than reverse charge (Jun)', true, { igst: 150500 }, 500),
+    r('06/2026', '2026-06-20', 'Reverse charge (Jun)', true, { cgst: 250, sgst: 250 }, 0),
+    r('06/2026', null, 'Closing Balance', null, {}, 0),
+  ];
+};
+
+/**
+ * One day of `n` deposits, each balance carrying a fee its tax head leaves
+ * out, so none chains; their balances still only rise in the true order.
+ */
+export const cashFeeDeposits = (n) => {
+  const r = reg('cash-5');
+  let bal = 0;
+  return [
+    r('09/2026', null, 'Opening Balance', null, {}, 0),
+    ...Array.from({ length: n }, (_, k) => {
+      bal += 1000 + k * 10 + 5;
+      return r('09/2026', '2026-09-20', `Amount deposited CPIN 260900${String(k + 1).padStart(2, '0')}`, false, { igst: 1000 + k * 10 }, bal);
+    }),
+    r('09/2026', null, 'Closing Balance', null, {}, bal),
   ];
 };
 
@@ -110,7 +165,7 @@ export const liabilityFy2026 = () => {
   ];
 };
 
-/** Two entries of one day that chain both ways (no opening, no closing): the fallback, debits first. */
+/** Two entries of one day that chain both ways (no opening, no closing): not guessed, kept as stored. */
 export const liabilityAmbiguous = () => {
   const r = reg('liab-2');
   return [

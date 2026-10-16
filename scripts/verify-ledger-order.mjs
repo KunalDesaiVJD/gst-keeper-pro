@@ -13,8 +13,11 @@
 //     ledger: a credit adds; the liability register: a debit adds, found from
 //     its own rows); the credit ledger's by the portal's serial number in its
 //     row text, else by the balances in it;
-//   - a day no unique chain orders: the entries that add to the balance first,
-//     then as stored, and the subtitle names the day;
+//   - a day no unique chain orders (a balance carrying interest or a fee the
+//     tax heads leave out): the order the balances fit best, else as stored
+//     (the pull stores the portal's own order); real shapes where "credits
+//     first" was wrong; a day too long to search kept as stored; the subtitle
+//     names the day;
 //   - every row once: none lost, none repeated;
 //   - every row names its month (a Month column), the balance rows too;
 //   - the view: each month's balances in place in the ledger's own order, the
@@ -170,25 +173,58 @@ await run('cash ledger', async (g) => {
   check(g, "May's day opens with a debit, as its balances prove (credits first would be wrong)", may === ',Debit,Credit,Debit,', may);
 });
 
-// ── 3. A day that does not chain: the fallback, stable, and named ───────────
-await run('cash ledger, fallback', async (g) => {
+// ── 3. A day the balances do not settle: as stored unless they fit better ───
+const dayOf = (t) => t.rows.filter((r) => /^\d{4}-/.test(r[1])).map((r) => r[2]);
+const NOTE_RE = (day) => new RegExp(`Same-day order: 1 day .*${day}.*listed as the portal gave them unless the balances fit another order better`);
+await run('cash ledger, a day the balances do not settle', async (g) => {
   const truth = F.cashUnchained();
   let ok = 0;
   let detail = '';
   for (const seed of SEEDS) {
-    const stored = F.shuffled(truth, seed);
-    serve('gst_cash_ledger_entries', stored);
+    serve('gst_cash_ledger_entries', F.shuffled(truth, seed));
     const t = await M.buildCashLedgerReport('cash-2', '08/2026');
-    const day = t.rows.filter((r) => /^\d{4}-/.test(r[1]));
-    const credits = stored.filter((r) => r.is_debit === false).map((r) => r.description);
     const good = t.rows.length === truth.length
       && t.rows[0][2] === 'Opening Balance' && t.rows[t.rows.length - 1][2] === 'Closing Balance'
-      && sameList(day.map((r) => r[2]), [...credits, 'Other than reverse charge (Aug)'])
-      && /Same-day order: 1 day .*15-Aug-2026.*credits first, then as stored/.test(t.subtitle);
+      && sameList(dayOf(t), truth.filter((r) => r.entry_date).map((r) => r.description))
+      && NOTE_RE('15-Aug-2026').test(t.subtitle);
     if (good) ok += 1;
     else if (!detail) detail = `seed ${seed}: ${t.rows.map((r) => r[2]).join(' / ')} | ${t.subtitle}`;
   }
-  check(g, 'credits first in their stored order, then the debit; nothing lost; the subtitle names the day', ok === SEEDS.length, detail);
+  check(g, `the order the balances fit best (the true one) from ${SEEDS.length} stored orders; nothing lost; the subtitle names the day`, ok === SEEDS.length, detail);
+
+  for (const [name, make, client, month, day] of [
+    ['a deposit after the set-offs (its balance carries a fee)', F.cashLateDeposit, 'cash-3', '08/2026', '18-Aug-2026'],
+    ['a transfer out and back before the deposit (the transfer out carries interest)', F.cashTransferPair, 'cash-4', '06/2026', '20-Jun-2026'],
+  ]) {
+    const want = make().filter((r) => r.entry_date).map((r) => r.description);
+    serve('gst_cash_ledger_entries', make());
+    const kept = await M.buildCashLedgerReport(client, month);
+    check(g, `${name}: stored in the portal's order, kept (credits first was wrong); named in the subtitle`,
+      sameList(dayOf(kept), want) && NOTE_RE(day).test(kept.subtitle), `${dayOf(kept).join(' / ')} | ${kept.subtitle}`);
+    let mended = 0;
+    for (const seed of SEEDS) {
+      serve('gst_cash_ledger_entries', F.shuffled(make(), seed));
+      if (sameList(dayOf(await M.buildCashLedgerReport(client, month)), want)) mended += 1;
+    }
+    check(g, `… and from ${SEEDS.length} other stored orders, put back in it by the balances`, mended === SEEDS.length, `${mended}/${SEEDS.length}`);
+  }
+
+  // Twelve deposits that each carry a fee: no chain, but only one order in which every balance rises.
+  const twelve = F.cashFeeDeposits(12);
+  const t0 = Date.now();
+  let rose = 0;
+  for (const seed of SEEDS.slice(0, 10)) {
+    serve('gst_cash_ledger_entries', F.shuffled(twelve, seed));
+    if (sameList(dayOf(await M.buildCashLedgerReport('cash-5', '09/2026')), twelve.filter((r) => r.entry_date).map((r) => r.description))) rose += 1;
+  }
+  const ms = Date.now() - t0;
+  check(g, 'twelve deposits of one day, none chaining: each moving the balance its way, from 10 stored orders, in under 5 s', rose === 10 && ms < 5000, `${rose}/10 in ${ms} ms`);
+  // Past the search's reach a day keeps its stored order rather than hold the report up.
+  const long = F.cashFeeDeposits(14);
+  const stored = F.shuffled(long, 11);
+  serve('gst_cash_ledger_entries', stored);
+  const tl = await M.buildCashLedgerReport('cash-5', '09/2026');
+  check(g, 'fourteen such deposits: kept as stored, and named', sameList(dayOf(tl), stored.filter((r) => r.entry_date).map((r) => r.description)) && NOTE_RE('20-Sep-2026').test(tl.subtitle), dayOf(tl).join(' / '));
 });
 
 // ── 4. Liability register: its convention found from its own rows ───────────
@@ -210,10 +246,11 @@ await run('liability ledger', async (g) => {
   const amb = F.liabilityAmbiguous();
   let stable = 0;
   for (const seed of SEEDS) {
-    const r = M.orderRegisterRows(F.shuffled(amb, seed), M.LIABILITY_ORDER);
-    if (r.lines.length === 2 && r.lines[0].row.is_debit === true && r.unsettled.length === 1 && r.unsettled[0].date === '2026-08-20') stable += 1;
+    const stored = F.shuffled(amb, seed);
+    const r = M.orderRegisterRows(stored, M.LIABILITY_ORDER);
+    if (r.lines.length === 2 && r.lines[0].row === stored[0] && r.lines[1].row === stored[1] && r.unsettled.length === 1 && r.unsettled[0].date === '2026-08-20') stable += 1;
   }
-  check(g, 'a day that chains both ways is not guessed: the fallback, the liability (debit) first, and it is reported', stable === SEEDS.length, `${stable}/${SEEDS.length}`);
+  check(g, 'a day that chains both ways is not guessed: kept as stored, and reported', stable === SEEDS.length, `${stable}/${SEEDS.length}`);
 });
 
 // ── 5. Credit ledger transaction detail ─────────────────────────────────────

@@ -127,16 +127,27 @@ export const mergeTables = (tables: ReportTable[], list: string[]): ReportTable 
  * subtitle names its own year, and the merge keeps the first one's, so the
  * view and the Excel / PDF strip would say "FY 2025-26" over a table holding
  * FY 2026-27 too: that segment (or a Financial year meta field) lists every
- * year merged instead.
+ * year merged instead. A year's own word (a ledger's "Same-day order: …", a
+ * statement "NOT PULLED") is a segment the other years' subtitles do not
+ * carry: it is kept, named by its year ("FY 2026-27: …"), rather than lost
+ * with every subtitle but the first or shown as if it spoke for every year.
+ * A year that could not be built says so in its own block, not here.
  */
-const namingEveryYear = (table: ReportTable, years: string[]): ReportTable => {
+const SUBTITLE_SEP = '   |   ';
+const namingEveryYear = (merged: ReportTable, tables: ReportTable[], years: string[]): ReportTable => {
   const all = years.join(', ');
-  const SEP = '   |   ';
-  return {
-    ...table,
-    subtitle: table.subtitle.split(SEP).map((seg) => (years.includes(seg.trim()) ? all : seg)).join(SEP),
-    ...(table.meta ? { meta: table.meta.map((f) => (/^(fy|financial year)$/i.test(f.label.trim()) ? { ...f, value: all } : f)) } : {}),
-  };
+  const meta = merged.meta ? { meta: merged.meta.map((f) => (/^(fy|financial year)$/i.test(f.label.trim()) ? { ...f, value: all } : f)) } : {};
+  const template = templateOf(tables);
+  // A report combining its own years (a merge hook) words its own subtitle.
+  if (template.merge) {
+    return { ...merged, subtitle: merged.subtitle.split(SUBTITLE_SEP).map((seg) => (years.includes(seg.trim()) ? all : seg)).join(SUBTITLE_SEP), ...meta };
+  }
+  const segments = (t: ReportTable): string[] => (t.subtitleParts?.common ?? t.subtitle).split(SUBTITLE_SEP).map((seg) => seg.trim()).filter(Boolean);
+  const built = tables.flatMap((t, i) => (t.failedReason ? [] : [{ year: years[i], own: segments(t) }]));
+  const shared = (seg: string): boolean => years.includes(seg) || built.every((b) => b.own.includes(seg));
+  const common = segments(template).filter(shared).map((seg) => (years.includes(seg) ? all : seg));
+  const perYear = built.flatMap((b) => b.own.filter((seg) => !shared(seg)).map((seg) => `${b.year}: ${seg}`));
+  return { ...merged, subtitle: [...common, ...perYear, `${years.length} periods combined`].join(SUBTITLE_SEP), ...meta };
 };
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -199,5 +210,5 @@ export const buildForPeriods = async (
   const template = templateOf(built);
   const tables = settled.map((s) => (s.status === 'fulfilled' ? s.value : failedTable(template, messageOf(s.reason))));
   const merged = mergeTables(tables, list);
-  return wholeYears ? namingEveryYear(merged, list) : merged;
+  return wholeYears ? namingEveryYear(merged, tables, list) : merged;
 };

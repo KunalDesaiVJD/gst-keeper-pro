@@ -15,11 +15,16 @@
 //     balance plus or minus its amount. The portal's own serial number, where
 //     a row carries one (the credit ledger's row text does), settles it first:
 //     the portal printed the rows in that order, so it is a chain already;
-//   - a day the balances do not put in exactly one order keeps a stable
-//     fallback: the entries that add to the balance first (deposits before
-//     their use in the cash ledger, a liability before its discharge in the
-//     liability register), then the order the rows were stored in. Nothing
-//     is dropped or repeated: the result holds every line given, once.
+//   - a day the balances do not put in exactly one order (the cash ledger's
+//     balance is the portal's tot_rng_bal, which carries interest, fee and
+//     other amounts its tax heads do not, so a deposit with them chains to
+//     nothing) keeps the order the rows were stored in: the pull writes a
+//     month in the portal's own order, and the database hands it back that
+//     way. Only an order the balances fit strictly better replaces it: more
+//     entries chaining from the one before, then more moving the balance
+//     their own way. Never a rule like "credits first", which put a later
+//     deposit ahead of the set-off it followed. Nothing is dropped or
+//     repeated: the result holds every line given, once.
 // Pure (no Supabase, no React), so scripts/verify-ledger-order.mjs runs it under Node.
 
 export type LedgerRole = 'opening' | 'closing' | 'entry';
@@ -58,7 +63,7 @@ export interface LedgerOrder<T> {
   convention: BalanceConvention;
   /** Days with more than one entry whose order the serial numbers or the balances settled. */
   settled: number;
-  /** Days with more than one entry no unique chain orders: listed by the fallback. */
+  /** Days with more than one entry no unique chain orders: as stored, unless the balances fit another order better. */
   unsettled: UnsettledDay[];
 }
 
@@ -72,9 +77,12 @@ export interface LedgerOrderOptions {
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}/;
 const PERIOD_RE = /^(\d{1,2})\/(\d{4})$/;
 // A same-day group is searched for chains within these bounds; past them it
-// takes the fallback rather than hold the report up.
+// counts as unsettled (bestFit) rather than hold the report up.
 const SEARCH_BUDGET = 20000;
 const CHAIN_CAP = 8;
+// A day the balances do not settle is fitted over every order up to this
+// many entries (2^n × n² steps); a longer one keeps its stored order.
+const FIT_CAP = 12;
 
 /** 'MM/YYYY' as a month count (year × 12 + month), so periods order across years; anything else sorts last. */
 export const periodIndex = (period: string): number => {
@@ -154,10 +162,88 @@ function byChain<T>(
   return pick.length === 1 ? pick[0].map((i) => group[i]) : null;
 }
 
-/** The stable fallback: entries that add to the balance, then those that reduce it, then the rest; each as stored. */
-function fallback<T>(group: Stored<T>[], convention: BalanceConvention): Stored<T>[] {
-  const rank = (l: LedgerLine) => (l.isDebit === null ? 2 : signedAmount(l, convention) >= 0 ? 0 : 1);
-  return [...group].sort((a, b) => rank(a.line) - rank(b.line) || a.at - b.at);
+/**
+ * How well a step from the balance `prev` to entry `l` fits: 'chain' when its
+ * balance is `prev` plus its signed amount, 'way' when it at least moves the
+ * balance its own way (a deposit carrying interest the tax heads leave out
+ * rises by more than its amount, still upward), 'none' otherwise or unknown.
+ */
+const stepFit = (prev: number | null, l: LedgerLine, convention: BalanceConvention): 'chain' | 'way' | 'none' => {
+  if (prev === null || l.balance === null || !Number.isFinite(l.balance) || l.isDebit === null) return 'none';
+  if (near(l.balance, prev + signedAmount(l, convention))) return 'chain';
+  const adds = convention === 'debit-adds' ? l.isDebit : !l.isDebit;
+  const delta = l.balance - prev;
+  return (adds ? delta > -0.005 : delta < 0.005) ? 'way' : 'none';
+};
+
+/**
+ * An order's fit to the running balance, as one number: the steps that chain
+ * (the day's last balance reaching `end` counts as one), then the steps that
+ * at least move the balance their own way. A chain weighs more than every
+ * step of a day of n entries moving its way (n + 2 against at most n).
+ */
+const chainWeight = (n: number): number => n + 2;
+const fitOf = (k: 'chain' | 'way' | 'none', n: number): number => (k === 'chain' ? chainWeight(n) + 1 : k === 'way' ? 1 : 0);
+const endFit = (last: number | null, end: number | null, n: number): number =>
+  (last !== null && end !== null && near(last, end) ? chainWeight(n) : 0);
+
+function fitScore<T>(order: Stored<T>[], start: number | null, end: number | null, convention: BalanceConvention): number {
+  const n = order.length;
+  let score = 0;
+  let prev = start;
+  for (const s of order) {
+    score += fitOf(stepFit(prev, s.line, convention), n);
+    prev = s.line.balance;
+  }
+  return score + endFit(prev, end, n);
+}
+
+/**
+ * A day no unique chain orders. Its stored order is the portal's own (the
+ * pull writes a month as the portal lists it), so it stays unless another
+ * order fits the balances strictly better (fitScore): rows read back in some
+ * other order are then put right, and a day whose balances fit several
+ * orders as well is not guessed. Searched over every order by subsets (the
+ * best order ending in each entry, for each set of entries placed); a day of
+ * more than FIT_CAP entries keeps its stored order.
+ */
+function bestFit<T>(group: Stored<T>[], start: number | null, end: number | null, convention: BalanceConvention): Stored<T>[] {
+  const stored = [...group].sort((a, b) => a.at - b.at);
+  const n = stored.length;
+  if (n > FIT_CAP) return stored;
+  const full = (1 << n) - 1;
+  const best = new Float64Array((1 << n) * n).fill(-1);
+  const from = new Int16Array((1 << n) * n).fill(-1);
+  for (let j = 0; j < n; j++) best[(1 << j) * n + j] = fitOf(stepFit(start, stored[j].line, convention), n);
+  for (let mask = 1; mask <= full; mask++) {
+    for (let i = 0; i < n; i++) {
+      const here = best[mask * n + i];
+      if (here < 0) continue;
+      const bal = stored[i].line.balance;
+      for (let j = 0; j < n; j++) {
+        if (mask & (1 << j)) continue;
+        const next = (mask | (1 << j)) * n + j;
+        const score = here + fitOf(stepFit(bal, stored[j].line, convention), n);
+        // Strictly better only: of orders fitting as well, the first found (nearest the stored) stays.
+        if (score > best[next]) { best[next] = score; from[next] = i; }
+      }
+    }
+  }
+  let last = -1;
+  let top = -1;
+  for (let i = 0; i < n; i++) {
+    const score = best[full * n + i] + endFit(stored[i].line.balance, end, n);
+    if (score > top) { top = score; last = i; }
+  }
+  if (top <= fitScore(stored, start, end, convention)) return stored;
+  const order: Stored<T>[] = [];
+  for (let mask = full, i = last; i >= 0;) {
+    order.unshift(stored[i]);
+    const prev = from[mask * n + i];
+    mask &= ~(1 << i);
+    i = prev;
+  }
+  return order;
 }
 
 function orderWith<T>(lines: LedgerLine<T>[], convention: BalanceConvention): LedgerOrder<T> {
@@ -216,7 +302,7 @@ function orderWith<T>(lines: LedgerLine<T>[], convention: BalanceConvention): Le
         start = ordered[ordered.length - 1].line.balance;
       } else {
         unsettled.push({ period, date: dateOf(day[0].line) as string, count: day.length });
-        placed.push(...fallback(day, convention));
+        placed.push(...bestFit(day, start, end, convention));
         // The day's last balance is not proven, so the next day starts unknown.
         start = null;
       }

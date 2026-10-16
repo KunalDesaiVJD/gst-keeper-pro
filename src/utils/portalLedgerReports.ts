@@ -18,7 +18,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
 import { fyMonthsForKey, formatMonthLabel } from './allClientsReports';
-import { orderLedger, readCreditLedgerText, type BalanceConvention, type LedgerLine, type LedgerOrderOptions, type UnsettledDay } from './ledgerOrder';
+import { orderLedger, readCreditLedgerText, type LedgerLine, type LedgerOrderOptions, type UnsettledDay } from './ledgerOrder';
 
 interface ClientLite { id: string; name: string; gstin: string; }
 
@@ -40,11 +40,10 @@ const fetchClient = async (clientId: string): Promise<ClientLite> => {
  * cross-checking against the portal knows which days to look at. Empty when
  * every day was settled.
  */
-const unsettledNote = (days: UnsettledDay[], convention: BalanceConvention): string => {
+const unsettledNote = (days: UnsettledDay[]): string => {
   if (!days.length) return '';
-  const first = convention === 'credit-adds' ? 'credits' : 'debits';
   const named = days.slice(0, 3).map((d) => dayLabel(d.date)).join(', ');
-  return `Same-day order: ${days.length} ${days.length === 1 ? 'day' : 'days'} the running balance does not put in one order (${named}${days.length > 3 ? ', …' : ''}), listed ${first} first, then as stored`;
+  return `Same-day order: ${days.length} ${days.length === 1 ? 'day' : 'days'} the running balance does not put in one order (${named}${days.length > 3 ? ', …' : ''}), listed as the portal gave them unless the balances fit another order better`;
 };
 
 // ─────────────────── Credit Ledger (full transaction detail) ──────────────
@@ -83,7 +82,7 @@ export const buildCreditLedgerTransactionsReport = async (clientId: string, anyM
   });
   tableRows.push(['', '', 'NET (Credit − Debit)', totI, totC, totS]);
 
-  const note = unsettledNote(order.unsettled, order.convention);
+  const note = unsettledNote(order.unsettled);
   return {
     title: 'Credit Ledger (Transaction Detail)',
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   Every transaction row from the portal's Electronic Credit Ledger, not just the opening balance the other Credit Ledger reports use.${note ? `   |   ${note}` : ''}`,
@@ -158,7 +157,7 @@ const buildRegister = async (
   if (fetched.length === 0) throw new Error(spec.empty(client.name, fyLabel));
 
   const order = orderRegisterRows(fetched, spec.options);
-  const note = unsettledNote(order.unsettled, order.convention);
+  const note = unsettledNote(order.unsettled);
   return {
     title: spec.title,
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}${note ? `   |   ${note}` : ''}`,

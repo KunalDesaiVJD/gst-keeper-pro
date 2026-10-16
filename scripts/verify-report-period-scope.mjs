@@ -10,8 +10,9 @@
 // Covers: Apr + May + Jun of one year build once and come back as the plain
 // table (no band, its own FY TOTAL once, in the table and in the full Excel);
 // Mar + Apr build twice and merge as two blocks named by their years, in
-// order, the subtitle naming both; a year that cannot be built is named by its
-// year; a month-scoped report is built and merged month by month as before;
+// order, the subtitle naming both, a year's own word (a ledger's same-day
+// note, its months-pulled count) kept and named by its year, a word every
+// year carries said once; a year that cannot be built is named by its year; a month-scoped report is built and merged month by month as before;
 // the annual trend view's own collapse (oneBlockPerYear) leaves either result
 // as it is and still collapses a month-by-month merge; and every catalog
 // report is marked 'fy' exactly when its builder reads the same thing for any
@@ -203,6 +204,50 @@ await section('two years picked', async (g) => {
   let err = '';
   try { await M.buildForPeriods(none.report, ['03/2026', '04/2026'], 'c'); } catch (e) { err = e.message; }
   check(g, 'neither year built: the error names each year', err === 'FY 2025-26: a  FY 2026-27: b', err);
+});
+
+// ── 2b. Two years: each year's own word kept, named by its year ────────────
+/** A ledger's shape: its year's subtitle, carrying a note only where `notes` gives that year one. */
+const ledgerOf = (notes) => (mmYyyy) => {
+  const { label, months } = yearOf(mmYyyy);
+  return {
+    title: 'Cash Ledger',
+    subtitle: `Client: FICTIONAL TRADERS   |   GSTIN: 24ABCDE1234F1Z5   |   ${label}${notes[label] ? `   |   ${notes[label]}` : ''}`,
+    headers: ['Month', 'Date', 'Description', 'Type', 'Balance'],
+    rows: [[months[0], '', 'Opening Balance', '', 0], [months[0], '', 'Closing Balance', '', 0]],
+    fileNameBase: `Cash_Ledger_${label.replace(/\s+/g, '_')}`,
+  };
+};
+const segs = (t) => t.subtitle.split('   |   ');
+const NOTE26 = 'Same-day order: 1 day the running balance does not put in one order (18-Aug-2026)';
+const NOTE25 = 'Same-day order: 1 day the running balance does not put in one order (20-Jun-2025)';
+await section("two years: each year's own word", async (g) => {
+  const later = await M.buildForPeriods(recorder({ periodScope: 'fy' }, ledgerOf({ 'FY 2026-27': NOTE26 })).report, ['03/2026', '04/2026'], 'c');
+  check(g, 'a note only the later year carries is kept, named by its year',
+    same(segs(later), ['Client: FICTIONAL TRADERS', 'GSTIN: 24ABCDE1234F1Z5', 'FY 2025-26, FY 2026-27', `FY 2026-27: ${NOTE26}`, '2 periods combined']), later.subtitle);
+  const earlier = await M.buildForPeriods(recorder({ periodScope: 'fy' }, ledgerOf({ 'FY 2025-26': NOTE25 })).report, ['03/2026', '04/2026'], 'c');
+  check(g, '… one only the first year carries is named by its year, not shown as if for both',
+    segs(earlier).includes(`FY 2025-26: ${NOTE25}`) && !segs(earlier).includes(NOTE25), earlier.subtitle);
+  const both = await M.buildForPeriods(recorder({ periodScope: 'fy' }, ledgerOf({ 'FY 2025-26': NOTE25, 'FY 2026-27': NOTE26 })).report, ['03/2026', '04/2026'], 'c');
+  check(g, '… each year its own, in order', segs(both).indexOf(`FY 2025-26: ${NOTE25}`) === 3 && segs(both).indexOf(`FY 2026-27: ${NOTE26}`) === 4, both.subtitle);
+  const alike = await M.buildForPeriods(recorder({ periodScope: 'fy' }, ledgerOf({ 'FY 2025-26': NOTE26, 'FY 2026-27': NOTE26 })).report, ['03/2026', '04/2026'], 'c');
+  check(g, '… a word every year carries said once, unnamed', segs(alike).filter((x) => x.includes(NOTE26)).length === 1 && segs(alike).includes(NOTE26), alike.subtitle);
+
+  // The annual summary's months-pulled count differs by year.
+  const pulledOf = (mmYyyy) => {
+    const t = annualOf(mmYyyy);
+    return yearOf(mmYyyy).label === 'FY 2025-26' ? { ...t, subtitle: t.subtitle.replace('3/12', '12/12') } : t;
+  };
+  const counts = await M.buildForPeriods(recorder({ periodScope: 'fy' }, pulledOf).report, ['03/2026', '04/2026'], 'c');
+  check(g, "each year's months-pulled count, named by its year",
+    segs(counts).some((x) => x.startsWith('FY 2025-26: As filed') && x.includes('12/12')) && segs(counts).some((x) => x.startsWith('FY 2026-27: As filed') && x.includes('3/12'))
+    && !segs(counts).some((x) => x.startsWith('As filed')), counts.subtitle);
+  const meta = M.metaOf(counts).fields;
+  check(g, '… the Excel / PDF strip still names both years', meta.some((f) => f.label === 'Financial year' && f.value === 'FY 2025-26, FY 2026-27'), JSON.stringify(meta));
+
+  const failed = await M.buildForPeriods(recorder({ periodScope: 'fy' }, ledgerOf({ 'FY 2026-27': NOTE26 }), { '03/2026': 'no rows' }).report, ['03/2026', '04/2026'], 'c');
+  check(g, 'a year that cannot be built adds nothing to the subtitle (its block says why)',
+    !segs(failed).some((x) => x.startsWith('FY 2025-26:')) && segs(failed).includes('FY 2025-26, FY 2026-27'), failed.subtitle);
 });
 
 // ── 3. Month-scoped reports: unchanged ──────────────────────────────────────
