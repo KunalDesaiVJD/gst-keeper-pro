@@ -158,7 +158,10 @@ export function classifyColumns(headers: string[], rows: (string | number)[][], 
     const numbers = values.filter((v) => typeof v === 'number');
     const strings = values.filter((v): v is string => typeof v === 'string');
     let kind: ColumnKind = 'text';
-    if (values.length && strings.length && strings.every((s) => URL_RE.test(s))) kind = 'url';
+    // A column of links, unless its figures outnumber them: a return's "Filed
+    // Return PDF" row puts one link under a figures column, which stays figures
+    // (that one cell still prints as a link).
+    if (values.length && strings.length && strings.length > numbers.length && strings.every((s) => URL_RE.test(s))) kind = 'url';
     else if (numbers.length && numbers.length >= strings.length) {
       if (RATE_HEADER_RE.test(header) && !AMOUNT_HEADER_RE.test(header.replace(/rate/i, ''))) kind = 'rate';
       else if (INT_HEADER_RE.test(header.trim()) && numbers.every((n) => Number.isInteger(n))) kind = 'int';

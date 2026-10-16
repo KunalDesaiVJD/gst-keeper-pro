@@ -268,6 +268,9 @@ const calcSub = 'Client: CG TRADERS   |   GSTIN: 24CCCCC0000C1Z5   |   Period: J
   check(g, '… the "filtered" export prints its words beside the link', !!pdfRow && pdfRow[0] === 'Filed Return PDF' && pdfRow.indexOf(url) === 1, JSON.stringify(pdfRow));
   const all = draw('FiledReturnSummaryView', g3b, V.report('gstr3b-filed'));
   check(g, 'on screen: the words once and the "View filed PDF" button to the link', (all.html.match(/Filed return PDF/g) ?? []).length === 1 && new RegExp(`href="${url.replace(/[.]/g, '\\.')}"[^>]*>(?:(?!</a>).)*View filed PDF`, 's').test(all.html) && !all.text.includes(url), (all.html.match(/Filed return PDF/g) ?? []).length);
+  // The link now sits under Taxable Value: that column stays figures (review re-check of #13).
+  const tv = all.kit?.model.columns[1];
+  check(g, 'the link under Taxable Value leaves it a figures column (right-aligned, filtered by range)', tv?.kind === 'amount' && tv?.filter === 'number', JSON.stringify({ kind: tv?.kind, filter: tv?.filter }));
   const none = draw('FiledReturnSummaryView', { ...g3b, rows: g3b.rows.map((row) => (row.includes(url) ? ['', 'Filed Return PDF', 'Not captured yet — pull it from Filing Status', '', '', ''] : row)) }, V.report('gstr3b-filed'));
   check(g, 'no PDF captured: says why, in the first column (unchanged)', has(none.text, 'Not captured yet — pull it from Filing Status'), none.text.slice(-400));
 }
