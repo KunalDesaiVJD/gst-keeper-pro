@@ -16,8 +16,10 @@
 //   - a day no unique chain orders (a balance carrying interest or a fee the
 //     tax heads leave out): the order the balances fit best, else as stored
 //     (the pull stores the portal's own order); real shapes where "credits
-//     first" was wrong; a day too long to search kept as stored; the subtitle
-//     names the day;
+//     first" was wrong; a day too long to search kept as stored; the stored
+//     order kept wherever the balances prove nothing against it (an unproven
+//     start, a fee with no tax, a register with no Opening row), and of
+//     orders fitting equally the one nearer it; the subtitle names the day;
 //   - every row once: none lost, none repeated;
 //   - every row names its month (a Month column), the balance rows too;
 //   - the view: each month's balances in place in the ledger's own order, the
@@ -225,6 +227,31 @@ await run('cash ledger, a day the balances do not settle', async (g) => {
   serve('gst_cash_ledger_entries', stored);
   const tl = await M.buildCashLedgerReport('cash-5', '09/2026');
   check(g, 'fourteen such deposits: kept as stored, and named', sameList(dayOf(tl), stored.filter((r) => r.entry_date).map((r) => r.description)) && NOTE_RE('20-Sep-2026').test(tl.subtitle), dayOf(tl).join(' / '));
+});
+
+// ── 3b. Where the balances prove nothing against it, the stored order stays ──
+await run('stored order kept where the balances prove nothing', async (g) => {
+  const descs = (rows) => rows.filter((r) => r.entry_date).map((r) => r.description);
+  for (const [name, make, client] of [
+    ['a day after an unsettled day (its start unproven): its first deposit stays first', F.cashAfterUnsettled, 'cash-6'],
+    ['a late fee set off with no tax: not moved ahead of the deposit that funded it', F.cashFeeOnly, 'cash-7'],
+  ]) {
+    serve('gst_cash_ledger_entries', make());
+    const t = await M.buildCashLedgerReport(client, '08/2026');
+    check(g, name, sameList(dayOf(t), descs(make())), dayOf(t).join(' / '));
+  }
+  for (const [name, make, client] of [
+    ["a nil-tax return's late fee owed and paid: the debit raises the register, the fee owed before it is paid", F.liabilityFeeOnly, 'liab-3'],
+    ['no Opening row, every liability and its discharge with the same fee: as stored, a debit raising the register', F.liabilityMirroredFees, 'liab-4'],
+  ]) {
+    const o = M.orderRegisterRows(make(), M.LIABILITY_ORDER);
+    check(g, name, o.convention === 'debit-adds' && sameList(o.lines.map((l) => l.row.description), make().map((r) => r.description)),
+      `${o.convention}: ${o.lines.map((l) => l.row.description).join(' / ')}`);
+  }
+  serve('gst_cash_ledger_entries', F.cashNearest(true));
+  const t = await M.buildCashLedgerReport('cash-8', '08/2026');
+  check(g, 'two deposits stored the wrong way round, two orders fitting equally: the one nearer the stored (the portal\'s)',
+    sameList(dayOf(t), descs(F.cashNearest(false))), dayOf(t).join(' / '));
 });
 
 // ── 4. Liability register: its convention found from its own rows ───────────

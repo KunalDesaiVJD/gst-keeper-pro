@@ -219,6 +219,8 @@ export function cellText(v: string | number | null | undefined, col: ColumnSpec 
 
 const MONTH_LABEL_RE = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s-]+\d{2,4}$/i;
 const FY_RE = /^(fy|f\.y\.?)\s*\d{4}/i;
+// A strip field's value past this many characters is prose, not a field.
+const PROSE_VALUE = 80;
 
 /**
  * The strip under the title: the table's own `meta`, else the subtitle's
@@ -237,6 +239,10 @@ export function metaOf(table: Pick<ReportTable, 'subtitle' | 'meta'>): { fields:
   for (const seg of segments) {
     const m = /^([A-Za-z][A-Za-z0-9 .()/&-]{0,28}):\s+(.+)$/.exec(seg);
     if (seg === combined) fields.push({ label: 'Periods', value: seg.replace(/\s*periods\s*/i, ' ') });
+    // One year's note in a merge of years ("FY 2026-27: As filed …"), or any
+    // value too long for a strip field (a ledger's "Same-day order: …"), is
+    // prose: the note line, where it reads whole, not a field cut off by the next.
+    else if (m && (FY_RE.test(m[1].trim()) || m[2].trim().length > PROSE_VALUE)) rest.push(seg);
     else if (m && !/https?$/i.test(m[1])) {
       if (!(combined && /^(period|month|return period)$/i.test(m[1].trim()))) fields.push({ label: m[1].trim(), value: m[2].trim() });
     } else if (MONTH_LABEL_RE.test(seg)) {

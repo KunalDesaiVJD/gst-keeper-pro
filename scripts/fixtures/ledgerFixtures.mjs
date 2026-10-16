@@ -145,6 +145,80 @@ export const cashFeeDeposits = (n) => {
 };
 
 /**
+ * Shapes where the balances prove nothing against the stored order, which
+ * must then stay as stored (each in the portal's own order):
+ *  - cashAfterUnsettled: a day after a day the balances did not settle (its
+ *    start not proven), whose first deposit chains only from that day's end;
+ *  - cashFeeOnly: a late fee set off with no tax (the stored heads all 0),
+ *    which "chains" from any balance equal to its own;
+ *  - liabilityFeeOnly: a nil-tax return's late fee owed and paid (no tax on
+ *    either row);
+ *  - liabilityMirroredFees: a register with no Opening row, every liability
+ *    and its discharge carrying the same fee, so nothing chains as owed, and
+ *    one pair chains by chance the other way.
+ * And cashNearest: a day stored with two deposits swapped, which the
+ * balances put right in two ways equally; the nearer the stored is taken.
+ */
+export const cashAfterUnsettled = () => {
+  const r = reg('cash-6');
+  return [
+    r('08/2026', null, 'Opening Balance', null, {}, 0),
+    r('08/2026', '2026-08-18', 'Amount deposited CPIN 26080021 (with interest)', false, { igst: 10000 }, 10200),
+    r('08/2026', '2026-08-18', 'Other than reverse charge (with interest)', true, { igst: 10000 }, 0),
+    r('08/2026', '2026-08-20', 'Amount deposited CPIN 26080022', false, { igst: 5000 }, 5000),
+    r('08/2026', '2026-08-20', 'Amount deposited CPIN 26080023 (with fee)', false, { igst: 300 }, 5350),
+    r('08/2026', '2026-08-20', 'Other than reverse charge (with fee)', true, { igst: 5300 }, 0),
+    r('08/2026', '2026-08-24', 'Amount deposited CPIN 26080024', false, { igst: 1864 }, 1864),
+    r('08/2026', null, 'Closing Balance', null, {}, 1864),
+  ];
+};
+export const cashFeeOnly = () => {
+  const r = reg('cash-7');
+  return [
+    r('08/2026', null, 'Opening Balance', null, {}, 0),
+    r('08/2026', '2026-08-20', 'Amount deposited CPIN 26080031 (with late fee)', false, { igst: 10000 }, 11890),
+    r('08/2026', '2026-08-20', 'Other than reverse charge', true, { igst: 10000 }, 1890),
+    r('08/2026', '2026-08-20', 'Late fee set off (no tax)', true, {}, 0),
+    r('08/2026', '2026-08-24', 'Amount deposited CPIN 26080032', false, { igst: 1864 }, 1864),
+    r('08/2026', null, 'Closing Balance', null, {}, 1864),
+  ];
+};
+export const liabilityFeeOnly = () => {
+  const r = reg('liab-3');
+  return [
+    r('06/2026', null, 'Opening Balance', null, {}, 0),
+    r('06/2026', '2026-07-18', 'Other than reverse charge (nil tax, late fee)', true, {}, 700),
+    r('06/2026', '2026-07-18', 'Other than reverse charge (late fee paid)', false, {}, 0),
+    r('06/2026', null, 'Closing Balance', null, {}, 0),
+  ];
+};
+export const liabilityMirroredFees = () => {
+  const r = reg('liab-4');
+  return [
+    r('06/2026', '2026-07-18', 'Other than reverse charge', true, { igst: 5927 }, 6852),
+    r('06/2026', '2026-07-18', 'Reverse charge', true, { igst: 140 }, 7417),
+    r('06/2026', '2026-07-18', 'Supplies u/s 9(5)', true, { igst: 6857 }, 14974),
+    r('06/2026', '2026-07-18', 'Other than reverse charge', false, { igst: 5927 }, 8122),
+    r('06/2026', '2026-07-18', 'Reverse charge', false, { igst: 140 }, 7557),
+    r('06/2026', '2026-07-18', 'Supplies u/s 9(5)', false, { igst: 6857 }, 0),
+    r('06/2026', null, 'Closing Balance', null, {}, 0),
+  ];
+};
+/** cashNearest: the day as the portal lists it; `swapped` stores its two deposits the other way round. */
+export const cashNearest = (swapped = false) => {
+  const r = reg('cash-8');
+  const a = r('08/2026', '2026-08-20', 'Amount deposited CPIN 26080041', false, { igst: 300 }, 600);
+  const b = r('08/2026', '2026-08-20', 'Amount deposited CPIN 26080042', false, { igst: 300 }, 900);
+  return [
+    r('08/2026', null, 'Opening Balance', null, {}, 300),
+    ...(swapped ? [b, a] : [a, b]),
+    r('08/2026', '2026-08-20', 'Other than reverse charge (with fee)', true, { igst: 100 }, 200),
+    r('08/2026', '2026-08-24', 'Amount deposited CPIN 26080043', false, { igst: 1000 }, 1200),
+    r('08/2026', null, 'Closing Balance', null, {}, 1200),
+  ];
+};
+
+/**
  * Liability register, FY 2026-27. A debit (the liability) raises the balance
  * and a credit (its discharge) lowers it. April has no Opening Balance row
  * (the portal's own register may not): its four entries of one day chain two

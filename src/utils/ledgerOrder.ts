@@ -20,10 +20,12 @@
 //     other amounts its tax heads do not, so a deposit with them chains to
 //     nothing) keeps the order the rows were stored in: the pull writes a
 //     month in the portal's own order, and the database hands it back that
-//     way. Only an order the balances fit strictly better replaces it: more
-//     entries chaining from the one before, then more moving the balance
-//     their own way. Never a rule like "credits first", which put a later
-//     deposit ahead of the set-off it followed. Nothing is dropped or
+//     way. Only when the balances prove that order wrong (an entry moving a
+//     known balance less than its amount or the other way, or the day not
+//     ending on the Closing Balance) does the order they fit strictly better
+//     replace it: more entries chaining from the one before, then more moving
+//     the balance their own way. Never a rule like "credits first", which put
+//     a later deposit ahead of the set-off it followed. Nothing is dropped or
 //     repeated: the result holds every line given, once.
 // Pure (no Supabase, no React), so scripts/verify-ledger-order.mjs runs it under Node.
 
@@ -59,7 +61,7 @@ export interface UnsettledDay { period: string; date: string; count: number }
 export interface LedgerOrder<T> {
   /** Every line given, once, in the ledger's order. */
   lines: LedgerLine<T>[];
-  /** The convention the order was built on (for 'auto', the one whose balances chain). */
+  /** The convention the order was built on (for 'auto', the one whose balances chain more often). */
   convention: BalanceConvention;
   /** Days with more than one entry whose order the serial numbers or the balances settled. */
   settled: number;
@@ -162,19 +164,46 @@ function byChain<T>(
   return pick.length === 1 ? pick[0].map((i) => group[i]) : null;
 }
 
+type Step = 'chain' | 'way' | 'against' | 'unknown';
+
 /**
- * How well a step from the balance `prev` to entry `l` fits: 'chain' when its
- * balance is `prev` plus its signed amount, 'way' when it at least moves the
- * balance its own way (a deposit carrying interest the tax heads leave out
- * rises by more than its amount, still upward), 'none' otherwise or unknown.
+ * How a step from the balance `prev` to entry `l` reads: 'chain' when its
+ * balance is `prev` plus its signed amount; 'way' when it moves the balance
+ * its own way by more than its amount (the balance also carries interest,
+ * fees and other amounts the stored tax heads leave out, which only ever add
+ * to an entry's movement: a deposit with interest rises by more than its
+ * amount, a set-off of a late fee falls by more); 'against' when it moves the
+ * balance less than its amount or the other way, which its true place never
+ * does; 'unknown' when a balance is not known. An entry of no amount (a fee
+ * or interest only: the stored tax heads are all 0) is never a chain, since it
+ * would "chain" from any balance equal to its own, the opening's included.
  */
-const stepFit = (prev: number | null, l: LedgerLine, convention: BalanceConvention): 'chain' | 'way' | 'none' => {
-  if (prev === null || l.balance === null || !Number.isFinite(l.balance) || l.isDebit === null) return 'none';
-  if (near(l.balance, prev + signedAmount(l, convention))) return 'chain';
+const stepFit = (prev: number | null, l: LedgerLine, convention: BalanceConvention): Step => {
+  if (prev === null || l.balance === null || !Number.isFinite(l.balance) || l.isDebit === null) return 'unknown';
+  const signed = signedAmount(l, convention);
+  if (Math.abs(l.amount) >= 0.005 && near(l.balance, prev + signed)) return 'chain';
   const adds = convention === 'debit-adds' ? l.isDebit : !l.isDebit;
-  const delta = l.balance - prev;
-  return (adds ? delta > -0.005 : delta < 0.005) ? 'way' : 'none';
+  // What the step moved beyond its own amount, its own way.
+  const beyond = adds ? l.balance - prev - signed : signed - (l.balance - prev);
+  return beyond > -0.005 ? 'way' : 'against';
 };
+
+/**
+ * Whether a stored order is proven wrong by the balances: a step from a
+ * known balance moving it less than its amount or the other way ('against'),
+ * or the day's last balance not
+ * reaching `end` (the period's Closing Balance after its last day). A step
+ * from an unknown balance (no opening row, or after a day the balances did
+ * not settle) proves nothing.
+ */
+function contradicted<T>(order: Stored<T>[], start: number | null, end: number | null, convention: BalanceConvention): boolean {
+  let prev = start;
+  for (const s of order) {
+    if (stepFit(prev, s.line, convention) === 'against') return true;
+    prev = s.line.balance;
+  }
+  return end !== null && prev !== null && Number.isFinite(prev) && !near(prev, end);
+}
 
 /**
  * An order's fit to the running balance, as one number: the steps that chain
@@ -183,7 +212,7 @@ const stepFit = (prev: number | null, l: LedgerLine, convention: BalanceConventi
  * step of a day of n entries moving its way (n + 2 against at most n).
  */
 const chainWeight = (n: number): number => n + 2;
-const fitOf = (k: 'chain' | 'way' | 'none', n: number): number => (k === 'chain' ? chainWeight(n) + 1 : k === 'way' ? 1 : 0);
+const fitOf = (k: Step, n: number): number => (k === 'chain' ? chainWeight(n) + 1 : k === 'way' ? 1 : 0);
 const endFit = (last: number | null, end: number | null, n: number): number =>
   (last !== null && end !== null && near(last, end) ? chainWeight(n) : 0);
 
@@ -200,53 +229,69 @@ function fitScore<T>(order: Stored<T>[], start: number | null, end: number | nul
 
 /**
  * A day no unique chain orders. Its stored order is the portal's own (the
- * pull writes a month as the portal lists it), so it stays unless another
- * order fits the balances strictly better (fitScore): rows read back in some
- * other order are then put right, and a day whose balances fit several
- * orders as well is not guessed. Searched over every order by subsets (the
- * best order ending in each entry, for each set of entries placed); a day of
- * more than FIT_CAP entries keeps its stored order.
+ * pull writes a month as the portal lists it), so it stays unless the
+ * balances prove it wrong (contradicted): then the order fitting them best
+ * (fitScore) is taken, if strictly better, so rows read back in some other
+ * order are put right while a day whose balances fit several orders as well
+ * is not guessed. Of the orders fitting best, the one nearest the stored
+ * order: at each place, the earliest stored entry that still lets the best
+ * fit be reached. `start` is the balance before the day as best known (after
+ * a day the balances did not settle, that day's last balance as listed).
+ * Searched by subsets (for each set of entries placed and the last of them,
+ * the best fit of the entries still to come); a day of more than FIT_CAP
+ * entries keeps its stored order.
  */
 function bestFit<T>(group: Stored<T>[], start: number | null, end: number | null, convention: BalanceConvention): Stored<T>[] {
   const stored = [...group].sort((a, b) => a.at - b.at);
   const n = stored.length;
-  if (n > FIT_CAP) return stored;
+  if (n > FIT_CAP || !contradicted(stored, start, end, convention)) return stored;
   const full = (1 << n) - 1;
-  const best = new Float64Array((1 << n) * n).fill(-1);
-  const from = new Int16Array((1 << n) * n).fill(-1);
-  for (let j = 0; j < n; j++) best[(1 << j) * n + j] = fitOf(stepFit(start, stored[j].line, convention), n);
-  for (let mask = 1; mask <= full; mask++) {
+  const step = (prev: number | null, j: number) => fitOf(stepFit(prev, stored[j].line, convention), n);
+  // rest[mask * n + i]: the best fit of the entries not in `mask`, placed after entry i (in mask) ends it.
+  const rest = new Int32Array((1 << n) * n);
+  for (let mask = full; mask >= 1; mask--) {
     for (let i = 0; i < n; i++) {
-      const here = best[mask * n + i];
-      if (here < 0) continue;
+      if (!(mask & (1 << i))) continue;
       const bal = stored[i].line.balance;
+      if (mask === full) { rest[mask * n + i] = endFit(bal, end, n); continue; }
+      let top = 0;
       for (let j = 0; j < n; j++) {
         if (mask & (1 << j)) continue;
-        const next = (mask | (1 << j)) * n + j;
-        const score = here + fitOf(stepFit(bal, stored[j].line, convention), n);
-        // Strictly better only: of orders fitting as well, the first found (nearest the stored) stays.
-        if (score > best[next]) { best[next] = score; from[next] = i; }
+        top = Math.max(top, step(bal, j) + rest[(mask | (1 << j)) * n + j]);
       }
+      rest[mask * n + i] = top;
     }
   }
-  let last = -1;
-  let top = -1;
-  for (let i = 0; i < n; i++) {
-    const score = best[full * n + i] + endFit(stored[i].line.balance, end, n);
-    if (score > top) { top = score; last = i; }
-  }
-  if (top <= fitScore(stored, start, end, convention)) return stored;
+  let best = 0;
+  for (let j = 0; j < n; j++) best = Math.max(best, step(start, j) + rest[(1 << j) * n + j]);
+  if (best <= fitScore(stored, start, end, convention)) return stored;
   const order: Stored<T>[] = [];
-  for (let mask = full, i = last; i >= 0;) {
-    order.unshift(stored[i]);
-    const prev = from[mask * n + i];
-    mask &= ~(1 << i);
-    i = prev;
+  let mask = 0;
+  let prev = start;
+  let need = best;
+  while (mask !== full) {
+    for (let j = 0; j < n; j++) {
+      if (mask & (1 << j)) continue;
+      const here = step(prev, j);
+      if (here + rest[(mask | (1 << j)) * n + j] !== need) continue;
+      order.push(stored[j]);
+      mask |= 1 << j;
+      need -= here;
+      prev = stored[j].line.balance;
+      break;
+    }
   }
   return order;
 }
 
-function orderWith<T>(lines: LedgerLine<T>[], convention: BalanceConvention): LedgerOrder<T> {
+/**
+ * The ledger in its order under one convention, and the evidence for that
+ * convention: how many entries chain (chainScore) with each unsettled day as
+ * stored. Not as listed: bestFit searches for the order fitting the balances
+ * best, so under the wrong convention it could find a chance chain there
+ * that the rows themselves never showed.
+ */
+function orderWith<T>(lines: LedgerLine<T>[], convention: BalanceConvention): { order: LedgerOrder<T>; evidence: number } {
   const stored: Stored<T>[] = lines.map((line, at) => ({ line, at }));
   // Periods in their own order; an unreadable period after the rest, by its text.
   const byPeriod = new Map<string, Stored<T>[]>();
@@ -264,6 +309,7 @@ function orderWith<T>(lines: LedgerLine<T>[], convention: BalanceConvention): Le
   });
 
   const out: LedgerLine<T>[] = [];
+  const asStored: LedgerLine<T>[] = [];
   let settled = 0;
   const unsettled: UnsettledDay[] = [];
   for (const period of periods) {
@@ -281,13 +327,20 @@ function orderWith<T>(lines: LedgerLine<T>[], convention: BalanceConvention): Le
     });
 
     const placed: Stored<T>[] = [...openings];
+    // The same, each unsettled day as stored: the convention's evidence.
+    const shadow: Stored<T>[] = [...openings];
     const lastOpening = openings[openings.length - 1]?.line.balance;
+    // `start`: the balance before the day, proven (a chain may open only from
+    // it); `listed`: the last balance as listed so far, proven or not.
     let start: number | null = typeof lastOpening === 'number' ? lastOpening : null;
+    let listed: number | null = start;
     const closingBalance = closings[0]?.line.balance;
     days.forEach((day, k) => {
       if (day.length === 1) {
         placed.push(day[0]);
+        shadow.push(day[0]);
         start = day[0].line.balance;
+        listed = start;
         return;
       }
       const isLast = k === days.length - 1;
@@ -299,27 +352,38 @@ function orderWith<T>(lines: LedgerLine<T>[], convention: BalanceConvention): Le
       if (ordered) {
         settled += 1;
         placed.push(...ordered);
+        shadow.push(...ordered);
         start = ordered[ordered.length - 1].line.balance;
+        listed = start;
       } else {
         unsettled.push({ period, date: dateOf(day[0].line) as string, count: day.length });
-        placed.push(...bestFit(day, start, end, convention));
-        // The day's last balance is not proven, so the next day starts unknown.
+        const fitted = bestFit(day, start ?? listed, end, convention);
+        placed.push(...fitted);
+        shadow.push(...[...day].sort((a, b) => a.at - b.at));
+        // The day's last balance is not proven, so no chain of the next day
+        // has to open from it; as listed, it is still the best word on it.
         start = null;
+        listed = fitted[fitted.length - 1].line.balance;
       }
     });
-    placed.push(...(bySerial(undated) ?? undated), ...closings);
-    out.push(...placed.map((s) => s.line));
+    const tail = [...(bySerial(undated) ?? undated), ...closings];
+    out.push(...[...placed, ...tail].map((s) => s.line));
+    asStored.push(...[...shadow, ...tail].map((s) => s.line));
   }
-  return { lines: out, convention, settled, unsettled };
+  return { order: { lines: out, convention, settled, unsettled }, evidence: chainScore(asStored, convention) };
 }
 
-/** How many entries chain from the row before them in a period, under the order built. */
-function chainScore<T>(order: LedgerOrder<T>): number {
+/**
+ * How many entries chain from the row before them in a period, in the
+ * order built. An entry of no amount chains under either convention alike,
+ * so it does not count.
+ */
+function chainScore<T>(lines: LedgerLine<T>[], convention: BalanceConvention): number {
   let score = 0;
   let prev: LedgerLine<T> | null = null;
-  for (const l of order.lines) {
+  for (const l of lines) {
     if (prev && prev.period === l.period && l.role === 'entry' && prev.balance !== null && l.balance !== null
-      && near(l.balance, prev.balance + signedAmount(l, order.convention))) score += 1;
+      && Math.abs(l.amount) >= 0.005 && near(l.balance, prev.balance + signedAmount(l, convention))) score += 1;
     prev = l;
   }
   return score;
@@ -327,12 +391,12 @@ function chainScore<T>(order: LedgerOrder<T>): number {
 
 /** The ledger's lines in its own order (see the header comment). */
 export function orderLedger<T>(lines: LedgerLine<T>[], options: LedgerOrderOptions): LedgerOrder<T> {
-  if (options.convention !== 'auto') return orderWith(lines, options.convention);
+  if (options.convention !== 'auto') return orderWith(lines, options.convention).order;
   const prefer = options.prefer ?? 'credit-adds';
   const other: BalanceConvention = prefer === 'credit-adds' ? 'debit-adds' : 'credit-adds';
   const a = orderWith(lines, prefer);
   const b = orderWith(lines, other);
-  return chainScore(b) > chainScore(a) ? b : a;
+  return (b.evidence > a.evidence ? b : a).order;
 }
 
 // ── The credit ledger's row text ─────────────────────────────────────────────

@@ -242,8 +242,12 @@ await section("two years: each year's own word", async (g) => {
   check(g, "each year's months-pulled count, named by its year",
     segs(counts).some((x) => x.startsWith('FY 2025-26: As filed') && x.includes('12/12')) && segs(counts).some((x) => x.startsWith('FY 2026-27: As filed') && x.includes('3/12'))
     && !segs(counts).some((x) => x.startsWith('As filed')), counts.subtitle);
-  const meta = M.metaOf(counts).fields;
+  const { fields: meta, rest } = M.metaOf(counts);
   check(g, '… the Excel / PDF strip still names both years', meta.some((f) => f.label === 'Financial year' && f.value === 'FY 2025-26, FY 2026-27'), JSON.stringify(meta));
+  check(g, "… and each year's note is on the note line, read whole, not a strip field cut off by the next",
+    !meta.some((f) => /^FY \d{4}/.test(f.label)) && rest.includes('FY 2025-26: As filed') && rest.includes('FY 2026-27: As filed'), JSON.stringify({ meta, rest }));
+  const ledgerMeta = M.metaOf(both);
+  check(g, "… so is a ledger's long same-day note", !ledgerMeta.fields.some((f) => /Same-day order/.test(`${f.label}: ${f.value}`)) && ledgerMeta.rest.includes(`FY 2026-27: ${NOTE26}`), JSON.stringify(ledgerMeta));
 
   const failed = await M.buildForPeriods(recorder({ periodScope: 'fy' }, ledgerOf({ 'FY 2026-27': NOTE26 }), { '03/2026': 'no rows' }).report, ['03/2026', '04/2026'], 'c');
   check(g, 'a year that cannot be built adds nothing to the subtitle (its block says why)',
