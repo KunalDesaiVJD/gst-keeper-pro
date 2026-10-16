@@ -12,7 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
 import { formatMonthLabel } from './allClientsReports';
 import {
-  fetchFiledReturn, notPulledMsg,
+  fetchFiledReturn, notPulledMsg, gstr1Taxable, gstr1InvoiceValue,
   type Gstr3bSummary, type Gstr1Summary, type HeadAmt, type TypedAmt,
 } from './filedReturnReports';
 
@@ -142,7 +142,8 @@ export const buildTaxLiabilityExclExportRcmReport = async (clientId: string, mon
     .map(([code, label]) => {
       const sec = byName.get(code);
       if (!sec) return null;
-      const tx = num(sec.ttl_val), i = num(sec.ttl_igst), c = num(sec.ttl_cgst), sg = num(sec.ttl_sgst), cess = num(sec.ttl_cess);
+      // ttl_val is the invoice value, tax included; the taxable value is ttl_tax (see gstr1Taxable).
+      const tx = gstr1Taxable(sec), i = num(sec.ttl_igst), c = num(sec.ttl_cgst), sg = num(sec.ttl_sgst), cess = num(sec.ttl_cess);
       totTx += tx; totI += i; totC += c; totS += sg; totCess += cess;
       return [label, tx, i, c, sg, cess, i + c + sg + cess];
     })
@@ -201,23 +202,22 @@ export const buildTaxLiabilityExportSezReport = async (clientId: string, month: 
   const exp = (s.sec_sum || []).find((sec) => sec.sec_nm === 'EXP');
 
   const rows: (string | number)[][] = [];
+  // Table 6A states each export's taxable value and its invoice value (taxable
+  // plus the IGST on an export with payment) apart, so both are shown; ttl_val
+  // is the invoice value, not the taxable value (see gstr1Taxable).
   if (exp) {
-    rows.push(['EXP', 'Exports', num(exp.ttl_rec), num(exp.ttl_val), num(exp.ttl_igst), num(exp.ttl_cgst), num(exp.ttl_sgst), num(exp.ttl_cess)]);
+    rows.push(['EXP', 'Exports', num(exp.ttl_rec), gstr1Taxable(exp), gstr1InvoiceValue(exp) ?? '', num(exp.ttl_igst), num(exp.ttl_cgst), num(exp.ttl_sgst), num(exp.ttl_cess)]);
   }
-  const totIgst = rows.reduce((a, r) => a + Number(r[4]), 0);
-  const totCgst = rows.reduce((a, r) => a + Number(r[5]), 0);
-  const totSgst = rows.reduce((a, r) => a + Number(r[6]), 0);
-  const totCess = rows.reduce((a, r) => a + Number(r[7]), 0);
-  const totValue = rows.reduce((a, r) => a + Number(r[3]), 0);
-  rows.push(['', 'TOTAL', '', totValue, totIgst, totCgst, totSgst, totCess]);
+  const tot = (c: number) => rows.reduce((a, r) => a + num(r[c]), 0);
+  rows.push(['', 'TOTAL', '', tot(3), tot(4), tot(5), tot(6), tot(7), tot(8)]);
 
   return {
     title: 'Tax Liability Due to Export and SEZ Supplies',
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   ARN: ${row.arn || '—'}   |   GSTR-1 Table 6A (Exports), as filed on the portal. 6B (SEZ) and 6C (Deemed Exports) aren't broken out as their own totals in the portal's summary API at the section level this app reads — they're folded inside B2B in the raw payload, so showing them here would risk a wrong split rather than a missing one.`,
-    headers: ['Table', 'Description', 'Count', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess'],
+    headers: ['Table', 'Description', 'Count', 'Taxable Value', 'Invoice Value', 'IGST', 'CGST', 'SGST', 'Cess'],
     rows,
     fileNameBase: `Tax_Liability_Export_SEZ_${fileSafe(client.name)}_${month.replace('/', '-')}`,
-    columnWidths: [8, 45, 8, 16, 14, 14, 14, 12],
+    columnWidths: [8, 45, 8, 16, 16, 14, 14, 14, 12],
   };
 };
 

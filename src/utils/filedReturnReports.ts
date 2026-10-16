@@ -40,10 +40,72 @@ export interface Gstr3bSummary {
   tt_val?: { tt_csh_pd?: number; tt_itc_pd?: number; tt_pay?: number };
 }
 export interface Gstr1Section {
-  sec_nm?: string; ttl_rec?: number; ttl_val?: number; ttl_doc_issued?: number;
+  sec_nm?: string; ttl_rec?: number;
+  /** The TAXABLE value, despite the name (GSTN's RETSUM naming): read it through gstr1Taxable. */
+  ttl_tax?: number;
+  /** The INVOICE value (taxable value plus tax), despite the name: read it through gstr1InvoiceValue. */
+  ttl_val?: number;
   ttl_igst?: number; ttl_cgst?: number; ttl_sgst?: number; ttl_cess?: number;
+  /** NIL (Table 8) carries these three amounts instead of ttl_tax / ttl_val. */
+  ttl_nilsup_amt?: number; ttl_expt_amt?: number; ttl_ngsup_amt?: number;
+  /** DOC_ISSUE (Table 13): counts of documents, not values. */
+  ttl_doc_issued?: number; ttl_doc_cancelled?: number; net_doc_issued?: number;
 }
 export interface Gstr1Summary { sec_sum?: Gstr1Section[]; }
+
+// GSTR-1's section summaries (api/gstr1/summary, GSTN's RETSUM shape) name
+// their two values the other way round from what the words suggest: ttl_tax
+// is the total TAXABLE value and ttl_val the total INVOICE value, taxable
+// value plus tax. Checked on the stored pulls (October 2026): on TTL_LIAB
+// and EXP, ttl_val is ttl_tax plus the tax heads to the rupee (an export with
+// payment: 1,180 = 1,000 + IGST 180), and the HSN rows carry ttl_tax with
+// ttl_val 0. Reports used to print ttl_val under
+// "Taxable Value", so GSTR-3B vs GSTR-1 showed a "variance" equal to the tax
+// on every month the two returns agreed. Every report that prints a GSTR-1
+// taxable value reads it through gstr1Taxable for that reason.
+const present = (v: unknown): boolean => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+const r2 = (v: number): number => Math.round(v * 100) / 100;
+const nilTable = (sec: Gstr1Section): number | null =>
+  present(sec.ttl_nilsup_amt) || present(sec.ttl_expt_amt) || present(sec.ttl_ngsup_amt)
+    ? num(sec.ttl_nilsup_amt) + num(sec.ttl_expt_amt) + num(sec.ttl_ngsup_amt)
+    : null;
+const taxOn = (sec: Gstr1Section): number => num(sec.ttl_igst) + num(sec.ttl_cgst) + num(sec.ttl_sgst) + num(sec.ttl_cess);
+
+/**
+ * A GSTR-1 section's taxable value: its ttl_tax. NIL has no ttl_tax; its value
+ * is its nil rated, exempt and non-GST amounts (no tax is charged on them, the
+ * way GSTR-3B Table 3.1(c) puts them in its taxable value column).
+ *
+ * A pull without ttl_tax (an older or differently shaped payload) falls back
+ * to the invoice value less the tax on it. The portal states the invoice value
+ * in whole rupees, so that can be off by under a rupee. A section whose
+ * ttl_val is nil (an HSN row) has nothing to take the tax from and stays nil
+ * rather than going negative.
+ */
+export const gstr1Taxable = (sec: Gstr1Section | undefined | null): number => {
+  if (!sec) return 0;
+  if (present(sec.ttl_tax)) return num(sec.ttl_tax);
+  const nil = nilTable(sec);
+  if (nil !== null) return nil;
+  if (present(sec.ttl_val) && num(sec.ttl_val) !== 0) return r2(num(sec.ttl_val) - taxOn(sec));
+  return 0;
+};
+
+/**
+ * A GSTR-1 section's invoice value (ttl_val: taxable value plus tax), or null
+ * where the section states none: an HSN row (ttl_val nil beside a taxable
+ * value), the documents issued (counts), or a pull without ttl_val. NIL's
+ * amounts carry no tax, so they are its invoice value too.
+ */
+export const gstr1InvoiceValue = (sec: Gstr1Section | undefined | null): number | null => {
+  if (!sec) return null;
+  const nil = nilTable(sec);
+  if (nil !== null) return nil;
+  if (!present(sec.ttl_val)) return null;
+  const v = num(sec.ttl_val);
+  if (v === 0 && gstr1Taxable(sec) !== 0) return null;
+  return v;
+};
 // The live GSTR-2B getdata JSON carries igst/cgst/sgst/cess on each invoice
 // (every live row read on 2026-10-15); iamt/camt/samt/csamt are kept as the
 // fallback for an older or differently shaped payload.
@@ -171,9 +233,17 @@ export const buildFiledGstr1Report = async (clientId: string, period: string): P
     .map(([code, label]) => {
       const sec = byName.get(code);
       if (!sec) return null;
+      // Table 13 counts documents: its counts go in its words, not under a
+      // value heading, where a count of 40 invoices would read as ₹40.
+      if (code === 'DOC_ISSUE') {
+        const issued = num(sec.ttl_doc_issued), cancelled = num(sec.ttl_doc_cancelled);
+        const net = present(sec.net_doc_issued) ? num(sec.net_doc_issued) : issued - cancelled;
+        return [`${label}: ${issued} issued, ${cancelled} cancelled, ${net} net`, num(sec.ttl_rec), '', '', '', '', '', ''];
+      }
+      const invoice = gstr1InvoiceValue(sec);
       return [
         label,
-        num(sec.ttl_rec), num(sec.ttl_val ?? sec.ttl_doc_issued),
+        num(sec.ttl_rec), gstr1Taxable(sec), invoice ?? '',
         num(sec.ttl_igst), num(sec.ttl_cgst), num(sec.ttl_sgst), num(sec.ttl_cess),
       ];
     })
@@ -183,15 +253,15 @@ export const buildFiledGstr1Report = async (clientId: string, period: string): P
     throw new Error(`GSTR-1 summary was pulled for ${client.name} in ${formatMonthLabel(period)} but had no recognisable sections — the portal's JSON shape may have changed.`);
   }
   const pdfUrl = await fetchFiledPdfUrl(clientId, period, ['GSTR-1', 'GSTR-1 (IFF)']);
-  rows.push(['Filed Return PDF', '', pdfUrl || 'Not captured yet — pull it from Filing Status', '', '', '', '']);
+  rows.push(['Filed Return PDF', '', pdfUrl || 'Not captured yet — pull it from Filing Status', '', '', '', '', '']);
 
   return {
     title: 'GSTR-1 (Filed on Portal)',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${formatMonthLabel(period)}   |   ARN: ${row.arn || '—'}   |   Filed: ${row.filed_date || '—'}   |   Status: ${row.status || '—'}   |   Current period only — amendment (…A) sections not shown.`,
-    headers: ['Section', 'Records', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess'],
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${formatMonthLabel(period)}   |   ARN: ${row.arn || '—'}   |   Filed: ${row.filed_date || '—'}   |   Status: ${row.status || '—'}   |   Current period only — amendment (…A) sections not shown. Invoice Value is the taxable value plus tax, as the portal states it; HSN rows state no invoice value.`,
+    headers: ['Section', 'Records', 'Taxable Value', 'Invoice Value', 'IGST', 'CGST', 'SGST', 'Cess'],
     rows,
     fileNameBase: `GSTR1_Filed_${fileSafe(client.name)}_${period.replace('/', '-')}`,
-    columnWidths: [34, 10, 16, 14, 14, 14, 12],
+    columnWidths: [34, 10, 16, 16, 14, 14, 14, 12],
   };
 };
 

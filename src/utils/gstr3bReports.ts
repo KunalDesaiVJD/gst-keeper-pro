@@ -12,7 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable } from './allClientsReports';
 import { formatMonthLabel, fyMonthsForKey } from './allClientsReports';
 import {
-  fetchFiledReturn, notPulledMsg,
+  fetchFiledReturn, notPulledMsg, gstr1Taxable,
   type Gstr3bSummary, type Gstr1Summary, type Gstr1Section, type HeadAmt, type TypedAmt,
   type Gstr2bSummary, type Gstr2aSummary,
 } from './filedReturnReports';
@@ -105,7 +105,9 @@ export const buildGstr3bVsGstr1TaxReport = async (clientId: string, month: strin
     fetchFiledGstr3b(clientId, client, month),
   ]);
   const ttlLiab = (g1.sec_sum || []).find((sec) => sec.sec_nm === 'TTL_LIAB');
-  const g1Value = num(ttlLiab?.ttl_val), g1Igst = num(ttlLiab?.ttl_igst), g1Cgst = num(ttlLiab?.ttl_cgst), g1Sgst = num(ttlLiab?.ttl_sgst);
+  // The taxable value is TTL_LIAB's ttl_tax; its ttl_val is the invoice value,
+  // tax included (see gstr1Taxable), which 3.1 never states.
+  const g1Value = gstr1Taxable(ttlLiab), g1Igst = num(ttlLiab?.ttl_igst), g1Cgst = num(ttlLiab?.ttl_cgst), g1Sgst = num(ttlLiab?.ttl_sgst);
   const g1TotalTax = g1Igst + g1Cgst + g1Sgst;
 
   const outward = headSum(g3.sup_details?.osup_det, g3.sup_details?.osup_zero);
@@ -121,7 +123,7 @@ export const buildGstr3bVsGstr1TaxReport = async (clientId: string, month: strin
 
   return {
     title: 'GSTR 3B vs GSTR 1 Tax Report',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   GSTR-1 ARN: ${g1row.arn || '—'}   |   GSTR-3B ARN: ${g3row.arn || '—'}   |   Both sides as filed on the portal — GSTR-1's own Total Liability (TTL_LIAB) section vs GSTR-3B's Table 3.1(a)+3.1(b). A genuine variance here is worth investigating; it isn't an artifact of this app's own computation.`,
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   GSTR-1 ARN: ${g1row.arn || '—'}   |   GSTR-3B ARN: ${g3row.arn || '—'}   |   Both sides as filed on the portal — GSTR-1's own Total Liability (TTL_LIAB) section vs GSTR-3B's Table 3.1(a)+3.1(b). GSTR-1's taxable value is the value before tax, not the invoice value its portal summary also shows. A genuine variance here is worth investigating; it isn't an artifact of this app's own computation.`,
     headers: ['Component', 'As per GSTR-1 (Total Liability, as filed)', 'As per GSTR-3B (Table 3.1, as filed)', 'Variance'],
     rows,
     fileNameBase: `GSTR3B_vs_GSTR1_Tax_${fileSafe(client.name)}_${month.replace('/', '-')}`,
@@ -138,7 +140,9 @@ const GSTR1_SECTION_LABELS: [string, string, string][] = [
   ['CDNR', 'Credit/Debit Notes (Registered)', '3.1(a) (net)'],
   ['CDNUR', 'Credit/Debit Notes (Unregistered)', '3.1(a) (net)'],
   ['EXP', 'Exports', '3.1(b)'],
-  ['NIL', 'Nil Rated / Exempt / Non-GST', '3.1(c)'],
+  // NIL's value is its nil rated, exempt and non-GST amounts together; GSTR-3B
+  // puts the first two in 3.1(c) and non-GST in 3.1(e), so both are listed below.
+  ['NIL', 'Nil Rated / Exempt / Non-GST', '3.1(c) and 3.1(e)'],
   ['AT', 'Advances Received', '3.1(a)'],
   ['TXPD', 'Advances Adjusted', '3.1(a) (reduces)'],
 ];
@@ -155,17 +159,19 @@ export const buildGstr3bVsGstr1ComparisonReport = async (clientId: string, month
     .map(([code, label, mapsTo]) => {
       const sec = byName.get(code);
       if (!sec) return null;
-      return [code, label, mapsTo, num(sec.ttl_val), num(sec.ttl_igst), num(sec.ttl_cgst), num(sec.ttl_sgst), num(sec.ttl_cess)];
+      return [code, label, mapsTo, gstr1Taxable(sec), num(sec.ttl_igst), num(sec.ttl_cgst), num(sec.ttl_sgst), num(sec.ttl_cess)];
     })
     .filter((r): r is (string | number)[] => r !== null);
 
   const outward = headSum(g3.sup_details?.osup_det);
   const zeroRated = headSum(g3.sup_details?.osup_zero);
   const nilExempt = headSum(g3.sup_details?.osup_nil_exmp);
+  const nonGst = headSum(g3.sup_details?.osup_nongst);
   rows.push(['', '', '', '', '', '', '', '']);
   rows.push(['', 'GSTR-3B Table 3.1(a) — Outward taxable supplies, as filed', '', outward.txval, outward.igst, outward.cgst, outward.sgst, '']);
   rows.push(['', 'GSTR-3B Table 3.1(b) — Zero rated supplies, as filed', '', zeroRated.txval, zeroRated.igst, zeroRated.cgst, zeroRated.sgst, '']);
   rows.push(['', 'GSTR-3B Table 3.1(c) — Nil rated / exempted, as filed', '', nilExempt.txval, 0, 0, 0, '']);
+  rows.push(['', 'GSTR-3B Table 3.1(e) — Non-GST outward supplies, as filed', '', nonGst.txval, 0, 0, 0, '']);
 
   return {
     title: 'GSTR 3B vs GSTR 1 Comparison Report',
