@@ -2,7 +2,8 @@
 // multi-month merge, section headings, groups with collapsible subtotals, the
 // rows, the report's own TOTAL rows in place, and the TOTAL pinned at the
 // bottom (recomputed and marked "filtered" once anything is filtered, so no
-// figure on screen describes hidden rows). A view keeps its own look through
+// figure on screen describes hidden rows), and above it all, a note naming any
+// period of a merge that could not be built. A view keeps its own look through
 // the hooks: renderCell for a badge, link or delta in one column, rowClassName
 // and onRowClick for its rows, and leading / trailing columns for a tick box
 // or the row's actions.
@@ -10,11 +11,11 @@ import React, { useEffect, useRef } from 'react';
 import { Badge } from '@/components/gstr9/badge';
 import { Table, TableBody, TableCell, TableFooter, TableRow } from '@/components/ui/table';
 import { WS_TABLE, WS_TD, WS_TR_HEADING, WS_TR_TOTAL } from '@/components/workspace/theme';
-import { CalendarRange, ChevronDown, ChevronRight, ExternalLink, Inbox } from 'lucide-react';
+import { AlertTriangle, CalendarRange, ChevronDown, ChevronRight, ExternalLink, Inbox } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TONE_VARIANT, isSentinelCell, isUrlCell, kitCellClass, statusVariant } from './cellRules';
 import { TableKitHeader, type KitExtraColumn } from './TableKitHead';
-import type { DisplayItem, ModelRow } from './tableModel';
+import type { DisplayItem, FailedPeriod, ModelRow } from './tableModel';
 import type { TableKit } from './useTableKit';
 
 export interface TableKitTableProps {
@@ -66,6 +67,38 @@ export const TableKitEmpty: React.FC<{ children?: React.ReactNode }> = ({ childr
   </div>
 );
 
+/**
+ * The periods of a merge that could not be built, each with its reason. Drawn
+ * above the rows in every mode: grouped, sorted or filtered, a period's own
+ * "Not built" line is not among the rows shown, and a month never checked
+ * must not read as a month with nothing in it. Nothing when every period built.
+ */
+export const TableKitFailedPeriods: React.FC<{ failed: FailedPeriod[]; className?: string }> = ({ failed, className }) => {
+  if (!failed.length) return null;
+  return (
+    <div
+      role="status"
+      className={cn('flex shrink-0 items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100', className)}
+    >
+      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+      {failed.length === 1 ? (
+        <p className="min-w-0">
+          <span className="font-semibold">{failed[0].label} was not built</span> ({failed[0].reason}): nothing from it is in the rows, counts or totals below.
+        </p>
+      ) : (
+        <div className="min-w-0">
+          <p className="font-semibold">{failed.length} periods were not built: nothing from them is in the rows, counts or totals below.</p>
+          <ul className="mt-0.5 space-y-0.5">
+            {failed.map((f) => (
+              <li key={f.key || f.label}><span className="font-medium">{f.label}:</span> {f.reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+};
+
 /** The standard look of one cell; a view's renderCell can fall back to it. */
 export const StandardCell: React.FC<{ kit: TableKit; row: ModelRow; col: number }> = ({ kit, row, col }) => {
   if (col === kit.model.periodCol) return <>{kit.text(row, col)}</>;
@@ -107,10 +140,13 @@ export const TableKitTable: React.FC<TableKitTableProps> = ({
   const { model, view, state, cols, labelAt, pageView } = kit;
   const tableRef = useRef<HTMLTableElement>(null);
 
-  // A new filter, sort, grouping or page starts at the top of the list.
+  // A new filter, sort, grouping or page starts at the top of the list. Only
+  // the reviewer's choices change `state` (useTableKit), never a Pull refresh
+  // or an inline edit, which keep the reviewer's place.
   useEffect(() => { tableRef.current?.parentElement?.scrollTo?.({ top: 0 }); }, [pageView.page, state]);
 
-  if (kit.table.rows.length === 0) return <TableKitEmpty>{emptyText}</TableKitEmpty>;
+  const failedNote = <TableKitFailedPeriods failed={kit.failedPeriods} />;
+  if (kit.table.rows.length === 0) return <>{failedNote}<TableKitEmpty>{emptyText}</TableKitEmpty></>;
 
   const extras = leading.length + trailing.length;
   const span = cols.length + extras;
@@ -160,7 +196,7 @@ export const TableKitTable: React.FC<TableKitTableProps> = ({
                 <CalendarRange className="h-3.5 w-3.5" />
                 {it.label}
                 <span className="font-normal text-muted-foreground">
-                  {it.continued ? '(continued)' : view.filtered ? `${it.count} matching` : ''}
+                  {it.continued ? '(continued)' : it.totalsOnly ? 'its own TOTAL, as printed' : view.filtered ? `${it.count} matching` : ''}
                 </span>
               </span>
             </TableCell>
@@ -254,31 +290,34 @@ export const TableKitTable: React.FC<TableKitTableProps> = ({
   };
 
   return (
-    // Its own wrapper scrolls, so the header and the TOTAL stay pinned.
-    <Table ref={tableRef} className={WS_TABLE} containerClassName={containerClassName ?? DEFAULT_CONTAINER} aria-label={label}>
-      <TableKitHeader kit={kit} leading={leading} trailing={trailing} sticky={sticky} headClassName={headClassName} columnClassName={columnClassName} />
+    <>
+      {failedNote}
+      {/* Its own wrapper scrolls, so the header and the TOTAL stay pinned. */}
+      <Table ref={tableRef} className={WS_TABLE} containerClassName={containerClassName ?? DEFAULT_CONTAINER} aria-label={label}>
+        <TableKitHeader kit={kit} leading={leading} trailing={trailing} sticky={sticky} headClassName={headClassName} columnClassName={columnClassName} />
 
-      <TableBody>
-        {view.rows.length === 0 && view.filtered && (
-          <TableRow>
-            <TableCell colSpan={span} className="border-b py-6 text-center text-sm text-muted-foreground">
-              {noMatchText ?? 'No rows match these filters.'}{' '}
-              <button type="button" className="text-primary hover:underline" onClick={kit.clearAll}>Clear all</button>
-            </TableCell>
-          </TableRow>
+        <TableBody>
+          {view.rows.length === 0 && view.filtered && (
+            <TableRow>
+              <TableCell colSpan={span} className="border-b py-6 text-center text-sm text-muted-foreground">
+                {noMatchText ?? 'No rows match these filters.'}{' '}
+                <button type="button" className="text-primary hover:underline" onClick={kit.clearAll}>Clear all</button>
+              </TableCell>
+            </TableRow>
+          )}
+          {pageView.items.map(renderItem)}
+        </TableBody>
+
+        {view.footer && (
+          <TableFooter className={cn(sticky && 'sticky bottom-0 z-10', 'border-t-0 bg-muted')}>
+            <TableRow className={cn(WS_TR_TOTAL, 'hover:bg-muted [&>td]:border-t-2 [&>td]:border-t-foreground/40 [&>td]:font-bold')}>
+              {blankExtras(leading)}
+              {view.footer.type === 'total' ? ownTotalCells(view.footer.row) : sumCells(view.footer.label, view.footer.sums)}
+              {blankExtras(trailing)}
+            </TableRow>
+          </TableFooter>
         )}
-        {pageView.items.map(renderItem)}
-      </TableBody>
-
-      {view.footer && (
-        <TableFooter className={cn(sticky && 'sticky bottom-0 z-10', 'border-t-0 bg-muted')}>
-          <TableRow className={cn(WS_TR_TOTAL, 'hover:bg-muted [&>td]:border-t-2 [&>td]:border-t-foreground/40 [&>td]:font-bold')}>
-            {blankExtras(leading)}
-            {view.footer.type === 'total' ? ownTotalCells(view.footer.row) : sumCells(view.footer.label, view.footer.sums)}
-            {blankExtras(trailing)}
-          </TableRow>
-        </TableFooter>
-      )}
-    </Table>
+      </Table>
+    </>
   );
 };

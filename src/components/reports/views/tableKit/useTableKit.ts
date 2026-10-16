@@ -11,18 +11,18 @@ import type { ColumnGroup, ReportTable } from '@/utils/allClientsReports';
 import { renderReportToExcel } from '@/utils/allClientsReports';
 import { renderReportToPdf } from '@/utils/closingBalanceReportsPdf';
 import {
-  EMPTY_VIEW, PAGE_THRESHOLD, activeFilters, buildModel, buildView, displayText, figureText, isFigureColumn, isFilterActive,
-  labelPosition, paginate, respanColumnGroups, sumRows, viewToReportTable, visibleColumns, withSummable,
-  type ActiveFilter, type ColumnFilter, type ModelColumn, type ModelRow, type Page, type SortState, type TableModel,
-  type ViewResult, type ViewState,
+  EMPTY_VIEW, PAGE_THRESHOLD, activeFilters, buildModel, buildView, columnTotals, displayText, figureText, isFigureColumn,
+  isFilterActive, labelPosition, paginate, respanColumnGroups, viewToReportTable, visibleColumns, withSearchable, withSummable,
+  type ActiveFilter, type ColumnFilter, type FailedPeriod, type ModelColumn, type ModelRow, type Page, type SortState,
+  type TableModel, type ViewResult, type ViewState,
 } from './tableModel';
 
 export type ExportFormat = 'xlsx' | 'pdf';
 
 /**
  * A view's own quick filter as the hook takes it. `test` is handed the table
- * of the moment, so a filter set before a Pull refresh reads the new rowFlags
- * or rowTones, never the old ones it was created with.
+ * of the moment (read through a ref), so a filter set before a Pull refresh
+ * reads the new rowFlags or rowTones, never the old ones it was created with.
  */
 export interface KitCustomFilter {
   label: string;
@@ -94,6 +94,23 @@ export interface TableKitOptions {
    * working paper (its rows are the steps of one computation). Default true.
    */
   sums?: boolean;
+  /**
+   * Which columns the search looks in: their indices (the Period column of a
+   * merge by its index, table.headers.length), or a test on the column.
+   * Default every column. Leave out a helper column the view adds to the rows
+   * (a hidden Quarter, "Q1 (Apr to Jun)"), or a search for "Jun 2026" would
+   * also match April and May.
+   */
+  searchable?: number[] | ((col: ModelColumn) => boolean);
+  /**
+   * How the summed columns read across the periods of a merge. 'sum' (the
+   * default) adds them up. 'latest': they are balances (a closing ledger, a
+   * roster of closing figures), which mean nothing added across month-ends:
+   * the KPI totals are the latest period's with rows shown (totalsAsAt), no
+   * TOTAL is computed over several periods, and groups carry subtotals only
+   * grouped by Period. An unmerged table is unaffected.
+   */
+  acrossPeriods?: 'sum' | 'latest';
 }
 
 /** A summable column's total over every row, and over the rows shown once anything is filtered (else null). */
@@ -122,6 +139,17 @@ export interface TableKit {
   statusCol: number;
   /** The summable columns' totals, for a view's KPI tiles. */
   totals: KitTotal[];
+  /**
+   * The period the totals are as at ("Jul 2026") when they are balances of a
+   * merge (acrossPeriods 'latest'): a tile must say so. Else null.
+   */
+  totalsAsAt: string | null;
+  /**
+   * The periods of a merge that could not be built, and why. TableKitTable
+   * names them above the rows; a view drawing its own rows or an empty state
+   * ("no exceptions") must say so too, or a month never checked reads as clean.
+   */
+  failedPeriods: FailedPeriod[];
   /** Whether the list is shown a page at a time. */
   paged: boolean;
   /** The items of the page shown (all of them when not paged). */
@@ -212,24 +240,36 @@ export function useTableKit(table: ReportTable, options: TableKitOptions = {}): 
   const sumSig = sm === undefined ? null
     : Array.isArray(sm) ? sm.join(',')
       : base.summable.filter((c) => sm(base.columns[c])).join(',');
+  // The searched columns likewise (every column unless a view leaves one out).
+  const se = options.searchable;
+  const searchSig = se === undefined ? null : base.columns.map((c) => ((Array.isArray(se) ? se.includes(c.index) : se(c)) ? '1' : '0')).join('');
   const within = !!options.sortWithinSections;
   const noSums = options.sums === false;
+  const latest = options.acrossPeriods === 'latest';
   const model = useMemo<TableModel>(() => {
     const grouped = groupSig === null ? base : { ...base, columns: base.columns.map((c, k) => ({ ...c, groupable: groupSig[k] === '1' })) };
     const summed = sumSig === null ? grouped : withSummable(grouped, sumSig ? sumSig.split(',').map(Number) : []);
-    if (!within && !noSums) return summed;
+    const searched = searchSig === null ? summed : withSearchable(summed, summed.columns.filter((_, k) => searchSig[k] === '1').map((c) => c.index));
+    if (!within && !noSums && !latest) return searched;
     return {
-      ...summed,
+      ...searched,
       sortWithinSections: within,
-      ...(noSums ? { keepReportTotals: true, summable: [], columns: summed.columns.map((c) => ({ ...c, summable: false })) } : {}),
+      ...(noSums ? { keepReportTotals: true, summable: [], columns: searched.columns.map((c) => ({ ...c, summable: false })) } : {}),
+      ...(latest ? { acrossPeriods: 'latest' as const } : {}),
     };
-  }, [base, groupSig, sumSig, within, noSums]);
+  }, [base, groupSig, sumSig, searchSig, within, noSums, latest]);
 
+  // The view's own filters read the table of the moment through a ref, so
+  // `state` changes only with the reviewer's choices: a Pull refresh or an
+  // inline edit (a new table) neither rebuilds it nor, through it, sends the
+  // list back to its top (TableKitTable scrolls up on a new state).
+  const tableRef = useRef(table);
+  tableRef.current = table;
   const state = useMemo<ViewState>(
     () => (store.custom.length
-      ? { ...store.view, custom: store.custom.map((c) => ({ id: c.id, label: c.label, test: (r: ModelRow) => c.test(r, table) })) }
+      ? { ...store.view, custom: store.custom.map((c) => ({ id: c.id, label: c.label, test: (r: ModelRow) => c.test(r, tableRef.current) })) }
       : store.view),
-    [store.view, store.custom, table],
+    [store.view, store.custom],
   );
   const view = useMemo(() => buildView(model, state, store.collapsed), [model, state, store.collapsed]);
   const cols = useMemo(() => visibleColumns(model, view, store.hidden), [model, view, store.hidden]);
@@ -247,16 +287,9 @@ export function useTableKit(table: ReportTable, options: TableKitOptions = {}): 
     : options.statusColumn ?? table.toneColumn ?? table.headers.findIndex((h) => STATUS_HEADER_RE.test(h.trim()));
 
   // The report's own grand TOTAL where it printed one (else the rows added up),
-  // and once filtered, the TOTAL of the rows still shown.
-  const totals = useMemo<KitTotal[]>(() => {
-    const all = model.grandTotal ? null : sumRows(model, model.data);
-    const totalOf = (c: number): number => {
-      const own = model.grandTotal?.cells[c];
-      return typeof own === 'number' ? own : all?.get(c) ?? 0;
-    };
-    const shown = view.footer?.type === 'sum' ? view.footer.sums : null;
-    return model.summable.map((c) => ({ col: c, total: totalOf(c), shown: view.filtered ? shown?.get(c) ?? 0 : null }));
-  }, [model, view]);
+  // and once filtered, the TOTAL of the rows still shown; balances of a merge,
+  // the latest period's (columnTotals).
+  const { totals, asAt: totalsAsAt } = useMemo(() => columnTotals(model, view), [model, view]);
 
   const rowNoun = options.rowNoun ?? DEFAULT_NOUN;
   const nounOf = (n: number) => (n === 1 ? rowNoun[0] : rowNoun[1]);
@@ -347,7 +380,7 @@ export function useTableKit(table: ReportTable, options: TableKitOptions = {}): 
   return {
     table, model, state, view, cols,
     hidden: store.hidden, collapsed: store.collapsed,
-    filters, labelAt, columnGroups, groupable, statusCol, totals,
+    filters, labelAt, columnGroups, groupable, statusCol, totals, totalsAsAt, failedPeriods: model.failedPeriods,
     paged, pageView, pageSize: store.pageSize, pageSizes: options.pageSizes ?? DEFAULT_PAGE_SIZES,
     exporting, rowNoun, countText,
     setSearch, setFilter, setCustomFilter, removeFilter, setSort, cycleSort, setGroup, toggleCollapsed, setAllCollapsed,

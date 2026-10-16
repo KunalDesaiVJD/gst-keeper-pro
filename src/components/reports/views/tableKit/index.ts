@@ -71,7 +71,13 @@
 // measures; a test: narrows what the report sums, as a version number or a
 // ledger's running balance is a figure but not a sum), pageable, pageThreshold
 // (page sooner than 500 lines), pageSizes, initialPageSize, statusColumn,
-// rowNoun, transformExport. TableKitTable's headClassName colours or centres
+// rowNoun, transformExport, searchable (indices or a test: leave a view's own
+// helper column out of the search), acrossPeriods ('latest' for balances: a
+// merge's totals are its latest period's, kit.totalsAsAt names it, nothing is
+// added across periods). kit.failedPeriods names the periods of a merge that
+// could not be built; TableKitTable shows them above the rows, and a view with
+// its own rows or empty state shows <TableKitFailedPeriods failed={...} />.
+// TableKitTable's headClassName colours or centres
 // one column's heading; columnClassName marks a whole column (a delta, a
 // headline figure) from its heading to its TOTAL.
 // For a report read top to bottom (a return, a working paper):
@@ -86,7 +92,7 @@ export type { ExportFormat, KitCustomFilter, KitTotal, TableKit, TableKitOptions
 export { ColumnFilter as ColumnFilterMenu, ValuesPanel } from './ColumnFilter';
 export { TableKitHead, TableKitHeader, TableKitGroupRow } from './TableKitHead';
 export type { KitExtraColumn, TableKitHeadProps } from './TableKitHead';
-export { TableKitTable, TableKitEmpty, StandardCell } from './TableKitTable';
+export { TableKitTable, TableKitEmpty, TableKitFailedPeriods, StandardCell } from './TableKitTable';
 export type { TableKitTableProps } from './TableKitTable';
 export { TableKitToolbar } from './TableKitToolbar';
 export type { TableKitToolbarProps } from './TableKitToolbar';
