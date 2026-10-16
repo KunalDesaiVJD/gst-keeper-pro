@@ -182,10 +182,15 @@ function headerBlock(ws: Worksheet, ctx: Ctx, widths: number[]): number {
   }
 
   if (ctx.rest) {
+    // Wrapped across the table's width, as the PDF's letterhead wraps it: a
+    // long note (a merge's per-year notes) run on past the table would make
+    // the printed sheet shrink to fit it.
+    if (n > 1) ws.mergeCells(r, FIRST_COL, r, FIRST_COL + n - 1);
     const c = ws.getCell(r, FIRST_COL);
-    c.value = ctx.rest;
-    c.style = styleOf(ctx, 'hb:rest', () => ({ font: font({ italic: true, color: { argb: PALETTE.muted } }), alignment: { vertical: 'middle' } }));
-    ws.getRow(r++).height = 13;
+    c.value = fitText(ctx.rest);
+    c.style = styleOf(ctx, 'hb:rest', () => ({ font: font({ italic: true, color: { argb: PALETTE.muted } }), alignment: { vertical: 'top', wrapText: true } }));
+    const lines = Math.min(linesFor(ctx.rest, widthOf(widths, 0, n)), 6);
+    ws.getRow(r++).height = lines > 1 ? lines * LINE_PT + 2 : 13;
   }
 
   // The prepared line carries the rule under the block, across the table's width.

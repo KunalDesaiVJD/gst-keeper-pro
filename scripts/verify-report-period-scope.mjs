@@ -246,6 +246,18 @@ await section("two years: each year's own word", async (g) => {
   check(g, '… the Excel / PDF strip still names both years', meta.some((f) => f.label === 'Financial year' && f.value === 'FY 2025-26, FY 2026-27'), JSON.stringify(meta));
   check(g, "… and each year's note is on the note line, read whole, not a strip field cut off by the next",
     !meta.some((f) => /^FY \d{4}/.test(f.label)) && rest.includes('FY 2025-26: As filed') && rest.includes('FY 2026-27: As filed'), JSON.stringify({ meta, rest }));
+  // In the Excel the note line wraps across the table's width (as the PDF's
+  // letterhead does), not one line running past it.
+  const wbn = new ExcelJS.Workbook();
+  await wbn.xlsx.load(await M.reportToXlsx(both, { now: new Date(Date.UTC(2026, 9, 16, 6, 0)) }));
+  const wsn = wbn.worksheets[0];
+  let noteRow = null;
+  wsn.eachRow((row, i) => { if (!noteRow && /^FY 2025-26: Same-day order/.test(String(row.getCell(2).value ?? ''))) noteRow = i; });
+  const noteCell = noteRow ? wsn.getCell(noteRow, 2) : null;
+  const across = noteRow ? wsn.getCell(noteRow, 2 + both.headers.length - 1).master?.address === noteCell.address : false;
+  check(g, "… and in the Excel the ledger's two notes are one note line wrapped across the whole table, tall enough for its lines",
+    !!noteCell && noteCell.alignment?.wrapText === true && across && (wsn.getRow(noteRow).height ?? 0) > 13,
+    JSON.stringify({ noteRow, wrap: noteCell?.alignment, across, h: noteRow && wsn.getRow(noteRow).height }));
   const ledgerMeta = M.metaOf(both);
   check(g, "… so is a ledger's long same-day note", !ledgerMeta.fields.some((f) => /Same-day order/.test(`${f.label}: ${f.value}`)) && ledgerMeta.rest.includes(`FY 2026-27: ${NOTE26}`), JSON.stringify(ledgerMeta));
 

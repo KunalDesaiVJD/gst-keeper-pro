@@ -146,7 +146,8 @@ function byChain<T>(
       const sig = `${l.isDebit}|${Math.round(l.amount * 100)}|${Math.round((l.balance as number) * 100)}`;
       if (alike.has(sig)) continue;
       alike.add(sig);
-      if (prev !== null && !near(l.balance as number, prev + signedAmount(l, convention))) continue;
+      // An entry of no amount (a fee only) would chain from any equal balance: never a link.
+      if (prev !== null && (Math.abs(l.amount) < 0.005 || !near(l.balance as number, prev + signedAmount(l, convention)))) continue;
       used[i] = true;
       path.push(i);
       dfs(l.balance);
@@ -206,15 +207,16 @@ function contradicted<T>(order: Stored<T>[], start: number | null, end: number |
 }
 
 /**
- * An order's fit to the running balance, as one number: the steps that chain
- * (the day's last balance reaching `end` counts as one), then the steps that
- * at least move the balance their own way. A chain weighs more than every
- * step of a day of n entries moving its way (n + 2 against at most n).
+ * An order's fit to the running balance, as one number: first the fewer
+ * contradictions (a step 'against', the day's last balance missing `end`),
+ * then the more steps that chain. Each step and the end score `sound` unless
+ * they contradict, and a chain adds 1, so one contradiction outweighs every
+ * chain a day of n entries can have (n + 2 against at most n).
  */
-const chainWeight = (n: number): number => n + 2;
-const fitOf = (k: Step, n: number): number => (k === 'chain' ? chainWeight(n) + 1 : k === 'way' ? 1 : 0);
+const sound = (n: number): number => n + 2;
+const fitOf = (k: Step, n: number): number => (k === 'against' ? 0 : sound(n) + (k === 'chain' ? 1 : 0));
 const endFit = (last: number | null, end: number | null, n: number): number =>
-  (last !== null && end !== null && near(last, end) ? chainWeight(n) : 0);
+  (last === null || end === null || near(last, end) ? sound(n) : 0);
 
 function fitScore<T>(order: Stored<T>[], start: number | null, end: number | null, convention: BalanceConvention): number {
   const n = order.length;
@@ -348,7 +350,19 @@ function orderWith<T>(lines: LedgerLine<T>[], convention: BalanceConvention): { 
       const nextStarts = isLast ? null : days[k + 1]
         .filter((s) => s.line.balance !== null)
         .map((s) => (s.line.balance as number) - signedAmount(s.line, convention));
-      const ordered = bySerial(day) ?? byChain(day, start, end, nextStarts, convention);
+      const serial = bySerial(day);
+      let ordered = serial ?? byChain(day, start, end, nextStarts, convention);
+      // A chain opened from an unknown balance (after a day the balances did
+      // not settle) proves less than one from a known one: it may open with
+      // any entry. Unless it is the stored order itself, it replaces that
+      // order only when the balance as listed before the day contradicts the
+      // stored order and not the chain; otherwise the day is judged as an
+      // unsettled one (kept as stored unless the balances prove it wrong).
+      if (!serial && ordered && start === null && listed !== null) {
+        const asStored = [...day].sort((a, b) => a.at - b.at);
+        const same = ordered.every((s, i) => s === asStored[i]);
+        if (!same && (contradicted(ordered, listed, end, convention) || !contradicted(asStored, listed, end, convention))) ordered = null;
+      }
       if (ordered) {
         settled += 1;
         placed.push(...ordered);

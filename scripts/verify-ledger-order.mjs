@@ -248,6 +248,18 @@ await run('stored order kept where the balances prove nothing', async (g) => {
     check(g, name, o.convention === 'debit-adds' && sameList(o.lines.map((l) => l.row.description), make().map((r) => r.description)),
       `${o.convention}: ${o.lines.map((l) => l.row.description).join(' / ')}`);
   }
+  for (const [name, make, client] of [
+    ['after an unsettled day, a transfer out and back: not swapped by a chain from the unknown balance; both days named', F.cashTransferAfterUnsettled, 'cash-9'],
+    ['after an unsettled day, a fee with no tax then a transfer: the fee stays first; both days named', F.cashFeeTransferAfterUnsettled, 'cash-10'],
+  ]) {
+    serve('gst_cash_ledger_entries', make());
+    const tt = await M.buildCashLedgerReport(client, '08/2026');
+    check(g, name, sameList(dayOf(tt), descs(make())) && /Same-day order: 2 days .*18-Aug-2026, 22-Aug-2026/.test(tt.subtitle), `${dayOf(tt).join(' / ')} | ${tt.subtitle}`);
+  }
+  const sw = M.orderRegisterRows(F.liabilitySwappedDebits(true), M.LIABILITY_ORDER);
+  const swRows = sw.lines.map((l) => l.row);
+  check(g, 'a liability day stored with its two liabilities swapped: put right, ending on the Closing Balance (not an order the balances prove wrong)',
+    sameList(swRows.map((r) => r.description), F.liabilitySwappedDebits(false).map((r) => r.description)), swRows.map((r) => `${r.description} [${r.balance}]`).join(' / '));
   serve('gst_cash_ledger_entries', F.cashNearest(true));
   const t = await M.buildCashLedgerReport('cash-8', '08/2026');
   check(g, 'two deposits stored the wrong way round, two orders fitting equally: the one nearer the stored (the portal\'s)',

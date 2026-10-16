@@ -204,6 +204,60 @@ export const liabilityMirroredFees = () => {
     r('06/2026', null, 'Closing Balance', null, {}, 0),
   ];
 };
+/**
+ * Days after a day the balances did not settle (a deposit carrying interest),
+ * which a chain opened from that unknown balance would put in another order:
+ *  - cashTransferAfterUnsettled: a PMT-09 transfer out, then back in partly
+ *    to the interest head (the in leg moves the tax heads less);
+ *  - cashFeeTransferAfterUnsettled: a late fee set off with no tax, then a
+ *    transfer whose out leg carries interest, then a set-off.
+ * Each is stored in the portal's order and must stay so.
+ */
+export const cashTransferAfterUnsettled = () => {
+  const r = reg('cash-9');
+  return [
+    r('08/2026', null, 'Opening Balance', null, {}, 0),
+    r('08/2026', '2026-08-18', 'Amount deposited CPIN 26080051 (with interest)', false, { igst: 10000 }, 10200),
+    r('08/2026', '2026-08-18', 'Other than reverse charge (Aug 18)', true, { igst: 6000 }, 4200),
+    r('08/2026', '2026-08-22', 'Transfer out (PMT-09)', true, { cgst: 3000 }, 1200),
+    r('08/2026', '2026-08-22', 'Transfer in (PMT-09, part to interest)', false, { igst: 2500 }, 4200),
+    r('08/2026', '2026-08-24', 'Amount deposited CPIN 26080052', false, { igst: 1864 }, 6064),
+    r('08/2026', null, 'Closing Balance', null, {}, 6064),
+  ];
+};
+export const cashFeeTransferAfterUnsettled = () => {
+  const r = reg('cash-10');
+  return [
+    r('08/2026', null, 'Opening Balance', null, {}, 0),
+    r('08/2026', '2026-08-18', 'Amount deposited CPIN 26080061 (with interest)', false, { igst: 10000 }, 10200),
+    r('08/2026', '2026-08-18', 'Other than reverse charge (Aug 18)', true, { igst: 6000 }, 4200),
+    r('08/2026', '2026-08-22', 'Late fee set off (no tax)', true, {}, 3700),
+    r('08/2026', '2026-08-22', 'Transfer out (PMT-09, with interest)', true, { cgst: 800 }, 2700),
+    r('08/2026', '2026-08-22', 'Transfer in (PMT-09)', false, { igst: 1000 }, 3700),
+    r('08/2026', '2026-08-22', 'Other than reverse charge (Aug 22)', true, { igst: 3000 }, 700),
+    r('08/2026', '2026-08-24', 'Amount deposited CPIN 26080062', false, { igst: 1864 }, 2564),
+    r('08/2026', null, 'Closing Balance', null, {}, 2564),
+  ];
+};
+
+/**
+ * A liability register day with no Opening row, the reverse charge carrying
+ * interest; `swapped` stores its two liabilities the other way round. Two
+ * orders fit as many chains, only one ends on the Closing Balance.
+ */
+export const liabilitySwappedDebits = (swapped = false) => {
+  const r = reg('liab-5');
+  const otrc = r('06/2026', '2026-07-22', 'Other than reverse charge (liability)', true, { cgst: 5000, sgst: 5000 }, 10000);
+  const rc = r('06/2026', '2026-07-22', 'Reverse charge (liability, with interest)', true, { igst: 2000 }, 12100);
+  return [
+    ...(swapped ? [rc, otrc] : [otrc, rc]),
+    r('06/2026', '2026-07-22', 'Other than reverse charge (paid in cash)', false, { cgst: 2000, sgst: 2000 }, 8100),
+    r('06/2026', '2026-07-22', 'Reverse charge (paid, with interest)', false, { igst: 2000 }, 6000),
+    r('06/2026', '2026-07-22', 'Other than reverse charge (paid by ITC)', false, { cgst: 3000, sgst: 3000 }, 0),
+    r('06/2026', null, 'Closing Balance', null, {}, 0),
+  ];
+};
+
 /** cashNearest: the day as the portal lists it; `swapped` stores its two deposits the other way round. */
 export const cashNearest = (swapped = false) => {
   const r = reg('cash-8');
