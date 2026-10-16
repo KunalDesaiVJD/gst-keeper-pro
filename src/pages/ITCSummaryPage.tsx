@@ -1045,8 +1045,14 @@ const ITCSummaryPage: React.FC = () => {
         (profiles || []).forEach(p => { userMap[p.user_id] = { name: p.first_name, role: '' }; });
         (roles || []).forEach(r => { if (userMap[r.user_id]) userMap[r.user_id].role = r.role; });
       }
+      // 4(D)(1) = 1.1 + 1.2 in every view of a version (preview, restore,
+      // download), whatever the version saved there.
+      const withD1 = (d: unknown) => {
+        const data = d as ITCData | null;
+        return data && Array.isArray(data.section4D) ? { ...data, section4D: with4D1Total(data.section4D) } : d;
+      };
       const formatted = (versionsData || []).map(v => ({
-        id: v.id, versionNumber: v.version_number || 1, versionData: v.version_data,
+        id: v.id, versionNumber: v.version_number || 1, versionData: withD1(v.version_data),
         updatedBy: userMap[v.updated_by]?.name || 'Unknown', updatedByRole: userMap[v.updated_by]?.role || '',
         updatedAt: v.updated_at, isCurrent: v.is_current || false, actionType: v.action_type || 'SAVE',
         restoredFromVersionId: v.restored_from_version_id,
