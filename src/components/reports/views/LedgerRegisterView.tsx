@@ -9,11 +9,16 @@
 //   - the direction tint on each entry's figures;
 //   - the balance as the ledger's own figure on each row: never recomputed and
 //     never added up (a sum of balances means nothing), whatever the order;
-//   - the Opening and Closing Balance rows pinned first and last, out of reach
-//     of the search, the filters and the sort: they bound the ledger, they are
-//     not entries. The cash and liability builders leave them undated, so the
-//     report's own order puts them at the end; pinned, they are where a
-//     reader looks for them;
+//   - the Opening and Closing Balance rows held out of reach of the search,
+//     the filters and the sort: they bound the ledger, they are not entries.
+//     A ledger of several months (the cash and liability ledgers: a Month
+//     column, a pair of balances per month) shows each month's balances in
+//     place in its own order: its opening before its first entry, its closing
+//     after its last, a month with no entry shown as its two balances alone.
+//     So does a merge, each period's under its band. Sorted, grouped, paged
+//     or with no entry shown, they are pinned first and last instead, each
+//     naming its month (or period). A filter that picks months (the Month
+//     column, a merge's Period) picks their balances too;
 //   - totals by direction. A TOTAL adding debits to credits would mean nothing,
 //     so a ledger with a Type column totals its debits and its credits apart
 //     and nets them (credit less debit, as the Credit Ledger's own NET row
@@ -36,8 +41,8 @@ import {
   ArrowUpCircle, ArrowDownCircle, BookText, CalendarRange, ChevronDown, ChevronRight, Inbox,
 } from 'lucide-react';
 import {
-  StandardCell, TableKitHeader, TableKitPager, TableKitToolbar, kitCellClass, periodLabel, useTableKit,
-  type DisplayItem, type ModelRow, type TableKit,
+  BLANK, StandardCell, TableKitHeader, TableKitPager, TableKitToolbar, kitCellClass, periodLabel, useTableKit,
+  type ColumnFilter, type DisplayItem, type ModelRow, type TableKit, type ViewState,
 } from './tableKit';
 
 interface LedgerRegisterViewProps {
@@ -49,24 +54,40 @@ type Cell = string | number;
 type Direction = 'debit' | 'credit';
 type Role = 'band' | 'section' | 'blank' | 'opening' | 'closing' | 'summary' | 'entry';
 
-/** An Opening / Closing Balance row held out of the kit and drawn first or last. */
+/** An Opening / Closing Balance row held out of the kit and drawn in its month, or first or last. */
 interface Pinned {
   /** Index in table.rows (for a closing taken from the last entry: that entry's). */
   i: number;
   /** The merge's period the row sits under ('' for one period). */
   band: string;
+  /** The row's Month cell ("Apr 2026"), '' for a ledger without a Month column. */
+  month: string;
+  /** Its segment (index into split.segments). */
+  seg: number;
   kind: 'opening' | 'closing' | 'last';
 }
 
+/**
+ * A stretch of the ledger one pair of balances bounds: a month under a merge's
+ * period band (or the whole ledger, for one period without a Month column).
+ */
+interface Segment { band: string; month: string; openings: Pinned[]; closings: Pinned[] }
+
+/** A line of the register in its own order: one of the kit's items (by index), or a balance in its place. */
+type Step = { item: number } | { pin: Pinned };
+
 const TYPE_HEADER_RE = /^type$/i;
 const DESC_HEADER_RE = /^(description|particulars|narration)$/i;
+// The cash and liability ledgers' (and the credit ledger's) month of each row.
+const MONTH_HEADER_RE = /^month$/i;
 // The running balances: the ledger's own figure per row, never added up.
 const BALANCE_HEADER_RE = /^(balance|closing\b.*|opening\b.*)$/i;
 const SERIAL_HEADER_RE = /^(#|sr\.?\s*no\.?|s\.?\s?no\.?|sl\.?\s?no\.?)$/i;
 // "ITC Claimed IGST": the group ("ITC Claimed") and the head ("IGST").
 const HEAD_RE = /^(.+?)\s+(IGST|CGST|SGST|UTGST|Cess)$/i;
-const OPENING_RE = /^opening balance$/i;
-const CLOSING_RE = /^closing balance$/i;
+// "Opening Balance", or one naming its month: "Opening Balance (Apr 2026)".
+const OPENING_RE = /^opening balance(\s*\(.*\))?$/i;
+const CLOSING_RE = /^closing balance(\s*\(.*\))?$/i;
 // The Credit Ledger's own closing line, "NET (Credit − Debit)".
 const NET_RE = /^net(\s*\(|$)/i;
 const BAND_RE = /^— (.+) —$/;
@@ -104,6 +125,59 @@ function sumFlows(rows: ModelRow[], cols: number[], pick?: (r: ModelRow) => bool
 }
 const sumAll = (m: Map<number, number>): number => round2([...m.values()].reduce((a, b) => a + b, 0));
 
+// Whether a filter on the Month (or a merge's Period) column lets a month's balances show.
+const picks = (f: ColumnFilter | undefined, key: string): boolean => {
+  if (!f) return true;
+  if (f.type === 'values') return f.values.includes(key === '' ? BLANK : key);
+  if (f.type === 'contains') return key.toLowerCase().includes(f.text.trim().toLowerCase());
+  return true;
+};
+
+/**
+ * The kit's items in the ledger's own order, each segment's balances in
+ * place: its openings before its first entry shown, its closings after its
+ * last, and a segment with no entry shown its balances alone, where it falls
+ * (a band's before the next band). Needs the items in the ledger's own order,
+ * segments ascending (split.monotonic); `segOf` gives a data item's segment,
+ * `bandStart` the first segment under a band, `visible` whether a segment's
+ * balances show. Every item is kept, in its order.
+ */
+function placeBalances(
+  items: DisplayItem[], segments: Segment[], segOf: (row: ModelRow) => number,
+  bandStart: (key: string) => number, visible: (s: number) => boolean,
+): Step[] {
+  const out: Step[] = [];
+  let at = -1;
+  let open = false;
+  const opening = (s: number) => { if (visible(s)) for (const p of segments[s].openings) out.push({ pin: p }); };
+  const closing = (s: number) => { if (visible(s)) for (const p of segments[s].closings) out.push({ pin: p }); };
+  // Closes the open segment and every one before `t` not yet drawn.
+  const closeTo = (t: number) => {
+    if (open) { closing(at); open = false; }
+    for (let s = at + 1; s < t; s++) { opening(s); closing(s); }
+    at = Math.max(at, t - 1);
+  };
+  items.forEach((it, k) => {
+    if (it.type === 'band') {
+      closeTo(bandStart(it.key));
+      out.push({ item: k });
+      return;
+    }
+    if (it.type === 'data') {
+      const s = segOf(it.row);
+      if (s >= 0 && !(open && s === at)) {
+        closeTo(s);
+        opening(s);
+        at = s;
+        open = true;
+      }
+    }
+    out.push({ item: k });
+  });
+  closeTo(segments.length);
+  return out;
+}
+
 export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, report }) => {
   const { headers, rows } = table;
   const typeCol = useMemo(() => headers.findIndex((h) => TYPE_HEADER_RE.test(h.trim())), [headers]);
@@ -111,33 +185,67 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
   const statusCol = useMemo(() => headers.findIndex((h) => /^status$/i.test(h.trim())), [headers]);
   const balanceCols = useMemo(() => headers.map((h, i) => (BALANCE_HEADER_RE.test(h.trim()) ? i : -1)).filter((i) => i >= 0), [headers]);
   const balanceCol = useMemo(() => headers.findIndex((h) => /^balance$/i.test(h.trim())), [headers]);
+  const monthCol = useMemo(() => headers.findIndex((h) => MONTH_HEADER_RE.test(h.trim())), [headers]);
   const hasType = typeCol !== -1;
 
   // The ledger split into what the kit lists (entries, and a merge's period
-  // bands) and the balances it pins.
+  // bands) and the balances it holds out, each in its segment: its month
+  // (from the Month column) under its merge band.
   const split = useMemo(() => {
     const listed: number[] = [];
     const kinds: RowKind[] = [];
-    const openings: Pinned[] = [];
-    const closings: Pinned[] = [];
+    /** Per kit row (index into listed): its segment, -1 for a band or a heading. */
+    const segOfListed: number[] = [];
+    const segments: Segment[] = [];
+    const segIndex = new Map<string, number>();
+    /** Per merge band: the first segment under it. */
+    const bandStart = new Map<string, number>();
     const summaries: number[] = [];
-    const lastEntry = new Map<string, number>();
+    const lastEntry = new Map<number, number>();
+    // Each segment's rows together and in order, so its balances can be drawn in place.
+    let monotonic = true;
+    let current = -1;
     let band = '';
+    const segOf = (row: Cell[]): number => {
+      const month = monthCol >= 0 ? str(row[monthCol]).replace(/\s+/g, ' ') : '';
+      const key = `${band}\u0001${month}`;
+      let s = segIndex.get(key);
+      if (s === undefined) {
+        s = segments.length;
+        segments.push({ band, month, openings: [], closings: [] });
+        segIndex.set(key, s);
+      } else if (s !== current) monotonic = false;
+      current = s;
+      return s;
+    };
     rows.forEach((row, i) => {
       const role = roleOf(row, table.rowKinds?.[i]);
       if (role === 'blank') return;
-      if (role === 'opening') { openings.push({ i, band, kind: 'opening' }); return; }
-      if (role === 'closing') { closings.push({ i, band, kind: 'closing' }); return; }
       if (role === 'summary') { summaries.push(i); return; }
-      if (role === 'band') band = BAND_RE.exec(str(row[0]))?.[1] ?? str(row[0]);
-      if (role === 'entry' && balanceCols.some((c) => typeof row[c] === 'number')) lastEntry.set(band, i);
+      if (role === 'opening' || role === 'closing') {
+        const seg = segOf(row);
+        const p: Pinned = { i, band, month: segments[seg].month, seg, kind: role };
+        (role === 'opening' ? segments[seg].openings : segments[seg].closings).push(p);
+        return;
+      }
+      if (role === 'band') {
+        band = BAND_RE.exec(str(row[0]))?.[1] ?? str(row[0]);
+        bandStart.set(band, segments.length);
+      }
+      const seg = role === 'entry' ? segOf(row) : -1;
+      if (role === 'entry' && balanceCols.some((c) => typeof row[c] === 'number')) lastEntry.set(seg, i);
       listed.push(i);
       kinds.push(role === 'band' ? 'period' : role === 'section' ? 'section' : 'data');
+      segOfListed.push(seg);
     });
     // A statement without Closing Balance rows closes on its last entry's balance.
-    if (!closings.length) for (const [b, i] of lastEntry) closings.push({ i, band: b, kind: 'last' });
-    return { listed, kinds, openings, closings, summaries };
-  }, [rows, table.rowKinds, balanceCols]);
+    if (!segments.some((s) => s.closings.length)) {
+      for (const [seg, i] of lastEntry) segments[seg].closings.push({ i, band: segments[seg].band, month: segments[seg].month, seg, kind: 'last' });
+    }
+    const openings = segments.flatMap((s) => s.openings);
+    const closings = segments.flatMap((s) => s.closings);
+    return { listed, kinds, segOfListed, segments, bandStart, monotonic, openings, closings, summaries };
+  }, [rows, table.rowKinds, balanceCols, monthCol]);
 
   // A statement's long headers ("ITC Claimed IGST" … "Closing Cess") read as a
   // band over the heads ("ITC Claimed" over IGST, CGST, SGST, Cess), on screen
@@ -234,16 +342,22 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
   // ── Pinned rows and totals, as cells over the columns shown ──────────────
   const firstText = cols.findIndex((c) => c !== model.periodCol && model.columns[c]?.kind === 'text');
   const labelPos = cols.indexOf(descCol) >= 0 ? cols.indexOf(descCol) : firstText >= 0 ? firstText : 0;
-  // Away from its period's band (sorted, grouped), a merge's balance names its period.
-  const pinnedLabel = (p: Pinned, ascii: boolean, inBand: boolean): string => {
+  // The Month column shown beside the label names a balance's month on its own row.
+  const monthOnRow = monthCol >= 0 && cols.includes(monthCol) && cols.indexOf(monthCol) !== labelPos;
+  // A balance names its month (a merge's: its period) unless it stands in
+  // place with its month beside it, or under its period's band.
+  const pinnedLabel = (p: Pinned, ascii: boolean, inPlace: boolean): string => {
     const base = p.kind === 'opening' ? 'Opening balance' : p.kind === 'closing' ? 'Closing balance' : 'Closing balance (last entry)';
-    return model.merged && p.band && !inBand ? `${base}${ascii ? ', ' : ' · '}${periodLabel(p.band)}` : base;
+    const sep = ascii ? ', ' : ' · ';
+    if (p.month) return inPlace && monthOnRow ? base : `${base}${sep}${p.month}`;
+    return model.merged && p.band && !inPlace ? `${base}${sep}${periodLabel(p.band)}` : base;
   };
-  const pinnedCells = (p: Pinned, ascii = false, inBand = false): Cell[] => {
+  const pinnedCells = (p: Pinned, ascii = false, inPlace = false): Cell[] => {
     const src = rows[p.i] ?? [];
     return cols.map((c, k) => {
       if (c === model.periodCol) return p.band ? periodLabel(p.band) : '';
-      if (k === labelPos) return pinnedLabel(p, ascii, inBand);
+      if (k === labelPos) return pinnedLabel(p, ascii, inPlace);
+      if (c === monthCol) return p.month;
       const v = src[c];
       if (typeof v !== 'number' || SERIAL_HEADER_RE.test(headers[c]?.trim() ?? '')) return '';
       // An entry standing in for the closing line gives its balances only.
@@ -268,43 +382,66 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
     ];
   };
 
+  // ── Where the balances go ────────────────────────────────────────────────
+  // Whether a segment's balances show: a filter on the Month column (or a
+  // merge's Period) picks months; in place, a merge band the filter left
+  // empty (and so not drawn) takes its balances with it.
+  const segmentVisible = (state: ViewState, items: DisplayItem[] | null) => {
+    const byMonth = monthCol >= 0 ? state.filters[monthCol] : undefined;
+    const byPeriod = model.merged ? state.filters[model.periodCol] : undefined;
+    const bands = items && model.merged ? new Set(items.flatMap((it) => (it.type === 'band' ? [it.key] : []))) : null;
+    return (s: number) => {
+      const seg = split.segments[s];
+      return picks(byMonth, seg.month) && picks(byPeriod, seg.band) && (!bands || bands.has(seg.band));
+    };
+  };
+  // The ledger's own order (no sort, no grouping): its balances in place.
+  const ownOrder = (k: TableKit) => !k.state.sort && !k.view.groups && split.monotonic;
+  const stepsOf = (k: TableKit, items: DisplayItem[]): Step[] => placeBalances(
+    items, split.segments, (row) => split.segOfListed[row.i] ?? -1,
+    (key) => split.bandStart.get(key) ?? split.segments.length, segmentVisible(k.state, items),
+  );
+  // Out of place: the balances shown, first and last.
+  const endsOf = (k: TableKit) => {
+    const visible = segmentVisible(k.state, null);
+    return { top: split.openings.filter((p) => visible(p.seg)), bottom: split.closings.filter((p) => visible(p.seg)) };
+  };
+
   // ── The "filtered" Excel / PDF: the screen, balances and totals included ──
   function exportLedger(t: ReportTable, k: TableKit): ReportTable {
     const out: Cell[][] = [];
     const kinds: RowKind[] = [];
     const tones: (RowTone | null)[] = [];
     const push = (cells: Cell[], kind: RowKind, tone: RowTone | null = null) => { out.push(cells); kinds.push(kind); tones.push(tone); };
-    // A merge in its own order keeps each period's balances under its band, as on screen.
-    const inBands = k.model.merged && k.view.showBands;
-    const pinOf = (list: Pinned[], band: string) => list.filter((p) => p.band === band);
-    if (!inBands) for (const p of split.openings) push(pinnedCells(p, true), 'subtotal');
-    // The kit's rows, less its own filtered TOTAL (the totals below replace it);
-    // a ledger with a Type column adds its debits and credits under each group.
-    const groups = k.view.groups;
+    // The kit's rows, less its own filtered TOTAL (the totals below replace it).
     const n = t.rows.length - (k.view.footer ? 1 : 0);
-    let band: string | null = null;
-    let g = -1;
-    const closeGroup = () => {
-      if (!hasType || !groups || g < 0 || !groups[g]) return;
-      const label = groups[g].label;
-      push(sumCells(`Debits: ${label}`, byDir(groups[g].rows, 'debit')), 'subtotal');
-      push(sumCells(`Credits: ${label}`, byDir(groups[g].rows, 'credit')), 'subtotal');
-    };
-    for (let r = 0; r < n; r++) {
-      const kind = t.rowKinds?.[r] ?? 'data';
-      if (groups && kind === 'section') { closeGroup(); g += 1; }
-      if (inBands && kind === 'period') {
-        if (band !== null) for (const p of pinOf(split.closings, band)) push(pinnedCells(p, true, true), 'subtotal');
-        band = BAND_RE.exec(str(t.rows[r][0]))?.[1] ?? '';
-        push(t.rows[r], kind);
-        for (const p of pinOf(split.openings, band)) push(pinnedCells(p, true, true), 'subtotal');
-        continue;
+    const own = (r: number) => push(t.rows[r], t.rowKinds?.[r] ?? 'data', t.rowTones?.[r] ?? null);
+    // In the ledger's own order the exported rows are the kit's items one for
+    // one, so the balances go in place, as on screen (the whole list, never a page).
+    if (ownOrder(k) && k.view.items.length === n) {
+      for (const step of stepsOf(k, k.view.items)) {
+        if ('pin' in step) push(pinnedCells(step.pin, true, true), 'subtotal');
+        else own(step.item);
       }
-      push(t.rows[r], kind, t.rowTones?.[r] ?? null);
+    } else {
+      const { top, bottom } = endsOf(k);
+      for (const p of top) push(pinnedCells(p, true), 'subtotal');
+      // A ledger with a Type column adds its debits and credits under each group.
+      const groups = k.view.groups;
+      let g = -1;
+      const closeGroup = () => {
+        if (!hasType || !groups || g < 0 || !groups[g]) return;
+        const label = groups[g].label;
+        push(sumCells(`Debits: ${label}`, byDir(groups[g].rows, 'debit')), 'subtotal');
+        push(sumCells(`Credits: ${label}`, byDir(groups[g].rows, 'credit')), 'subtotal');
+      };
+      for (let r = 0; r < n; r++) {
+        if (groups && t.rowKinds?.[r] === 'section') { closeGroup(); g += 1; }
+        own(r);
+      }
+      closeGroup();
+      for (const p of bottom) push(pinnedCells(p, true), 'subtotal');
     }
-    closeGroup();
-    if (inBands && band !== null) for (const p of pinOf(split.closings, band)) push(pinnedCells(p, true, true), 'subtotal');
-    if (!inBands) for (const p of split.closings) push(pinnedCells(p, true), 'subtotal');
     for (const line of totalLines(true)) push(line.cells, 'total');
 
     const rowsShown = t.kpis?.find((x) => /rows shown/i.test(x.label));
@@ -442,9 +579,11 @@ export const LedgerRegisterView: React.FC<LedgerRegisterViewProps> = ({ table, r
           hasType={hasType}
           dirOf={dirOf}
           byDir={byDir}
-          openings={split.openings}
-          closings={split.closings}
-          pinnedCells={(p, inBand) => pinnedCells(p, false, inBand)}
+          // In the ledger's own order on one page, the balances in place; else
+          // first and last (with no entry shown too: the "no entries" line then
+          // sits between them, not above them).
+          layout={ownOrder(kit) && !kit.paged && view.rows.length > 0 ? { steps: stepsOf(kit, kit.pageView.items) } : endsOf(kit)}
+          pinnedCells={(p, inPlace) => pinnedCells(p, false, inPlace)}
           totals={totalLines(false)}
           labelPos={labelPos}
         />
@@ -465,9 +604,9 @@ interface LedgerTableProps {
   hasType: boolean;
   dirOf: (r: ModelRow) => Direction | null;
   byDir: (rows: ModelRow[], d: Direction) => Map<number, number>;
-  openings: Pinned[];
-  closings: Pinned[];
-  pinnedCells: (p: Pinned, inBand: boolean) => Cell[];
+  /** The page's items with the balances in place, or the balances to pin first and last. */
+  layout: { steps: Step[] } | { top: Pinned[]; bottom: Pinned[] };
+  pinnedCells: (p: Pinned, inPlace: boolean) => Cell[];
   totals: { label: string; cells: Cell[] }[];
   labelPos: number;
 }
@@ -486,7 +625,7 @@ const DEBIT_TEXT = 'text-rose-600 dark:text-rose-400';
 const CREDIT_TEXT = 'text-emerald-600 dark:text-emerald-400';
 
 const LedgerTable: React.FC<LedgerTableProps> = ({
-  kit, typeCol, statusCol, balanceCols, flowCols, hasType, dirOf, byDir, openings, closings, pinnedCells, totals, labelPos,
+  kit, typeCol, statusCol, balanceCols, flowCols, hasType, dirOf, byDir, layout, pinnedCells, totals, labelPos,
 }) => {
   const { model, view, state, cols, pageView } = kit;
   const span = cols.length;
@@ -495,40 +634,17 @@ const LedgerTable: React.FC<LedgerTableProps> = ({
   const figureClass = (c: number) => cn(WS_TD, 'whitespace-nowrap', kit.isFigure(c) && 'text-right tabular-nums', c === firstBalance && 'border-l border-l-foreground/20');
   const show = (c: number, v: Cell) => (typeof v === 'number' ? kit.figure(c, v) : v);
 
-  // A balance line (opening / closing): pinned, never an entry.
-  const pinnedRow = (p: Pinned, where: 'top' | 'bottom', inBand = false) => (
-    <TableRow key={`${where}${p.i}`} className={cn(WS_TR_HEADING, 'hover:bg-muted/50')}>
-      {pinnedCells(p, inBand).map((v, k) => (
+  // A balance line (opening / closing): held out of the kit, never an entry.
+  const pinnedRow = (p: Pinned, inPlace: boolean) => (
+    <TableRow key={`p${p.kind}${p.i}`} className={cn(WS_TR_HEADING, 'hover:bg-muted/50')}>
+      {pinnedCells(p, inPlace).map((v, k) => (
         <TableCell key={cols[k]} className={cn(figureClass(cols[k]), k === labelPos && 'font-semibold', typeof v === 'number' && 'font-semibold')}>
           {show(cols[k], v)}
         </TableCell>
       ))}
     </TableRow>
   );
-
-  // A merge in its own order (its period bands shown, one page) keeps each
-  // period's balances under its band; sorted or grouped, they are pinned first
-  // and last, each naming its period.
-  const inBands = model.merged && view.showBands && !kit.paged;
-  const bandedItems = (): React.ReactNode[] => {
-    const out: React.ReactNode[] = [];
-    let band: string | null = null;
-    const closeBand = () => {
-      if (band !== null) for (const p of closings) if (p.band === band) out.push(pinnedRow(p, 'bottom', true));
-    };
-    for (const it of pageView.items) {
-      if (it.type === 'band') {
-        closeBand();
-        band = it.key;
-        out.push(renderItem(it));
-        for (const p of openings) if (p.band === band) out.push(pinnedRow(p, 'top', true));
-        continue;
-      }
-      out.push(renderItem(it));
-    }
-    closeBand();
-    return out;
-  };
+  const inPlace = 'steps' in layout;
 
   const firstFigure = cols.findIndex((c) => model.summable.includes(c));
   const headSpan = firstFigure > 0 ? firstFigure : cols.length;
@@ -654,7 +770,7 @@ const LedgerTable: React.FC<LedgerTableProps> = ({
     <Table className={WS_TABLE} containerClassName="min-h-[160px] max-h-[65vh] flex-[0_1_auto] rounded-md border bg-card" aria-label="Ledger entries">
       <TableKitHeader kit={kit} />
       <TableBody>
-        {!inBands && openings.map((p) => pinnedRow(p, 'top'))}
+        {!inPlace && layout.top.map((p) => pinnedRow(p, false))}
         {model.data.length === 0 && (
           <TableRow>
             <TableCell colSpan={span} className="border-b py-6 text-center text-sm text-muted-foreground">
@@ -670,8 +786,10 @@ const LedgerTable: React.FC<LedgerTableProps> = ({
             </TableCell>
           </TableRow>
         )}
-        {inBands ? bandedItems() : pageView.items.map(renderItem)}
-        {!inBands && closings.map((p) => pinnedRow(p, 'bottom'))}
+        {inPlace
+          ? layout.steps.map((step) => ('pin' in step ? pinnedRow(step.pin, true) : renderItem(pageView.items[step.item])))
+          : pageView.items.map(renderItem)}
+        {!inPlace && layout.bottom.map((p) => pinnedRow(p, false))}
       </TableBody>
       {flowCols.length > 0 && model.data.length > 0 && (
         <TableFooter className="sticky bottom-0 z-10 border-t-0 bg-muted">
