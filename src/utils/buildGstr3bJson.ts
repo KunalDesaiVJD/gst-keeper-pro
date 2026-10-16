@@ -14,6 +14,7 @@
 //   Table 5 (exempt inward)     ← NOT computed by the app → left 0 (REVIEW)
 
 import { computePartialItcSplit } from './builderPartialItc';
+import { reclaimed4D1 } from '@/lib/itc4D';
 
 export interface ItcRow { srNo: string; igst: number; cgst: number; sgst: number; particular?: string }
 export interface ItcData { section4A: ItcRow[]; section4B: ItcRow[]; section4D: ItcRow[] }
@@ -456,7 +457,9 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     flags.push(`4B(1) Rule 42/43 reversal came out negative (${heads}), since credit notes took Total 4A below zero: set to 0 and taken off 4B(2) Others (net ITC unchanged).`);
   }
 
-  const rclmd1 = row(D, '(1)');                       // 4D(1) ITC reclaimed which was reversed under 4B(2) in an earlier period
+  // 4D(1) ITC reclaimed which was reversed under 4B(2) in an earlier period:
+  // 1.1 + 1.2 (src/lib/itc4D.ts), never row (1) as a summary saved it.
+  const rclmd1 = reclaimed4D1(D);
   const inelgOth = row(D, '(2)');                     // 4D(2) 16(4) & PoS
   // Full 4(D) Other Details, as shown in ITC Summary and the portal GSTR-3B.
   const itcOtherDetails = [

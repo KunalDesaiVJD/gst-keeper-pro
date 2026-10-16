@@ -42,7 +42,7 @@ const safeNum = (v: any): number => {
 
 // Credit Ledger reconciliation only exists from Jun-26 onward — same cutoff
 // the GstReceivableRecoPage applies. Reports must enforce this so old months
-// don't get a misleading "0 + 4A − 4B + 4D − Output" number when there is
+// don't get a misleading "0 + 4A − 4B − Output" number when there is
 // genuinely no portal opening balance to compare against.
 const CREDIT_RECO_FROM = 202606; // YYYY * 100 + MM
 const monthSortKey = (mmYyyy: string): number => {
@@ -116,7 +116,7 @@ const computeSuspendedBooksClosing = (bills: any[]) => {
 
 interface CreditClosing { closingCgst: number; closingSgst: number; closingIgst: number; payableCgst: number; payableSgst: number; payableIgst: number; }
 
-const computeCreditClosing = (
+export const computeCreditClosing = (
   gr: any | undefined,
   itc: any | undefined,
   rawJson: any | undefined,
@@ -131,11 +131,14 @@ const computeCreditClosing = (
     ? computeTotal4A((itc.section4A || []).map((r: any) => ({ srNo: r?.srNo, igst: safeNum(r?.igst), cgst: safeNum(r?.cgst), sgst: safeNum(r?.sgst) })))
     : { cgst: 0, sgst: 0, igst: 0 };
   const reversed = itc ? sumSection(itc.section4B) : { cgst: 0, sgst: 0, igst: 0 };
-  const reclaimed = itc ? sumSection(itc.section4D) : { cgst: 0, sgst: 0, igst: 0 };
+  // 4(D) is not added: it is a memorandum. Its 4(D)(1) reclaims (rows 1.1 +
+  // 1.2) are already inside Total 4A (rows 5.4 and 5.5), and 4(D)(2) is ITC
+  // that cannot be claimed at all. Adding every 4(D) row counted the reclaims
+  // twice, or three times with row (1).
   const output = rawJson ? computeGstr1OutputTax(rawJson, periodMonth) : { igst: 0, cgst: 0, sgst: 0 };
-  const availableCgst = Math.max(0, openingCgst + availed.cgst - reversed.cgst + reclaimed.cgst);
-  const availableSgst = Math.max(0, openingSgst + availed.sgst - reversed.sgst + reclaimed.sgst);
-  const availableIgst = Math.max(0, openingIgst + availed.igst - reversed.igst + reclaimed.igst);
+  const availableCgst = Math.max(0, openingCgst + availed.cgst - reversed.cgst);
+  const availableSgst = Math.max(0, openingSgst + availed.sgst - reversed.sgst);
+  const availableIgst = Math.max(0, openingIgst + availed.igst - reversed.igst);
   return {
     closingCgst: availableCgst - Math.min(availableCgst, output.cgst),
     closingSgst: availableSgst - Math.min(availableSgst, output.sgst),

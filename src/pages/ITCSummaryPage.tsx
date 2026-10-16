@@ -21,6 +21,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { exportITCSummaryToPDF } from '@/utils/itcPdfExport';
+import { with4D1Total } from '@/lib/itc4D';
 import GSTPortalLink from '@/components/clients/GSTPortalLink';
 import GenericVersionHistoryDialog, { GenericVersion } from '@/components/dialogs/GenericVersionHistoryDialog';
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
@@ -169,7 +170,8 @@ const applyStructuralFlags = (loaded: ITCData, template: ITCData): ITCData => {
   return {
     section4A: applyFlags(loaded.section4A || [], template.section4A),
     section4B: applyFlags(loaded.section4B || [], template.section4B),
-    section4D: applyFlags(loaded.section4D || [], template.section4D),
+    // 4(D)(1) = 1.1 + 1.2, whatever a summary saved before held there.
+    section4D: with4D1Total(applyFlags(loaded.section4D || [], template.section4D)),
   };
 };
 
@@ -725,10 +727,11 @@ const ITCSummaryPage: React.FC = () => {
         return row;
       });
 
-      // Update Section 4D row (1) and 1.1 to match 5.4 reclaim values
+      // Update Section 4D 1.1 to match 5.4 reclaim values
       // Update 1.2 to include expense out totals as system-calculated suggestion
-      newData.section4D = prev.section4D.map(row => {
-        if (row.srNo === '(1)' || row.srNo === '1.1') {
+      // Row (1) is then 1.1 + 1.2 (with4D1Total)
+      newData.section4D = with4D1Total(prev.section4D.map(row => {
+        if (row.srNo === '1.1') {
           return { 
             ...row, 
             igst: reclaimFromReco.igst, 
@@ -748,7 +751,7 @@ const ITCSummaryPage: React.FC = () => {
           };
         }
         return row;
-      });
+      }));
       
       return newData;
     });
@@ -869,16 +872,13 @@ const ITCSummaryPage: React.FC = () => {
       
       newData[section] = newSection;
 
-      // Auto-link 4(d)(1) and 4(d) 1.1 to 4(a) 5.4 value
+      // Auto-link 4(d) 1.1 to 4(a) 5.4 value
       if (section === 'section4A' && newSection[rowIndex].srNo === '5.4') {
-        const reclaimValue = newSection[rowIndex].igst;
-        newData.section4D = newData.section4D.map(row => {
-          if (row.srNo === '(1)' || row.srNo === '1.1') {
-            return { ...row, igst: reclaimValue };
-          }
-          return row;
-        });
+        const { igst, cgst, sgst } = newSection[rowIndex];
+        newData.section4D = newData.section4D.map(row => (row.srNo === '1.1' ? { ...row, igst, cgst, sgst } : row));
       }
+      // 4(d)(1) = 1.1 + 1.2, after any change to either
+      newData.section4D = with4D1Total(newData.section4D);
 
       return newData;
     });
@@ -1045,8 +1045,14 @@ const ITCSummaryPage: React.FC = () => {
         (profiles || []).forEach(p => { userMap[p.user_id] = { name: p.first_name, role: '' }; });
         (roles || []).forEach(r => { if (userMap[r.user_id]) userMap[r.user_id].role = r.role; });
       }
+      // 4(D)(1) = 1.1 + 1.2 in every view of a version (preview, restore,
+      // download), whatever the version saved there.
+      const withD1 = (d: unknown) => {
+        const data = d as ITCData | null;
+        return data && Array.isArray(data.section4D) ? { ...data, section4D: with4D1Total(data.section4D) } : d;
+      };
       const formatted = (versionsData || []).map(v => ({
-        id: v.id, versionNumber: v.version_number || 1, versionData: v.version_data,
+        id: v.id, versionNumber: v.version_number || 1, versionData: withD1(v.version_data),
         updatedBy: userMap[v.updated_by]?.name || 'Unknown', updatedByRole: userMap[v.updated_by]?.role || '',
         updatedAt: v.updated_at, isCurrent: v.is_current || false, actionType: v.action_type || 'SAVE',
         restoredFromVersionId: v.restored_from_version_id,
@@ -1073,7 +1079,9 @@ const ITCSummaryPage: React.FC = () => {
   const handleRestoreVersion = async (version: GenericVersion) => {
     if (!selectedClient || !selectedMonth) return;
     try {
-      const versionData = version.versionData as ITCData;
+      const restored = version.versionData as ITCData;
+      // 4(D)(1) = 1.1 + 1.2, whatever the version saved there.
+      const versionData: ITCData = { ...restored, section4D: with4D1Total(restored.section4D || []) };
       setItcData(versionData);
       // Save as RESTORE
       const { data: maxV } = await supabase.from('itc_versions').select('version_number').eq('client_id', selectedClient).eq('period_month', selectedMonth).order('version_number', { ascending: false }).limit(1);
@@ -1088,11 +1096,13 @@ const ITCSummaryPage: React.FC = () => {
 
   const handleDownloadVersion = (version: GenericVersion) => {
     try {
-      const versionData = version.versionData as ITCData;
-      if (!versionData) {
+      const saved = version.versionData as ITCData;
+      if (!saved) {
         toast.error('Invalid version data');
         return;
       }
+      // 4(D)(1) = 1.1 + 1.2, whatever the version saved there.
+      const versionData: ITCData = { ...saved, section4D: with4D1Total(saved.section4D || []) };
 
       const workbook = XLSX.utils.book_new();
       const sheetData: any[][] = [
