@@ -118,9 +118,13 @@ export const NonZeroToggle: React.FC<{ kit: TableKit }> = ({ kit }) => {
 /**
  * One muted line under the toolbar while anything is filtered, sorted or
  * grouped: rows stay under their section heading (or a group's, without a
- * subtotal), and what the pinned TOTAL or result is.
+ * subtotal), and where the report's own TOTAL or result is. Grouped (or
+ * sorted across the report) the kit lists those after the rows, as printed,
+ * so the line says so only then; `filteredNote` (what the TOTAL or result
+ * describes) is said only while a filter hides rows. `totalName` is what the
+ * report calls its total line ("TOTAL", a working paper's "Result").
  */
-export const TopDownHint: React.FC<{ kit: TableKit; filteredNote?: React.ReactNode }> = ({ kit, filteredNote }) => {
+export const TopDownHint: React.FC<{ kit: TableKit; totalName?: string; filteredNote?: React.ReactNode }> = ({ kit, totalName = 'TOTAL', filteredNote }) => {
   const { view, state, model } = kit;
   if (!view.filtered && !state.sort && !view.groups) return null;
   const sortedBy = state.sort ? model.columns[state.sort.col]?.name : null;
@@ -136,7 +140,13 @@ export const TopDownHint: React.FC<{ kit: TableKit; filteredNote?: React.ReactNo
       ? `Sorted by ${sortedBy} within each section; the sections keep the report's order.`
       : `Sorted by ${sortedBy}.`);
   }
-  if ((view.filtered || groupedBy) && filteredNote) parts.push(filteredNote);
+  if (view.reportTotals?.length) {
+    const after = groupedBy ? 'groups' : 'rows';
+    parts.push(model.merged
+      ? `Each period's own ${totalName} follows the ${after}, as printed.`
+      : `The report's own ${totalName} lines follow the ${after}, as printed.`);
+  }
+  if (view.filtered && filteredNote) parts.push(filteredNote);
   return (
     <p className="flex items-start gap-1.5 rounded-md border border-primary/20 bg-primary/[0.04] px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground">
       <Info className="mt-px h-3.5 w-3.5 shrink-0 text-primary" />

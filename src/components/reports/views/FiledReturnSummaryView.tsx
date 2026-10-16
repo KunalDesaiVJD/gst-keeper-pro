@@ -145,16 +145,24 @@ const spacerSections = (rows: { cells: Row; kind: RowKind }[]): (string | null)[
 };
 
 /**
- * The filed-return PDF row as one cell in the first column: the link (drawn as
- * a "View filed PDF" button, exported as a "View PDF" link), or why there is
- * none. Left where the report put it, a link would sit in a figures column and
- * make it read as a column of links.
+ * The filed-return PDF row with its words in the first column and the link
+ * beside them (drawn as a "View filed PDF" button, exported as the label with
+ * an "Open" / "View PDF" link), or why there is none. The words stay a cell of
+ * their own so the search finds the row by them and the export labels the
+ * link; the link stays out of the first column, whose long descriptions would
+ * then never wrap in the PDF (a column holding a link is printed unbroken).
  */
 const pdfRowCells = (cells: Row, width: number): Row => {
   const out: Row = Array(width).fill('');
   const url = cells.find((c) => isUrlCell(c));
+  const label = cells.map(cellText).find((s) => PDF_ROW_RE.test(s)) ?? 'Filed return PDF';
   const note = cells.map(cellText).find((s) => s !== '' && !PDF_ROW_RE.test(s) && !isUrlCell(s));
-  out[0] = url ?? `Filed return PDF: ${note || 'not captured yet'}`;
+  if (url !== undefined && width > 1) {
+    out[0] = label;
+    out[1] = url;
+  } else {
+    out[0] = url ?? `Filed return PDF: ${note || 'not captured yet'}`;
+  }
   return out;
 };
 
@@ -304,6 +312,7 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
   }
 
   const pdfRow = (row: ModelRow) => isUrlCell(row.cells[0]) || cellText(row.cells[0]).toLowerCase().startsWith('filed return pdf');
+  const pdfUrl = (row: ModelRow) => row.cells.find((c): c is string => isUrlCell(c));
 
   const renderCell = (row: ModelRow, col: number): React.ReactNode | undefined => {
     const text = row.cells[col];
@@ -311,23 +320,25 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
     if (!pdfRow(row) && typeof text === 'string' && text.length > LONG_TEXT && !kit.isFigure(col)) {
       return <span className="block max-w-[36rem] whitespace-normal">{text}</span>;
     }
-    if (col !== 0 || !pdfRow(row)) return undefined;
-    const v = row.cells[0];
+    if (!pdfRow(row)) return undefined;
+    const url = pdfUrl(row);
+    // The link is drawn as the button beside the words, not again in its own cell.
+    if (col !== 0) return url !== undefined && text === url ? <></> : undefined;
     return (
       <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="inline-flex items-center gap-1.5 font-medium not-italic text-foreground">
           <FileText className="h-3.5 w-3.5 text-primary" />
           Filed return PDF
         </span>
-        {isUrlCell(v) ? (
+        {url !== undefined ? (
           <Button asChild size="sm" className="h-7 gap-1 px-2.5 text-xs">
-            <a href={v} target="_blank" rel="noreferrer">
+            <a href={url} target="_blank" rel="noreferrer">
               <FileText className="h-3.5 w-3.5" />
               View filed PDF
             </a>
           </Button>
         ) : (
-          <span>{cellText(v).replace(/^filed return pdf:\s*/i, '')}</span>
+          <span>{cellText(text).replace(/^filed return pdf:\s*/i, '')}</span>
         )}
       </span>
     );
@@ -389,7 +400,7 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
           />
           <TopDownHint
             kit={kit}
-            filteredNote={hasTotal ? 'The TOTAL is the return\'s own, as printed for every table; it is not recomputed for the rows shown.' : 'Nothing is added up: a return\'s rows include their own totals.'}
+            filteredNote={hasTotal ? 'Its TOTAL lines are the return\'s own, as printed; they are not recomputed for the rows shown.' : 'Nothing is added up: a return\'s rows include their own totals.'}
           />
           <TableKitTable
             kit={kit}
@@ -397,7 +408,7 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
             renderCell={renderCell}
             rowClassName={(row) => (pdfRow(row) ? 'bg-primary/[0.05] hover:bg-primary/10' : undefined)}
             // A return's descriptions are read in full: they wrap rather than being cut.
-            cellClassName={(row, col) => (!kit.isFigure(col) ? cn('max-w-none whitespace-normal', pdfRow(row) && col === 0 && !isUrlCell(row.cells[0]) && 'italic text-muted-foreground') : undefined)}
+            cellClassName={(row, col) => (!kit.isFigure(col) ? cn('max-w-none whitespace-normal', pdfRow(row) && col === 0 && pdfUrl(row) === undefined && 'italic text-muted-foreground') : undefined)}
             // A two or three column return reads better at the width of a page than across the screen.
             containerClassName={narrow ? NARROW_CONTAINER : undefined}
             noMatchText="No line of this return matches these filters."

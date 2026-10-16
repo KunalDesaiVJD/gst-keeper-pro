@@ -336,6 +336,12 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     initialPageSize: ROWS_PER_PAGE_OPTIONS[0],
     statusColumn: statusColIdx === -1 ? null : statusColIdx,
     rowNoun: ['record', 'records'],
+    // Nothing is added up. Amount of Demand is each notice's own figure: a
+    // dispute's notice and its order both carry the demand, and closed notices
+    // carry theirs, so a TOTAL or subtotal of the column would count a demand
+    // twice and count settled ones. The firm's exposure is counted once per
+    // dispute, open notices only, in notice_facts (positions §2).
+    summable: [],
   });
 
   type Indexed = { row: (string | number)[]; idx: number };
@@ -817,8 +823,6 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     ),
   }] : [];
 
-  const amountTotal = amountColIdx !== -1 ? kit.totals.find((t) => t.col === amountColIdx) : undefined;
-
   return (
     // The card fills the preview so the list takes the room left and its pager stays in sight.
     <Card className="flex h-full min-h-0 flex-col">
@@ -840,13 +844,6 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
               value={withEvidenceCount}
               hint={withEvidenceCount < dataRows.length ? `${dataRows.length - withEvidenceCount} not captured` : undefined}
               tone={withEvidenceCount < dataRows.length ? 'warn' : 'ok'}
-            />
-          )}
-          {amountTotal && amountTotal.total !== 0 && (
-            <KpiTile
-              label="Amount of demand"
-              value={kit.figure(amountColIdx, amountTotal.shown ?? amountTotal.total)}
-              hint={amountTotal.shown !== null ? `of ${kit.figure(amountColIdx, amountTotal.total)}` : undefined}
             />
           )}
           {statusCounts.map(({ label, count }) => {

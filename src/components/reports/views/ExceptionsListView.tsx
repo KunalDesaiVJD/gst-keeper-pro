@@ -22,7 +22,9 @@ import { KpiTile } from '@/components/gstr9/ui';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { CheckCircle2, AlertTriangle, ArrowDownWideNarrow, ArrowDownAZ } from 'lucide-react';
 import { rowKindsOf } from '@/lib/reportExport/layout';
-import { TableKitPager, TableKitTable, TableKitToolbar, useTableKit, type ModelColumn, type ModelRow } from './tableKit';
+import {
+  TableKitFailedPeriods, TableKitPager, TableKitTable, TableKitToolbar, useTableKit, type ModelColumn, type ModelRow,
+} from './tableKit';
 
 interface ExceptionsListViewProps {
   table: ReportTable;
@@ -79,11 +81,17 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
   const headers = table.headers;
   const Icon = report.icon || AlertTriangle;
 
-  // The flagged rows (not the TOTAL), read before the kit so its options can use them.
-  const { dataRows, merged } = useMemo(() => {
+  // The flagged rows (not the TOTAL), read before the kit so its options can
+  // use them, and whether a month of a merge could not be built (its band and
+  // one "Not built" line, as the kit reads it).
+  const { dataRows, merged, someFailed } = useMemo(() => {
     const kinds = rowKindsOf(table.rows, table.rowKinds);
-    return { dataRows: table.rows.filter((_, i) => kinds[i] === 'data'), merged: kinds.includes('period') };
-  }, [table.rows, table.rowKinds]);
+    return {
+      dataRows: table.rows.filter((_, i) => kinds[i] === 'data'),
+      merged: kinds.includes('period'),
+      someFailed: !!table.failedReason || kinds.some((k, i) => k === 'period' && /^not built:/i.test(String(table.rows[i + 1]?.[0] ?? '').trim())),
+    };
+  }, [table.rows, table.rowKinds, table.failedReason]);
   // Several months merged: a row is a client in one month, and a client late
   // in both months is two rows, so the rows are counted as flags, not clients.
   const noun: [string, string] = merged ? ['flag', 'flags'] : ['client', 'clients'];
@@ -96,9 +104,12 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
     // Largest exposure first, as the list always opened. Several months
     // merged open grouped by month (each with its subtotal, as the report's
     // own per-month TOTAL), largest first within each: sorted across months,
-    // the month bands and TOTALs would go.
+    // the month bands and TOTALs would go. Not when a month could not be
+    // built: grouped by month, the months listed would read as every month
+    // checked; the list opens sorted, its Period column and the note above it
+    // naming the month missing.
     initialSort: amountColIdx !== -1 ? { col: amountColIdx, dir: 'desc' } : null,
-    initialGroupBy: merged ? headers.length : null,
+    initialGroupBy: merged && !someFailed ? headers.length : null,
     rowNoun: noun,
     // Group by a value clients share (days late, the month); a client's name
     // or GSTIN is one row each, so grouping by it would only add a heading
@@ -108,6 +119,8 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
   const { model, view, state } = kit;
 
   const flaggedCount = model.data.length;
+  // The periods checked: a month that could not be built was not.
+  const builtPeriods = model.periods.length - kit.failedPeriods.filter((f) => f.key !== '').length;
 
   // The amount's total: the pinned TOTAL row's own figure where the report
   // printed one (it's the number that was actually computed against, not a
@@ -133,7 +146,10 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
   );
 
   // ── Calm empty state — nothing flagged this period, no table to show ──────
+  // Calm only when every period was checked: a month that could not be built
+  // was never checked, so it is named, and nothing is said to have cleared.
   if (flaggedCount === 0) {
+    const failed = kit.failedPeriods;
     return (
       <Card>
         <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
@@ -143,14 +159,26 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
           </CardTitle>
           <CardDescription className="text-xs">{subtitleOf(table.subtitle, merged)}</CardDescription>
         </CardHeader>
-        <CardContent className="px-4 pb-3">
-          <div className="flex flex-col items-center justify-center gap-1.5 rounded-md border border-dashed py-8 text-center">
-            <CheckCircle2 className="h-5 w-5 text-success" />
-            <p className="text-sm font-medium text-foreground">No exceptions this period</p>
-            <p className="max-w-sm text-xs text-muted-foreground">
-              Every client cleared this check for the selected period — nothing needs action.
-            </p>
-          </div>
+        <CardContent className="space-y-2.5 px-4 pb-3">
+          {failed.length > 0 ? (
+            <>
+              <TableKitFailedPeriods failed={failed} />
+              {builtPeriods > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No client is flagged in the {builtPeriods === 1 ? 'one period' : `${builtPeriods} periods`} that could be built;
+                  {' '}{failed.length === 1 ? 'the period above was' : 'the periods above were'} not checked.
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-1.5 rounded-md border border-dashed py-8 text-center">
+              <CheckCircle2 className="h-5 w-5 text-success" />
+              <p className="text-sm font-medium text-foreground">No exceptions this period</p>
+              <p className="max-w-sm text-xs text-muted-foreground">
+                Every client cleared this check for the selected period — nothing needs action.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
     );
@@ -197,7 +225,7 @@ export const ExceptionsListView: React.FC<ExceptionsListViewProps> = ({ table, r
           <Badge variant="destructive" className="flex shrink-0 items-center gap-1 text-[10px] font-medium">
             <AlertTriangle className="h-3 w-3 text-destructive" />
             {merged
-              ? `${flaggedCount} flagged across ${model.periods.length} periods`
+              ? `${flaggedCount} flagged across ${builtPeriods} ${builtPeriods === 1 ? 'period' : 'periods'}`
               : `${flaggedCount} client${flaggedCount === 1 ? '' : 's'} flagged`}
           </Badge>
         </div>

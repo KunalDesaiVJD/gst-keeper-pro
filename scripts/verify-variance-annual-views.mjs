@@ -11,11 +11,13 @@
 //
 // Covers: which column is the delta (never a cess or a total payable); a
 // mismatch is a variance beyond 0.50 either way, as a filter on the delta
-// column the kit applies; whether the rows add up to the report's TOTAL (a
-// list: a TOTAL recomputed under a filter) or are unlike measures (a
-// statement: none); the kit's summable override; the quarter of a month; a
-// month not pulled read from any cell; the headline figure. Prints pass / fail;
-// exits 1 on any failure.
+// column the kit applies (a plain "Not nil" is not that filter, and the switch
+// upgrades it); whether the rows add up to the report's TOTAL (a list: a TOTAL
+// recomputed under a filter) or are unlike measures (a statement: none); the
+// kit's summable override; the quarter of a month; a month not pulled read
+// from any cell; the headline figure; several months of one financial year
+// merged as that year once. Prints pass / fail; exits 1 on any failure.
+// What the views draw from these is checked in verify-report-views.mjs.
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -152,6 +154,22 @@ const panNet = T('Net Output Liability Report (PAN-Based)', ['Entity (GSTIN)', '
   const pan = shapeOf(panOut);
   const panShown = M.applyFilters(pan.model, view({ filters: { [pan.delta.col]: f } }));
   check(g, 'PAN: a NOT PULLED entity is never called a mismatch', panShown.map((r) => r.cells[0]).join() === 'ALPHA TRADERS', panShown.map((r) => r.cells[0]).join());
+
+  // The switch is lit only for its own filter. A plain "Not nil" ticked in the
+  // column's menu keeps the rounding variances: lit for it, the tile (1) and
+  // the list (3) would disagree, and a click would take the filter off.
+  const plain = { type: 'number', min: null, max: null, nonZero: true };
+  check(g, 'a plain "Not nil" is not "mismatches only"', M.isMismatchFilter(f) && !M.isMismatchFilter(plain) && !M.isMismatchFilter({ ...plain, tolerance: 0.01 }) && !M.isMismatchFilter(undefined));
+  const up = typeof M.withMismatchFilter === 'function' ? M.withMismatchFilter(plain, true) : null;
+  check(g, 'switched on over a plain "Not nil": the filter becomes the mismatch one', M.isMismatchFilter(up) && up.tolerance === M.MISMATCH_TOLERANCE, JSON.stringify(up));
+  const upShown = up ? M.applyFilters(model, view({ filters: { [delta.col]: up } })).length : -1;
+  check(g, '… and the list keeps exactly the rows the tile counts', upShown === model.data.filter((r) => M.isMismatch(r.cells[delta.col])).length && upShown === 1, upShown);
+  const ranged = typeof M.withMismatchFilter === 'function' ? M.withMismatchFilter({ ...plain, min: 100, max: null }, true) : null;
+  check(g, '… a range typed beside it is kept', ranged?.min === 100 && ranged.max === null && M.isMismatchFilter(ranged), JSON.stringify(ranged));
+  const off = typeof M.withMismatchFilter === 'function' ? M.withMismatchFilter({ ...f, min: 100 }, false) : 'missing';
+  check(g, 'switched off: the range stays, the "not nil" goes', off?.type === 'number' && off.min === 100 && !off.nonZero && !M.isMismatchFilter(off), JSON.stringify(off));
+  const bare = typeof M.withMismatchFilter === 'function' ? M.withMismatchFilter(f, false) : 'missing';
+  check(g, 'switched off with nothing typed: no filter left', bare !== 'missing' && (bare === undefined || !M.isFilterActive(bare)), JSON.stringify(bare));
 }
 
 {
@@ -236,6 +254,48 @@ const credLiab = T('Credit And Liability Statement', ['Month', 'Total Liability'
   check(g, 'filtering months: the TOTAL follows', pick.length === 2 && v.footer?.type === 'sum' && v.footer.sums.get(1) === 2000 && months.columns[0].filter === 'values');
   const sorted = M.buildView(months, view({ sort: { col: 1, dir: 'desc' } }));
   check(g, 'sorted by a figure: a NOT PULLED month sorts with the blanks, last', sorted.rows.slice(-1)[0].cells[1] === 'NOT PULLED' && sorted.footer?.type === 'total');
+}
+
+{
+  // Each annual report builds its whole year from any one month of it, so the
+  // months of one year picked ("This FY") are that year once per month picked.
+  const g = 'annual trend: one block per financial year';
+  const one = typeof M.oneBlockPerYear === 'function' ? M.oneBlockPerYear : () => ({ table: null, note: null });
+  const three = M.mergeTables([annual3b, annual3b, annual3b], ['04/2026', '05/2026', '06/2026']);
+  const { table: y, note } = one(three, 0);
+  const ym = y && M.buildModel(y);
+  check(g, 'Apr + May + Jun of FY 2026-27: the year once, no band (as for one month)', ym && !ym.merged && ym.data.length === 12, JSON.stringify(ym && [ym.merged, ym.data.length]));
+  check(g, '… its TOTAL the year\'s own, the grand total', ym?.grandTotal && ym.grandTotal.cells[0] === 'TOTAL — FY 2026-27' && ym.grandTotal.cells[3] === annual3b.rows[12][3], JSON.stringify(ym?.grandTotal?.cells));
+  check(g, '… a note naming the months: "Apr, May, Jun 2026 are in the same financial year: shown once"', note === 'Apr, May, Jun 2026 are in the same financial year: shown once', note);
+  check(g, '… the subtitle carries the note, not "3 periods combined"', y && /shown once/.test(y.subtitle) && !/periods combined/.test(y.subtitle) && /FY 2026-27/.test(y.subtitle), y?.subtitle);
+  check(g, '… the file name is the one month\'s', y && !/periods$/.test(y.fileNameBase), y?.fileNameBase);
+
+  // sus-one prints its TOTAL as "TOTAL", which the merge renames per period.
+  const s = one(M.mergeTables([susOne, susOne], ['04/2026', '05/2026']), 1).table;
+  check(g, 'a year printed with a plain "TOTAL" gets it back', s && s.rows.filter((r) => r[1] === 'TOTAL').length === 1 && !s.rows.some((r) => /TOTAL \(/.test(String(r[1]))), JSON.stringify(s?.rows.slice(-1)));
+
+  // The same statement a year earlier: "Apr 2025" … "Mar 2026", "TOTAL — FY 2025-26".
+  const earlier = (c) => (typeof c !== 'string' ? c : c
+    .replace(/^([A-Z][a-z]{2}) (\d{4})$/, (_, m, yr) => `${m} ${+yr - 1}`)
+    .replace(/FY (\d{4})-(\d{2})/, (_, a, b) => `FY ${+a - 1}-${String(+b - 1).padStart(2, '0')}`));
+  const lastYear = { ...credLiab, rows: credLiab.rows.map((r) => r.map(earlier)) };
+  const mixed = M.mergeTables([lastYear, credLiab, credLiab], ['03/2026', '04/2026', '05/2026']);
+  const mx = one(mixed, 0);
+  const mm = mx.table && M.buildModel(mx.table);
+  check(g, 'Mar 2026 + Apr 2026 + May 2026: two years, two blocks with their bands', mm?.merged && mm.periods.map((p) => p.key).join() === '03/2026,04/2026', JSON.stringify(mm?.periods));
+  check(g, '… the repeat named: "Apr, May 2026 are in the same financial year: shown once"', mx.note === 'Apr, May 2026 are in the same financial year: shown once', mx.note);
+  check(g, '… "2 periods combined", each year\'s months once (24)', mx.table && /2 periods combined/.test(mx.table.subtitle) && mm.data.length === 24, JSON.stringify([mx.table?.subtitle, mm?.data.length]));
+  const twoYears = M.mergeTables([lastYear, credLiab], ['03/2026', '04/2026']);
+  const tw = one(twoYears, 0);
+  check(g, 'two months of two different years: unchanged, no note', tw.table === twoYears && tw.note === null);
+  check(g, 'one month: unchanged', one(annual3b, 0).table === annual3b);
+
+  // A month not built in a year another month built: the year is there, the failure moot.
+  const failed = { ...annual3b, failedReason: 'boom', rows: [['Not built: boom', '', '', '', '', '', '']] };
+  const withFail = M.mergeTables([annual3b, failed], ['04/2026', '05/2026']);
+  const wf = one(withFail, 0).table;
+  const wm = wf && M.buildModel(wf);
+  check(g, 'Apr built, May not built (same year): the year once, nothing left reading "not built"', wm && !wm.merged && wm.failedPeriods.length === 0 && wm.data.length === 12, JSON.stringify(wm && [wm.merged, wm.failedPeriods, wm.data.length]));
 }
 
 // ── Report ──────────────────────────────────────────────────────────────────

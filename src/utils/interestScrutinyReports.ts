@@ -151,14 +151,19 @@ export const buildInterestLateFeeCalculatorReport = async (clientId: string, mon
   const result = await computeInterestForClient(client, month);
   const fileNameBase = `Interest_Late_Fee_Calculator_${fileSafe(client.name)}_${month.replace('/', '-')}`;
 
+  // The computation's own columns even when there is nothing to compute: a
+  // quarterly client's first two months of a quarter merged with its third
+  // would otherwise hand the merge a two-column shape for the working.
+  const headers = ['Item', 'IGST', 'CGST', 'SGST'];
+  const columnWidths = [40, 20, 14, 14];
   if (!result) {
     return {
       title: 'Interest and Late Fee Calculator',
       subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   No GSTR-3B/GSTR-3B (Q) filing record for this period — nothing to calculate.`,
-      headers: ['Item', 'Value'],
+      headers,
       rows: [],
       fileNameBase,
-      columnWidths: [34, 20],
+      columnWidths,
     };
   }
 
@@ -184,10 +189,10 @@ export const buildInterestLateFeeCalculatorReport = async (clientId: string, mon
   return {
     title: 'Interest and Late Fee Calculator',
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   ${result.stillAccruing ? 'Return not yet filed — computed as of today and still accruing.   |   ' : ''}Approximate — net-of-ITC basis (Rule 88B(1)), flat 18% p.a./365-day interest, s.47 late fee. See docs/INTEREST_LATE_FEE_POSITIONS.md.`,
-    headers: ['Item', 'IGST', 'CGST', 'SGST'],
+    headers,
     rows,
     fileNameBase,
-    columnWidths: [40, 20, 14, 14],
+    columnWidths,
   };
 };
 

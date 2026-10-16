@@ -20,8 +20,26 @@ export const isMismatch = (v: unknown): boolean => typeof v === 'number' && Numb
 /** "Mismatches only" as a filter on the delta column, so it is a chip, feeds the counts and the TOTAL, and is printed on the export. */
 export const MISMATCH_FILTER: ColumnFilter = { type: 'number', min: null, max: null, nonZero: true, tolerance: MISMATCH_TOLERANCE };
 
-/** Whether a delta column's filter is the "mismatches only" one (whatever range was typed beside it). */
-export const isMismatchFilter = (f: ColumnFilter | undefined): boolean => f?.type === 'number' && !!f.nonZero;
+/**
+ * Whether a delta column's filter is the "mismatches only" one (whatever range
+ * was typed beside it): not nil beyond the view's own tolerance. A plain "Not
+ * nil" ticked in the column's menu keeps the rounding variances, so it is not:
+ * lit for it, the switch and the Mismatched tile would name rows the list
+ * does not keep, and a click would take the filter off instead of applying it.
+ */
+export const isMismatchFilter = (f: ColumnFilter | undefined): boolean =>
+  f?.type === 'number' && !!f.nonZero && f.tolerance === MISMATCH_TOLERANCE;
+
+/**
+ * The delta column's filter with "mismatches only" switched on or off, keeping
+ * any range typed beside it. Switched on over a plain "Not nil", the filter
+ * becomes the mismatch one.
+ */
+export const withMismatchFilter = (f: ColumnFilter | undefined, on: boolean): ColumnFilter | undefined => {
+  const cur = f?.type === 'number' ? f : null;
+  if (on) return { ...MISMATCH_FILTER, ...(cur ? { min: cur.min, max: cur.max } : {}) };
+  return cur ? { type: 'number', min: cur.min, max: cur.max } : undefined;
+};
 
 const VARIANCE_HEADER_RE = /variance|difference|\bdiff\b|delta|mismatch/i;
 // "2B − 2A", "Liability − ITC": one figure minus another (a minus sign, an en

@@ -24,6 +24,8 @@
 // year for context and marks the months the table shows. A month counts as
 // not pulled when any of its cells says so, not only the charted one (the
 // GSTR-3B summary writes it under its first figure and leaves the rest blank).
+// Each report builds its whole year from any month of it, so several months
+// of one year picked are that year once, not once per month (oneBlockPerYear).
 import React, { useMemo, useState } from 'react';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
@@ -39,7 +41,7 @@ import { cn } from '@/lib/utils';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { TrendingUp, Inbox, EyeOff, BarChart3 } from 'lucide-react';
 import { TableKitPager, TableKitTable, TableKitToolbar, useTableKit } from './tableKit';
-import { headlineColumn, isNotPulledRow, monthColumn, withQuarterColumn, withoutQuarterNote } from './annualTrendRules';
+import { headlineColumn, isNotPulledRow, monthColumn, oneBlockPerYear, withQuarterColumn, withoutQuarterNote } from './annualTrendRules';
 import { shortKpiLabels, splitSubtitle } from './varianceRules';
 
 interface AnnualTrendViewProps {
@@ -128,12 +130,18 @@ const TrendTooltip: React.FC<TrendTooltipProps> = ({ active, payload, label, hea
 
 export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report }) => {
   const monthCol = useMemo(() => monthColumn(table.headers), [table.headers]);
-  const { table: kitTable, quarterCol } = useMemo(() => withQuarterColumn(table, monthCol), [table, monthCol]);
+  // Several months of one financial year merged are that year once per month
+  // picked (each report builds its whole year from any month): one block per year.
+  const yearly = useMemo(() => oneBlockPerYear(table, monthCol).table, [table, monthCol]);
+  const { table: kitTable, quarterCol } = useMemo(() => withQuarterColumn(yearly, monthCol), [yearly, monthCol]);
   const kit = useTableKit(kitTable, {
     resetKey: report.key,
     initialHidden: quarterCol >= 0 ? [quarterCol] : [],
     // A year's months group by quarter (and a merge by its period); one month per group says nothing.
     groupable: (c) => c.index === quarterCol || c.virtual,
+    // The Quarter is the view's helper, not the report's: searched, its "(Apr
+    // to Jun)" would make "Jun 2026" match April and May too.
+    searchable: (c) => c.index !== quarterCol,
     rowNoun: ['month', 'months'],
     transformExport: (t) => shortKpiLabels(withoutQuarterNote(t)),
   });
@@ -195,7 +203,7 @@ export const AnnualTrendView: React.FC<AnnualTrendViewProps> = ({ table, report 
     [chartHeader],
   );
 
-  const { parts, notes } = splitSubtitle(table.subtitle, model.merged);
+  const { parts, notes } = splitSubtitle(yearly.subtitle, model.merged);
   const header = (
     <CardHeader className="space-y-0 px-4 py-3">
       <div className="flex items-center gap-2">

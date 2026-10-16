@@ -1,11 +1,13 @@
 // How the annual trend view (AnnualTrendView) reads one client's months of a
 // financial year before the table kit draws them: the month column, the
-// headline figure the chart follows, which months were never pulled, and the
+// headline figure the chart follows, which months were never pulled, the
 // quarter each month falls in (a hidden column, so the months can be grouped
-// with quarterly subtotals). No React, so
-// scripts/verify-variance-annual-views.mjs checks it.
-import { SENTINEL_RE } from '@/lib/reportExport/layout';
+// with quarterly subtotals), and a merge of several months as one block per
+// financial year. No React, so scripts/verify-variance-annual-views.mjs
+// checks it.
+import { SENTINEL_RE, rowKindsOf } from '@/lib/reportExport/layout';
 import type { ReportTable } from '@/utils/allClientsReports';
+import { periodLabel } from './tableKit/tableModel';
 
 const MONTH_HEADER_RE = /month|period/i;
 const MONTH_CELL_RE = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s-]+(\d{4})$/i;
@@ -103,4 +105,88 @@ export function withoutQuarterNote(t: ReportTable): ReportTable {
     ?.map((f) => (f.label === 'Columns hidden' ? { ...f, value: prune(f.value) } : f))
     .filter((f) => !(f.label === 'Columns hidden' && !f.value));
   return { ...t, subtitle, ...(meta ? { meta } : {}) };
+}
+
+const BAND_RE = /^— (.+) —$/;
+const COMBINED_RE = /\d+ periods combined/;
+
+/** The financial year of a month label ("Apr 2026" is "FY 2026-27"), '' for anything else. */
+const yearOf = (label: string): string => /^FY \S+/.exec(quarterOf(label))?.[0] ?? '';
+
+/** Month labels listed with each year once: "Apr, May, Jun 2026"; "Dec 2026, Jan 2027". */
+const listMonths = (labels: string[]): string => labels.map((l, k) => {
+  const year = l.split(' ')[1];
+  return year && labels[k + 1]?.split(' ')[1] === year ? l.split(' ')[0] : l;
+}).join(', ');
+
+/**
+ * A merge of several months as one block per financial year. Each annual
+ * report builds its whole year from any one month of it, so picking Apr, May
+ * and Jun (or "This FY") hands the view the same year once per month picked,
+ * each copy with its own FY TOTAL: added up by the kit, every figure would
+ * read as that many times the year's. The first block of each year that was
+ * built is kept, with its own TOTAL; the repeats and their bands go, and the
+ * subtitle says so ("Apr, May, Jun 2026 are in the same financial year: shown
+ * once"), as does `note`. Two years stay two blocks. One year left reads as
+ * the report does for one month: no band, its TOTAL as printed. Unchanged,
+ * with a null note, when no year repeats.
+ */
+export function oneBlockPerYear(table: ReportTable, monthCol: number): { table: ReportTable; note: string | null } {
+  const kinds = rowKindsOf(table.rows, table.rowKinds);
+  const bands = kinds.flatMap((k, i) => (k === 'period' ? [i] : []));
+  if (bands.length < 2) return { table, note: null };
+  const blocks = bands.map((start, b) => {
+    const end = b + 1 < bands.length ? bands[b + 1] : table.rows.length;
+    const key = BAND_RE.exec(String(table.rows[start][0] ?? '').trim())?.[1] ?? '';
+    const years = table.rows.slice(start + 1, end).map((r) => yearOf(String(r[monthCol] ?? '').trim())).filter(Boolean);
+    // A block that could not be built has no months: its year is the picked month's.
+    return { start, end, key, year: years[0] ?? yearOf(periodLabel(key)), built: years.length > 0 };
+  });
+
+  const byYear = new Map<string, number[]>();
+  const keep = new Set<number>();
+  blocks.forEach((b, k) => {
+    if (!b.year) { keep.add(k); return; }
+    byYear.set(b.year, [...(byYear.get(b.year) ?? []), k]);
+  });
+  for (const list of byYear.values()) keep.add(list.find((k) => blocks[k].built) ?? list[0]);
+  if (keep.size === blocks.length) return { table, note: null };
+
+  const note = [...byYear.values()].filter((list) => list.length > 1)
+    .map((list) => `${listMonths(list.map((k) => periodLabel(blocks[k].key)))} are in the same financial year: shown once`)
+    .join('; ');
+  const single = keep.size === 1;
+  // The rows kept (anything before the first band too), by their index in table.rows.
+  const at: number[] = Array.from({ length: bands[0] }, (_, i) => i);
+  blocks.forEach((b, k) => {
+    if (!keep.has(k)) return;
+    for (let i = single ? b.start + 1 : b.start; i < b.end; i++) at.push(i);
+  });
+  // A single year back as printed: the merge renamed its "TOTAL" "TOTAL (MM/YYYY)".
+  const own = single ? `TOTAL (${blocks[[...keep][0]].key})` : null;
+  const rows = at.map((i) => (own ? table.rows[i].map((c) => (c === own ? 'TOTAL' : c)) : table.rows[i]));
+  const pick = <T,>(xs: T[] | undefined): T[] | undefined => (xs ? at.map((i) => xs[i]) : undefined);
+  const periods = single ? '' : `${keep.size} periods combined`;
+  const subtitle = [
+    single ? table.subtitle.replace(/\s*\|\s*\d+ periods combined/, '') : table.subtitle.replace(COMBINED_RE, periods),
+    note,
+  ].join('   |   ');
+  const meta = table.meta
+    ?.filter((f) => !(single && f.label === 'Periods'))
+    .map((f) => (f.label === 'Periods' ? { ...f, value: `${keep.size} combined` } : f));
+  return {
+    note,
+    table: {
+      ...table,
+      subtitle,
+      rows,
+      ...(table.rowKinds ? { rowKinds: pick(table.rowKinds) } : {}),
+      ...(table.rowTones ? { rowTones: pick(table.rowTones) } : {}),
+      ...(table.rowIds ? { rowIds: pick(table.rowIds) } : {}),
+      ...(table.clientIds ? { clientIds: pick(table.clientIds) } : {}),
+      ...(table.rowFlags ? { rowFlags: pick(table.rowFlags) } : {}),
+      ...(meta ? { meta } : {}),
+      fileNameBase: table.fileNameBase.replace(/_\d+periods$/, single ? '' : `_${keep.size}periods`),
+    },
+  };
 }

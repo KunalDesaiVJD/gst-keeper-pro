@@ -6,7 +6,8 @@
 // "directory", not "document":
 //   1. A header (title and the subtitle's parts).
 //   2. A summary strip before anyone scrolls: how many clients, how many have
-//      the portal return pulled, and the grand totals; once filtered, the
+//      the portal return pulled, and the grand totals (closing balances over
+//      several months: the latest month's, as at it); once filtered, the
 //      figures of the rows shown against the whole.
 //   3. Status pills (Filed, Data Pending, Active…) with their counts: one click
 //      shows that status, as a column filter, so it is a chip, it moves the
@@ -83,6 +84,16 @@ const DATE_HEADER_RE = /date/i;
 const VARIANCE_HEADER_RE = /^(variance|difference|diff)\b/i;
 const MONTH_LABEL_RE = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s-]+\d{2,4}$/i;
 
+// Rosters of closing balances: each figure is a client's balance at a
+// month-end, a stock, not a month's flow. Added across the months of a merge,
+// three month-ends of the same balance would read as three times it, so their
+// totals are the latest month's, "as at" it (the kit's acrossPeriods 'latest').
+// Named by report, and any roster with no TOTAL of its own titled a closing
+// balance. ITC Claimed vs Utilized is not one: its Balance is the month's
+// claimed less utilised, a flow that adds up across months.
+const CLOSING_ROSTERS = new Set(['sus-all', 'cred-all']);
+const CLOSING_TITLE_RE = /closing balance/i;
+
 const NIL = 0.005;
 const PULLED_ONLY = 'Pulled only';
 const NOT_PULLED_ONLY = 'Not pulled only';
@@ -102,7 +113,7 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
   // bands of a merge left out), and whether each is a different client: then
   // the count is of clients; the Filing Status Report (a row per return) and a
   // multi-month merge count rows and clients apart.
-  const { dataCount, perClient } = useMemo(() => {
+  const { dataCount, perClient, ownTotal } = useMemo(() => {
     const kinds = rowKindsOf(table.rows, table.rowKinds);
     const names = new Set<string>();
     let n = 0;
@@ -113,8 +124,9 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
       n++;
       if (clientCol >= 0) names.add(String(r[clientCol] ?? '').trim());
     });
-    return { dataCount: n, perClient: clientCol >= 0 && !merged && names.size === n };
+    return { dataCount: n, perClient: clientCol >= 0 && !merged && names.size === n, ownTotal: kinds.includes('total') };
   }, [table.rows, table.rowKinds, clientCol]);
+  const balances = CLOSING_ROSTERS.has(report.key) || (!ownTotal && CLOSING_TITLE_RE.test(table.title));
   // A column can be grouped by only when its values repeat.
   const groupable = (c: ModelColumn): boolean => {
     if (c.kind === 'period') return true;
@@ -127,6 +139,8 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
     resetKey: report.key,
     groupable,
     rowNoun: perClient ? ['client', 'clients'] : ['row', 'rows'],
+    // A merge of closing balances: the latest month's, never added across months.
+    ...(balances ? { acrossPeriods: 'latest' as const } : {}),
   });
   const { model, view, state } = kit;
 
@@ -201,6 +215,9 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
   }
 
   const fmtCount = (n: number) => n.toLocaleString('en-IN');
+  // The months of a merge that were built: one that could not be (the Credit
+  // Ledger before Jun 2026) adds no rows, and the note above the list names it.
+  const builtPeriods = model.periods.length - kit.failedPeriods.filter((f) => f.key !== '').length;
   const pulledAll = model.data.length - notPulledAll;
   const pulledShown = view.rows.length - notPulledShown;
 
@@ -230,7 +247,7 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
           <KpiTile
             label={perClient ? 'Clients' : 'Rows'}
             value={fmtCount(view.filtered ? view.rows.length : model.data.length)}
-            hint={view.filtered ? `of ${fmtCount(model.data.length)}` : model.merged ? `${model.periods.length} periods` : undefined}
+            hint={view.filtered ? `of ${fmtCount(model.data.length)}` : model.merged ? `${builtPeriods} ${builtPeriods === 1 ? 'period' : 'periods'}` : undefined}
           />
           {!perClient && clientCol >= 0 && (
             <KpiTile
@@ -247,15 +264,22 @@ export const AllClientsSnapshotView: React.FC<AllClientsSnapshotViewProps> = ({ 
               tone={(view.filtered ? notPulledShown : notPulledAll) > 0 ? 'warn' : 'ok'}
             />
           )}
-          {kit.totals.map((s) => (
-            <KpiTile
-              key={s.col}
-              label={model.columns[s.col].name}
-              value={kit.figure(s.col, s.shown ?? s.total)}
-              // "of –" says nothing: a nil total is not repeated under a nil figure.
-              hint={s.shown !== null && !(Math.abs(s.total) < NIL && Math.abs(s.shown) < NIL) ? `of ${kit.figure(s.col, s.total)}` : undefined}
-            />
-          ))}
+          {kit.totals.map((s) => {
+            // "of –" says nothing: a nil total is not repeated under a nil figure.
+            const of = s.shown !== null && !(Math.abs(s.total) < NIL && Math.abs(s.shown) < NIL) ? `of ${kit.figure(s.col, s.total)}` : '';
+            // Balances of several months are the latest month's: the tile says
+            // which, under the figure (beside a long name such as "GST Payable
+            // CGST" the label would cut it off).
+            const asAt = kit.totalsAsAt ? `as at ${kit.totalsAsAt}` : '';
+            return (
+              <KpiTile
+                key={s.col}
+                label={model.columns[s.col].name}
+                value={kit.figure(s.col, s.shown ?? s.total)}
+                hint={[of, asAt].filter(Boolean).join(' ') || undefined}
+              />
+            );
+          })}
         </div>
 
         {/* Status pills: a click shows that status (several: any of them); the counts follow the other filters. */}

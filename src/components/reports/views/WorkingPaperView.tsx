@@ -44,15 +44,19 @@ interface WorkingPaperViewProps {
 const HEAD_RE = /^(igst|cgst|sgst|utgst|cess)$/i;
 const PERIOD_BAND_RE = /^— (.+) —$/;
 
-// A "section marker" row restates the remaining headers as its own values
-// (e.g. ['Interest (…)', 'IGST', 'CGST', 'SGST'] under headers
-// ['Item','IGST','CGST','SGST']): a part's heading, not a step.
+// A "section marker" row restates the value columns as its own values (e.g.
+// ['Interest (…)', 'IGST', 'CGST', 'SGST'] under headers
+// ['Item','IGST','CGST','SGST']): a part's heading, not a step. A tax head's
+// name counts whatever the header above it says, so the marker is still a
+// heading under headers that do not name the heads (a merge shaped by a
+// narrower table, such as an empty month's ['Item', 'Value']).
 const isSectionMarkerRow = (row: Row, headers: string[]): boolean => {
   const values = row.slice(1);
   if (values.length < 2) return false;
   return values.every((v, i) => {
+    if (typeof v !== 'string') return false;
     const header = headers[i + 1];
-    return typeof v === 'string' && !!header && v.trim().toLowerCase() === header.trim().toLowerCase();
+    return HEAD_RE.test(v.trim()) || (!!header && v.trim().toLowerCase() === header.trim().toLowerCase());
   });
 };
 
@@ -78,8 +82,24 @@ interface Schedule {
 
 const blankRow = (n: number): Row => Array(n).fill('');
 
+/**
+ * The working paper's columns: as wide as its widest row, never only as wide
+ * as its headers (a merge may take its headers from a narrower table), each
+ * named by its header or, where that is not a tax head, by the head a marker
+ * line names there. A row is never cut to the headers' width.
+ */
+const sourceColumns = (table: ReportTable): string[] => {
+  const width = Math.max(table.headers.length, ...table.rows.map((r) => r.length));
+  const marker = table.rows.find((r) => isSectionMarkerRow(r, table.headers));
+  return Array.from({ length: width }, (_, i) => {
+    const h = table.headers[i] ?? '';
+    const named = marker && i > 0 ? cellText(marker[i]) : '';
+    return !HEAD_RE.test(h.trim()) && HEAD_RE.test(named) ? named : h;
+  });
+};
+
 const toSchedule = (table: ReportTable, key: string): Schedule => {
-  const src = table.headers;
+  const src = sourceColumns(table);
   const heads = src.map((h, i) => (i > 0 && HEAD_RE.test(h.trim()) ? i : -1)).filter((i) => i >= 0);
   const split = heads.length >= 2;
   const DETAIL = 2;
@@ -94,7 +114,7 @@ const toSchedule = (table: ReportTable, key: string): Schedule => {
     if (!split) {
       const out = [step, label, ...cells.slice(1).map(fix)];
       while (out.length < width) out.push('');
-      return out.slice(0, width);
+      return out;
     }
     const out: Row = [step, label, ...blankRow(width - 2)];
     const vals = cells.slice(1).map((v, k) => ({ v: fix(v), at: k + 1 })).filter((x) => cellText(x.v) !== '');
@@ -182,7 +202,7 @@ const toSchedule = (table: ReportTable, key: string): Schedule => {
       rows,
       rowKinds: kinds,
       rowTones: undefined,
-      columnWidths: split ? [8, 40, 34, 16, ...heads.map(() => 14)] : [8, ...(table.columnWidths ?? []).slice(0, width - 1)],
+      columnWidths: split ? [8, 40, 34, 16, ...heads.map(() => 14)] : [8, ...src.map((_, i) => table.columnWidths?.[i] ?? 14)],
       columnGroups: undefined,
       pdfColumns: undefined,
       toneColumn: undefined,
@@ -308,6 +328,7 @@ export const WorkingPaperView: React.FC<WorkingPaperViewProps> = ({ table, repor
         />
         <TopDownHint
           kit={kit}
+          totalName="Result"
           filteredNote="Step numbers are the working's own; the Result below is the answer of every step, not of the steps shown."
         />
         <TableKitTable

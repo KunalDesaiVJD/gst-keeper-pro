@@ -33,8 +33,8 @@ import {
   type ModelRow,
 } from './tableKit';
 import {
-  MISMATCH_FILTER, MISMATCH_TOLERANCE, deltaColumn, isMismatch, isMismatchFilter, isTotalLabelRow, parsePanBanner,
-  readShape, shortKpiLabels, splitSubtitle,
+  MISMATCH_TOLERANCE, deltaColumn, isMismatch, isMismatchFilter, isTotalLabelRow, parsePanBanner,
+  readShape, shortKpiLabels, splitSubtitle, withMismatchFilter,
 } from './varianceRules';
 
 interface VarianceComparisonViewProps {
@@ -89,10 +89,7 @@ export const VarianceComparisonView: React.FC<VarianceComparisonViewProps> = ({ 
   // The toggle and the tile set the delta column's own filter, keeping any
   // range typed beside it in the column's menu.
   const setMismatchesOnly = (on: boolean) => {
-    if (dc < 0) return;
-    const cur = deltaFilter?.type === 'number' ? deltaFilter : null;
-    if (on) kit.setFilter(dc, { ...MISMATCH_FILTER, ...(cur ? { min: cur.min, max: cur.max } : {}) });
-    else kit.setFilter(dc, cur ? { type: 'number', min: cur.min, max: cur.max } : undefined);
+    if (dc >= 0) kit.setFilter(dc, withMismatchFilter(deltaFilter, on));
   };
   const setNotPulledOnly = (on: boolean) => kit.setCustomFilter(NOT_PULLED_ID, on
     ? { label: 'Not pulled from the portal yet', test: (row) => hasSentinel(row.cells) }
