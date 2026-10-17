@@ -1338,28 +1338,32 @@ const ITCSummaryPage: React.FC = () => {
   const typedNotFrom2B = (section: keyof ITCData, row: ITCRow): { detail: string } | null => {
     if (section !== 'section4A') return null;
     const inr = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    // Head by head: row 5.2 may hold a negative head, and heads that cancel must not hide a typed row or pass as equal.
+    const anyHead = (a: { igst: number; cgst: number; sgst: number }) => Math.abs(a.igst) >= 0.5 || Math.abs(a.cgst) >= 0.5 || Math.abs(a.sgst) >= 0.5;
+    const sameHeads = (a: { igst: number; cgst: number; sgst: number }, b: { igst: number; cgst: number; sgst: number }) =>
+      Math.abs(a.igst - b.igst) < 1 && Math.abs(a.cgst - b.cgst) < 1 && Math.abs(a.sgst - b.sgst) < 1;
     const typed = row.igst + row.cgst + row.sgst;
     if (row.srNo === '5.1' && (isLiberalClient || isNoItcClient)) {
       const g = { igst: eligibleFromImport2B.igst + reversalFromReco.igst, cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst, sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst };
       const twob = g.igst + g.cgst + g.sgst;
-      if (Math.abs(typed) < 0.5 && Math.abs(twob) < 0.5) return null;
+      if (!anyHead(row) && !anyHead(g)) return null;
       const diff = typed - twob;
       return {
         detail: `2B gives ₹${inr(twob)} (IGST ${inr(g.igst)}, CGST ${inr(g.cgst)}, SGST ${inr(g.sgst)})`
-          + (Math.abs(diff) < 1 ? ': the typed figure equals it' : `: difference ₹${inr(diff)}`),
+          + (sameHeads(row, g) ? ': the typed figure equals it' : `: difference ₹${inr(diff)}`),
       };
     }
-    if (row.srNo === '5.2' && Math.abs(typed) >= 0.5) {
+    if (row.srNo === '5.2' && anyHead(row)) {
       return { detail: 'No 2B source: check it against the Not in Books list on 2B Reconciliation' };
     }
     if (row.srNo === '5.3' && (isLiberalClient || isNoItcClient) && notesFromImport2B) {
       const g = creditNotesFromImport2B;
       const twob = g.igst + g.cgst + g.sgst;
-      if (Math.abs(typed) < 0.5 && Math.abs(twob) < 0.5) return null;
+      if (!anyHead(row) && !anyHead(g)) return null;
       const diff = typed - twob;
       return {
         detail: `2B credit notes give ₹${inr(twob)} (IGST ${inr(g.igst)}, CGST ${inr(g.cgst)}, SGST ${inr(g.sgst)})`
-          + (Math.abs(diff) < 1 ? ': the typed figure equals it' : `: difference ₹${inr(diff)}`),
+          + (sameHeads(row, g) ? ': the typed figure equals it' : `: difference ₹${inr(diff)}`),
       };
     }
     return null;

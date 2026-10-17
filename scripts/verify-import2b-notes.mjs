@@ -121,8 +121,9 @@ export * as I from './src/utils/builderPartialItc';
 export * as G from './src/utils/buildGstr3bJson';
 export * as R from './src/lib/gstReceivableRecoCalc';
 export * as A from './src/utils/allClientsReports';
+export * as F from './src/utils/fetchGstr3b';
 `);
-const { T, P, B, I, G, R, A } = M;
+const { T, P, B, I, G, R, A, F } = M;
 
 const doc = (o) => ({
   is_amendment: false, original_doc_type: null, reverse_charge: false, bucket: 'available', itc_available: true,
@@ -284,11 +285,21 @@ await run('mail', async () => {
   check(`… split into credit (${credit.toFixed(2)}) and what the credit notes take off (${less.toFixed(2)})`,
     Math.abs(s.credit - credit) < 0.005 && Math.abs(s.reduction - less) < 0.005, JSON.stringify({ credit: s.credit, reduction: s.reduction }));
   const words = B.creditWording?.(s);
-  check('the credit reads "₹306.00, less ₹78.40 on credit notes"', words === '₹306.00, less ₹78.40 on credit notes', words);
-  const notesOnly = B.summariseBills(rows.filter((r) => r.igst + r.cgst + r.sgst < 0));
-  const nWords = B.creditWording?.(notesOnly);
-  check('… a list of credit notes only reads as a net reduction, never "₹-78.40"',
-    nWords === '₹0.00, less ₹78.40 on credit notes, a net reduction of ₹78.40' && !/₹\s*-/.test(nWords), nWords);
+  check('the credit reads "₹306.00, less ₹78.40 on credit notes, amendments and adjustments" (the list holds a carried adjustment)',
+    words === '₹306.00, less ₹78.40 on credit notes, amendments and adjustments', words);
+  const negatives = rows.filter((r) => r.igst + r.cgst + r.sgst < 0);
+  const nWords = B.creditWording?.(B.summariseBills(negatives));
+  check('… a list of reductions only reads as a net reduction, never "₹-78.40"',
+    nWords === '₹0.00, less ₹78.40 on credit notes, amendments and adjustments, a net reduction of ₹78.40' && !/₹\s*-/.test(nWords), nWords);
+  const cnOnly = negatives.filter((r) => /credit note$/i.test(r.docType));
+  const cnLess = -cnOnly.reduce((a, r) => a + r.igst + r.cgst + r.sgst, 0);
+  const cnWords = B.creditWording?.(B.summariseBills(cnOnly));
+  check(`… a list of credit notes only says "on credit notes" (₹${cnLess.toFixed(2)})`,
+    cnOnly.length > 0 && cnWords === `₹0.00, less ₹${cnLess.toFixed(2)} on credit notes, a net reduction of ₹${cnLess.toFixed(2)}`, cnWords);
+  const adjOnly = negatives.filter((r) => !/credit note$/i.test(r.docType));
+  const adjWords = B.creditWording?.(B.summariseBills([...rows.filter((r) => r.igst + r.cgst + r.sgst >= 0), ...adjOnly]));
+  check('… and a list with no credit note never calls its reductions credit notes ("₹306.00, less ₹14.40 on amendments and adjustments")',
+    adjOnly.length > 0 && adjWords === '₹306.00, less ₹14.40 on amendments and adjustments', adjWords);
   const plain = B.creditWording?.(B.summariseBills(rows.filter((r) => r.igst + r.cgst + r.sgst >= 0)));
   check('… and a list with no credit note is the plain figure (₹306.00)', plain === '₹306.00', plain);
   check('a supplier\'s negative tax is in brackets', B.rupees?.(-14.4) === '(₹14.40)' && B.rupees?.(36) === '₹36.00', `${B.rupees?.(-14.4)} / ${B.rupees?.(36)}`);
@@ -303,14 +314,14 @@ await run('mail', async () => {
   const res = await send(rows);
   const mail = (db.email_outbox || []).at(-1);
   check('the e-mail is queued and sent', res.ok && !!mail, JSON.stringify(res));
-  check('… its body: "input tax credit of ₹306.00, less ₹78.40 on credit notes."',
-    !!mail && mail.body.includes('input tax credit of ₹306.00, less ₹78.40 on credit notes.') && !/₹\s*-/.test(mail.body), mail?.body);
+  check('… its body: "input tax credit of ₹306.00, less ₹78.40 on credit notes, amendments and adjustments."',
+    !!mail && mail.body.includes('input tax credit of ₹306.00, less ₹78.40 on credit notes, amendments and adjustments.') && !/₹\s*-/.test(mail.body), mail?.body);
   check('… the supplier table brackets a negative supplier, no "₹-"',
     !!mail && mail.render_vars.table_html.includes('(&#8377;14.40)') && !/&#8377;\s*-/.test(mail.render_vars.table_html), mail?.render_vars?.table_html);
   const res2 = await send(rows.filter((r) => r.igst + r.cgst + r.sgst < 0));
   const mail2 = (db.email_outbox || []).at(-1);
-  check('a list of credit notes only: "input tax credit of ₹0.00, less ₹78.40 on credit notes, a net reduction of ₹78.40.", total in brackets',
-    res2.ok && mail2 !== mail && mail2.body.includes('less ₹78.40 on credit notes, a net reduction of ₹78.40.') && !/₹\s*-/.test(mail2.body)
+  check('a list of reductions only: "input tax credit of ₹0.00, less ₹78.40 on credit notes, amendments and adjustments, a net reduction of ₹78.40.", total in brackets',
+    res2.ok && mail2 !== mail && mail2.body.includes('less ₹78.40 on credit notes, amendments and adjustments, a net reduction of ₹78.40.') && !/₹\s*-/.test(mail2.body)
       && mail2.render_vars.itc_total === nWords && mail2.render_vars.table_html.includes('(&#8377;78.40)') && !/&#8377;\s*-/.test(mail2.render_vars.table_html),
     `${mail2?.body} | ${mail2?.render_vars?.table_html}`);
   const dialog = fs.readFileSync(path.join(root, 'src/components/import2b/EmailBillsNotInBooksDialog.tsx'), 'utf8');
@@ -430,6 +441,34 @@ await run('row 5.2', async () => {
   const d2 = await R.computeGstReceivableRecoDiff(RC, '10/2026');
   check('the GST receivable reco reads the negative 5.2 head signed (closing 1,450 / 2,400 / 2,400), as if off 5.1',
     same3(d1, H3(1450, 2400, 2400)) && same3(d1, d2), `${show3(d1)} vs ${show3(d2)}`);
+});
+
+// ── 6. A typed 5.2 is flagged head by head ──────────────────────────────────
+// With a negative head allowed, IGST −800 against CGST/SGST +400 adds up to
+// nothing; the GSTR-3B "typed" list and the ITC Summary mark must still name 5.2.
+await run('typed 5.2', async () => {
+  const db = globalThis.__db;
+  const z = { igst: 0, cgst: 0, sgst: 0 };
+  const sec4A = (r52) => [
+    { srNo: '(1)', ...z }, { srNo: '(2)', ...z }, { srNo: '(3)', ...z }, { srNo: '(4)', ...z }, { srNo: '(5)', ...z, isHeader: true },
+    { srNo: '5.1', igst: 1000, cgst: 500, sgst: 500 }, { srNo: '5.2', particular: 'ITC for Previous Month, if any', ...r52 },
+    { srNo: '5.3', ...z }, { srNo: '5.4', ...z }, { srNo: '5.5', ...z },
+  ];
+  for (const [label, r52, want] of [
+    ['IGST −800 alone', { igst: -800, cgst: 0, sgst: 0 }, true],
+    ['IGST −800 with CGST/SGST +400 (sums to 0)', { igst: -800, cgst: 400, sgst: 400 }, true],
+    ['empty', z, false],
+  ]) {
+    db.clients = [{ id: 'typed-c', builder_itc_type: null, commercial_area: null, residential_area: null, liberal_2b_reconciliation: true }];
+    db.itc_summaries = [{ client_id: 'typed-c', period_month: '09/2026', data: { section4A: sec4A(r52), section4B: [], section4D: [] } }];
+    const res = await F.fetchGstr3b('typed-c', '27ZZZZZ0000Z1Z5', '09/2026');
+    const rows = (res.itcTyped || []).map((x) => x.row);
+    check(`GSTR-3B typed list, 5.2 ${label}: ${want ? 'names' : 'leaves out'} 5.2`, rows.includes('5.2') === want, JSON.stringify(rows));
+  }
+  const page = fs.readFileSync(path.join(root, 'src/pages/ITCSummaryPage.tsx'), 'utf8');
+  check('the ITC Summary "Typed, not from 2B" mark checks each head, and "equals" each head',
+    page.includes("if (row.srNo === '5.2' && anyHead(row))") && (page.match(/sameHeads\(row, g\)/g) || []).length === 2
+      && !/Math\.abs\(typed\) < 0\.5/.test(page));
 });
 
 // ── Report ──────────────────────────────────────────────────────────────────

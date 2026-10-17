@@ -92,16 +92,17 @@ export async function fetchGstr3b(
       eligibleFromImport2B, creditNotesFromImport2B, notesFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco,
     } = autoLink;
     const amt = (r: ItcRow) => ({ igst: Number(r.igst) || 0, cgst: Number(r.cgst) || 0, sgst: Number(r.sgst) || 0 });
-    const sum = (a: { igst: number; cgst: number; sgst: number }) => a.igst + a.cgst + a.sgst;
+    // Any head, either way: row 5.2 may hold a negative head, and heads that cancel must not hide a typed row.
+    const anyHead = (a: { igst: number; cgst: number; sgst: number }) => Math.abs(a.igst) >= 0.5 || Math.abs(a.cgst) >= 0.5 || Math.abs(a.sgst) >= 0.5;
     for (const r of itc.section4A as ItcRow[]) {
       if (r.srNo === '5.1' && (isLiberal || isNoITC)) {
         const twob = { igst: eligibleFromImport2B.igst + reversalFromReco.igst, cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst, sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst };
-        if (Math.abs(sum(amt(r))) >= 0.5 || Math.abs(sum(twob)) >= 0.5) itcTyped.push({ row: '5.1', label: 'ITC for the Month', typed: amt(r), twob });
+        if (anyHead(amt(r)) || anyHead(twob)) itcTyped.push({ row: '5.1', label: 'ITC for the Month', typed: amt(r), twob });
       }
-      if (r.srNo === '5.2' && Math.abs(sum(amt(r))) >= 0.5) itcTyped.push({ row: '5.2', label: r.particular || 'ITC for Previous Month', typed: amt(r) });
+      if (r.srNo === '5.2' && anyHead(amt(r))) itcTyped.push({ row: '5.2', label: r.particular || 'ITC for Previous Month', typed: amt(r) });
       if (r.srNo === '5.3' && (isLiberal || isNoITC) && notesFromImport2B) {
         const twob = { ...creditNotesFromImport2B };
-        if (Math.abs(sum(amt(r))) >= 0.5 || Math.abs(sum(twob)) >= 0.5) itcTyped.push({ row: '5.3', label: 'Debit Note', typed: amt(r), twob });
+        if (anyHead(amt(r)) || anyHead(twob)) itcTyped.push({ row: '5.3', label: 'Debit Note', typed: amt(r), twob });
       }
     }
     itc.section4A = itc.section4A.map((r: ItcRow) => {

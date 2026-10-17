@@ -767,10 +767,13 @@ has not yet recorded in its books, as an Excel working paper attached to the
   posted. Amounts are the ledger's, with their sign: a credit note parked Not
   in Books (§10, choice 3) is negative, and an amendment counts at its
   difference, so it can be negative too. The e-mail and the pop-up never
-  show a negative credit (`creditWording`): with credit notes in the list it
+  show a negative credit (`creditWording`): with negative rows in the list it
   reads "₹X, less ₹Y on credit notes" (after the template's "input tax credit
-  of"), followed by ", a net reduction of ₹Z" when they outweigh the rest; a
-  supplier's negative tax is in brackets. A ledger
+  of"), naming only what the list holds ("on amendments and adjustments" for
+  downward amendments and carried "Credit / adjustment" rows, "on credit
+  notes, amendments and adjustments" for both), followed by ", a net
+  reduction of ₹Z" when they outweigh the rest; a supplier's negative tax is
+  in brackets. A ledger
   row that repeats a listed document (same supplier, number and figures, dated
   within a day) is sent once and named in the pop-up, so staff can clean the
   ledger. SWENI's ledger held 27 such pairs, carried from older months.

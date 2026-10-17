@@ -55,6 +55,8 @@ export interface BillsSummary {
   credit: number;
   /** Tax the negative rows take off (credit notes, downward amendments), as a positive figure. */
   reduction: number;
+  /** The part of `reduction` that credit notes take off (the rest: amendments and carried adjustments). */
+  reductionNotes: number;
   months: string[];
   unposted: number;
   bySupplier: { gstin: string; name: string; count: number; taxable: number; tax: number }[];
@@ -221,11 +223,15 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
 export function summariseBills(rows: BillNotInBooks[]): BillsSummary {
   const sup = new Map<string, { gstin: string; name: string; count: number; taxable: number; tax: number }>();
   const months = new Map<string, number>();
-  const t = { taxable: 0, igst: 0, cgst: 0, sgst: 0, credit: 0, reduction: 0 };
+  const t = { taxable: 0, igst: 0, cgst: 0, sgst: 0, credit: 0, reduction: 0, reductionNotes: 0 };
   for (const r of rows) {
     t.taxable += r.taxable; t.igst += r.igst; t.cgst += r.cgst; t.sgst += r.sgst;
     const rowTax = r.igst + r.cgst + r.sgst;
-    if (rowTax >= 0) t.credit += rowTax; else t.reduction -= rowTax;
+    if (rowTax >= 0) t.credit += rowTax;
+    else {
+      t.reduction -= rowTax;
+      if (/credit note$/i.test(r.docType)) t.reductionNotes -= rowTax;
+    }
     months.set(r.monthIn2B, monthOrder(r.monthIn2B));
     const k = r.supplierGstin || r.supplierName;
     const s = sup.get(k) || { gstin: r.supplierGstin, name: r.supplierName, count: 0, taxable: 0, tax: 0 };
@@ -238,6 +244,7 @@ export function summariseBills(rows: BillNotInBooks[]): BillsSummary {
     tax: r2(t.igst + t.cgst + t.sgst),
     credit: r2(t.credit),
     reduction: r2(t.reduction),
+    reductionNotes: r2(t.reductionNotes),
     months: [...months.entries()].sort((a, b) => a[1] - b[1]).map(([m]) => m),
     unposted: rows.filter((r) => r.unposted).length,
     bySupplier: [...sup.values()]
@@ -249,15 +256,21 @@ export function summariseBills(rows: BillNotInBooks[]): BillsSummary {
 /**
  * The list's credit in words, for the e-mail ({{itc_total}}, which the
  * template puts after "input tax credit of") and the pop-up: never a negative
- * "₹-…". With no credit notes it is "₹X"; with them "₹X, less ₹Y on credit
- * notes"; and when they outweigh the rest ", a net reduction of ₹Z" follows.
+ * "₹-…". With nothing negative it is "₹X"; otherwise "₹X, less ₹Y on credit
+ * notes" (or "on amendments and adjustments", or "on credit notes, amendments
+ * and adjustments", naming only what the list holds); and when the
+ * reductions outweigh the rest ", a net reduction of ₹Z" follows.
  */
-export function creditWording(sum: Pick<BillsSummary, 'credit' | 'reduction'>): string {
+export function creditWording(sum: Pick<BillsSummary, 'credit' | 'reduction' | 'reductionNotes'>): string {
   const credit = r2(sum.credit);
   const reduction = r2(sum.reduction);
   if (reduction < 0.005) return `₹${formatINR(credit)}`;
+  const notes = r2(sum.reductionNotes);
+  const what = notes < 0.005 ? 'amendments and adjustments'
+    : reduction - notes < 0.005 ? 'credit notes'
+      : 'credit notes, amendments and adjustments';
   const net = r2(credit - reduction);
-  return `₹${formatINR(credit)}, less ₹${formatINR(reduction)} on credit notes`
+  return `₹${formatINR(credit)}, less ₹${formatINR(reduction)} on ${what}`
     + (net < -0.005 ? `, a net reduction of ₹${formatINR(-net)}` : '');
 }
 
