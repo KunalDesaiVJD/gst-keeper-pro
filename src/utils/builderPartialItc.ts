@@ -36,6 +36,18 @@ const sum4 = (a: ItcTotals, b: ItcTotals, sign = 1): ItcTotals => ({
   sgst: a.sgst + sign * b.sgst,
 });
 
+/**
+ * The one ITC Summary row that takes a negative head: 4A row 5.2. A credit
+ * note parked Not in Books in Import 2B is reduced there once the client books
+ * it (docs/2B_RECONCILIATION_FLOW.md §10, choice 3), and its head can exceed
+ * what 5.2 claims; row 5.3 is auto-linked for a Strict client. Every other row
+ * refuses a negative. The totals below are plain sums, so a negative 5.2 head
+ * lowers Total (5) and Total 4A; GSTR-3B files a head of 4A(5) below zero as 0
+ * with the excess in 4B(2) (src/utils/buildGstr3bJson.ts).
+ */
+export const takesNegativeHead = (section: string, srNo: string | null | undefined): boolean =>
+  section === 'section4A' && srNo === '5.2';
+
 /** Total (5) of section 4A = 5.1 + 5.2 − 5.3 + 5.4 + 5.5. */
 export const computeSection4ATotal5 = (section4A: ItcRowLike[]): ItcTotals => {
   const get = (srNo: string, field: 'igst' | 'cgst' | 'sgst') => findRow(section4A, srNo)?.[field] || 0;

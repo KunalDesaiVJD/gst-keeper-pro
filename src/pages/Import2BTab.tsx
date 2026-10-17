@@ -2227,10 +2227,11 @@ const Import2BTab: React.FC = () => {
       const noteTax = (Number(d.input_igst) || 0) + (Number(d.input_cgst) || 0) + (Number(d.input_sgst) || 0);
       out.push({ text: `IMS: reduce ₹${num(clean(taxOf(fullFigures(d))))} declared (note tax ₹${num(clean(noteTax))})` });
     }
-    // Parked, a credit note is left out of 5.3 until booked, though the
-    // portal's auto-drafted 4A(5) is already net of it (§10, choice 3).
+    // Parked, a credit note is left out of 5.3; once booked it is reduced in
+    // 5.2, though the portal's auto-drafted 4A(5) is already net of it (§10,
+    // choice 3).
     if (isCreditNote(d) && action === 'NOT_IN_BOOKS' && d.bucket === 'available') {
-      out.push({ text: 'Not reduced in 5.3 until booked; the portal\'s auto-drafted 4A(5) is already net of it (keep it Pending in IMS to defer it there too)' });
+      out.push({ text: 'Not reduced in 5.3: once booked, reduce row 5.2 by it, head by head; the portal\'s auto-drafted 4A(5) is already net of it (keep it Pending in IMS to defer it there too)' });
     }
     if (d.bucket === 'reversal') out.push({ text: 'Rule 37A ITC reversal: reverse it in 4B(2)(ii)' });
     if (d.bucket === 'rejected') out.push({ text: 'Rejected in IMS' });
@@ -3005,7 +3006,8 @@ const Import2BTab: React.FC = () => {
                     <Note className="mt-2">
                       Once booked, claim the ITC under ITC Summary row 5.2 "ITC for Previous Month": the document
                       won't reappear in a future GSTR-2B pull. A negative row is a credit note, or an amendment that
-                      cut an earlier document's tax: reduce the 5.2 claim by that amount instead.
+                      cut an earlier document's tax: once booked, reduce row 5.2 by it, head by head, negative where
+                      needed (5.2 is the one ITC Summary row that takes a negative figure).
                     </Note>
                     </CollapsibleContent>
                   </Collapsible>

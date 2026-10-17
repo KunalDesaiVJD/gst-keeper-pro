@@ -622,12 +622,19 @@ in one module, `src/lib/twobDocs.ts`.
    Oct 2026: "Debit note should have selection of not in books same like
    Invoice", the firm's Debit Note being the purchase return, the supplier's
    credit note in 2B; supplier debit notes already had it). Until booked it is
-   left out of 5.3 and sits on the ledger as a negative row (`signedEffect`),
-   reduced through 5.2 once booked, as the hand-entered credit notes were
-   until 05/2026; its amendment follows it there. Caveat for the firm to
-   confirm: IMS reduces the auto-drafted 4A(5) by an accepted or deemed
-   accepted credit note, so parking one files 4A(5) above the portal's
-   figure; the portal's own way to defer is to keep the note Pending in IMS.
+   left out of 5.3 and sits on the ledger as a negative row (`signedEffect`);
+   its amendment follows it there. Once booked, reduce row 5.2 by the note,
+   head by head, negative where needed: 5.2 is the one ITC Summary row that
+   takes a negative head (`takesNegativeHead` in `src/utils/builderPartialItc.ts`;
+   5.3 is auto-linked and read-only for a Strict `full_2b` month). Every
+   reader of 5.2 sums it as signed: Total (5) and Total 4A, the Partial-ITC
+   carpet-area split, the GST receivable reco and the credit closing report.
+   A head that takes 4A(5) below zero is filed as 0 in GSTR-3B with the
+   excess in 4B(2) Others, net ITC unchanged (below, "Negative 4A(5)").
+   Caveat for the firm to confirm: IMS reduces the auto-drafted 4A(5) by an
+   accepted or deemed accepted credit note, so parking one files 4A(5) above
+   the portal's figure; the portal's own way to defer is to keep the note
+   Pending in IMS.
    `node scripts/verify-import2b-notes.mjs` checks every reader.
 
 **Engineering positions (not asked; reversible):**
@@ -713,7 +720,8 @@ in one module, `src/lib/twobDocs.ts`.
   is named before importing. The month's credit notes count as read
   (`full_2b`, which lets row 5.3 fill itself) only when B2B-CDNR is in the
   file and neither credit note sheet lost a row.
-- **Negative 4A(5).** When credit notes take a head of Total (5) below zero,
+- **Negative 4A(5).** When credit notes (row 5.3, or a negative row 5.2
+  head) take a head of Total (5) below zero,
   GSTR-3B puts 0 in 4A(5) and the excess in 4B(2) Others (net ITC unchanged),
   and ITC Summary marks Total (5). For a Partial-ITC builder the carpet-area
   split then gives a negative 4B(1) in that head: GSTR-3B files it as 0 and
@@ -758,7 +766,11 @@ has not yet recorded in its books, as an Excel working paper attached to the
   forward), plus this month's 2B documents marked Not in Books but not yet
   posted. Amounts are the ledger's, with their sign: a credit note parked Not
   in Books (§10, choice 3) is negative, and an amendment counts at its
-  difference, so it can be negative too. A ledger
+  difference, so it can be negative too. The e-mail and the pop-up never
+  show a negative credit (`creditWording`): with credit notes in the list it
+  reads "₹X, less ₹Y on credit notes" (after the template's "input tax credit
+  of"), followed by ", a net reduction of ₹Z" when they outweigh the rest; a
+  supplier's negative tax is in brackets. A ledger
   row that repeats a listed document (same supplier, number and figures, dated
   within a day) is sent once and named in the pop-up, so staff can clean the
   ledger. SWENI's ledger held 27 such pairs, carried from older months.

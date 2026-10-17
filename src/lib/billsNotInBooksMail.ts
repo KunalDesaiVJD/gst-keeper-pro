@@ -51,6 +51,10 @@ export interface BillsSummary {
   cgst: number;
   sgst: number;
   tax: number;
+  /** Tax of the rows that add credit (invoices, debit notes, upward amendments). */
+  credit: number;
+  /** Tax the negative rows take off (credit notes, downward amendments), as a positive figure. */
+  reduction: number;
   months: string[];
   unposted: number;
   bySupplier: { gstin: string; name: string; count: number; taxable: number; tax: number }[];
@@ -217,9 +221,11 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
 export function summariseBills(rows: BillNotInBooks[]): BillsSummary {
   const sup = new Map<string, { gstin: string; name: string; count: number; taxable: number; tax: number }>();
   const months = new Map<string, number>();
-  const t = { taxable: 0, igst: 0, cgst: 0, sgst: 0 };
+  const t = { taxable: 0, igst: 0, cgst: 0, sgst: 0, credit: 0, reduction: 0 };
   for (const r of rows) {
     t.taxable += r.taxable; t.igst += r.igst; t.cgst += r.cgst; t.sgst += r.sgst;
+    const rowTax = r.igst + r.cgst + r.sgst;
+    if (rowTax >= 0) t.credit += rowTax; else t.reduction -= rowTax;
     months.set(r.monthIn2B, monthOrder(r.monthIn2B));
     const k = r.supplierGstin || r.supplierName;
     const s = sup.get(k) || { gstin: r.supplierGstin, name: r.supplierName, count: 0, taxable: 0, tax: 0 };
@@ -230,12 +236,29 @@ export function summariseBills(rows: BillNotInBooks[]): BillsSummary {
     count: rows.length,
     taxable: r2(t.taxable), igst: r2(t.igst), cgst: r2(t.cgst), sgst: r2(t.sgst),
     tax: r2(t.igst + t.cgst + t.sgst),
+    credit: r2(t.credit),
+    reduction: r2(t.reduction),
     months: [...months.entries()].sort((a, b) => a[1] - b[1]).map(([m]) => m),
     unposted: rows.filter((r) => r.unposted).length,
     bySupplier: [...sup.values()]
       .map((s) => ({ ...s, taxable: r2(s.taxable), tax: r2(s.tax) }))
       .sort((a, b) => b.tax - a.tax || a.name.localeCompare(b.name)),
   };
+}
+
+/**
+ * The list's credit in words, for the e-mail ({{itc_total}}, which the
+ * template puts after "input tax credit of") and the pop-up: never a negative
+ * "₹-…". With no credit notes it is "₹X"; with them "₹X, less ₹Y on credit
+ * notes"; and when they outweigh the rest ", a net reduction of ₹Z" follows.
+ */
+export function creditWording(sum: Pick<BillsSummary, 'credit' | 'reduction'>): string {
+  const credit = r2(sum.credit);
+  const reduction = r2(sum.reduction);
+  if (reduction < 0.005) return `₹${formatINR(credit)}`;
+  const net = r2(credit - reduction);
+  return `₹${formatINR(credit)}, less ₹${formatINR(reduction)} on credit notes`
+    + (net < -0.005 ? `, a net reduction of ₹${formatINR(-net)}` : '');
 }
 
 // ---------------------------------------------------------------------------
@@ -509,6 +532,10 @@ export async function buildBillsWorkbook(opts: {
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/** A supplier's tax: a negative one in brackets, as in the working paper, never "₹-…". */
+export const rupees = (n: number) => (n < -0.005 ? `(₹${formatINR(-n)})` : `₹${formatINR(n)}`);
+const rupeesHtml = (n: number) => rupees(n).replace('₹', '&#8377;');
+
 /** The supplier table under the message (top suppliers; the rest are in the attachment). */
 function supplierTableHtml(sum: BillsSummary): string {
   const top = sum.bySupplier.slice(0, 8);
@@ -517,12 +544,12 @@ function supplierTableHtml(sum: BillsSummary): string {
   const td = 'padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#1f2937;';
   const rows = top.map((s) =>
     `<tr><td style="${td}">${esc(s.name || s.gstin)}<div style="color:#64748b;font-size:11px;">${esc(s.gstin)}</div></td>`
-    + `<td style="${td}text-align:right;">${s.count}</td><td style="${td}text-align:right;">&#8377;${formatINR(s.tax)}</td></tr>`).join('');
+    + `<td style="${td}text-align:right;">${s.count}</td><td style="${td}text-align:right;">${rupeesHtml(s.tax)}</td></tr>`).join('');
   return `<p style="margin:0 0 8px;font-weight:600;color:#0f2b46;">By supplier</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:6px;border-collapse:separate;overflow:hidden;margin:0 0 8px;">
 <tr><td style="${th}">Supplier</td><td style="${th}text-align:right;">Documents</td><td style="${th}text-align:right;">Tax</td></tr>
 ${rows}
-<tr><td style="${td}font-weight:700;background:#f8fafc;">Total</td><td style="${td}font-weight:700;background:#f8fafc;text-align:right;">${sum.count}</td><td style="${td}font-weight:700;background:#f8fafc;text-align:right;">&#8377;${formatINR(sum.tax)}</td></tr>
+<tr><td style="${td}font-weight:700;background:#f8fafc;">Total</td><td style="${td}font-weight:700;background:#f8fafc;text-align:right;">${sum.count}</td><td style="${td}font-weight:700;background:#f8fafc;text-align:right;">${rupeesHtml(sum.tax)}</td></tr>
 </table>
 <p style="margin:0 0 18px;color:#64748b;font-size:12px;">${more > 0 ? `and ${more} more supplier${more === 1 ? '' : 's'}; ` : ''}every document is in the attached Excel.</p>`;
 }
@@ -564,7 +591,7 @@ export async function sendBillsNotInBooks(opts: {
     gstin: opts.gstin,
     period: prettyPeriod(opts.periodMonth),
     bill_count: `${sum.count} document${sum.count === 1 ? '' : 's'}`,
-    itc_total: `₹${formatINR(sum.tax)}`,
+    itc_total: creditWording(sum),
     reply_by: opts.replyBy,
     staff_name: opts.staffName || GST_FIRM.team,
     firm_name: GST_FIRM.name,

@@ -27,7 +27,7 @@ import GenericVersionHistoryDialog, { GenericVersion } from '@/components/dialog
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import * as XLSX from 'xlsx';
 import {
-  computeNet4C, computePartialItcSplit, computeSection4ATotal5, computeTotal4A, computeTotal4B,
+  computeNet4C, computePartialItcSplit, computeSection4ATotal5, computeTotal4A, computeTotal4B, takesNegativeHead,
 } from '@/utils/builderPartialItc';
 import { fetchImport2BCreditNotes, fetchImport2BEligibleTotal, fetchImport2BHeld, import2BHeldMessage } from '@/lib/postImport2B';
 
@@ -210,6 +210,8 @@ const ITCSummaryPage: React.FC = () => {
   const import2BRequest = useRef(0);
   const [rcmTotals, setRcmTotals] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
+  // Row 5.2's cell as typed, while it has focus (see renderEditableCell).
+  const [cellDraft, setCellDraft] = useState<{ key: string; text: string } | null>(null);
   const [dataLoadVersion, setDataLoadVersion] = useState(0);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [versions, setVersions] = useState<GenericVersion[]>([]);
@@ -1251,23 +1253,37 @@ const ITCSummaryPage: React.FC = () => {
   // into, plain right-aligned text everywhere else.
   const renderEditableCell = (section: keyof ITCData, rowIndex: number, row: ITCRow, field: 'igst' | 'cgst' | 'sgst') => {
     const canEdit = row.editable && !editLocked && !rowAutoLinked(section, row);
-    
+    // Row 5.2 alone takes a negative head: a booked credit note that was
+    // parked Not in Books is reduced there (takesNegativeHead).
+    const negativeOk = takesNegativeHead(section, row.srNo);
+    // While typing, 5.2's cell shows the text as typed: a lone "-" reads as ""
+    // (badInput), and held as a number React would reset it to the figure,
+    // so "-500" typed would come out as 500.
+    const draftKey = `${section}:${rowIndex}:${field}`;
+    const shown = negativeOk && cellDraft?.key === draftKey ? cellDraft.text : row[field];
+
     if (canEdit) {
       return (
         <td className={cn(WS_TD, 'bg-primary/[0.03] p-0')}>
           <Input
             type="number"
-            value={row[field]}
+            value={shown}
             onChange={(e) => {
               const numVal = parseFloat(e.target.value) || 0;
-              if (numVal < 0) {
-                setNegativeValueError('Negative values are not allowed in ITC Summary.');
+              if (numVal < 0 && !negativeOk) {
+                setNegativeValueError('Negative values are allowed only in row 5.2 of ITC Summary.');
                 setTimeout(() => setNegativeValueError(null), 3000);
                 return;
               }
+              if (negativeOk) {
+                setCellDraft({ key: draftKey, text: e.target.value });
+                // "-" so far: keep the figure until a number is typed.
+                if (e.target.value === '' && e.target.validity?.badInput) return;
+              }
               handleCellChange(section, rowIndex, field, e.target.value);
             }}
-            min={0}
+            onBlur={negativeOk ? () => setCellDraft(null) : undefined}
+            min={negativeOk ? undefined : 0}
             aria-label={`${row.srNo || row.particular} ${field.toUpperCase()}`}
             className={cn(WS_CELL_INPUT, 'text-right tabular-nums [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none')}
           />

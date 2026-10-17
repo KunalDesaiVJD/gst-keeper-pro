@@ -10,7 +10,13 @@
 //  - Post to Reconciliation (src/lib/postImport2B.ts): the ledger row, with
 //    its sign, and row 5.1 / 5.3 leaving parked documents out;
 //  - the e-mailed list (src/lib/billsNotInBooksMail.ts), at the ledger's
-//    figures.
+//    figures, its credit in words and never a negative "₹-…";
+//  - once booked, the note is reduced in ITC Summary row 5.2, the one row
+//    that takes a negative head (src/utils/builderPartialItc.ts
+//    takesNegativeHead, src/pages/ITCSummaryPage.tsx), and every reader of
+//    5.2 sums it signed: Total (5) and Total 4A, GSTR-3B (4A(5) filed at 0
+//    with the excess in 4B(2), net ITC unchanged), the Partial-ITC split, the
+//    GST receivable reco and the credit closing report.
 //
 //   node scripts/verify-import2b-notes.mjs
 //   GSTK_ROOT=/path/to/other/checkout node scripts/verify-import2b-notes.mjs
@@ -18,12 +24,14 @@
 // Fictional documents; Supabase is replaced by an in-memory table store, so
 // nothing is read from or written to the live project. Exits 1 on any failure.
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import fs from 'node:fs';
 import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = process.env.GSTK_ROOT || path.resolve(here, '..');
-const { build } = createRequire(path.join(root, 'package.json'))('esbuild');
+const req = createRequire(path.join(root, 'package.json'));
+const { build } = req('esbuild');
 
 const results = [];
 const check = (name, cond, info = '') => results.push({ name, ok: !!cond, info: cond ? '' : String(info) });
@@ -77,33 +85,44 @@ class Q {
   }
   then(ok, ko) { let r; try { r = this.exec(); } catch (e) { return Promise.reject(e).then(ok, ko); } return Promise.resolve(r).then(ok, ko); }
 }
-export const supabase = { from: (t) => new Q(t) };
+export const supabase = {
+  from: (t) => new Q(t),
+  // The e-mail is sent at once by send-gst-email: recorded, reported sent.
+  functions: { invoke: async (name, opts) => { (globalThis.__invoked = globalThis.__invoked || []).push({ name, opts }); return { data: { sent: 1 }, error: null }; } },
+};
 `;
 
 const load = async (contents) => {
   const out = await build({
     stdin: { contents, resolveDir: root, loader: 'ts' },
     bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
-    external: ['exceljs'],
     plugins: [{
       name: 'stub',
       setup(b) {
+        // ExcelJS (the working paper) from the checkout's node_modules, by an
+        // absolute URL, since the bundle runs from a data: URL.
+        b.onResolve({ filter: /^exceljs$/ }, () => ({ path: pathToFileURL(req.resolve('exceljs')).href, external: true }));
         b.onResolve({ filter: /^@\/integrations\/supabase\/client$/ }, () => ({ path: 'supabase', namespace: 'stub' }));
         b.onResolve({ filter: /^@\// }, (a) => b.resolve(`./${a.path.slice(2)}`, { resolveDir: path.join(root, 'src'), kind: a.kind }));
         b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: FAKE_SUPABASE, loader: 'js' }));
       },
     }],
     define: { 'import.meta.env': '{}' },
+    banner: { js: `import { createRequire as __cr } from 'node:module'; const require = __cr(${JSON.stringify(path.join(root, 'package.json'))});` },
   });
   return import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
 };
-// One bundle, so the three modules share the one fake client.
+// One bundle, so the modules share the one fake client.
 const M = await load(`
 export * as T from './src/lib/twobDocs';
 export * as P from './src/lib/postImport2B';
 export * as B from './src/lib/billsNotInBooksMail';
+export * as I from './src/utils/builderPartialItc';
+export * as G from './src/utils/buildGstr3bJson';
+export * as R from './src/lib/gstReceivableRecoCalc';
+export * as A from './src/utils/allClientsReports';
 `);
-const { T, P, B } = M;
+const { T, P, B, I, G, R, A } = M;
 
 const doc = (o) => ({
   is_amendment: false, original_doc_type: null, reverse_charge: false, bucket: 'available', itc_available: true,
@@ -258,6 +277,159 @@ await run('mail', async () => {
   const s = B.summariseBills(rows);
   const want = 180 + 90 - 36 - 10 - 9 + 36 - 9 - 14.4;
   check(`the summary nets credit notes off (tax ${want.toFixed(2)})`, Math.abs(s.tax - want) < 0.005, s.tax);
+
+  // The credit in words: never a negative "input tax credit of ₹-…".
+  const credit = 180 + 90 + 36;
+  const less = 36 + 10 + 9 + 9 + 14.4;
+  check(`… split into credit (${credit.toFixed(2)}) and what the credit notes take off (${less.toFixed(2)})`,
+    Math.abs(s.credit - credit) < 0.005 && Math.abs(s.reduction - less) < 0.005, JSON.stringify({ credit: s.credit, reduction: s.reduction }));
+  const words = B.creditWording?.(s);
+  check('the credit reads "₹306.00, less ₹78.40 on credit notes"', words === '₹306.00, less ₹78.40 on credit notes', words);
+  const notesOnly = B.summariseBills(rows.filter((r) => r.igst + r.cgst + r.sgst < 0));
+  const nWords = B.creditWording?.(notesOnly);
+  check('… a list of credit notes only reads as a net reduction, never "₹-78.40"',
+    nWords === '₹0.00, less ₹78.40 on credit notes, a net reduction of ₹78.40' && !/₹\s*-/.test(nWords), nWords);
+  const plain = B.creditWording?.(B.summariseBills(rows.filter((r) => r.igst + r.cgst + r.sgst >= 0)));
+  check('… and a list with no credit note is the plain figure (₹306.00)', plain === '₹306.00', plain);
+  check('a supplier\'s negative tax is in brackets', B.rupees?.(-14.4) === '(₹14.40)' && B.rupees?.(36) === '₹36.00', `${B.rupees?.(-14.4)} / ${B.rupees?.(36)}`);
+
+  // The e-mail as queued: the template's own sentence around {{itc_total}}.
+  const mig = fs.readFileSync(path.join(root, 'supabase/migrations/20261019100000_bills_not_in_books_email.sql'), 'utf8');
+  check('the template says "input tax credit of {{itc_total}}"', mig.includes('Together they carry input tax credit of {{itc_total}}.'));
+  db.email_templates = [{ key: 'bills_not_in_books', is_active: true, subject: 'Bills not in your books, {{period}}',
+    body: 'We found {{bill_count}} not yet recorded in your books. Together they carry input tax credit of {{itc_total}}.' }];
+  const send = (list) => B.sendBillsNotInBooks({ clientId: C, clientName: 'Fictional Traders', gstin: '24CCCCC0000C1Z5', periodMonth: M9,
+    to: 'accounts@example.com', cc: '', replyBy: '22 Oct 2026', rows: list, staffName: 'Staff', userId: null });
+  const res = await send(rows);
+  const mail = (db.email_outbox || []).at(-1);
+  check('the e-mail is queued and sent', res.ok && !!mail, JSON.stringify(res));
+  check('… its body: "input tax credit of ₹306.00, less ₹78.40 on credit notes."',
+    !!mail && mail.body.includes('input tax credit of ₹306.00, less ₹78.40 on credit notes.') && !/₹\s*-/.test(mail.body), mail?.body);
+  check('… the supplier table brackets a negative supplier, no "₹-"',
+    !!mail && mail.render_vars.table_html.includes('(&#8377;14.40)') && !/&#8377;\s*-/.test(mail.render_vars.table_html), mail?.render_vars?.table_html);
+  const res2 = await send(rows.filter((r) => r.igst + r.cgst + r.sgst < 0));
+  const mail2 = (db.email_outbox || []).at(-1);
+  check('a list of credit notes only: "input tax credit of ₹0.00, less ₹78.40 on credit notes, a net reduction of ₹78.40.", total in brackets',
+    res2.ok && mail2 !== mail && mail2.body.includes('less ₹78.40 on credit notes, a net reduction of ₹78.40.') && !/₹\s*-/.test(mail2.body)
+      && mail2.render_vars.itc_total === nWords && mail2.render_vars.table_html.includes('(&#8377;78.40)') && !/&#8377;\s*-/.test(mail2.render_vars.table_html),
+    `${mail2?.body} | ${mail2?.render_vars?.table_html}`);
+  const dialog = fs.readFileSync(path.join(root, 'src/components/import2b/EmailBillsNotInBooksDialog.tsx'), 'utf8');
+  check('the pop-up shows the same words (creditWording), not ₹{sum.tax}',
+    dialog.includes('credit {creditWording(sum)}') && !dialog.includes('formatINR(sum.tax)'));
+});
+
+// ── 5. Booked: row 5.2 takes the negative head, and every reader sums it ───
+const H3 = (igst, cgst, sgst) => ({ igst, cgst, sgst });
+const same3 = (a, b) => ['igst', 'cgst', 'sgst'].every((h) => Math.abs((Number(a?.[h]) || 0) - b[h]) < 0.005);
+const show3 = (x) => JSON.stringify(x && H3(x.igst, x.cgst, x.sgst));
+await run('row 5.2', async () => {
+  // Every row of both ITC Summary templates (ordinary and Partial-ITC), read
+  // from the page itself.
+  const page = fs.readFileSync(path.join(root, 'src/pages/ITCSummaryPage.tsx'), 'utf8');
+  const tplRows = (name) => {
+    const i = page.indexOf(`const ${name} = (): ITCData => ({`);
+    const body = page.slice(i, page.indexOf('\n});', i));
+    return ['section4A', 'section4B', 'section4D'].flatMap((sec) => {
+      const k = body.indexOf(`${sec}: [`);
+      const part = body.slice(k, body.indexOf('\n  ],', k));
+      return [...part.matchAll(/\{ srNo: '([^']*)',[^\n]*\}/g)].map((m) => ({ sec, srNo: m[1], editable: /editable: true/.test(m[0]) }));
+    });
+  };
+  for (const name of ['getDefaultITCData', 'getPartialITCData']) {
+    const rows = tplRows(name);
+    const neg = rows.filter((r) => I.takesNegativeHead?.(r.sec, r.srNo));
+    check(`${name}: row 5.2 alone takes a negative head (and is typed); the other ${rows.filter((r) => r.editable).length - 1} typed rows refuse one`,
+      rows.length >= 15 && neg.length === 1 && neg[0].sec === 'section4A' && neg[0].srNo === '5.2' && neg[0].editable,
+      JSON.stringify(neg) + ` of ${rows.length}`);
+  }
+  check('… 5.3 (auto-linked for a Strict month), 5.1, 4B and 4D rows refuse one',
+    !['5.1', '5.3', '5.4', '5.5', '(1)'].some((sr) => I.takesNegativeHead?.('section4A', sr))
+      && !I.takesNegativeHead?.('section4B', '5.2') && !I.takesNegativeHead?.('section4D', '5.2') && !I.takesNegativeHead?.('section4B', '(ii)'));
+  check('the ITC Summary cell refuses a negative only where takesNegativeHead says no, with no floor of 0 on 5.2',
+    page.includes('const negativeOk = takesNegativeHead(section, row.srNo);') && page.includes('if (numVal < 0 && !negativeOk) {')
+      && page.includes('min={negativeOk ? undefined : 0}') && (page.match(/numVal < 0/g) || []).length === 1);
+  check('… and 5.2 shows what is typed while focused, so a leading "-" is not reset to the figure',
+    page.includes('value={shown}') && page.includes('setCellDraft({ key: draftKey, text: e.target.value });')
+      && page.includes("onBlur={negativeOk ? () => setCellDraft(null) : undefined}"));
+
+  // A month: 5.1 claims 1,000 / 500 / 500; the booked credit note (1,500 IGST,
+  // 100 + 100 CGST/SGST) is reduced in 5.2, taking IGST of 4A(5) below zero.
+  const A4 = (r51, r52) => [
+    { srNo: '(1)', ...H3(0, 0, 0) }, { srNo: '(2)', ...H3(0, 0, 0) }, { srNo: '(3)', ...H3(0, 0, 0) }, { srNo: '(4)', ...H3(0, 0, 0) },
+    { srNo: '(5)', ...H3(0, 0, 0), isHeader: true },
+    { srNo: '5.1', ...r51 }, { srNo: '5.2', ...r52 }, { srNo: '5.3', ...H3(0, 0, 0) }, { srNo: '5.4', ...H3(0, 0, 0) }, { srNo: '5.5', ...H3(0, 0, 0) },
+  ];
+  const B4 = [
+    { srNo: '(1)', ...H3(0, 0, 0) }, { srNo: '(2)', ...H3(0, 0, 0), isHeader: true },
+    { srNo: '(i)', ...H3(50, 0, 0) }, { srNo: '(ii)', ...H3(0, 0, 0) }, { srNo: '(iii)', ...H3(0, 0, 0) },
+  ];
+  const D4 = [{ srNo: '(1)', ...H3(0, 0, 0) }, { srNo: '1.1', ...H3(0, 0, 0) }, { srNo: '1.2', ...H3(0, 0, 0) }, { srNo: '(2)', ...H3(0, 0, 0) }];
+  const NEG = A4(H3(1000, 500, 500), H3(-1500, -100, -100));
+  // The same month with the note taken off 5.1 instead: what a signed 5.2 must equal.
+  const NET = A4(H3(-500, 400, 400), H3(0, 0, 0));
+  check('Total (5) = 5.1 + 5.2 − 5.3 + 5.4 + 5.5 with a negative 5.2 head (−500 / 400 / 400)',
+    same3(I.computeSection4ATotal5(NEG), H3(-500, 400, 400)), show3(I.computeSection4ATotal5(NEG)));
+  check('… and Total 4A the same (rows 1 to 4 nil)', same3(I.computeTotal4A(NEG), H3(-500, 400, 400)), show3(I.computeTotal4A(NEG)));
+
+  const g3 = (section4A, extra = {}) => G.buildGstr3bJson({ gstin: '24AAAAA0000A1Z5', periodMonth: '09/2026', gstr1Raw: null,
+    itc: { section4A, section4B: extra.section4B || B4, section4D: D4 }, rcm: { taxable: 0, igst: 0, cgst: 0, sgst: 0 }, alreadyFiled: false, ...extra.input });
+  const r = g3(NEG);
+  const avl = (x) => x.json.itc_elg.itc_avl.find((e) => e.ty === 'OTH');
+  const rev = (x, ty) => x.json.itc_elg.itc_rev.find((e) => e.ty === ty);
+  check('GSTR-3B files 4A(5) at 0 for the head the negative 5.2 takes below zero (IGST), the others as they are (0 / 400 / 400)',
+    same3(avl(r), H3(0, 400, 400)) && same3(r.summary.itcAvailableRows.find((x) => x.srNo === '(5)'), H3(0, 400, 400)), show3(avl(r)));
+  check('… and puts the excess (500 IGST) in 4B(2) Others, beside the 50 reversed (550 / 0 / 0); 4B(1) nil',
+    same3(rev(r, 'OTH'), H3(550, 0, 0)) && same3(rev(r, 'RUL'), H3(0, 0, 0)), `${show3(rev(r, 'OTH'))} ${show3(rev(r, 'RUL'))}`);
+  check('… net ITC unchanged: 4C = Total 4A − 4B as typed (−550 / 400 / 400), and the same as the note taken off 5.1',
+    same3(r.json.itc_elg.itc_net, H3(-550, 400, 400)) && same3(r.summary.itcNet, g3(NET).summary.itcNet), show3(r.json.itc_elg.itc_net));
+  check('… with a flag naming the negative row 5.2', r.flags.some((f) => f.includes('4A(5) All other ITC came out negative (IGST 500.00)') && f.includes('row 5.2')),
+    r.flags.filter((f) => f.startsWith('4A(5)')).join(' | '));
+  const small = g3(A4(H3(1000, 500, 500), H3(-200, -100, -100)));
+  check('a negative 5.2 head that leaves 4A(5) above zero is filed as it nets (800 / 400 / 400), nothing moved to 4B(2)',
+    same3(avl(small), H3(800, 400, 400)) && same3(rev(small, 'OTH'), H3(50, 0, 0)) && !small.flags.some((f) => f.startsWith('4A(5)')), show3(avl(small)));
+
+  // Partial-ITC builder: the carpet-area split runs on the signed Total 4A.
+  const PB = [
+    { srNo: '(1)', particular: 'Calculation of Ineligible ITC under Rule - 38, 42 & 43, and Section 17(5)', ...H3(0, 0, 0) },
+    { srNo: '', particular: 'i) On ITC as per 4A', ...H3(0, 0, 0) },
+    { srNo: '', particular: 'ii) Previous Month Adjustment', ...H3(0, 0, 0) },
+    { srNo: '', particular: 'iii) On Other reversal', ...H3(0, 0, 0) },
+    { srNo: '(2)', particular: 'Others', ...H3(0, 0, 0) },
+    { srNo: '', particular: 'ITC Reversal for the current month as per 2B RECO', ...H3(50, 0, 0) },
+    { srNo: '', particular: 'ITC Reversal for the previous months, if any.', ...H3(0, 0, 0) },
+  ];
+  const split = (a) => I.computePartialItcSplit({ section4A: a, section4B: PB, commercialArea: 600, residentialArea: 400 });
+  const sNeg = split(NEG);
+  check('the Partial-ITC split takes 40% of the signed Total 4A (−200 / 160 / 160), the same as the note taken off 5.1',
+    same3(sNeg.onITCAsPerA, H3(-200, 160, 160)) && same3(sNeg.main1Calculated, split(NET).main1Calculated), show3(sNeg.onITCAsPerA));
+  const pb = g3(NEG, { section4B: PB, input: { builderItcType: 'PARTIAL_ITC', commercialArea: 600, residentialArea: 400 } });
+  const pbNet = g3(NET, { section4B: PB, input: { builderItcType: 'PARTIAL_ITC', commercialArea: 600, residentialArea: 400 } });
+  check('… GSTR-3B for that builder: 4A(5) and 4B(1) never below zero, net ITC the same as the note taken off 5.1',
+    ['igst', 'cgst', 'sgst'].every((h) => avl(pb)[h] >= 0 && rev(pb, 'RUL')[h] >= 0) && same3(pb.summary.itcNet, pbNet.summary.itcNet),
+    `4A(5) ${show3(avl(pb))} 4B(1) ${show3(rev(pb, 'RUL'))} 4B(2) ${show3(rev(pb, 'OTH'))} net ${show3(pb.summary.itcNet)} vs ${show3(pbNet.summary.itcNet)}`);
+
+  // Credit closing (Reports): opening + Total 4A − 4B, signed.
+  const gr = { opening_igst: 2000, opening_cgst: 2000, opening_sgst: 2000 };
+  const cc = A.computeCreditClosing(gr, { section4A: NEG, section4B: B4, section4D: D4 }, null, '09/2026');
+  const ccNet = A.computeCreditClosing(gr, { section4A: NET, section4B: B4, section4D: D4 }, null, '09/2026');
+  check('the credit closing report takes the negative 5.2 head off the credit (1,450 / 2,400 / 2,400), as if off 5.1',
+    Math.abs(cc.closingIgst - 1450) < 0.005 && Math.abs(cc.closingCgst - 2400) < 0.005 && Math.abs(cc.closingSgst - 2400) < 0.005
+      && cc.closingIgst === ccNet.closingIgst && cc.closingCgst === ccNet.closingCgst,
+    JSON.stringify({ igst: cc.closingIgst, cgst: cc.closingCgst, sgst: cc.closingSgst }));
+
+  // GST receivable reco (the GSTR-3B push's check): the previous month's ITC Summary.
+  const db = globalThis.__db;
+  const RC = 'client-r';
+  db.gst_receivable_reco = [{ client_id: RC, period_month: '10/2026', opening_igst: 2000, opening_cgst: 2000, opening_sgst: 2000,
+    books_closing_igst: 0, books_closing_cgst: 0, books_closing_sgst: 0, utilized_igst: 0, utilized_cgst: 0, utilized_sgst: 0, drc_igst: 0, drc_cgst: 0, drc_sgst: 0 }];
+  db.filing_status = [{ client_id: RC, period_month: '09/2026', return_type: 'GSTR-3B', status: 'Filed' }];
+  db.clients = [{ id: RC, builder_itc_type: null, commercial_area: null, residential_area: null }];
+  db.itc_summaries = [{ client_id: RC, period_month: '09/2026', data: { section4A: NEG, section4B: B4, section4D: D4 } }];
+  const d1 = await R.computeGstReceivableRecoDiff(RC, '10/2026');
+  db.itc_summaries = [{ client_id: RC, period_month: '09/2026', data: { section4A: NET, section4B: B4, section4D: D4 } }];
+  const d2 = await R.computeGstReceivableRecoDiff(RC, '10/2026');
+  check('the GST receivable reco reads the negative 5.2 head signed (closing 1,450 / 2,400 / 2,400), as if off 5.1',
+    same3(d1, H3(1450, 2400, 2400)) && same3(d1, d2), `${show3(d1)} vs ${show3(d2)}`);
 });
 
 // ── Report ──────────────────────────────────────────────────────────────────
