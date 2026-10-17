@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import { sessionsEndedAt } from '@/lib/staffLevels';
 import { toast } from 'sonner';
 
 type UserRole = 'superadmin' | 'gst_manager' | 'employee' | 'client';
@@ -83,6 +84,13 @@ interface AppUser {
   role: UserRole;
   userId: string;
   permissions: UserPermissions;
+  /**
+   * Staff: profiles.sessions_ended_at as it stood when this sign-in began
+   * (null: never ended). When the server's value moves past it, someone
+   * ended this person's sessions (Dashboard → User Management → Log out):
+   * the sign-in is over. Undefined on a sign-in saved before this existed.
+   */
+  sessionsEndedAt?: string | null;
 }
 
 interface AuthContextType {
@@ -134,8 +142,10 @@ interface AuthContextType {
   canSendClientEmails: () => boolean;
   /** Edit e-mail templates and switch reminder rules. */
   canManageEmailTemplates: () => boolean;
-  /** Positions and who holds them; promoting to GST Manager. Role only. */
+  /** Positions and who holds them. Role only (GST Manager, superadmin). */
   canManagePositions: () => boolean;
+  /** Give or take away the GST Manager level: the superadmin only (and the database asks for their password). */
+  canChangeStaffLevel: () => boolean;
   /** Accept a BU agreement value without the client's confirmation. */
   canOverrideBuAgreement: () => boolean;
   hasPermission: (permission: keyof UserPermissions) => boolean;
@@ -144,6 +154,20 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const FALLBACK_AUTH_KEY = 'vjdesai_user';
+
+/**
+ * Whether a staff sign-in has been ended since it began: the person's
+ * sessions were ended (profiles.sessions_ended_at) after the value this
+ * sign-in saw, or at all for a sign-in saved before it noted one. Server
+ * times only, so a computer's wrong clock cannot keep a sign-in alive. A
+ * failed read ends nothing.
+ */
+const sessionWasEnded = async (u: Pick<AppUser, 'id' | 'sessionsEndedAt'>): Promise<boolean> => {
+  const ended = await sessionsEndedAt(u.id);
+  if (!ended) return false;
+  if (u.sessionsEndedAt === undefined || u.sessionsEndedAt === null) return true;
+  return new Date(ended).getTime() > new Date(u.sessionsEndedAt).getTime();
+};
 
 // Fetch permissions from database
 const fetchUserPermissions = async (userId: string): Promise<UserPermissions> => {
@@ -238,7 +262,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .eq('user_id', parsedUser.id)
             .maybeSingle();
           
-          if (roleData) {
+          if (roleData && roleData.role !== 'client' && await sessionWasEnded(parsedUser)) {
+            localStorage.removeItem(FALLBACK_AUTH_KEY);
+            toast.info('Please log in again', { description: 'You were logged out by an administrator.' });
+          } else if (roleData) {
             const dbRole = roleData.role as AppUser['role'];
             const permissions = dbRole !== 'client'
               ? await fetchUserPermissions(parsedUser.id)
@@ -321,6 +348,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role: staff.role as UserRole,
           userId: staff.first_name,
           permissions,
+          sessionsEndedAt: (await sessionsEndedAt(staff.user_id)) ?? null,
         };
 
         localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(userData));
@@ -467,6 +495,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: userInfo.role as UserRole,
         userId: userInfo.first_name,
         permissions,
+        sessionsEndedAt: (await sessionsEndedAt(userInfo.user_id)) ?? null,
       };
 
       localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(appUser));
@@ -627,6 +656,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user?.role === 'superadmin' || user?.role === 'gst_manager';
   }, [user]);
 
+  const canChangeStaffLevel = useCallback((): boolean => user?.role === 'superadmin', [user]);
+
+  // A staff sign-in ends when someone ends the person's sessions: checked
+  // every minute and whenever the tab comes back into view.
+  useEffect(() => {
+    if (!user || user.role === 'client') return;
+    let stopped = false;
+    const check = async () => {
+      if (stopped || document.visibilityState === 'hidden') return;
+      if (await sessionWasEnded(user)) {
+        stopped = true;
+        localStorage.removeItem(FALLBACK_AUTH_KEY);
+        setSession(null);
+        setUser(null);
+        setPendingFirstLogin(null);
+        toast.info('Please log in again', { description: 'You were logged out by an administrator.' });
+      }
+    };
+    const timer = window.setInterval(check, 60_000);
+    const onVisible = () => { void check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [user]);
+
   // ── Advance set-off gate (docs/ADVANCE_SETOFF_POSITIONS.md §6) ───────────
   // Two separate powers, deliberately not one helper: raising a request and
   // deciding it are the whole point of the control. An employee may ask, with
@@ -760,6 +819,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canSendClientEmails,
         canManageEmailTemplates,
         canManagePositions,
+        canChangeStaffLevel,
         canOverrideBuAgreement,
         hasPermission,
       }}

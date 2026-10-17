@@ -29,6 +29,8 @@ import { toast } from 'sonner';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
+import SuperadminPasswordDialog from '@/components/dialogs/SuperadminPasswordDialog';
+import { addStaffLevel, removeStaff, STAFF_LEVEL_LABEL } from '@/lib/staffLevels';
 
 
 interface Employee {
@@ -52,7 +54,9 @@ const RequiredMark: React.FC = () => (
 );
 
 const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = false }) => {
-  const { user, canManageEmployees, canManagePositions } = useAuth();
+  const { user, canManageEmployees, canManagePositions, canChangeStaffLevel } = useAuth();
+  // A change waiting for the superadmin's password (the GST Manager level is theirs alone).
+  const [passwordAsk, setPasswordAsk] = useState<{ title: string; confirmText: string; run: (password: string) => Promise<void> } | null>(null);
   const confirm = useConfirm();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -137,96 +141,95 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
   }, [fetchEmployees]);
 
   const handleAddEmployee = async () => {
-    if (!newEmployee.firstName.trim()) {
+    const firstName = newEmployee.firstName.trim();
+    if (!firstName) {
       setShowValidation(true);
       toast.error('Please enter the employee name.');
       return;
     }
+    if (!user) return;
+    const level = newEmployee.role;
+    if (level === 'gst_manager' && !canChangeStaffLevel()) {
+      toast.error('Only the superadmin can add a GST Manager.');
+      return;
+    }
+    const positionId = newEmployee.positionId;
 
-    setIsSubmitting(true);
-    try {
+    const create = async (password?: string) => {
       // Generate a unique user_id for the employee
       const tempUserId = crypto.randomUUID();
-      const email = `${newEmployee.firstName.toLowerCase().replace(/\s+/g, '.')}@staff.local`;
+      const email = `${firstName.toLowerCase().replace(/\s+/g, '.')}@staff.local`;
 
-      // First, insert into profiles with password
+      // First the profile, with the default password; then its level.
       const { error: profileError } = await supabase
         .from('profiles')
-        .insert([{
-          user_id: tempUserId,
-          first_name: newEmployee.firstName,
-          email: email,
-          password: '2026', // Default password stored in profiles
-        }]);
-
+        .insert([{ user_id: tempUserId, first_name: firstName, email, password: '2026' }]);
       if (profileError) throw profileError;
-
-      // Then insert into user_roles
-      const { error: roleError } = await supabase
-        .from('user_roles')
-        .insert([{
-          user_id: tempUserId,
-          role: newEmployee.role,
-          is_first_login: true,
-        }]);
-
-      if (roleError) {
-        // Rollback profile if role insert fails
+      try {
+        await addStaffLevel(user.id, tempUserId, level, password);
+      } catch (error) {
+        // A profile without a level is not staff: take it out again.
         await supabase.from('profiles').delete().eq('user_id', tempUserId);
-        throw roleError;
+        throw error;
       }
 
       // An employee's controls come from their position (User Control).
-      if (newEmployee.role === 'employee' && newEmployee.positionId) {
+      if (level === 'employee' && positionId) {
         const { error: posError } = await supabase.rpc('staff_assign_position', {
-          p_user_id: tempUserId, p_position_id: newEmployee.positionId, p_actor_id: user?.id ?? '',
+          p_user_id: tempUserId, p_position_id: positionId, p_actor_id: user.id,
         });
         if (posError) toast.error(`Added, but the role was not set: ${posError.message}`);
       }
 
-      toast.success(
-        `${newEmployee.firstName} has been added as ${newEmployee.role === 'gst_manager' ? 'GST Manager' : 'Employee'}. Login: ${newEmployee.firstName} / 2026`
-      );
-
+      toast.success(`${firstName} has been added as ${STAFF_LEVEL_LABEL[level]}. Login: ${firstName} / 2026`);
       setNewEmployee({ firstName: '', role: 'employee', positionId: '' });
       setShowValidation(false);
       setShowAddDialog(false);
       fetchEmployees();
-    } catch (error: any) {
+    };
+
+    if (level === 'gst_manager') {
+      setShowAddDialog(false);
+      setPasswordAsk({ title: `Add ${firstName} as a GST Manager`, confirmText: 'Add', run: create });
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await create();
+    } catch (error) {
       console.error('Error adding employee:', error);
-      toast.error('Failed to add employee: ' + error.message);
+      toast.error('Failed to add employee: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDeleteEmployee = async (employeeId: string, userId: string, name: string) => {
+  const handleDeleteEmployee = async (emp: Employee) => {
+    if (!user) return;
+    if (emp.role === 'gst_manager' && !canChangeStaffLevel()) {
+      toast.error('Only the superadmin can remove a GST Manager.');
+      return;
+    }
     if (!(await confirm({
       title: 'Remove employee?',
-      description: `This permanently deletes ${name}'s account — login, role and profile. This cannot be undone.`,
+      description: `This permanently deletes ${emp.first_name}'s account — login, role and profile. This cannot be undone.`,
       destructive: true,
       confirmText: 'Delete',
     }))) return;
-    try {
-      // Delete from user_roles first (child table)
-      await supabase
-        .from('user_roles')
-        .delete()
-        .eq('user_id', userId);
-
-      // Delete from profiles (parent table)
-      await supabase
-        .from('profiles')
-        .delete()
-        .eq('id', employeeId);
-
-      // Employees are now fully managed in Supabase - no mock data needed
-
-      toast.success(`${name} has been removed from the system.`);
-
+    // Level, permissions and profile go together (staff_remove).
+    const remove = async (password?: string) => {
+      await removeStaff(user.id, emp.user_id, password);
+      toast.success(`${emp.first_name} has been removed from the system.`);
       fetchEmployees();
-    } catch (error: any) {
-      toast.error('Failed to delete employee: ' + error.message);
+    };
+    if (emp.role === 'gst_manager') {
+      setPasswordAsk({ title: `Remove ${emp.first_name} (GST Manager)`, confirmText: 'Remove', run: remove });
+      return;
+    }
+    try {
+      await remove();
+    } catch (error) {
+      toast.error('Failed to delete employee: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
 
@@ -313,7 +316,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="gst_manager" disabled={!canManagePositions()}>GST Manager</SelectItem>
+                      <SelectItem value="gst_manager" disabled={!canChangeStaffLevel()}>GST Manager</SelectItem>
                       <SelectItem value="employee">Employee</SelectItem>
                     </SelectContent>
                   </Select>
@@ -407,7 +410,9 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
                     size="icon"
                     aria-label={`Remove ${emp.first_name}`}
                     className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                    onClick={() => handleDeleteEmployee(emp.id, emp.user_id, emp.first_name)}
+                    onClick={() => handleDeleteEmployee(emp)}
+                    disabled={emp.role === 'gst_manager' && !canChangeStaffLevel()}
+                    title={emp.role === 'gst_manager' && !canChangeStaffLevel() ? 'Only the superadmin can remove a GST Manager' : undefined}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -424,6 +429,22 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
           )}
         </CardContent>
       </Card>
+      <SuperadminPasswordDialog
+        open={!!passwordAsk}
+        title={passwordAsk?.title ?? ''}
+        confirmText={passwordAsk?.confirmText}
+        onOpenChange={(open) => { if (!open) setPasswordAsk(null); }}
+        onConfirm={async (password) => {
+          if (!passwordAsk) return false;
+          try {
+            await passwordAsk.run(password);
+            return true;
+          } catch (error) {
+            toast.error('Not done: ' + (error instanceof Error ? error.message : String(error)));
+            return false;
+          }
+        }}
+      />
     </>
   );
 

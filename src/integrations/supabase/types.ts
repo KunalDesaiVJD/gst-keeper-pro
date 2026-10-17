@@ -9023,6 +9023,7 @@ export type Database = {
           id: string
           password: string | null
           position_id: string | null
+          sessions_ended_at: string | null
           updated_at: string | null
           user_id: string
         }
@@ -9033,6 +9034,7 @@ export type Database = {
           id?: string
           password?: string | null
           position_id?: string | null
+          sessions_ended_at?: string | null
           updated_at?: string | null
           user_id: string
         }
@@ -9043,6 +9045,7 @@ export type Database = {
           id?: string
           password?: string | null
           position_id?: string | null
+          sessions_ended_at?: string | null
           updated_at?: string | null
           user_id?: string
         }
@@ -11727,12 +11730,32 @@ export type Database = {
         Args: { new_password: string; target_client_id: string }
         Returns: boolean
       }
+      staff_add_level: {
+        Args: { p_actor_id: string; p_actor_password?: string | null; p_level: string; p_target_user_id: string }
+        Returns: boolean
+      }
       staff_assign_position: {
         Args: { p_actor_id: string; p_position_id: string | null; p_user_id: string }
         Returns: undefined
       }
+      staff_end_sessions: {
+        Args: { p_actor_id: string; p_target_user_id: string }
+        Returns: string
+      }
+      staff_level_of: {
+        Args: { p_user_id: string }
+        Returns: string | null
+      }
+      staff_remove: {
+        Args: { p_actor_id: string; p_actor_password?: string | null; p_target_user_id: string }
+        Returns: boolean
+      }
       staff_set_client_password: {
         Args: { p_actor_id: string; p_client_id: string; p_new_password: string }
+        Returns: boolean
+      }
+      staff_set_level: {
+        Args: { p_actor_id: string; p_actor_password: string; p_level: string; p_target_user_id: string }
         Returns: boolean
       }
       staff_set_password: {
