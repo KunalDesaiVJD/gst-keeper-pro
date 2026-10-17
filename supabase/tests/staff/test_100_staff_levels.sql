@@ -30,13 +30,13 @@ SELECT set_config('app.staff_roles_write', 'off', false), set_config('app.positi
 SET ROLE anon;
 
 -- 1. Direct writes refused
-SELECT t_raises($$UPDATE user_roles SET role = 'superadmin' WHERE user_id = '10000000-0000-0000-0000-000000000005'$$, 'Staff levels change only', 'an employee made superadmin directly');
-SELECT t_raises($$UPDATE user_roles SET role = 'gst_manager' WHERE user_id = '10000000-0000-0000-0000-000000000005'$$, 'Staff levels change only', 'an employee made GST Manager directly');
-SELECT t_raises($$INSERT INTO user_roles (user_id, role) VALUES ('10000000-0000-0000-0000-000000000006', 'superadmin')$$, 'Staff levels change only', 'a level added directly');
-SELECT t_raises($$DELETE FROM user_roles WHERE user_id = '10000000-0000-0000-0000-000000000002'$$, 'Staff levels change only', 'a level removed directly');
-SELECT t_raises($$UPDATE user_roles SET user_id = '10000000-0000-0000-0000-000000000006' WHERE user_id = '10000000-0000-0000-0000-000000000002'$$, 'Staff levels change only', 'a level moved to another person');
-SELECT t_raises($$UPDATE user_roles SET is_first_login = true WHERE user_id = '10000000-0000-0000-0000-000000000004'$$, 'Staff levels change only', 'first login set again directly');
-SELECT t_raises($$DELETE FROM profiles WHERE user_id = '10000000-0000-0000-0000-000000000005'$$, 'Remove staff only', 'a staff profile deleted directly');
+SELECT t_raises($$UPDATE user_roles SET role = 'superadmin' WHERE user_id = '10000000-0000-0000-0000-000000000005'$$, 'This screen is out of date', 'an employee made superadmin directly');
+SELECT t_raises($$UPDATE user_roles SET role = 'gst_manager' WHERE user_id = '10000000-0000-0000-0000-000000000005'$$, 'This screen is out of date', 'an employee made GST Manager directly');
+SELECT t_raises($$INSERT INTO user_roles (user_id, role) VALUES ('10000000-0000-0000-0000-000000000006', 'superadmin')$$, 'This screen is out of date', 'a level added directly');
+SELECT t_raises($$DELETE FROM user_roles WHERE user_id = '10000000-0000-0000-0000-000000000002'$$, 'This screen is out of date', 'a level removed directly');
+SELECT t_raises($$UPDATE user_roles SET user_id = '10000000-0000-0000-0000-000000000006' WHERE user_id = '10000000-0000-0000-0000-000000000002'$$, 'This screen is out of date', 'a level moved to another person');
+SELECT t_raises($$UPDATE user_roles SET is_first_login = true WHERE user_id = '10000000-0000-0000-0000-000000000004'$$, 'This screen is out of date', 'first login set again directly');
+SELECT t_raises($$DELETE FROM profiles WHERE user_id = '10000000-0000-0000-0000-000000000005'$$, 'This screen is out of date', 'a staff profile deleted directly');
 SELECT t_eq((SELECT count(*) FROM user_roles WHERE role = 'superadmin')::int, 1, 'still one superadmin');
 
 -- 2. The first-login flag still clears (the sign-in functions)
