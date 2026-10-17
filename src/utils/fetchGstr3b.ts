@@ -7,6 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bItcTyped, type Gstr3bResult, type ItcData, type ItcRow, type RcmTotals } from './buildGstr3bJson';
 import { fetchItcAutoLinkTotals } from '@/lib/itcAutoLink';
 import { with4D1Total } from '@/lib/itc4D';
+import { headsTyped } from '@/lib/itcHeads';
 import { fetchImport2BHeld, import2BHeldMessage } from '@/lib/postImport2B';
 
 const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -92,17 +93,16 @@ export async function fetchGstr3b(
       eligibleFromImport2B, creditNotesFromImport2B, notesFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco,
     } = autoLink;
     const amt = (r: ItcRow) => ({ igst: Number(r.igst) || 0, cgst: Number(r.cgst) || 0, sgst: Number(r.sgst) || 0 });
-    // Any head, either way: row 5.2 may hold a negative head, and heads that cancel must not hide a typed row.
-    const anyHead = (a: { igst: number; cgst: number; sgst: number }) => Math.abs(a.igst) >= 0.5 || Math.abs(a.cgst) >= 0.5 || Math.abs(a.sgst) >= 0.5;
+    // headsTyped: row 5.2 may hold a negative head, and heads that cancel must not hide a typed row.
     for (const r of itc.section4A as ItcRow[]) {
       if (r.srNo === '5.1' && (isLiberal || isNoITC)) {
         const twob = { igst: eligibleFromImport2B.igst + reversalFromReco.igst, cgst: eligibleFromImport2B.cgst + reversalFromReco.cgst, sgst: eligibleFromImport2B.sgst + reversalFromReco.sgst };
-        if (anyHead(amt(r)) || anyHead(twob)) itcTyped.push({ row: '5.1', label: 'ITC for the Month', typed: amt(r), twob });
+        if (headsTyped(amt(r)) || headsTyped(twob)) itcTyped.push({ row: '5.1', label: 'ITC for the Month', typed: amt(r), twob });
       }
-      if (r.srNo === '5.2' && anyHead(amt(r))) itcTyped.push({ row: '5.2', label: r.particular || 'ITC for Previous Month', typed: amt(r) });
+      if (r.srNo === '5.2' && headsTyped(amt(r))) itcTyped.push({ row: '5.2', label: r.particular || 'ITC for Previous Month', typed: amt(r) });
       if (r.srNo === '5.3' && (isLiberal || isNoITC) && notesFromImport2B) {
         const twob = { ...creditNotesFromImport2B };
-        if (anyHead(amt(r)) || anyHead(twob)) itcTyped.push({ row: '5.3', label: 'Debit Note', typed: amt(r), twob });
+        if (headsTyped(amt(r)) || headsTyped(twob)) itcTyped.push({ row: '5.3', label: 'Debit Note', typed: amt(r), twob });
       }
     }
     itc.section4A = itc.section4A.map((r: ItcRow) => {

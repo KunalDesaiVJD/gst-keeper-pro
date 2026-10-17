@@ -37,6 +37,7 @@ import { classifyGstr3bPush, skipLabel, type Gstr3bPushOutcome } from '@/lib/gst
 import { diffGstr3b, summariseDiff } from '@/utils/gstReturnDiff';
 import ReturnDiffTable from '@/components/dialogs/ReturnDiffTable';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { headsDifferOnly, headsEqual, headsNegative, headsText } from '@/lib/itcHeads';
 
 interface Client { id: string; name: string; gstin: string; regular_sub_type?: string | null; builder_itc_type?: string | null; registration_type?: string | null }
 
@@ -993,22 +994,29 @@ const Gstr3bPage: React.FC = () => {
                 4A(5) includes figures typed in ITC Summary:
                 <ul className="mt-1 list-disc space-y-0.5 pl-5">
                   {result!.itcTyped!.map((t) => {
+                    // Head by head, as ITC Summary marks it (src/lib/itcHeads.ts):
+                    // the heads are shown when one is negative or the totals hide a difference.
                     const typed = t.typed.igst + t.typed.cgst + t.typed.sgst;
                     const twob = t.twob ? t.twob.igst + t.twob.cgst + t.twob.sgst : null;
+                    const splitOnly = !!t.twob && headsDifferOnly(t.typed, t.twob);
+                    const typedHeads = headsNegative(t.typed) || splitOnly ? ` (${headsText(t.typed)})` : '';
+                    const versus = !t.twob ? ''
+                      : headsEqual(t.typed, t.twob) ? 'the same'
+                        : splitOnly ? `the same total, but the heads differ: ${headsText(t.twob)}`
+                          : `difference ₹${inr(typed - (twob ?? 0))}`;
                     if (t.row === '5.3') {
                       return (
                         <li key={t.row}>
-                          Row 5.3 {t.label} typed ₹{inr(typed)}; 2B credit notes give ₹{inr(twob ?? 0)}
-                          {Math.abs(typed - (twob ?? 0)) < 1 ? ' (the same)' : ` (difference ₹${inr(typed - (twob ?? 0))})`}
+                          Row 5.3 {t.label} typed ₹{inr(typed)}{typedHeads}; 2B credit notes give ₹{inr(twob ?? 0)} ({versus})
                         </li>
                       );
                     }
                     return (
                       <li key={t.row}>
-                        Row {t.row} {t.label}: ₹{inr(typed)}
-                        {twob != null && (Math.abs(typed - twob) < 1
+                        Row {t.row} {t.label}: ₹{inr(typed)}{typedHeads}
+                        {twob != null && (headsEqual(t.typed, t.twob!)
                           ? ` (2B gives the same, ₹${inr(twob)})`
-                          : ` (2B gives ₹${inr(twob)}: difference ₹${inr(typed - twob)})`)}
+                          : ` (2B gives ₹${inr(twob)}: ${versus})`)}
                         {t.row === '5.2' && ' (no 2B source: check it against the Not in Books list)'}
                       </li>
                     );

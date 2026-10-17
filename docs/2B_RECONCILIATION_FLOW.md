@@ -769,11 +769,14 @@ has not yet recorded in its books, as an Excel working paper attached to the
   difference, so it can be negative too. The e-mail and the pop-up never
   show a negative credit (`creditWording`): with negative rows in the list it
   reads "₹X, less ₹Y on credit notes" (after the template's "input tax credit
-  of"), naming only what the list holds ("on amendments and adjustments" for
-  downward amendments and carried "Credit / adjustment" rows, "on credit
-  notes, amendments and adjustments" for both), followed by ", a net
-  reduction of ₹Z" when they outweigh the rest; a supplier's negative tax is
-  in brackets. A ledger
+  of") when every reduction is a credit note, "on amendments" when every one
+  is an amendment, and "on credit notes, amendments and adjustments"
+  otherwise: a carried "Credit / adjustment" row has no document behind it
+  and may be a credit note parked in an earlier month. ", a net reduction of
+  ₹Z" follows when the reductions outweigh the rest; a supplier's negative
+  tax is in brackets. The GSTR-3B page and ITC Summary mark typed ITC head by
+  head (`src/lib/itcHeads.ts`), so a 5.2 of IGST −800 against CGST/SGST +400
+  is shown, with its heads. A ledger
   row that repeats a listed document (same supplier, number and figures, dated
   within a day) is sent once and named in the pop-up, so staff can clean the
   ledger. SWENI's ledger held 27 such pairs, carried from older months.

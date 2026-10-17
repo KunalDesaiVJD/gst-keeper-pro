@@ -122,8 +122,9 @@ export * as G from './src/utils/buildGstr3bJson';
 export * as R from './src/lib/gstReceivableRecoCalc';
 export * as A from './src/utils/allClientsReports';
 export * as F from './src/utils/fetchGstr3b';
+export * as H from './src/lib/itcHeads';
 `);
-const { T, P, B, I, G, R, A, F } = M;
+const { T, P, B, I, G, R, A, F, H } = M;
 
 const doc = (o) => ({
   is_amendment: false, original_doc_type: null, reverse_charge: false, bucket: 'available', itc_available: true,
@@ -291,15 +292,22 @@ await run('mail', async () => {
   const nWords = B.creditWording?.(B.summariseBills(negatives));
   check('… a list of reductions only reads as a net reduction, never "₹-78.40"',
     nWords === '₹0.00, less ₹78.40 on credit notes, amendments and adjustments, a net reduction of ₹78.40' && !/₹\s*-/.test(nWords), nWords);
-  const cnOnly = negatives.filter((r) => /credit note$/i.test(r.docType));
-  const cnLess = -cnOnly.reduce((a, r) => a + r.igst + r.cgst + r.sgst, 0);
-  const cnWords = B.creditWording?.(B.summariseBills(cnOnly));
-  check(`… a list of credit notes only says "on credit notes" (₹${cnLess.toFixed(2)})`,
-    cnOnly.length > 0 && cnWords === `₹0.00, less ₹${cnLess.toFixed(2)} on credit notes, a net reduction of ₹${cnLess.toFixed(2)}`, cnWords);
-  const adjOnly = negatives.filter((r) => !/credit note$/i.test(r.docType));
-  const adjWords = B.creditWording?.(B.summariseBills([...rows.filter((r) => r.igst + r.cgst + r.sgst >= 0), ...adjOnly]));
-  check('… and a list with no credit note never calls its reductions credit notes ("₹306.00, less ₹14.40 on amendments and adjustments")',
-    adjOnly.length > 0 && adjWords === '₹306.00, less ₹14.40 on amendments and adjustments', adjWords);
+  // Each kind of reduction named for what it is: a plain credit note, an
+  // amendment (of any document, a credit note's too), and a carried
+  // "Credit / adjustment" row, which may be a credit note parked earlier.
+  const bill = (docType, igst) => ({ monthIn2B: 'Sep 26', date: '2026-09-02', supplierGstin: '24AAAAA0000A1Z5', supplierName: 'Alpha',
+    docNo: `${docType}/${igst}`, docType, taxable: igst * 10, igst, cgst: 0, sgst: 0, unposted: false, linked: true });
+  const inv = bill('Invoice', 180);
+  for (const [label, list, want] of [
+    ['credit notes only', [inv, bill('Credit note', -36)], '₹180.00, less ₹36.00 on credit notes'],
+    ['an amended invoice only', [inv, bill('Amended invoice', -18)], '₹180.00, less ₹18.00 on amendments'],
+    ['an amended credit note only (an amendment)', [inv, bill('Amended credit note', -50)], '₹180.00, less ₹50.00 on amendments'],
+    ['a carried "Credit / adjustment" (may be a credit note)', [inv, bill('Credit / adjustment', -14.4)], '₹180.00, less ₹14.40 on credit notes, amendments and adjustments'],
+    ['a credit note and an amendment', [inv, bill('Credit note', -36), bill('Amended invoice', -18)], '₹180.00, less ₹54.00 on credit notes, amendments and adjustments'],
+  ]) {
+    const w = B.creditWording?.(B.summariseBills(list));
+    check(`… ${label}: "${want}"`, w === want, w);
+  }
   const plain = B.creditWording?.(B.summariseBills(rows.filter((r) => r.igst + r.cgst + r.sgst >= 0)));
   check('… and a list with no credit note is the plain figure (₹306.00)', plain === '₹306.00', plain);
   check('a supplier\'s negative tax is in brackets', B.rupees?.(-14.4) === '(₹14.40)' && B.rupees?.(36) === '₹36.00', `${B.rupees?.(-14.4)} / ${B.rupees?.(36)}`);
@@ -457,6 +465,7 @@ await run('typed 5.2', async () => {
   for (const [label, r52, want] of [
     ['IGST −800 alone', { igst: -800, cgst: 0, sgst: 0 }, true],
     ['IGST −800 with CGST/SGST +400 (sums to 0)', { igst: -800, cgst: 400, sgst: 400 }, true],
+    ['0 / 0.40 / 0.40 (small, but typed)', { igst: 0, cgst: 0.4, sgst: 0.4 }, true],
     ['empty', z, false],
   ]) {
     db.clients = [{ id: 'typed-c', builder_itc_type: null, commercial_area: null, residential_area: null, liberal_2b_reconciliation: true }];
@@ -467,8 +476,23 @@ await run('typed 5.2', async () => {
   }
   const page = fs.readFileSync(path.join(root, 'src/pages/ITCSummaryPage.tsx'), 'utf8');
   check('the ITC Summary "Typed, not from 2B" mark checks each head, and "equals" each head',
-    page.includes("if (row.srNo === '5.2' && anyHead(row))") && (page.match(/sameHeads\(row, g\)/g) || []).length === 2
-      && !/Math\.abs\(typed\) < 0\.5/.test(page));
+    page.includes("if (row.srNo === '5.2' && headsTyped(row))") && (page.match(/headsTyped\(row\) && !headsTyped\(g\)/g) || []).length === 2
+      && page.includes('headsEqual(row, g)') && page.includes('headsDifferOnly(row, g)') && !/Math\.abs\(typed\) < 0\.5/.test(page));
+  const g3b = fs.readFileSync(path.join(root, 'src/pages/Gstr3bPage.tsx'), 'utf8');
+  check('the GSTR-3B page compares typed and 2B head by head too, and shows the heads when one is negative or only the split differs',
+    g3b.includes('headsEqual(t.typed, t.twob)') && g3b.includes('headsDifferOnly(t.typed, t.twob)') && g3b.includes('headsNegative(t.typed)')
+      && !/Math\.abs\(typed - \(?twob/.test(g3b));
+
+  // The shared rule (src/lib/itcHeads.ts).
+  const h = (igst, cgst, sgst) => ({ igst, cgst, sgst });
+  check('headsTyped: −800/400/400 and 0/0.40/0.40 are typed, 0/0.20/0.20 is not',
+    H.headsTyped(h(-800, 400, 400)) && H.headsTyped(h(0, 0.4, 0.4)) && H.headsTyped(h(0.3, 0.1, 0.1)) && !H.headsTyped(h(0, 0.2, 0.2)) && !H.headsTyped(h(0, 0, 0)));
+  check('headsEqual: within ₹1 in total and in each head (1000/500/500 vs 1000.95/500.95/500.95 differs by ₹2.85, so not equal)',
+    H.headsEqual(h(1000, 500, 500), h(1000.4, 500.2, 500.2)) && !H.headsEqual(h(1000, 500, 500), h(1000.95, 500.95, 500.95))
+      && !H.headsEqual(h(1800, 0, 0), h(0, 900, 900)));
+  check('headsDifferOnly: IGST 1,800 typed where 2B gives CGST/SGST 900 each',
+    H.headsDifferOnly(h(1800, 0, 0), h(0, 900, 900)) && !H.headsDifferOnly(h(1000, 500, 500), h(1000, 500, 500)) && !H.headsDifferOnly(h(1000, 0, 0), h(500, 0, 0)));
+  check('headsText shows each head with its sign', H.headsText(h(-800, 400, 400)) === 'IGST -800.00, CGST 400.00, SGST 400.00', H.headsText(h(-800, 400, 400)));
 });
 
 // ── Report ──────────────────────────────────────────────────────────────────
