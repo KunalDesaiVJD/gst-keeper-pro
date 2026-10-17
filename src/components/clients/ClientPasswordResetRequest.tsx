@@ -8,8 +8,9 @@ import { toast } from 'sonner';
 
 /**
  * A signed-in client changes their password through the same e-mailed link
- * as "Forgot password" (client_password_reset_request with their GSTIN). With
- * no e-mail on record the database files a request for staff instead.
+ * as "Forgot password" (client_password_reset_request with their GSTIN). When
+ * no link can go (no e-mail on record, a limit) the database files a request
+ * for staff instead.
  */
 const ClientPasswordResetRequest: React.FC = () => {
   const { user } = useAuth();
@@ -39,7 +40,7 @@ const ClientPasswordResetRequest: React.FC = () => {
             <h3 className="mb-1 text-[15px] font-semibold">Check your e-mail</h3>
             <p className="text-sm text-muted-foreground">
               A link to set a new password is on its way to the e-mail address we hold for you. It works once, for
-              60 minutes. If we have no e-mail address for you, our team has been asked to reset it and will contact you.
+              60 minutes. If we cannot e-mail one, our team has been asked to reset it and will contact you.
             </p>
           </div>
         </CardContent>

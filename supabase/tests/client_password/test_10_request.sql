@@ -1,6 +1,7 @@
 -- Asking for a link (client_password_reset_request, as anon): one answer for
 -- every outcome; a queued link only for a real client with an e-mail; one
--- staff request when there is no e-mail; the rate limits.
+-- staff request when there is no e-mail; the rate limits. (Requests a limit
+-- refuses: test_60. A shared User ID: test_80.)
 BEGIN;
 INSERT INTO clients (id, name, gstin, email, client_user_id, client_password, is_first_login) VALUES
  ('c0000000-0000-0000-0000-000000000001', 'NAVRATNA TEST PROPERTIES PRIVATE LIMITED', '24AAACN0000A1ZK', 'p.owner@navratna.com', NULL,
@@ -45,10 +46,12 @@ SELECT t_eq((SELECT sent_to || ' | ' || email_hint || ' | ' || via FROM client_p
 SELECT t_eq((SELECT token_hash IS NULL AND claimed_at IS NULL AND expires_at IS NULL FROM client_password_resets
               WHERE client_id = 'c0000000-0000-0000-0000-000000000001'), true, 'no token until the mailer claims it');
 SELECT t_eq((SELECT count(*) FROM client_password_resets
-              WHERE client_id IN ('c0000000-0000-0000-0000-000000000002', 'c0000000-0000-0000-0000-000000000003',
-                                  'c0000000-0000-0000-0000-000000000004', 'c0000000-0000-0000-0000-000000000009')), 0::bigint,
-  'nothing queued without an e-mail, with a bad e-mail, or for a User ID two clients share');
-SELECT t_eq((SELECT count(*) FROM client_password_resets), 3::bigint, 'three links queued in all');
+              WHERE client_id IN ('c0000000-0000-0000-0000-000000000002', 'c0000000-0000-0000-0000-000000000009')), 0::bigint,
+  'nothing queued without an e-mail, or with a bad e-mail');
+SELECT t_eq((SELECT string_agg(sent_to, ', ' ORDER BY sent_to) FROM client_password_resets
+              WHERE client_id IN ('c0000000-0000-0000-0000-000000000003', 'c0000000-0000-0000-0000-000000000004')),
+  'one@example.com, two@example.com', 'a User ID two clients share: a link to each');
+SELECT t_eq((SELECT count(*) FROM client_password_resets), 5::bigint, 'five links queued in all');
 SELECT t_eq((SELECT sent_to || ' | ' || email_hint FROM client_password_resets
               WHERE client_id = 'c0000000-0000-0000-0000-000000000005'),
   'A.Accounts@Example.com, b@example.in | A•••@Example.com + 1 more', 'several addresses, each once');
@@ -59,7 +62,11 @@ SELECT t_eq((SELECT count(*) FROM client_password_resets WHERE client_id = 'c000
 SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE user_id = 'c0000000-0000-0000-0000-000000000002' AND status = 'pending'),
   1::bigint, 'one pending staff request for the client with no e-mail');
 SELECT t_eq((SELECT note FROM password_reset_requests WHERE user_id = 'c0000000-0000-0000-0000-000000000002'),
-  'Asked for a reset link; no e-mail address on record.', 'the request says why');
+  'Asked for a reset link; none went out. Edit Client shows why.', 'the open request does not say why');
+SELECT t_eq((SELECT detail FROM client_password_log WHERE client_id = 'c0000000-0000-0000-0000-000000000002' AND action = 'fallback_request'),
+  'Asked for a reset link, but there is no e-mail address on record. A request is waiting on the Dashboard.', 'the private log does');
+SELECT t_eq((SELECT count(*) FROM client_password_log WHERE client_id = 'c0000000-0000-0000-0000-000000000002'), 1::bigint,
+  'logged once, however often asked');
 SELECT t_eq((SELECT requested_by_name FROM password_reset_requests WHERE user_id = 'c0000000-0000-0000-0000-000000000002'),
   'No Mail Traders (24AAACM0000B1Z5)', 'named like the old form did');
 SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE user_id = 'c0000000-0000-0000-0000-000000000009'), 1::bigint,
@@ -68,18 +75,20 @@ SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE user_id = 'c0000
 -- Every request recorded for the rate limits; the identifier only as a hash.
 SELECT t_eq((SELECT string_agg(outcome || '=' || n, ',' ORDER BY outcome) FROM
               (SELECT outcome, count(*) AS n FROM client_password_reset_attempts GROUP BY outcome) s),
-  'invalid=3,no_client=2,no_email=3,queued=3,rate_limited=1', 'attempts by outcome');
+  'invalid=3,no_client=1,no_email=3,queued=5,rate_limited=1', 'attempts by outcome');
+SELECT t_eq((SELECT count(DISTINCT request_id) FROM client_password_reset_attempts), 12::bigint,
+  'twelve requests (the shared User ID is one request, two rows)');
 SELECT t_eq((SELECT identifier_hash FROM client_password_reset_attempts WHERE outcome = 'no_client' ORDER BY at, identifier_hash LIMIT 1) ~ '^[0-9a-f]{64}$',
   true, 'identifier kept as sha256 only');
 SELECT t_eq((SELECT count(*) FROM client_password_reset_attempts WHERE identifier_hash ILIKE '%24ZZZZZ%'), 0::bigint, 'no raw identifier');
 
 -- The mailer is woken once per queued link, with the anon key; never via email_outbox.
-SELECT t_eq((SELECT count(*) FROM net.calls), 3::bigint, 'one wake-up per queued link');
+SELECT t_eq((SELECT count(*) FROM net.calls), 5::bigint, 'one wake-up per queued link');
 SELECT t_eq((SELECT url FROM net.calls LIMIT 1), 'https://gcquafqxbykxkbexcdpy.supabase.co/functions/v1/client-password-reset', 'wakes the mailer');
 SELECT t_eq((SELECT headers ->> 'Authorization' FROM net.calls LIMIT 1), 'Bearer test-anon-key', 'with the Vault anon key');
 SELECT t_eq((SELECT count(*) FROM email_outbox), 0::bigint, 'nothing written to email_outbox');
-SELECT t_eq((SELECT count(*) FROM client_password_log WHERE client_id = 'c0000000-0000-0000-0000-000000000001' AND action = 'link_queued'),
-  1::bigint, 'queued link logged');
+SELECT t_eq((SELECT detail FROM client_password_log WHERE client_id = 'c0000000-0000-0000-0000-000000000001' AND action = 'link_queued'),
+  'The client asked for a reset link, to p•••@navratna.com.', 'queued link logged, the address masked');
 
 -- A newer request voids the older link.
 UPDATE client_password_resets SET created_at = created_at - interval '2 minutes';
@@ -122,8 +131,10 @@ RESET ROLE;
 SELECT t_eq((SELECT count(*) FROM client_password_reset_attempts WHERE ip = '203.0.113.9'), 11::bigint, 'the first address of x-forwarded-for');
 SELECT t_eq((SELECT count(*) FROM client_password_resets WHERE client_id = 'c0000000-0000-0000-0000-000000000007'), 0::bigint,
   'the eleventh request from one address is refused, even for a real client');
-SELECT t_eq((SELECT outcome FROM client_password_reset_attempts WHERE ip = '203.0.113.9' AND client_id IS NULL ORDER BY outcome DESC LIMIT 1),
-  'rate_limited', 'recorded as rate limited');
+SELECT t_eq((SELECT outcome FROM client_password_reset_attempts WHERE ip = '203.0.113.9' AND client_id = 'c0000000-0000-0000-0000-000000000007'),
+  'staff_request', 'recorded as refused, staff asked instead');
+SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE user_id = 'c0000000-0000-0000-0000-000000000007' AND status = 'pending'),
+  1::bigint, 'a staff request for the refused client');
 SELECT set_config('request.headers', '{"cf-connecting-ip": "198.51.100.7", "x-forwarded-for": "203.0.113.9"}', true);
 SET LOCAL ROLE anon;
 SELECT client_password_reset_request('24AAACI0000G1Z6');
@@ -132,14 +143,5 @@ SELECT t_eq((SELECT requested_ip FROM client_password_resets WHERE client_id = '
   'another address is not limited (cf-connecting-ip first)');
 SELECT set_config('request.headers', '', true);
 
--- Sixty an hour across all clients.
-INSERT INTO client_password_resets (client_id, via, sent_to, created_at, voided_at)
-SELECT 'c0000000-0000-0000-0000-000000000006', 'self', 'uid@example.com', now() - interval '30 minutes', now()
-  FROM generate_series(1, 60);
-SET LOCAL ROLE anon;
-INSERT INTO t_answers SELECT 'global limit', client_password_reset_request('24AAACG0000H1Z7');
-RESET ROLE;
-SELECT t_eq((SELECT count(*) FROM client_password_resets WHERE client_id = 'c0000000-0000-0000-0000-000000000008'), 0::bigint,
-  'over sixty an hour in all: refused');
 SELECT t_eq((SELECT count(DISTINCT answer) FROM t_answers), 1::bigint, 'still the same answer when limited');
 ROLLBACK;

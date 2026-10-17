@@ -16,24 +16,29 @@ interface Props {
   clientId: string;
   name: string;
   gstin: string;
+  /** The e-mail address saved on the client (where a link goes). */
   email?: string | null;
+  /** The address the form shows now; a link waits until it is saved. */
+  typedEmail?: string | null;
 }
 
 /** Edit Client: how the client signs in to the app, a reset, and who changed it last. */
-const ClientAppLoginCard: React.FC<Props> = ({ clientId, name, gstin, email }) => {
-  const { canResetClientPasswords } = useAuth();
+const ClientAppLoginCard: React.FC<Props> = ({ clientId, name, gstin, email, typedEmail }) => {
+  const { user, canResetClientPasswords } = useAuth();
   const [open, setOpen] = useState(false);
   const [log, setLog] = useState<ClientPasswordLogEntry[]>([]);
+  const actorId = user?.id;
 
   const refresh = useCallback(() => {
-    loadClientPasswordLog(clientId, 6).then(setLog).catch(() => setLog([]));
-  }, [clientId]);
+    if (!actorId) { setLog([]); return; }
+    loadClientPasswordLog(actorId, clientId, 6).then(setLog).catch(() => setLog([]));
+  }, [actorId, clientId]);
   useEffect(() => { refresh(); }, [refresh]);
 
   return (
     <SectionCard
       title="Client app login"
-      description={<>Signs in at /login with the GSTIN <span className="font-mono">{gstin}</span> as User ID. Forgot password e-mails a link to the address above.</>}
+      description={<>Signs in at /login with the GSTIN <span className="font-mono">{gstin}</span> as User ID. Forgot password e-mails a link to the saved e-mail address.</>}
       actions={canResetClientPasswords() ? (
         <Button type="button" size="sm" variant="outline" className={WS_BTN} onClick={() => setOpen(true)}>
           <KeyRound className="h-3.5 w-3.5" /> Reset app password
@@ -55,7 +60,7 @@ const ClientAppLoginCard: React.FC<Props> = ({ clientId, name, gstin, email }) =
         </ul>
       )}
       <ResetClientPasswordDialog
-        client={open ? { id: clientId, name, gstin, email } : null}
+        client={open ? { id: clientId, name, gstin, email, typedEmail } : null}
         onOpenChange={(v) => setOpen(v)}
         onDone={refresh}
       />

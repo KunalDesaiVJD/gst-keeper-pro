@@ -1,23 +1,25 @@
--- Who can reach what: the link tables are private (RLS on, no policies, no
--- anon or authenticated grants, like portal_sessions); the log is readable,
--- written only by the functions; the mailer's functions are service role only.
+-- Who can reach what: the link tables and the log are private (RLS on, no
+-- policies, no anon or authenticated grants, like portal_sessions); staff read
+-- the log through client_password_log_for (test_70); the mailer's functions
+-- and the internal helpers are service role only.
 BEGIN;
 INSERT INTO clients (id, name, gstin, email) VALUES
  ('c4000000-0000-0000-0000-000000000001', 'Access Test Co', '24AAACA0000L1Z1', 'a@example.com');
 INSERT INTO client_password_log (client_id, action, detail) VALUES ('c4000000-0000-0000-0000-000000000001', 'link_queued', 'seed');
 
 SELECT t_eq((SELECT bool_and(relrowsecurity) FROM pg_class
-              WHERE oid IN ('public.client_password_resets'::regclass, 'public.client_password_reset_attempts'::regclass)),
-  true, 'RLS on for both private tables');
+              WHERE oid IN ('public.client_password_resets'::regclass, 'public.client_password_reset_attempts'::regclass,
+                            'public.client_password_log'::regclass)),
+  true, 'RLS on for the three private tables');
 SELECT t_eq((SELECT count(*) FROM pg_policies WHERE schemaname = 'public'
-              AND tablename IN ('client_password_resets', 'client_password_reset_attempts')), 0::bigint, 'and no policies');
+              AND tablename IN ('client_password_resets', 'client_password_reset_attempts', 'client_password_log')), 0::bigint, 'and no policies');
 
 DO $$
 DECLARE r text; t text;
 BEGIN
   FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
     EXECUTE format('SET LOCAL ROLE %I', r);
-    FOREACH t IN ARRAY ARRAY['client_password_resets', 'client_password_reset_attempts'] LOOP
+    FOREACH t IN ARRAY ARRAY['client_password_resets', 'client_password_reset_attempts', 'client_password_log'] LOOP
       PERFORM t_eq(t_error(format('SELECT 1 FROM public.%I', t)) LIKE 'permission denied%', true, r || ' cannot read ' || t);
       PERFORM t_eq(t_error(format('INSERT INTO public.%I (client_id) VALUES (%L)', t, 'c4000000-0000-0000-0000-000000000001')) LIKE 'permission denied%',
         true, r || ' cannot insert into ' || t);
@@ -27,10 +29,13 @@ BEGIN
     PERFORM t_eq(t_error('SELECT * FROM public.client_password_reset_claim(1)') LIKE 'permission denied%', true, r || ' cannot claim');
     PERFORM t_eq(t_error('SELECT public.client_password_reset_mark(gen_random_uuid(), NULL)') LIKE 'permission denied%', true, r || ' cannot mark');
     PERFORM t_eq(t_error('SELECT public.client_password_reset_ping()') LIKE 'permission denied%', true, r || ' cannot ping');
-    PERFORM t_eq((SELECT count(*) FROM public.client_password_log), 1::bigint, r || ' can read the log');
-    PERFORM t_eq(t_error($q$INSERT INTO public.client_password_log (client_id, action) VALUES ('c4000000-0000-0000-0000-000000000001', 'staff_reset')$q$)
-      LIKE 'permission denied%', true, r || ' cannot write the log');
-    PERFORM t_eq(t_error('DELETE FROM public.client_password_log') LIKE 'permission denied%', true, r || ' cannot delete the log');
+    PERFORM t_eq(t_error('SELECT public.client_password_reset_sweep()') LIKE 'permission denied%', true, r || ' cannot sweep');
+    PERFORM t_eq(t_error($q$SELECT public.client_password_staff_request('c4000000-0000-0000-0000-000000000001', 'x')$q$) LIKE 'permission denied%',
+      true, r || ' cannot file a staff request directly');
+    PERFORM t_eq(t_error($q$SELECT public.client_password_reset_for_client('c4000000-0000-0000-0000-000000000001', NULL, false)$q$) LIKE 'permission denied%',
+      true, r || ' cannot skip the address limit');
+    PERFORM t_eq(t_error($q$SELECT public.client_password_has_open_link('c4000000-0000-0000-0000-000000000001')$q$) LIKE 'permission denied%',
+      true, r || ' cannot ask whether a link is open');
     EXECUTE 'RESET ROLE';
   END LOOP;
 END $$;
@@ -56,14 +61,18 @@ RESET ROLE;
 SELECT t_eq((SELECT bool_and(has_function_privilege('anon', f, 'EXECUTE')) FROM unnest(ARRAY[
   'public.client_password_reset_request(text)', 'public.client_password_reset_check(text)',
   'public.client_password_reset_complete(text,text)', 'public.staff_set_client_password(uuid,uuid,text,text)',
-  'public.staff_send_client_reset_link(uuid,uuid)']) f), true, 'anon can ask, check, redeem and (as staff) reset');
+  'public.staff_send_client_reset_link(uuid,uuid)', 'public.client_password_log_for(uuid,uuid,integer)']) f), true,
+  'anon can ask, check, redeem and (as staff) reset and read the log');
 SELECT t_eq(to_regprocedure('public.staff_set_client_password(uuid,uuid,text)') IS NULL, true, 'the old 3-argument version is gone');
 SELECT t_eq((SELECT bool_and(prosecdef) FROM pg_proc WHERE proname IN ('client_password_reset_request', 'client_password_reset_check',
   'client_password_reset_complete', 'client_password_reset_claim', 'client_password_reset_mark', 'staff_set_client_password',
-  'staff_send_client_reset_link')), true, 'all SECURITY DEFINER');
+  'staff_send_client_reset_link', 'client_password_log_for', 'client_password_reset_sweep', 'client_password_reset_for_client',
+  'client_password_staff_request', 'client_password_has_open_link')), true, 'all SECURITY DEFINER');
 SELECT t_eq((SELECT bool_and(array_to_string(proconfig, ',') LIKE '%search_path=public, extensions%') FROM pg_proc
   WHERE proname IN ('client_password_reset_request', 'client_password_reset_check', 'client_password_reset_complete',
-  'client_password_reset_claim', 'client_password_reset_mark', 'staff_set_client_password', 'staff_send_client_reset_link')),
+  'client_password_reset_claim', 'client_password_reset_mark', 'staff_set_client_password', 'staff_send_client_reset_link',
+  'client_password_log_for', 'client_password_reset_sweep', 'client_password_reset_for_client', 'client_password_staff_request',
+  'client_password_has_open_link')),
   true, 'with a fixed search_path that reaches pgcrypto');
 
 -- The password rules helper.

@@ -4949,44 +4949,6 @@ export type Database = {
           },
         ]
       }
-      client_password_log: {
-        Row: {
-          action: string
-          actor_id: string | null
-          actor_name: string | null
-          at: string
-          client_id: string
-          detail: string | null
-          id: string
-        }
-        Insert: {
-          action: string
-          actor_id?: string | null
-          actor_name?: string | null
-          at?: string
-          client_id: string
-          detail?: string | null
-          id?: string
-        }
-        Update: {
-          action?: string
-          actor_id?: string | null
-          actor_name?: string | null
-          at?: string
-          client_id?: string
-          detail?: string | null
-          id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "client_password_log_client_id_fkey"
-            columns: ["client_id"]
-            isOneToOne: false
-            referencedRelation: "clients"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       client_scheme_history: {
         Row: {
           changed_at: string
@@ -11819,6 +11781,16 @@ export type Database = {
       client_password_problem: {
         Args: { p_gstin?: string; p_password: string }
         Returns: string
+      }
+      client_password_log_for: {
+        Args: { p_actor_id: string; p_client_id: string; p_limit?: number }
+        Returns: {
+          action: string
+          actor_name: string | null
+          at: string
+          detail: string | null
+          id: string
+        }[]
       }
       staff_set_level: {
         Args: { p_actor_id: string; p_actor_password: string; p_level: string; p_target_user_id: string }

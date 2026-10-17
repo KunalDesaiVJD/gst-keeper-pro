@@ -7,7 +7,10 @@
 // client_password_reset_claim (service role only), which mints the token and
 // stores only its sha256, sends the e-mail through Microsoft Graph, and
 // reports back with client_password_reset_mark (sent, or failed: the link is
-// voided and staff get a request on the Dashboard).
+// voided and staff get a request on the Dashboard). A link that does not point
+// at https://gst.vjdesai.com is never sent (message.ts checkedLink): it is
+// reported as failed. A link claimed here but never reported (the function
+// stopped half way) is voided by the database after 15 minutes.
 //
 // It answers {ok:true} at once and works afterwards, so the answer never
 // shows whether a link went out. It takes no input: what is sent, and to

@@ -8,12 +8,16 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { staffEmailResetLink, staffSetClientPassword } from '@/lib/clientPasswordReset';
 import { staffClientPasswordProblem } from '@/lib/passwordRules';
+import { resetLinkBlock } from '@/lib/clientResetLink';
 
 export interface ResetClientTarget {
   id: string;
   name: string;
   gstin: string;
+  /** The e-mail address saved on the client: where the link goes. */
   email?: string | null;
+  /** On a screen that edits the address: what the form shows now. */
+  typedEmail?: string | null;
 }
 
 interface Props {
@@ -41,7 +45,7 @@ const ResetClientPasswordDialog: React.FC<Props> = ({ client, onOpenChange, onDo
     setQueuedTo(null);
   }, [client?.id]);
 
-  const hasEmail = !!client?.email && /@/.test(client.email);
+  const linkBlock = client ? resetLinkBlock({ saved: client.email, typed: client.typedEmail }) : null;
   const tooShort = newPassword.length > 0 && !!staffClientPasswordProblem(newPassword);
   const mismatch = confirmPassword.length > 0 && newPassword !== confirmPassword;
 
@@ -105,9 +109,7 @@ const ResetClientPasswordDialog: React.FC<Props> = ({ client, onOpenChange, onDo
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                {hasEmail
-                  ? <>The client chooses their own password. Goes to {client?.email}.</>
-                  : 'No e-mail address on record: add one in Edit Client, or set a password below.'}
+                {linkBlock ?? <>The client chooses their own password. Goes to {client?.email}.</>}
               </p>
             )}
             <Button
@@ -115,7 +117,7 @@ const ResetClientPasswordDialog: React.FC<Props> = ({ client, onOpenChange, onDo
               variant="outline"
               size="sm"
               className="w-full"
-              disabled={!hasEmail || busy !== null || !!queuedTo}
+              disabled={!!linkBlock || busy !== null || !!queuedTo}
               onClick={() => void sendLink()}
             >
               {busy === 'link' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}

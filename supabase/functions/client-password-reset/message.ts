@@ -17,20 +17,36 @@ export interface ClaimedLink {
 export const esc = (v: unknown) =>
   String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
-/** The sign-in page next to the reset page (same origin as the link). */
-export function loginUrl(link: string): string {
-  try {
-    return new URL('/login', link).toString();
-  } catch {
-    return 'https://gst.vjdesai.com/login';
+/**
+ * The app's address, fixed in code. The database fixes it too
+ * (client_password_reset_claim); it is never read from a setting, since the
+ * app's tables can be changed with the anon key and a link to another site
+ * would hand that site a working token.
+ */
+export const APP_ORIGIN = 'https://gst.vjdesai.com';
+
+/** The sign-in page, always on the app's own address. */
+export const LOGIN_URL = `${APP_ORIGIN}/login`;
+
+/**
+ * The link to e-mail: exactly the app's reset page with this row's token.
+ * Anything else (another site, another token) is refused, and the mailer
+ * reports the link as failed instead of sending it.
+ */
+export function checkedLink(row: Pick<ClaimedLink, 'token' | 'link'>): string {
+  const token = String(row.token ?? '');
+  const expected = `${APP_ORIGIN}/reset-password#token=${token}`;
+  if (!/^[0-9a-f]{64}$/.test(token) || row.link !== expected) {
+    throw new Error('refused: the reset link does not point at the app');
   }
+  return expected;
 }
 
 export function resetEmail(row: ClaimedLink): { subject: string; html: string } {
-  // The link is ours (the base URL from settings plus a hex token); it is still
-  // escaped like everything else that goes into the HTML.
-  const link = esc(row.link);
-  const login = esc(loginUrl(row.link));
+  // The link is ours (the fixed address plus a hex token, checked); it is
+  // still escaped like everything else that goes into the HTML.
+  const link = esc(checkedLink(row));
+  const login = esc(LOGIN_URL);
   const opening = row.via === 'staff'
     ? 'Our team has sent you this link so that you can set a new password for the GST client portal of V. J. Desai &amp; Co. LLP.'
     : 'We received a request to reset the password you use to sign in to the GST client portal of V. J. Desai &amp; Co. LLP.';

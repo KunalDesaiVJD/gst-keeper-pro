@@ -7,7 +7,8 @@ import { supabase } from '@/integrations/supabase/client';
 
 /** What the login page says after any request, whatever happened. */
 export const RESET_REQUESTED_MESSAGE =
-  'If this GSTIN or User ID is registered with us and we have an e-mail address for it, a link to set a new password is on its way. ' +
+  'If this GSTIN or User ID is registered with us, a link to set a new password is on its way to the e-mail address we hold for it. ' +
+  'If we cannot e-mail one, our team will reset it and contact you. ' +
   'The link works once, for 60 minutes. If nothing arrives, check your spam folder or write to gst@vjdesai.com.';
 
 /** Wakes the mailer now (the database wakes it too); its answer says nothing. */
@@ -89,13 +90,17 @@ export const CLIENT_PASSWORD_ACTION_LABEL: Record<ClientPasswordAction, string> 
   fallback_request: 'Request for staff',
 };
 
-export async function loadClientPasswordLog(clientId: string, limit = 8): Promise<ClientPasswordLogEntry[]> {
-  const { data, error } = await supabase
-    .from('client_password_log')
-    .select('id, at, action, actor_name, detail')
-    .eq('client_id', clientId)
-    .order('at', { ascending: false })
-    .limit(limit);
+/**
+ * The client's password log, newest first. The table is private (it would
+ * show anyone which GSTINs are clients and which have an e-mail);
+ * client_password_log_for checks the reader holds a staff level.
+ */
+export async function loadClientPasswordLog(actorId: string, clientId: string, limit = 8): Promise<ClientPasswordLogEntry[]> {
+  const { data, error } = await supabase.rpc('client_password_log_for', {
+    p_actor_id: actorId,
+    p_client_id: clientId,
+    p_limit: limit,
+  });
   if (error) throw new Error(error.message);
   return (data ?? []) as ClientPasswordLogEntry[];
 }

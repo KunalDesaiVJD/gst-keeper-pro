@@ -14,8 +14,8 @@ interface ClientForgotPasswordDialogProps {
 /**
  * A client asks for a link to set a new password, e-mailed to the address the
  * firm holds for them. The answer is the same whether or not the GSTIN is a
- * client (client_password_reset_request); with no e-mail on record, staff get
- * a request on the Dashboard instead.
+ * client (client_password_reset_request); when no link can go (no e-mail on
+ * record, a limit), staff get a request on the Dashboard instead.
  */
 const ClientForgotPasswordDialog: React.FC<ClientForgotPasswordDialogProps> = ({ children }) => {
   const [open, setOpen] = useState(false);

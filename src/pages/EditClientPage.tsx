@@ -69,6 +69,9 @@ const EditClientPage: React.FC = () => {
   // app-login password, so a password the client set by e-mailed link is not
   // overwritten by every save.
   const originalGstPassword = useRef('');
+  // The e-mail address as loaded (or last saved): a reset link goes there,
+  // not to an address typed but not yet saved.
+  const savedEmail = useRef('');
 
   const [formData, setFormData] = useState({
     gstin: '',
@@ -137,7 +140,7 @@ const EditClientPage: React.FC = () => {
         registrationType: regType,
         registrationDate: data.registration_date,
         mobile: data.mobile || '',
-        email: data.email || '',
+        email: (savedEmail.current = data.email || ''),
         assignedAccountant: data.assigned_accountant || '',
         selectedReturns: (data.selected_returns || []) as ReturnType[],
         gstr1ImportMode: ((data as any).gstr1_import_mode as 'json' | 'manual' | 'json_manual') || 'json',
@@ -363,6 +366,7 @@ const EditClientPage: React.FC = () => {
         .eq('id', clientId);
 
       if (error) throw error;
+      savedEmail.current = formData.email || '';
 
       // A changed GST password is also the client's new app-login password
       // (the firm's arrangement), set the checked way. An unchanged one leaves
@@ -935,7 +939,15 @@ const EditClientPage: React.FC = () => {
           </div>
         </SectionCard>
 
-        {clientId && <ClientAppLoginCard clientId={clientId} name={formData.name} gstin={formData.gstin} email={formData.email} />}
+        {clientId && (
+          <ClientAppLoginCard
+            clientId={clientId}
+            name={formData.name}
+            gstin={formData.gstin}
+            email={savedEmail.current}
+            typedEmail={formData.email}
+          />
+        )}
 
         <SectionCard
           title="E-invoicing"

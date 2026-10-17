@@ -1,6 +1,6 @@
 // deno test supabase/functions/client-password-reset/test/
-import { assert, assertEquals, assertStringIncludes } from 'jsr:@std/assert@1';
-import { esc, loginUrl, resetEmail } from '../message.ts';
+import { assert, assertEquals, assertStringIncludes, assertThrows } from 'jsr:@std/assert@1';
+import { APP_ORIGIN, checkedLink, esc, LOGIN_URL, resetEmail } from '../message.ts';
 
 const row = {
   reset_id: '00000000-0000-0000-0000-000000000001',
@@ -44,6 +44,26 @@ Deno.test('a staff-sent link says so', () => {
 
 Deno.test('helpers', () => {
   assertEquals(esc(`<a href="x">'&'</a>`), '&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;');
-  assertEquals(loginUrl('https://example.org/reset-password#token=1'), 'https://example.org/login');
-  assertEquals(loginUrl('not a url'), 'https://gst.vjdesai.com/login');
+  assertEquals(APP_ORIGIN, 'https://gst.vjdesai.com');
+  assertEquals(LOGIN_URL, 'https://gst.vjdesai.com/login');
+});
+
+// A link to another site would hand that site a working token: the mailer
+// refuses it (and reports the link as failed), and the sign-in link in the
+// e-mail is always the app's own, whatever the link says.
+Deno.test('only a link to the app is e-mailed', () => {
+  assertEquals(checkedLink(row), row.link);
+  const evil = { ...row, link: `https://evil.example/reset-password#token=${row.token}` };
+  assertThrows(() => resetEmail(evil), Error, 'does not point at the app');
+  assertThrows(() => checkedLink({ ...row, link: `https://gst.vjdesai.com.evil.example/reset-password#token=${row.token}` }));
+  assertThrows(() => checkedLink({ ...row, link: `https://gst.vjdesai.com/reset-password#token=${'cd'.repeat(32)}` }));
+  assertThrows(() => checkedLink({ token: 'not-hex', link: 'https://gst.vjdesai.com/reset-password#token=not-hex' }));
+});
+
+Deno.test('the sign-in link is always the app\'s', () => {
+  const { html } = resetEmail(row);
+  assertStringIncludes(html, `href="${LOGIN_URL}"`);
+  const appLinks = [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]).filter((h) => /login|reset-password/.test(h));
+  assertEquals(appLinks.length, 3); // button, plain-text fallback, sign-in
+  assert(appLinks.every((h) => h.startsWith(`${APP_ORIGIN}/`)), appLinks.join(' '));
 });

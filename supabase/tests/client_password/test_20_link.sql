@@ -41,7 +41,7 @@ SET LOCAL ROLE service_role;
 SELECT client_password_reset_mark(:'r1', NULL);
 RESET ROLE;
 SELECT t_eq((SELECT sent_at IS NOT NULL FROM client_password_resets WHERE id = :'r1'), true, 'marked sent');
-SELECT t_eq((SELECT detail FROM client_password_log WHERE action = 'link_sent'), 'Reset link e-mailed to p.owner@navratna.com.', 'sent logged');
+SELECT t_eq((SELECT detail FROM client_password_log WHERE action = 'link_sent'), 'Reset link e-mailed to p•••@navratna.com.', 'sent logged, the address masked');
 
 -- The reset page.
 SET LOCAL ROLE anon;
@@ -139,9 +139,9 @@ SELECT t_eq((SELECT send_error || ' | ' || void_reason FROM client_password_rese
   'sendMail 503: try later | the e-mail could not be sent', 'failure recorded, link voided');
 SELECT t_eq(client_password_reset_check(:'t5') ->> 'valid', 'false', 'a link whose e-mail failed does not work');
 SELECT t_eq((SELECT note FROM password_reset_requests WHERE user_id = 'c2000000-0000-0000-0000-000000000002' AND status = 'pending'),
-  'Asked for a reset link; the e-mail to bounce@example.com could not be sent.', 'one staff request filed');
-SELECT t_eq((SELECT count(*) FROM client_password_log WHERE client_id = 'c2000000-0000-0000-0000-000000000002' AND action = 'link_failed'),
-  1::bigint, 'failure logged');
+  'Asked for a reset link; none went out. Edit Client shows why.', 'one staff request filed, without the address');
+SELECT t_eq((SELECT detail FROM client_password_log WHERE client_id = 'c2000000-0000-0000-0000-000000000002' AND action = 'link_failed'),
+  'The reset link could not be e-mailed to b•••@example.com: sendMail 503: try later', 'failure logged, the address masked');
 
 -- A link the mailer never picked up within the hour is given up, not sent late.
 INSERT INTO client_password_resets (id, client_id, via, sent_to, created_at)
@@ -150,5 +150,7 @@ SET LOCAL ROLE service_role;
 SELECT t_eq((SELECT count(*) FROM client_password_reset_claim(10)), 0::bigint, 'a stale link is not handed out');
 RESET ROLE;
 SELECT t_eq((SELECT void_reason FROM client_password_resets WHERE id = 'c2000000-0000-0000-0000-0000000000ff'), 'not sent in time', 'and is voided');
+SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE user_id = 'c2000000-0000-0000-0000-000000000002' AND status = 'pending'),
+  1::bigint, 'staff asked once, not twice');
 SELECT t_eq((SELECT count(*) FROM email_outbox), 0::bigint, 'nothing written to email_outbox');
 ROLLBACK;
