@@ -362,8 +362,9 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     { igst: adj4A5.igst, cgst: adj4A5.cgst, sgst: adj4A5.sgst },
   ));
   // 4A(5) is never negative on the portal. When supplier credit notes (row
-  // 5.3, filled from 2B for a Strict client) or a negative amendment
-  // difference take a head below zero, that head is 0 in 4A(5) and the excess
+  // 5.3, filled from 2B for a Strict client, or a booked credit note reduced
+  // through a negative row 5.2 head) or a negative amendment difference take
+  // a head below zero, that head is 0 in 4A(5) and the excess
   // is reversed in 4B(2), as the portal's own auto-fill does. Net ITC (4C) is
   // the same either way. A No-ITC builder reverses all of 4A in 4B(1) and has
   // nothing to reduce, so its excess is dropped.
@@ -399,7 +400,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
       .filter(([, v]) => v).map(([h, v]) => `${h} ${Number(v).toFixed(2)}`).join(', ');
     flags.push(isNoITC
       ? `4A(5) All other ITC came out negative (${heads}): set to 0; a No-ITC client reverses all of 4A, so nothing moves to 4B(2).`
-      : `4A(5) All other ITC came out negative (${heads}), mostly supplier credit notes in row 5.3: set to 0 and the excess added to 4B(2) Others.`);
+      : `4A(5) All other ITC came out negative (${heads}), mostly supplier credit notes (row 5.3, or a negative row 5.2): set to 0 and the excess added to 4B(2) Others.`);
   }
   const commercialArea = input.commercialArea || 0;
   const residentialArea = input.residentialArea || 0;

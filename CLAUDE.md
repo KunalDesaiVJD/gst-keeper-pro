@@ -86,7 +86,9 @@ not settled law — and were implemented without a firm sign-off conversation,
 so treat them as reversible defaults pending confirmation, not fixed rules.
 Import 2B reads every B2B sheet of the 2B Excel (§10 of that doc): debit notes
 count like invoices in 5.1; credit notes fill row 5.3 "Debit Note" for Strict
-clients (`full_2b` months only); amendments count only revised minus the
+clients (`full_2b` months only), or, parked Not in Books like an invoice, wait on the
+ledger as negative rows and, once booked, are reduced in row 5.2 (the one ITC Summary
+row that takes a negative head); amendments count only revised minus the
 earlier version's `base_*`, or are HELD; a re-import merges, never wipes.
 Document meaning (type, sign, effect, colour) lives in `src/lib/twobDocs.ts`.
 "Email bills not in books" (Import 2B header, §11) mails the client its open Not in Books list as an

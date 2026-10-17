@@ -9,8 +9,9 @@
 //    it is no longer Not in Books, at its current figures if they changed);
 //  - this month's 2B documents marked Not in Books that were never posted
 //    (so a send never has to wait for Post to Reconciliation).
-// Amounts are what the ledger holds: an amendment counts at its difference
-// (twobDocs.effectFigures), so a row may be negative.
+// Amounts are what the ledger holds, with their sign (twobDocs.signedEffect):
+// a credit note parked Not in Books (17 Oct 2026) is negative, and an
+// amendment counts at its difference, so it may be negative too.
 //
 // The list goes out as a working paper in the firm's house style (Arial 9,
 // navy heads, figures in #,##0.00 with brackets, a supplier summary sheet,
@@ -21,7 +22,7 @@ import type { Borders, Fill, Font, Workbook, Worksheet } from 'exceljs';
 import { supabase } from '@/integrations/supabase/client';
 import { GST_FIRM, prettyPeriod, renderTemplate } from '@/lib/gstReminders';
 import { periodMonthLabel } from '@/lib/postImport2B';
-import { docLabel, effectFigures } from '@/lib/twobDocs';
+import { docLabel, signedEffect } from '@/lib/twobDocs';
 import { formatINR } from '@/utils/builderRates';
 import { normalizeInvoiceNo } from '@/utils/matchTwob';
 
@@ -50,6 +51,15 @@ export interface BillsSummary {
   cgst: number;
   sgst: number;
   tax: number;
+  /** Tax of the rows that add credit (invoices, debit notes, upward amendments). */
+  credit: number;
+  /** Tax the negative rows take off (credit notes, downward amendments), as a positive figure. */
+  reduction: number;
+  /** The part of `reduction` that credit notes take off ("Credit note"). */
+  reductionNotes: number;
+  /** The part of `reduction` that amendments take off ("Amended …"). The rest is carried
+   *  "Credit / adjustment" rows, which may be credit notes or anything else. */
+  reductionAmendments: number;
   months: string[];
   unposted: number;
   bySupplier: { gstin: string; name: string; count: number; taxable: number; tax: number }[];
@@ -123,8 +133,9 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
   type DocRow = {
     id: string; date: string | null; supplier_name: string | null; supplier_invoice_number: string | null; supplier_gstin: string | null;
     taxable_value: number | null; input_igst: number | null; input_cgst: number | null; input_sgst: number | null; cess: number | null;
-    doc_type: string | null; is_amendment: boolean | null; itc_action: string;
+    doc_type: string | null; is_amendment: boolean | null; original_doc_type: string | null; itc_action: string;
     base_taxable_value: number | null; base_input_igst: number | null; base_input_cgst: number | null; base_input_sgst: number | null; base_cess: number | null;
+    ims_reduce_required: string | null; declared_igst: number | null; declared_cgst: number | null; declared_sgst: number | null; declared_cess: number | null;
   };
   const [ledger, linkedAll, docs] = await Promise.all([
     pageAll<LedgerRow>((a, b) => supabase.from('bills_not_in_books')
@@ -138,14 +149,18 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
       .eq('client_id', clientId).eq('period_month', periodMonth).not('source_doc_id', 'is', null)
       .order('id').range(a, b) as never),
     pageAll<DocRow>((a, b) => supabase.from('twob_import_docs')
-      .select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, cess, doc_type, is_amendment, itc_action, base_taxable_value, base_input_igst, base_input_cgst, base_input_sgst, base_cess')
+      // Every column signedEffect reads (a flipped note amendment's original
+      // type, a credit note's IMS declared tax), so a figure is the ledger's.
+      .select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, cess, '
+        + 'doc_type, is_amendment, original_doc_type, itc_action, base_taxable_value, base_input_igst, base_input_cgst, base_input_sgst, base_cess, '
+        + 'ims_reduce_required, declared_igst, declared_cgst, declared_sgst, declared_cess')
       .eq('client_id', clientId).eq('period_month', periodMonth).eq('reverse_charge', false)
       .order('id').range(a, b) as never),
   ]);
   const docById = new Map(docs.map((d) => [d.id, d]));
   const posted = new Set(linkedAll.map((l) => l.source_doc_id));
   const thisMonth = periodMonthLabel(periodMonth);
-  const isOpenDoc = (d: DocRow) => d.itc_action === 'NOT_IN_BOOKS' && d.doc_type !== 'CREDIT_NOTE';
+  const isOpenDoc = (d: DocRow) => d.itc_action === 'NOT_IN_BOOKS';
 
   const out: BillNotInBooks[] = [];
   for (const l of ledger) {
@@ -153,7 +168,7 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
     if (d) {
       // Posted from this month's Import 2B: as the next Post will leave it.
       if (!isOpenDoc(d)) continue;
-      const e = effectFigures(d);
+      const e = signedEffect(d);
       out.push({
         monthIn2B: l.bill_in_2b_month || thisMonth,
         date: d.date ?? l.date,
@@ -175,7 +190,8 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
       supplierGstin: (l.supplier_gstin || '').toUpperCase(),
       supplierName: l.supplier_name || '',
       docNo: l.supplier_invoice_number || '',
-      docType: taxable < 0 ? 'Credit / adjustment' : 'Invoice',
+      // No document behind it: a negative row takes ITC away (a credit note, or an amendment's cut).
+      docType: taxable < 0 || Number(l.input_igst) + Number(l.input_cgst) + Number(l.input_sgst) < 0 ? 'Credit / adjustment' : 'Invoice',
       taxable,
       igst: r2(Number(l.input_igst)),
       cgst: r2(Number(l.input_cgst)),
@@ -186,7 +202,7 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
   }
   for (const d of docs) {
     if (!isOpenDoc(d) || posted.has(d.id)) continue;
-    const e = effectFigures(d);
+    const e = signedEffect(d);
     if (!e.igst && !e.cgst && !e.sgst && !e.taxable) continue;
     out.push({
       monthIn2B: thisMonth,
@@ -210,9 +226,16 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
 export function summariseBills(rows: BillNotInBooks[]): BillsSummary {
   const sup = new Map<string, { gstin: string; name: string; count: number; taxable: number; tax: number }>();
   const months = new Map<string, number>();
-  const t = { taxable: 0, igst: 0, cgst: 0, sgst: 0 };
+  const t = { taxable: 0, igst: 0, cgst: 0, sgst: 0, credit: 0, reduction: 0, reductionNotes: 0, reductionAmendments: 0 };
   for (const r of rows) {
     t.taxable += r.taxable; t.igst += r.igst; t.cgst += r.cgst; t.sgst += r.sgst;
+    const rowTax = r.igst + r.cgst + r.sgst;
+    if (rowTax >= 0) t.credit += rowTax;
+    else {
+      t.reduction -= rowTax;
+      if (/^credit note$/i.test(r.docType)) t.reductionNotes -= rowTax;
+      else if (/^amended /i.test(r.docType)) t.reductionAmendments -= rowTax;
+    }
     months.set(r.monthIn2B, monthOrder(r.monthIn2B));
     const k = r.supplierGstin || r.supplierName;
     const s = sup.get(k) || { gstin: r.supplierGstin, name: r.supplierName, count: 0, taxable: 0, tax: 0 };
@@ -223,12 +246,37 @@ export function summariseBills(rows: BillNotInBooks[]): BillsSummary {
     count: rows.length,
     taxable: r2(t.taxable), igst: r2(t.igst), cgst: r2(t.cgst), sgst: r2(t.sgst),
     tax: r2(t.igst + t.cgst + t.sgst),
+    credit: r2(t.credit),
+    reduction: r2(t.reduction),
+    reductionNotes: r2(t.reductionNotes),
+    reductionAmendments: r2(t.reductionAmendments),
     months: [...months.entries()].sort((a, b) => a[1] - b[1]).map(([m]) => m),
     unposted: rows.filter((r) => r.unposted).length,
     bySupplier: [...sup.values()]
       .map((s) => ({ ...s, taxable: r2(s.taxable), tax: r2(s.tax) }))
       .sort((a, b) => b.tax - a.tax || a.name.localeCompare(b.name)),
   };
+}
+
+/**
+ * The list's credit in words, for the e-mail ({{itc_total}}, which the
+ * template puts after "input tax credit of") and the pop-up: never a negative
+ * "₹-…". With nothing negative it is "₹X"; otherwise "₹X, less ₹Y on credit
+ * notes" when every reduction is a credit note, "on amendments" when every
+ * one is an amendment, and "on credit notes, amendments and adjustments"
+ * otherwise (a carried "Credit / adjustment" row may be either); when the
+ * reductions outweigh the rest ", a net reduction of ₹Z" follows.
+ */
+export function creditWording(sum: Pick<BillsSummary, 'credit' | 'reduction' | 'reductionNotes' | 'reductionAmendments'>): string {
+  const credit = r2(sum.credit);
+  const reduction = r2(sum.reduction);
+  if (reduction < 0.005) return `₹${formatINR(credit)}`;
+  const what = reduction - r2(sum.reductionNotes) < 0.005 ? 'credit notes'
+    : reduction - r2(sum.reductionAmendments) < 0.005 ? 'amendments'
+      : 'credit notes, amendments and adjustments';
+  const net = r2(credit - reduction);
+  return `₹${formatINR(credit)}, less ₹${formatINR(reduction)} on ${what}`
+    + (net < -0.005 ? `, a net reduction of ₹${formatINR(-net)}` : '');
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +482,7 @@ export async function buildBillsWorkbook(opts: {
   const notes = [
     'What we need from you',
     '1.  Record each document above in your books, or write in the last column why it should not be recorded (goods or services not received, wrong GSTIN, duplicate, and so on).',
-    '2.  We claim input tax credit on these documents once they are recorded in your books; recording them promptly lets us claim it in the right month.',
+    '2.  We claim input tax credit on these documents once they are recorded in your books, and reduce it by a credit note once that is recorded; recording them promptly lets us take each in the right month.',
     '3.  Amounts are as your suppliers reported them in GSTR-2B. A negative figure is a credit note or a downward amendment of a document. "Earlier" marks an older item whose GSTR-2B month was not recorded.',
     `4.  Please reply by ${opts.replyBy}. Questions: ${GST_FIRM.email}.`,
   ];
@@ -502,6 +550,10 @@ export async function buildBillsWorkbook(opts: {
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/** A supplier's tax: a negative one in brackets, as in the working paper, never "₹-…". */
+export const rupees = (n: number) => (n < -0.005 ? `(₹${formatINR(-n)})` : `₹${formatINR(n)}`);
+const rupeesHtml = (n: number) => rupees(n).replace('₹', '&#8377;');
+
 /** The supplier table under the message (top suppliers; the rest are in the attachment). */
 function supplierTableHtml(sum: BillsSummary): string {
   const top = sum.bySupplier.slice(0, 8);
@@ -510,12 +562,12 @@ function supplierTableHtml(sum: BillsSummary): string {
   const td = 'padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#1f2937;';
   const rows = top.map((s) =>
     `<tr><td style="${td}">${esc(s.name || s.gstin)}<div style="color:#64748b;font-size:11px;">${esc(s.gstin)}</div></td>`
-    + `<td style="${td}text-align:right;">${s.count}</td><td style="${td}text-align:right;">&#8377;${formatINR(s.tax)}</td></tr>`).join('');
+    + `<td style="${td}text-align:right;">${s.count}</td><td style="${td}text-align:right;">${rupeesHtml(s.tax)}</td></tr>`).join('');
   return `<p style="margin:0 0 8px;font-weight:600;color:#0f2b46;">By supplier</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:6px;border-collapse:separate;overflow:hidden;margin:0 0 8px;">
 <tr><td style="${th}">Supplier</td><td style="${th}text-align:right;">Documents</td><td style="${th}text-align:right;">Tax</td></tr>
 ${rows}
-<tr><td style="${td}font-weight:700;background:#f8fafc;">Total</td><td style="${td}font-weight:700;background:#f8fafc;text-align:right;">${sum.count}</td><td style="${td}font-weight:700;background:#f8fafc;text-align:right;">&#8377;${formatINR(sum.tax)}</td></tr>
+<tr><td style="${td}font-weight:700;background:#f8fafc;">Total</td><td style="${td}font-weight:700;background:#f8fafc;text-align:right;">${sum.count}</td><td style="${td}font-weight:700;background:#f8fafc;text-align:right;">${rupeesHtml(sum.tax)}</td></tr>
 </table>
 <p style="margin:0 0 18px;color:#64748b;font-size:12px;">${more > 0 ? `and ${more} more supplier${more === 1 ? '' : 's'}; ` : ''}every document is in the attached Excel.</p>`;
 }
@@ -557,7 +609,7 @@ export async function sendBillsNotInBooks(opts: {
     gstin: opts.gstin,
     period: prettyPeriod(opts.periodMonth),
     bill_count: `${sum.count} document${sum.count === 1 ? '' : 's'}`,
-    itc_total: `₹${formatINR(sum.tax)}`,
+    itc_total: creditWording(sum),
     reply_by: opts.replyBy,
     staff_name: opts.staffName || GST_FIRM.team,
     firm_name: GST_FIRM.name,

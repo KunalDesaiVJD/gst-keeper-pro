@@ -8,9 +8,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Download, Loader2, Mail, Paperclip } from 'lucide-react';
 import { prettyPeriod } from '@/lib/gstReminders';
-import { formatINR } from '@/utils/builderRates';
 import {
-  billsWorkbookName, buildBillsWorkbook, isEmailList, lastBillsMail, loadBillsNotInBooks, sendBillsNotInBooks, summariseBills,
+  billsWorkbookName, buildBillsWorkbook, creditWording, isEmailList, lastBillsMail, loadBillsNotInBooks, rupees, sendBillsNotInBooks, summariseBills,
   type BillNotInBooks, type LastSent,
 } from '@/lib/billsNotInBooksMail';
 
@@ -152,7 +151,7 @@ const EmailBillsNotInBooksDialog: React.FC<{
             <DialogTitle>Email bills not in books to {snap.clientName}</DialogTitle>
             <DialogDescription>
               {sum.count} document{sum.count === 1 ? '' : 's'} in GSTR-2B not recorded in the client's books ({months}),
-              tax ₹{formatINR(sum.tax)}. The full list goes as an Excel attachment, from gst@vjdesai.com.
+              credit {creditWording(sum)}. The full list goes as an Excel attachment, from gst@vjdesai.com.
             </DialogDescription>
           </DialogHeader>
 
@@ -199,7 +198,7 @@ const EmailBillsNotInBooksDialog: React.FC<{
               {sum.bySupplier.map((s) => (
                 <li key={s.gstin || s.name} className="flex items-center justify-between gap-3 px-3 py-1.5">
                   <span className="min-w-0 truncate">{s.name || s.gstin} <span className="text-muted-foreground">{s.gstin}</span></span>
-                  <span className="shrink-0 tabular-nums">{s.count} · ₹{formatINR(s.tax)}</span>
+                  <span className="shrink-0 tabular-nums">{s.count} · {rupees(s.tax)}</span>
                 </li>
               ))}
             </ul>
