@@ -27,15 +27,16 @@
 // Notes and amendments (firm decision, 14 Oct 2026, §10 of the doc): every
 // figure is read through src/lib/twobDocs.ts. A supplier debit note counts
 // like an invoice (row 5.1, or Not in Books). A supplier credit note reduces
-// ITC through row 5.3 (fetchImport2BCreditNotes) and is never posted to the
-// ledger. An amendment counts only its difference from the version Import 2B
-// already counted (effectFigures), in row 5.1 / 5.3 or as a Not in Books row
-// that may be negative; a HELD amendment counts nowhere.
+// ITC through row 5.3 (fetchImport2BCreditNotes), or, parked Not in Books
+// like an invoice (17 Oct 2026), is posted to the ledger as a negative row.
+// An amendment counts only its difference from the version Import 2B already
+// counted (effectFigures), in row 5.1 / 5.3 or as a Not in Books row that may
+// be negative; a HELD amendment counts nowhere.
 
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import { fetchAllRows } from '@/lib/fetchAllRows';
-import { COUNTED_ACTIONS, effectFigures, isCreditNote, type TwobDocLike } from '@/lib/twobDocs';
+import { COUNTED_ACTIONS, effectFigures, signedEffect, type TwobDocLike } from '@/lib/twobDocs';
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -110,10 +111,10 @@ export interface PostPlan {
 }
 
 // The figures a 2B document puts in the Not in Books ledger: what it changes
-// this month (an invoice or debit note its 2B figures, an amendment its
-// difference, which may be negative).
+// this month, with its sign (an invoice or debit note its 2B figures, a credit
+// note the same negative, an amendment its difference, which may be negative).
 const ledgerFiguresOf = (d: TwoBDocRow) => {
-  const e = effectFigures(d);
+  const e = signedEffect(d);
   return { taxable_value: e.taxable, input_igst: e.igst, input_cgst: e.cgst, input_sgst: e.sgst };
 };
 
@@ -163,20 +164,15 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
     if (l.source_book_id && !notIn2BIds.has(l.source_book_id)) plan.retractBills2B.push({ ledgerId: l.id });
   }
 
-  // 2B docs not in books -> bills_not_in_books. A credit note never sits
-  // here (the portal has already reduced the ITC; Import 2B does not offer
-  // the treatment), so one found with it is skipped and any row it posted
-  // before is retracted. A HELD amendment never has this treatment, so it
-  // is never posted. An amendment that changes no figure (a number or date
-  // correction) has nothing to add beside its original and is not posted.
+  // 2B docs not in books -> bills_not_in_books, every kind alike: a credit
+  // note posts negative (ledgerFiguresOf). A HELD amendment never has this
+  // treatment, so it is never posted. An amendment that changes no figure (a
+  // number or date correction) has nothing to add beside its original and is
+  // not posted.
   const notInBooks = docs.filter((d) => d.itc_action === 'NOT_IN_BOOKS');
   const kept = new Set<string>();
   const byDocId = new Map(ledgerBooks.map((l) => [l.source_doc_id as string, l]));
   for (const d of notInBooks) {
-    if (isCreditNote(d)) {
-      plan.skippedDocs.push({ row: d, reason: 'A credit note is never Not in Books: choose Matched, Mismatched, Ineligible or ITC of Others' });
-      continue;
-    }
     const fig = ledgerFiguresOf(d);
     if (d.is_amendment && [fig.taxable_value, fig.input_igst, fig.input_cgst, fig.input_sgst].every((v) => Math.abs(v) < 0.005)) continue;
     kept.add(d.id);
@@ -238,7 +234,8 @@ export async function fetchImport2BEligibleTotal(clientId: string, periodMonth: 
 
 // The month's supplier credit notes as per GSTR-2B, for ITC Summary row 5.3
 // "Debit Note": MATCHED and MISMATCHED, non-RCM, by what each reduces (an
-// amended note its difference). Positive = the reduction. notesRead says
+// amended note its difference). Positive = the reduction. One parked Not in
+// Books is left out: it waits on the ledger until booked. notesRead says
 // whether this month's import read the notes at all (any row with full_2b):
 // an older, invoices-only import has none, and its row 5.3 stays as typed.
 export async function fetchImport2BCreditNotes(

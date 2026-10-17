@@ -47,7 +47,8 @@ import {
 //
 // What each kind of document does (src/lib/twobDocs.ts, firm's positions of
 // 14 Oct 2026): a debit note is claimed like an invoice; a credit note reduces
-// ITC (row 5.3); an amendment counts only its difference over the version
+// ITC (row 5.3), or waits Not in Books like an invoice until the client books
+// it (17 Oct 2026); an amendment counts only its difference over the version
 // already counted and follows that version's treatment, and is HELD when no
 // earlier version is in Import 2B. Every amount on this page is the document's
 // net ITC effect (signedEffect), so totals add up the way ITC Summary reads them.
@@ -183,7 +184,8 @@ const BOOK_TREATMENTS = [
 ];
 
 // A books row is an invoice or a debit note; a supplier credit note is never
-// booked here (it reduces ITC straight from 2B).
+// entered here (it is treated on its own 2B row: row 5.3, or Not in Books
+// until the client books it).
 const BOOK_DOC_TYPES = [
   { value: 'INVOICE', label: DOC_TYPE_LABEL.INVOICE },
   { value: 'DEBIT_NOTE', label: DOC_TYPE_LABEL.DEBIT_NOTE },
@@ -264,6 +266,15 @@ const sumDocs = (rows: TwoBDoc[]): Totals =>
     return { count: a.count + 1, taxable: a.taxable + e.taxable, igst: a.igst + e.igst, cgst: a.cgst + e.cgst, sgst: a.sgst + e.sgst };
   }, { count: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0 });
 
+/** A pending ledger item as its type badge reads it. */
+type PendingItemLike = {
+  doc_type?: string | null; is_amendment?: boolean | null;
+  taxable_value?: number | null; input_igst?: number | null; input_cgst?: number | null; input_sgst?: number | null;
+};
+/** A ledger entry that takes ITC away (a credit note, or an amendment that cut a document's tax): negative. */
+const takesItcAway = (r: PendingItemLike) => (Number(r.taxable_value) || 0) < 0
+  || (Number(r.input_igst) || 0) + (Number(r.input_cgst) || 0) + (Number(r.input_sgst) || 0) < 0;
+
 /** Dense workspace table; the last column drops its right rule (the wrapper draws it). */
 const TABLE_CLS = cn(WS_TABLE, '[&_tr>*:last-child]:border-r-0');
 /** Bordered horizontal scroll area around a table. */
@@ -295,7 +306,7 @@ const otherTypeMessage = (b: BookRow, other: TwoBDoc) => {
   const what = DOC_TYPE_LABEL[otherType].toLowerCase();
   const no = other.supplier_invoice_number || '';
   if (otherType === 'CREDIT_NOTE') {
-    return `2B has credit note ${no} from this supplier, not ${docTypeOf(b) === 'DEBIT_NOTE' ? 'a debit note' : 'an invoice'}. A credit note reduces ITC straight from 2B and is never booked here; check this row.`;
+    return `2B has credit note ${no} from this supplier, not ${docTypeOf(b) === 'DEBIT_NOTE' ? 'a debit note' : 'an invoice'}. A credit note is treated on its own 2B row (Matched, or Not in Books until booked), never entered here; check this row.`;
   }
   return `2B has ${what} ${no} from this supplier; is this row ${otherType === 'INVOICE' ? 'an invoice' : 'a debit note'}? Change its Type to pair it.`;
 };
@@ -474,7 +485,7 @@ const Import2BTab: React.FC = () => {
       }
       const withType = (r: PendingBill2B): PendingBill2B => ({ ...r, doc_type: r.source_book_id ? bookType.get(r.source_book_id) ?? null : null });
       // And of each item awaiting book entry, from the 2B document that posted
-      // it (a debit note, or an amendment's difference).
+      // it (a debit note, a credit note, or an amendment's difference).
       const pendingBooks = (pendingBooksRes.data || []) as PendingBillBooks[];
       const sourceDocIds = [...new Set(pendingBooks.map((r) => r.source_doc_id).filter((v): v is string => !!v))];
       const sourceType = new Map<string, { doc_type: string; is_amendment: boolean }>();
@@ -1297,8 +1308,8 @@ const Import2BTab: React.FC = () => {
       }
       if (toClear.length > 0) {
         toast.warning(
-          `${plural(toClear.length, 'amendment')} ${toClear.length === 1 ? 'is' : 'are'} not claimed, since the revised document gives no ITC, and the earlier version is parked Not in Books, never claimed: `
-          + `${list(toClear.map(amountOf))}. Clear ${toClear.length === 1 ? 'its' : 'their'} entry on the Not in Books ledger rather than claim it when booked; nothing is to be reversed in 4B(2).`,
+          `${plural(toClear.length, 'amendment')} ${toClear.length === 1 ? 'is' : 'are'} not counted, since the revised document gives no ITC, and the earlier version is parked Not in Books, never counted: `
+          + `${list(toClear.map(amountOf))}. Clear ${toClear.length === 1 ? 'its' : 'their'} entry on the Not in Books ledger rather than take it into 5.2 when booked; nothing is to be reversed or added back by hand.`,
           { duration: 30000 },
         );
       }
@@ -1711,10 +1722,7 @@ const Import2BTab: React.FC = () => {
     if (ok.length) toast.success(`Staged ${plural(ok.length, 'row')} to ${label}. Click Save changes to commit.`);
     if (skipped.size) {
       const kinds = [...skipped].map(([k, n]) => `${plural(n, k.toLowerCase())}`).join(', ');
-      const why = bulkValue === 'NOT_IN_BOOKS'
-        ? 'A credit note is never parked as Not in Books: 2B has already reduced its ITC.'
-        : `${label} is not offered for that kind of document.`;
-      toast.warning(`Skipped ${kinds}. ${why}`);
+      toast.warning(`Skipped ${kinds}. ${label} is not offered for that kind of document.`);
     }
     setSelected(new Set());
     setBulkValue('');
@@ -2006,8 +2014,8 @@ const Import2BTab: React.FC = () => {
       const netBooks = plan.insertBillsBooks.length + plan.updateBillsBooks.length + plan.retractBillsBooks.length;
       if (net2B) parts.push(`Bills Not in 2B: ${plan.insertBills2B.length} new, ${plan.updateBills2B.length} updated, ${plan.retractBills2B.length} removed`);
       if (netBooks) parts.push(`Bills Not in Books: ${plan.insertBillsBooks.length} new, ${plan.updateBillsBooks.length} updated, ${plan.retractBillsBooks.length} removed`);
-      // Skipped rows, by reason (a missing date or supplier, or a credit note
-      // marked Not in Books), with the first few document numbers of each.
+      // Skipped rows, by reason (a missing date or supplier), with the first
+      // few document numbers of each.
       const skippedByReason = new Map<string, string[]>();
       [...plan.skippedBooks, ...plan.skippedDocs].forEach(({ row, reason }) => {
         skippedByReason.set(reason, [...(skippedByReason.get(reason) || []), row.supplier_invoice_number || '(no number)']);
@@ -2100,10 +2108,13 @@ const Import2BTab: React.FC = () => {
 
   // The type of a pending ledger item, from the books row or 2B document that
   // posted it; an item with no known source (carried forward, or added on 2B
-  // Reconciliation) reads as an invoice.
-  const pendingTypeBadge = (r: { doc_type?: string | null; is_amendment?: boolean | null }) => (
-    <span className={cn('inline-flex whitespace-nowrap rounded border px-1.5 text-[11px] font-medium leading-5', TONE_BADGE[docTone(r)])}>
-      {docLabel(r)}
+  // Reconciliation) reads as an invoice, or, negative, as a credit or
+  // adjustment (in the credit note colour), as the e-mailed list names it.
+  const pendingKind = (r: PendingItemLike): { label: string; tone: TwobTone } =>
+    (!r.doc_type && takesItcAway(r) ? { label: 'Credit / adjustment', tone: 'credit' } : { label: docLabel(r), tone: docTone(r) });
+  const pendingTypeBadge = (r: PendingItemLike) => (
+    <span className={cn('inline-flex whitespace-nowrap rounded border px-1.5 text-[11px] font-medium leading-5', TONE_BADGE[pendingKind(r).tone])}>
+      {pendingKind(r).label}
     </span>
   );
 
@@ -2201,7 +2212,9 @@ const Import2BTab: React.FC = () => {
       if (countedNothing(action) && !baseZero && !(earlier && (countedNothing(earlier.itc_action) || earlier.itc_action === 'HELD'))) {
         out.push({
           text: earlier?.itc_action === 'NOT_IN_BOOKS'
-            ? `Not claimed here; the earlier version is parked Not in Books (₹${num(clean(Math.abs(baseTax)))}), never claimed: clear its entry on the Not in Books ledger if no longer due, nothing to reverse in 4B(2)`
+            ? isCreditNote(earlier)
+              ? `Not counted here; the earlier credit note is parked Not in Books (₹${num(clean(Math.abs(baseTax)))}), never reduced: clear its entry on the Not in Books ledger if no longer due, nothing to add back`
+              : `Not claimed here; the earlier version is parked Not in Books (₹${num(clean(Math.abs(baseTax)))}), never claimed: clear its entry on the Not in Books ledger if no longer due, nothing to reverse in 4B(2)`
             : isCreditNote(d)
               ? `Not counted here, but the earlier version still reduces ₹${num(clean(Math.abs(baseTax)))}: add it back by hand if no longer due`
               : `Not claimed here, but the earlier version still counts ₹${num(clean(Math.abs(baseTax)))}: reverse it in 4B(2) if it is no longer eligible`,
@@ -2213,6 +2226,11 @@ const Import2BTab: React.FC = () => {
       && [d.declared_igst, d.declared_cgst, d.declared_sgst, d.declared_cess].some((v) => v !== null && v !== undefined)) {
       const noteTax = (Number(d.input_igst) || 0) + (Number(d.input_cgst) || 0) + (Number(d.input_sgst) || 0);
       out.push({ text: `IMS: reduce ₹${num(clean(taxOf(fullFigures(d))))} declared (note tax ₹${num(clean(noteTax))})` });
+    }
+    // Parked, a credit note is left out of 5.3 until booked, though the
+    // portal's auto-drafted 4A(5) is already net of it (§10, choice 3).
+    if (isCreditNote(d) && action === 'NOT_IN_BOOKS' && d.bucket === 'available') {
+      out.push({ text: 'Not reduced in 5.3 until booked; the portal\'s auto-drafted 4A(5) is already net of it (keep it Pending in IMS to defer it there too)' });
     }
     if (d.bucket === 'reversal') out.push({ text: 'Rule 37A ITC reversal: reverse it in 4B(2)(ii)' });
     if (d.bucket === 'rejected') out.push({ text: 'Rejected in IMS' });
@@ -2888,8 +2906,8 @@ const Import2BTab: React.FC = () => {
                           </thead>
                           <tbody>
                             {pendingBills2B.map((r) => (
-                              <tr key={r.id} className={cn(WS_TR, TONE_ROW[docTone(r)])}>
-                                <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums', TONE_STRIPE[docTone(r)])}>{isoToDisplay(r.date)}</td>
+                              <tr key={r.id} className={cn(WS_TR, TONE_ROW[pendingKind(r).tone])}>
+                                <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums', TONE_STRIPE[pendingKind(r).tone])}>{isoToDisplay(r.date)}</td>
                                 <td className={WS_TD}>{pendingTypeBadge(r)}</td>
                                 <td className={WS_TD}>{r.supplier_name}</td>
                                 <td className={WS_TD}>{r.supplier_invoice_number}</td>
@@ -2957,8 +2975,8 @@ const Import2BTab: React.FC = () => {
                           </thead>
                           <tbody>
                             {pendingBillsBooks.map((r) => (
-                              <tr key={r.id} className={cn(WS_TR, TONE_ROW[docTone(r)])}>
-                                <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums', TONE_STRIPE[docTone(r)])}>{isoToDisplay(r.date)}</td>
+                              <tr key={r.id} className={cn(WS_TR, TONE_ROW[pendingKind(r).tone])}>
+                                <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums', TONE_STRIPE[pendingKind(r).tone])}>{isoToDisplay(r.date)}</td>
                                 <td className={WS_TD}>{pendingTypeBadge(r)}</td>
                                 <td className={WS_TD}>{r.supplier_name}</td>
                                 <td className={WS_TD}>{r.supplier_invoice_number}</td>
@@ -2986,8 +3004,8 @@ const Import2BTab: React.FC = () => {
                     </ScrollArea>
                     <Note className="mt-2">
                       Once booked, claim the ITC under ITC Summary row 5.2 "ITC for Previous Month": the document
-                      won't reappear in a future GSTR-2B pull. A negative row is an amendment that cut an earlier
-                      document's tax: reduce the 5.2 claim by that amount instead.
+                      won't reappear in a future GSTR-2B pull. A negative row is a credit note, or an amendment that
+                      cut an earlier document's tax: reduce the 5.2 claim by that amount instead.
                     </Note>
                     </CollapsibleContent>
                   </Collapsible>
@@ -3020,8 +3038,8 @@ const Import2BTab: React.FC = () => {
                           </thead>
                           <tbody>
                             {expensedOutItems.map((r) => (
-                              <tr key={r.id} className={cn(WS_TR, TONE_ROW[docTone(r)])}>
-                                <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums', TONE_STRIPE[docTone(r)])}>{isoToDisplay(r.date)}</td>
+                              <tr key={r.id} className={cn(WS_TR, TONE_ROW[pendingKind(r).tone])}>
+                                <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums', TONE_STRIPE[pendingKind(r).tone])}>{isoToDisplay(r.date)}</td>
                                 <td className={WS_TD}>{pendingTypeBadge(r)}</td>
                                 <td className={WS_TD}>{r.supplier_name}</td>
                                 <td className={WS_TD}>{r.supplier_invoice_number}</td>

@@ -618,16 +618,26 @@ in one module, `src/lib/twobDocs.ts`.
    earlier version counted (`base_*` with no `amends_doc_id`): the row then
    counts only the difference. A second amendment counts against the first;
    one that amends a held amendment stays Held until that one is settled.
+3. **A credit note may be parked Not in Books, like an invoice** (asked 17
+   Oct 2026: "Debit note should have selection of not in books same like
+   Invoice", the firm's Debit Note being the purchase return, the supplier's
+   credit note in 2B; supplier debit notes already had it). Until booked it is
+   left out of 5.3 and sits on the ledger as a negative row (`signedEffect`),
+   reduced through 5.2 once booked, as the hand-entered credit notes were
+   until 05/2026; its amendment follows it there. Caveat for the firm to
+   confirm: IMS reduces the auto-drafted 4A(5) by an accepted or deemed
+   accepted credit note, so parking one files 4A(5) above the portal's
+   figure; the portal's own way to defer is to keep the note Pending in IMS.
+   `node scripts/verify-import2b-notes.mjs` checks every reader.
 
 **Engineering positions (not asked; reversible):**
 
 - **Debit notes** are claimed like invoices (5.1), with every invoice
   treatment. Their s.16(4) clock runs from the debit note's own date.
-- **A credit note reduces ITC this month even when it is not in the books
-  yet:** IMS has accepted it (or deemed it accepted) and the portal has
-  already reduced the auto-filled 3B. It is never parked Not in Books and
-  never evidences a reclaim; its treatments are Matched, Mismatched,
-  Ineligible and ITC of Others. A credit note with ITC Availability No still
+- **A credit note starts Matched, reducing ITC this month**, since IMS has
+  accepted it (or deemed it accepted) and the portal has already reduced the
+  auto-filled 3B; staff may park it Not in Books (choice 3). It never
+  evidences a reclaim. A credit note with ITC Availability No still
   reduces (the GSTR-2B instructions keep the reversal on credit notes), unless
   the recipient declared in IMS that no ITC is to be reduced (then
   Ineligible). With "Yes" and a declared amount, the declared tax is what
@@ -727,9 +737,7 @@ in one module, `src/lib/twobDocs.ts`.
   difference (it may be negative); one whose difference is zero (a number or
   date correction) is not posted, and a ledger row it posted before is
   retracted, since a ₹0 row would sit in Pending items forever. A credit note
-  found marked Not in Books (only possible from data written outside the page)
-  is not posted, is named in the Post confirmation, and any ledger row it
-  posted before is retracted.
+  marked Not in Books posts negative, its figures with their sign.
 - **Totals throw on a read error**: `fetchImport2BEligibleTotal` and
   `fetchImport2BCreditNotes` page through every row and throw instead of
   returning zeros, so a failed read can never save a 5.1 or 5.3 of zero (ITC
@@ -748,8 +756,9 @@ has not yet recorded in its books, as an Excel working paper attached to the
 - **The list** is the month's open Not in Books ledger rows
   (`bills_not_in_books` with no `book_entry_month`, which carry earlier months
   forward), plus this month's 2B documents marked Not in Books but not yet
-  posted. Credit notes are never Not in Books (§10). Amounts are the ledger's:
-  an amendment counts at its difference, so a row can be negative. A ledger
+  posted. Amounts are the ledger's, with their sign: a credit note parked Not
+  in Books (§10, choice 3) is negative, and an amendment counts at its
+  difference, so it can be negative too. A ledger
   row that repeats a listed document (same supplier, number and figures, dated
   within a day) is sent once and named in the pop-up, so staff can clean the
   ledger. SWENI's ledger held 27 such pairs, carried from older months.

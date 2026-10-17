@@ -9,8 +9,9 @@
 //    it is no longer Not in Books, at its current figures if they changed);
 //  - this month's 2B documents marked Not in Books that were never posted
 //    (so a send never has to wait for Post to Reconciliation).
-// Amounts are what the ledger holds: an amendment counts at its difference
-// (twobDocs.effectFigures), so a row may be negative.
+// Amounts are what the ledger holds, with their sign (twobDocs.signedEffect):
+// a credit note parked Not in Books (17 Oct 2026) is negative, and an
+// amendment counts at its difference, so it may be negative too.
 //
 // The list goes out as a working paper in the firm's house style (Arial 9,
 // navy heads, figures in #,##0.00 with brackets, a supplier summary sheet,
@@ -21,7 +22,7 @@ import type { Borders, Fill, Font, Workbook, Worksheet } from 'exceljs';
 import { supabase } from '@/integrations/supabase/client';
 import { GST_FIRM, prettyPeriod, renderTemplate } from '@/lib/gstReminders';
 import { periodMonthLabel } from '@/lib/postImport2B';
-import { docLabel, effectFigures } from '@/lib/twobDocs';
+import { docLabel, signedEffect } from '@/lib/twobDocs';
 import { formatINR } from '@/utils/builderRates';
 import { normalizeInvoiceNo } from '@/utils/matchTwob';
 
@@ -123,8 +124,9 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
   type DocRow = {
     id: string; date: string | null; supplier_name: string | null; supplier_invoice_number: string | null; supplier_gstin: string | null;
     taxable_value: number | null; input_igst: number | null; input_cgst: number | null; input_sgst: number | null; cess: number | null;
-    doc_type: string | null; is_amendment: boolean | null; itc_action: string;
+    doc_type: string | null; is_amendment: boolean | null; original_doc_type: string | null; itc_action: string;
     base_taxable_value: number | null; base_input_igst: number | null; base_input_cgst: number | null; base_input_sgst: number | null; base_cess: number | null;
+    ims_reduce_required: string | null; declared_igst: number | null; declared_cgst: number | null; declared_sgst: number | null; declared_cess: number | null;
   };
   const [ledger, linkedAll, docs] = await Promise.all([
     pageAll<LedgerRow>((a, b) => supabase.from('bills_not_in_books')
@@ -138,14 +140,18 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
       .eq('client_id', clientId).eq('period_month', periodMonth).not('source_doc_id', 'is', null)
       .order('id').range(a, b) as never),
     pageAll<DocRow>((a, b) => supabase.from('twob_import_docs')
-      .select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, cess, doc_type, is_amendment, itc_action, base_taxable_value, base_input_igst, base_input_cgst, base_input_sgst, base_cess')
+      // Every column signedEffect reads (a flipped note amendment's original
+      // type, a credit note's IMS declared tax), so a figure is the ledger's.
+      .select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, cess, '
+        + 'doc_type, is_amendment, original_doc_type, itc_action, base_taxable_value, base_input_igst, base_input_cgst, base_input_sgst, base_cess, '
+        + 'ims_reduce_required, declared_igst, declared_cgst, declared_sgst, declared_cess')
       .eq('client_id', clientId).eq('period_month', periodMonth).eq('reverse_charge', false)
       .order('id').range(a, b) as never),
   ]);
   const docById = new Map(docs.map((d) => [d.id, d]));
   const posted = new Set(linkedAll.map((l) => l.source_doc_id));
   const thisMonth = periodMonthLabel(periodMonth);
-  const isOpenDoc = (d: DocRow) => d.itc_action === 'NOT_IN_BOOKS' && d.doc_type !== 'CREDIT_NOTE';
+  const isOpenDoc = (d: DocRow) => d.itc_action === 'NOT_IN_BOOKS';
 
   const out: BillNotInBooks[] = [];
   for (const l of ledger) {
@@ -153,7 +159,7 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
     if (d) {
       // Posted from this month's Import 2B: as the next Post will leave it.
       if (!isOpenDoc(d)) continue;
-      const e = effectFigures(d);
+      const e = signedEffect(d);
       out.push({
         monthIn2B: l.bill_in_2b_month || thisMonth,
         date: d.date ?? l.date,
@@ -175,7 +181,8 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
       supplierGstin: (l.supplier_gstin || '').toUpperCase(),
       supplierName: l.supplier_name || '',
       docNo: l.supplier_invoice_number || '',
-      docType: taxable < 0 ? 'Credit / adjustment' : 'Invoice',
+      // No document behind it: a negative row takes ITC away (a credit note, or an amendment's cut).
+      docType: taxable < 0 || Number(l.input_igst) + Number(l.input_cgst) + Number(l.input_sgst) < 0 ? 'Credit / adjustment' : 'Invoice',
       taxable,
       igst: r2(Number(l.input_igst)),
       cgst: r2(Number(l.input_cgst)),
@@ -186,7 +193,7 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
   }
   for (const d of docs) {
     if (!isOpenDoc(d) || posted.has(d.id)) continue;
-    const e = effectFigures(d);
+    const e = signedEffect(d);
     if (!e.igst && !e.cgst && !e.sgst && !e.taxable) continue;
     out.push({
       monthIn2B: thisMonth,
@@ -434,7 +441,7 @@ export async function buildBillsWorkbook(opts: {
   const notes = [
     'What we need from you',
     '1.  Record each document above in your books, or write in the last column why it should not be recorded (goods or services not received, wrong GSTIN, duplicate, and so on).',
-    '2.  We claim input tax credit on these documents once they are recorded in your books; recording them promptly lets us claim it in the right month.',
+    '2.  We claim input tax credit on these documents once they are recorded in your books, and reduce it by a credit note once that is recorded; recording them promptly lets us take each in the right month.',
     '3.  Amounts are as your suppliers reported them in GSTR-2B. A negative figure is a credit note or a downward amendment of a document. "Earlier" marks an older item whose GSTR-2B month was not recorded.',
     `4.  Please reply by ${opts.replyBy}. Questions: ${GST_FIRM.email}.`,
   ];
