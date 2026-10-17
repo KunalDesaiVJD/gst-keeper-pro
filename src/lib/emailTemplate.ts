@@ -21,6 +21,7 @@ const SHELL: Record<string, ShellMeta> = {
   notice_alert_soon: { accent: '#d97706', pill: { text: 'Due soon &middot; Notice Alert', bg: '#fef3c7', fg: '#92400e' }, box: { bg: '#fffbeb', border: '#fde68a', label: '#78716c' } },
   bills_not_in_books: { accent: '#d97706', pill: { text: 'Action needed &middot; Books update', bg: '#fef3c7', fg: '#92400e' }, box: { bg: '#fffbeb', border: '#fde68a', label: '#78716c' } },
   notice_alert_critical: { accent: '#dc2626', pill: { text: 'Urgent &middot; Notice Alert', bg: '#fee2e2', fg: '#b91c1c' }, box: { bg: '#fef2f2', border: '#fecaca', label: '#7f1d1d' } },
+  client_password_reset: { accent: '#0f2b46', pill: { text: 'Password reset', bg: '#e0e7ff', fg: '#1e3a8a' }, box: { bg: '#f8fafc', border: '#e2e8f0', label: '#64748b' } },
 };
 
 export function buildEmailHtml(opts: { key: string; kind: string; message: string; vars: EmailVars }): string {
@@ -34,6 +35,8 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
   // Alerts to staff (render_vars._audience = 'internal'): no client greeting and no
   // signature; a headline, an "Open notice" button and the facts, once.
   const internal = kind === 'notice_alert' && g('_audience') === 'internal';
+  // A client's password reset link (client-password-reset) gets the button too.
+  const resetLink = kind === 'client_password_reset';
   const tone = g('_tone');
   const toneColor = tone === 'urgent' ? '#b91c1c' : tone === 'soon' ? '#b45309' : '#0f2b46';
 
@@ -54,7 +57,10 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
     }
   } else {
     rows.push(['GSTIN', g('gstin')]);
-    if (kind === 'notice_alert') {
+    if (resetLink) {
+      rows.push(['User ID', g('user_id')]);
+      rows.push(['Link valid for', g('valid_for')]);
+    } else if (kind === 'notice_alert') {
       rows.push(['Type', g('notice_type')]);
       rows.push(['Reference', g('reference_number')]);
       if (g('due_date')) rows.push(['Due Date', g('due_date')]);
@@ -104,7 +110,7 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
   const headline = internal && g('headline')
     ? `<p style="margin:0 0 12px;font-size:16px;font-weight:700;color:${toneColor};">${g('headline')}</p>`
     : '';
-  const cta = internal && g('cta_url')
+  const cta = (internal || resetLink) && g('cta_url')
     ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px;"><tr>
 <td style="background:#0f2b46;border-radius:6px;"><a href="${g('cta_url')}" style="display:inline-block;padding:10px 18px;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;">${g('cta_label') || 'Open in GST Keeper'}</a></td>
 ${g('pdf_url') ? `<td style="padding-left:16px;"><a href="${g('pdf_url')}" style="color:#0f2b46;font-size:13px;">Notice PDF</a></td>` : ''}

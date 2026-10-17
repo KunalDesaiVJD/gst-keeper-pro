@@ -98,6 +98,8 @@ interface AuthContextType {
   canUnlockSheets: () => boolean;
   canViewVersionHistory: () => boolean;
   canResetPasswords: () => boolean;
+  /** Set a client's app-login password or e-mail them a reset link: every staff member. */
+  canResetClientPasswords: () => boolean;
   /** Switch notice alerts between off / preview / live (outward-facing e-mail). */
   canManageNoticeAlerts: () => boolean;
   /** Approve a reply draft in partner review (superadmin / GST manager). */
@@ -535,6 +537,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user?.role === 'superadmin' || user?.role === 'gst_manager';
   }, [user]);
 
+  // The firm's decision (17 Oct 2026): any staff level, no permission key;
+  // staff_set_client_password checks the same in the database.
+  const canResetClientPasswords = useCallback((): boolean => isStaffRole(), [isStaffRole]);
+
   const canManageNoticeAlerts = useCallback((): boolean => {
     return user?.role === 'superadmin' || user?.role === 'gst_manager';
   }, [user]);
@@ -730,6 +736,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canUnlockSheets,
         canViewVersionHistory,
         canResetPasswords,
+        canResetClientPasswords,
         canManageNoticeAlerts,
         canApproveNoticeReplies,
         canAddEditClients,

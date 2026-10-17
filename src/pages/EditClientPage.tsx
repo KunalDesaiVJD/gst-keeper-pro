@@ -25,6 +25,8 @@ import { Badge } from '@/components/gstr9/badge';
 import { WS_PAGE, WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TR } from '@/components/workspace/theme';
 import { cn } from '@/lib/utils';
 import { cleanPortalPassword, portalPasswordProblem } from '@/lib/portalPassword';
+import { staffSetClientPassword } from '@/lib/clientPasswordReset';
+import ClientAppLoginCard from '@/components/clients/ClientAppLoginCard';
 
 /** Consistent required-field marker used across the Add / Edit client forms. */
 const Req: React.FC = () => (
@@ -63,6 +65,10 @@ const EditClientPage: React.FC = () => {
   // The 2B Reconciliation mode as loaded: a save that changes it stamps who
   // switched it (the database logs every switch, client_liberal_log).
   const originalLiberal = useRef<boolean | null>(null);
+  // The GST password as loaded: only a change to it also sets the client's
+  // app-login password, so a password the client set by e-mailed link is not
+  // overwritten by every save.
+  const originalGstPassword = useRef('');
 
   const [formData, setFormData] = useState({
     gstin: '',
@@ -145,7 +151,7 @@ const EditClientPage: React.FC = () => {
         defaultTargetDate: defaultTarget,
         otherTargetDate: otherTarget,
         gstUserId: (data as any).gst_user_id || '',
-        gstPassword: (data as any).gst_password || '',
+        gstPassword: (originalGstPassword.current = cleanPortalPassword((data as any).gst_password)),
         regularSubType: (data as any).regular_sub_type || '',
         builderItcType: (data as any).builder_itc_type || '',
         commercialArea: (data as any).commercial_area?.toString() || '',
@@ -345,10 +351,8 @@ const EditClientPage: React.FC = () => {
           einvoice_exemption: formData.einvoiceExemption || null,
           gst_user_id: formData.gstUserId.trim() || null,
           gst_password: gstPassword || null,
-          // Keep the client's app-login password in sync with the GST password,
-          // so updating it here updates it everywhere (app login + extension).
-          // Only when a password is present, so we never blank an existing one.
-          ...(gstPassword ? { client_password: gstPassword } : {}),
+          // The app-login password is not written here: a changed GST password
+          // sets it below through staff_set_client_password (hashed, logged).
           regular_sub_type: formData.registrationType === 'Regular' ? formData.regularSubType : null,
           builder_itc_type: formData.regularSubType === 'Builder' ? formData.builderItcType : null,
           commercial_area: formData.builderItcType === 'PARTIAL_ITC' ? parseFloat(formData.commercialArea) || 0 : 0,
@@ -359,6 +363,18 @@ const EditClientPage: React.FC = () => {
         .eq('id', clientId);
 
       if (error) throw error;
+
+      // A changed GST password is also the client's new app-login password
+      // (the firm's arrangement), set the checked way. An unchanged one leaves
+      // whatever password the client has, e.g. one set by e-mailed link.
+      if (gstPassword && gstPassword !== originalGstPassword.current && user?.id && clientId) {
+        try {
+          await staffSetClientPassword(user.id, clientId, gstPassword, 'GST password changed in Edit Client; app login set to match.');
+        } catch (e) {
+          toast.warning(`GST password saved, but the app login password was not changed: ${(e as Error).message}`);
+        }
+        originalGstPassword.current = gstPassword;
+      }
 
       // Update filing_status target dates
       if (defaultTarget !== null) {
@@ -866,7 +882,7 @@ const EditClientPage: React.FC = () => {
 
         <SectionCard
           title="Contact & portal login"
-          description="Portal login is optional. The GST password is also this client's app login password."
+          description="Portal login is optional. Changing the GST password here also sets it as this client's app login password."
         >
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -908,7 +924,7 @@ const EditClientPage: React.FC = () => {
 
             <div className="space-y-1.5">
               <Label htmlFor="gstPassword">GST Password</Label>
-              <p className="text-xs text-muted-foreground">Used for the GST portal (extension) and this client's app login — changing it updates both.</p>
+              <p className="text-xs text-muted-foreground">Used for the GST portal (extension). Changing it also sets the client's app login password; saving without a change leaves that alone.</p>
               <PasswordInput
                 id="gstPassword"
                 value={formData.gstPassword}
@@ -918,6 +934,8 @@ const EditClientPage: React.FC = () => {
             </div>
           </div>
         </SectionCard>
+
+        {clientId && <ClientAppLoginCard clientId={clientId} name={formData.name} gstin={formData.gstin} email={formData.email} />}
 
         <SectionCard
           title="E-invoicing"

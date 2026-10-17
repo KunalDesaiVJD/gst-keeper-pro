@@ -4949,6 +4949,44 @@ export type Database = {
           },
         ]
       }
+      client_password_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          actor_name: string | null
+          at: string
+          client_id: string
+          detail: string | null
+          id: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          actor_name?: string | null
+          at?: string
+          client_id: string
+          detail?: string | null
+          id?: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          actor_name?: string | null
+          at?: string
+          client_id?: string
+          detail?: string | null
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_password_log_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_scheme_history: {
         Row: {
           changed_at: string
@@ -8424,6 +8462,7 @@ export type Database = {
       password_reset_requests: {
         Row: {
           id: string
+          note: string | null
           requested_at: string
           requested_by_name: string
           resolved_at: string | null
@@ -8433,6 +8472,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          note?: string | null
           requested_at?: string
           requested_by_name: string
           resolved_at?: string | null
@@ -8442,6 +8482,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          note?: string | null
           requested_at?: string
           requested_by_name?: string
           resolved_at?: string | null
@@ -11732,8 +11773,33 @@ export type Database = {
         Returns: undefined
       }
       staff_set_client_password: {
-        Args: { p_actor_id: string; p_client_id: string; p_new_password: string }
+        Args: {
+          p_actor_id: string
+          p_client_id: string
+          p_new_password: string
+          p_note?: string
+        }
         Returns: boolean
+      }
+      staff_send_client_reset_link: {
+        Args: { p_actor_id: string; p_client_id: string }
+        Returns: Json
+      }
+      client_password_reset_request: {
+        Args: { p_identifier: string }
+        Returns: Json
+      }
+      client_password_reset_check: {
+        Args: { p_token: string }
+        Returns: Json
+      }
+      client_password_reset_complete: {
+        Args: { p_new_password: string; p_token: string }
+        Returns: Json
+      }
+      client_password_problem: {
+        Args: { p_gstin?: string; p_password: string }
+        Returns: string
       }
       staff_set_password: {
         Args: {
