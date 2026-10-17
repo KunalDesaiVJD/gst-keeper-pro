@@ -16,7 +16,7 @@ createdb "$db"
 trap 'dropdb --if-exists "$db"' EXIT
 psql_q -f "$here/00_stub.sql" >/dev/null
 psql_q -f "$mig/20261014120000_staff_positions.sql" >/dev/null || { echo "FAILED applying staff positions"; exit 1; }
-for f in 20261017100000_staff_levels_guard.sql 20261017110000_staff_end_sessions.sql 20261017140000_staff_end_sessions_harden.sql; do
+for f in 20261017100000_staff_levels_guard.sql 20261017110000_staff_end_sessions.sql 20261017140000_staff_end_sessions_harden.sql 20261017150000_staff_levels_guard_message.sql; do
   psql_q -f "$mig/$f" >/dev/null || { echo "FAILED applying $f"; exit 1; }
   psql_q -f "$mig/$f" >/dev/null || { echo "FAILED re-applying $f"; exit 1; }
 done
