@@ -3,7 +3,8 @@
 // trigger refuses every direct write to user_roles. Only the superadmin
 // gives or takes away the GST Manager level, with their password; an
 // Employee is added or removed by whoever manages employees. Sessions end
-// through staff_end_sessions (20261017110000).
+// through staff_end_sessions (20261017110000, hardened in 20261017140000:
+// a GST Manager's or the superadmin's only by the superadmin, with their password).
 import { supabase } from '@/integrations/supabase/client';
 
 export type StaffLevel = 'employee' | 'gst_manager';
@@ -40,9 +41,11 @@ export async function removeStaff(actorId: string, targetUserId: string, passwor
   if (error) fail(error);
 }
 
-/** Signs the person out of every browser: they must log in again. */
-export async function endStaffSessions(actorId: string, targetUserId: string): Promise<void> {
-  const { error } = await supabase.rpc('staff_end_sessions', { p_actor_id: actorId, p_target_user_id: targetUserId });
+/** Signs the person out of every browser: they must log in again (a GST Manager: the superadmin, with their password). */
+export async function endStaffSessions(actorId: string, targetUserId: string, password?: string): Promise<void> {
+  const { error } = await supabase.rpc('staff_end_sessions', {
+    p_actor_id: actorId, p_target_user_id: targetUserId, p_actor_password: password ?? null,
+  });
   if (error) fail(error);
 }
 

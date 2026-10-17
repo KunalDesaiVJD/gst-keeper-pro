@@ -11739,7 +11739,7 @@ export type Database = {
         Returns: undefined
       }
       staff_end_sessions: {
-        Args: { p_actor_id: string; p_target_user_id: string }
+        Args: { p_actor_id: string; p_actor_password?: string | null; p_target_user_id: string }
         Returns: string
       }
       staff_level_of: {

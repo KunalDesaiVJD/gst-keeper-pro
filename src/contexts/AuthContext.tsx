@@ -667,6 +667,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (stopped || document.visibilityState === 'hidden') return;
       if (await sessionWasEnded(user)) {
         stopped = true;
+        // Another tab may have signed in again since this tab's sign-in began
+        // (or someone else on this computer): that newer sign-in stays, and
+        // this tab picks it up instead of wiping it.
+        let saved: Pick<AppUser, 'id' | 'sessionsEndedAt'> | null = null;
+        try { saved = JSON.parse(localStorage.getItem(FALLBACK_AUTH_KEY) || 'null'); } catch { saved = null; }
+        const sameSignIn = !!saved && saved.id === user.id && (saved.sessionsEndedAt ?? null) === (user.sessionsEndedAt ?? null);
+        if (saved && !sameSignIn) {
+          window.location.reload();
+          return;
+        }
         localStorage.removeItem(FALLBACK_AUTH_KEY);
         setSession(null);
         setUser(null);

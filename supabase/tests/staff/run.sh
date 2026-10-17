@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Replays the staff migrations on a throwaway local database and runs the SQL
 # tests in this folder: staff positions (20261014120000_staff_positions.sql),
-# staff levels (20261017100000) and ending sessions (20261017110000), each new
+# staff levels (20261017100000) and ending sessions (20261017110000, hardened
+# 20261017140000), each new
 # one applied twice (they must be safe to re-run). Needs a local PostgreSQL
 # 15/16; connection from the usual PG* variables, e.g.
 #   PGHOST=/tmp/pgsock PGPORT=55432 PGUSER=postgres supabase/tests/staff/run.sh
@@ -15,7 +16,7 @@ createdb "$db"
 trap 'dropdb --if-exists "$db"' EXIT
 psql_q -f "$here/00_stub.sql" >/dev/null
 psql_q -f "$mig/20261014120000_staff_positions.sql" >/dev/null || { echo "FAILED applying staff positions"; exit 1; }
-for f in 20261017100000_staff_levels_guard.sql 20261017110000_staff_end_sessions.sql; do
+for f in 20261017100000_staff_levels_guard.sql 20261017110000_staff_end_sessions.sql 20261017140000_staff_end_sessions_harden.sql; do
   psql_q -f "$mig/$f" >/dev/null || { echo "FAILED applying $f"; exit 1; }
   psql_q -f "$mig/$f" >/dev/null || { echo "FAILED re-applying $f"; exit 1; }
 done

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -57,6 +57,9 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
   const { user, canManageEmployees, canManagePositions, canChangeStaffLevel } = useAuth();
   // A change waiting for the superadmin's password (the GST Manager level is theirs alone).
   const [passwordAsk, setPasswordAsk] = useState<{ title: string; confirmText: string; run: (password: string) => Promise<void> } | null>(null);
+  // Set while the Add dialog closes to make way for the password prompt, so
+  // the closing dialog does not hand focus back to its trigger behind it.
+  const passwordNext = useRef(false);
   const confirm = useConfirm();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -189,6 +192,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
     };
 
     if (level === 'gst_manager') {
+      passwordNext.current = true;
       setShowAddDialog(false);
       setPasswordAsk({ title: `Add ${firstName} as a GST Manager`, confirmText: 'Add', run: create });
       return;
@@ -268,7 +272,7 @@ const ManageEmployeesPage: React.FC<ManageEmployeesPageProps> = ({ embedded = fa
                 Add Employee
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent onCloseAutoFocus={(e) => { if (passwordNext.current) { e.preventDefault(); passwordNext.current = false; } }}>
               <DialogHeader>
                 <DialogTitle>Add New Employee</DialogTitle>
                 <DialogDescription>

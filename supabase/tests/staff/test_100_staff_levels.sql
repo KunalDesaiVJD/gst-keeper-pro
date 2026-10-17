@@ -88,15 +88,20 @@ SELECT t_raises($$SELECT staff_require_employee_manager('10000000-0000-0000-0000
 
 -- 7. Ending sessions
 SELECT t_raises($$SELECT staff_end_sessions('10000000-0000-0000-0000-000000000005', '10000000-0000-0000-0000-000000000003')$$, 'not allowed', 'a plain employee cannot end another''s sessions');
-SELECT t_raises($$SELECT staff_end_sessions('10000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000001')$$, 'Only the superadmin', 'a GST Manager cannot end the superadmin''s sessions');
+SELECT t_raises($$SELECT staff_end_sessions('10000000-0000-0000-0000-000000000005', '10000000-0000-0000-0000-000000000005')$$, 'not allowed', 'no own-sessions shortcut for an employee');
+SELECT t_raises($$SELECT staff_end_sessions('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001')$$, 'password is not correct', 'the superadmin''s sessions not ended by naming them as actor');
+SELECT t_raises($$SELECT staff_end_sessions('10000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002')$$, 'Only the superadmin', 'a GST Manager''s sessions not ended by naming them as actor');
+SELECT t_raises($$SELECT staff_end_sessions('10000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000001', 'Gm-pass-12')$$, 'Only the superadmin', 'a GST Manager cannot end the superadmin''s sessions');
 SELECT t_raises($$SELECT staff_end_sessions('10000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000002')$$, 'Only the superadmin', 'an employee manager cannot end a GST Manager''s sessions');
+SELECT t_raises($$SELECT staff_end_sessions('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002', 'wrong')$$, 'password is not correct', 'the superadmin id without the password cannot end a GST Manager''s');
 SELECT t_eq(staff_end_sessions('10000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000003') IS NOT NULL, true, 'an employee manager ends an Employee''s sessions');
 SELECT t_eq((SELECT sessions_ended_at IS NOT NULL FROM profiles WHERE user_id = '10000000-0000-0000-0000-000000000003'), true, 'stamped on the profile');
-SELECT t_eq(staff_end_sessions('10000000-0000-0000-0000-000000000005', '10000000-0000-0000-0000-000000000005') IS NOT NULL, true, 'anyone ends their own');
-SELECT t_eq(staff_end_sessions('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002') IS NOT NULL, true, 'the superadmin ends a GST Manager''s');
-SELECT t_eq((SELECT count(*) FROM staff_position_log WHERE action = 'logged out')::int, 3, 'logged out logged');
+SELECT t_eq(staff_end_sessions('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002', 'Super-Pass-1') IS NOT NULL, true, 'the superadmin ends a GST Manager''s, with their password');
+SELECT t_eq((SELECT sessions_ended_at IS NULL FROM profiles WHERE user_id = '10000000-0000-0000-0000-000000000001'), true, 'the superadmin was never signed out');
+SELECT t_eq((SELECT count(*) FROM staff_position_log WHERE action = 'logged out')::int, 2, 'logged out logged');
 -- Profiles cannot be updated with the public key at all (their policy needs an auth session).
 UPDATE profiles SET sessions_ended_at = NULL WHERE user_id = '10000000-0000-0000-0000-000000000003';
 SELECT t_eq((SELECT sessions_ended_at IS NOT NULL FROM profiles WHERE user_id = '10000000-0000-0000-0000-000000000003'), true, 'a session end is not undone directly');
+SELECT t_raises($$SELECT staff_end_sessions('10000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000003', NULL::text, 'x')$$, 'function', 'the old two-argument form is gone');
 
 RESET ROLE;

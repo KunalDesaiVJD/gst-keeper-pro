@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -51,6 +51,9 @@ const UserManagementSection: React.FC = () => {
   const { user, canManageEmployees, canChangeStaffLevel } = useAuth();
   const confirm = useConfirm();
   const [passwordAsk, setPasswordAsk] = useState<PasswordAsk | null>(null);
+  // Set while the Add dialog closes to make way for the password prompt, so
+  // the closing dialog does not hand focus back to its trigger behind it.
+  const passwordNext = useRef(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -222,6 +225,7 @@ const UserManagementSection: React.FC = () => {
     };
 
     if (level === 'gst_manager') {
+      passwordNext.current = true;
       setShowAddDialog(false);
       setPasswordAsk({ title: `Add ${firstName} as a GST Manager`, confirmText: 'Add', run: create });
       return;
@@ -257,15 +261,25 @@ const UserManagementSection: React.FC = () => {
 
   const handleEndSessions = async (emp: Employee) => {
     if (!user) return;
+    if (emp.role === 'gst_manager' && !canChangeStaffLevel()) {
+      toast.error('Only the superadmin can log out a GST Manager.');
+      return;
+    }
     const ok = await confirm({
       title: `Log out ${emp.first_name}?`,
       description: `${emp.first_name} will be signed out on every computer and must log in again.`,
       confirmText: 'Log out',
     });
     if (!ok) return;
-    if (await attempt(() => endStaffSessions(user.id, emp.user_id), 'Failed to log out')) {
+    const end = async (password?: string) => {
+      await endStaffSessions(user.id, emp.user_id, password);
       toast.success(`${emp.first_name} is logged out and must log in again.`);
+    };
+    if (emp.role === 'gst_manager') {
+      setPasswordAsk({ title: `Log out ${emp.first_name} (GST Manager)`, confirmText: 'Log out', run: end });
+      return;
     }
+    await attempt(() => end(), 'Failed to log out');
   };
 
   const handleEditEmployee = (employee: Employee) => {
@@ -386,7 +400,7 @@ const UserManagementSection: React.FC = () => {
                 Add Employee
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent onCloseAutoFocus={(e) => { if (passwordNext.current) { e.preventDefault(); passwordNext.current = false; } }}>
               <DialogHeader>
                 <DialogTitle>Add New Employee</DialogTitle>
               </DialogHeader>
