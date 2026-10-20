@@ -30,6 +30,7 @@ BEGIN
     PERFORM t_eq(t_error('SELECT public.client_password_reset_mark(gen_random_uuid(), NULL)') LIKE 'permission denied%', true, r || ' cannot mark');
     PERFORM t_eq(t_error('SELECT public.client_password_reset_ping()') LIKE 'permission denied%', true, r || ' cannot ping');
     PERFORM t_eq(t_error('SELECT public.client_password_reset_sweep()') LIKE 'permission denied%', true, r || ' cannot sweep');
+    PERFORM t_eq(t_error('SELECT public.client_password_reset_limits_lock()') LIKE 'permission denied%', true, r || ' cannot take the limits lock');
     PERFORM t_eq(t_error($q$SELECT public.client_password_staff_request('c4000000-0000-0000-0000-000000000001', 'x')$q$) LIKE 'permission denied%',
       true, r || ' cannot file a staff request directly');
     PERFORM t_eq(t_error($q$SELECT public.client_password_reset_for_client('c4000000-0000-0000-0000-000000000001', NULL, false)$q$) LIKE 'permission denied%',
@@ -60,10 +61,11 @@ RESET ROLE;
 -- The anon-facing functions.
 SELECT t_eq((SELECT bool_and(has_function_privilege('anon', f, 'EXECUTE')) FROM unnest(ARRAY[
   'public.client_password_reset_request(text)', 'public.client_password_reset_check(text)',
-  'public.client_password_reset_complete(text,text)', 'public.staff_set_client_password(uuid,uuid,text,text)',
+  'public.client_password_reset_complete(text,text)', 'public.staff_set_client_password(uuid,uuid,text,text,boolean)',
   'public.staff_send_client_reset_link(uuid,uuid)', 'public.client_password_log_for(uuid,uuid,integer)']) f), true,
   'anon can ask, check, redeem and (as staff) reset and read the log');
 SELECT t_eq(to_regprocedure('public.staff_set_client_password(uuid,uuid,text)') IS NULL, true, 'the old 3-argument version is gone');
+SELECT t_eq(to_regprocedure('public.staff_set_client_password(uuid,uuid,text,text)') IS NULL, true, 'and the 4-argument one (one function, no overloads)');
 SELECT t_eq((SELECT bool_and(prosecdef) FROM pg_proc WHERE proname IN ('client_password_reset_request', 'client_password_reset_check',
   'client_password_reset_complete', 'client_password_reset_claim', 'client_password_reset_mark', 'staff_set_client_password',
   'staff_send_client_reset_link', 'client_password_log_for', 'client_password_reset_sweep', 'client_password_reset_for_client',

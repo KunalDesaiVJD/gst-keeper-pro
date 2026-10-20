@@ -380,9 +380,15 @@ const EditClientPage: React.FC = () => {
       // A changed GST password is also the client's new app-login password
       // (the firm's arrangement), set the checked way. An unchanged one leaves
       // whatever password the client has, e.g. one set by e-mailed link.
+      // keepResets: this is a portal-password change, not an answer to the
+      // client, so a request waiting on the Dashboard stays there and a reset
+      // link the client holds keeps working.
       if (gstPassword && gstPassword !== originalGstPassword.current && user?.id && clientId) {
         try {
-          await staffSetClientPassword(user.id, clientId, gstPassword, 'GST password changed in Edit Client; app login set to match.');
+          await staffSetClientPassword(user.id, clientId, gstPassword, {
+            note: 'GST password changed in Edit Client; app login set to match.',
+            keepResets: true,
+          });
         } catch (e) {
           toast.warning(`GST password saved, but the app login password was not changed: ${(e as Error).message}`);
         }

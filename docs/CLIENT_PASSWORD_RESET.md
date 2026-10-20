@@ -2,8 +2,8 @@
 
 Migration `supabase/migrations/20261020140000_client_password_reset.sql`, Edge Function
 `supabase/functions/client-password-reset/`, tests `supabase/tests/client_password/run.sh`
-(local Postgres 15/16 with the `dblink` contrib extension, which `test_99_lock_order.sql`
-uses to run real concurrent sessions), `deno test supabase/functions/client-password-reset/test/`
+(local Postgres 15/16 with the `dblink` contrib extension, which `test_98_concurrent_limits.sql`
+and `test_99_lock_order.sql` use to run real concurrent sessions), `deno test supabase/functions/client-password-reset/test/`
 and `node scripts/verify-client-reset-link.mjs`. Going live: [the last section](#going-live).
 The positions below were engineering judgement, not a firm sign-off.
 
@@ -52,9 +52,10 @@ The positions below were engineering judgement, not a firm sign-off.
   `staff_set_client_password`). The log names e-mail addresses only masked
   (`p•••@navratna.com`); requests for identifiers that are not clients are kept only in
   the private attempts table, as a sha256.
-- **The link:** once, 60 minutes from sending; a newer request (or a staff reset) voids
-  it; until it is used the current password keeps working. Using it voids every other
-  open link and resolves waiting staff requests.
+- **The link:** once, 60 minutes from sending; a newer request (or a staff reset from the
+  reset dialog, but not Edit Client's GST-password sync: see Staff resets) voids it; until
+  it is used the current password keeps working. Using it voids every other open link and
+  resolves waiting staff requests.
 - **A link follows the address on record.** It is good only while every address it went
   to is still in `clients.email` (`client_password_sent_to_current`: case, separators and
   order do not matter, and an address added since does not either). Staff replace an
@@ -80,6 +81,16 @@ The positions below were engineering judgement, not a firm sign-off.
   `cf-connecting-ip` / `x-real-ip` / `x-forwarded-for`): ten requests an hour, whatever
   they were for; an IPv6 address counts as its /64 block, an IPv4-mapped one as the IPv4
   address. All clients: 300 links an hour (the firm has about 130 clients).
+  These are hard limits, whatever arrives at once. Each count reads only committed rows
+  and the client's own lock serializes only that client's requests, so requests for
+  different clients in flight together would each count without the others and all get
+  through (about one per PostgREST connection). Every request and every staff link
+  therefore takes one transaction advisory lock for the limits first
+  (`client_password_reset_limits_lock`) and holds it to commit: they take turns, and each
+  count sees the rows the one before wrote (see Locks). A request is a few milliseconds,
+  so the queue is short; `test_98_concurrent_limits.sql` runs nine earlier requests plus
+  three at once from one address (one link, two refused) and 299 links plus a request and
+  two staff links at once (300 links, not 302).
 - **Never a silent drop.** A client is never left with neither a link nor staff help.
   One pending `password_reset_requests` row (never two) is filed for staff on the
   Dashboard when: there is no usable e-mail; any limit (per client, per address, all
@@ -144,6 +155,15 @@ The positions below were engineering judgement, not a firm sign-off.
   Client app login, Dashboard requests. `staff_set_client_password` keeps
   `is_first_login = true` and allows the GSTIN, so a staff reset to the GSTIN makes the
   client choose a new password at first sign-in. Setting a password is never limited.
+  From the reset dialog it is staff acting on the client's password: it voids every open
+  link and resolves the client's waiting requests. Edit Client's GST-password sync (below)
+  is not: the staff member was changing the portal password, the client did not ask for
+  it and has not been told it, so it calls `staff_set_client_password` with
+  `p_close_resets => false` (`keepResets` in `src/lib/clientPasswordReset.ts`). A client
+  waiting for staff keeps their request on the Dashboard, so somebody still contacts
+  them, and a link in their mailbox keeps working (using it then sets the client's own
+  password). The log says what was kept ("… The client's open reset link was kept." /
+  "… The request waiting on the Dashboard stays open."; `test_95`).
   `staff_send_client_reset_link` is held to the same limits as every link (five an hour
   per client, every link asked for, staff and self together; 300 an hour in all) and to
   a minute's spacing, which counts only a link that went out to an address still on
@@ -157,7 +177,15 @@ The positions below were engineering judgement, not a firm sign-off.
   only the addresses the database will e-mail (`resetLinkAddresses`, the same rule as
   `client_email_list`). When the field holds none it can use (say `accounts@sorath.com.`
   or `a@x.c`), "E-mail reset link" is off with "No usable e-mail address on record";
-  Edit Client refuses to save such an address in the first place.
+  Edit Client refuses to save such an address in the first place. Every staff level opens
+  the dialog, but not every employee can open Edit Client (`add_edit_clients`), so the
+  dialog names it only to staff who can (`canAddEditClients()`): "No e-mail address on
+  record: add one in Edit Client, or set a password below." for them, "No e-mail address
+  on record: set a password below, or ask a colleague who edits clients to add one." for
+  everyone else (and the same for "correct it"). The staff-link errors never name it:
+  "This client has no e-mail address on record. Set a password instead, or have an
+  address added to the client." / "This client has no usable e-mail address on record.
+  Set a password instead, or have the address corrected."
 - **Edit Client** names the e-mail address as saved, since that is where a link goes
   (`staff_send_client_reset_link` reads `clients.email`). While the e-mail field holds an
   address not yet saved, "E-mail reset link" is off with "Save the new e-mail first."
@@ -167,9 +195,18 @@ The positions below were engineering judgement, not a firm sign-off.
   GSTIN first to reset the password."
 - **Edit Client** no longer writes the GST password into `client_password` on every save:
   only a *changed* GST password also sets the app login, through
-  `staff_set_client_password` (hashed, logged). The firm may prefer to stop that sync.
-- **Locks: one order everywhere, the client's `clients` row, then the client's advisory
-  lock.** An Edit Client save holds the row when its e-mail trigger takes the advisory
+  `staff_set_client_password` (hashed, logged, `p_close_resets => false`, so the client's
+  reset link and waiting request are left as they were). The firm may prefer to stop that
+  sync.
+- **Locks: one order everywhere, the limits lock (requests and staff links only), then
+  the client's `clients` row, then the client's advisory lock.** The limits lock
+  (`client_password_reset_limits_lock`, Rate limits above) is taken first thing by
+  `client_password_reset_request` (and again, re-entrantly, by
+  `client_password_reset_for_client`) and by `staff_send_client_reset_link` before it
+  locks the row; nothing else takes it (the sweep, the claim, the mark, the e-mail
+  trigger, `_complete` and `staff_set_client_password` never do), and nothing takes it
+  while holding a client's row or lock, so it adds no wait cycle (`test_98` checks both).
+  An Edit Client save holds the row when its e-mail trigger takes the advisory
   lock, and holds it `FOR UPDATE` when it also changes the GSTIN (a unique, so key,
   column); every insert into a table with a foreign key to `clients`
   (`client_password_resets`, `client_password_log`, `client_password_reset_attempts`)
@@ -209,11 +246,11 @@ Never applied live yet. Everything below is for project **`gcquafqxbykxkbexcdpy`
 always name it (`--project-ref gcquafqxbykxkbexcdpy`, or the URL below), never
 `SUPABASE_PROJECT_REF` (it points at another live project, `hubyywmodekfdzhwiumb`).
 `SUPABASE_ACCESS_TOKEN` must be set. Order: database, secrets, Edge Function, then the
-frontend. The current frontend keeps working on the new database (the 3-argument
-`staff_set_client_password` call still resolves, `password_reset_requests.note` is a new
-nullable column, the e-mail trigger only touches reset links); the new frontend calls RPCs
-only the migration creates, and a link queued before the function is deployed would wait
-for nothing.
+frontend. The current frontend keeps working on the new database (its 3-argument
+`staff_set_client_password` call still resolves, to the one 5-argument function;
+`password_reset_requests.note` is a new nullable column; the e-mail trigger only touches
+reset links); the new frontend calls RPCs only the migration creates, and a link queued
+before the function is deployed would wait for nothing.
 
 1. **Check what the migration relies on** (read-only; expect `pgcrypto` in `extensions`,
    `pg_net`, `pg_cron`, and one Vault row, from 20260726130000):
@@ -240,14 +277,15 @@ for nothing.
     where n.nspname = 'public' and p.proname in (
       'client_email_list', 'client_email_hint', 'client_password_sent_to_current', 'client_password_problem',
       'client_password_request_ip', 'client_password_ip_key', 'client_password_reset_ping',
+      'client_password_reset_limits_lock',
       'client_password_staff_note', 'client_password_staff_request', 'client_password_has_open_link',
       'client_password_reset_sweep_client', 'client_password_reset_sweep', 'client_password_reset_tick',
       'client_password_email_changed', 'client_password_reset_for_client', 'client_password_reset_request',
       'client_password_reset_claim', 'client_password_reset_mark', 'client_password_reset_check',
       'client_password_reset_complete', 'staff_set_client_password', 'staff_send_client_reset_link',
-      'client_password_log_for');                                                        -- 23
+      'client_password_log_for');                                                        -- 24
    select pg_get_function_identity_arguments('public.staff_set_client_password'::regproc);
-                                     -- p_actor_id uuid, p_client_id uuid, p_new_password text, p_note text
+          -- p_actor_id uuid, p_client_id uuid, p_new_password text, p_note text, p_close_resets boolean
    select tgname from pg_trigger where tgname = 'client_password_email_changed';        -- one row
    select schedule, command from cron.job where jobname = 'client-password-reset-sweep';
                                      -- 3-59/5 * * * * | select public.client_password_reset_tick()

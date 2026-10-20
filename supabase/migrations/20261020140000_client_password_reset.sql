@@ -37,9 +37,17 @@
 --    read it through client_password_log_for. It shows e-mail addresses only
 --    masked.
 --  * staff_set_client_password: any staff level (superadmin, GST Manager, any
---    employee, no permission key needed); logged; voids open links.
---  * Locks, one order everywhere: the client's clients row, then the
---    client's advisory lock. An Edit Client save holds the row (FOR UPDATE
+--    employee, no permission key needed); logged; voids open links and
+--    answers waiting requests, except for Edit Client's GST-password sync
+--    (p_close_resets false), which the client did not ask for: that leaves
+--    the client's link and request as they were.
+--  * Locks, one order everywhere: the limits lock (requests and staff links
+--    only), then the client's clients row, then the client's advisory lock.
+--    The per-address and all-clients limits count rows other requests write,
+--    so a request and a staff link take the limits lock first and hold it to
+--    commit: they take turns, and each count sees the rows the one before
+--    wrote. Nothing else takes it, and nothing takes it while holding a
+--    client's row or lock. An Edit Client save holds the row (FOR UPDATE
 --    when it changes the GSTIN, a key column) when its e-mail trigger takes
 --    the advisory lock, and every insert into a table with a foreign key to
 --    clients locks the row FOR KEY SHARE; so whatever waits locks the row
@@ -280,6 +288,15 @@ BEGIN
   END;
 END;
 $$;
+
+-- The limits lock (see Locks above): taken first by every request and every
+-- staff link, held to commit, never by anything else and never while holding
+-- a client's row or lock.
+CREATE OR REPLACE FUNCTION public.client_password_reset_limits_lock()
+RETURNS void
+LANGUAGE sql
+VOLATILE
+AS $$ SELECT pg_advisory_xact_lock(hashtextextended('client_password_reset:limits', 0)) $$;
 
 -- The note on every request this file files for staff (and how a sent link
 -- finds the requests it answers). It names the Dashboard's own "Reset
@@ -523,10 +540,12 @@ DECLARE
   v_to     text;
   v_hint   text;
 BEGIN
-  -- One request per client at a time: the clients row, then the client's
-  -- lock (see Locks above). The address is read under both, so an e-mail
-  -- change saving right now is either seen here or voids this link when it
-  -- commits.
+  -- The limits lock (already held by client_password_reset_request, its only
+  -- caller: re-entrant, so it never waits here), then one request per client
+  -- at a time: the clients row, then the client's lock (see Locks above). The
+  -- address is read under both, so an e-mail change saving right now is
+  -- either seen here or voids this link when it commits.
+  PERFORM public.client_password_reset_limits_lock();
   PERFORM 1 FROM public.clients c WHERE c.id = p_client_id FOR KEY SHARE;
   IF NOT FOUND THEN RETURN 'no_client'; END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || p_client_id::text, 0));
@@ -619,6 +638,13 @@ DECLARE
   v_cid    uuid;
   v_limited boolean;
 BEGIN
+  -- Requests (and staff links) take turns, first thing and before any
+  -- client's row or lock (see Locks above): the per-address count below and
+  -- the all-clients count in client_password_reset_for_client read only
+  -- committed rows, so two requests in flight at once would each count
+  -- without the other and both get through. Held to commit, the next request
+  -- counts this one's rows. Nothing else takes this lock.
+  PERFORM public.client_password_reset_limits_lock();
   DELETE FROM public.client_password_reset_attempts WHERE at < now() - interval '30 days';
 
   IF v_ident = '' OR length(v_ident) > 64 THEN
@@ -921,17 +947,34 @@ END;
 $$;
 
 -- ── 6. Staff: set a client's password (any staff level) ────────────────────
--- Same three arguments as before (20261014120000) plus an optional note for
--- the log; the 3-argument version is replaced.
+-- Same three arguments as before (20261014120000), plus an optional note for
+-- the log and p_close_resets; the 3-argument version (and an earlier draft's
+-- 4-argument one) is replaced, and a call with three or four named arguments
+-- still resolves.
+--
+-- A reset from the reset dialog (p_close_resets true, the default) is staff
+-- acting on the client's password: it voids every open link and answers the
+-- client's waiting requests. Edit Client's GST-password sync passes false:
+-- the staff member was changing the portal password, the client did not ask
+-- for it and has not been told, so a client waiting for help keeps their
+-- request on the Dashboard and a link in their mailbox keeps working (using
+-- it then sets the client's own password). The log says what was kept.
 DROP FUNCTION IF EXISTS public.staff_set_client_password(uuid, uuid, text);
+DROP FUNCTION IF EXISTS public.staff_set_client_password(uuid, uuid, text, text);
 CREATE OR REPLACE FUNCTION public.staff_set_client_password(
-  p_actor_id uuid, p_client_id uuid, p_new_password text, p_note text DEFAULT NULL)
+  p_actor_id uuid, p_client_id uuid, p_new_password text, p_note text DEFAULT NULL,
+  p_close_resets boolean DEFAULT true)
 RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, extensions
 AS $$
-DECLARE v_name text;
+DECLARE
+  v_name    text;
+  v_close   boolean := p_close_resets IS DISTINCT FROM false;
+  v_link    boolean := false;
+  v_pending boolean := false;
+  v_detail  text := COALESCE(NULLIF(btrim(p_note), ''), 'Password set by staff.');
 BEGIN
   IF p_actor_id IS NULL OR NOT EXISTS (
        SELECT 1 FROM public.user_roles ur
@@ -958,15 +1001,26 @@ BEGIN
   END IF;
 
   SELECT p.first_name INTO v_name FROM public.profiles p WHERE p.user_id = p_actor_id LIMIT 1;
-  UPDATE public.client_password_resets r
-     SET voided_at = now(), void_reason = 'staff set a password'
-   WHERE r.client_id = p_client_id AND r.used_at IS NULL AND r.voided_at IS NULL;
-  UPDATE public.password_reset_requests
-     SET status = 'resolved', resolved_at = now(), resolved_by = p_actor_id
-   WHERE user_id = p_client_id AND status = 'pending';
+  IF v_close THEN
+    UPDATE public.client_password_resets r
+       SET voided_at = now(), void_reason = 'staff set a password'
+     WHERE r.client_id = p_client_id AND r.used_at IS NULL AND r.voided_at IS NULL;
+    UPDATE public.password_reset_requests
+       SET status = 'resolved', resolved_at = now(), resolved_by = p_actor_id
+     WHERE user_id = p_client_id AND status = 'pending';
+  ELSE
+    v_link := EXISTS (SELECT 1 FROM public.client_password_resets r
+                       WHERE r.client_id = p_client_id AND r.used_at IS NULL AND r.voided_at IS NULL);
+    v_pending := EXISTS (SELECT 1 FROM public.password_reset_requests q
+                          WHERE q.user_id = p_client_id AND q.status = 'pending');
+    v_detail := v_detail || CASE
+      WHEN v_link AND v_pending THEN ' The client''s open reset link was kept, and the request waiting on the Dashboard stays open.'
+      WHEN v_link THEN ' The client''s open reset link was kept.'
+      WHEN v_pending THEN ' The request waiting on the Dashboard stays open.'
+      ELSE '' END;
+  END IF;
   INSERT INTO public.client_password_log (client_id, action, actor_id, actor_name, detail)
-  VALUES (p_client_id, 'staff_reset', p_actor_id, v_name,
-          COALESCE(NULLIF(btrim(p_note), ''), 'Password set by staff.'));
+  VALUES (p_client_id, 'staff_reset', p_actor_id, v_name, v_detail);
   RETURN true;
 END;
 $$;
@@ -998,7 +1052,10 @@ BEGIN
         WHERE ur.user_id = p_actor_id AND ur.role::text IN ('superadmin', 'gst_manager', 'employee')) THEN
     RAISE EXCEPTION 'Only a staff member can send a client a reset link.' USING ERRCODE = 'insufficient_privilege';
   END IF;
-  -- The clients row, then the client's lock (see Locks above).
+  -- The limits lock, then the clients row, then the client's lock (see Locks
+  -- above): the all-clients count below sees every link a request or another
+  -- staff link in flight has just made.
+  PERFORM public.client_password_reset_limits_lock();
   SELECT c.id INTO v_cid FROM public.clients c WHERE c.id = p_client_id FOR KEY SHARE;
   IF v_cid IS NULL THEN
     RAISE EXCEPTION 'Client not found.' USING ERRCODE = 'no_data_found';
@@ -1008,8 +1065,13 @@ BEGIN
   -- right now is either seen here or voids this link when it commits.
   SELECT c.email INTO v_email FROM public.clients c WHERE c.id = v_cid;
   v_emails := public.client_email_list(v_email);
-  IF cardinality(v_emails) = 0 THEN
-    RAISE EXCEPTION 'This client has no e-mail address on record. Add one in Edit Client, or set a password instead.'
+  -- (Never "in Edit Client": not every staff member who can send a link can
+  -- open it.)
+  IF btrim(COALESCE(v_email, '')) = '' THEN
+    RAISE EXCEPTION 'This client has no e-mail address on record. Set a password instead, or have an address added to the client.'
+      USING ERRCODE = 'check_violation';
+  ELSIF cardinality(v_emails) = 0 THEN
+    RAISE EXCEPTION 'This client has no usable e-mail address on record. Set a password instead, or have the address corrected.'
       USING ERRCODE = 'check_violation';
   END IF;
   v_to := array_to_string(v_emails, ', ');
@@ -1089,6 +1151,7 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.client_password_reset_claim(integer) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_reset_mark(uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_reset_ping() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.client_password_reset_limits_lock() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_reset_sweep() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_reset_sweep_client(uuid, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_reset_tick() FROM PUBLIC, anon, authenticated;
@@ -1103,6 +1166,7 @@ REVOKE EXECUTE ON FUNCTION public.client_password_email_changed() FROM PUBLIC, a
 GRANT EXECUTE ON FUNCTION public.client_password_reset_claim(integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_mark(uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_ping() TO service_role;
+GRANT EXECUTE ON FUNCTION public.client_password_reset_limits_lock() TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_sweep() TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_sweep_client(uuid, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_tick() TO service_role;
@@ -1117,7 +1181,7 @@ GRANT EXECUTE ON FUNCTION public.client_password_sent_to_current(text, text) TO 
 GRANT EXECUTE ON FUNCTION public.client_password_reset_request(text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_check(text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_complete(text, text) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.staff_set_client_password(uuid, uuid, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.staff_set_client_password(uuid, uuid, text, text, boolean) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.staff_send_client_reset_link(uuid, uuid) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_log_for(uuid, uuid, integer) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_problem(text, text) TO anon, authenticated, service_role;

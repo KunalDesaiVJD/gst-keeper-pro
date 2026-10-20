@@ -51,13 +51,30 @@ export async function completeClientPasswordReset(token: string, newPassword: st
   return { userId: String((data as { user_id?: string } | null)?.user_id ?? '') };
 }
 
-/** Any staff member sets a client's password (logged; voids open links). */
-export async function staffSetClientPassword(actorId: string, clientId: string, newPassword: string, note?: string): Promise<void> {
+export interface StaffSetPasswordOptions {
+  /** For the client's password log (default "Password set by staff."). */
+  note?: string;
+  /**
+   * Leave the client's open reset links and waiting requests as they are
+   * (p_close_resets false). For Edit Client's GST-password sync only: the
+   * client did not ask for that password and has not been told it, so a
+   * client waiting for staff keeps their request and a link in their mailbox
+   * keeps working. A reset from the reset dialog leaves this off, and voids
+   * open links and answers waiting requests.
+   */
+  keepResets?: boolean;
+}
+
+/** Any staff member sets a client's password (logged; voids open links unless keepResets). */
+export async function staffSetClientPassword(
+  actorId: string, clientId: string, newPassword: string, opts: StaffSetPasswordOptions = {},
+): Promise<void> {
   const { data, error } = await supabase.rpc('staff_set_client_password', {
     p_actor_id: actorId,
     p_client_id: clientId,
     p_new_password: newPassword,
-    ...(note ? { p_note: note } : {}),
+    ...(opts.note ? { p_note: opts.note } : {}),
+    ...(opts.keepResets ? { p_close_resets: false } : {}),
   });
   if (error) throw new Error(error.message);
   if (data === false) throw new Error('Client not found.');

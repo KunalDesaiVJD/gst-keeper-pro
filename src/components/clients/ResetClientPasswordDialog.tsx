@@ -39,7 +39,7 @@ interface Props {
  * database checks the actor is staff and logs it (client_password_log).
  */
 const ResetClientPasswordDialog: React.FC<Props> = ({ client, onOpenChange, onDone }) => {
-  const { user } = useAuth();
+  const { user, canAddEditClients } = useAuth();
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [busy, setBusy] = useState<null | 'password' | 'link'>(null);
@@ -67,7 +67,10 @@ const ResetClientPasswordDialog: React.FC<Props> = ({ client, onOpenChange, onDo
     return () => { live = false; };
   }, [actorId, clientId, askedForHelp]);
 
-  const linkBlock = client ? resetLinkBlock({ saved: client.email, typed: client.typedEmail }) : null;
+  // Edit Client is named only to staff who can open it.
+  const linkBlock = client
+    ? resetLinkBlock({ saved: client.email, typed: client.typedEmail }, { canEditClients: canAddEditClients() })
+    : null;
   // Only the well-formed addresses: the ones the database sends the link to.
   const linkTo = client ? resetLinkAddresses(client.email) : '';
   const tooShort = newPassword.length > 0 && !!staffClientPasswordProblem(newPassword);

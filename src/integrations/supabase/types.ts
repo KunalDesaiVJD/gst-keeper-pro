@@ -11759,6 +11759,7 @@ export type Database = {
           p_client_id: string
           p_new_password: string
           p_note?: string
+          p_close_resets?: boolean
         }
         Returns: boolean
       }

@@ -9,7 +9,10 @@
 // staff are told is the saved GSTIN, and a reset waits while a new one is
 // typed but not saved. And a request waiting on the Dashboard sends staff only
 // to the reset dialog, which every staff level can open and which says why no
-// link reached the client (src/lib/clientPasswordReason.ts).
+// link reached the client (src/lib/clientPasswordReason.ts); the dialog and the
+// staff-link error name Edit Client only to staff who can open it. And Edit
+// Client's GST-password sync leaves the client's reset link and waiting
+// request alone (keepResets -> p_close_resets false).
 //
 //   node scripts/verify-client-reset-link.mjs
 //
@@ -54,6 +57,21 @@ check(M.resetLinkBlock({ saved: '', typed: 'new@y.com' }) === SAVE_FIRST, 'an ad
 check(/^No e-mail address on record/.test(M.resetLinkBlock({ saved: null }) ?? ''), 'no saved address: says so');
 check(/^No e-mail address on record/.test(M.resetLinkBlock({ saved: '', typed: '' }) ?? ''), 'none saved, none typed: says so');
 check(M.emailUnsaved({ saved: 'a@x.com' }) === false, 'no form: nothing unsaved');
+// Edit Client only for staff who can open it (canAddEditClients()).
+const EDITS = { canEditClients: true };
+const VIEWS = { canEditClients: false };
+for (const [saved, what] of [[null, 'no address'], ['', 'an empty address'], ['accounts@sorath.com.', 'no usable address']]) {
+  const forViewer = M.resetLinkBlock({ saved }, VIEWS) ?? '';
+  check(forViewer !== '' && !/Edit Client/.test(forViewer), `${what}, staff without add_edit_clients: Edit Client never named (${JSON.stringify(forViewer)})`);
+  check(/set a password below/.test(forViewer), `  and told to set a password below`);
+  const byDefault = M.resetLinkBlock({ saved }) ?? '';
+  check(byDefault !== '' && !/Edit Client/.test(byDefault), `${what}, viewer not given: Edit Client never named`);
+  check(/Edit Client/.test(M.resetLinkBlock({ saved }, EDITS) ?? ''), `${what}, staff who edit clients: sent to Edit Client`);
+}
+check(/^No e-mail address on record/.test(M.resetLinkBlock({ saved: null }, VIEWS) ?? '')
+  && /^No usable e-mail address on record/.test(M.resetLinkBlock({ saved: 'a@x.c' }, VIEWS) ?? ''),
+  'the same opening words whoever looks');
+check(M.resetLinkBlock({ saved: 'a@x.com', typed: 'b@y.com' }, VIEWS) === 'Save the new e-mail first.', 'save first, whoever looks');
 // Only the addresses the database e-mails (client_email_list).
 const NO_USABLE = /^No usable e-mail address on record/;
 for (const bad of ['accounts@sorath.com.', 'accounts@sorath.c', 'accounts@sorath', '<a@x.com>', 'a@@x.com']) {
@@ -93,7 +111,10 @@ check(/\{ id: clientId, name, gstin, email, typedEmail \}/.test(cardSrc), 'the c
 check(/gstinUnsaved\(gstin, typedGstin\)/.test(cardSrc) && /disabled=\{newGstin\}/.test(cardSrc), 'Reset app password is off while a new GSTIN is unsaved');
 check(/open && !newGstin \?/.test(cardSrc), 'and the dialog does not open then');
 const dialog = src('src/components/clients/ResetClientPasswordDialog.tsx');
-check(/resetLinkBlock\(\{ saved: client\.email, typed: client\.typedEmail \}\)/.test(dialog), 'the dialog asks the rule');
+check(/resetLinkBlock\(\{ saved: client\.email, typed: client\.typedEmail \}, \{ canEditClients: canAddEditClients\(\) \}\)/.test(dialog),
+  'the dialog asks the rule, saying whether the viewer can open Edit Client');
+check(/const \{ user, canAddEditClients \} = useAuth\(\);/.test(dialog), '  from the auth context\'s own check');
+check(!/Edit Client/.test(dialog.replace(/\/\/.*$/gm, '')), 'the dialog itself never names Edit Client (outside comments)');
 check(/disabled=\{!!linkBlock \|\|/.test(dialog), '"E-mail reset link" is off while the rule says so');
 check(/\{linkBlock \?\? </.test(dialog), 'and the dialog shows why');
 check(/Goes to \{linkTo\}/.test(dialog) && /resetLinkAddresses\(client\.email\)/.test(dialog), 'the dialog names only the usable addresses');
@@ -122,6 +143,21 @@ check(JSON.stringify(R.latestFallbackReason(log)) === JSON.stringify({ at: '2026
 check(R.latestFallbackReason([...log].reverse())?.at === '2026-10-20T09:20:00+00:00', 'whatever the order of the log');
 check(R.latestFallbackReason(log.filter((l) => l.action !== 'fallback_request')) === null, 'none logged: nothing shown');
 check(R.latestFallbackReason([{ action: 'fallback_request', at: '2026-10-20T09:20:00+00:00', detail: null }]) === null, 'an empty reason: nothing shown');
+
+// The staff-link error, shown in the same dialog, sends nobody to Edit Client.
+const staffLink = mig.match(/CREATE OR REPLACE FUNCTION public\.staff_send_client_reset_link[\s\S]*?\n\$\$;/)?.[0] ?? '';
+const raised = [...staffLink.matchAll(/RAISE EXCEPTION '((?:[^']|'')*)'/g)].map((m) => m[1]);
+check(raised.length > 0 && raised.every((m) => !/Edit Client/.test(m)), `staff_send_client_reset_link's errors never name Edit Client (${raised.length} checked)`);
+
+// Edit Client's GST-password sync keeps the client's reset state.
+const lib = src('src/lib/clientPasswordReset.ts');
+check(/\.\.\.\(opts\.keepResets \? \{ p_close_resets: false \} : \{\}\)/.test(lib), 'keepResets is sent as p_close_resets false');
+const sync = edit.match(/await staffSetClientPassword\(user\.id, clientId, gstPassword, \{[\s\S]*?\}\);/)?.[0] ?? '';
+check(sync !== '' && /keepResets: true/.test(sync), 'Edit Client\'s GST-password sync keeps the client\'s link and waiting request');
+const dialogSet = dialog.match(/await staffSetClientPassword\([^;]*\);/)?.[0] ?? '';
+check(dialogSet !== '' && !/keepResets/.test(dialogSet), 'the reset dialog does not: a reset there voids links and answers requests');
+const setFn = mig.match(/CREATE OR REPLACE FUNCTION public\.staff_set_client_password\([\s\S]*?\)\nRETURNS/)?.[0] ?? '';
+check(/p_close_resets boolean DEFAULT true/.test(setFn), 'staff_set_client_password takes p_close_resets, true by default');
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

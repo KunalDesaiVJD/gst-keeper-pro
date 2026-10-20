@@ -42,12 +42,28 @@ export function emailUnsaved({ saved, typed }: ResetLinkEmail): boolean {
   return typed !== undefined && norm(typed) !== norm(saved);
 }
 
+export interface ResetLinkViewer {
+  /**
+   * The staff member looking can open Edit Client (canAddEditClients()).
+   * Every staff level opens the reset dialog, but not every employee can
+   * open Edit Client, so only then does the dialog send them there.
+   */
+  canEditClients?: boolean;
+}
+
 /** Why "E-mail reset link" is off, or null when a link can go. */
-export function resetLinkBlock(email: ResetLinkEmail): string | null {
+export function resetLinkBlock(email: ResetLinkEmail, viewer: ResetLinkViewer = {}): string | null {
   if (emailUnsaved(email)) return 'Save the new e-mail first.';
-  if (!norm(email.saved)) return 'No e-mail address on record: add one in Edit Client, or set a password below.';
+  const edits = viewer.canEditClients === true;
+  if (!norm(email.saved)) {
+    return edits
+      ? 'No e-mail address on record: add one in Edit Client, or set a password below.'
+      : 'No e-mail address on record: set a password below, or ask a colleague who edits clients to add one.';
+  }
   if (clientEmailList(email.saved).length === 0) {
-    return 'No usable e-mail address on record: correct it in Edit Client, or set a password below.';
+    return edits
+      ? 'No usable e-mail address on record: correct it in Edit Client, or set a password below.'
+      : 'No usable e-mail address on record: set a password below, or ask a colleague who edits clients to correct it.';
   }
   return null;
 }

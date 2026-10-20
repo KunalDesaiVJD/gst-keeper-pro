@@ -5,7 +5,8 @@ BEGIN;
 INSERT INTO clients (id, name, gstin, email, client_password, is_first_login) VALUES
  ('c3000000-0000-0000-0000-000000000001', 'Navratna Highway Test Pvt Ltd', '24AAACN0000A1ZK', 'p.owner@navratna.com',
   extensions.crypt('OldPass#2026', extensions.gen_salt('bf', 4)), false),
- ('c3000000-0000-0000-0000-000000000002', 'No Mail Traders', '24AAACM0000B1Z5', NULL, 'x', true);
+ ('c3000000-0000-0000-0000-000000000002', 'No Mail Traders', '24AAACM0000B1Z5', NULL, 'x', true),
+ ('c3000000-0000-0000-0000-000000000003', 'Bad Mail Traders', '24AAACM0000B1Z6', 'accounts@badmail.com.', 'x', true);
 INSERT INTO user_roles (user_id, role) VALUES
  ('a3000000-0000-0000-0000-00000000000a', 'superadmin'),
  ('a3000000-0000-0000-0000-00000000000b', 'gst_manager'),
@@ -71,7 +72,11 @@ SELECT t_eq(staff_send_client_reset_link('a3000000-0000-0000-0000-00000000000c',
 SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('a3000000-0000-0000-0000-00000000000b', 'c3000000-0000-0000-0000-000000000001')$$),
   'A reset link to this client is on its way. Try again in a minute, or set a password.', 'not twice in a minute');
 SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('a3000000-0000-0000-0000-00000000000a', 'c3000000-0000-0000-0000-000000000002')$$),
-  'This client has no e-mail address on record. Add one in Edit Client, or set a password instead.', 'no e-mail: says so');
+  'This client has no e-mail address on record. Set a password instead, or have an address added to the client.',
+  'no e-mail: says so, and sends nobody to Edit Client (not every staff member can open it)');
+SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('a3000000-0000-0000-0000-00000000000a', 'c3000000-0000-0000-0000-000000000003')$$),
+  'This client has no usable e-mail address on record. Set a password instead, or have the address corrected.',
+  'an address the database would not e-mail: says so, the same way');
 SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('c3000000-0000-0000-0000-000000000001', 'c3000000-0000-0000-0000-000000000001')$$),
   'Only a staff member can send a client a reset link.', 'a client cannot');
 SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('a3000000-0000-0000-0000-00000000000c', gen_random_uuid())$$),
