@@ -637,11 +637,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // granted `manual_override` in User Control to see the Override button. This
   // preserves the previous "superadmin only" behaviour while adding a knob for
   // trusted employees.
-  // Overriding portal figures is restricted to GST Manager and Superadmin only —
-  // junior staff (employees) can never override, regardless of row permissions.
+  // Overriding an opening balance (Suspended Reco, GST Receivable Reco) is the
+  // superadmin's alone (the firm's decision, 20 Oct 2026); the database refuses
+  // an override stamped by anyone else (20261020150000).
   const canManualOverride = useCallback((): boolean => {
     if (!user) return false;
-    return user.role === 'superadmin' || user.role === 'gst_manager';
+    return user.role === 'superadmin';
   }, [user]);
 
   const keyOrManager = useCallback((key: keyof UserPermissions): boolean => {

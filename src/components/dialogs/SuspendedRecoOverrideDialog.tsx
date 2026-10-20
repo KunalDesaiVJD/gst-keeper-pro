@@ -5,7 +5,9 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 
-const MIN_JUSTIFICATION = 20;
+// Only the superadmin overrides (canManualOverride), so a reason is optional;
+// without one the override is still stamped (who, when) and marked Overridden.
+const DEFAULT_JUSTIFICATION = 'Overridden by the superadmin.';
 
 interface Props {
   open: boolean;
@@ -34,14 +36,13 @@ const SuspendedRecoOverrideDialog: React.FC<Props> = ({
     }
   }, [open, initialCgst, initialSgst, initialIgst]);
 
-  const trimmedLength = justification.trim().length;
-  const canSave = trimmedLength >= MIN_JUSTIFICATION && !saving;
+  const canSave = !saving;
 
   const handleSave = async () => {
     if (!canSave) return;
     setSaving(true);
     try {
-      await onSave({ cgst, sgst, igst, justification: justification.trim() });
+      await onSave({ cgst, sgst, igst, justification: justification.trim() || DEFAULT_JUSTIFICATION });
       onOpenChange(false);
     } finally {
       setSaving(false);
@@ -54,7 +55,7 @@ const SuspendedRecoOverrideDialog: React.FC<Props> = ({
         <DialogHeader>
           <DialogTitle>Manual Override</DialogTitle>
           <DialogDescription>
-            Override the opening balance values. A justification of at least {MIN_JUSTIFICATION} characters is required.
+            Override the opening balance values. Only the superadmin can do this; a reason is optional and is kept with the override.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -91,17 +92,14 @@ const SuspendedRecoOverrideDialog: React.FC<Props> = ({
             </div>
           </div>
           <div className="space-y-1">
-            <Label htmlFor="ov-just" className="text-xs">Reason for override</Label>
+            <Label htmlFor="ov-just" className="text-xs">Reason for override (optional)</Label>
             <Textarea
               id="ov-just"
               value={justification}
               onChange={(e) => setJustification(e.target.value)}
-              placeholder="Explain why you are overriding the source values (min 20 characters)..."
+              placeholder="Why the opening balance differs from the source (optional)"
               rows={3}
             />
-            <p className={`text-xs ${trimmedLength >= MIN_JUSTIFICATION ? 'text-muted-foreground' : 'text-destructive'}`}>
-              {trimmedLength}/{MIN_JUSTIFICATION} characters
-            </p>
           </div>
         </div>
         <DialogFooter>

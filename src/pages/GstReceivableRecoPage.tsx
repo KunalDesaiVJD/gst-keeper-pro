@@ -1133,7 +1133,7 @@ const GstReceivableRecoPage: React.FC = () => {
                             <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={handleNotApplicable} disabled={!selectedClientId || isSaving}>
                               Not Applicable
                             </Button>
-                            {openingSource !== 'manual' && canManualOverride() && (
+                            {canManualOverride() && (
                               <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => setShowOverrideDialog(true)} disabled={!selectedClientId || isSaving}>
                                 <Edit3 className="h-3 w-3" />
                                 Override
