@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,6 +52,25 @@ interface Client { id: string; name: string; gstin: string; regular_sub_type?: s
 
 const inr = (n: number) => (n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const r2 = (n: number) => Math.round(n * 100) / 100;
+
+// Table 11B (GSTR-1 txpd) by POS, rate and supply type: adjusted value and
+// each tax head, so two 11Bs compare line for line, not on their total.
+type Heads = [number, number, number, number, number]; // ad_amt, iamt, camt, samt, csamt
+const txpdByKey = (txpd: unknown): Map<string, Heads> => {
+  const out = new Map<string, Heads>();
+  (Array.isArray(txpd) ? txpd : []).forEach((g: { pos?: unknown; sply_ty?: unknown; itms?: Record<string, unknown>[] }) =>
+    (g?.itms || []).forEach((i) => {
+      const k = `${g.pos}__${Number(i.rt) || 0}__${g.sply_ty}`;
+      const cur = out.get(k) || [0, 0, 0, 0, 0];
+      (['ad_amt', 'iamt', 'camt', 'samt', 'csamt'] as const).forEach((f, n) => { cur[n] = r2(cur[n] + (Number(i[f]) || 0)); });
+      out.set(k, cur);
+    }));
+  return out;
+};
+const sameTxpd = (a: unknown, b: unknown) => {
+  const A = txpdByKey(a), B = txpdByKey(b), Z: Heads = [0, 0, 0, 0, 0];
+  return [...new Set([...A.keys(), ...B.keys()])].every((k) => (A.get(k) || Z).every((v, n) => Math.abs(v - (B.get(k) || Z)[n]) < 0.5));
+};
 
 // Table pieces: the kit's TableHead carries h-12, and its row a hover tint of its own.
 const TH = `h-auto ${WS_TH}`;
@@ -176,25 +195,43 @@ const AdvancesPage: React.FC = () => {
     sgst: r2(t.sgst + (Number(leg.sgst) || 0)),
   }), { taxable: 0, igst: 0, cgst: 0, sgst: 0 }), [legsThisMonth]);
 
-  // What this period's GSTR-1 draft holds in Table 11B now: null while
-  // loading, 'none' without a draft, else its total adjusted value.
-  const [draft11B, setDraft11B] = useState<number | 'none' | null>(null);
+  // What this period's GSTR-1 draft holds in Table 11B, compared line for
+  // line with what "Write Table 11B" would send: null while loading, 'none'
+  // without a draft, 'error' when it could not be read. Only the latest read
+  // counts, so a slow reply for another client or month never lands here.
+  const txpdThisMonth = useMemo(
+    () => (selectedMonth ? buildTxpdFromLegs(register.receipts, register.adjustments, selectedMonth) : []),
+    [register, selectedMonth],
+  );
+  const [draftTxpd, setDraftTxpd] = useState<unknown[] | 'none' | 'error' | null>(null);
+  const draftReq = useRef(0);
   const refreshDraft11B = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) { setDraft11B(null); return; }
-    const { data, error } = await supabase.from('gstr1_data').select('raw_json')
+    const req = ++draftReq.current;
+    if (!selectedClient || !selectedMonth) { setDraftTxpd(null); return; }
+    setDraftTxpd(null);
+    // Only Table 11B, not the whole return (a JSON path the typed client cannot follow).
+    const { data, error } = await supabase.from('gstr1_data' as never).select('txpd:raw_json->txpd')
       .eq('client_id', selectedClient).eq('period_month', mmYyyyToShort(selectedMonth)).maybeSingle();
-    if (error) { setDraft11B(null); return; }
-    if (!data) { setDraft11B('none'); return; }
-    const txpd = ((data as { raw_json?: { txpd?: unknown } }).raw_json?.txpd);
-    const groups = Array.isArray(txpd) ? (txpd as { itms?: { ad_amt?: unknown }[] }[]) : [];
-    setDraft11B(r2(groups.reduce((t, g) => t + (g.itms || []).reduce((u, i) => u + (Number(i.ad_amt) || 0), 0), 0)));
+    if (req !== draftReq.current) return;
+    if (error) { setDraftTxpd('error'); return; }
+    if (!data) { setDraftTxpd('none'); return; }
+    const t = (data as { txpd?: unknown }).txpd;
+    setDraftTxpd(Array.isArray(t) ? t : []);
   }, [selectedClient, selectedMonth]);
   useEffect(() => { refreshDraft11B(); }, [refreshDraft11B, register]);
-  const draftState = draft11B === null ? null
-    : draft11B === 'none' ? 'No GSTR-1 draft for this month yet'
-    : Math.abs(draft11B - recorded11B.taxable) < 0.5 ? (recorded11B.taxable > 0 ? 'In the GSTR-1 draft' : null)
-    : draft11B === 0 ? 'Not yet in the GSTR-1 draft'
-    : `GSTR-1 draft has ₹${inr(draft11B)}, write again`;
+  const draftTotal = Array.isArray(draftTxpd) ? r2([...txpdByKey(draftTxpd).values()].reduce((t, h) => t + h[0], 0)) : 0;
+  // A short form for the tile, a sentence for the card, and the tile's tone.
+  const draftState: { short: string; long: string; tone: 'ok' | 'warn' | 'neutral' } | null = (() => {
+    const has = txpdThisMonth.length > 0;
+    if (draftTxpd === null) return null;
+    if (draftTxpd === 'error') return { short: 'Draft not read', long: 'The GSTR-1 draft could not be read; reload the page.', tone: 'warn' };
+    if (draftTxpd === 'none') return has ? { short: 'No GSTR-1 draft yet', long: 'There is no GSTR-1 draft for this month yet: import or build it, then write these into it.', tone: 'warn' } : null;
+    if (sameTxpd(draftTxpd, txpdThisMonth)) return has ? { short: 'In GSTR-1 draft', long: 'The GSTR-1 draft holds them.', tone: 'ok' } : null;
+    if (draftTotal === 0) return { short: 'Not in GSTR-1 draft', long: 'They are not in the GSTR-1 draft yet: write them.', tone: 'warn' };
+    return has
+      ? { short: 'Draft 11B differs', long: `The GSTR-1 draft's Table 11B (₹${inr(draftTotal)}) differs from these: write them again.`, tone: 'warn' }
+      : { short: 'Draft has 11B', long: `The GSTR-1 draft holds Table 11B of ₹${inr(draftTotal)}, but nothing is set off against this month here.`, tone: 'warn' };
+  })();
 
   const reconciliation = useMemo(() => {
     if (!ledger) return [];
@@ -486,8 +523,8 @@ const AdvancesPage: React.FC = () => {
             <KpiTile
               label="Table 11B to report"
               value={<>₹{inr(recorded11B.taxable)}</>}
-              tone={!legsThisMonth.length ? 'neutral' : draftState === 'In the GSTR-1 draft' ? 'ok' : 'warn'}
-              hint={[`Recorded · ${selectedMonth}`, legsThisMonth.length ? draftState : null, allocTotal > 0 ? `+ ₹${inr(allocTotal)} to record` : null].filter(Boolean).join(' · ')}
+              tone={draftState?.tone ?? 'neutral'}
+              hint={[draftState?.short ?? `Recorded · ${selectedMonth}`, allocTotal > 0 ? `+ ₹${inr(allocTotal)} to record` : null].filter(Boolean).join(' · ')}
             />
           </TileButton>
           {canApprove && (
@@ -774,17 +811,19 @@ const AdvancesPage: React.FC = () => {
                 reaches GSTR-1 only when written to the draft. */}
             <SectionCard
               className="mt-3"
-              title={`Set-offs recorded against ${selectedMonth} (Table 11B)`}
-              description={legsThisMonth.length
-                ? <>These become Table 11B of the {selectedMonth} GSTR-1 once written to its draft.{draftState ? <> <span className="font-medium text-foreground">{draftState}.</span></> : null}</>
-                : <>Nothing set off against {selectedMonth} yet.</>}
-              actions={legsThisMonth.length > 0 && (
-                <Button variant="outline" size="sm" className={WS_BTN} onClick={writeToGstr1} disabled={!canEdit}>
-                  Write Table 11B to GSTR-1 draft
-                </Button>
-              )}
+              title={`Recorded set-offs · ${selectedMonth}`}
+              description={<>
+                {legsThisMonth.length ? `Table 11B of the ${selectedMonth} GSTR-1 is built from these.` : `Nothing set off against ${selectedMonth} yet.`}
+                {draftState ? <> <span className="font-medium text-foreground">{draftState.long}</span></> : null}
+              </>}
             >
               {legsThisMonth.length > 0 && (
+                <div className="space-y-2.5">
+                <div className="flex justify-end">
+                  <Button variant="outline" size="sm" className={WS_BTN} onClick={writeToGstr1} disabled={!canEdit}>
+                    Write Table 11B to GSTR-1 draft
+                  </Button>
+                </div>
                 <Table className={WS_TABLE} containerClassName={TABLE_WRAP}>
                   <TableHeader>
                     <TableRow className="border-0 hover:bg-transparent">
@@ -801,9 +840,9 @@ const AdvancesPage: React.FC = () => {
                   <TableBody>
                     {legsThisMonth.map(({ leg, receipt }) => (
                       <TableRow key={leg.id} className={TR}>
-                        <TableCell className={`${WS_TD} font-medium`}>{receipt.receipt_no || '—'}</TableCell>
+                        <TableCell className={`${WS_TD} whitespace-nowrap font-medium`}>{receipt.receipt_no || '—'}</TableCell>
                         <TableCell className={WS_TD}>{leg.invoice_no || '—'}</TableCell>
-                        <TableCell className={`${WS_TD} max-w-[180px] truncate`}>{receipt.party_name || receipt.party_gstin || '—'}</TableCell>
+                        <TableCell className={`${WS_TD} max-w-[180px] truncate`} title={receipt.party_name || receipt.party_gstin || undefined}>{receipt.party_name || receipt.party_gstin || '—'}</TableCell>
                         <TableCell className={`${WS_TD} whitespace-nowrap`}>{receipt.pos} @ {receipt.rate_pct}%</TableCell>
                         <TableCell className={WS_TD_NUM}>{inr(Number(leg.taxable_value_adjusted))}</TableCell>
                         <TableCell className={WS_TD_NUM}>{inr(Number(leg.igst))}</TableCell>
@@ -820,6 +859,7 @@ const AdvancesPage: React.FC = () => {
                     </TableRow>
                   </TableBody>
                 </Table>
+                </div>
               )}
             </SectionCard>
           </TabsContent>
