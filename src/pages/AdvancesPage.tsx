@@ -31,7 +31,7 @@ import {
 import {
   fetchRegister, receiptPositions, registerClosingByKey, reconcileRegister,
   suggestAllocation, buildTxpdFromLegs, saveReceipt, deleteReceipt, saveAdjustments,
-  receiptKey, taxForRate,
+  receiptKey, taxForRate, effectiveLegs,
   type AdvanceReceipt, type ReceiptPosition, type RegisterData,
 } from '@/lib/advanceRegister';
 import ReceiptFormDialog from '@/components/advances/ReceiptFormDialog';
@@ -158,12 +158,43 @@ const AdvancesPage: React.FC = () => {
     [register],
   );
   const openPositions = useMemo(() => positions.filter((p) => p.open > 0), [positions]);
-  // This period's Table 11B from the legs already recorded; it still has to be
-  // written to the GSTR-1 draft once the last open advance is set off.
-  const txpdThisMonth = useMemo(
-    () => (selectedMonth ? buildTxpdFromLegs(register.receipts, register.adjustments, selectedMonth) : []),
-    [register, selectedMonth],
-  );
+  // The set-offs already recorded against this period: what buildTxpdFromLegs
+  // turns into Table 11B (invoice legs on services; goods carry no tax on
+  // advances, so no 11B). They stay listed after the last open advance closes,
+  // since they still have to be written to the GSTR-1 draft.
+  const legsThisMonth = useMemo(() => {
+    const byId = new Map(register.receipts.map((r) => [r.id, r]));
+    return effectiveLegs(register.adjustments)
+      .filter((a) => a.reason === 'INVOICE' && a.period_month === selectedMonth)
+      .map((a) => ({ leg: a, receipt: byId.get(a.receipt_id) }))
+      .filter((x): x is { leg: typeof x.leg; receipt: AdvanceReceipt } => !!x.receipt && x.receipt.supply_nature !== 'GOODS');
+  }, [register, selectedMonth]);
+  const recorded11B = useMemo(() => legsThisMonth.reduce((t, { leg }) => ({
+    taxable: r2(t.taxable + (Number(leg.taxable_value_adjusted) || 0)),
+    igst: r2(t.igst + (Number(leg.igst) || 0)),
+    cgst: r2(t.cgst + (Number(leg.cgst) || 0)),
+    sgst: r2(t.sgst + (Number(leg.sgst) || 0)),
+  }), { taxable: 0, igst: 0, cgst: 0, sgst: 0 }), [legsThisMonth]);
+
+  // What this period's GSTR-1 draft holds in Table 11B now: null while
+  // loading, 'none' without a draft, else its total adjusted value.
+  const [draft11B, setDraft11B] = useState<number | 'none' | null>(null);
+  const refreshDraft11B = useCallback(async () => {
+    if (!selectedClient || !selectedMonth) { setDraft11B(null); return; }
+    const { data, error } = await supabase.from('gstr1_data').select('raw_json')
+      .eq('client_id', selectedClient).eq('period_month', mmYyyyToShort(selectedMonth)).maybeSingle();
+    if (error) { setDraft11B(null); return; }
+    if (!data) { setDraft11B('none'); return; }
+    const txpd = ((data as { raw_json?: { txpd?: unknown } }).raw_json?.txpd);
+    const groups = Array.isArray(txpd) ? (txpd as { itms?: { ad_amt?: unknown }[] }[]) : [];
+    setDraft11B(r2(groups.reduce((t, g) => t + (g.itms || []).reduce((u, i) => u + (Number(i.ad_amt) || 0), 0), 0)));
+  }, [selectedClient, selectedMonth]);
+  useEffect(() => { refreshDraft11B(); }, [refreshDraft11B, register]);
+  const draftState = draft11B === null ? null
+    : draft11B === 'none' ? 'No GSTR-1 draft for this month yet'
+    : Math.abs(draft11B - recorded11B.taxable) < 0.5 ? (recorded11B.taxable > 0 ? 'In the GSTR-1 draft' : null)
+    : draft11B === 0 ? 'Not yet in the GSTR-1 draft'
+    : `GSTR-1 draft has ₹${inr(draft11B)}, write again`;
 
   const reconciliation = useMemo(() => {
     if (!ledger) return [];
@@ -300,6 +331,7 @@ const AdvancesPage: React.FC = () => {
       .eq('client_id', selectedClient).eq('period_month', shortMonth);
     if (error) { toast.error(`Could not write to the draft: ${error.message}`); return; }
     toast.success('Table 11B written to the GSTR-1 draft.');
+    refreshDraft11B();
   };
 
   // ── Working papers (docs/ADVANCE_SETOFF_POSITIONS.md §8) ────────────────
@@ -451,7 +483,12 @@ const AdvancesPage: React.FC = () => {
             />
           </TileButton>
           <TileButton active={tab === 'setoff'} onClick={() => goTo('setoff')} title="Open the set-off workspace">
-            <KpiTile label="Table 11B to report" value={<>₹{inr(allocTotal)}</>} hint={`Set off now · ${selectedMonth}`} />
+            <KpiTile
+              label="Table 11B to report"
+              value={<>₹{inr(recorded11B.taxable)}</>}
+              tone={!legsThisMonth.length ? 'neutral' : draftState === 'In the GSTR-1 draft' ? 'ok' : 'warn'}
+              hint={[`Recorded · ${selectedMonth}`, legsThisMonth.length ? draftState : null, allocTotal > 0 ? `+ ₹${inr(allocTotal)} to record` : null].filter(Boolean).join(' · ')}
+            />
           </TileButton>
           {canApprove && (
             <TileButton active={tab === 'approvals'} onClick={() => goTo('approvals')} title="Open override approvals">
@@ -677,17 +714,7 @@ const AdvancesPage: React.FC = () => {
               </div>
 
               {openPositions.length === 0 ? (
-                <>
-                  <TableEmptyState title="No open advances in the register for this client." />
-                  {txpdThisMonth.length > 0 && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2.5">
-                      <span className="text-xs text-muted-foreground">Set-offs recorded against {selectedMonth} go into the GSTR-1 draft as Table 11B.</span>
-                      <Button variant="outline" size="sm" className={WS_BTN} onClick={writeToGstr1} disabled={!canEdit}>
-                        Write Table 11B to GSTR-1 draft
-                      </Button>
-                    </div>
-                  )}
-                </>
+                <TableEmptyState title={legsThisMonth.length ? 'No advance left open: every receipt is set off.' : 'No open advances in the register for this client.'} />
               ) : (
                 <>
                   <Table className={WS_TABLE} containerClassName={TABLE_WRAP}>
@@ -731,20 +758,68 @@ const AdvancesPage: React.FC = () => {
 
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2.5">
                     <div className="text-xs">
-                      <span className="text-muted-foreground">Table 11B to report this month: </span>
+                      <span className="text-muted-foreground">Set off now: </span>
                       <span className="text-sm font-semibold tabular-nums text-primary">₹{inr(allocTotal)}</span>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="outline" size="sm" className={WS_BTN} onClick={writeToGstr1} disabled={!canEdit}>
-                        Write Table 11B to GSTR-1 draft
-                      </Button>
-                      <Button size="sm" className={WS_BTN} onClick={recordSetoff} disabled={!canEdit || applying || allocTotal <= 0}>
-                        {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                        Record set-off
-                      </Button>
-                    </div>
+                    <Button size="sm" className={WS_BTN} onClick={recordSetoff} disabled={!canEdit || applying || allocTotal <= 0}>
+                      {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      Record set-off
+                    </Button>
                   </div>
                 </>
+              )}
+            </SectionCard>
+
+            {/* What is recorded against this period, open advances or not: it
+                reaches GSTR-1 only when written to the draft. */}
+            <SectionCard
+              className="mt-3"
+              title={`Set-offs recorded against ${selectedMonth} (Table 11B)`}
+              description={legsThisMonth.length
+                ? <>These become Table 11B of the {selectedMonth} GSTR-1 once written to its draft.{draftState ? <> <span className="font-medium text-foreground">{draftState}.</span></> : null}</>
+                : <>Nothing set off against {selectedMonth} yet.</>}
+              actions={legsThisMonth.length > 0 && (
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={writeToGstr1} disabled={!canEdit}>
+                  Write Table 11B to GSTR-1 draft
+                </Button>
+              )}
+            >
+              {legsThisMonth.length > 0 && (
+                <Table className={WS_TABLE} containerClassName={TABLE_WRAP}>
+                  <TableHeader>
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableHead className={TH}>Receipt</TableHead>
+                      <TableHead className={TH}>Invoice</TableHead>
+                      <TableHead className={TH}>Party</TableHead>
+                      <TableHead className={TH}>POS / Rate</TableHead>
+                      <TableHead className={`${TH} text-right`}>Adjusted</TableHead>
+                      <TableHead className={`${TH} text-right`}>IGST</TableHead>
+                      <TableHead className={`${TH} text-right`}>CGST</TableHead>
+                      <TableHead className={`${TH} text-right`}>SGST</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {legsThisMonth.map(({ leg, receipt }) => (
+                      <TableRow key={leg.id} className={TR}>
+                        <TableCell className={`${WS_TD} font-medium`}>{receipt.receipt_no || '—'}</TableCell>
+                        <TableCell className={WS_TD}>{leg.invoice_no || '—'}</TableCell>
+                        <TableCell className={`${WS_TD} max-w-[180px] truncate`}>{receipt.party_name || receipt.party_gstin || '—'}</TableCell>
+                        <TableCell className={`${WS_TD} whitespace-nowrap`}>{receipt.pos} @ {receipt.rate_pct}%</TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(Number(leg.taxable_value_adjusted))}</TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(Number(leg.igst))}</TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(Number(leg.cgst))}</TableCell>
+                        <TableCell className={WS_TD_NUM}>{inr(Number(leg.sgst))}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow className={`${TR} font-semibold`}>
+                      <TableCell className={WS_TD} colSpan={4}>Total</TableCell>
+                      <TableCell className={WS_TD_NUM}>{inr(recorded11B.taxable)}</TableCell>
+                      <TableCell className={WS_TD_NUM}>{inr(recorded11B.igst)}</TableCell>
+                      <TableCell className={WS_TD_NUM}>{inr(recorded11B.cgst)}</TableCell>
+                      <TableCell className={WS_TD_NUM}>{inr(recorded11B.sgst)}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
               )}
             </SectionCard>
           </TabsContent>
