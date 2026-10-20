@@ -336,7 +336,8 @@ export function gstr1OutputTax(gstr1Raw: unknown, periodMonth: string, alreadyFi
 //   UIN holders: b2b invoices to a UIN (GSTN's UIN format) at a place of
 //     supply outside the supplier's state, and their cdnr notes (signed).
 //   Composition dealers: GSTR-1 does not say who is one, so this stays
-//     empty; interB2b counts the invoices it could hold, for the caller's flag.
+//     empty. The portal fills that row itself from GSTR-1 (TISHA 10/2025
+//     filed comp_details it computed), so no flag is raised for it.
 interface PosRow { pos: string; txval: number; iamt: number }
 function computeInterSup(g: Gj | null, homeState: string) {
   const make = () => {
@@ -460,12 +461,6 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   // the first two digits of its GSTIN.
   const homeState = /^\d{2}/.test(input.gstin || '') ? input.gstin.slice(0, 2) : '';
   const inter = computeInterSup(g, homeState);
-  if (inter.interB2b) {
-    flags.push(
-      `Table 3.2 supplies to composition dealers is left empty: GSTR-1 does not show which buyers are composition dealers. ` +
-      `If any of this month's ${inter.interB2b} inter-state B2B invoice(s) went to one, enter it on the portal.`
-    );
-  }
 
   // ---- GSTR-3B Adjustments module — fold mapped rows into the relevant
   // Table 3.1 / Table 4 bucket before anything downstream (totalLiability,

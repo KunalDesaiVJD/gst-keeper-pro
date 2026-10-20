@@ -135,7 +135,10 @@ const draftProblems = (json: unknown): string[] => {
   const walk = (v: unknown, path: string[]) => {
     if (typeof v === 'number') {
       if (!Number.isFinite(v)) out.push(`${draftCell(path)} is not a number`);
-      else if (v < 0 && (path[0] === 'sup_details' || path[0] === 'itc_elg') && path[1] !== 'itc_net') {
+      // 3.1(b) may be minus: a month whose SEZ / export credit notes outweigh
+      // its zero-rated supplies, as the portal itself files (ACCURATE 03/2026,
+      // MICROCIRCUITS 07/2025). Every other row stays refused below zero.
+      else if (v < 0 && (path[0] === 'sup_details' || path[0] === 'itc_elg') && path[1] !== 'itc_net' && path[1] !== 'osup_zero') {
         out.push(`${draftCell(path)} is negative (₹${inr(v)})`);
       }
     } else if (Array.isArray(v)) {

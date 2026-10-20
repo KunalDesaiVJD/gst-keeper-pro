@@ -9,7 +9,7 @@
 //    a credit note takes off, a debit note adds;
 //  - the draft (src/utils/buildGstr3bJson.ts): 3.1(a) to (e) on a fixture
 //    holding every kind, export cess in 3.1(b), Table 3.2 (unregistered
-//    persons with B2CL notes, UIN holders, the composition flag), total
+//    persons with B2CL notes, UIN holders; no composition flag), total
 //    liability = 3.1(a) + (b) + (d), amendments flagged and never folded
 //    (a Table 10 re-rating difference folded), reverse charge value only;
 //  - output tax (computeGstr1OutputTax, the credit closing report, the GST
@@ -283,7 +283,7 @@ await run('draft Table 3.2', async () => {
   const uin07 = (inter.uin_details || []).find((r) => r.pos === '07');
   check(g, 'UIN holders: the UN body invoice less its credit note', (inter.uin_details || []).length === 1 && sameHeads(uin07, EXPECT.uin07), J(inter.uin_details));
   check(g, 'no zero rated row (SEZ, export) in any 3.2 row', ![...inter.unreg_details, ...(inter.uin_details || [])].some((r) => r.pos === '24' || r.pos === '96'), J(inter));
-  check(g, 'composition rows: empty, and flagged (2 inter-state B2B invoices: R-1 and DE-1)', (inter.comp_details || []).length === 0 && res.flags.some((f) => /composition/.test(f) && /\b2 inter-state/.test(f)), J(res.flags));
+  check(g, 'composition rows: empty and not flagged (the portal fills them from GSTR-1)', (inter.comp_details || []).length === 0 && !res.flags.some((f) => /composition/.test(f)), J(res.flags));
   const intra = draft({ b2b: [{ ctin: '24DDDDD3333D1Z5', inv: [inv('I-1', { pos: '24' }, [{ txval: 1000, camt: 90, samt: 90 }])] }] });
   check(g, 'no composition flag for an intra-state month', !intra.flags.some((f) => /composition/.test(f)), J(intra.flags));
 });
@@ -466,6 +466,16 @@ await run('GSTR-3B version diff', async () => {
   const next = { sup_details: {}, inter_sup: { unreg_details: [], comp_details: [{ pos: '27', txval: 1000, iamt: 180 }], uin_details: [{ pos: '07', txval: 5000, iamt: 900 }] } };
   const rows = D.diffGstr3b(base, next);
   check(g, 'a change in Table 3.2 UIN and composition rows is shown', rows.some((r) => /UIN/.test(r.section) && r.kind === 'changed') && rows.some((r) => /composition/.test(r.section) && r.kind === 'added'), J(rows));
+});
+
+// ── 9. The push check lets a minus 3.1(b) through ───────────────────────────
+// The portal files a minus 3.1(b) itself when SEZ / export credit notes
+// outweigh the month's zero-rated supplies; every other row stays refused.
+await run('push check', async () => {
+  const g = 'push check';
+  const page = fs.readFileSync(path.join(root, 'src/pages/Gstr3bPage.tsx'), 'utf8');
+  check(g, 'draftProblems exempts osup_zero (3.1(b)) from the minus check, and only it',
+    page.includes("path[1] !== 'itc_net' && path[1] !== 'osup_zero'") && (page.match(/osup_zero'/g) || []).length >= 1);
 });
 
 // ── Report ──────────────────────────────────────────────────────────────────
