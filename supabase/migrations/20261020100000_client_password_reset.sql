@@ -21,7 +21,12 @@
 --    e-mail, a failed or lost e-mail, or a request refused by a limit (with
 --    no link still open to the address on record) files one pending
 --    password_reset_requests row for staff. Its note never names the e-mail
---    address or the reason. A link that does go out answers that request.
+--    address or the reason. A link that does go out, to the address on
+--    record, answers that request.
+--  * A link is good only while every address it went to is still on record:
+--    changing clients.email voids links to an address no longer there (a
+--    trigger; staff asked if one was still live), the mailer never mints a
+--    token for one, and the reset page refuses one.
 --  * A link not claimed, or claimed and not sent, within 15 minutes is lost:
 --    voided, logged, staff asked. pg_cron checks every 5 minutes (and wakes
 --    the mailer again for links still waiting); a request or a claim checks
@@ -32,7 +37,9 @@
 --  * staff_set_client_password: any staff level (superadmin, GST Manager, any
 --    employee, no permission key needed); logged; voids open links.
 --  * Locks: whatever changes a client's links takes that client's advisory
---    lock first; the sweep only tries it, so it never waits.
+--    lock first; the sweep and the claim only try it, so they never wait.
+--    Whatever also locks the clients row locks it before the advisory lock
+--    (an e-mail change holds the row when its trigger takes the lock).
 --
 -- Safe to re-run.
 
@@ -90,7 +97,7 @@ ALTER TABLE public.client_password_reset_attempts
   ADD CONSTRAINT client_password_reset_attempts_outcome_check
   CHECK (outcome IN ('queued', 'no_client', 'no_email', 'rate_limited', 'staff_request', 'invalid'));
 COMMENT ON COLUMN public.client_password_reset_attempts.outcome IS
-  'queued: a link queued. no_email: no usable address, staff asked. rate_limited: refused, a recent link is still open (or, with no client, the address limit). staff_request: refused by a limit, staff asked instead. no_client, invalid.';
+  'queued: a link queued. no_email: no usable address, staff asked. rate_limited: refused by a limit, a link to the address on record is still open (or, with no client, the address limit). staff_request: refused by a limit, staff asked instead. no_client, invalid.';
 CREATE INDEX IF NOT EXISTS idx_client_password_reset_attempts_at ON public.client_password_reset_attempts (at);
 CREATE INDEX IF NOT EXISTS idx_client_password_reset_attempts_ip ON public.client_password_reset_attempts (ip, at) WHERE ip IS NOT NULL;
 
@@ -108,11 +115,14 @@ CREATE TABLE IF NOT EXISTS public.client_password_log (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   at         timestamptz NOT NULL DEFAULT now(),
   client_id  uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
-  action     text NOT NULL CHECK (action IN ('staff_reset', 'link_queued', 'link_sent', 'link_failed', 'link_used', 'fallback_request')),
+  action     text NOT NULL,
   actor_id   uuid,
   actor_name text,
   detail     text
 );
+ALTER TABLE public.client_password_log DROP CONSTRAINT IF EXISTS client_password_log_action_check;
+ALTER TABLE public.client_password_log ADD CONSTRAINT client_password_log_action_check
+  CHECK (action IN ('staff_reset', 'link_queued', 'link_sent', 'link_failed', 'link_voided', 'link_used', 'fallback_request'));
 CREATE INDEX IF NOT EXISTS idx_client_password_log_client ON public.client_password_log (client_id, at DESC);
 ALTER TABLE public.client_password_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "app read client_password_log" ON public.client_password_log;
@@ -151,6 +161,22 @@ AS $$
          || CASE WHEN cardinality(l) > 1 THEN ' + ' || (cardinality(l) - 1) || ' more' ELSE '' END
   END
   FROM (SELECT public.client_email_list(p_email) AS l) s
+$$;
+
+-- Did a link go only to addresses still on record? p_sent_to is the link's
+-- sent_to, p_email the client's clients.email now. Case, separators and order
+-- do not matter, and an address added since does not either; a link that
+-- went to an address staff have since removed or replaced is no longer the
+-- client's (a mistyped domain, an ex-accountant).
+CREATE OR REPLACE FUNCTION public.client_password_sent_to_current(p_sent_to text, p_email text)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT cardinality(public.client_email_list(p_sent_to)) > 0
+     AND NOT EXISTS (
+       SELECT 1 FROM unnest(public.client_email_list(p_sent_to)) AS s(e)
+        WHERE lower(s.e) <> ALL (SELECT lower(x.e) FROM unnest(public.client_email_list(p_email)) AS x(e)))
 $$;
 
 -- The rules a client's own new password must meet (mirrored in
@@ -255,7 +281,7 @@ CREATE OR REPLACE FUNCTION public.client_password_staff_note()
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
-AS $$ SELECT 'Asked for a reset link; none went out. Edit Client shows why.'::text $$;
+AS $$ SELECT 'Asked for a reset link; none reached the client. Edit Client shows why.'::text $$;
 
 -- One pending request for staff per client (the Dashboard). p_why goes to the
 -- private log only; the open request carries a fixed note. True when filed.
@@ -284,9 +310,9 @@ $$;
 
 -- Is a link still on its way to the client, or in their mailbox and good?
 -- (Waiting to be claimed for under 15 minutes, being sent for under 15
--- minutes, or sent and not expired; never used, voided or failed; and sent to
--- the address on record now, since a link to an address staff have since
--- corrected is no help to the client.)
+-- minutes, or sent and not expired; never used, voided or failed; and sent
+-- only to addresses on record now, since a link to an address staff have
+-- since corrected is no help to the client.)
 CREATE OR REPLACE FUNCTION public.client_password_has_open_link(p_client_id uuid)
 RETURNS boolean
 LANGUAGE sql
@@ -299,7 +325,7 @@ AS $$
       JOIN public.clients c ON c.id = r.client_id
      WHERE r.client_id = p_client_id
        AND r.used_at IS NULL AND r.voided_at IS NULL AND r.send_error IS NULL
-       AND lower(r.sent_to) = lower(array_to_string(public.client_email_list(c.email), ', '))
+       AND public.client_password_sent_to_current(r.sent_to, c.email)
        AND (   (r.claimed_at IS NULL AND r.created_at > now() - interval '15 minutes')
             OR (r.sent_at IS NULL AND r.claimed_at > now() - interval '15 minutes')
             OR (r.sent_at IS NOT NULL AND r.expires_at > now())))
@@ -402,6 +428,58 @@ BEGIN
 END;
 $$;
 
+-- ── The client's e-mail address changes (Edit Client, any update) ─────────
+-- Links that went, or would go, to an address no longer on record are voided
+-- and logged: whoever holds the old mailbox must not be able to use one. If
+-- one of them was still live (on its way, or sent and not expired) and no
+-- link to the address on record is open, staff are asked, so a client who
+-- asked is not left with nothing. The row is already locked by the update;
+-- the client's advisory lock comes second (see Locks above).
+CREATE OR REPLACE FUNCTION public.client_password_email_changed()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE r record; v_live boolean := false;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || NEW.id::text, 0));
+  FOR r IN
+    SELECT x.id, x.email_hint,
+           x.send_error IS NULL AND (
+                (x.claimed_at IS NULL AND x.created_at > now() - interval '15 minutes')
+             OR (x.sent_at IS NULL AND x.claimed_at > now() - interval '15 minutes')
+             OR (x.sent_at IS NOT NULL AND x.expires_at > now())) AS live
+      FROM public.client_password_resets x
+     WHERE x.client_id = NEW.id AND x.used_at IS NULL AND x.voided_at IS NULL
+       AND NOT public.client_password_sent_to_current(x.sent_to, NEW.email)
+     ORDER BY x.created_at
+     FOR UPDATE
+  LOOP
+    UPDATE public.client_password_resets x
+       SET voided_at = now(), void_reason = 'the e-mail address changed'
+     WHERE x.id = r.id;
+    v_live := v_live OR r.live;
+    INSERT INTO public.client_password_log (client_id, action, detail)
+    VALUES (NEW.id, 'link_voided',
+            'The e-mail address on record changed, so the reset link to ' || COALESCE(r.email_hint, 'the old address')
+            || ' was voided.');
+  END LOOP;
+  IF v_live AND NOT public.client_password_has_open_link(NEW.id) THEN
+    PERFORM public.client_password_staff_request(NEW.id,
+      'The e-mail address changed while a reset link was open, so the link was voided.');
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS client_password_email_changed ON public.clients;
+CREATE TRIGGER client_password_email_changed
+  AFTER UPDATE OF email ON public.clients
+  FOR EACH ROW
+  WHEN (OLD.email IS DISTINCT FROM NEW.email)
+  EXECUTE FUNCTION public.client_password_email_changed();
+
 -- ── 1. A client asks for a link (login page / client dashboard) ────────────
 -- One client the request reached (the GSTIN, or one of the clients sharing a
 -- User ID): queue a link, or say why not. Returns the attempt's outcome.
@@ -427,8 +505,12 @@ BEGIN
   -- asked), so a retry never voids it unreported as "a newer link".
   PERFORM public.client_password_reset_sweep_client(p_client_id);
 
-  -- Per address: refused, so staff are asked instead.
+  -- Per address: refused. A link already on its way or in the client's
+  -- mailbox (to the address on record) is enough; otherwise staff are asked.
   IF p_address_limited THEN
+    IF public.client_password_has_open_link(p_client_id) THEN
+      RETURN 'rate_limited';
+    END IF;
     PERFORM public.client_password_staff_request(p_client_id,
       'Asked for a reset link, but too many requests came from the same address this hour.');
     RETURN 'staff_request';
@@ -452,8 +534,12 @@ BEGIN
     RETURN 'staff_request';
   END IF;
 
-  -- All clients: 300 links an hour (the firm has about 130 clients).
+  -- All clients: 300 links an hour (the firm has about 130 clients). Refused
+  -- the same way: nothing more with a link open, staff asked without one.
   IF (SELECT count(*) FROM public.client_password_resets r WHERE r.created_at > now() - interval '1 hour') >= 300 THEN
+    IF public.client_password_has_open_link(p_client_id) THEN
+      RETURN 'rate_limited';
+    END IF;
     PERFORM public.client_password_staff_request(p_client_id,
       'Asked for a reset link, but the hourly limit for all clients was reached.');
     RETURN 'staff_request';
@@ -557,6 +643,7 @@ DECLARE
   -- every other app table) can be changed with the anon key, and a link to
   -- another site would hand it a working token.
   c_base  constant text := 'https://gst.vjdesai.com';
+  v       record;
   v_id    uuid;
   v_token text;
 BEGIN
@@ -564,14 +651,41 @@ BEGIN
   PERFORM public.client_password_reset_sweep();
 
   -- (Waiting for under 15 minutes; an older one has just been given up.)
-  FOR v_id IN
-    SELECT r.id FROM public.client_password_resets r
+  FOR v IN
+    SELECT r.id, r.client_id, r.email_hint,
+           public.client_password_sent_to_current(r.sent_to, c.email) AS to_record
+      FROM public.client_password_resets r
+      JOIN public.clients c ON c.id = r.client_id
      WHERE r.claimed_at IS NULL AND r.voided_at IS NULL AND r.used_at IS NULL
        AND r.created_at > now() - interval '15 minutes'
      ORDER BY r.created_at
      LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 10), 50))
-     FOR UPDATE SKIP LOCKED
+     FOR UPDATE OF r SKIP LOCKED
   LOOP
+    v_id := v.id;
+    IF NOT v.to_record THEN
+      -- The address on record changed after this link was asked for (the
+      -- e-mail trigger voids such links; this catches one queued in the same
+      -- moment). No token for an address that is no longer the client's: the
+      -- link is voided, logged, and staff asked unless another is on its way.
+      -- A client busy right now is left to the next claim.
+      CONTINUE WHEN NOT pg_try_advisory_xact_lock(hashtextextended('client_password_reset:' || v.client_id::text, 0));
+      UPDATE public.client_password_resets r
+         SET voided_at = now(), void_reason = 'the e-mail address changed'
+       WHERE r.id = v_id AND r.claimed_at IS NULL AND r.voided_at IS NULL AND r.used_at IS NULL
+         AND NOT public.client_password_sent_to_current(
+               r.sent_to, (SELECT c.email FROM public.clients c WHERE c.id = r.client_id));
+      CONTINUE WHEN NOT FOUND;
+      INSERT INTO public.client_password_log (client_id, action, detail)
+      VALUES (v.client_id, 'link_voided',
+              'The e-mail address on record changed before the reset link to ' || COALESCE(v.email_hint, 'the old address')
+              || ' was sent, so it was voided.');
+      IF NOT public.client_password_has_open_link(v.client_id) THEN
+        PERFORM public.client_password_staff_request(v.client_id,
+          'The e-mail address changed before the reset link was sent.');
+      END IF;
+      CONTINUE;
+    END IF;
     v_token := encode(gen_random_bytes(32), 'hex');
     UPDATE public.client_password_resets r
        SET token_hash = encode(digest(v_token, 'sha256'), 'hex'),
@@ -595,25 +709,35 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, extensions
 AS $$
-DECLARE v record; v_cid uuid; v_hint text; v_closed integer := 0;
+DECLARE v record; v_cid uuid; v_hint text; v_closed integer := 0; v_moved boolean;
 BEGIN
   SELECT r.client_id INTO v_cid FROM public.client_password_resets r WHERE r.id = p_reset_id;
   IF v_cid IS NULL THEN RETURN; END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || v_cid::text, 0));
   SELECT r.id, r.client_id, r.email_hint, r.requested_by, r.requested_by_name, r.via, r.used_at,
-         r.voided_at, r.void_reason
+         r.voided_at, r.void_reason, r.sent_to
     INTO v
     FROM public.client_password_resets r
    WHERE r.id = p_reset_id
    FOR UPDATE;
   v_hint := COALESCE(v.email_hint, 'the client');
+  -- Did it go to an address staff have since removed or replaced?
+  v_moved := NOT public.client_password_sent_to_current(
+               v.sent_to, (SELECT c.email FROM public.clients c WHERE c.id = v.client_id));
 
   IF p_error IS NULL THEN
     UPDATE public.client_password_resets SET sent_at = now(), send_error = NULL WHERE id = p_reset_id;
-    -- A good link is now in the client's mailbox. A request filed for staff
-    -- because none went out earlier is answered by it, and acting on that
-    -- request (a password, another link) would void the link the client holds.
-    IF v.used_at IS NULL AND v.voided_at IS NULL THEN
+    IF v.used_at IS NULL AND v.voided_at IS NULL AND v_moved THEN
+      -- In a mailbox that is no longer the client's: it must not work there,
+      -- and it answers nothing. Staff are asked unless another link is open.
+      UPDATE public.client_password_resets
+         SET voided_at = now(), void_reason = 'the e-mail address changed'
+       WHERE id = p_reset_id;
+    ELSIF v.used_at IS NULL AND v.voided_at IS NULL THEN
+      -- A good link is now in the client's mailbox, at the address on record.
+      -- A request filed for staff because none reached the client is answered
+      -- by it, and acting on that request (a password, another link) would
+      -- void the link the client holds.
       UPDATE public.password_reset_requests q
          SET status = 'resolved', resolved_at = now()
        WHERE q.user_id = v.client_id AND q.status = 'pending'
@@ -625,9 +749,16 @@ BEGIN
             'Reset link e-mailed to ' || v_hint || '.'
             || CASE WHEN v.used_at IS NULL AND v.voided_at IS NOT NULL
                     THEN ' It was already void (' || COALESCE(v.void_reason, 'voided') || '), so it does not work.'
+                    WHEN v.used_at IS NULL AND v_moved
+                    THEN ' That address is no longer on record, so the link was voided and does not work.'
                     ELSE '' END
             || CASE WHEN v_closed > 0 THEN ' The request waiting on the Dashboard was closed: this link answers it.'
                     ELSE '' END);
+    IF v.used_at IS NULL AND v.voided_at IS NULL AND v_moved
+       AND NOT public.client_password_has_open_link(v.client_id) THEN
+      PERFORM public.client_password_staff_request(v.client_id,
+        'The reset link went to an e-mail address that is no longer on record.');
+    END IF;
     RETURN;
   END IF;
 
@@ -665,11 +796,13 @@ BEGIN
   IF p_token IS NULL OR btrim(p_token) !~ '^[0-9a-f]{64}$' THEN
     RETURN jsonb_build_object('valid', false);
   END IF;
+  -- (A link that went to an address no longer on record is not good either.)
   SELECT r.expires_at, c.name, c.gstin INTO v
     FROM public.client_password_resets r
     JOIN public.clients c ON c.id = r.client_id
    WHERE r.token_hash = encode(digest(btrim(p_token), 'sha256'), 'hex')
-     AND r.used_at IS NULL AND r.voided_at IS NULL AND r.expires_at > now();
+     AND r.used_at IS NULL AND r.voided_at IS NULL AND r.expires_at > now()
+     AND public.client_password_sent_to_current(r.sent_to, c.email);
   IF NOT FOUND THEN
     RETURN jsonb_build_object('valid', false);
   END IF;
@@ -695,6 +828,7 @@ DECLARE
   v_voided  timestamptz;
   v_expires timestamptz;
   v_gstin   text;
+  v_current boolean;
   v_problem text;
 BEGIN
   IF p_token IS NOT NULL AND btrim(p_token) ~ '^[0-9a-f]{64}$' THEN
@@ -703,15 +837,22 @@ BEGIN
      WHERE r.token_hash = encode(digest(btrim(p_token), 'sha256'), 'hex');
   END IF;
   IF v_cid IS NOT NULL THEN
+    -- The clients row first, then the advisory lock (the order an e-mail
+    -- change takes them in), so the two never wait on each other.
+    PERFORM 1 FROM public.clients c WHERE c.id = v_cid FOR NO KEY UPDATE;
     PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || v_cid::text, 0));
-    SELECT r.id, r.used_at, r.voided_at, r.expires_at, c.gstin
-      INTO v_id, v_used, v_voided, v_expires, v_gstin
+    SELECT r.id, r.used_at, r.voided_at, r.expires_at, c.gstin,
+           public.client_password_sent_to_current(r.sent_to, c.email)
+      INTO v_id, v_used, v_voided, v_expires, v_gstin, v_current
       FROM public.client_password_resets r
       JOIN public.clients c ON c.id = r.client_id
      WHERE r.token_hash = encode(digest(btrim(p_token), 'sha256'), 'hex')
      FOR UPDATE OF r;
   END IF;
-  IF v_id IS NULL OR v_used IS NOT NULL OR v_voided IS NOT NULL OR v_expires IS NULL OR v_expires <= now() THEN
+  -- A link that went to an address no longer on record does not work: its
+  -- mailbox is not the client's any more.
+  IF v_id IS NULL OR v_used IS NOT NULL OR v_voided IS NOT NULL OR v_expires IS NULL OR v_expires <= now()
+     OR v_current IS NOT TRUE THEN
     RAISE EXCEPTION 'This link is invalid or has expired. Ask for a new one from the login page.'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
@@ -763,6 +904,8 @@ BEGIN
   END IF;
 
   IF p_client_id IS NOT NULL THEN
+    -- The clients row first, then the advisory lock (as an e-mail change).
+    PERFORM 1 FROM public.clients c WHERE c.id = p_client_id FOR NO KEY UPDATE;
     PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || p_client_id::text, 0));
   END IF;
   UPDATE public.clients
@@ -787,8 +930,12 @@ END;
 $$;
 
 -- ── 7. Staff: e-mail the client a reset link (any staff level) ─────────────
--- The same per-client limits bind every link, whoever asked: one a minute,
--- five an hour per client (staff and self together), 300 an hour in all.
+-- The same per-client limits bind every link, whoever asked: five an hour per
+-- client (staff and self together, every link asked for), 300 an hour in all.
+-- Links are a minute apart, counting only one that went out to an address
+-- still on record or is still on its way: a failed one, or one voided before
+-- it went (say, because staff just corrected the address), does not hold the
+-- next one back. Each error says what happened.
 CREATE OR REPLACE FUNCTION public.staff_send_client_reset_link(p_actor_id uuid, p_client_id uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -802,16 +949,21 @@ DECLARE
   v_emails text[];
   v_to     text;
   v_hint   text;
+  v_recent record;
 BEGIN
   IF p_actor_id IS NULL OR NOT EXISTS (
        SELECT 1 FROM public.user_roles ur
         WHERE ur.user_id = p_actor_id AND ur.role::text IN ('superadmin', 'gst_manager', 'employee')) THEN
     RAISE EXCEPTION 'Only a staff member can send a client a reset link.' USING ERRCODE = 'insufficient_privilege';
   END IF;
-  SELECT c.id, c.email INTO v_cid, v_email FROM public.clients c WHERE c.id = p_client_id;
+  SELECT c.id INTO v_cid FROM public.clients c WHERE c.id = p_client_id;
   IF v_cid IS NULL THEN
     RAISE EXCEPTION 'Client not found.' USING ERRCODE = 'no_data_found';
   END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || v_cid::text, 0));
+  -- The address is read under the lock, so an e-mail change that is saving
+  -- right now is either seen here or voids this link when it commits.
+  SELECT c.email INTO v_email FROM public.clients c WHERE c.id = v_cid;
   v_emails := public.client_email_list(v_email);
   IF cardinality(v_emails) = 0 THEN
     RAISE EXCEPTION 'This client has no e-mail address on record. Add one in Edit Client, or set a password instead.'
@@ -820,20 +972,30 @@ BEGIN
   v_to := array_to_string(v_emails, ', ');
   v_hint := public.client_email_hint(v_to);
 
-  PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || v_cid::text, 0));
   -- An earlier link that never went out is logged as lost, not voided as "a
   -- newer link" unreported. No staff request: staff are acting now.
   PERFORM public.client_password_reset_sweep_client(v_cid, false);
-  IF EXISTS (SELECT 1 FROM public.client_password_resets r
-              WHERE r.client_id = v_cid AND r.created_at > now() - interval '60 seconds') THEN
-    RAISE EXCEPTION 'A reset link went to this client less than a minute ago.' USING ERRCODE = 'check_violation';
+  SELECT r.sent_at IS NOT NULL AS sent INTO v_recent
+    FROM public.client_password_resets r
+   WHERE r.client_id = v_cid AND r.created_at > now() - interval '60 seconds'
+     AND r.send_error IS NULL
+     AND public.client_password_sent_to_current(r.sent_to, v_email)
+     AND (r.sent_at IS NOT NULL OR (r.used_at IS NULL AND r.voided_at IS NULL))
+   ORDER BY r.sent_at IS NOT NULL DESC, r.created_at DESC
+   LIMIT 1;
+  IF FOUND AND v_recent.sent THEN
+    RAISE EXCEPTION 'A reset link went to this client less than a minute ago. Try again in a minute, or set a password.'
+      USING ERRCODE = 'check_violation';
+  ELSIF FOUND THEN
+    RAISE EXCEPTION 'A reset link to this client is on its way. Try again in a minute, or set a password.'
+      USING ERRCODE = 'check_violation';
   END IF;
   IF (SELECT count(*) FROM public.client_password_resets r
        WHERE r.client_id = v_cid AND r.created_at > now() - interval '1 hour') >= 5 THEN
-    RAISE EXCEPTION 'Five reset links went to this client in the last hour. Set a password instead.' USING ERRCODE = 'check_violation';
+    RAISE EXCEPTION 'Five reset links were asked for this client in the last hour. Set a password instead.' USING ERRCODE = 'check_violation';
   END IF;
   IF (SELECT count(*) FROM public.client_password_resets r WHERE r.created_at > now() - interval '1 hour') >= 300 THEN
-    RAISE EXCEPTION 'Too many reset links went out in the last hour. Set a password instead.' USING ERRCODE = 'check_violation';
+    RAISE EXCEPTION 'Too many reset links were asked for in the last hour. Set a password instead.' USING ERRCODE = 'check_violation';
   END IF;
 
   SELECT p.first_name INTO v_name FROM public.profiles p WHERE p.user_id = p_actor_id LIMIT 1;
@@ -893,6 +1055,8 @@ REVOKE EXECUTE ON FUNCTION public.client_password_staff_request(uuid, text) FROM
 REVOKE EXECUTE ON FUNCTION public.client_password_has_open_link(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_request_ip() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_ip_key(text) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.client_password_sent_to_current(text, text) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.client_password_email_changed() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_claim(integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_mark(uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_ping() TO service_role;
@@ -905,6 +1069,7 @@ GRANT EXECUTE ON FUNCTION public.client_password_staff_request(uuid, text) TO se
 GRANT EXECUTE ON FUNCTION public.client_password_has_open_link(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_request_ip() TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_ip_key(text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.client_password_sent_to_current(text, text) TO service_role;
 
 GRANT EXECUTE ON FUNCTION public.client_password_reset_request(text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_check(text) TO anon, authenticated, service_role;

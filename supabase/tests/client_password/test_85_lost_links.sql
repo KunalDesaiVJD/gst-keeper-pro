@@ -36,7 +36,7 @@ SELECT t_eq((SELECT void_reason FROM client_password_resets WHERE id = :'r1'), '
 SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE user_id = 'c8500000-0000-0000-0000-000000000001' AND status = 'pending'),
   1::bigint, 'staff get a request');
 SELECT t_eq((SELECT note FROM password_reset_requests WHERE user_id = 'c8500000-0000-0000-0000-000000000001'),
-  'Asked for a reset link; none went out. Edit Client shows why.', 'the usual note');
+  'Asked for a reset link; none reached the client. Edit Client shows why.', 'the usual note');
 SELECT t_eq((SELECT detail FROM client_password_log WHERE client_id = 'c8500000-0000-0000-0000-000000000001' AND action = 'link_failed'),
   'The mailer stopped before the reset link for l•••@example.com was sent, so it was voided.', 'logged');
 SET LOCAL ROLE anon;

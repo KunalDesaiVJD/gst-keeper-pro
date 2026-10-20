@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { staffEmailResetLink, staffSetClientPassword } from '@/lib/clientPasswordReset';
 import { staffClientPasswordProblem } from '@/lib/passwordRules';
-import { resetLinkBlock } from '@/lib/clientResetLink';
+import { resetLinkAddresses, resetLinkBlock } from '@/lib/clientResetLink';
 
 export interface ResetClientTarget {
   id: string;
@@ -46,6 +46,8 @@ const ResetClientPasswordDialog: React.FC<Props> = ({ client, onOpenChange, onDo
   }, [client?.id]);
 
   const linkBlock = client ? resetLinkBlock({ saved: client.email, typed: client.typedEmail }) : null;
+  // Only the well-formed addresses: the ones the database sends the link to.
+  const linkTo = client ? resetLinkAddresses(client.email) : '';
   const tooShort = newPassword.length > 0 && !!staffClientPasswordProblem(newPassword);
   const mismatch = confirmPassword.length > 0 && newPassword !== confirmPassword;
 
@@ -109,7 +111,7 @@ const ResetClientPasswordDialog: React.FC<Props> = ({ client, onOpenChange, onDo
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                {linkBlock ?? <>The client chooses their own password. Goes to {client?.email}.</>}
+                {linkBlock ?? <>The client chooses their own password. Goes to {linkTo}.</>}
               </p>
             )}
             <Button

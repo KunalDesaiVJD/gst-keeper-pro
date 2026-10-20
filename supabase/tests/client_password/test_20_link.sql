@@ -139,7 +139,7 @@ SELECT t_eq((SELECT send_error || ' | ' || void_reason FROM client_password_rese
   'sendMail 503: try later | the e-mail could not be sent', 'failure recorded, link voided');
 SELECT t_eq(client_password_reset_check(:'t5') ->> 'valid', 'false', 'a link whose e-mail failed does not work');
 SELECT t_eq((SELECT note FROM password_reset_requests WHERE user_id = 'c2000000-0000-0000-0000-000000000002' AND status = 'pending'),
-  'Asked for a reset link; none went out. Edit Client shows why.', 'one staff request filed, without the address');
+  'Asked for a reset link; none reached the client. Edit Client shows why.', 'one staff request filed, without the address');
 SELECT t_eq((SELECT detail FROM client_password_log WHERE client_id = 'c2000000-0000-0000-0000-000000000002' AND action = 'link_failed'),
   'The reset link could not be e-mailed to b•••@example.com: sendMail 503: try later', 'failure logged, the address masked');
 

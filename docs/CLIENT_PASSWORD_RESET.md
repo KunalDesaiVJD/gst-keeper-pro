@@ -13,8 +13,8 @@ The positions below were engineering judgement, not a firm sign-off.
    GSTIN; otherwise every client with that User ID. A User ID several GSTINs share (two
    registrations of one PAN; it signs in to either) is a request for each of them, each
    under its own limits. For each client it queues a row in `client_password_resets`
-   addressed to `clients.email` (every well-formed address in it), or files a staff
-   request (below).
+   addressed to `clients.email` (every well-formed address in it: `client_email_list`,
+   mirrored in `src/lib/clientResetLink.ts`), or files a staff request (below).
 2. **Send.** The database wakes the Edge Function `client-password-reset` (pg_net, the
    Vault key `gst_cron_anon_key`); the app wakes it too. It calls
    `client_password_reset_claim` (service role only), which mints a 256-bit token, stores
@@ -54,6 +54,22 @@ The positions below were engineering judgement, not a firm sign-off.
 - **The link:** once, 60 minutes from sending; a newer request (or a staff reset) voids
   it; until it is used the current password keeps working. Using it voids every other
   open link and resolves waiting staff requests.
+- **A link follows the address on record.** It is good only while every address it went
+  to is still in `clients.email` (`client_password_sent_to_current`: case, separators and
+  order do not matter, and an address added since does not either). Staff replace an
+  address because the old one is not the client's (a mistyped domain, an ex-accountant),
+  so whoever reads the old mailbox must not be able to use a link there:
+  - changing `clients.email` (Edit Client, or any update) fires the trigger
+    `client_password_email_changed`, which voids every link to an address no longer on
+    record (`void_reason` "the e-mail address changed", logged as `link_voided`, masked)
+    and, if one of them was still live and no other link is open, files the staff
+    request;
+  - `client_password_reset_claim` never mints a token for such a link (one queued in the
+    same moment as the change): it voids it, logs it and asks staff instead;
+  - `client_password_reset_mark` reports one sent as voided and resolves nothing;
+  - `client_password_reset_check` / `_complete` refuse one, whatever its state.
+  The trigger takes the client's lock, so it and a request never cross; the claim,
+  mark and page checks are the backstop.
 - **Rate limits.** Per client: one link a minute; three of its own an hour; five an hour
   in all, its own and staff links together. Per caller address (the gateway's
   `cf-connecting-ip` / `x-real-ip` / `x-forwarded-for`): ten requests an hour, whatever
@@ -61,22 +77,25 @@ The positions below were engineering judgement, not a firm sign-off.
   address. All clients: 300 links an hour (the firm has about 130 clients).
 - **Never a silent drop.** A client is never left with neither a link nor staff help.
   One pending `password_reset_requests` row (never two) is filed for staff on the
-  Dashboard when: there is no usable e-mail; the per-address or all-clients limit refuses
-  the request; the per-client limit refuses it and no earlier link is still open (on its
-  way, or sent and not expired, and addressed to the e-mail on record now); the client's
-  live link fails to send and nothing else is on its way; or a link never goes out
-  (below). A request the per-client limit refuses while a link from a moment ago is still
-  open needs nothing more. A link that went to an address staff have since corrected does
-  not count as open: the client is not reading that mailbox.
+  Dashboard when: there is no usable e-mail; any limit (per client, per address, all
+  clients) refuses the request and no earlier link is still open (on its way, or sent and
+  not expired, and addressed to the e-mail on record now); the client's live link fails
+  to send and nothing else is on its way; a live link is voided because the address
+  changed; or a link never goes out (below). A request a limit refuses while a link is
+  still open needs nothing more: the client has a link, and a staff reset on a "none went
+  out" request would void it. A link that went to an address staff have since corrected
+  does not count as open: the client is not reading that mailbox.
 - **A failed send of a replaced link asks nobody.** When a link a newer one already
   replaced (or a reset, a sweep or another used link already voided) fails to send, the
   failure is logged and no staff request is filed: the newer link is the one that
   matters, and it reports its own failure.
-- **A link that goes out answers the request.** When a link is reported sent and still
-  good, the client's pending requests filed by this flow (the fixed note) are resolved,
-  and the log says so: the client has a link, and a staff reset would void it. Queuing a
-  link does not resolve them (the mailer may be down); a link reported sent after it was
-  voided does not either. Requests not filed by this flow are left to staff.
+- **A link that goes out answers the request.** When a link is reported sent, still
+  good and to the address on record, the client's pending requests filed by this flow
+  (the fixed note) are resolved, and the log says so: the client has a link, and a staff
+  reset would void it. Queuing a link does not resolve them (the mailer may be down); a
+  link reported sent after it was voided does not either, nor one that went to an address
+  no longer on record (that one is voided, and staff asked if nothing else is open).
+  Requests not filed by this flow are left to staff.
 - **Links that never go out.** A link not claimed within 15 minutes (the mailer did not
   run; a working one claims in seconds) is given up; one claimed but not reported sent
   within 15 minutes (the mailer stopped half way) is voided. Either way it is logged
@@ -90,7 +109,7 @@ The positions below were engineering judgement, not a firm sign-off.
   one logs it without filing a request, since staff are acting. A send reported after the
   sweep voided the link is recorded, and the log says the link does not work.
 - **The staff request's note** is the same for every reason ("Asked for a reset link;
-  none went out. Edit Client shows why.") and never names the e-mail address:
+  none reached the client. Edit Client shows why.") and never names the e-mail address:
   `password_reset_requests` is open to the anon key. The reason is in the private log.
 - **Password rules** (`client_password_problem`, mirrored in `src/lib/passwordRules.ts`):
   8 to 72 characters, no outer spaces, not the client's GSTIN, nothing shaped like a GSTIN.
@@ -99,21 +118,39 @@ The positions below were engineering judgement, not a firm sign-off.
   Client app login, Dashboard requests. `staff_set_client_password` keeps
   `is_first_login = true` and allows the GSTIN, so a staff reset to the GSTIN makes the
   client choose a new password at first sign-in. Setting a password is never limited.
-  `staff_send_client_reset_link` is held to the same limits as every link (one a minute
-  and five an hour per client, 300 an hour in all) and says which one stopped it. Every
-  reset is logged.
+  `staff_send_client_reset_link` is held to the same limits as every link (five an hour
+  per client, every link asked for, staff and self together; 300 an hour in all) and to
+  a minute's spacing, which counts only a link that went out to an address still on
+  record or is still on its way: one that failed, or was voided before it went (say,
+  because staff just corrected the address), does not hold the next one back. Its errors
+  say what happened: "A reset link went to this client less than a minute ago." / "A
+  reset link to this client is on its way." (each with "Try again in a minute, or set a
+  password."), "Five reset links were asked for this client in the last hour.", "Too many
+  reset links were asked for in the last hour." Every reset is logged.
+- **The reset dialog** (Edit Client, the Clients page key button, the Dashboard) names
+  only the addresses the database will e-mail (`resetLinkAddresses`, the same rule as
+  `client_email_list`). When the field holds none it can use (say `accounts@sorath.com.`
+  or `a@x.c`), "E-mail reset link" is off with "No usable e-mail address on record";
+  Edit Client refuses to save such an address in the first place.
 - **Edit Client** names the e-mail address as saved, since that is where a link goes
   (`staff_send_client_reset_link` reads `clients.email`). While the e-mail field holds an
   address not yet saved, "E-mail reset link" is off with "Save the new e-mail first."
-  (`src/lib/clientResetLink.ts`).
+  (`src/lib/clientResetLink.ts`). The Client app login card names the GSTIN (the User ID)
+  and name as saved, since a password set there goes on the saved row; while the GSTIN
+  field holds a new one not yet saved, "Reset app password" is off with "Save the new
+  GSTIN first to reset the password."
 - **Edit Client** no longer writes the GST password into `client_password` on every save:
   only a *changed* GST password also sets the app login, through
   `staff_set_client_password` (hashed, logged). The firm may prefer to stop that sync.
 - **Locks.** Whatever changes a client's links takes that client's advisory lock first;
   the sweep only tries it (and leaves a busy client to the next sweep), and the claim
-  skips locked rows, so neither waits while holding a lock. The per-client sweep inside a
+  skips locked rows and only tries a client's lock, so neither waits while holding a
+  lock. An e-mail change holds the `clients` row when its trigger takes the advisory
+  lock, so whatever locks both (`client_password_reset_complete`,
+  `staff_set_client_password`) locks the row first. The per-client sweep inside a
   request or a staff link runs under the lock the caller already holds, never another
-  client's (a shared User ID takes its clients' locks in id order).
+  client's (a shared User ID takes its clients' locks in id order). A staff link reads
+  the address under the lock.
 
 ## Known limits
 

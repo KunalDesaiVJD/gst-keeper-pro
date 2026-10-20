@@ -6,6 +6,7 @@ import { SectionCard } from '@/components/gstr9/ui';
 import { WS_BTN } from '@/components/workspace/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import ResetClientPasswordDialog from '@/components/clients/ResetClientPasswordDialog';
+import { gstinUnsaved } from '@/lib/clientResetLink';
 import {
   CLIENT_PASSWORD_ACTION_LABEL,
   loadClientPasswordLog,
@@ -14,8 +15,11 @@ import {
 
 interface Props {
   clientId: string;
+  /** The name and GSTIN as saved: the GSTIN is the client's User ID. */
   name: string;
   gstin: string;
+  /** The GSTIN the form shows now; a reset waits until it is saved. */
+  typedGstin?: string;
   /** The e-mail address saved on the client (where a link goes). */
   email?: string | null;
   /** The address the form shows now; a link waits until it is saved. */
@@ -23,11 +27,14 @@ interface Props {
 }
 
 /** Edit Client: how the client signs in to the app, a reset, and who changed it last. */
-const ClientAppLoginCard: React.FC<Props> = ({ clientId, name, gstin, email, typedEmail }) => {
+const ClientAppLoginCard: React.FC<Props> = ({ clientId, name, gstin, typedGstin, email, typedEmail }) => {
   const { user, canResetClientPasswords } = useAuth();
   const [open, setOpen] = useState(false);
   const [log, setLog] = useState<ClientPasswordLogEntry[]>([]);
   const actorId = user?.id;
+  // A password set now goes on the saved row; with a new GSTIN typed but not
+  // saved, the User ID to tell the client is not settled yet.
+  const newGstin = gstinUnsaved(gstin, typedGstin);
 
   const refresh = useCallback(() => {
     if (!actorId) { setLog([]); return; }
@@ -38,9 +45,12 @@ const ClientAppLoginCard: React.FC<Props> = ({ clientId, name, gstin, email, typ
   return (
     <SectionCard
       title="Client app login"
-      description={<>Signs in at /login with the GSTIN <span className="font-mono">{gstin}</span> as User ID. Forgot password e-mails a link to the saved e-mail address.</>}
+      description={<>
+        Signs in at /login with the GSTIN <span className="font-mono">{gstin}</span> as User ID. Forgot password e-mails a link to the saved e-mail address.
+        {newGstin && canResetClientPasswords() && <> Save the new GSTIN first to reset the password.</>}
+      </>}
       actions={canResetClientPasswords() ? (
-        <Button type="button" size="sm" variant="outline" className={WS_BTN} onClick={() => setOpen(true)}>
+        <Button type="button" size="sm" variant="outline" className={WS_BTN} disabled={newGstin} onClick={() => setOpen(true)}>
           <KeyRound className="h-3.5 w-3.5" /> Reset app password
         </Button>
       ) : undefined}
@@ -60,7 +70,7 @@ const ClientAppLoginCard: React.FC<Props> = ({ clientId, name, gstin, email, typ
         </ul>
       )}
       <ResetClientPasswordDialog
-        client={open ? { id: clientId, name, gstin, email, typedEmail } : null}
+        client={open && !newGstin ? { id: clientId, name, gstin, email, typedEmail } : null}
         onOpenChange={(v) => setOpen(v)}
         onDone={refresh}
       />

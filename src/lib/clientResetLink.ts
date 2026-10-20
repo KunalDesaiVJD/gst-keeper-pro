@@ -12,6 +12,31 @@ export interface ResetLinkEmail {
 
 const norm = (v: string | null | undefined) => (v ?? '').trim().toLowerCase();
 
+// The database's rule (client_email_list in migration 20261020100000): the
+// field may hold several addresses, separated by commas, semicolons or
+// spaces; only well-formed ones count (something@domain.tld, a top-level part
+// of two or more characters, no trailing dot), each once, in the order
+// written. Keep the two in step.
+const ADDRESS = /^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>".]{2,}$/;
+
+/** The addresses a reset link goes to: the well-formed ones in clients.email. */
+export function clientEmailList(raw: string | null | undefined): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of (raw ?? '').split(/[,;\s]+/)) {
+    const e = part.trim();
+    if (!e || !ADDRESS.test(e) || seen.has(e.toLowerCase())) continue;
+    seen.add(e.toLowerCase());
+    out.push(e);
+  }
+  return out;
+}
+
+/** Where a link would go now, as the database will write it ("a@x.com, b@y.com"). */
+export function resetLinkAddresses(saved: string | null | undefined): string {
+  return clientEmailList(saved).join(', ');
+}
+
 /** True when the form's address differs from the saved one. */
 export function emailUnsaved({ saved, typed }: ResetLinkEmail): boolean {
   return typed !== undefined && norm(typed) !== norm(saved);
@@ -20,6 +45,14 @@ export function emailUnsaved({ saved, typed }: ResetLinkEmail): boolean {
 /** Why "E-mail reset link" is off, or null when a link can go. */
 export function resetLinkBlock(email: ResetLinkEmail): string | null {
   if (emailUnsaved(email)) return 'Save the new e-mail first.';
-  if (!email.saved || !/@/.test(email.saved)) return 'No e-mail address on record: add one in Edit Client, or set a password below.';
+  if (!norm(email.saved)) return 'No e-mail address on record: add one in Edit Client, or set a password below.';
+  if (clientEmailList(email.saved).length === 0) {
+    return 'No usable e-mail address on record: correct it in Edit Client, or set a password below.';
+  }
   return null;
+}
+
+/** True when the form's GSTIN (the client's User ID) differs from the saved one. */
+export function gstinUnsaved(saved: string | null | undefined, typed: string | null | undefined): boolean {
+  return typed !== undefined && typed !== null && typed.trim().toUpperCase() !== (saved ?? '').trim().toUpperCase();
 }

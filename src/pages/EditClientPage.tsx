@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { cleanPortalPassword, portalPasswordProblem } from '@/lib/portalPassword';
 import { staffSetClientPassword } from '@/lib/clientPasswordReset';
 import ClientAppLoginCard from '@/components/clients/ClientAppLoginCard';
+import { clientEmailList } from '@/lib/clientResetLink';
 
 /** Consistent required-field marker used across the Add / Edit client forms. */
 const Req: React.FC = () => (
@@ -72,6 +73,10 @@ const EditClientPage: React.FC = () => {
   // The e-mail address as loaded (or last saved): a reset link goes there,
   // not to an address typed but not yet saved.
   const savedEmail = useRef('');
+  // The GSTIN (the client's User ID) and name as loaded (or last saved): a
+  // password set from this page goes on the saved row.
+  const savedGstin = useRef('');
+  const savedName = useRef('');
 
   const [formData, setFormData] = useState({
     gstin: '',
@@ -135,8 +140,8 @@ const EditClientPage: React.FC = () => {
       originalRegType.current = regType;
 
       setFormData({
-        gstin: data.gstin,
-        name: data.name,
+        gstin: (savedGstin.current = data.gstin),
+        name: (savedName.current = data.name),
         registrationType: regType,
         registrationDate: data.registration_date,
         mobile: data.mobile || '',
@@ -230,7 +235,9 @@ const EditClientPage: React.FC = () => {
       newErrors.mobile = 'Mobile must be 10 digits';
     }
 
-    if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+    // Also the database's rule (clientEmailList): an address it would not
+    // e-mail, like a@x.com. or a@x.c, is refused here too.
+    if (formData.email && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email) || clientEmailList(formData.email).length === 0)) {
       newErrors.email = 'Invalid email format';
     }
 
@@ -367,6 +374,8 @@ const EditClientPage: React.FC = () => {
 
       if (error) throw error;
       savedEmail.current = formData.email || '';
+      savedGstin.current = formData.gstin;
+      savedName.current = formData.name;
 
       // A changed GST password is also the client's new app-login password
       // (the firm's arrangement), set the checked way. An unchanged one leaves
@@ -942,8 +951,9 @@ const EditClientPage: React.FC = () => {
         {clientId && (
           <ClientAppLoginCard
             clientId={clientId}
-            name={formData.name}
-            gstin={formData.gstin}
+            name={savedName.current}
+            gstin={savedGstin.current}
+            typedGstin={formData.gstin}
             email={savedEmail.current}
             typedEmail={formData.email}
           />

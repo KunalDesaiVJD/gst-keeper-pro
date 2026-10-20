@@ -69,7 +69,7 @@ SET LOCAL ROLE anon;
 SELECT t_eq(staff_send_client_reset_link('a3000000-0000-0000-0000-00000000000c', 'c3000000-0000-0000-0000-000000000001'),
   '{"queued": true, "sent_to": "p.owner@navratna.com"}'::jsonb, 'an employee can e-mail a link');
 SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('a3000000-0000-0000-0000-00000000000b', 'c3000000-0000-0000-0000-000000000001')$$),
-  'A reset link went to this client less than a minute ago.', 'not twice in a minute');
+  'A reset link to this client is on its way. Try again in a minute, or set a password.', 'not twice in a minute');
 SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('a3000000-0000-0000-0000-00000000000a', 'c3000000-0000-0000-0000-000000000002')$$),
   'This client has no e-mail address on record. Add one in Edit Client, or set a password instead.', 'no e-mail: says so');
 SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('c3000000-0000-0000-0000-000000000001', 'c3000000-0000-0000-0000-000000000001')$$),
@@ -105,7 +105,7 @@ UPDATE client_password_resets SET created_at = created_at - interval '2 minutes'
 SELECT staff_send_client_reset_link('a3000000-0000-0000-0000-00000000000c', 'c3000000-0000-0000-0000-000000000001');
 UPDATE client_password_resets SET created_at = created_at - interval '2 minutes';
 SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('a3000000-0000-0000-0000-00000000000c', 'c3000000-0000-0000-0000-000000000001')$$),
-  'Five reset links went to this client in the last hour. Set a password instead.', 'five links an hour per client');
+  'Five reset links were asked for this client in the last hour. Set a password instead.', 'five links an hour per client');
 SELECT t_eq((SELECT count(*) FROM client_password_resets WHERE client_id = 'c3000000-0000-0000-0000-000000000001' AND voided_at IS NULL AND used_at IS NULL),
   1::bigint, 'only the newest staff link is open');
 SELECT t_eq((SELECT string_agg(DISTINCT detail, ' / ') FROM client_password_log

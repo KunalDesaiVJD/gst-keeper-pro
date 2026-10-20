@@ -71,7 +71,8 @@ export async function staffEmailResetLink(actorId: string, clientId: string): Pr
   return { sentTo: String((data as { sent_to?: string } | null)?.sent_to ?? '') };
 }
 
-export type ClientPasswordAction = 'staff_reset' | 'link_queued' | 'link_sent' | 'link_failed' | 'link_used' | 'fallback_request';
+export type ClientPasswordAction =
+  | 'staff_reset' | 'link_queued' | 'link_sent' | 'link_failed' | 'link_voided' | 'link_used' | 'fallback_request';
 
 export interface ClientPasswordLogEntry {
   id: string;
@@ -86,6 +87,7 @@ export const CLIENT_PASSWORD_ACTION_LABEL: Record<ClientPasswordAction, string> 
   link_queued: 'Link asked for',
   link_sent: 'Link e-mailed',
   link_failed: 'E-mail failed',
+  link_voided: 'Link voided',
   link_used: 'Set by the client',
   fallback_request: 'Request for staff',
 };

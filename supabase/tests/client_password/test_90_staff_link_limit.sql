@@ -32,7 +32,7 @@ END $$;
 UPDATE client_password_resets SET created_at = created_at - interval '2 minutes';
 SET LOCAL ROLE anon;
 SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('a9000000-0000-0000-0000-00000000000c', 'c9000000-0000-0000-0000-000000000001')$$),
-  'Five reset links went to this client in the last hour. Set a password instead.', 'the sixth in the hour is refused, with a clear error');
+  'Five reset links were asked for this client in the last hour. Set a password instead.', 'the sixth in the hour is refused, with a clear error');
 RESET ROLE;
 SELECT t_eq((SELECT count(*) FROM client_password_resets WHERE client_id = 'c9000000-0000-0000-0000-000000000001'), 5::bigint,
   'five links in the hour, no more');
@@ -65,7 +65,7 @@ SELECT 'c9000000-0000-0000-0000-000000000003', 'staff', 'f@example.com', now() -
   FROM generate_series(1, 300 - (SELECT count(*) FROM client_password_resets WHERE created_at > now() - interval '1 hour')::int);
 SET LOCAL ROLE anon;
 SELECT t_eq(t_error($$SELECT staff_send_client_reset_link('a9000000-0000-0000-0000-00000000000c', 'c9000000-0000-0000-0000-000000000002')$$),
-  'Too many reset links went out in the last hour. Set a password instead.', 'past 300 an hour in all');
+  'Too many reset links were asked for in the last hour. Set a password instead.', 'past 300 an hour in all');
 RESET ROLE;
 SELECT t_eq((SELECT count(*) FROM client_password_resets WHERE client_id = 'c9000000-0000-0000-0000-000000000002'), 0::bigint, 'nothing queued');
 ROLLBACK;

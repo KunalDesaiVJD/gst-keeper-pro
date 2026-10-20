@@ -23,7 +23,7 @@ SELECT client_password_reset_mark(:'rb', NULL);
 SELECT client_password_reset_mark(:'ra', 'sendMail 503');
 RESET ROLE;
 SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE user_id = 'c8900000-0000-0000-0000-000000000001'),
-  0::bigint, '(a) no "none went out" request: B went out');
+  0::bigint, '(a) no "none reached the client" request: B went out');
 SELECT t_eq(client_password_reset_check(:'tb') ->> 'valid', 'true', '(a) B works');
 SELECT t_eq((SELECT detail FROM client_password_log WHERE client_id = 'c8900000-0000-0000-0000-000000000001' AND action = 'link_failed'),
   'The reset link could not be e-mailed to r•••@example.com: sendMail 503 (It was already void: a newer link was asked for.)',
