@@ -659,12 +659,29 @@ in one module, `src/lib/twobDocs.ts`.
   2/CN/2026-27 (−360 CGST and SGST, Not in 2B) went into the ledger as a
   minus reversal: row 5.1 came out 360 short of the matched invoices and
   4B(2) minus 360, which the portal refuses (the push check stopped it).
+- **A books "Debit note" is the client's purchase return** (the firm's
+  decision, 20 Oct 2026: "When DN is there in Books but [not] in 2B then it is
+  not required to give effect in books unless the opposite person gives effect
+  in their books"). The books register's Type "Debit note (purchase return)" is
+  the client's own debit note, the other side of the supplier's credit note. It
+  is entered at plus amounts and has **no effect** until the supplier reports
+  the credit note: Post to Reconciliation never posts it and takes back what it
+  posted before (`bookIsPurchaseReturn`, `BOOK_DEBIT_NOTE_REASON`); once the
+  credit note is in 2B its own row reduces ITC (row 5.3, or Not in Books until
+  booked). It pairs only with 2B credit notes; the books totals and Purchase
+  Rate Wise count it as a minus. A supplier's debit note (which adds ITC) is
+  booked as a purchase: enter it as an Invoice; it pairs with the 2B debit note
+  of exactly its number. Before, ORVIX's Sep-26 entry 2/CN/2026-27 re-entered
+  at +360 CGST and SGST as a "Debit note" Not in 2B posted a +360 reversal: row
+  5.1 came out 19,107.52 instead of 18,747.52 and 4B(2)(i) 360 instead of 0
+  (net ITC 17,740.74 either way). Only that one books debit note existed live.
 - **Rule 37A reversal rows and IMS rejected rows start Ineligible**, so they
   never reach 5.1 (before this change they defaulted to Matched; none existed
   live). A Rule 37A reversal is typed in 4B(2)(ii).
-- **Matching is by type**: a books row is paired only with a 2B document of
-  the same type. A similar-numbered document of the other type gives a
-  warning, never a pairing.
+- **Matching is by kind**: a books invoice is paired only with a 2B invoice
+  (or a supplier's debit note of exactly its number), a books debit note
+  (purchase return) only with a 2B credit note. A similar-numbered document of
+  another kind gives a warning, never a pairing.
 - **Colours**: invoices plain, debit notes amber, credit notes rose,
   amendments violet, with a legend that filters.
 - **Re-import merges.** A document is the same one when its type, amendment

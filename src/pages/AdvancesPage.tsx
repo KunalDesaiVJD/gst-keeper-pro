@@ -158,6 +158,12 @@ const AdvancesPage: React.FC = () => {
     [register],
   );
   const openPositions = useMemo(() => positions.filter((p) => p.open > 0), [positions]);
+  // This period's Table 11B from the legs already recorded; it still has to be
+  // written to the GSTR-1 draft once the last open advance is set off.
+  const txpdThisMonth = useMemo(
+    () => (selectedMonth ? buildTxpdFromLegs(register.receipts, register.adjustments, selectedMonth) : []),
+    [register, selectedMonth],
+  );
 
   const reconciliation = useMemo(() => {
     if (!ledger) return [];
@@ -671,7 +677,17 @@ const AdvancesPage: React.FC = () => {
               </div>
 
               {openPositions.length === 0 ? (
-                <TableEmptyState title="No open advances in the register for this client." />
+                <>
+                  <TableEmptyState title="No open advances in the register for this client." />
+                  {txpdThisMonth.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2.5">
+                      <span className="text-xs text-muted-foreground">Set-offs recorded against {selectedMonth} go into the GSTR-1 draft as Table 11B.</span>
+                      <Button variant="outline" size="sm" className={WS_BTN} onClick={writeToGstr1} disabled={!canEdit}>
+                        Write Table 11B to GSTR-1 draft
+                      </Button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <>
                   <Table className={WS_TABLE} containerClassName={TABLE_WRAP}>

@@ -123,8 +123,10 @@ export * as R from './src/lib/gstReceivableRecoCalc';
 export * as A from './src/utils/allClientsReports';
 export * as F from './src/utils/fetchGstr3b';
 export * as H from './src/lib/itcHeads';
+export * as X from './src/utils/matchTwob';
+export * as Q from './src/utils/gstr2bReports';
 `);
-const { T, P, B, I, G, R, A, F, H } = M;
+const { T, P, B, I, G, R, A, F, H, X, Q } = M;
 
 const doc = (o) => ({
   is_amendment: false, original_doc_type: null, reverse_charge: false, bucket: 'available', itc_available: true,
@@ -497,15 +499,16 @@ await run('typed 5.2', async () => {
 
 // ── 7. The books register takes no minus amount ─────────────────────────────
 // A booked supplier credit note (the client's debit note) waits for its own
-// 2B row (row 5.3); entered in books as a minus "Debit note" Not in 2B it went
-// into the ledger as a minus reversal: 5.1 short and 4B(2) minus (ORVIX Sep-26).
+// 2B row (row 5.3); entered in books at minus amounts Not in 2B it went into
+// the ledger as a minus reversal: 5.1 short and 4B(2) minus (ORVIX Sep-26).
+// Amounts are always plus; a purchase return has its own Type (section 8).
 await run('books minus', async () => {
   const db = globalThis.__db;
   const BC = 'client-books', BM = '09/2026';
   const book = (id, no, taxable, cgst, docType) => ({ id, client_id: BC, period_month: BM, date: '2026-09-18', supplier_name: 'V J Desai & Co.',
     supplier_invoice_number: no, supplier_gstin: '24AAKFV4897J1ZF', taxable_value: taxable, input_igst: 0, input_cgst: cgst, input_sgst: cgst,
     book_treatment: 'NOT_IN_2B', doc_type: docType, matched_2b_id: null });
-  db.books_register = [book('bk-inv', 'A/1', 1000, 90, 'INVOICE'), book('bk-cn', '2/CN/2026-27', -4000, -360, 'DEBIT_NOTE')];
+  db.books_register = [book('bk-inv', 'A/1', 1000, 90, 'INVOICE'), book('bk-cn', '2/CN/2026-27', -4000, -360, 'INVOICE')];
   db.bills_not_in_2b.push({ id: 'led-cn', client_id: BC, period_month: BM, source_book_id: 'bk-cn', date: '2026-09-18', supplier_name: 'V J Desai & Co.',
     supplier_invoice_number: '2/CN/2026-27', supplier_gstin: '24AAKFV4897J1ZF', taxable_value: -4000, input_igst: 0, input_cgst: -360, input_sgst: -360,
     reversal_month: 'Sep 26', reclaim_month: null, is_carried_forward: false, is_locked: false });
@@ -525,6 +528,71 @@ await run('books minus', async () => {
   const tab = fs.readFileSync(path.join(root, 'src/pages/Import2BTab.tsx'), 'utf8');
   check('the books register refuses a minus amount on save and marks a saved one red',
     /if \(bookHasMinus\(row\)\) \{[\s\S]{0,400}never minus/.test(tab) && tab.includes("const minus = bookHasMinus(b);"));
+});
+
+// ── 8. A books debit note is a purchase return and waits for 2B ─────────────
+// The client's own debit note (a purchase return: the supplier's credit note)
+// has no effect until the supplier reports that credit note; the 2B row then
+// reduces ITC in row 5.3. Entered at plus amounts as "Debit note" Not in 2B it
+// went into the ledger as a +360 reversal: 5.1 19,107.52 instead of 18,747.52
+// and 4B(2)(i) 360 instead of 0, net unchanged (ORVIX Sep-26, 20 Oct 2026).
+await run('books purchase return', async () => {
+  const db = globalThis.__db;
+  const BC = 'client-books-dn', BM = '09/2026';
+  const book = (id, no, taxable, cgst, docType) => ({ id, client_id: BC, period_month: BM, date: '2026-09-18', supplier_name: 'V J Desai & Co.',
+    supplier_invoice_number: no, supplier_gstin: '24AAKFV4897J1ZF', taxable_value: taxable, input_igst: 0, input_cgst: cgst, input_sgst: cgst,
+    book_treatment: 'NOT_IN_2B', doc_type: docType, matched_2b_id: null });
+  db.books_register = [book('bk-inv2', 'A/2', 1000, 90, 'INVOICE'), book('bk-dn', '2/CN/2026-27', 4000, 360, 'DEBIT_NOTE')];
+  db.bills_not_in_2b.push({ id: 'led-dn', client_id: BC, period_month: BM, source_book_id: 'bk-dn', date: '2026-09-18', supplier_name: 'V J Desai & Co.',
+    supplier_invoice_number: '2/CN/2026-27', supplier_gstin: '24AAKFV4897J1ZF', taxable_value: 4000, input_igst: 0, input_cgst: 360, input_sgst: 360,
+    reversal_month: 'Sep 26', reclaim_month: null, is_carried_forward: false, is_locked: false });
+  check('bookIsPurchaseReturn: a books debit note only', P.bookIsPurchaseReturn?.({ doc_type: 'DEBIT_NOTE' }) === true
+    && P.bookIsPurchaseReturn?.({ doc_type: 'INVOICE' }) === false && P.bookIsPurchaseReturn?.({}) === false);
+  const plan = await P.planImport2BPost(BC, BM);
+  check('Post to Reconciliation posts the invoice and leaves the debit note out with the reason',
+    plan.insertBills2B.map(({ row }) => row.id).join() === 'bk-inv2'
+      && plan.skippedBooks.some(({ row, reason }) => row.id === 'bk-dn' && reason.startsWith('Debit note (purchase return)')),
+    JSON.stringify({ ins: plan.insertBills2B.map(({ row }) => row.id), skipped: plan.skippedBooks.map(({ row, reason }) => `${row.id}: ${reason}`) }));
+  check('… and takes back the +360 reversal it posted before', plan.retractBills2B.some(({ ledgerId }) => ledgerId === 'led-dn'), JSON.stringify(plan.retractBills2B));
+  await P.postImport2BToLedger(BC, BM, 'user-1', plan);
+  const led = db.bills_not_in_2b.filter((l) => l.client_id === BC);
+  check('the ledger then holds the invoice only: nothing in 4B(2)(i) from the debit note',
+    led.length === 1 && led[0].source_book_id === 'bk-inv2', JSON.stringify(led));
+
+  // Pairing: a books debit note pairs with the supplier's credit note only; a
+  // books invoice with the supplier's invoice, or its debit note on the exact number.
+  const g = '24AAKFV4897J1ZF';
+  const tb = (id, no, cgst, docType) => ({ id, supplierGstin: g, supplierInvoiceNumber: no, inputIgst: 0, inputCgst: cgst, inputSgst: cgst, docType });
+  const bk = (no, cgst, docType) => ({ supplierGstin: g, supplierInvoiceNumber: no, inputIgst: 0, inputCgst: cgst, inputSgst: cgst, docType });
+  const cn = tb('cn', '2/CN/2026-27', 360, 'CREDIT_NOTE');
+  const r1 = X.classifyBookAgainst2b(bk('2/CN/2026-27', 360, 'DEBIT_NOTE'), [cn]);
+  check('a books debit note finds the supplier\'s credit note in 2B (already in 2B)', r1.classification === 'ALREADY_IN_2B' && r1.match?.id === 'cn', JSON.stringify(r1));
+  const r2 = X.classifyBookAgainst2b(bk('2/CN/2026-27', 300, 'DEBIT_NOTE'), [cn]);
+  check('… and pairs with it when the tax differs (mismatched)', r2.classification === 'MISMATCHED' && r2.match?.id === 'cn', JSON.stringify(r2));
+  const r3 = X.classifyBookAgainst2b(bk('2/CN/2026-27', 360, 'DEBIT_NOTE'), [tb('dn', '2/CN/2026-27', 360, 'DEBIT_NOTE'), tb('in', '2/CN/2026-27', 360, 'INVOICE')]);
+  check('… never with an invoice or a supplier\'s debit note, which are named instead', r3.classification === 'NOT_IN_2B' && !!r3.otherTypeHint, JSON.stringify(r3));
+  const r4 = X.classifyBookAgainst2b(bk('2/CN/2026-27', 360, 'INVOICE'), [cn]);
+  check('a books invoice never pairs with a credit note', r4.classification === 'NOT_IN_2B' && r4.otherTypeHint?.id === 'cn', JSON.stringify(r4));
+  const r5 = X.classifyBookAgainst2b(bk('DN/12', 90, 'INVOICE'), [tb('sdn', 'DN-12', 90, 'DEBIT_NOTE')]);
+  check('a books invoice pairs with the supplier\'s debit note of exactly its number', r5.classification === 'ALREADY_IN_2B' && r5.match?.id === 'sdn', JSON.stringify(r5));
+  const r6 = X.classifyBookAgainst2b(bk('12', 90, 'INVOICE'), [tb('sdn', 'DN/12', 90, 'DEBIT_NOTE')]);
+  check('… but not on a loose number (invoice 12 next to debit note DN/12)', r6.classification === 'NOT_IN_2B' && r6.otherTypeHint?.id === 'sdn', JSON.stringify(r6));
+  const r7 = X.classifyBookAgainst2b(bk('A/7', 90, 'INVOICE'), [tb('i7', 'A/7', 90, 'INVOICE')]);
+  check('a books invoice still finds the supplier\'s invoice', r7.classification === 'ALREADY_IN_2B' && r7.match?.id === 'i7', JSON.stringify(r7));
+
+  // Purchase Rate Wise (books register report): the debit note reduces its rate.
+  db.clients = [...(db.clients || []), { id: BC, name: 'Books DN client', gstin: '24AAAAA0000A1Z5' }];
+  try {
+    const rep = await Q.buildPurchaseRateWiseReport(BC, BM);
+    const total = rep.rows.find((r) => r[0] === 'TOTAL');
+    check('Purchase Rate Wise nets the purchase return: taxable 1,000 - 4,000 = -3,000, CGST 90 - 360 = -270',
+      total && Number(total[1]) === -3000 && Number(total[3]) === -270, JSON.stringify(rep.rows));
+  } catch (e) {
+    check('Purchase Rate Wise nets the purchase return', false, e?.message ?? e);
+  }
+  const tab = fs.readFileSync(path.join(root, 'src/pages/Import2BTab.tsx'), 'utf8');
+  check('the books register labels the type "Debit note (purchase return)" and nets it in the totals',
+    tab.includes("label: 'Debit note (purchase return)'") && tab.includes('const bookTotals = sumBooksNet(books);'));
 });
 
 // ── Report ──────────────────────────────────────────────────────────────────

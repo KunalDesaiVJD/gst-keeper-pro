@@ -20,7 +20,7 @@ import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { parseGstr2bFile } from '@/utils/parseGstr2b';
 import { classifyBookAgainst2b, invoiceSimilar, TwoBLite, ClassifyResult } from '@/utils/matchTwob';
-import { periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty, fetchImport2BCreditNotes, bookHasMinus } from '@/lib/postImport2B';
+import { periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty, fetchImport2BCreditNotes, bookHasMinus, bookIsPurchaseReturn } from '@/lib/postImport2B';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import {
   docTypeOf, isCreditNote, fullFigures, effectFigures, signedEffect, docLabel, docTone, DOC_TYPE_LABEL,
@@ -183,13 +183,17 @@ const BOOK_TREATMENTS = [
   { value: 'NOT_ELIGIBLE', label: 'Not Eligible' },
 ];
 
-// A books row is an invoice or a debit note; a supplier credit note is never
-// entered here (it is treated on its own 2B row: row 5.3, or Not in Books
-// until the client books it).
+// A books row is a purchase (an invoice, or a supplier's debit note booked as
+// a purchase) or the client's own debit note, a purchase return. A purchase
+// return has no effect until the supplier's credit note is in 2B; that 2B row
+// then reduces ITC (row 5.3), so it is never posted (the firm's decision,
+// 20 Oct 2026; docs §10).
 const BOOK_DOC_TYPES = [
   { value: 'INVOICE', label: DOC_TYPE_LABEL.INVOICE },
-  { value: 'DEBIT_NOTE', label: DOC_TYPE_LABEL.DEBIT_NOTE },
+  { value: 'DEBIT_NOTE', label: 'Debit note (purchase return)' },
 ];
+
+const BOOK_DEBIT_NOTE_MSG = 'Debit note (purchase return): no effect on ITC until the supplier\'s credit note is in 2B. That 2B row then reduces ITC (row 5.3); Post to Reconciliation leaves this row out.';
 
 const TONES: TwobTone[] = ['invoice', 'debit', 'credit', 'amendment'];
 
@@ -251,14 +255,20 @@ const newDocId = (): string => {
 const errMsg = (err: unknown) => (err as { message?: string } | null)?.message || 'Unknown error';
 
 interface Totals { count: number; taxable: number; igst: number; cgst: number; sgst: number }
-const sumRows = (rows: { taxable_value: number; input_igst: number; input_cgst: number; input_sgst: number }[]): Totals =>
+const sumRows = (rows: { taxable_value: number; input_igst: number; input_cgst: number; input_sgst: number }[], sign = 1): Totals =>
   rows.reduce((a, r) => ({
     count: a.count + 1,
-    taxable: a.taxable + (r.taxable_value || 0),
-    igst: a.igst + (r.input_igst || 0),
-    cgst: a.cgst + (r.input_cgst || 0),
-    sgst: a.sgst + (r.input_sgst || 0),
+    taxable: a.taxable + sign * (r.taxable_value || 0),
+    igst: a.igst + sign * (r.input_igst || 0),
+    cgst: a.cgst + sign * (r.input_cgst || 0),
+    sgst: a.sgst + sign * (r.input_sgst || 0),
   }), { count: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0 });
+/** Books entries net: a debit note (purchase return) reduces the purchases. */
+const sumBooksNet = (rows: BookRow[]): Totals => {
+  const plus = sumRows(rows.filter((b) => !bookIsPurchaseReturn(b)));
+  const less = sumRows(rows.filter(bookIsPurchaseReturn), -1);
+  return { count: plus.count + less.count, taxable: plus.taxable + less.taxable, igst: plus.igst + less.igst, cgst: plus.cgst + less.cgst, sgst: plus.sgst + less.sgst };
+};
 /** Net ITC effect of 2B documents: a credit note subtracts, an amendment counts its difference. */
 const sumDocs = (rows: TwoBDoc[]): Totals =>
   rows.reduce((a, d) => {
@@ -300,15 +310,18 @@ const nextPairing = (b: BookRow, res: ClassifyResult) => {
   return { treatment: b.book_treatment, matched2bId: b.matched_2b_id };
 };
 
-/** "2B has debit note DN/12 from this supplier; is this row a debit note?" */
+/** "2B has credit note CN/12 from this supplier; is this row your debit note for it?" */
 const otherTypeMessage = (b: BookRow, other: TwoBDoc) => {
   const otherType = docTypeOf(other);
   const what = DOC_TYPE_LABEL[otherType].toLowerCase();
   const no = other.supplier_invoice_number || '';
   if (otherType === 'CREDIT_NOTE') {
-    return `2B has credit note ${no} from this supplier, not ${docTypeOf(b) === 'DEBIT_NOTE' ? 'a debit note' : 'an invoice'}. A credit note is treated on its own 2B row (Matched, or Not in Books until booked), never entered here; check this row.`;
+    return `2B has credit note ${no} from this supplier. If this row is your debit note (purchase return) for it, change its Type to Debit note (purchase return) to pair it.`;
   }
-  return `2B has ${what} ${no} from this supplier; is this row ${otherType === 'INVOICE' ? 'an invoice' : 'a debit note'}? Change its Type to pair it.`;
+  if (docTypeOf(b) === 'DEBIT_NOTE') {
+    return `2B has ${what} ${no} from this supplier, which adds ITC. A debit note (purchase return) pairs only with the supplier's credit note; if this row is that purchase, change its Type to Invoice.`;
+  }
+  return `2B has the supplier's debit note ${no}; if this row is that debit note, enter its number exactly as 2B shows it to pair it.`;
 };
 
 /** Which KPI tone each 2B action reads as (same meaning as the classification). */
@@ -1903,11 +1916,12 @@ const Import2BTab: React.FC = () => {
     const row = { ...found, ...patch };
     let next = { treatment: row.book_treatment, matched2bId: row.matched_2b_id };
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
-    // Books rows are invoices and debit notes, always positive. A credit note
-    // from the supplier (the client's debit note) waits for its own 2B row,
-    // which reduces ITC in row 5.3 (the firm's decision, 20 Oct 2026).
+    // Books rows are always positive. The client's debit note (a purchase
+    // return, the supplier's credit note) is entered at plus amounts with its
+    // own Type and waits for the supplier's credit note in 2B, which reduces
+    // ITC in row 5.3 (the firm's decisions, 20 Oct 2026).
     if (bookHasMinus(row)) {
-      toast.error('Amounts here are never minus. A credit note from the supplier (the client\'s debit note) is not entered in the books register: it reduces ITC from its own 2B row once the supplier reports it (row 5.3), and needs no entry until then.', { duration: 15000 });
+      toast.error('Amounts here are never minus. Enter your debit note (purchase return) at plus amounts with Type "Debit note (purchase return)": it has no effect until the supplier\'s credit note is in 2B, which then reduces ITC (row 5.3).', { duration: 15000 });
       const { data } = await supabase.from('books_register').select('*').eq('id', id).maybeSingle();
       if (data) updateBookLocal(id, data as BookRow);
       return;
@@ -1918,7 +1932,9 @@ const Import2BTab: React.FC = () => {
         const res = classifyBookAgainst2b(bookLite(row), twoBLites);
         next = nextPairing(row, res);
         if (res.classification === 'ALREADY_IN_2B') {
-          toast.warning(`This ${DOC_TYPE_LABEL[docTypeOf(row)].toLowerCase()} looks like it is already in 2B (matched): ${row.supplier_name || row.supplier_invoice_number}. Add only if it is genuinely missing.`);
+          toast.warning(bookIsPurchaseReturn(row)
+            ? `The supplier's credit note for this debit note is already in 2B (${res.match?.supplierInvoiceNumber || ''}): it reduces ITC from its 2B row, and this row has no effect.`
+            : `This ${DOC_TYPE_LABEL[docTypeOf(row)].toLowerCase()} looks like it is already in 2B (matched): ${row.supplier_name || row.supplier_invoice_number}. Add only if it is genuinely missing.`);
         }
         const other = res.otherTypeHint ? twoBDocs.find((d) => d.id === res.otherTypeHint?.id) : undefined;
         if (other) toast.warning(otherTypeMessage(row, other), { duration: 12000 });
@@ -1946,11 +1962,13 @@ const Import2BTab: React.FC = () => {
     }
   };
 
-  // Changing a books row's type re-matches it (a debit note pairs only with 2B debit notes).
+  // Changing a books row's type re-matches it (a debit note, the client's
+  // purchase return, pairs only with the supplier's credit note in 2B).
   const setBookDocType = (id: string, docType: string) => {
     if (readOnly) return;
     updateBookLocal(id, { doc_type: docType });
     saveBookRow(id, true, { doc_type: docType });
+    if (docType === 'DEBIT_NOTE') toast.info(BOOK_DEBIT_NOTE_MSG, { duration: 12000 });
   };
 
   const setBookTreatment = async (id: string, treatment: string) => {
@@ -2140,8 +2158,14 @@ const Import2BTab: React.FC = () => {
   );
   // What counts in ITC Summary: Matched and Mismatched, rows 5.1 less 5.3.
   const counted2b = useMemo(() => sumDocs(twoBDocs.filter((d) => isCountedAction(effectiveAction(d)))), [twoBDocs, effectiveAction]);
+  // Purchase returns stand apart, as a minus: they reduce the books, but wait
+  // for the supplier's credit note in 2B and post nothing until then.
   const summaryBooks = useMemo(
-    () => BOOK_TREATMENTS.map((t) => ({ label: t.label, ...sumRows(books.filter((b) => b.book_treatment === t.value)) })),
+    () => {
+      const returns = books.filter(bookIsPurchaseReturn);
+      const rows = BOOK_TREATMENTS.map((t) => ({ label: t.label, ...sumRows(books.filter((b) => !bookIsPurchaseReturn(b) && b.book_treatment === t.value)) }));
+      return returns.length ? [...rows, { label: 'Less: debit notes (purchase returns)', ...sumRows(returns, -1) }] : rows;
+    },
     [books],
   );
 
@@ -2731,7 +2755,7 @@ const Import2BTab: React.FC = () => {
                   <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${zone2Open ? '' : '-rotate-90'}`} />
                   <div>
                     <p className="text-[15px] font-semibold leading-snug text-foreground">2 · Books / purchase register</p>
-                    <p className="text-xs text-muted-foreground">Add invoices and debit notes booked but missing from 2B · CGST fills SGST</p>
+                    <p className="text-xs text-muted-foreground">Add purchases booked but missing from 2B · a debit note (purchase return) waits for the supplier's credit note in 2B · CGST fills SGST</p>
                   </div>
                 </CollapsibleTrigger>
                 {!readOnly && (
@@ -2763,14 +2787,15 @@ const Import2BTab: React.FC = () => {
                           colSpan={readOnly ? 10 : 11}
                           icon={<Inbox className="h-5 w-5" />}
                           title="No books entries added"
-                          description={readOnly ? undefined : 'Use "Add row" to record invoices or debit notes booked but missing from 2B.'}
+                          description={readOnly ? undefined : 'Use "Add row" to record purchases or debit notes (purchase returns) booked but missing from 2B.'}
                         />
                       ) : books.map((b) => {
                         const tone = docTone({ doc_type: b.doc_type });
                         const minus = bookHasMinus(b);
                         return (
                         <tr key={b.id} className={cn(WS_TR, TONE_ROW[tone], minus && 'bg-destructive/10')}
-                          title={minus ? 'Minus amount: a credit note from the supplier is not entered here. It reduces ITC from its own 2B row once the supplier reports it (row 5.3). Delete this row.' : undefined}>
+                          title={minus ? 'Minus amount: amounts here are always plus. Enter a debit note (purchase return) at plus amounts with Type "Debit note (purchase return)".'
+                            : bookIsPurchaseReturn(b) ? BOOK_DEBIT_NOTE_MSG : undefined}>
                           <td className={cn('border-b border-r p-0', minus ? 'border-l-4 border-l-destructive' : TONE_STRIPE[tone])}>
                             <input type="date" className={cellInputCls} value={b.date || ''} disabled={writeLocked}
                               onChange={(e) => updateBookLocal(b.id, { date: e.target.value })} onBlur={() => saveBookRow(b.id, false)} />
@@ -2780,7 +2805,7 @@ const Import2BTab: React.FC = () => {
                               className={cn(rowSelectCls, 'm-0.5 w-[calc(100%-4px)]')}
                               value={docTypeOf({ doc_type: b.doc_type }) === 'DEBIT_NOTE' ? 'DEBIT_NOTE' : 'INVOICE'}
                               disabled={writeLocked}
-                              title="A books row is matched only against 2B documents of its own type"
+                              title="An invoice pairs with the supplier's invoice in 2B; a debit note (purchase return) with the supplier's credit note, and has no effect until then"
                               onChange={(e) => setBookDocType(b.id, e.target.value)}
                             >
                               {BOOK_DOC_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -2839,7 +2864,7 @@ const Import2BTab: React.FC = () => {
                       })}
                     </tbody>
                     {books.length > 0 && (() => {
-                      const bookTotals = sumRows(books);
+                      const bookTotals = sumBooksNet(books);
                       return (
                         <tfoot>
                           <tr className={WS_TR_TOTAL}>
