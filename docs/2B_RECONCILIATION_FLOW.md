@@ -650,7 +650,15 @@ in one module, `src/lib/twobDocs.ts`.
   Ineligible). With "Yes" and a declared amount, the declared tax is what
   reduces.
 - **A credit note missing from 2B has no entry**: the books register takes
-  invoices and debit notes only, since row 5.3 follows 2B.
+  invoices and debit notes only, since row 5.3 follows 2B. A booked credit
+  note (the client's debit note) waits for its 2B row and has no effect
+  until then (the firm's decision, 20 Oct 2026). Enforced since then: the
+  books register refuses a minus amount, a minus row already saved is marked
+  red, and Post to Reconciliation skips it and takes back what it posted
+  (`bookHasMinus`, `postImport2B.ts`). Before, ORVIX's Sep-26 entry
+  2/CN/2026-27 (−360 CGST and SGST, Not in 2B) went into the ledger as a
+  minus reversal: row 5.1 came out 360 short of the matched invoices and
+  4B(2) minus 360, which the portal refuses (the push check stopped it).
 - **Rule 37A reversal rows and IMS rejected rows start Ineligible**, so they
   never reach 5.1 (before this change they defaulted to Matched; none existed
   live). A Rule 37A reversal is typed in 4B(2)(ii).

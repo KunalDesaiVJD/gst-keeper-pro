@@ -495,6 +495,38 @@ await run('typed 5.2', async () => {
   check('headsText shows each head with its sign', H.headsText(h(-800, 400, 400)) === 'IGST -800.00, CGST 400.00, SGST 400.00', H.headsText(h(-800, 400, 400)));
 });
 
+// ── 7. The books register takes no minus amount ─────────────────────────────
+// A booked supplier credit note (the client's debit note) waits for its own
+// 2B row (row 5.3); entered in books as a minus "Debit note" Not in 2B it went
+// into the ledger as a minus reversal: 5.1 short and 4B(2) minus (ORVIX Sep-26).
+await run('books minus', async () => {
+  const db = globalThis.__db;
+  const BC = 'client-books', BM = '09/2026';
+  const book = (id, no, taxable, cgst, docType) => ({ id, client_id: BC, period_month: BM, date: '2026-09-18', supplier_name: 'V J Desai & Co.',
+    supplier_invoice_number: no, supplier_gstin: '24AAKFV4897J1ZF', taxable_value: taxable, input_igst: 0, input_cgst: cgst, input_sgst: cgst,
+    book_treatment: 'NOT_IN_2B', doc_type: docType, matched_2b_id: null });
+  db.books_register = [book('bk-inv', 'A/1', 1000, 90, 'INVOICE'), book('bk-cn', '2/CN/2026-27', -4000, -360, 'DEBIT_NOTE')];
+  db.bills_not_in_2b.push({ id: 'led-cn', client_id: BC, period_month: BM, source_book_id: 'bk-cn', date: '2026-09-18', supplier_name: 'V J Desai & Co.',
+    supplier_invoice_number: '2/CN/2026-27', supplier_gstin: '24AAKFV4897J1ZF', taxable_value: -4000, input_igst: 0, input_cgst: -360, input_sgst: -360,
+    reversal_month: 'Sep 26', reclaim_month: null, is_carried_forward: false, is_locked: false });
+  check('bookHasMinus: a minus head or taxable value, never a plain row',
+    P.bookHasMinus?.({ taxable_value: -4000, input_cgst: -360 }) === true && P.bookHasMinus?.({ taxable_value: 0, input_cgst: -0.01 }) === true
+      && P.bookHasMinus?.({ taxable_value: 1000, input_igst: 0, input_cgst: 90, input_sgst: 90 }) === false && P.bookHasMinus?.({}) === false);
+  const plan = await P.planImport2BPost(BC, BM);
+  check('Post to Reconciliation posts the invoice and skips the minus row with the reason',
+    plan.insertBills2B.map(({ row }) => row.id).join() === 'bk-inv'
+      && plan.skippedBooks.some(({ row, reason }) => row.id === 'bk-cn' && reason.startsWith('Minus amount')),
+    JSON.stringify({ ins: plan.insertBills2B.map(({ row }) => row.id), skipped: plan.skippedBooks.map(({ row, reason }) => `${row.id}: ${reason}`) }));
+  check('… and takes back what the minus row posted before', plan.retractBills2B.some(({ ledgerId }) => ledgerId === 'led-cn'), JSON.stringify(plan.retractBills2B));
+  await P.postImport2BToLedger(BC, BM, 'user-1', plan);
+  const led = db.bills_not_in_2b.filter((l) => l.client_id === BC);
+  check('the ledger then holds the invoice only, reversed in Sep 26 at +90',
+    led.length === 1 && led[0].source_book_id === 'bk-inv' && led[0].reversal_month === 'Sep 26' && Number(led[0].input_cgst) === 90, JSON.stringify(led));
+  const tab = fs.readFileSync(path.join(root, 'src/pages/Import2BTab.tsx'), 'utf8');
+  check('the books register refuses a minus amount on save and marks a saved one red',
+    /if \(bookHasMinus\(row\)\) \{[\s\S]{0,400}never minus/.test(tab) && tab.includes("const minus = bookHasMinus(b);"));
+});
+
 // ── Report ──────────────────────────────────────────────────────────────────
 let failed = 0;
 for (const r of results) {

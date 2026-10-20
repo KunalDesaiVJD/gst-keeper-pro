@@ -90,7 +90,7 @@ clients (`full_2b` months only), or, parked Not in Books like an invoice, wait o
 ledger as negative rows and, once booked, are reduced in row 5.2 (the one ITC Summary
 row that takes a negative head); amendments count only revised minus the
 earlier version's `base_*`, or are HELD; a re-import merges, never wipes.
-Document meaning (type, sign, effect, colour) lives in `src/lib/twobDocs.ts`.
+The books register takes invoices and debit notes only, never a minus amount: a booked supplier credit note waits for its 2B row (`bookHasMinus`, §10). Document meaning (type, sign, effect, colour) lives in `src/lib/twobDocs.ts`.
 "Email bills not in books" (Import 2B header, §11) mails the client its open Not in Books list as an
 Excel working paper via `email_outbox` (`attachments`, `cc_email`) and `send-gst-email` v5 (`src/lib/billsNotInBooksMail.ts`).
 
