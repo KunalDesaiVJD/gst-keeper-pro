@@ -90,7 +90,8 @@ clients (`full_2b` months only), or, parked Not in Books like an invoice, wait o
 ledger as negative rows and, once booked, are reduced in row 5.2 (the one ITC Summary
 row that takes a negative head); amendments count only revised minus the
 earlier version's `base_*`, or are HELD; a re-import merges, never wipes.
-The books register takes invoices and debit notes only, never a minus amount: a booked supplier credit note waits for its 2B row (`bookHasMinus`, §10). Document meaning (type, sign, effect, colour) lives in `src/lib/twobDocs.ts`. Opening-balance overrides on Suspended Reco / GST Receivable Reco are the superadmin's alone, a reason optional (`canManualOverride`; DB trigger `opening_override_guard`, 20261020150000).
+The books register takes invoices and debit notes only, never a minus amount: a booked supplier credit note waits for its 2B row (`bookHasMinus`, §10). Document meaning (type, sign, effect, colour) lives in `src/lib/twobDocs.ts`.
+A books register "Debit note" is the client's purchase return: no effect until the supplier's credit note is in 2B (never posted; pairs with 2B credit notes only; §10). Opening-balance overrides on Suspended Reco / GST Receivable Reco are the superadmin's alone, a reason optional (`canManualOverride`; DB trigger `opening_override_guard`, 20261020150000).
 "Email bills not in books" (Import 2B header, §11) mails the client its open Not in Books list as an
 Excel working paper via `email_outbox` (`attachments`, `cc_email`) and `send-gst-email` v5 (`src/lib/billsNotInBooksMail.ts`).
 

@@ -73,6 +73,7 @@ interface BookRegRow {
   input_cgst: number | null;
   input_sgst: number | null;
   book_treatment: string;
+  doc_type?: string | null;
 }
 
 interface LedgerRow {
@@ -103,7 +104,12 @@ const amountsDiffer = (a: LedgerRow, b: { date: string; supplier_name: string; s
 export const bookHasMinus = (b: { taxable_value?: number | null; input_igst?: number | null; input_cgst?: number | null; input_sgst?: number | null }) =>
   [b.taxable_value, b.input_igst, b.input_cgst, b.input_sgst].some((v) => (Number(v) || 0) < 0);
 
-export const BOOK_MINUS_REASON = 'Minus amount: a credit note from the supplier is not entered in the books register. It reduces ITC from its own 2B row once the supplier reports it (row 5.3); delete this row';
+export const BOOK_MINUS_REASON = 'Minus amount: amounts in the books register are always plus. Your debit note (purchase return) is entered as Type "Debit note (purchase return)" at plus amounts; correct this row';
+
+/** A books "Debit note": the client's own debit note, a purchase return (the supplier's credit note). */
+export const bookIsPurchaseReturn = (b: { doc_type?: string | null }) => b.doc_type === 'DEBIT_NOTE';
+
+export const BOOK_DEBIT_NOTE_REASON = 'Debit note (purchase return): no effect until the supplier\'s credit note is in 2B; that 2B row then reduces ITC (row 5.3)';
 
 export interface PostPlan {
   insertBills2B: { row: BookRegRow }[];
@@ -147,15 +153,18 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
     insertBillsBooks: [], updateBillsBooks: [], retractBillsBooks: [], skippedDocs: [],
   };
 
-  // Books not in 2B -> bills_not_in_2b. Books rows are invoices or debit
-  // notes, always positive: a supplier credit note the client has booked waits
-  // for its own 2B row (row 5.3) and is never posted from books (the firm's
-  // decision, 20 Oct 2026; docs §10). A minus row is skipped, and what it
-  // posted before is taken back below.
+  // Books not in 2B -> bills_not_in_2b. Only purchases (invoices) post, at
+  // plus amounts. A books debit note is the client's purchase return, the
+  // other side of the supplier's credit note: it has no effect until the
+  // supplier reports that credit note, whose own 2B row then reduces ITC
+  // (row 5.3), so it is never posted from books (the firm's decisions,
+  // 20 Oct 2026; docs §10). A debit note or a minus row is skipped, and what
+  // it posted before is taken back below.
   const notIn2B = books.filter((b) => b.book_treatment === 'NOT_IN_2B');
   const byBookId = new Map(ledger2B.map((l) => [l.source_book_id as string, l]));
   const postable = new Set<string>();
   for (const b of notIn2B) {
+    if (bookIsPurchaseReturn(b)) { plan.skippedBooks.push({ row: b, reason: BOOK_DEBIT_NOTE_REASON }); continue; }
     if (bookHasMinus(b)) { plan.skippedBooks.push({ row: b, reason: BOOK_MINUS_REASON }); continue; }
     postable.add(b.id);
     if (!b.date) { plan.skippedBooks.push({ row: b, reason: 'Missing date' }); continue; }

@@ -127,7 +127,7 @@ export const buildPurchaseRateWiseReport = async (clientId: string, month: strin
   const client = await fetchClient(clientId);
   const { data } = await supabase
     .from('books_register')
-    .select('taxable_value, input_igst, input_cgst, input_sgst')
+    .select('taxable_value, input_igst, input_cgst, input_sgst, doc_type')
     .eq('client_id', clientId).eq('period_month', month);
   const docs = data || [];
   if (docs.length === 0) {
@@ -137,8 +137,10 @@ export const buildPurchaseRateWiseReport = async (clientId: string, month: strin
   interface Bucket { txval: number; igst: number; cgst: number; sgst: number; }
   const byRate = new Map<number, Bucket>();
   docs.forEach((d) => {
-    const txval = num(d.taxable_value), igst = num(d.input_igst), cgst = num(d.input_cgst), sgst = num(d.input_sgst);
-    const rate = deriveRate(txval, igst + cgst + sgst);
+    // A books debit note is a purchase return: it reduces its rate's purchases.
+    const sign = d.doc_type === 'DEBIT_NOTE' ? -1 : 1;
+    const txval = sign * num(d.taxable_value), igst = sign * num(d.input_igst), cgst = sign * num(d.input_cgst), sgst = sign * num(d.input_sgst);
+    const rate = deriveRate(Math.abs(txval), Math.abs(igst + cgst + sgst));
     const cur = byRate.get(rate) || { txval: 0, igst: 0, cgst: 0, sgst: 0 };
     cur.txval += txval; cur.igst += igst; cur.cgst += cgst; cur.sgst += sgst;
     byRate.set(rate, cur);
