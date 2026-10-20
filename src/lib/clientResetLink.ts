@@ -12,7 +12,7 @@ export interface ResetLinkEmail {
 
 const norm = (v: string | null | undefined) => (v ?? '').trim().toLowerCase();
 
-// The database's rule (client_email_list in migration 20261020100000): the
+// The database's rule (client_email_list in migration 20261020140000): the
 // field may hold several addresses, separated by commas, semicolons or
 // spaces; only well-formed ones count (something@domain.tld, a top-level part
 // of two or more characters, no trailing dot), each once, in the order

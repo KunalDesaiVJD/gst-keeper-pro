@@ -1,5 +1,5 @@
 // Client app-login passwords: the e-mailed reset link and staff resets.
-// Everything is decided in the database (migration 20261020100000, positions
+// Everything is decided in the database (migration 20261020140000, positions
 // in docs/CLIENT_PASSWORD_RESET.md); the Edge Function client-password-reset
 // sends the e-mails. The browser never sees a token except the one in the
 // link the client opened.

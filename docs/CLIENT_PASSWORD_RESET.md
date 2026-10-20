@@ -1,9 +1,10 @@
 # Client password reset (17 Oct 2026)
 
-Migration `supabase/migrations/20261020100000_client_password_reset.sql`, Edge Function
+Migration `supabase/migrations/20261020140000_client_password_reset.sql`, Edge Function
 `supabase/functions/client-password-reset/`, tests `supabase/tests/client_password/run.sh`
-(local Postgres), `deno test supabase/functions/client-password-reset/test/` and
-`node scripts/verify-client-reset-link.mjs`.
+(local Postgres 15/16 with the `dblink` contrib extension, which `test_99_lock_order.sql`
+uses to run real concurrent sessions), `deno test supabase/functions/client-password-reset/test/`
+and `node scripts/verify-client-reset-link.mjs`. Going live: [the last section](#going-live).
 The positions below were engineering judgement, not a firm sign-off.
 
 ## The flow
@@ -60,10 +61,14 @@ The positions below were engineering judgement, not a firm sign-off.
   address because the old one is not the client's (a mistyped domain, an ex-accountant),
   so whoever reads the old mailbox must not be able to use a link there:
   - changing `clients.email` (Edit Client, or any update) fires the trigger
-    `client_password_email_changed`, which voids every link to an address no longer on
+    `client_password_email_changed`, which first reports the client's links that never
+    went out (`client_password_reset_sweep_client`, as a retry or the sweep would: logged
+    as `link_failed`, staff asked), then voids every link to an address no longer on
     record (`void_reason` "the e-mail address changed", logged as `link_voided`, masked)
     and, if one of them was still live and no other link is open, files the staff
-    request;
+    request. Without the first step a link that never went out would be voided as "the
+    e-mail address changed", would not count as live, and the client who asked would be
+    left with nothing;
   - `client_password_reset_claim` never mints a token for such a link (one queued in the
     same moment as the change): it voids it, logs it and asks staff instead;
   - `client_password_reset_mark` reports one sent as voided and resolves nothing;
@@ -97,20 +102,41 @@ The positions below were engineering judgement, not a firm sign-off.
   no longer on record (that one is voided, and staff asked if nothing else is open).
   Requests not filed by this flow are left to staff.
 - **Links that never go out.** A link not claimed within 15 minutes (the mailer did not
-  run; a working one claims in seconds) is given up; one claimed but not reported sent
-  within 15 minutes (the mailer stopped half way) is voided. Either way it is logged
-  (`link_failed`) and staff are asked. pg_cron runs `client_password_reset_tick` every 5
-  minutes (job `client-password-reset-sweep`, 3, 8, 13 … past the hour), whatever the
-  traffic: it sweeps (`client_password_reset_sweep`) and wakes the mailer again while a
-  link is still waiting, in case the first wake-up was lost. The claim and every request
-  sweep too. A client's own retry (and a staff link) first reports that client's lost
+  run; a working one claims in seconds) is given up (`void_reason` "not sent in time");
+  one claimed but whose send is not confirmed within 15 minutes is voided (`void_reason`
+  "the send could not be confirmed"). The second may well have been e-mailed (the mailer
+  stopped after sending, or its report never arrived), so nothing says it was not: the log
+  reads "The send of the reset link to p•••@x.com could not be confirmed within 15
+  minutes, so the link was voided." and the reason staff were asked "The send of the reset
+  link could not be confirmed." Either way it is logged (`link_failed`) and staff are
+  asked. pg_cron runs `client_password_reset_tick` every 5 minutes (job
+  `client-password-reset-sweep`, 3, 8, 13 … past the hour), whatever the traffic: it
+  sweeps (`client_password_reset_sweep`) and wakes the mailer again while a link is still
+  waiting, in case the first wake-up was lost. The claim and every request sweep too. A
+  client's own retry, a staff link and an e-mail change first report that client's lost
   links (`client_password_reset_sweep_client`, under the client's lock), so a lost link
-  is never voided unreported as "a newer link was asked for"; a staff link over a lost
-  one logs it without filing a request, since staff are acting. A send reported after the
-  sweep voided the link is recorded, and the log says the link does not work.
+  is never voided unreported as "a newer link was asked for" or "the e-mail address
+  changed"; a staff link over a lost one logs it without filing a request, since staff
+  are acting. A send reported after the sweep voided the link is recorded, and the log
+  says the link does not work.
+- **The mailer retries its report.** After each e-mail the Edge Function reports with
+  `client_password_reset_mark`, retried up to three more times with backoff (0.5 s, 1.5 s,
+  4 s; `mark.ts`), so a link that went out is not voided for a passing network or
+  database error. A report can arrive and its answer still be lost, so a repeat must be
+  harmless: `client_password_reset_mark` keeps a link's first report (sent, or failed)
+  and ignores any after it (no second log row, no second staff request, `sent_at`
+  unchanged).
 - **The staff request's note** is the same for every reason ("Asked for a reset link;
-  none reached the client. Edit Client shows why.") and never names the e-mail address:
+  none reached the client. Reset password shows why.") and never names the e-mail address:
   `password_reset_requests` is open to the anon key. The reason is in the private log.
+  The note names the Dashboard row's own "Reset password" button, never Edit Client, which
+  not every employee can open: every staff member who sees the request can open that
+  dialog, and opened from such a request (only these carry a note) it shows "Why no link
+  reached the client" with the newest `fallback_request` entry of the client's log (read
+  through `client_password_log_for`, any staff level; `src/lib/clientPasswordReason.ts`,
+  without the log's "A request is waiting on the Dashboard." sentence). The database files one
+  pending request per client and logs a reason only when it files one, so the newest
+  reason is the waiting request's.
 - **Password rules** (`client_password_problem`, mirrored in `src/lib/passwordRules.ts`):
   8 to 72 characters, no outer spaces, not the client's GSTIN, nothing shaped like a GSTIN.
 - **Staff resets.** Every staff level (superadmin, GST Manager, any employee, no key)
@@ -142,15 +168,30 @@ The positions below were engineering judgement, not a firm sign-off.
 - **Edit Client** no longer writes the GST password into `client_password` on every save:
   only a *changed* GST password also sets the app login, through
   `staff_set_client_password` (hashed, logged). The firm may prefer to stop that sync.
-- **Locks.** Whatever changes a client's links takes that client's advisory lock first;
-  the sweep only tries it (and leaves a busy client to the next sweep), and the claim
-  skips locked rows and only tries a client's lock, so neither waits while holding a
-  lock. An e-mail change holds the `clients` row when its trigger takes the advisory
-  lock, so whatever locks both (`client_password_reset_complete`,
-  `staff_set_client_password`) locks the row first. The per-client sweep inside a
-  request or a staff link runs under the lock the caller already holds, never another
-  client's (a shared User ID takes its clients' locks in id order). A staff link reads
-  the address under the lock.
+- **Locks: one order everywhere, the client's `clients` row, then the client's advisory
+  lock.** An Edit Client save holds the row when its e-mail trigger takes the advisory
+  lock, and holds it `FOR UPDATE` when it also changes the GSTIN (a unique, so key,
+  column); every insert into a table with a foreign key to `clients`
+  (`client_password_resets`, `client_password_log`, `client_password_reset_attempts`)
+  locks the row `FOR KEY SHARE`. Anything that took the advisory lock first and touched
+  the row afterwards therefore deadlocked with a GSTIN + e-mail save. So:
+  - whatever waits locks the row first: `FOR KEY SHARE` in
+    `client_password_reset_for_client`, `staff_send_client_reset_link`,
+    `client_password_reset_mark`, `client_password_staff_request` and
+    `client_password_reset_sweep_client`; `FOR NO KEY UPDATE` in
+    `client_password_reset_complete` and `staff_set_client_password`, which change it;
+    then `pg_advisory_xact_lock`;
+  - the sweep and the claim never wait: they try the row (`FOR KEY SHARE SKIP LOCKED`)
+    and then the advisory lock (`pg_try_advisory_xact_lock`), and leave a client whose
+    row or lock is busy to the next run (the claim also skips link rows already locked);
+  - both locks are re-entrant, so the helpers called under them never wait. The
+    per-client sweep inside a request, a staff link or an e-mail change runs under the
+    locks the caller already holds, never another client's (a shared User ID takes its
+    clients' locks in id order). A request and a staff link read the address under both
+    locks, so an e-mail change saving at that moment is either seen or voids the new link
+    when it commits.
+  `test_99_lock_order.sql` runs a GSTIN + e-mail change against a request half way
+  through (two sessions), and checks the order in every function above.
 
 ## Known limits
 
@@ -161,3 +202,105 @@ limits above bound how many. `password_reset_requests` (from 20260105095015) is 
 the anon key, so a pending client request, and the client it names, can be seen with it;
 it never carries the e-mail address or the reason. Anyone can therefore file at most one
 pending staff request per client by tripping a limit.
+
+## Going live
+
+Never applied live yet. Everything below is for project **`gcquafqxbykxkbexcdpy`** only:
+always name it (`--project-ref gcquafqxbykxkbexcdpy`, or the URL below), never
+`SUPABASE_PROJECT_REF` (it points at another live project, `hubyywmodekfdzhwiumb`).
+`SUPABASE_ACCESS_TOKEN` must be set. Order: database, secrets, Edge Function, then the
+frontend. The current frontend keeps working on the new database (the 3-argument
+`staff_set_client_password` call still resolves, `password_reset_requests.note` is a new
+nullable column, the e-mail trigger only touches reset links); the new frontend calls RPCs
+only the migration creates, and a link queued before the function is deployed would wait
+for nothing.
+
+1. **Check what the migration relies on** (read-only; expect `pgcrypto` in `extensions`,
+   `pg_net`, `pg_cron`, and one Vault row, from 20260726130000):
+
+   ```sql
+   select extname, extnamespace::regnamespace from pg_extension where extname in ('pgcrypto', 'pg_net', 'pg_cron');
+   select name from vault.decrypted_secrets where name = 'gst_cron_anon_key';
+   ```
+
+2. **Apply the migration** (one transaction, safe to re-run):
+
+   ```bash
+   jq -Rs '{query: .}' supabase/migrations/20261020140000_client_password_reset.sql \
+     | curl -sS -X POST https://api.supabase.com/v1/projects/gcquafqxbykxkbexcdpy/database/query \
+         -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H 'Content-Type: application/json' --data-binary @-
+   ```
+
+   Then check its objects exist (there is no migration ledger):
+
+   ```sql
+   select to_regclass('public.client_password_resets'), to_regclass('public.client_password_reset_attempts'),
+          to_regclass('public.client_password_log');                                   -- three names
+   select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname in (
+      'client_email_list', 'client_email_hint', 'client_password_sent_to_current', 'client_password_problem',
+      'client_password_request_ip', 'client_password_ip_key', 'client_password_reset_ping',
+      'client_password_staff_note', 'client_password_staff_request', 'client_password_has_open_link',
+      'client_password_reset_sweep_client', 'client_password_reset_sweep', 'client_password_reset_tick',
+      'client_password_email_changed', 'client_password_reset_for_client', 'client_password_reset_request',
+      'client_password_reset_claim', 'client_password_reset_mark', 'client_password_reset_check',
+      'client_password_reset_complete', 'staff_set_client_password', 'staff_send_client_reset_link',
+      'client_password_log_for');                                                        -- 23
+   select pg_get_function_identity_arguments('public.staff_set_client_password'::regproc);
+                                     -- p_actor_id uuid, p_client_id uuid, p_new_password text, p_note text
+   select tgname from pg_trigger where tgname = 'client_password_email_changed';        -- one row
+   select schedule, command from cron.job where jobname = 'client-password-reset-sweep';
+                                     -- 3-59/5 * * * * | select public.client_password_reset_tick()
+   select count(*) from pg_policies
+    where tablename in ('client_password_resets', 'client_password_reset_attempts', 'client_password_log');  -- 0
+   select public.client_password_staff_note();
+                                     -- Asked for a reset link; none reached the client. Reset password shows why.
+   ```
+
+   And that the anon key cannot read the private tables (the management API bypasses
+   RLS, so this one goes through PostgREST with the key from `.env`); each must answer
+   `permission denied`:
+
+   ```bash
+   for t in client_password_resets client_password_reset_attempts client_password_log; do
+     curl -sS "https://gcquafqxbykxkbexcdpy.supabase.co/rest/v1/$t?select=id&limit=1" \
+       -H "apikey: $VITE_SUPABASE_PUBLISHABLE_KEY" -H "Authorization: Bearer $VITE_SUPABASE_PUBLISHABLE_KEY"; echo
+   done
+   ```
+
+3. **Secrets.** The function reads `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`,
+   `GRAPH_CLIENT_SECRET` and `GRAPH_SENDER` (`gst@vjdesai.com`), the same ones
+   `send-gst-email` uses (function secrets are per project, so they should already be
+   there; the Graph app needs the application permission Mail.Send for the sender).
+   `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected by the platform.
+
+   ```bash
+   supabase secrets list --project-ref gcquafqxbykxkbexcdpy     # the four GRAPH_* names
+   # only if one is missing:
+   supabase secrets set GRAPH_SENDER=gst@vjdesai.com --project-ref gcquafqxbykxkbexcdpy
+   ```
+
+4. **Deploy the Edge Function** (it bundles `../_shared/graph.ts` and `../_shared/email.ts`;
+   keep JWT verification on, the default: the database's wake-up and the app both call it
+   with the anon key, a JWT):
+
+   ```bash
+   supabase functions deploy client-password-reset --project-ref gcquafqxbykxkbexcdpy
+   curl -sS -X POST https://gcquafqxbykxkbexcdpy.supabase.co/functions/v1/client-password-reset \
+     -H "Authorization: Bearer $VITE_SUPABASE_PUBLISHABLE_KEY" -H 'Content-Type: application/json' -d '{}'
+                                     # {"ok":true}; with no link waiting it sends nothing
+   ```
+
+   `send-gst-email` need not be redeployed: the change to `_shared/email.ts` only adds the
+   reset e-mail's shell.
+
+5. **Deploy the frontend** (merge to `main`; Vercel builds it, and `vercel.json` adds
+   `Referrer-Policy: no-referrer` on `/reset-password`). Only after steps 2 to 4.
+
+6. **Check end to end** with a client whose e-mail on record is a firm mailbox: login page
+   → "Forgot Password? (Clients)" with its GSTIN; the e-mail arrives within a minute; its
+   button opens `https://gst.vjdesai.com/reset-password`; set a password and sign in with
+   the GSTIN. Edit Client → Client app login shows link asked for, link e-mailed and set by
+   the client. After 10 minutes, `select status, start_time from cron.job_run_details
+   where jobid = (select jobid from cron.job where jobname = 'client-password-reset-sweep')
+   order by start_time desc limit 3;` shows the sweep running.

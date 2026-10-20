@@ -36,7 +36,7 @@ SELECT t_eq((SELECT count(*) FROM password_reset_requests), 0::bigint, 'nothing 
 -- The job runs as pg_cron would run it.
 DELETE FROM net.calls;
 DO $$ BEGIN EXECUTE (SELECT command FROM cron.job WHERE jobname = 'client-password-reset-sweep'); END $$;
-SELECT t_eq((SELECT void_reason FROM client_password_resets WHERE id = :'ra'), 'claimed but not sent', '(a) voided');
+SELECT t_eq((SELECT void_reason FROM client_password_resets WHERE id = :'ra'), 'the send could not be confirmed', '(a) voided');
 SELECT t_eq((SELECT void_reason FROM client_password_resets WHERE client_id = 'c8700000-0000-0000-0000-000000000002'),
   'not sent in time', '(b) given up');
 SELECT t_eq((SELECT string_agg(c.gstin, ',' ORDER BY c.gstin) FROM password_reset_requests q JOIN clients c ON c.id = q.user_id

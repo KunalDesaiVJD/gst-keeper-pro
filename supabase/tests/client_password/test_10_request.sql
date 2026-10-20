@@ -62,7 +62,7 @@ SELECT t_eq((SELECT count(*) FROM client_password_resets WHERE client_id = 'c000
 SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE user_id = 'c0000000-0000-0000-0000-000000000002' AND status = 'pending'),
   1::bigint, 'one pending staff request for the client with no e-mail');
 SELECT t_eq((SELECT note FROM password_reset_requests WHERE user_id = 'c0000000-0000-0000-0000-000000000002'),
-  'Asked for a reset link; none reached the client. Edit Client shows why.', 'the open request does not say why');
+  'Asked for a reset link; none reached the client. Reset password shows why.', 'the open request does not say why');
 SELECT t_eq((SELECT detail FROM client_password_log WHERE client_id = 'c0000000-0000-0000-0000-000000000002' AND action = 'fallback_request'),
   'Asked for a reset link, but there is no e-mail address on record. A request is waiting on the Dashboard.', 'the private log does');
 SELECT t_eq((SELECT count(*) FROM client_password_log WHERE client_id = 'c0000000-0000-0000-0000-000000000002'), 1::bigint,

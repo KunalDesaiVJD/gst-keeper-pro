@@ -1,5 +1,5 @@
 // client-password-reset — e-mails the client password reset links waiting in
-// public.client_password_resets (migration 20261020100000).
+// public.client_password_resets (migration 20261020140000).
 //
 // Woken by the database right after a link is queued (pg_net, the Vault anon
 // key the cron jobs use) and by the app after asking; either may arrive
@@ -7,10 +7,13 @@
 // client_password_reset_claim (service role only), which mints the token and
 // stores only its sha256, sends the e-mail through Microsoft Graph, and
 // reports back with client_password_reset_mark (sent, or failed: the link is
-// voided and staff get a request on the Dashboard). A link that does not point
-// at https://gst.vjdesai.com is never sent (message.ts checkedLink): it is
-// reported as failed. A link claimed here but never reported (the function
-// stopped half way), or never claimed, is voided after 15 minutes by the
+// voided and staff get a request on the Dashboard). The report is retried with
+// backoff (mark.ts; the database keeps a link's first report, so a repeat is
+// harmless): an e-mailed link whose report never arrives would be voided. A
+// link that does not point at https://gst.vjdesai.com is never sent
+// (message.ts checkedLink): it is reported as failed. A link claimed here
+// whose send is still unconfirmed after 15 minutes (the function stopped half
+// way, or every report failed), or never claimed, is voided by the
 // database's sweep (pg_cron every 5 minutes, which also wakes this function
 // again while a link waits), and staff get a request on the Dashboard.
 //
@@ -22,6 +25,7 @@
 // Auto-injected: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { graphToken, sendMail } from '../_shared/graph.ts';
+import { markWithRetry } from './mark.ts';
 import { type ClaimedLink, resetEmail } from './message.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
@@ -58,9 +62,14 @@ async function drain(): Promise<void> {
           problem = ((e as Error).message || 'send error').slice(0, 500);
         }
       }
-      const { error: markError } = await sb.rpc('client_password_reset_mark', { p_reset_id: row.reset_id, p_error: problem });
-      if (markError) console.error(`client-password-reset: mark ${row.reset_id}: ${markError.message}`);
       console.log(`client-password-reset: ${row.reset_id} ${problem ? 'failed: ' + problem : 'sent'}`);
+      const mark = await markWithRetry(() =>
+        sb.rpc('client_password_reset_mark', { p_reset_id: row.reset_id, p_error: problem }));
+      if (!mark.ok) {
+        // The database will void the link after 15 minutes as "the send could
+        // not be confirmed" and ask staff.
+        console.error(`client-password-reset: mark ${row.reset_id} failed ${mark.attempts} times: ${mark.error}`);
+      }
     }
     if (rows.length < 10) return;
   }

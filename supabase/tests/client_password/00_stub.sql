@@ -1,5 +1,5 @@
 -- Test-only stand-ins for the Supabase platform and the slice of app tables
--- that 20261020100000_client_password_reset.sql touches, so the real
+-- that 20261020140000_client_password_reset.sql touches, so the real
 -- migration can be replayed on a plain PostgreSQL 15/16.
 -- NOT a migration: never apply this to the live project.
 

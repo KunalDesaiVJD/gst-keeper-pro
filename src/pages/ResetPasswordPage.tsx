@@ -18,7 +18,7 @@ import { clientPasswordProblem } from '@/lib/passwordRules';
 // Public page, reached from the e-mailed link (/reset-password#token=…). The
 // token, not a session, is what lets the client set a new password; it is
 // taken off the address bar at once, works once, for 60 minutes
-// (client_password_reset_check / _complete, migration 20261020100000).
+// (client_password_reset_check / _complete, migration 20261020140000).
 
 type Stage = 'checking' | 'invalid' | 'form' | 'done' | 'error';
 

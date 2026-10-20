@@ -3,10 +3,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
-import { KeyRound, Loader2, Mail, CheckCircle2 } from 'lucide-react';
+import { KeyRound, Loader2, Mail, CheckCircle2, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { staffEmailResetLink, staffSetClientPassword } from '@/lib/clientPasswordReset';
+import { loadClientPasswordLog, staffEmailResetLink, staffSetClientPassword } from '@/lib/clientPasswordReset';
+import { latestFallbackReason, type FallbackReason } from '@/lib/clientPasswordReason';
 import { staffClientPasswordProblem } from '@/lib/passwordRules';
 import { resetLinkAddresses, resetLinkBlock } from '@/lib/clientResetLink';
 
@@ -18,6 +19,11 @@ export interface ResetClientTarget {
   email?: string | null;
   /** On a screen that edits the address: what the form shows now. */
   typedEmail?: string | null;
+  /**
+   * Opened from a request waiting on the Dashboard: the dialog says why no
+   * link reached the client (the request's note says to look here).
+   */
+  askedForHelp?: boolean;
 }
 
 interface Props {
@@ -38,12 +44,28 @@ const ResetClientPasswordDialog: React.FC<Props> = ({ client, onOpenChange, onDo
   const [confirmPassword, setConfirmPassword] = useState('');
   const [busy, setBusy] = useState<null | 'password' | 'link'>(null);
   const [queuedTo, setQueuedTo] = useState<string | null>(null);
+  const [why, setWhy] = useState<FallbackReason | null>(null);
 
   useEffect(() => {
     setNewPassword('');
     setConfirmPassword('');
     setQueuedTo(null);
   }, [client?.id]);
+
+  // Why staff were asked: the client's private password log, which every
+  // staff level reads (client_password_log_for). The dialog works without it.
+  const actorId = user?.id;
+  const clientId = client?.id;
+  const askedForHelp = !!client?.askedForHelp;
+  useEffect(() => {
+    setWhy(null);
+    if (!actorId || !clientId || !askedForHelp) return;
+    let live = true;
+    loadClientPasswordLog(actorId, clientId, 50)
+      .then((log) => { if (live) setWhy(latestFallbackReason(log)); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [actorId, clientId, askedForHelp]);
 
   const linkBlock = client ? resetLinkBlock({ saved: client.email, typed: client.typedEmail }) : null;
   // Only the well-formed addresses: the ones the database sends the link to.
@@ -102,6 +124,21 @@ const ResetClientPasswordDialog: React.FC<Props> = ({ client, onOpenChange, onDo
         </DialogHeader>
 
         <div className="space-y-4 pt-1">
+          {why && (
+            <div className="space-y-1 rounded-md border border-warning/40 bg-warning/5 p-3">
+              <p className="flex items-center gap-1.5 text-sm font-medium">
+                <Info className="h-3.5 w-3.5 shrink-0 text-warning" />
+                Why no link reached the client
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {why.text}{' '}
+                <span className="tabular-nums">
+                  ({new Date(why.at).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })})
+                </span>
+              </p>
+            </div>
+          )}
+
           <div className="space-y-2 rounded-md border p-3">
             <p className="text-sm font-medium">E-mail the client a reset link</p>
             {queuedTo ? (

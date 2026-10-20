@@ -32,13 +32,13 @@ SELECT t_eq(client_password_has_open_link('c8500000-0000-0000-0000-000000000001'
 SET LOCAL ROLE service_role;
 SELECT t_eq((SELECT count(*) FROM client_password_reset_claim(10)), 0::bigint, 'the claim sweeps');
 RESET ROLE;
-SELECT t_eq((SELECT void_reason FROM client_password_resets WHERE id = :'r1'), 'claimed but not sent', 'the lost link is voided');
+SELECT t_eq((SELECT void_reason FROM client_password_resets WHERE id = :'r1'), 'the send could not be confirmed', 'the lost link is voided');
 SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE user_id = 'c8500000-0000-0000-0000-000000000001' AND status = 'pending'),
   1::bigint, 'staff get a request');
 SELECT t_eq((SELECT note FROM password_reset_requests WHERE user_id = 'c8500000-0000-0000-0000-000000000001'),
-  'Asked for a reset link; none reached the client. Edit Client shows why.', 'the usual note');
+  'Asked for a reset link; none reached the client. Reset password shows why.', 'the usual note');
 SELECT t_eq((SELECT detail FROM client_password_log WHERE client_id = 'c8500000-0000-0000-0000-000000000001' AND action = 'link_failed'),
-  'The mailer stopped before the reset link for l•••@example.com was sent, so it was voided.', 'logged');
+  'The send of the reset link to l•••@example.com could not be confirmed within 15 minutes, so the link was voided.', 'logged');
 SET LOCAL ROLE anon;
 SELECT t_eq(client_password_reset_check(:'t1') ->> 'valid', 'false', 'the token no longer works');
 RESET ROLE;
@@ -53,7 +53,7 @@ SELECT client_password_reset_mark(:'r1', NULL);
 RESET ROLE;
 SELECT t_eq((SELECT sent_at IS NOT NULL AND voided_at IS NOT NULL FROM client_password_resets WHERE id = :'r1'), true, 'sent late, still void');
 SELECT t_eq((SELECT detail FROM client_password_log WHERE client_id = 'c8500000-0000-0000-0000-000000000001' AND action = 'link_sent'),
-  'Reset link e-mailed to l•••@example.com. It was already void (claimed but not sent), so it does not work.', 'and says so');
+  'Reset link e-mailed to l•••@example.com. It was already void (the send could not be confirmed), so it does not work.', 'and says so');
 
 -- Any request sweeps too, even with the mailer down: a lost link for another client.
 SET LOCAL ROLE anon;
@@ -70,7 +70,7 @@ VALUES ('c8500000-0000-0000-0000-0000000000ff', 'c8500000-0000-0000-0000-0000000
 SET LOCAL ROLE anon;
 SELECT client_password_reset_request('24AAACL0004A1Z4');
 RESET ROLE;
-SELECT t_eq((SELECT void_reason FROM client_password_resets WHERE id = :'r2'), 'claimed but not sent', 'a request swept the lost link');
+SELECT t_eq((SELECT void_reason FROM client_password_resets WHERE id = :'r2'), 'the send could not be confirmed', 'a request swept the lost link');
 SELECT t_eq((SELECT void_reason FROM client_password_resets WHERE id = 'c8500000-0000-0000-0000-0000000000ff'), 'not sent in time',
   'and the one never claimed');
 SELECT t_eq((SELECT string_agg(c.gstin, ',' ORDER BY c.gstin) FROM password_reset_requests q JOIN clients c ON c.id = q.user_id

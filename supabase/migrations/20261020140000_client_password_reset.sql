@@ -27,19 +27,25 @@
 --    changing clients.email voids links to an address no longer there (a
 --    trigger; staff asked if one was still live), the mailer never mints a
 --    token for one, and the reset page refuses one.
---  * A link not claimed, or claimed and not sent, within 15 minutes is lost:
---    voided, logged, staff asked. pg_cron checks every 5 minutes (and wakes
---    the mailer again for links still waiting); a request or a claim checks
---    too, and a client's own retry never voids a lost link unreported.
+--  * A link not claimed within 15 minutes, or claimed and its send not
+--    confirmed within 15 minutes, is lost: voided, logged, staff asked.
+--    pg_cron checks every 5 minutes (and wakes the mailer again for links
+--    still waiting); a request, a claim and an e-mail change check too, so a
+--    retry or a new address never voids a lost link unreported. The mailer
+--    retries its report; a report repeated changes nothing.
 --  * client_password_log (who changed a password, how) is private too; staff
 --    read it through client_password_log_for. It shows e-mail addresses only
 --    masked.
 --  * staff_set_client_password: any staff level (superadmin, GST Manager, any
 --    employee, no permission key needed); logged; voids open links.
---  * Locks: whatever changes a client's links takes that client's advisory
---    lock first; the sweep and the claim only try it, so they never wait.
---    Whatever also locks the clients row locks it before the advisory lock
---    (an e-mail change holds the row when its trigger takes the lock).
+--  * Locks, one order everywhere: the client's clients row, then the
+--    client's advisory lock. An Edit Client save holds the row (FOR UPDATE
+--    when it changes the GSTIN, a key column) when its e-mail trigger takes
+--    the advisory lock, and every insert into a table with a foreign key to
+--    clients locks the row FOR KEY SHARE; so whatever waits locks the row
+--    (FOR KEY SHARE, or FOR NO KEY UPDATE to change it) before the advisory
+--    lock, and the sweep and the claim, which never wait, try both and leave
+--    a busy client to the next run.
 --
 -- Safe to re-run.
 
@@ -276,12 +282,14 @@ END;
 $$;
 
 -- The note on every request this file files for staff (and how a sent link
--- finds the requests it answers).
+-- finds the requests it answers). It names the Dashboard's own "Reset
+-- password" button, whose dialog shows why (client_password_log_for, any
+-- staff level), never a screen some staff cannot open (Edit Client).
 CREATE OR REPLACE FUNCTION public.client_password_staff_note()
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
-AS $$ SELECT 'Asked for a reset link; none reached the client. Edit Client shows why.'::text $$;
+AS $$ SELECT 'Asked for a reset link; none reached the client. Reset password shows why.'::text $$;
 
 -- One pending request for staff per client (the Dashboard). p_why goes to the
 -- private log only; the open request carries a fixed note. True when filed.
@@ -293,6 +301,9 @@ SET search_path = public, extensions
 AS $$
 DECLARE v_name text; v_gstin text;
 BEGIN
+  -- The clients row, then the client's lock (see Locks above).
+  PERFORM 1 FROM public.clients c WHERE c.id = p_client_id FOR KEY SHARE;
+  IF NOT FOUND THEN RETURN false; END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || p_client_id::text, 0));
   IF EXISTS (SELECT 1 FROM public.password_reset_requests q
               WHERE q.user_id = p_client_id AND q.status = 'pending') THEN
@@ -333,18 +344,22 @@ $$;
 
 -- One client's links that will never arrive: not claimed within 15 minutes
 -- (the mailer did not run; a working one claims in seconds), or claimed but
--- not reported sent within 15 minutes (the mailer stopped half way). Each is
--- voided and logged, and staff are asked instead (p_ask_staff false: staff
--- are sending a link right now). The caller holds the client's lock.
+-- its send not confirmed within 15 minutes (the mailer stopped half way, or
+-- its report back never arrived: the e-mail may have gone, so nothing says
+-- it did not). Each is voided and logged, and staff are asked instead
+-- (p_ask_staff false: staff are sending a link right now). The caller holds
+-- the client's row and lock.
 CREATE OR REPLACE FUNCTION public.client_password_reset_sweep_client(p_client_id uuid, p_ask_staff boolean DEFAULT true)
 RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, extensions
 AS $$
-DECLARE r record; n integer := 0;
+DECLARE r record; n integer := 0; v_unconfirmed boolean := false;
 BEGIN
-  -- Already held by every caller (advisory locks are re-entrant): never waits.
+  -- Already held by every caller (row locks and advisory locks are
+  -- re-entrant): never waits. In the usual order for any other caller.
+  PERFORM 1 FROM public.clients c WHERE c.id = p_client_id FOR KEY SHARE;
   PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || p_client_id::text, 0));
   FOR r IN
     SELECT x.id, x.claimed_at IS NULL AS unclaimed, x.email_hint
@@ -358,21 +373,25 @@ BEGIN
     -- Checked again on the row: a claim that just committed keeps its link.
     UPDATE public.client_password_resets x
        SET voided_at = now(),
-           void_reason = CASE WHEN r.unclaimed THEN 'not sent in time' ELSE 'claimed but not sent' END
+           void_reason = CASE WHEN r.unclaimed THEN 'not sent in time' ELSE 'the send could not be confirmed' END
      WHERE x.id = r.id AND x.used_at IS NULL AND x.voided_at IS NULL AND x.sent_at IS NULL AND x.send_error IS NULL
        AND (   (x.claimed_at IS NULL AND x.created_at <= now() - interval '15 minutes')
             OR (x.claimed_at <= now() - interval '15 minutes'));
     CONTINUE WHEN NOT FOUND;
     n := n + 1;
+    v_unconfirmed := v_unconfirmed OR NOT r.unclaimed;
     INSERT INTO public.client_password_log (client_id, action, detail)
     VALUES (p_client_id, 'link_failed',
             CASE WHEN r.unclaimed
                  THEN 'The reset link for ' || COALESCE(r.email_hint, 'the client') || ' was not sent within 15 minutes, so it was given up.'
-                 ELSE 'The mailer stopped before the reset link for ' || COALESCE(r.email_hint, 'the client') || ' was sent, so it was voided.'
+                 ELSE 'The send of the reset link to ' || COALESCE(r.email_hint, 'the client')
+                      || ' could not be confirmed within 15 minutes, so the link was voided.'
             END);
   END LOOP;
   IF n > 0 AND p_ask_staff THEN
-    PERFORM public.client_password_staff_request(p_client_id, 'The reset link did not go out.');
+    PERFORM public.client_password_staff_request(p_client_id,
+      CASE WHEN v_unconfirmed THEN 'The send of the reset link could not be confirmed.'
+           ELSE 'The reset link did not go out.' END);
   END IF;
   RETURN n;
 END;
@@ -380,8 +399,8 @@ $$;
 
 -- Every client's lost links. Run by pg_cron every 5 minutes (through
 -- client_password_reset_tick), by the claim and after every request. It only
--- tries each client's lock, so it never waits while holding one; a busy
--- client is left to the next sweep.
+-- tries each client's row and lock (in that order), so it never waits while
+-- holding one; a busy client is left to the next sweep.
 CREATE OR REPLACE FUNCTION public.client_password_reset_sweep()
 RETURNS integer
 LANGUAGE plpgsql
@@ -400,6 +419,10 @@ BEGIN
      ORDER BY min(x.created_at)
      LIMIT 200
   LOOP
+    -- A row held by a save (say a GSTIN change, whose e-mail trigger is about
+    -- to take the client's lock) is skipped, never waited for.
+    PERFORM 1 FROM public.clients c WHERE c.id = v_cid FOR KEY SHARE SKIP LOCKED;
+    CONTINUE WHEN NOT FOUND;
     CONTINUE WHEN NOT pg_try_advisory_xact_lock(hashtextextended('client_password_reset:' || v_cid::text, 0));
     n := n + public.client_password_reset_sweep_client(v_cid);
   END LOOP;
@@ -429,12 +452,15 @@ END;
 $$;
 
 -- ── The client's e-mail address changes (Edit Client, any update) ─────────
--- Links that went, or would go, to an address no longer on record are voided
--- and logged: whoever holds the old mailbox must not be able to use one. If
--- one of them was still live (on its way, or sent and not expired) and no
--- link to the address on record is open, staff are asked, so a client who
--- asked is not left with nothing. The row is already locked by the update;
--- the client's advisory lock comes second (see Locks above).
+-- Links that never went out are reported first, as everywhere (logged as
+-- lost, staff asked): voided here as "the e-mail address changed" they would
+-- not count as live, and a client who asked would be left with nothing.
+-- Then links that went, or would go, to an address no longer on record are
+-- voided and logged: whoever holds the old mailbox must not be able to use
+-- one. If one of them was still live (on its way, or sent and not expired)
+-- and no link to the address on record is open, staff are asked. The row is
+-- already locked by the update; the client's advisory lock comes second (see
+-- Locks above).
 CREATE OR REPLACE FUNCTION public.client_password_email_changed()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -444,6 +470,7 @@ AS $$
 DECLARE r record; v_live boolean := false;
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || NEW.id::text, 0));
+  PERFORM public.client_password_reset_sweep_client(NEW.id);
   FOR r IN
     SELECT x.id, x.email_hint,
            x.send_error IS NULL AND (
@@ -496,10 +523,14 @@ DECLARE
   v_to     text;
   v_hint   text;
 BEGIN
-  -- One request per client at a time.
+  -- One request per client at a time: the clients row, then the client's
+  -- lock (see Locks above). The address is read under both, so an e-mail
+  -- change saving right now is either seen here or voids this link when it
+  -- commits.
+  PERFORM 1 FROM public.clients c WHERE c.id = p_client_id FOR KEY SHARE;
+  IF NOT FOUND THEN RETURN 'no_client'; END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || p_client_id::text, 0));
   SELECT c.email INTO v_email FROM public.clients c WHERE c.id = p_client_id;
-  IF NOT FOUND THEN RETURN 'no_client'; END IF;
 
   -- An earlier link that never went out is reported first (logged, staff
   -- asked), so a retry never voids it unreported as "a newer link".
@@ -668,7 +699,10 @@ BEGIN
       -- e-mail trigger voids such links; this catches one queued in the same
       -- moment). No token for an address that is no longer the client's: the
       -- link is voided, logged, and staff asked unless another is on its way.
-      -- A client busy right now is left to the next claim.
+      -- A client busy right now (its row or its lock held) is left to the
+      -- next claim: both are only tried, the row first.
+      PERFORM 1 FROM public.clients c WHERE c.id = v.client_id FOR KEY SHARE SKIP LOCKED;
+      CONTINUE WHEN NOT FOUND;
       CONTINUE WHEN NOT pg_try_advisory_xact_lock(hashtextextended('client_password_reset:' || v.client_id::text, 0));
       UPDATE public.client_password_resets r
          SET voided_at = now(), void_reason = 'the e-mail address changed'
@@ -703,6 +737,9 @@ END;
 $$;
 
 -- ── 3. The mailer reports back (service role only) ─────────────────────────
+-- The mailer retries a report it could not make (it cannot tell whether one
+-- that failed on the way arrived), so a link's first report stands and a
+-- repeat changes nothing.
 CREATE OR REPLACE FUNCTION public.client_password_reset_mark(p_reset_id uuid, p_error text DEFAULT NULL)
 RETURNS void
 LANGUAGE plpgsql
@@ -713,13 +750,18 @@ DECLARE v record; v_cid uuid; v_hint text; v_closed integer := 0; v_moved boolea
 BEGIN
   SELECT r.client_id INTO v_cid FROM public.client_password_resets r WHERE r.id = p_reset_id;
   IF v_cid IS NULL THEN RETURN; END IF;
+  -- The clients row, then the client's lock (see Locks above).
+  PERFORM 1 FROM public.clients c WHERE c.id = v_cid FOR KEY SHARE;
   PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || v_cid::text, 0));
   SELECT r.id, r.client_id, r.email_hint, r.requested_by, r.requested_by_name, r.via, r.used_at,
-         r.voided_at, r.void_reason, r.sent_to
+         r.voided_at, r.void_reason, r.sent_to, r.sent_at, r.send_error
     INTO v
     FROM public.client_password_resets r
    WHERE r.id = p_reset_id
    FOR UPDATE;
+  IF v.sent_at IS NOT NULL OR v.send_error IS NOT NULL THEN
+    RETURN;  -- Already reported.
+  END IF;
   v_hint := COALESCE(v.email_hint, 'the client');
   -- Did it go to an address staff have since removed or replaced?
   v_moved := NOT public.client_password_sent_to_current(
@@ -956,12 +998,13 @@ BEGIN
         WHERE ur.user_id = p_actor_id AND ur.role::text IN ('superadmin', 'gst_manager', 'employee')) THEN
     RAISE EXCEPTION 'Only a staff member can send a client a reset link.' USING ERRCODE = 'insufficient_privilege';
   END IF;
-  SELECT c.id INTO v_cid FROM public.clients c WHERE c.id = p_client_id;
+  -- The clients row, then the client's lock (see Locks above).
+  SELECT c.id INTO v_cid FROM public.clients c WHERE c.id = p_client_id FOR KEY SHARE;
   IF v_cid IS NULL THEN
     RAISE EXCEPTION 'Client not found.' USING ERRCODE = 'no_data_found';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || v_cid::text, 0));
-  -- The address is read under the lock, so an e-mail change that is saving
+  -- The address is read under both, so an e-mail change that is saving
   -- right now is either seen here or voids this link when it commits.
   SELECT c.email INTO v_email FROM public.clients c WHERE c.id = v_cid;
   v_emails := public.client_email_list(v_email);

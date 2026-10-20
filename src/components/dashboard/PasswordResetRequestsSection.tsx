@@ -58,7 +58,13 @@ const PasswordResetRequestsSection: React.FC = () => {
       }
       setRequests(
         rows
-          .map((r) => ({ ...r, client: clientById.get(r.user_id) }))
+          // A client's request filed because no link reached them (only those
+          // carry a note, which says to look there) opens the reset dialog
+          // saying why.
+          .map((r) => {
+            const c = clientById.get(r.user_id);
+            return { ...r, client: c ? { ...c, askedForHelp: !!r.note } : undefined };
+          })
           .filter((r) => (r.client ? canResetClientPasswords() : canManageEmployees())),
       );
     } catch (error) {

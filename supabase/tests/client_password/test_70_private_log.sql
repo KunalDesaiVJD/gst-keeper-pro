@@ -61,7 +61,7 @@ SELECT t_eq((SELECT detail FROM client_password_log WHERE client_id = 'c7000000-
 SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE note LIKE '%@%' OR requested_by_name LIKE '%@%'), 0::bigint,
   'no e-mail address in a staff request');
 SELECT t_eq((SELECT string_agg(DISTINCT note, ' | ') FROM password_reset_requests),
-  'Asked for a reset link; none reached the client. Edit Client shows why.', 'one note for every reason');
+  'Asked for a reset link; none reached the client. Reset password shows why.', 'one note for every reason');
 SELECT t_eq((SELECT count(*) FROM password_reset_requests WHERE requested_by_name LIKE '%24ZZZZZ%'), 0::bigint,
   'nothing filed for an identifier that is no client');
 

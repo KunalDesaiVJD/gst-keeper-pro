@@ -1,6 +1,6 @@
 // Client app-login password rules. The database decides
 // (client_password_problem / staff_set_client_password in
-// supabase/migrations/20261020100000_client_password_reset.sql); this mirror
+// supabase/migrations/20261020140000_client_password_reset.sql); this mirror
 // only lets the forms say so before a round trip. Keep the wording identical.
 
 export const CLIENT_PASSWORD_MIN = 8;
