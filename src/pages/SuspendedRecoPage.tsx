@@ -547,9 +547,8 @@ const SuspendedRecoPage: React.FC = () => {
   };
 
   // Override: layer new values + justification on top of existing source.
-  // Gated by canManualOverride() (superadmin always; others need the
-  // 'manual_override' permission from User Control) — same check as the
-  // button visibility, applied here as defense-in-depth.
+  // Gated by canManualOverride() (the superadmin only) — same check as the
+  // button visibility, applied here as defense-in-depth; the database checks it too.
   const handleOverrideSave = async (values: { cgst: number; sgst: number; igst: number; justification: string }) => {
     if (!canManualOverride() || !selectedClientId || !selectedMonth) return;
     setIsSaving(true);
@@ -911,7 +910,7 @@ const SuspendedRecoPage: React.FC = () => {
                           >
                             Not Applicable
                           </Button>
-                          {(openingSource !== 'manual' || user?.role === 'superadmin') && canManualOverride() && (
+                          {canManualOverride() && (
                             <Button
                               size="sm"
                               variant="outline"
