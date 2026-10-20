@@ -10,7 +10,9 @@
 // voided and staff get a request on the Dashboard). A link that does not point
 // at https://gst.vjdesai.com is never sent (message.ts checkedLink): it is
 // reported as failed. A link claimed here but never reported (the function
-// stopped half way) is voided by the database after 15 minutes.
+// stopped half way), or never claimed, is voided after 15 minutes by the
+// database's sweep (pg_cron every 5 minutes, which also wakes this function
+// again while a link waits), and staff get a request on the Dashboard.
 //
 // It answers {ok:true} at once and works afterwards, so the answer never
 // shows whether a link went out. It takes no input: what is sent, and to

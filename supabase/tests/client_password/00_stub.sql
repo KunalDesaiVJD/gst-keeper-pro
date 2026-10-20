@@ -25,6 +25,16 @@ CREATE TABLE net.calls (id bigserial PRIMARY KEY, url text, body jsonb, headers 
 CREATE FUNCTION net.http_post(url text, body jsonb DEFAULT '{}', params jsonb DEFAULT '{}',
   headers jsonb DEFAULT '{}', timeout_milliseconds int DEFAULT 5000) RETURNS bigint
 LANGUAGE sql AS $$ INSERT INTO net.calls (url, body, headers) VALUES (url, body, headers) RETURNING id $$;
+-- pg_cron: schedule() upserts by job name, like the real extension.
+CREATE SCHEMA IF NOT EXISTS cron;
+CREATE TABLE cron.job (jobid bigserial PRIMARY KEY, jobname text UNIQUE, schedule text, command text);
+CREATE FUNCTION cron.schedule(job_name text, schedule text, command text) RETURNS bigint
+LANGUAGE sql AS $$
+  INSERT INTO cron.job (jobname, schedule, command) VALUES (job_name, schedule, command)
+  ON CONFLICT (jobname) DO UPDATE SET schedule = EXCLUDED.schedule, command = EXCLUDED.command
+  RETURNING jobid $$;
+CREATE FUNCTION cron.unschedule(job_name text) RETURNS boolean
+LANGUAGE sql AS $$ DELETE FROM cron.job WHERE jobname = job_name RETURNING true $$;
 CREATE SCHEMA IF NOT EXISTS vault;
 CREATE VIEW vault.decrypted_secrets AS SELECT 'gst_cron_anon_key'::text AS name, 'test-anon-key'::text AS decrypted_secret;
 

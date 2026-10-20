@@ -19,8 +19,13 @@
 --    Until it is used the current password keeps working.
 --  * A client is never left with neither a link nor staff help: no usable
 --    e-mail, a failed or lost e-mail, or a request refused by a limit (with
---    no link still open) files one pending password_reset_requests row for
---    staff. Its note never names the e-mail address or the reason.
+--    no link still open to the address on record) files one pending
+--    password_reset_requests row for staff. Its note never names the e-mail
+--    address or the reason. A link that does go out answers that request.
+--  * A link not claimed, or claimed and not sent, within 15 minutes is lost:
+--    voided, logged, staff asked. pg_cron checks every 5 minutes (and wakes
+--    the mailer again for links still waiting); a request or a claim checks
+--    too, and a client's own retry never voids a lost link unreported.
 --  * client_password_log (who changed a password, how) is private too; staff
 --    read it through client_password_log_for. It shows e-mail addresses only
 --    masked.
@@ -244,6 +249,14 @@ BEGIN
 END;
 $$;
 
+-- The note on every request this file files for staff (and how a sent link
+-- finds the requests it answers).
+CREATE OR REPLACE FUNCTION public.client_password_staff_note()
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$ SELECT 'Asked for a reset link; none went out. Edit Client shows why.'::text $$;
+
 -- One pending request for staff per client (the Dashboard). p_why goes to the
 -- private log only; the open request carries a fixed note. True when filed.
 CREATE OR REPLACE FUNCTION public.client_password_staff_request(p_client_id uuid, p_why text)
@@ -262,8 +275,7 @@ BEGIN
   SELECT c.name, c.gstin INTO v_name, v_gstin FROM public.clients c WHERE c.id = p_client_id;
   IF NOT FOUND THEN RETURN false; END IF;
   INSERT INTO public.password_reset_requests (user_id, requested_by_name, status, note)
-  VALUES (p_client_id, v_name || ' (' || v_gstin || ')', 'pending',
-          'Asked for a reset link; none went out. Edit Client shows why.');
+  VALUES (p_client_id, v_name || ' (' || v_gstin || ')', 'pending', public.client_password_staff_note());
   INSERT INTO public.client_password_log (client_id, action, detail)
   VALUES (p_client_id, 'fallback_request', btrim(COALESCE(p_why, '') || ' A request is waiting on the Dashboard.'));
   RETURN true;
@@ -271,8 +283,10 @@ END;
 $$;
 
 -- Is a link still on its way to the client, or in their mailbox and good?
--- (Waiting to be claimed within the hour, being sent for under 15 minutes,
--- or sent and not expired; never used, voided or failed.)
+-- (Waiting to be claimed for under 15 minutes, being sent for under 15
+-- minutes, or sent and not expired; never used, voided or failed; and sent to
+-- the address on record now, since a link to an address staff have since
+-- corrected is no help to the client.)
 CREATE OR REPLACE FUNCTION public.client_password_has_open_link(p_client_id uuid)
 RETURNS boolean
 LANGUAGE sql
@@ -282,18 +296,21 @@ SET search_path = public, extensions
 AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.client_password_resets r
+      JOIN public.clients c ON c.id = r.client_id
      WHERE r.client_id = p_client_id
        AND r.used_at IS NULL AND r.voided_at IS NULL AND r.send_error IS NULL
-       AND (   (r.claimed_at IS NULL AND r.created_at > now() - interval '60 minutes')
+       AND lower(r.sent_to) = lower(array_to_string(public.client_email_list(c.email), ', '))
+       AND (   (r.claimed_at IS NULL AND r.created_at > now() - interval '15 minutes')
             OR (r.sent_at IS NULL AND r.claimed_at > now() - interval '15 minutes')
             OR (r.sent_at IS NOT NULL AND r.expires_at > now())))
 $$;
 
--- Links that will never arrive: never claimed within the hour (the mailer did
--- not run), or claimed but not reported sent within 15 minutes (the mailer
--- stopped half way). Each is voided and staff are asked instead. Run by the
--- claim and after every request.
-CREATE OR REPLACE FUNCTION public.client_password_reset_sweep()
+-- One client's links that will never arrive: not claimed within 15 minutes
+-- (the mailer did not run; a working one claims in seconds), or claimed but
+-- not reported sent within 15 minutes (the mailer stopped half way). Each is
+-- voided and logged, and staff are asked instead (p_ask_staff false: staff
+-- are sending a link right now). The caller holds the client's lock.
+CREATE OR REPLACE FUNCTION public.client_password_reset_sweep_client(p_client_id uuid, p_ask_staff boolean DEFAULT true)
 RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -301,31 +318,86 @@ SET search_path = public, extensions
 AS $$
 DECLARE r record; n integer := 0;
 BEGIN
+  -- Already held by every caller (advisory locks are re-entrant): never waits.
+  PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || p_client_id::text, 0));
   FOR r IN
-    SELECT x.id, x.client_id, x.claimed_at IS NULL AS unclaimed, x.email_hint
+    SELECT x.id, x.claimed_at IS NULL AS unclaimed, x.email_hint
       FROM public.client_password_resets x
-     WHERE x.used_at IS NULL AND x.voided_at IS NULL AND x.sent_at IS NULL AND x.send_error IS NULL
-       AND (   (x.claimed_at IS NULL AND x.created_at <= now() - interval '60 minutes')
+     WHERE x.client_id = p_client_id
+       AND x.used_at IS NULL AND x.voided_at IS NULL AND x.sent_at IS NULL AND x.send_error IS NULL
+       AND (   (x.claimed_at IS NULL AND x.created_at <= now() - interval '15 minutes')
             OR (x.claimed_at <= now() - interval '15 minutes'))
      ORDER BY x.created_at
-     LIMIT 200
   LOOP
-    -- Someone else is working on this client right now: the next sweep.
-    CONTINUE WHEN NOT pg_try_advisory_xact_lock(hashtextextended('client_password_reset:' || r.client_id::text, 0));
+    -- Checked again on the row: a claim that just committed keeps its link.
     UPDATE public.client_password_resets x
        SET voided_at = now(),
            void_reason = CASE WHEN r.unclaimed THEN 'not sent in time' ELSE 'claimed but not sent' END
-     WHERE x.id = r.id AND x.used_at IS NULL AND x.voided_at IS NULL AND x.sent_at IS NULL AND x.send_error IS NULL;
+     WHERE x.id = r.id AND x.used_at IS NULL AND x.voided_at IS NULL AND x.sent_at IS NULL AND x.send_error IS NULL
+       AND (   (x.claimed_at IS NULL AND x.created_at <= now() - interval '15 minutes')
+            OR (x.claimed_at <= now() - interval '15 minutes'));
     CONTINUE WHEN NOT FOUND;
     n := n + 1;
     INSERT INTO public.client_password_log (client_id, action, detail)
-    VALUES (r.client_id, 'link_failed',
+    VALUES (p_client_id, 'link_failed',
             CASE WHEN r.unclaimed
-                 THEN 'The reset link for ' || COALESCE(r.email_hint, 'the client') || ' was not sent within the hour, so it was given up.'
+                 THEN 'The reset link for ' || COALESCE(r.email_hint, 'the client') || ' was not sent within 15 minutes, so it was given up.'
                  ELSE 'The mailer stopped before the reset link for ' || COALESCE(r.email_hint, 'the client') || ' was sent, so it was voided.'
             END);
-    PERFORM public.client_password_staff_request(r.client_id, 'The reset link did not go out.');
   END LOOP;
+  IF n > 0 AND p_ask_staff THEN
+    PERFORM public.client_password_staff_request(p_client_id, 'The reset link did not go out.');
+  END IF;
+  RETURN n;
+END;
+$$;
+
+-- Every client's lost links. Run by pg_cron every 5 minutes (through
+-- client_password_reset_tick), by the claim and after every request. It only
+-- tries each client's lock, so it never waits while holding one; a busy
+-- client is left to the next sweep.
+CREATE OR REPLACE FUNCTION public.client_password_reset_sweep()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE v_cid uuid; n integer := 0;
+BEGIN
+  FOR v_cid IN
+    SELECT x.client_id
+      FROM public.client_password_resets x
+     WHERE x.used_at IS NULL AND x.voided_at IS NULL AND x.sent_at IS NULL AND x.send_error IS NULL
+       AND (   (x.claimed_at IS NULL AND x.created_at <= now() - interval '15 minutes')
+            OR (x.claimed_at <= now() - interval '15 minutes'))
+     GROUP BY x.client_id
+     ORDER BY min(x.created_at)
+     LIMIT 200
+  LOOP
+    CONTINUE WHEN NOT pg_try_advisory_xact_lock(hashtextextended('client_password_reset:' || v_cid::text, 0));
+    n := n + public.client_password_reset_sweep_client(v_cid);
+  END LOOP;
+  RETURN n;
+END;
+$$;
+
+-- pg_cron, every 5 minutes (scheduled at the end of this file): the sweep,
+-- whatever the traffic, and one more wake-up for the mailer while a link is
+-- still waiting (the first one may have been lost).
+CREATE OR REPLACE FUNCTION public.client_password_reset_tick()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE n integer;
+BEGIN
+  n := public.client_password_reset_sweep();
+  IF EXISTS (SELECT 1 FROM public.client_password_resets r
+              WHERE r.claimed_at IS NULL AND r.voided_at IS NULL AND r.used_at IS NULL
+                AND r.created_at > now() - interval '15 minutes') THEN
+    PERFORM public.client_password_reset_ping();
+  END IF;
   RETURN n;
 END;
 $$;
@@ -351,6 +423,10 @@ BEGIN
   SELECT c.email INTO v_email FROM public.clients c WHERE c.id = p_client_id;
   IF NOT FOUND THEN RETURN 'no_client'; END IF;
 
+  -- An earlier link that never went out is reported first (logged, staff
+  -- asked), so a retry never voids it unreported as "a newer link".
+  PERFORM public.client_password_reset_sweep_client(p_client_id);
+
   -- Per address: refused, so staff are asked instead.
   IF p_address_limited THEN
     PERFORM public.client_password_staff_request(p_client_id,
@@ -359,8 +435,9 @@ BEGIN
   END IF;
 
   -- Per client: one link a minute, three of its own an hour, five an hour in
-  -- all (staff links too). A link from a moment ago is still open, so nothing
-  -- more is needed; if none is, staff are asked.
+  -- all (staff links too). A link from a moment ago is still open (to the
+  -- address on record now), so nothing more is needed; if none is, staff are
+  -- asked.
   IF EXISTS (SELECT 1 FROM public.client_password_resets r
               WHERE r.client_id = p_client_id AND r.created_at > now() - interval '60 seconds')
      OR (SELECT count(*) FROM public.client_password_resets r
@@ -486,10 +563,11 @@ BEGIN
   -- Links that will never arrive are voided and staff asked instead.
   PERFORM public.client_password_reset_sweep();
 
+  -- (Waiting for under 15 minutes; an older one has just been given up.)
   FOR v_id IN
     SELECT r.id FROM public.client_password_resets r
      WHERE r.claimed_at IS NULL AND r.voided_at IS NULL AND r.used_at IS NULL
-       AND r.created_at > now() - interval '60 minutes'
+       AND r.created_at > now() - interval '15 minutes'
      ORDER BY r.created_at
      LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 10), 50))
      FOR UPDATE SKIP LOCKED
@@ -517,7 +595,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, extensions
 AS $$
-DECLARE v record; v_cid uuid; v_hint text;
+DECLARE v record; v_cid uuid; v_hint text; v_closed integer := 0;
 BEGIN
   SELECT r.client_id INTO v_cid FROM public.client_password_resets r WHERE r.id = p_reset_id;
   IF v_cid IS NULL THEN RETURN; END IF;
@@ -532,11 +610,23 @@ BEGIN
 
   IF p_error IS NULL THEN
     UPDATE public.client_password_resets SET sent_at = now(), send_error = NULL WHERE id = p_reset_id;
+    -- A good link is now in the client's mailbox. A request filed for staff
+    -- because none went out earlier is answered by it, and acting on that
+    -- request (a password, another link) would void the link the client holds.
+    IF v.used_at IS NULL AND v.voided_at IS NULL THEN
+      UPDATE public.password_reset_requests q
+         SET status = 'resolved', resolved_at = now()
+       WHERE q.user_id = v.client_id AND q.status = 'pending'
+         AND q.note = public.client_password_staff_note();
+      GET DIAGNOSTICS v_closed = ROW_COUNT;
+    END IF;
     INSERT INTO public.client_password_log (client_id, action, actor_id, actor_name, detail)
     VALUES (v.client_id, 'link_sent', v.requested_by, v.requested_by_name,
             'Reset link e-mailed to ' || v_hint || '.'
             || CASE WHEN v.used_at IS NULL AND v.voided_at IS NOT NULL
                     THEN ' It was already void (' || COALESCE(v.void_reason, 'voided') || '), so it does not work.'
+                    ELSE '' END
+            || CASE WHEN v_closed > 0 THEN ' The request waiting on the Dashboard was closed: this link answers it.'
                     ELSE '' END);
     RETURN;
   END IF;
@@ -548,8 +638,17 @@ BEGIN
    WHERE id = p_reset_id AND used_at IS NULL;
   INSERT INTO public.client_password_log (client_id, action, actor_id, actor_name, detail)
   VALUES (v.client_id, 'link_failed', v.requested_by, v.requested_by_name,
-          'The reset link could not be e-mailed to ' || v_hint || ': ' || left(p_error, 300));
-  PERFORM public.client_password_staff_request(v.client_id, 'The e-mail with the reset link could not be sent.');
+          'The reset link could not be e-mailed to ' || v_hint || ': ' || left(p_error, 300)
+          || CASE WHEN v.used_at IS NULL AND v.voided_at IS NOT NULL
+                  THEN ' (It was already void: ' || COALESCE(v.void_reason, 'voided') || '.)'
+                  ELSE '' END);
+  -- Staff are asked only when this was the client's live link and nothing
+  -- else is on its way. A link already replaced by a newer one (or voided by
+  -- a reset, a sweep, another link used) needs nothing more: the newer link
+  -- reports its own failure.
+  IF v.used_at IS NULL AND v.voided_at IS NULL AND NOT public.client_password_has_open_link(v.client_id) THEN
+    PERFORM public.client_password_staff_request(v.client_id, 'The e-mail with the reset link could not be sent.');
+  END IF;
 END;
 $$;
 
@@ -722,6 +821,9 @@ BEGIN
   v_hint := public.client_email_hint(v_to);
 
   PERFORM pg_advisory_xact_lock(hashtextextended('client_password_reset:' || v_cid::text, 0));
+  -- An earlier link that never went out is logged as lost, not voided as "a
+  -- newer link" unreported. No staff request: staff are acting now.
+  PERFORM public.client_password_reset_sweep_client(v_cid, false);
   IF EXISTS (SELECT 1 FROM public.client_password_resets r
               WHERE r.client_id = v_cid AND r.created_at > now() - interval '60 seconds') THEN
     RAISE EXCEPTION 'A reset link went to this client less than a minute ago.' USING ERRCODE = 'check_violation';
@@ -783,6 +885,9 @@ REVOKE EXECUTE ON FUNCTION public.client_password_reset_claim(integer) FROM PUBL
 REVOKE EXECUTE ON FUNCTION public.client_password_reset_mark(uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_reset_ping() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_reset_sweep() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.client_password_reset_sweep_client(uuid, boolean) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.client_password_reset_tick() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.client_password_staff_note() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_reset_for_client(uuid, text, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_staff_request(uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.client_password_has_open_link(uuid) FROM PUBLIC, anon, authenticated;
@@ -792,6 +897,9 @@ GRANT EXECUTE ON FUNCTION public.client_password_reset_claim(integer) TO service
 GRANT EXECUTE ON FUNCTION public.client_password_reset_mark(uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_ping() TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_sweep() TO service_role;
+GRANT EXECUTE ON FUNCTION public.client_password_reset_sweep_client(uuid, boolean) TO service_role;
+GRANT EXECUTE ON FUNCTION public.client_password_reset_tick() TO service_role;
+GRANT EXECUTE ON FUNCTION public.client_password_staff_note() TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_reset_for_client(uuid, text, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_staff_request(uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.client_password_has_open_link(uuid) TO service_role;
@@ -807,5 +915,19 @@ GRANT EXECUTE ON FUNCTION public.client_password_log_for(uuid, uuid, integer) TO
 GRANT EXECUTE ON FUNCTION public.client_password_problem(text, text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.client_email_list(text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.client_email_hint(text) TO anon, authenticated, service_role;
+
+-- ── Schedule: the sweep runs whatever the traffic ──────────────────────────
+-- Every 5 minutes (3, 8, 13 ... past the hour, off the other jobs' minutes).
+-- Without pg_cron (a plain local Postgres) it is only reported.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'client-password-reset-sweep') THEN
+    PERFORM cron.unschedule('client-password-reset-sweep');
+  END IF;
+  PERFORM cron.schedule('client-password-reset-sweep', '3-59/5 * * * *',
+                        $cmd$select public.client_password_reset_tick()$cmd$);
+EXCEPTION WHEN undefined_table OR invalid_schema_name OR undefined_function THEN
+  RAISE WARNING 'pg_cron is not available: schedule client-password-reset-sweep (select public.client_password_reset_tick(), every 5 minutes) by hand';
+END $$;
 
 COMMIT;
