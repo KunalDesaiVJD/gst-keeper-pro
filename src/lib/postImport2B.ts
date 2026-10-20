@@ -99,6 +99,12 @@ const amountsDiffer = (a: LedgerRow, b: { date: string; supplier_name: string; s
   Number(a.input_cgst || 0) !== b.input_cgst ||
   Number(a.input_sgst || 0) !== b.input_sgst;
 
+/** A books row with a minus amount: a supplier credit note, which the books register does not take. */
+export const bookHasMinus = (b: { taxable_value?: number | null; input_igst?: number | null; input_cgst?: number | null; input_sgst?: number | null }) =>
+  [b.taxable_value, b.input_igst, b.input_cgst, b.input_sgst].some((v) => (Number(v) || 0) < 0);
+
+export const BOOK_MINUS_REASON = 'Minus amount: a credit note from the supplier is not entered in the books register. It reduces ITC from its own 2B row once the supplier reports it (row 5.3); delete this row';
+
 export interface PostPlan {
   insertBills2B: { row: BookRegRow }[];
   updateBills2B: { ledgerId: string; row: BookRegRow }[];
@@ -141,11 +147,17 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
     insertBillsBooks: [], updateBillsBooks: [], retractBillsBooks: [], skippedDocs: [],
   };
 
-  // Books not in 2B -> bills_not_in_2b (books rows are invoices or debit
-  // notes, always positive)
+  // Books not in 2B -> bills_not_in_2b. Books rows are invoices or debit
+  // notes, always positive: a supplier credit note the client has booked waits
+  // for its own 2B row (row 5.3) and is never posted from books (the firm's
+  // decision, 20 Oct 2026; docs §10). A minus row is skipped, and what it
+  // posted before is taken back below.
   const notIn2B = books.filter((b) => b.book_treatment === 'NOT_IN_2B');
   const byBookId = new Map(ledger2B.map((l) => [l.source_book_id as string, l]));
+  const postable = new Set<string>();
   for (const b of notIn2B) {
+    if (bookHasMinus(b)) { plan.skippedBooks.push({ row: b, reason: BOOK_MINUS_REASON }); continue; }
+    postable.add(b.id);
     if (!b.date) { plan.skippedBooks.push({ row: b, reason: 'Missing date' }); continue; }
     if (!b.supplier_name || !b.supplier_name.trim()) { plan.skippedBooks.push({ row: b, reason: 'Missing supplier name' }); continue; }
     const existing = byBookId.get(b.id);
@@ -159,9 +171,8 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
       plan.updateBills2B.push({ ledgerId: existing.id, row: b });
     }
   }
-  const notIn2BIds = new Set(notIn2B.map((b) => b.id));
   for (const l of ledger2B) {
-    if (l.source_book_id && !notIn2BIds.has(l.source_book_id)) plan.retractBills2B.push({ ledgerId: l.id });
+    if (l.source_book_id && !postable.has(l.source_book_id)) plan.retractBills2B.push({ ledgerId: l.id });
   }
 
   // 2B docs not in books -> bills_not_in_books, every kind alike: a credit

@@ -20,7 +20,7 @@ import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { parseGstr2bFile } from '@/utils/parseGstr2b';
 import { classifyBookAgainst2b, invoiceSimilar, TwoBLite, ClassifyResult } from '@/utils/matchTwob';
-import { periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty, fetchImport2BCreditNotes } from '@/lib/postImport2B';
+import { periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty, fetchImport2BCreditNotes, bookHasMinus } from '@/lib/postImport2B';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import {
   docTypeOf, isCreditNote, fullFigures, effectFigures, signedEffect, docLabel, docTone, DOC_TYPE_LABEL,
@@ -1903,6 +1903,15 @@ const Import2BTab: React.FC = () => {
     const row = { ...found, ...patch };
     let next = { treatment: row.book_treatment, matched2bId: row.matched_2b_id };
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
+    // Books rows are invoices and debit notes, always positive. A credit note
+    // from the supplier (the client's debit note) waits for its own 2B row,
+    // which reduces ITC in row 5.3 (the firm's decision, 20 Oct 2026).
+    if (bookHasMinus(row)) {
+      toast.error('Amounts here are never minus. A credit note from the supplier (the client\'s debit note) is not entered in the books register: it reduces ITC from its own 2B row once the supplier reports it (row 5.3), and needs no entry until then.', { duration: 15000 });
+      const { data } = await supabase.from('books_register').select('*').eq('id', id).maybeSingle();
+      if (data) updateBookLocal(id, data as BookRow);
+      return;
+    }
 
     try {
       if (classify && row.supplier_gstin && row.supplier_invoice_number) {
@@ -2758,9 +2767,11 @@ const Import2BTab: React.FC = () => {
                         />
                       ) : books.map((b) => {
                         const tone = docTone({ doc_type: b.doc_type });
+                        const minus = bookHasMinus(b);
                         return (
-                        <tr key={b.id} className={cn(WS_TR, TONE_ROW[tone])}>
-                          <td className={cn('border-b border-r p-0', TONE_STRIPE[tone])}>
+                        <tr key={b.id} className={cn(WS_TR, TONE_ROW[tone], minus && 'bg-destructive/10')}
+                          title={minus ? 'Minus amount: a credit note from the supplier is not entered here. It reduces ITC from its own 2B row once the supplier reports it (row 5.3). Delete this row.' : undefined}>
+                          <td className={cn('border-b border-r p-0', minus ? 'border-l-4 border-l-destructive' : TONE_STRIPE[tone])}>
                             <input type="date" className={cellInputCls} value={b.date || ''} disabled={writeLocked}
                               onChange={(e) => updateBookLocal(b.id, { date: e.target.value })} onBlur={() => saveBookRow(b.id, false)} />
                           </td>
