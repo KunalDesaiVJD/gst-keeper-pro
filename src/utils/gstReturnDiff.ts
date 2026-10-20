@@ -137,11 +137,15 @@ export function flattenGstr3b(json: unknown): FlatMap {
   put('3.1d', T31, '(d) Inward supplies liable to reverse charge', taxOf(sd.isup_rev));
   put('3.1e', T31, '(e) Non-GST outward supplies', taxOf(sd.osup_nongst));
 
-  arr(rec(j.inter_sup).unreg_details).forEach((raw) => {
+  // Table 3.2's three rows, each by place of supply.
+  ([
+    ['unreg_details', '3.2u', 'Table 3.2 — Inter-State supplies to unregistered persons'],
+    ['comp_details', '3.2c', 'Table 3.2 — Inter-State supplies to composition taxable persons'],
+    ['uin_details', '3.2n', 'Table 3.2 — Inter-State supplies to UIN holders'],
+  ] as const).forEach(([field, prefix, section]) => arr(rec(j.inter_sup)[field]).forEach((raw) => {
     const r = rec(raw);
-    put(`3.2u|${str(r.pos)}`, 'Table 3.2 — Inter-State supplies to unregistered persons',
-      `Place of supply ${str(r.pos) || '—'}`, pick(r, ['txval', 'iamt']));
-  });
+    put(`${prefix}|${str(r.pos)}`, section, `Place of supply ${str(r.pos) || '—'}`, pick(r, ['txval', 'iamt']));
+  }));
 
   const itc = rec(j.itc_elg);
   const itcSection = (value: unknown, prefix: string, section: string) =>

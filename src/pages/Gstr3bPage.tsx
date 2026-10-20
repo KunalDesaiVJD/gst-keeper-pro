@@ -961,9 +961,9 @@ const Gstr3bPage: React.FC = () => {
         <>
           {/* Summary tiles */}
           <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            <KpiTile label="Output Tax (3.1a)" value={`₹${inr(sum3(s.outward))}`} hint="IGST + CGST + SGST" />
+            <KpiTile label="Output Tax (3.1 a + b)" value={`₹${inr(sum3(s.outward) + s.zeroRated.igst)}`} hint="IGST + CGST + SGST, zero rated IGST included" />
             <KpiTile label="RCM Liability (3.1d)" value={`₹${inr(sum3(s.rcmLiability))}`} hint="Inward supplies under reverse charge" />
-            <KpiTile label="Total Tax Liability" value={`₹${inr(sum3(s.totalLiability))}`} hint="3.1 (a) + (d)" />
+            <KpiTile label="Total Tax Liability" value={`₹${inr(sum3(s.totalLiability))}`} hint="3.1 (a) + (b) + (d)" />
             <KpiTile label="Net ITC (4C)" value={`₹${inr(sum3(s.itcNet))}`} hint="ITC available − reversed" tone="ok" />
           </div>
 
@@ -974,11 +974,11 @@ const Gstr3bPage: React.FC = () => {
                 <THead first="Nature of supplies" />
                 <tbody>
                   <TRow label="(a) Outward taxable supplies (other than zero rated, nil rated and exempted)" txval={s.outward.txval} igst={s.outward.igst} cgst={s.outward.cgst} sgst={s.outward.sgst} />
-                  <TRow label="(b) Outward taxable supplies (zero rated)" txval={s.zeroRated.txval} igst={s.zeroRated.igst} cgst={0} sgst={0} />
+                  <TRow label="(b) Outward taxable supplies (zero rated: exports and SEZ)" txval={s.zeroRated.txval} igst={s.zeroRated.igst} cgst={0} sgst={0} />
                   <TRow label="(c) Other outward supplies (nil rated, exempted)" txval={s.nilExempt} igst={0} cgst={0} sgst={0} />
                   <TRow label="(d) Inward supplies (liable to reverse charge)" txval={s.rcmLiability.txval} igst={s.rcmLiability.igst} cgst={s.rcmLiability.cgst} sgst={s.rcmLiability.sgst} />
                   <TRow label="(e) Non-GST outward supplies" txval={s.nonGst} igst={0} cgst={0} sgst={0} />
-                  <TRow label="Total tax liability (a + d)" igst={s.totalLiability.igst} cgst={s.totalLiability.cgst} sgst={s.totalLiability.sgst} bold />
+                  <TRow label="Total tax liability (a + b + d)" igst={s.totalLiability.igst} cgst={s.totalLiability.cgst} sgst={s.totalLiability.sgst} bold />
                 </tbody>
               </table>
             </div>

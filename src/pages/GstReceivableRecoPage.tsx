@@ -26,7 +26,7 @@ import {
   openingBalancePeriodKey,
   formatPeriodLabel,
 } from '@/utils/parseElectronicCreditLedgerCsv';
-import { buildGstr3bJson } from '@/utils/buildGstr3bJson';
+import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
 
 type OpeningSource = 'manual' | 'csv' | 'not_applicable';
 
@@ -501,21 +501,17 @@ const GstReceivableRecoPage: React.FC = () => {
       setHasGstr1(!!gstr1Data?.raw_json);
       if (!hasUtilizedFromCsv) {
         if (gstr1Data?.raw_json) {
-          // ITC utilized fallback = the GSTR-3B output liability (Table 3.1a),
-          // computed from M-1's GSTR-1 exactly like the GSTR-3B module. Capped
-          // at Available ITC in the closing math below.
-          const { summary } = buildGstr3bJson({
-            gstin: '', periodMonth: prevMonth || '', gstr1Raw: gstr1Data.raw_json,
-            itc: null, rcm: { taxable: 0, igst: 0, cgst: 0, sgst: 0 },
-            // This fallback only estimates "ITC utilized" for the Credit Ledger
-            // closing math, not a live filing — kept on the pre-existing
-            // date-only RCM gate (unaffected by the unfiled-period widening in
-            // buildGstr3bJson.ts) so historical closing figures don't shift.
-            alreadyFiled: true,
-          });
-          setUtilizedCgst(summary.outward.cgst);
-          setUtilizedSgst(summary.outward.sgst);
-          setUtilizedIgst(summary.outward.igst);
+          // ITC utilized fallback = the GSTR-3B output tax, Table 3.1(a) +
+          // 3.1(b) (the IGST on exports and SEZ supplies with payment is
+          // set off too), computed from M-1's GSTR-1 exactly like the GSTR-3B
+          // module. Capped at Available ITC in the closing math below.
+          // computeGstr1OutputTax keeps the pre-existing date-only RCM gate
+          // (unaffected by the unfiled-period widening in buildGstr3bJson.ts)
+          // so historical closing figures don't shift.
+          const out = computeGstr1OutputTax(gstr1Data.raw_json, prevMonth || '');
+          setUtilizedCgst(out.cgst);
+          setUtilizedSgst(out.sgst);
+          setUtilizedIgst(out.igst);
         } else {
           setUtilizedCgst(0); setUtilizedSgst(0); setUtilizedIgst(0);
         }
@@ -1184,8 +1180,8 @@ const GstReceivableRecoPage: React.FC = () => {
                         {utilizedFromCsv
                           ? `Actual per-head debit from ${prevMonthLabel || 'M-1'} row of Credit Ledger (covers cross-head set-off)`
                           : prevMonthLabel
-                            ? `From ${prevMonthLabel} GSTR-3B output (Table 3.1a), set off cross-head like the portal (estimate)`
-                            : 'From previous month GSTR-3B output (Table 3.1a), set off cross-head like the portal (estimate)'}
+                            ? `From ${prevMonthLabel} GSTR-3B output tax (Table 3.1(a) + 3.1(b)), set off cross-head like the portal (estimate)`
+                            : 'From previous month GSTR-3B output tax (Table 3.1(a) + 3.1(b)), set off cross-head like the portal (estimate)'}
                       </p>
                       {!utilizedFromCsv && !hasGstr1 && (
                         <p className={SUB}>

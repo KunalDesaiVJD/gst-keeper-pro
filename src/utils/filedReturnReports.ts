@@ -50,6 +50,14 @@ export interface Gstr1Section {
   ttl_nilsup_amt?: number; ttl_expt_amt?: number; ttl_ngsup_amt?: number;
   /** DOC_ISSUE (Table 13): counts of documents, not values. */
   ttl_doc_issued?: number; ttl_doc_cancelled?: number; net_doc_issued?: number;
+  /**
+   * CDNR, CDNUR, EXP (and their amendments) carry their parts here: CDNR's
+   * named by sec_nm (CDNR_4A, CDNR_4B, CDNR_6C, CDNR_SEZWP, CDNR_SEZWOP),
+   * CDNUR's and EXP's by typ (B2CL, EXPWP, EXPWOP). B2B's parts are sections of
+   * their own (B2B_4A, B2B_4B, B2B_6C, B2B_SEZWP, B2B_SEZWOP).
+   */
+  sub_sections?: Gstr1Section[];
+  typ?: string;
 }
 export interface Gstr1Summary { sec_sum?: Gstr1Section[]; }
 

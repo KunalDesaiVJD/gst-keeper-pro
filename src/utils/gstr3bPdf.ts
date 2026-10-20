@@ -36,11 +36,11 @@ export const exportGstr3bToPDF = ({ result, clientName, gstin, monthLabel }: Par
     head: [['3.1 Nature of supplies', 'Taxable value', 'Integrated tax', 'Central tax', 'State/UT tax']],
     body: [
       ['(a) Outward taxable (other than zero/nil/exempt)', fmt2(s.outward.txval), fmt2(s.outward.igst), fmt2(s.outward.cgst), fmt2(s.outward.sgst)],
-      ['(b) Outward taxable (zero rated)', fmt2(s.zeroRated.txval), fmt2(s.zeroRated.igst), '0.00', '0.00'],
+      ['(b) Outward taxable (zero rated: exports and SEZ)', fmt2(s.zeroRated.txval), fmt2(s.zeroRated.igst), '0.00', '0.00'],
       ['(c) Other outward (nil rated, exempted)', fmt2(s.nilExempt), '0.00', '0.00', '0.00'],
       ['(d) Inward supplies (liable to reverse charge)', fmt2(s.rcmLiability.txval), fmt2(s.rcmLiability.igst), fmt2(s.rcmLiability.cgst), fmt2(s.rcmLiability.sgst)],
       ['(e) Non-GST outward supplies', fmt2(s.nonGst), '0.00', '0.00', '0.00'],
-      ['Total tax liability (a + d)', '', fmt2(s.totalLiability.igst), fmt2(s.totalLiability.cgst), fmt2(s.totalLiability.sgst)],
+      ['Total tax liability (a + b + d)', '', fmt2(s.totalLiability.igst), fmt2(s.totalLiability.cgst), fmt2(s.totalLiability.sgst)],
     ],
     headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 8 },
     bodyStyles: { fontSize: 8 },

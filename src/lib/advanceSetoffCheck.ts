@@ -21,6 +21,7 @@ import {
 } from './advanceRegister';
 import { resolveSchemeForPeriod } from '@/utils/schemeResolver';
 import { isQuarterEndMonth } from '@/types';
+import { b2bRow } from '@/lib/gstr1/supplyKind';
 
 /**
  * Rupee value below which a difference is treated as rounding noise.
@@ -108,6 +109,10 @@ const prevPeriod = (mmYyyy: string): string => {
  * not an invoice that can absorb an advance. Exports are excluded too — an
  * advance against an export is not reported through Table 11A in this app's
  * clients' returns, and including them would fire rule 1 on zero-rated value.
+ * Supplies to an SEZ (SEWP / SEWOP) are zero rated as well, and left out the
+ * same way (src/lib/gstr1/supplyKind.ts). An SEZ in the client's own state
+ * would otherwise have keyed as intra-state, though s.7(5)(b) IGST Act makes
+ * it inter-state.
  */
 function invoiceTaxableByKey(json: any, homeState: string): Map<string, number> { // eslint-disable-line @typescript-eslint/no-explicit-any
   const out = new Map<string, number>();
@@ -118,7 +123,7 @@ function invoiceTaxableByKey(json: any, homeState: string): Map<string, number> 
     out.set(k, (out.get(k) || 0) + txval);
   };
   const j = json || {};
-  (j.b2b || []).forEach((party: any) => (party.inv || []).forEach((inv: any) => // eslint-disable-line @typescript-eslint/no-explicit-any
+  (j.b2b || []).forEach((party: any) => (party.inv || []).filter((inv: any) => b2bRow(inv) === '3.1(a)').forEach((inv: any) => // eslint-disable-line @typescript-eslint/no-explicit-any
     (inv.itms || []).forEach((it: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
       const d = it?.itm_det || it || {};
       bump(String(inv.pos || ''), num(d.rt), num(d.txval));

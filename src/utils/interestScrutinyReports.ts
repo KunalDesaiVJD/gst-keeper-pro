@@ -44,9 +44,16 @@ const itcAvailGrossOf = (s: Gstr3bSummary) => {
     sgst: heads.reduce((a, h) => a + num(h.samt), 0),
   };
 };
+// 3.1(a) + 3.1(b) + 3.1(d). 3.1(b) carries the IGST on exports and SEZ
+// supplies with payment: it is paid in cash or ITC like the rest, and a month
+// with only that tax is not a nil return.
 const totalLiabilityOf = (s: Gstr3bSummary) => {
-  const o = s.sup_details?.osup_det, r = s.sup_details?.isup_rev;
-  return { igst: num(o?.iamt) + num(r?.iamt), cgst: num(o?.camt) + num(r?.camt), sgst: num(o?.samt) + num(r?.samt) };
+  const o = s.sup_details?.osup_det, z = s.sup_details?.osup_zero, r = s.sup_details?.isup_rev;
+  return {
+    igst: num(o?.iamt) + num(z?.iamt) + num(r?.iamt),
+    cgst: num(o?.camt) + num(z?.camt) + num(r?.camt),
+    sgst: num(o?.samt) + num(z?.samt) + num(r?.samt),
+  };
 };
 const itcNetOf = (s: Gstr3bSummary) => ({ igst: num(s.itc_elg?.itc_net?.iamt), cgst: num(s.itc_elg?.itc_net?.camt), sgst: num(s.itc_elg?.itc_net?.samt) });
 const itcReversedOf = (s: Gstr3bSummary) => {

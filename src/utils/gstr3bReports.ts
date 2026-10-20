@@ -62,7 +62,8 @@ export const buildGstr3bLiabilityReport = async (clientId: string, month: string
   const nilExempt = headSum(sup.osup_nil_exmp);
   const rcm = headSum(sup.isup_rev);
   const nonGst = headSum(sup.osup_nongst);
-  const total = headSum(sup.osup_det, sup.isup_rev);
+  // 3.1(b) carries the IGST on exports and SEZ supplies with payment.
+  const total = headSum(sup.osup_det, sup.osup_zero, sup.isup_rev);
   const itcAvail = headSum(...ITC_AVL_TYPES.map((ty) => findItc(s.itc_elg?.itc_avl, ty)));
   const itcRev = headSum(...(s.itc_elg?.itc_rev || []));
   const itcInelg = headSum(...(s.itc_elg?.itc_inelg || []));
@@ -71,11 +72,11 @@ export const buildGstr3bLiabilityReport = async (clientId: string, month: string
 
   const rows: (string | number)[][] = [
     ['3.1(a)', 'Outward taxable supplies (other than zero rated, nil rated and exempted)', outward.txval, outward.igst, outward.cgst, outward.sgst],
-    ['3.1(b)', 'Outward taxable supplies — zero rated (exports)', zeroRated.txval, zeroRated.igst, zeroRated.cgst, zeroRated.sgst],
+    ['3.1(b)', 'Outward taxable supplies — zero rated (exports and SEZ)', zeroRated.txval, zeroRated.igst, zeroRated.cgst, zeroRated.sgst],
     ['3.1(c)', 'Other outward supplies (Nil rated, exempted)', nilExempt.txval, 0, 0, 0],
     ['3.1(d)', 'Inward supplies liable to reverse charge', rcm.txval, rcm.igst, rcm.cgst, rcm.sgst],
     ['3.1(e)', 'Non-GST outward supplies', nonGst.txval, 0, 0, 0],
-    ['', 'Total Output Tax Liability (3.1(a) + 3.1(d))', '', total.igst, total.cgst, total.sgst],
+    ['', 'Total Output Tax Liability (3.1(a) + 3.1(b) + 3.1(d))', '', total.igst, total.cgst, total.sgst],
     ['', '', '', '', '', ''],
     ['4(A)', 'ITC Available (gross)', '', itcAvail.igst, itcAvail.cgst, itcAvail.sgst],
     ['4(B)', 'ITC Reversed', '', itcRev.igst, itcRev.cgst, itcRev.sgst],
@@ -133,12 +134,31 @@ export const buildGstr3bVsGstr1TaxReport = async (clientId: string, month: strin
 
 // ────────────── REPORT 3: GSTR-3B vs GSTR-1 Comparison Report ────────────
 
+// Each GSTR-1 section and the GSTR-3B Table 3.1 row it feeds. B2B, CDNR and
+// CDNUR hold both kinds of row, so their parts are listed under them (B2B's
+// sections B2B_4A … B2B_SEZWOP, CDNR's and CDNUR's sub_sections): SEZ supplies
+// and export notes are zero rated, 3.1(b); the rest 3.1(a). A part is listed
+// when the pull has it and it is not nil. src/lib/gstr1/supplyKind.ts is the
+// same rule for the draft.
 const GSTR1_SECTION_LABELS: [string, string, string][] = [
-  ['B2B', 'B2B Invoices', '3.1(a)'],
+  ['B2B', 'B2B, SEZ and deemed export invoices (all)', '3.1(a); SEZ 3.1(b) (parts below)'],
+  ['B2B_4A', '  of which regular B2B (4A)', '3.1(a)'],
+  ['B2B_4B', '  of which reverse charge (4B)', '3.1(a) value; tax is the recipient\'s'],
+  ['B2B_6C', '  of which deemed exports (6C)', '3.1(a)'],
+  ['B2B_SEZWP', '  of which SEZ with payment (6B)', '3.1(b)'],
+  ['B2B_SEZWOP', '  of which SEZ without payment (6B)', '3.1(b)'],
   ['B2CL', 'B2C (Large)', '3.1(a)'],
   ['B2CS', 'B2C (Small)', '3.1(a)'],
-  ['CDNR', 'Credit/Debit Notes (Registered)', '3.1(a) (net)'],
-  ['CDNUR', 'Credit/Debit Notes (Unregistered)', '3.1(a) (net)'],
+  ['CDNR', 'Credit/Debit Notes (Registered)', '3.1(a) (net); SEZ notes 3.1(b) (parts below)'],
+  ['CDNR_4A', '  of which regular B2B', '3.1(a) (net)'],
+  ['CDNR_4B', '  of which reverse charge', '3.1(a) value (net)'],
+  ['CDNR_6C', '  of which deemed exports', '3.1(a) (net)'],
+  ['CDNR_SEZWP', '  of which SEZ with payment', '3.1(b) (net)'],
+  ['CDNR_SEZWOP', '  of which SEZ without payment', '3.1(b) (net)'],
+  ['CDNUR', 'Credit/Debit Notes (Unregistered)', '3.1(a) (net); export notes 3.1(b) (parts below)'],
+  ['CDNUR_B2CL', '  of which B2C (Large)', '3.1(a) (net)'],
+  ['CDNUR_EXPWP', '  of which exports with payment', '3.1(b) (net)'],
+  ['CDNUR_EXPWOP', '  of which exports without payment', '3.1(b) (net)'],
   ['EXP', 'Exports', '3.1(b)'],
   // NIL's value is its nil rated, exempt and non-GST amounts together; GSTR-3B
   // puts the first two in 3.1(c) and non-GST in 3.1(e), so both are listed below.
@@ -146,6 +166,28 @@ const GSTR1_SECTION_LABELS: [string, string, string][] = [
   ['AT', 'Advances Received', '3.1(a)'],
   ['TXPD', 'Advances Adjusted', '3.1(a) (reduces)'],
 ];
+// A part of a section (see GSTR1_SECTION_LABELS), found in the pull: B2B's
+// parts are sections of their own; CDNR's sub_sections are named by sec_nm,
+// CDNUR's by typ.
+const PARTS_OF: Record<string, string> = { CDNR: 'CDNR_', CDNUR: 'CDNUR_' };
+const isPart = (code: string) => code.startsWith('B2B_') || code.startsWith('CDNR_') || code.startsWith('CDNUR_');
+const notNil = (sec: Gstr1Section) =>
+  num(sec.ttl_rec) !== 0 || gstr1Taxable(sec) !== 0 || num(sec.ttl_igst) !== 0 || num(sec.ttl_cgst) !== 0 || num(sec.ttl_sgst) !== 0 || num(sec.ttl_cess) !== 0;
+const sectionsByCode = (g1: Gstr1Summary): Map<string, Gstr1Section> => {
+  const out = new Map<string, Gstr1Section>();
+  for (const sec of g1.sec_sum || []) {
+    if (!sec.sec_nm) continue;
+    out.set(sec.sec_nm, sec);
+    const prefix = PARTS_OF[sec.sec_nm];
+    if (prefix) {
+      for (const sub of sec.sub_sections || []) {
+        const name = sub.sec_nm || (sub.typ ? `${prefix}${sub.typ}` : '');
+        if (name) out.set(name, sub);
+      }
+    }
+  }
+  return out;
+};
 
 export const buildGstr3bVsGstr1ComparisonReport = async (clientId: string, month: string): Promise<ReportTable> => {
   const client = await fetchClient(clientId);
@@ -153,12 +195,12 @@ export const buildGstr3bVsGstr1ComparisonReport = async (clientId: string, month
     fetchFiledGstr1(clientId, client, month),
     fetchFiledGstr3b(clientId, client, month),
   ]);
-  const byName = new Map((g1.sec_sum || []).map((sec) => [sec.sec_nm, sec] as [string, Gstr1Section]));
+  const byName = sectionsByCode(g1);
 
   const rows: (string | number)[][] = GSTR1_SECTION_LABELS
     .map(([code, label, mapsTo]) => {
       const sec = byName.get(code);
-      if (!sec) return null;
+      if (!sec || (isPart(code) && !notNil(sec))) return null;
       return [code, label, mapsTo, gstr1Taxable(sec), num(sec.ttl_igst), num(sec.ttl_cgst), num(sec.ttl_sgst), num(sec.ttl_cess)];
     })
     .filter((r): r is (string | number)[] => r !== null);
@@ -175,7 +217,7 @@ export const buildGstr3bVsGstr1ComparisonReport = async (clientId: string, month
 
   return {
     title: 'GSTR 3B vs GSTR 1 Comparison Report',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   GSTR-1 ARN: ${g1row.arn || '—'}   |   Every GSTR-1 section and which GSTR-3B Table 3.1 row it feeds, both as filed on the portal.`,
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   GSTR-1 ARN: ${g1row.arn || '—'}   |   Every GSTR-1 section and which GSTR-3B Table 3.1 row it feeds, both as filed on the portal. Supplies to an SEZ, exports and their notes are zero rated, 3.1(b); the "of which" rows split B2B and the notes where the pull has the parts and they are not nil. Notes are shown as the portal states them.`,
     headers: ['GSTR-1 Section', 'Description', 'Maps to GSTR-3B Table', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess'],
     rows,
     fileNameBase: `GSTR3B_vs_GSTR1_Comparison_${fileSafe(client.name)}_${month.replace('/', '-')}`,
@@ -276,7 +318,8 @@ export const buildGstr3bAnnualSummaryReport = async (clientId: string, anyMonthI
     const s = byMonth.get(m);
     if (!s || Object.keys(s).length === 0) return [formatMonthLabel(m), 'NOT PULLED', '', '', '', '', ''];
     pulled++;
-    const outward = headSum(s.sup_details?.osup_det);
+    // Outward = 3.1(a) + 3.1(b): the IGST on exports and SEZ supplies with payment is payable too.
+    const outward = headSum(s.sup_details?.osup_det, s.sup_details?.osup_zero);
     const rcm = headSum(s.sup_details?.isup_rev);
     const liab = outward.igst + outward.cgst + outward.sgst + rcm.igst + rcm.cgst + rcm.sgst;
     const itcAvail = headSum(...ITC_AVL_TYPES.map((ty) => findItc(s.itc_elg?.itc_avl, ty)));
@@ -291,7 +334,7 @@ export const buildGstr3bAnnualSummaryReport = async (clientId: string, anyMonthI
   return {
     title: 'GSTR 3B Annual Summary Report',
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}   |   As filed on the portal for each month (${pulled}/${months.length} months pulled — the rest show NOT PULLED; use GSTR-3B (Filed on Portal)'s Pull button for each missing month).`,
-    headers: ['Month', 'Outward Liability', 'RCM Liability', 'Total Liability', 'ITC Available', 'Net ITC', 'Total Payable (as filed)'],
+    headers: ['Month', 'Outward Liability (3.1a + 3.1b)', 'RCM Liability', 'Total Liability', 'ITC Available', 'Net ITC', 'Total Payable (as filed)'],
     rows,
     fileNameBase: `GSTR3B_Annual_Summary_${fileSafe(client.name)}_${fyLabel.replace(/\s+/g, '_')}`,
     columnWidths: [14, 18, 16, 16, 16, 14, 20],
@@ -339,7 +382,8 @@ export function computeItcOffset(liability: TaxHeadAmounts, itcAvailable: TaxHea
 export const buildGstr3bOffsetSummaryReport = async (clientId: string, month: string): Promise<ReportTable> => {
   const client = await fetchClient(clientId);
   const { row, s } = await fetchFiledGstr3b(clientId, client, month);
-  const total = headSum(s.sup_details?.osup_det, s.sup_details?.isup_rev);
+  // 3.1(a) + 3.1(b) + 3.1(d): 3.1(b) carries the IGST on exports and SEZ supplies with payment.
+  const total = headSum(s.sup_details?.osup_det, s.sup_details?.osup_zero, s.sup_details?.isup_rev);
   const tt = s.tt_val || {};
 
   const rows: (string | number)[][] = [
