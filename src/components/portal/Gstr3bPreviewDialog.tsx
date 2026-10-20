@@ -97,7 +97,7 @@ export const Gstr3bPreviewDialog: React.FC<{
                 <Row label="(c) Other outward (nil / exempt)" txval={s.nilExempt} />
                 <Row label="(d) Inward liable to reverse charge" txval={s.rcmLiability.txval} igst={s.rcmLiability.igst} cgst={s.rcmLiability.cgst} sgst={s.rcmLiability.sgst} />
                 <Row label="(e) Non-GST outward" txval={s.nonGst} />
-                <Row label="Total liability (a + d)" igst={s.totalLiability.igst} cgst={s.totalLiability.cgst} sgst={s.totalLiability.sgst} bold />
+                <Row label="Total liability (a + b + d)" igst={s.totalLiability.igst} cgst={s.totalLiability.cgst} sgst={s.totalLiability.sgst} bold />
               </tbody>
             </table>
 

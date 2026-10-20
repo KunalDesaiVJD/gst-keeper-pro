@@ -74,7 +74,8 @@ stale silently if nobody checks it.
 | GSTR-3B / GSTR-1 | Turnover > ₹5cr | ₹50/day | ₹10,000 |
 
 "NIL return" here means a period with zero GSTR-3B computed liability
-(outward + RCM) — the app doesn't know whether the client would have
+(the tax of 3.1(a), 3.1(b) and 3.1(d): outward, zero rated with payment, and
+RCM) — the app doesn't know whether the client would have
 answered the portal's own "NIL return" question the same way (e.g. a return
 with only exempt supplies but a non-zero RCM liability is not NIL despite
 having no output tax), so this is an approximation of the portal's NIL test,

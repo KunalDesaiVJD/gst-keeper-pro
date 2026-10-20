@@ -7,7 +7,9 @@
 // exempt) or the GSTN mapping is ambiguous (4D → itc_inelg).
 //
 // Sources:
-//   Table 3.1 (outward) + 3.2   ← the client's GSTR-1 raw JSON (computed here)
+//   Table 3.1 (outward) + 3.2   ← the client's GSTR-1 raw JSON (computed here;
+//                                 3.1(a) vs 3.1(b) by src/lib/gstr1/supplyKind.ts,
+//                                 docs/GSTR3B_OUTWARD_POSITIONS.md)
 //   Table 3.1(d) inward RCM     ← RCM Summary totals (rcm_data)
 //   Table 4 (ITC) 4A / 4B / 4C  ← ITC Summary (itc_summaries.data)
 //   Table 4D(2) ineligible      ← ITC Summary 4D(2)  [4D(1) reclaim already sits inside 4A(5)]
@@ -15,6 +17,7 @@
 
 import { computePartialItcSplit } from './builderPartialItc';
 import { reclaimed4D1 } from '@/lib/itc4D';
+import { b2bRow, cdnurRow, isUin, noteSign, type Outward31Row } from '@/lib/gstr1/supplyKind';
 
 export interface ItcRow { srNo: string; igst: number; cgst: number; sgst: number; particular?: string }
 export interface ItcData { section4A: ItcRow[]; section4B: ItcRow[]; section4D: ItcRow[] }
@@ -58,7 +61,7 @@ export interface Gstr3bInput {
 export interface TaxHead { igst: number; cgst: number; sgst: number }
 export interface Gstr3bSummary {
   outward: { txval: number; igst: number; cgst: number; sgst: number }; // 3.1(a)
-  zeroRated: { txval: number; igst: number };                           // 3.1(b)
+  zeroRated: { txval: number; igst: number; cess: number };             // 3.1(b) exports and SEZ
   nilExempt: number;                                                    // 3.1(c) txval
   rcmLiability: { txval: number; igst: number; cgst: number; sgst: number }; // 3.1(d)
   nonGst: number;                                                       // 3.1(e) txval
@@ -74,7 +77,7 @@ export interface Gstr3bSummary {
   // 4(D) Other Details — the four portal rows (D)(1), (1.1), (1.2), (2),
   // taken straight from the ITC Summary section 4D.
   itcOtherDetails: { srNo: string; label: string; igst: number; cgst: number; sgst: number }[];
-  totalLiability: TaxHead;      // output + RCM
+  totalLiability: TaxHead;      // 3.1(a) + 3.1(b) + 3.1(d)
   indicativeNetPayable: TaxHead; // liability − net ITC (indicative; real offset is done on the portal)
 }
 export interface Gstr3bResult {
@@ -101,10 +104,10 @@ export interface Gstr3bItcTyped {
 
 const r2 = (n: number) => Math.round((n || 0) * 100) / 100;
 const num = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
-// Note type lives in `ntty` on real portal/GSTN exports (`typ` on some older
-// exports) — check both, defaulting to credit if neither is present.
-const noteSign = (nt: any): 1 | -1 =>
-  String(nt?.ntty ?? nt?.typ ?? 'C').toUpperCase().startsWith('D') ? 1 : -1;
+
+// The GSTR-1 JSON as stored: loosely shaped, read field by field.
+type Gj = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+const list = (v: unknown): Gj[] => (Array.isArray(v) ? v : []);
 
 // B2B invoices marked `rchrg: 'Y'` (Table 4B — reverse charge) are the
 // recipient's liability, not the supplier's: GSTN's own "Total Liability"
@@ -138,60 +141,105 @@ const sub3 = (a: TaxHead, b: TaxHead): TaxHead => ({ igst: a.igst - b.igst, cgst
 const round3 = (t: TaxHead): TaxHead => ({ igst: r2(t.igst), cgst: r2(t.cgst), sgst: r2(t.sgst) });
 
 // ---- Table 3.1 outward, computed from the GSTR-1 raw JSON ------------------
-function computeOutward(g: any, periodMonth: string, alreadyFiled: boolean) {
-  const det = { txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 }; // 3.1(a)
-  const zero = { txval: 0, iamt: 0, csamt: 0 };                  // 3.1(b)
-  let nilExempt = 0;                                             // 3.1(c) txval
-  let nonGst = 0;                                                // 3.1(e) txval
+// Which row a document goes to is decided in one place,
+// src/lib/gstr1/supplyKind.ts (docs/GSTR3B_OUTWARD_POSITIONS.md):
+//   3.1(a) R, DE and CBW invoices, B2CL, B2CS, advances, and their notes;
+//   3.1(b) exports (exp, WPAY and WOPAY) and SEZ supplies (SEWP, SEWOP),
+//          and their notes: cdnr notes whose inv_typ is SEWP / SEWOP, cdnur
+//          notes whose typ is EXPWP / EXPWOP. The IGST on an export or SEZ
+//          supply with payment is shown in 3.1(b) and is payable.
+interface Heads { txval: number; iamt: number; camt: number; samt: number; csamt: number }
+const heads = (): Heads => ({ txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 });
+/** The 3.1 bucket a document goes to. */
+type Pick31 = (row: Outward31Row) => Heads;
+// One rate line into its bucket. Reverse charge: the value counts, the tax
+// is the recipient's (Table 4B; see RCM_RCHRG_FIX_FROM).
+const addLine = (to: Heads, d: Gj, sign: number, valueOnly: boolean) => {
+  to.txval += sign * num(d.txval);
+  if (valueOnly) return;
+  to.iamt += sign * num(d.iamt); to.camt += sign * num(d.camt); to.samt += sign * num(d.samt); to.csamt += sign * num(d.csamt);
+};
+const isRcm = (doc: Gj) => String(doc.rchrg || 'N').toUpperCase() === 'Y';
 
-  const addDet = (it: any, sign = 1) => {
-    det.txval += sign * num(it.txval); det.iamt += sign * num(it.iamt);
-    det.camt += sign * num(it.camt); det.samt += sign * num(it.samt); det.csamt += sign * num(it.csamt);
-  };
-  const applyRcmFix = periodSortKey(periodMonth) >= RCM_RCHRG_FIX_FROM || !alreadyFiled;
+// The document tables, one adder per JSON shape. The amendment tables share
+// the shape of the table they amend (b2ba of b2b, cdnra of cdnr, cdnura of
+// cdnur, expa of exp, b2cla of b2cl), so the same adder sorts both.
+// A note is signed by noteSign: a credit note takes off, a debit note adds.
+// A note against an RCM invoice carries its own rchrg='Y' (GSTN's real
+// schema puts it on the note, not just the original invoice) and gets the
+// same treatment as the RCM invoice — value only, no tax — or its tax
+// adjustment nets against nothing (the original invoice's tax was never
+// added) and produces a phantom negative liability.
+const addB2b = (rows: unknown, pick: Pick31, rcmFix: boolean) => list(rows).forEach((p) => list(p.inv).forEach((inv) => {
+  const to = pick(b2bRow(inv));
+  const valueOnly = rcmFix && isRcm(inv);
+  list(inv.itms).forEach((i) => addLine(to, i.itm_det || {}, 1, valueOnly));
+}));
+const addB2cl = (rows: unknown, pick: Pick31) => list(rows).forEach((s) => list(s.inv).forEach((inv) =>
+  list(inv.itms).forEach((i) => addLine(pick('3.1(a)'), i.itm_det || {}, 1, false))));
+const addCdnr = (rows: unknown, pick: Pick31, rcmFix: boolean) => list(rows).forEach((p) => list(p.nt).forEach((nt) => {
+  const to = pick(b2bRow(nt)); // a registered note carries the inv_typ of its invoice
+  const sign = noteSign(nt, 'cdnr');
+  const valueOnly = rcmFix && isRcm(nt);
+  list(nt.itms).forEach((i) => addLine(to, i.itm_det || {}, sign, valueOnly));
+}));
+const addCdnur = (rows: unknown, pick: Pick31, rcmFix: boolean) => list(rows).forEach((nt) => {
+  const to = pick(cdnurRow(nt));
+  const sign = noteSign(nt, 'cdnur');
+  const valueOnly = rcmFix && isRcm(nt);
+  list(nt.itms).forEach((i) => addLine(to, i.itm_det || {}, sign, valueOnly));
+});
+// Exports: zero rated, value, IGST (with payment) and cess. Flat rate lines.
+const addExp = (rows: unknown, pick: Pick31) => list(rows).forEach((e) => list(e.inv).forEach((inv) =>
+  list(inv.itms).forEach((i) => addLine(pick('3.1(b)'), i.itm_det || i, 1, false))));
+
+// Table 10 (b2csa) rate lines: under itms[] in the portal's shape
+// (Builder's), flat in older files.
+const b2csaLines = (a: Gj): Gj[] => (Array.isArray(a.itms) && a.itms.length ? a.itms : [a]);
+// A Table 10 entry that reverses a rate and re-reports the same value at
+// another (a line below zero, the lines netting to nil value) states the
+// DIFFERENCE, not the revised month: the Builder's re-rating
+// (builderGstr1.ts, discharge_mode 'GSTR1_AMENDMENT') writes exactly this.
+// Its tax difference is this month's liability and is folded into 3.1(a).
+// Any other entry restates the earlier month in full, like every other
+// amendment, and is flagged, never folded (docs/ADVANCE_SETOFF_POSITIONS.md
+// §7.2): adding a restated figure would overstate 3.1(a).
+const isB2csaDifference = (a: Gj): boolean => {
+  const lines = b2csaLines(a);
+  const net = lines.reduce((t, l) => t + num(l.txval), 0);
+  return lines.some((l) => num(l.txval) < 0) && Math.abs(net) < 0.005;
+};
+
+/** What one GSTR-1 amendment table restates, by the 3.1 row its documents belong to. */
+export interface Gstr1AmendmentSum { table: string; label: string; docs: number; a: Heads; b: Heads }
+const AMENDMENT_TABLES: { table: string; label: string }[] = [
+  { table: 'b2ba', label: 'Table 9A B2B invoices (b2ba)' },
+  { table: 'b2cla', label: 'Table 9A B2C large invoices (b2cla)' },
+  { table: 'expa', label: 'Table 9A exports (expa)' },
+  { table: 'cdnra', label: 'Table 9C registered credit / debit notes (cdnra)' },
+  { table: 'cdnura', label: 'Table 9C unregistered credit / debit notes (cdnura)' },
+  { table: 'b2csa', label: 'Table 10 B2C small, restated (b2csa)' },
+];
+
+function computeOutward(g: Gj | null, periodMonth: string, alreadyFiled: boolean) {
+  const det = heads();  // 3.1(a)
+  const zero = heads(); // 3.1(b)
+  let nilExempt = 0;    // 3.1(c) txval
+  let nonGst = 0;       // 3.1(e) txval
+  const amendments: Gstr1AmendmentSum[] = [];
+
+  const rcmFix = periodSortKey(periodMonth) >= RCM_RCHRG_FIX_FROM || !alreadyFiled;
+  const into: Pick31 = (r) => (r === '3.1(b)' ? zero : det);
   if (g) {
-    (g.b2b || []).forEach((p: any) => (p.inv || []).forEach((inv: any) => {
-      const isRcmInvoice = applyRcmFix && String(inv.rchrg || 'N').toUpperCase() === 'Y';
-      (inv.itms || []).forEach((i: any) => {
-        if (isRcmInvoice) {
-          // Table 4B: recipient's liability under RCM, not ours — value counts
-          // toward taxable turnover, tax does not.
-          det.txval += num((i.itm_det || {}).txval);
-        } else {
-          addDet(i.itm_det || {});
-        }
-      });
-    }));
-    (g.b2cl || []).forEach((s: any) => (s.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => addDet(i.itm_det || {}))));
-    (g.b2cs || []).forEach((i: any) => addDet(i));
-    // Credit note subtracts, debit note adds (same convention as computeGstr1OutputTax).
-    // A note against an RCM invoice carries its own rchrg='Y' (GSTN's real
-    // schema puts it on the note, not just the original invoice) and must get
-    // the same treatment as the B2B RCM branch above — value only, no tax —
-    // or its tax adjustment nets against nothing (the original invoice's tax
-    // was never added) and produces a phantom negative liability.
-    (g.cdnr || []).forEach((p: any) => (p.nt || []).forEach((nt: any) => {
-      const isRcmNote = applyRcmFix && String(nt.rchrg || 'N').toUpperCase() === 'Y';
-      const sign = noteSign(nt);
-      (nt.itms || []).forEach((i: any) => {
-        if (isRcmNote) det.txval += sign * num((i.itm_det || {}).txval);
-        else addDet(i.itm_det || {}, sign);
-      });
-    }));
-    (g.cdnur || []).forEach((nt: any) => {
-      const isRcmNote = applyRcmFix && String(nt.rchrg || 'N').toUpperCase() === 'Y';
-      const sign = noteSign(nt);
-      (nt.itms || []).forEach((i: any) => {
-        if (isRcmNote) det.txval += sign * num((i.itm_det || {}).txval);
-        else addDet(i.itm_det || {}, sign);
-      });
-    });
-    // Table 10 — amendments to earlier B2CS entries. They carry a real
-    // liability (a retrospective re-rating is reported here, not as a debit
-    // note), so they belong in 3.1(a) like any other outward row. Rates sit
-    // under itms[] in the portal's shape (Builder's), flat in older files.
-    (g.b2csa || []).forEach((a: Record<string, unknown>) =>
-      (Array.isArray(a.itms) && a.itms.length ? (a.itms as Record<string, unknown>[]) : [a]).forEach((i) => addDet(i)));
+    addB2b(g.b2b, into, rcmFix);
+    addB2cl(g.b2cl, into);
+    list(g.b2cs).forEach((i) => addLine(det, i, 1, false));
+    addCdnr(g.cdnr, into, rcmFix);
+    addCdnur(g.cdnur, into, rcmFix);
+    addExp(g.exp, into);
+    // Table 10: a re-rating difference is folded; a restated month is
+    // flagged with the other amendments below.
+    list(g.b2csa).filter(isB2csaDifference).forEach((a) => b2csaLines(a).forEach((i) => addLine(det, i, 1, false)));
     // Advances. The advance amount IS the value being offered to tax when the
     // supply is a service — construction is, so Notification 66/2017 does not
     // apply and tax falls due on receipt. Carrying only the tax and not the
@@ -205,13 +253,13 @@ function computeOutward(g: any, periodMonth: string, alreadyFiled: boolean) {
     // itms[0], as this did, dropped every rate but the first straight out of
     // 3.1(a) — understating the liability on 11A and overstating it on 11B.
     // Sum every line, the way buildGstr1Summary always has.
-    const advanceLines = (a: any): any[] =>
+    const advanceLines = (a: Gj): Gj[] =>
       Array.isArray(a?.itms) && a.itms.length ? a.itms : [a];
-    (g.at || []).forEach((a: any) => advanceLines(a).forEach((it: any) => {
+    list(g.at).forEach((a) => advanceLines(a).forEach((it) => {
       det.txval += num(it.ad_amt);
       det.iamt += num(it.iamt); det.camt += num(it.camt); det.samt += num(it.samt);
     }));
-    (g.txpd || []).forEach((a: any) => advanceLines(a).forEach((it: any) => {
+    list(g.txpd).forEach((a) => advanceLines(a).forEach((it) => {
       det.txval -= num(it.ad_amt);
       det.iamt -= num(it.iamt); det.camt -= num(it.camt); det.samt -= num(it.samt);
     }));
@@ -226,29 +274,117 @@ function computeOutward(g: any, periodMonth: string, alreadyFiled: boolean) {
     // caller raises a flag instead, pointing at GSTR-3B Adjustments (source
     // 'Prior Period') where a human enters the differential.
     // See docs/ADVANCE_SETOFF_POSITIONS.md §7.2.
-    // Exports = zero-rated.
-    (g.exp || []).forEach((e: any) => (e.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => { zero.txval += num(i.txval); zero.iamt += num(i.iamt); })));
+    //
+    // The same holds for every other amendment table (9A b2ba / b2cla / expa,
+    // 9C cdnra / cdnura, a restated Table 10): each states the revised
+    // document in full. They are summed here, each by its own 3.1 row, only
+    // so the caller's flag can say what they restate and where.
+    AMENDMENT_TABLES.forEach(({ table, label }) => {
+      const s: Gstr1AmendmentSum = { table, label, docs: 0, a: heads(), b: heads() };
+      const pick: Pick31 = (r) => (r === '3.1(b)' ? s.b : s.a);
+      const rows = list(g[table]);
+      if (table === 'b2ba') { addB2b(rows, pick, rcmFix); s.docs = rows.reduce((n, p) => n + list(p.inv).length, 0); }
+      if (table === 'b2cla') { addB2cl(rows, pick); s.docs = rows.reduce((n, p) => n + list(p.inv).length, 0); }
+      if (table === 'expa') { addExp(rows, pick); s.docs = rows.reduce((n, p) => n + list(p.inv).length, 0); }
+      if (table === 'cdnra') { addCdnr(rows, pick, rcmFix); s.docs = rows.reduce((n, p) => n + list(p.nt).length, 0); }
+      if (table === 'cdnura') { addCdnur(rows, pick, rcmFix); s.docs = rows.length; }
+      if (table === 'b2csa') {
+        const restated = rows.filter((a) => !isB2csaDifference(a));
+        restated.forEach((a) => b2csaLines(a).forEach((i) => addLine(s.a, i, 1, false)));
+        s.docs = restated.length;
+      }
+      if (s.docs) amendments.push(s);
+    });
     // Nil / exempt / non-GST.
-    (g.nil?.inv || []).forEach((n: any) => { nilExempt += num(n.nil_amt) + num(n.expt_amt); nonGst += num(n.ngsup_amt); });
+    list(g.nil?.inv).forEach((n) => { nilExempt += num(n.nil_amt) + num(n.expt_amt); nonGst += num(n.ngsup_amt); });
   }
 
-  const roundObj = (o: any) => { Object.keys(o).forEach((k) => (o[k] = r2(o[k]))); return o; };
-  return { det: roundObj(det), zero: roundObj(zero), nilExempt: r2(nilExempt), nonGst: r2(nonGst) };
+  const roundObj = (o: Heads): Heads => { (Object.keys(o) as (keyof Heads)[]).forEach((k) => (o[k] = r2(o[k]))); return o; };
+  amendments.forEach((s) => { roundObj(s.a); roundObj(s.b); });
+  roundObj(det); roundObj(zero);
+  return {
+    det,
+    // GSTN's osup_zero carries value, IGST and cess only: zero rated supplies
+    // bear no CGST / SGST. zeroLocalTax is whatever a 3.1(b) document wrongly
+    // carries as CGST / SGST, for the caller's flag.
+    zero: { txval: zero.txval, iamt: zero.iamt, csamt: zero.csamt },
+    zeroLocalTax: r2(zero.camt + zero.samt),
+    nilExempt: r2(nilExempt),
+    nonGst: r2(nonGst),
+    amendments,
+  };
 }
 
-// 3.2 inter-state supplies to unregistered persons — POS-wise from B2CL + inter B2CS.
-function computeInterUnreg(g: any) {
-  const byPos: Record<string, { txval: number; iamt: number }> = {};
-  const bump = (pos: string, txval: number, iamt: number) => {
-    if (!pos) return;
-    byPos[pos] = byPos[pos] || { txval: 0, iamt: 0 };
-    byPos[pos].txval += num(txval); byPos[pos].iamt += num(iamt);
+/**
+ * Output tax of a month's GSTR-1: the tax of Table 3.1(a) and 3.1(b), which
+ * GSTR-3B sets off against ITC or cash. 3.1(b) holds the IGST on exports and
+ * SEZ supplies with payment. Cess is left out. Reverse charge as in
+ * computeOutward (value only from Aug-2026, or for an unfiled month).
+ * Shared by the GST receivable reco and the credit closing report
+ * (computeGstr1OutputTax), so their "ITC utilised" is the draft's own figure.
+ */
+export function gstr1OutputTax(gstr1Raw: unknown, periodMonth: string, alreadyFiled: boolean): TaxHead {
+  const g = gstr1Raw && typeof gstr1Raw === 'object' ? (gstr1Raw as Gj) : null;
+  const out = computeOutward(g, periodMonth, alreadyFiled);
+  return round3({ igst: out.det.iamt + out.zero.iamt, cgst: out.det.camt, sgst: out.det.samt });
+}
+
+// ---- Table 3.2 inter-state supplies, by place of supply --------------------
+// "Of the supplies shown in 3.1(a)": zero rated supplies never enter it.
+//   Unregistered persons: B2CL, inter-state B2CS, cdnur notes of typ B2CL
+//     (signed), and an inter-state Table 10 difference folded above.
+//   UIN holders: b2b invoices to a UIN (GSTN's UIN format) at a place of
+//     supply outside the supplier's state, and their cdnr notes (signed).
+//   Composition dealers: GSTR-1 does not say who is one, so this stays
+//     empty. The portal fills that row itself from GSTR-1 (TISHA 10/2025
+//     filed comp_details it computed), so no flag is raised for it.
+interface PosRow { pos: string; txval: number; iamt: number }
+function computeInterSup(g: Gj | null, homeState: string) {
+  const make = () => {
+    const byPos: Record<string, { txval: number; iamt: number }> = {};
+    const bump = (pos: unknown, d: Gj, sign = 1) => {
+      const p = String(pos ?? '').trim();
+      if (!p) return;
+      byPos[p] = byPos[p] || { txval: 0, iamt: 0 };
+      byPos[p].txval += sign * num(d.txval); byPos[p].iamt += sign * num(d.iamt);
+    };
+    const rows = (): PosRow[] => Object.entries(byPos).map(([pos, v]) => ({ pos, txval: r2(v.txval), iamt: r2(v.iamt) }));
+    return { bump, rows };
   };
+  const unreg = make();
+  const uin = make();
+  let interB2b = 0;
+  // Inter-state: a place of supply outside the supplier's state; with no
+  // GSTIN to tell the state, IGST charged on the line.
+  const inter = (pos: unknown, d: Gj) => (homeState ? !!String(pos ?? '').trim() && String(pos).trim() !== homeState : num(d.iamt) !== 0);
   if (g) {
-    (g.b2cl || []).forEach((s: any) => (s.inv || []).forEach((inv: any) => (inv.itms || []).forEach((i: any) => bump(s.pos, num(i.itm_det?.txval), num(i.itm_det?.iamt)))));
-    (g.b2cs || []).forEach((i: any) => { if ((i.sply_ty || '').toUpperCase() === 'INTER') bump(i.pos, num(i.txval), num(i.iamt)); });
+    list(g.b2cl).forEach((s) => list(s.inv).forEach((inv) => list(inv.itms).forEach((i) => unreg.bump(s.pos, i.itm_det || {}))));
+    list(g.b2cs).forEach((i) => { if (String(i.sply_ty || '').toUpperCase() === 'INTER') unreg.bump(i.pos, i); });
+    list(g.cdnur).forEach((nt) => {
+      if (cdnurRow(nt) !== '3.1(a)') return; // export notes are zero rated
+      const sign = noteSign(nt, 'cdnur');
+      list(nt.itms).forEach((i) => unreg.bump(nt.pos, i.itm_det || {}, sign));
+    });
+    list(g.b2csa).filter(isB2csaDifference).forEach((a) => {
+      if (String(a.sply_ty || '').toUpperCase() === 'INTER') b2csaLines(a).forEach((i) => unreg.bump(a.pos, i));
+    });
+    list(g.b2b).forEach((p) => list(p.inv).forEach((inv) => {
+      if (b2bRow(inv) !== '3.1(a)') return; // SEZ: zero rated
+      const lines = list(inv.itms).map((i) => i.itm_det || {});
+      if (!lines.some((d) => inter(inv.pos, d))) return;
+      if (isUin(p.ctin)) lines.forEach((d) => uin.bump(inv.pos, d));
+      else if (!isRcm(inv)) interB2b += 1;
+    }));
+    list(g.cdnr).forEach((p) => {
+      if (!isUin(p.ctin)) return;
+      list(p.nt).forEach((nt) => {
+        if (b2bRow(nt) !== '3.1(a)') return;
+        const sign = noteSign(nt, 'cdnr');
+        list(nt.itms).forEach((i) => { const d = i.itm_det || {}; if (inter(nt.pos, d)) uin.bump(nt.pos, d, sign); });
+      });
+    });
   }
-  return Object.entries(byPos).map(([pos, v]) => ({ pos, txval: r2(v.txval), iamt: r2(v.iamt) }));
+  return { unreg: unreg.rows(), uin: uin.rows(), interB2b };
 }
 
 export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
@@ -291,6 +427,40 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
       "against that period's own 3B must be entered in GSTR-3B Adjustments (table 3.1(a), source 'Prior Period')."
     );
   }
+
+  // The other amendment tables (9A, 9C, a restated Table 10) restate an
+  // earlier document in full, so they are flagged the same way, never folded
+  // (computeOutward). Each is shown against its own 3.1 row: SEZ and export
+  // amendments against 3.1(b), the rest against 3.1(a).
+  if (out.amendments.length) {
+    const money = (n: number) => `₹${n.toFixed(2)}`;
+    const part = (h: { txval: number; iamt: number; camt: number; samt: number; csamt: number }, row: string) =>
+      `${row} value ${money(h.txval)}, tax ${money(r2(h.iamt + h.camt + h.samt + h.csamt))}`;
+    const parts = out.amendments.map((s) => {
+      const rows = [
+        ...(s.a.txval || s.a.iamt || s.a.camt || s.a.samt || s.a.csamt ? [part(s.a, '3.1(a)')] : []),
+        ...(s.b.txval || s.b.iamt || s.b.csamt ? [part(s.b, '3.1(b)')] : []),
+      ];
+      return `${s.label}: ${s.docs} document(s)${rows.length ? `, ${rows.join('; ')}` : ''}`;
+    });
+    flags.push(
+      `GSTR-1 amendments present, NOT included in Table 3.1: ${parts.join('. ')}. ` +
+      'An amendment states the revised document in full, so only its difference from the original belongs in this 3B. ' +
+      "Enter that difference in GSTR-3B Adjustments (source 'Prior Period') against the row shown. " +
+      'An amended B2C large or small supply that is inter-state also changes Table 3.2 on the portal.'
+    );
+  }
+  if (out.zeroLocalTax) {
+    flags.push(
+      `A zero rated document (export or SEZ) carries CGST / SGST of ₹${out.zeroLocalTax.toFixed(2)}. ` +
+      'Table 3.1(b) takes IGST and cess only, so this tax is NOT in the draft. Check the invoice type in GSTR-1.'
+    );
+  }
+
+  // Table 3.2, by place of supply (computeInterSup). The supplier's state is
+  // the first two digits of its GSTIN.
+  const homeState = /^\d{2}/.test(input.gstin || '') ? input.gstin.slice(0, 2) : '';
+  const inter = computeInterSup(g, homeState);
 
   // ---- GSTR-3B Adjustments module — fold mapped rows into the relevant
   // Table 3.1 / Table 4 bucket before anything downstream (totalLiability,
@@ -507,10 +677,10 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
       isup_rev: rcm,                                       // 3.1(d) inward RCM
       osup_nongst: { txval: out.nonGst },                  // 3.1(e)
     },
-    inter_sup: {
-      unreg_details: computeInterUnreg(g),                 // 3.2
-      comp_details: [],
-      uin_details: [],
+    inter_sup: {                                           // 3.2, of the supplies in 3.1(a)
+      unreg_details: inter.unreg,
+      comp_details: [],                                    // not known from GSTR-1 (flagged)
+      uin_details: inter.uin,
     },
     itc_elg: {
       itc_avl: [
@@ -546,13 +716,16 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     },
   };
 
+  // Total tax liability = 3.1(a) + 3.1(b) + 3.1(d). 3.1(b) holds the IGST on
+  // exports and SEZ supplies with payment, which is payable like any other.
   const totalLiability = round3(add3(
     { igst: out.det.iamt, cgst: out.det.camt, sgst: out.det.samt },
+    { igst: out.zero.iamt, cgst: 0, sgst: 0 },
     { igst: rcm.iamt, cgst: rcm.camt, sgst: rcm.samt },
   ));
   const summary: Gstr3bSummary = {
     outward: { txval: out.det.txval, igst: out.det.iamt, cgst: out.det.camt, sgst: out.det.samt },
-    zeroRated: { txval: out.zero.txval, igst: out.zero.iamt },
+    zeroRated: { txval: out.zero.txval, igst: out.zero.iamt, cess: out.zero.csamt },
     nilExempt: out.nilExempt,
     rcmLiability: { txval: rcm.txval, igst: rcm.iamt, cgst: rcm.camt, sgst: rcm.samt },
     nonGst: out.nonGst,

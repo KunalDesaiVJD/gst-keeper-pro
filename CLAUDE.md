@@ -94,6 +94,8 @@ The books register takes invoices and debit notes only, never a minus amount: a 
 "Email bills not in books" (Import 2B header, §11) mails the client its open Not in Books list as an
 Excel working paper via `email_outbox` (`attachments`, `cc_email`) and `send-gst-email` v5 (`src/lib/billsNotInBooksMail.ts`).
 
+GSTR-3B Table 3.1 / 3.2 from GSTR-1: which row a document goes to (SEZ SEWP/SEWOP, exports and their notes 3.1(b); R, DE, CBW, B2C 3.1(a)) is decided only in `src/lib/gstr1/supplyKind.ts`; total liability is 3.1(a) + (b) + (d) everywhere; amendments are flagged, never folded. Read `docs/GSTR3B_OUTWARD_POSITIONS.md` and run `node scripts/verify-gstr3b-outward.mjs` after any change there.
+
 ## GSTR-2A vs GSTR-2B reconciliation (Reports Hub)
 
 The report `gstr2a-vs-gstr2b-reco` (`src/utils/gstr2aVs2bReports.ts`) matches the portal-pulled 2A and 2B

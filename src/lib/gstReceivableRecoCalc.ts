@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { previousPeriodMonthKey } from '@/utils/parseElectronicCreditLedgerCsv';
-import { buildGstr3bJson } from '@/utils/buildGstr3bJson';
+import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
 import type { RecoDiffResult } from './suspendedRecoCalc';
 
 // Mirrors the "DIFFERENCE" figure on the GST Receivable Reco page
@@ -208,14 +208,11 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
       ? await supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', shortMonth).maybeSingle()
       : { data: null };
     if (gstr1Data?.raw_json) {
-      const { summary } = buildGstr3bJson({
-        gstin: '', periodMonth: prevMonth || '', gstr1Raw: gstr1Data.raw_json,
-        itc: null, rcm: { taxable: 0, igst: 0, cgst: 0, sgst: 0 },
-        alreadyFiled: true,
-      });
-      utilizedCgst = summary.outward.cgst;
-      utilizedSgst = summary.outward.sgst;
-      utilizedIgst = summary.outward.igst;
+      // GSTR-3B 3.1(a) + 3.1(b) tax (zero rated IGST included), as the page.
+      const out = computeGstr1OutputTax(gstr1Data.raw_json, prevMonth || '');
+      utilizedCgst = out.cgst;
+      utilizedSgst = out.sgst;
+      utilizedIgst = out.igst;
     }
   }
 

@@ -34,7 +34,9 @@ export const buildCreditAndLiabilityStatementReport = async (clientId: string, a
     if (!s || Object.keys(s).length === 0) return [formatMonthLabel(m), 'NOT PULLED', '', ''];
     pulled++;
     const sup = s.sup_details || {};
+    // 3.1(a) + 3.1(b) + 3.1(d): 3.1(b) carries the IGST on exports and SEZ supplies with payment.
     const liab = num(sup.osup_det?.iamt) + num(sup.osup_det?.camt) + num(sup.osup_det?.samt)
+      + num(sup.osup_zero?.iamt) + num(sup.osup_zero?.camt) + num(sup.osup_zero?.samt)
       + num(sup.isup_rev?.iamt) + num(sup.isup_rev?.camt) + num(sup.isup_rev?.samt);
     const itc = num(s.tt_val?.tt_itc_pd);
     const cash = num(s.tt_val?.tt_csh_pd);

@@ -36,10 +36,13 @@ const findItc = (arr: TypedAmt[] | undefined, ty: string) => (Array.isArray(arr)
 const itcAvailGross = (s: Gstr3bSummary) => ['IMPG', 'IMPS', 'ISRC', 'ISD', 'OTH']
   .map((ty) => findItc(s.itc_elg?.itc_avl, ty))
   .reduce((a, r) => a + num(r.iamt) + num(r.camt) + num(r.samt), 0);
-const totalLiability = (s: Gstr3bSummary) => {
-  const o = s.sup_details?.osup_det, r = s.sup_details?.isup_rev;
-  return num(o?.iamt) + num(o?.camt) + num(o?.samt) + num(r?.iamt) + num(r?.camt) + num(r?.samt);
-};
+const taxOf = (h: { iamt?: number; camt?: number; samt?: number } | undefined) => num(h?.iamt) + num(h?.camt) + num(h?.samt);
+// Output tax, 3.1(a) + 3.1(b): what GSTR-1's TTL_LIAB states. 3.1(b) carries
+// the IGST on exports and SEZ supplies with payment, which TTL_LIAB counts
+// too. 3.1(d) (reverse charge on inward supplies) is not in GSTR-1 at all.
+const outputTax = (s: Gstr3bSummary) => taxOf(s.sup_details?.osup_det) + taxOf(s.sup_details?.osup_zero);
+// Total liability, 3.1(a) + 3.1(b) + 3.1(d).
+const totalLiability = (s: Gstr3bSummary) => outputTax(s) + taxOf(s.sup_details?.isup_rev);
 
 // ────── REPORT 1: Output Liability as per GSTR 1 and GSTR 3B (PAN) ───────
 
@@ -62,7 +65,7 @@ export const buildPanOutputLiabilityReport = async (clientId: string, month: str
     const g3 = g3row.summary as Gstr3bSummary;
     const ttlLiab = (g1.sec_sum || []).find((sec) => sec.sec_nm === 'TTL_LIAB');
     const g1Tax = num(ttlLiab?.ttl_igst) + num(ttlLiab?.ttl_cgst) + num(ttlLiab?.ttl_sgst);
-    const g3bTax = totalLiability(g3);
+    const g3bTax = outputTax(g3);
     totG1 += g1Tax; totG3b += g3bTax;
     rows.push([c.name, c.gstin || '—', g1Tax, g3bTax, g3bTax - g1Tax]);
   }
@@ -70,8 +73,8 @@ export const buildPanOutputLiabilityReport = async (clientId: string, month: str
 
   return {
     title: 'Output Liability as per GSTR 1 and GSTR 3B (PAN-Based)',
-    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s), ${pulled} pulled for this period   |   Period: ${formatMonthLabel(month)}   |   Both sides as filed on the portal for each entity — GSTINs not yet pulled show NOT PULLED.`,
-    headers: ['Entity (GSTIN)', 'GSTIN', 'GSTR-1 Output Tax', 'GSTR-3B Output Liability', 'Variance'],
+    subtitle: `PAN: ${pan}   |   ${group.length} GSTIN(s), ${pulled} pulled for this period   |   Period: ${formatMonthLabel(month)}   |   Both sides as filed on the portal for each entity — GSTINs not yet pulled show NOT PULLED. GSTR-3B's output liability is the tax of 3.1(a) and 3.1(b) (exports and SEZ supplies with payment), the supplies GSTR-1 reports; reverse charge on inward supplies (3.1(d)) is not in GSTR-1.`,
+    headers: ['Entity (GSTIN)', 'GSTIN', 'GSTR-1 Output Tax', 'GSTR-3B Output Liability (3.1a + 3.1b)', 'Variance'],
     rows,
     fileNameBase: `PAN_Output_Liability_${pan}_${month.replace('/', '-')}`,
     columnWidths: [30, 18, 18, 20, 14],

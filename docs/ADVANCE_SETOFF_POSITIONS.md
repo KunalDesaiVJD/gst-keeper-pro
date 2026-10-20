@@ -378,6 +378,12 @@ The correct path already exists: a **GSTR-3B Adjustments** row against `3.1(a)`
 with source `Prior Period`, entered by a manager who has looked at both periods.
 The flag points there by name.
 
+Since 20 Oct 2026 every other amendment table is treated the same way: 9A
+(`b2ba`, `b2cla`, `expa`), 9C (`cdnra`, `cdnura`) and a restated Table 10
+(`b2csa`) are flagged against their own 3.1 row, never folded. A Table 10
+entry that is a re-rating difference (the Builder's) is folded. See
+`docs/GSTR3B_OUTWARD_POSITIONS.md` §2, positions 5 and 6.
+
 ### 7.3 An amendment against a filed period is a hard finding
 
 Rule 4 in §5. An `ata`/`txpda` restating a period already marked `Filed`, with

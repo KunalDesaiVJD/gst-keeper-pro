@@ -1,26 +1,28 @@
 // Sum the total output tax from a parsed GSTR-1 JSON. Used as a proxy for
-// "ITC Utilized this month" on the GST Receivable Reco page, since the output
-// liability computed here flows into GSTR-3B Table 3.1, which is then settled
-// out of the Electronic Credit Ledger.
+// "ITC Utilized this month" (the GST Receivable Reco page and the credit
+// closing report), since the output liability computed here flows into
+// GSTR-3B Table 3.1, which is then settled out of the Electronic Credit Ledger.
 //
-// Includes b2csa (Table 10 — amendments to earlier-period B2CS entries),
-// treated as purely additive to the current period's liability — mirrors
-// buildGstr3bJson.ts's computeOutward() interpretation for parity; not an
-// independently re-verified reading of the GSTN schema.
+// It is the GSTR-3B draft's own figure: the tax of Table 3.1(a) + 3.1(b), from
+// buildGstr3bJson's gstr1OutputTax, so the two "ITC utilised" figures cannot
+// differ (src/lib/gstr1/supplyKind.ts, docs/GSTR3B_OUTWARD_POSITIONS.md).
+// 3.1(b) holds the IGST on exports and SEZ supplies with payment.
 //
 // Per project decision (June 2026): Cess is ignored entirely.
 //
-// Sign convention for credit/debit notes:
-//   note type "C" (credit note) → REDUCES outward tax
-//   note type "D" (debit note)  → INCREASES outward tax
-// The type lives in `ntty` on real portal/GSTN exports (`typ` on some older
-// exports) — check both, defaulting to credit if neither is present.
-// Advance receipts (`at`) add to outward tax for the period; advance
-// adjustments (`txpd`) subtract because the tax was paid in an earlier period.
-//
-// B2B invoices under reverse charge (`rchrg: 'Y'`, Table 4B) are excluded, and
-// so are CDNR/CDNUR notes carrying the same rchrg='Y' — see RCM_RCHRG_FIX_FROM
-// below for the period this starts applying from.
+// What that figure takes, in short:
+//   - credit notes take off, debit notes add (noteSign);
+//   - advance receipts (`at`) add, advance adjustments (`txpd`) take off, on
+//     every rate line;
+//   - B2B invoices under reverse charge (`rchrg: 'Y'`, Table 4B), and notes
+//     carrying the same flag, add no tax, from Aug-2026 only: periods before
+//     that were already filed with the un-gated figure, and recomputing them
+//     now would show a number that no longer matches what was filed;
+//   - amendment tables (9A, 9C, 11(2), a restated Table 10) add nothing: they
+//     restate an earlier document in full. A Table 10 re-rating difference
+//     (the Builder's) adds its tax difference.
+
+import { gstr1OutputTax } from './buildGstr3bJson';
 
 export interface Gstr1OutputTotals {
   igst: number;
@@ -28,114 +30,9 @@ export interface Gstr1OutputTotals {
   sgst: number;
 }
 
-const num = (v: any): number => {
-  const n = typeof v === 'number' ? v : parseFloat(v);
-  return Number.isFinite(n) ? n : 0;
-};
-
-const noteSign = (nt: any): 1 | -1 =>
-  String(nt?.ntty ?? nt?.typ ?? 'C').toUpperCase().startsWith('D') ? 1 : -1;
-
-// B2B invoices marked `rchrg: 'Y'` (Table 4B — reverse charge) are the
-// recipient's liability under RCM, not the supplier's own output tax.
-// Gated from Aug-2026 onward only — periods before that were already filed
-// with the un-gated (incorrect) figure, and recomputing them now would show
-// a number that no longer matches what was actually filed.
-const RCM_RCHRG_FIX_FROM = 202608; // YYYY * 100 + MM
-const periodSortKey = (mmYyyy: string): number => {
-  const [mm, yyyy] = (mmYyyy || '').split('/');
-  return (parseInt(yyyy, 10) || 0) * 100 + (parseInt(mm, 10) || 0);
-};
-
-export const computeGstr1OutputTax = (rawJson: any, periodMonth: string): Gstr1OutputTotals => {
-  let igst = 0, cgst = 0, sgst = 0;
-  if (!rawJson || typeof rawJson !== 'object') return { igst, cgst, sgst };
-  const applyRcmFix = periodSortKey(periodMonth) >= RCM_RCHRG_FIX_FROM;
-
-  // B2B — Table 4B (reverse charge) invoices are excluded from output tax.
-  (rawJson.b2b || []).forEach((party: any) => {
-    (party.inv || []).forEach((inv: any) => {
-      if (applyRcmFix && String(inv.rchrg || 'N').toUpperCase() === 'Y') return;
-      (inv.itms || []).forEach((itm: any) => {
-        const d = itm.itm_det || {};
-        igst += num(d.iamt);
-        cgst += num(d.camt);
-        sgst += num(d.samt);
-      });
-    });
-  });
-
-  // B2CL (inter-state, only IGST possible)
-  (rawJson.b2cl || []).forEach((state: any) => {
-    (state.inv || []).forEach((inv: any) => {
-      (inv.itms || []).forEach((itm: any) => {
-        const d = itm.itm_det || {};
-        igst += num(d.iamt);
-      });
-    });
-  });
-
-  // B2CS — flat array of {pos, typ, rt, txval, iamt, camt, samt}
-  (rawJson.b2cs || []).forEach((item: any) => {
-    igst += num(item.iamt);
-    cgst += num(item.camt);
-    sgst += num(item.samt);
-  });
-
-  // CDNR (credit/debit notes, registered). A note against an RCM invoice
-  // carries its own rchrg: 'Y' in GSTN's schema and must be excluded the same
-  // way as the B2B branch above — otherwise its tax adjustment nets against
-  // an invoice tax that was never added in the first place, producing a
-  // phantom (often negative) output-tax figure.
-  (rawJson.cdnr || []).forEach((party: any) => {
-    (party.nt || []).forEach((nt: any) => {
-      if (applyRcmFix && String(nt.rchrg || 'N').toUpperCase() === 'Y') return;
-      const sign = noteSign(nt);
-      (nt.itms || []).forEach((itm: any) => {
-        const d = itm.itm_det || {};
-        igst += sign * num(d.iamt);
-        cgst += sign * num(d.camt);
-        sgst += sign * num(d.samt);
-      });
-    });
-  });
-
-  // CDNUR (credit/debit notes, unregistered — IGST only)
-  (rawJson.cdnur || []).forEach((nt: any) => {
-    if (applyRcmFix && String(nt.rchrg || 'N').toUpperCase() === 'Y') return;
-    const sign = noteSign(nt);
-    (nt.itms || []).forEach((itm: any) => {
-      const d = itm.itm_det || {};
-      igst += sign * num(d.iamt);
-    });
-  });
-
-  // Table 10 — amendments to earlier-period B2CS entries. Rates under itms[]
-  // in the portal's shape (Builder's), flat like b2cs in older files; never
-  // nested under itm_det.
-  (rawJson.b2csa || []).forEach((entry: Record<string, unknown>) => {
-    (Array.isArray(entry.itms) && entry.itms.length ? (entry.itms as Record<string, unknown>[]) : [entry]).forEach((item) => {
-      igst += num(item.iamt);
-      cgst += num(item.camt);
-      sgst += num(item.samt);
-    });
-  });
-
-  // AT — advance tax received
-  (rawJson.at || []).forEach((item: any) => {
-    const first = item.itms?.[0] || item;
-    igst += num(first.iamt);
-    cgst += num(first.camt);
-    sgst += num(first.samt);
-  });
-
-  // TXPD — advance tax adjustments (paid in earlier period, reduces this one)
-  (rawJson.txpd || []).forEach((item: any) => {
-    const first = item.itms?.[0] || item;
-    igst -= num(first.iamt);
-    cgst -= num(first.camt);
-    sgst -= num(first.samt);
-  });
-
-  return { igst, cgst, sgst };
+export const computeGstr1OutputTax = (rawJson: unknown, periodMonth: string): Gstr1OutputTotals => {
+  if (!rawJson || typeof rawJson !== 'object') return { igst: 0, cgst: 0, sgst: 0 };
+  // alreadyFiled: true keeps the reverse-charge exclusion on its date-only
+  // gate (Aug-2026 onward), as this figure always has.
+  return gstr1OutputTax(rawJson, periodMonth, true);
 };

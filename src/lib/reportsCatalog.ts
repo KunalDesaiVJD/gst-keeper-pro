@@ -408,7 +408,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'liability-declared-vs-paid',
     title: 'Difference in Liability Declared and Paid',
-    description: 'As-filed total output liability (3.1a + 3.1d) vs the return\'s own as-filed cash paid / ITC utilised / total payable, pulled directly from the portal.',
+    description: 'As-filed total output liability (3.1a + 3.1b + 3.1d) vs the return\'s own as-filed cash paid / ITC utilised / total payable, pulled directly from the portal.',
     icon: Receipt,
     category: 'tax-liability',
     status: 'extends-login',
@@ -432,7 +432,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'tax-liability-excl-export-rcm',
     title: 'Tax Liability Other Than Export/Reverse Charge',
-    description: 'Domestic taxable supplies (B2B, B2CL, B2CS, CDNR, CDNUR) by section, from the as-filed GSTR-1 — excludes exports/SEZ and Nil-rated/Exempt.',
+    description: 'Domestic taxable supplies (B2B, B2CL, B2CS, CDNR, CDNUR) by section, from the as-filed GSTR-1 — excludes reverse charge, exports/SEZ and Nil-rated/Exempt.',
     icon: Percent,
     category: 'tax-liability',
     status: 'extends-login',
@@ -456,7 +456,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'tax-liability-export-sez',
     title: 'Tax Liability Due to Export and SEZ Supplies',
-    description: 'GSTR-1 Table 6A (Exports) from the as-filed return, pulled directly from the portal.',
+    description: 'GSTR-1 Table 6A (Exports), 6B (SEZ supplies) and the notes against them, the zero rated supplies of GSTR-3B 3.1(b), from the as-filed return, pulled directly from the portal.',
     icon: Ship,
     category: 'tax-liability',
     status: 'extends-login',

@@ -23,7 +23,7 @@ export const exportGstReceivableRecoToExcel = (d: GstReceivableExportData) => {
     ? `ADD: NET ITC AVAILABLE (4C) — ${d.prevMonthLabel} ITC Summary`
     : 'ADD: NET ITC AVAILABLE (4C)';
   const utilizedLabel = d.prevMonthLabel
-    ? `LESS: ITC UTILIZED — ${d.prevMonthLabel} GSTR-3B output, Table 3.1a (capped at Available ITC)`
+    ? `LESS: ITC UTILIZED — ${d.prevMonthLabel} GSTR-3B output tax, Table 3.1(a) + 3.1(b) (capped at Available ITC)`
     : 'LESS: ITC UTILIZED (min of GSTR-3B output and Available ITC)';
 
   const rows: (string | number)[][] = [
