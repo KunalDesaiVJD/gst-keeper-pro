@@ -27,15 +27,16 @@
 // Notes and amendments (firm decision, 14 Oct 2026, §10 of the doc): every
 // figure is read through src/lib/twobDocs.ts. A supplier debit note counts
 // like an invoice (row 5.1, or Not in Books). A supplier credit note reduces
-// ITC through row 5.3 (fetchImport2BCreditNotes) and is never posted to the
-// ledger. An amendment counts only its difference from the version Import 2B
-// already counted (effectFigures), in row 5.1 / 5.3 or as a Not in Books row
-// that may be negative; a HELD amendment counts nowhere.
+// ITC through row 5.3 (fetchImport2BCreditNotes), or, parked Not in Books
+// like an invoice (17 Oct 2026), is posted to the ledger as a negative row.
+// An amendment counts only its difference from the version Import 2B already
+// counted (effectFigures), in row 5.1 / 5.3 or as a Not in Books row that may
+// be negative; a HELD amendment counts nowhere.
 
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import { fetchAllRows } from '@/lib/fetchAllRows';
-import { COUNTED_ACTIONS, effectFigures, isCreditNote, type TwobDocLike } from '@/lib/twobDocs';
+import { COUNTED_ACTIONS, effectFigures, signedEffect, type TwobDocLike } from '@/lib/twobDocs';
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -98,6 +99,12 @@ const amountsDiffer = (a: LedgerRow, b: { date: string; supplier_name: string; s
   Number(a.input_cgst || 0) !== b.input_cgst ||
   Number(a.input_sgst || 0) !== b.input_sgst;
 
+/** A books row with a minus amount: a supplier credit note, which the books register does not take. */
+export const bookHasMinus = (b: { taxable_value?: number | null; input_igst?: number | null; input_cgst?: number | null; input_sgst?: number | null }) =>
+  [b.taxable_value, b.input_igst, b.input_cgst, b.input_sgst].some((v) => (Number(v) || 0) < 0);
+
+export const BOOK_MINUS_REASON = 'Minus amount: a credit note from the supplier is not entered in the books register. It reduces ITC from its own 2B row once the supplier reports it (row 5.3); delete this row';
+
 export interface PostPlan {
   insertBills2B: { row: BookRegRow }[];
   updateBills2B: { ledgerId: string; row: BookRegRow }[];
@@ -110,10 +117,10 @@ export interface PostPlan {
 }
 
 // The figures a 2B document puts in the Not in Books ledger: what it changes
-// this month (an invoice or debit note its 2B figures, an amendment its
-// difference, which may be negative).
+// this month, with its sign (an invoice or debit note its 2B figures, a credit
+// note the same negative, an amendment its difference, which may be negative).
 const ledgerFiguresOf = (d: TwoBDocRow) => {
-  const e = effectFigures(d);
+  const e = signedEffect(d);
   return { taxable_value: e.taxable, input_igst: e.igst, input_cgst: e.cgst, input_sgst: e.sgst };
 };
 
@@ -140,11 +147,17 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
     insertBillsBooks: [], updateBillsBooks: [], retractBillsBooks: [], skippedDocs: [],
   };
 
-  // Books not in 2B -> bills_not_in_2b (books rows are invoices or debit
-  // notes, always positive)
+  // Books not in 2B -> bills_not_in_2b. Books rows are invoices or debit
+  // notes, always positive: a supplier credit note the client has booked waits
+  // for its own 2B row (row 5.3) and is never posted from books (the firm's
+  // decision, 20 Oct 2026; docs §10). A minus row is skipped, and what it
+  // posted before is taken back below.
   const notIn2B = books.filter((b) => b.book_treatment === 'NOT_IN_2B');
   const byBookId = new Map(ledger2B.map((l) => [l.source_book_id as string, l]));
+  const postable = new Set<string>();
   for (const b of notIn2B) {
+    if (bookHasMinus(b)) { plan.skippedBooks.push({ row: b, reason: BOOK_MINUS_REASON }); continue; }
+    postable.add(b.id);
     if (!b.date) { plan.skippedBooks.push({ row: b, reason: 'Missing date' }); continue; }
     if (!b.supplier_name || !b.supplier_name.trim()) { plan.skippedBooks.push({ row: b, reason: 'Missing supplier name' }); continue; }
     const existing = byBookId.get(b.id);
@@ -158,25 +171,19 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
       plan.updateBills2B.push({ ledgerId: existing.id, row: b });
     }
   }
-  const notIn2BIds = new Set(notIn2B.map((b) => b.id));
   for (const l of ledger2B) {
-    if (l.source_book_id && !notIn2BIds.has(l.source_book_id)) plan.retractBills2B.push({ ledgerId: l.id });
+    if (l.source_book_id && !postable.has(l.source_book_id)) plan.retractBills2B.push({ ledgerId: l.id });
   }
 
-  // 2B docs not in books -> bills_not_in_books. A credit note never sits
-  // here (the portal has already reduced the ITC; Import 2B does not offer
-  // the treatment), so one found with it is skipped and any row it posted
-  // before is retracted. A HELD amendment never has this treatment, so it
-  // is never posted. An amendment that changes no figure (a number or date
-  // correction) has nothing to add beside its original and is not posted.
+  // 2B docs not in books -> bills_not_in_books, every kind alike: a credit
+  // note posts negative (ledgerFiguresOf). A HELD amendment never has this
+  // treatment, so it is never posted. An amendment that changes no figure (a
+  // number or date correction) has nothing to add beside its original and is
+  // not posted.
   const notInBooks = docs.filter((d) => d.itc_action === 'NOT_IN_BOOKS');
   const kept = new Set<string>();
   const byDocId = new Map(ledgerBooks.map((l) => [l.source_doc_id as string, l]));
   for (const d of notInBooks) {
-    if (isCreditNote(d)) {
-      plan.skippedDocs.push({ row: d, reason: 'A credit note is never Not in Books: choose Matched, Mismatched, Ineligible or ITC of Others' });
-      continue;
-    }
     const fig = ledgerFiguresOf(d);
     if (d.is_amendment && [fig.taxable_value, fig.input_igst, fig.input_cgst, fig.input_sgst].every((v) => Math.abs(v) < 0.005)) continue;
     kept.add(d.id);
@@ -238,7 +245,8 @@ export async function fetchImport2BEligibleTotal(clientId: string, periodMonth: 
 
 // The month's supplier credit notes as per GSTR-2B, for ITC Summary row 5.3
 // "Debit Note": MATCHED and MISMATCHED, non-RCM, by what each reduces (an
-// amended note its difference). Positive = the reduction. notesRead says
+// amended note its difference). Positive = the reduction. One parked Not in
+// Books is left out: it waits on the ledger until booked. notesRead says
 // whether this month's import read the notes at all (any row with full_2b):
 // an older, invoices-only import has none, and its row 5.3 stays as typed.
 export async function fetchImport2BCreditNotes(

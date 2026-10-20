@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { BriefcaseBusiness, History, Loader2, Plus, Save, Shield, Trash2, Users } from 'lucide-react';
@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import SuperadminPasswordDialog from '@/components/dialogs/SuperadminPasswordDialog';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
 import { Badge } from '@/components/gstr9/badge';
@@ -21,6 +22,7 @@ import {
 import {
   PERMISSION_GROUPS, PERMISSION_LABEL, ROLE_ONLY_CONTROLS, permissionsInGroup,
 } from '@/lib/permissionCatalog';
+import { setStaffLevel, STAFF_LEVEL_LABEL, type StaffLevel } from '@/lib/staffLevels';
 
 /**
  * User Control — positions.
@@ -70,8 +72,13 @@ interface UserControlPageProps {
 }
 
 const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) => {
-  const { user, canManagePositions } = useAuth();
+  const { user, canManagePositions, canChangeStaffLevel } = useAuth();
   const confirm = useConfirm();
+  // A level change waiting for the superadmin's password (staff_set_level).
+  const [levelAsk, setLevelAsk] = useState<{ person: Staff; level: StaffLevel } | null>(null);
+  // Set while the level list closes to make way for the password prompt, so
+  // the list does not take focus back from the password box.
+  const passwordNext = useRef(false);
 
   const [tab, setTab] = useState<Tab>('positions');
   const [positions, setPositions] = useState<Position[]>([]);
@@ -245,6 +252,22 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
       ? `${s.first_name} is now ${positionName.get(positionId)}`
       : `${s.first_name} has no role — no permissions`);
     await load();
+  };
+
+  const changeLevel = async (password: string): Promise<boolean> => {
+    if (!levelAsk || !user) return false;
+    const { person, level } = levelAsk;
+    try {
+      await setStaffLevel(user.id, password, person.user_id, level);
+      toast.success(level === 'employee' && !person.position_id
+        ? `${person.first_name} is now an Employee: choose their role to give them permissions`
+        : `${person.first_name} is now ${level === 'gst_manager' ? 'a GST Manager' : 'an Employee'}`);
+      void load();
+      return true;
+    } catch (e) {
+      toast.error('Not done: ' + (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
   };
 
   // Kept after every hook so hook order stays stable.
@@ -450,7 +473,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
       ) : tab === 'people' ? (
         <SectionCard
           title="People and their roles"
-          description="Each employee holds one role and gets exactly its permissions. GST Managers and the Superadmin have every permission by role."
+          description={`Each employee holds one role and gets exactly its permissions. GST Managers and the Superadmin have every permission by role. ${canChangeStaffLevel() ? 'Change a level here; it asks for your password.' : 'Only the superadmin changes a level.'}`}
         >
           <div className={WS_TABLE_WRAP}>
             <table className={WS_TABLE} aria-label="Staff roles">
@@ -472,8 +495,27 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
                         <span className="font-medium">{s.first_name}</span>
                         {s.email && <span className="block text-xs text-muted-foreground">{s.email}</span>}
                       </td>
-                      <td className={WS_TD}>
-                        <Badge variant={s.role === 'gst_manager' ? 'default' : 'secondary'} className="text-[10px]">{ROLE_LABEL[s.role]}</Badge>
+                      <td className={cn(WS_TD, canChangeStaffLevel() && 'min-w-[150px]')}>
+                        {canChangeStaffLevel() ? (
+                          <Select
+                            value={s.role}
+                            onValueChange={(v) => {
+                              if (v === s.role) return;
+                              passwordNext.current = true;
+                              setLevelAsk({ person: s, level: v as StaffLevel });
+                            }}
+                          >
+                            <SelectTrigger className={WS_CONTROL} aria-label={`Level of ${s.first_name}`}><SelectValue /></SelectTrigger>
+                            <SelectContent onCloseAutoFocus={(e) => { if (passwordNext.current) { e.preventDefault(); passwordNext.current = false; } }}>
+                              <SelectItem value="employee">{STAFF_LEVEL_LABEL.employee}</SelectItem>
+                              <SelectItem value="gst_manager">{STAFF_LEVEL_LABEL.gst_manager}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <span title="Only the superadmin changes a level">
+                            <Badge variant={s.role === 'gst_manager' ? 'default' : 'secondary'} className="text-[10px]">{ROLE_LABEL[s.role]}</Badge>
+                          </span>
+                        )}
                       </td>
                       <td className={cn(WS_TD, 'min-w-[220px]')}>
                         <Select
@@ -541,6 +583,13 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
           </div>
         </SectionCard>
       )}
+      <SuperadminPasswordDialog
+        open={!!levelAsk}
+        title={levelAsk ? `Make ${levelAsk.person.first_name} ${levelAsk.level === 'gst_manager' ? 'a GST Manager' : 'an Employee'}` : ''}
+        confirmText="Change level"
+        onOpenChange={(open) => { if (!open) setLevelAsk(null); }}
+        onConfirm={changeLevel}
+      />
     </div>
   );
 };

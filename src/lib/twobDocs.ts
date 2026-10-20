@@ -8,7 +8,9 @@
 //  - A supplier debit note is claimed like an invoice (ITC Summary row 5.1).
 //  - A supplier credit note reduces ITC through row 5.3 "Debit Note" (what the
 //    firm's books call the purchase return). Amounts stay positive as on the
-//    2B; the type gives the sign.
+//    2B; the type gives the sign. Like an invoice it may be parked Not in
+//    Books until the client books it (17 Oct 2026): it then sits on the
+//    ledger as a negative row and is left out of 5.3.
 //  - An amendment (B2BA / B2B-CDNRA) counts only its difference: its full
 //    figures minus base_*, the figures of the earlier version Import 2B
 //    already counted. It follows that version's treatment; the confirmed
@@ -193,16 +195,17 @@ export const isCountedAction = (a: string | null | undefined) => a === 'MATCHED'
 export const countedNothing = (a: string | null | undefined) => a === 'INELIGIBLE' || a === 'ITC_OF_OTHERS';
 
 /**
- * The treatments a document may take. A credit note reduces ITC or is left
- * out: it is never parked as Not in Books (the portal has already reduced the
- * ITC) and never evidences a reclaim. An amendment never evidences a reclaim
- * either (its original was already in an earlier 2B). HELD is set only by the
- * import; it is offered back only on a row that holds it.
+ * The treatments a document may take. Every kind may be parked Not in Books,
+ * a credit note too (firm's request, 17 Oct 2026: as for an invoice, it waits
+ * on the ledger, negative, until the client books it). Only an original
+ * invoice or debit note evidences a reclaim (canEvidenceReclaim): a credit
+ * note reduces ITC, and an amendment's original was already in an earlier
+ * 2B. HELD is set only by the import; it is offered back only on a row that
+ * holds it.
  */
 export function allowedActions(d: { doc_type?: string | null; is_amendment?: boolean | null }, current?: string | null): string[] {
   let list: string[];
-  if (isCreditNote(d)) list = ['MATCHED', 'MISMATCHED', 'INELIGIBLE', 'ITC_OF_OTHERS'];
-  else if (d.is_amendment) list = ['MATCHED', 'MISMATCHED', 'INELIGIBLE', 'ITC_OF_OTHERS', 'NOT_IN_BOOKS'];
+  if (isCreditNote(d) || d.is_amendment) list = ['MATCHED', 'MISMATCHED', 'INELIGIBLE', 'ITC_OF_OTHERS', 'NOT_IN_BOOKS'];
   else list = ['MATCHED', 'INELIGIBLE', 'ITC_OF_OTHERS', 'MISMATCHED', 'NOT_IN_BOOKS', 'RECLAIM'];
   if (current === 'HELD') list = ['HELD', ...list];
   return list;
@@ -255,7 +258,9 @@ export const portalIneligible = (e: EarlierLike) => e.bucket === 'rejected'
  *    counted figures, which stay claimed in their month and are reversed by
  *    hand). Otherwise the earlier version's treatment (a reclaim or a
  *    mismatch counts as Matched; a debit note parked Not in Books and
- *    revised into a credit note is Matched, reducing in full: see baseFrom),
+ *    revised into a credit note is Matched, reducing in full: see baseFrom;
+ *    a credit note parked Not in Books keeps its amendment there, like an
+ *    invoice),
  *    except that a version the portal had made ineligible (portalIneligible:
  *    rejected in IMS, ITC Availability No, or for a credit note IMS "no ITC
  *    to be reduced") and the revision makes available is Matched, credit
@@ -275,7 +280,7 @@ export function defaultAction(r: DefaultActionInput, earlier?: EarlierLike | nul
     if (earlier.reverse_charge) return 'HELD';
     if (revisedNotAvailable(r)) return 'INELIGIBLE';
     if (earlierAction === 'RECLAIM' || earlierAction === 'MISMATCHED') return 'MATCHED';
-    if (earlierAction === 'NOT_IN_BOOKS' && r.docType === 'CREDIT_NOTE') return 'MATCHED';
+    if (earlierAction === 'NOT_IN_BOOKS' && r.docType === 'CREDIT_NOTE' && !isCreditNote(earlier)) return 'MATCHED';
     if (earlierAction === 'INELIGIBLE' && portalIneligible(earlier) && (r.docType === 'CREDIT_NOTE' || r.itcAvailable === true)) return 'MATCHED';
     return earlierAction;
   }
@@ -387,7 +392,9 @@ export function findEarlierVersion<T extends EarlierVersionCandidate>(
  *  - it was a debit note parked Not in Books and the revision is a credit
  *    note: its figures sit on the Not in Books ledger, never claimed, so the
  *    credit note reduces in full and the parked entry stays for staff to
- *    clear.
+ *    clear. Any other version parked Not in Books, a credit note included,
+ *    keeps its figures: the amendment follows it there and posts its
+ *    difference beside it.
  *  - the reverse charge flag differs: a reverse charge version sat in RCM
  *    Summary, never in rows 5.1 / 5.3 (and a revision into reverse charge
  *    leaves them for RCM Summary).
