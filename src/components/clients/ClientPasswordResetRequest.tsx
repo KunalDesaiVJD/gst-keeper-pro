@@ -1,39 +1,31 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Lock, Send, Loader2, CheckCircle2 } from 'lucide-react';
+import { Lock, Mail, Loader2, MailCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { requestClientPasswordReset } from '@/lib/clientPasswordReset';
 import { toast } from 'sonner';
 
+/**
+ * A signed-in client changes their password through the same e-mailed link
+ * as "Forgot password" (client_password_reset_request with their GSTIN). When
+ * no link can go (no e-mail on record, a limit) the database files a request
+ * for staff instead.
+ */
 const ClientPasswordResetRequest: React.FC = () => {
   const { user } = useAuth();
-  const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
 
   const handleSubmitRequest = async () => {
-    if (!user?.id) return;
-
+    if (!user?.userId) return;
     setIsSubmitting(true);
     try {
-      const { error } = await supabase
-        .from('password_reset_requests')
-        .insert({
-          user_id: user.id,
-          requested_by_name: user.firstName || user.userId,
-          status: 'pending',
-        });
-
-      if (error) throw error;
-
+      await requestClientPasswordReset(user.userId);
       setHasSubmitted(true);
-      toast.success('Your password reset request has been sent to the admin team.');
-    } catch (error: any) {
-      console.error('Error submitting request:', error);
-      toast.error('Failed to submit request. Please try again.');
+    } catch (error) {
+      console.error('Error requesting a reset link:', error);
+      toast.error('Could not send the request. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -44,10 +36,11 @@ const ClientPasswordResetRequest: React.FC = () => {
       <Card>
         <CardContent className="px-4 py-3">
           <div className="flex flex-col items-center justify-center py-4 text-center">
-            <CheckCircle2 className="mb-2 h-8 w-8 text-success" />
-            <h3 className="mb-1 text-[15px] font-semibold">Request Submitted</h3>
+            <MailCheck className="mb-2 h-8 w-8 text-success" />
+            <h3 className="mb-1 text-[15px] font-semibold">Check your e-mail</h3>
             <p className="text-sm text-muted-foreground">
-              Your password reset request has been submitted. An employee will set your new password shortly.
+              A link to set a new password is on its way to the e-mail address we hold for you. It works once, for
+              60 minutes. If we cannot e-mail one, our team has been asked to reset it and will contact you.
             </p>
           </div>
         </CardContent>
@@ -60,25 +53,15 @@ const ClientPasswordResetRequest: React.FC = () => {
       <CardHeader className="space-y-0.5 px-4 pb-2 pt-3">
         <CardTitle className="flex items-center gap-2 text-[15px] leading-snug">
           <Lock className="h-4 w-4 text-primary" />
-          Request Password Reset
+          Change your password
         </CardTitle>
         <CardDescription className="text-xs leading-snug">
-          Submit a request to have an employee reset your password
+          We e-mail you a link to choose a new password. Your current password keeps working until you use it.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3 px-4 pb-3">
-        <div className="space-y-1">
-          <Label htmlFor="reason" className="text-[11px] font-medium text-muted-foreground">Reason (optional)</Label>
-          <Textarea
-            id="reason"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Enter reason for password reset request..."
-            className="min-h-[72px] text-sm"
-          />
-        </div>
-        <Button 
-          onClick={handleSubmitRequest} 
+      <CardContent className="px-4 pb-3">
+        <Button
+          onClick={handleSubmitRequest}
           disabled={isSubmitting}
           size="sm"
           className="h-8 w-full gap-1 text-xs"
@@ -86,12 +69,12 @@ const ClientPasswordResetRequest: React.FC = () => {
           {isSubmitting ? (
             <>
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Submitting...
+              Sending...
             </>
           ) : (
             <>
-              <Send className="h-3.5 w-3.5" />
-              Submit Request
+              <Mail className="h-3.5 w-3.5" />
+              E-mail me a link
             </>
           )}
         </Button>

@@ -12,6 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useAuth } from '@/contexts/AuthContext';
+import ResetClientPasswordDialog, { type ResetClientTarget } from '@/components/clients/ResetClientPasswordDialog';
 
 interface PasswordResetRequest {
   id: string;
@@ -19,11 +20,17 @@ interface PasswordResetRequest {
   requested_by_name: string;
   requested_at: string;
   status: string;
+  note?: string | null;
+  /** Set when the request is a client's (user_id is a client id). */
+  client?: ResetClientTarget;
 }
 
+// Client requests reach every staff member (any staff level may reset a
+// client's password); staff requests only those who manage employees.
 const PasswordResetRequestsSection: React.FC = () => {
-  const { user } = useAuth();
+  const { user, canManageEmployees, canResetClientPasswords } = useAuth();
   const confirm = useConfirm();
+  const [clientTarget, setClientTarget] = useState<ResetClientTarget | null>(null);
   const [requests, setRequests] = useState<PasswordResetRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedRequest, setSelectedRequest] = useState<PasswordResetRequest | null>(null);
@@ -42,13 +49,30 @@ const PasswordResetRequestsSection: React.FC = () => {
         .order('requested_at', { ascending: false });
 
       if (error) throw error;
-      setRequests(data || []);
+      const rows = (data || []) as PasswordResetRequest[];
+      const ids = [...new Set(rows.map((r) => r.user_id))];
+      const clientById = new Map<string, ResetClientTarget>();
+      if (ids.length) {
+        const { data: cs } = await supabase.from('clients').select('id, name, gstin, email').in('id', ids);
+        (cs || []).forEach((c) => clientById.set(c.id, c));
+      }
+      setRequests(
+        rows
+          // A client's request filed because no link reached them (only those
+          // carry a note, which says to look there) opens the reset dialog
+          // saying why.
+          .map((r) => {
+            const c = clientById.get(r.user_id);
+            return { ...r, client: c ? { ...c, askedForHelp: !!r.note } : undefined };
+          })
+          .filter((r) => (r.client ? canResetClientPasswords() : canManageEmployees())),
+      );
     } catch (error) {
       console.error('Error fetching reset requests:', error);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [canManageEmployees, canResetClientPasswords]);
 
   useEffect(() => {
     fetchRequests();
@@ -85,28 +109,13 @@ const PasswordResetRequestsSection: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      // First try to reset as employee password
+      // Staff accounts only: client requests open ResetClientPasswordDialog.
       const { error: employeeError } = await supabase.rpc('staff_set_password', {
         p_actor_id: user?.id ?? '',
         p_target_user_id: selectedRequest.user_id,
         p_new_password: newPassword,
       });
-
-      // If employee reset fails, try client reset
-      if (employeeError) {
-        const { error: clientError } = await supabase.rpc('staff_set_client_password', {
-          p_actor_id: user?.id ?? '',
-          p_client_id: selectedRequest.user_id,
-          p_new_password: newPassword,
-        });
-
-        if (clientError) {
-          // A refusal (not allowed / no such client) says why; otherwise the staff error does.
-          throw new Error(
-            employeeError.message.includes('No staff account') ? clientError.message : employeeError.message,
-          );
-        }
-      }
+      if (employeeError) throw new Error(employeeError.message);
 
       // Mark request as resolved
       const { error: requestError } = await supabase
@@ -168,8 +177,18 @@ const PasswordResetRequestsSection: React.FC = () => {
     }
   };
 
+  const clientDialog = (
+    <ResetClientPasswordDialog
+      client={clientTarget}
+      onOpenChange={(open) => { if (!open) setClientTarget(null); }}
+      onDone={() => fetchRequests()}
+    />
+  );
+
   if (requests.length === 0 && !isLoading) {
-    return null; // Don't show section if no pending requests
+    // No section without pending requests; a dialog still open (its request
+    // just resolved) stays until closed.
+    return clientDialog;
   }
 
   return (
@@ -187,7 +206,7 @@ const PasswordResetRequestsSection: React.FC = () => {
             )}
           </span>
         }
-        description="Client password reset requests waiting for approval"
+        description="Clients and staff waiting for a password reset. A client can also be sent a link to set their own."
       >
           {isLoading ? (
             <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
@@ -205,7 +224,13 @@ const PasswordResetRequestsSection: React.FC = () => {
                       <User className="h-3.5 w-3.5 text-warning" />
                     </div>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{request.requested_by_name}</p>
+                      <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                        {request.client?.name ? `${request.client.name} (${request.client.gstin})` : request.requested_by_name}
+                        <Badge variant={request.client ? 'secondary' : 'outline'} className="text-[10px] font-medium">
+                          {request.client ? 'Client' : 'Staff'}
+                        </Badge>
+                      </p>
+                      {request.note && <p className="truncate text-xs text-muted-foreground">{request.note}</p>}
                       <div className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
                         <Clock className="h-3 w-3" />
                         <span>
@@ -238,10 +263,10 @@ const PasswordResetRequestsSection: React.FC = () => {
                     <Button
                       size="sm"
                       className={WS_BTN}
-                      onClick={() => setSelectedRequest(request)}
+                      onClick={() => (request.client ? setClientTarget(request.client) : setSelectedRequest(request))}
                     >
                       <Key className="h-3.5 w-3.5" />
-                      Set New Password
+                      {request.client ? 'Reset password' : 'Set New Password'}
                     </Button>
                   </div>
                 </div>
@@ -250,7 +275,9 @@ const PasswordResetRequestsSection: React.FC = () => {
           )}
       </SectionCard>
 
-      {/* Set Password Dialog */}
+      {clientDialog}
+
+      {/* Set Password Dialog (staff accounts) */}
       <Dialog open={!!selectedRequest} onOpenChange={() => setSelectedRequest(null)}>
         <DialogContent>
           <DialogHeader>

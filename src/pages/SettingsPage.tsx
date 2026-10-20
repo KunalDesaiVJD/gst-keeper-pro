@@ -100,7 +100,14 @@ const SettingsPage: React.FC = () => {
         .order('requested_at', { ascending: false });
 
       if (error) throw error;
-      setResetRequests(data || []);
+      // Staff requests only: a client's request is handled on the Dashboard
+      // (Reset password), where every staff member can act on it.
+      const ids = [...new Set((data || []).map((r) => r.user_id))];
+      const { data: clientRows } = ids.length
+        ? await supabase.from('clients').select('id').in('id', ids)
+        : { data: [] as { id: string }[] };
+      const clientIds = new Set((clientRows || []).map((c) => c.id));
+      setResetRequests((data || []).filter((r) => !clientIds.has(r.user_id)));
     } catch (error) {
       console.error('Error fetching reset requests:', error);
     } finally {

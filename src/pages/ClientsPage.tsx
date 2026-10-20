@@ -29,6 +29,7 @@ import { describeClientDeleteError } from '@/lib/clientDeleteError';
 import { toast } from 'sonner';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import LiberalModeListDialog from '@/components/clients/LiberalModeListDialog';
+import ResetClientPasswordDialog, { type ResetClientTarget } from '@/components/clients/ResetClientPasswordDialog';
 import { EinvoiceStatusBadge } from '@/components/clients/EinvoiceStatusBadge';
 import {
   loadEinvoiceData,
@@ -75,7 +76,10 @@ const EINV_FILTER_LABEL: Record<EinvFilter, string> = {
 
 const ClientsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { canAddEditClients, canDeleteClients, user } = useAuth();
+  const { canAddEditClients, canDeleteClients, canResetClientPasswords, user } = useAuth();
+  // Every staff member can reset a client's app password (the firm's decision).
+  const showActions = canResetClientPasswords() || canAddEditClients() || canDeleteClients();
+  const [resetTarget, setResetTarget] = useState<ResetClientTarget | null>(null);
   // Exporting the full credentials list (plain-text passwords) is limited to
   // Superadmin and GST Manager; other staff can still view the table on screen.
   const canExportCreds = user?.role === 'superadmin' || user?.role === 'gst_manager';
@@ -428,8 +432,8 @@ const ClientsPage: React.FC = () => {
                     <th className={WS_TH}>Registration</th>
                     <th className={WS_TH}>Returns</th>
                     <th className={WS_TH}>E-invoice</th>
-                    {(canAddEditClients() || canDeleteClients()) && (
-                      <th className={cn(WS_TH, 'w-20 text-center')}>Actions</th>
+                    {showActions && (
+                      <th className={cn(WS_TH, 'w-24 text-center')}>Actions</th>
                     )}
                   </tr>
                 </thead>
@@ -483,9 +487,21 @@ const ClientsPage: React.FC = () => {
                           assessment={einvAssessments.get(client.id)}
                         />
                       </td>
-                      {(canAddEditClients() || canDeleteClients()) && (
+                      {showActions && (
                         <td className={cn(WS_TD, 'py-0.5 text-center')}>
                           <div className="flex items-center justify-center gap-0.5">
+                            {canResetClientPasswords() && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                title="Reset app password"
+                                aria-label={`Reset app password for ${client.name}`}
+                                onClick={() => setResetTarget({ id: client.id, name: client.name, gstin: client.gstin, email: client.email })}
+                              >
+                                <KeyRound className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
                             {canAddEditClients() && (
                               <Button
                                 variant="ghost"
@@ -601,6 +617,7 @@ const ClientsPage: React.FC = () => {
           </div>
         </>
       )}
+      <ResetClientPasswordDialog client={resetTarget} onOpenChange={(open) => { if (!open) setResetTarget(null); }} />
     </div>
   );
 };

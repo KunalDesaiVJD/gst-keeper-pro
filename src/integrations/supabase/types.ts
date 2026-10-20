@@ -8424,6 +8424,7 @@ export type Database = {
       password_reset_requests: {
         Row: {
           id: string
+          note: string | null
           requested_at: string
           requested_by_name: string
           resolved_at: string | null
@@ -8433,6 +8434,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          note?: string | null
           requested_at?: string
           requested_by_name: string
           resolved_at?: string | null
@@ -8442,6 +8444,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          note?: string | null
           requested_at?: string
           requested_by_name?: string
           resolved_at?: string | null
@@ -11751,8 +11754,44 @@ export type Database = {
         Returns: boolean
       }
       staff_set_client_password: {
-        Args: { p_actor_id: string; p_client_id: string; p_new_password: string }
+        Args: {
+          p_actor_id: string
+          p_client_id: string
+          p_new_password: string
+          p_note?: string
+          p_close_resets?: boolean
+        }
         Returns: boolean
+      }
+      staff_send_client_reset_link: {
+        Args: { p_actor_id: string; p_client_id: string }
+        Returns: Json
+      }
+      client_password_reset_request: {
+        Args: { p_identifier: string }
+        Returns: Json
+      }
+      client_password_reset_check: {
+        Args: { p_token: string }
+        Returns: Json
+      }
+      client_password_reset_complete: {
+        Args: { p_new_password: string; p_token: string }
+        Returns: Json
+      }
+      client_password_problem: {
+        Args: { p_gstin?: string; p_password: string }
+        Returns: string
+      }
+      client_password_log_for: {
+        Args: { p_actor_id: string; p_client_id: string; p_limit?: number }
+        Returns: {
+          action: string
+          actor_name: string | null
+          at: string
+          detail: string | null
+          id: string
+        }[]
       }
       staff_set_level: {
         Args: { p_actor_id: string; p_actor_password: string; p_level: string; p_target_user_id: string }
