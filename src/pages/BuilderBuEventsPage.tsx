@@ -346,7 +346,7 @@ const BuilderBuEventsPage: React.FC = () => {
           cutOffSource: r.cut_off_source, cutOffDate: r.cut_off_date,
           status: c?.status || 'NOT_SENT', disputeNotes: c?.disputeNotes ?? null, respondedByName: c?.respondedByName ?? null,
           respondedByEmail: c?.respondedByEmail ?? null, respondedAt: c?.respondedAt ?? null,
-          requestId: c?.requestId ?? null, legacyLink: c?.legacyLink ?? false,
+          requestId: c?.requestId ?? null, legacyLink: c?.legacyLink ?? false, legacy: c?.legacy ?? null,
         };
       });
   };
@@ -686,7 +686,7 @@ const BuilderBuEventsPage: React.FC = () => {
                             : `e-mail ${lastReq.mailStatus}`}
                           {lastReq.mailStatus === 'failed' && lastReq.mailError ? `: ${lastReq.mailError.trim().replace(/[.\s]+$/, '')}` : ''}
                           {mailOutcome(lastReq.mailStatus) === 'failed'
-                            ? `. ${failedMailWords(lastReq.earlierLink, lastReq.unitIds.map(unitNoOf))}` : ''}
+                            ? `. ${failedMailWords(lastReq.earlierLink, lastReq.unitIds.map(unitNoOf), lastReq.earlierUnits?.map(unitNoOf))}` : ''}
                         </span>
                       )}
                     </p>
@@ -694,13 +694,15 @@ const BuilderBuEventsPage: React.FC = () => {
                   {notOut.map(({ request: rq, unitIds }) => {
                     const nos = unitIds.map(unitNoOf);
                     const failed = mailOutcome(rq.mailStatus) === 'failed';
+                    // Of the units still waiting on it, those an earlier link reached (as the send recorded it).
+                    const earlierNos = rq.earlierUnits ? rq.earlierUnits.filter((u) => unitIds.includes(u)).map(unitNoOf) : null;
                     const what = failed
                       ? `e-mail ${rq.mailStatus}${rq.mailError ? `: ${rq.mailError.trim().replace(/[.\s]+$/, '')}` : ''}`
                       : 'e-mail queued, not sent yet';
                     return (
                       <p key={rq.id} className={failed ? 'text-destructive' : 'text-amber-700 dark:text-amber-400'}>
                         {`Request ${shortWhen(rq.sentAt || rq.createdAt)} to ${rq.to.join(', ')}: ${what}. `
-                          + `Waiting on it: ${nos.join(', ')}.${failed ? ` ${failedMailWords(rq.earlierLink, nos)}` : ''}`}
+                          + `Waiting on it: ${nos.join(', ')}.${failed ? ` ${failedMailWords(rq.earlierLink, nos, earlierNos)}` : ''}`}
                       </p>
                     );
                   })}
@@ -789,13 +791,10 @@ const BuilderBuEventsPage: React.FC = () => {
                                     </span>
                                   )}
                                   {status === 'PENDING' && (() => {
-                                    // Asked only once its e-mail is out (round 4).
+                                    // Asked only once its e-mail is out (round 4), a per-unit e-mail
+                                    // of before 21 Oct 2026 too (its outbox status: finding of 21 Oct 2026).
                                     const ask = unitAsk(r.unit_id, cf, evRequests);
-                                    if (!ask) {
-                                      return cf?.sentAt
-                                        ? <span className="mt-0.5 block text-[11px] text-muted-foreground">Asked {shortDate(cf.sentAt)}</span>
-                                        : null;
-                                    }
+                                    if (!ask) return null;
                                     if (ask.state === 'asked') {
                                       return <span className="mt-0.5 block text-[11px] text-muted-foreground">Asked {shortDate(ask.at)}</span>;
                                     }
