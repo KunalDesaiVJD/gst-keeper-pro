@@ -3,7 +3,11 @@
 // missing after an empty or partly failed pull, checks the portal session's GSTIN
 // before saving, and keeps portal passwords out of chrome.storage. Older copies
 // are refused here; the database also turns their hard deletes into soft deletes.
-export const MIN_EXTENSION_VERSION = '0.4.0';
+// 0.16.0 (21 Oct 2026): the reco Pull saves through reco_record_pull (stamped
+// with who asked; the database refuses an older copy's direct write), and the
+// GSTR-3B push asks gstr3b_push_gate before it opens the portal. So it is the
+// minimum now: an older copy could push a GSTR-3B the gate would stop.
+export const MIN_EXTENSION_VERSION = '0.16.0';
 // Phase 1: 0.5.0 writes through the database's single ingest door (sync_ingest),
 // fills the run ledger, skips documents already stored and has the CAPTCHA
 // watchdog. Phase 3: 0.6.0 also reads applications on the portal, the
@@ -29,12 +33,14 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // the documents already there as e-invoices (the page's einvoice.keep) instead
 // of re-sending them, never writes an IRN field, and the e-invoice pull checks
 // the file's GSTIN and period and drops e-invoices the portal no longer holds.
-// 0.4.x to 0.8.6 are still allowed (their writes are safe), only nudged to update.
+// 0.4.x to 0.8.6 were allowed until 0.16.0 (their writes were safe), only nudged to update.
 // 0.13.0 pulls GSTR-2A and GSTR-2B together for the 2A vs 2B report (mode
 // gstr2a2b_pull) and no longer stops a GSTR-2B pull after its first month.
 // 0.14.0 also reads the GSTR-2A credit and debit notes, so the report can
 // compare the 2B's notes (not confirmed live; a failed read is recorded).
-export const RECOMMENDED_EXTENSION_VERSION = '0.14.0';
+// 0.16.0 pulls Suspended Reco and GST Receivable Reco through the database's
+// pull door with who asked, and asks the GSTR-3B push gate before a push.
+export const RECOMMENDED_EXTENSION_VERSION = '0.16.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -51,7 +57,7 @@ export function isExtensionOutdated(version: string | null | undefined): boolean
 
 export function outdatedExtensionMessage(version: string | null | undefined): string {
   return `The browser extension${version ? ` (v${version})` : ''} is out of date. Load v${MIN_EXTENSION_VERSION} or later `
-    + '(chrome://extensions → Reload, from the updated extension folder) before syncing: older copies can remove saved notices when the portal returns an error.';
+    + '(chrome://extensions → Reload, from the updated extension folder) before syncing or pushing: older copies do not save the reco pulls the way the database accepts, and do not check the recos before a GSTR-3B push.';
 }
 
 export function isExtensionUpdateRecommended(version: string | null | undefined): boolean {
@@ -92,6 +98,7 @@ const GAINS: [string, string][] = [
   ['0.12.0', "drives an unfiled GSTR-9 the way the portal's own pages work: PREPARE-ONLINE, No on the Nil question, NEXT, then the system-computed summary"],
   ['0.13.0', 'pulls GSTR-2A and GSTR-2B together for the 2A vs 2B report, and a GSTR-2B pull over several months no longer stops after the first'],
   ['0.14.0', "reads the GSTR-2A credit and debit notes, so the 2A vs 2B report compares the 2B's notes too"],
+  ['0.16.0', 'pulls Suspended Reco and GST Receivable Reco the way the database accepts, records who pulled, and checks Suspended Reco and GST Receivable Reco before a GSTR-3B push'],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

@@ -27,9 +27,9 @@ import { toast } from 'sonner';
 import { fetchGstr3b } from '@/utils/fetchGstr3b';
 import type { Gstr3bResult } from '@/utils/buildGstr3bJson';
 import { exportGstr3bToPDF } from '@/utils/gstr3bPdf';
-import { computeSuspendedRecoDiff } from '@/lib/suspendedRecoCalc';
-import type { RecoDiffResult } from '@/lib/suspendedRecoCalc';
-import { computeGstReceivableRecoDiff } from '@/lib/gstReceivableRecoCalc';
+import { askGateForClick, checkGstr3bPushGate, gateReasonsText, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
+import { extensionCanPull, needsExtensionMessage } from '@/lib/recoSources';
+import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 import { effectiveFilingReturnType } from '@/lib/markFilingPushed';
@@ -278,6 +278,8 @@ const Gstr3bPage: React.FC = () => {
   // Table 3.1 + Table 4 directly and stops before Confirm/Offset/File — the
   // human reviews and submits.
   const [extReady, setExtReady] = useState(false);
+  // 0.16.0 asks the push gate itself before it opens the portal; older copies do not.
+  const [extVersion, setExtVersion] = useState<string | null>(null);
   const [isPushing, setIsPushing] = useState(false);
   const [pushResult, setPushResult] = useState<{
     status: Gstr3bPushOutcome;
@@ -351,7 +353,7 @@ const Gstr3bPage: React.FC = () => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkExtensionReady) { setExtReady(true); setExtVersion(typeof d.version === 'string' ? d.version : null); }
       if (d.__gstkPushGstr3bResult) {
         const r = d.__gstkPushGstr3bResult as {
           ok: boolean;
@@ -487,68 +489,60 @@ const Gstr3bPage: React.FC = () => {
 
   useEffect(() => { compute(); }, [compute]);
 
-  // Reconciliation check — Suspended Reco and GST Receivable Reco each carry
-  // their own live "DIFFERENCE" figure (opening + portal − books, Rs.10
-  // tolerance applied). Neither is otherwise surfaced here, so a client could
-  // get pushed to the portal with an unresolved balance mismatch and nobody
-  // would know until someone happened to open those pages. A non-zero
-  // difference DOES block Push (see hasRecoDiff below) — the comment here used
-  // to say "advisory only, doesn't block Push", which had not been true since
-  // the disabled= binding was added and sent people looking in the wrong place
-  // when the button wouldn't press.
-  const [recoCheck, setRecoCheck] = useState<{ suspended: RecoDiffResult | null; receivable: RecoDiffResult | null }>({ suspended: null, receivable: null });
-  const [recoCheckLoading, setRecoCheckLoading] = useState(false);
+  // The GSTR-3B push gate (the firm's decisions of 21 Oct 2026): one database
+  // function, gstr3b_push_gate, decides for this page's push, its JSON
+  // download and the browser extension, so the three agree. It passes only
+  // when Suspended Reco and GST Receivable Reco (from 06/2026) are pulled from
+  // the portal (or allowed manual by the superadmin) and show no difference
+  // after the ₹10 tolerance; Nil returns included; the Builder + NO_ITC
+  // waiver of the Suspended Reco difference as before (docs/2B_RECONCILIATION_FLOW.md
+  // §8, §13). It fails closed: while it loads, on any error and for a missing
+  // row the push and the JSON are locked. Push and JSON ask it again at the
+  // click, so a page left open cannot use an old answer.
+  const [gate, setGate] = useState<Gstr3bGateResult | null>(null);
+  const [gateLoading, setGateLoading] = useState(false);
+  const gateSeq = useRef(0);
 
-  const checkReconciliation = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) { setRecoCheck({ suspended: null, receivable: null }); return; }
-    setRecoCheckLoading(true);
-    try {
-      const [suspended, receivable] = await Promise.all([
-        computeSuspendedRecoDiff(selectedClient, selectedMonth),
-        computeGstReceivableRecoDiff(selectedClient, selectedMonth),
-      ]);
-      setRecoCheck({ suspended, receivable });
-    } catch {
-      // Advisory check — a failure here shouldn't block anything, just skip the banner.
-      setRecoCheck({ suspended: null, receivable: null });
-    } finally {
-      setRecoCheckLoading(false);
-    }
+  const checkGate = useCallback(async () => {
+    const seq = ++gateSeq.current;
+    if (!selectedClient || !selectedMonth) { setGate(null); setGateLoading(false); return; }
+    setGateLoading(true);
+    const g = await checkGstr3bPushGate(selectedClient, selectedMonth);
+    if (seq !== gateSeq.current) return;
+    setGate(g);
+    setGateLoading(false);
   }, [selectedClient, selectedMonth]);
 
-  useEffect(() => { checkReconciliation(); }, [checkReconciliation]);
+  useEffect(() => { checkGate(); }, [checkGate]);
+  // A pull or an override in another tab: check again when the page is back in front.
+  useEffect(() => {
+    const onFocus = () => { checkGate(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [checkGate]);
 
-  // A NO-ITC promoter's Suspended Reco can never tie out, so it must not hold
-  // up the push. Credit reversed under Rule 37A / s.16(2)(c) sits in the
-  // portal's suspended balance until it is reclaimed; a promoter who elected
-  // the 1%/5% scheme under Notification 3/2019-CTR never reclaims any of it
-  // (ITC Summary pins Total 4B to Total 4A for these clients precisely so Net
-  // ITC is 0 by construction). The books side accumulates reversals with no
-  // portal-side balance to match them against, so the difference is
-  // permanently non-zero through no error of the staff's and the Push button
-  // stays disabled forever — reported on KRISHNA INFRA-NO ITC for Aug-2026, a
-  // fixed -Rs 82,076.88 that nothing on the Suspended Reco page could clear.
-  //
-  // Same waiver, same two flags as the Filing Status gate — see
-  // docs/2B_RECONCILIATION_FLOW.md §8. Builder AND NO_ITC: the waiver is about
-  // the promoter scheme, not about a client having no ITC for some other
-  // reason. The GST Receivable Reco half is NOT waived: its own calculation
-  // already handles NO_ITC (gstReceivableRecoCalc.ts nets Total 4B against
-  // Total 4A for these clients), so a difference there is a real finding and
-  // still blocks.
-  const isNoItcBuilder =
-    selectedClientData?.regular_sub_type === 'Builder'
-    && selectedClientData?.builder_itc_type === 'NO_ITC';
-  const suspendedBlocks = !isNoItcBuilder && !!recoCheck.suspended && recoCheck.suspended.total !== 0;
-  const receivableBlocks = !!recoCheck.receivable && recoCheck.receivable.total !== 0;
+  const gateBlocks = gateLoading || !gate || !gate.ok;
 
-  const hasRecoDiff = suspendedBlocks || receivableBlocks;
+  // Asks the gate again at the moment of a push or download; false (with the
+  // reasons shown) unless it passes now.
+  const gatePassesNow = async (what: string): Promise<Gstr3bGateResult | null> => {
+    if (!selectedClient || !selectedMonth) return null;
+    const { gate: g, allowed, message } = await askGateForClick(selectedClient, selectedMonth, what);
+    setGate(g);
+    if (!allowed) {
+      toast.error(message, { duration: 15000 });
+      return null;
+    }
+    return g;
+  };
 
   const s = result?.summary;
 
-  const handleDownloadJson = () => {
+  const handleDownloadJson = async () => {
     if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
     if (!result) return;
+    // The JSON can be uploaded to the portal by hand, so it is gated like the push.
+    if (!(await gatePassesNow('The GSTR-3B JSON download'))) return;
     const blob = new Blob([JSON.stringify(result.json, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -588,14 +582,17 @@ const Gstr3bPage: React.FC = () => {
       toast.error('Install / enable the GST Keeper browser extension to push from this page.');
       return;
     }
+    if (!extensionCanPull(extVersion)) {
+      toast.error(needsExtensionMessage(extVersion));
+      return;
+    }
     if (!selectedClientData?.gstin) {
       toast.error('Selected client has no GSTIN on file.');
       return;
     }
-    if (recoCheckLoading || hasRecoDiff) {
-      toast.error('Resolve the Suspended Reco / GST Receivable Reco difference before pushing to the portal.');
-      return;
-    }
+    // Asked again now, not the answer from when the page loaded. The
+    // extension asks it once more before it opens the portal.
+    if (!(await gatePassesNow('Push to GST Portal'))) return;
     // Every amount to 2 decimals, and nothing the portal would refuse (see roundDraft / draftProblems).
     const draft = roundDraft(result.json);
     const bad = draftProblems(draft);
@@ -669,8 +666,12 @@ const Gstr3bPage: React.FC = () => {
               size="sm"
               className={WS_BTN}
               onClick={handleDownloadJson}
-              disabled={!canExportData()}
-              title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+              disabled={!canExportData() || gateBlocks}
+              title={!canExportData()
+                ? 'Needs the Export data permission — ask a GST Manager to add it to your position'
+                : gateBlocks
+                  ? `JSON download is locked. ${gateReasonsText(gateLoading ? null : gate)}`
+                  : 'Download the GSTR-3B JSON'}
             >
               <FileJson className="h-3.5 w-3.5" /> JSON
             </Button>
@@ -688,17 +689,17 @@ const Gstr3bPage: React.FC = () => {
               <Button
                 onClick={handlePush}
                 size="sm"
-                disabled={isPushing || !extReady || isFiled || recoCheckLoading || hasRecoDiff || !canEditFilingStatus()}
+                disabled={isPushing || !extReady || isFiled || gateBlocks || !canEditFilingStatus()}
                 className={WS_BTN}
                 title={
                   !canEditFilingStatus()
                     ? 'Needs the Filing status & portal push permission — ask a GST Manager to add it to your position'
                     : isFiled
                     ? 'GSTR-3B already Filed for this period — push is locked'
-                    : recoCheckLoading
+                    : gateLoading
                       ? 'Checking Suspended Reco / GST Receivable Reco…'
-                      : hasRecoDiff
-                        ? 'Suspended Reco / GST Receivable Reco difference must be resolved before pushing'
+                      : gateBlocks
+                        ? `Push is locked. ${gateReasonsText(gate)}`
                         : !extReady
                           ? 'Install / enable the GST Keeper browser extension'
                           : 'Fills Table 3.1 + Table 4 on the live GSTR-3B form; stops before Confirm/Offset/File'
@@ -795,34 +796,20 @@ const Gstr3bPage: React.FC = () => {
         </div>
       )}
 
-      {/* Reconciliation difference — Suspended Reco and/or GST Receivable Reco
-          don't tie out for this client/period. Advisory, not a block: staff
-          should look before filing, but the push itself isn't held up. */}
-      {!recoCheckLoading && selectedClient && selectedMonth && hasRecoDiff && (
-        <div className="flex flex-wrap items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-xs text-foreground">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
-          <div className="min-w-0 flex-1 space-y-0.5">
-            <p className="font-semibold text-destructive">Reconciliation difference found — Push to GST Portal is locked</p>
-            {suspendedBlocks && (
-              <p>
-                <span className="font-medium">Suspended Reco</span> difference: <span className="font-semibold tabular-nums">₹{inr(recoCheck.suspended!.total)}</span> (2B and RCM → Suspended Reco).
-              </p>
-            )}
-            {receivableBlocks && (
-              <p>
-                <span className="font-medium">GST Receivable Reco</span> difference: <span className="font-semibold tabular-nums">₹{inr(recoCheck.receivable!.total)}</span>.
-              </p>
-            )}
-            <p className="text-muted-foreground">Resolve the difference on the relevant page to unlock the push.</p>
-          </div>
-          <div className="flex shrink-0 flex-wrap gap-1.5">
-            {suspendedBlocks && (
-              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/2b-and-rcm')}>Suspended Reco</Button>
-            )}
-            {receivableBlocks && (
-              <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/itc-summary')}>GST Receivable Reco</Button>
-            )}
-          </div>
+      {/* The GSTR-3B push gate: ready, or locked with the reasons. */}
+      {selectedClient && selectedMonth && !isFiled && (
+        <div className="space-y-1.5">
+          <Gstr3bGateNote gate={gate} loading={gateLoading} onRecheck={checkGate} />
+          {!gateLoading && gate && !gate.ok && !gate.error && (
+            <div className="flex flex-wrap gap-1.5">
+              {gate.reasons.some((r) => r.code.startsWith('suspended')) && (
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/2b-and-rcm')}>Suspended Reco</Button>
+              )}
+              {gate.reasons.some((r) => r.code.startsWith('receivable')) && (
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={() => navigate('/itc-summary')}>GST Receivable Reco</Button>
+              )}
+            </div>
+          )}
         </div>
       )}
 

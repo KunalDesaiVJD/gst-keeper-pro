@@ -22,11 +22,19 @@ import { KpiTile, Note } from '@/components/gstr9/ui';
 import {
   WS_PAGE, WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL, WS_CELL_INPUT,
 } from '@/components/workspace/theme';
+import ManualSourceAllowanceControl from '@/components/manualSource/ManualSourceAllowanceControl';
+import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
+import { fetchManualSourceAllowances, liveAllowance, manualSourceLabel, staffNames, type ManualSourceAllowance } from '@/lib/manualSource';
+import {
+  extensionCanPull, fetchRecoLog, fmtDateTime, needsExtensionMessage, pulledLabel, recordManualOpening, recoLogActionLabel,
+  recoScope, suspendedSavePayload, type OpeningSource, type RecoLogEntry,
+} from '@/lib/recoSources';
+import { checkGstr3bPushGate, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
 
 /** Dense workspace table; the last column drops its right rule (the wrapper draws it). */
 const TABLE_CLS = cn(WS_TABLE, '[&_tr>*:last-child]:border-r-0');
 
-type OpeningSource = 'manual' | 'csv' | 'not_applicable';
+const SCOPE = recoScope('suspended');
 
 interface Client {
   id: string;
@@ -61,6 +69,16 @@ const SuspendedRecoPage: React.FC = () => {
   const [openingOverriderName, setOpeningOverriderName] = useState<string | null>(null);
   const [showOverrideDialog, setShowOverrideDialog] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Pulled from the portal (who, when), the manual entry the superadmin
+  // allowed, and the change log (Jun-26+; migration 20261021120000).
+  const [openingPulledAt, setOpeningPulledAt] = useState<string | null>(null);
+  const [openingPullerName, setOpeningPullerName] = useState<string | null>(null);
+  const [openingAllowanceId, setOpeningAllowanceId] = useState<string | null>(null);
+  const [allowances, setAllowances] = useState<ManualSourceAllowance[]>([]);
+  const [names, setNames] = useState<Map<string, string>>(new Map());
+  const [recoLog, setRecoLog] = useState<RecoLogEntry[]>([]);
+  const [gate, setGate] = useState<Gstr3bGateResult | null>(null);
+  const [gateLoading, setGateLoading] = useState(false);
 
   // Current total - auto-calculated from ITC Summary: (4B2i + 4B2ii) - (5.4 + 5.5)
   const [portalCgst, setPortalCgst] = useState<number>(0);
@@ -159,18 +177,14 @@ const SuspendedRecoPage: React.FC = () => {
         setOpeningOverrideJustification(sd.opening_override_justification || null);
         setOpeningOverrideAt(sd.opening_override_at || null);
         setOpeningOverrideBy(sd.opening_override_by || null);
+        setOpeningPulledAt(sd.opening_portal_pulled_at || null);
+        setOpeningAllowanceId(sd.opening_allowance_id || null);
 
-        // Resolve uploader/overrider first names for the info popover
-        const ids: string[] = [];
-        if (sd.opening_csv_uploaded_by) ids.push(sd.opening_csv_uploaded_by);
-        if (sd.opening_override_by && sd.opening_override_by !== sd.opening_csv_uploaded_by) ids.push(sd.opening_override_by);
-        let nameMap = new Map<string, string>();
-        if (ids.length > 0) {
-          const { data: profiles } = await supabase.from('profiles').select('user_id, first_name').in('user_id', ids);
-          nameMap = new Map((profiles || []).map(p => [p.user_id, p.first_name || 'Unknown']));
-        }
+        // Resolve uploader/overrider/puller first names for the info popover
+        const nameMap = await staffNames([sd.opening_csv_uploaded_by, sd.opening_override_by, sd.opening_portal_pulled_by]);
         setOpeningCsvUploaderName(sd.opening_csv_uploaded_by ? (nameMap.get(sd.opening_csv_uploaded_by) || 'Unknown') : null);
         setOpeningOverriderName(sd.opening_override_by ? (nameMap.get(sd.opening_override_by) || 'Unknown') : null);
+        setOpeningPullerName(sd.opening_portal_pulled_by ? (nameMap.get(sd.opening_portal_pulled_by) || 'Unknown') : null);
 
         // Fetch last saved by info
         const updatedBy = sd.updated_by;
@@ -199,8 +213,21 @@ const SuspendedRecoPage: React.FC = () => {
         setOpeningOverrideAt(null);
         setOpeningOverrideBy(null);
         setOpeningOverriderName(null);
+        setOpeningPulledAt(null);
+        setOpeningPullerName(null);
+        setOpeningAllowanceId(null);
         setLastSavedBy(null);
       }
+
+      // The superadmin's manual-entry allowances for this client and month,
+      // and the change log of the opening.
+      const [allowRows, logRows] = await Promise.all([
+        fetchManualSourceAllowances(selectedClientId, selectedMonth, SCOPE).catch(() => [] as ManualSourceAllowance[]),
+        fetchRecoLog('suspended', selectedClientId, selectedMonth),
+      ]);
+      setAllowances(allowRows);
+      setRecoLog(logRows);
+      setNames(await staffNames([...allowRows.map(a => a.allowed_by), ...logRows.map(l => l.actor_id)]));
 
       // Calculate "Current Total" using formula: (4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5)
       // 4B(2)(i) and 5.4 are auto-linked from bills_not_in_2b, so we calculate them live
@@ -364,6 +391,14 @@ const SuspendedRecoPage: React.FC = () => {
     }
   }, [selectedClientId, selectedMonth, fetchData]);
 
+  // What the GSTR-3B push gate says for this client and month (database).
+  const checkGate = useCallback(async () => {
+    if (!selectedClientId || !selectedMonth) { setGate(null); return; }
+    setGateLoading(true);
+    setGate(await checkGstr3bPushGate(selectedClientId, selectedMonth));
+    setGateLoading(false);
+  }, [selectedClientId, selectedMonth]);
+
   const handleSave = async () => {
     if (!selectedClientId || !selectedMonth) {
       toast.error('Please select a client and month');
@@ -372,40 +407,38 @@ const SuspendedRecoPage: React.FC = () => {
 
     setIsSaving(true);
     try {
+      // From Jun-26 Save carries only the current total snapshot: the opening
+      // is the pull's, the allowed manual entry's or the override's to write.
       const { error } = await supabase
         .from('suspended_reco')
-        .upsert({
-          client_id: selectedClientId,
-          period_month: selectedMonth,
-          opening_cgst: openingCgst,
-          opening_sgst: openingSgst,
-          opening_igst: openingIgst,
-          portal_cgst: portalCgst,
-          portal_sgst: portalSgst,
-          portal_igst: portalIgst,
-          // Preserve opening-source metadata — Upload/NA/Override writes these
-          // directly; the Save Changes button must not clobber them.
-          opening_source: openingSource,
-          opening_csv_period_month: openingCsvPeriodMonth,
-          opening_csv_uploaded_at: openingCsvUploadedAt,
-          opening_csv_uploaded_by: openingCsvUploadedBy,
-          opening_override_justification: openingOverrideJustification,
-          opening_override_at: openingOverrideAt,
-          opening_override_by: openingOverrideBy,
-          updated_by: user?.id,
-          updated_at: new Date().toISOString(),
-        } as any, {
+        .upsert(suspendedSavePayload({
+          clientId: selectedClientId,
+          periodMonth: selectedMonth,
+          userId: user?.id,
+          opening: { cgst: openingCgst, sgst: openingSgst, igst: openingIgst },
+          portal: { cgst: portalCgst, sgst: portalSgst, igst: portalIgst },
+        }) as never, {
           onConflict: 'client_id,period_month'
         });
 
       if (error) throw error;
       toast.success('Data saved successfully');
+      fetchData();
+      checkGate();
     } catch (error: any) {
       toast.error('Failed to save: ' + error.message);
     } finally {
       setIsSaving(false);
     }
   };
+
+  // The live allowance for this client and month, and whether it can still be used.
+  const allowance = liveAllowance(allowances, SCOPE);
+  const canEnterManually = !!allowance && !allowance.used_at;
+  const manualLabel = (() => {
+    const a = allowances.find((x) => x.id === openingAllowanceId);
+    return a ? manualSourceLabel(names.get(a.allowed_by), a.reason) : null;
+  })();
 
   // Upload: trigger hidden file picker
   const handleUploadClick = () => {
@@ -450,44 +483,20 @@ const SuspendedRecoPage: React.FC = () => {
         return;
       }
 
-      const now = new Date().toISOString();
-      const { error } = await supabase
-        .from('suspended_reco')
-        .upsert({
-          client_id: selectedClientId,
-          period_month: selectedMonth,
-          opening_cgst: row.closingCgst,
-          opening_sgst: row.closingSgst,
-          opening_igst: row.closingIgst,
-          portal_cgst: portalCgst,
-          portal_sgst: portalSgst,
-          portal_igst: portalIgst,
-          opening_source: 'csv',
-          opening_csv_period_month: row.periodMonthKey,
-          opening_csv_uploaded_at: now,
-          opening_csv_uploaded_by: user?.id,
-          // Re-upload wipes any prior override (Q7)
-          opening_override_justification: null,
-          opening_override_at: null,
-          opening_override_by: null,
-          updated_by: user?.id,
-          updated_at: now,
-        } as any, { onConflict: 'client_id,period_month' });
-      if (error) throw error;
-
-      setOpeningCgst(row.closingCgst);
-      setOpeningSgst(row.closingSgst);
-      setOpeningIgst(row.closingIgst);
-      setOpeningSource('csv');
-      setOpeningCsvPeriodMonth(row.periodMonthKey);
-      setOpeningCsvUploadedAt(now);
-      setOpeningCsvUploadedBy(user?.id || null);
-      setOpeningCsvUploaderName(user?.firstName || 'You');
-      setOpeningOverrideJustification(null);
-      setOpeningOverrideAt(null);
-      setOpeningOverrideBy(null);
-      setOpeningOverriderName(null);
-
+      // Only with the manual entry the superadmin allowed for this client and
+      // month (used once); the database refuses it otherwise.
+      if (!user?.id) { toast.error('Sign in again to upload.'); return; }
+      await recordManualOpening({
+        actorId: user.id,
+        kind: 'suspended',
+        clientId: selectedClientId,
+        periodMonth: selectedMonth,
+        source: 'csv',
+        opening: { igst: row.closingIgst, cgst: row.closingCgst, sgst: row.closingSgst },
+        csvPeriod: row.periodMonthKey,
+      });
+      await fetchData();
+      checkGate();
       toast.success(`Opening balance set from ${formatPeriodLabel(row.periodMonthKey)} closing.`);
     } catch (error: any) {
       toast.error('Failed to import: ' + error.message);
@@ -501,43 +510,17 @@ const SuspendedRecoPage: React.FC = () => {
     if (!isStaff || !selectedClientId || !selectedMonth) return;
     setIsSaving(true);
     try {
-      const now = new Date().toISOString();
-      const { error } = await supabase
-        .from('suspended_reco')
-        .upsert({
-          client_id: selectedClientId,
-          period_month: selectedMonth,
-          opening_cgst: 0,
-          opening_sgst: 0,
-          opening_igst: 0,
-          portal_cgst: portalCgst,
-          portal_sgst: portalSgst,
-          portal_igst: portalIgst,
-          opening_source: 'not_applicable',
-          opening_csv_period_month: null,
-          opening_csv_uploaded_at: null,
-          opening_csv_uploaded_by: null,
-          opening_override_justification: null,
-          opening_override_at: null,
-          opening_override_by: null,
-          updated_by: user?.id,
-          updated_at: now,
-        } as any, { onConflict: 'client_id,period_month' });
-      if (error) throw error;
-
-      setOpeningCgst(0);
-      setOpeningSgst(0);
-      setOpeningIgst(0);
-      setOpeningSource('not_applicable');
-      setOpeningCsvPeriodMonth(null);
-      setOpeningCsvUploadedAt(null);
-      setOpeningCsvUploadedBy(null);
-      setOpeningCsvUploaderName(null);
-      setOpeningOverrideJustification(null);
-      setOpeningOverrideAt(null);
-      setOpeningOverrideBy(null);
-      setOpeningOverriderName(null);
-
+      if (!user?.id) { toast.error('Sign in again.'); return; }
+      await recordManualOpening({
+        actorId: user.id,
+        kind: 'suspended',
+        clientId: selectedClientId,
+        periodMonth: selectedMonth,
+        source: 'not_applicable',
+        opening: { igst: 0, cgst: 0, sgst: 0 },
+      });
+      await fetchData();
+      checkGate();
       toast.success('Marked Not Applicable. Opening balance set to 0.');
     } catch (error: any) {
       toast.error('Failed to save: ' + error.message);
@@ -547,13 +530,16 @@ const SuspendedRecoPage: React.FC = () => {
   };
 
   // Override: layer new values + justification on top of existing source.
-  // Gated by canManualOverride() (the superadmin only) — same check as the
-  // button visibility, applied here as defense-in-depth; the database checks it too.
+  // Gated by canManualOverride() (the superadmin and GST Managers, 21 Oct
+  // 2026) — same check as the button visibility, applied here as
+  // defense-in-depth; the database checks it too, and wants a reason.
   const handleOverrideSave = async (values: { cgst: number; sgst: number; igst: number; justification: string }) => {
     if (!canManualOverride() || !selectedClientId || !selectedMonth) return;
     setIsSaving(true);
     try {
       const now = new Date().toISOString();
+      // Only the opening and the override stamp: the source and the pull or
+      // CSV stamps stay as they are (the database refuses a change to them).
       const { error } = await supabase
         .from('suspended_reco')
         .upsert({
@@ -562,19 +548,12 @@ const SuspendedRecoPage: React.FC = () => {
           opening_cgst: values.cgst,
           opening_sgst: values.sgst,
           opening_igst: values.igst,
-          portal_cgst: portalCgst,
-          portal_sgst: portalSgst,
-          portal_igst: portalIgst,
-          opening_source: openingSource,
-          opening_csv_period_month: openingCsvPeriodMonth,
-          opening_csv_uploaded_at: openingCsvUploadedAt,
-          opening_csv_uploaded_by: openingCsvUploadedBy,
           opening_override_justification: values.justification,
           opening_override_at: now,
           opening_override_by: user?.id,
           updated_by: user?.id,
           updated_at: now,
-        } as any, { onConflict: 'client_id,period_month' });
+        } as never, { onConflict: 'client_id,period_month' });
       if (error) throw error;
 
       setOpeningCgst(values.cgst);
@@ -586,6 +565,8 @@ const SuspendedRecoPage: React.FC = () => {
       setOpeningOverriderName(user?.firstName || 'You');
 
       toast.success('Override saved.');
+      fetchData();
+      checkGate();
     } catch (error: any) {
       toast.error('Failed to save override: ' + error.message);
     } finally {
@@ -656,12 +637,13 @@ const SuspendedRecoPage: React.FC = () => {
 
   // Browser-extension pull: fetch the ledger opening balances from the portal.
   const [extReady, setExtReady] = useState(false);
+  const [extVersion, setExtVersion] = useState<string | null>(null);
   const pulledRef = useRef(false);
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkExtensionReady) { setExtReady(true); setExtVersion(typeof d.version === 'string' ? d.version : null); }
       if (d.__gstkPullLedgersResult) {
         if (d.__gstkPullLedgersResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there; the opening balance is fetched automatically and appears here when you switch back.');
         else toast.error('Could not start the pull: ' + d.__gstkPullLedgersResult.error);
@@ -672,7 +654,7 @@ const SuspendedRecoPage: React.FC = () => {
     ping();
     const t1 = setTimeout(ping, 400);
     const t2 = setTimeout(ping, 1200);
-    const onFocus = () => { if (pulledRef.current) fetchData(); };
+    const onFocus = () => { if (pulledRef.current) fetchData(); checkGate(); };
     window.addEventListener('focus', onFocus);
     return () => {
       window.removeEventListener('message', onMsg);
@@ -680,19 +662,31 @@ const SuspendedRecoPage: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [fetchData]);
+  }, [fetchData, checkGate]);
+  useEffect(() => { checkGate(); }, [checkGate]);
   const pullLedgers = () => {
     if (!selectedClientId || !selectedMonth) { toast.error('Select a client and month first'); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
+    // 0.16.0 saves the pull through reco_record_pull, stamped with who asked.
+    if (!extensionCanPull(extVersion)) { toast.error(needsExtensionMessage(extVersion)); return; }
     pulledRef.current = true;
-    window.postMessage({ __gstkPullLedgers: { clientId: selectedClientId, period_month: selectedMonth } }, '*');
+    window.postMessage({ __gstkPullLedgers: { clientId: selectedClientId, period_month: selectedMonth, actorId: user?.id ?? null } }, '*');
   };
 
-  const sourceBadge = !useNewFlow ? null
-    : openingOverrideJustification ? <Badge variant="warning" className="px-1.5 text-[10px] font-medium">Overridden</Badge>
-    : openingSource === 'csv' ? <Badge variant="info" className="px-1.5 text-[10px] font-medium">CSV</Badge>
-    : openingSource === 'not_applicable' ? <Badge variant="secondary" className="px-1.5 text-[10px] font-medium">Not applicable</Badge>
-    : null;
+  // Where the opening came from: pulled (who, when), manual (allowed by
+  // whom, why), or neither (then the GSTR-3B push stays locked).
+  const sourceBadge = !useNewFlow ? null : (
+    <>
+      {openingSource === 'portal' && openingPulledAt
+        ? <Badge variant="success" className="px-1.5 text-[10px] font-medium">{pulledLabel(openingPulledAt, openingPullerName)}</Badge>
+        : manualLabel && (openingSource === 'csv' || openingSource === 'not_applicable')
+          ? <Badge variant="warning" className="px-1.5 text-[10px] font-medium">{manualLabel[0].toUpperCase() + manualLabel.slice(1)}</Badge>
+          : <Badge variant="destructive" className="px-1.5 text-[10px] font-medium">
+              {openingSource === 'csv' ? 'CSV, not allowed' : openingSource === 'not_applicable' ? 'Not applicable, not allowed' : 'Not pulled'}
+            </Badge>}
+      {openingOverrideJustification && <Badge variant="warning" className="px-1.5 text-[10px] font-medium">Overridden</Badge>}
+    </>
+  );
 
   return (
     <div className={WS_PAGE}>
@@ -855,7 +849,7 @@ const SuspendedRecoPage: React.FC = () => {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span>Opening balance as per portal</span>
                         {sourceBadge}
-                        {useNewFlow && openingSource !== 'manual' && (
+                        {useNewFlow && (openingSource !== 'manual' || recoLog.length > 0) && (
                           <Popover>
                             <PopoverTrigger asChild>
                               <button
@@ -867,6 +861,14 @@ const SuspendedRecoPage: React.FC = () => {
                               </button>
                             </PopoverTrigger>
                             <PopoverContent className="text-xs max-w-xs space-y-2" align="start">
+                              {openingSource === 'portal' && openingPulledAt && (
+                                <p>
+                                  <span className="font-semibold">Source:</span> {pulledLabel(openingPulledAt, openingPullerName)}, {fmtDateTime(openingPulledAt)}.
+                                </p>
+                              )}
+                              {manualLabel && openingSource !== 'portal' && (
+                                <p><span className="font-semibold">Allowed:</span> {manualLabel}.</p>
+                              )}
                               {openingSource === 'csv' && openingCsvPeriodMonth && (
                                 <p>
                                   <span className="font-semibold">Source:</span> CSV ({formatPeriodLabel(openingCsvPeriodMonth)} closing).
@@ -895,21 +897,52 @@ const SuspendedRecoPage: React.FC = () => {
                                   <p className="mt-1"><span className="font-semibold">Reason:</span> {openingOverrideJustification}</p>
                                 </div>
                               )}
+                              {recoLog.length > 0 && (
+                                <div className="border-t pt-2">
+                                  <p className="font-semibold">History</p>
+                                  <ul className="mt-1 space-y-0.5">
+                                    {recoLog.map((l) => (
+                                      <li key={l.id}>
+                                        {fmtDateTime(l.logged_at)}: {recoLogActionLabel(l.action)}
+                                        {l.actor_id && <> by {names.get(l.actor_id) || 'Unknown'}</>}
+                                        {l.reason && <> ({l.reason})</>}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
                             </PopoverContent>
                           </Popover>
                         )}
                       </div>
                       {useNewFlow && isStaff && (
-                        <div className="flex flex-wrap gap-1">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2 text-xs"
-                            onClick={handleNotApplicable}
-                            disabled={!selectedClientId || isSaving}
-                          >
-                            Not Applicable
-                          </Button>
+                        <div className="flex flex-wrap items-center gap-1">
+                          {/* Upload and Not Applicable only with the manual entry the
+                              superadmin allowed for this client and month (used once). */}
+                          {canEnterManually && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs"
+                                onClick={handleNotApplicable}
+                                disabled={!selectedClientId || isSaving}
+                              >
+                                Not Applicable
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 gap-1 px-2 text-xs"
+                                onClick={handleUploadClick}
+                                disabled={!selectedClientId || isSaving}
+                                title="Allowed manual entry: upload the ledger statement (CSV)"
+                              >
+                                <Upload className="h-3 w-3" />
+                                Upload
+                              </Button>
+                            </>
+                          )}
                           {canManualOverride() && (
                             <Button
                               size="sm"
@@ -922,18 +955,24 @@ const SuspendedRecoPage: React.FC = () => {
                               Override
                             </Button>
                           )}
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                            onClick={handleUploadClick}
-                            disabled={!selectedClientId || isSaving}
-                            title="Manual fallback — upload the ledger statement if the portal sync didn't set this"
-                          >
-                            <Upload className="h-3 w-3" />
-                            {openingSource === 'csv' ? 'Re-upload' : 'Upload'}
-                          </Button>
+                          {selectedClientId && (
+                            <ManualSourceAllowanceControl
+                              clientId={selectedClientId}
+                              clientName={selectedClientData?.name}
+                              periodMonth={selectedMonth}
+                              scope={SCOPE}
+                              what="Suspended Reco"
+                              allowance={allowance}
+                              names={names}
+                              onChanged={() => { fetchData(); checkGate(); }}
+                            />
+                          )}
                         </div>
+                      )}
+                      {useNewFlow && openingSource !== 'portal' && !manualLabel && (
+                        <p className="text-[11px] font-normal text-muted-foreground">
+                          Pull this from the portal. Upload and Not Applicable need the superadmin to allow a manual entry.
+                        </p>
                       )}
                     </div>
                   </td>
@@ -992,9 +1031,12 @@ const SuspendedRecoPage: React.FC = () => {
             </table>
           </div>
 
+          {useNewFlow && <Gstr3bGateNote compact gate={gate} loading={gateLoading} onRecheck={checkGate} />}
+
           <Note>
             Difference = opening balance as per portal + current total − closing balance as per books.
             {useNewFlow && ' From the Jun-26 return period, a difference of ₹10 or less in a tax head reads as 0.'}
+            {useNewFlow && ' From Jun-26 the opening comes only from the portal pull; the superadmin may allow a manual entry when a pull cannot be done.'}
           </Note>
         </>
       )}

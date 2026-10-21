@@ -5,9 +5,16 @@ import type { RecoDiffResult } from './suspendedRecoCalc';
 
 // Mirrors the "DIFFERENCE" figure on the GST Receivable Reco page
 // (src/pages/GstReceivableRecoPage.tsx) — same source tables, same cross-head
-// set-off simulation, same Rs.10 tolerance. Kept here so the GSTR-3B push
-// validation can read the live figure without re-deriving it independently;
-// if that page's formula changes, update both.
+// set-off simulation, same Rs.10 tolerance. The GSTR-3B push gate reads the
+// same figure from the database (gst_receivable_reco_difference, migration
+// 20261021120000, run on the same rows as this by
+// supabase/tests/reco_gate/parity.mjs); if this formula changes, change the
+// page and that function too.
+//
+// ITC utilised: a row whose opening came from the credit ledger (pulled, or
+// an allowed CSV upload / Not Applicable, i.e. any source but 'manual') takes
+// the ledger's set-off debit, and none seen is 0 (docs/2B_RECONCILIATION_FLOW.md
+// §13). Only a row not yet pulled shows the GSTR-1 estimate.
 
 // GST Receivable Reco only exists from Jun-26 (06/2026) onward.
 const RECEIVABLE_FROM = 202606;
@@ -59,6 +66,15 @@ const monthMatches = (storedMonth: string | null, patterns: ReturnType<typeof ge
 
 const applyTolerance = (v: number) => (Math.abs(v) <= 10 ? 0 : v);
 
+/** Whether a gst_receivable_reco row's ITC utilised is the credit ledger's
+ *  (its utilized_* as stored, NULL read as 0) rather than the GSTR-1
+ *  estimate: a typed utilised figure, or any opening the ledger set. */
+export function utilisedFromLedger(row: { opening_source?: string | null; utilized_cgst?: unknown } | null | undefined): boolean {
+  if (!row) return false;
+  if (row.utilized_cgst !== null && row.utilized_cgst !== undefined) return true;
+  return !!row.opening_source && row.opening_source !== 'manual';
+}
+
 // Returns null for periods before GST Receivable Reco existed (Jun-26) — the
 // page itself has nothing to reconcile before that, so there's no diff to flag.
 export async function computeGstReceivableRecoDiff(clientId: string, periodMonth: string): Promise<RecoDiffResult | null> {
@@ -68,7 +84,7 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
 
   const { data: rowData } = await supabase
     .from('gst_receivable_reco' as any)
-    .select('opening_cgst, opening_sgst, opening_igst, books_closing_cgst, books_closing_sgst, books_closing_igst, utilized_cgst, utilized_sgst, utilized_igst, drc_cgst, drc_sgst, drc_igst')
+    .select('opening_source, opening_cgst, opening_sgst, opening_igst, books_closing_cgst, books_closing_sgst, books_closing_igst, utilized_cgst, utilized_sgst, utilized_igst, drc_cgst, drc_sgst, drc_igst')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
     .maybeSingle();
@@ -82,7 +98,7 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
   const drcCgst = Number(r?.drc_cgst) || 0;
   const drcSgst = Number(r?.drc_sgst) || 0;
   const drcIgst = Number(r?.drc_igst) || 0;
-  const utilizedFromCsv = r?.utilized_cgst !== null && r?.utilized_cgst !== undefined;
+  const utilizedFromCsv = utilisedFromLedger(r);
   let utilizedCgst = utilizedFromCsv ? Number(r.utilized_cgst) || 0 : 0;
   let utilizedSgst = utilizedFromCsv ? Number(r.utilized_sgst) || 0 : 0;
   let utilizedIgst = utilizedFromCsv ? Number(r.utilized_igst) || 0 : 0;

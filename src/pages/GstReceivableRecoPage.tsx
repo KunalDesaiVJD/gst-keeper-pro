@@ -27,8 +27,17 @@ import {
   formatPeriodLabel,
 } from '@/utils/parseElectronicCreditLedgerCsv';
 import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
+import { utilisedFromLedger } from '@/lib/gstReceivableRecoCalc';
+import ManualSourceAllowanceControl from '@/components/manualSource/ManualSourceAllowanceControl';
+import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
+import { fetchManualSourceAllowances, liveAllowance, manualSourceLabel, staffNames, type ManualSourceAllowance } from '@/lib/manualSource';
+import {
+  extensionCanPull, fetchRecoLog, fmtDateTime, needsExtensionMessage, pulledLabel, receivableSavePayload, recordManualOpening,
+  recoLogActionLabel, recoScope, type OpeningSource, type RecoLogEntry,
+} from '@/lib/recoSources';
+import { checkGstr3bPushGate, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
 
-type OpeningSource = 'manual' | 'csv' | 'not_applicable';
+const SCOPE = recoScope('receivable');
 
 interface HeadTriple { igst: number; cgst: number; sgst: number }
 
@@ -130,6 +139,16 @@ const GstReceivableRecoPage: React.FC = () => {
   const [openingOverriderName, setOpeningOverriderName] = useState<string | null>(null);
   const [showOverrideDialog, setShowOverrideDialog] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Pulled from the portal (who, when), the manual entry the superadmin
+  // allowed, and the change log (migration 20261021120000).
+  const [openingPulledAt, setOpeningPulledAt] = useState<string | null>(null);
+  const [openingPullerName, setOpeningPullerName] = useState<string | null>(null);
+  const [openingAllowanceId, setOpeningAllowanceId] = useState<string | null>(null);
+  const [allowances, setAllowances] = useState<ManualSourceAllowance[]>([]);
+  const [names, setNames] = useState<Map<string, string>>(new Map());
+  const [recoLog, setRecoLog] = useState<RecoLogEntry[]>([]);
+  const [gate, setGate] = useState<Gstr3bGateResult | null>(null);
+  const [gateLoading, setGateLoading] = useState(false);
 
   // Books closing balance — persisted, manually entered
   const [booksClosingCgst, setBooksClosingCgst] = useState(0);
@@ -249,9 +268,13 @@ const GstReceivableRecoPage: React.FC = () => {
         setBooksClosingCgst(Number(r.books_closing_cgst) || 0);
         setBooksClosingSgst(Number(r.books_closing_sgst) || 0);
         setBooksClosingIgst(Number(r.books_closing_igst) || 0);
-        const hasUtilizedFromCsv =
-          r.utilized_cgst !== null && r.utilized_cgst !== undefined;
-        setUtilizedFromCsv(!!hasUtilizedFromCsv);
+        // From the credit ledger (pulled, or an allowed manual entry): its
+        // set-off debit, none seen being 0. Only a row not yet pulled shows
+        // the GSTR-1 estimate (gstReceivableRecoCalc.ts, §13 of the 2B doc).
+        const hasUtilizedFromCsv = utilisedFromLedger(r);
+        setUtilizedFromCsv(hasUtilizedFromCsv);
+        setOpeningPulledAt(r.opening_portal_pulled_at || null);
+        setOpeningAllowanceId(r.opening_allowance_id || null);
         if (hasUtilizedFromCsv) {
           setUtilizedCgst(Number(r.utilized_cgst) || 0);
           setUtilizedSgst(Number(r.utilized_sgst) || 0);
@@ -262,16 +285,10 @@ const GstReceivableRecoPage: React.FC = () => {
         setDrcIgst(Number((r as any).drc_igst) || 0);
 
         // Resolve names for hover popover
-        const ids: string[] = [];
-        if (r.opening_csv_uploaded_by) ids.push(r.opening_csv_uploaded_by);
-        if (r.opening_override_by && r.opening_override_by !== r.opening_csv_uploaded_by) ids.push(r.opening_override_by);
-        let nameMap = new Map<string, string>();
-        if (ids.length > 0) {
-          const { data: profiles } = await supabase.from('profiles').select('user_id, first_name').in('user_id', ids);
-          nameMap = new Map((profiles || []).map(p => [p.user_id, p.first_name || 'Unknown']));
-        }
+        const nameMap = await staffNames([r.opening_csv_uploaded_by, r.opening_override_by, r.opening_portal_pulled_by]);
         setOpeningCsvUploaderName(r.opening_csv_uploaded_by ? (nameMap.get(r.opening_csv_uploaded_by) || 'Unknown') : null);
         setOpeningOverriderName(r.opening_override_by ? (nameMap.get(r.opening_override_by) || 'Unknown') : null);
+        setOpeningPullerName(r.opening_portal_pulled_by ? (nameMap.get(r.opening_portal_pulled_by) || 'Unknown') : null);
 
         if (r.updated_by) {
           const { data: profile } = await supabase.from('profiles').select('first_name').eq('user_id', r.updated_by).maybeSingle();
@@ -298,8 +315,21 @@ const GstReceivableRecoPage: React.FC = () => {
         setBooksClosingCgst(0); setBooksClosingSgst(0); setBooksClosingIgst(0);
         setUtilizedFromCsv(false);
         setDrcCgst(0); setDrcSgst(0); setDrcIgst(0);
+        setOpeningPulledAt(null);
+        setOpeningPullerName(null);
+        setOpeningAllowanceId(null);
         setLastSavedBy(null);
       }
+
+      // The superadmin's manual-entry allowances for this client and month,
+      // and the change log of the opening.
+      const [allowRows, logRows] = await Promise.all([
+        fetchManualSourceAllowances(selectedClientId, selectedMonth, SCOPE).catch(() => [] as ManualSourceAllowance[]),
+        fetchRecoLog('receivable', selectedClientId, selectedMonth),
+      ]);
+      setAllowances(allowRows);
+      setRecoLog(logRows);
+      setNames(await staffNames([...allowRows.map(a => a.allowed_by), ...logRows.map(l => l.actor_id)]));
 
       // The June-26 page verifies May-26 set-off, so all derived figures come
       // from the M-1 (previous month) sources.
@@ -484,10 +514,7 @@ const GstReceivableRecoPage: React.FC = () => {
       // 3. GSTR-1 (M-1) → output tax. Only used as a fallback when the CSV
       // hasn't been uploaded; otherwise the M-1 Debit row from the credit
       // ledger CSV is more accurate (it includes cross-head set-off).
-      const hasUtilizedFromCsv =
-        rowData &&
-        (rowData as any).utilized_cgst !== null &&
-        (rowData as any).utilized_cgst !== undefined;
+      const hasUtilizedFromCsv = utilisedFromLedger(rowData as any);
       const shortMonth = prevMonth ? toShortMonth(prevMonth) : '';
       const { data: gstr1Data } = shortMonth
         ? await supabase
@@ -527,6 +554,23 @@ const GstReceivableRecoPage: React.FC = () => {
   useEffect(() => {
     if (selectedClientId && selectedMonth && isEligibleMonth) fetchData();
   }, [selectedClientId, selectedMonth, isEligibleMonth, fetchData]);
+
+  // What the GSTR-3B push gate says for this client and month (database).
+  const checkGate = useCallback(async () => {
+    if (!selectedClientId || !selectedMonth || !isEligibleMonth) { setGate(null); return; }
+    setGateLoading(true);
+    setGate(await checkGstr3bPushGate(selectedClientId, selectedMonth));
+    setGateLoading(false);
+  }, [selectedClientId, selectedMonth, isEligibleMonth]);
+  useEffect(() => { checkGate(); }, [checkGate]);
+
+  // The live allowance for this client and month, and whether it can still be used.
+  const allowance = liveAllowance(allowances, SCOPE);
+  const canEnterManually = !!allowance && !allowance.used_at;
+  const manualLabel = (() => {
+    const a = allowances.find((x) => x.id === openingAllowanceId);
+    return a ? manualSourceLabel(names.get(a.allowed_by), a.reason) : null;
+  })();
 
   // ─────────── Action handlers (Upload / Not Applicable / Override) ─────────
 
@@ -599,59 +643,22 @@ const GstReceivableRecoPage: React.FC = () => {
           { cgst: 0, sgst: 0, igst: 0 },
         );
 
-      const now = new Date().toISOString();
-      const { error } = await supabase
-        .from('gst_receivable_reco' as any)
-        .upsert({
-          client_id: selectedClientId,
-          period_month: selectedMonth,
-          opening_cgst: row.balanceCgst,
-          opening_sgst: row.balanceSgst,
-          opening_igst: row.balanceIgst,
-          opening_source: 'csv',
-          opening_csv_period_month: row.periodMonthKey,
-          opening_csv_uploaded_at: now,
-          opening_csv_uploaded_by: user?.id,
-          opening_override_justification: null,
-          opening_override_at: null,
-          opening_override_by: null,
-          utilized_cgst: utilizedFromCsvRow?.cgst ?? null,
-          utilized_sgst: utilizedFromCsvRow?.sgst ?? null,
-          utilized_igst: utilizedFromCsvRow?.igst ?? null,
-          drc_cgst: drcFromCsv.cgst,
-          drc_sgst: drcFromCsv.sgst,
-          drc_igst: drcFromCsv.igst,
-          books_closing_cgst: booksClosingCgst,
-          books_closing_sgst: booksClosingSgst,
-          books_closing_igst: booksClosingIgst,
-          updated_by: user?.id,
-          updated_at: now,
-        }, { onConflict: 'client_id,period_month' });
-      if (error) throw error;
-
-      setOpeningCgst(row.balanceCgst);
-      setOpeningSgst(row.balanceSgst);
-      setOpeningIgst(row.balanceIgst);
-      setOpeningSource('csv');
-      setOpeningCsvPeriodMonth(row.periodMonthKey);
-      setOpeningCsvUploadedAt(now);
-      setOpeningCsvUploadedBy(user?.id || null);
-      setOpeningCsvUploaderName(user?.firstName || 'You');
-      setOpeningOverrideJustification(null);
-      setOpeningOverrideAt(null);
-      setOpeningOverrideBy(null);
-      setOpeningOverriderName(null);
-      if (utilizedFromCsvRow) {
-        setUtilizedCgst(utilizedFromCsvRow.cgst);
-        setUtilizedSgst(utilizedFromCsvRow.sgst);
-        setUtilizedIgst(utilizedFromCsvRow.igst);
-        setUtilizedFromCsv(true);
-      } else {
-        setUtilizedFromCsv(false);
-      }
-      setDrcCgst(drcFromCsv.cgst);
-      setDrcSgst(drcFromCsv.sgst);
-      setDrcIgst(drcFromCsv.igst);
+      // Only with the manual entry the superadmin allowed for this client and
+      // month (used once); the database refuses it otherwise.
+      if (!user?.id) { toast.error('Sign in again to upload.'); return; }
+      await recordManualOpening({
+        actorId: user.id,
+        kind: 'receivable',
+        clientId: selectedClientId,
+        periodMonth: selectedMonth,
+        source: 'csv',
+        opening: { igst: row.balanceIgst, cgst: row.balanceCgst, sgst: row.balanceSgst },
+        utilised: utilizedFromCsvRow ? { igst: utilizedFromCsvRow.igst, cgst: utilizedFromCsvRow.cgst, sgst: utilizedFromCsvRow.sgst } : null,
+        drc: { igst: drcFromCsv.igst, cgst: drcFromCsv.cgst, sgst: drcFromCsv.sgst },
+        csvPeriod: row.periodMonthKey,
+      });
+      await fetchData();
+      checkGate();
 
       const utilizedNote = utilizedFromCsvRow
         ? ` ITC utilized captured from ${prevKey ? formatPeriodLabel(prevKey) : 'M-1'} Debit row.`
@@ -668,47 +675,17 @@ const GstReceivableRecoPage: React.FC = () => {
     if (!isStaff || !selectedClientId || !selectedMonth) return;
     setIsSaving(true);
     try {
-      const now = new Date().toISOString();
-      const { error } = await supabase
-        .from('gst_receivable_reco' as any)
-        .upsert({
-          client_id: selectedClientId,
-          period_month: selectedMonth,
-          opening_cgst: 0, opening_sgst: 0, opening_igst: 0,
-          opening_source: 'not_applicable',
-          opening_csv_period_month: null,
-          opening_csv_uploaded_at: null,
-          opening_csv_uploaded_by: null,
-          opening_override_justification: null,
-          opening_override_at: null,
-          opening_override_by: null,
-          utilized_cgst: null,
-          utilized_sgst: null,
-          utilized_igst: null,
-          drc_cgst: 0,
-          drc_sgst: 0,
-          drc_igst: 0,
-          books_closing_cgst: booksClosingCgst,
-          books_closing_sgst: booksClosingSgst,
-          books_closing_igst: booksClosingIgst,
-          updated_by: user?.id,
-          updated_at: now,
-        }, { onConflict: 'client_id,period_month' });
-      if (error) throw error;
-
-      setOpeningCgst(0); setOpeningSgst(0); setOpeningIgst(0);
-      setDrcCgst(0); setDrcSgst(0); setDrcIgst(0);
-      setOpeningSource('not_applicable');
-      setOpeningCsvPeriodMonth(null);
-      setOpeningCsvUploadedAt(null);
-      setOpeningCsvUploadedBy(null);
-      setOpeningCsvUploaderName(null);
-      setOpeningOverrideJustification(null);
-      setOpeningOverrideAt(null);
-      setOpeningOverrideBy(null);
-      setOpeningOverriderName(null);
-      setUtilizedFromCsv(false);
-
+      if (!user?.id) { toast.error('Sign in again.'); return; }
+      await recordManualOpening({
+        actorId: user.id,
+        kind: 'receivable',
+        clientId: selectedClientId,
+        periodMonth: selectedMonth,
+        source: 'not_applicable',
+        opening: { igst: 0, cgst: 0, sgst: 0 },
+      });
+      await fetchData();
+      checkGate();
       toast.success('Marked Not Applicable. Opening balance set to 0.');
     } catch (error: any) {
       toast.error('Failed to save: ' + error.message);
@@ -722,6 +699,9 @@ const GstReceivableRecoPage: React.FC = () => {
     setIsSaving(true);
     try {
       const now = new Date().toISOString();
+      // Only the opening and the override stamp: the source, the pull or CSV
+      // stamps and the ledger figures stay as they are (the database refuses
+      // a change to them).
       const { error } = await supabase
         .from('gst_receivable_reco' as any)
         .upsert({
@@ -730,22 +710,9 @@ const GstReceivableRecoPage: React.FC = () => {
           opening_cgst: values.cgst,
           opening_sgst: values.sgst,
           opening_igst: values.igst,
-          opening_source: openingSource,
-          opening_csv_period_month: openingCsvPeriodMonth,
-          opening_csv_uploaded_at: openingCsvUploadedAt,
-          opening_csv_uploaded_by: openingCsvUploadedBy,
           opening_override_justification: values.justification,
           opening_override_at: now,
           opening_override_by: user.id,
-          utilized_cgst: utilizedFromCsv ? utilizedCgst : null,
-          utilized_sgst: utilizedFromCsv ? utilizedSgst : null,
-          utilized_igst: utilizedFromCsv ? utilizedIgst : null,
-          drc_cgst: drcCgst,
-          drc_sgst: drcSgst,
-          drc_igst: drcIgst,
-          books_closing_cgst: booksClosingCgst,
-          books_closing_sgst: booksClosingSgst,
-          books_closing_igst: booksClosingIgst,
           updated_by: user.id,
           updated_at: now,
         }, { onConflict: 'client_id,period_month' });
@@ -760,6 +727,8 @@ const GstReceivableRecoPage: React.FC = () => {
       setOpeningOverriderName(user.firstName || 'You');
 
       toast.success('Override saved.');
+      fetchData();
+      checkGate();
     } catch (error: any) {
       toast.error('Failed to save override: ' + error.message);
     } finally {
@@ -774,35 +743,20 @@ const GstReceivableRecoPage: React.FC = () => {
     }
     setIsSaving(true);
     try {
+      // Save carries only the typed books closing: the opening, ITC utilised
+      // and DRC-03 are the pull's (or the allowed manual entry's) to write.
       const { error } = await supabase
         .from('gst_receivable_reco' as any)
-        .upsert({
-          client_id: selectedClientId,
-          period_month: selectedMonth,
-          opening_cgst: openingCgst,
-          opening_sgst: openingSgst,
-          opening_igst: openingIgst,
-          opening_source: openingSource,
-          opening_csv_period_month: openingCsvPeriodMonth,
-          opening_csv_uploaded_at: openingCsvUploadedAt,
-          opening_csv_uploaded_by: openingCsvUploadedBy,
-          opening_override_justification: openingOverrideJustification,
-          opening_override_at: openingOverrideAt,
-          opening_override_by: openingOverrideBy,
-          utilized_cgst: utilizedFromCsv ? utilizedCgst : null,
-          utilized_sgst: utilizedFromCsv ? utilizedSgst : null,
-          utilized_igst: utilizedFromCsv ? utilizedIgst : null,
-          drc_cgst: drcCgst,
-          drc_sgst: drcSgst,
-          drc_igst: drcIgst,
-          books_closing_cgst: booksClosingCgst,
-          books_closing_sgst: booksClosingSgst,
-          books_closing_igst: booksClosingIgst,
-          updated_by: user?.id,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'client_id,period_month' });
+        .upsert(receivableSavePayload({
+          clientId: selectedClientId,
+          periodMonth: selectedMonth,
+          userId: user?.id,
+          booksClosing: { cgst: booksClosingCgst, sgst: booksClosingSgst, igst: booksClosingIgst },
+        }), { onConflict: 'client_id,period_month' });
       if (error) throw error;
       toast.success('Data saved successfully');
+      fetchData();
+      checkGate();
     } catch (error: any) {
       toast.error('Failed to save: ' + error.message);
     } finally {
@@ -893,12 +847,13 @@ const GstReceivableRecoPage: React.FC = () => {
 
   // Browser-extension pull: fetch the ledger opening balances from the portal.
   const [extReady, setExtReady] = useState(false);
+  const [extVersion, setExtVersion] = useState<string | null>(null);
   const pulledRef = useRef(false);
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkExtensionReady) { setExtReady(true); setExtVersion(typeof d.version === 'string' ? d.version : null); }
       if (d.__gstkPullLedgersResult) {
         if (d.__gstkPullLedgersResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there; the opening balance is fetched automatically and appears here when you switch back.');
         else toast.error('Could not start the pull: ' + d.__gstkPullLedgersResult.error);
@@ -909,7 +864,7 @@ const GstReceivableRecoPage: React.FC = () => {
     ping();
     const t1 = setTimeout(ping, 400);
     const t2 = setTimeout(ping, 1200);
-    const onFocus = () => { if (pulledRef.current) fetchData(); };
+    const onFocus = () => { if (pulledRef.current) fetchData(); checkGate(); };
     window.addEventListener('focus', onFocus);
     return () => {
       window.removeEventListener('message', onMsg);
@@ -917,12 +872,14 @@ const GstReceivableRecoPage: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [fetchData]);
+  }, [fetchData, checkGate]);
   const pullLedgers = () => {
     if (!selectedClientId || !selectedMonth) { toast.error('Select a client and month first'); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
+    // 0.16.0 saves the pull through reco_record_pull, stamped with who asked.
+    if (!extensionCanPull(extVersion)) { toast.error(needsExtensionMessage(extVersion)); return; }
     pulledRef.current = true;
-    window.postMessage({ __gstkPullLedgers: { clientId: selectedClientId, period_month: selectedMonth } }, '*');
+    window.postMessage({ __gstkPullLedgers: { clientId: selectedClientId, period_month: selectedMonth, actorId: user?.id ?? null } }, '*');
   };
 
   // ──────────────────────────── Render ───────────────────────────────────
@@ -1055,7 +1012,7 @@ const GstReceivableRecoPage: React.FC = () => {
         <>
           {/* Headline figures */}
           <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
-            <KpiTile label="Opening as per portal" value={formatNumber(openingTotal)} hint={openingSource === 'csv' ? 'From the credit ledger' : openingSource === 'not_applicable' ? 'Marked not applicable' : 'Entered'} />
+            <KpiTile label="Opening as per portal" value={formatNumber(openingTotal)} hint={openingSource === 'portal' ? 'Pulled from the portal' : manualLabel ? 'Manual (allowed)' : openingSource === 'csv' ? 'CSV, not allowed' : openingSource === 'not_applicable' ? 'Not applicable, not allowed' : 'Not pulled'} />
             <KpiTile label="Add: Net ITC available (4C)" value={formatNumber(availedTotal)} hint={prevMonthLabel ? `From ${prevMonthLabel} ITC Summary` : 'Previous month ITC Summary'} />
             <KpiTile label="Closing as per portal" value={formatNumber(portalClosingTotal)} hint="Opening + 4C − utilized − DRC-03" />
             <KpiTile label="Closing as per books" value={formatNumber(booksClosingTotal)} hint="Typed from the books" />
@@ -1089,10 +1046,15 @@ const GstReceivableRecoPage: React.FC = () => {
                       <div className="flex flex-col gap-1.5">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium">Opening balance as per portal</span>
-                          {openingSource === 'csv' && <Badge variant="info" className="text-[10px] font-medium">Credit ledger</Badge>}
-                          {openingSource === 'not_applicable' && <Badge variant="secondary" className="text-[10px] font-medium">Not applicable</Badge>}
+                          {openingSource === 'portal' && openingPulledAt
+                            ? <Badge variant="success" className="text-[10px] font-medium">{pulledLabel(openingPulledAt, openingPullerName)}</Badge>
+                            : manualLabel && (openingSource === 'csv' || openingSource === 'not_applicable')
+                              ? <Badge variant="warning" className="text-[10px] font-medium">{manualLabel[0].toUpperCase() + manualLabel.slice(1)}</Badge>
+                              : <Badge variant="destructive" className="text-[10px] font-medium">
+                                  {openingSource === 'csv' ? 'CSV, not allowed' : openingSource === 'not_applicable' ? 'Not applicable, not allowed' : 'Not pulled'}
+                                </Badge>}
                           {openingOverrideJustification && <Badge variant="warning" className="text-[10px] font-medium">Overridden</Badge>}
-                          {openingSource !== 'manual' && (
+                          {(openingSource !== 'manual' || recoLog.length > 0) && (
                             <Popover>
                               <PopoverTrigger asChild>
                                 <button type="button" className="inline-flex items-center text-muted-foreground hover:text-foreground" aria-label="Opening balance source">
@@ -1100,6 +1062,12 @@ const GstReceivableRecoPage: React.FC = () => {
                                 </button>
                               </PopoverTrigger>
                               <PopoverContent className="text-xs max-w-xs space-y-2" align="start">
+                                {openingSource === 'portal' && openingPulledAt && (
+                                  <p><span className="font-semibold">Source:</span> {pulledLabel(openingPulledAt, openingPullerName)}, {fmtDateTime(openingPulledAt)}.</p>
+                                )}
+                                {manualLabel && openingSource !== 'portal' && (
+                                  <p><span className="font-semibold">Allowed:</span> {manualLabel}.</p>
+                                )}
                                 {openingSource === 'csv' && openingCsvPeriodMonth && (
                                   <p>
                                     <span className="font-semibold">Source:</span> Credit Ledger CSV ({formatPeriodLabel(openingCsvPeriodMonth)} closing).
@@ -1124,26 +1092,63 @@ const GstReceivableRecoPage: React.FC = () => {
                                     <p className="mt-1"><span className="font-semibold">Reason:</span> {openingOverrideJustification}</p>
                                   </div>
                                 )}
+                                {recoLog.length > 0 && (
+                                  <div className="border-t pt-2">
+                                    <p className="font-semibold">History</p>
+                                    <ul className="mt-1 space-y-0.5">
+                                      {recoLog.map((l) => (
+                                        <li key={l.id}>
+                                          {fmtDateTime(l.logged_at)}: {recoLogActionLabel(l.action)}
+                                          {l.actor_id && <> by {names.get(l.actor_id) || 'Unknown'}</>}
+                                          {l.reason && <> ({l.reason})</>}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
                               </PopoverContent>
                             </Popover>
                           )}
                         </div>
                         {isStaff && (
-                          <div className="flex flex-wrap gap-1">
-                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={handleNotApplicable} disabled={!selectedClientId || isSaving}>
-                              Not Applicable
-                            </Button>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {/* Upload and Not Applicable only with the manual entry the
+                                superadmin allowed for this client and month (used once). */}
+                            {canEnterManually && (
+                              <>
+                                <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={handleNotApplicable} disabled={!selectedClientId || isSaving}>
+                                  Not Applicable
+                                </Button>
+                                <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={handleUploadClick} disabled={!selectedClientId || isSaving} title="Allowed manual entry: upload the Credit Ledger CSV">
+                                  <Upload className="h-3 w-3" />
+                                  Upload
+                                </Button>
+                              </>
+                            )}
                             {canManualOverride() && (
                               <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => setShowOverrideDialog(true)} disabled={!selectedClientId || isSaving}>
                                 <Edit3 className="h-3 w-3" />
                                 Override
                               </Button>
                             )}
-                            <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground" onClick={handleUploadClick} disabled={!selectedClientId || isSaving} title="Manual fallback — upload the ledger if the portal sync didn't set this">
-                              <Upload className="h-3 w-3" />
-                              {openingSource === 'csv' ? 'Re-upload' : 'Upload'}
-                            </Button>
+                            {selectedClientId && (
+                              <ManualSourceAllowanceControl
+                                clientId={selectedClientId}
+                                clientName={selectedClientData?.name}
+                                periodMonth={selectedMonth}
+                                scope={SCOPE}
+                                what="GST Receivable Reco"
+                                allowance={allowance}
+                                names={names}
+                                onChanged={() => { fetchData(); checkGate(); }}
+                              />
+                            )}
                           </div>
+                        )}
+                        {openingSource !== 'portal' && !manualLabel && (
+                          <p className="text-[11px] font-normal text-muted-foreground">
+                            Pull this from the portal. Upload and Not Applicable need the superadmin to allow a manual entry.
+                          </p>
                         )}
                       </div>
                     </td>
@@ -1174,11 +1179,11 @@ const GstReceivableRecoPage: React.FC = () => {
                         <span className="font-medium">Less: ITC utilized</span>
                         {utilizedFromCsv
                           ? <Badge variant="info" className="text-[10px] font-medium">Credit ledger</Badge>
-                          : <Badge variant="warning" className="text-[10px] font-medium">Estimate</Badge>}
+                          : <Badge variant="warning" className="text-[10px] font-medium">Estimate, not pulled</Badge>}
                       </div>
                       <p className={SUB}>
                         {utilizedFromCsv
-                          ? `Actual per-head debit from ${prevMonthLabel || 'M-1'} row of Credit Ledger (covers cross-head set-off)`
+                          ? `The set-off debit of ${prevMonthLabel || 'M-1'}'s return in the credit ledger (cross-head as the portal did it); none in the ledger is 0`
                           : prevMonthLabel
                             ? `From ${prevMonthLabel} GSTR-3B output tax (Table 3.1(a) + 3.1(b)), set off cross-head like the portal (estimate)`
                             : 'From previous month GSTR-3B output tax (Table 3.1(a) + 3.1(b)), set off cross-head like the portal (estimate)'}
@@ -1200,12 +1205,12 @@ const GstReceivableRecoPage: React.FC = () => {
                     <td className={WS_TD}>
                       <div className="font-medium">Less: DRC-03 / other ledger debits</div>
                       <p className={SUB}>
-                        Demand / appeal / interest / penalty paid through the credit ledger — auto-detected from the CSV; editable
+                        Demand / appeal / interest / penalty paid through the credit ledger, read by the pull
                       </p>
                     </td>
-                    <td className={INPUT_TD}>{renderBooksCell(drcIgst, setDrcIgst)}</td>
-                    <td className={INPUT_TD}>{renderBooksCell(drcCgst, setDrcCgst)}</td>
-                    <td className={INPUT_TD}>{renderBooksCell(drcSgst, setDrcSgst)}</td>
+                    <td className={NUM}>{formatNumber(drcIgst)}</td>
+                    <td className={NUM}>{formatNumber(drcCgst)}</td>
+                    <td className={NUM}>{formatNumber(drcSgst)}</td>
                     <td className={NUM_TOTAL}>{formatNumber(drcTotal)}</td>
                   </tr>
 
@@ -1251,11 +1256,13 @@ const GstReceivableRecoPage: React.FC = () => {
 
             {!utilizedFromCsv && (
               <Note tone="warn">
-                Tip: Upload the Credit Ledger CSV to pull the actual per-head debit (closing will then tally with the portal).
+                Not pulled yet: ITC utilised is an estimate from the GSTR-1. Pull from the portal to read the credit ledger.
               </Note>
             )}
+            <Gstr3bGateNote compact gate={gate} loading={gateLoading} onRecheck={checkGate} />
             <Note>
-              Differences of ₹10 or less per head are treated as nil.
+              Differences of ₹10 or less per head are treated as nil. The opening, ITC utilised and DRC-03 come only from
+              the portal pull; the superadmin may allow a manual entry when a pull cannot be done.
             </Note>
           </SectionCard>
         </>

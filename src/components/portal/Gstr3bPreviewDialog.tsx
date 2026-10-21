@@ -8,6 +8,7 @@ import { Loader2, Download, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Gstr3bResult } from '@/utils/buildGstr3bJson';
 import { fetchGstr3b } from '@/utils/fetchGstr3b';
+import { askGateForClick } from '@/lib/gstr3bPushGate';
 
 const inr = (n: number) => (n || n === 0 ? Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '0');
 
@@ -58,8 +59,12 @@ export const Gstr3bPreviewDialog: React.FC<{
     })();
   }, [open, clientId, periodMonth, gstin]);
 
-  const download = () => {
+  // Gated like the GSTR-3B page's own JSON download (gstr3b_push_gate):
+  // a JSON can be uploaded to the portal by hand.
+  const download = async () => {
     if (!result) return;
+    const { allowed, message } = await askGateForClick(clientId, periodMonth, 'The GSTR-3B JSON download');
+    if (!allowed) { toast.error(message, { duration: 15000 }); return; }
     const blob = new Blob([JSON.stringify(result.json, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

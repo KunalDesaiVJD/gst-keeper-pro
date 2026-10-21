@@ -2,6 +2,18 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-21 — Reco pulls through the database, GSTR-3B push gate (v0.16.0)
+
+The firm's decisions of 21 Oct 2026: from the Jun-2026 period Suspended Reco and GST Receivable Reco come only from the portal pull, for every client (Nil returns too), and a GSTR-3B is pushed only when both are pulled and show no difference. Migration `20261021120000_reco_pull_push_gate.sql` must be live first.
+
+- **The pull saves through `reco_record_pull`.** The credit ledger (opening, ITC utilised, DRC-03) and the reversal ledger (opening) go through one database function, which stamps the time and who asked, and clears a stale override, CSV stamps and manual allowance. A direct write to `suspended_reco` / `gst_receivable_reco` (the old `upsertReco`, removed) is refused by the database from 06/2026.
+- **Who pulled.** The reco pages send the signed-in user's id with `__gstkPullLedgers` (`actorId`); it rides on the job and is saved as `opening_portal_pulled_by`. The popup's full sync has no user and saves none.
+- **ITC utilised.** With ledger rows read and no "other than reverse charge" set-off debit among them, ITC utilised is saved as 0 (the portal's figure). It stays empty only when no ledger row was read. GST Keeper no longer replaces a pulled empty figure with its GSTR-1 estimate.
+- A save the database refuses shows in red on the banner ("read, but NOT saved: …") and the job moves on.
+- **The GSTR-3B push asks the gate first.** `startGstr3bPush` calls `gstr3b_push_gate` for the client and period before it opens the portal, whatever the page decided. A "no", an error or no answer stops it there with the reasons ("GSTR-3B push stopped: …"), and nothing is recorded. The check that let it start is saved with the Push History row (`gate`), when the database has that column.
+- The app needs v0.16.0: it asks for it before a reco Pull or a GSTR-3B push, and `MIN_EXTENSION_VERSION` is 0.16.0 (0.15.0 is another branch's; the lead merges them).
+- Test `test/16-reco-pull-gate.test.mjs` covers the gate before a push, the pull's save and the ITC utilised rule.
+
 ## 2026-10-15 — GSTR-2A credit and debit notes (v0.14.0)
 
 - The GSTR-2A pull also reads the credit and debit notes (CDN), after the B2B invoices, so the 2A vs 2B report can match the 2B's CDNR documents. Before, they were all "Not compared" (521 of 3,169 documents in one real client's year).

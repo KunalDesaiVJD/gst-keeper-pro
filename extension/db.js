@@ -27,7 +27,8 @@
     getClient: (id) => call('getClient', id),
     einvoiceExcelLatest: (clientId, period) => call('einvoiceExcelLatest', clientId, period),
     upsertFilingStatus: (rows) => call('upsertFilingStatus', rows),
-    upsertReco: (table, clientId, period, patchObj) => call('upsertReco', table, clientId, period, patchObj),
+    // 0.16.0: a reco pull goes through reco_record_pull (see background.js).
+    recordRecoPull: (info) => call('recordRecoPull', info),
     replaceTwob: (clientId, period, rows) => call('replaceTwob', clientId, period, rows),
     replaceCreditLedgerTxns: (clientId, period, rows) => call('replaceCreditLedgerTxns', clientId, period, rows),
     replaceLiabilityLedgerEntries: (clientId, period, rows) => call('replaceLiabilityLedgerEntries', clientId, period, rows),

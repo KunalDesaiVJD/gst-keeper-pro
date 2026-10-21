@@ -182,11 +182,21 @@ const API = {
     catch (e) { return null; } // a database without migration 20261010100000
   },
   upsertFilingStatus: (rows) => post('filing_status?on_conflict=client_id,return_type,period_month', rows, 'resolution=merge-duplicates,return=minimal'),
-  upsertReco: async (table, clientId, period, patchObj) => {
-    const ex = await sel(`${table}?client_id=eq.${clientId}&period_month=eq.${enc(period)}&select=id&limit=1`);
-    if (ex[0]) return patch(`${table}?id=eq.${ex[0].id}`, patchObj);
-    return post(table, [{ client_id: clientId, period_month: period, ...patchObj }]);
-  },
+  // 0.16.0: a reco pull is saved through reco_record_pull (migration
+  // 20261021120000), the one way in for portal figures from 06/2026: the
+  // database stamps when and who (the app user who asked, from the page's
+  // message; none for the popup's full sync) and clears a stale override, CSV
+  // stamps and manual allowance. A direct table write is refused there.
+  // reco: 'suspended' (reversal ledger) or 'receivable' (credit ledger);
+  // opening / utilised / drc: { igst, cgst, sgst }; utilised null when no
+  // ledger row was read.
+  recordRecoPull: ({ reco, clientId, period, actorId, opening, utilised, drc }) => rpc('reco_record_pull', {
+    p_actor_id: actorId || null, p_reco: reco, p_client_id: clientId, p_period: period,
+    p_opening: opening, p_utilised: utilised || null, p_drc: drc || null, p_ext_version: EXT_VERSION,
+  }),
+  // 0.16.0: the GSTR-3B push gate (gstr3b_push_gate), the same function the
+  // app's GSTR-3B page asks. Returns { ok, reasons: [{ code, message }], ... }.
+  gstr3bPushGate: (clientId, period) => rpc('gstr3b_push_gate', { p_client_id: clientId, p_period: period }),
   replaceTwob: async (clientId, period, rows) => {
     await del('twob_import_docs', `client_id=eq.${clientId}&period_month=eq.${enc(period)}`);
     return rows.length ? post('twob_import_docs', rows) : true;
@@ -733,11 +743,14 @@ const API = {
   // with the user 2026-09-16: they use both pages' Pull buttons together
   // and only want the two ledgers each pull already covers, not a silent
   // full-client sync as a side effect.
+  // 0.16.0: info.actorId (the app user who pressed Pull) rides on the job,
+  // and the pull's save names them (reco_record_pull).
   startLedgerPull: async (info) => {
     const c = await API.getClient(info.clientId);
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'ledgers', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
+      actorId: info.actorId || null,
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
@@ -990,10 +1003,24 @@ const API = {
   // a second time (which would duplicate real tax-computation logic in two
   // languages and risk them drifting apart). 0.8.6: the outcome is recorded
   // by recordGstr3bPush below, with this job's client and period.
+  //
+  // 0.16.0: before anything opens, the push asks the database's GSTR-3B push
+  // gate (gstr3b_push_gate) for this client and period, whatever the page
+  // decided: Suspended Reco and GST Receivable Reco pulled (or allowed
+  // manual) and without a difference. A gate that says no, an error, or no
+  // answer stops the push here ("fails closed"), with the reasons; the check
+  // that passed is kept on the job and in the Push History row (gate).
   startGstr3bPush: async (info) => {
     const c = await API.getClient(info.clientId);
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     if (!info.gstr3bJson) throw new Error('No GSTR-3B draft data was passed in — recompute the page and try again.');
+    let gate;
+    try { gate = await API.gstr3bPushGate(info.clientId, info.period_month); }
+    catch (e) { throw new Error('GSTR-3B push stopped: the reconciliation check could not run (' + ((e && e.message) || 'no answer') + ').'); }
+    const reasons = gate && Array.isArray(gate.reasons) ? gate.reasons.map((r) => r && r.message).filter(Boolean) : [];
+    if (!gate || gate.ok !== true || reasons.length) {
+      throw new Error('GSTR-3B push stopped: ' + (reasons.length ? reasons.join(' ') : 'the reconciliation check did not pass.'));
+    }
     const job = {
       mode: 'gstr3b_push',
       idx: 0,
@@ -1005,7 +1032,7 @@ const API = {
         clientId: c.id,
         creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] },
       }],
-      gstr3b: { json: info.gstr3bJson },
+      gstr3b: { json: info.gstr3bJson, gate: { ok: true, checked_at: gate.checked_at || null } },
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
@@ -1157,9 +1184,11 @@ const API = {
   // mark_filing_pushed is not called here. portalFilled entries (3.1(a)/(b),
   // left to the portal) are kept with the skipped ones. The content script
   // awaits this and tells the page whether it landed (`recorded`).
-  recordGstr3bPush: async ({ clientId, period_month, actorId, status, summary, filled, skipped, portalFilled, payload }) => {
+  // 0.16.0: also the gate check that let the push start (gate), when the
+  // job carries one; a database without that column takes the row without it.
+  recordGstr3bPush: async ({ clientId, period_month, actorId, status, summary, filled, skipped, portalFilled, payload, gate }) => {
     if (!clientId || !period_month) return false;
-    await post('gstr3b_push_versions', [{
+    const row = {
       client_id: clientId,
       period_month,
       actor_id: actorId || null,
@@ -1168,7 +1197,12 @@ const API = {
       filled_count: Number(filled) || 0,
       skipped: [...(skipped || []), ...(portalFilled || [])],
       payload: payload || null,
-    }]);
+    };
+    if (gate) {
+      try { await post('gstr3b_push_versions', [{ ...row, gate }]); return true; }
+      catch (e) { if (!/gate/.test(String(e && e.message))) throw e; }
+    }
+    await post('gstr3b_push_versions', [row]);
     return true;
   },
 

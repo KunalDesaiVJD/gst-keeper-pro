@@ -1522,6 +1522,7 @@
       ...target, tabId: job.tabId == null ? null : job.tabId, actorId: job.actorId || null,
       status, summary, error, filled, skipped, portalFilled,
       payload: (job.gstr3b && job.gstr3b.json) || null,
+      gate: (job.gstr3b && job.gstr3b.gate) || null,
     }], 60000);
     if (resp || !(await getJob())) return;
     await chrome.storage.local.set({ gstk_gstr3b_push_result: {
@@ -3270,8 +3271,10 @@
 
   // Classify the scraped rows into ITC utilised (the "Other than reverse charge"
   // return set-off Debit) and DRC-03 / other debits (any other Debit that isn't a
-  // reverse-charge set-off) — mirrors the app's CSV-upload detection. `utilised`
-  // is null when no return set-off Debit is present, so the app keeps its estimate.
+  // reverse-charge set-off) — mirrors the app's CSV-upload detection. 0.16.0:
+  // with ledger rows read and no return set-off Debit among them, `utilised`
+  // is 0 (the portal's figure: nothing was set off from the credit ledger);
+  // it is null only when no ledger row was read at all.
   function classifyLedgerRows(rows) {
     let utilised = { igst: 0, cgst: 0, sgst: 0 }, sawReturnDebit = false;
     const drc = { igst: 0, cgst: 0, sgst: 0 };
@@ -3284,7 +3287,7 @@
         drc.igst += r.igst; drc.cgst += r.cgst; drc.sgst += r.sgst;
       }
     }
-    if (!sawReturnDebit) utilised = null;
+    if (!sawReturnDebit && !(rows && rows.length)) utilised = null;
     return { utilised, drc };
   }
 
@@ -3332,29 +3335,28 @@
       'OPENING row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : '(NO Opening Balance data row found)'),
       'parsed opening   : IGST=' + (bal ? bal.igst : '?') + '  CGST=' + (bal ? bal.cgst : '?') + '  SGST=' + (bal ? bal.sgst : '?') + '  Cess=' + (bal ? bal.cess : '?'),
       'ledger rows read : ' + ledgerRows.length,
-      'ITC utilised     : ' + (utilised ? ('IGST=' + utilised.igst + '  CGST=' + utilised.cgst + '  SGST=' + utilised.sgst) : '(no return set-off Debit found — app keeps its estimate)'),
+      'ITC utilised     : ' + (utilised ? ('IGST=' + utilised.igst + '  CGST=' + utilised.cgst + '  SGST=' + utilised.sgst) : '(no ledger rows read: ITC utilised not saved)'),
       'DRC-03 / other   : IGST=' + drc.igst + '  CGST=' + drc.cgst + '  SGST=' + drc.sgst,
       '-> GST Receivable Reco gets Opening + ITC utilised + DRC-03 above.',
     ]);
     if (bal) {
-      const patch = {
-        opening_igst: bal.igst, opening_cgst: bal.cgst, opening_sgst: bal.sgst,
-        opening_source: 'portal', opening_portal_pulled_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-        drc_igst: drc.igst, drc_cgst: drc.cgst, drc_sgst: drc.sgst,
-      };
-      // Only set utilised when a return set-off Debit was actually seen; otherwise
-      // leave it null so the app falls back to its GSTR-3B estimate.
-      if (utilised) {
-        patch.utilized_igst = utilised.igst;
-        patch.utilized_cgst = utilised.cgst;
-        patch.utilized_sgst = utilised.sgst;
+      // 0.16.0: saved through reco_record_pull (the database stamps when and
+      // who asked; a direct table write is refused from 06/2026).
+      try {
+        await GSTKdb.recordRecoPull({
+          reco: 'receivable', clientId: cur.clientId, period: job.period, actorId: job.actorId || null,
+          opening: { igst: bal.igst, cgst: bal.cgst, sgst: bal.sgst },
+          utilised: utilised ? { igst: utilised.igst, cgst: utilised.cgst, sgst: utilised.sgst } : null,
+          drc: { igst: drc.igst, cgst: drc.cgst, sgst: drc.sgst },
+        });
+        // Echo the figures so they can be checked against the portal at a glance.
+        const utilNote = utilised ? (' · utilised CGST ' + inr(utilised.cgst)) : '';
+        const drcNote = (drc.cgst || drc.sgst || drc.igst) ? (' · DRC-03 CGST ' + inr(drc.cgst)) : '';
+        banner('Credit ledger → opening CGST ' + inr(bal.cgst) + utilNote + drcNote + ' — saved. Now the reversal ledger…' + progress, '#16a34a');
+      } catch (e) {
+        banner('Credit ledger read, but NOT saved: ' + ((e && e.message) || 'unknown error') + '. Now the reversal ledger…' + progress, '#dc2626');
+        await sleep(2500);
       }
-      // Credit-ledger opening + utilised + DRC -> GST Receivable Reco.
-      await GSTKdb.upsertReco('gst_receivable_reco', cur.clientId, job.period, patch);
-      // Echo the figures so they can be checked against the portal at a glance.
-      const utilNote = utilised ? (' · utilised CGST ' + inr(utilised.cgst)) : '';
-      const drcNote = (drc.cgst || drc.sgst || drc.igst) ? (' · DRC-03 CGST ' + inr(drc.cgst)) : '';
-      banner('Credit ledger → opening CGST ' + inr(bal.cgst) + utilNote + drcNote + ' — saved. Now the reversal ledger…' + progress, '#16a34a');
       await sleep(1200);
     } else {
       banner('No credit-ledger opening row — now the reversal ledger…' + progress, '#f59e0b');
@@ -3397,12 +3399,17 @@
       '-> Suspended Reco gets CGST/SGST/IGST above.',
     ]);
     if (bal) {
-      const opening = {
-        opening_igst: bal.igst, opening_cgst: bal.cgst, opening_sgst: bal.sgst,
-        opening_source: 'portal', opening_portal_pulled_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-      };
-      await GSTKdb.upsertReco('suspended_reco', cur.clientId, job.period, opening);
-      banner('Reversal ledger → IGST ' + inr(bal.igst) + ' · CGST ' + inr(bal.cgst) + ' · SGST ' + inr(bal.sgst) + ' — saved.' + progress, '#16a34a');
+      // 0.16.0: saved through reco_record_pull, as the credit ledger above.
+      try {
+        await GSTKdb.recordRecoPull({
+          reco: 'suspended', clientId: cur.clientId, period: job.period, actorId: job.actorId || null,
+          opening: { igst: bal.igst, cgst: bal.cgst, sgst: bal.sgst },
+        });
+        banner('Reversal ledger → IGST ' + inr(bal.igst) + ' · CGST ' + inr(bal.cgst) + ' · SGST ' + inr(bal.sgst) + ' — saved.' + progress, '#16a34a');
+      } catch (e) {
+        banner('Reversal ledger read, but NOT saved: ' + ((e && e.message) || 'unknown error') + '.' + progress, '#dc2626');
+        await sleep(2500);
+      }
       await sleep(1500);
     } else {
       banner('No reversal opening-balance row found.' + progress, '#f59e0b');
