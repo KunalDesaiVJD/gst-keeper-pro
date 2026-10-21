@@ -11,8 +11,14 @@
 --      from one caller over five links). Now:
 --        * a caller is one IPv4 address, or one IPv6 /64 (a single host gets a
 --          whole /64), builder_bu_confirm_caller, kept on each code (caller);
---        * the per-caller limits count over every link: 5 codes an hour and
---          10 a day to one address, 20 an hour whatever the address;
+--        * per caller and address, 5 codes an hour and 10 a day on one link,
+--          as before (a proof holds on one link only, so a reader with several
+--          live links needs a code on each: counted over every link, as a
+--          first version of this file did, the sixth link of a reader with six
+--          was refused); the 5-an-hour refusal names the e-mail to type by its
+--          reference. Over every link, 20 a day per caller and address, a
+--          limit of its own that says so ("over all our links"); 20 an hour
+--          per caller whatever the address or link;
 --        * over all callers and every link, 30 codes e-mailed a day to one
 --          address; past 30 only a caller's first 2 codes of the day to that
 --          address go, and never more than 40 in all (a hard ceiling: once
@@ -38,6 +44,11 @@
 --      on the same link (another page's code, or an earlier one) are said to
 --      be that and are not counted as a wrong try, so a reader who types the
 --      code another holder of the link asked for is never locked out by it.
+--      That other code is spent by the same statement (typed_elsewhere_at,
+--      new column; its page is told "That code was typed on another page"),
+--      so the answer is useless to whoever typed the digits: a first version
+--      of this file left it working, which made every counted wrong try a
+--      check against every live code the guesser held (verification, medium).
 --   3. A send records which of its units had an earlier link that reached the
 --      client (builder_bu_confirm_requests.earlier_units, low): after a
 --      failed send, BU Events and the pop-up say it per unit ("The earlier
@@ -56,27 +67,33 @@
 -- node scripts/verify-bu-confirm.mjs.
 --
 -- Live-apply steps (project gcquafqxbykxkbexcdpy only; never the project in
--- SUPABASE_PROJECT_REF):
---   1. Apply this file to gcquafqxbykxkbexcdpy (management API database query
+-- SUPABASE_PROJECT_REF), in this order:
+--   1. Deploy the Edge Function bu-confirm-code again
+--      (supabase/functions/bu-confirm-code, default verify_jwt): its e-mail
+--      now carries the code's reference. It needs nothing from this file (the
+--      reference is worked out from the code_id that the unchanged
+--      builder_bu_confirm_code_claim returns), so it goes first: until this
+--      file is applied the e-mails carry a mark the old page does not show,
+--      which is harmless, whereas this file first would have the messages
+--      name a mark ("the e-mail marked DRLK") that the old e-mail lacks.
+--   2. Apply this file to gcquafqxbykxkbexcdpy (management API database query
 --      or the SQL editor). It is safe before the app: the old page and pop-up
 --      call the same functions with the same arguments (the send returns one
 --      more key, earlier_units; the code request one more, ref).
---   2. Deploy the Edge Function bu-confirm-code again
---      (supabase/functions/bu-confirm-code, default verify_jwt): its e-mail
---      now carries the code's reference. Until it is deployed the old e-mail
---      goes out without one; the page and the messages still name it.
 --   3. Deploy the app.
---   4. Check the objects exist: column caller on builder_bu_confirm_codes
---      (SELECT count(*) FILTER (WHERE requested_ip IS NOT NULL AND caller IS
---      NULL) FROM builder_bu_confirm_codes gives 0), indexes
---      idx_builder_bu_confirm_codes_email and idx_builder_bu_confirm_codes_created;
---      column earlier_units uuid[] on builder_bu_confirm_requests; functions
---      builder_bu_confirm_caller(text), builder_bu_confirm_code_ref(uuid) (and
---      SELECT builder_bu_confirm_code_ref('3fa90000-0000-4000-8000-000000000000')
+--   4. Check the objects exist: columns caller and typed_elsewhere_at on
+--      builder_bu_confirm_codes (SELECT count(*) FILTER (WHERE requested_ip IS
+--      NOT NULL AND caller IS NULL) FROM builder_bu_confirm_codes gives 0),
+--      indexes idx_builder_bu_confirm_codes_email and
+--      idx_builder_bu_confirm_codes_created; column earlier_units uuid[] on
+--      builder_bu_confirm_requests; functions builder_bu_confirm_caller(text),
+--      builder_bu_confirm_code_ref(uuid) (and SELECT
+--      builder_bu_confirm_code_ref('3fa90000-0000-4000-8000-000000000000')
 --      gives DRLK), builder_bu_confirm_code_request's body mentions
---      bu_confirm_code_addr and "Nothing on this link is waiting",
---      builder_bu_confirm_code_claim's body mentions bu_confirm_code_addr,
---      builder_bu_confirm_code_verify's body mentions "the e-mail marked",
+--      bu_confirm_code_addr, "Nothing on this link is waiting" and "over all
+--      our links", builder_bu_confirm_code_claim's body mentions
+--      bu_confirm_code_addr, builder_bu_confirm_code_verify's body mentions
+--      "the e-mail marked" and typed_elsewhere_at,
 --      builder_bu_confirm_request_send's body mentions earlier_units.
 --   5. With the anon key from .env: rpc builder_bu_confirm_caller and
 --      builder_bu_confirm_code_ref are refused (permission denied); rpc
@@ -144,13 +161,19 @@ CREATE INDEX IF NOT EXISTS idx_builder_bu_confirm_codes_created
 -- The address must be one the e-mail went to, outside the firm, and the link
 -- must have a unit waiting for an answer. Limits (finding of 21 Oct 2026: they
 -- were counted per link, which never stopped a mailbox being flooded):
---   per caller (builder_bu_confirm_caller), over every link:
---     5 codes an hour and 10 a day to one address; 20 an hour in all;
+--   per caller (builder_bu_confirm_caller), to one address:
+--     5 codes an hour and 10 a day on one link (as before: a proof holds on
+--     one link only, so a reader with several live links needs a code on
+--     each; verification of this file, low: counted over every link, the
+--     sixth link of a reader with six was refused, told to type a code "this
+--     page asked for" when it had asked for none);
+--     20 a day over every link, a limit of its own that says so;
+--   per caller, 20 codes an hour in all, whatever the address or link;
 --   over all callers and every link, codes e-mailed (claimed, not failed):
 --     30 a day to one address, past which only a caller's first 2 of the day
---     to that address go, and never more than 40;
---     60 an hour on one link, past which only a caller's first 2 go, and
---     never more than 80.
+--     to that address (over every link) go, and never more than 40;
+--     60 an hour on one link, past which only a caller's first 2 to that
+--     address on that link go, and never more than 80.
 -- Locked per link and per address, in that order (the claim takes the
 -- address lock only), so two requests count each other.
 -- Returns { ok, code_id, email, ref }: the page keeps code_id (only it has it)
@@ -171,6 +194,7 @@ DECLARE
   n             record;
   v_caller_hour bigint;
   v_link_hour   bigint;
+  v_last        uuid;
 BEGIN
   IF NOT public.builder_bu_confirm_email_ok(v_email) THEN
     RAISE EXCEPTION 'Please give a valid e-mail address.' USING ERRCODE = 'check_violation';
@@ -194,9 +218,12 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('bu_confirm_code:' || COALESCE(l.o_req, l.o_cf)::text, 0));
   PERFORM pg_advisory_xact_lock(hashtextextended('bu_confirm_code_addr:' || v_email, 0));
 
-  SELECT count(*) FILTER (WHERE k.caller IS NOT DISTINCT FROM v_caller) AS mine_day,
+  SELECT count(*) FILTER (WHERE k.caller IS NOT DISTINCT FROM v_caller) AS mine_all_day,
          count(*) FILTER (WHERE k.caller IS NOT DISTINCT FROM v_caller
-                            AND k.created_at > now() - interval '1 hour') AS mine_hour,
+                            AND (k.request_id = l.o_req OR k.confirmation_id = l.o_cf)) AS mine_link_day,
+         count(*) FILTER (WHERE k.caller IS NOT DISTINCT FROM v_caller
+                            AND (k.request_id = l.o_req OR k.confirmation_id = l.o_cf)
+                            AND k.created_at > now() - interval '1 hour') AS mine_link_hour,
          count(*) FILTER (WHERE k.claimed_at IS NOT NULL AND k.send_error IS NULL) AS address_day
     INTO n
     FROM public.builder_bu_confirm_codes k
@@ -212,23 +239,42 @@ BEGIN
      AND k.created_at > now() - interval '1 hour'
      AND k.claimed_at IS NOT NULL AND k.send_error IS NULL;
 
-  IF n.mine_day >= 10 THEN
-    RAISE EXCEPTION 'We have sent 10 codes to this address today. Please try again tomorrow, or write to us at gst@vjdesai.com.'
+  IF n.mine_link_day >= 10 THEN
+    RAISE EXCEPTION 'We have sent 10 codes to this address today for this link. Please try again tomorrow, or write to us at gst@vjdesai.com.'
       USING ERRCODE = 'check_violation';
   END IF;
-  IF n.mine_hour >= 5 THEN
-    RAISE EXCEPTION 'We have sent 5 codes to this address in the last hour. Please type the code from the last e-mail this page asked for, or try again in an hour.'
+  IF n.mine_link_hour >= 5 THEN
+    -- Name the e-mail to type: the last code this caller asked for on this
+    -- link to this address that was not refused by the mailer (the page that
+    -- asked shows the same mark next to the Code box).
+    SELECT k.id INTO v_last
+      FROM public.builder_bu_confirm_codes k
+     WHERE k.email = v_email AND k.caller IS NOT DISTINCT FROM v_caller
+       AND (k.request_id = l.o_req OR k.confirmation_id = l.o_cf)
+       AND k.created_at > now() - interval '1 hour' AND k.send_error IS NULL
+     ORDER BY k.created_at DESC
+     LIMIT 1;
+    IF v_last IS NULL THEN
+      RAISE EXCEPTION 'We have sent 5 codes to this address in the last hour for this link. Please ask again in an hour.'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    RAISE EXCEPTION 'We have sent 5 codes to this address in the last hour for this link. Please type the code from our e-mail marked %, or ask again in an hour.',
+      public.builder_bu_confirm_code_ref(v_last)
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF n.mine_all_day >= 20 THEN
+    RAISE EXCEPTION 'We have sent 20 codes to this address today from your connection, over all our links. Please try again tomorrow, or write to us at gst@vjdesai.com.'
       USING ERRCODE = 'check_violation';
   END IF;
   IF v_caller_hour >= 20 THEN
     RAISE EXCEPTION 'Too many codes were asked for from your connection in the last hour. Please try again later.'
       USING ERRCODE = 'check_violation';
   END IF;
-  IF n.address_day >= 40 OR (n.address_day >= 30 AND n.mine_day >= 2) THEN
+  IF n.address_day >= 40 OR (n.address_day >= 30 AND n.mine_all_day >= 2) THEN
     RAISE EXCEPTION 'Too many codes were e-mailed to this address today. Please try again tomorrow, or write to us at gst@vjdesai.com.'
       USING ERRCODE = 'check_violation';
   END IF;
-  IF v_link_hour >= 80 OR (v_link_hour >= 60 AND n.mine_day >= 2) THEN
+  IF v_link_hour >= 80 OR (v_link_hour >= 60 AND n.mine_link_day >= 2) THEN
     RAISE EXCEPTION 'Too many codes were asked for on this link in the last hour. Please try again later.'
       USING ERRCODE = 'check_violation';
   END IF;
@@ -303,9 +349,17 @@ END;
 $$;
 
 -- ── 5. The reader types the code ────────────────────────────────────────────
+-- A code whose digits were typed against another code (another page) is
+-- spent: it never gives a proof (verification of this file, medium, below).
+ALTER TABLE public.builder_bu_confirm_codes
+  ADD COLUMN IF NOT EXISTS typed_elsewhere_at timestamptz;
+COMMENT ON COLUMN public.builder_bu_confirm_codes.typed_elsewhere_at IS
+  'When this code''s digits were typed against another code of the same address and link (another page): '
+  'from then on it gives no proof (builder_bu_confirm_code_verify).';
+
 -- As before (typed with the code_id the asking page got; 5 wrong tries end a
 -- code; 10 wrong tries a day from one caller end that caller's codes to the
--- address on the link; never raises for a wrong code), with two changes
+-- address on the link; never raises for a wrong code), with three changes
 -- (finding of 21 Oct 2026: the reader typed the code another holder of the
 -- link had asked for, the newest in their mailbox, because the page said
 -- "check the latest e-mail", and was locked out for the day):
@@ -313,8 +367,13 @@ $$;
 --     marked DRLK"), never "the latest";
 --   * digits that are the code of another e-mail to this address on this link
 --     (another page's, or an earlier one) are said to be that and are not
---     counted as a wrong try. They prove nothing: a code works only with its
---     own code_id, which only the page that asked has.
+--     counted as a wrong try;
+--   * and that other code is spent by the same statement (typed_elsewhere_at,
+--     expires_at now), so it never gives a proof, to anyone (verification of
+--     this file, medium: the answer checked a guess against every live code
+--     on the link for free, and a hit was then typed against its own code_id
+--     for a proof, so every counted try tested as many codes as the guesser
+--     held). Its own page is told it no longer works, and asks again.
 -- The caller is builder_bu_confirm_caller (an IPv6 /64 is one caller).
 CREATE OR REPLACE FUNCTION public.builder_bu_confirm_code_verify(_token text, _email text, _code text, _code_id uuid)
 RETURNS jsonb
@@ -329,6 +388,7 @@ DECLARE
   k       public.builder_bu_confirm_codes;
   v_ref   text;
   v_proof text;
+  v_hits  integer;
   v_no    CONSTANT jsonb := jsonb_build_object('ok', false);
 BEGIN
   SELECT * INTO l FROM public.builder_bu_confirm_link(_token);
@@ -356,6 +416,11 @@ BEGIN
   IF k.claimed_at IS NULL OR k.send_error IS NOT NULL THEN
     RETURN v_no || jsonb_build_object('message', 'We could not e-mail that code. Please ask for a new one.');
   END IF;
+  -- Its digits were typed on another page: spent, whatever is typed now.
+  IF k.typed_elsewhere_at IS NOT NULL THEN
+    RETURN v_no || jsonb_build_object('message',
+      'That code was typed on another page, so it no longer works. Please ask for a new one.');
+  END IF;
   IF k.expires_at <= now() THEN
     RETURN v_no || jsonb_build_object('message', 'This code has expired. Please ask for a new one.');
   END IF;
@@ -366,11 +431,17 @@ BEGIN
     RETURN v_no || jsonb_build_object('message', format('The code is the 6 digits in our e-mail marked %s.', v_ref));
   END IF;
   IF k.code_hash IS DISTINCT FROM encode(extensions.digest(k.id::text || ':' || v_code, 'sha256'), 'hex') THEN
-    IF EXISTS (SELECT 1 FROM public.builder_bu_confirm_codes c2
-                WHERE (c2.request_id = l.o_req OR c2.confirmation_id = l.o_cf) AND c2.email = v_email
-                  AND c2.id <> k.id AND c2.code_hash IS NOT NULL
-                  AND c2.created_at > now() - interval '24 hours'
-                  AND c2.code_hash = encode(extensions.digest(c2.id::text || ':' || v_code, 'sha256'), 'hex')) THEN
+    -- The code of another of our e-mails to this address on this link? Found
+    -- and spent in one statement, so the match is useless to whoever typed it.
+    UPDATE public.builder_bu_confirm_codes c2
+       SET typed_elsewhere_at = COALESCE(c2.typed_elsewhere_at, now()),
+           expires_at = LEAST(c2.expires_at, now())
+     WHERE (c2.request_id = l.o_req OR c2.confirmation_id = l.o_cf) AND c2.email = v_email
+       AND c2.id <> k.id AND c2.code_hash IS NOT NULL
+       AND c2.created_at > now() - interval '24 hours'
+       AND c2.code_hash = encode(extensions.digest(c2.id::text || ':' || v_code, 'sha256'), 'hex');
+    GET DIAGNOSTICS v_hits = ROW_COUNT;
+    IF v_hits > 0 THEN
       RETURN v_no || jsonb_build_object('other_code', true, 'message', format(
         'That is the code from another of our e-mails to this address. Please type the code from the e-mail marked %s.', v_ref));
     END IF;

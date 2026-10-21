@@ -6,6 +6,11 @@
 -- refused a caller's first 2 codes, so 37 more callers sent 74 more (104 to
 -- one address on one link). Every call as the public key; t_mailbox stands in
 -- for the Edge Function e-mailing each code.
+-- Since the verification of 20261021160000 (low: the per-caller 5 an hour and
+-- 10 a day were counted over every link, but a proof holds on one link only,
+-- so a reader with six live links was refused the sixth, told to type a code
+-- "this page asked for" when it had asked for none): they are per link again,
+-- and over every link one caller gets 20 a day to an address, said so.
 
 -- Who is one caller.
 BEGIN;
@@ -20,8 +25,9 @@ SET LOCAL ROLE anon;
 SELECT t_raises('SELECT builder_bu_confirm_caller(''x'')', 'permission denied', 'a helper, closed to the public key');
 ROLLBACK;
 
--- (a) One caller, several links To the owner: 10 a day to the address in all,
--- not 10 on each link.
+-- (a) One caller, several links To the owner: 5 an hour and 10 a day to the
+-- address on each link, the limit naming the e-mail to type; over all links
+-- 20 a day, said so.
 BEGIN;
 \ir fixtures.psql
 CREATE FUNCTION pg_temp.an_hour_passes() RETURNS void LANGUAGE sql AS $$
@@ -32,22 +38,93 @@ SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000002']::uuid[], ARRAY['owne
 SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000003']::uuid[], ARRAY['owner@client.test'], NULL) ->> 'token' AS t3 \gset
 UPDATE email_outbox SET status = 'sent', sent_at = now();
 SELECT set_config('request.headers', '{"cf-connecting-ip": "203.0.113.7"}', true);
-SELECT t_mailbox((builder_bu_confirm_code_request(t, 'owner@client.test') ->> 'code_id')::uuid) IS NOT NULL
-  FROM unnest(ARRAY[:'t1', :'t2', :'t3', :'t1', :'t2']) t;
-SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'t3', 'owner@client.test'),
-                '5 codes to this address in the last hour', 'five an hour to the address over every link');
+SELECT t_mailbox((builder_bu_confirm_code_request(:'t1', 'owner@client.test') ->> 'code_id')::uuid) IS NOT NULL
+  FROM generate_series(1, 4);
+RESET ROLE;
+UPDATE builder_bu_confirm_codes SET created_at = created_at - interval '5 minutes';
+SET LOCAL ROLE anon;
+SELECT builder_bu_confirm_code_request(:'t1', 'owner@client.test') AS last1 \gset
+SELECT t_mailbox((:'last1'::jsonb ->> 'code_id')::uuid) IS NOT NULL;
+SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'t1', 'owner@client.test'),
+                format('We have sent 5 codes to this address in the last hour for this link. Please type the code from our e-mail marked %s, or ask again in an hour.',
+                       :'last1'::jsonb ->> 'ref'),
+                'five an hour to the address on a link, naming the last e-mail asked for on it');
+SELECT t_eq((builder_bu_confirm_code_request(:'t2', 'owner@client.test') ->> 'ok')::boolean, true, 'another link still takes one');
 RESET ROLE;
 SELECT pg_temp.an_hour_passes();
 SET LOCAL ROLE anon;
-SELECT t_mailbox((builder_bu_confirm_code_request(t, 'owner@client.test') ->> 'code_id')::uuid) IS NOT NULL
-  FROM unnest(ARRAY[:'t2', :'t3', :'t1', :'t2', :'t3']) t;
-SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'t3', 'owner@client.test'),
-                'We have sent 10 codes to this address today', 'ten a day to the address from one caller, over every link');
+SELECT t_mailbox((builder_bu_confirm_code_request(:'t1', 'owner@client.test') ->> 'code_id')::uuid) IS NOT NULL
+  FROM generate_series(1, 5);
 SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'t1', 'owner@client.test'),
-                'We have sent 10 codes to this address today', 'on the other links too');
+                'We have sent 10 codes to this address today for this link.', 'ten a day to the address on a link');
+SELECT t_eq((builder_bu_confirm_code_request(:'t3', 'owner@client.test') ->> 'ok')::boolean, true, 'the other links still take codes');
+-- Over all links: 20 a day from one caller to one address (t1 10, t2 1, t3 1).
 RESET ROLE;
-SELECT t_eq((SELECT count(*) FROM builder_bu_confirm_codes WHERE email = 'owner@client.test' AND sent_at IS NOT NULL)::int,
-            10, 'ten codes e-mailed to the owner, not ten per link');
+SELECT pg_temp.an_hour_passes();
+SET LOCAL ROLE anon;
+SELECT t_mailbox((builder_bu_confirm_code_request(:'t2', 'owner@client.test') ->> 'code_id')::uuid) IS NOT NULL
+  FROM generate_series(1, 4);
+RESET ROLE;
+SELECT pg_temp.an_hour_passes();
+SET LOCAL ROLE anon;
+SELECT t_mailbox((builder_bu_confirm_code_request(:'t3', 'owner@client.test') ->> 'code_id')::uuid) IS NOT NULL
+  FROM generate_series(1, 4);
+SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'t2', 'owner@client.test'),
+                'We have sent 20 codes to this address today from your connection, over all our links.',
+                'twenty a day to the address over all links, said so');
+SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'t3', 'owner@client.test'),
+                'over all our links', 'on every link');
+SELECT set_config('request.headers', '{"cf-connecting-ip": "198.51.100.99"}', true);
+SELECT t_eq((builder_bu_confirm_code_request(:'t2', 'owner@client.test') ->> 'ok')::boolean, true, 'another caller is not held up');
+RESET ROLE;
+SELECT t_eq((SELECT count(*) FROM builder_bu_confirm_codes WHERE email = 'owner@client.test' AND caller = '203.0.113.7')::int, 20,
+            'twenty codes to the owner from that caller');
+SELECT t_eq((SELECT count(*) FROM pg_proc WHERE proname = 'builder_bu_confirm_code_request'
+               AND prosrc LIKE '%this page asked for%')::int, 0, 'no limit points at a code "this page asked for"');
+ROLLBACK;
+
+-- (a) The repro (p_multilink): staff send six separate requests To the owner
+-- (A-101, A-102, A-103, A-106, A-107, A-108; several BU events of a client's
+-- projects give the same picture). The owner, on one connection, asks one
+-- code on each link and types it: all six are proved.
+BEGIN;
+\ir fixtures.psql
+INSERT INTO builder_units (id, project_id, unit_no, sort_order) VALUES
+  ('a1000000-0000-0000-0000-000000000006', 'b1000000-0000-0000-0000-000000000001', 'A-106', 6),
+  ('a1000000-0000-0000-0000-000000000007', 'b1000000-0000-0000-0000-000000000001', 'A-107', 7),
+  ('a1000000-0000-0000-0000-000000000008', 'b1000000-0000-0000-0000-000000000001', 'A-108', 8);
+INSERT INTO builder_bu_event_units (bu_event_id, unit_id, cut_off_date, booked_at_cutoff, agreement_value) VALUES
+  ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000006', '2026-09-15', true, 4000000),
+  ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000007', '2026-09-15', true, 4000000),
+  ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000008', '2026-09-15', true, 4000000);
+SET LOCAL ROLE anon;
+CREATE TEMP TABLE toks (n int, tok text);
+INSERT INTO toks SELECT n, t_send(ARRAY[u]::uuid[], ARRAY['owner@client.test'], NULL) ->> 'token'
+  FROM (VALUES (1, 'a1000000-0000-0000-0000-000000000001'::uuid), (2, 'a1000000-0000-0000-0000-000000000002'),
+               (3, 'a1000000-0000-0000-0000-000000000003'), (4, 'a1000000-0000-0000-0000-000000000006'),
+               (5, 'a1000000-0000-0000-0000-000000000007'), (6, 'a1000000-0000-0000-0000-000000000008')) v(n, u) ORDER BY n;
+UPDATE email_outbox SET status = 'sent', sent_at = now();
+SELECT set_config('request.headers', '{"cf-connecting-ip": "198.51.100.10"}', true);
+CREATE TEMP TABLE got (n int, result text);
+DO $$
+DECLARE t record; v jsonb; c text;
+BEGIN
+  FOR t IN SELECT * FROM toks ORDER BY n LOOP
+    BEGIN
+      v := builder_bu_confirm_code_request(t.tok, 'owner@client.test');
+      c := t_mailbox((v ->> 'code_id')::uuid);
+      v := builder_bu_confirm_code_verify(t.tok, 'owner@client.test', c, (v ->> 'code_id')::uuid);
+      INSERT INTO got VALUES (t.n, CASE WHEN (v ->> 'ok')::boolean THEN 'proved' ELSE v ->> 'message' END);
+    EXCEPTION WHEN check_violation THEN
+      INSERT INTO got VALUES (t.n, 'REFUSED: ' || SQLERRM);
+    END;
+  END LOOP;
+END $$;
+SELECT t_eq((SELECT string_agg(n || ':' || result, ', ' ORDER BY n) FROM got),
+            '1:proved, 2:proved, 3:proved, 4:proved, 5:proved, 6:proved', 'six links, one code each: all six proved');
+-- And each answers its unit as the owner.
+SELECT t_eq((SELECT string_agg(t_states(tok), ',' ORDER BY n) FROM toks),
+            'A-101:PENDING,A-102:PENDING,A-103:PENDING,A-106:PENDING,A-107:PENDING,A-108:PENDING', 'nothing answered yet');
 ROLLBACK;
 
 -- (a, the repro) Five requests To the owner, all out; the owner confirms on
@@ -145,7 +222,7 @@ BEGIN
   END LOOP;
 END $$;
 SELECT t_eq((SELECT sum(ok)::int FROM got), 10, 'forty addresses in one /64: ten codes in all');
-SELECT t_eq((SELECT count(*) FROM got WHERE refused LIKE 'We have sent 10 codes to this address today%')::int, 40,
+SELECT t_eq((SELECT count(*) FROM got WHERE refused LIKE 'We have sent 10 codes to this address today for this link.%')::int, 40,
             'every one of them is told ten went today');
 -- Another /64 is another caller.
 SELECT set_config('request.headers', '{"cf-connecting-ip": "2001:db8:0:1::5"}', true);

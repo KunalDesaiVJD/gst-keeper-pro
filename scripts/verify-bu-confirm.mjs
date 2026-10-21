@@ -36,6 +36,11 @@
 //    link; the proof is kept only in sessionStorage (not for a new tab); a
 //    reload after the mailer did not report back does not say the code was
 //    e-mailed; each code's e-mail is named by its reference (codeRef).
+//  - verification of 20261021160000: its live-apply steps deploy the Edge
+//    Function bu-confirm-code before the file is applied (the function needs
+//    nothing from it; the other way round, the messages named a mark the old
+//    e-mail lacked), and the page says a code from another e-mail, typed
+//    there, stops working where it was asked for (the database spends it).
 // The database side is tested in supabase/tests/bu_confirm/run.sh.
 //
 //   node scripts/verify-bu-confirm.mjs
@@ -378,6 +383,21 @@ guard('the pop-up reads the requests again', () => {
   check(/unseenRequest\(c\.requestId, freshRequests, knownIds\)/.test(dialogSrc) && /\{unseenRequestWords\(unseen\)\}/.test(dialogSrc),
     'the pop-up shows it under the unit');
   check(/sent since this page loaded/.test(dialogSrc), 'and says when the To it filled in is from such a request');
+});
+
+// ── Verification of 20261021160000 (low): the live-apply order ──────────────
+guard('live-apply order', () => {
+  const fu = src('supabase/migrations/20261021160000_bu_confirm_followup.sql');
+  const head = fu.slice(0, fu.indexOf('\nBEGIN;'));
+  const steps = head.slice(head.indexOf('Live-apply steps'));
+  const step = (n) => ((steps.match(new RegExp(`^--\\s+${n}\\.\\s+([^\\n]*)`, 'm')) || [])[1] || '');
+  check(/^Deploy the Edge Function bu-confirm-code/.test(step(1)) && /^Apply this file to gcquafqxbykxkbexcdpy/.test(step(2))
+    && /^Deploy the app/.test(step(3)),
+    'the Edge Function goes first, then the file, then the app (no message names a mark the e-mail lacks)',
+    `1: ${step(1)} | 2: ${step(2)} | 3: ${step(3)}`);
+  const pgx = src('src/pages/AgreementConfirmPage.tsx');
+  check(/A code from an e-mail with another mark was asked\s+for elsewhere: it does not work here, and typed here it stops working there too\./.test(pgx),
+    'the page says another e-mail\'s code, typed there, stops working where it was asked for');
 });
 
 // ── The public page ─────────────────────────────────────────────────────────

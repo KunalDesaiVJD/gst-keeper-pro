@@ -43,8 +43,9 @@ import logo from '@/assets/logo.png';
 // of 21 Oct 2026). "Not you?" clears the step. Each code's e-mail is marked
 // with a reference (codeRef) shown next to the Code box, so a reader who gets
 // two codes (a shared mailbox, another holder of the link) types the one this
-// page asked for. Every access is wrapped: a private window, blocked storage
-// or a preview just starts afresh.
+// page asked for; the other page's code, typed here, stops working there too
+// (the database spends it, 20261021160000). Every access is wrapped: a private
+// window, blocked storage or a preview just starts afresh.
 
 type UnitState = PageUnitState;
 
@@ -402,7 +403,7 @@ const AgreementConfirmPage: React.FC = () => {
                 <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                   Type the code from our e-mail marked <strong className="tracking-wider text-foreground">{codeRef(codeId)}</strong>
                   {codeAt ? `, asked for at ${clockTime(codeAt)}` : ''}. A code from an e-mail with another mark was asked
-                  for elsewhere and does not work here.{' '}
+                  for elsewhere: it does not work here, and typed here it stops working there too.{' '}
                   <button type="button" className="underline hover:text-foreground" onClick={startAgain}>Not you? Start again</button>
                 </p>
               )}

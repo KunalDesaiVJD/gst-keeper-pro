@@ -251,16 +251,31 @@ directly on the button pressed."
   said to be that and are not counted as a wrong try, so typing the other
   page's code never locks a reader out (finding of 21 Oct 2026: five such
   tries ended the owner's code, two rounds locked the owner out for the
-  day). A code works for 30 minutes and 5 tries.
+  day). That other code is spent in the same statement
+  (`typed_elsewhere_at`): it never gives a proof afterwards, to anyone, and
+  its page says "That code was typed on another page, so it no longer works"
+  and asks for a new one. Without that, the answer was a free check of a
+  guess against every live code on the link, and a hit was then typed
+  against its own code id for a proof: one caller holding 5 codes tested 50
+  a day instead of 10, and 11 callers holding 40 codes stood about a 0.44%
+  daily chance of answering as the owner (verification of `20261021160000`,
+  medium). The price: two people sharing a mailbox who each type the other's
+  code first both ask again. A code works for 30 minutes and 5 tries.
   Limits (`20261021160000`; finding of 21 Oct 2026: they were counted per
   link, so every link ever sent took 10 codes a day to an address, links with
   nothing left to answer too, and rotating addresses in one IPv6 /64 made a
   new caller each time: 50 codes reached one mailbox from one caller over five
   links, 104 over one link from one /64):
   - A caller is one IPv4 address, or one IPv6 /64 (a single host gets a whole
-    /64). Per caller, over every link: 5 codes an hour and 10 a day to one
-    address, 20 an hour whatever the address; 10 wrong tries a day to one
-    address on a link.
+    /64). Per caller and address, on one link: 5 codes an hour (the refusal
+    names the e-mail to type by its mark) and 10 a day. A proof holds on one
+    link only, so a reader with several live links needs a code on each:
+    counted over every link (a first version of `20261021160000`), the sixth
+    link of a reader with six was refused, told to type a code "this page
+    asked for" when it had asked for none (verification, low). Over every
+    link, 20 a day per caller and address, a limit of its own that says
+    "over all our links"; 20 an hour per caller whatever the address or link;
+    10 wrong tries a day to one address on a link.
   - Over all callers and every link, at most 30 codes e-mailed a day to one
     address; past 30 only a caller's first 2 codes of the day to that address
     go, and never more than 40 in all. On one link, 60 e-mailed an hour; past
@@ -392,8 +407,8 @@ directly on the button pressed."
 *Migration `20261021140000_bu_confirm_cc.sql` (send, lookup, code and answer
 functions; template `builder_bu_agreement_confirm_request`, editable under
 Reminders, Templates, Builder) and `20261021160000_bu_confirm_followup.sql`
-(the code limits over every link and caller, the code's reference,
-`earlier_units`); Edge Function `bu-confirm-code`; tests
+(the code limits per link, over every link and over all callers, the code's
+reference, a code typed on another page spent, `earlier_units`); Edge Function `bu-confirm-code`; tests
 `supabase/tests/bu_confirm/run.sh`, `deno test --allow-read
 supabase/functions/bu-confirm-code/test/` and
 `node scripts/verify-bu-confirm.mjs`; `src/lib/builderConfirmRules.ts`,
