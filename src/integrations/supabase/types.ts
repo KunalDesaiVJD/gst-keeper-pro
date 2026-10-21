@@ -5702,6 +5702,108 @@ export type Database = {
           },
         ]
       }
+      gst_change_log: {
+        Row: {
+          actor_basis: string
+          actor_id: string | null
+          actor_name: string | null
+          actor_source: string
+          at: string
+          changed: Json
+          client_id: string | null
+          financial_year: string | null
+          id: number
+          op: string
+          period_month: string | null
+          request_id: string | null
+          row_id: string | null
+          row_label: string | null
+          table_name: string
+          txid: number
+        }
+        Insert: {
+          actor_basis: string
+          actor_id?: string | null
+          actor_name?: string | null
+          actor_source: string
+          at?: string
+          changed: Json
+          client_id?: string | null
+          financial_year?: string | null
+          id?: number
+          op: string
+          period_month?: string | null
+          request_id?: string | null
+          row_id?: string | null
+          row_label?: string | null
+          table_name: string
+          txid?: number
+        }
+        Update: {
+          actor_basis?: string
+          actor_id?: string | null
+          actor_name?: string | null
+          actor_source?: string
+          at?: string
+          changed?: Json
+          client_id?: string | null
+          financial_year?: string | null
+          id?: number
+          op?: string
+          period_month?: string | null
+          request_id?: string | null
+          row_id?: string | null
+          row_label?: string | null
+          table_name?: string
+          txid?: number
+        }
+        Relationships: []
+      }
+      gst_change_log_tables: {
+        Row: {
+          actor_columns: string[]
+          attached_at: string
+          client_expr: string
+          fy_expr: string
+          label_expr: string
+          key_columns: string[]
+          mode: string
+          month_expr: string
+          only_columns: string[] | null
+          skip_columns: string[]
+          summary_columns: string[]
+          table_name: string
+        }
+        Insert: {
+          actor_columns: string[]
+          attached_at?: string
+          client_expr: string
+          fy_expr: string
+          label_expr: string
+          key_columns: string[]
+          mode: string
+          month_expr: string
+          only_columns?: string[] | null
+          skip_columns: string[]
+          summary_columns: string[]
+          table_name: string
+        }
+        Update: {
+          actor_columns?: string[]
+          attached_at?: string
+          client_expr?: string
+          fy_expr?: string
+          label_expr?: string
+          key_columns?: string[]
+          mode?: string
+          month_expr?: string
+          only_columns?: string[] | null
+          skip_columns?: string[]
+          summary_columns?: string[]
+          table_name?: string
+        }
+        Relationships: []
+      }
       gst_challans: {
         Row: {
           cess_amount: number | null
@@ -10499,6 +10601,28 @@ export type Database = {
       }
     }
     Views: {
+      gst_change_history: {
+        Row: {
+          actor_basis: string | null
+          actor_id: string | null
+          actor_name: string | null
+          actor_source: string | null
+          at: string | null
+          changed: Json | null
+          client_id: string | null
+          financial_year: string | null
+          key: string | null
+          log: string | null
+          log_id: number | null
+          op: string | null
+          period_month: string | null
+          request_id: string | null
+          row_id: string | null
+          row_label: string | null
+          table_name: string | null
+        }
+        Relationships: []
+      }
       ai_learning_responses: {
         Row: {
           case_id: string | null
@@ -11082,6 +11206,10 @@ export type Database = {
       }
     }
     Functions: {
+      gst_change_log_whoami: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       notice_case_items: {
         Args: { p_client_id: string; p_case_key: string }
         Returns: Json

@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { isQuarterEndMonth } from '@/types';
 import { Lock, AlertCircle, Save, FileText, History, Trash2, Receipt, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -1571,6 +1572,7 @@ const ITCSummaryPage: React.FC = () => {
                   Versions
                 </Button>
               )}
+              <ChangeHistoryButton page="itc" clientId={selectedClient} month={selectedMonth} />
             </div>
           </div>
         </CardContent>

@@ -2,6 +2,14 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-21 — Who did it, for the change log (v0.17.0)
+
+- Every request to the database (`/rest/v1`, tables and RPCs) now says it comes from the extension (`x-gst-source: extension`) and carries a request id (`x-gst-request`). While a job the app started is running, it also names the app user who started it (`x-gst-actor`, the job's `actorId`, the same id the app sends). A scheduled sync names no one. The database's change log (`gst_change_log`, migration `20261021130000_gst_change_log.sql`) records these with every row the extension writes, so a pull shows as "Extension, for Gita" in Change history.
+- Uploads to Storage (return PDFs) are unchanged: another API, not logged there.
+- Nothing else changes. An older extension still works; its writes are logged with the person from the row's own stamp, or none.
+- Numbered after 0.15.0 (filing pull) and 0.16.0 (reco pull) on their branches; release once all three are merged.
+- Test `test/17-actor-headers.test.mjs`.
+
 ## 2026-10-15 — GSTR-2A credit and debit notes (v0.14.0)
 
 - The GSTR-2A pull also reads the credit and debit notes (CDN), after the B2B invoices, so the 2A vs 2B report can match the 2B's CDNR documents. Before, they were all "Not compared" (521 of 3,169 documents in one real client's year).

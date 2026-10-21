@@ -20,6 +20,7 @@ import {
   Inbox,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import { useAuth } from '@/contexts/AuthContext';
@@ -1466,6 +1467,7 @@ const TwoBReconciliationPage: React.FC = () => {
                 View Versions
               </Button>
             )}
+            <ChangeHistoryButton page="twob_reco" clientId={selectedClientId} month={selectedMonth} />
             {/* Last saved audit label */}
             {lastSavedInfo && selectedClientId && (
               <p className="ml-auto self-center text-[11px] text-muted-foreground">

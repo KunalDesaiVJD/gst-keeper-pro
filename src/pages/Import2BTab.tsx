@@ -9,6 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -2332,6 +2333,7 @@ const Import2BTab: React.FC = () => {
         icon={<FileSpreadsheet />}
         actions={isStaff ? (
           <>
+            <ChangeHistoryButton page="import2b" clientId={selectedClient} month={selectedMonth} />
             <Button
               variant="outline"
               size="sm"

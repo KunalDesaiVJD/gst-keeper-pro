@@ -50,30 +50,50 @@ const dnrReady = (async () => {
   } catch (e) { return false; } // best-effort — a failed registration just leaves the old fetch behavior
 })();
 
+// 0.17.0: who is acting, for the change log (gst_change_log, migration
+// 20261021130000). Every /rest/v1 request says it comes from the extension
+// and, while a job the app started is running, names the app user who started
+// it (the job's actorId, the same id the app sends). A scheduled sync names no
+// one. Storage uploads (another API) are left as they were.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const actorHeaders = async () => {
+  const h = {
+    'x-gst-source': 'extension',
+    'x-gst-request': 'extension ' + chrome.runtime.getManifest().version + ' ' + Math.random().toString(16).slice(2, 10),
+  };
+  try {
+    const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
+    const actor = job && job.actorId;
+    if (typeof actor === 'string' && UUID_RE.test(actor)) h['x-gst-actor'] = actor;
+  } catch (e) { /* no job storage: no actor */ }
+  return h;
+};
+const hdrs = async (extra) => ({ ...H, ...(await actorHeaders()), ...(extra || {}) });
+
 const sel = async (path) => {
-  const r = await fetch(base + path, { headers: H });
+  const r = await fetch(base + path, { headers: await hdrs() });
   if (!r.ok) throw new Error('GET ' + path + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
   return r.json();
 };
 const patch = async (path, body) => {
-  const r = await fetch(base + path, { method: 'PATCH', headers: { ...H, Prefer: 'return=minimal' }, body: JSON.stringify(body) });
+  const r = await fetch(base + path, { method: 'PATCH', headers: await hdrs({ Prefer: 'return=minimal' }), body: JSON.stringify(body) });
   if (!r.ok) throw new Error('PATCH ' + path + ' -> ' + r.status);
   return true;
 };
 const post = async (table, rows, prefer = 'return=minimal') => {
-  const r = await fetch(base + table, { method: 'POST', headers: { ...H, Prefer: prefer }, body: JSON.stringify(rows) });
+  const r = await fetch(base + table, { method: 'POST', headers: await hdrs({ Prefer: prefer }), body: JSON.stringify(rows) });
   if (!r.ok) throw new Error('POST ' + table + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
   return true;
 };
 const del = async (table, query) => {
-  const r = await fetch(base + table + '?' + query, { method: 'DELETE', headers: H });
+  const r = await fetch(base + table + '?' + query, { method: 'DELETE', headers: await hdrs() });
   if (!r.ok) throw new Error('DELETE ' + table + ' -> ' + r.status);
   return true;
 };
 const upsert = async (table, conflictCols, rows) => {
   const r = await fetch(base + table + '?on_conflict=' + conflictCols, {
     method: 'POST',
-    headers: { ...H, Prefer: 'resolution=merge-duplicates,return=minimal' },
+    headers: await hdrs({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
     body: JSON.stringify(rows),
   });
   if (!r.ok) throw new Error('UPSERT ' + table + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
@@ -112,7 +132,7 @@ const guardedSoftDelete = async (table, scopeQuery, rows, pullTs, opts) => {
 // back to the REST path above.
 const EXT_VERSION = chrome.runtime.getManifest().version;
 const rpc = async (fn, body) => {
-  const r = await fetch(base + 'rpc/' + fn, { method: 'POST', headers: H, body: JSON.stringify(body) });
+  const r = await fetch(base + 'rpc/' + fn, { method: 'POST', headers: await hdrs(), body: JSON.stringify(body) });
   const text = await r.text();
   if (!r.ok) {
     const err = new Error('RPC ' + fn + ' -> ' + r.status + ' ' + text.slice(0, 160));
@@ -318,7 +338,7 @@ const API = {
   // Closing sweep (public.notices_sweep): fills case due dates from the case
   // folder and auto-closes untriaged rows by rule, for this one client.
   runSweep: async (clientId) => {
-    const r = await fetch(base + 'rpc/notices_sweep', { method: 'POST', headers: H, body: JSON.stringify({ p_client_id: clientId }) });
+    const r = await fetch(base + 'rpc/notices_sweep', { method: 'POST', headers: await hdrs(), body: JSON.stringify({ p_client_id: clientId }) });
     if (!r.ok) throw new Error('RPC notices_sweep -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
     return r.json();
   },

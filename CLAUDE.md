@@ -41,6 +41,8 @@ Single-page React 18 + TypeScript app built with Vite (SWC), styled with Tailwin
 
 **Routing.** `react-router-dom` in `src/App.tsx`. `/login` is public; everything else is nested under `MainLayout` (sidebar shell). Pages live in `src/pages/` (Dashboard, Clients, 2B Reconciliation, 2B & RCM, Suspended Reco, ITC Summary, RCM Summary, Manage Masters, Filing Status, GST Running Update, GSTR1 Data, Manage Employees, User Control, Settings).
 
+**Change log.** Every change to a GST working table (2B, ledgers, ITC, recos, filing status, GSTR-1/3B, RCM, advances, builder, client GST fields, portal pulls, manual-entry allowances; 102 tables) is kept append-only in `gst_change_log` by statement-level triggers (`gst_change_log_attach`, migration `20261021130000`), the person from the `x-gst-actor` / `x-gst-source` headers the app (`src/lib/changeLogHeaders.ts`, `/rest/v1` only), extension 0.17.0 and the agent send, else the row's own stamp; read on `/change-history` and the pages' History buttons (key `view_change_history`); a new GST table gets `SELECT gst_change_log_attach(...)` in its migration. Read `docs/GST_CHANGE_LOG.md` first.
+
 **Database.** Migrations are timestamped SQL files in `supabase/migrations/`. They define the enums (`app_role`, `registration_type`, `filing_status_type`, `return_type`), RLS policies (gated via the `has_role` SQL function), and the RPCs the auth flow depends on.
 **Path alias.** `@/` → `src/` (configured in `vite.config.ts` and `tsconfig`).
 

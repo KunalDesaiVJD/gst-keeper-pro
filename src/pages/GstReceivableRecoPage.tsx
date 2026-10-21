@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FileText, Save, Loader2, Upload, Info, Edit3, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -945,6 +946,7 @@ const GstReceivableRecoPage: React.FC = () => {
         icon={<FileText />}
         actions={
           <>
+            <ChangeHistoryButton page="receivable" clientId={selectedClientId} month={selectedMonth} />
             {lastSavedBy && (
               <span className="text-xs text-muted-foreground">
                 Saved by <span className="font-medium text-foreground">{lastSavedBy.name}</span>

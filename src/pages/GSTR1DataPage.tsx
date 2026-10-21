@@ -14,6 +14,7 @@ import {
 import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
 import { exportGstr1SummaryToPDF } from '@/utils/gstr1SummaryPdf';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
 import { Badge } from '@/components/gstr9/badge';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import {
@@ -2624,6 +2625,7 @@ const GSTR1DataPage: React.FC = () => {
         icon={<FileJson />}
         actions={isStaff ? (
           <>
+            <ChangeHistoryButton page="gstr1" clientId={selectedClient} month={selectedMonth} />
             {/* Version History — every Import / Upload / Refresh_Errors action
                 is recorded, so operators can audit who touched what and see
                 per-attempt error reports. Always visible when a client + month

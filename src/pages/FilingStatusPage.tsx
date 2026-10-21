@@ -22,6 +22,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { enqueueConfirmation } from '@/lib/gstReminders';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { generateFilingRecords } from '@/lib/filingRecords';
 import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
@@ -2282,7 +2283,8 @@ const FilingStatusPage: React.FC = () => {
         title="Filing Status"
         subtitle="GST return filing status for all clients"
         icon={<ClipboardCheck />}
-        actions={
+        actions={<>
+          <ChangeHistoryButton page="filing" month={selectedMonth} />
           <Button
             variant="outline"
             size="sm"
@@ -2294,7 +2296,7 @@ const FilingStatusPage: React.FC = () => {
             <Download className="h-3.5 w-3.5" />
             Export PDF
           </Button>
-        }
+        </>}
       />
 
       {/* Headline tiles for the open tab; the status tiles double as the status filter. */}

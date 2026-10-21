@@ -10,6 +10,8 @@ interface UserPermissions {
   manage_employees: boolean;
   unlock_sheets: boolean;
   view_version_history: boolean;
+  /** Change history: who changed what on the GST working pages (gst_change_log). */
+  view_change_history: boolean;
   add_edit_clients: boolean;
   delete_clients: boolean;
   edit_filing_status: boolean;
@@ -49,6 +51,7 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   manage_employees: false,
   unlock_sheets: false,
   view_version_history: false,
+  view_change_history: false,
   add_edit_clients: false,
   delete_clients: false,
   edit_filing_status: false,
@@ -105,6 +108,8 @@ interface AuthContextType {
   canManageEmployees: () => boolean;
   canUnlockSheets: () => boolean;
   canViewVersionHistory: () => boolean;
+  /** Change history page and the History buttons (superadmin, GST Manager, or the key). */
+  canViewChangeHistory: () => boolean;
   canResetPasswords: () => boolean;
   /** Set a client's app-login password or e-mail them a reset link: every staff member. */
   canResetClientPasswords: () => boolean;
@@ -562,6 +567,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return hasPermission('view_version_history');
   }, [user, hasPermission]);
 
+  const canViewChangeHistory = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return user.role === 'employee' && hasPermission('view_change_history');
+  }, [user, hasPermission]);
+
   const canResetPasswords = useCallback((): boolean => {
     return user?.role === 'superadmin' || user?.role === 'gst_manager';
   }, [user]);
@@ -805,6 +816,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canManageEmployees,
         canUnlockSheets,
         canViewVersionHistory,
+        canViewChangeHistory,
         canResetPasswords,
         canResetClientPasswords,
         canManageNoticeAlerts,
