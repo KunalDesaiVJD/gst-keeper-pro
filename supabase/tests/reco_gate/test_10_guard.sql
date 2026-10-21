@@ -90,8 +90,8 @@ BEGIN
   PERFORM t_raises(format($q$SELECT public.manual_source_allow(%L, %L, 'Sep-26', 'reco:suspended', 'portal password changed')$q$, s, c1),
     'MM/YYYY', 'the month must be MM/YYYY');
   PERFORM t_raises(format($q$SELECT public.manual_source_allow(%L, %L, '09/2026', 'reco suspended', 'portal password changed')$q$, s, c1),
-    'Unknown scope', 'the scope must look like kind:name');
-  a := public.manual_source_allow(s, c1, '09/2026', 'reco:suspended', 'portal password changed by the client');
+    'Unknown allowance scope', 'the scope must look like kind:name');
+  a := to_jsonb(public.manual_source_allow(s, c1, '09/2026', 'reco:suspended', 'portal password changed by the client'));
   PERFORM t_eq(a->>'allowed_by', s::text, 'the allowance records who allowed it');
   PERFORM t_eq(a->>'used_at', NULL, 'a new allowance is unused');
   PERFORM t_raises(format($q$SELECT public.manual_source_allow(%L, %L, '09/2026', 'reco:suspended', 'second one please')$q$, s, c1),
@@ -99,11 +99,11 @@ BEGIN
 
   -- The table itself refuses direct writes.
   PERFORM t_raises(format($q$INSERT INTO public.manual_source_allowances (client_id, period_month, scope, reason, allowed_by) VALUES (%L, '09/2026', 'reco:receivable', 'typed by hand', %L)$q$, c1, s),
-    'only by the superadmin', 'a direct insert of an allowance is refused');
+    'Only the superadmin gives or takes back', 'a direct insert of an allowance is refused');
   PERFORM t_raises(format($q$UPDATE public.manual_source_allowances SET used_at = now() WHERE id = %L$q$, a->>'id'),
-    'only by the superadmin', 'a direct update of an allowance is refused');
+    'Only the superadmin gives or takes back', 'a direct update of an allowance is refused');
   PERFORM t_raises(format($q$DELETE FROM public.manual_source_allowances WHERE id = %L$q$, a->>'id'),
-    'only by the superadmin', 'a direct delete of an allowance is refused');
+    'Only the superadmin gives or takes back', 'a direct delete of an allowance is refused');
 
   -- Used once, by staff.
   PERFORM t_raises(format($q$SELECT public.reco_manual_opening(%L, 'suspended', %L, '09/2026', 'csv', '{"igst":0,"cgst":1200,"sgst":1200}'::jsonb, NULL, NULL, '08/2026')$q$, x, c1),
@@ -121,7 +121,7 @@ BEGIN
     'No manual entry is allowed', 'an allowance is used once');
 
   -- Receivable: an allowed CSV upload carries ITC utilised and DRC-03.
-  a := public.manual_source_allow(s, c1, '09/2026', 'reco:receivable', 'GST portal down all day');
+  a := to_jsonb(public.manual_source_allow(s, c1, '09/2026', 'reco:receivable', 'GST portal down all day'));
   v := public.reco_manual_opening(m, 'receivable', c1, '09/2026', 'csv', '{"igst":10,"cgst":20,"sgst":30}'::jsonb,
     '{"igst":1,"cgst":2,"sgst":3}'::jsonb, '{"igst":0,"cgst":4,"sgst":4}'::jsonb, '07/2026');
   SELECT * INTO r FROM public.gst_receivable_reco WHERE client_id = c1 AND period_month = '09/2026';
@@ -144,54 +144,53 @@ BEGIN
   PERFORM t_eq(r.opening_csv_period_month IS NULL AND r.opening_csv_uploaded_by IS NULL AND r.opening_allowance_id IS NULL, true,
     'the pull clears the CSV stamps and the allowance');
   PERFORM t_eq(r.opening_cgst, 500::numeric, 'the pulled opening replaces the manual one');
-  v := public.reco_record_pull(x, 'receivable', c1, '09/2026', '{"igst":0,"cgst":900,"sgst":900}'::jsonb, '{"igst":0,"cgst":0,"sgst":0}'::jsonb, '{"igst":0,"cgst":0,"sgst":0}'::jsonb, '0.16.0');
+  PERFORM t_raises(format($q$SELECT public.reco_record_pull(%L, 'receivable', %L, '09/2026', '{"igst":0,"cgst":900,"sgst":900}'::jsonb)$q$, x, c1),
+    'saved only for a staff member', 'a pull asked by a non-staff id is refused');
+  v := public.reco_record_pull(m, 'receivable', c1, '09/2026', '{"igst":0,"cgst":900,"sgst":900}'::jsonb, '{"igst":0,"cgst":0,"sgst":0}'::jsonb, '{"igst":0,"cgst":0,"sgst":0}'::jsonb, '0.16.0');
   SELECT * INTO r FROM public.gst_receivable_reco WHERE client_id = c1 AND period_month = '09/2026';
-  PERFORM t_eq(r.opening_portal_pulled_by, NULL::uuid, 'a pull asked by a non-staff id is saved without a name');
+  PERFORM t_eq(r.opening_portal_pulled_by, m, 'the receivable pull names who asked');
   PERFORM t_eq(r.utilized_cgst::text || '/' || r.drc_cgst::text || '/' || r.books_closing_cgst::text, '0/0/300', 'the pull writes utilised and DRC-03, not the books');
   PERFORM t_raises(format($q$SELECT public.reco_record_pull(%L, 'suspended', %L, '09/2026', '{"igst":"x","cgst":1,"sgst":1}'::jsonb)$q$, e, c1),
     'not a number', 'a pulled figure must be a number');
   PERFORM t_raises(format($q$SELECT public.reco_record_pull(%L, 'ledger', %L, '09/2026', '{"igst":0,"cgst":1,"sgst":1}'::jsonb)$q$, e, c1),
     'Unknown reco', 'only the two recos');
 
-  -- Override: the superadmin and GST Managers, with a reason; the time is the database's.
-  INSERT INTO public.suspended_reco (client_id, period_month, opening_cgst, opening_sgst, opening_igst,
-    opening_override_justification, opening_override_at, opening_override_by, updated_by, updated_at)
-  VALUES (c1, '09/2026', 450, 500, 0, 'Portal shows Rs 50 reclaimed late', '2020-01-01', m, m, now())
-  ON CONFLICT (client_id, period_month) DO UPDATE SET opening_cgst = EXCLUDED.opening_cgst, opening_sgst = EXCLUDED.opening_sgst,
-    opening_igst = EXCLUDED.opening_igst, opening_override_justification = EXCLUDED.opening_override_justification,
-    opening_override_at = EXCLUDED.opening_override_at, opening_override_by = EXCLUDED.opening_override_by,
-    updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at;
+  -- Override: the superadmin and GST Managers, through reco_override_opening,
+  -- with a reason; the time is the database's; a direct write is refused.
+  v := public.reco_override_opening(m, 'suspended', c1, '09/2026', '{"igst":0,"cgst":450,"sgst":500}'::jsonb, 'Portal shows Rs 50 reclaimed late');
   SELECT * INTO r FROM public.suspended_reco WHERE client_id = c1 AND period_month = '09/2026';
   PERFORM t_eq(r.opening_cgst, 450::numeric, 'a GST Manager can override the opening');
   PERFORM t_eq(r.opening_source, 'portal', 'the override keeps the source');
-  PERFORM t_eq(r.opening_override_at > '2020-01-02'::timestamptz, true, 'the override time is the database''s');
-  PERFORM t_raises(format($q$UPDATE public.suspended_reco SET opening_cgst = 1, opening_override_justification = 'employee wants it', opening_override_by = %L, opening_override_at = now() WHERE client_id = %L AND period_month = '09/2026'$q$, e, c1),
+  PERFORM t_eq(r.opening_override_by, m, 'the override names who made it');
+  PERFORM t_eq(r.opening_override_base, '{"igst":0,"cgst":500,"sgst":500}'::jsonb, 'and keeps the pulled figure it replaced');
+  PERFORM t_eq(r.opening_override_at > now() - interval '1 minute', true, 'the override time is the database''s');
+  PERFORM t_raises(format($q$SELECT public.reco_override_opening(%L, 'suspended', %L, '09/2026', '{"igst":0,"cgst":1,"sgst":1}'::jsonb, 'employee wants it')$q$, e, c1),
     'Only the superadmin or a GST Manager', 'an employee cannot override');
-  PERFORM t_raises(format($q$UPDATE public.suspended_reco SET opening_cgst = 1, opening_override_justification = 'ok', opening_override_by = %L, opening_override_at = now() WHERE client_id = %L AND period_month = '09/2026'$q$, s, c1),
+  PERFORM t_raises(format($q$SELECT public.reco_override_opening(%L, 'suspended', %L, '09/2026', '{"igst":0,"cgst":1,"sgst":1}'::jsonb, 'ok')$q$, s, c1),
     'Give a reason', 'an override needs a reason');
-  PERFORM t_raises(format($q$UPDATE public.suspended_reco SET opening_cgst = 1, opening_source = 'csv', opening_override_justification = 'mixed in a source', opening_override_by = %L, opening_override_at = now() WHERE client_id = %L AND period_month = '09/2026'$q$, s, c1),
-    'comes only from the portal pull', 'an override cannot change the source');
-  UPDATE public.suspended_reco SET portal_cgst = 7, opening_override_justification = r.opening_override_justification,
-    opening_override_at = r.opening_override_at, opening_override_by = r.opening_override_by
-   WHERE client_id = c1 AND period_month = '09/2026';
+  PERFORM t_raises(format($q$UPDATE public.suspended_reco SET opening_cgst = 1, opening_override_justification = 'typed by hand', opening_override_by = %L, opening_override_at = now() WHERE client_id = %L AND period_month = '09/2026'$q$, s, c1),
+    'overridden only with the Override button', 'a direct override, even naming the superadmin, is refused');
+  PERFORM t_raises(format($q$UPDATE public.suspended_reco SET opening_cgst = 1 WHERE client_id = %L AND period_month = '09/2026'$q$, c1),
+    'comes only from the portal pull', 'an overridden opening is not changed by a direct write');
+  UPDATE public.suspended_reco SET portal_cgst = 7 WHERE client_id = c1 AND period_month = '09/2026';
   PERFORM t_raises(format($q$UPDATE public.suspended_reco SET opening_override_justification = NULL, opening_override_at = NULL, opening_override_by = NULL WHERE client_id = %L AND period_month = '09/2026'$q$, c1),
-    'cleared only by a new pull', 'an override is not removed by hand');
+    'overridden only with the Override button', 'an override is not removed by hand');
   -- The superadmin overrides too.
-  UPDATE public.gst_receivable_reco SET opening_cgst = 800, opening_override_justification = 'Matches the ledger printout', opening_override_by = s, opening_override_at = now()
-   WHERE client_id = c1 AND period_month = '09/2026';
-  -- A new pull clears the override.
-  PERFORM public.reco_record_pull(m, 'suspended', c1, '09/2026', '{"igst":0,"cgst":500,"sgst":500}'::jsonb);
+  PERFORM public.reco_override_opening(s, 'receivable', c1, '09/2026', '{"igst":0,"cgst":800,"sgst":900}'::jsonb, 'Matches the ledger printout');
+  -- A new pull of another figure clears the override.
+  PERFORM public.reco_record_pull(m, 'suspended', c1, '09/2026', '{"igst":0,"cgst":520,"sgst":500}'::jsonb);
   SELECT * INTO r FROM public.suspended_reco WHERE client_id = c1 AND period_month = '09/2026';
-  PERFORM t_eq(r.opening_override_justification IS NULL AND r.opening_override_by IS NULL, true, 'a new pull clears a stale override');
+  PERFORM t_eq(r.opening_override_justification IS NULL AND r.opening_override_by IS NULL AND r.opening_override_base IS NULL, true, 'a new pull of another figure clears a stale override');
+  PERFORM t_eq(r.opening_cgst, 520::numeric, 'and brings the new figure');
   PERFORM t_eq(r.opening_portal_pulled_by, m, 'and names the new puller');
 
-  -- Revoke: the superadmin's alone, once.
+  -- Revoke: the superadmin's alone; a second revoke changes nothing.
   SELECT to_jsonb(z) INTO a FROM public.manual_source_allowances z WHERE client_id = c1 AND scope = 'reco:suspended' AND revoked_at IS NULL;
   PERFORM t_raises(format($q$SELECT public.manual_source_revoke(%L, %L)$q$, e, a->>'id'), 'Only the superadmin', 'an employee cannot revoke');
-  v := public.manual_source_revoke(s, (a->>'id')::uuid);
+  v := to_jsonb(public.manual_source_revoke(s, (a->>'id')::uuid));
   PERFORM t_eq(v->>'revoked_by', s::text, 'the revoke records who');
-  PERFORM t_raises(format($q$SELECT public.manual_source_revoke(%L, %L)$q$, s, a->>'id'), 'already revoked', 'a revoke happens once');
-  a := public.manual_source_allow(s, c1, '09/2026', 'reco:suspended', 'portal locked the account again');
+  PERFORM t_eq(to_jsonb(public.manual_source_revoke(s, (a->>'id')::uuid))->>'revoked_at', v->>'revoked_at', 'a second revoke changes nothing');
+  a := to_jsonb(public.manual_source_allow(s, c1, '09/2026', 'reco:suspended', 'portal locked the account again'));
   PERFORM t_eq(a->>'revoked_at', NULL, 'a new allowance can follow a revoked one');
 
   -- Everything is in the log, with who and why.
@@ -207,6 +206,8 @@ BEGIN
     'and who overrode');
   SELECT count(*) INTO n FROM public.reco_opening_log WHERE client_id = c1 AND period_month = '09/2026' AND reco = 'suspended' AND action = 'pull';
   PERFORM t_eq(n, 2, 'each pull is logged');
+  PERFORM t_eq((SELECT count(*) FROM public.reco_opening_log WHERE client_id = c1 AND period_month = '09/2026' AND reco = 'suspended' AND action = 'pull'
+                   AND actor_id = e AND ext_version = '0.16.0'), 1::bigint, 'with who pulled and the extension version');
   PERFORM t_raises(format($q$INSERT INTO public.reco_opening_log (reco, client_id, period_month, action) VALUES ('suspended', %L, '09/2026', 'pull')$q$, c1),
     'row-level security', 'the log is not writable with the public key');
 
@@ -215,17 +216,21 @@ BEGIN
   SELECT count(*) INTO n FROM public.reco_opening_log WHERE client_id = c1 AND period_month = '05/2026' AND action = 'delete';
   PERFORM t_eq(n, 1, 'a cleared row is logged');
 
-  -- What the app and the extension call is open to the public key; the internal helper is not.
+  -- What the app and the extension call is open to the public key; the internal helpers are not.
   PERFORM t_eq(has_function_privilege('anon', 'public.gstr3b_push_gate(uuid,text)', 'execute'), true, 'anon may call gstr3b_push_gate');
   PERFORM t_eq(has_function_privilege('anon', 'public.manual_source_allow(uuid,uuid,text,text,text)', 'execute'), true, 'anon may call manual_source_allow');
   PERFORM t_eq(has_function_privilege('anon', 'public.manual_source_revoke(uuid,uuid)', 'execute'), true, 'anon may call manual_source_revoke');
-  PERFORM t_eq(has_function_privilege('anon', 'public.reco_record_pull(uuid,text,uuid,text,jsonb,jsonb,jsonb,text)', 'execute'), true, 'anon may call reco_record_pull');
+  PERFORM t_eq(has_function_privilege('anon', 'public.reco_record_pull(uuid,text,uuid,text,jsonb,jsonb,jsonb,text,boolean)', 'execute'), true, 'anon may call reco_record_pull');
   PERFORM t_eq(has_function_privilege('anon', 'public.reco_manual_opening(uuid,text,uuid,text,text,jsonb,jsonb,jsonb,text)', 'execute'), true, 'anon may call reco_manual_opening');
+  PERFORM t_eq(has_function_privilege('anon', 'public.reco_override_opening(uuid,text,uuid,text,jsonb,text)', 'execute'), true, 'anon may call reco_override_opening');
+  PERFORM t_eq(has_function_privilege('anon', 'public.reco_clear(uuid,text,uuid,text[])', 'execute'), true, 'anon may call reco_clear');
   PERFORM t_eq(has_function_privilege('anon', 'public.suspended_reco_difference(uuid,text)', 'execute'), true, 'anon may call suspended_reco_difference');
   PERFORM t_eq(has_function_privilege('anon', 'public.gst_receivable_reco_difference(uuid,text)', 'execute'), true, 'anon may call gst_receivable_reco_difference');
-  PERFORM t_eq(has_function_privilege('anon', 'public.manual_source_use(uuid,uuid,text,text)', 'execute'), false, 'anon may not call manual_source_use');
-  PERFORM t_raises(format($q$SELECT public.manual_source_use(%L, %L, '09/2026', 'reco:suspended')$q$, e, c1),
-    'permission denied', 'manual_source_use is refused to the public key');
+  PERFORM t_eq(has_function_privilege('anon', 'public.manual_source_take(uuid,uuid,text,text)', 'execute'), false, 'anon may not call manual_source_take');
+  PERFORM t_eq(has_function_privilege('anon', 'public.reco_door(text,uuid,text,text)', 'execute'), false, 'anon may not call reco_door');
+  PERFORM t_eq(to_regprocedure('public.reco_record_pull(uuid,text,uuid,text,jsonb,jsonb,jsonb,text)') IS NULL, true, 'the first draft''s pull signature is gone');
+  PERFORM t_raises(format($q$SELECT public.manual_source_take(%L, %L, '09/2026', 'reco:suspended')$q$, e, c1),
+    'permission denied', 'manual_source_take is refused to the public key');
 END $$;
 
 -- A client's deletion still removes its allowances (the cascade passes the guard).

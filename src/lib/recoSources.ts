@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { compareVersions } from '@/lib/extensionVersion';
+import { manualSourceLabel, type ManualSourceAllowance } from '@/lib/manualSource';
 
 // Where a Suspended Reco / GST Receivable Reco opening comes from (the firm's
 // decisions of 21 Oct 2026, migration 20261021120000):
@@ -8,10 +9,13 @@ import { compareVersions } from '@/lib/extensionVersion';
 //  - the CSV upload and Not Applicable need a manual entry the superadmin
 //    allowed for that client and month (manual_source_allowances, scope
 //    'reco:suspended' / 'reco:receivable'); reco_manual_opening uses it once;
-//  - an override of the opening is the superadmin's or a GST Manager's;
-//  - Save writes only what staff type (books closing, the portal_* snapshot).
-// The database refuses anything else (reco_source_guard). Before 06/2026
-// nothing changes. docs/2B_RECONCILIATION_FLOW.md §13.
+//  - an override of the opening is the superadmin's or a GST Manager's,
+//    through reco_override_opening (who acts is checked there);
+//  - Save writes only what staff type (books closing, the portal_* snapshot);
+//  - Clear Data deletes through reco_clear, so the log names who cleared.
+// The database refuses anything else (reco_source_guard,
+// opening_override_guard). Before 06/2026 the opening is typed as before.
+// docs/2B_RECONCILIATION_FLOW.md §13.
 
 export type OpeningSource = 'manual' | 'csv' | 'not_applicable' | 'portal';
 export type RecoKind = 'suspended' | 'receivable';
@@ -114,19 +118,64 @@ export async function recordManualOpening(args: {
   if (error) throw error;
 }
 
+/** The opening balance override (superadmin or GST Manager, a reason of at least 5 characters). */
+export async function recordOverride(args: {
+  actorId: string;
+  kind: RecoKind;
+  clientId: string;
+  periodMonth: string;
+  opening: Heads;
+  reason: string;
+}): Promise<void> {
+  const { error } = await supabase.rpc('reco_override_opening', {
+    p_actor_id: args.actorId,
+    p_reco: args.kind,
+    p_client_id: args.clientId,
+    p_period: args.periodMonth,
+    p_opening: args.opening,
+    p_reason: args.reason,
+  });
+  if (error) throw error;
+}
+
+/** Clear Data on a reco: deletes the client's rows for these months; the log names who cleared. */
+export async function clearReco(actorId: string, kind: RecoKind, clientId: string, periodMonths: string[]): Promise<number> {
+  const { data, error } = await supabase.rpc('reco_clear', {
+    p_actor_id: actorId, p_reco: kind, p_client_id: clientId, p_periods: periodMonths,
+  });
+  if (error) throw error;
+  return Number(data) || 0;
+}
+
+/**
+ * Where a manual (allowed) opening stands: the allowance it was entered
+ * under, from the rows of manual_source_allowances for this client, month
+ * and reco. A revoked allowance no longer counts (the GSTR-3B gate says
+ * "revoked"), so it gives no "manual (allowed by ...)" label.
+ */
+export function openingManualState(
+  allowances: ManualSourceAllowance[], openingAllowanceId: string | null | undefined, names: Map<string, string>,
+): { label: string | null; revoked: boolean } {
+  const a = openingAllowanceId ? allowances.find((x) => x.id === openingAllowanceId) : undefined;
+  if (!a) return { label: null, revoked: false };
+  if (a.revoked_at) return { label: null, revoked: true };
+  return { label: manualSourceLabel(names.get(a.allowed_by), a.reason), revoked: false };
+}
+
 export interface RecoLogEntry {
   id: string;
   action: string;
   source: string | null;
   actor_id: string | null;
   reason: string | null;
+  ext_version?: string | null;
   logged_at: string;
 }
 
 /** The latest changes to a reco's portal side (pull, manual entry, override, delete). */
 export async function fetchRecoLog(kind: RecoKind, clientId: string, periodMonth: string, limit = 8): Promise<RecoLogEntry[]> {
   const { data, error } = await supabase.from('reco_opening_log')
-    .select('id, action, source, actor_id, reason, logged_at')
+    .select('id, action, source, actor_id, reason, ext_version, logged_at')
     .eq('reco', kind).eq('client_id', clientId).eq('period_month', periodMonth)
     .order('logged_at', { ascending: false }).limit(limit);
   if (error) return [];
@@ -148,6 +197,6 @@ export const fmtDateTime = (iso: string | null | undefined) =>
 export const fmtDate = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 
-/** "Pulled from portal 21 Oct 2026 by Asha" */
-export const pulledLabel = (at: string | null | undefined, byName: string | null | undefined) =>
-  `Pulled from portal ${fmtDate(at)}${byName ? ` by ${byName}` : ''}`;
+/** "Pulled from portal 21 Oct 2026 by Asha" (", no balance on the portal" for an empty month) */
+export const pulledLabel = (at: string | null | undefined, byName: string | null | undefined, empty?: boolean) =>
+  `Pulled from portal ${fmtDate(at)}${byName ? ` by ${byName}` : ''}${empty ? ', no balance on the portal' : ''}`;

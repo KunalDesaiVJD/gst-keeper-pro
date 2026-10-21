@@ -185,14 +185,19 @@ const API = {
   // 0.16.0: a reco pull is saved through reco_record_pull (migration
   // 20261021120000), the one way in for portal figures from 06/2026: the
   // database stamps when and who (the app user who asked, from the page's
-  // message; none for the popup's full sync) and clears a stale override, CSV
-  // stamps and manual allowance. A direct table write is refused there.
+  // message; the popup's full sync has none and does not save the recos),
+  // keeps an override made against the same figure and closes an open
+  // manual allowance. A direct table write is refused there.
   // reco: 'suspended' (reversal ledger) or 'receivable' (credit ledger);
   // opening / utilised / drc: { igst, cgst, sgst }; utilised null when no
   // ledger row was read.
-  recordRecoPull: ({ reco, clientId, period, actorId, opening, utilised, drc }) => rpc('reco_record_pull', {
+  // noRows: the month's statement loaded with no balance row (the portal
+  // says it is empty); saved as 0 and marked so. The database refuses a pull
+  // without a staff actorId.
+  recordRecoPull: ({ reco, clientId, period, actorId, opening, utilised, drc, noRows }) => rpc('reco_record_pull', {
     p_actor_id: actorId || null, p_reco: reco, p_client_id: clientId, p_period: period,
-    p_opening: opening, p_utilised: utilised || null, p_drc: drc || null, p_ext_version: EXT_VERSION,
+    p_opening: opening || null, p_utilised: utilised || null, p_drc: drc || null, p_ext_version: EXT_VERSION,
+    p_no_rows: !!noRows,
   }),
   // 0.16.0: the GSTR-3B push gate (gstr3b_push_gate), the same function the
   // app's GSTR-3B page asks. Returns { ok, reasons: [{ code, message }], ... }.

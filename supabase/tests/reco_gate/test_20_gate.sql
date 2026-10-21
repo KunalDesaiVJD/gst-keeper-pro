@@ -114,7 +114,7 @@ BEGIN
   -- A Save without a pull: not pulled.
   g := public.gstr3b_push_gate('20000000-0000-0000-0000-000000000003', '09/2026');
   PERFORM t_eq((g->>'ok')::boolean, false, 'a saved but not pulled row blocks');
-  PERFORM t_eq(g->'reasons'->0->>'message', 'Suspended Reco for Sep 2026 is not pulled from the portal (its opening was entered by hand).', 'and says so');
+  PERFORM t_eq(g->'reasons'->0->>'message', 'Suspended Reco for Sep 2026 has no portal pull yet.', 'and says so');
 
   -- A difference blocks, with the amount; within ₹10 a head is 0.
   g := public.gstr3b_push_gate('20000000-0000-0000-0000-000000000004', '09/2026');
@@ -128,9 +128,8 @@ BEGIN
   -- Overridden by a GST Manager to the books: passes, and says who overrode.
   g := public.gstr3b_push_gate('20000000-0000-0000-0000-000000000005', '09/2026');
   PERFORM t_eq((g->>'ok')::boolean, false, 'before the override it is blocked');
-  UPDATE public.suspended_reco SET opening_cgst = 0, opening_override_justification = 'Books are right, portal reclaim pending',
-         opening_override_by = m, opening_override_at = now()
-   WHERE client_id = '20000000-0000-0000-0000-000000000005' AND period_month = '09/2026';
+  PERFORM public.reco_override_opening(m, 'suspended', '20000000-0000-0000-0000-000000000005', '09/2026',
+    '{"igst":0,"cgst":0,"sgst":0}', 'Books are right, portal reclaim pending');
   g := public.gstr3b_push_gate('20000000-0000-0000-0000-000000000005', '09/2026');
   PERFORM t_eq((g->>'ok')::boolean, true, 'an override that clears the difference passes');
   PERFORM t_eq(g->'suspended'->'override'->>'by_name', 'Mehul', 'and names who overrode');

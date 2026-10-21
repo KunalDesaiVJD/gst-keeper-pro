@@ -2,7 +2,7 @@ import React from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { gatePartLabel, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
+import { gatePartLabel, gateReadyText, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
 
 interface Props {
   gate: Gstr3bGateResult | null;
@@ -39,9 +39,10 @@ const Gstr3bGateNote: React.FC<Props> = ({ gate, loading, onRecheck, compact, cl
       <div className="min-w-0 flex-1 space-y-0.5">
         <p className="font-medium text-foreground">
           {loading ? 'Checking the GSTR-3B push gate…'
-            : ok ? 'GSTR-3B push: ready. Both recos are pulled and tally.'
+            : ok ? 'GSTR-3B push: ready.'
             : 'GSTR-3B push and JSON download are locked.'}
         </p>
+        {ok && <p className="text-muted-foreground">{gateReadyText(gate)}</p>}
         {!loading && gate && !ok && (
           compact
             ? <p className="text-muted-foreground">{gate.reasons.map((r) => r.message).join(' ')}</p>

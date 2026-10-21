@@ -34,6 +34,8 @@ export interface GateRecoPart {
   difference?: GateDifference | null;
   /** Suspended Reco: the Builder + NO_ITC waiver of the difference. */
   waived?: boolean;
+  /** The pull found no balance row on the portal for the month (saved as 0). */
+  empty?: boolean;
   required?: boolean;
   required_pull?: boolean;
 }
@@ -94,12 +96,39 @@ export const gateReasonsText = (g: Gstr3bGateResult | null | undefined): string 
 const fmtDate = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 
+/**
+ * What a passing gate rests on, one sentence per reco, so "ready" never
+ * claims more than the gate checked: pulled or an allowed manual entry, a
+ * waived difference (Builder, no ITC), no pull needed before Jun 2026, an
+ * override.
+ */
+export function gateReadyText(g: Gstr3bGateResult | null | undefined): string {
+  if (!g || !g.ok) return '';
+  const sentence = (name: string, p: GateRecoPart | undefined, required: boolean): string => {
+    if (!p) return '';
+    const total = Number(p.difference?.total ?? 0);
+    const waived = !!p.waived && total !== 0;
+    let text: string;
+    if (p.status === 'pulled') text = waived ? `${name} is pulled; its difference is waived (Builder, no ITC).` : `${name} is pulled and has no difference.`;
+    else if (p.status === 'manual') text = waived ? `${name} is a manual entry (allowed); its difference is waived (Builder, no ITC).` : `${name} is a manual entry (allowed) with no difference.`;
+    else if (!required) text = waived ? `${name}: its difference is waived (Builder, no ITC); no pull is needed before Jun 2026.` : `${name} has no difference (no pull is needed before Jun 2026).`;
+    else text = `${name} is not pulled.`;
+    if (p.empty && p.status === 'pulled') text += ' The portal had no balance for the month.';
+    if (p.override) text += ` Its opening was overridden by ${p.override.by_name || 'someone'}.`;
+    return text;
+  };
+  return [
+    sentence('Suspended Reco', g.suspended, !!g.suspended?.required_pull),
+    g.receivable?.required ? sentence('GST Receivable Reco', g.receivable, true) : '',
+  ].filter(Boolean).join(' ');
+}
+
 /** "Pulled from portal 21 Oct 2026 by Asha", "manual (allowed by X: reason)", or why it is not. */
 export function gatePartLabel(part: GateRecoPart | null | undefined): string {
   if (!part) return '';
   switch (part.status) {
     case 'pulled':
-      return `Pulled from portal ${fmtDate(part.pulled_at)}${part.pulled_by_name ? ` by ${part.pulled_by_name}` : ''}`;
+      return `Pulled from portal ${fmtDate(part.pulled_at)}${part.pulled_by_name ? ` by ${part.pulled_by_name}` : ''}${part.empty ? ', no balance on the portal' : ''}`;
     case 'manual':
       return manualSourceLabel(part.allowance?.allowed_by_name, part.allowance?.reason);
     case 'revoked':
@@ -107,6 +136,6 @@ export function gatePartLabel(part: GateRecoPart | null | undefined): string {
     case 'missing':
       return 'Not pulled';
     default:
-      return 'Not pulled (entered by hand)';
+      return part.source === 'csv' || part.source === 'not_applicable' ? 'Not pulled (entered by hand, not allowed)' : 'Not pulled yet';
   }
 }

@@ -12,10 +12,13 @@
 //   - the Push History row carries the gate it passed, and is written without
 //     it on a database that lacks the column;
 //   - startLedgerPull keeps the app user who asked (actorId) on the job, and
-//     recordRecoPull sends it with the figures to rpc/reco_record_pull;
+//     recordRecoPull sends it with the figures (or p_no_rows for an empty
+//     month) to rpc/reco_record_pull;
 //   - content.js saves both ledgers through recordRecoPull with the job's
-//     actor (no direct table write left), and classifyLedgerRows reads ITC
-//     utilised as 0 when ledger rows were read with no set-off debit.
+//     actor (no direct table write left), saves nothing without one (the
+//     popup's full sync), saves an empty reversal month only when the page
+//     says there are no records, and classifyLedgerRows reads ITC utilised
+//     as 0 when ledger rows were read with no set-off debit.
 //   node test/16-reco-pull-gate.test.mjs
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -194,13 +197,27 @@ reset();
   ok(p && p.body.p_opening.cgst === 2 && p.body.p_utilised.cgst === 0 && p.body.p_drc.cgst === 4 && p.body.p_ext_version === '0.16.0',
     'with the figures and the extension version');
   ok(calls.every((c) => !/rest\/v1\/(suspended_reco|gst_receivable_reco)/.test(c.url)), 'no direct write to the reco tables');
+  ok(p && p.body.p_no_rows === false, 'a pull with a balance row says so (p_no_rows false)');
+  await bgCall('recordRecoPull', { reco: 'suspended', clientId: 'c1', period: '09/2026', actorId: 'u-9', opening: null, noRows: true });
+  const q = rpcCalls('reco_record_pull')[1];
+  ok(q && q.body.p_no_rows === true && q.body.p_opening === null && q.body.p_actor_id === 'u-9' && q.body.p_reco === 'suspended',
+    'an empty reversal month is sent as p_no_rows with no figures');
 }
 
 // ── content.js: both ledgers saved through the pull door, with the actor ───
 const content = read('content.js');
 ok(!/upsertReco/.test(content) && !/upsertReco/.test(read('background.js')) && !/upsertReco/.test(read('db.js')), 'the direct reco write (upsertReco) is gone');
-ok((content.match(/GSTKdb\.recordRecoPull\(\{\s*reco: '(receivable|suspended)', clientId: cur\.clientId, period: job\.period, actorId: job\.actorId \|\| null,/g) || []).length === 2,
+ok((content.match(/GSTKdb\.recordRecoPull\(\{\s*reco: '(receivable|suspended)', clientId: cur\.clientId, period: job\.period, actorId: job\.actorId,/g) || []).length === 2,
   'handleLedger and handleReversal both save through recordRecoPull with the job\'s actor');
+// A pull nobody can be named for is not saved (the database refuses it too):
+// the popup's full sync reads the ledgers and says it did not save them.
+ok(/if \(bal && !job\.actorId\) \{[\s\S]{0,400}?not saved: this sync has no app user/.test(content)
+  && /if \(\(bal \|\| noRows\) && !job\.actorId\) \{[\s\S]{0,400}?not saved: this sync has no app user/.test(content),
+  'without an app user (popup full sync) neither ledger is saved, and the banner says so');
+// The reversal ledger with no balance row: saved as 0 only when the page says the month is empty.
+ok(/const noRows = !bal && ledgerSaysNoRecords\(document\.body && document\.body\.innerText\);/.test(content)
+  && /opening: bal \? \{ igst: bal\.igst, cgst: bal\.cgst, sgst: bal\.sgst \} : null, noRows: !bal,/.test(content),
+  'an empty reversal month is saved as a pull with noRows, only when the portal says there are no records');
 ok(/gate: \(job\.gstr3b && job\.gstr3b\.gate\) \|\| null/.test(content), 'finishGstr3b passes the gate to the Push History row');
 
 // classifyLedgerRows, cut from content.js as test 07 does.
@@ -216,6 +233,18 @@ const rcm = { isDebit: true, text: 'Debit reverse charge', igst: 0, cgst: 99, sg
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 ok(eq(cx.classifyLedgerRows([credit]).utilised, { igst: 0, cgst: 0, sgst: 0 }), 'rows read with no set-off debit: ITC utilised is 0');
 ok(cx.classifyLedgerRows([]).utilised === null, 'no ledger row read: ITC utilised is not saved');
+// ledgerSaysNoRecords, cut the same way.
+{
+  const sig2 = '\n  function ledgerSaysNoRecords(';
+  const k = content.indexOf(sig2);
+  const src2 = content.slice(k + 1, content.indexOf('\n  }\n', k) + 4);
+  vm.runInContext(src2 + '\nthis.ledgerSaysNoRecords = ledgerSaysNoRecords;', cx);
+  ok(cx.ledgerSaysNoRecords('Viewing details from 01/09/2026 To 30/09/2026 No Records Found') === true
+    && cx.ledgerSaysNoRecords('No record(s) found for the selected period') === true
+    && cx.ledgerSaysNoRecords('No data available') === true, 'the portal\'s "no records" words are read as an empty month');
+  ok(cx.ledgerSaysNoRecords('Opening Balance 0 1,200 1,200 0 Closing Balance') === false && cx.ledgerSaysNoRecords('') === false
+    && cx.ledgerSaysNoRecords(null) === false, 'a page without them is not');
+}
 const c3 = cx.classifyLedgerRows([credit, setoff, drc, rcm]);
 ok(eq(c3.utilised, { igst: 10, cgst: 200, sgst: 200 }) && eq(c3.drc, { igst: 0, cgst: 7, sgst: 7 }), 'the set-off debit is ITC utilised; other debits but reverse charge are DRC-03');
 

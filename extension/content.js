@@ -3291,6 +3291,14 @@
     return { utilised, drc };
   }
 
+  // 0.16.0: whether the ledger page says the range has nothing in it ("No
+  // records found" and the like). Asked only after the month loaded and no
+  // balance row came in 25 seconds, so a page that is still drawing is not
+  // read as empty; without such words nothing is saved.
+  function ledgerSaysNoRecords(text) {
+    return /\bno\s+(?:records?|data|transactions?|entries|entry|details?)(?:\s+(?:found|available|to\s+display))?\b/i.test(String(text || ''));
+  }
+
   async function handleLedger(job, cur, progress) {
     if (!/detailedledger/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/ledger/detailedledger'; return; }
     banner('Reading credit-ledger opening balance…' + progress);
@@ -3339,12 +3347,18 @@
       'DRC-03 / other   : IGST=' + drc.igst + '  CGST=' + drc.cgst + '  SGST=' + drc.sgst,
       '-> GST Receivable Reco gets Opening + ITC utilised + DRC-03 above.',
     ]);
-    if (bal) {
+    if (bal && !job.actorId) {
+      // 0.16.0: a pull is saved only under the app user who asked for it
+      // (the reco pages' Pull). The popup's full sync has none: it reads but
+      // does not save the recos.
+      banner('Credit ledger read, but not saved: this sync has no app user. Use Pull on the GST Receivable Reco page. Now the reversal ledger…' + progress, '#f59e0b');
+      await sleep(2500);
+    } else if (bal) {
       // 0.16.0: saved through reco_record_pull (the database stamps when and
       // who asked; a direct table write is refused from 06/2026).
       try {
         await GSTKdb.recordRecoPull({
-          reco: 'receivable', clientId: cur.clientId, period: job.period, actorId: job.actorId || null,
+          reco: 'receivable', clientId: cur.clientId, period: job.period, actorId: job.actorId,
           opening: { igst: bal.igst, cgst: bal.cgst, sgst: bal.sgst },
           utilised: utilised ? { igst: utilised.igst, cgst: utilised.cgst, sgst: utilised.sgst } : null,
           drc: { igst: drc.igst, cgst: drc.cgst, sgst: drc.sgst },
@@ -3390,29 +3404,40 @@
     // Suspended Reco takes the CLOSING balance of the month's range (the balance
     // after the previous month's return was filed) — confirmed by the user.
     const bal = await readLedgerBalance('closing');
+    // 0.16.0: the month loaded (per.ok) but has no balance row. When the page
+    // says there is nothing for the range, that is the portal's answer for a
+    // client with no reversals (Nil returns): saved as a pull of 0, marked so.
+    const noRows = !bal && ledgerSaysNoRecords(document.body && document.body.innerText);
     debugPanel([
       'STEP: ITC-Reversal ledger  (' + location.pathname + ')',
       'requested period : ' + per.from + ' – ' + per.to,
       'page is showing  : ' + (shownPeriod() || '(none)'),
-      'CLOSING row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : '(NO Closing Balance data row found)'),
+      'CLOSING row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : noRows ? '(no balance row: the portal says there are no records for the month)' : '(NO Closing Balance data row found)'),
       'parsed           : IGST=' + (bal ? bal.igst : '?') + '  CGST=' + (bal ? bal.cgst : '?') + '  SGST=' + (bal ? bal.sgst : '?') + '  Cess=' + (bal ? bal.cess : '?'),
       '-> Suspended Reco gets CGST/SGST/IGST above.',
     ]);
-    if (bal) {
+    if ((bal || noRows) && !job.actorId) {
+      // 0.16.0: saved only under the app user who asked (see handleLedger).
+      banner('Reversal ledger read, but not saved: this sync has no app user. Use Pull on the Suspended Reco page.' + progress, '#f59e0b');
+      await sleep(2500);
+    } else if (bal || noRows) {
       // 0.16.0: saved through reco_record_pull, as the credit ledger above.
       try {
         await GSTKdb.recordRecoPull({
-          reco: 'suspended', clientId: cur.clientId, period: job.period, actorId: job.actorId || null,
-          opening: { igst: bal.igst, cgst: bal.cgst, sgst: bal.sgst },
+          reco: 'suspended', clientId: cur.clientId, period: job.period, actorId: job.actorId,
+          opening: bal ? { igst: bal.igst, cgst: bal.cgst, sgst: bal.sgst } : null, noRows: !bal,
         });
-        banner('Reversal ledger → IGST ' + inr(bal.igst) + ' · CGST ' + inr(bal.cgst) + ' · SGST ' + inr(bal.sgst) + ' — saved.' + progress, '#16a34a');
+        banner(bal
+          ? 'Reversal ledger → IGST ' + inr(bal.igst) + ' · CGST ' + inr(bal.cgst) + ' · SGST ' + inr(bal.sgst) + ' — saved.' + progress
+          : 'Reversal ledger → no balance on the portal for the month — saved as 0.' + progress, '#16a34a');
       } catch (e) {
         banner('Reversal ledger read, but NOT saved: ' + ((e && e.message) || 'unknown error') + '.' + progress, '#dc2626');
         await sleep(2500);
       }
       await sleep(1500);
     } else {
-      banner('No reversal opening-balance row found.' + progress, '#f59e0b');
+      banner('No reversal balance row found, and the portal did not say the month is empty: nothing saved.' + progress, '#f59e0b');
+      await sleep(2500);
     }
     // mode 'ledgers' (the reco pages' own Pull button) stops right here —
     // credit ledger + reversal ledger is exactly what it's for. No mode

@@ -13,7 +13,13 @@
 //    and Not Applicable go through reco_manual_opening (the allowance), the
 //    Pull sends who asked and needs extension 0.16.0;
 //  - a pulled GST Receivable Reco takes ITC utilised from the ledger (none
-//    seen is 0); only a row not yet pulled shows the GSTR-1 estimate.
+//    seen is 0); only a row not yet pulled shows the GSTR-1 estimate;
+//  - round 1 of the review: the override and Clear Data go through their
+//    database doors (reco_override_opening, reco_clear) with who acts; Upload
+//    and Not Applicable never show over a pulled opening; a revoked
+//    allowance gives no "manual (allowed ...)" label; the reco pages show only
+//    the latest gate answer; "ready" says what it rests on (pulled, manual,
+//    waived, no pull needed before Jun 2026).
 //
 //   node scripts/verify-reco-gate.mjs
 //
@@ -125,6 +131,27 @@ c = await lib.askGateForClick(CLIENT, P, 'Push to GST Portal');
 check('click: refused when the check cannot run', c.allowed === false && /could not run/.test(c.message), c.message);
 check('labels: pulled / manual', lib.gatePartLabel({ status: 'pulled', pulled_at: '2026-10-21T05:00:00Z', pulled_by_name: 'Esha' }).startsWith('Pulled from portal 21 Oct 2026 by Esha')
   && lib.gatePartLabel({ status: 'manual', allowance: { allowed_by_name: 'Sonal', reason: 'Portal down' } }) === 'manual (allowed by Sonal: Portal down)');
+check('labels: an empty portal month and a row with no pull yet',
+  /no balance on the portal$/.test(lib.gatePartLabel({ status: 'pulled', pulled_at: '2026-10-21T05:00:00Z', pulled_by_name: 'Esha', empty: true }))
+  && lib.gatePartLabel({ status: 'not_pulled', source: 'manual' }) === 'Not pulled yet');
+
+// ── "Ready" says what it rests on (round 1, low) ───────────────────────────
+const ready = (suspended, receivable) => lib.gateReadyText({ ok: true, reasons: [], suspended, receivable });
+check('ready: pulled and no difference', ready({ status: 'pulled', required_pull: true, difference: { total: 0 } }, { status: 'pulled', required: true, difference: { total: 0 } })
+  === 'Suspended Reco is pulled and has no difference. GST Receivable Reco is pulled and has no difference.');
+check('ready: a waived Builder difference is not called "no difference"',
+  ready({ status: 'pulled', required_pull: true, waived: true, difference: { total: 1000 } }, { status: 'pulled', required: true, difference: { total: 0 } })
+    .startsWith('Suspended Reco is pulled; its difference is waived (Builder, no ITC).'));
+check('ready: an allowed manual entry is called manual, not pulled',
+  ready({ status: 'pulled', required_pull: true, difference: { total: 0 } }, { status: 'manual', required: true, difference: { total: 0 } })
+    .endsWith('GST Receivable Reco is a manual entry (allowed) with no difference.'));
+check('ready: before Jun 2026 a missing row is not called pulled',
+  ready({ status: 'missing', required_pull: false, difference: { total: 0 } }, { required: false })
+    === 'Suspended Reco has no difference (no pull is needed before Jun 2026).');
+check('ready: an override is named', /Its opening was overridden by Gita\.$/.test(
+  ready({ status: 'pulled', required_pull: true, difference: { total: 0 }, override: { by_name: 'Gita' } }, { required: false })));
+const note = fs.readFileSync(path.join(root, 'src/components/reco/Gstr3bGateNote.tsx'), 'utf8');
+check('ready: the note no longer says "Both recos are pulled and tally"', !/Both recos are pulled and tally/.test(note) && /gateReadyText\(gate\)/.test(note));
 
 // ── The GSTR-3B page: both ways out ask the gate first ─────────────────────
 const page = fs.readFileSync(path.join(root, 'src/pages/Gstr3bPage.tsx'), 'utf8');
@@ -187,18 +214,56 @@ for (const [file, kind] of [['src/pages/SuspendedRecoPage.tsx', 'suspended'], ['
     for (; j < src.length; j++) { if (src[j] === '(') depth++; else if (src[j] === ')' && --depth === 0) break; }
     upserts.push(src.slice(i, j + 1));
   }
-  check(`${kind} page: both upserts (Save, Override) found`, upserts.length === 2, upserts.length);
+  check(`${kind} page: one upsert left (Save); the override goes through its door`, upserts.length === 1, upserts.length);
+  check(`${kind} page: the override goes through reco_override_opening with who acts`,
+    /await recordOverride\(\{\s*actorId: user\.id,\s*kind: '(suspended|receivable)',/.test(src) && !/opening_override_justification: values/.test(src));
   check(`${kind} page: no upsert writes the opening source, CSV, pull or ledger fields`,
     upserts.every((u) => !/opening_source|opening_csv_|opening_portal_pulled|opening_allowance_id|utilized_|drc_/.test(u)), upserts.map((u) => u.slice(0, 160)).join(' | '));
   check(`${kind} page: Upload and Not Applicable use the allowance (recordManualOpening)`,
     (src.match(/await recordManualOpening\(\{/g) || []).length === 2 && src.includes(`kind: '${kind}'`));
   check(`${kind} page: Upload and Not Applicable show only with an unused allowance`, /\{canEnterManually && \(/.test(src));
+  check(`${kind} page: and never over a pulled opening`,
+    /const isPulled = openingSource === 'portal' && !!openingPulledAt;\s*const canEnterManually = !!allowance && !allowance\.used_at && !isPulled;/.test(src));
+  check(`${kind} page: the manual label comes from a live allowance only (openingManualState)`,
+    /const \{ label: manualLabel, revoked: manualRevoked \} = openingManualState\(allowances, openingAllowanceId, names\);/.test(src)
+    && src.includes("manualRevoked ? 'Manual entry revoked'") && !src.includes('manualSourceLabel('));
+  check(`${kind} page: only the latest gate answer is shown`,
+    /const seq = \+\+gateSeq\.current;[\s\S]{0,300}?if \(seq !== gateSeq\.current\) return;/.test(src));
+  check(`${kind} page: Override needs a pulled (or allowed manual) opening`, /disabled=\{!selectedClientId \|\| isSaving \|\| !\(isPulled \|\| manualLabel\)\}/.test(src));
   check(`${kind} page: the Pull sends who asked and needs 0.16.0`,
     /__gstkPullLedgers: \{ clientId: selectedClientId, period_month: selectedMonth, actorId: user\?\.id \?\? null \}/.test(src)
     && /if \(!extensionCanPull\(extVersion\)\) \{ toast\.error\(needsExtensionMessage\(extVersion\)\); return; \}/.test(src));
-  check(`${kind} page: shows the pull and the allowed manual entry`, src.includes('pulledLabel(openingPulledAt, openingPullerName)') && src.includes('ManualSourceAllowanceControl'));
+  check(`${kind} page: shows the pull and the allowed manual entry`, src.includes('pulledLabel(openingPulledAt, openingPullerName, openingPortalEmpty)') && src.includes('ManualSourceAllowanceControl'));
   check(`${kind} page: shows the push gate`, src.includes('<Gstr3bGateNote compact'));
 }
+// The manual label: a revoked allowance does not count.
+{
+  const names = new Map([['sa', 'Sonal']]);
+  const live = { id: 'a1', allowed_by: 'sa', reason: 'Portal password changed', revoked_at: null };
+  const gone = { ...live, revoked_at: '2026-10-21T06:00:00Z' };
+  const m1 = lib.openingManualState([live], 'a1', names);
+  const m2 = lib.openingManualState([gone], 'a1', names);
+  const m3 = lib.openingManualState([live], 'other', names);
+  check('manual label: a live allowance is "manual (allowed by Sonal: ...)"', m1.label === 'manual (allowed by Sonal: Portal password changed)' && !m1.revoked);
+  check('manual label: a revoked one gives no label and says revoked', m2.label === null && m2.revoked === true, JSON.stringify(m2));
+  check('manual label: an allowance not this row\'s gives nothing', m3.label === null && !m3.revoked);
+}
+
+// The doors: override and Clear Data name who acts.
+globalThis.__rpcCalls = [];
+answer({ ok: true });
+await lib.recordOverride({ actorId: 'gm', kind: 'suspended', clientId: CLIENT, periodMonth: P, opening: { igst: 0, cgst: 0, sgst: 0 }, reason: 'Portal lags' });
+const ov = globalThis.__rpcCalls.at(-1);
+check('override: through reco_override_opening with who, which reco and the reason', ov.fn === 'reco_override_opening' && ov.args.p_actor_id === 'gm'
+  && ov.args.p_reco === 'suspended' && ov.args.p_reason === 'Portal lags' && ov.args.p_opening.cgst === 0, JSON.stringify(ov));
+answer(2);
+const cleared = await lib.clearReco('sa', 'suspended', CLIENT, ['04/2026', '05/2026']);
+const cl = globalThis.__rpcCalls.at(-1);
+check('clear data: through reco_clear with who and the months', cl.fn === 'reco_clear' && cl.args.p_actor_id === 'sa' && cl.args.p_periods.length === 2 && cleared === 2, JSON.stringify(cl));
+const clearDialog = fs.readFileSync(path.join(root, 'src/components/dialogs/ClearDataDialog.tsx'), 'utf8');
+check('clear data: the dialog clears Suspended Reco through clearReco, not a direct delete',
+  /totalDeleted = await clearReco\(user\.id, 'suspended', clientId, months\);/.test(clearDialog) && !/from\('suspended_reco'\)/.test(clearDialog));
+
 const recvPage = fs.readFileSync(path.join(root, 'src/pages/GstReceivableRecoPage.tsx'), 'utf8');
 check('receivable page: DRC-03 is shown, not typed', !/renderBooksCell\(drc/.test(recvPage));
 check('receivable page: ITC utilised from the ledger for a pulled row', /const hasUtilizedFromCsv = utilisedFromLedger\(r\);/.test(recvPage));

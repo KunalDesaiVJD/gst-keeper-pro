@@ -6407,6 +6407,8 @@ export type Database = {
           drc_sgst: number | null
           id: string
           opening_allowance_id: string | null
+          opening_override_base: Json | null
+          opening_portal_empty: boolean
           opening_cgst: number | null
           opening_csv_period_month: string | null
           opening_csv_uploaded_at: string | null
@@ -6436,6 +6438,8 @@ export type Database = {
           drc_sgst?: number | null
           id?: string
           opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -6465,6 +6469,8 @@ export type Database = {
           drc_sgst?: number | null
           id?: string
           opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -9318,6 +9324,7 @@ export type Database = {
           allowance_id: string | null
           before: Json | null
           client_id: string
+          ext_version: string | null
           id: string
           logged_at: string
           period_month: string
@@ -9332,6 +9339,7 @@ export type Database = {
           allowance_id?: string | null
           before?: Json | null
           client_id: string
+          ext_version?: string | null
           id?: string
           logged_at?: string
           period_month: string
@@ -9346,6 +9354,7 @@ export type Database = {
           allowance_id?: string | null
           before?: Json | null
           client_id?: string
+          ext_version?: string | null
           id?: string
           logged_at?: string
           period_month?: string
@@ -9353,15 +9362,7 @@ export type Database = {
           reco?: string
           source?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "reco_opening_log_client_id_fkey"
-            columns: ["client_id"]
-            isOneToOne: false
-            referencedRelation: "clients"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       reconciliation_reasons: {
         Row: {
@@ -9798,6 +9799,8 @@ export type Database = {
           client_id: string
           id: string
           opening_allowance_id: string | null
+          opening_override_base: Json | null
+          opening_portal_empty: boolean
           opening_cgst: number | null
           opening_csv_period_month: string | null
           opening_csv_uploaded_at: string | null
@@ -9821,6 +9824,8 @@ export type Database = {
           client_id: string
           id?: string
           opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -9844,6 +9849,8 @@ export type Database = {
           client_id?: string
           id?: string
           opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -11867,11 +11874,11 @@ export type Database = {
       }
       manual_source_allow: {
         Args: { p_actor_id: string; p_client_id: string; p_period: string; p_reason: string; p_scope: string }
-        Returns: Json
+        Returns: Database["public"]["Tables"]["manual_source_allowances"]["Row"]
       }
       manual_source_revoke: {
         Args: { p_actor_id: string; p_id: string }
-        Returns: Json
+        Returns: Database["public"]["Tables"]["manual_source_allowances"]["Row"]
       }
       reco_manual_opening: {
         Args: {
@@ -11887,13 +11894,22 @@ export type Database = {
         }
         Returns: Json
       }
+      reco_clear: {
+        Args: { p_actor_id: string; p_client_id: string; p_periods: string[]; p_reco: string }
+        Returns: number
+      }
+      reco_override_opening: {
+        Args: { p_actor_id: string; p_client_id: string; p_opening: Json; p_period: string; p_reason: string; p_reco: string }
+        Returns: Json
+      }
       reco_record_pull: {
         Args: {
-          p_actor_id: string | null
+          p_actor_id: string
           p_client_id: string
           p_drc?: Json | null
           p_ext_version?: string | null
-          p_opening: Json
+          p_no_rows?: boolean
+          p_opening: Json | null
           p_period: string
           p_reco: string
           p_utilised?: Json | null

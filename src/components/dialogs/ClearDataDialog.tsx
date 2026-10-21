@@ -14,6 +14,7 @@ import { AlertTriangle, Trash2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { clearReco } from '@/lib/recoSources';
 
 interface ClearDataDialogProps {
   open: boolean;
@@ -122,13 +123,9 @@ const ClearDataDialog: React.FC<ClearDataDialogProps> = ({
           .select('id');
         totalDeleted = data?.length || 0;
       } else if (module === 'Suspended Reco') {
-        const { data } = await supabase
-          .from('suspended_reco')
-          .delete()
-          .eq('client_id', clientId)
-          .in('period_month', months)
-          .select('id');
-        totalDeleted = data?.length || 0;
+        // Through reco_clear, so the reco's history names who cleared it.
+        if (!user?.id) throw new Error('Sign in again to clear data.');
+        totalDeleted = await clearReco(user.id, 'suspended', clientId, months);
       } else if (module === 'RCM Summary') {
         const rcmFY = selectedFY.replace('-', '-');
         // RCM uses "2025-26" format for financial_year

@@ -24,10 +24,10 @@ import {
 } from '@/components/workspace/theme';
 import ManualSourceAllowanceControl from '@/components/manualSource/ManualSourceAllowanceControl';
 import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
-import { fetchManualSourceAllowances, liveAllowance, manualSourceLabel, staffNames, type ManualSourceAllowance } from '@/lib/manualSource';
+import { fetchManualSourceAllowances, liveAllowance, staffNames, type ManualSourceAllowance } from '@/lib/manualSource';
 import {
-  extensionCanPull, fetchRecoLog, fmtDateTime, needsExtensionMessage, pulledLabel, recordManualOpening, recoLogActionLabel,
-  recoScope, suspendedSavePayload, type OpeningSource, type RecoLogEntry,
+  extensionCanPull, fetchRecoLog, fmtDateTime, needsExtensionMessage, openingManualState, pulledLabel, recordManualOpening,
+  recordOverride, recoLogActionLabel, recoScope, suspendedSavePayload, type OpeningSource, type RecoLogEntry,
 } from '@/lib/recoSources';
 import { checkGstr3bPushGate, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
 
@@ -74,11 +74,13 @@ const SuspendedRecoPage: React.FC = () => {
   const [openingPulledAt, setOpeningPulledAt] = useState<string | null>(null);
   const [openingPullerName, setOpeningPullerName] = useState<string | null>(null);
   const [openingAllowanceId, setOpeningAllowanceId] = useState<string | null>(null);
+  const [openingPortalEmpty, setOpeningPortalEmpty] = useState(false);
   const [allowances, setAllowances] = useState<ManualSourceAllowance[]>([]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
   const [recoLog, setRecoLog] = useState<RecoLogEntry[]>([]);
   const [gate, setGate] = useState<Gstr3bGateResult | null>(null);
   const [gateLoading, setGateLoading] = useState(false);
+  const gateSeq = useRef(0);
 
   // Current total - auto-calculated from ITC Summary: (4B2i + 4B2ii) - (5.4 + 5.5)
   const [portalCgst, setPortalCgst] = useState<number>(0);
@@ -179,6 +181,7 @@ const SuspendedRecoPage: React.FC = () => {
         setOpeningOverrideBy(sd.opening_override_by || null);
         setOpeningPulledAt(sd.opening_portal_pulled_at || null);
         setOpeningAllowanceId(sd.opening_allowance_id || null);
+        setOpeningPortalEmpty(sd.opening_portal_empty === true);
 
         // Resolve uploader/overrider/puller first names for the info popover
         const nameMap = await staffNames([sd.opening_csv_uploaded_by, sd.opening_override_by, sd.opening_portal_pulled_by]);
@@ -216,6 +219,7 @@ const SuspendedRecoPage: React.FC = () => {
         setOpeningPulledAt(null);
         setOpeningPullerName(null);
         setOpeningAllowanceId(null);
+        setOpeningPortalEmpty(false);
         setLastSavedBy(null);
       }
 
@@ -392,10 +396,15 @@ const SuspendedRecoPage: React.FC = () => {
   }, [selectedClientId, selectedMonth, fetchData]);
 
   // What the GSTR-3B push gate says for this client and month (database).
+  // Only the latest question's answer is shown (a quick client switch must
+  // not show the previous client's verdict).
   const checkGate = useCallback(async () => {
-    if (!selectedClientId || !selectedMonth) { setGate(null); return; }
+    const seq = ++gateSeq.current;
+    if (!selectedClientId || !selectedMonth) { setGate(null); setGateLoading(false); return; }
     setGateLoading(true);
-    setGate(await checkGstr3bPushGate(selectedClientId, selectedMonth));
+    const g = await checkGstr3bPushGate(selectedClientId, selectedMonth);
+    if (seq !== gateSeq.current) return;
+    setGate(g);
     setGateLoading(false);
   }, [selectedClientId, selectedMonth]);
 
@@ -432,13 +441,14 @@ const SuspendedRecoPage: React.FC = () => {
     }
   };
 
-  // The live allowance for this client and month, and whether it can still be used.
+  // The live allowance for this client and month, and whether it can still
+  // be used: once, and never over a pulled opening (a new pull or an
+  // override corrects that).
   const allowance = liveAllowance(allowances, SCOPE);
-  const canEnterManually = !!allowance && !allowance.used_at;
-  const manualLabel = (() => {
-    const a = allowances.find((x) => x.id === openingAllowanceId);
-    return a ? manualSourceLabel(names.get(a.allowed_by), a.reason) : null;
-  })();
+  const isPulled = openingSource === 'portal' && !!openingPulledAt;
+  const canEnterManually = !!allowance && !allowance.used_at && !isPulled;
+  // The allowance this opening was entered under; a revoked one no longer counts.
+  const { label: manualLabel, revoked: manualRevoked } = openingManualState(allowances, openingAllowanceId, names);
 
   // Upload: trigger hidden file picker
   const handleUploadClick = () => {
@@ -534,38 +544,21 @@ const SuspendedRecoPage: React.FC = () => {
   // 2026) — same check as the button visibility, applied here as
   // defense-in-depth; the database checks it too, and wants a reason.
   const handleOverrideSave = async (values: { cgst: number; sgst: number; igst: number; justification: string }) => {
-    if (!canManualOverride() || !selectedClientId || !selectedMonth) return;
+    if (!canManualOverride() || !selectedClientId || !selectedMonth || !user?.id) return;
     setIsSaving(true);
     try {
-      const now = new Date().toISOString();
-      // Only the opening and the override stamp: the source and the pull or
-      // CSV stamps stay as they are (the database refuses a change to them).
-      const { error } = await supabase
-        .from('suspended_reco')
-        .upsert({
-          client_id: selectedClientId,
-          period_month: selectedMonth,
-          opening_cgst: values.cgst,
-          opening_sgst: values.sgst,
-          opening_igst: values.igst,
-          opening_override_justification: values.justification,
-          opening_override_at: now,
-          opening_override_by: user?.id,
-          updated_by: user?.id,
-          updated_at: now,
-        } as never, { onConflict: 'client_id,period_month' });
-      if (error) throw error;
-
-      setOpeningCgst(values.cgst);
-      setOpeningSgst(values.sgst);
-      setOpeningIgst(values.igst);
-      setOpeningOverrideJustification(values.justification);
-      setOpeningOverrideAt(now);
-      setOpeningOverrideBy(user?.id || null);
-      setOpeningOverriderName(user?.firstName || 'You');
-
+      // Through reco_override_opening: the database checks who acts, keeps
+      // the reason and logs the person; the source and the pull stay as they are.
+      await recordOverride({
+        actorId: user.id,
+        kind: 'suspended',
+        clientId: selectedClientId,
+        periodMonth: selectedMonth,
+        opening: { igst: values.igst, cgst: values.cgst, sgst: values.sgst },
+        reason: values.justification,
+      });
       toast.success('Override saved.');
-      fetchData();
+      await fetchData();
       checkGate();
     } catch (error: any) {
       toast.error('Failed to save override: ' + error.message);
@@ -677,12 +670,12 @@ const SuspendedRecoPage: React.FC = () => {
   // whom, why), or neither (then the GSTR-3B push stays locked).
   const sourceBadge = !useNewFlow ? null : (
     <>
-      {openingSource === 'portal' && openingPulledAt
-        ? <Badge variant="success" className="px-1.5 text-[10px] font-medium">{pulledLabel(openingPulledAt, openingPullerName)}</Badge>
+      {isPulled
+        ? <Badge variant="success" className="px-1.5 text-[10px] font-medium">{pulledLabel(openingPulledAt, openingPullerName, openingPortalEmpty)}</Badge>
         : manualLabel && (openingSource === 'csv' || openingSource === 'not_applicable')
           ? <Badge variant="warning" className="px-1.5 text-[10px] font-medium">{manualLabel[0].toUpperCase() + manualLabel.slice(1)}</Badge>
           : <Badge variant="destructive" className="px-1.5 text-[10px] font-medium">
-              {openingSource === 'csv' ? 'CSV, not allowed' : openingSource === 'not_applicable' ? 'Not applicable, not allowed' : 'Not pulled'}
+              {manualRevoked ? 'Manual entry revoked' : openingSource === 'csv' ? 'CSV, not allowed' : openingSource === 'not_applicable' ? 'Not applicable, not allowed' : 'Not pulled'}
             </Badge>}
       {openingOverrideJustification && <Badge variant="warning" className="px-1.5 text-[10px] font-medium">Overridden</Badge>}
     </>
@@ -861,13 +854,16 @@ const SuspendedRecoPage: React.FC = () => {
                               </button>
                             </PopoverTrigger>
                             <PopoverContent className="text-xs max-w-xs space-y-2" align="start">
-                              {openingSource === 'portal' && openingPulledAt && (
+                              {isPulled && (
                                 <p>
-                                  <span className="font-semibold">Source:</span> {pulledLabel(openingPulledAt, openingPullerName)}, {fmtDateTime(openingPulledAt)}.
+                                  <span className="font-semibold">Source:</span> {pulledLabel(openingPulledAt, openingPullerName, openingPortalEmpty)}, {fmtDateTime(openingPulledAt)}.
                                 </p>
                               )}
-                              {manualLabel && openingSource !== 'portal' && (
+                              {manualLabel && !isPulled && (
                                 <p><span className="font-semibold">Allowed:</span> {manualLabel}.</p>
+                              )}
+                              {manualRevoked && !isPulled && (
+                                <p><span className="font-semibold">Manual entry revoked.</span> It no longer counts. Pull this from the portal.</p>
                               )}
                               {openingSource === 'csv' && openingCsvPeriodMonth && (
                                 <p>
@@ -906,6 +902,7 @@ const SuspendedRecoPage: React.FC = () => {
                                         {fmtDateTime(l.logged_at)}: {recoLogActionLabel(l.action)}
                                         {l.actor_id && <> by {names.get(l.actor_id) || 'Unknown'}</>}
                                         {l.reason && <> ({l.reason})</>}
+                                        {l.ext_version && <> · extension {l.ext_version}</>}
                                       </li>
                                     ))}
                                   </ul>
@@ -949,13 +946,15 @@ const SuspendedRecoPage: React.FC = () => {
                               variant="outline"
                               className="h-7 gap-1 px-2 text-xs"
                               onClick={() => setShowOverrideDialog(true)}
-                              disabled={!selectedClientId || isSaving}
+                              disabled={!selectedClientId || isSaving || !(isPulled || manualLabel)}
+                              title={isPulled || manualLabel ? 'Override the pulled opening, with a reason' : 'Pull it from the portal first. An override corrects a pulled opening.'}
                             >
                               <Edit3 className="h-3 w-3" />
                               Override
                             </Button>
                           )}
-                          {selectedClientId && (
+                          {/* Not offered over a pulled month (a manual entry cannot replace it); an open one can still be revoked. */}
+                          {selectedClientId && (!isPulled || allowance) && (
                             <ManualSourceAllowanceControl
                               clientId={selectedClientId}
                               clientName={selectedClientData?.name}
@@ -969,7 +968,7 @@ const SuspendedRecoPage: React.FC = () => {
                           )}
                         </div>
                       )}
-                      {useNewFlow && openingSource !== 'portal' && !manualLabel && (
+                      {useNewFlow && !isPulled && !manualLabel && (
                         <p className="text-[11px] font-normal text-muted-foreground">
                           Pull this from the portal. Upload and Not Applicable need the superadmin to allow a manual entry.
                         </p>

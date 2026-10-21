@@ -848,24 +848,52 @@ a reason, and everything must be traceable. Migration
 
 | Figure | Source | Who | Refused otherwise |
 |---|---|---|---|
-| Opening (both recos), ITC utilised and DRC-03 (GST Receivable Reco) | The extension's Pull, through `reco_record_pull` | Any staff member (stamped: `opening_portal_pulled_by`, server time) | `reco_source_guard`: a direct write, the old Upload / Not Applicable, or a Save that changes them |
-| The same, when a pull cannot be done | CSV upload or Not Applicable, through `reco_manual_opening` | Any staff member, once, after the superadmin allowed it (`manual_source_allowances`, scope `reco:suspended` / `reco:receivable`) | Without an unused, unrevoked allowance |
-| Opening override | The Override button | The superadmin and GST Managers, with a reason of at least 5 characters (`opening_override_guard`) | Employees; no reason |
+| Opening (both recos), ITC utilised and DRC-03 (GST Receivable Reco) | The extension's Pull, through `reco_record_pull` | A staff member, named by the app (`opening_portal_pulled_by`, server time); a pull nobody can be named for is refused | `reco_source_guard`: a direct write, the old Upload / Not Applicable, or a Save that changes them |
+| The same, when a pull cannot be done | CSV upload or Not Applicable, through `reco_manual_opening` | Any staff member, once, after the superadmin allowed it (`manual_source_allowances`, scope `reco:suspended` / `reco:receivable`), and only while the month is not pulled | Without an unused, unrevoked allowance; over a pulled month |
+| Opening override | The Override button, through `reco_override_opening` | The superadmin and GST Managers (who acts is checked there), with a reason of at least 5 characters; from 06/2026 only over a pulled (or allowed manual) opening | Employees; no reason; any direct write of the override fields (`opening_override_guard`, every period) |
+| Clear Data (Suspended Reco) | `reco_clear` | Staff; the log names who cleared | A direct delete still works but is logged with nobody named |
 | Books closing (GST Receivable Reco), the current-total snapshot (Suspended Reco) | Typed / computed, Save | Staff, as before | — |
 
-- A pull clears a stale override, the CSV stamps and the allowance link: the
-  portal's figure replaces them. Before 0.16.0 a re-pull left an old
-  "Overridden" stamp on 2 rows.
+- A reco row stays with its client and month: an update that changes either
+  is refused, for every period (a row moved from an old month, or between
+  months or clients, would carry a pull, an override or a cleared difference
+  with it).
+- A pull clears the CSV stamps and the allowance link, and uses up an open,
+  unused manual allowance for the month (no longer needed; logged). It keeps
+  an override made against the same portal figure (`opening_override_base`,
+  the figure the first override replaced), and clears one made against
+  another figure; the log says which ("Override by X kept / cleared"). So
+  Pull on GST Receivable Reco, which pulls both ledgers, no longer wipes a
+  Suspended Reco override when the portal has not moved. Before 0.16.0 a
+  re-pull left an old "Overridden" stamp on 2 rows.
+- **A month with no balance on the portal.** When the reversal statement loads
+  for the month but has no balance row and the page says there are no
+  records, the pull saves 0, marked "no balance on the portal"
+  (`opening_portal_empty`). A Nil client passes by pulling; no allowance is
+  needed. Without such words on the page nothing is saved. The portal's exact
+  wording for an empty month is not confirmed live yet.
+- The popup's full sync has no app user, so it reads the two ledgers but does
+  not save them: Pull on a reco page does.
 - The pages show where the opening came from: **Pulled from portal \<date\> by
-  \<name\>**, **Manual (allowed by X: reason)**, or **Not pulled** (also "CSV,
-  not allowed" for an upload made before this change). The (i) popover lists
-  the history from `reco_opening_log` (pull, manual entry, override, insert,
-  clear; who, when, why). The log is written by a trigger and only read by the
-  app.
-- Upload and Not Applicable are shown only while an unused allowance is open.
-  The superadmin allows or revokes it on the reco page itself ("Allow manual
-  entry", reason required). A revoked allowance makes the entry count as not
-  pulled again. One live allowance per client, month and scope.
+  \<name\>** (", no balance on the portal" for an empty month), **Manual
+  (allowed by X: reason)**, **Manual entry revoked**, or **Not pulled** (also
+  "CSV, not allowed" for an upload made before this change). The (i) popover
+  lists the history from `reco_opening_log` (pull with the extension version,
+  manual entry, override, insert, clear; who, when, why). Who is the person
+  the door checked (the pull, manual entry, override and Clear Data doors);
+  a direct delete names nobody, and a client's deletion is logged as
+  "Client deleted". The log has no foreign key to clients, so it outlives a
+  deleted client. It is written by a trigger and only read by the app.
+- Upload and Not Applicable are shown only while an unused allowance is open
+  and the month is not pulled. The superadmin allows or revokes it on the
+  reco page itself ("Allow manual entry", reason required). A revoked
+  allowance makes the entry count as not pulled again, and the page says
+  "Manual entry revoked". One live allowance per client, month and scope; an
+  allowance counts only for its own client, month and reco.
+- `manual_source_allowances` and `manual_source_allow` / `_revoke` / `_take`
+  are byte for byte the filing branch's (20261021110000);
+  `supabase/tests/reco_gate/shared_block.sh` compares them and applies the two
+  migrations in both orders.
 - DRC-03 is no longer typed on GST Receivable Reco: it is the ledger's.
 - **ITC utilised, a change of figure.** A pulled (or allowed) GST Receivable
   Reco takes ITC utilised from the credit ledger, and a pull that saw no
@@ -895,6 +923,9 @@ calling it, an empty or malformed answer, or the page still loading it, all
 block, with the reason. Before 06/2026 it checks only the Suspended Reco
 difference, with no tolerance, as the page did. The extension saves the
 check that let a push start with its Push History row (`gstr3b_push_versions.gate`).
+"Ready" on the pages says what it rests on, per reco: pulled, an allowed
+manual entry, a waived Builder difference, or no pull needed before
+Jun 2026; the reco pages show only the answer for the client on screen.
 
 The differences are `suspended_reco_difference` and
 `gst_receivable_reco_difference`, ports of `src/lib/suspendedRecoCalc.ts`
@@ -904,6 +935,6 @@ and 10/2026 rows). **A change to either formula must be made in both.**
 
 **Still open.** Marking GSTR-3B Filed on Filing Status keeps its own
 Suspended Reco check (§8, ₹20) and does not ask the gate; Filing Status is
-being reworked separately. A Nil client whose reversal ledger shows no
-balance row at all saves nothing on a pull; such a month needs the
-superadmin's allowance (Not Applicable).
+being reworked separately. The empty-month rule above relies on the
+portal's "no records" words: confirm them on one Nil client after the
+release (the extension's diagnostic box shows what it read).
