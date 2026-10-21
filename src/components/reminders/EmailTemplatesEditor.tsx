@@ -8,14 +8,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Loader2, Save, Bell, CheckCircle2, AlertTriangle, Mail } from 'lucide-react';
+import { Loader2, Save, Bell, CheckCircle2, AlertTriangle, Mail, Building2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { buildEmailHtml } from '@/lib/emailTemplate';
 
 interface Tpl {
   key: string;
   name: string;
-  kind: 'reminder' | 'confirmation' | 'notice_alert' | 'bills_not_in_books';
+  kind: 'reminder' | 'confirmation' | 'notice_alert' | 'bills_not_in_books' | 'builder_agreement_confirm';
   step: number | null;
   subject: string;
   body: string;
@@ -46,7 +46,22 @@ const BILLS_VARS = [
   'contact_person', 'client_name', 'gstin', 'period', 'bill_count', 'itc_total', 'reply_by',
   'staff_name', 'firm_name', 'firm_email',
 ];
+// Builder → BU Events "Send confirmation request" (one e-mail, every unit, one link).
+// The older per-unit template (builder_bu_agreement_confirm) is no longer sent.
+const BU_CONFIRM_KEYS = new Set(['builder_bu_agreement_confirm_request']);
+const BU_CONFIRM_VARS = [
+  'contact_person', 'client_name', 'gstin', 'project_name', 'bu_date', 'cutoff_label',
+  'unit_count', 'unit_table', 'total_value', 'confirm_link',
+  'staff_name', 'firm_name', 'firm_email',
+];
 const SAMPLE: Record<string, string> = {
+  project_name: 'Shree Residency',
+  bu_date: '15 Sep 2026',
+  cutoff_label: 'building use permission',
+  unit_count: '3 units',
+  unit_table: 'Unit A-101: Rs. 45,00,000.00\nUnit A-102: Rs. 52,00,000.00\nUnit A-103: Rs. 39,00,000.00 (taxable from its sale deed of 02 Sep 2026)',
+  total_value: '1,36,00,000.00',
+  confirm_link: 'https://gst.vjdesai.com/agreement-confirm/3f9c…',
   bill_count: '12 documents',
   table_html: '<p style="margin:0 0 8px;font-weight:600;color:#0f2b46;">By supplier</p><p style="margin:0 0 18px;color:#64748b;font-size:12px;">(The supplier table of the client\'s documents appears here; every document is in the attached Excel.)</p>',
   itc_total: '₹1,84,320.00',
@@ -160,7 +175,14 @@ const EmailTemplatesEditor: React.FC = () => {
   const confirmations = templates.filter(t => t.kind === 'confirmation');
   const noticeAlerts = templates.filter(t => t.kind === 'notice_alert');
   const clientLists = templates.filter(t => t.kind === 'bills_not_in_books');
-  const activeVars = current?.kind === 'notice_alert' ? NOTICE_VARS : current?.kind === 'bills_not_in_books' ? BILLS_VARS : VARS;
+  const builderMails = templates.filter(t => BU_CONFIRM_KEYS.has(t.key));
+  const activeVars = current?.kind === 'notice_alert' ? NOTICE_VARS
+    : current?.kind === 'bills_not_in_books' ? BILLS_VARS
+      : current && BU_CONFIRM_KEYS.has(current.key) ? BU_CONFIRM_VARS : VARS;
+  // The BU confirmation e-mail carries no return, period or due date: its details box shows the GSTIN only.
+  const previewVars = current && BU_CONFIRM_KEYS.has(current.key)
+    ? Object.fromEntries(Object.entries(SAMPLE).filter(([k]) => !['return_type', 'period', 'due_date'].includes(k)))
+    : SAMPLE;
 
   const listItem = (t: Tpl) => (
     <button
@@ -206,6 +228,12 @@ const EmailTemplatesEditor: React.FC = () => {
                 <div className="space-y-1.5">{clientLists.map(listItem)}</div>
               </div>
             )}
+            {builderMails.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Building2 className="h-3.5 w-3.5" /> Builder</p>
+                <div className="space-y-1.5">{builderMails.map(listItem)}</div>
+              </div>
+            )}
             {noticeAlerts.length > 0 && (
               <div className="space-y-1.5">
                 <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><AlertTriangle className="h-3.5 w-3.5" /> Notice Alerts</p>
@@ -246,7 +274,7 @@ const EmailTemplatesEditor: React.FC = () => {
                 <p className="mb-3 text-sm font-medium">{renderPreview(subject)}</p>
                 <iframe
                   title="Email preview"
-                  srcDoc={buildEmailHtml({ key: selKey, kind: current.kind, message: renderPreview(body), vars: SAMPLE })}
+                  srcDoc={buildEmailHtml({ key: selKey, kind: current.kind, message: renderPreview(body), vars: previewVars })}
                   sandbox=""
                   className="w-full rounded-md border bg-white"
                   style={{ height: 620 }}

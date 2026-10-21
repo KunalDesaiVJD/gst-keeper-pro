@@ -1,6 +1,7 @@
 // Microsoft Graph mail, as send-gst-email does it: application permission
 // Mail.Send, client-credentials flow, from GRAPH_SENDER (gst@vjdesai.com).
-// Used by client-password-reset; send-gst-email still carries its own copy.
+// Used by client-password-reset and bu-confirm-code; send-gst-email still
+// carries its own copy.
 //
 // Secrets (function env, never in the repo):
 //   GRAPH_TENANT_ID, GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET, GRAPH_SENDER
@@ -41,7 +42,8 @@ export async function sendMail(token: string, to: string, subject: string, html:
         body: { contentType: 'HTML', content: html },
         toRecipients: recipients(to),
       },
-      // A reset link is not kept in the shared mailbox's Sent Items.
+      // A reset link or a confirmation code is not kept in the shared
+      // mailbox's Sent Items.
       saveToSentItems: false,
     }),
   });

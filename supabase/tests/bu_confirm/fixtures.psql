@@ -1,0 +1,43 @@
+-- Shared fixtures, included by every test inside its own transaction (rolled
+-- back at the end). Fictional only.
+--   client  c1…01 Shree Test Infra, no e-mail on the client master
+--   staff   10…01 superadmin, 10…02 GST Manager, 10…03 employee with
+--           post_bu_event (a personal address on their profile), 10…04
+--           employee without it; 10…09 a client login whose profile carries
+--           a client's address (not staff)
+--   event   e1…01 PREPARED, posts 10/2026: A-101, A-102, A-103 booked,
+--           A-104 unbooked (Schedule III); e1…02 POSTED: B-201
+INSERT INTO clients (id, name, gstin, email) VALUES
+  ('c1000000-0000-0000-0000-000000000001', 'Shree Test Infra', '24AAAAA0000A1Z5', NULL);
+INSERT INTO user_roles (user_id, role) VALUES
+  ('10000000-0000-0000-0000-000000000001', 'superadmin'),
+  ('10000000-0000-0000-0000-000000000002', 'gst_manager'),
+  ('10000000-0000-0000-0000-000000000003', 'employee'),
+  ('10000000-0000-0000-0000-000000000004', 'employee'),
+  ('10000000-0000-0000-0000-000000000009', 'client');
+INSERT INTO profiles (user_id, first_name, email) VALUES
+  ('10000000-0000-0000-0000-000000000001', 'Sam', 'sam@vjdesai.com'),
+  ('10000000-0000-0000-0000-000000000002', 'Mira', 'Mira.Manager@VJDesai.com'),
+  ('10000000-0000-0000-0000-000000000003', 'Jay', ' Jay.Junior@Gmail.test '),
+  ('10000000-0000-0000-0000-000000000004', 'Neel', NULL),
+  ('10000000-0000-0000-0000-000000000009', 'Owner', 'owner@client.test');
+INSERT INTO user_permissions (user_id, permission_key) VALUES
+  ('10000000-0000-0000-0000-000000000003', 'post_bu_event'),
+  ('10000000-0000-0000-0000-000000000004', 'enter_builder_receipts');
+INSERT INTO builder_projects (id, client_id, name) VALUES
+  ('b1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'Test Heights');
+INSERT INTO builder_units (id, project_id, unit_no, sort_order) VALUES
+  ('a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'A-101', 1),
+  ('a1000000-0000-0000-0000-000000000002', 'b1000000-0000-0000-0000-000000000001', 'A-102', 2),
+  ('a1000000-0000-0000-0000-000000000003', 'b1000000-0000-0000-0000-000000000001', 'A-103', 3),
+  ('a1000000-0000-0000-0000-000000000004', 'b1000000-0000-0000-0000-000000000001', 'A-104', 4),
+  ('a1000000-0000-0000-0000-000000000005', 'b1000000-0000-0000-0000-000000000001', 'B-201', 5);
+INSERT INTO builder_bu_events (id, project_id, bu_date, posting_period, status) VALUES
+  ('e1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', '2026-09-15', '10/2026', 'PREPARED'),
+  ('e1000000-0000-0000-0000-000000000002', 'b1000000-0000-0000-0000-000000000001', '2026-06-10', '07/2026', 'POSTED');
+INSERT INTO builder_bu_event_units (bu_event_id, unit_id, cut_off_date, booked_at_cutoff, agreement_value) VALUES
+  ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', '2026-09-15', true, 4500000),
+  ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000002', '2026-09-15', true, 5200000),
+  ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000003', '2026-09-15', true, 3900000),
+  ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000004', '2026-09-15', false, 4100000),
+  ('e1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000005', '2026-06-10', true, 6000000);

@@ -189,6 +189,167 @@ The reason is kept on the unit's confirmation row
 (`builder_bu_agreement_override`, migration `20261015100000`). A client's own
 confirmation is never replaced.
 
+**Who is asked, and who may answer (firm decision, 21/10/2026).** "BU
+confirmation request can be sent to multiple emails in CC if needed & anyone
+can provide confirmation for the outstanding figures & the email can be typed
+directly on the button pressed."
+
+- "Send confirmation requests" opens a pop-up. Staff type the To addresses
+  (filled from the client master, or from the last request, and editable) and
+  any CC addresses. "Name <address>" pastes from Outlook are read. Sending
+  works when the client master has no e-mail.
+- The pop-up lists the outstanding units (pending, disputed or never sent)
+  with their agreement values, read again each time it opens. Staff may untick
+  any. Confirmed and accepted units are never asked again: a unit confirmed or
+  accepted while the pop-up is open is left out of the e-mail, and the send
+  says so.
+- The send carries the status and answer time of each ticked unit as the
+  pop-up showed them. A unit disputed (or otherwise answered) since is not
+  asked: nothing is sent, the pop-up shows the dispute, its note and who gave
+  it, and unticks the unit. Staff send for the others, or tick it again to
+  ask again once the working is right. A send never clears a dispute staff
+  have not seen.
+- Asking again about a disputed unit clears the dispute on the unit's row
+  (the gate reads that row), but the dispute is kept in
+  `builder_bu_confirm_answer_history`: the note, who gave it and when, at what
+  value, and the request that asked again. BU Events shows the latest one
+  under the unit.
+- A unit left unticked gets a `NOT_SENT` row. It holds up posting and filing
+  like a pending unit until it is asked or accepted, so a partial send never
+  opens the filing gate.
+- One e-mail per send, not one per unit, with one link
+  (`builder_bu_confirm_requests`). The link's page lists every unit in it. The
+  reader may confirm all at once, or confirm or dispute each unit. A dispute
+  needs a note. A unit whose dispute box is open is left out of "Confirm
+  all", because a confirmation cannot be undone.
+- Only the people the e-mail went to may answer, and they prove it. The page
+  asks the reader's name and e-mail (both required). The e-mail must be one of
+  the request's To or CC addresses; for a per-unit link sent before this
+  change, one of the addresses that e-mail went to, as recorded once when the
+  change was applied (`legacy_emails`, below). The page
+  then e-mails a 6-digit code to that address, and only the code typed back
+  lets the reader answer (a proof good for 2 hours). Knowing an address is
+  not enough: every recipient sees the To and CC addresses in the header, the
+  firm's copy sits in gst@vjdesai.com, and BU Events prints them. The code
+  goes straight through Microsoft Graph (Edge Function `bu-confirm-code`),
+  never through `email_outbox` (which the public key can read), and no copy is
+  kept in the firm's Sent Items, so staff cannot read a client's code. The
+  page that asked for a code gets its id, and the code is typed back with it:
+  only that page can try it, so another reader typing wrong codes "as" the
+  owner touches only their own codes. Limits, per link and counted per caller
+  (the IP the request came from) so that one reader cannot use up another's:
+  a code works for 30 minutes and 5 tries; 5 codes an hour and 10 a day to one
+  address, 20 an hour whatever the address, 10 wrong tries a day to one
+  address. Behind them, over all callers, at most 30 codes e-mailed a day to
+  one address and 60 an hour on a link, so nobody can flood a mailbox. These
+  caps count only codes that were e-mailed, and they never refuse a caller's
+  first 2 codes of the day to an address: other callers cannot lock a reader
+  out, however many codes they ask for (round 4: six callers asking 5 codes
+  each, never e-mailed, locked the owner out for a day). A reader who used up
+  their own limits waits an hour or a day, or writes to the firm, which may
+  accept the value ("Accept without confirmation"). Only hashes are stored, in
+  `builder_bu_confirm_codes` (private: RLS on, no policies, like
+  `client_password_resets`).
+- The page keeps the code step per link in the reader's browser (localStorage:
+  name, address, the code's id and when it was asked, the proof and when it
+  ends) and restores it on load. A phone mail app that closes the link's tab
+  to show the inbox, or a reload, no longer loses the code already e-mailed or
+  the proof. A code is dropped after its 30 minutes, a proof after its 2
+  hours; a browser that blocks storage simply starts afresh. The code is not
+  put in the e-mail's subject: the firm's Microsoft 365 message trace lists
+  the subjects of what it sends, so its admins could read a client's code
+  there.
+- Name and e-mail are kept, with the time, on each unit answered
+  (`responded_by_name`, `responded_by_email`, `responded_at`). The BU Events
+  page shows "Confirmed by <name> (<email>) on <date>" per unit and on the
+  event. The public page shows who answered with the address masked
+  ("r…h@client.com").
+- The firm's own addresses never answer and get no code: the firm's domain
+  (`vjdesai.com`) and any staff member's profile e-mail. They may get a copy,
+  but a request needs at least one address outside the firm. The pop-up asks
+  the database which typed addresses count as the firm's (a staff member's
+  personal address is one) and lists them; a refusal names them. A staff
+  member who wants to clear a unit without the client uses "Accept without
+  confirmation", with its permission and reason; neither a request sent to
+  oneself nor the firm's copy of a client's request can do it.
+- Only an open unit takes an answer. A confirmed unit stays confirmed: the
+  next reader sees who confirmed it and cannot dispute it there (a client's own
+  confirmation is never replaced); the page says an answer given there stands
+  and to write to the firm if it is wrong. A disputed unit waits for staff, who
+  correct the working and send a new request for it.
+  *Open question for the firm:* "anyone can provide confirmation for the
+  outstanding figures" could mean that another recipient may confirm a unit
+  someone else disputed. Until the firm decides, a dispute stands. That is the
+  safer reading: a dispute says the working's value may be wrong.
+- A new request for a unit replaces the earlier one for that unit once its
+  e-mail is out (outbox `sent`, or the row gone). The earlier link then shows
+  the unit as "replaced by a newer request" and takes no answer for it. While
+  the newer e-mail waits in the outbox, is stuck sending, or failed (failed,
+  skipped or cancelled), the earlier link keeps answering, so the client is
+  never told to use an e-mail they have not received. Only a newer request
+  that is out replaces a link: a link replaced by a delivered request stays
+  replaced when a still newer request fails. A per-unit link counts every
+  request as newer. A confirmed or accepted unit shows its answer on every
+  link that asked about it. Per-unit links e-mailed before this change keep
+  working, on the new page and with the same checks, until a newer request
+  about their unit is out; the old per-unit answer function and its lookup
+  are closed to the public key. When the change is applied, each row such an
+  e-mail made records, once, the addresses it went to (`legacy_emails`: the To
+  and CC of its outbox row, or the client master's then when that row was
+  gone) and the e-mail itself (`legacy_outbox_id`). Nothing changes them
+  later, not even the confirmation functions. Only such a row answers by its
+  own token, and only those addresses may answer it, whatever a request asks
+  later. Every row carries a token the public key can read, but the token of a
+  row a request or Accept made was never e-mailed and opens nothing; and the
+  addresses are never read live from `clients.email` or `email_outbox`, which
+  the public key can write (round 4, high: one write to the client master let
+  anyone confirm every unit through the rows' own tokens and open the filing
+  gate). When a newer request counts as out is still read from
+  `email_outbox.status`; the public key can write it, but that only reopens an
+  earlier link to the people its own e-mail went to, who must still prove
+  their address.
+- A re-send while an earlier request's e-mail still waits in the outbox
+  cancels that e-mail when the new request asks everything it asked (or the
+  rest is answered), so the client never gets a link that opens "replaced".
+  When the new e-mail fails, staff are told whether an earlier link still
+  takes answers, or that no earlier link to the request's units has reached
+  the client (`builder_bu_confirm_requests.earlier_link`; said of those units,
+  since an earlier e-mail about other units may have been answered).
+- A unit is shown as asked only once its e-mail is out. BU Events shows
+  "Asked <date>" when the unit's request went out (dated when it went), and
+  otherwise "E-mail of <date> failed: <why>" or "queued, not sent yet", with
+  whether an earlier link to the unit still takes answers. Every request whose
+  e-mail failed or waits and that units still wait on gets its own line on
+  the event, not only the last one. The pop-up badges such units "Pending ·
+  e-mail failed" or "Pending · not sent yet", and says when the To it fills
+  in from the last request failed.
+- A send locks the event's rows before it checks them, so an answer given
+  while it runs is either seen (a confirmation is left out, a dispute stops
+  the send) or waits for it. A colleague's request for a ticked unit sent
+  while the pop-up was open stops the send too: the pop-up says the unit was
+  asked meanwhile, and to whom, and unticks it.
+- Nobody writes around the functions. The requests, the per-unit rows and
+  the history are open to read (RLS open to public, as everywhere), but the
+  public key has no insert, update or delete grant on them, and a trigger
+  refuses every write, from any role, that the send, the page's answer or the
+  firm's Accept did not make (`builder_bu_confirm_write_guard`). So nobody can
+  add their own address to a request, point a link at another client's units,
+  or write a confirmation or a responder straight into a unit's row. Deleting a
+  BU event, unit or client still takes its rows with it.
+- The posting gate is unchanged. The per-unit rows in
+  `builder_bu_agreement_confirmations` stay the record it reads; CONFIRMED or
+  OVERRIDDEN clears a unit, and PENDING, DISPUTED and NOT_SENT hold it.
+
+*Migration `20261021140000_bu_confirm_cc.sql` (send, lookup, code and answer
+functions; template `builder_bu_agreement_confirm_request`, editable under
+Reminders, Templates, Builder); Edge Function `bu-confirm-code`; tests
+`supabase/tests/bu_confirm/run.sh`, `deno test --allow-read
+supabase/functions/bu-confirm-code/test/` and
+`node scripts/verify-bu-confirm.mjs`; `src/lib/builderConfirmRules.ts`,
+`src/lib/builderAgreementConfirmData.ts`,
+`src/components/builder/SendAgreementConfirmDialog.tsx`,
+`src/pages/AgreementConfirmPage.tsx`.*
+
 *At posting time:*
 - The posted figures must equal the confirmed or accepted ones. If a unit's
   agreement value or differential moved since the event was prepared, posting
