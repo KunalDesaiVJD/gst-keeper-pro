@@ -27,6 +27,7 @@ import {
   formatPeriodLabel,
 } from '@/utils/parseElectronicCreditLedgerCsv';
 import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
+import { savedReversalReclaim } from '@/lib/itcAutoLink';
 
 type OpeningSource = 'manual' | 'csv' | 'not_applicable';
 
@@ -313,7 +314,7 @@ const GstReceivableRecoPage: React.FC = () => {
       // that point and won't drift again); before that it's still a draft.
       const [{ data: itcData }, { data: prevFilingRows }] = prevMonth
         ? await Promise.all([
-            supabase.from('itc_summaries').select('data').eq('client_id', selectedClientId).eq('period_month', prevMonth).maybeSingle(),
+            supabase.from('itc_summaries').select('data, is_locked').eq('client_id', selectedClientId).eq('period_month', prevMonth).maybeSingle(),
             supabase.from('filing_status').select('status').eq('client_id', selectedClientId).eq('period_month', prevMonth).in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']),
           ])
         : [{ data: null }, { data: null }];
@@ -356,14 +357,19 @@ const GstReceivableRecoPage: React.FC = () => {
           }),
           zero3
         );
-        const liveReversal = patterns
+        // M-1 is filed: once its ITC Summary is locked, its 4B(2)(i) and 5.4
+        // are read as saved then, not from its live 2B lists, which a GST
+        // Manager may still correct (docs §13); as the push gate reads them
+        // (computeGstReceivableRecoDiff).
+        const savedFigures = (itcData as { is_locked?: boolean | null }).is_locked === true ? savedReversalReclaim(itc) : null;
+        const liveReversal = savedFigures ? savedFigures.reversal : patterns
           ? (reversalBills || [])
               .filter((b: any) => monthMatches(b.reversal_month, patterns))
               .reduce((acc: any, b: any) => ({
                 igst: acc.igst + (b.input_igst || 0), cgst: acc.cgst + (b.input_cgst || 0), sgst: acc.sgst + (b.input_sgst || 0),
               }), zero3)
           : zero3;
-        const liveReclaim = patterns
+        const liveReclaim = savedFigures ? savedFigures.reclaim : patterns
           ? (reclaimBills || [])
               .filter((b: any) => b.reclaim_subtype !== 'EXPENSE_OUT' && monthMatches(b.reclaim_month, patterns))
               .reduce((acc: any, b: any) => ({

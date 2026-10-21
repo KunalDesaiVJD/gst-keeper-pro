@@ -37,6 +37,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { COUNTED_ACTIONS, effectFigures, signedEffect, type TwobDocLike } from '@/lib/twobDocs';
+import type { TwobChange } from '@/lib/twobPriorMonth';
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -309,11 +310,15 @@ export async function postImport2BToLedger(
   const nowIso = new Date().toISOString();
   const currentLabel = periodMonthLabel(periodMonth);
 
+  // Every write checks its error: the database refuses a write to a prior
+  // month (twob_guard), which must stop the post, not pass unseen.
   if (plan.retractBills2B.length > 0) {
-    await supabase.from('bills_not_in_2b').delete().in('id', plan.retractBills2B.map((r) => r.ledgerId));
+    const { error } = await supabase.from('bills_not_in_2b').delete().in('id', plan.retractBills2B.map((r) => r.ledgerId));
+    if (error) throw error;
   }
   if (plan.retractBillsBooks.length > 0) {
-    await supabase.from('bills_not_in_books').delete().in('id', plan.retractBillsBooks.map((r) => r.ledgerId));
+    const { error } = await supabase.from('bills_not_in_books').delete().in('id', plan.retractBillsBooks.map((r) => r.ledgerId));
+    if (error) throw error;
   }
 
   if (plan.insertBills2B.length > 0) {
@@ -339,7 +344,7 @@ export async function postImport2BToLedger(
     if (error) throw error;
   }
   for (const { ledgerId, row: b } of plan.updateBills2B) {
-    await supabase.from('bills_not_in_2b').update({
+    const { error } = await supabase.from('bills_not_in_2b').update({
       date: b.date as string,
       supplier_name: (b.supplier_name || '').trim() || 'Unknown supplier',
       supplier_invoice_number: b.supplier_invoice_number,
@@ -351,6 +356,7 @@ export async function postImport2BToLedger(
       updated_by: userId,
       updated_at: nowIso,
     }).eq('id', ledgerId);
+    if (error) throw error;
   }
 
   if (plan.insertBillsBooks.length > 0) {
@@ -373,7 +379,7 @@ export async function postImport2BToLedger(
     if (error) throw error;
   }
   for (const { ledgerId, row: d } of plan.updateBillsBooks) {
-    await supabase.from('bills_not_in_books').update({
+    const { error } = await supabase.from('bills_not_in_books').update({
       date: d.date as string,
       supplier_name: (d.supplier_name || '').trim() || 'Unknown supplier',
       supplier_invoice_number: d.supplier_invoice_number,
@@ -382,6 +388,7 @@ export async function postImport2BToLedger(
       updated_by: userId,
       updated_at: nowIso,
     }).eq('id', ledgerId);
+    if (error) throw error;
   }
 
   // Stamp every classified row for the period as posted (audit trail — even
@@ -394,8 +401,27 @@ export async function postImport2BToLedger(
     .update({ posted_at: nowIso, posted_by: userId })
     .eq('client_id', clientId).eq('period_month', periodMonth);
 
-  // Version snapshot — same shape TwoBReconciliationPage's old "Save Changes"
-  // wrote, so View Versions keeps working unchanged.
+  const versionNumber = await writePostVersion(clientId, periodMonth, userId);
+
+  return {
+    inserted2B: plan.insertBills2B.length,
+    updated2B: plan.updateBills2B.length,
+    retracted2B: plan.retractBills2B.length,
+    insertedBooks: plan.insertBillsBooks.length,
+    updatedBooks: plan.updateBillsBooks.length,
+    retractedBooks: plan.retractBillsBooks.length,
+    skipped: plan.skippedBooks.length + plan.skippedDocs.length,
+    versionNumber,
+  };
+}
+
+// The version snapshot a Post leaves (and a prior month's Save on 2B
+// Reconciliation): the month's two lists as they now stand, in the shape
+// TwoBReconciliationPage's "Save Changes" writes, so View Versions keeps
+// working unchanged. Never fails the caller: returns the version number, or
+// null when it could not be written.
+export async function writePostVersion(clientId: string, periodMonth: string, userId: string | undefined): Promise<number | null> {
+  const nowIso = new Date().toISOString();
   let versionNumber: number | null = null;
   try {
     const { data: existingVersions } = await supabase
@@ -447,14 +473,41 @@ export async function postImport2BToLedger(
     // Versioning is an audit nicety — never fail the post because of it.
   }
 
-  return {
-    inserted2B: plan.insertBills2B.length,
-    updated2B: plan.updateBills2B.length,
-    retracted2B: plan.retractBills2B.length,
-    insertedBooks: plan.insertBillsBooks.length,
-    updatedBooks: plan.updateBillsBooks.length,
-    retractedBooks: plan.retractBillsBooks.length,
-    skipped: plan.skippedBooks.length + plan.skippedDocs.length,
-    versionNumber,
-  };
+  return versionNumber;
+}
+
+// Post's plan for a prior month, as the changes twob_prior_books_apply takes
+// (src/lib/twobPriorMonth.ts): the same retractions, new entries and updates
+// postImport2BToLedger writes, each also reaching the later months' carried
+// copies of the entry. The posting stamps are not written: a prior month's 2B
+// documents do not change.
+export function planToPriorChanges(plan: PostPlan, periodMonth: string): TwobChange[] {
+  const label = periodMonthLabel(periodMonth);
+  const fields = (r: { date: string | null; supplier_name: string | null; supplier_invoice_number: string | null; supplier_gstin: string | null }) => ({
+    date: r.date as string,
+    supplier_name: (r.supplier_name || '').trim() || 'Unknown supplier',
+    supplier_invoice_number: r.supplier_invoice_number,
+    supplier_gstin: r.supplier_gstin,
+  });
+  const bookFigures = (b: BookRegRow) => ({
+    taxable_value: b.taxable_value || 0, input_igst: b.input_igst || 0, input_cgst: b.input_cgst || 0, input_sgst: b.input_sgst || 0,
+  });
+  return [
+    ...plan.retractBills2B.map(({ ledgerId }): TwobChange => ({ table: 'bills_not_in_2b', op: 'delete', id: ledgerId })),
+    ...plan.retractBillsBooks.map(({ ledgerId }): TwobChange => ({ table: 'bills_not_in_books', op: 'delete', id: ledgerId })),
+    ...plan.insertBills2B.map(({ row: b }): TwobChange => ({
+      table: 'bills_not_in_2b', op: 'insert',
+      values: { ...fields(b), ...bookFigures(b), reversal_month: label, source_book_id: b.id },
+    })),
+    ...plan.updateBills2B.map(({ ledgerId, row: b }): TwobChange => ({
+      table: 'bills_not_in_2b', op: 'update', id: ledgerId, values: { ...fields(b), ...bookFigures(b) },
+    })),
+    ...plan.insertBillsBooks.map(({ row: d }): TwobChange => ({
+      table: 'bills_not_in_books', op: 'insert',
+      values: { ...fields(d), ...ledgerFiguresOf(d), bill_in_2b_month: label, source_doc_id: d.id },
+    })),
+    ...plan.updateBillsBooks.map(({ ledgerId, row: d }): TwobChange => ({
+      table: 'bills_not_in_books', op: 'update', id: ledgerId, values: { ...fields(d), ...ledgerFiguresOf(d) },
+    })),
+  ];
 }

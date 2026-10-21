@@ -10,6 +10,7 @@ import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { savedReversalReclaim } from '@/lib/itcAutoLink';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -261,8 +262,9 @@ const SuspendedRecoPage: React.FC = () => {
         sgst: acc.sgst + (Number(b.input_sgst) || 0),
         igst: acc.igst + (Number(b.input_igst) || 0),
       }), { cgst: 0, sgst: 0, igst: 0 });
-      const row54 = sumHeads(normalReclaims);
-      const row4D12FromBills = sumHeads(expenseOutReclaims);
+      let row54 = sumHeads(normalReclaims);
+      let row4D12FromBills = sumHeads(expenseOutReclaims);
+      let row4B2iUsed = row4B2i;
 
       // 4B(2)(ii) and 5.5: read from saved ITC summary (these are editable, not auto-linked)
       let row4B2ii = { cgst: 0, sgst: 0, igst: 0 };
@@ -274,13 +276,22 @@ const SuspendedRecoPage: React.FC = () => {
 
       const { data: itcData } = await supabase
         .from('itc_summaries')
-        .select('data')
+        .select('data, is_locked')
         .eq('client_id', selectedClientId)
         .eq('period_month', selectedMonth)
         .maybeSingle();
 
       if (itcData?.data) {
         const itc = itcData.data as any;
+        // A filed month (its ITC Summary locked): the current total is what
+        // was filed, as saved then; only the books side follows the books
+        // (docs §13; computeSuspendedRecoDiff reads it the same way).
+        if (itcData.is_locked === true) {
+          const filed = savedReversalReclaim(itc);
+          row4B2iUsed = filed.reversal;
+          row54 = filed.reclaim;
+          row4D12FromBills = filed.expenseOut;
+        }
         const section4A = itc.section4A || [];
         const section4B = itc.section4B || [];
         const section4D = itc.section4D || [];
@@ -315,9 +326,9 @@ const SuspendedRecoPage: React.FC = () => {
       };
 
       // Updated formula: (4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)
-      setPortalCgst(row4B2i.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst);
-      setPortalSgst(row4B2i.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst);
-      setPortalIgst(row4B2i.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst);
+      setPortalCgst(row4B2iUsed.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst);
+      setPortalSgst(row4B2iUsed.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst);
+      setPortalIgst(row4B2iUsed.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst);
 
       // Fetch books data from bills_not_in_2b 
       const { data: booksData } = await supabase

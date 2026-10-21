@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { savedReversalReclaim } from './itcAutoLink';
 
 // Mirrors the "DIFFERENCE" figure on the Suspended Reco page
 // (src/pages/SuspendedRecoPage.tsx) — same source tables, same formula, same
@@ -73,6 +74,7 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
     sgst: acc.sgst + (Number(b.input_sgst) || 0),
     igst: acc.igst + (Number(b.input_igst) || 0),
   }), { cgst: 0, sgst: 0, igst: 0 });
+  let row4B2iUsed = row4B2i;
 
   // 5.4 / 4(D) 1.2: reclaim bills where reclaim_month matches current month
   const { data: reclaimBills } = await supabase
@@ -89,20 +91,24 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
     sgst: acc.sgst + (Number(b.input_sgst) || 0),
     igst: acc.igst + (Number(b.input_igst) || 0),
   }), { cgst: 0, sgst: 0, igst: 0 });
-  const row54 = sumHeads(normalReclaims);
-  const row4D12FromBills = sumHeads(expenseOutReclaims);
+  let row54 = sumHeads(normalReclaims);
+  let row4D12FromBills = sumHeads(expenseOutReclaims);
 
   let row4B2ii = { cgst: 0, sgst: 0, igst: 0 };
   let row55 = { cgst: 0, sgst: 0, igst: 0 };
   let row4D12FromItc = { cgst: 0, sgst: 0, igst: 0 };
   const { data: itcData } = await supabase
     .from('itc_summaries')
-    .select('data')
+    .select('data, is_locked')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
     .maybeSingle();
+  let filedFigures: ReturnType<typeof savedReversalReclaim> | null = null;
   if (itcData?.data) {
     const itc = itcData.data as any;
+    // A filed month (its ITC Summary locked): the current total is what was
+    // filed, as saved then; only the books side follows the books (docs §13).
+    if (itcData.is_locked === true) filedFigures = savedReversalReclaim(itc);
     const section4A = itc.section4A || [];
     const section4B = itc.section4B || [];
     const section4D = itc.section4D || [];
@@ -117,15 +123,20 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
       igst: Number(found4D12?.igst) || 0,
     };
   }
+  if (filedFigures) {
+    row4B2iUsed = filedFigures.reversal;
+    row54 = filedFigures.reclaim;
+    row4D12FromBills = filedFigures.expenseOut;
+  }
   const row4D12 = {
     cgst: Math.max(row4D12FromBills.cgst, row4D12FromItc.cgst),
     sgst: Math.max(row4D12FromBills.sgst, row4D12FromItc.sgst),
     igst: Math.max(row4D12FromBills.igst, row4D12FromItc.igst),
   };
 
-  const portalCgst = row4B2i.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst;
-  const portalSgst = row4B2i.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst;
-  const portalIgst = row4B2i.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst;
+  const portalCgst = row4B2iUsed.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst;
+  const portalSgst = row4B2iUsed.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst;
+  const portalIgst = row4B2iUsed.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst;
 
   const { data: booksData } = await supabase
     .from('bills_not_in_2b')
@@ -163,4 +174,50 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
     // identical to SuspendedRecoPage.tsx's diffTotal formula.
     total: normalizeZero(diffCgst + diffSgst + diffIgst),
   };
+}
+
+export interface FilingSuspendedCheck {
+  /** False when the month has neither a Suspended Reco row nor Not in 2B rows (nothing to check). */
+  checked: boolean;
+  /** Opening + current total as saved on Suspended Reco, less the live books side. */
+  difference: number;
+  /** Over ₹20: marking GSTR-3B Filed is refused. */
+  blocks: boolean;
+}
+
+// Filing Status's check before a GSTR-3B is marked Filed (FilingStatusPage,
+// handleStatusChange): the opening and current total as saved on Suspended
+// Reco, less the books side (Not in 2B rows with a reversal month and no
+// reclaim month), within ₹20. Kept here so the page and the gates test
+// (supabase/tests/twob_simple/gates.test.mjs) run the same code.
+export async function filingSuspendedCheck(clientId: string, periodMonth: string): Promise<FilingSuspendedCheck> {
+  const { data: suspendedData } = await supabase
+    .from('suspended_reco')
+    .select('opening_cgst, opening_sgst, opening_igst, portal_cgst, portal_sgst, portal_igst')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth)
+    .maybeSingle();
+  // RULE: Include rows where Reclaim is blank AND Reversal is NOT blank
+  const { data: booksData } = await supabase
+    .from('bills_not_in_2b')
+    .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth);
+  if (!suspendedData && !(booksData && booksData.length > 0)) return { checked: false, difference: 0, blocks: false };
+  const s = suspendedData as Record<string, unknown> | null;
+  const n = (v: unknown) => Number(v) || 0;
+  // Opening Balance + Current Total - Books
+  const portalTotal = n(s?.opening_cgst) + n(s?.opening_sgst) + n(s?.opening_igst) + n(s?.portal_cgst) + n(s?.portal_sgst) + n(s?.portal_igst);
+  const booksTotal = (booksData || [])
+    .filter((row) => {
+      const reversalBlank = row.reversal_month === null || row.reversal_month === '';
+      const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
+      return reclaimBlank && !reversalBlank;
+    })
+    .reduce((acc, row) => acc + n(row.input_cgst) + n(row.input_sgst) + n(row.input_igst), 0);
+  // Round to 2 decimal places to handle floating-point precision issues; normalize -0 to 0.
+  let difference = Math.round((portalTotal - booksTotal) * 100) / 100;
+  if (difference === 0 || Object.is(difference, -0)) difference = 0;
+  // Allow differences up to 20 for rounding errors
+  return { checked: true, difference, blocks: Math.abs(difference) > 20 };
 }

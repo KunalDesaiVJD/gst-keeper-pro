@@ -19,6 +19,7 @@ import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { savedReversalReclaim } from '@/lib/itcAutoLink';
 import type { Json } from '@/integrations/supabase/types';
 import { exportITCSummaryToPDF } from '@/utils/itcPdfExport';
 import { with4D1Total } from '@/lib/itc4D';
@@ -384,6 +385,21 @@ const ITCSummaryPage: React.FC = () => {
       setReversalFromReco({ igst: 0, cgst: 0, sgst: 0 });
       setReclaimFromReco({ igst: 0, cgst: 0, sgst: 0 });
       setExpenseOutFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      return;
+    }
+
+    // A filed month whose summary is locked shows its 2B Reconciliation rows
+    // (4B(2)(i), 5.4, 4D(1.2)) as saved when it was filed, not from today's
+    // lists: a GST Manager may still correct a filed month's books entries
+    // (docs §13), which moves only its Suspended Reco books side; a Save of
+    // the filed summary keeps what was filed.
+    const { data: savedRow } = await supabase.from('itc_summaries').select('data, is_locked')
+      .eq('client_id', selectedClient).eq('period_month', selectedMonth).maybeSingle();
+    if (savedRow?.is_locked === true && savedRow.data) {
+      const filed = savedReversalReclaim(savedRow.data);
+      setReversalFromReco(filed.reversal);
+      setReclaimFromReco(filed.reclaim);
+      setExpenseOutFromReco(filed.expenseOut);
       return;
     }
 

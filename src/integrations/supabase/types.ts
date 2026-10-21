@@ -11741,6 +11741,26 @@ export type Database = {
         Args: { p_actor_id: string; p_position_id: string | null; p_user_id: string }
         Returns: undefined
       }
+      twob_month_state: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: Json
+      }
+      twob_month_is_prior: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: boolean
+      }
+      twob_prior_books_apply: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_changes: Json; p_dry_run?: boolean }
+        Returns: Json
+      }
+      twob_carry_after_filing: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: Json
+      }
+      twob_carry_rerun: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_dry_run?: boolean }
+        Returns: Json
+      }
       staff_end_sessions: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_target_user_id: string }
         Returns: string

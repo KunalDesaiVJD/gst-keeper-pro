@@ -32,6 +32,9 @@ import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 import { markFiledForPeriod } from '@/lib/advanceSetoffOverrides';
 import RequestDirectFilingDialog, { DirectFilingTarget } from '@/components/filing/RequestDirectFilingDialog';
 import DirectFilingApprovalsPanel from '@/components/filing/DirectFilingApprovalsPanel';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { canChangePriorBooks, carryAfterFiling, describeRerun, monthName, rerunCarry } from '@/lib/twobPriorMonth';
+import { filingSuspendedCheck } from '@/lib/suspendedRecoCalc';
 import {
   DirectFilingApproval,
   DirectFilingState,
@@ -180,6 +183,7 @@ interface FilingRecord {
 
 const FilingStatusPage: React.FC = () => {
   const { canUnlockSheets, isStaffRole, user, canEditFilingStatus, canExportData } = useAuth();
+  const confirm = useConfirm();
   const { selectedMonth: contextMonth, setSelectedMonth: setContextMonth } = useMonth();
   const [searchParams] = useSearchParams();
   const [selectedMonth, setSelectedMonth] = useState<string>(contextMonth);
@@ -248,16 +252,14 @@ const FilingStatusPage: React.FC = () => {
   // Record id currently retrying a carry-forward, for the button's spinner.
   const [retryingCarryForwardId, setRetryingCarryForwardId] = useState<string | null>(null);
 
-  // Carry forward function - transfers all 2B records to next month.
-  // Returns a result instead of swallowing failures: the original version
-  // never checked the insert() calls' errors at all and its catch swallowed
-  // everything silently ("don't fail the filing just because carry forward
-  // failed") — so when a delete/insert failed (most likely the tab
-  // navigating away mid-flight, right after the "Filed" click), staff saw a
-  // normal success and had no way to know the next period's carry-forward
-  // never happened. See docs/2B_RECONCILIATION_FLOW.md and the migration
-  // 20260814180000_backfill_missing_carry_forward.sql for the incident this
-  // caused across ~21 clients.
+  // The carry after filing: the database's first carry (twob_carry_after_filing,
+  // 20261021100000; docs §13). It copies the month's Not in 2B / Not in Books
+  // lists into the next month only when that month holds no carried rows on
+  // the list yet, and otherwise does nothing, so a later month's reclaims and
+  // book entries are never wiped (TAMNNA, 17 Oct 2026). The filing trigger
+  // (auto_lock_on_filed) already made it when the status was saved; this is
+  // the second, harmless pass, and the one a quarterly return relied on.
+  // Returns a result instead of swallowing failures (docs §6).
   const carryForwardToNextMonth = async (
     clientId: string,
     periodMonth: string,
@@ -267,115 +269,9 @@ const FilingStatusPage: React.FC = () => {
       return { success: false, totalCarried: 0, error: 'A carry-forward for this client/period is already running.' };
     }
     carryForwardInFlight.current.add(lockKey);
-
-    // Calculate next month
-    const [month, year] = periodMonth.split('/');
-    let nextMonth = parseInt(month) + 1;
-    let nextYear = parseInt(year);
-    if (nextMonth > 12) {
-      nextMonth = 1;
-      nextYear++;
-    }
-    const nextPeriod = `${String(nextMonth).padStart(2, '0')}/${nextYear}`;
-
     try {
-      // Fetch current bills not in 2B
-      const { data: billsNotIn2B, error: fetch2BError } = await supabase
-        .from('bills_not_in_2b')
-        .select('*')
-        .eq('client_id', clientId)
-        .eq('period_month', periodMonth);
-
-      if (fetch2BError) throw fetch2BError;
-
-      // Fetch current bills not in books
-      const { data: billsNotInBooks, error: fetchBooksError } = await supabase
-        .from('bills_not_in_books')
-        .select('*')
-        .eq('client_id', clientId)
-        .eq('period_month', periodMonth);
-
-      if (fetchBooksError) throw fetchBooksError;
-
-      let totalCarried = 0;
-
-      // CARRY FORWARD BILLS NOT IN 2B
-      // Carry forward ALL records regardless of reclaim_month status
-      // This ensures totals match between months.
-      // The delete runs unconditionally, OUTSIDE the "source month has rows"
-      // check: if this period's last pending item was cleared, next period's
-      // carried-forward copy of it has to go too. Guarding the delete behind
-      // `length > 0` (as this did originally) left that copy stranded there
-      // forever, and the DB trigger — which deletes unconditionally — then
-      // disagreed with this function about the result.
-      const { error: delete2BError } = await supabase
-        .from('bills_not_in_2b')
-        .delete()
-        .eq('client_id', clientId)
-        .eq('period_month', nextPeriod)
-        .eq('is_carried_forward', true);
-      if (delete2BError) throw delete2BError;
-
-      if (billsNotIn2B && billsNotIn2B.length > 0) {
-        // Now insert ALL records from current month as CF records in next month
-        const records2B = billsNotIn2B.map(b => ({
-          client_id: b.client_id,
-          date: b.date,
-          supplier_name: b.supplier_name,
-          supplier_invoice_number: b.supplier_invoice_number,
-          supplier_gstin: b.supplier_gstin,
-          taxable_value: b.taxable_value,
-          input_igst: b.input_igst,
-          input_cgst: b.input_cgst,
-          input_sgst: b.input_sgst,
-          period_month: nextPeriod,
-          reversal_month: b.reversal_month,
-          reclaim_month: b.reclaim_month,
-          reclaim_subtype: (b as any).reclaim_subtype ?? null,
-          is_carried_forward: true,
-        }));
-
-        const { error: insert2BError } = await supabase.from('bills_not_in_2b').insert(records2B);
-        if (insert2BError) throw insert2BError;
-        totalCarried += records2B.length;
-      }
-
-      // CARRY FORWARD BILLS NOT IN BOOKS
-      // Carry forward ALL records regardless of book_entry_month or bill_in_2b_month status
-      // This matches user requirement to carry forward everything to next month
-      // Same unconditional delete as the 2B side above.
-      const { error: deleteBooksError } = await supabase
-        .from('bills_not_in_books')
-        .delete()
-        .eq('client_id', clientId)
-        .eq('period_month', nextPeriod)
-        .eq('is_carried_forward', true);
-      if (deleteBooksError) throw deleteBooksError;
-
-      if (billsNotInBooks && billsNotInBooks.length > 0) {
-        // Now insert ALL records from current month as CF records in next month
-        const recordsBooks = billsNotInBooks.map(b => ({
-          client_id: b.client_id,
-          date: b.date,
-          supplier_name: b.supplier_name,
-          supplier_invoice_number: b.supplier_invoice_number,
-          supplier_gstin: b.supplier_gstin,
-          taxable_value: b.taxable_value,
-          input_igst: b.input_igst,
-          input_cgst: b.input_cgst,
-          input_sgst: b.input_sgst,
-          period_month: nextPeriod,
-          book_entry_month: b.book_entry_month,
-          bill_in_2b_month: b.bill_in_2b_month,
-          is_carried_forward: true,
-        }));
-
-        const { error: insertBooksError } = await supabase.from('bills_not_in_books').insert(recordsBooks);
-        if (insertBooksError) throw insertBooksError;
-        totalCarried += recordsBooks.length;
-      }
-
-      return { success: true, totalCarried };
+      const { carried } = await carryAfterFiling(clientId, periodMonth);
+      return { success: true, totalCarried: carried };
     } catch (error: any) {
       console.error('Error during carry forward:', error);
       return { success: false, totalCarried: 0, error: error?.message || 'Unknown error' };
@@ -384,21 +280,37 @@ const FilingStatusPage: React.FC = () => {
     }
   };
 
-  // Self-service recovery for a Filed GSTR-3B/GSTR-3B (Q) record whose
-  // automatic carry-forward didn't happen (or needs re-syncing after a later
-  // edit to this period's 2B Reconciliation) — no engineer needed. Safe to
-  // click any time: it's the exact same delete-then-insert as the automatic
-  // run, so it just re-syncs next period's carried-forward rows to match
-  // this period's current state.
+  // Re-run carry forward (docs §13): a GST Manager or the superadmin, with a
+  // preview first. It compares the month's two lists with the next month's
+  // carried copies, document by document: entries the next month lacks are
+  // added, copies the month no longer holds are removed, and such a copy that
+  // holds the next month's own reclaim or book entry is kept and named. It no
+  // longer deletes and copies the whole list again (that wiped later months'
+  // reclaims).
   const handleRetryCarryForward = async (record: FilingRecord) => {
+    if (!canChangePriorBooks(user?.role) || !user?.id) {
+      toast.error('Only a GST Manager or the superadmin can re-run the carry forward.');
+      return;
+    }
     setRetryingCarryForwardId(record.id);
     try {
-      const result = await carryForwardToNextMonth(record.client_id, record.period_month);
-      if (result.success) {
-        toast.success(`Carried forward ${result.totalCarried} record(s) to next period.`);
-      } else {
-        toast.error(`Carry-forward failed: ${result.error || 'unknown error'}`);
+      const preview = await rerunCarry(user.id, record.client_id, record.period_month, true);
+      const { lines, nothingToDo } = describeRerun(preview);
+      if (nothingToDo) {
+        toast.info(`${monthName(preview.nextPeriod)} already holds every entry of ${monthName(preview.period)}.${lines.length ? ` ${lines.join(' ')}` : ''}`, { duration: 10000 });
+        return;
       }
+      if (!(await confirm({
+        title: `Re-run carry forward into ${monthName(preview.nextPeriod)}?`,
+        description: (<>{lines.map((l, i) => <React.Fragment key={i}>{l}<br /></React.Fragment>)}</>),
+        confirmText: 'Re-run',
+      }))) return;
+      const done = await rerunCarry(user.id, record.client_id, record.period_month, false);
+      const added = done.bills2B.add.length + done.billsBooks.add.length;
+      const removed = done.bills2B.remove.length + done.billsBooks.remove.length;
+      toast.success(`Carry forward re-run into ${monthName(done.nextPeriod)}: ${added} added, ${removed} removed.`);
+    } catch (err: any) {
+      toast.error(`Carry-forward failed: ${err?.message || 'unknown error'}`);
     } finally {
       setRetryingCarryForwardId(null);
     }
@@ -1050,57 +962,13 @@ const FilingStatusPage: React.FC = () => {
 
       if (!isNoItcBuilder) {
         try {
-          // Fetch suspended_reco data
-          const { data: suspendedData } = await supabase
-            .from('suspended_reco')
-            .select('*')
-            .eq('client_id', record.client_id)
-            .eq('period_month', selectedMonth)
-            .maybeSingle();
-        
-          // Fetch books data from bills_not_in_2b
-          // RULE: Include rows where Reclaim is blank AND Reversal is NOT blank
-          const { data: booksData } = await supabase
-            .from('bills_not_in_2b')
-            .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
-            .eq('client_id', record.client_id)
-            .eq('period_month', selectedMonth);
-        
-          if (suspendedData || (booksData && booksData.length > 0)) {
-            // New formula: Opening Balance + Current Total - Books
-            const openingCgst = Number((suspendedData as any)?.opening_cgst) || 0;
-            const openingSgst = Number((suspendedData as any)?.opening_sgst) || 0;
-            const openingIgst = Number((suspendedData as any)?.opening_igst) || 0;
-            const portalCgst = Number(suspendedData?.portal_cgst) || 0;
-            const portalSgst = Number(suspendedData?.portal_sgst) || 0;
-            const portalIgst = Number(suspendedData?.portal_igst) || 0;
-            const portalTotal = (openingCgst + openingSgst + openingIgst) + (portalCgst + portalSgst + portalIgst);
-          
-            // Filter books data: Include rows where Reclaim is blank AND Reversal is NOT blank
-            const filteredBooksData = (booksData || []).filter(row => {
-              const reversalBlank = row.reversal_month === null || row.reversal_month === '';
-              const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
-              return reclaimBlank && !reversalBlank;
-            });
-          
-            const booksTotals = filteredBooksData.reduce((acc, row) => ({
-              cgst: acc.cgst + (Number(row.input_cgst) || 0),
-              sgst: acc.sgst + (Number(row.input_sgst) || 0),
-              igst: acc.igst + (Number(row.input_igst) || 0),
-            }), { cgst: 0, sgst: 0, igst: 0 });
-          
-            const booksTotal = booksTotals.cgst + booksTotals.sgst + booksTotals.igst;
-            // Round to 2 decimal places to handle floating-point precision issues
-            let difference = Math.round((portalTotal - booksTotal) * 100) / 100;
-            // Normalize -0 to 0
-            if (difference === 0 || Object.is(difference, -0)) difference = 0;
-          
-            // Allow differences up to 20 for rounding errors
-            if (Math.abs(difference) > 20) {
-              const displayDiff = difference === 0 ? '0' : difference.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-              toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be within ₹20. Current difference: ${displayDiff}`);
-              return;
-            }
+          // Stored opening + current total less the live books side, within ₹20
+          // (filingSuspendedCheck, shared with the gates test).
+          const check = await filingSuspendedCheck(record.client_id, selectedMonth);
+          if (check.blocks) {
+            const displayDiff = check.difference === 0 ? '0' : check.difference.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+            toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be within ₹20. Current difference: ${displayDiff}`);
+            return;
           }
         } catch (error: any) {
           console.error('Error checking suspended reco:', error);
@@ -1239,17 +1107,18 @@ const FilingStatusPage: React.FC = () => {
           .update({ is_locked: true })
           .eq('id', record.id); // Only lock this specific record
         
-        // AUTO CARRY FORWARD: Transfer all 2B records to next month. The
-        // status/lock updates above already committed — a carry-forward
-        // failure here must not read as "filing failed" (the outer catch's
-        // generic message), it needs its own distinct, actionable warning.
+        // AUTO CARRY FORWARD: the first carry into the next month (nothing
+        // when it already holds its lists, docs §13). The status/lock updates
+        // above already committed — a carry-forward failure here must not
+        // read as "filing failed" (the outer catch's generic message), it
+        // needs its own distinct, actionable warning.
         const cfResult = await carryForwardToNextMonth(record.client_id, record.period_month);
         if (cfResult.success) {
-          toast.success(`${record.return_type} filed. 2B and ITC sheets are now locked and data carried forward to next month.`);
+          toast.success(`${record.return_type} filed. 2B and ITC sheets are now locked, and next month holds this month's pending 2B entries.`);
         } else {
           toast.warning(
             `${record.return_type} filed and sheets are locked, but carrying data forward to next month failed `
-            + `(${cfResult.error || 'unknown error'}). Use the retry button next to this record to try again.`,
+            + `(${cfResult.error || 'unknown error'}). A GST Manager or the superadmin can re-run it with the button next to this record.`,
             { duration: 10000 },
           );
         }
@@ -1366,6 +1235,9 @@ const FilingStatusPage: React.FC = () => {
         .eq('client_id', record.client_id)
         .eq('month', record.period_month);
       
+      // Unlocking does not open the month again for Import 2B and 2B
+      // Reconciliation: once Filed it stays a prior month there (docs §13).
+      //
       // Next period's carried-forward rows are deliberately LEFT IN PLACE.
       //
       // This used to delete them, on the reasoning that re-filing would
@@ -1374,12 +1246,12 @@ const FilingStatusPage: React.FC = () => {
       // wiped Jul-2026's entire backlog, and once Jul-2026 was itself filed it
       // carried only its own rows into Aug-2026, so every pending item older
       // than July vanished for good (docs/2B_RECONCILIATION_FLOW.md §7).
-      // Keeping them costs nothing: both carry-forward paths (the
-      // auto_lock_on_filed trigger and carryForwardToNextMonth above) delete
-      // every carried-forward row in the destination period before inserting,
-      // so a re-file still produces exactly the right set.
+      // Keeping them costs nothing: a re-file carries only into a month that
+      // holds no carried rows yet (the first carry, docs §13), and Re-run
+      // carry forward brings the next month in line without wiping its own
+      // reclaims and book entries.
       
-      toast.success('All sheets unlocked. GSTR-3B status changed to Prepared Pending. Next month\'s carried-forward items were left untouched.');
+      toast.success('All sheets unlocked. GSTR-3B status changed to Prepared Pending. Next month\'s carried-forward items were left untouched. For Import 2B and 2B Reconciliation the month stays filed: only a GST Manager or the superadmin changes its books entries.');
       fetchFilingRecords();
     } catch (error: any) {
       toast.error('Failed to unlock: ' + error.message);
@@ -1971,11 +1843,11 @@ const FilingStatusPage: React.FC = () => {
                         never filed, so its pending items never carried into the
                         next period — gating it on Filed left staff with no way
                         out of exactly the breakage it exists to repair. */}
-                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && (
+                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && canChangePriorBooks(user?.role) && (
                       <button
                         type="button"
                         className="shrink-0 disabled:opacity-50"
-                        title="Re-run carry forward to next month — use this if pending 2B items look missing next period"
+                        title="Re-run carry forward to next month (GST Manager / superadmin): shows what it adds and removes first, and keeps the next month's own reclaims and book entries"
                         disabled={retryingCarryForwardId === record.id}
                         onClick={() => handleRetryCarryForward(record)}
                       >

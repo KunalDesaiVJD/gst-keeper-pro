@@ -81,3 +81,25 @@ export async function fetchItcAutoLinkTotals(clientId: string, periodMonth: stri
     reversalFromReco, reclaimFromReco, expenseOutFromReco,
   };
 }
+
+// A filed month's 2B Reconciliation figures as its ITC Summary was saved and
+// locked when the return was filed: 4B(2)(i) "current month as per 2B RECO",
+// 5.4 and 4D(1.2). A gate that reads a filed month (the next month's GST
+// Receivable Reco; the month's own Suspended Reco portal side) reads these,
+// not the month's live lists: a GST Manager's change to a filed month's books
+// entries (docs §13) moves only the books side, never what was filed.
+type SavedRow = { srNo?: string; particular?: string; igst?: unknown; cgst?: unknown; sgst?: unknown };
+const heads = (r: SavedRow | undefined): HeadTotals => ({
+  igst: Number(r?.igst) || 0, cgst: Number(r?.cgst) || 0, sgst: Number(r?.sgst) || 0,
+});
+export function savedReversalReclaim(data: unknown): { reversal: HeadTotals; reclaim: HeadTotals; expenseOut: HeadTotals } {
+  const d = (typeof data === 'string' ? JSON.parse(data) : data) as { section4A?: SavedRow[]; section4B?: SavedRow[]; section4D?: SavedRow[] } | null;
+  const rowsA = Array.isArray(d?.section4A) ? d.section4A : [];
+  const rowsB = Array.isArray(d?.section4B) ? d.section4B : [];
+  const rowsD = Array.isArray(d?.section4D) ? d.section4D : [];
+  return {
+    reversal: heads(rowsB.find((r) => typeof r?.particular === 'string' && r.particular.includes('current month as per 2B RECO'))),
+    reclaim: heads(rowsA.find((r) => r?.srNo === '5.4')),
+    expenseOut: heads(rowsD.find((r) => r?.srNo === '1.2')),
+  };
+}

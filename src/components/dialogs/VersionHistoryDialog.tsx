@@ -31,6 +31,8 @@ interface VersionHistoryDialogProps {
   onOpenChange: (open: boolean) => void;
   versions: TwoBVersion[];
   onRestore: (version: TwoBVersion) => void;
+  /** Set when the month cannot be restored (a prior month, docs §13): Restore is hidden and this is shown. */
+  restoreBlockedReason?: string | null;
   onVersionDeleted?: () => void;
   clientName: string;
   month: string;
@@ -41,6 +43,7 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
   onOpenChange,
   versions,
   onRestore,
+  restoreBlockedReason,
   onVersionDeleted,
   clientName,
   month,
@@ -51,8 +54,8 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [viewingVersion, setViewingVersion] = useState<TwoBVersion | null>(null);
 
-  // Only superadmin can restore versions and delete versions
-  const canRestore = user?.role === 'superadmin';
+  // Only superadmin can restore versions and delete versions; a prior month is never restored.
+  const canRestore = user?.role === 'superadmin' && !restoreBlockedReason;
   const canDelete = user?.role === 'superadmin';
 
   const handleDownloadVersion = (version: TwoBVersion) => {
@@ -302,7 +305,7 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
 
           {!canRestore && versions.length > 0 && (
             <p className="text-xs text-muted-foreground text-center mt-4">
-              Only Superadmin can restore previous versions.
+              {restoreBlockedReason || 'Only Superadmin can restore previous versions.'}
             </p>
           )}
         </DialogContent>

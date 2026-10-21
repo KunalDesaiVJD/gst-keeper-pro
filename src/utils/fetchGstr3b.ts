@@ -5,7 +5,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bItcTyped, type Gstr3bResult, type ItcData, type ItcRow, type RcmTotals } from './buildGstr3bJson';
-import { fetchItcAutoLinkTotals } from '@/lib/itcAutoLink';
+import { fetchItcAutoLinkTotals, savedReversalReclaim } from '@/lib/itcAutoLink';
 import { with4D1Total } from '@/lib/itc4D';
 import { headsTyped } from '@/lib/itcHeads';
 import { fetchImport2BHeld, import2BHeldMessage } from '@/lib/postImport2B';
@@ -24,7 +24,7 @@ export async function fetchGstr3b(
   const short = toShort(periodMonth);
   const [g, itcRes, rcmRes, adjRes, fsiRes, filingRes, clientRes, autoLink, held] = await Promise.all([
     supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', short).maybeSingle(),
-    supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle(),
+    supabase.from('itc_summaries').select('data, is_locked').eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle(),
     supabase.from('rcm_data').select('taxable_value, cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', short),
     // GSTR-3B Adjustments module — GSTR-1A / prior-period corrections that
     // don't come from GSTR-1/ITC Summary/RCM. See Gstr3bAdjustmentsPage.tsx.
@@ -89,9 +89,15 @@ export async function fetchGstr3b(
   if (itc) {
     const isLiberal = !!clientRes.data?.liberal_2b_reconciliation;
     const isNoITC = clientRes.data?.builder_itc_type === 'NO_ITC';
-    const {
-      eligibleFromImport2B, creditNotesFromImport2B, notesFromImport2B, reversalFromReco, reclaimFromReco, expenseOutFromReco,
-    } = autoLink;
+    const { eligibleFromImport2B, creditNotesFromImport2B, notesFromImport2B } = autoLink;
+    // A filed month whose summary is locked: its 2B Reconciliation rows
+    // (4B(2)(i), 5.4, 4D(1.2)) as saved when it was filed, not today's lists,
+    // which a GST Manager may still correct (docs §13).
+    const filedFigures = (itcRes.data as { is_locked?: boolean | null } | null)?.is_locked === true && alreadyFiled
+      ? savedReversalReclaim(parsed) : null;
+    const reversalFromReco = filedFigures ? filedFigures.reversal : autoLink.reversalFromReco;
+    const reclaimFromReco = filedFigures ? filedFigures.reclaim : autoLink.reclaimFromReco;
+    const expenseOutFromReco = filedFigures ? filedFigures.expenseOut : autoLink.expenseOutFromReco;
     const amt = (r: ItcRow) => ({ igst: Number(r.igst) || 0, cgst: Number(r.cgst) || 0, sgst: Number(r.sgst) || 0 });
     // headsTyped: row 5.2 may hold a negative head, and heads that cancel must not hide a typed row.
     for (const r of itc.section4A as ItcRow[]) {

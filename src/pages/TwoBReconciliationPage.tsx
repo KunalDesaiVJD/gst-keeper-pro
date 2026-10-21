@@ -34,6 +34,12 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { cn } from '@/lib/utils';
 import { KpiTile, Note } from '@/components/gstr9/ui';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { writePostVersion } from '@/lib/postImport2B';
+import {
+  OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchTwobMonthState, previewAndApplyPriorBooks,
+  type TwobChange, type TwobMonthState,
+} from '@/lib/twobPriorMonth';
 import {
   WS_PAGE, WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL,
 } from '@/components/workspace/theme';
@@ -113,6 +119,9 @@ const TwoBReconciliationPage: React.FC = () => {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  // Prior month (docs §13), as the database reads it (twob_month_state).
+  const [monthState, setMonthState] = useState<TwobMonthState>(OPEN_MONTH);
+  const confirm = useConfirm();
   const [versions, setVersions] = useState<TwoBVersion[]>([]);
   const [lastSavedInfo, setLastSavedInfo] = useState<LastSavedInfo | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -160,7 +169,19 @@ const TwoBReconciliationPage: React.FC = () => {
   // The superadmin may add, edit and delete on every working sheet (firm's
   // decision, 13 Oct 2026): neither Strict mode nor a filed period stops them.
   const isSuperadmin = user?.role === 'superadmin';
-  const readOnly = !isSuperadmin && (isLocked || !isLiberalClient);
+  // A prior month (filed, or a later month filed; firm's rule of 21 Oct
+  // 2026, docs §13): only a GST Manager or the superadmin changes it, and
+  // only its books entries (the two lists), through twob_prior_books_apply,
+  // which also changes every later month's carried copy, with a preview
+  // first. Cells and added rows for a Liberal client; the delete buttons for
+  // Strict and Liberal. The reversal, reclaim, book entry and in-2B months
+  // of its rows never change; Import Excel, Restore and Clear Data never
+  // touch it. Employees see it read-only.
+  const isPrior = monthState.isPrior;
+  const canPriorBooks = canChangePriorBooks(user?.role);
+  const readOnly = isPrior ? !(canPriorBooks && isLiberalClient) : !isSuperadmin && (isLocked || !isLiberalClient);
+  const canDeleteHere = isPrior ? canPriorBooks : !readOnly;
+  const canSaveHere = !readOnly || canDeleteHere;
 
   // Check if client requires quarterly months only (IFF or Composition)
   const isQuarterlyClient = selectedClientData?.registration_type === 'IFF' || selectedClientData?.registration_type === 'Composition';
@@ -350,6 +371,12 @@ const TwoBReconciliationPage: React.FC = () => {
 
     // Set the final lock state
     setIsLocked(lockState);
+    // A month state that cannot be read leaves the month read-only: the
+    // database would refuse a prior month's writes anyway.
+    setMonthState(await fetchTwobMonthState(selectedClientId, selectedMonth).catch((err: Error) => {
+      toast.error(`${err.message}. The month is shown read-only; reload to try again.`);
+      return { ...OPEN_MONTH, isPrior: true };
+    }));
     setHasUnsavedChanges(false);
   }, [selectedClientId, selectedMonth]);
 
@@ -450,6 +477,7 @@ const TwoBReconciliationPage: React.FC = () => {
       setLocalBills2B([]);
       setLocalBillsBooks([]);
       setIsLocked(false);
+      setMonthState(OPEN_MONTH);
       setHasUnsavedChanges(false);
       setVersions([]);
       setLastSavedInfo(null);
@@ -639,6 +667,10 @@ const TwoBReconciliationPage: React.FC = () => {
       return;
     }
 
+    if (isPrior) {
+      toast.error(PRIOR_MONTH_DOCS_MSG + ' Import Excel adds to open months only.');
+      return;
+    }
     if (readOnly) {
       toast.error(isLocked ? 'Cannot import - sheet is locked' : 'Cannot import - this client is in Strict mode, use Import 2B instead');
       return;
@@ -781,7 +813,7 @@ const TwoBReconciliationPage: React.FC = () => {
   const [deletedRowsBooks, setDeletedRowsBooks] = useState<string[]>([]);
 
   const handleDeleteRow2B = (id: string) => {
-    if (readOnly) return;
+    if (!canDeleteHere) return;
     setLocalBills2B(prev => prev.filter(b => b.id !== id));
     // Track for actual deletion on save
     if (billsNotIn2B.find(b => b.id === id)) {
@@ -791,7 +823,7 @@ const TwoBReconciliationPage: React.FC = () => {
   };
 
   const handleDeleteRowBooks = (id: string) => {
-    if (readOnly) return;
+    if (!canDeleteHere) return;
     setLocalBillsBooks(prev => prev.filter(b => b.id !== id));
     // Track for actual deletion on save
     if (billsNotInBooks.find(b => b.id === id)) {
@@ -887,9 +919,61 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const hasMandatoryFieldErrors = validationErrors.length > 0;
 
+  // A prior month's Save: the removals, added rows and changed date,
+  // supplier, number, GSTIN and amounts, as one call through the one door,
+  // previewed first ("Also changes Aug-26 (1)"); each reaches the later
+  // months' carried copies of the entry. The month columns never change here.
+  const LEDGER_FIELDS = ['date', 'supplier_name', 'supplier_invoice_number', 'supplier_gstin', 'taxable_value', 'input_igst', 'input_cgst', 'input_sgst'] as const;
+  const savePriorMonth = async () => {
+    if (!selectedClientId || !selectedMonth || !user?.id) return;
+    const changesOf = (table: 'bills_not_in_2b' | 'bills_not_in_books', local: BillRecord[], saved: BillRecord[], deleted: string[]): TwobChange[] => {
+      const out: TwobChange[] = deleted.map((id) => ({ table, op: 'delete', id }));
+      for (const row of local) {
+        if (row.id.startsWith('temp-')) {
+          const values: Record<string, string | number | null> = {};
+          LEDGER_FIELDS.forEach((k) => { values[k] = row[k] ?? null; });
+          if (table === 'bills_not_in_2b') values.reversal_month = row.reversal_month || null;
+          else values.bill_in_2b_month = row.bill_in_2b_month || null;
+          out.push({ table, op: 'insert', values });
+          continue;
+        }
+        const was = saved.find((o) => o.id === row.id);
+        if (!was) continue;
+        const values: Record<string, string | number | null> = {};
+        LEDGER_FIELDS.forEach((k) => { if ((row[k] ?? null) !== (was[k] ?? null)) values[k] = row[k] ?? null; });
+        if (Object.keys(values).length) out.push({ table, op: 'update', id: row.id, values });
+      }
+      return out;
+    };
+    const changes = [
+      ...changesOf('bills_not_in_2b', localBills2B, billsNotIn2B, deletedRows2B),
+      ...changesOf('bills_not_in_books', localBillsBooks, billsNotInBooks, deletedRowsBooks),
+    ];
+    if (changes.length === 0) { toast.info('Nothing to save.'); return; }
+    setIsSaving(true);
+    try {
+      const outcome = await previewAndApplyPriorBooks({
+        actorId: user.id, clientId: selectedClientId, period: selectedMonth, changes, confirm,
+        title: 'Save changes to a filed month?', confirmText: 'Save',
+        destructive: changes.some((c) => c.op === 'delete'),
+        notify: { error: (m) => toast.error(m, { duration: 15000 }) },
+      });
+      if (!outcome.applied) return;
+      const version = await writePostVersion(selectedClientId, selectedMonth, user.id);
+      setDeletedRows2B([]);
+      setDeletedRowsBooks([]);
+      setHasUnsavedChanges(false);
+      await fetchBillsData();
+      await fetchVersions();
+      toast.success(`Changes saved${version ? `. Version ${version} created` : ''}.`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   // Save all changes to database
   const handleSaveAll = async () => {
-    if (!selectedClientId || readOnly) return;
+    if (!selectedClientId || !canSaveHere) return;
     
     // Validate mandatory fields
     if (validationErrors.length > 0) {
@@ -902,6 +986,11 @@ const TwoBReconciliationPage: React.FC = () => {
       return;
     }
     
+    if (isPrior) {
+      await savePriorMonth();
+      return;
+    }
+
     setIsSaving(true);
     try {
       // Get next version number
@@ -1141,6 +1230,7 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const handleRestoreVersion = async (version: TwoBVersion) => {
     if (!selectedClientId || readOnly) return;
+    if (isPrior) { toast.error(PRIOR_MONTH_DOCS_MSG + ' Restore works on open months only.'); return; }
     
     try {
       // Get next version number for the RESTORE action
@@ -1284,10 +1374,12 @@ const TwoBReconciliationPage: React.FC = () => {
     isEditableForCF: boolean = false,
     isReclaimColumn: boolean = false,
     reclaimSubtype?: string | null,
-    onSubtypeChange?: (subtype: string | null) => void
+    onSubtypeChange?: (subtype: string | null) => void,
+    priorEditable: boolean = false
   ) => {
-    // Carried forward rows are non-editable - except columns marked as editable for CF (Reclaim, Book Entry, In 2B)
-    const shouldBeReadOnly = readOnly || (isCarriedForward && !isEditableForCF && !isSuperadmin);
+    // Carried forward rows are non-editable - except columns marked as editable for CF (Reclaim, Book Entry, In 2B).
+    // A prior month's months never change; only a row being added takes its reversal / in-2B month.
+    const shouldBeReadOnly = readOnly || (isPrior && !priorEditable) || (isCarriedForward && !isEditableForCF && !isSuperadmin);
     
     if (shouldBeReadOnly) {
       const displayVal = value || '-';
@@ -1349,7 +1441,7 @@ const TwoBReconciliationPage: React.FC = () => {
               Expense out
             </SelectItem>
           )}
-          {isRestrictedPeriod
+          {isRestrictedPeriod || isPrior
             ? (currentPeriodMonthLabel && (
                 <SelectItem value={currentPeriodMonthLabel}>{currentPeriodMonthLabel}</SelectItem>
               ))
@@ -1381,7 +1473,7 @@ const TwoBReconciliationPage: React.FC = () => {
         icon={<FileSpreadsheet />}
         actions={
           <>
-            {selectedClientId && !readOnly && (
+            {selectedClientId && canSaveHere && (
               <Button
                 size="sm"
                 onClick={handleSaveAll}
@@ -1402,7 +1494,8 @@ const TwoBReconciliationPage: React.FC = () => {
               className="hidden"
             />
             {canImportExcel() && (
-              <Button variant="outline" size="sm" className={WS_BTN} onClick={handleImportClick} disabled={readOnly}>
+              <Button variant="outline" size="sm" className={WS_BTN} onClick={handleImportClick} disabled={readOnly || isPrior}
+                title={isPrior ? `${PRIOR_MONTH_DOCS_MSG} Import Excel adds to open months only.` : undefined}>
                 <Upload className="h-3.5 w-3.5" />
                 Import Excel
               </Button>
@@ -1519,9 +1612,9 @@ const TwoBReconciliationPage: React.FC = () => {
             </TileButton>
             <KpiTile
               label="Sheet"
-              value={isLocked ? 'Locked' : isLiberalClient ? 'Liberal' : 'Strict'}
-              hint={isLocked ? 'Return filed — read-only' : isLiberalClient ? 'Directly editable' : 'Read-only · edit via Import 2B'}
-              tone={isLocked ? 'warn' : 'neutral'}
+              value={isPrior ? 'Filed' : isLocked ? 'Locked' : isLiberalClient ? 'Liberal' : 'Strict'}
+              hint={isPrior ? (canPriorBooks ? 'Books entries only · previewed' : 'Read-only') : isLocked ? 'Return filed — read-only' : isLiberalClient ? 'Directly editable' : 'Read-only · edit via Import 2B'}
+              tone={isPrior || isLocked ? 'warn' : 'neutral'}
             />
           </div>
 
@@ -1543,8 +1636,21 @@ const TwoBReconciliationPage: React.FC = () => {
             </Note>
           )}
 
+          {/* Prior month (docs §13) */}
+          {isPrior && (
+            <Note tone="warn">
+              <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5" />
+                {!canPriorBooks
+                  ? PRIOR_MONTH_MSG
+                  : isLiberalClient
+                    ? 'This month is filed. You can change its books entries here: the date, supplier, number, GSTIN and amounts, add entries and delete them. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved. The reversal, reclaim, book entry and in-2B months stay as filed.'
+                    : 'This month is filed. You can delete its entries here; add or correct them through Import 2B\'s books register and Post. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved.'}
+              </span>
+            </Note>
+          )}
+
           {/* Lock indicator - No unlock button here, only on Filing Status page */}
-          {isLocked && (
+          {!isPrior && isLocked && (
             <Note tone="warn">
               <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5" />
                 {isSuperadmin
@@ -1628,7 +1734,7 @@ const TwoBReconciliationPage: React.FC = () => {
                           />
                         </div>
                       </th>
-                      {!readOnly && <th className={cn(WS_TH, 'w-12')}></th>}
+                      {canDeleteHere && <th className={cn(WS_TH, 'w-12')}></th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1718,7 +1824,12 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.reversal_month,
                             (val) => handleUpdate2BField(row.id, 'reversal_month', val || null),
                             'Rev',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            false,
+                            false,
+                            undefined,
+                            undefined,
+                            row.id.startsWith('temp-')
                           )}
                         </td>
                         <td className={tdCls}>
@@ -1733,7 +1844,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             (subtype) => handleUpdate2BField(row.id, 'reclaim_subtype', subtype)
                           )}
                         </td>
-                        {!readOnly && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
+                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
                           <td className={tdCls}>
                             <Button
                               variant="ghost"
@@ -1747,12 +1858,12 @@ const TwoBReconciliationPage: React.FC = () => {
                             </Button>
                           </td>
                         )}
-                        {!readOnly && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td className={WS_TD}></td>}
+                        {canDeleteHere && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td className={WS_TD}></td>}
                       </tr>
                     ))}
                     {filteredBills2B.length === 0 && (
                       <TableEmptyState
-                        colSpan={readOnly ? 10 : 11}
+                        colSpan={canDeleteHere ? 11 : 10}
                         icon={<Inbox className="h-5 w-5" />}
                         title={localBills2B.length === 0 ? 'No records found' : 'No matching records'}
                         description={localBills2B.length === 0
@@ -1769,7 +1880,7 @@ const TwoBReconciliationPage: React.FC = () => {
                       <td className={cn(WS_TD_NUM, 'border-b-0')}>{totals2B.sgst.toLocaleString('en-IN')}</td>
                       <td className={cn(WS_TD, 'border-b-0')}></td>
                       <td className={cn(WS_TD, 'border-b-0')}></td>
-                      {!readOnly && <td className={cn(WS_TD, 'border-b-0')}></td>}
+                      {canDeleteHere && <td className={cn(WS_TD, 'border-b-0')}></td>}
                     </tr>
                   </tbody>
                 </table>
@@ -1849,7 +1960,7 @@ const TwoBReconciliationPage: React.FC = () => {
                           />
                         </div>
                       </th>
-                      {!readOnly && <th className={cn(WS_TH, 'w-12')}></th>}
+                      {canDeleteHere && <th className={cn(WS_TH, 'w-12')}></th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1949,10 +2060,14 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdateBooksField(row.id, 'bill_in_2b_month', val || null),
                             'In 2B',
                             row.is_carried_forward || false,
-                            true // isEditableForCF - allow editing In 2B column for carried forward rows
+                            true, // isEditableForCF - allow editing In 2B column for carried forward rows
+                            false,
+                            undefined,
+                            undefined,
+                            row.id.startsWith('temp-')
                           )}
                         </td>
-                        {!readOnly && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
+                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
                           <td className={tdCls}>
                             <Button
                               variant="ghost"
@@ -1966,12 +2081,12 @@ const TwoBReconciliationPage: React.FC = () => {
                             </Button>
                           </td>
                         )}
-                        {!readOnly && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td className={WS_TD}></td>}
+                        {canDeleteHere && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td className={WS_TD}></td>}
                       </tr>
                     ))}
                     {filteredBillsBooks.length === 0 && (
                       <TableEmptyState
-                        colSpan={readOnly ? 10 : 11}
+                        colSpan={canDeleteHere ? 11 : 10}
                         icon={<Inbox className="h-5 w-5" />}
                         title={localBillsBooks.length === 0 ? 'No records found' : 'No matching records'}
                         description={localBillsBooks.length === 0
@@ -1988,7 +2103,7 @@ const TwoBReconciliationPage: React.FC = () => {
                       <td className={cn(WS_TD_NUM, 'border-b-0')}>{totalsBooks.sgst.toLocaleString('en-IN')}</td>
                       <td className={cn(WS_TD, 'border-b-0')}></td>
                       <td className={cn(WS_TD, 'border-b-0')}></td>
-                      {!readOnly && <td className={cn(WS_TD, 'border-b-0')}></td>}
+                      {canDeleteHere && <td className={cn(WS_TD, 'border-b-0')}></td>}
                     </tr>
                   </tbody>
                 </table>
@@ -2005,6 +2120,7 @@ const TwoBReconciliationPage: React.FC = () => {
         onOpenChange={setShowVersionHistory}
         versions={versions}
         onRestore={handleRestoreVersion}
+        restoreBlockedReason={isPrior ? `${PRIOR_MONTH_DOCS_MSG} Restore works on open months only.` : null}
         onVersionDeleted={fetchVersions}
         clientName={selectedClientData?.name || ''}
         month={selectedMonth}

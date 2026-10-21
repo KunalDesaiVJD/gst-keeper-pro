@@ -1,0 +1,103 @@
+-- Timing, as PostgREST runs it (anon): a 1,000-row Post in a prior month
+-- with three later months (Aug, Sep, Oct-26 hold carried lists of 600 rows
+-- each), previewed and applied; 1,000 removals carried to three months; and
+-- a first carry of 1,000 rows on each list when a month is filed. Each under
+-- 1 s.
+\set P '80000000-0000-0000-0000-000000000001'
+\set C '80000000-0000-0000-0000-000000000002'
+SELECT set_config('twob.write', 'system', false);
+INSERT INTO public.clients (id, name) VALUES (:'P', 'Timing post'), (:'C', 'Timing carry');
+-- 600 entries carried Jul -> Aug -> Sep -> Oct, 1,000 books register rows in July not yet posted.
+INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
+  taxable_value, input_cgst, input_sgst, reversal_month, is_carried_forward)
+SELECT :'P', m.p, date '2026-04-01' + (g % 90), 'OLD ' || g, 'O-' || g, '24OLDSU' || lpad(g::text, 4, '0') || 'A1Z5',
+       1000 + g, 90 + g, 90 + g, 'Apr 26', m.p <> '07/2026'
+  FROM generate_series(1, 600) g, (VALUES ('07/2026'), ('08/2026'), ('09/2026'), ('10/2026')) m(p);
+INSERT INTO public.books_register (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
+  taxable_value, input_cgst, input_sgst, book_treatment)
+SELECT :'P', '07/2026', date '2026-07-01' + (g % 30), 'BOOK ' || g, 'P-' || g, '24BOOKS' || lpad(g::text, 4, '0') || 'A1Z5', 500 + g, 45, 45, 'NOT_IN_2B'
+  FROM generate_series(1, 1000) g;
+INSERT INTO public.filing_status (client_id, return_type, period_month, status, filed_date, is_locked) VALUES
+  (:'P', 'GSTR-3B', '07/2026', 'Filed', '2026-08-20', true),
+  (:'P', 'GSTR-3B', '08/2026', 'Filed', '2026-09-20', true);
+-- 1,000 entries on each list in Sep-26 for the carry.
+INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
+  taxable_value, input_cgst, input_sgst, reversal_month)
+SELECT :'C', '09/2026', date '2026-09-01' + (g % 30), 'SUP ' || g, 'S-' || g, '24SUPPL' || lpad(g::text, 4, '0') || 'A1Z5', 1000, 90, 90, 'Sep 26'
+  FROM generate_series(1, 1000) g;
+INSERT INTO public.bills_not_in_books (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
+  taxable_value, input_cgst, input_sgst, bill_in_2b_month)
+SELECT :'C', '09/2026', date '2026-09-01' + (g % 30), 'NIB ' || g, 'N-' || g, '24NIBSU' || lpad(g::text, 4, '0') || 'A1Z5', 1000, 90, 90, 'Sep 26'
+  FROM generate_series(1, 1000) g;
+INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES (:'C', 'GSTR-3B', '09/2026', 'Prepared');
+SELECT set_config('twob.write', '', false);
+ANALYZE public.bills_not_in_2b;
+ANALYZE public.bills_not_in_books;
+ANALYZE public.books_register;
+
+SET ROLE anon;
+SELECT set_config('request.jwt.claims', '{"role":"anon"}', false);
+DO $$
+DECLARE
+  v_changes jsonb;
+  t0 timestamptz;
+  ms numeric;
+  r jsonb;
+BEGIN
+  -- Post's plan: every books row Not in 2B becomes a ledger entry (as postImport2B plans it).
+  SELECT jsonb_agg(jsonb_build_object('table', 'bills_not_in_2b', 'op', 'insert', 'values', jsonb_build_object(
+           'date', b.date, 'supplier_name', b.supplier_name, 'supplier_invoice_number', b.supplier_invoice_number,
+           'supplier_gstin', b.supplier_gstin, 'taxable_value', b.taxable_value, 'input_igst', 0, 'input_cgst', b.input_cgst,
+           'input_sgst', b.input_sgst, 'reversal_month', 'Jul 26', 'source_book_id', b.id)))
+    INTO v_changes
+    FROM public.books_register b WHERE b.client_id = '80000000-0000-0000-0000-000000000001' AND b.period_month = '07/2026';
+
+  t0 := clock_timestamp();
+  r := public.twob_prior_books_apply('00000000-0000-0000-0000-0000000000a2', '80000000-0000-0000-0000-000000000001', '07/2026', v_changes, true);
+  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  RAISE NOTICE 'timing: 1,000-row Post preview, prior month, three later months: % ms', ms;
+  PERFORM public.t_eq(r -> 'later_months', '[{"count": 1000, "period": "08/2026"}, {"count": 1000, "period": "09/2026"}, {"count": 1000, "period": "10/2026"}]'::jsonb, 'timing: preview reaches Aug, Sep and Oct-26');
+  PERFORM public.t_eq(ms < 1000, true, 'timing: Post preview under 1 s');
+
+  t0 := clock_timestamp();
+  r := public.twob_prior_books_apply('00000000-0000-0000-0000-0000000000a2', '80000000-0000-0000-0000-000000000001', '07/2026', v_changes, false);
+  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  RAISE NOTICE 'timing: 1,000-row Post applied, prior month, three later months: % ms', ms;
+  PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = '80000000-0000-0000-0000-000000000001' AND supplier_name LIKE 'BOOK %'), 4000,
+    'timing: 1,000 entries and 3,000 carried copies');
+  PERFORM public.t_eq(ms < 1000, true, 'timing: Post applied under 1 s');
+
+  -- 1,000 removals (the entries just posted), each with a copy to find in three months.
+  SELECT jsonb_agg(jsonb_build_object('table', 'bills_not_in_2b', 'op', 'delete', 'id', x.id))
+    INTO v_changes
+    FROM (SELECT id FROM public.bills_not_in_2b WHERE client_id = '80000000-0000-0000-0000-000000000001' AND period_month = '07/2026'
+           ORDER BY supplier_name LIMIT 1000) x;
+  t0 := clock_timestamp();
+  r := public.twob_prior_books_apply('00000000-0000-0000-0000-0000000000a2', '80000000-0000-0000-0000-000000000001', '07/2026', v_changes, false);
+  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  RAISE NOTICE 'timing: 1,000 removals applied, prior month, three later months: % ms', ms;
+  PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = '80000000-0000-0000-0000-000000000001'), 2400,
+    'timing: 1,000 entries and their 3,000 copies removed');
+  PERFORM public.t_eq(ms < 1000, true, 'timing: removals under 1 s');
+
+  -- The first carry when Sep-26 is filed: 1,000 rows on each list.
+  t0 := clock_timestamp();
+  UPDATE public.filing_status SET status = 'Filed', arn = 'AA2409260000077', filed_date = '2026-10-20'
+   WHERE client_id = '80000000-0000-0000-0000-000000000002' AND period_month = '09/2026';
+  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  RAISE NOTICE 'timing: first carry of 1,000 rows per list on filing: % ms', ms;
+  PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = '80000000-0000-0000-0000-000000000002' AND period_month = '10/2026'), 1000,
+    'timing: 1,000 Not in 2B rows carried');
+  PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE client_id = '80000000-0000-0000-0000-000000000002' AND period_month = '10/2026'), 1000,
+    'timing: 1,000 Not in Books rows carried');
+  PERFORM public.t_eq(ms < 1000, true, 'timing: first carry under 1 s');
+
+  -- Re-run preview over the same 1,000 + 1,000 (nothing to do).
+  t0 := clock_timestamp();
+  r := public.twob_carry_rerun('00000000-0000-0000-0000-0000000000a2', '80000000-0000-0000-0000-000000000002', '09/2026', true);
+  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  RAISE NOTICE 'timing: Re-run preview of 1,000 rows per list: % ms', ms;
+  PERFORM public.t_eq(jsonb_array_length(r -> 'bills_not_in_2b' -> 'add') + jsonb_array_length(r -> 'bills_not_in_books' -> 'remove'), 0, 'timing: re-run finds nothing to do');
+  PERFORM public.t_eq(ms < 1000, true, 'timing: re-run preview under 1 s');
+END $$;
+RESET ROLE;
