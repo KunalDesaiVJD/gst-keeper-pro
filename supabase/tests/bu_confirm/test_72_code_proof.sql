@@ -45,7 +45,8 @@ SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_arra
                 'with the code we send', 'a made-up proof: refused');
 -- Guessing: a wrong code is counted and refused (not raised, so the count stays).
 SELECT t_eq(builder_bu_confirm_code_verify(:'tok', 'owner@client.test', '000000', :'cid1') ->> 'ok', 'false', 'a wrong code');
-SELECT t_eq(builder_bu_confirm_code_verify(:'tok', 'owner@client.test', '12ab56', :'cid1') ->> 'message', 'The code is the 6 digits in our latest e-mail.', 'not digits: not counted');
+SELECT t_eq(builder_bu_confirm_code_verify(:'tok', 'owner@client.test', '12ab56', :'cid1') ->> 'message'
+              ~ '^The code is the 6 digits in our e-mail marked [A-HJ-NP-R]{4}\.$', true, 'not digits: not counted (the e-mail named by its reference)');
 RESET ROLE;
 SELECT t_eq((SELECT wrong_tries FROM builder_bu_confirm_codes), 1, 'one wrong try counted');
 SET LOCAL ROLE anon;
@@ -113,7 +114,8 @@ UPDATE builder_bu_confirm_codes SET created_at = now() - interval '2 hours';
 SET LOCAL ROLE anon;
 SELECT builder_bu_confirm_code_request(:'tok', 'owner@client.test') FROM generate_series(1, 5);
 SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'tok', 'owner@client.test'), '10 codes to this address today', 'an eleventh in the day: refused');
--- Twenty an hour on one link from one caller, whatever the address.
+-- Twenty an hour from one caller, whatever the address (since 20261021160000
+-- on every link together: test_76).
 SELECT builder_bu_confirm_code_request(:'tok', 'accounts@client.test') FROM generate_series(1, 5);
 SELECT builder_bu_confirm_code_request(:'tok', 'site@client.test') FROM generate_series(1, 4);
 RESET ROLE;
@@ -121,7 +123,7 @@ SELECT t_eq((SELECT count(*) FROM builder_bu_confirm_codes WHERE created_at > no
 INSERT INTO builder_bu_confirm_codes (request_id, email)
 SELECT id, 'other' || g || '@client.test' FROM builder_bu_confirm_requests, generate_series(1, 6) g;
 SET LOCAL ROLE anon;
-SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'tok', 'site@client.test'), 'Too many codes were asked for on this link', 'twenty on a link in an hour: refused');
+SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'tok', 'site@client.test'), 'Too many codes were asked for from your connection in the last hour', 'twenty from one caller in an hour: refused');
 ROLLBACK;
 
 -- Ten wrong tries a day from one caller end that caller's codes to the

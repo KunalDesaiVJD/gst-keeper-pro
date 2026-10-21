@@ -2470,6 +2470,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           earlier_link: boolean
+          earlier_units: string[] | null
           id: string
           outbox_id: string | null
           sent_at: string | null
@@ -2485,6 +2486,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           earlier_link?: boolean
+          earlier_units?: string[] | null
           id?: string
           outbox_id?: string | null
           sent_at?: string | null
@@ -2500,6 +2502,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           earlier_link?: boolean
+          earlier_units?: string[] | null
           id?: string
           outbox_id?: string | null
           sent_at?: string | null

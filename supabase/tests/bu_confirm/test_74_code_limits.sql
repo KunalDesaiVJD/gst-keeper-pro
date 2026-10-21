@@ -59,7 +59,7 @@ SELECT set_config('request.headers', '{"x-forwarded-for": "203.0.113.5, 10.0.0.1
 SELECT builder_bu_confirm_code_request(:'tok', a) IS NOT NULL
   FROM unnest(ARRAY['site@client.test', 'accounts@client.test', 'partner@client.test', 'fifth@client.test']) a, generate_series(1, 5);
 SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'tok', 'owner@client.test'),
-                'Too many codes were asked for on this link', 'twenty from one caller in an hour: refused');
+                'Too many codes were asked for from your connection in the last hour', 'twenty from one caller in an hour: refused');
 SELECT set_config('request.headers', '{"cf-connecting-ip": "198.51.100.7"}', true);
 SELECT t_eq((builder_bu_confirm_code_request(:'tok', 'owner@client.test') ->> 'ok')::boolean, true, 'another caller is not held up');
 RESET ROLE;
