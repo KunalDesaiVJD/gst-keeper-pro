@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import {
   isExtensionOutdated, isExtensionUpdateRecommended, outdatedExtensionMessage, updateRecommendedMessage,
 } from '@/lib/extensionVersion';
+import { currentActorId } from '@/lib/changeLogHeaders';
 
 export interface PullResult { ok: boolean; count?: number; error?: string }
 
@@ -79,7 +80,7 @@ export function useExtensionBridge(opts: { announceVersion?: boolean } = {}) {
 
   /** Starts a section pull ('notices_bundle', 'taxpayerprofile', …) for the given clients (all when omitted). */
   const startPull = useCallback((mode: string, clientIds?: string[]) =>
-    request(pull, { __gstkPullSectionAllClients: clientIds ? { mode, clientIds } : { mode } }), [request]);
+    request(pull, { __gstkPullSectionAllClients: { mode, ...(clientIds ? { clientIds } : {}), actorId: currentActorId() } }), [request]);
 
   /** Opens the notice's page on the GST portal (logs in first). */
   const openOnPortal = useCallback((clientId: string, referenceNumber: string | null) =>

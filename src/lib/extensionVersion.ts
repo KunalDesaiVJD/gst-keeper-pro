@@ -48,7 +48,11 @@ export const MIN_EXTENSION_VERSION = '0.16.0';
 // return showing that ARN; one return, a client's, or every return in view.
 // 0.16.0 pulls Suspended Reco and GST Receivable Reco through the database's
 // pull door with who asked, and asks the GSTR-3B push gate before a push.
-export const RECOMMENDED_EXTENSION_VERSION = '0.16.0';
+// 0.17.0 names, on every database request, that it is the extension and the
+// app user who started the job, for the change log (20261021150000). It is
+// the release that carries 0.15.0 and 0.16.0; 0.16.0 stays the minimum (an
+// older copy's writes are still logged, with no person).
+export const RECOMMENDED_EXTENSION_VERSION = '0.17.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -109,6 +113,7 @@ const GAINS: [string, string][] = [
   ['0.14.0', "reads the GSTR-2A credit and debit notes, so the 2A vs 2B report compares the 2B's notes too"],
   ['0.15.0', "pulls filed returns for Filing Status with the portal's ARN and filing date, and keeps a PDF only when it is the filed return (never the System generated summary or a GSTR-1A)"],
   ['0.16.0', 'pulls Suspended Reco and GST Receivable Reco the way the database accepts, records who pulled, and checks Suspended Reco and GST Receivable Reco before a GSTR-3B push'],
+  ['0.17.0', 'names the person who started each pull or push in the change log (Change history)'],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

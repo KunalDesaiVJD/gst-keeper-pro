@@ -2,6 +2,16 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-21 — Who did it, for the change log (v0.17.0)
+
+- Every request to the database (`/rest/v1`, tables and RPCs) now says it comes from the extension (`x-gst-source: extension`) and carries a request id (`x-gst-request`). While a job the app started is running, it also names the app user who started it (`x-gst-actor`, the job's `actorId`, the same id the app sends). A scheduled sync names no one. The database's change log (`gst_change_log`, migration `20261021150000_gst_change_log.sql`) records these with every row the extension writes, so a pull shows as "Extension, for Gita" in Change history.
+- Every job the app starts keeps the user's `actorId` from the app's message: the ledger pull (`startLedgerPull`), the return pull (`startReturnPull`), the 2B and 2A pulls, the filing page (`startFilingOpen`), the section and all-clients pulls, as the GSTR-1 upload, the e-invoice pull and the GSTR-3B push already did. An office-agent job (`startAgentJob`) keeps the person who queued it. `appbridge.js` passes the messages on unchanged.
+- The scheduled Chrome runner (`runner.js`, the live runner) keeps the person who queued a job too (`portal_jobs.requested_by`, from `portal_job_claim`), so a pull queued from the app names them; a scheduled job names no one. Test `test/18-runner-actor.test.mjs`.
+- Uploads to Storage (return PDFs) are unchanged: another API, not logged there.
+- Nothing else changes. An older extension still works; its writes are logged with no person unless they write a saved-by field themselves.
+- **One release, 0.17.0, carries 0.16.0 and 0.15.0 below** (the reco pull and GSTR-3B push gate, the filed-return pull for Filing Status), none of which was released on its own: the three were merged on 21 Oct 2026. GST Keeper requires 0.16.0 or later (`MIN_EXTENSION_VERSION`) and recommends 0.17.0. Migrations `20261021110000`, `20261021120000` and `20261021150000` must be live first.
+- Test `test/17-actor-headers.test.mjs`.
+
 ## 2026-10-21 — Reco pulls through the database, GSTR-3B push gate (v0.16.0)
 
 The firm's decisions of 21 Oct 2026: from the Jun-2026 period Suspended Reco and GST Receivable Reco come only from the portal pull, for every client (Nil returns too), and a GSTR-3B is pushed only when both are pulled and show no difference. Migration `20261021120000_reco_pull_push_gate.sql` must be live first.
@@ -14,14 +24,14 @@ The firm's decisions of 21 Oct 2026: from the Jun-2026 period Suspended Reco and
 - A save the database refuses shows in red on the banner ("read, but NOT saved: …") and the job moves on.
 - **The GSTR-3B push asks the gate first.** `startGstr3bPush` calls `gstr3b_push_gate` for the client and period before it opens the portal, whatever the page decided. A "no", an error or no answer stops it there with the reasons ("GSTR-3B push stopped: …"), and nothing is recorded. The check that let it start is saved with the Push History row (`gate`), when the database has that column.
 - The app needs v0.16.0: it asks for it before a reco Pull or a GSTR-3B push, and `MIN_EXTENSION_VERSION` is 0.16.0.
-- **0.16.0 also carries 0.15.0 below** (the filed-return pull for Filing Status), which was never released on its own: both were merged on 21 Oct 2026 and go out together as 0.16.0. Migrations `20261021110000` and `20261021120000` must both be live first.
+- **0.16.0 also carries 0.15.0 below** (the filed-return pull for Filing Status). Neither was released on its own: both go out inside 0.17.0 (above). Migrations `20261021110000` and `20261021120000` must both be live first.
 - Older copies of the extension push without asking the gate. The database now records the check itself on every Push History row, and such a push, when the check does not pass, is recorded but does not mark the return Pushed (migration 20261021120000).
 - Test `test/16-reco-pull-gate.test.mjs` covers the gate before a push, the pull's save (with its user, or not at all), the empty month, the ITC utilised rule and the header check before a pull saves.
 
 ## 2026-10-21 — Filed returns pulled for Filing Status, checked (v0.15.0)
 
 The firm's decision: Filing Status is pulled from the portal only (GST Keeper migration
-`20261021110000`, `docs/FILING_STATUS_PULL_ONLY.md`). Released inside 0.16.0 (above), which GST Keeper requires.
+`20261021110000`, `docs/FILING_STATUS_PULL_ONLY.md`). Released inside 0.17.0 (above); GST Keeper requires 0.16.0 or later.
 
 - **The stored PDF is the filed return and shows its ARN** (`filedpdf.js`, a new content script).
   The portal's PDFs keep their words behind Identity-H fonts; the checker reads them through each

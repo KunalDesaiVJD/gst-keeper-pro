@@ -123,7 +123,7 @@
     if (!cfg) throw new Error('config.js is not loaded on this page');
     const r = await fetch(cfg.SUPABASE_URL + '/rest/v1/rpc/' + fn, {
       method: 'POST',
-      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'x-gst-source': 'extension' },
       body: JSON.stringify(body || {}),
     });
     if (!r.ok) throw new Error('RPC ' + fn + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
@@ -136,7 +136,7 @@
     const cfg = globalThis.GSTK_CONFIG;
     if (!cfg) throw new Error('config.js is not loaded on this page');
     const r = await fetch(cfg.SUPABASE_URL + '/rest/v1/' + path, {
-      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY },
+      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY, 'x-gst-source': 'extension' },
     });
     if (!r.ok) throw new Error('GET ' + path.split('?')[0] + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
     return r.json();

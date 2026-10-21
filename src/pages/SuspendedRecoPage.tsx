@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FileText, Save, Loader2, FileSpreadsheet, Trash2, Upload, Info, Edit3, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
 import ClearDataDialog from '@/components/dialogs/ClearDataDialog';
 import SuspendedRecoOverrideDialog from '@/components/dialogs/SuspendedRecoOverrideDialog';
 import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
@@ -731,6 +732,7 @@ const SuspendedRecoPage: React.FC = () => {
         icon={<FileText />}
         actions={
           <>
+            <ChangeHistoryButton page="suspended" clientId={selectedClientId} month={selectedMonth} />
             {selectedClientId && (
               <Button
                 variant="outline"

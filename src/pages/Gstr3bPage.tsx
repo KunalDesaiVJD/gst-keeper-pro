@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { FileCheck2, Download, FileText, Loader2, FileJson, Send, CheckCircle2, XCircle, X, Lock, History, Info, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
 import { Badge } from '@/components/gstr9/badge';
@@ -752,7 +753,9 @@ const Gstr3bPage: React.FC = () => {
         title="GSTR-3B"
         subtitle="Draft GSTR-3B assembled from GSTR-1, ITC Summary and RCM — client-wise & month-wise"
         icon={<FileCheck2 />}
-        actions={result ? (
+        actions={<>
+          <ChangeHistoryButton page="gstr3b" clientId={selectedClient} month={selectedMonth} />
+          {result ? (
           <>
             <Button
               variant="outline"
@@ -807,7 +810,8 @@ const Gstr3bPage: React.FC = () => {
               </Button>
             )}
           </>
-        ) : undefined}
+        ) : null}
+        </>}
       />
 
       {/* Filters — client / period, NIL flag and push history in one compact row */}

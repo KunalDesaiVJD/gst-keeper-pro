@@ -66,6 +66,7 @@ import RemindersPage from "@/pages/RemindersPage";
 import LitigationMattersPage from "@/pages/LitigationMattersPage";
 import LitigationMatterDetailPage from "@/pages/LitigationMatterDetailPage";
 import LitigationMISPage from "@/pages/LitigationMISPage";
+import ChangeHistoryPage from "@/pages/ChangeHistoryPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -144,6 +145,7 @@ const App = () => (
                   <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                   <Route path="/user-control" element={<UserControlPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/change-history" element={<StaffGuard><ChangeHistoryPage /></StaffGuard>} />
                 </Route>
                 
                 <Route path="*" element={<NotFound />} />

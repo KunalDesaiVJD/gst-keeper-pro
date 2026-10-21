@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { sessionsEndedAt } from '@/lib/staffLevels';
+import { setChangeLogActor } from '@/lib/changeLogHeaders';
 import { toast } from 'sonner';
 
 type UserRole = 'superadmin' | 'gst_manager' | 'employee' | 'client';
@@ -10,6 +11,8 @@ interface UserPermissions {
   manage_employees: boolean;
   unlock_sheets: boolean;
   view_version_history: boolean;
+  /** Change history: who changed what on the GST working pages (gst_change_log). */
+  view_change_history: boolean;
   add_edit_clients: boolean;
   delete_clients: boolean;
   edit_filing_status: boolean;
@@ -49,6 +52,7 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   manage_employees: false,
   unlock_sheets: false,
   view_version_history: false,
+  view_change_history: false,
   add_edit_clients: false,
   delete_clients: false,
   edit_filing_status: false,
@@ -105,6 +109,8 @@ interface AuthContextType {
   canManageEmployees: () => boolean;
   canUnlockSheets: () => boolean;
   canViewVersionHistory: () => boolean;
+  /** Change history page and the History buttons (superadmin, GST Manager, or the key). */
+  canViewChangeHistory: () => boolean;
   canResetPasswords: () => boolean;
   /** Set a client's app-login password or e-mail them a reset link: every staff member. */
   canResetClientPasswords: () => boolean;
@@ -195,7 +201,13 @@ const fetchUserPermissions = async (userId: string): Promise<UserPermissions> =>
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<AppUser | null>(null);
+  const [user, setUserState] = useState<AppUser | null>(null);
+  // Every request this tab sends names this tab's user (the change log's
+  // x-gst-actor), set the moment the user changes, before any page reacts.
+  const setUser = useCallback((next: AppUser | null) => {
+    setChangeLogActor(next?.id ?? null);
+    setUserState(next);
+  }, []);
   const [isLoading, setIsLoading] = useState(true);
   const [pendingFirstLogin, setPendingFirstLogin] = useState<{ userId: string; firstName: string } | null>(null);
 
@@ -316,7 +328,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     initAuth();
-  }, [fetchUserData]);
+  }, [fetchUserData, setUser]);
 
   const login = useCallback(async (identifier: string, password: string): Promise<{ success: boolean; isFirstLogin?: boolean }> => {
     try {
@@ -417,7 +429,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       return { success: false };
     }
-  }, []);
+  }, [setUser]);
 
   const completeFirstLogin = useCallback(async (newPassword: string): Promise<boolean> => {
     if (!pendingFirstLogin) {
@@ -514,7 +526,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.error('Failed to set password. Please try again.');
       return false;
     }
-  }, [pendingFirstLogin]);
+  }, [pendingFirstLogin, setUser]);
 
   const logout = useCallback(async () => {
     localStorage.removeItem(FALLBACK_AUTH_KEY);
@@ -526,7 +538,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     toast.success('Logged Out', {
       description: 'You have been successfully logged out.',
     });
-  }, []);
+  }, [setUser]);
 
   // Role-based permission checks - Superadmin has all permissions by default
   const isStaffRole = useCallback((): boolean => {
@@ -560,6 +572,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return false;
     if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
     return hasPermission('view_version_history');
+  }, [user, hasPermission]);
+
+  const canViewChangeHistory = useCallback((): boolean => {
+    if (!user) return false;
+    if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
+    return user.role === 'employee' && hasPermission('view_change_history');
   }, [user, hasPermission]);
 
   const canResetPasswords = useCallback((): boolean => {
@@ -697,7 +715,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
-  }, [user]);
+  }, [user, setUser]);
 
   // ── Advance set-off gate (docs/ADVANCE_SETOFF_POSITIONS.md §6) ───────────
   // Two separate powers, deliberately not one helper: raising a request and
@@ -801,6 +819,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canManageEmployees,
         canUnlockSheets,
         canViewVersionHistory,
+        canViewChangeHistory,
         canResetPasswords,
         canResetClientPasswords,
         canManageNoticeAlerts,

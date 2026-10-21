@@ -11,6 +11,7 @@ import { log } from './log.js';
 import { readOutcome } from './outcome.js';
 import { bannerText, captchaImage, captchaReady, DASHBOARD_URL, documentToken, fillCaptcha, logOut } from './portal.js';
 import type { SessionStore } from './sessions.js';
+import { agentJobStart } from './jobStart.js';
 
 export interface Settings {
   enabled: boolean;
@@ -38,6 +39,8 @@ export interface Job {
   payload: { mode?: string; periods?: string[] } | null;
   run_id: string | null;
   attempts: number;
+  /** Who queued it (staff user id); none for a scheduled run. */
+  requested_by?: string | null;
 }
 
 type WorkerState = 'starting' | 'idle' | 'login' | 'captcha' | 'running' | 'parking' | 'stopped';
@@ -156,10 +159,7 @@ export class PortalWorker {
     for (const p of pages) if (p !== keeper) await p.close().catch(() => {});
     const pagePromise = context.waitForEvent('page', { timeout: 30000 });
     pagePromise.catch(() => {});
-    await this.api('startAgentJob', {
-      clientId: job.client_id, mode, periods: job.payload?.periods || [], runId: job.run_id, jobId: job.id,
-      startUrl: saved ? DASHBOARD_URL : undefined,
-    });
+    await this.api('startAgentJob', agentJobStart(job, mode, saved ? DASHBOARD_URL : undefined));
     const page = await pagePromise;
     this.sessionOpen = true;
     this.sessionClient = job.client_id;

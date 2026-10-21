@@ -15,7 +15,12 @@ export interface Db {
 
 export function makeDb(cfg: Pick<AgentConfig, 'supabaseUrl' | 'anonKey'>, fetchImpl: typeof fetch = fetch): Db {
   const base = cfg.supabaseUrl + '/rest/v1/';
-  const headers = { apikey: cfg.anonKey, Authorization: 'Bearer ' + cfg.anonKey, 'Content-Type': 'application/json' };
+  // x-gst-source: the database's change log (gst_change_log, migration
+  // 20261021150000) records what this agent writes as the office agent.
+  const headers = {
+    apikey: cfg.anonKey, Authorization: 'Bearer ' + cfg.anonKey, 'Content-Type': 'application/json',
+    'x-gst-source': 'agent',
+  };
 
   async function call(method: string, url: string, body?: unknown, prefer?: string): Promise<unknown> {
     let last: unknown;
@@ -25,7 +30,7 @@ export function makeDb(cfg: Pick<AgentConfig, 'supabaseUrl' | 'anonKey'>, fetchI
       try {
         const r = await fetchImpl(url, {
           method, signal: ctl.signal,
-          headers: prefer ? { ...headers, Prefer: prefer } : headers,
+          headers: { ...headers, 'x-gst-request': 'agent ' + Math.random().toString(16).slice(2, 10), ...(prefer ? { Prefer: prefer } : {}) },
           body: body === undefined ? undefined : JSON.stringify(body),
         });
         const text = await r.text();

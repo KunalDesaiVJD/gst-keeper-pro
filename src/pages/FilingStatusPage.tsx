@@ -19,6 +19,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
 import { effectiveFilingReturnType, generateFilingRecords } from '@/lib/filingRecords';
 import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
@@ -1101,8 +1102,8 @@ const FilingStatusPage: React.FC = () => {
   // Log the client in on the portal and open THIS return's filing page (current
   // tab's return + period). The human does the CAPTCHA and the OTP/DSC submit.
   const openFilingOnPortal = (record: FilingRecord) => {
-    if (!extReady) { toast.error('Install/enable the GST Keeper extension to log in from here.'); return; }
-    window.postMessage({ __gstkOpenFiling: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month } }, '*');
+    if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to log in from here.'); return; }
+    window.postMessage({ __gstkOpenFiling: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month, actorId: user?.id ?? null } }, '*');
   };
 
   // The other row of the same return (GSTR-1 / GSTR-1 (IFF), GSTR-3B / GSTR-3B
@@ -1417,6 +1418,7 @@ const FilingStatusPage: React.FC = () => {
         icon={<ClipboardCheck />}
         actions={
           <div className="flex items-center gap-2">
+            <ChangeHistoryButton page="filing" month={selectedMonth} />
             <Button
               variant="outline"
               size="sm"
