@@ -236,8 +236,9 @@
 --         Aug-26 (the latest filed month) previews 0 to add and 0 to remove.
 --  6. After step 4, reads only: the months that are prior but not covered by
 --     a Filed return of their own (a later month was filed first), with the
---     query below. Filing such a month later (by hand, or the extension's
---     markFiled when its PDF comes) carries nothing, because its next month
+--     query below. Filing such a month later (from 20261021110000 by the
+--     extension's pull, or an attach the superadmin allowed; before it, by
+--     hand or the extension's markFiled) carries nothing, because its next month
 --     counts as filed. When the month holds entries, Filing Status marks its
 --     GSTR-3B row with a warning from the carry record (twob_carry_log,
 --     carried_at NULL; a list the month holds nothing on is recorded as

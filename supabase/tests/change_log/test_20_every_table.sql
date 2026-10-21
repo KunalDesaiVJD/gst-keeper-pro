@@ -103,6 +103,7 @@ BEGIN
     SELECT a.attname, format_type(a.atttypid, a.atttypmod) INTO v_col, v_type
       FROM pg_attribute a
      WHERE a.attrelid = ('public.' || t.table_name)::regclass AND a.attnum > 0 AND NOT a.attisdropped
+       AND a.attgenerated = ''  -- a generated column cannot be set (twob_ever_filed.cover_key, on the real table)
        AND NOT (a.attname = ANY (t.key_columns))
        AND a.attname NOT IN ('client_id', 'period_month', 'updated_at', 'reason', 'scope')
        AND a.attname NOT LIKE '%\_by' AND a.attname NOT LIKE '%\_id'
@@ -112,7 +113,7 @@ BEGIN
      ORDER BY a.attnum LIMIT 1;
     IF v_col IS NULL THEN
       SELECT a.attname, 'timestamp' INTO v_col, v_type FROM pg_attribute a
-       WHERE a.attrelid = ('public.' || t.table_name)::regclass AND a.attnum > 0 AND NOT a.attisdropped
+       WHERE a.attrelid = ('public.' || t.table_name)::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = ''
          AND format_type(a.atttypid, a.atttypmod) LIKE 'timestamp%' AND a.attname <> 'updated_at'
        ORDER BY a.attnum LIMIT 1;
     END IF;

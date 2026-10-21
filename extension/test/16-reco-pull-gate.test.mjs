@@ -102,7 +102,11 @@ const ok = (cond, name) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if 
 const reset = () => { calls.length = 0; tabsCreated.length = 0; for (const k of Object.keys(storage)) delete storage[k]; gateAnswer = null; versionsRefuseGate = false; };
 const pushInfo = { clientId: 'c1', period_month: '09/2026', actorId: 'u-1', gstr3bJson: { ret_period: '092026' } };
 
-ok(JSON.parse(read('manifest.json')).version === '0.16.0', 'manifest is 0.16.0');
+// Released inside 0.17.0 (with 0.15.0's filing pull and the change log's
+// headers): the manifest is 0.16.0 or later, and the pull names that version.
+const MANIFEST_VERSION = JSON.parse(read('manifest.json')).version;
+const vnum = (v) => v.split('.').map(Number).reduce((a, n) => a * 1000 + n, 0);
+ok(vnum(MANIFEST_VERSION) >= vnum('0.16.0'), `manifest is 0.16.0 or later (${MANIFEST_VERSION})`);
 
 // ── The gate passes: the portal opens and the job keeps the check ──────────
 reset();
@@ -196,7 +200,7 @@ reset();
   const p = rpcCalls('reco_record_pull')[0];
   ok(p && p.body.p_actor_id === 'u-9' && p.body.p_reco === 'receivable' && p.body.p_client_id === 'c1' && p.body.p_period === '09/2026',
     'recordRecoPull sends who, which reco, client and period');
-  ok(p && p.body.p_opening.cgst === 2 && p.body.p_utilised.cgst === 0 && p.body.p_drc.cgst === 4 && p.body.p_ext_version === '0.16.0',
+  ok(p && p.body.p_opening.cgst === 2 && p.body.p_utilised.cgst === 0 && p.body.p_drc.cgst === 4 && p.body.p_ext_version === MANIFEST_VERSION,
     'with the figures and the extension version');
   ok(calls.every((c) => !/rest\/v1\/(suspended_reco|gst_receivable_reco)/.test(c.url)), 'no direct write to the reco tables');
   ok(p && p.body.p_no_rows === false, 'a pull with a balance row says so (p_no_rows false)');

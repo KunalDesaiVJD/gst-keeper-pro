@@ -107,6 +107,10 @@
 -- ===========================================================================
 -- Live apply (project gcquafqxbykxkbexcdpy ONLY; never SUPABASE_PROJECT_REF)
 -- ===========================================================================
+-- Merged release (controls-integration): live order 20261021160000, 100000, 110000,
+-- this file, 150000. Step 4 ships ONE extension, 0.17.0, which carries this file's
+-- 0.16.0, the filing branch's 0.15.0 and the change log's headers (the popup shows
+-- 0.17.0; MIN_EXTENSION_VERSION stays 0.16.0).
 -- 1. Dry checks (SELECT only, management API read_only), note the numbers:
 --      SELECT to_regprocedure('public.staff_level_of(uuid)') IS NOT NULL;            -- true
 --      SELECT to_regprocedure('public.opening_override_guard()') IS NOT NULL;        -- true

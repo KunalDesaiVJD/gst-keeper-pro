@@ -64,6 +64,10 @@
 -- the allowance block, either order works.
 --
 -- LIVE APPLY (project gcquafqxbykxkbexcdpy only; never SUPABASE_PROJECT_REF)
+-- Merged release (controls-integration): live order 20261021160000, 100000, this file,
+-- 120000, 150000. Steps 5 and 8 ship ONE extension, 0.17.0, which carries this file's
+-- 0.15.0, the reco branch's 0.16.0 and the change log's headers; the app asks for 0.16.0
+-- (MIN_EXTENSION_VERSION), so the popup shows 0.17.0 after the Reload, never 0.15.0.
 -- 1. Dry checks, SELECT only (management API, read_only):
 --    a. SELECT count(*) total, count(*) FILTER (WHERE status::text = 'Filed') filed,
 --              count(arn) arns, count(return_pdf_url) pdfs FROM filing_status;

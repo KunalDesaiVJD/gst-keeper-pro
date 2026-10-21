@@ -78,9 +78,13 @@ ok(version === '0.17.0', 'manifest is 0.17.0');
 // 1. A job the app started: every write names the app user.
 await local.set({ gstk_active_job: { mode: 'filing', actorId: GITA, tabId: 1 } });
 calls.length = 0;
-await bgCall('upsertFilingStatus', [{ client_id: 'c1', return_type: 'GSTR-3B', period_month: '09/2026', status: 'Filed' }]);
+// Merged with 0.15.0 / 0.16.0: a filed return and a reco pull are recorded
+// through RPCs (filing_record_pull, reco_record_pull); the upsert is the
+// refund applications' (Prefer: resolution=merge-duplicates).
+await bgCall('recordFiledPull', { clientId: 'c1', returnType: 'GSTR-3B', periodMonth: '09/2026', arn: 'AA240926000001X', actorId: GITA });
 await bgCall('replaceCreditLedgerTxns', 'c1', '09/2026', [{ is_debit: true, igst: 1, cgst: 0, sgst: 0, description: 'x' }]);
-await bgCall('upsertReco', 'suspended_reco', 'c1', '09/2026', { opening_igst: 10 });
+await bgCall('replaceRefundApplications', 'c1', [{ client_id: 'c1', portal_key: 'k1', arn: 'AA2409260000001', status: 'Open' }], '2026-10-21T10:00:00Z', { complete: false });
+await bgCall('recordRecoPull', { reco: 'suspended', clientId: 'c1', period: '09/2026', actorId: GITA, opening: { igst: 10, cgst: 0, sgst: 0 }, utilised: { igst: 0, cgst: 0, sgst: 0 }, drc: { igst: 0, cgst: 0, sgst: 0 } });
 await bgCall('runSweep', 'c1');
 const during = restCalls();
 ok(during.length >= 4, `requests made (${during.length})`);
@@ -159,8 +163,8 @@ for (const [name, data, mode] of starts) {
     await fromApp({ [key]: { ...data[key], ...(actorId ? { actorId } : {}) } });
     const { gstk_active_job: job } = await local.get('gstk_active_job');
     calls.length = 0;
-    await bgCall('upsertFilingStatus', [{ client_id: 'c1', return_type: 'GSTR-3B', period_month: '09/2026', status: 'Filed' }]);
-    await bgCall('upsertReco', 'suspended_reco', 'c1', '09/2026', { opening_igst: 10 });
+    await bgCall('replaceRefundApplications', 'c1', [{ client_id: 'c1', portal_key: 'k1', arn: 'AA2409260000001', status: 'Open' }], '2026-10-21T10:00:00Z', { complete: false });
+    await bgCall('recordRecoPull', { reco: 'suspended', clientId: 'c1', period: '09/2026', actorId, opening: { igst: 10, cgst: 0, sgst: 0 }, utilised: { igst: 0, cgst: 0, sgst: 0 }, drc: { igst: 0, cgst: 0, sgst: 0 } });
     const writes = restCalls().filter((c) => c.method !== 'GET');
     if (actorId) {
       ok(!!job && job.mode === mode && job.actorId === GITA, `${name}: the job keeps the app user`);
