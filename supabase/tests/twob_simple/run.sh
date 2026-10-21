@@ -11,8 +11,9 @@
 # removal runs, the lock order of the door and filing), the GSTR-3B gates test
 # (gates.test.mjs: the app's own gate code run against this database before
 # and after a permitted change, and against origin/main's code before it) and
-# the app's own writes (app_writes.test.mjs: a stale page's reclaim, the
-# open-month delete, the words after filing).
+# the app's own writes and words (app_writes.test.mjs: a stale page's
+# reclaim, the open-month delete, the words after filing and of Re-run, the
+# GSTR-3B push gate failing closed, a prior month's Post plan).
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.

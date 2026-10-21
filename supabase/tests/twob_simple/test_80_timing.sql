@@ -1,17 +1,24 @@
 -- Timing, as PostgREST runs it (anon): a 1,000-row Post in a prior month
 -- with three later months (Aug, Sep, Oct-26 hold carried lists of 600 rows
 -- each), previewed and applied; 1,000 removals carried to three months; and
--- a first carry of 1,000 rows on each list when a month is filed, also when
--- the month is filed after its next month (round 2: the carry then reaches
--- the filed next month and the open month after it). Each under 1 s.
+-- a first carry of 1,000 rows on each list when a month is filed; a month
+-- filed after its next month (it carries nothing, round 3) repaired by Re-run
+-- into the filed next month (1,000 rows per list added); and 1,000 entries
+-- added to a prior month through the door reaching six later months (round
+-- 3: up to the open month). Each under 1 s.
 \set P '80000000-0000-0000-0000-000000000001'
 \set C '80000000-0000-0000-0000-000000000002'
 \set Q '80000000-0000-0000-0000-000000000003'
 \set W '80000000-0000-0000-0000-000000000004'
 \set L '80000000-0000-0000-0000-000000000005'
+\set S '80000000-0000-0000-0000-000000000006'
 SELECT set_config('twob.write', 'system', false);
 INSERT INTO public.clients (id, name) VALUES (:'P', 'Timing post'), (:'C', 'Timing carry'), (:'Q', 'Timing blank numbers'), (:'W', 'Timing guard'),
-  (:'L', 'Timing late carry');
+  (:'L', 'Timing late carry'), (:'S', 'Timing six months');
+-- Round 3: Sep-26 filed, Apr-26 to Sep-26 prior, Oct-26 open; 1,000 entries
+-- added to April through the door reach May to Oct-26.
+INSERT INTO public.filing_status (client_id, return_type, period_month, status, filed_date, is_locked)
+VALUES (:'S', 'GSTR-3B', '09/2026', 'Filed', '2026-10-20', true);
 -- Round 2: 1,000 entries on each list in Jul-26 and in Aug-26; August is
 -- filed first (its list carried into September), July later.
 INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
@@ -157,15 +164,46 @@ BEGIN
   PERFORM public.t_eq(r -> 'later_months' -> 4 ->> 'count', '400', 'timing: one copy per twin per month');
   PERFORM public.t_eq(ms < 1000, true, 'timing: twin removals under 1 s');
 
-  -- Round 2: July filed after August: 1,000 entries per list carried into
-  -- filed August and into open September (which holds August's carry).
+  -- Round 3: July filed after August carries nothing (August is filed);
+  -- Re-run of July into filed August adds its 1,000 entries per list there.
   t0 := clock_timestamp();
   INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES ('80000000-0000-0000-0000-000000000005', 'GSTR-3B', '07/2026', 'Filed');
   ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
-  RAISE NOTICE 'timing: carry of 1,000 rows per list on filing a month after its next month (two months reached): % ms', ms;
-  PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = '80000000-0000-0000-0000-000000000005' AND period_month IN ('08/2026', '09/2026')), 4000,
-    'timing: July''s 1,000 reach August (1,000 own) and September (1,000 carried)');
-  PERFORM public.t_eq(ms < 1000, true, 'timing: late carry under 1 s');
+  RAISE NOTICE 'timing: filing a month after its next month (nothing carried): % ms', ms;
+  PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = '80000000-0000-0000-0000-000000000005' AND period_month IN ('08/2026', '09/2026')), 2000,
+    'timing: filing July after August carries nothing');
+  t0 := clock_timestamp();
+  r := public.twob_carry_rerun('00000000-0000-0000-0000-0000000000a2', '80000000-0000-0000-0000-000000000005', '07/2026', true);
+  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  RAISE NOTICE 'timing: Re-run preview into a filed next month, 1,000 rows per list: % ms', ms;
+  PERFORM public.t_eq(ms < 1000, true, 'timing: Re-run preview into a filed month under 1 s');
+  t0 := clock_timestamp();
+  r := public.twob_carry_rerun('00000000-0000-0000-0000-0000000000a2', '80000000-0000-0000-0000-000000000005', '07/2026', false);
+  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  RAISE NOTICE 'timing: Re-run into a filed next month, 1,000 rows per list added: % ms', ms;
+  PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = '80000000-0000-0000-0000-000000000005' AND period_month = '08/2026'), 2000,
+    'timing: Re-run adds July''s 1,000 to filed August');
+  PERFORM public.t_eq(ms < 1000, true, 'timing: Re-run into a filed month under 1 s');
+
+  -- Round 3: 1,000 entries added to filed April through the door reach
+  -- May to Oct-26 (six later months, up to the open month).
+  SELECT jsonb_agg(jsonb_build_object('table', 'bills_not_in_2b', 'op', 'insert', 'values', jsonb_build_object(
+           'date', '2026-04-10', 'supplier_name', 'SIX ' || g, 'supplier_invoice_number', 'S6-' || g, 'supplier_gstin', '24SIXSU' || lpad(g::text, 4, '0') || 'A1Z5',
+           'taxable_value', 100, 'input_cgst', 9, 'input_sgst', 9, 'reversal_month', 'Apr 26')))
+    INTO v_changes FROM generate_series(1, 1000) g;
+  t0 := clock_timestamp();
+  r := public.twob_prior_books_apply('00000000-0000-0000-0000-0000000000a2', '80000000-0000-0000-0000-000000000006', '04/2026', v_changes, true);
+  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  RAISE NOTICE 'timing: 1,000 entries added to a prior month, six later months (preview): % ms', ms;
+  PERFORM public.t_eq(jsonb_array_length(r -> 'later_months'), 6, 'timing: the added entries reach May to Oct-26');
+  PERFORM public.t_eq(ms < 1000, true, 'timing: six-month insert preview under 1 s');
+  t0 := clock_timestamp();
+  r := public.twob_prior_books_apply('00000000-0000-0000-0000-0000000000a2', '80000000-0000-0000-0000-000000000006', '04/2026', v_changes, false);
+  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  RAISE NOTICE 'timing: 1,000 entries added to a prior month, six later months (applied): % ms', ms;
+  PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = '80000000-0000-0000-0000-000000000006'), 7000,
+    'timing: 1,000 entries in April and six copies each');
+  PERFORM public.t_eq(ms < 1000, true, 'timing: six-month insert under 1 s');
 
   -- R20: 2,000 rows written to an open month (October) of a client with 36
   -- filed months: insert, update, delete, one statement each.

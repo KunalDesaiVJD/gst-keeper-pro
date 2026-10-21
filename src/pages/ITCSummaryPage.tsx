@@ -198,6 +198,10 @@ const ITCSummaryPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [itcSummaryId, setItcSummaryId] = useState<string | null>(null);
   const [reversalFromReco, setReversalFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  // The month's recorded filed figures could not be read (docs §13): its rows
+  // 4B(2)(i), 5.4 and 4D(1.2) are not shown from today's lists instead, and
+  // Save stays off until a reload reads them (fail closed).
+  const [filedFiguresError, setFiledFiguresError] = useState<string | null>(null);
   const [reclaimFromReco, setReclaimFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [expenseOutFromReco, setExpenseOutFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [eligibleFromImport2B, setEligibleFromImport2B] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
@@ -395,8 +399,15 @@ const ITCSummaryPage: React.FC = () => {
     let filed: Awaited<ReturnType<typeof fetchFiledFigures>> = null;
     try {
       filed = await fetchFiledFigures(selectedClient, selectedMonth);
+      setFiledFiguresError(null);
     } catch (err) {
-      toast.error((err as Error).message);
+      const msg = (err as Error).message;
+      setFiledFiguresError(msg);
+      toast.error(`${msg}. Rows 4B(2)(i), 5.4 and 4D(1.2) show 0; reload the page before saving.`);
+      setReversalFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      setReclaimFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      setExpenseOutFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      return;
     }
     if (filed) {
       setReversalFromReco(filed.reversal);
@@ -923,6 +934,10 @@ const ITCSummaryPage: React.FC = () => {
     if (!selectedClient || !selectedMonth) return;
     if (import2BReadFailed) {
       toast.error('Rows 5.1 and 5.3 could not be read from Import 2B, so they show 0. Reload the page before saving.');
+      return;
+    }
+    if (filedFiguresError) {
+      toast.error(`Rows 4B(2)(i), 5.4 and 4D(1.2) could not be read (${filedFiguresError}), so they show 0. Nothing was saved; reload the page before saving.`);
       return;
     }
 

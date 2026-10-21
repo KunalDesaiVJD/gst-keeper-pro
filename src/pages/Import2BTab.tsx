@@ -22,7 +22,7 @@ import { parseGstr2bFile } from '@/utils/parseGstr2b';
 import { classifyBookAgainst2b, invoiceSimilar, TwoBLite, ClassifyResult } from '@/utils/matchTwob';
 import {
   periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty, fetchImport2BCreditNotes, bookHasMinus, bookIsPurchaseReturn,
-  planToPriorChanges, writePostVersion,
+  planToPriorChanges, priorPlanLeftOut, writePostVersion,
 } from '@/lib/postImport2B';
 import {
   OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_MANAGER_MSG, PRIOR_MONTH_DOCS_MSG, applyPriorBooks, canChangePriorBooks, describePriorPreview,
@@ -2152,8 +2152,11 @@ const Import2BTab: React.FC = () => {
     const month = selectedMonth;
     const actorId = user.id;
     const changes = planToPriorChanges(plan, month);
+    // The Not in Books side follows the filed 2B and is not posted (docs §13).
+    const leftOut = priorPlanLeftOut(plan);
+    const shown = parts.filter((p) => !p.startsWith('Bills Not in Books'));
     if (changes.length === 0) {
-      toast.info(`Nothing to post. ${parts.join(' ')}`);
+      toast.info(`Nothing to post. ${[leftOut, ...shown].filter(Boolean).join(' ')}`, { duration: 20000 });
       return;
     }
     let preview;
@@ -2168,7 +2171,7 @@ const Import2BTab: React.FC = () => {
       return;
     }
     if (!previewChangesSomething(preview)) {
-      toast.info(`Nothing to post. ${noteLines(preview).join(' ')}`, { duration: 20000 });
+      toast.info(`Nothing to post. ${[...noteLines(preview), leftOut].filter(Boolean).join(' ')}`, { duration: 20000 });
       return;
     }
     if (!(await confirm({
@@ -2177,9 +2180,10 @@ const Import2BTab: React.FC = () => {
         <>
           This updates the 2B Reconciliation ledger of {selectedClientName} for {month}, and the later months that hold these entries:
           <br /><br />
-          {parts.map((p, i) => <React.Fragment key={i}>{p}<br /></React.Fragment>)}
+          {shown.map((p, i) => <React.Fragment key={i}>{p}<br /></React.Fragment>)}
           <br />
           {describePriorPreview(preview, month)}
+          {leftOut && <><br /><br />{leftOut}</>}
         </>
       ),
       confirmText: 'Post',

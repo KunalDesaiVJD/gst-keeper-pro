@@ -33,7 +33,7 @@ import { markFiledForPeriod } from '@/lib/advanceSetoffOverrides';
 import RequestDirectFilingDialog, { DirectFilingTarget } from '@/components/filing/RequestDirectFilingDialog';
 import DirectFilingApprovalsPanel from '@/components/filing/DirectFilingApprovalsPanel';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { canChangePriorBooks, describeFilingCarry, describeRerun, fetchEverFiled, monthName, nextMonthCarried, reopenFiled, rerunCarry, type NextMonthCarried } from '@/lib/twobPriorMonth';
+import { canChangePriorBooks, describeFilingCarry, describeRerun, fetchCarryOutcome, fetchEverFiled, monthName, reopenFiled, rerunCarry, type CarryOutcome } from '@/lib/twobPriorMonth';
 import { filingSuspendedCheck } from '@/lib/suspendedRecoCalc';
 import {
   DirectFilingApproval,
@@ -254,10 +254,11 @@ const FilingStatusPage: React.FC = () => {
   // The carry when a GSTR-3B / GSTR-3B (Q) is marked Filed is the database's
   // (auto_lock_on_filed → twob_carry_first, 20261021100000; docs §13): it
   // copies the month's Not in 2B / Not in Books lists into the next month
-  // only when that month holds no carried rows on the list yet and is not
-  // filed itself, and otherwise does nothing, so a later month's reclaims and
-  // book entries are never wiped (TAMNNA, 17 Oct 2026). The page asks before
-  // filing which of the two will happen, to say so afterwards.
+  // once, only when that month is not filed and holds no carried rows on the
+  // list, and otherwise does nothing, so a later month's reclaims, book
+  // entries and removals are never undone (TAMNNA, 17 Oct 2026). It records
+  // what it did (twob_carry_log), which the page reads after filing to say
+  // so, list by list.
 
   // Re-run carry forward (docs §13): a GST Manager or the superadmin, with a
   // preview first. It compares the month's two lists with the next month's
@@ -280,14 +281,17 @@ const FilingStatusPage: React.FC = () => {
         return;
       }
       if (!(await confirm({
-        title: `Re-run carry forward into ${monthName(preview.nextPeriod)}?`,
+        title: preview.nextFiled
+          ? `Add ${monthName(preview.period)}'s missing entries to ${monthName(preview.nextPeriod)} (filed)?`
+          : `Re-run carry forward into ${monthName(preview.nextPeriod)}?`,
         description: (<>{lines.map((l, i) => <React.Fragment key={i}>{l}<br /></React.Fragment>)}</>),
         confirmText: 'Re-run',
       }))) return;
       const done = await rerunCarry(user.id, record.client_id, record.period_month, false);
       const added = done.bills2B.add.length + done.billsBooks.add.length;
       const removed = done.bills2B.remove.length + done.billsBooks.remove.length;
-      toast.success(`Carry forward re-run into ${monthName(done.nextPeriod)}: ${added} added, ${removed} removed.`);
+      toast.success(`Carry forward re-run into ${monthName(done.nextPeriod)}: ${added} added, ${removed} removed.${done.nextFiled && added
+        ? ` Re-run ${monthName(done.nextPeriod)} next to carry them on.` : ''}`, { duration: 10000 });
     } catch (err: any) {
       toast.error(`Carry-forward failed: ${err?.message || 'unknown error'}`);
     } finally {
@@ -1029,18 +1033,7 @@ const FilingStatusPage: React.FC = () => {
       if (!advanceOk) return;
     }
 
-    // Filing a GSTR-3B carries this month's pending 2B entries into the next
-    // month only when that month holds none yet and is not filed (docs §13):
-    // ask which it will be, to say so after filing.
     const is3B = record.return_type === 'GSTR-3B' || record.return_type === 'GSTR-3B (Q)';
-    let nextHeld: NextMonthCarried | null = null;
-    if (newStatus === 'Filed' && !wasFiledBefore && is3B) {
-      try {
-        nextHeld = await nextMonthCarried(record.client_id, record.period_month || selectedMonth);
-      } catch (err) {
-        console.error('Error reading the next month before filing:', err);
-      }
-    }
 
     try {
       if (isNewRecord) {
@@ -1144,9 +1137,15 @@ const FilingStatusPage: React.FC = () => {
           .eq('id', record.id); // Only lock this specific record
         
         // The carry into the next month was made by the database with the
-        // status (docs §13), each list only when that month held no carried
-        // entries on it. Say which happened, list by list.
-        const carry = describeFilingCarry(record.return_type, nextHeld);
+        // status (docs §13): once, each list only when that month was not
+        // filed and held no carried entries on it. Say what it did, list by list.
+        let outcomes: CarryOutcome[] | null = null;
+        try {
+          outcomes = is3B ? await fetchCarryOutcome(record.client_id, record.period_month || selectedMonth) : null;
+        } catch (err) {
+          console.error('Error reading what filing carried:', err);
+        }
+        const carry = describeFilingCarry(record.return_type, record.period_month || selectedMonth, outcomes);
         if (carry.tone === 'warning') toast.warning(carry.text, { duration: 15000 });
         else toast.success(carry.text);
       } else if (newStatus === 'Filed') {

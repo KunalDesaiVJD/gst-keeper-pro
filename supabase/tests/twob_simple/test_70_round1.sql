@@ -46,8 +46,13 @@ UPDATE public.bills_not_in_2b SET input_cgst = 600, input_sgst = 600 WHERE clien
 SELECT set_config('twob.write', '', false);
 SET ROLE anon;
 SELECT public.t_books_side(:'B', '09/2026') AS b_sep_before \gset
-SELECT public.t_raises(format($q$SELECT public.twob_carry_rerun(public.t_manager(), '%s', '07/2026', false)$q$, :'B'),
-  'Aug-26 is filed too. Re-run works only into a month not yet filed.', 'R1 legacy: Re-run of July into filed August refused');
+-- Re-run of July into filed August only adds (round 3, S1): T-2 differs in
+-- amount from August's copy, which it does not replace there, so nothing is added.
+SELECT public.t_books_side(:'B', '08/2026') AS b_aug_before \gset
+SELECT public.twob_carry_rerun(public.t_manager(), :'B', '07/2026', false) -> 'bills_not_in_2b' AS b1 \gset
+SELECT public.t_eq(:'b1'::jsonb -> 'add', '[]'::jsonb, 'R1 legacy: Re-run of July into filed August adds nothing beside the copy at other amounts');
+SELECT public.t_eq((:'b1'::jsonb -> 'conflict' -> 0 ->> 'message') LIKE '%Aug-26 is filed, so Re-run does not replace its copy%', true, 'R1 legacy: ... and says why');
+SELECT public.t_eq(public.t_books_side(:'B', '08/2026'), :'b_aug_before'::numeric, 'R1 legacy: August''s books side unchanged');
 SELECT public.twob_carry_rerun(public.t_manager(), :'B', '08/2026', false) -> 'bills_not_in_2b' AS b2 \gset
 SELECT public.t_eq(:'b2'::jsonb -> 'add', '[]'::jsonb, 'R1 legacy: Re-run of August adds nothing to September');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'B' AND period_month = '09/2026' AND supplier_invoice_number = 'T-2'), 1,
@@ -71,8 +76,10 @@ DELETE FROM public.bills_not_in_2b WHERE client_id = :'C' AND period_month = '07
 SELECT set_config('twob.write', '', false);
 SET ROLE anon;
 SELECT public.t_books_side(:'C', '08/2026') AS c_aug_before \gset
-SELECT public.t_raises(format($q$SELECT public.twob_carry_rerun(public.t_manager(), '%s', '07/2026', false)$q$, :'C'),
-  'Aug-26 is filed too', 'R2: Re-run into filed August refused');
+-- Round 3: Re-run into filed August only adds; the copy July no longer holds is left there and named.
+SELECT public.twob_carry_rerun(public.t_manager(), :'C', '07/2026', false) -> 'bills_not_in_2b' AS c_rr \gset
+SELECT public.t_eq(:'c_rr'::jsonb -> 'remove', '[]'::jsonb, 'R2: Re-run into filed August removes nothing');
+SELECT public.t_eq(:'c_rr'::jsonb -> 'left' -> 0 ->> 'supplier_invoice_number', 'T-2', 'R2: ... and names the copy it leaves there');
 SELECT public.t_eq(public.t_books_side(:'C', '08/2026'), :'c_aug_before'::numeric, 'R2: August''s books side unchanged');
 SELECT public.t_eq(public.t_count(:'C', '08/2026', 'OTHER SUPPLIER'), 1, 'R2: August keeps T-2 (September''s reclaim depends on it)');
 -- A month after the next one holding carried rows: refused.
@@ -114,15 +121,16 @@ SELECT public.t_make_tamnna(:'E', 'R5 carry into prior');
 SET ROLE anon;
 SELECT public.t_eq(to_regprocedure('public.twob_carry_after_filing(uuid, text)') IS NULL, true, 'R5: twob_carry_after_filing is gone');
 SELECT public.twob_prior_books_apply(public.t_manager(), :'E', '07/2026', '[{"table": "bills_not_in_books", "op": "insert", "values": {"date": "2026-07-21", "supplier_name": "NIB NEW", "input_cgst": 9, "input_sgst": 9, "bill_in_2b_month": "Jul 26"}}]'::jsonb, false) -> 'later_months' AS e_later \gset
-SELECT public.t_eq(:'e_later'::jsonb, '[]'::jsonb, 'R5: no later month holds a Not in Books list, so none is made');
--- July unlocked and filed again: filed August holds no carried Not in Books
--- rows, so July's list is carried into it and on into open September (round
--- 2, D1: the filings that would have carried it have passed). Its Not in 2B
--- list, carried before, is left as it is.
+SELECT public.t_eq(:'e_later'::jsonb, '[{"count": 1, "period": "08/2026"}, {"count": 1, "period": "09/2026"}]'::jsonb,
+  'R5: an added entry reaches the later months up to the open month (round 3, S3), though none held a Not in Books list');
+-- July unlocked and filed again: its first carry was made when it was first
+-- filed, so nothing is carried again (round 3, S1).
 UPDATE public.filing_status SET status = 'Prepared Pending', is_locked = false, filed_date = NULL WHERE client_id = :'E' AND period_month = '07/2026';
 UPDATE public.filing_status SET status = 'Filed', filed_date = '2026-10-21' WHERE client_id = :'E' AND period_month = '07/2026';
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE client_id = :'E' AND period_month IN ('08/2026', '09/2026') AND is_carried_forward), 2,
-  'R5: re-filing July carries its Not in Books entry into filed August and open September');
+  'R5: re-filing July carries nothing more into August or September');
+SELECT public.t_eq((SELECT array_agg(last_outcome ORDER BY list) FROM public.twob_carry_log WHERE client_id = :'E' AND period_month = '07/2026'),
+  ARRAY['done_before', 'done_before'], 'R5: ... and the carry record says it was carried before');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'E' AND period_month = '08/2026'), 2,
   'R5: August''s Not in 2B list is left as it is');
 RESET ROLE;

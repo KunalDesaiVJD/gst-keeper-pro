@@ -91,9 +91,11 @@ interface LedgerRow {
   input_sgst: number | null;
 }
 
+// The supplier name as Post writes it (trimmed, or "Unknown supplier"), so a
+// books name with a stray space does not plan an update that changes nothing.
 const amountsDiffer = (a: LedgerRow, b: { date: string; supplier_name: string; supplier_invoice_number: string | null; supplier_gstin: string | null; taxable_value: number; input_igst: number; input_cgst: number; input_sgst: number }) =>
   a.date !== b.date ||
-  (a.supplier_name || '') !== b.supplier_name ||
+  (a.supplier_name || '').trim() !== ((b.supplier_name || '').trim() || 'Unknown supplier') ||
   (a.supplier_invoice_number || '') !== (b.supplier_invoice_number || '') ||
   (a.supplier_gstin || '') !== (b.supplier_gstin || '') ||
   Number(a.taxable_value || 0) !== b.taxable_value ||
@@ -477,10 +479,12 @@ export async function writePostVersion(clientId: string, periodMonth: string, us
 }
 
 // Post's plan for a prior month, as the changes twob_prior_books_apply takes
-// (src/lib/twobPriorMonth.ts): the same retractions, new entries and updates
-// postImport2BToLedger writes, each also reaching the later months' carried
-// copies of the entry. The posting stamps are not written: a prior month's 2B
-// documents do not change.
+// (src/lib/twobPriorMonth.ts): the books side only, the same retractions, new
+// entries and updates of Not in 2B postImport2BToLedger writes, each also
+// reaching the later months' carried copies of the entry. The Not in Books
+// side follows the month's 2B documents, which stay as filed, so it is left
+// out (priorPlanLeftOut names it; docs §13). The posting stamps are not
+// written: a prior month's 2B documents do not change.
 export function planToPriorChanges(plan: PostPlan, periodMonth: string): TwobChange[] {
   const label = periodMonthLabel(periodMonth);
   const fields = (r: { date: string | null; supplier_name: string | null; supplier_invoice_number: string | null; supplier_gstin: string | null }) => ({
@@ -494,7 +498,6 @@ export function planToPriorChanges(plan: PostPlan, periodMonth: string): TwobCha
   });
   return [
     ...plan.retractBills2B.map(({ ledgerId }): TwobChange => ({ table: 'bills_not_in_2b', op: 'delete', id: ledgerId })),
-    ...plan.retractBillsBooks.map(({ ledgerId }): TwobChange => ({ table: 'bills_not_in_books', op: 'delete', id: ledgerId })),
     ...plan.insertBills2B.map(({ row: b }): TwobChange => ({
       table: 'bills_not_in_2b', op: 'insert',
       values: { ...fields(b), ...bookFigures(b), reversal_month: label, source_book_id: b.id },
@@ -502,12 +505,21 @@ export function planToPriorChanges(plan: PostPlan, periodMonth: string): TwobCha
     ...plan.updateBills2B.map(({ ledgerId, row: b }): TwobChange => ({
       table: 'bills_not_in_2b', op: 'update', id: ledgerId, values: { ...fields(b), ...bookFigures(b) },
     })),
-    ...plan.insertBillsBooks.map(({ row: d }): TwobChange => ({
-      table: 'bills_not_in_books', op: 'insert',
-      values: { ...fields(d), ...ledgerFiguresOf(d), bill_in_2b_month: label, source_doc_id: d.id },
-    })),
-    ...plan.updateBillsBooks.map(({ ledgerId, row: d }): TwobChange => ({
-      table: 'bills_not_in_books', op: 'update', id: ledgerId, values: { ...fields(d), ...ledgerFiguresOf(d) },
-    })),
   ];
+}
+
+// The Not in Books side of a prior month's Post plan, left out of it: entries
+// from 2B documents to add, change or remove, which follow the filed 2B, not
+// the books. As one sentence for the preview, or null when there are none.
+export function priorPlanLeftOut(plan: PostPlan): string | null {
+  const n = plan.insertBillsBooks.length + plan.updateBillsBooks.length + plan.retractBillsBooks.length;
+  if (n === 0) return null;
+  const names = [...plan.insertBillsBooks, ...plan.updateBillsBooks].slice(0, 4)
+    .map(({ row: d }) => [(d.supplier_name || '').trim(), d.supplier_invoice_number].filter(Boolean).join(' ')).filter(Boolean);
+  const parts = [
+    plan.insertBillsBooks.length && `${plan.insertBillsBooks.length} to add`,
+    plan.updateBillsBooks.length && `${plan.updateBillsBooks.length} to change`,
+    plan.retractBillsBooks.length && `${plan.retractBillsBooks.length} to remove`,
+  ].filter(Boolean).join(', ');
+  return `Not posted: ${n} Not in Books ${n === 1 ? 'entry' : 'entries'} from this month's 2B documents (${parts}${names.length ? `: ${names.join(', ')}${n > names.length ? ' and more' : ''}` : ''}). A filed month's Not in Books list follows its filed 2B, not the books, so it does not change here.`;
 }

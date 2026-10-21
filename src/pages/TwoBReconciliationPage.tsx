@@ -38,8 +38,8 @@ import { useConfirm } from '@/components/ui/confirm-dialog';
 import { writePostVersion } from '@/lib/postImport2B';
 import { deleteOpenMonthRows, holdsDecision } from '@/lib/twobPendingWrites';
 import {
-  OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchTwobMonthState, ledgerCellReadOnly, previewAndApplyPriorBooks,
-  type TwobChange, type TwobMonthState,
+  OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, PRIOR_NIB_FROM_2B_MSG, canChangePriorBooks, fetchTwobMonthState, ledgerCellReadOnly,
+  previewAndApplyPriorBooks, restoreBlockedReason, restoreVersion, type RestoreRow, type TwobChange, type TwobMonthState,
 } from '@/lib/twobPriorMonth';
 import {
   WS_PAGE, WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL,
@@ -91,6 +91,8 @@ interface BillRecord {
   reclaim_subtype?: string | null;
   book_entry_month?: string | null;
   bill_in_2b_month?: string | null;
+  /** Not in Books: the 2B document it was posted from (follows the filed 2B in a prior month; docs §13). */
+  source_doc_id?: string | null;
   is_locked: boolean | null;
   is_carried_forward: boolean | null;
   version: number | null;
@@ -1252,76 +1254,50 @@ const TwoBReconciliationPage: React.FC = () => {
 
 
   const handleRestoreVersion = async (version: TwoBVersion) => {
-    if (!selectedClientId || readOnly) return;
-    if (isPrior) { toast.error(PRIOR_MONTH_DOCS_MSG + ' Restore works on open months only.'); return; }
+    if (!selectedClientId || readOnly || !user?.id) return;
+    // A filed month is never restored, and an open month only when no later
+    // month holds entries (docs §13); the database checks both again.
+    const blocked = restoreBlockedReason(monthState);
+    if (blocked) { toast.error(blocked); return; }
     
     try {
       // Get next version number for the RESTORE action
       const newVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
-      
-      // Mark all existing versions as not current
-      await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
-      
-      // Delete current records. A carried entry's own decision (a reclaim,
-      // Expense out or book entry) is undone first: the database refuses to
-      // delete a carried entry that holds one (docs §13), and a Restore
-      // replaces the month as a whole. A refused write stops the Restore
-      // before anything is added back, so the month is never doubled.
-      const restoreStep = (what: string, e: { message: string } | null) => {
-        if (e) throw new Error(`${what}: ${e.message}`);
+
+      // The month's two lists replaced by the version's in one call
+      // (twob_restore_version): nothing is changed when it is refused, so the
+      // month is never cleared or doubled halfway.
+      // A version's rows are camelCase (old saves) or snake_case (Post, newer saves).
+      type Cell = string | number | boolean | null;
+      const pick = (b: Record<string, unknown>, camel: string, snake: string): Cell => {
+        const v = b[camel] || b[snake];
+        return (v ?? b[camel] ?? b[snake] ?? null) as Cell;   // a 0 stays 0
       };
-      restoreStep('Could not clear the month', (await supabase.from('bills_not_in_2b')
-        .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null })
-        .eq('client_id', selectedClientId).eq('period_month', selectedMonth).eq('is_carried_forward', true)
-        .or('reclaim_month.not.is.null,reclaim_subtype.not.is.null')).error);
-      restoreStep('Could not clear the month', (await supabase.from('bills_not_in_books')
-        .update({ book_entry_month: null })
-        .eq('client_id', selectedClientId).eq('period_month', selectedMonth).eq('is_carried_forward', true)
-        .not('book_entry_month', 'is', null)).error);
-      restoreStep('Could not clear the month', (await supabase.from('bills_not_in_2b').delete().eq('client_id', selectedClientId).eq('period_month', selectedMonth)).error);
-      restoreStep('Could not clear the month', (await supabase.from('bills_not_in_books').delete().eq('client_id', selectedClientId).eq('period_month', selectedMonth)).error);
-      
-      // Restore bills not in 2B from version (handle both camelCase and snake_case)
-      if (version.billsNotIn2B && version.billsNotIn2B.length > 0) {
-        const records2B = version.billsNotIn2B.map((b: any) => ({
-          client_id: selectedClientId,
-          date: b.date,
-          supplier_name: b.supplierName || b.supplier_name,
-          supplier_invoice_number: b.supplierInvoiceNumber || b.supplier_invoice_number,
-          supplier_gstin: b.supplierGstin || b.supplier_gstin,
-          taxable_value: b.taxableValue ?? b.taxable_value ?? 0,
-          input_igst: b.inputIgst ?? b.input_igst ?? 0,
-          input_cgst: b.inputCgst ?? b.input_cgst ?? 0,
-          input_sgst: b.inputSgst ?? b.input_sgst ?? 0,
-          period_month: selectedMonth,
-          reversal_month: b.reversalMonth || b.reversal_month || null,
-          reclaim_month: b.reclaimMonth || b.reclaim_month || null,
-          is_carried_forward: b.isCarriedForward ?? b.is_carried_forward ?? false,
-        }));
-        restoreStep('Could not restore', (await supabase.from('bills_not_in_2b').insert(records2B)).error);
-      }
-      
-      // Restore bills not in books from version (handle both camelCase and snake_case)
-      if (version.billsNotInBooks && version.billsNotInBooks.length > 0) {
-        const recordsBooks = version.billsNotInBooks.map((b: any) => ({
-          client_id: selectedClientId,
-          date: b.date,
-          supplier_name: b.supplierName || b.supplier_name,
-          supplier_invoice_number: b.supplierInvoiceNumber || b.supplier_invoice_number,
-          supplier_gstin: b.supplierGstin || b.supplier_gstin,
-          taxable_value: b.taxableValue ?? b.taxable_value ?? 0,
-          input_igst: b.inputIgst ?? b.input_igst ?? 0,
-          input_cgst: b.inputCgst ?? b.input_cgst ?? 0,
-          input_sgst: b.inputSgst ?? b.input_sgst ?? 0,
-          period_month: selectedMonth,
-          book_entry_month: b.bookEntryMonth || b.book_entry_month || null,
-          bill_in_2b_month: b.billIn2BMonth || b.bill_in_2b_month || null,
-          is_carried_forward: b.isCarriedForward ?? b.is_carried_forward ?? false,
-        }));
-        restoreStep('Could not restore', (await supabase.from('bills_not_in_books').insert(recordsBooks)).error);
-      }
-      
-      // Create a new RESTORE version entry with the restored data
+      const common = (b: Record<string, unknown>): RestoreRow => ({
+        date: pick(b, 'date', 'date'),
+        supplier_name: pick(b, 'supplierName', 'supplier_name'),
+        supplier_invoice_number: pick(b, 'supplierInvoiceNumber', 'supplier_invoice_number'),
+        supplier_gstin: pick(b, 'supplierGstin', 'supplier_gstin'),
+        taxable_value: pick(b, 'taxableValue', 'taxable_value') ?? 0,
+        input_igst: pick(b, 'inputIgst', 'input_igst') ?? 0,
+        input_cgst: pick(b, 'inputCgst', 'input_cgst') ?? 0,
+        input_sgst: pick(b, 'inputSgst', 'input_sgst') ?? 0,
+        is_carried_forward: pick(b, 'isCarriedForward', 'is_carried_forward') ?? false,
+      });
+      const rows2B: RestoreRow[] = ((version.billsNotIn2B || []) as unknown as Record<string, unknown>[]).map((b) => ({
+        ...common(b),
+        reversal_month: pick(b, 'reversalMonth', 'reversal_month') || null,
+        reclaim_month: pick(b, 'reclaimMonth', 'reclaim_month') || null,
+      }));
+      const rowsBooks: RestoreRow[] = ((version.billsNotInBooks || []) as unknown as Record<string, unknown>[]).map((b) => ({
+        ...common(b),
+        book_entry_month: pick(b, 'bookEntryMonth', 'book_entry_month') || null,
+        bill_in_2b_month: pick(b, 'billIn2BMonth', 'bill_in_2b_month') || null,
+      }));
+      await restoreVersion(user.id, selectedClientId, selectedMonth, rows2B, rowsBooks);
+
+      // Mark all existing versions as not current, then record the RESTORE.
+      await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
       const versionData = {
         billsNotIn2B: version.billsNotIn2B || [],
         billsNotInBooks: version.billsNotInBooks || [],
@@ -1347,7 +1323,7 @@ const TwoBReconciliationPage: React.FC = () => {
       setShowVersionHistory(false);
     } catch (error: any) {
       console.error('Error restoring version:', error);
-      toast.error('Failed to restore: ' + error.message);
+      toast.error('Nothing was restored: ' + error.message);
     }
   };
 
@@ -1360,12 +1336,14 @@ const TwoBReconciliationPage: React.FC = () => {
     className: string = '',
     isCarriedForward: boolean = false,
     isEditableForCF: boolean = false,
-    maxDate?: string
+    maxDate?: string,
+    followsTwoB: boolean = false
   ) => {
     // Carried forward rows are non-editable (display only) - except columns marked as editable for CF.
     // In a prior month a GST Manager / the superadmin corrects a carried entry's date, supplier,
-    // number, GSTIN and amounts here too (each Save goes through the previewed door, docs §13).
-    const shouldBeReadOnly = ledgerCellReadOnly({ readOnly, isCarriedForward, editableForCF: isEditableForCF, isSuperadmin, isPrior, canPriorBooks });
+    // number, GSTIN and amounts here too (each Save goes through the previewed door, docs §13),
+    // except a Not in Books entry posted from a 2B document, which follows the filed 2B (followsTwoB).
+    const shouldBeReadOnly = followsTwoB || ledgerCellReadOnly({ readOnly, isCarriedForward, editableForCF: isEditableForCF, isSuperadmin, isPrior, canPriorBooks });
     
     if (shouldBeReadOnly) {
       if (type === 'date' && value) {
@@ -1683,7 +1661,7 @@ const TwoBReconciliationPage: React.FC = () => {
                 {!canPriorBooks
                   ? PRIOR_MONTH_MSG
                   : isLiberalClient
-                    ? 'This month is filed. You can change its books entries here: the date, supplier, number, GSTIN and amounts, add entries and delete them. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved. The reversal, reclaim, book entry and in-2B months stay as filed.'
+                    ? 'This month is filed. You can change its books entries here: the date, supplier, number, GSTIN and amounts, add entries and delete them. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved. The reversal, reclaim, book entry and in-2B months stay as filed, and so do Not in Books entries from 2B documents.'
                     : 'This month is filed. You can delete its entries here; add or correct them through Import 2B\'s books register and Post. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved.'}
               </span>
             </Note>
@@ -2014,7 +1992,8 @@ const TwoBReconciliationPage: React.FC = () => {
                             '',
                             row.is_carried_forward || false,
                             false,
-                            maxDateForReturnPeriod
+                            maxDateForReturnPeriod,
+                            isPrior && !!row.source_doc_id
                           )}
                         </td>
                         <td className={tdCls}>
@@ -2024,7 +2003,10 @@ const TwoBReconciliationPage: React.FC = () => {
                               (val) => handleUpdateBooksField(row.id, 'supplier_name', val),
                               'text',
                               'min-w-[150px]',
-                              row.is_carried_forward || false
+                              row.is_carried_forward || false,
+                              false,
+                              undefined,
+                              isPrior && !!row.source_doc_id
                             )}
                             {row.is_carried_forward && (
                               <Badge variant="info" className="shrink-0 px-1.5 text-[10px] font-medium">CF</Badge>
@@ -2037,7 +2019,10 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdateBooksField(row.id, 'supplier_invoice_number', val),
                             'text',
                             '',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            false,
+                            undefined,
+                            isPrior && !!row.source_doc_id
                           )}
                         </td>
                         <td className={tdCls}>
@@ -2046,7 +2031,10 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdateBooksField(row.id, 'supplier_gstin', val),
                             'text',
                             'font-mono text-xs',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            false,
+                            undefined,
+                            isPrior && !!row.source_doc_id
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2055,7 +2043,10 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdateBooksField(row.id, 'taxable_value', val),
                             'number',
                             'text-right',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            false,
+                            undefined,
+                            isPrior && !!row.source_doc_id
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2064,7 +2055,10 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdateBooksField(row.id, 'input_igst', val),
                             'number',
                             'text-right',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            false,
+                            undefined,
+                            isPrior && !!row.source_doc_id
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2073,7 +2067,10 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdateBooksField(row.id, 'input_cgst', val),
                             'number',
                             'text-right',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            false,
+                            undefined,
+                            isPrior && !!row.source_doc_id
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2082,7 +2079,10 @@ const TwoBReconciliationPage: React.FC = () => {
                             (val) => handleUpdateBooksField(row.id, 'input_sgst', val),
                             'number',
                             'text-right',
-                            row.is_carried_forward || false
+                            row.is_carried_forward || false,
+                            false,
+                            undefined,
+                            isPrior && !!row.source_doc_id
                           )}
                         </td>
                         <td className={tdCls}>
@@ -2107,7 +2107,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.id.startsWith('temp-')
                           )}
                         </td>
-                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && (
+                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && !(isPrior && row.source_doc_id) && (
                           <td className={tdCls}>
                             <Button
                               variant="ghost"
@@ -2122,6 +2122,9 @@ const TwoBReconciliationPage: React.FC = () => {
                           </td>
                         )}
                         {canDeleteHere && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td className={WS_TD}></td>}
+                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && isPrior && row.source_doc_id && (
+                          <td className={WS_TD} title={PRIOR_NIB_FROM_2B_MSG}></td>
+                        )}
                       </tr>
                     ))}
                     {filteredBillsBooks.length === 0 && (
@@ -2160,7 +2163,7 @@ const TwoBReconciliationPage: React.FC = () => {
         onOpenChange={setShowVersionHistory}
         versions={versions}
         onRestore={handleRestoreVersion}
-        restoreBlockedReason={isPrior ? `${PRIOR_MONTH_DOCS_MSG} Restore works on open months only.` : null}
+        restoreBlockedReason={restoreBlockedReason(monthState)}
         onVersionDeleted={fetchVersions}
         clientName={selectedClientData?.name || ''}
         month={selectedMonth}

@@ -9981,6 +9981,50 @@ export type Database = {
           },
         ]
       }
+      twob_carry_log: {
+        Row: {
+          carried_at: string | null
+          carried_how: string | null
+          carried_rows: number
+          client_id: string
+          last_at: string
+          last_outcome: string
+          list: string
+          next_period: string
+          period_month: string
+        }
+        Insert: {
+          carried_at?: string | null
+          carried_how?: string | null
+          carried_rows?: number
+          client_id: string
+          last_at?: string
+          last_outcome: string
+          list: string
+          next_period: string
+          period_month: string
+        }
+        Update: {
+          carried_at?: string | null
+          carried_how?: string | null
+          carried_rows?: number
+          client_id?: string
+          last_at?: string
+          last_outcome?: string
+          list?: string
+          next_period?: string
+          period_month?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "twob_carry_log_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       twob_ever_filed: {
         Row: {
           client_id: string
@@ -11856,6 +11900,10 @@ export type Database = {
       }
       twob_carry_rerun: {
         Args: { p_actor_id: string; p_client_id: string; p_period: string; p_dry_run?: boolean }
+        Returns: Json
+      }
+      twob_restore_version: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_bills_2b: Json; p_bills_books: Json }
         Returns: Json
       }
       staff_end_sessions: {

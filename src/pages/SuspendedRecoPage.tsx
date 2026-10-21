@@ -43,6 +43,10 @@ const SuspendedRecoPage: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  // The month's figures could not be read (a filed month's recorded figures
+  // among them, docs §13): Save stays off until a reload reads them, so a
+  // stale Current Total is never saved for Filing Status to check (fail closed).
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showClearData, setShowClearData] = useState(false);
   const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string } | null>(null);
   // Opening balance portal values (editable for legacy <Jun-26; for Jun-26+ set via Upload/NA/Override flow)
@@ -137,6 +141,7 @@ const SuspendedRecoPage: React.FC = () => {
     if (!selectedClientId || !selectedMonth) return;
 
     setIsLoading(true);
+    setLoadError(null);
     try {
       // Fetch portal data from suspended_reco table (opening balance only)
       const { data: suspendedData } = await supabase
@@ -360,7 +365,8 @@ const SuspendedRecoPage: React.FC = () => {
         setBooksIgst(0);
       }
     } catch (error: any) {
-      toast.error('Failed to fetch data: ' + error.message);
+      setLoadError(error.message);
+      toast.error('Failed to fetch data: ' + error.message + '. Reload the page before saving.');
     } finally {
       setIsLoading(false);
     }
@@ -379,6 +385,10 @@ const SuspendedRecoPage: React.FC = () => {
   const handleSave = async () => {
     if (!selectedClientId || !selectedMonth) {
       toast.error('Please select a client and month');
+      return;
+    }
+    if (loadError) {
+      toast.error(`This month's figures could not be read (${loadError}). Nothing was saved; reload the page before saving.`);
       return;
     }
 

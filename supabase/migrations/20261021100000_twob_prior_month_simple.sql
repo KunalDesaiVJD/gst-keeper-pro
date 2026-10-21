@@ -22,27 +22,33 @@
 --    Filed by mistake is reopened by a GST Manager or the superadmin, with a
 --    reason (twob_reopen_filed).
 -- 2. In a prior month only a GST Manager or the superadmin changes anything,
---    and only books entries: Not in 2B and Not in Books rows and the Import
---    2B books register. 2B documents, reversal / reclaim / Expense out / book
---    entry / in-2B months, Clear Data, Restore and imports are refused for
---    everyone. Removing an entry or changing its amounts is refused while the
---    entry or a later copy holds a reclaim (Expense out) or a book entry,
---    naming the month ("Sep-26 has reclaimed this entry; undo that reclaim
---    first"; for a filed month's decision "Aug-26 (filed) has booked this
---    entry, so it cannot be removed or its amounts changed"); its date,
---    supplier, number and GSTIN may change.
+--    and only books entries: Not in 2B rows, the Import 2B books register,
+--    and Not in Books rows typed without a 2B source. A Not in Books entry
+--    posted from a 2B document (source_doc_id) follows the filed 2B and is
+--    neither added, changed nor removed. 2B documents, reversal / reclaim /
+--    Expense out / book entry / in-2B months, Clear Data, Restore and imports
+--    are refused for everyone. Removing an entry or changing its amounts is
+--    refused while the entry or a later copy holds a reclaim (Expense out) or
+--    a book entry, naming the month ("Sep-26 has reclaimed this entry; undo
+--    that reclaim first"; for a filed month's decision "Aug-26 (filed) has
+--    booked this entry, so it cannot be removed or its amounts changed"); its
+--    date, supplier, number and GSTIN may change.
 -- 3. One door: twob_prior_books_apply(p_actor_id, p_client_id, p_period,
 --    p_changes, p_dry_run). Each change in the month and the same change on
---    every later month's carried copy (same document: GSTIN, or both blank and
---    the same supplier; number; date; amounts), twins one copy per month (a
---    copy without its own decision first); an added entry gets a carried copy
---    in every later month up to the latest one holding a carried list (a
---    month in between too), takes this month as its reversal (in-2B) month,
---    and is left out, named in a note, when the month or any later month
---    already holds it (the rest goes ahead). A removed posted entry takes its
---    books register row with it, paired with a 2B document or not. The rows
---    and copies it changes are locked first. One transaction; p_dry_run
---    returns the preview the screens show first.
+--    every later month's carried copy of the same entry (GSTIN, or both blank
+--    and the same supplier; number; date; amounts; and the same reversal
+--    month, or in-2B month on Not in Books: twob_month_tag), twins one copy
+--    per month on that key (a copy without its own decision first), stopping
+--    at the first later month that holds the same entry as its own entry
+--    (that month and the later ones are left, and named). An added entry gets
+--    a carried copy in every later month up to the later of the latest month
+--    holding a carried list on that list and the month after the client's
+--    latest filed month (never further), takes this month as its reversal
+--    (in-2B) month, and is left out, named in a note, when the month or any
+--    later month already holds it (the rest goes ahead). A removed posted
+--    entry takes its books register row with it. The rows and copies it
+--    changes are locked first. One transaction; p_dry_run returns the preview
+--    the screens show first.
 -- 4. The guard (twob_guard) on bills_not_in_2b, bills_not_in_books,
 --    books_register and twob_import_docs refuses every other write to a prior
 --    month; still allowed: a change of the lock columns only (the filing lock,
@@ -54,46 +60,58 @@
 --    holds a decision made in that month or later is refused, and so is adding
 --    a carried row beside a decided carried row of the same document
 --    (twob_guard_carried_insert): a page opened before this change still runs
---    the old delete-and-copy carry and Restore, and neither wipes a reclaim nor
---    doubles the month.
--- 5. The carry never wipes: filing (an update or a row added as Filed, a
---    quarterly return too; the extension's markFiled) copies into the next
---    month only a list the next month does not hold yet (twob_carry_first).
---    A month filed after its next month carries into that filed month when
---    it holds no carried list, and on to the open month, each month getting
---    what it lacks, its figures recorded first. Re-run carry forward
---    (twob_carry_rerun) is a GST Manager's or the superadmin's, from the
---    latest filed month into the open month after it, previewed first: it
---    adds the entries the next month lacks, removes carried copies the month
---    no longer holds and keeps those holding a decision; an entry the next
---    month holds as its own, or whose copy differs in amount, or in number or
---    date at the same supplier and amounts, and holds a decision, is named
---    and left alone. Every writer takes the client's lock before row locks.
--- 6. Filed figures (twob_filed_figures): before the door first changes a
---    prior month, the month's 2B Reconciliation figures (4B(2)(i), 5.4 and
---    4D(1.2), summed from its live lists as the app sums them) are recorded;
---    every gate that reads that month reads them from then on. Until then the
---    live lists are its figures, as before this change, so applying it
---    changes no gate.
+--    the old delete-and-copy carry, and it neither wipes a reclaim nor
+--    doubles the month. Its old Restore can still double an open month (it
+--    adds the month's own entries back): that risk lasts until the page is
+--    reloaded, so everyone reloads after the deploy (step 4).
+-- 5. The carry runs once and never wipes: filing (an update or a row added as
+--    Filed, a quarterly return too; the extension's markFiled) copies a list
+--    into the next month only the first time (twob_carry_log; every month
+--    filed before this change counts as carried, back-filled here), only when
+--    the next month is not filed, and only when it holds no carried rows on
+--    that list (twob_carry_first). Otherwise nothing, and the record says why
+--    (Filing Status shows it). Nothing carries by itself into a filed month or
+--    past the next month; marking a month Filed again never carries anything.
+--    An out-of-order filing is repaired only by Re-run carry forward
+--    (twob_carry_rerun, a GST Manager or the superadmin, previewed, one month
+--    into the next): into an open month it adds, removes copies without a
+--    decision and keeps decided ones; into a filed month it only adds, that
+--    month's figures recorded first. An entry the next month holds as its
+--    own, or whose copy differs in amount, or in number or date at the same
+--    supplier and amounts, or in supplier or GSTIN at the same number, date
+--    and amounts, and holds a decision, is named and left alone. Every writer
+--    takes the client's lock before row locks.
+-- 6. Filed figures (twob_filed_figures): before the door, or Re-run into a
+--    filed month, first changes a prior month, the month's 2B Reconciliation
+--    figures (4B(2)(i), 5.4 and 4D(1.2), summed from its live lists as the app
+--    sums them) are recorded; every gate that reads that month reads them
+--    from then on, and blocks when it cannot read them (the app fails
+--    closed). Until then the live lists are its figures, as before this
+--    change, so applying it changes no gate.
+-- 7. Restore of a saved version (twob_restore_version, the superadmin): an
+--    open month only, and only the client's latest month that holds rows on
+--    either list; the two lists replaced in one call.
 --
 -- RLS: unchanged on the four tables (open, as the app has no auth session).
--- twob_ever_filed and twob_filed_figures: select open to public, written only
--- by this file's functions. Re-runnable: CREATE OR REPLACE, IF NOT EXISTS, ON
--- CONFLICT DO NOTHING, triggers dropped and created again. No function
--- carries a SET of a custom setting (a non-superuser cannot create one);
--- twob.write is set at run time with set_config, as app.filing_push is.
--- Tests: supabase/tests/twob_simple/run.sh (applies this file twice, as a
--- role that is not a superuser).
+-- twob_ever_filed, twob_filed_figures and twob_carry_log: select open to
+-- public, written only by this file's functions. Re-runnable: CREATE OR
+-- REPLACE, IF NOT EXISTS, ON CONFLICT DO NOTHING, triggers dropped and created
+-- again. No function carries a SET of a custom setting (a non-superuser
+-- cannot create one); twob.write is set at run time with set_config, as
+-- app.filing_push is. Tests: supabase/tests/twob_simple/run.sh (applies this
+-- file twice, as a role that is not a superuser).
 --
 -- LIVE APPLY (project gcquafqxbykxkbexcdpy only; never SUPABASE_PROJECT_REF):
 --  1. Dry checks, reads only, before applying (figures of 21 Oct 2026 from
 --     anon reads):
---       -- Filed returns to record (1,369, of them 31 GSTR-3B (Q)):
+--       -- Filed returns to record (1,369, of them 31 GSTR-3B (Q)); each is
+--       -- recorded as carried on both lists (twob_carry_log, 2 rows each):
 --       SELECT count(*), count(*) FILTER (WHERE return_type::text = 'GSTR-3B (Q)')
 --         FROM public.filing_status
 --        WHERE status::text = 'Filed' AND return_type::text IN ('GSTR-3B', 'GSTR-3B (Q)');
---       -- Filed months whose next month already holds carried rows (a later
---       -- filing of them carries nothing; 739 Not in 2B, 670 Not in Books):
+--       -- Filed months whose next month already holds carried rows (739 Not
+--       -- in 2B, 670 Not in Books); after this change no filed month carries
+--       -- again, these or the others:
 --       SELECT count(*) FILTER (WHERE EXISTS (SELECT 1 FROM public.bills_not_in_2b b WHERE b.client_id = f.client_id
 --                 AND b.period_month = to_char(to_date(f.period_month, 'MM/YYYY') + interval '1 month', 'MM/YYYY') AND b.is_carried_forward)) AS next_2b,
 --              count(*) FILTER (WHERE EXISTS (SELECT 1 FROM public.bills_not_in_books b WHERE b.client_id = f.client_id
@@ -124,75 +142,91 @@
 --        WHERE reversal_month ~* '^[a-z]{3}[ -]?[0-9]{2}$'
 --          AND to_date(regexp_replace(reversal_month, '[ -]', '', 'g'), 'MonYY') > to_date(period_month, 'MM/YYYY');
 --       -- Nothing of this file there yet, staff_level_of there (20261017100000):
---       SELECT to_regclass('public.twob_ever_filed'), to_regclass('public.twob_filed_figures'),
+--       SELECT to_regclass('public.twob_ever_filed'), to_regclass('public.twob_filed_figures'), to_regclass('public.twob_carry_log'),
 --              to_regprocedure('public.staff_level_of(uuid)'),
---              (SELECT count(*) FROM pg_proc WHERE proname LIKE 'twob%');   -- NULL, NULL, staff_level_of, 0
+--              (SELECT count(*) FROM pg_proc WHERE proname LIKE 'twob%');   -- NULL, NULL, NULL, staff_level_of, 0
 --       -- The filing trigger as 20260814190000 left it (BEFORE UPDATE only):
 --       SELECT tgname, pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = 'public.filing_status'::regclass AND NOT tgisinternal;
 --  2. Apply this file as one statement batch (it is one transaction). It
 --     needs no superuser: no function stores a custom setting.
 --  3. Check (reads only):
 --       SELECT count(*) FROM public.twob_ever_filed;                 -- = step 1's first count
+--       SELECT count(*), count(*) FILTER (WHERE carried_how = 'backfill') FROM public.twob_carry_log;  -- twice that, all back-filled
 --       SELECT count(*) FROM public.twob_filed_figures;              -- 0: figures are recorded at a month's first change
 --       SELECT tgrelid::regclass, tgname FROM pg_trigger
 --        WHERE tgname IN ('trg_twob_prior_guard', 'trg_twob_carried_insert', 'trg_twob_record_filed', 'trigger_auto_lock_on_filed');
 --                                -- 4 guards, 2 carried-insert checks, the record trigger, the filing trigger (INSERT OR UPDATE)
 --       SELECT has_function_privilege('anon', 'public.twob_prior_books_apply(uuid, uuid, text, jsonb, boolean)', 'EXECUTE'),  -- true
+--              has_function_privilege('anon', 'public.twob_carry_rerun(uuid, uuid, text, boolean)', 'EXECUTE'),              -- true
 --              has_function_privilege('anon', 'public.twob_reopen_filed(uuid, uuid, text, text, text)', 'EXECUTE'),         -- true
+--              has_function_privilege('anon', 'public.twob_restore_version(uuid, uuid, text, jsonb, jsonb)', 'EXECUTE'),    -- true
 --              has_function_privilege('anon', 'public.twob_carry_first(uuid, text)', 'EXECUTE'),                             -- false
---              has_function_privilege('anon', 'public.twob__carry_into(text, uuid, text, text[])', 'EXECUTE'),               -- false
+--              to_regprocedure('public.twob__carry_into(text, uuid, text, text[])'),                                         -- NULL
 --              to_regprocedure('public.twob_carry_after_filing(uuid, text)');                                                 -- NULL
 --     and with the anon key (POST /rest/v1/rpc/...): twob_month_state for SORATH BUILDERS
 --     (73449b01-54bd-405d-84ee-0f8877b296d2) and 07/2026 gives is_prior true; for a
 --     client's month after its latest filed one, false.
---  4. Deploy the app built from this commit (it reads twob_month_state; before
---     step 2 its screens show every month read-only). Then ask everyone to
---     reload every open GST Keeper tab: a tab opened before the deploy still
---     runs the old carry and Restore. The database refuses their writes to a
---     prior month, their deletion of a carried entry that holds its own
---     month's decision, and their adding of a carried entry beside a decided
---     one, so an old tab's Restore fails rather than doubling a month; the
---     reload is still needed for the new screens.
---  5. SORATH BUILDERS: nothing to remove. A delete-and-copy re-run of
---     20 Oct 2026 (09:46 UTC) already brought August and September in line
---     with July. Confirm with Filing Status, Re-run carry forward on Aug-26
---     (the latest filed month): the preview shows 0 to add and 0 to remove.
---     July's books register row PERFECT INDUSTRIES 19/26-27
---     (c379891a-6a14-4d7d-a64c-bcf448ceca3b, Not in 2B, no longer linked) is
---     named by a July Post as already in July and left out; delete it on
---     Import 2B if it should not be there. The same note shows on the first
---     prior-month Post of ABHIJEET RAMNIKBHAI SATANI Jul-26 (Care Bio Medical
---     Waste ABD6932-2627), PRIDE DRUGS Jul-26 (MAHAVIR 347, RETAILEZ
---     LKO1-622965, SHREE HARI 119: their ledger rows lost their link) and
---     TAMNNA INFRASTRUCTURE-GUJARAT Jul-26 (JAY INFRASTRUCTURE 16/2026-27,
---     held by Sep-26 and Oct-26, booked Sep 26); everything else posts. Twelve
---     filed months carry earlier pending changes that their first Post makes
---     (previewed): NAVRATNA Sep-26 (52 Not in Books + Oct copies), SHIVASHRAY
---     Jul-26 (15, x3 later months), KWIKTEAM Sep-26 (14), RAYWINGS Jul-26 (6)
---     and Aug-26 (2), ELENZA CALLISTA Jul-26 (4 changes + 3), TISHA Sep-26 (5
---     removals), PRIDE Sep-26 (3), POINT PACKERS Sep-26 (4), ELENZA ARISTA
---     Jul-26, MICROCIRCUITS Aug-26 and REVTI Aug-26 (1 each).
---  6. Optional, past breaks of the out-of-order kind (reads only first): a
---     filed month holding rows whose next month is filed and holds no carried
---     rows on that list. Marking such a month Filed again (Unlock sheets, then
---     Filed) now carries it into the next month and on to the open month.
---       SELECT 'bills_not_in_2b' AS list, f.client_id, f.period_month FROM public.filing_status f
---        WHERE f.status::text = 'Filed' AND f.return_type::text = 'GSTR-3B'
---          AND EXISTS (SELECT 1 FROM public.bills_not_in_2b b WHERE b.client_id = f.client_id AND b.period_month = f.period_month)
---          AND EXISTS (SELECT 1 FROM public.filing_status n WHERE n.client_id = f.client_id AND n.status::text = 'Filed'
---                       AND n.return_type::text IN ('GSTR-3B', 'GSTR-3B (Q)')
---                       AND n.period_month = to_char(to_date(f.period_month, 'MM/YYYY') + interval '1 month', 'MM/YYYY'))
---          AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b b WHERE b.client_id = f.client_id AND b.is_carried_forward
---                       AND b.period_month = to_char(to_date(f.period_month, 'MM/YYYY') + interval '1 month', 'MM/YYYY'))
---       UNION ALL
---       SELECT 'bills_not_in_books', f.client_id, f.period_month FROM public.filing_status f
---        WHERE f.status::text = 'Filed' AND f.return_type::text = 'GSTR-3B'
---          AND EXISTS (SELECT 1 FROM public.bills_not_in_books b WHERE b.client_id = f.client_id AND b.period_month = f.period_month)
---          AND EXISTS (SELECT 1 FROM public.filing_status n WHERE n.client_id = f.client_id AND n.status::text = 'Filed'
---                       AND n.return_type::text IN ('GSTR-3B', 'GSTR-3B (Q)')
---                       AND n.period_month = to_char(to_date(f.period_month, 'MM/YYYY') + interval '1 month', 'MM/YYYY'))
---          AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_books b WHERE b.client_id = f.client_id AND b.is_carried_forward
---                       AND b.period_month = to_char(to_date(f.period_month, 'MM/YYYY') + interval '1 month', 'MM/YYYY'));
+--  4. Deploy the app built from this commit, only after step 2 (Vercel deploys
+--     on merge: merge after step 2). Deployed before it, its screens would
+--     show every month read-only and its GSTR-3B Push would stay locked for
+--     every client: the filed figures it reads would not exist yet, and a
+--     check that cannot read them blocks. Then ask everyone to reload every open
+--     GST Keeper tab: a tab opened before the deploy still runs the old carry
+--     and Restore. The database refuses their writes to a prior month, their
+--     deletion of a carried entry that holds its own month's decision, and
+--     their adding of a carried entry beside a decided one; an old tab's
+--     Restore of an open month can still double that month until the tab is
+--     reloaded.
+--  5. Prior months' Posts (census of 21 Oct 2026, the app's own plan of every
+--     prior client-month with Import 2B rows): none writes anything on its
+--     first Post. 16 had something to write before this change:
+--       - the Not in Books side from the month's 2B documents, which a prior
+--         month's Post now names and leaves out (it follows the filed 2B):
+--         NAVRATNA Sep-26 (52 to add), SHIVASHRAY Jul-26 (15), KWIKTEAM Sep-26
+--         (14), RAYWINGS Jul-26 (6) and Aug-26 (2), TISHA Sep-26 (5 to
+--         remove), POINT PACKERS Sep-26 (4), ELENZA CALLISTA Jul-26 (3), PRIDE
+--         DRUGS Jul-26 (3: MAHAVIR 347, RETAILEZ LKO1-622965, SHREE HARI 119),
+--         ABHIJEET RAMNIKBHAI SATANI Jul-26 (1: Care Bio Medical Waste
+--         ABD6932-2627), REVTI Aug-26 (1) and TAMNNA INFRASTRUCTURE-GUJARAT
+--         Jul-26 (1: JAY INFRASTRUCTURE 16/2026-27, held by Sep-26 and Oct-26,
+--         booked Sep 26). If one belongs on its list, add it in the open month;
+--       - Not in 2B updates that changed nothing (the books supplier name had
+--         a stray space): PRIDE DRUGS Sep-26 (3), ELENZA ARISTA Jul-26 (1),
+--         MICROCIRCUITS Aug-26 (1), ELENZA CALLISTA Jul-26 (4); no longer
+--         planned;
+--       - SORATH BUILDERS Jul-26: PERFECT INDUSTRIES 19/26-27
+--         (c379891a-6a14-4d7d-a64c-bcf448ceca3b, Not in 2B, no longer linked)
+--         is named as already in July and left out; delete that books row on
+--         Import 2B if it should not be there. SORATH has nothing to remove: a
+--         delete-and-copy re-run of 20 Oct 2026 (09:46 UTC) already brought
+--         August and September in line with July. Re-run carry forward on
+--         Aug-26 (the latest filed month) previews 0 to add and 0 to remove.
+--  6. Optional, reads only after step 2: the months that are prior but not
+--     covered by a Filed return of their own (a later month was filed first).
+--     Filing such a month later carries nothing, because its next month is
+--     filed; Filing Status then says so, and a GST Manager brings its entries
+--     on with Re-run carry forward (previewed, one month at a time) where they
+--     belong. On 21 Oct 2026 (a full anon copy): AMBER GUM Jun-26, GROWQ
+--     Apr-26, NAVRATNA Dec-25 (4 April 2026 bills typed into it, which Apr-26
+--     holds as its own: do not re-run those on), REVTI Jul-26 (11 Not in 2B,
+--     67 Not in Books), SHIVON Jun-26 and SWENI Nov-24 (6 Not in Books bills
+--     of Nov-2025).
+--       SELECT c.name, x.client_id, x.period_month,
+--              (SELECT count(*) FROM public.bills_not_in_2b b WHERE b.client_id = x.client_id AND b.period_month = x.period_month) AS not_in_2b,
+--              (SELECT count(*) FROM public.bills_not_in_books b WHERE b.client_id = x.client_id AND b.period_month = x.period_month) AS not_in_books
+--         FROM (SELECT client_id, period_month FROM public.bills_not_in_2b
+--               UNION SELECT client_id, period_month FROM public.bills_not_in_books) x
+--         JOIN public.clients c ON c.id = x.client_id
+--        WHERE public.twob_month_is_prior(x.client_id, x.period_month)
+--          AND NOT EXISTS (SELECT 1 FROM public.twob_ever_filed e
+--                           WHERE e.client_id = x.client_id AND e.reopened_at IS NULL
+--                             AND public.twob_period_key(x.period_month)
+--                                 BETWEEN e.cover_key - CASE WHEN e.return_type = 'GSTR-3B (Q)' THEN 2 ELSE 0 END AND e.cover_key)
+--        ORDER BY c.name, public.twob_period_key(x.period_month);
+--     V J DESAI & CO LLP Jun-26 is not an out-of-order case: June (19 Jul) and
+--     July (20 Aug) were filed in order, and July's carried Not in Books list
+--     was emptied by staff before July was filed. Filing June again now
+--     carries nothing back.
 
 
 BEGIN;
@@ -522,6 +556,22 @@ BEGIN
                    round(COALESCE(p_cgst, 0), 2)::text, round(COALESCE(p_sgst, 0), 2)::text);
 END;
 $$;
+
+-- The month an entry started from, as its copies carry it: its reversal
+-- month (Not in 2B) or in-2B month (Not in Books), "Jul 26", "jul-2026" and
+-- "July 26" alike; '' when blank. A later copy of an entry is the same
+-- document (twob_doc_key) with the same such month, so a change reaches only
+-- that entry's copies, never a later month's own entry of the same invoice
+-- (which carries its own month) or that entry's copies.
+CREATE OR REPLACE FUNCTION public.twob_month_tag(p_label text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+  SELECT COALESCE(public.twob_label_key(p_label)::text, upper(regexp_replace(btrim(COALESCE(p_label, '')), '\s+', ' ', 'g')));
+$$;
+
 -- "Sep 26" (as the month columns hold it) -> "Sep-26", for messages.
 CREATE OR REPLACE FUNCTION public.twob_label_name(p_label text)
 RETURNS text
@@ -656,7 +706,7 @@ $$;
 -- 3. Filed figures
 -- ---------------------------------------------------------------------------
 -- A prior month's 2B Reconciliation figures as they stood before the door
--- first changed its books entries: 4B(2)(i) (rows whose reversal month names
+-- (or Re-run into a filed month) first changed its books entries: 4B(2)(i) (rows whose reversal month names
 -- the month), 5.4 (reclaims naming it, Expense out aside) and 4D(1.2) (its
 -- Expense outs), summed from the month's own Not in 2B list as the app sums
 -- them (src/lib/itcAutoLink.ts). Every gate that reads the month (its
@@ -680,9 +730,9 @@ CREATE TABLE IF NOT EXISTS public.twob_filed_figures (
   PRIMARY KEY (client_id, period_month)
 );
 COMMENT ON TABLE public.twob_filed_figures IS
-  'A prior month''s 4B(2)(i), 5.4 and 4D(1.2) from its Not in 2B list, recorded just before twob_prior_books_apply first '
-  'changed the month (20261021100000; docs/2B_RECONCILIATION_FLOW.md §13). The gates read these instead of the live list '
-  'once they exist. Removed only when twob_reopen_filed opens the month again.';
+  'A prior month''s 4B(2)(i), 5.4 and 4D(1.2) from its Not in 2B list, recorded just before twob_prior_books_apply (or '
+  'Re-run carry forward into a filed month) first changed the month (20261021100000; docs/2B_RECONCILIATION_FLOW.md §13). '
+  'The gates read these instead of the live list once they exist. Removed only when twob_reopen_filed opens the month again.';
 ALTER TABLE public.twob_filed_figures ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Anyone can view twob_filed_figures" ON public.twob_filed_figures;
 CREATE POLICY "Anyone can view twob_filed_figures" ON public.twob_filed_figures FOR SELECT TO public USING (true);
@@ -839,15 +889,20 @@ BEGIN
   IF COALESCE(current_setting('twob.write', true), '') IN ('rpc', 'system') THEN
     RETURN NULL;
   END IF;
+  -- The decided carried rows of the months written to first (few), then the
+  -- documents: a join on number and date alone was planned as a nested loop
+  -- over every look-alike (2,000 rows without a number: over 1 s).
   EXECUTE format($q$
+    WITH m AS (SELECT DISTINCT n.client_id, n.period_month FROM new_rows n WHERE COALESCE(n.is_carried_forward, false)),
+    d AS MATERIALIZED (
+      SELECT e.* FROM public.%1$I e JOIN m ON e.client_id = m.client_id AND e.period_month = m.period_month
+       WHERE e.is_carried_forward AND %2$s
+         AND NOT EXISTS (SELECT 1 FROM new_rows x WHERE x.id = e.id))
     SELECT to_jsonb(n) FROM new_rows n
-      JOIN public.%1$I e ON e.client_id = n.client_id AND e.period_month = n.period_month AND e.is_carried_forward
-       AND public.twob_norm_no(e.supplier_invoice_number) = public.twob_norm_no(n.supplier_invoice_number) AND e.date = n.date
+      JOIN d e ON e.client_id = n.client_id AND e.period_month = n.period_month AND e.date = n.date
        AND public.twob_doc_key(e.supplier_gstin, e.supplier_name, e.supplier_invoice_number, e.date, e.taxable_value, e.input_igst, e.input_cgst, e.input_sgst)
          = public.twob_doc_key(n.supplier_gstin, n.supplier_name, n.supplier_invoice_number, n.date, n.taxable_value, n.input_igst, n.input_cgst, n.input_sgst)
-       AND %2$s
      WHERE COALESCE(n.is_carried_forward, false)
-       AND NOT EXISTS (SELECT 1 FROM new_rows x WHERE x.id = e.id)
      LIMIT 1$q$, TG_TABLE_NAME, v_dec) INTO v_row;
   IF v_row IS NOT NULL THEN
     RAISE EXCEPTION '%', COALESCE(public.twob__entry_name(v_row) || ': ', '')
@@ -865,14 +920,14 @@ CREATE TRIGGER trg_twob_carried_insert AFTER INSERT ON public.bills_not_in_books
   REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION public.twob_guard_carried_insert();
 
 -- ---------------------------------------------------------------------------
--- 5. The carry: first carry only
+-- 5. The carry: the first carry only, into the next month only
 -- ---------------------------------------------------------------------------
--- The months a prior month's entry reaches on one list: every month after
--- p_period up to the latest month holding carried rows on that list, whether
--- or not a month in between holds any yet (a filed month whose list was empty
--- when it was filed). p_through_open: also up to the open month after the
--- latest filed month (the filing carry of a month filed after its next
--- month: the filings it missed have passed). Empty when there is none.
+-- The months an entry added to a prior month reaches on one list (the door,
+-- twob_prior_books_apply): every month after p_period up to the later of the
+-- latest month holding carried rows on that list and, with p_through_open,
+-- the month after the client's latest filed month (the open month), whether
+-- or not a month in between holds any yet. Never further. Empty when there
+-- is none.
 CREATE OR REPLACE FUNCTION public.twob__reach_months(p_table text, p_client_id uuid, p_period text, p_through_open boolean)
 RETURNS text[]
 LANGUAGE plpgsql
@@ -892,82 +947,59 @@ BEGIN
 END;
 $$;
 
--- Copies of a month's entries into each of p_targets that lacks them (the
--- same document, twins one to one: a target holding one of two twins gets
--- the other), as carried entries with the month's own month labels; a
--- target whose return is Filed and locked locks them. Returns how many.
-CREATE OR REPLACE FUNCTION public.twob__carry_into(p_table text, p_client_id uuid, p_period text, p_targets text[])
-RETURNS integer
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  n integer := 0;
-BEGIN
-  IF COALESCE(array_length(p_targets, 1), 0) = 0 THEN
-    RETURN 0;
-  END IF;
-  IF p_table = 'bills_not_in_2b' THEN
-    WITH src AS (
-      SELECT t.*, public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
-                                      t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst) AS key
-        FROM public.bills_not_in_2b t WHERE t.client_id = p_client_id AND t.period_month = p_period),
-    srn AS (SELECT src.*, row_number() OVER (PARTITION BY src.key ORDER BY src.date, src.id) AS rn FROM src),
-    tg AS (SELECT x AS period, public.twob_month_locked(p_client_id, x) AS locked FROM unnest(p_targets) x),
-    have AS (
-      SELECT t.period_month, public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
-                                                 t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst) AS key, count(*) AS n
-        FROM public.bills_not_in_2b t WHERE t.client_id = p_client_id AND t.period_month = ANY (p_targets) GROUP BY 1, 2)
-    INSERT INTO public.bills_not_in_2b (
-      client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
-      taxable_value, input_igst, input_cgst, input_sgst,
-      period_month, reversal_month, reclaim_month, reclaim_subtype, is_carried_forward, is_locked)
-    SELECT srn.client_id, srn.date, srn.supplier_name, srn.supplier_invoice_number, srn.supplier_gstin,
-           srn.taxable_value, srn.input_igst, srn.input_cgst, srn.input_sgst,
-           tg.period, srn.reversal_month, srn.reclaim_month, srn.reclaim_subtype, true, tg.locked
-      FROM srn CROSS JOIN tg
-      LEFT JOIN have h ON h.period_month = tg.period AND h.key = srn.key
-     WHERE srn.rn > COALESCE(h.n, 0)
-     ORDER BY public.twob_period_key(tg.period), srn.date, srn.id;
-    GET DIAGNOSTICS n = ROW_COUNT;
-  ELSE
-    WITH src AS (
-      SELECT t.*, public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
-                                      t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst) AS key
-        FROM public.bills_not_in_books t WHERE t.client_id = p_client_id AND t.period_month = p_period),
-    srn AS (SELECT src.*, row_number() OVER (PARTITION BY src.key ORDER BY src.date, src.id) AS rn FROM src),
-    tg AS (SELECT x AS period, public.twob_month_locked(p_client_id, x) AS locked FROM unnest(p_targets) x),
-    have AS (
-      SELECT t.period_month, public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
-                                                 t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst) AS key, count(*) AS n
-        FROM public.bills_not_in_books t WHERE t.client_id = p_client_id AND t.period_month = ANY (p_targets) GROUP BY 1, 2)
-    INSERT INTO public.bills_not_in_books (
-      client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
-      taxable_value, input_igst, input_cgst, input_sgst,
-      period_month, book_entry_month, bill_in_2b_month, is_carried_forward, is_locked)
-    SELECT srn.client_id, srn.date, srn.supplier_name, srn.supplier_invoice_number, srn.supplier_gstin,
-           srn.taxable_value, srn.input_igst, srn.input_cgst, srn.input_sgst,
-           tg.period, srn.book_entry_month, srn.bill_in_2b_month, true, tg.locked
-      FROM srn CROSS JOIN tg
-      LEFT JOIN have h ON h.period_month = tg.period AND h.key = srn.key
-     WHERE srn.rn > COALESCE(h.n, 0)
-     ORDER BY public.twob_period_key(tg.period), srn.date, srn.id;
-    GET DIAGNOSTICS n = ROW_COUNT;
-  END IF;
-  RETURN n;
-END;
-$$;
+-- What filing did to each list of a month, once per (client, month, list):
+-- the first carry into the next month (carried_at, carried_how: 'carried',
+-- or 'next_held' when the next month already held a carried list, which
+-- counts as carried; 'backfill' for every month filed before this change,
+-- whose filing carried it then), and the outcome of the latest filing
+-- (last_outcome: 'carried', 'next_held', 'next_filed' when the next month
+-- was filed already and nothing was carried, 'done_before' when the first
+-- carry had happened). Filing Status reads it to say, list by list, what was
+-- carried. Written only by twob_carry_first (and the back-fill here).
+CREATE TABLE IF NOT EXISTS public.twob_carry_log (
+  client_id    uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
+  period_month text NOT NULL,
+  list         text NOT NULL CHECK (list IN ('bills_not_in_2b', 'bills_not_in_books')),
+  next_period  text NOT NULL,
+  carried_at   timestamptz,
+  carried_how  text CHECK (carried_how IN ('carried', 'next_held', 'backfill')),
+  carried_rows integer NOT NULL DEFAULT 0,
+  last_outcome text NOT NULL CHECK (last_outcome IN ('carried', 'next_held', 'next_filed', 'done_before', 'backfill')),
+  last_at      timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (client_id, period_month, list)
+);
+COMMENT ON TABLE public.twob_carry_log IS
+  'The filing carry of each list of a month (20261021100000; docs/2B_RECONCILIATION_FLOW.md §13): made once, into the next '
+  'month only, when that month is not filed and holds no carried rows on the list (carried_at, carried_how, carried_rows); '
+  'never again after that. last_outcome: what the latest filing of the month did. Written by twob_carry_first only.';
+ALTER TABLE public.twob_carry_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Anyone can view twob_carry_log" ON public.twob_carry_log;
+CREATE POLICY "Anyone can view twob_carry_log" ON public.twob_carry_log FOR SELECT TO public USING (true);
+GRANT SELECT ON public.twob_carry_log TO anon, authenticated, service_role;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.twob_carry_log FROM anon, authenticated;
 
--- Copies a month's two lists into the next month, each list only when the
--- next month holds no carried rows on it yet (the first carry); otherwise it
--- does nothing, so a later month's reclaims and book entries stay. A next
--- month that is filed already (marked Filed before this one, e.g. its PDF
--- came first) takes the entries too when its list holds no carried rows,
--- and so do the months after it, up to the open month after the latest
--- filed one and every month holding carried rows on that list: each gets
--- the entries it lacks (the same document, twins one to one), since the
--- filings that would have carried them have passed. The figures of those
--- filed months are recorded first (twob_filed_figures), so no gate moves.
--- Internal: called by the filing trigger.
+-- Every return filed before this change carried its month when it was filed
+-- (the old delete-and-copy carry): that first carry has happened.
+INSERT INTO public.twob_carry_log (client_id, period_month, list, next_period, carried_at, carried_how, carried_rows, last_outcome, last_at)
+SELECT e.client_id, e.period_month, l.list, public.twob_period_of_key(public.twob_period_key(e.period_month) + 1),
+       e.first_filed_at, 'backfill', 0, 'backfill', now()
+  FROM public.twob_ever_filed e
+ CROSS JOIN (VALUES ('bills_not_in_2b'), ('bills_not_in_books')) l(list)
+ WHERE public.twob_period_key(e.period_month) IS NOT NULL
+ON CONFLICT (client_id, period_month, list) DO NOTHING;
+
+-- The late filing carry of round 2 is gone (docs §13): nothing carries into
+-- a filed month or past the next month by itself.
+DROP FUNCTION IF EXISTS public.twob__carry_into(text, uuid, text, text[]);
+
+-- The carry when a month is marked Filed, list by list: the month's entries
+-- are copied into the next month only the first time (no carry of this list
+-- recorded yet), only when the next month is not filed, and only when it
+-- holds no carried rows on the list; otherwise nothing, so a later month's
+-- reclaims, book entries and removals stay. A month filed after its next
+-- month (its PDF came late) carries nothing: Filing Status says so, and a
+-- GST Manager repairs it with Re-run carry forward, previewed. Internal:
+-- called by the filing trigger.
 CREATE OR REPLACE FUNCTION public.twob_carry_first(p_client_id uuid, p_period text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -979,12 +1011,12 @@ DECLARE
   v_key integer := public.twob_period_key(p_period);
   v_next text;
   v_next_prior boolean;
-  v_skip_2b boolean;
-  v_skip_books boolean;
-  v_months_2b text[] := '{}';
-  v_months_books text[] := '{}';
-  n2b integer := 0;
-  nbk integer := 0;
+  v_done boolean;
+  v_held boolean;
+  v_outcome text;
+  v_out jsonb := '{}'::jsonb;
+  l text;
+  n integer;
 BEGIN
   IF p_client_id IS NULL OR v_key IS NULL THEN
     RETURN NULL;
@@ -993,55 +1025,61 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('twob:' || p_client_id::text, 0));
   PERFORM set_config('twob.write', 'system', true);
   v_next_prior := public.twob_month_is_prior(p_client_id, v_next);
-  v_skip_2b := EXISTS (SELECT 1 FROM public.bills_not_in_2b
-                        WHERE client_id = p_client_id AND period_month = v_next AND is_carried_forward);
-  v_skip_books := EXISTS (SELECT 1 FROM public.bills_not_in_books
-                           WHERE client_id = p_client_id AND period_month = v_next AND is_carried_forward);
-  IF NOT v_next_prior THEN
-    IF NOT v_skip_2b THEN
-      INSERT INTO public.bills_not_in_2b (
-        client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
-        taxable_value, input_igst, input_cgst, input_sgst,
-        period_month, reversal_month, reclaim_month, reclaim_subtype, is_carried_forward)
-      SELECT client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
-             taxable_value, input_igst, input_cgst, input_sgst,
-             v_next, reversal_month, reclaim_month, reclaim_subtype, true
-        FROM public.bills_not_in_2b
-       WHERE client_id = p_client_id AND period_month = p_period
-       ORDER BY date, id;
-      GET DIAGNOSTICS n2b = ROW_COUNT;
-      v_months_2b := ARRAY[v_next];
+  FOREACH l IN ARRAY ARRAY['bills_not_in_2b', 'bills_not_in_books'] LOOP
+    n := 0;
+    SELECT g.carried_at IS NOT NULL INTO v_done FROM public.twob_carry_log g
+     WHERE g.client_id = p_client_id AND g.period_month = p_period AND g.list = l;
+    IF COALESCE(v_done, false) THEN
+      v_outcome := 'done_before';
+    ELSIF v_next_prior THEN
+      v_outcome := 'next_filed';
+    ELSE
+      EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I t WHERE t.client_id = $1 AND t.period_month = $2 AND t.is_carried_forward)', l)
+        INTO v_held USING p_client_id, v_next;
+      IF v_held THEN
+        v_outcome := 'next_held';
+      ELSIF l = 'bills_not_in_2b' THEN
+        INSERT INTO public.bills_not_in_2b (
+          client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
+          taxable_value, input_igst, input_cgst, input_sgst,
+          period_month, reversal_month, reclaim_month, reclaim_subtype, is_carried_forward)
+        SELECT client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
+               taxable_value, input_igst, input_cgst, input_sgst,
+               v_next, reversal_month, reclaim_month, reclaim_subtype, true
+          FROM public.bills_not_in_2b
+         WHERE client_id = p_client_id AND period_month = p_period
+         ORDER BY date, id;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        v_outcome := 'carried';
+      ELSE
+        INSERT INTO public.bills_not_in_books (
+          client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
+          taxable_value, input_igst, input_cgst, input_sgst,
+          period_month, book_entry_month, bill_in_2b_month, is_carried_forward)
+        SELECT client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
+               taxable_value, input_igst, input_cgst, input_sgst,
+               v_next, book_entry_month, bill_in_2b_month, true
+          FROM public.bills_not_in_books
+         WHERE client_id = p_client_id AND period_month = p_period
+         ORDER BY date, id;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        v_outcome := 'carried';
+      END IF;
     END IF;
-    IF NOT v_skip_books THEN
-      INSERT INTO public.bills_not_in_books (
-        client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
-        taxable_value, input_igst, input_cgst, input_sgst,
-        period_month, book_entry_month, bill_in_2b_month, is_carried_forward)
-      SELECT client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
-             taxable_value, input_igst, input_cgst, input_sgst,
-             v_next, book_entry_month, bill_in_2b_month, true
-        FROM public.bills_not_in_books
-       WHERE client_id = p_client_id AND period_month = p_period
-       ORDER BY date, id;
-      GET DIAGNOSTICS nbk = ROW_COUNT;
-      v_months_books := ARRAY[v_next];
-    END IF;
-  ELSE
-    IF NOT v_skip_2b THEN
-      v_months_2b := public.twob__reach_months('bills_not_in_2b', p_client_id, p_period, true);
-    END IF;
-    IF NOT v_skip_books THEN
-      v_months_books := public.twob__reach_months('bills_not_in_books', p_client_id, p_period, true);
-    END IF;
-    PERFORM public.twob__freeze_figures(p_client_id,
-      ARRAY(SELECT DISTINCT x FROM unnest(v_months_2b || v_months_books) x WHERE public.twob_month_is_prior(p_client_id, x)), NULL);
-    n2b := public.twob__carry_into('bills_not_in_2b', p_client_id, p_period, v_months_2b);
-    nbk := public.twob__carry_into('bills_not_in_books', p_client_id, p_period, v_months_books);
-  END IF;
+    INSERT INTO public.twob_carry_log AS g (client_id, period_month, list, next_period, carried_at, carried_how, carried_rows, last_outcome, last_at)
+    VALUES (p_client_id, p_period, l, v_next,
+            CASE WHEN v_outcome IN ('carried', 'next_held') THEN now() END,
+            CASE WHEN v_outcome IN ('carried', 'next_held') THEN v_outcome END, n, v_outcome, now())
+    ON CONFLICT (client_id, period_month, list) DO UPDATE
+      SET next_period = EXCLUDED.next_period,
+          carried_at = COALESCE(g.carried_at, EXCLUDED.carried_at),
+          carried_how = COALESCE(g.carried_how, EXCLUDED.carried_how),
+          carried_rows = CASE WHEN g.carried_at IS NULL THEN EXCLUDED.carried_rows ELSE g.carried_rows END,
+          last_outcome = EXCLUDED.last_outcome, last_at = now();
+    v_out := v_out || jsonb_build_object(l, jsonb_build_object('outcome', v_outcome, 'rows', n));
+  END LOOP;
   PERFORM set_config('twob.write', COALESCE(v_prev, ''), true);
-  RETURN jsonb_build_object('period', p_period, 'next_period', v_next, 'next_prior', v_next_prior,
-    'carried_2b', n2b, 'carried_books', nbk, 'skipped_2b', v_skip_2b, 'skipped_books', v_skip_books,
-    'months_2b', to_jsonb(v_months_2b), 'months_books', to_jsonb(v_months_books));
+  RETURN v_out || jsonb_build_object('period', p_period, 'next_period', v_next, 'next_prior', v_next_prior);
 END;
 $$;
 
@@ -1093,8 +1131,8 @@ CREATE TRIGGER trigger_auto_lock_on_filed BEFORE INSERT OR UPDATE ON public.fili
 DROP FUNCTION IF EXISTS public.twob_carry_after_filing(uuid, text);
 
 -- Re-run carry forward (Filing Status), a GST Manager or the superadmin only:
--- one list of the latest filed month against the next (open) month, document
--- by document, twins one to one, in this order:
+-- one list of a filed month against the next month, document by document,
+-- twins one to one, in this order:
 --  1. the same document (twob_doc_key) carried: nothing to do;
 --  2. the same document as the next month's own entry: not added again;
 --  3. the same invoice (twob_doc_ident) carried at other amounts: the copy is
@@ -1104,10 +1142,17 @@ DROP FUNCTION IF EXISTS public.twob_carry_after_filing(uuid, text);
 --  4. the same supplier at the same amounts, a carried copy holding a
 --     decision (its number or date corrected in the next month, then
 --     reclaimed there): a conflict too, for the same reason;
+--  5. the same number, date and amounts, a carried copy holding a decision
+--     (its supplier or GSTIN corrected in the next month, then reclaimed
+--     there): a conflict too;
 -- then the entries left are added, the carried copies left without a
--- decision removed, and those holding one kept. p_dry_run: what it would do.
+-- decision removed, and those holding one kept. p_add_only (the next month
+-- is filed, an out-of-order filing repaired): entries are only added, never
+-- a copy removed or replaced there (a copy at other amounts is a conflict;
+-- the copies the month no longer holds are listed as left). p_dry_run: what
+-- it would do.
 CREATE OR REPLACE FUNCTION public.twob__rerun_list(
-  p_table text, p_client_id uuid, p_period text, p_next text, p_dry_run boolean)
+  p_table text, p_client_id uuid, p_period text, p_next text, p_dry_run boolean, p_add_only boolean)
 RETURNS jsonb
 LANGUAGE plpgsql
 AS $$
@@ -1127,6 +1172,9 @@ DECLARE
                 || 'CASE WHEN public.twob_norm_gstin(t.supplier_gstin) = '''' THEN public.twob_norm_name(t.supplier_name) END, '
                 || 'round(COALESCE(t.taxable_value, 0), 2), round(COALESCE(t.input_igst, 0), 2), '
                 || 'round(COALESCE(t.input_cgst, 0), 2), round(COALESCE(t.input_sgst, 0), 2))';
+  v_nda text := 'concat_ws(''|'', public.twob_norm_no(t.supplier_invoice_number), t.date, '
+                || 'round(COALESCE(t.taxable_value, 0), 2), round(COALESCE(t.input_igst, 0), 2), '
+                || 'round(COALESCE(t.input_cgst, 0), 2), round(COALESCE(t.input_sgst, 0), 2))';
 BEGIN
   IF NOT p_dry_run THEN
     -- The next month's rows, locked: a decision made meanwhile is seen.
@@ -1135,10 +1183,10 @@ BEGIN
   END IF;
   EXECUTE format($q$
     WITH s AS (
-      SELECT t.id, public.twob_doc_key(%3$s, %4$s) AS key, public.twob_doc_ident(%3$s) AS ident, %5$s AS sup
+      SELECT t.id, public.twob_doc_key(%3$s, %4$s) AS key, public.twob_doc_ident(%3$s) AS ident, %5$s AS sup, %6$s AS nda
         FROM public.%1$I t WHERE t.client_id = $1 AND t.period_month = $2),
     c AS (
-      SELECT t.id, public.twob_doc_key(%3$s, %4$s) AS key, public.twob_doc_ident(%3$s) AS ident, %5$s AS sup,
+      SELECT t.id, public.twob_doc_key(%3$s, %4$s) AS key, public.twob_doc_ident(%3$s) AS ident, %5$s AS sup, %6$s AS nda,
              %2$s AS decided, COALESCE(t.is_carried_forward, false) AS carried
         FROM public.%1$I t WHERE t.client_id = $1 AND t.period_month = $3),
     j1 AS (
@@ -1167,20 +1215,32 @@ BEGIN
                 FROM s WHERE s.id NOT IN (SELECT j1.sid FROM j1 UNION ALL SELECT j2.sid FROM j2 UNION ALL SELECT j3.sid FROM j3)) a
         JOIN (SELECT c.id, c.sup, row_number() OVER (PARTITION BY c.sup ORDER BY c.id) AS rn
                 FROM c WHERE c.carried AND c.decided AND c.id NOT IN (SELECT j1.cid FROM j1 UNION ALL SELECT j3.cid FROM j3)) b
-          ON b.sup = a.sup AND b.rn = a.rn)
+          ON b.sup = a.sup AND b.rn = a.rn),
+    j5 AS (
+      SELECT a.id AS sid, b.id AS cid
+        FROM (SELECT s.id, s.nda, row_number() OVER (PARTITION BY s.nda ORDER BY s.id) AS rn
+                FROM s WHERE s.id NOT IN (SELECT j1.sid FROM j1 UNION ALL SELECT j2.sid FROM j2 UNION ALL SELECT j3.sid FROM j3
+                                          UNION ALL SELECT j4.sid FROM j4)) a
+        JOIN (SELECT c.id, c.nda, row_number() OVER (PARTITION BY c.nda ORDER BY c.id) AS rn
+                FROM c WHERE c.carried AND c.decided
+                  AND c.id NOT IN (SELECT j1.cid FROM j1 UNION ALL SELECT j3.cid FROM j3 UNION ALL SELECT j4.cid FROM j4)) b
+          ON b.nda = a.nda AND b.rn = a.rn)
     SELECT
       (SELECT array_agg(s.id) FROM s
         WHERE s.id NOT IN (SELECT j1.sid FROM j1 UNION ALL SELECT j2.sid FROM j2 UNION ALL SELECT j4.sid FROM j4
-                           UNION ALL SELECT j3.sid FROM j3 WHERE j3.decided)),
-      (SELECT array_agg(c.id) FROM c WHERE c.carried AND NOT c.decided AND c.id NOT IN (SELECT j1.cid FROM j1)),
+                           UNION ALL SELECT j5.sid FROM j5 UNION ALL SELECT j3.sid FROM j3 WHERE j3.decided OR $4)),
+      (SELECT array_agg(c.id) FROM c WHERE c.carried AND NOT c.decided AND c.id NOT IN (SELECT j1.cid FROM j1)
+          AND NOT ($4 AND c.id IN (SELECT j3.cid FROM j3))),
       (SELECT array_agg(c.id) FROM c WHERE c.carried AND c.decided
-          AND c.id NOT IN (SELECT j1.cid FROM j1 UNION ALL SELECT j3.cid FROM j3 UNION ALL SELECT j4.cid FROM j4)),
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('entry', j3.sid, 'copy', j3.cid, 'kind', 'amount')) FROM j3 WHERE j3.decided), '[]'::jsonb)
+          AND c.id NOT IN (SELECT j1.cid FROM j1 UNION ALL SELECT j3.cid FROM j3 UNION ALL SELECT j4.cid FROM j4 UNION ALL SELECT j5.cid FROM j5)),
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('entry', j3.sid, 'copy', j3.cid, 'kind', CASE WHEN j3.decided THEN 'amount' ELSE 'amount_filed' END))
+                  FROM j3 WHERE j3.decided OR $4), '[]'::jsonb)
         || COALESCE((SELECT jsonb_agg(jsonb_build_object('entry', j4.sid, 'copy', j4.cid, 'kind', 'supplier')) FROM j4), '[]'::jsonb)
+        || COALESCE((SELECT jsonb_agg(jsonb_build_object('entry', j5.sid, 'copy', j5.cid, 'kind', 'gstin')) FROM j5), '[]'::jsonb)
         || COALESCE((SELECT jsonb_agg(jsonb_build_object('entry', j2.sid, 'copy', j2.cid, 'kind', 'own')) FROM j2), '[]'::jsonb)
-    $q$, p_table, v_dec, v_cols, v_amts, v_sup)
+    $q$, p_table, v_dec, v_cols, v_amts, v_sup, v_nda)
     INTO v_add, v_remove, v_keep, v_conflicts
-    USING p_client_id, p_period, p_next;
+    USING p_client_id, p_period, p_next, p_add_only;
   v_add := COALESCE(v_add, '{}');
   v_remove := COALESCE(v_remove, '{}');
   v_keep := COALESCE(v_keep, '{}');
@@ -1190,8 +1250,10 @@ BEGIN
     SELECT jsonb_build_object(
       'add', COALESCE((SELECT jsonb_agg(public.twob__entry_json(to_jsonb(t), NULL) ORDER BY t.date, t.id)
                          FROM public.%1$I t WHERE t.id = ANY ($1)), '[]'::jsonb),
-      'remove', COALESCE((SELECT jsonb_agg(public.twob__entry_json(to_jsonb(t), NULL) ORDER BY t.date, t.id)
+      CASE WHEN $7 THEN 'left' ELSE 'remove' END,
+               COALESCE((SELECT jsonb_agg(public.twob__entry_json(to_jsonb(t), NULL) ORDER BY t.date, t.id)
                             FROM public.%1$I t WHERE t.id = ANY ($2)), '[]'::jsonb),
+      CASE WHEN $7 THEN 'remove' ELSE 'left' END, '[]'::jsonb,
       'keep', COALESCE((SELECT jsonb_agg(public.twob__entry_json(to_jsonb(t), public.twob__decision_message(%2$L, to_jsonb(t), $5)) ORDER BY t.date, t.id)
                           FROM public.%1$I t WHERE t.id = ANY ($3)), '[]'::jsonb),
       'conflict', COALESCE((SELECT jsonb_agg(
@@ -1201,10 +1263,19 @@ BEGIN
                                          public.twob_month_name($6), to_char(es.tax, 'FM99,99,99,99,990.00'),
                                          public.twob_month_name($5), to_char(cs.tax, 'FM99,99,99,99,990.00'),
                                          public.twob__decision_message(%2$L, to_jsonb(c), $5)))
+                                WHEN 'amount_filed' THEN public.twob__entry_json(to_jsonb(c),
+                                  format('%%s holds it at %%s tax and %%s''s copy at %%s. %%s is filed, so Re-run does not replace its copy: correct the copy there through Import 2B or 2B Reconciliation',
+                                         public.twob_month_name($6), to_char(es.tax, 'FM99,99,99,99,990.00'),
+                                         public.twob_month_name($5), to_char(cs.tax, 'FM99,99,99,99,990.00'), public.twob_month_name($5)))
                                 WHEN 'supplier' THEN public.twob__entry_json(to_jsonb(e),
                                   format('%%s''s copy %%s has the same supplier and amounts and holds a decision (%%s). It may be this entry with its number or date corrected there, so this entry is not added beside it. Correct one of them, then re-run',
                                          public.twob_month_name($5),
                                          concat_ws(' ', NULLIF(btrim(COALESCE(c.supplier_invoice_number, '')), ''), 'of ' || to_char(c.date, 'DD-MM-YYYY')),
+                                         public.twob__decision_message(%2$L, to_jsonb(c), $5)))
+                                WHEN 'gstin' THEN public.twob__entry_json(to_jsonb(e),
+                                  format('%%s''s copy from %%s has the same number, date and amounts and holds a decision (%%s). It may be this entry with its supplier or GSTIN corrected there, so this entry is not added beside it. Correct one of them, then re-run',
+                                         public.twob_month_name($5),
+                                         concat_ws(' ', NULLIF(btrim(COALESCE(c.supplier_name, '')), ''), NULLIF(btrim(COALESCE(c.supplier_gstin, '')), '')),
                                          public.twob__decision_message(%2$L, to_jsonb(c), $5)))
                                 ELSE public.twob__entry_json(to_jsonb(e),
                                   format('%%s holds this entry as its own entry; it is not added again', public.twob_month_name($5)))
@@ -1216,7 +1287,7 @@ BEGIN
                               CROSS JOIN LATERAL (SELECT COALESCE(c.input_igst, 0) + COALESCE(c.input_cgst, 0) + COALESCE(c.input_sgst, 0) AS tax) cs),
                            '[]'::jsonb))$q$, p_table, p_table)
     INTO v_out
-    USING v_add, v_remove, v_keep, v_conflicts, p_next, p_period;
+    USING v_add, v_remove, v_keep, v_conflicts, p_next, p_period, p_add_only;
 
   IF NOT p_dry_run THEN
     IF p_table = 'bills_not_in_2b' THEN
@@ -1228,7 +1299,9 @@ BEGIN
              taxable_value, input_igst, input_cgst, input_sgst,
              p_next, reversal_month, reclaim_month, reclaim_subtype, true, v_locked
         FROM public.bills_not_in_2b WHERE id = ANY (v_add) ORDER BY date, id;
-      DELETE FROM public.bills_not_in_2b WHERE id = ANY (v_remove);
+      IF NOT p_add_only THEN
+        DELETE FROM public.bills_not_in_2b WHERE id = ANY (v_remove);
+      END IF;
     ELSE
       INSERT INTO public.bills_not_in_books (
         client_id, date, supplier_name, supplier_invoice_number, supplier_gstin,
@@ -1238,17 +1311,24 @@ BEGIN
              taxable_value, input_igst, input_cgst, input_sgst,
              p_next, book_entry_month, bill_in_2b_month, true, v_locked
         FROM public.bills_not_in_books WHERE id = ANY (v_add) ORDER BY date, id;
-      DELETE FROM public.bills_not_in_books WHERE id = ANY (v_remove);
+      IF NOT p_add_only THEN
+        DELETE FROM public.bills_not_in_books WHERE id = ANY (v_remove);
+      END IF;
     END IF;
   END IF;
   RETURN v_out;
 END;
 $$;
+DROP FUNCTION IF EXISTS public.twob__rerun_list(text, uuid, text, text, boolean);
 
--- Re-run runs from the latest filed month into the open month after it, and
--- only while no month after that holds carried entries: a filed next month
--- changes only through the door (which reaches every later month), and an
--- unfiled month carries when it is filed.
+-- Re-run runs from a filed month into the month after it, one month at a
+-- time. Into an open month (the latest filed month's next month, while no
+-- month after it holds carried entries) it adds, removes and keeps as above.
+-- Into a month that is filed too (the month was filed after its next month,
+-- so its filing carried nothing: the only repair of an out-of-order filing)
+-- it only adds what that month lacks, its figures recorded first so no gate
+-- moves; the GST Manager then re-runs that month into the next, and so on up
+-- to the open month. Previewed first (p_dry_run).
 CREATE OR REPLACE FUNCTION public.twob_carry_rerun(
   p_actor_id uuid, p_client_id uuid, p_period text, p_dry_run boolean DEFAULT true)
 RETURNS jsonb
@@ -1260,6 +1340,7 @@ DECLARE
   v_prev text := current_setting('twob.write', true);
   v_key integer := public.twob_period_key(p_period);
   v_next text;
+  v_next_prior boolean;
   v_beyond text;
   v_out jsonb;
 BEGIN
@@ -1274,25 +1355,27 @@ BEGIN
     RAISE EXCEPTION '% is not filed. Re-run works from a filed month; filing % carries its entries into %.',
       public.twob_month_name(p_period), public.twob_month_name(p_period), public.twob_month_name(v_next);
   END IF;
-  IF public.twob_month_is_prior(p_client_id, v_next) THEN
-    RAISE EXCEPTION '% is filed too. Re-run works only into a month not yet filed. Correct %''s books entries on Import 2B or 2B Reconciliation: each change reaches the later months.',
-      public.twob_month_name(v_next), public.twob_month_name(v_next);
-  END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('twob:' || p_client_id::text, 0));
-  SELECT public.twob_period_of_key(min(k)) INTO v_beyond
-    FROM (SELECT public.twob_period_key(t.period_month) AS k FROM public.bills_not_in_2b t
-           WHERE t.client_id = p_client_id AND t.is_carried_forward AND public.twob_period_key(t.period_month) > v_key + 1
-          UNION ALL
-          SELECT public.twob_period_key(t.period_month) FROM public.bills_not_in_books t
-           WHERE t.client_id = p_client_id AND t.is_carried_forward AND public.twob_period_key(t.period_month) > v_key + 1) x;
-  IF v_beyond IS NOT NULL THEN
-    RAISE EXCEPTION '% already holds carried entries. Re-run works only into the last month that holds them.', public.twob_month_name(v_beyond);
+  v_next_prior := public.twob_month_is_prior(p_client_id, v_next);
+  IF NOT v_next_prior THEN
+    SELECT public.twob_period_of_key(min(k)) INTO v_beyond
+      FROM (SELECT public.twob_period_key(t.period_month) AS k FROM public.bills_not_in_2b t
+             WHERE t.client_id = p_client_id AND t.is_carried_forward AND public.twob_period_key(t.period_month) > v_key + 1
+            UNION ALL
+            SELECT public.twob_period_key(t.period_month) FROM public.bills_not_in_books t
+             WHERE t.client_id = p_client_id AND t.is_carried_forward AND public.twob_period_key(t.period_month) > v_key + 1) x;
+    IF v_beyond IS NOT NULL THEN
+      RAISE EXCEPTION '% already holds carried entries. Re-run works only into the last month that holds them.', public.twob_month_name(v_beyond);
+    END IF;
   END IF;
   PERFORM set_config('twob.write', 'system', true);
+  IF v_next_prior AND NOT p_dry_run THEN
+    PERFORM public.twob__freeze_figures(p_client_id, ARRAY[v_next], p_actor_id);
+  END IF;
   v_out := jsonb_build_object(
-    'period', p_period, 'next_period', v_next, 'dry_run', p_dry_run,
-    'bills_not_in_2b', public.twob__rerun_list('bills_not_in_2b', p_client_id, p_period, v_next, p_dry_run),
-    'bills_not_in_books', public.twob__rerun_list('bills_not_in_books', p_client_id, p_period, v_next, p_dry_run));
+    'period', p_period, 'next_period', v_next, 'next_filed', v_next_prior, 'dry_run', p_dry_run,
+    'bills_not_in_2b', public.twob__rerun_list('bills_not_in_2b', p_client_id, p_period, v_next, p_dry_run, v_next_prior),
+    'bills_not_in_books', public.twob__rerun_list('bills_not_in_books', p_client_id, p_period, v_next, p_dry_run, v_next_prior));
   PERFORM set_config('twob.write', COALESCE(v_prev, ''), true);
   RETURN v_out;
 END;
@@ -1303,12 +1386,19 @@ $$;
 -- ---------------------------------------------------------------------------
 -- The later months' carried copies of the Not in 2B / Not in Books entries
 -- that p_changes updates or removes in p_period, matched once for the whole
--- call (twob_doc_key of each entry as it is now; twins one copy per month, a
--- copy without a decision of its own first). The entries and every candidate
--- copy (same number and date) are locked first, so a decision committed
--- meanwhile is seen and blocks the change. Per copy: its month, the decision
--- it holds (as the refusal names it), and whether its reversal month is its
--- own month (its removal would move that month's 4B(2)(i)).
+-- call. A copy is the same entry: the same document (twob_doc_key) with the
+-- same reversal month (Not in 2B) or in-2B month (Not in Books)
+-- (twob_month_tag), as it is now; twins one copy per month, a copy without a
+-- decision of its own first. The chain stops at the first later month that
+-- holds the same entry as its own entry (an invoice entered again there, as
+-- NAVRATNA's April bills typed into December): that month and the months
+-- after it are left as they are, since their copies are that entry's, and a
+-- row is returned for it with id NULL (the door names it). The entries and
+-- every candidate copy (same number and date) are locked first, so a
+-- decision committed meanwhile is seen and blocks the change. Per copy: its
+-- month, the decision it holds (as the refusal names it), and whether its
+-- reversal month is its own month (its removal would move that month's
+-- 4B(2)(i)).
 CREATE OR REPLACE FUNCTION public.twob__match_copies(p_table text, p_client_id uuid, p_period text, p_changes jsonb)
 RETURNS TABLE (idx integer, id uuid, period_month text, msg text, own_rev boolean)
 LANGUAGE plpgsql
@@ -1319,7 +1409,8 @@ DECLARE
   v_dec text := CASE WHEN p_table = 'bills_not_in_2b'
                      THEN '(NULLIF(btrim(t.reclaim_month), '''') IS NOT NULL OR t.reclaim_subtype IS NOT NULL)'
                      ELSE '(NULLIF(btrim(t.book_entry_month), '''') IS NOT NULL)' END;
-  v_doc text := 'public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date, t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst)';
+  v_doc text := 'public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date, t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst)'
+                || ' || ''#'' || public.twob_month_tag(t.' || CASE WHEN p_table = 'bills_not_in_2b' THEN 'reversal_month' ELSE 'bill_in_2b_month' END || ')';
 BEGIN
   EXECUTE format($q$
     SELECT 1 FROM public.%1$I t
@@ -1337,8 +1428,8 @@ BEGIN
         ON public.twob_norm_no(t.supplier_invoice_number) = n.no AND t.date = n.date
      WHERE t.client_id = $2 AND t.is_carried_forward AND public.twob_period_key(t.period_month) > $4
      FOR UPDATE OF t$q$, p_table) USING p_changes, p_client_id, p_period, v_key;
-  -- Changes and copies meet on a slot (document key and twin number) looked
-  -- up in one jsonb map: a join of the two sets was planned as a nested loop
+  -- Changes and copies meet on a slot (entry key and twin number) looked up
+  -- in one jsonb map: a join of the two sets was planned as a nested loop
   -- that re-ran the copies once per change.
   RETURN QUERY EXECUTE format($q$
     WITH ch AS MATERIALIZED (
@@ -1350,20 +1441,29 @@ BEGIN
          AND t.client_id = $2 AND t.period_month = $3),
     mp AS MATERIALIZED (
       SELECT COALESCE(jsonb_object_agg(s.slot, s.idx), '{}'::jsonb) AS o
-        FROM (SELECT ch.idx, ch.key || '#' || row_number() OVER (PARTITION BY ch.key ORDER BY ch.idx) AS slot FROM ch) s),
-    cp AS MATERIALIZED (
+        FROM (SELECT ch.idx, ch.key || '@' || row_number() OVER (PARTITION BY ch.key ORDER BY ch.idx) AS slot FROM ch) s),
+    lr AS MATERIALIZED (
       SELECT t.id, t.period_month, public.twob_period_key(t.period_month) AS pk, %2$s AS key,
+             COALESCE(t.is_carried_forward, false) AS carried,
              CASE WHEN %4$s THEN public.twob__decision_message(%1$L, to_jsonb(t), t.period_month) END AS msg, %3$s AS own_rev
         FROM public.%1$I t
         JOIN (SELECT DISTINCT ch.no, ch.date FROM ch) n
           ON public.twob_norm_no(t.supplier_invoice_number) = n.no AND t.date = n.date
-       WHERE t.client_id = $2 AND t.is_carried_forward AND public.twob_period_key(t.period_month) > $4),
+       WHERE t.client_id = $2 AND public.twob_period_key(t.period_month) > $4),
+    stop AS MATERIALIZED (
+      SELECT lr.key, min(lr.pk) AS pk FROM lr WHERE NOT lr.carried GROUP BY lr.key),
     cpn AS MATERIALIZED (
-      SELECT cp.*, cp.key || '#' || row_number() OVER (PARTITION BY cp.pk, cp.key ORDER BY (cp.msg IS NOT NULL), cp.id) AS slot FROM cp)
-    SELECT (mp.o ->> cpn.slot)::integer, cpn.id, cpn.period_month, cpn.msg, cpn.own_rev
-      FROM cpn CROSS JOIN mp
-     WHERE mp.o ? cpn.slot
-     ORDER BY 1, cpn.pk$q$, p_table, v_doc, v_own, v_dec)
+      SELECT lr.*, lr.key || '@' || row_number() OVER (PARTITION BY lr.pk, lr.key ORDER BY (lr.msg IS NOT NULL), lr.id) AS slot
+        FROM lr LEFT JOIN stop ON stop.key = lr.key
+       WHERE lr.carried AND lr.pk < COALESCE(stop.pk, 2147483647))
+    SELECT u.idx, u.id, u.period_month, u.msg, u.own_rev
+      FROM (SELECT (mp.o ->> cpn.slot)::integer AS idx, cpn.id, cpn.period_month, cpn.msg, cpn.own_rev, cpn.pk
+              FROM cpn CROSS JOIN mp
+             WHERE mp.o ? cpn.slot
+            UNION ALL
+            SELECT ch.idx, NULL::uuid, public.twob_period_of_key(stop.pk), NULL::text, NULL::boolean, stop.pk
+              FROM ch JOIN stop ON stop.key = ch.key) u
+     ORDER BY u.idx, u.pk$q$, p_table, v_doc, v_own, v_dec)
     USING p_changes, p_client_id, p_period, v_key;
 END;
 $$;
@@ -1522,11 +1622,16 @@ $$;
 -- p_months: the later months an added entry reaches (twob__reach_months).
 -- p_held: the month already holding an added entry, if any. p_named_books:
 -- the books register rows the call names itself (left to their own change).
+-- p_stop: the first later month holding the entry as its own entry (its
+-- copies from there on are not this entry's), named in the result.
+-- A Not in Books entry posted from a 2B document (source_doc_id) follows the
+-- filed 2B, not the books: it is neither added, changed nor removed here.
+DROP FUNCTION IF EXISTS public.twob__apply_ledger(uuid, uuid, text, text, text, uuid, jsonb, text[], text[], uuid[], text[], text[], boolean[], text, uuid[]);
 CREATE OR REPLACE FUNCTION public.twob__apply_ledger(
   p_actor_id uuid, p_client_id uuid, p_period text,
   p_table text, p_op text, p_id uuid, p_vals jsonb, p_months text[], p_locked text[],
   p_copy_ids uuid[], p_copy_periods text[], p_copy_msgs text[], p_copy_own boolean[],
-  p_held text, p_named_books uuid[])
+  p_held text, p_named_books uuid[], p_stop text)
 RETURNS jsonb
 LANGUAGE plpgsql
 AS $$
@@ -1570,6 +1675,9 @@ BEGIN
         RETURN v_base || jsonb_build_object('refusal', format('An entry holds only its date, supplier, number, GSTIN and amounts here (%s).', k));
       END IF;
     END LOOP;
+    IF NOT v_is2b AND NULLIF(btrim(COALESCE(p_vals ->> 'source_doc_id', '')), '') IS NOT NULL THEN
+      RETURN v_base || jsonb_build_object('refusal', 'A Not in Books entry from a 2B document is not added to a filed month: it follows the filed 2B, which stays as filed. Only books entries change in a filed month');
+    END IF;
     IF NULLIF(btrim(COALESCE(p_vals ->> v_dec_col, '')), '') IS NOT NULL OR NULLIF(btrim(COALESCE(p_vals ->> 'reclaim_subtype', '')), '') IS NOT NULL THEN
       RETURN v_base || jsonb_build_object('refusal', CASE WHEN v_is2b
         THEN 'A new entry in a filed month cannot be reclaimed or expensed out. Record that in an open month.'
@@ -1598,9 +1706,8 @@ BEGIN
     END IF;
     IF p_held IS NOT NULL THEN
       RETURN v_base || jsonb_build_object('this', jsonb_build_object('action', 'none'), 'later', '[]'::jsonb,
-        'note', format('%s already holds this %s; it is not added again', public.twob_month_name(p_held),
-          CASE WHEN NOT v_is2b AND NULLIF(p_vals ->> 'source_doc_id', '') IS NOT NULL THEN '2B document on its Not in Books list'
-               WHEN v_is2b THEN 'entry on its Not in 2B list' ELSE 'entry on its Not in Books list' END));
+        'note', format('%s already holds this entry on its %s list; it is not added again', public.twob_month_name(p_held),
+          CASE WHEN v_is2b THEN 'Not in 2B' ELSE 'Not in Books' END));
     END IF;
     v_ins := public.twob__ledger_insert(p_table, p_client_id, p_period, p_vals, p_months, p_locked, p_actor_id);
     RETURN v_base || jsonb_build_object('this', jsonb_build_object('action', 'add', 'id', v_ins -> 'id'), 'later', v_ins -> 'later');
@@ -1614,6 +1721,9 @@ BEGIN
     RETURN v_base || jsonb_build_object('refusal', 'This entry is not in this month any more. Reload the page.');
   END IF;
   v_base := v_base || jsonb_build_object('entry', public.twob__entry_name(v_old), 'id', p_id);
+  IF NOT v_is2b AND v_old ->> 'source_doc_id' IS NOT NULL THEN
+    RETURN v_base || jsonb_build_object('refusal', 'This Not in Books entry comes from a 2B document and follows the filed 2B, so it is neither changed nor removed in a filed month. Only books entries change in a filed month');
+  END IF;
 
   IF p_op = 'update' THEN
     FOR k IN SELECT jsonb_object_keys(p_vals) LOOP
@@ -1655,14 +1765,6 @@ BEGIN
     IF v_set = '{}'::jsonb THEN
       RETURN v_base || jsonb_build_object('this', jsonb_build_object('action', 'none', 'id', p_id), 'later', '[]'::jsonb);
     END IF;
-  END IF;
-
-  -- A Not in Books entry posted from a 2B document that is still Not in Books
-  -- here would come back on the next Post: the document stays as filed.
-  IF p_op = 'delete' AND NOT v_is2b AND v_old ->> 'source_doc_id' IS NOT NULL
-     AND EXISTS (SELECT 1 FROM public.twob_import_docs d
-                  WHERE d.id = (v_old ->> 'source_doc_id')::uuid AND d.period_month = p_period AND d.itc_action = 'NOT_IN_BOOKS') THEN
-    RETURN v_base || jsonb_build_object('refusal', 'It comes from this month''s 2B document, which stays as filed (Not in Books); the next Post would add it back');
   END IF;
 
   -- A removal or an amount change is refused when the entry, or the copy a
@@ -1719,7 +1821,10 @@ BEGIN
   END IF;
   RETURN v_base || jsonb_build_object('this', jsonb_strip_nulls(jsonb_build_object('action', v_action, 'id', p_id,
     'fields', (SELECT COALESCE(jsonb_agg(x), '[]'::jsonb) FROM jsonb_object_keys(v_set) x),
-    'books_row', v_book_done)), 'later', v_later);
+    'books_row', v_book_done)), 'later', v_later)
+    || CASE WHEN p_stop IS NOT NULL THEN jsonb_build_object('stop', format(
+         '%s holds this entry as its own entry, so %s and the months after it are left as they are',
+         public.twob_month_name(p_stop), public.twob_month_name(p_stop))) ELSE '{}'::jsonb END;
 END;
 $$;
 
@@ -1877,6 +1982,9 @@ DECLARE
   h_idx integer[];
   h_per text[];
   v_held text;
+  -- the changes whose chain stops at a later month's own entry
+  s_idx integer[];
+  s_per text[];
 BEGIN
   IF p_client_id IS NULL OR v_key IS NULL THEN
     RAISE EXCEPTION 'Choose a client and a month.';
@@ -1898,11 +2006,11 @@ BEGIN
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('twob:' || p_client_id::text, 0));
   -- The later months an added entry reaches on each list: every month up to
-  -- the latest one holding carried rows on that list, a month in between
-  -- included even when it holds none yet (never past that month: a list is
-  -- not started in a month that would not hold one).
-  v_months_2b := public.twob__reach_months('bills_not_in_2b', p_client_id, p_period, false);
-  v_months_books := public.twob__reach_months('bills_not_in_books', p_client_id, p_period, false);
+  -- the later of the latest one holding carried rows on that list and the
+  -- month after the client's latest filed month (the open month), a month in
+  -- between included even when it holds none yet. Never further.
+  v_months_2b := public.twob__reach_months('bills_not_in_2b', p_client_id, p_period, true);
+  v_months_books := public.twob__reach_months('bills_not_in_books', p_client_id, p_period, true);
   -- The months whose rows take the filing lock.
   SELECT COALESCE(array_agg(x), '{}') INTO v_locked
     FROM (SELECT DISTINCT unnest(ARRAY[p_period] || v_months_2b || v_months_books) AS x) m
@@ -1918,14 +2026,21 @@ BEGIN
       ARRAY[p_period] || ARRAY(SELECT DISTINCT x FROM unnest(v_months_2b || v_months_books) x
                                 WHERE public.twob_month_is_prior(p_client_id, x)),
       p_actor_id);
-    -- The later copies of every entry changed or removed, matched once (rows locked).
-    SELECT COALESCE(array_agg(x.idx ORDER BY x.idx, x.ord), '{}'), COALESCE(array_agg(x.id ORDER BY x.idx, x.ord), '{}'),
-           COALESCE(array_agg(x.period_month ORDER BY x.idx, x.ord), '{}'), COALESCE(array_agg(x.msg ORDER BY x.idx, x.ord), '{}'),
-           COALESCE(array_agg(x.own_rev ORDER BY x.idx, x.ord), '{}')
-      INTO m_idx, m_id, m_per, m_msg, m_own
-      FROM (SELECT mc.*, row_number() OVER () AS ord FROM public.twob__match_copies('bills_not_in_2b', p_client_id, p_period, p_changes) mc
-            UNION ALL
-            SELECT mc.*, row_number() OVER () FROM public.twob__match_copies('bills_not_in_books', p_client_id, p_period, p_changes) mc) x;
+    -- The later copies of every entry changed or removed, matched once (rows
+    -- locked), and where each chain stops (a row without id).
+    WITH x AS MATERIALIZED (
+      SELECT mc.*, row_number() OVER () AS ord FROM public.twob__match_copies('bills_not_in_2b', p_client_id, p_period, p_changes) mc
+      UNION ALL
+      SELECT mc.*, row_number() OVER () FROM public.twob__match_copies('bills_not_in_books', p_client_id, p_period, p_changes) mc)
+    SELECT COALESCE(array_agg(x.idx ORDER BY x.idx, x.ord) FILTER (WHERE x.id IS NOT NULL), '{}'),
+           COALESCE(array_agg(x.id ORDER BY x.idx, x.ord) FILTER (WHERE x.id IS NOT NULL), '{}'),
+           COALESCE(array_agg(x.period_month ORDER BY x.idx, x.ord) FILTER (WHERE x.id IS NOT NULL), '{}'),
+           COALESCE(array_agg(x.msg ORDER BY x.idx, x.ord) FILTER (WHERE x.id IS NOT NULL), '{}'),
+           COALESCE(array_agg(x.own_rev ORDER BY x.idx, x.ord) FILTER (WHERE x.id IS NOT NULL), '{}'),
+           COALESCE(array_agg(x.idx ORDER BY x.idx) FILTER (WHERE x.id IS NULL), '{}'),
+           COALESCE(array_agg(x.period_month ORDER BY x.idx) FILTER (WHERE x.id IS NULL), '{}')
+      INTO m_idx, m_id, m_per, m_msg, m_own, s_idx, s_per
+      FROM x;
     m_n := COALESCE(array_length(m_idx, 1), 0);
     SELECT COALESCE(array_agg(h.idx), '{}'), COALESCE(array_agg(h.period_month), '{}') INTO h_idx, h_per
       FROM (SELECT * FROM public.twob__held_inserts('bills_not_in_2b', p_client_id, p_period, p_changes)
@@ -1943,7 +2058,8 @@ BEGIN
         v_held := CASE WHEN c ->> 'op' = 'insert' THEN h_per[array_position(h_idx, i)] END;
         v_one := public.twob__apply_ledger(p_actor_id, p_client_id, p_period, v_table, c ->> 'op', v_id, c -> 'values',
           CASE WHEN v_table = 'bills_not_in_2b' THEN v_months_2b ELSE v_months_books END, v_locked,
-          m_id[p:q - 1], m_per[p:q - 1], m_msg[p:q - 1], m_own[p:q - 1], v_held, v_named_books);
+          m_id[p:q - 1], m_per[p:q - 1], m_msg[p:q - 1], m_own[p:q - 1], v_held, v_named_books,
+          CASE WHEN c ->> 'op' IN ('update', 'delete') THEN s_per[array_position(s_idx, i)] END);
         p := q;
       ELSIF v_table = 'books_register' THEN
         v_one := public.twob__apply_books_register(p_actor_id, p_client_id, p_period, c ->> 'op', v_id, c -> 'values');
@@ -1957,7 +2073,10 @@ BEGIN
           'index', i, 'entry', v_one -> 'entry', 'message', v_one ->> 'refusal'));
       ELSIF v_one ? 'note' THEN
         v_notes := v_notes || jsonb_build_array(jsonb_build_object(
-          'index', i, 'entry', v_one -> 'entry', 'message', v_one ->> 'note'));
+          'index', i, 'entry', v_one -> 'entry', 'message', v_one ->> 'note', 'kind', 'held'));
+      ELSIF v_one ? 'stop' THEN
+        v_notes := v_notes || jsonb_build_array(jsonb_build_object(
+          'index', i, 'entry', v_one -> 'entry', 'message', v_one ->> 'stop', 'kind', 'stop'));
       END IF;
       -- (appended in place: a jsonb array concatenated once per change grew quadratically)
       v_list := array_append(v_list, v_one);
@@ -2034,6 +2153,105 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- 7b. Restore of a saved version (2B Reconciliation, the superadmin)
+-- ---------------------------------------------------------------------------
+-- A month's two lists replaced by a saved version, in one transaction. Only
+-- on the client's latest month that holds rows on either list: an earlier
+-- month's restore would leave the later months' carried copies as they are
+-- (its changes reach no later month), and a filed month is never restored.
+-- p_bills_2b / p_bills_books: the version's rows (snake_case, as the page
+-- reads them from twob_versions). The page writes the version record after.
+CREATE OR REPLACE FUNCTION public.twob_restore_version(
+  p_actor_id uuid, p_client_id uuid, p_period text, p_bills_2b jsonb, p_bills_books jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_prev text := current_setting('twob.write', true);
+  v_key integer := public.twob_period_key(p_period);
+  v_latest text;
+  v_bad text;
+  n2b integer := 0;
+  nbk integer := 0;
+BEGIN
+  IF p_actor_id IS NULL OR COALESCE(public.staff_level_of(p_actor_id), '') <> 'superadmin' THEN
+    RAISE EXCEPTION 'Only the superadmin can restore a version.';
+  END IF;
+  IF p_client_id IS NULL OR v_key IS NULL THEN
+    RAISE EXCEPTION 'Choose a client and a month.';
+  END IF;
+  IF public.twob_month_is_prior(p_client_id, p_period) THEN
+    RAISE EXCEPTION 'This month is filed. Its 2B documents and the reversal, reclaim and book entry months cannot change. Restore works on open months only.';
+  END IF;
+  p_bills_2b := COALESCE(p_bills_2b, '[]'::jsonb);
+  p_bills_books := COALESCE(p_bills_books, '[]'::jsonb);
+  IF jsonb_typeof(p_bills_2b) <> 'array' OR jsonb_typeof(p_bills_books) <> 'array' THEN
+    RAISE EXCEPTION 'This version cannot be read. Nothing was restored.';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('twob:' || p_client_id::text, 0));
+  SELECT public.twob_period_of_key(max(k)) INTO v_latest
+    FROM (SELECT public.twob_period_key(t.period_month) AS k FROM public.bills_not_in_2b t WHERE t.client_id = p_client_id
+          UNION ALL
+          SELECT public.twob_period_key(t.period_month) FROM public.bills_not_in_books t WHERE t.client_id = p_client_id) x
+   WHERE x.k > v_key;
+  IF v_latest IS NOT NULL THEN
+    RAISE EXCEPTION 'Restore works only on the latest month that holds entries (%). Restoring % would not reach the entries % holds.',
+      public.twob_month_name(v_latest), public.twob_month_name(p_period), public.twob_month_name(v_latest);
+  END IF;
+  SELECT CASE WHEN public.twob__try_date(x ->> 'date') IS NULL THEN 'An entry of this version has no date or a date that is not one.'
+              WHEN NULLIF(btrim(COALESCE(x ->> 'supplier_name', '')), '') IS NULL THEN 'An entry of this version has no supplier name.'
+              ELSE format('%s is not an amount.', COALESCE(
+                CASE WHEN NULLIF(btrim(COALESCE(x ->> 'taxable_value', '')), '') IS NOT NULL AND public.twob__try_num(x ->> 'taxable_value') IS NULL THEN x ->> 'taxable_value' END,
+                CASE WHEN NULLIF(btrim(COALESCE(x ->> 'input_igst', '')), '') IS NOT NULL AND public.twob__try_num(x ->> 'input_igst') IS NULL THEN x ->> 'input_igst' END,
+                CASE WHEN NULLIF(btrim(COALESCE(x ->> 'input_cgst', '')), '') IS NOT NULL AND public.twob__try_num(x ->> 'input_cgst') IS NULL THEN x ->> 'input_cgst' END,
+                CASE WHEN NULLIF(btrim(COALESCE(x ->> 'input_sgst', '')), '') IS NOT NULL AND public.twob__try_num(x ->> 'input_sgst') IS NULL THEN x ->> 'input_sgst' END)) END
+    INTO v_bad
+    FROM (SELECT x FROM jsonb_array_elements(p_bills_2b) x UNION ALL SELECT x FROM jsonb_array_elements(p_bills_books) x) e(x)
+   WHERE jsonb_typeof(x) <> 'object'
+      OR public.twob__try_date(x ->> 'date') IS NULL
+      OR NULLIF(btrim(COALESCE(x ->> 'supplier_name', '')), '') IS NULL
+      OR EXISTS (SELECT 1 FROM unnest(ARRAY['taxable_value', 'input_igst', 'input_cgst', 'input_sgst']) a
+                  WHERE NULLIF(btrim(COALESCE(x ->> a, '')), '') IS NOT NULL AND public.twob__try_num(x ->> a) IS NULL)
+   LIMIT 1;
+  IF v_bad IS NOT NULL THEN
+    RAISE EXCEPTION '% Nothing was restored.', v_bad;
+  END IF;
+  PERFORM set_config('twob.write', 'system', true);
+  DELETE FROM public.bills_not_in_2b WHERE client_id = p_client_id AND period_month = p_period;
+  DELETE FROM public.bills_not_in_books WHERE client_id = p_client_id AND period_month = p_period;
+  INSERT INTO public.bills_not_in_2b (
+    client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
+    taxable_value, input_igst, input_cgst, input_sgst, reversal_month, reclaim_month, reclaim_subtype,
+    is_carried_forward, updated_by, updated_at)
+  SELECT p_client_id, p_period, public.twob__try_date(x ->> 'date'), x ->> 'supplier_name',
+         NULLIF(x ->> 'supplier_invoice_number', ''), NULLIF(x ->> 'supplier_gstin', ''),
+         COALESCE(public.twob__try_num(x ->> 'taxable_value'), 0), COALESCE(public.twob__try_num(x ->> 'input_igst'), 0),
+         COALESCE(public.twob__try_num(x ->> 'input_cgst'), 0), COALESCE(public.twob__try_num(x ->> 'input_sgst'), 0),
+         NULLIF(btrim(COALESCE(x ->> 'reversal_month', '')), ''), NULLIF(btrim(COALESCE(x ->> 'reclaim_month', '')), ''),
+         NULLIF(btrim(COALESCE(x ->> 'reclaim_subtype', '')), ''),
+         COALESCE(lower(x ->> 'is_carried_forward') IN ('true', 't', '1'), false), p_actor_id, now()
+    FROM jsonb_array_elements(p_bills_2b) WITH ORDINALITY e(x, o) ORDER BY o;
+  GET DIAGNOSTICS n2b = ROW_COUNT;
+  INSERT INTO public.bills_not_in_books (
+    client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
+    taxable_value, input_igst, input_cgst, input_sgst, book_entry_month, bill_in_2b_month,
+    is_carried_forward, updated_by, updated_at)
+  SELECT p_client_id, p_period, public.twob__try_date(x ->> 'date'), x ->> 'supplier_name',
+         NULLIF(x ->> 'supplier_invoice_number', ''), NULLIF(x ->> 'supplier_gstin', ''),
+         COALESCE(public.twob__try_num(x ->> 'taxable_value'), 0), COALESCE(public.twob__try_num(x ->> 'input_igst'), 0),
+         COALESCE(public.twob__try_num(x ->> 'input_cgst'), 0), COALESCE(public.twob__try_num(x ->> 'input_sgst'), 0),
+         NULLIF(btrim(COALESCE(x ->> 'book_entry_month', '')), ''), NULLIF(btrim(COALESCE(x ->> 'bill_in_2b_month', '')), ''),
+         COALESCE(lower(x ->> 'is_carried_forward') IN ('true', 't', '1'), false), p_actor_id, now()
+    FROM jsonb_array_elements(p_bills_books) WITH ORDINALITY e(x, o) ORDER BY o;
+  GET DIAGNOSTICS nbk = ROW_COUNT;
+  PERFORM set_config('twob.write', COALESCE(v_prev, ''), true);
+  RETURN jsonb_build_object('period', p_period, 'bills_not_in_2b', n2b, 'bills_not_in_books', nbk);
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- 8. Who may call what
 -- ---------------------------------------------------------------------------
 -- The screens call these (src/lib/twobPriorMonth.ts, FilingStatusPage); the
@@ -2043,22 +2261,22 @@ GRANT EXECUTE ON FUNCTION
   public.twob_month_is_prior(uuid, text),
   public.twob_prior_books_apply(uuid, uuid, text, jsonb, boolean),
   public.twob_carry_rerun(uuid, uuid, text, boolean),
-  public.twob_reopen_filed(uuid, uuid, text, text, text)
+  public.twob_reopen_filed(uuid, uuid, text, text, text),
+  public.twob_restore_version(uuid, uuid, text, jsonb, jsonb)
 TO anon, authenticated, service_role;
 
 -- Internal: they write without checking who acts, or are triggers.
 REVOKE ALL ON FUNCTION
   public.twob_carry_first(uuid, text),
-  public.twob__carry_into(text, uuid, text, text[]),
   public.twob__reach_months(text, uuid, text, boolean),
-  public.twob__rerun_list(text, uuid, text, text, boolean),
+  public.twob__rerun_list(text, uuid, text, text, boolean, boolean),
   public.twob__freeze_figures(uuid, text[], uuid),
   public.twob__match_copies(text, uuid, text, jsonb),
   public.twob__held_inserts(text, uuid, text, jsonb),
   public.twob__ledger_insert(text, uuid, text, jsonb, text[], text[], uuid),
   public.twob__ledger_update(text, uuid[], jsonb, uuid),
   public.twob__ledger_delete(text, uuid[]),
-  public.twob__apply_ledger(uuid, uuid, text, text, text, uuid, jsonb, text[], text[], uuid[], text[], text[], boolean[], text, uuid[]),
+  public.twob__apply_ledger(uuid, uuid, text, text, text, uuid, jsonb, text[], text[], uuid[], text[], text[], boolean[], text, uuid[], text),
   public.twob__apply_books_register(uuid, uuid, text, text, uuid, jsonb),
   public.twob_guard(),
   public.twob_guard_carried_insert(),

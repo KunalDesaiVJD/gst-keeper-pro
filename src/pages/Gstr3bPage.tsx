@@ -27,9 +27,7 @@ import { toast } from 'sonner';
 import { fetchGstr3b } from '@/utils/fetchGstr3b';
 import type { Gstr3bResult } from '@/utils/buildGstr3bJson';
 import { exportGstr3bToPDF } from '@/utils/gstr3bPdf';
-import { computeSuspendedRecoDiff } from '@/lib/suspendedRecoCalc';
-import type { RecoDiffResult } from '@/lib/suspendedRecoCalc';
-import { computeGstReceivableRecoDiff } from '@/lib/gstReceivableRecoCalc';
+import { pushRecoBlocks, runPushRecoCheck, type PushRecoCheck } from '@/lib/pushRecoGate';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 import { effectiveFilingReturnType } from '@/lib/markFilingPushed';
@@ -496,21 +494,17 @@ const Gstr3bPage: React.FC = () => {
   // to say "advisory only, doesn't block Push", which had not been true since
   // the disabled= binding was added and sent people looking in the wrong place
   // when the button wouldn't press.
-  const [recoCheck, setRecoCheck] = useState<{ suspended: RecoDiffResult | null; receivable: RecoDiffResult | null }>({ suspended: null, receivable: null });
+  // A check that cannot run (a filed month's recorded figures unreadable, a
+  // network error) blocks Push with its reason: the gate fails closed (docs
+  // §13; runPushRecoCheck).
+  const [recoCheck, setRecoCheck] = useState<PushRecoCheck>({ suspended: null, receivable: null, error: null });
   const [recoCheckLoading, setRecoCheckLoading] = useState(false);
 
   const checkReconciliation = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) { setRecoCheck({ suspended: null, receivable: null }); return; }
+    if (!selectedClient || !selectedMonth) { setRecoCheck({ suspended: null, receivable: null, error: null }); return; }
     setRecoCheckLoading(true);
     try {
-      const [suspended, receivable] = await Promise.all([
-        computeSuspendedRecoDiff(selectedClient, selectedMonth),
-        computeGstReceivableRecoDiff(selectedClient, selectedMonth),
-      ]);
-      setRecoCheck({ suspended, receivable });
-    } catch {
-      // Advisory check — a failure here shouldn't block anything, just skip the banner.
-      setRecoCheck({ suspended: null, receivable: null });
+      setRecoCheck(await runPushRecoCheck(selectedClient, selectedMonth));
     } finally {
       setRecoCheckLoading(false);
     }
@@ -539,10 +533,7 @@ const Gstr3bPage: React.FC = () => {
   const isNoItcBuilder =
     selectedClientData?.regular_sub_type === 'Builder'
     && selectedClientData?.builder_itc_type === 'NO_ITC';
-  const suspendedBlocks = !isNoItcBuilder && !!recoCheck.suspended && recoCheck.suspended.total !== 0;
-  const receivableBlocks = !!recoCheck.receivable && recoCheck.receivable.total !== 0;
-
-  const hasRecoDiff = suspendedBlocks || receivableBlocks;
+  const { suspendedBlocks, receivableBlocks, errorBlocks: recoCheckFailed, blocks: hasRecoDiff } = pushRecoBlocks(recoCheck, isNoItcBuilder);
 
   const s = result?.summary;
 
@@ -590,6 +581,10 @@ const Gstr3bPage: React.FC = () => {
     }
     if (!selectedClientData?.gstin) {
       toast.error('Selected client has no GSTIN on file.');
+      return;
+    }
+    if (recoCheckFailed) {
+      toast.error(`The Suspended Reco / GST Receivable Reco check could not run (${recoCheck.error}), so Push stays locked. Reload the page to check again.`, { duration: 15000 });
       return;
     }
     if (recoCheckLoading || hasRecoDiff) {
@@ -697,6 +692,8 @@ const Gstr3bPage: React.FC = () => {
                     ? 'GSTR-3B already Filed for this period — push is locked'
                     : recoCheckLoading
                       ? 'Checking Suspended Reco / GST Receivable Reco…'
+                      : recoCheckFailed
+                        ? 'The Suspended Reco / GST Receivable Reco check could not run — reload to check again'
                       : hasRecoDiff
                         ? 'Suspended Reco / GST Receivable Reco difference must be resolved before pushing'
                         : !extReady
@@ -802,7 +799,10 @@ const Gstr3bPage: React.FC = () => {
         <div className="flex flex-wrap items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-xs text-foreground">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
           <div className="min-w-0 flex-1 space-y-0.5">
-            <p className="font-semibold text-destructive">Reconciliation difference found — Push to GST Portal is locked</p>
+            <p className="font-semibold text-destructive">{recoCheckFailed ? 'Reconciliation check could not run — Push to GST Portal is locked' : 'Reconciliation difference found — Push to GST Portal is locked'}</p>
+            {recoCheckFailed && (
+              <p>{recoCheck.error}. Reload the page to check again.</p>
+            )}
             {suspendedBlocks && (
               <p>
                 <span className="font-medium">Suspended Reco</span> difference: <span className="font-semibold tabular-nums">₹{inr(recoCheck.suspended!.total)}</span> (2B and RCM → Suspended Reco).

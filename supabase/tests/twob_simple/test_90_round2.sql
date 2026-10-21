@@ -18,10 +18,11 @@
 \set M '90000000-0000-0000-0000-00000000000d'
 
 -- ---------------------------------------------------------------------------
--- Q1 (medium). A month filed after its next month (its PDF came late) still
--- carries: into the filed next month, which held no carried rows, and on
--- into each later month up to the open one, each getting what it lacks. The
--- filed month's figures are recorded first. Filing it again does nothing.
+-- Q1 (medium), as decided in round 3 (S1): a month filed after its next
+-- month (its PDF came late) carries nothing by itself, into the filed next
+-- month or further; Filing Status says so, and a GST Manager repairs it with
+-- Re-run (into filed August: it only adds, August's figures recorded first;
+-- then August into open September). Filing July again carries nothing.
 -- ---------------------------------------------------------------------------
 SELECT set_config('twob.write', 'system', false);
 INSERT INTO public.clients (id, name, gstin) VALUES (:'A', 'Q1 late filing', '24QONEA0000A1Z5'), (:'B', 'Q1 late, empty', '24QONEB0000A1Z5');
@@ -41,19 +42,26 @@ INSERT INTO public.filing_status (client_id, return_type, period_month, status) 
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'A' AND period_month = '09/2026'), 1,
   'Q1: filing August first carries its own entry into September');
 INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES (:'A', 'GSTR-3B', '07/2026', 'Filed');
+SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'A' AND supplier_name = 'JUL SUP' AND period_month <> '07/2026'), 0,
+  'Q1: filing July after August carries nothing into filed August or further');
+SELECT public.t_eq((SELECT array_agg(list || ':' || last_outcome ORDER BY list) FROM public.twob_carry_log WHERE client_id = :'A' AND period_month = '07/2026'),
+  ARRAY['bills_not_in_2b:next_filed', 'bills_not_in_books:next_filed'], 'Q1: the carry record says why (August is filed)');
+SELECT public.twob_carry_rerun(public.t_manager(), :'A', '07/2026', false) AS q1_rr \gset
+SELECT public.t_eq((:'q1_rr'::jsonb ->> 'next_filed')::boolean, true, 'Q1: Re-run of July into filed August only adds');
 SELECT public.t_eq((SELECT array_agg(supplier_invoice_number || CASE WHEN is_carried_forward THEN '+c' ELSE '' END || CASE WHEN is_locked THEN '+l' ELSE '' END
                                      ORDER BY supplier_invoice_number) FROM public.bills_not_in_2b WHERE client_id = :'A' AND period_month = '08/2026'),
-  ARRAY['A-1+l', 'J-1+c+l', 'J-2+c+l'], 'Q1: filing July then carries J-1 and J-2 into filed August (locked, as August is)');
+  ARRAY['A-1+l', 'J-1+c+l', 'J-2+c+l'], 'Q1: ... J-1 and J-2 into filed August (locked, as August is)');
+SELECT public.t_eq((SELECT reversal_cgst FROM public.twob_filed_figures WHERE client_id = :'A' AND period_month = '08/2026'), 45::numeric,
+  'Q1: August''s 4B(2)(i) recorded as filed (its own entry only) before the Re-run');
+SELECT public.twob_carry_rerun(public.t_manager(), :'A', '08/2026', false) AS q1_rr2 \gset
 SELECT public.t_eq((SELECT array_agg(supplier_invoice_number ORDER BY supplier_invoice_number) FROM public.bills_not_in_2b
                      WHERE client_id = :'A' AND period_month = '09/2026' AND is_carried_forward AND NOT is_locked),
-  ARRAY['A-1', 'J-1', 'J-2'], 'Q1: ... and on into open September, which already held August''s carry');
+  ARRAY['A-1', 'J-1', 'J-2'], 'Q1: ... then Re-run of August carries them on into open September');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE client_id = :'A' AND period_month IN ('08/2026', '09/2026') AND supplier_invoice_number = 'N-1'), 2,
   'Q1: the Not in Books list too');
-SELECT public.t_eq((SELECT reversal_cgst FROM public.twob_filed_figures WHERE client_id = :'A' AND period_month = '08/2026'), 45::numeric,
-  'Q1: August''s 4B(2)(i) recorded as filed (its own entry only) before the carry');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.twob_filed_figures WHERE client_id = :'A' AND period_month = '09/2026'), 0,
   'Q1: open September records nothing');
--- Filing July again: August holds carried rows now, nothing happens.
+-- Filing July again: nothing happens.
 UPDATE public.filing_status SET status = 'Prepared Pending', is_locked = false, filed_date = NULL WHERE client_id = :'A' AND period_month = '07/2026';
 UPDATE public.filing_status SET status = 'Filed' WHERE client_id = :'A' AND period_month = '07/2026';
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'A' AND period_month IN ('08/2026', '09/2026')), 6,
@@ -61,8 +69,8 @@ SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE c
 -- The verifier's shape: August filed first with nothing on its list.
 INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES (:'B', 'GSTR-3B', '08/2026', 'Filed');
 INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES (:'B', 'GSTR-3B', '07/2026', 'Filed');
-SELECT public.t_eq((SELECT array_agg(period_month ORDER BY period_month) FROM public.bills_not_in_2b WHERE client_id = :'B' AND is_carried_forward),
-  ARRAY['08/2026', '09/2026'], 'Q1: an empty filed August and open September both take July''s entry');
+SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'B' AND is_carried_forward), 0,
+  'Q1: an empty filed August takes nothing by itself');
 RESET ROLE;
 
 -- ---------------------------------------------------------------------------
@@ -187,9 +195,10 @@ SELECT public.t_eq(public.t_books_side(:'F', '09/2026'), :'q6_books'::numeric + 
 RESET ROLE;
 
 -- ---------------------------------------------------------------------------
--- Q7 (medium). One Post of a filed month whose plan holds a document a later
--- month already holds (TAMNNA's JAY INFRASTRUCTURE, booked in September)
--- posts the rest, and names that document.
+-- Q7 (medium), as decided in round 3 (S6). A Not in Books entry from a 2B
+-- document (TAMNNA's JAY INFRASTRUCTURE, booked in September) is never added
+-- to a filed month: a prior month's Post leaves the Not in Books side out
+-- (planToPriorChanges), and the door refuses it if sent. The books side posts.
 -- ---------------------------------------------------------------------------
 SELECT public.t_make_tamnna(:'G', 'Q7 Post held');
 SELECT set_config('twob.write', 'system', false);
@@ -202,11 +211,18 @@ SET ROLE anon;
 SELECT public.twob_prior_books_apply(public.t_manager(), :'G', '07/2026',
   '[{"table":"bills_not_in_books","op":"insert","values":{"date":"2026-07-12","supplier_name":"JAY INFRASTRUCTURE","supplier_invoice_number":"16/2026-27","supplier_gstin":"24JAYIN0000A1Z5","taxable_value":1000,"input_igst":0,"input_cgst":90,"input_sgst":90,"bill_in_2b_month":"Jul 26","source_doc_id":"90000000-0000-0000-0000-0000000000d7"}},
     {"table":"bills_not_in_2b","op":"insert","values":{"date":"2026-07-18","supplier_name":"NS SUPPLIER","supplier_invoice_number":"NS/1","supplier_gstin":"24NSSUP0000A1Z5","taxable_value":100,"input_cgst":9,"input_sgst":9,"reversal_month":"Jul 26"}}]'::jsonb,
-  false) AS q7 \gset
-SELECT public.t_eq((:'q7'::jsonb ->> 'ok')::boolean, true, 'Q7: the Post goes ahead');
-SELECT public.t_eq(:'q7'::jsonb -> 'notes' -> 0 ->> 'message', 'Sep-26 already holds this 2B document on its Not in Books list; it is not added again',
-  'Q7: the 2B document is named, in words about the document');
+  true) AS q7 \gset
+-- Round 3 (S6): a Not in Books entry from a 2B document is never added to a
+-- filed month through the door (the Post leaves it out, postImport2B
+-- planToPriorChanges); sent anyway, it is refused, and nothing is written.
+SELECT public.t_eq((:'q7'::jsonb ->> 'ok')::boolean, false, 'Q7: a Not in Books entry from a 2B document is refused in a filed month');
+SELECT public.t_eq(:'q7'::jsonb -> 'refusals' -> 0 ->> 'message',
+  'A Not in Books entry from a 2B document is not added to a filed month: it follows the filed 2B, which stays as filed. Only books entries change in a filed month',
+  'Q7: ... in words about the 2B');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE client_id = :'G' AND supplier_invoice_number = '16/2026-27'), 1, 'Q7: no second copy of it');
+SELECT public.twob_prior_books_apply(public.t_manager(), :'G', '07/2026',
+  '[{"table":"bills_not_in_2b","op":"insert","values":{"date":"2026-07-18","supplier_name":"NS SUPPLIER","supplier_invoice_number":"NS/1","supplier_gstin":"24NSSUP0000A1Z5","taxable_value":100,"input_cgst":9,"input_sgst":9,"reversal_month":"Jul 26"}}]'::jsonb,
+  false) AS q7b \gset
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'G' AND supplier_invoice_number = 'NS/1'), 3, 'Q7: NS/1 posted to July and its later months');
 RESET ROLE;
 
@@ -284,7 +300,7 @@ SET ROLE anon;
 SELECT public.t_raises($$UPDATE public.bills_not_in_books SET source_doc_id = NULL WHERE id = '90000000-0000-0000-0000-0000000000b1'$$,
   'This month is filed', 'Q11: clearing a link by hand in a filed month is refused');
 SELECT public.t_eq(public.twob_prior_books_apply(public.t_manager(), :'L', '07/2026', '[{"table":"bills_not_in_books","op":"delete","id":"90000000-0000-0000-0000-0000000000b1"}]', true) -> 'refusals' -> 0 ->> 'message',
-  'It comes from this month''s 2B document, which stays as filed (Not in Books); the next Post would add it back', 'Q11: so the door''s protection stays');
+  'This Not in Books entry comes from a 2B document and follows the filed 2B, so it is neither changed nor removed in a filed month. Only books entries change in a filed month', 'Q11: so the door''s protection stays');
 SELECT public.t_ok($$DELETE FROM public.twob_import_docs WHERE id = '90000000-0000-0000-0000-0000000000dc'$$, 'Q11: deleting an open month''s 2B document still clears a filed row''s link to it');
 SELECT public.t_eq((SELECT reclaimed_via_doc_id FROM public.bills_not_in_2b WHERE id = '90000000-0000-0000-0000-0000000000b2'), NULL::uuid, 'Q11: the link is cleared');
 RESET ROLE;

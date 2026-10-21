@@ -338,11 +338,12 @@ for (const [C, name, liberal] of [
   check('Screens: an employee (the page read-only) edits nothing in a prior month', cell({ readOnly: true, canPriorBooks: false }) === true);
 }
 
-// ── 4. A month filed after its next month (round 2, Q1): July is marked
-// Filed after August, so its two pending entries are carried into filed
-// August and open September then. Every gate of August and September stays
-// as it was, except the Suspended Reco books side, which takes July's
-// entries (that is the carry); August's figures are recorded first. ──────
+// ── 4. A month filed after its next month (round 3, S1): July is marked
+// Filed after August and carries nothing by itself; a GST Manager's Re-run
+// of July adds its two pending entries to filed August (August's figures
+// recorded first), and Re-run of August carries them into open September.
+// Every gate of August and September stays as it was, except the Suspended
+// Reco books side, which takes July's entries (that is the repair). ──────
 {
   const C = '91000000-0000-0000-0000-000000000004';
   const MONTHS2 = ['08/2026', '09/2026'];
@@ -363,11 +364,13 @@ for (const [C, name, liberal] of [
         SELECT set_config('twob.write', '', false);`);
   asApp(`INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES ('${C}', 'GSTR-3B', '08/2026', 'Filed'), ('${C}', 'GSTR-3B', '09/2026', 'Data Received');`);
   asApp(`INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES ('${C}', 'GSTR-3B', '07/2026', 'Filed');`);
-  check('Late filing: July\'s entries reach filed August and open September',
+  check('Late filing: filing July after August carries nothing by itself',
+    psql(`SELECT count(*) FROM public.bills_not_in_2b WHERE client_id = '${C}' AND supplier_name = 'JUL SUP' AND period_month IN ('08/2026', '09/2026')`).trim() === '0');
+  asApp(`SELECT public.twob_carry_rerun(public.t_manager(), '${C}', '07/2026', false); SELECT public.twob_carry_rerun(public.t_manager(), '${C}', '08/2026', false);`);
+  check('Late filing: Re-run of July, then of August, brings July\'s entries into filed August and open September',
     psql(`SELECT count(*) FROM public.bills_not_in_2b WHERE client_id = '${C}' AND supplier_name = 'JUL SUP' AND period_month IN ('08/2026', '09/2026')`).trim() === '4');
   const snap = snapshot();
-  // Before: the same database as the round-1 version left it (July filed,
-  // nothing carried, nothing recorded); after: as this one leaves it.
+  // Before: July filed, nothing carried, nothing recorded; after: the two Re-runs.
   const without = {
     ...snap,
     bills_not_in_2b: snap.bills_not_in_2b.filter((r) => !(r.client_id === C && r.supplier_name === 'JUL SUP' && r.period_month !== '07/2026')),
