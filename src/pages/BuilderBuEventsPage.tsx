@@ -665,6 +665,8 @@ const BuilderBuEventsPage: React.FC = () => {
                       {lastReq.mailStatus && (
                         <span className={cn(lastReq.mailStatus === 'failed' && 'text-destructive')}>
                           {' '}· e-mail {lastReq.mailStatus}{lastReq.mailStatus === 'failed' && lastReq.mailError ? `: ${lastReq.mailError}` : ''}
+                          {['failed', 'skipped', 'cancelled'].includes(lastReq.mailStatus)
+                            ? '. The earlier link still takes answers until an e-mail goes out.' : ''}
                         </span>
                       )}
                     </p>

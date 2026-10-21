@@ -10,7 +10,9 @@ import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatINR } from '@/utils/builderRates';
-import { EMAIL_RE } from '@/lib/builderAgreementConfirmData';
+import { emailOk } from '@/lib/builderAgreementConfirmData';
+import { confirmAllTargets, pageSummary, type PageUnitState } from '@/lib/builderConfirmRules';
+import { GST_FIRM } from '@/lib/gstReminders';
 import logo from '@/assets/logo.png';
 
 // Public, no-login confirmation page. The link comes from the BU agreement
@@ -18,11 +20,13 @@ import logo from '@/assets/logo.png';
 // asked about (builder_bu_confirm_requests); before that one link per unit,
 // which still works here as a list of one. The token, not a session, scopes
 // every call (builder_bu_confirm_lookup / builder_bu_confirm_respond).
-// Anyone who received the e-mail may answer; the page asks their name and
-// e-mail and records them on each unit they answer. Only an open unit takes
-// an answer: a confirmed one stays confirmed, a disputed one waits for the firm.
+// Anyone the e-mail was sent to (To or CC) may answer; the page asks their
+// name and e-mail, the database checks the e-mail against the request, and
+// both are recorded on each unit they answer. Only an open unit takes an
+// answer: a confirmed one stays confirmed, a disputed one waits for the firm.
+// A unit whose dispute box is open is left out of "Confirm all".
 
-type UnitState = 'PENDING' | 'CONFIRMED' | 'DISPUTED' | 'ACCEPTED' | 'REPLACED';
+type UnitState = PageUnitState;
 
 interface PageUnit {
   unit_id: string;
@@ -53,9 +57,11 @@ const longDate = (iso: string | null | undefined) => {
 const RESULT_WORDS: Record<string, string> = {
   REPLACED: 'was asked again in a newer e-mail; please use the link there',
   ALREADY_CONFIRMED: 'had already been confirmed by someone else',
-  ALREADY_DISPUTED: 'had already been disputed by someone else',
+  ALREADY_DISPUTED: 'had already been disputed by someone else. The firm will check it and write to you',
   ALREADY_ACCEPTED: 'had already been settled by the firm',
 };
+
+const CONTACT = `If you have not received it, please write to us at ${GST_FIRM.email}.`;
 
 const AgreementConfirmPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
@@ -64,8 +70,9 @@ const AgreementConfirmPage: React.FC = () => {
   const [savingUnit, setSavingUnit] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [disputeOpen, setDisputeOpen] = useState<string | null>(null);
-  const [disputeNotes, setDisputeNotes] = useState('');
+  // Open dispute boxes and what has been typed in each, by unit. Answering
+  // another unit leaves them as they are.
+  const [disputes, setDisputes] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -83,7 +90,7 @@ const AgreementConfirmPage: React.FC = () => {
     const n = name.trim().replace(/\s+/g, ' ');
     const e = email.trim().toLowerCase();
     if (n.length < 2) { toast.error('Please give your name.'); return null; }
-    if (!EMAIL_RE.test(e)) { toast.error('Please give a valid e-mail address.'); return null; }
+    if (!emailOk(e)) { toast.error('Please give a valid e-mail address.'); return null; }
     return { n, e };
   };
 
@@ -109,11 +116,14 @@ const AgreementConfirmPage: React.FC = () => {
       if (missed.length) {
         setNotice(missed.map((r) => `Unit ${r.unit_no} ${RESULT_WORDS[r.result] || 'could not be answered'}.`).join(' '));
       }
-      setDisputeOpen(null);
-      setDisputeNotes('');
+      // Close the boxes of the units just answered; keep the others' drafts.
+      const answered = new Set(results.map((r) => r.unit_id));
+      setDisputes((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => !answered.has(id))));
       await load();
     } catch (e) {
-      toast.error(`Could not save your answer: ${(e as Error).message}`);
+      const msg = (e as Error).message;
+      toast.error(`Could not save your answer: ${msg}`);
+      setNotice(msg);
     } finally {
       setSavingUnit(null);
     }
@@ -150,22 +160,23 @@ const AgreementConfirmPage: React.FC = () => {
   }
 
   const open = page.units.filter((u) => u.state === 'PENDING');
-  const allReplaced = page.units.every((u) => u.state === 'REPLACED');
+  const summary = pageSummary(page.units);
+  const disputing = Object.keys(disputes).filter((id) => open.some((u) => u.unit_id === id));
+  const allTargets = confirmAllTargets(page.units, disputing);
+  const unitNo = (id: string) => page.units.find((u) => u.unit_id === id)?.unit_no || '';
 
-  if (allReplaced) {
+  if (summary.allReplaced) {
     return shell(
       <div className="text-center space-y-2 py-4">
         <XCircle className="h-10 w-10 text-muted-foreground mx-auto" />
         <CardTitle className="text-lg">Replaced by a newer request</CardTitle>
         <p className="text-sm text-muted-foreground">
           We sent a newer e-mail about {page.units.length === 1 ? `unit ${page.units[0].unit_no}` : 'these units'},{' '}
-          {page.project_name}. Please use the link in that e-mail.
+          {page.project_name}. Please use the link in that e-mail. {CONTACT}
         </p>
       </div>,
     );
   }
-
-  const total = page.units.filter((u) => u.state !== 'REPLACED').reduce((a, u) => a + u.agreement_value, 0);
 
   const stateLine = (u: PageUnit) => {
     const by = u.responded_by_name
@@ -178,7 +189,7 @@ const AgreementConfirmPage: React.FC = () => {
         return { tone: 'text-amber-700 dark:text-amber-400', text: `Disputed${by}${note ? `: ${note}` : ''}. We will follow up.` };
       }
       case 'ACCEPTED': return { tone: 'text-muted-foreground', text: 'Settled by the firm. Nothing more is needed.' };
-      case 'REPLACED': return { tone: 'text-muted-foreground', text: 'Replaced by a newer request. Please use the link in the newer e-mail.' };
+      case 'REPLACED': return { tone: 'text-muted-foreground', text: `Replaced by a newer request. Please use the link in the newer e-mail. ${CONTACT}` };
       default: return null;
     }
   };
@@ -207,8 +218,14 @@ const AgreementConfirmPage: React.FC = () => {
             <Input id="cf-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
           </div>
           <p className="text-xs text-muted-foreground sm:col-span-2">
-            Anyone who received our e-mail may answer. We keep your name and e-mail with each answer.
+            Anyone our e-mail was sent to (To or CC) may answer. Please give the e-mail address it reached you at.
+            We keep your name and e-mail with each answer.
           </p>
+        </div>
+      ) : summary.restReplaced ? (
+        <div className="flex items-center justify-center gap-2 rounded-md border p-3 text-sm">
+          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+          Every unit still on this link has an answer. The others were asked again in a newer e-mail.
         </div>
       ) : (
         <div className="flex items-center justify-center gap-2 rounded-md border p-3 text-sm">
@@ -233,11 +250,11 @@ const AgreementConfirmPage: React.FC = () => {
                 <span className="tabular-nums font-semibold">Rs. {formatINR(u.agreement_value)}</span>
               </div>
               {line && <p className={cn('mt-1 text-xs', line.tone)}>{line.text}</p>}
-              {u.state === 'PENDING' && disputeOpen !== u.unit_id && (
+              {u.state === 'PENDING' && disputes[u.unit_id] === undefined && (
                 <div className="mt-2 flex justify-end gap-2">
                   <Button
                     size="sm" variant="outline" disabled={busy}
-                    onClick={() => { setDisputeOpen(u.unit_id); setDisputeNotes(''); }}
+                    onClick={() => setDisputes((prev) => ({ ...prev, [u.unit_id]: '' }))}
                   >
                     Dispute
                   </Button>
@@ -249,20 +266,33 @@ const AgreementConfirmPage: React.FC = () => {
                   </Button>
                 </div>
               )}
-              {u.state === 'PENDING' && disputeOpen === u.unit_id && (
+              {u.state === 'PENDING' && disputes[u.unit_id] !== undefined && (
                 <div className="mt-2 space-y-2">
                   <Textarea
                     placeholder="What has changed? For example, the revised agreement value and its date."
-                    value={disputeNotes}
-                    onChange={(e) => setDisputeNotes(e.target.value)}
+                    value={disputes[u.unit_id]}
+                    onChange={(e) => {
+                      const text = e.target.value;
+                      setDisputes((prev) => ({ ...prev, [u.unit_id]: text }));
+                    }}
                   />
                   <div className="flex justify-end gap-2">
-                    <Button size="sm" variant="outline" disabled={busy} onClick={() => setDisputeOpen(null)}>Back</Button>
+                    <Button
+                      size="sm" variant="outline" disabled={busy}
+                      onClick={() => setDisputes((prev) => {
+                        const next = { ...prev };
+                        delete next[u.unit_id];
+                        return next;
+                      })}
+                    >
+                      Back
+                    </Button>
                     <Button
                       size="sm" variant="destructive" disabled={busy}
                       onClick={() => {
-                        if (!disputeNotes.trim()) { toast.error('Please say what has changed.'); return; }
-                        void respond([{ unit_id: u.unit_id, action: 'DISPUTE', notes: disputeNotes.trim() }], u.unit_id);
+                        const note = (disputes[u.unit_id] || '').trim();
+                        if (!note) { toast.error('Please say what has changed.'); return; }
+                        void respond([{ unit_id: u.unit_id, action: 'DISPUTE', notes: note }], u.unit_id);
                       }}
                     >
                       {savingUnit === u.unit_id && <Loader2 className="h-4 w-4 animate-spin" />} Submit dispute
@@ -277,19 +307,28 @@ const AgreementConfirmPage: React.FC = () => {
 
       {page.units.length > 1 && (
         <div className="flex items-center justify-between px-1 text-sm">
-          <span className="text-muted-foreground">Total</span>
-          <span className="tabular-nums font-semibold">Rs. {formatINR(total)}</span>
+          <span className="text-muted-foreground">{summary.totalLabel}</span>
+          <span className="tabular-nums font-semibold">Rs. {formatINR(summary.total)}</span>
         </div>
       )}
 
-      {open.length > 1 && (
-        <Button
-          className="w-full" disabled={savingUnit !== null}
-          onClick={() => void respond(open.map((u) => ({ unit_id: u.unit_id, action: 'CONFIRM' as const })), 'all')}
-        >
-          {savingUnit === 'all' && <Loader2 className="h-4 w-4 animate-spin" />}
-          Confirm all {open.length} open units
-        </Button>
+      {open.length > 1 && allTargets.length > 0 && (
+        <div className="space-y-1">
+          <Button
+            className="w-full" disabled={savingUnit !== null}
+            onClick={() => void respond(allTargets.map((id) => ({ unit_id: id, action: 'CONFIRM' as const })), 'all')}
+          >
+            {savingUnit === 'all' && <Loader2 className="h-4 w-4 animate-spin" />}
+            {disputing.length
+              ? `Confirm the other ${allTargets.length} open unit${allTargets.length === 1 ? '' : 's'}`
+              : `Confirm all ${allTargets.length} open units`}
+          </Button>
+          {disputing.length > 0 && (
+            <p className="text-center text-xs text-muted-foreground">
+              Left out: unit {disputing.map(unitNo).join(', ')}, whose dispute is open. Submit it, or press Back to confirm it too.
+            </p>
+          )}
+        </div>
       )}
     </>,
     page.units.length > 1,

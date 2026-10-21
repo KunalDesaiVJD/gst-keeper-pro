@@ -66,6 +66,15 @@ SELECT t_raises($$SELECT builder_bu_confirm_request_send('e1000000-0000-0000-000
 SELECT t_raises($$SELECT builder_bu_confirm_request_send('e1000000-0000-0000-0000-000000000001', ARRAY['a1000000-0000-0000-0000-000000000001']::uuid[],
                    ARRAY['owner@client.test'], NULL, '10000000-0000-0000-0000-000000000001', 'https://gst.vjdesai.com', 'S', 'No link here.', NULL)$$,
                   'no {{confirm_link}}', 'a body without the link');
+-- Addresses Graph would refuse are refused here (the browser's EMAIL_RE is the same rule).
+SELECT t_eq(builder_bu_confirm_email_ok(a), false, 'refused: ' || a)
+  FROM unnest(ARRAY['user@domain..com', 'user@.domain.com', '.user@domain.com', 'us..er@domain.com', 'user.@domain.com',
+                    'user@-domain.com', 'user@domain-.com', 'user@domain.c', 'user@domain.com.', 'user@domain', 'user@@domain.com',
+                    'us er@domain.com', 'user@dom_ain.com', 'user@domain.123', '<user@domain.com>', repeat('a', 65) || '@domain.com']) a;
+SELECT t_eq(builder_bu_confirm_email_ok(a), true, 'accepted: ' || a)
+  FROM unnest(ARRAY['o''brien+bu@sub.client-co.in', 'a.b-c_d@x.co', 'Owner@Client.Test', 'a@b.xn--p1ai', '1@2.com']) a;
+SELECT t_raises($$SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001']::uuid[], ARRAY['owner@client.test'], ARRAY['user@domain..com'])$$,
+                'Not a valid e-mail address: user@domain..com', 'a CC Graph would refuse');
 SELECT t_eq((SELECT count(*) FROM email_outbox)::int, 1, 'refusals queue nothing');
 SELECT t_eq((SELECT count(*) FROM builder_bu_confirm_requests)::int, 1, 'refusals create no request');
 

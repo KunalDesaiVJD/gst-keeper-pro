@@ -6,7 +6,7 @@ SET LOCAL ROLE anon;
 
 SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001',
                     'a1000000-0000-0000-0000-000000000002']::uuid[],
-              ARRAY['owner@client.test'], ARRAY['accounts@client.test', 'ca@firm.test']) ->> 'token' AS tok \gset
+              ARRAY['rajesh@client.test'], ARRAY['accounts@client.test', 'ca@firm.test']) ->> 'token' AS tok \gset
 
 SELECT builder_bu_confirm_lookup(:'tok') AS page \gset
 SELECT t_eq(:'page'::jsonb ->> 'kind', 'request', 'a request link');

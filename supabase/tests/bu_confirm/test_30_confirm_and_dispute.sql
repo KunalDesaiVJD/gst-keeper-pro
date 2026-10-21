@@ -32,10 +32,10 @@ SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-0
 -- Another reader: the dispute stands; the open unit takes their answer.
 SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok', jsonb_build_array(
               t_answer('a1000000-0000-0000-0000-000000000002', 'CONFIRM'),
-              t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Ravi Mehta', 'ravi@client.test')),
+              t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Ravi Mehta', 'Director@Client.test')),
             'A-102:ALREADY_DISPUTED,A-103:CONFIRMED', 'a disputed unit waits for staff; the open one is confirmed');
 SELECT t_eq((SELECT string_agg(u.unit_no || '=' || c.responded_by_email, ',' ORDER BY u.unit_no)
                FROM builder_bu_agreement_confirmations c JOIN builder_units u ON u.id = c.unit_id),
-            'A-101=meena@ca.test,A-102=meena@ca.test,A-103=ravi@client.test', 'each unit keeps its own responder');
+            'A-101=meena@ca.test,A-102=meena@ca.test,A-103=director@client.test', 'each unit keeps its own responder');
 SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-000000000001', '10/2026'), true, 'the dispute still blocks');
 ROLLBACK;

@@ -4,11 +4,19 @@ BEGIN;
 \ir fixtures.psql
 SET LOCAL ROLE anon;
 
--- Rows as the old app wrote them (direct table writes, one token per unit).
+-- Rows as the old app wrote them (direct table writes, one token and one
+-- e-mail per unit, to the client master's address as it then stood).
 INSERT INTO builder_bu_agreement_confirmations (bu_event_id, unit_id, client_id, agreement_value_at_request, status, sent_at)
 SELECT eu.bu_event_id, eu.unit_id, 'c1000000-0000-0000-0000-000000000001', eu.agreement_value, 'PENDING', now()
   FROM builder_bu_event_units eu
  WHERE eu.bu_event_id = 'e1000000-0000-0000-0000-000000000001' AND eu.booked_at_cutoff;
+WITH mail AS (
+  INSERT INTO email_outbox (client_id, to_email, kind, template_key, subject, body, status)
+  SELECT 'c1000000-0000-0000-0000-000000000001', 'Rajesh@Client.test', 'builder_agreement_confirm',
+         'builder_bu_agreement_confirm', 'Please confirm the agreement value', c.id::text, 'sent'
+    FROM builder_bu_agreement_confirmations c
+  RETURNING id, body)
+UPDATE builder_bu_agreement_confirmations c SET outbox_id = mail.id FROM mail WHERE c.id::text = mail.body;
 SELECT max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000001') AS t1,
        max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000002') AS t2,
        max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000003') AS t3
@@ -27,6 +35,8 @@ SELECT t_eq((SELECT responded_by_name || '/' || responded_by_email FROM builder_
             'Rajesh Shah/rajesh@client.test', 'with who answered');
 SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000002', 'CONFIRM')), 'Rajesh Shah', 'rajesh@client.test')$q$, :'t1'),
                 'not in this request', 'a per-unit link reaches only its unit');
+SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Someone', 'someone@client.test')$q$, :'t3'),
+                'reached you at', 'only the address that e-mail went to answers a per-unit link');
 
 -- The old answer function still works for an untouched link.
 SELECT t_eq(builder_bu_agreement_confirm(:'t2', 'DISPUTE', 'Changed'), true, 'the old function records a dispute');
@@ -41,7 +51,7 @@ SELECT t_eq(t_states(:'t3'), 'A-103:REPLACED', 'the old link shows it replaced')
 SELECT t_eq(t_states(:'t2'), 'A-102:REPLACED', 'the disputed one too');
 SELECT t_eq(builder_bu_agreement_confirm(:'t3', 'CONFIRM', NULL), false, 'the old function no longer answers it');
 SELECT t_eq(t_results(builder_bu_confirm_respond(:'t3', jsonb_build_array(
-              t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Rajesh Shah', 'rajesh@client.test')),
+              t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Owner', 'owner@client.test')),
             'A-103:REPLACED', 'nor does the new page through the old link');
 SELECT t_eq((SELECT status FROM builder_bu_agreement_confirmations WHERE unit_id = 'a1000000-0000-0000-0000-000000000003'), 'PENDING', 'still open, on the new request');
 SELECT t_eq(t_states(:'tok'), 'A-102:PENDING,A-103:PENDING', 'the new link asks about both');

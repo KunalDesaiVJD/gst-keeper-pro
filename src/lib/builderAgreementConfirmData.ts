@@ -1,12 +1,14 @@
 import { supabase } from '@/integrations/supabase/client';
 import { GST_FIRM, renderTemplate } from '@/lib/gstReminders';
 import { formatINR } from '@/utils/builderRates';
+import { isClearedStatus, parseEmailList, type ConfirmStatus } from '@/lib/builderConfirmRules';
 
 // Client confirmation of the agreement value behind a BU differential, by a
 // tokenized e-mail link (no login). Since 21 Oct 2026 one e-mail goes per
 // send: To and CC typed by staff, every outstanding unit listed, one link.
-// Anyone who got it may answer on the page, which asks their name and e-mail
-// and records them on each unit they answer
+// Anyone it was sent to (To or CC, never the firm's own addresses) may answer
+// on the page, which asks their name and e-mail, checks the e-mail against the
+// request, and records them on each unit they answer
 // (supabase/migrations/20261021140000_bu_confirm_cc.sql). The per-unit rows in
 // builder_bu_agreement_confirmations stay the record the posting gate reads.
 // Per-unit links e-mailed before that keep working until a new request asks
@@ -24,26 +26,9 @@ export interface AgreementConfirmUnit {
   cutOffDate?: string;
 }
 
-/** One e-mail address. The database checks the same pattern
- *  (builder_bu_confirm_email_ok). */
-export const EMAIL_RE = /^[^\s@,;<>()"]+@[^\s@,;<>()"]+\.[^\s@,;<>()".]+$/;
-
-/**
- * Addresses typed into a To or CC box: separated by commas, semicolons, spaces
- * or new lines. Trimmed, lower case, each once, in the order typed.
- */
-export function parseEmailList(text: string): { valid: string[]; invalid: string[] } {
-  const seen = new Set<string>();
-  const valid: string[] = [];
-  const invalid: string[] = [];
-  for (const raw of (text || '').split(/[,;\s]+/)) {
-    const a = raw.trim().replace(/^<|>$/g, '').toLowerCase();
-    if (!a || seen.has(a)) continue;
-    seen.add(a);
-    (EMAIL_RE.test(a) ? valid : invalid).push(a);
-  }
-  return { valid, invalid };
-}
+// Address rules (valid, the firm's own, "Name <addr>" pastes) live in a pure
+// module so scripts/verify-bu-confirm.mjs can run them.
+export { EMAIL_RE, emailOk, isFirmAddress, parseEmailList } from '@/lib/builderConfirmRules';
 
 export const AGREEMENT_CONFIRM_TEMPLATE = 'builder_bu_agreement_confirm_request';
 
@@ -54,29 +39,54 @@ const longDate = (iso: string | null | undefined): string => {
   return new Date(y, m - 1, d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
-/** The client master's e-mail, split into addresses, to fill the To box. */
-export async function fetchClientEmails(clientId: string): Promise<string[]> {
+/** The client master's e-mail, split into addresses, to fill the To box;
+ *  invalid: the parts left out (shown, so a bad master address is not lost). */
+export async function fetchClientEmails(clientId: string): Promise<{ valid: string[]; invalid: string[] }> {
   const { data } = await supabase.from('clients').select('email').eq('id', clientId).maybeSingle();
-  return parseEmailList(data?.email || '').valid;
+  return parseEmailList(data?.email || '');
+}
+
+/** A ticked unit someone answered while the pop-up was open: left out of the send. */
+export interface AnsweredMeanwhile {
+  unitId: string;
+  unitNo: string;
+  status: string;
+  respondedByName: string | null;
+  respondedByEmail: string | null;
 }
 
 export interface SendConfirmResult {
   ok: boolean;
   /** The e-mail's outbox status after the send: sent, pending (goes with the
-   *  next run), failed, sending/unknown (may have gone). */
+   *  next run), failed, sending/unknown (may have gone); 'answered' when every
+   *  ticked unit was answered meanwhile; 'error' when refused. */
   status: string;
   sent: number;
   requestId?: string;
   link?: string;
   reason?: string;
+  /** Units answered meanwhile, left out of the e-mail. */
+  skipped: AnsweredMeanwhile[];
 }
+
+type SendRpcResult = {
+  sent?: boolean;
+  request_id?: string;
+  outbox_id?: string;
+  link?: string;
+  units?: number;
+  already_answered?: { unit_id: string; unit_no: string; status: string; responded_by_name: string | null; responded_by_email: string | null }[];
+};
 
 /**
  * Ask about some units of one BU event in ONE e-mail to everyone in To and
  * CC. The database writes the request, points each unit at it (status
  * PENDING; an earlier dispute cleared; the earlier link for the unit then
- * shows it replaced) and queues the e-mail, all or nothing. A unit already
- * confirmed or accepted is refused there. Then the e-mail is sent at once.
+ * shows it replaced), gives the event's other taxable units a NOT_SENT row
+ * (so they still block filing) and queues the e-mail, all or nothing. A unit
+ * confirmed or accepted meanwhile is reported back instead: it is left out,
+ * the e-mail is filled in again for the rest and sent. Then the e-mail is sent
+ * at once.
  */
 export async function requestAgreementConfirmations(params: {
   buEventId: string;
@@ -91,62 +101,84 @@ export async function requestAgreementConfirmations(params: {
   cc: string[];
   units: AgreementConfirmUnit[];
 }): Promise<SendConfirmResult> {
-  if (!params.userId) return { ok: false, status: 'error', sent: 0, reason: 'Sign in again: who is sending is not known.' };
-  if (!params.units.length) return { ok: false, status: 'error', sent: 0, reason: 'Tick at least one unit.' };
-  if (!params.to.length) return { ok: false, status: 'error', sent: 0, reason: 'Enter at least one To address.' };
+  const skipped: AnsweredMeanwhile[] = [];
+  const refuse = (reason: string): SendConfirmResult => ({ ok: false, status: 'error', sent: 0, reason, skipped });
+  if (!params.userId) return refuse('Sign in again: who is sending is not known.');
+  if (!params.units.length) return refuse('Tick at least one unit.');
+  if (!params.to.length) return refuse('Enter at least one To address.');
 
   const { data: client } = await supabase
     .from('clients').select('name, gstin').eq('id', params.clientId).maybeSingle();
-  if (!client) return { ok: false, status: 'error', sent: 0, reason: 'Client not found.' };
+  if (!client) return refuse('Client not found.');
 
   const { data: tpl } = await supabase
     .from('email_templates').select('subject, body, is_active')
     .eq('key', AGREEMENT_CONFIRM_TEMPLATE).maybeSingle();
-  if (!tpl) return { ok: false, status: 'error', sent: 0, reason: `Template "${AGREEMENT_CONFIRM_TEMPLATE}" is missing.` };
-  if (tpl.is_active === false) return { ok: false, status: 'error', sent: 0, reason: 'The agreement confirmation template is switched off under Reminders.' };
+  if (!tpl) return refuse(`Template "${AGREEMENT_CONFIRM_TEMPLATE}" is missing.`);
+  if (tpl.is_active === false) return refuse('The agreement confirmation template is switched off under Reminders.');
   if (!tpl.body.includes('{{confirm_link}}')) {
-    return { ok: false, status: 'error', sent: 0, reason: 'The template has no {{confirm_link}}: add it back under Reminders, Templates.' };
+    return refuse('The template has no {{confirm_link}}: add it back under Reminders, Templates.');
   }
 
-  const lines = params.units.map((u) => {
-    const deed = !params.dastavejEvent && u.cutOffSource === 'DASTAVEJ' && u.cutOffDate
-      ? ` (taxable from its sale deed of ${longDate(u.cutOffDate)})` : '';
-    return `Unit ${u.unitNo}: Rs. ${formatINR(u.agreementValue)}${deed}`;
-  });
-  const total = params.units.reduce((a, u) => a + (Number(u.agreementValue) || 0), 0);
-  const vars: Record<string, string> = {
-    contact_person: client.name,
-    client_name: client.name,
-    gstin: client.gstin ?? '',
-    project_name: params.projectName,
-    bu_date: longDate(params.buDate),
-    cutoff_label: params.dastavejEvent ? 'registered sale deed (dastavej)' : 'building use permission',
-    unit_count: `${params.units.length} unit${params.units.length === 1 ? '' : 's'}`,
-    unit_table: lines.join('\n'),
-    total_value: formatINR(total),
-    // Left in place: the database makes the token and puts the link here.
-    confirm_link: '{{confirm_link}}',
-    staff_name: params.staffName || GST_FIRM.team,
-    firm_name: GST_FIRM.name,
-    firm_email: GST_FIRM.email,
-    firm_phone: GST_FIRM.phone,
+  const fill = (units: AgreementConfirmUnit[]): Record<string, string> => {
+    const lines = units.map((u) => {
+      const deed = !params.dastavejEvent && u.cutOffSource === 'DASTAVEJ' && u.cutOffDate
+        ? ` (taxable from its sale deed of ${longDate(u.cutOffDate)})` : '';
+      return `Unit ${u.unitNo}: Rs. ${formatINR(u.agreementValue)}${deed}`;
+    });
+    const total = units.reduce((a, u) => a + (Number(u.agreementValue) || 0), 0);
+    return {
+      contact_person: client.name,
+      client_name: client.name,
+      gstin: client.gstin ?? '',
+      project_name: params.projectName,
+      bu_date: longDate(params.buDate),
+      cutoff_label: params.dastavejEvent ? 'registered sale deed (dastavej)' : 'building use permission',
+      unit_count: `${units.length} unit${units.length === 1 ? '' : 's'}`,
+      unit_table: lines.join('\n'),
+      total_value: formatINR(total),
+      // Left in place: the database makes the token and puts the link here.
+      confirm_link: '{{confirm_link}}',
+      staff_name: params.staffName || GST_FIRM.team,
+      firm_name: GST_FIRM.name,
+      firm_email: GST_FIRM.email,
+      firm_phone: GST_FIRM.phone,
+    };
   };
 
-  const { data, error } = await supabase.rpc('builder_bu_confirm_request_send', {
-    p_bu_event_id: params.buEventId,
-    p_unit_ids: params.units.map((u) => u.unitId),
-    p_to: params.to,
-    p_cc: params.cc,
-    p_actor_id: params.userId,
-    p_link_base: window.location.origin,
-    p_subject: renderTemplate(tpl.subject, vars),
-    p_body: renderTemplate(tpl.body, vars),
-    p_render_vars: vars,
-  });
-  if (error) return { ok: false, status: 'error', sent: 0, reason: error.message };
-  const res = (data || {}) as { request_id?: string; outbox_id?: string; link?: string; units?: number };
-  const sent = Number(res.units) || params.units.length;
-  const base = { sent, requestId: res.request_id, link: res.link };
+  // Each round either sends or drops at least one unit answered meanwhile.
+  let units = params.units;
+  let res: SendRpcResult = {};
+  for (;;) {
+    const vars = fill(units);
+    const { data, error } = await supabase.rpc('builder_bu_confirm_request_send', {
+      p_bu_event_id: params.buEventId,
+      p_unit_ids: units.map((u) => u.unitId),
+      p_to: params.to,
+      p_cc: params.cc,
+      p_actor_id: params.userId,
+      p_link_base: window.location.origin,
+      p_subject: renderTemplate(tpl.subject, vars),
+      p_body: renderTemplate(tpl.body, vars),
+      p_render_vars: vars,
+    });
+    if (error) return refuse(error.message);
+    res = (data || {}) as SendRpcResult;
+    if (res.sent !== false) break;
+    const answered = res.already_answered || [];
+    const gone = new Set(answered.map((a) => a.unit_id));
+    const left = units.filter((u) => !gone.has(u.unitId));
+    if (!answered.length || left.length === units.length) return refuse('A ticked unit changed meanwhile. Check the list and send again.');
+    skipped.push(...answered.map((a) => ({
+      unitId: a.unit_id, unitNo: a.unit_no, status: a.status,
+      respondedByName: a.responded_by_name, respondedByEmail: a.responded_by_email,
+    })));
+    if (!left.length) return { ok: false, status: 'answered', sent: 0, skipped, reason: 'Every ticked unit was answered meanwhile.' };
+    units = left;
+  }
+
+  const sent = Number(res.units) || units.length;
+  const base = { sent, requestId: res.request_id, link: res.link, skipped };
   if (!res.outbox_id) return { ok: false, status: 'unknown', ...base, reason: 'The e-mail was not queued.' };
 
   // Send it now (the function also drains on its daily run, so a failure here
@@ -161,8 +193,10 @@ export async function requestAgreementConfirmations(params: {
 
 export interface AgreementConfirmStatus {
   unitId: string;
-  /** OVERRIDDEN = the firm accepted the value without the client's confirmation. */
-  status: 'PENDING' | 'CONFIRMED' | 'DISPUTED' | 'OVERRIDDEN' | 'NOT_SENT';
+  /** OVERRIDDEN = the firm accepted the value without the client's confirmation.
+   *  NOT_SENT = no request asked about the unit yet (no row, or a row written
+   *  for a unit left unticked; it blocks filing like PENDING). */
+  status: ConfirmStatus;
   disputeNotes: string | null;
   overrideReason?: string | null;
   /** Who answered on the confirmation page, and when. */
@@ -176,7 +210,7 @@ export interface AgreementConfirmStatus {
 
 /** A unit no longer holds up posting or filing. */
 export const isAgreementCleared = (status: AgreementConfirmStatus['status'] | undefined): boolean =>
-  status === 'CONFIRMED' || status === 'OVERRIDDEN';
+  isClearedStatus(status);
 
 /**
  * Accept a unit's agreement value without the client's confirmation. The DB
@@ -207,7 +241,7 @@ const CONFIRM_COLUMNS = 'bu_event_id, unit_id, status, dispute_notes, override_r
 // older ones rather than show every unit as never sent.
 const CONFIRM_COLUMNS_OLD = 'bu_event_id, unit_id, status, dispute_notes, override_reason, responded_at, sent_at';
 
-/** Confirmation rows per BU event. A unit with no row has had no request yet ('NOT_SENT'). */
+/** Confirmation rows per BU event. A unit with no row, or a NOT_SENT row, has had no request yet. */
 export async function fetchAgreementConfirmations(eventIds: string[]): Promise<Record<string, AgreementConfirmStatus[]>> {
   const out: Record<string, AgreementConfirmStatus[]> = {};
   if (!eventIds.length) return out;

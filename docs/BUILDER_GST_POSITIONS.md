@@ -196,34 +196,57 @@ directly on the button pressed."
 
 - "Send confirmation requests" opens a pop-up. Staff type the To addresses
   (filled from the client master, or from the last request, and editable) and
-  any CC addresses. Sending works when the client master has no e-mail.
+  any CC addresses. "Name <address>" pastes from Outlook are read. Sending
+  works when the client master has no e-mail.
 - The pop-up lists the outstanding units (pending, disputed or never sent)
-  with their agreement values. Staff may untick any. Confirmed and accepted
-  units are never asked again.
+  with their agreement values, read again each time it opens. Staff may untick
+  any. Confirmed and accepted units are never asked again: a unit answered
+  while the pop-up is open is left out of the e-mail, and the send says so.
+- A unit left unticked gets a `NOT_SENT` row. It holds up posting and filing
+  like a pending unit until it is asked or accepted, so a partial send never
+  opens the filing gate.
 - One e-mail per send, not one per unit, with one link
   (`builder_bu_confirm_requests`). The link's page lists every unit in it. The
   reader may confirm all at once, or confirm or dispute each unit. A dispute
-  needs a note.
-- Anyone who got the e-mail, in To or CC, may answer. The page asks their name
-  and e-mail (both required) and keeps them, with the time, on each unit they
-  answer (`responded_by_name`, `responded_by_email`, `responded_at`). The BU
-  Events page shows "Confirmed by <name> (<email>) on <date>" per unit and on
-  the event.
+  needs a note. A unit whose dispute box is open is left out of "Confirm
+  all", because a confirmation cannot be undone.
+- Only the people the e-mail went to may answer. The page asks the reader's
+  name and e-mail (both required). The e-mail must be one of the request's To
+  or CC addresses; for a per-unit link sent before this change, the address
+  that e-mail went to or the client master's. Both are kept, with the time, on
+  each unit answered (`responded_by_name`, `responded_by_email`,
+  `responded_at`). The BU Events page shows "Confirmed by <name> (<email>) on
+  <date>" per unit and on the event.
+- The firm's own addresses never answer: the firm's domain (`vjdesai.com`)
+  and any staff member's profile e-mail. They may get a copy, but a request
+  needs at least one address outside the firm. A staff member who wants to
+  clear a unit without the client uses "Accept without confirmation", with
+  its permission and reason; a request sent to oneself cannot do it.
 - Only an open unit takes an answer. A confirmed unit stays confirmed: the
   next reader sees who confirmed it and cannot dispute it there (a client's own
   confirmation is never replaced). A disputed unit waits for staff, who correct
   the working and send a new request for it.
+  *Open question for the firm:* "anyone can provide confirmation for the
+  outstanding figures" could mean that another recipient may confirm a unit
+  someone else disputed. Until the firm decides, a dispute stands. That is the
+  safer reading: a dispute says the working's value may be wrong.
 - A new request for a unit replaces the earlier one for that unit. The earlier
   link then shows the unit as "replaced by a newer request" and takes no
-  answer for it. Per-unit links e-mailed before this change keep working until
-  a new request asks about their unit.
+  answer for it. While the newer e-mail has failed (failed, skipped or
+  cancelled in the outbox), the earlier link keeps answering, so a failed send
+  never leaves the client without a working link. A confirmed or accepted unit
+  shows its answer on every link that asked about it. Per-unit links e-mailed
+  before this change keep working until a new request asks about their unit.
+- A send locks the event's rows before it checks them, so an answer given
+  while it runs is either seen (the unit is left out) or waits for it.
 - The posting gate is unchanged. The per-unit rows in
   `builder_bu_agreement_confirmations` stay the record it reads; CONFIRMED or
-  OVERRIDDEN clears a unit.
+  OVERRIDDEN clears a unit, and PENDING, DISPUTED and NOT_SENT hold it.
 
 *Migration `20261021140000_bu_confirm_cc.sql` (send, lookup and answer
 functions; template `builder_bu_agreement_confirm_request`, editable under
-Reminders, Templates, Builder); tests `supabase/tests/bu_confirm/`;
+Reminders, Templates, Builder); tests `supabase/tests/bu_confirm/run.sh` and
+`node scripts/verify-bu-confirm.mjs`; `src/lib/builderConfirmRules.ts`,
 `src/lib/builderAgreementConfirmData.ts`,
 `src/components/builder/SendAgreementConfirmDialog.tsx`,
 `src/pages/AgreementConfirmPage.tsx`.*

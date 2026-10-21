@@ -47,9 +47,12 @@ SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-
 SELECT t_eq((SELECT count(*) FROM builder_bu_agreement_confirmations WHERE request_id IS NOT NULL)::int, 3, 'every row on the request');
 SELECT pg_temp.run_gate_cases('request rows');
 
--- A unit with no row at all (never sent) does not show in the DB gate, as
--- before; the BU Events page blocks it itself (isAgreementCleared).
+-- A unit with no row at all does not show in the DB gate, as before. Since
+-- this change that happens only for an event whose requests went out as the
+-- old per-unit e-mails (every one of which asked about every taxable unit):
+-- a request now writes a row for each taxable unit, NOT_SENT for those not
+-- asked, which the gate counts (test_80).
 DELETE FROM builder_bu_agreement_confirmations WHERE unit_id = 'a1000000-0000-0000-0000-000000000003';
 UPDATE builder_bu_agreement_confirmations SET status = 'CONFIRMED';
-SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-000000000001', '10/2026'), false, 'a never-sent unit is the page''s check, as before');
+SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-000000000001', '10/2026'), false, 'a unit with no row is not seen, as before');
 ROLLBACK;

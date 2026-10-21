@@ -6,16 +6,17 @@ BEGIN;
 SET LOCAL ROLE anon;
 
 SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000002',
-                    'a1000000-0000-0000-0000-000000000003']::uuid[], ARRAY['owner@client.test'], NULL) AS r1 \gset
+                    'a1000000-0000-0000-0000-000000000003']::uuid[], ARRAY['owner@client.test'], ARRAY['meena@ca.test']) AS r1 \gset
 SELECT :'r1'::jsonb ->> 'token' AS tok1, :'r1'::jsonb ->> 'request_id' AS req1 \gset
 SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok1', jsonb_build_array(
               t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM'),
               t_answer('a1000000-0000-0000-0000-000000000002', 'DISPUTE', 'Value is 50 lakh')), 'Meena Patel', 'meena@ca.test')),
             'A-101:CONFIRMED,A-102:DISPUTED', 'first answers');
 
--- A confirmed unit cannot be asked again.
-SELECT t_raises($$SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000002']::uuid[], ARRAY['owner@client.test'], NULL)$$,
-                'Already confirmed or accepted: unit A-101', 'a confirmed unit is not re-sent');
+-- A confirmed unit is not asked again: the send writes nothing and names it.
+SELECT t_eq(t_send(ARRAY['a1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000002']::uuid[], ARRAY['owner@client.test'], NULL)
+              -> 'already_answered' -> 0 ->> 'unit_no', 'A-101', 'a confirmed unit is not re-sent');
+SELECT t_eq((SELECT count(*) FROM email_outbox)::int, 1, 'and nothing was queued');
 
 -- Re-send the disputed and the open unit, by an employee holding post_bu_event.
 SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000003']::uuid[],
@@ -34,7 +35,7 @@ SELECT t_eq(t_states(:'tok1'), 'A-101:CONFIRMED,A-102:REPLACED,A-103:REPLACED', 
 SELECT t_eq((SELECT u ->> 'responded_by_name' FROM jsonb_array_elements(builder_bu_confirm_lookup(:'tok1') -> 'units') u WHERE u ->> 'unit_no' = 'A-102'),
             NULL::text, 'a replaced unit shows no answer');
 SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok1', jsonb_build_array(
-              t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Old Reader', 'old@client.test')),
+              t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Old Reader', 'owner@client.test')),
             'A-103:REPLACED', 'the earlier link takes no answer for it');
 SELECT t_eq((SELECT status FROM builder_bu_agreement_confirmations WHERE unit_id = 'a1000000-0000-0000-0000-000000000003'), 'PENDING', 'still open');
 
@@ -51,8 +52,9 @@ SELECT t_eq(t_states(:'tok2'), 'A-102:CONFIRMED,A-103:ACCEPTED', 'the page shows
 SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok2', jsonb_build_array(
               t_answer('a1000000-0000-0000-0000-000000000003', 'DISPUTE', 'no')), 'Site Office', 'site@client.test')),
             'A-103:ALREADY_ACCEPTED', 'an accepted unit takes no answer');
-SELECT t_raises($$SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000003']::uuid[], ARRAY['owner@client.test'], NULL)$$,
-                'Already confirmed or accepted: unit A-103', 'an accepted unit is not re-sent');
+SELECT t_eq(t_send(ARRAY['a1000000-0000-0000-0000-000000000003']::uuid[], ARRAY['owner@client.test'], NULL)::text,
+            '{"sent": false, "already_answered": [{"status": "OVERRIDDEN", "unit_id": "a1000000-0000-0000-0000-000000000003", "unit_no": "A-103", "responded_by_name": null, "responded_by_email": null}]}',
+            'an accepted unit is not re-sent');
 SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-000000000001', '10/2026'), false, 'every unit cleared');
 
 -- Deleting the event takes its requests with it.

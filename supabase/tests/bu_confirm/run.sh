@@ -2,8 +2,9 @@
 # BU agreement value confirmation, one request to several people
 # (20261021140000_bu_confirm_cc.sql): replays the confirmation migrations on a
 # throwaway local database, each twice (they must be safe to re-run), and runs
-# the SQL tests in this folder. Every test calls the functions as the public
-# key (anon), as the app and the public page do. Needs a local PostgreSQL
+# the SQL tests in this folder, then the two-session cases (race.sh) on a copy
+# of the database. Every test calls the functions as the public key (anon), as
+# the app and the public page do. Needs a local PostgreSQL
 # 15/16; connection from the usual PG* variables, e.g.
 #   PGHOST=/tmp/pgsock PGPORT=55432 PGUSER=postgres supabase/tests/bu_confirm/run.sh
 # Never point it at the live project: it creates and drops its own database.
@@ -36,4 +37,9 @@ for t in "$here"/test_*.sql; do
     echo "FAIL $(basename "$t")"; echo "$out"; status=1
   fi
 done
+# The two-session cases, on a copy of the migrated database (nothing else is
+# connected to it now).
+createdb -T "$db" "${db}_race"
+trap 'dropdb --if-exists --force "${db}_race"; dropdb --if-exists --force "$db"' EXIT
+"$here/race.sh" "${db}_race" || status=1
 exit $status

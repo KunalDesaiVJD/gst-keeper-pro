@@ -23,6 +23,12 @@ CREATE TABLE public.user_roles (
   role public.app_role NOT NULL DEFAULT 'employee',
   UNIQUE (user_id, role)
 );
+CREATE TABLE public.profiles (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL UNIQUE,
+  first_name text NOT NULL,
+  email text
+);
 CREATE TABLE public.user_permissions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL,
@@ -102,7 +108,7 @@ CREATE TABLE public.email_outbox (
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['user_roles','user_permissions','clients','builder_projects','builder_units',
+  FOREACH t IN ARRAY ARRAY['user_roles','profiles','user_permissions','clients','builder_projects','builder_units',
                            'builder_bu_events','builder_bu_event_units','email_templates','email_outbox'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('CREATE POLICY %I ON public.%I FOR ALL TO public USING (true) WITH CHECK (true)', t || '_all', t);
