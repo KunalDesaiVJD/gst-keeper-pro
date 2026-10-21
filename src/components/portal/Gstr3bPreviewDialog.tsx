@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
@@ -8,6 +8,8 @@ import { Loader2, Download, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Gstr3bResult } from '@/utils/buildGstr3bJson';
 import { fetchGstr3b } from '@/utils/fetchGstr3b';
+import { askGateForClick } from '@/lib/gstr3bPushGate';
+import { draftMismatch, forSelection, selectionKey, tagForSelection, type ForSelection } from '@/lib/gstr3bSelection';
 
 const inr = (n: number) => (n || n === 0 ? Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '0');
 
@@ -41,26 +43,44 @@ export const Gstr3bPreviewDialog: React.FC<{
   periodMonth: string; // MM/YYYY
 }> = ({ open, onOpenChange, clientId, gstin, periodMonth }) => {
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<Gstr3bResult | null>(null);
+  // Kept with the client and month it was built for, as on the GSTR-3B page
+  // (src/lib/gstr3bSelection.ts): a build that ends after the props changed
+  // is dropped, and the draft shows only for its own pair.
+  const [loaded, setLoaded] = useState<ForSelection<Gstr3bResult> | null>(null);
+  const result = forSelection(loaded, clientId, periodMonth);
+  const keyRef = useRef('');
+  keyRef.current = selectionKey(clientId, periodMonth);
+  const buildSeq = useRef(0);
 
   useEffect(() => {
     if (!open || !clientId || !periodMonth) return;
+    const seq = ++buildSeq.current;
     (async () => {
       setLoading(true);
-      setResult(null);
+      setLoaded(null);
       try {
-        setResult(await fetchGstr3b(clientId, gstin, periodMonth));
+        const built = await fetchGstr3b(clientId, gstin, periodMonth);
+        if (seq === buildSeq.current) setLoaded(tagForSelection(clientId, periodMonth, built));
       } catch (e: any) {
-        toast.error('Failed to build GSTR-3B: ' + (e?.message || 'unknown'));
+        if (seq === buildSeq.current) toast.error('Failed to build GSTR-3B: ' + (e?.message || 'unknown'));
       } finally {
-        setLoading(false);
+        if (seq === buildSeq.current) setLoading(false);
       }
     })();
   }, [open, clientId, periodMonth, gstin]);
 
-  const download = () => {
-    if (!result) return;
-    const blob = new Blob([JSON.stringify(result.json, null, 2)], { type: 'application/json' });
+  // Gated like the GSTR-3B page's own JSON download (gstr3b_push_gate):
+  // a JSON can be uploaded to the portal by hand.
+  const download = async () => {
+    const draft = result;
+    const key = selectionKey(clientId, periodMonth);
+    if (!draft || loading) return;
+    const off = draftMismatch(draft.json, gstin, periodMonth);
+    if (off) { toast.error(`The GSTR-3B JSON download is locked. ${off}`, { duration: 15000 }); return; }
+    const { allowed, message } = await askGateForClick(clientId, periodMonth, 'The GSTR-3B JSON download');
+    if (keyRef.current !== key) { toast.error('The GSTR-3B JSON download was stopped: the client or month changed. Nothing was sent.'); return; }
+    if (!allowed) { toast.error(message, { duration: 15000 }); return; }
+    const blob = new Blob([JSON.stringify(draft.json, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -132,7 +152,7 @@ export const Gstr3bPreviewDialog: React.FC<{
         )}
 
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={download} disabled={!result}>
+          <Button variant="outline" onClick={download} disabled={!result || loading}>
             <Download className="h-4 w-4 mr-2" />Download JSON
           </Button>
         </DialogFooter>

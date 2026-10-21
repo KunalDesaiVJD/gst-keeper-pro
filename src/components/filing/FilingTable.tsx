@@ -18,6 +18,7 @@ import {
 } from '@/lib/filingPull';
 import type { ManualSourceAllowance } from '@/lib/manualSourceAllowances';
 import { describeCarryGap, type CarryOutcome } from '@/lib/twobPriorMonth';
+import { MIN_EXTENSION_VERSION } from '@/lib/extensionVersion';
 
 export interface FilingRecord {
   id: string;
@@ -356,7 +357,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
             const pullDisabled = ctx.pulling || p.pullRunning;
             const pullTitle = !p.extReady
               ? 'GST Keeper extension not detected yet: install or enable it and reload this page'
-              : p.extOutdated ? 'Update the GST Keeper extension to 0.15.0 or later to pull filed returns'
+              : p.extOutdated ? `Update the GST Keeper extension to ${MIN_EXTENSION_VERSION} or later to pull filed returns`
                 : p.pullRunning && !ctx.pulling ? 'A pull is running. The extension pulls one set at a time: wait for it to end, then pull again.'
                 : ctx.pullBlocked ? `Pull is held back: this ${record.return_type} was not pushed through GST Keeper. Click to Request approval of the direct filing from the superadmin first.`
                   : isFiled ? 'Pull again from the GST portal: the same ARN refreshes the date and PDF; a different ARN goes to the superadmin'

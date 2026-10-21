@@ -522,8 +522,12 @@ first fix only covered one of them:
 
 | Where | Form | Threshold | File |
 |---|---|---|---|
-| Marking GSTR-3B **Filed** | `toast.error` on click | \|diff\| > ₹20 | `FilingStatusPage.tsx`, `handleStatusChange` |
+| Marking GSTR-3B **Filed** | `toast.error` on click | \|diff\| > ₹20 | `FilingStatusPage.tsx`, `handleStatusChange` (gone since 21 Oct 2026: Filed comes only from the portal pull, `docs/FILING_STATUS_PULL_ONLY.md`) |
 | **Push to GST Portal** | Button `disabled`, hard-blocked | diff ≠ 0 | `Gstr3bPage.tsx`, `hasRecoDiff` |
+
+*Since 21 Oct 2026 the push row is the database's `gstr3b_push_gate`, which
+also needs both recos pulled and gates the JSON download and the extension's
+push (§14). The waiver below carries over unchanged.*
 
 The Push gate is the stricter of the two (any non-zero difference, not just
 over ₹20) and the more visible: the button simply cannot be pressed, with a
@@ -567,6 +571,7 @@ everyone else keeps the rules as they are.
 - **RCM Summary:** filed months and a fully filed year.
 - **Suspended Reco:** Override is offered even when the opening was set by
   hand.
+  *Since 21 Oct 2026 the GST Managers override too, with a reason (§14).*
 
 **What the screens show:**
 
@@ -1287,3 +1292,200 @@ through 2B Reconciliation before its Re-run. V J
 DESAI & CO LLP Jun-26 is not one of these: June and July were filed in order,
 and July's list was emptied by staff before July was filed. Filing June
 again now carries nothing.
+## §14. Recos pulled only; one GSTR-3B push gate (firm decision, 21 Oct 2026)
+
+*Written as §13 on its branch; renumbered when merged with the prior-month
+rule (§13), 21 Oct 2026.*
+
+The firm's words: "In case of Nil return too, pulling of data of Suspended &
+GST Receivable Reco directly from portal is required. Manual uploading of
+credit ledger to be restricted. Unless pulling is done, pushing GSTR-3B to
+portal to be banned." and "Unless there is [no] difference in Suspended & GST
+Receivable Reco, 3B should not be pushed, except superadmin/GST Manager
+overrides the opening balance." With them: when a pull cannot be done, the
+superadmin may allow a manual entry for that one client, month and reco, with
+a reason, and everything must be traceable. Migration
+`20261021120000_reco_pull_push_gate.sql`, extension 0.16.0.
+
+**Where the portal side comes from (from the Jun-2026 period).**
+
+| Figure | Source | Who | Refused otherwise |
+|---|---|---|---|
+| Opening (both recos), ITC utilised and DRC-03 (GST Receivable Reco) | The extension's Pull, through `reco_record_pull` | A staff member, named by the app (`opening_portal_pulled_by`, server time); a pull nobody can be named for is refused | `reco_source_guard`: a direct write, the old Upload / Not Applicable, or a Save that changes them |
+| The same, when a pull cannot be done | CSV upload or Not Applicable, through `reco_manual_opening` | Any staff member, once, after the superadmin allowed it (`manual_source_allowances`, scope `reco:suspended` / `reco:receivable`), and only while the month is not pulled | Without an unused, unrevoked allowance; over a pulled month |
+| Opening override | The Override button, through `reco_override_opening` | The superadmin and GST Managers (who acts is checked there), with a reason of at least 5 characters; from 06/2026 only over a pulled (or allowed manual) opening | Employees; no reason; any direct write of the override fields (`opening_override_guard`, every period) |
+| Clear Data (Suspended Reco) | `reco_clear` | Staff; the log names who cleared | A direct delete still works but is logged with nobody named |
+| Books closing (GST Receivable Reco), the current-total snapshot (Suspended Reco) | Typed / computed, Save | Staff, as before | — |
+
+- A reco row stays with its client and month: an update that changes either
+  is refused, for every period (a row moved from an old month, or between
+  months or clients, would carry a pull, an override or a cleared difference
+  with it).
+- A pull clears the CSV stamps and the allowance link, and closes the
+  month's live manual allowance, used or not: it is revoked, with the puller
+  as `revoked_by` (logged: "The manual entry allowed for the month (used /
+  not used) was closed by this pull."). So the shared table tells "closed by
+  a pull" (revoked) from "used for a manual entry" (used, not revoked), and
+  a pulled month never shows "manual (allowed by ...)". It keeps
+  an override made against the same portal figure (`opening_override_base`,
+  the figure the first override replaced), and clears one made against
+  another figure; the log says which ("Override by X kept / cleared"). So
+  Pull on GST Receivable Reco, which pulls both ledgers, no longer wipes a
+  Suspended Reco override when the portal has not moved. An override made
+  before the migration has no base: its figure is unknown, not different, so
+  the first pull keeps it and takes the pulled figure as its base ("kept (no
+  base was recorded; base set from this pull)"); a re-override of such a row
+  leaves the base empty for that pull to set. Live, 8 Suspended Reco
+  overrides are of this kind. Before 0.16.0 a re-pull wrote the pulled figure
+  over an override and left its stamps: an override with no base whose last
+  pull is later than the override (`reco_override_superseded`) no longer
+  applies, so the next pull clears it ("cleared: a later pull had already
+  replaced it") instead of keeping it under the new figure, and a re-override
+  of such a row takes the pulled opening as its base (round 3 of the review).
+  Live, 2 rows: NAVRATNA S G HIGHWAY 06/2026 and SORATH BUILDERS 08/2026,
+  both Filed; they keep the "Overridden" label until they are pulled again.
+- The pull saves only for the client the portal page shows: both ledger
+  steps check the page header's GSTIN first, as the push does (0.16.0), and
+  stop with nothing saved when it is another client's.
+- **A month with no balance on the portal.** When the reversal statement loads
+  for the month but has no balance row and the page says there are no
+  records, the pull saves 0, marked "no balance on the portal"
+  (`opening_portal_empty`). A Nil client passes by pulling; no allowance is
+  needed. Without such words on the page nothing is saved. The portal's exact
+  wording for an empty month is not confirmed live yet.
+- The popup's full sync has no app user, so it reads the two ledgers but does
+  not save them: Pull on a reco page does.
+- The pages show where the opening came from: **Pulled from portal \<date\> by
+  \<name\>** (", no balance on the portal" for an empty month), **Manual
+  (allowed by X: reason)**, **Manual entry revoked**, or **Not pulled** (also
+  "CSV, not allowed" for an upload made before this change). The (i) popover
+  lists the history from `reco_opening_log` (pull with the extension version,
+  manual entry, override, insert, clear; who, when, why). Who is the person
+  the door checked (the pull, manual entry, override and Clear Data doors);
+  a direct delete names nobody, and a client's deletion is logged as
+  "Client deleted". The log has no foreign key to clients, so it outlives a
+  deleted client. It is written by a trigger and only read by the app.
+- Upload and Not Applicable are shown only while an unused allowance is open
+  and the month is not pulled. The superadmin allows or revokes it on the
+  reco page itself ("Allow manual entry", reason required); the control is
+  not shown over a pulled month, and it reads "manual (allowed by X:
+  reason)" only for the allowance the opening shown was entered under. A
+  revoked allowance makes the entry count as not pulled again, and the page
+  says "Manual entry revoked". One live allowance per client, month and
+  scope; an allowance counts only for its own client, month and reco.
+- On GST Receivable Reco, Override, Upload and Not Applicable are refused
+  while a books closing is typed but not saved ("Save your changes first"):
+  they reload the row and would drop it. The gate note then says it has not
+  checked the figures typed ("Based on the saved figures. Save to check
+  again.") instead of "ready".
+- The Excel exports of both recos have an "Opening source" line under the
+  opening (pulled by, manual allowed by X with the reason, overridden by Y
+  with the reason), and the Credit Ledger reports (all clients, one client
+  by month) have an Opening Source column.
+- `manual_source_allowances` and `manual_source_allow` / `_revoke` / `_take`
+  are byte for byte the filing branch's (20261021110000);
+  `supabase/tests/reco_gate/shared_block.sh` compares them and applies the two
+  migrations in both orders.
+- DRC-03 is no longer typed on GST Receivable Reco: it is the ledger's.
+- **ITC utilised, a change of figure.** A pulled (or allowed) GST Receivable
+  Reco takes ITC utilised from the credit ledger, and a pull that saw no
+  "other than reverse charge" set-off debit means 0: that is the portal's
+  figure (the client paid in cash, or had nothing to pay). Before, the page
+  put its GSTR-1 estimate there. The estimate is shown only on a row not yet
+  pulled ("Estimate, not pulled"). 0.16.0 saves 0 when ledger rows were read
+  without a set-off debit, and nothing when no row was read.
+- Periods before 06/2026 keep the typed opening, as before.
+
+**The gate.** `gstr3b_push_gate(client, period)` decides for the GSTR-3B
+page's push, its JSON download (which can be uploaded to the portal by hand)
+and the extension, which asks it again before it opens the portal. All three
+therefore agree. It passes only when:
+
+1. Suspended Reco is pulled, or allowed manual, and its difference is 0 under
+   every head and in total, after the ₹10 tolerance per head (Builder +
+   NO_ITC: the difference is waived as in §8; the pull is still needed, and
+   the same Pull run fetches both ledgers);
+2. GST Receivable Reco is pulled, or allowed manual, and its difference is 0
+   under every head and in total, after the ₹10 tolerance.
+
+Heads that offset do not pass (round 2 of the review): IGST ₹1,000 on the
+portal against CGST ₹500 + SGST ₹500 in the books totals 0 but puts the
+credit under the wrong head. The reason then names each head ("has a
+difference under IGST ₹1000.00, CGST ₹-500.00, SGST ₹-500.00 (total ₹0.00).
+Each head must tally, not only the total."), and the reco pages say
+"Differs" ("Heads differ: each must tally"). The same per-head rule applies
+before 06/2026 (no tolerance there).
+
+Nil returns are not exempt. A missing row blocks. An override by the
+superadmin or a GST Manager is how a difference in the opening is cleared;
+it is not a bypass. The gate fails closed: an error inside it, an error
+calling it, an empty or malformed answer, or the page still loading it, all
+block, with the reason. Before 06/2026 it checks only the Suspended Reco
+difference, with no tolerance, as the page did; there the GSTR-3B page names
+the opening's source plainly (typed, CSV, Not Applicable), not as "not
+pulled".
+
+**A recorded push carries the database's own check.** When a Push History row
+is written (`gstr3b_push_versions`, by the extension or the page), a trigger
+asks `gstr3b_push_gate` itself and stores that answer in `gate`, in place of
+what was sent (whether the sender said it passed is kept as `gate.sent_ok`).
+An `ok` row whose gate does not pass is still recorded, because the portal
+has the draft, but it does not mark the return Pushed, and Push History shows
+it as "Reco check failed: not marked Pushed" with the reasons. This covers an
+extension older than 0.16.0, which pushes without asking, and a forged row.
+The gate, client and month of a recorded push never change afterwards.
+`mark_filing_pushed`, the other way into Pushed (the GSTR-1 page and the
+extension's GSTR-1 NIL push), refuses a GSTR-3B or GSTR-3B (Q) whose gate
+does not pass, with the reasons (round 3 of the review); no page calls it for
+a GSTR-3B. Filing Status shows such a return as not Pushed; it does not yet show the
+flag itself (the page is being reworked on the filing branch).
+"Ready" on the pages says what it rests on, per reco: pulled, an allowed
+manual entry, a waived Builder difference, or no pull needed before
+Jun 2026; the reco pages show only the answer for the client on screen.
+
+**The GSTR-3B page keeps everything with its client and month** (round 3 of
+the review, `src/lib/gstr3bSelection.ts`). The draft, the gate answer and the
+filing status are each kept with the client and month they were loaded for
+and shown only while that pair is selected: a switch clears them and loads
+the new pair's, and an answer that comes back after a switch is dropped. The
+JSON download and the push take the draft, client and month of the click,
+check that the draft's GSTIN and return period are that client's and month's,
+ask the gate for that pair, and stop ("... was stopped: the client or month
+changed. Nothing was sent.") if another pair is selected by the time the
+checks and confirmations end. Both buttons are locked while the draft
+builds, and the push until that return's filing status is read. Before, a
+draft still building for the client selected before could be downloaded or
+pushed under the new client's passing gate (another client's figures typed
+into this client's portal form), and a late gate answer from a JSON or Push
+click showed "ready" for the client selected since. The GSTR-3B preview
+dialog (`Gstr3bPreviewDialog`, unused today) keeps its draft the same way.
+
+The differences are `suspended_reco_difference` and
+`gst_receivable_reco_difference`, ports of `src/lib/suspendedRecoCalc.ts`
+and `src/lib/gstReceivableRecoCalc.ts`. `supabase/tests/reco_gate/parity.mjs`
+runs both on the same rows (12 of 12 agree, and on a copy of the live 09/2026
+and 10/2026 rows). **A change to either formula must be made in both.**
+
+**Filing Status.** It no longer marks a GSTR-3B Filed by hand
+(20261021110000, merged with this on 21 Oct 2026): Filed is recorded from the
+portal pull, or an attach the superadmin allowed, as what the portal already
+holds, so neither the old ₹20 Suspended Reco check (§8) nor the gate stands
+there; the gate stands before the push and the JSON.
+
+**With the prior-month rule (§13).** §13 makes the two differences read a
+prior month's 4B(2)(i), 5.4 and 4(D) 1.2 as recorded at its first change
+after filing (`twob_filed_figures`), so a GST Manager's correction of a filed
+month moves only the Suspended Reco books side; and it makes every read of
+the push check fail closed. Merged (21 Oct 2026): the database's ports
+(`suspended_reco_difference`, `gst_receivable_reco_difference`) read those
+recorded figures too (the month's own for Suspended Reco, M-1's for GST
+Receivable Reco), exactly as `src/lib/suspendedRecoCalc.ts` and
+`src/lib/gstReceivableRecoCalc.ts` do, and `parity.mjs` has a client with
+recorded figures. The GSTR-3B page asks only `gstr3b_push_gate`, which fails
+closed on any error; `src/lib/pushRecoGate.ts` stays as the TypeScript
+mirror §13's tests run. Without 20261021100000 there are no recorded figures
+and the ports read the live lists, as this section's own branch did.
+
+**Still open.** The empty-month rule above relies on the
+portal's "no records" words: confirm them on one Nil client after the
+release (the extension's diagnostic box shows what it read).

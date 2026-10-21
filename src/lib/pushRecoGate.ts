@@ -1,12 +1,16 @@
 import { computeSuspendedRecoDiff, type RecoDiffResult } from './suspendedRecoCalc';
 import { computeGstReceivableRecoDiff } from './gstReceivableRecoCalc';
 
-// The GSTR-3B page's push gate (Gstr3bPage): the Suspended Reco and GST
+// The app's own reading of the GSTR-3B push check: the Suspended Reco and GST
 // Receivable Reco differences must both be 0 before Push. Both read a filed
 // month's recorded figures (twob_filed_figures, docs/2B_RECONCILIATION_FLOW.md
-// §13), and a check that cannot be read blocks Push with its reason: the gate
+// §13), and a check that cannot be read blocks Push with its reason: the check
 // fails closed (a missing table before the migration is applied, a network
-// error), never open.
+// error), never open. Since the merge with 20261021120000 (§14) the GSTR-3B
+// page, its JSON and the extension ask the database's gstr3b_push_gate, whose
+// difference functions read the same recorded figures (parity:
+// supabase/tests/reco_gate/parity.mjs); this stays the TypeScript mirror the
+// prior-month tests (supabase/tests/twob_simple) run.
 export interface PushRecoCheck {
   suspended: RecoDiffResult | null;
   receivable: RecoDiffResult | null;

@@ -632,17 +632,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return hasPermission('import_excel');
   }, [user, hasPermission]);
 
-  // Note the deliberate difference from other helpers: only superadmin bypasses
-  // the explicit permission check here. gst_manager and employees must both be
-  // granted `manual_override` in User Control to see the Override button. This
-  // preserves the previous "superadmin only" behaviour while adding a knob for
-  // trusted employees.
-  // Overriding an opening balance (Suspended Reco, GST Receivable Reco) is the
-  // superadmin's alone (the firm's decision, 20 Oct 2026); the database refuses
-  // an override stamped by anyone else (20261020150000).
+  // Overriding an opening balance (Suspended Reco, GST Receivable Reco) is for
+  // the superadmin and GST Managers (the firm's decision, 21 Oct 2026; it was
+  // the superadmin's alone from 20 Oct). The database refuses an override
+  // stamped by anyone else, or without a reason (20261021120000).
   const canManualOverride = useCallback((): boolean => {
     if (!user) return false;
-    return user.role === 'superadmin';
+    return user.role === 'superadmin' || user.role === 'gst_manager';
   }, [user]);
 
   const keyOrManager = useCallback((key: keyof UserPermissions): boolean => {

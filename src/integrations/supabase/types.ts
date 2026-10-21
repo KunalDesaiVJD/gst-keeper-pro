@@ -6578,6 +6578,9 @@ export type Database = {
           drc_igst: number | null
           drc_sgst: number | null
           id: string
+          opening_allowance_id: string | null
+          opening_override_base: Json | null
+          opening_portal_empty: boolean
           opening_cgst: number | null
           opening_csv_period_month: string | null
           opening_csv_uploaded_at: string | null
@@ -6606,6 +6609,9 @@ export type Database = {
           drc_igst?: number | null
           drc_sgst?: number | null
           id?: string
+          opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -6634,6 +6640,9 @@ export type Database = {
           drc_igst?: number | null
           drc_sgst?: number | null
           id?: string
+          opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -7350,6 +7359,7 @@ export type Database = {
           actor_id: string | null
           client_id: string
           filled_count: number | null
+          gate: Json | null
           id: string
           period_month: string
           payload: Json | null
@@ -7363,6 +7373,7 @@ export type Database = {
           actor_id?: string | null
           client_id: string
           filled_count?: number | null
+          gate?: Json | null
           id?: string
           period_month: string
           payload: Json | null
@@ -7376,6 +7387,7 @@ export type Database = {
           actor_id?: string | null
           client_id?: string
           filled_count?: number | null
+          gate?: Json | null
           id?: string
           period_month?: string
           payload?: Json | null
@@ -7849,6 +7861,56 @@ export type Database = {
           id?: number
         }
         Relationships: []
+      }
+      manual_source_allowances: {
+        Row: {
+          allowed_at: string
+          allowed_by: string
+          client_id: string
+          id: string
+          period_month: string
+          reason: string
+          revoked_at: string | null
+          revoked_by: string | null
+          scope: string
+          used_at: string | null
+          used_by: string | null
+        }
+        Insert: {
+          allowed_at?: string
+          allowed_by: string
+          client_id: string
+          id?: string
+          period_month: string
+          reason: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          scope: string
+          used_at?: string | null
+          used_by?: string | null
+        }
+        Update: {
+          allowed_at?: string
+          allowed_by?: string
+          client_id?: string
+          id?: string
+          period_month?: string
+          reason?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          scope?: string
+          used_at?: string | null
+          used_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manual_source_allowances_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       matter_deadlines: {
         Row: {
@@ -9426,6 +9488,54 @@ export type Database = {
         }
         Relationships: []
       }
+      reco_opening_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          after: Json | null
+          allowance_id: string | null
+          before: Json | null
+          client_id: string
+          ext_version: string | null
+          id: string
+          logged_at: string
+          period_month: string
+          reason: string | null
+          reco: string
+          source: string | null
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          after?: Json | null
+          allowance_id?: string | null
+          before?: Json | null
+          client_id: string
+          ext_version?: string | null
+          id?: string
+          logged_at?: string
+          period_month: string
+          reason?: string | null
+          reco: string
+          source?: string | null
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          after?: Json | null
+          allowance_id?: string | null
+          before?: Json | null
+          client_id?: string
+          ext_version?: string | null
+          id?: string
+          logged_at?: string
+          period_month?: string
+          reason?: string | null
+          reco?: string
+          source?: string | null
+        }
+        Relationships: []
+      }
       reconciliation_reasons: {
         Row: {
           client_id: string
@@ -9860,6 +9970,9 @@ export type Database = {
         Row: {
           client_id: string
           id: string
+          opening_allowance_id: string | null
+          opening_override_base: Json | null
+          opening_portal_empty: boolean
           opening_cgst: number | null
           opening_csv_period_month: string | null
           opening_csv_uploaded_at: string | null
@@ -9882,6 +9995,9 @@ export type Database = {
         Insert: {
           client_id: string
           id?: string
+          opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -9904,6 +10020,9 @@ export type Database = {
         Update: {
           client_id?: string
           id?: string
+          opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -12124,6 +12243,54 @@ export type Database = {
       staff_level_of: {
         Args: { p_user_id: string }
         Returns: string | null
+      }
+      gstr3b_push_gate: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: Json
+      }
+      manual_source_allow: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_reason: string; p_scope: string }
+        Returns: Database["public"]["Tables"]["manual_source_allowances"]["Row"]
+      }
+      manual_source_revoke: {
+        Args: { p_actor_id: string; p_id: string }
+        Returns: Database["public"]["Tables"]["manual_source_allowances"]["Row"]
+      }
+      reco_manual_opening: {
+        Args: {
+          p_actor_id: string
+          p_client_id: string
+          p_csv_period?: string | null
+          p_drc?: Json | null
+          p_opening: Json
+          p_period: string
+          p_reco: string
+          p_source: string
+          p_utilised?: Json | null
+        }
+        Returns: Json
+      }
+      reco_clear: {
+        Args: { p_actor_id: string; p_client_id: string; p_periods: string[]; p_reco: string }
+        Returns: number
+      }
+      reco_override_opening: {
+        Args: { p_actor_id: string; p_client_id: string; p_opening: Json; p_period: string; p_reason: string; p_reco: string }
+        Returns: Json
+      }
+      reco_record_pull: {
+        Args: {
+          p_actor_id: string
+          p_client_id: string
+          p_drc?: Json | null
+          p_ext_version?: string | null
+          p_no_rows?: boolean
+          p_opening: Json | null
+          p_period: string
+          p_reco: string
+          p_utilised?: Json | null
+        }
+        Returns: Json
       }
       staff_remove: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_target_user_id: string }
