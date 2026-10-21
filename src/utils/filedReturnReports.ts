@@ -143,15 +143,29 @@ export const fetchFiledReturn = async (clientId: string, period: string, returnT
 // from the JSON pulls above) lives on filing_status, not gst_filed_returns.
 // Joined in here so the PDF shows inline in the same report a reviewer is
 // already looking at, instead of a separate documents page.
+// 21 Oct 2026: with where it came from — pulled from the portal, or attached
+// by hand ("manual (allowed by X: reason)") — so the working paper says so.
 const fetchFiledPdfUrl = async (clientId: string, period: string, returnTypes: string[]): Promise<string | null> => {
   const { data } = await supabase
     .from('filing_status')
-    .select('return_pdf_url')
+    .select('return_pdf_url, filed_source, manual_allowance_id, return_type')
     .eq('client_id', clientId).eq('period_month', period)
     .in('return_type', returnTypes)
     .not('return_pdf_url', 'is', null)
     .limit(1).maybeSingle();
-  return data?.return_pdf_url || null;
+  const row = data as unknown as { return_pdf_url: string | null; filed_source: string | null; manual_allowance_id: string | null; return_type: string } | null;
+  if (!row?.return_pdf_url) return null;
+  if (row.filed_source !== 'manual') return row.return_pdf_url;
+  let note = 'manual';
+  if (row.manual_allowance_id) {
+    const { data: a } = await supabase.from('manual_source_allowances' as never).select('reason, allowed_by').eq('id', row.manual_allowance_id).maybeSingle();
+    const allowance = a as unknown as { reason: string; allowed_by: string } | null;
+    if (allowance) {
+      const { data: p } = await supabase.from('profiles').select('first_name').eq('user_id', allowance.allowed_by).maybeSingle();
+      note = `manual (allowed by ${p?.first_name || 'the superadmin'}: ${allowance.reason})`;
+    }
+  } else note = `manual (no portal pull for ${row.return_type} yet)`;
+  return `${row.return_pdf_url} — ${note}`;
 };
 
 export const notPulledMsg = (client: ClientLite, period: string, label: string) =>

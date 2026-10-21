@@ -2,6 +2,38 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-21 — Filed returns pulled for Filing Status, checked (v0.15.0)
+
+The firm's decision: Filing Status is pulled from the portal only (GST Keeper migration
+`20261021110000`, `docs/FILING_STATUS_PULL_ONLY.md`). GST Keeper now requires 0.15.0.
+
+- **The stored PDF is the filed return and shows its ARN** (`filedpdf.js`, a new content script).
+  The portal's PDFs keep their words behind Identity-H fonts; the checker reads them through each
+  font's ToUnicode map and refuses the GSTR-3B "System generated summary" (26 of 191 pulled
+  GSTR-3B PDFs before), a GSTR-1A or the GSTR-1 + GSTR-1A consolidated summary for a GSTR-1, a
+  return of another kind, and a PDF that does not print the ARN. Every PDF the click produces is
+  checked, so a summary that comes first is passed over. Nothing certain: no PDF is stored and
+  the reason is recorded with the ARN. The red "SYSTEM GENERATED" button is never clicked.
+- **Exact return type.** The Return Type option and the e-Filed Returns row must be exactly the
+  return asked for (0.14.0 took any type starting with "GSTR1": SBL-UK 09/2026 got its GSTR-1A
+  ARN on the GSTR-1 row), and the row must be the year and month asked for. A GSTR-1A seen is
+  saved as its own `gst_filed_returns` record (`GSTR1A`) and logged, never on the GSTR-1 row.
+- **ARN and filing date from the portal**: the form details (`api/formdetails`), else the row's
+  date (slashes or dashes, with or without a time), else the PDF's "Date of ARN". Never the day
+  of the pull (13 rows had it), and the two ARNs must agree.
+- **One door, and the answer is shown.** `markFiled` and `upsertFilingStatus` are gone; a pull is
+  recorded through `filing_record_pull`, which answers filed / refreshed / conflict / refused: the
+  same ARN refreshes, a different ARN changes nothing and goes to the superadmin. The banner shows
+  the answer, and the job's end says what each return came to.
+- **One return, a client's returns, or every return in view**: `startReturnPull` takes
+  `items` (one login per client), `actorId` (who asked) and `requestId`. A client without a saved
+  login is reported at once. Each outcome goes to the page (`gstk_return_pull_progress` →
+  `__gstkReturnPullProgress`) and the whole pull at the end (`gstk_return_pull_result` →
+  `__gstkReturnPullDone`, returns not reached included, also when the tab is closed); outcomes
+  that wrote nothing are logged through `filing_pull_report`.
+- Tests: `test/16-filed-return-pull.test.mjs`, fixtures `test/fixtures/*.pdf` (fictional, made by
+  `test/_pdffixture.mjs` the way the portal's pdfmake makes them).
+
 ## 2026-10-15 — GSTR-2A credit and debit notes (v0.14.0)
 
 - The GSTR-2A pull also reads the credit and debit notes (CDN), after the B2B invoices, so the 2A vs 2B report can match the 2B's CDNR documents. Before, they were all "Not compared" (521 of 3,169 documents in one real client's year).

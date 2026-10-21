@@ -4,9 +4,10 @@
 //     the app is a SPA, so its message listener usually mounts long AFTER this
 //     content script's one-shot announcement would have fired. With the ping/
 //     answer below, detection works no matter which side loads first.
-//  2) Bridge the Filing Status "Portal" button (a window message) to the
-//     background worker, which opens the portal and pulls that one return's
-//     ARN + PDF and marks it Filed.
+//  2) Bridge the Filing Status "Pull from portal" (a window message) to the
+//     background worker, which opens the portal, pulls each return's ARN,
+//     filing date and checked PDF, and records them through
+//     filing_record_pull (0.15.0).
 
 const EXT_VERSION = chrome.runtime.getManifest().version;
 const ALLOWED_ORIGINS = ['https://gst.vjdesai.com', 'https://gst-keeper-pro.vercel.app'];
@@ -29,14 +30,22 @@ window.addEventListener('message', (e) => {
   // The app (re)mounted and is asking whether the extension is loaded.
   if (d.__gstkAppReady) { announce(); return; }
 
-  // The Filing Status "Portal" button asked to pull one return.
-  if (d.__gstkPullReturn) {
-    const info = d.__gstkPullReturn;
-    if (!info.clientId || !info.return_type || !info.period_month) return;
+  // The Filing Status "Pull from portal" asked to pull filed returns. 0.15.0:
+  // __gstkPullReturns { items: [{ clientId, return_type, period_month }],
+  // actorId, requestId } (one return, a client's, or every one in view);
+  // __gstkPullReturn is one return, as 0.14.0's app sent it. The start is
+  // answered at once (__gstkPullResult, with requestId); each return's
+  // outcome comes later through the storage listener below.
+  if (d.__gstkPullReturns || d.__gstkPullReturn) {
+    const info = d.__gstkPullReturns || d.__gstkPullReturn;
+    if (d.__gstkPullReturn && (!info.clientId || !info.return_type || !info.period_month)) return;
+    if (d.__gstkPullReturns && !(Array.isArray(info.items) && info.items.length)) return;
     chrome.runtime.sendMessage({ gstk: true, fn: 'startReturnPull', args: [info] }, (resp) => {
       const ok = resp && resp.ok;
       const error = (resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'failed';
-      window.postMessage({ __gstkPullResult: ok ? { ok: true } : { ok: false, error } }, location.origin);
+      window.postMessage({ __gstkPullResult: ok
+        ? { ok: true, requestId: info.requestId || null, ...(resp.data || {}) }
+        : { ok: false, error, requestId: info.requestId || null } }, location.origin);
     });
     return;
   }
@@ -288,6 +297,23 @@ chrome.storage.onChanged.addListener((changes, area) => {
         fileB64: v.fileB64, fileName: v.fileName || null, at: v.at || null,
       } }, location.origin);
       chrome.storage.local.remove('gstk_einvoice_excel_result');
+    }
+  }
+  // 0.15.0: one filed return pulled (its outcome as GST Keeper recorded it:
+  // filed, refreshed, conflict, refused, not_found, failed), and the whole
+  // pull done (every return asked for, those not reached included).
+  if (changes.gstk_return_pull_progress) {
+    const v = changes.gstk_return_pull_progress.newValue;
+    if (v) {
+      window.postMessage({ __gstkReturnPullProgress: v }, location.origin);
+      chrome.storage.local.remove('gstk_return_pull_progress');
+    }
+  }
+  if (changes.gstk_return_pull_result) {
+    const v = changes.gstk_return_pull_result.newValue;
+    if (v) {
+      window.postMessage({ __gstkReturnPullDone: v }, location.origin);
+      chrome.storage.local.remove('gstk_return_pull_result');
     }
   }
   // GSTR-3B form-fill finished (or the whole flow errored out before it got

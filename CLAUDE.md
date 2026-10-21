@@ -62,6 +62,8 @@ value *received*, and the 1%/5% cap on FSI is summed per unit rather than
 blended. Changing one of these without reading why it is that way will produce
 wrong tax, not just a failing test.
 
+**Filing Status is pulled only** (20261021110000, extension 0.15.0): Filed, ARN, filing date and PDF come from `filing_record_pull` (the extension's checked pull) or `filing_attach_manual` (a superadmin's `manual_source_allowances` entry, or CMP-08 / GSTR-6 / GSTR-7 / ITC-04 which have no pull yet); a trigger refuses every other write, side effects of Filed run in the database, every change is in `filing_status_log`; read `docs/FILING_STATUS_PULL_ONLY.md` first.
+
 ## Import 2B → 2B Reconciliation → Suspended Reco → GSTR-3B
 
 `twob_import_docs` / `books_register` (Import 2B tab) is the **only**

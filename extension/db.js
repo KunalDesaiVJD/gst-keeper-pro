@@ -26,7 +26,6 @@
     getClients: () => call('getClients'),
     getClient: (id) => call('getClient', id),
     einvoiceExcelLatest: (clientId, period) => call('einvoiceExcelLatest', clientId, period),
-    upsertFilingStatus: (rows) => call('upsertFilingStatus', rows),
     upsertReco: (table, clientId, period, patchObj) => call('upsertReco', table, clientId, period, patchObj),
     replaceTwob: (clientId, period, rows) => call('replaceTwob', clientId, period, rows),
     replaceCreditLedgerTxns: (clientId, period, rows) => call('replaceCreditLedgerTxns', clientId, period, rows),
@@ -53,7 +52,9 @@
     fetchCrossOriginAsBase64: (url) => call('fetchCrossOriginAsBase64', url),
     getDnrDebug: () => call('getDnrDebug'),
     uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
-    markFiled: (row) => call('markFiled', row),
+    // 0.15.0: a pulled return goes through filing_record_pull only.
+    recordFiledPull: (p) => call('recordFiledPull', p),
+    reportFiledPull: (p) => call('reportFiledPull', p),
     // 0.8.4: one e-invoice pull — upserts einvoice_docs (from the portal's
     // GSTR-1 JSON, when given) and einvoice_pulls. See background.js.
     saveEinvoicePull: (info) => call('saveEinvoicePull', info),

@@ -154,13 +154,15 @@
   // dropdowns (e.g. Month) only render AFTER a prior select changes. Setting
   // .value + .selected and firing input+change is what makes ng-model register it.
   async function selectWhereOption(desired, opts = {}) {
-    const { startsWith = false, alnum = false, timeout = 12000 } = opts;
+    // accept (0.15.0): a test of the option's normalised text instead of an
+    // equal / startsWith match.
+    const { startsWith = false, alnum = false, timeout = 12000, accept = null } = opts;
     const norm = alnum
       ? (s) => (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
       : (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const target = norm(desired);
     if (!target) return null;
-    const matches = (o) => { const txt = norm(o && o.textContent); return !!txt && (startsWith ? txt.startsWith(target) : txt === target); };
+    const matches = (o) => { const txt = norm(o && o.textContent); return !!txt && (accept ? accept(txt) : startsWith ? txt.startsWith(target) : txt === target); };
     // Apply a selection the way AngularJS registers it: set value AND selectedIndex,
     // then fire input/change/blur so ng-model + ng-change both run.
     const apply = (s, opt) => {
@@ -513,6 +515,8 @@
       return;
     }
     job.idx++;
+    // 0.15.0: a filed-return pull starts each client at its first return.
+    job.retIdx = 0;
     if (job.idx < job.clients.length) {
       job.periodIdx = 0;
       job.period = job.periods[0];
@@ -529,11 +533,23 @@
     } else {
       // 0.8.1: say which clients were left out for a refused password.
       const refused = job.loginRefused || [];
-      banner('All ' + job.clients.length + ' client(s) done ✓'
+      // 0.15.0: a filed-return pull says what each return came to.
+      if (job.mode === 'returnpdf') {
+        const n = {};
+        for (const r of job.retResults || []) n[r.outcome] = (n[r.outcome] || 0) + 1;
+        const words = { filed: 'filed', refreshed: 'pulled again', conflict: 'conflict', refused: 'refused', not_found: 'not found', failed: 'failed' };
+        const parts = Object.keys(words).filter((k) => n[k]).map((k) => n[k] + ' ' + words[k]);
+        const clean = !(n.conflict || n.refused || n.not_found || n.failed) && !refused.length;
+        banner('Pull done: ' + (parts.join(', ') || 'nothing pulled') + (clean ? ' ✓' : '. See Filing Status for each return.')
+          + (refused.length ? ' Not logged in (password refused): ' + refused.map((r) => r.name).join(', ') + '.' : '')
+          + ' You can close this tab.', clean ? '#16a34a' : '#d97706');
+      } else banner('All ' + job.clients.length + ' client(s) done ✓'
         + (refused.length ? ' · not logged in (password refused): ' + refused.map((r) => r.name).join(', ') + ' — change them in Edit Client' : '')
         + ' — you can close this tab.', refused.length ? '#d97706' : '#16a34a');
       // An agent or scheduled job's run belongs to the queue (portal_job_finish closes it).
       if (job.runId && !job.agent && !job.runner) { try { await GSTKdb.runFinish(job.runId, 'done'); } catch (e) { /* ledger is diagnostic */ } }
+      // 0.15.0: the Filing Status page hears every return's outcome.
+      if (job.mode === 'returnpdf') await publishReturnResults(job);
       await clearJob();
     }
   }
@@ -1150,63 +1166,287 @@
     // Page navigates; next content-script load (step still 'login') re-checks isLoggedIn().
   }
 
-  // "One return" mode — triggered by the app's Filing Status button. Opens View
-  // e-Filed Returns for job.ret, reads its ARN + filed date, downloads its PDF
-  // (MAIN-world hook captures the blob), uploads it, and marks the return Filed.
+  // ── Filed-return pull helpers (0.15.0) ──────────────────────────────────
+  // Pure: test/16-filed-return-pull.test.mjs runs them from this file.
+  // The portal's Return Type, as letters and digits ("GSTR1", "GSTR3B").
+  function filedRetAlnum(returnType) {
+    const rt = String(returnType || '');
+    if (rt === 'GSTR-1A') return 'GSTR1A';
+    if (/^GSTR-1\b/.test(rt)) return 'GSTR1';
+    if (/^GSTR-3B\b/.test(rt)) return 'GSTR3B';
+    return rt.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+  // Exact: a GSTR-1A is never the GSTR-1 (0.14.0 took any type starting with
+  // "GSTR1", so SBL-UK 09/2026 got its GSTR-1A ARN on the GSTR-1 row; it
+  // would also have taken GSTR-10). A label may go on in words ("GSTR1 -
+  // Details of outward supplies", "GSTR1 (IFF)"), but never straight on with a
+  // digit or an A: GSTR1A, GSTR10, GSTR6A, GSTR7A are other forms.
+  function filedTypeMatches(portalType, returnType) {
+    const t = String(portalType || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const want = filedRetAlnum(returnType);
+    if (!t || !want) return false;
+    const alt = { CMP08: ['GSTCMP08'], ITC04: ['GSTITC04'], GSTR1: ['IFF'] }[want] || [];
+    return [want].concat(alt).some((w) => t === w || (t.startsWith(w) && !/^[0-9A]/.test(t.slice(w.length))));
+  }
+  // "18/09/2026", "18-09-2026", "18/09/2026 10:22" -> "2026-09-18"; else null.
+  function portalDateToIso(s) {
+    const m = String(s || '').trim().match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/);
+    if (!m) return null;
+    const dd = Number(m[1]), mm = Number(m[2]), yyyy = Number(m[3]);
+    const d = new Date(Date.UTC(yyyy, mm - 1, dd));
+    if (yyyy < 2017 || d.getUTCFullYear() !== yyyy || d.getUTCMonth() !== mm - 1 || d.getUTCDate() !== dd) return null;
+    return yyyy + '-' + String(mm).padStart(2, '0') + '-' + String(dd).padStart(2, '0');
+  }
+  // One row of View e-Filed Returns: Return Type, Financial Year, Tax Period,
+  // Acknowledgement Number (ARN), Date of filing, ...
+  function efiledRowInfo(cells) {
+    const c = (cells || []).map((x) => String(x || '').replace(/\s+/g, ' ').trim());
+    return { type: c[0] || '', fy: c[1] || '', period: c[2] || '', arn: (c[3] || '').toUpperCase().replace(/\s+/g, ''), date: c[4] || '' };
+  }
+  // Is this row the return asked for: exact type, the financial year and the
+  // month (a quarterly return names its quarter or its last month)?
+  function efiledRowMatches(info, want) {
+    const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+    const [mm, yyyy] = String(want.period_month || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy || !filedTypeMatches(info.type, want.return_type)) return false;
+    const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+    const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
+    if (/\d{4}\s*-\s*\d{2}/.test(info.fy) && info.fy.replace(/\s+/g, '') !== fyShort) return false;
+    const p = info.period.toUpperCase();
+    if (p && !p.includes(MONTHS[mm - 1])) return false;
+    return /^[A-Z]{2}[0-9]{6}[A-Z0-9]{7}$/.test(info.arn);
+  }
+  // Where a pulled return's PDF is stored (as since 0.3).
+  function filedPdfPath(clientId, ret, arn) {
+    return clientId + '/' + String(ret.period_month).replace('/', '-') + '/' + ret.return_type + '-' + arn + '.pdf';
+  }
+  // ── end of filed-return pull helpers ──────────────────────────────────
+
+  // The return this step works on: the client's queue (0.15.0), or the
+  // single return of a job started by 0.14.0's app.
+  function currentRet(job, cur) {
+    const rets = (cur && cur.rets) || (job.ret ? [job.ret] : []);
+    return rets[job.retIdx || 0] || job.ret || {};
+  }
+
+  // The portal's own form details for a GSTR-1 or GSTR-3B: ARN and the date
+  // of filing (fil_dt), the same API the Reports Hub pull reads. null when
+  // not available for this return.
+  async function filedFormDetails(ret) {
+    const typ = filedRetAlnum(ret.return_type);
+    if (typ !== 'GSTR1' && typ !== 'GSTR3B') return null;
+    const [mm, yyyy] = String(ret.period_month).split('/');
+    try {
+      const r = await fetch('https://return.gst.gov.in/returns/auth/api/formdetails?rtn_prd=' + mm + yyyy + '&rtn_typ=' + typ, { credentials: 'include' });
+      if (!r.ok) return null;
+      const j = await r.json();
+      if (!j || j.status !== 1 || !j.data) return null;
+      return { arn: String(j.data.arn || '').toUpperCase() || null, filedDate: portalDateToIso(String(j.data.fil_dt || '').replace(/-/g, '/')), raw: j.data.fil_dt || null, status: j.data.status || null };
+    } catch (e) { return null; }
+  }
+
+  // One return is done (whatever the outcome): tell GST Keeper and the page,
+  // then the next return of this client, or the next client.
+  async function finishReturn(job, cur, ret, result) {
+    const r = Object.assign({ clientId: cur.clientId, return_type: ret.return_type, period_month: ret.period_month }, result);
+    if (r.outcome === 'not_found' || r.outcome === 'failed') {
+      try {
+        await GSTKdb.reportFiledPull({ clientId: cur.clientId, returnType: ret.return_type, periodMonth: ret.period_month,
+          outcome: r.outcome, message: r.message, actorId: job.actorId || null, detail: { ext_version: EXT_VERSION, request_id: job.requestId || null } });
+      } catch (e) { /* the page still hears it below */ }
+    }
+    job.retResults = (job.retResults || []).concat([{ clientId: r.clientId, return_type: r.return_type, period_month: r.period_month, outcome: r.outcome, message: r.message || '' }]);
+    try { await store.set({ gstk_return_pull_progress: Object.assign({ requestId: job.requestId || null, at: Date.now() }, job.retResults[job.retResults.length - 1]) }); } catch (e) { /* progress only */ }
+    const tone = r.outcome === 'filed' || r.outcome === 'refreshed' ? '#16a34a' : r.outcome === 'conflict' || r.outcome === 'not_found' ? '#d97706' : '#dc2626';
+    banner(ret.return_type + ' ' + ret.period_month + ': ' + (r.message || r.outcome), tone);
+    await sleep(1500);
+    const rets = cur.rets || [ret];
+    if ((job.retIdx || 0) + 1 < rets.length) {
+      job.retIdx = (job.retIdx || 0) + 1;
+      delete job.pdfClicked; delete job.viewClicked; delete job.summaryClicked; delete job.ret;
+      job.step = 'efiledpdf';
+      await setJob(job);
+      location.href = 'https://return.gst.gov.in/returns/auth/efiledReturns';
+      return;
+    }
+    job.retIdx = 0;
+    delete job.pdfClicked; delete job.viewClicked; delete job.summaryClicked; delete job.ret;
+    await advance(job);
+  }
+
+  // Every return asked for, with its outcome (one not reached: the login
+  // failed or the session kept dropping), for the page that asked.
+  async function publishReturnResults(job, extra) {
+    const done = job.retResults || [];
+    const key = (x) => x.clientId + '|' + x.return_type + '|' + x.period_month;
+    const seen = new Set(done.map(key));
+    const results = done.slice();
+    for (const c of job.clients || []) {
+      for (const r of c.rets || []) {
+        const x = { clientId: c.clientId, return_type: r.return_type, period_month: r.period_month };
+        if (!seen.has(key(x))) results.push(Object.assign(x, { outcome: 'not_reached', message: (extra && extra.message) || 'Not reached: the portal login for this client did not complete.' }));
+      }
+    }
+    try { await store.set({ gstk_return_pull_result: Object.assign({ requestId: job.requestId || null, at: Date.now(), results }, extra || {}) }); } catch (e) { /* the log in GST Keeper still has each pull */ }
+  }
+
+  // Records what was read on the portal through GST Keeper's one door
+  // (filing_record_pull): it decides filed / refreshed / conflict / refused.
+  async function recordReturnPull(job, cur, ret, pdf) {
+    try {
+      const res = await GSTKdb.recordFiledPull({
+        clientId: cur.clientId, returnType: ret.return_type, periodMonth: ret.period_month,
+        arn: ret.arn, filedDate: ret.filedDate || null, pdfUrl: pdf.url || null, pdfNote: pdf.note || null,
+        actorId: job.actorId || null,
+        detail: { ext_version: EXT_VERSION, request_id: job.requestId || null, date_from: ret.dateFrom || null,
+          efiled_date_text: ret.efiledDateText || null, formdetails_date: ret.formDate || null, pdf_form: pdf.form || null, pdf_arn_date: pdf.arnDate || null },
+      });
+      return { outcome: (res && res.outcome) || 'failed', message: (res && res.message) || 'GST Keeper gave no answer.' };
+    } catch (e) {
+      return { outcome: 'failed', message: 'Read on the portal, but GST Keeper could not record it: ' + ((e && e.message) || e) };
+    }
+  }
+
+  // Waits for the PDF the click produces and keeps the first one that is the
+  // filed return showing the ARN (GSTKFiledPdf, filedpdf.js). A System
+  // generated summary, a GSTR-1A or another month's return is passed over.
+  function captureFiledPdf(clickEl, want, ms) {
+    return new Promise((resolve) => {
+      let done = false;
+      let lastReason = null;
+      const finish = (r) => { if (done) return; done = true; window.removeEventListener('message', onMsg); clearTimeout(timer); resolve(r); };
+      const onMsg = async (e) => {
+        const d = e.data && e.data.__gstkPdf;
+        if (!d || done) return;
+        let v;
+        try { v = await globalThis.GSTKFiledPdf.checkDataUrl(d, want); } catch (err) { v = { ok: false, reason: 'The PDF could not be checked (' + ((err && err.message) || err) + ').' }; }
+        if (v.ok) finish({ dataUrl: d, check: v });
+        else lastReason = v.reason;
+      };
+      window.addEventListener('message', onMsg);
+      const timer = setTimeout(() => finish({ dataUrl: null, check: null, reason: lastReason || 'No PDF came from the portal\'s download.' }), ms);
+      clickEl.click();
+    });
+  }
+
+  // Stores a checked PDF (or none, with the reason) and records the pull.
+  async function saveCheckedReturn(job, cur, ret, captured) {
+    let pdf = { url: null, note: captured.reason || null, form: captured.check && captured.check.form, arnDate: captured.check && captured.check.arnDate };
+    if (captured.dataUrl) {
+      try {
+        pdf.url = await GSTKdb.uploadPdf(filedPdfPath(cur.clientId, ret, ret.arn), captured.dataUrl);
+        pdf.note = null;
+      } catch (e) {
+        pdf = { url: null, note: 'The checked PDF could not be uploaded (' + ((e && e.message) || e) + ').' };
+      }
+    }
+    if (!ret.filedDate && pdf.arnDate) { ret.filedDate = pdf.arnDate; ret.dateFrom = 'pdf'; }
+    const res = await recordReturnPull(job, cur, ret, pdf);
+    await finishReturn(job, cur, ret, res);
+  }
+
+  // "One return" mode — the Filing Status "Pull from portal" (one return, a
+  // client's returns, or every return in view). Opens View e-Filed Returns
+  // for each return, takes the row of exactly that return, reads its ARN and
+  // filing date (the portal's form details when there are any, else the
+  // row's date, never today), downloads the filed return's PDF and keeps it
+  // only when it is that return and shows that ARN, then records it all
+  // through filing_record_pull. 0.15.0.
   async function handleReturnPdf(job, cur) {
+    const ret = currentRet(job, cur);
     if (!/efiledReturns/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/efiledReturns'; return; }
     // If we already clicked the download once and bounced back here, the link
-    // opened a viewer/page instead of downloading a file — stop, don't loop.
-    if (job.pdfClicked) { banner('The download opened a page instead of a file — tell me what you saw when clicking View/Download and I\'ll adjust.', '#dc2626'); await clearJob(); return; }
-    if (!(await waitFor('select', 20000))) { banner('e-Filed Returns page did not load.', '#dc2626'); await clearJob(); return; }
+    // opened a viewer/page instead of downloading a file — no loop.
+    if (job.pdfClicked) {
+      if (ret.arn) await saveCheckedReturn(job, cur, ret, { dataUrl: null, reason: 'The download opened a page instead of a file, so no PDF was stored.' });
+      else await finishReturn(job, cur, ret, { outcome: 'failed', message: 'The download opened a page instead of a file.' });
+      return;
+    }
+    if (!(await waitFor('select', 20000))) { await finishReturn(job, cur, ret, { outcome: 'failed', message: 'The e-Filed Returns page did not load.' }); return; }
     const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const ret = job.ret || {};
     const [mm, yyyy] = String(ret.period_month || '').split('/').map((n) => parseInt(n, 10));
-    if (!mm || !yyyy) { banner('Bad return period.', '#dc2626'); await clearJob(); return; }
+    if (!mm || !yyyy) { await finishReturn(job, cur, ret, { outcome: 'failed', message: 'Bad return period.' }); return; }
     const fyStart = mm >= 4 ? yyyy : yyyy - 1;
     const fyShort = fyStart + '-' + String((fyStart + 1) % 100).padStart(2, '0');
     const monthName = MONTHS_FULL[mm - 1];
     const freq = /\(Q\)|IFF/.test(ret.return_type || '') ? 'Quarterly' : 'Monthly';
-    // Portal Return Type option labels are alnum, e.g. "GSTR3B", "GSTR1".
-    const retAlnum = /GSTR-1/.test(ret.return_type || '') ? 'GSTR1'
-      : /GSTR-3B/.test(ret.return_type || '') ? 'GSTR3B'
-      : String(ret.return_type || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const retAlnum = filedRetAlnum(ret.return_type);
 
-    // Fill the cascading form in order, waiting for each option list to render.
     banner('Finding ' + ret.return_type + ' ' + ret.period_month + '…');
-    if (!(await selectWhereOption(fyShort))) { banner('Could not set financial year ' + fyShort + ' (page layout may differ).', '#dc2626'); await clearJob(); return; }
-    await sleep(700); // let the FY change settle before the cascading period select
-    if (!(await selectWhereOption(freq))) { banner('Could not set the filing period (' + freq + ').', '#dc2626'); await clearJob(); return; }
-    await sleep(700); // selecting the period reveals the Month dropdown — give it a beat
+    if (!(await selectWhereOption(fyShort))) { await finishReturn(job, cur, ret, { outcome: 'failed', message: 'Could not set the financial year ' + fyShort + ' on e-Filed Returns.' }); return; }
+    await sleep(700);
+    if (!(await selectWhereOption(freq))) { await finishReturn(job, cur, ret, { outcome: 'failed', message: 'Could not set the filing period (' + freq + ').' }); return; }
+    await sleep(700);
     if (freq === 'Quarterly') {
-      // GST FY quarters: Q1 Apr-Jun, Q2 Jul-Sep, Q3 Oct-Dec, Q4 Jan-Mar.
       const q = mm >= 4 ? Math.ceil((mm - 3) / 3) : 4;
       await selectWhereOption('Quarter' + q, { alnum: true, startsWith: true, timeout: 6000 });
       await sleep(500);
     }
-    // Month dropdown only renders after the period is chosen — selectWhereOption
-    // polls, so it waits for it to appear. (Quarterly views may not have one.)
     const monthSel = await selectWhereOption(monthName, { timeout: freq === 'Monthly' ? 15000 : 6000 });
-    if (freq === 'Monthly' && !monthSel) { banner('Could not set the month (' + monthName + ').', '#dc2626'); await clearJob(); return; }
-    await selectWhereOption(retAlnum, { alnum: true, startsWith: true, timeout: 6000 });
+    if (freq === 'Monthly' && !monthSel) { await finishReturn(job, cur, ret, { outcome: 'failed', message: 'Could not set the month (' + monthName + ').' }); return; }
+    // The exact return type (0.14.0 took the first option starting with it).
+    const typeSel = await selectWhereOption(retAlnum, { alnum: true, timeout: 6000, accept: (txt) => filedTypeMatches(txt, ret.return_type) });
+    const chosen = typeSel && typeSel.options[typeSel.selectedIndex];
+    if (!typeSel || !chosen || !filedTypeMatches(chosen.textContent, ret.return_type)) {
+      await finishReturn(job, cur, ret, { outcome: 'failed', message: 'Could not choose ' + ret.return_type + ' as the return type on e-Filed Returns.' });
+      return;
+    }
     await sleep(300);
     const search = $$('button, input[type=submit], input[type=button]').find((b) => /search/i.test((b.textContent || '') + ' ' + (b.value || ''))) || $('button.btn-primary.pull-right');
-    if (!search) { banner('Could not find the Search button.', '#dc2626'); await clearJob(); return; }
+    if (!search) { await finishReturn(job, cur, ret, { outcome: 'failed', message: 'Could not find the Search button on e-Filed Returns.' }); return; }
     search.click();
 
-    const tr = await waitForRow(12000);
-    if (!tr) { banner('No filed ' + ret.return_type + ' found for ' + ret.period_month + ' — check the period.', '#f59e0b'); await clearJob(); return; }
-    const cells = [...tr.children].map((td) => (td.textContent || '').replace(/\s+/g, ' ').trim());
-    // Columns: Return Type, FY, Tax Period, Acknowledgement Number, Date of filing, ...
-    const arn = (cells[3] || '').toUpperCase();
-    const filedDate = ddmmyyyyToIso(cells[4] || '');
-    if (!/^[A-Z0-9]{15}$/.test(arn)) { banner('Found a row but could not read a valid ARN for ' + ret.return_type + '.', '#f59e0b'); await clearJob(); return; }
+    if (!(await waitForRow(12000))) {
+      await finishReturn(job, cur, ret, { outcome: 'not_found', message: 'No filed ' + ret.return_type + ' for ' + ret.period_month + ' on the portal.' });
+      return;
+    }
+    const table = $('table');
+    const rows = [...(table ? table.querySelectorAll('tbody tr') : [])]
+      .map((tr) => ({ tr, info: efiledRowInfo([...tr.children].map((td) => td.textContent)) }))
+      .filter((r) => r.tr.children.length >= 4);
+    // A GSTR-1A seen next to the GSTR-1 is kept as its own record.
+    if (filedRetAlnum(ret.return_type) === 'GSTR1') {
+      for (const r of rows) {
+        if (efiledRowMatches(r.info, { return_type: 'GSTR-1A', period_month: ret.period_month })) {
+          try { await GSTKdb.upsertFiledReturn(cur.clientId, ret.period_month, 'GSTR1A', { arn: r.info.arn, filed_date: portalDateToIso(r.info.date), status: 'Filed', updated_at: new Date().toISOString() }); } catch (e) { /* recorded below anyway */ }
+          try {
+            await GSTKdb.reportFiledPull({ clientId: cur.clientId, returnType: ret.return_type, periodMonth: ret.period_month, outcome: 'gstr1a_seen',
+              message: 'A GSTR-1A was also filed for ' + ret.period_month + ' (ARN ' + r.info.arn + '). It is kept as its own record, never on the GSTR-1 row.',
+              actorId: job.actorId || null, detail: { gstr1a_arn: r.info.arn, ext_version: EXT_VERSION } });
+          } catch (e) { /* diagnostic */ }
+        }
+      }
+    }
+    const matches = rows.filter((r) => efiledRowMatches(r.info, ret));
+    if (!matches.length) {
+      const seenTypes = [...new Set(rows.map((r) => r.info.type).filter(Boolean))].join(', ');
+      await finishReturn(job, cur, ret, { outcome: 'not_found', message: 'No filed ' + ret.return_type + ' for ' + ret.period_month + ' on the portal'
+        + (seenTypes ? ' (the list showed ' + seenTypes + ').' : '.') });
+      return;
+    }
+    if (new Set(matches.map((r) => r.info.arn)).size > 1) {
+      await finishReturn(job, cur, ret, { outcome: 'failed', message: 'The portal lists more than one ' + ret.return_type + ' for ' + ret.period_month + ' (' + matches.map((r) => r.info.arn).join(', ') + '). Nothing was recorded.' });
+      return;
+    }
+    const row = matches[0];
+    const arn = row.info.arn;
+    // ARN and date from the portal's form details when it has them; the row's
+    // date otherwise. Never the day of the pull.
+    const form = await filedFormDetails(ret);
+    if (form && form.arn && form.arn !== arn) {
+      await finishReturn(job, cur, ret, { outcome: 'failed', message: 'The portal disagrees with itself: e-Filed Returns shows ARN ' + arn + ', the form details ' + form.arn + '. Nothing was recorded.' });
+      return;
+    }
+    const rowDate = portalDateToIso(row.info.date);
+    const filedDate = (form && form.filedDate) || rowDate || null;
+    const r0 = Object.assign({}, ret, { arn, filedDate, dateFrom: form && form.filedDate ? 'formdetails' : rowDate ? 'efiled row' : null,
+      efiledDateText: row.info.date || null, formDate: form && form.raw });
     // Prefer the "View" page: it has a dedicated Download-PDF button that yields
     // a capturable file. The row's inline download icon tends to open a PDF
     // VIEWER page instead of saving a file, so only use it when there's NO View.
-    const viewLink = tr.querySelector('a.btn-edit') || [...tr.querySelectorAll('a, button')].find((a) => /^\s*view\s*$/i.test(a.textContent || ''));
+    const viewLink = row.tr.querySelector('a.btn-edit') || [...row.tr.querySelectorAll('a, button')].find((a) => /^\s*view\s*$/i.test(a.textContent || ''));
     if (viewLink) {
-      job.ret = Object.assign({}, ret, { arn, filedDate });
+      job.ret = r0;
       job.step = 'efiledview';
       job.viewClicked = false;
       await setJob(job);
@@ -1214,77 +1454,43 @@
       viewLink.click();
       return;
     }
-
-    // No View link → try an inline direct download control in the row.
-    const directDl = tr.querySelector('a[title="download" i], a[download], a[href$=".pdf" i], a[href*="pdf" i]')
-      || (tr.querySelector('i.fa-download') && tr.querySelector('i.fa-download').closest('a, button'))
-      || [...tr.querySelectorAll('a, button')].find((a) => /download/i.test((a.textContent || '') + ' ' + (a.getAttribute('title') || '') + ' ' + (a.className || '')) && !/view/i.test(a.textContent || ''));
-    if (!directDl) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but no View/Download control in the row.', '#f59e0b'); await clearJob(); return; }
+    const directDl = row.tr.querySelector('a[title="download" i], a[download], a[href$=".pdf" i], a[href*="pdf" i]')
+      || (row.tr.querySelector('i.fa-download') && row.tr.querySelector('i.fa-download').closest('a, button'))
+      || [...row.tr.querySelectorAll('a, button')].find((a) => /download/i.test((a.textContent || '') + ' ' + (a.getAttribute('title') || '') + ' ' + (a.className || '')) && !/view/i.test(a.textContent || ''));
+    if (!directDl) { await saveCheckedReturn(job, cur, r0, { dataUrl: null, reason: 'The portal row had no View or Download control, so no PDF was stored.' }); return; }
     banner('Downloading the ' + ret.return_type + ' PDF…');
     job.pdfClicked = true;
+    job.ret = r0;
     await setJob(job);
-    const dataUrl = await new Promise((resolve) => {
-      const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data.__gstkPdf); } };
-      window.addEventListener('message', h);
-      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 20000);
-      directDl.click();
-    });
-    if (!dataUrl) { banner('Found ' + ret.return_type + ' (ARN ' + arn + ') but could not capture the PDF.', '#dc2626'); await clearJob(); return; }
-    try { await saveReturnPdf(cur, ret, arn, filedDate, dataUrl); banner(ret.return_type + ' ' + ret.period_month + ' — Filed + PDF saved ✓. Close this tab.', '#16a34a'); }
-    catch (e) { banner('Save failed: ' + (e && e.message), '#dc2626'); }
-    await clearJob();
-  }
-
-  // Upload a captured PDF data-URL to the bucket and mark the return Filed.
-  async function saveReturnPdf(cur, ret, arn, filedDate, dataUrl) {
-    const path = cur.clientId + '/' + ret.period_month.replace('/', '-') + '/' + ret.return_type + '-' + arn + '.pdf';
-    const pdfUrl = await GSTKdb.uploadPdf(path, dataUrl);
-    await GSTKdb.markFiled({
-      client_id: cur.clientId, return_type: ret.return_type, period_month: ret.period_month,
-      status: 'Filed', arn, filed_date: filedDate, return_pdf_url: pdfUrl, updated_at: new Date().toISOString(),
-    });
+    const captured = await captureFiledPdf(directDl, { arn, returnType: ret.return_type }, 20000);
+    await saveCheckedReturn(job, cur, r0, captured);
   }
 
   // The return-view page reached by clicking "View" on View e-Filed Returns.
-  // Find the PDF-download button (e.g. "DOWNLOAD FILED GSTR-3B"), capture the blob
-  // (inject.js hook), upload it, and mark Filed. Runs when step === 'efiledview'.
+  // Find the PDF-download button (e.g. "DOWNLOAD FILED GSTR-3B"), capture the
+  // blob (inject.js hook), keep it only when it is the filed return showing
+  // the ARN, and record the pull. Runs when step === 'efiledview'.
   async function handleReturnView(job, cur) {
-    // DIAGNOSTIC MARKER v3 — bumped from v2 specifically so this tag proves
-    // THIS revision (substring match for "VIEW SUMMARY", not the earlier
-    // exact-match version) is what's running. If you still see "[v2]" or no
-    // tag at all instead of "[v3]", the reload isn't taking effect — check
-    // chrome://extensions for the exact folder path it's loaded from and
-    // confirm it matches C:\Users\Admin\OneDrive\Desktop\extension.
-    banner('[v3] handleReturnView starting…', '#7c3aed');
     await sleep(400);
-    const ret = job.ret || {};
+    const ret = Object.assign({}, currentRet(job, cur), job.ret || {});
     const arn = (ret.arn || '').toUpperCase();
-    if (!/^[A-Z0-9]{15}$/.test(arn)) { banner('Lost the ARN — please retry the pull.', '#dc2626'); await clearJob(); return; }
+    if (!/^[A-Z0-9]{15}$/.test(arn)) { await finishReturn(job, cur, ret, { outcome: 'failed', message: 'Lost the ARN on the way to the return; pull again.' }); return; }
     // Already clicked download and bounced back → it opened a viewer we can't
-    // capture; stop instead of looping.
-    if (job.viewClicked) { banner('The ' + ret.return_type + ' download did not produce a capturable file — tell me the exact button label on the view page.', '#dc2626'); await clearJob(); return; }
+    // capture: record the ARN and date without a PDF instead of looping.
+    if (job.viewClicked) { await saveCheckedReturn(job, cur, ret, { dataUrl: null, reason: 'The portal\'s download opened a page instead of a file, so no PDF was stored.' }); return; }
 
     // For GSTR-1 the "View" link lands on the itemized table-by-table page
     // (…/returns/auth/gstr1), which has NO download control at all — the
     // actual "DOWNLOAD (PDF)" button only exists one click deeper, on the
     // summary sub-page (…/returns/auth/gstr1/gstr1sum) reached via its own
-    // "VIEW SUMMARY" button. Confirmed live. Click through once if we're not
-    // there yet before searching for the download control. This page is
-    // Angular-rendered like the rest of the portal, so — same as everywhere
-    // else in this file — POLL for the button rather than checking once; a
-    // single synchronous find() right as the page loads can easily run
-    // before Angular has rendered it, and silently find nothing.
+    // "VIEW SUMMARY" button. Confirmed live. Polled: the page is Angular.
     if (/GSTR-?1\b/i.test(ret.return_type || '') && !/gstr1sum/i.test(url) && !job.summaryClicked) {
       banner('Opening the GSTR-1 summary page for the PDF download…');
       let summaryBtn = null;
       const ts0 = Date.now();
       while (Date.now() - ts0 < 12000 && !summaryBtn) {
-        // Confirmed live (DevTools): this is one <button> with TWO <span>
-        // children toggled by ng-show/ng-hide ("PROCEED FILE/SUMMARY" for
-        // unfiled, "VIEW SUMMARY" for filed) — .textContent concatenates
-        // BOTH regardless of which is CSS-hidden, so an exact/anchored match
-        // against the whole button's text can never succeed. Match the
-        // phrase as a substring instead.
+        // One <button> with two ng-show spans ("PROCEED FILE/SUMMARY" and
+        // "VIEW SUMMARY"): match the phrase as a substring.
         summaryBtn = $$('a, button').find((x) => x.offsetParent !== null && /\bview\s+summary\b/i.test(x.textContent || ''));
         if (!summaryBtn) await sleep(400);
       }
@@ -1294,48 +1500,43 @@
         summaryBtn.click();
         await sleep(2000);
       }
-      // If summaryBtn was never found, fall through to the search below as-is
-      // — it'll report the real "no PDF-download button" state honestly
-      // rather than silently pretending nothing was tried.
     }
 
     let dl = null;
-
-    // For GSTR-3B the portal auto-shows a "System generated summary" popup
-    // (#statustable) on every load of this page — confirmed live, same
-    // popup closeGstr3bModal() already handles for the Push-to-Portal flow,
-    // just never wired into this ARN/PDF-pull flow. It sits on top of the
-    // real download button, and the generic text-based search below isn't
-    // reliable here anyway: the page also has a DIFFERENT red "SYSTEM
-    // GENERATED GSTR-3B" button that downloads a different file and would
-    // happily match a loose "download"+"pdf" guess. Target the real button
-    // by its exact ng-click attribute instead, closing the popup first.
+    // GSTR-3B: the page opens with the "System generated summary" popup
+    // (#statustable) over the real download button, and also has a red
+    // "SYSTEM GENERATED GSTR-3B" button. The filed return's button is the one
+    // with ng-click downloadPrePdf(). Whatever is clicked, only a PDF that is
+    // the filed GSTR-3B showing the ARN is kept (captureFiledPdf).
     if (/GSTR-?3B/i.test(ret.return_type || '')) {
       banner('Closing the system-generated-summary popup, if it\'s open…');
-      const popup = $('#statustable');
-      if (popup && getComputedStyle(popup).display === 'block') {
-        const closeBtn = popup.querySelector('button[data-dismiss="modal"]');
-        if (closeBtn) closeBtn.click();
-        const pt0 = Date.now();
-        while (Date.now() - pt0 < 5000 && getComputedStyle(popup).display === 'block') await sleep(200);
+      const pt0 = Date.now();
+      while (Date.now() - pt0 < 6000) {
+        const popup = $('#statustable');
+        if (popup && getComputedStyle(popup).display === 'block') {
+          const closeBtn = popup.querySelector('button[data-dismiss="modal"]');
+          if (closeBtn) closeBtn.click();
+          await sleep(300);
+          continue;
+        }
+        if (Date.now() - pt0 > 1500) break; // it did not open (or is closed)
+        await sleep(300);
       }
       const blueBtn = await waitFor('button[data-ng-click="downloadPrePdf()"]', 15000);
       if (blueBtn) {
         blueBtn.scrollIntoView({ block: 'center' });
-        await sleep(300); // let the scroll settle before the click below
+        await sleep(300);
         dl = blueBtn;
       }
-      // If not found (e.g. an unfiled period has no such button), fall
-      // through to the generic search — it'll report honestly if that also
-      // finds nothing, rather than silently giving up here.
     }
 
     if (!dl) banner('Looking for the ' + ret.return_type + ' PDF download…');
     const t = (x) => (x.textContent || '') + ' ' + (x.getAttribute('title') || '');
     const t0 = Date.now();
     while (Date.now() - t0 < 20000 && !dl) {
-      // Only content controls — exclude the portal's top-nav "Downloads" menu.
-      const cands = $$('a, button').filter((x) => x.offsetParent !== null &&
+      // Only content controls — not the top-nav "Downloads" menu, and never a
+      // "System generated" button.
+      const cands = $$('a, button').filter((x) => x.offsetParent !== null && !/system\s*generated/i.test(t(x)) &&
         !x.closest('nav, header, .navbar, .nav, .navbar-nav, .dropdown-menu, .top-nav, .mega-menu, ul.nav'));
       dl = cands.find((x) => /download/i.test(t(x)) && /pdf/i.test(t(x)))
         || cands.find((x) => /download/i.test(t(x)) && /(gstr|filed|return)/i.test(t(x)))
@@ -1344,29 +1545,15 @@
       if (!dl) await sleep(500);
     }
     if (!dl) {
-      banner(
-        '[v3] found no PDF-download button on ' + location.pathname +
-        ' — summary click: ' + (job.summaryClicked ? 'attempted' : 'button never found') +
-        '. Tell me the button label you see.',
-        '#f59e0b'
-      );
-      await clearJob();
+      await saveCheckedReturn(job, cur, ret, { dataUrl: null, reason: 'No PDF download button was found on ' + location.pathname + ', so no PDF was stored.' });
       return;
     }
 
-    banner('Downloading the ' + ret.return_type + ' PDF…');
+    banner('Downloading the ' + ret.return_type + ' PDF and checking it…');
     job.viewClicked = true;
     await setJob(job);
-    const dataUrl = await new Promise((resolve) => {
-      const h = (e) => { if (e.data && e.data.__gstkPdf) { window.removeEventListener('message', h); resolve(e.data.__gstkPdf); } };
-      window.addEventListener('message', h);
-      setTimeout(() => { window.removeEventListener('message', h); resolve(null); }, 25000);
-      dl.click();
-    });
-    if (!dataUrl) { banner('Clicked download on the ' + ret.return_type + ' page but could not capture the PDF — tell me what happened.', '#dc2626'); await clearJob(); return; }
-    try { await saveReturnPdf(cur, ret, arn, ret.filedDate, dataUrl); banner(ret.return_type + ' ' + ret.period_month + ' — Filed + PDF saved ✓. Close this tab.', '#16a34a'); }
-    catch (e) { banner('Save failed: ' + (e && e.message), '#dc2626'); }
-    await clearJob();
+    const captured = await captureFiledPdf(dl, { arn, returnType: ret.return_type }, 25000);
+    await saveCheckedReturn(job, cur, ret, captured);
   }
 
   // Find an action button inside the dashboard tile that names `returnRe`, and is
