@@ -250,6 +250,8 @@ export interface AgreementConfirmStatus {
   /** The latest request that asked about the unit (null: a per-unit e-mail sent before 21 Oct 2026). */
   requestId?: string | null;
   sentAt?: string | null;
+  /** A per-unit e-mail of before 21 Oct 2026 asked about it (legacy_emails, recorded once). */
+  legacyLink?: boolean;
 }
 
 /** A unit no longer holds up posting or filing. */
@@ -278,9 +280,10 @@ type ConfirmRow = {
   bu_event_id: string; unit_id: string; status: string; dispute_notes: string | null;
   override_reason: string | null; responded_by_name?: string | null; responded_by_email?: string | null;
   responded_at?: string | null; request_id?: string | null; sent_at?: string | null;
+  legacy_emails?: string[] | null;
 };
 const CONFIRM_COLUMNS = 'bu_event_id, unit_id, status, dispute_notes, override_reason, responded_at, sent_at, '
-  + 'responded_by_name, responded_by_email, request_id';
+  + 'responded_by_name, responded_by_email, request_id, legacy_emails';
 // Before 20261021140000 is applied the newer columns do not exist: read the
 // older ones rather than show every unit as never sent.
 const CONFIRM_COLUMNS_OLD = 'bu_event_id, unit_id, status, dispute_notes, override_reason, responded_at, sent_at';
@@ -304,6 +307,7 @@ export async function fetchAgreementConfirmations(eventIds: string[]): Promise<R
       respondedAt: r.responded_at ?? null,
       requestId: r.request_id ?? null,
       sentAt: r.sent_at ?? null,
+      legacyLink: Array.isArray(r.legacy_emails) && r.legacy_emails.length > 0,
     });
   });
   return out;
@@ -326,6 +330,8 @@ export interface AgreementConfirmRequest {
   /** The e-mail's outbox status (sent, pending, failed …), when known. */
   mailStatus: string | null;
   mailError: string | null;
+  /** When the e-mail went (email_outbox.sent_at). */
+  mailSentAt: string | null;
   /** When it was sent, an earlier link to some of its units had reached the client. */
   earlierLink: boolean;
 }
@@ -340,10 +346,10 @@ export async function fetchConfirmRequests(eventIds: string[]): Promise<Agreemen
     .order('seq', { ascending: false });
   if (error || !data) return [];
   const outboxIds = data.map((r) => r.outbox_id).filter((x): x is string => !!x);
-  const mail = new Map<string, { status: string; error: string | null }>();
+  const mail = new Map<string, { status: string; error: string | null; sentAt: string | null }>();
   if (outboxIds.length) {
-    const { data: ob } = await supabase.from('email_outbox').select('id, status, error').in('id', outboxIds);
-    (ob || []).forEach((o) => mail.set(o.id, { status: o.status, error: o.error }));
+    const { data: ob } = await supabase.from('email_outbox').select('id, status, error, sent_at').in('id', outboxIds);
+    (ob || []).forEach((o) => mail.set(o.id, { status: o.status, error: o.error, sentAt: o.sent_at }));
   }
   return data.map((r) => ({
     id: r.id,
@@ -356,6 +362,7 @@ export async function fetchConfirmRequests(eventIds: string[]): Promise<Agreemen
     createdBy: r.created_by,
     mailStatus: r.outbox_id ? mail.get(r.outbox_id)?.status ?? null : null,
     mailError: r.outbox_id ? mail.get(r.outbox_id)?.error ?? null : null,
+    mailSentAt: r.outbox_id ? mail.get(r.outbox_id)?.sentAt ?? null : null,
     earlierLink: r.earlier_link === true,
   }));
 }

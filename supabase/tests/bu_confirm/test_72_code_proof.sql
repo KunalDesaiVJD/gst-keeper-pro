@@ -163,13 +163,15 @@ SELECT t_eq((SELECT project_name || '/' || client_name || '/' || to_email
 ROLLBACK;
 
 -- A per-unit link of before this change: the code goes to the address that
--- e-mail went to, or the client master's.
+-- e-mail went to (here the client master's: its outbox row is gone), as
+-- recorded when the change was applied.
 BEGIN;
 \ir fixtures.psql
 SET LOCAL ROLE anon;
 UPDATE clients SET email = 'Accounts <accounts@client.test>' WHERE id = 'c1000000-0000-0000-0000-000000000001';
 SELECT t_old_app($f$INSERT INTO builder_bu_agreement_confirmations (bu_event_id, unit_id, client_id, agreement_value_at_request, status, sent_at)
 VALUES ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 4500000, 'PENDING', now())$f$);
+SELECT t_legacy_snapshot() = 1;
 SELECT token AS t1 FROM builder_bu_agreement_confirmations \gset
 SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'t1', 'sam@vjdesai.com'), 'staff cannot answer', 'per-unit link: no code for staff');
 SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'t1', 'owner@client.test'), 'reached you at', 'per-unit link: none for a stranger');

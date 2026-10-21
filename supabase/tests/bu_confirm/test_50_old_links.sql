@@ -23,6 +23,8 @@ WITH mail AS (
   RETURNING id, body)
 UPDATE builder_bu_agreement_confirmations c SET outbox_id = mail.id FROM mail WHERE c.id::text = mail.body;
 $f$);
+-- This change is applied: each row records where its e-mail went.
+SELECT t_eq(t_legacy_snapshot(), 3, 'three per-unit e-mails recorded');
 SELECT max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000001') AS t1,
        max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000002') AS t2,
        max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000003') AS t3

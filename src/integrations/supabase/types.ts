@@ -2266,6 +2266,7 @@ export type Database = {
           created_by: string | null
           dispute_notes: string | null
           id: string
+          legacy_emails: string[] | null
           legacy_outbox_id: string | null
           outbox_id: string | null
           override_reason: string | null
@@ -2290,6 +2291,7 @@ export type Database = {
           created_by?: string | null
           dispute_notes?: string | null
           id?: string
+          legacy_emails?: string[] | null
           legacy_outbox_id?: string | null
           outbox_id?: string | null
           override_reason?: string | null
@@ -2314,6 +2316,7 @@ export type Database = {
           created_by?: string | null
           dispute_notes?: string | null
           id?: string
+          legacy_emails?: string[] | null
           legacy_outbox_id?: string | null
           outbox_id?: string | null
           override_reason?: string | null

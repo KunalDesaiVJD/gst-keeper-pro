@@ -17,6 +17,7 @@ WITH mail AS (INSERT INTO email_outbox (client_id, to_email, kind, template_key,
           'Please confirm the agreement value', 'old', 'sent') RETURNING id)
 UPDATE builder_bu_agreement_confirmations SET outbox_id = (SELECT id FROM mail);
 $f$);
+SELECT t_legacy_snapshot() = 1;
 SELECT token AS t1, outbox_id AS old_ob FROM builder_bu_agreement_confirmations \gset
 
 -- (a) The master changes; a request for the unit goes to the new address and is still queued.
@@ -48,6 +49,7 @@ WITH mail AS (INSERT INTO email_outbox (client_id, to_email, kind, template_key,
           'Please confirm the agreement value', 'old', 'sent') RETURNING id)
 UPDATE builder_bu_agreement_confirmations SET outbox_id = (SELECT id FROM mail);
 $f$);
+SELECT t_legacy_snapshot() = 1;
 SELECT token AS t1, outbox_id AS old_ob FROM builder_bu_agreement_confirmations \gset
 SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001']::uuid[], ARRAY['typo@clent.test'], NULL) AS r1 \gset
 SELECT t_eq((:'r1'::jsonb ->> 'earlier_link')::boolean, true, 'R1: an earlier link reached the client');

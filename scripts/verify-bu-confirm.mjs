@@ -22,7 +22,12 @@
 //    request sent meanwhile as that, with its To and CC; it shows why Send is
 //    off; the page types a code back with its code_id, says so when the code
 //    may not have gone, wraps long addresses and notes at phone width, and
-//    says an answer given there stands.
+//    says an answer given there stands;
+//  - round 4: BU Events and the pop-up say when a unit's e-mail failed or is
+//    still queued (not "Asked"), flag every such request on the event, and a
+//    failed send speaks of the request's own units; the public page keeps its
+//    code step per link in localStorage, so a closed tab or a reload does not
+//    lose the code already e-mailed or the proof.
 // The database side is tested in supabase/tests/bu_confirm/run.sh.
 //
 //   node scripts/verify-bu-confirm.mjs
@@ -124,7 +129,11 @@ check(same(split.cleared.map((a) => a.unitNo), ['A-101', 'A-103']) && same(split
 check(fresh.length && R.freshCandidates(page, [{ unitId: 'u2', status: 'DISPUTED', respondedAt: 't1' }])[1].respondedAt === 't1',
   'the pop-up keeps each unit\'s answer time, to send it back');
 // Failed first send (round 2, defect: "the earlier link still takes answers" when there was none).
-check(R.failedMailWords(false) === 'No e-mail has reached the client yet.', 'no earlier link: says no e-mail reached the client');
+check(R.failedMailWords(false, ['A-103']) === 'No earlier link to A-103 has reached the client.',
+  'no earlier link: says no link to the request\'s own units reached the client', R.failedMailWords(false, ['A-103']));
+// Round 4 (low, s1): A-101 confirmed and A-102 accepted from an earlier e-mail; a send for A-103 fails.
+check(!/No e-mail has reached the client/.test(R.failedMailWords(false, ['A-103'])) && R.failedMailWords(false).includes('these units'),
+  'never "no e-mail has reached the client" when an earlier one about other units was answered');
 
 // Round 3 (low): a colleague's request sent while the pop-up was open is not "answered ... (changed)".
 check(same(R.seenFor([{ unitId: 'u1', status: 'PENDING', requestId: 'r1' }, { unitId: 'u2', status: 'NOT_SENT', requestId: null }, { unitId: 'u3', status: 'PENDING' }]),
@@ -160,11 +169,11 @@ check(/Sending asks again and clears this dispute\. It stays in the unit's histo
 check(/fetchFirmAddresses\(userId/.test(dialog) && /isFirmAddress\(a\) \|\| dbFirm\.includes\(a\)/.test(dialog),
   'the pop-up asks the database which addresses are the firm\'s own (a staff member\'s personal one)');
 check(/master === 'empty' \?/.test(dialog) && !/fromMaster/.test(dialog), '"no e-mail on record" only when the master is empty');
-check(/failedMailWords\(res\.earlierLink\)/.test(dialog), 'the failed toast speaks of an earlier link only when there is one');
+check(/failedMailWords\(res\.earlierLink, sentNos\)/.test(dialog), 'the failed toast speaks of an earlier link only when there is one, and of its units');
 const events = src('src/pages/BuilderBuEventsPage.tsx');
 check(/onSent=\{\(\) => void load\(true\)\}/.test(events) && /if \(!quiet\) setIsLoading\(true\);/.test(events),
   'BU Events refreshes quietly after a send, so the pop-up (and what staff typed, and a dispute it shows) stays');
-check(/failedMailWords\(lastReq\.earlierLink\)/.test(events), 'the Last request line speaks of an earlier link only when there is one');
+check(/failedMailWords\(lastReq\.earlierLink, lastReq\.unitIds\.map\(unitNoOf\)\)/.test(events), 'the Last request line speaks of an earlier link only when there is one');
 check(/Earlier disputed/.test(events) && /fetchClearedDisputes\(ids\)/.test(events), 'BU Events shows a dispute asked about again');
 check(/fetchAgreementConfirmationStatus\(eventId\)/.test(dialog) && /void reloadUnits\(\);\s*\n\s*if \(lastRequest\)/.test(dialog),
   'the pop-up reads the statuses again each time it opens');
@@ -180,6 +189,83 @@ check(/p_seen: /.test(data), 'the send passes the statuses to the database');
 check(/if \(changed\.length\) \{[\s\S]{0,300}?status: 'changed'/.test(data), 'a unit answered meanwhile other than confirmed or accepted is never re-sent automatically');
 check(/res\.sent !== false\) break;/.test(data) && /units = left;/.test(data), 'a send that finds units answered meanwhile drops them and sends again');
 check(/left\.length === units\.length\) return refuse/.test(data), 'and never loops without progress');
+
+// ── Round 4 (medium, s2): was a pending unit really asked? ──────────────────
+// R1 asks A-101 and A-102 (sent); R2 asks A-103 To a mistyped address (550);
+// the owner disputes A-101 on R1 and staff ask it again in R3 (sent).
+const reqs = [
+  { id: 'R3', unitIds: ['u1'], to: ['owner@client.test'], sentAt: '2026-10-21T08:05:00Z', createdAt: '2026-10-21T08:05:00Z',
+    mailStatus: 'sent', mailError: null, mailSentAt: '2026-10-21T08:05:09Z', earlierLink: true },
+  { id: 'R2', unitIds: ['u3'], to: ['owner@clent.test'], sentAt: '2026-10-21T08:00:00Z', createdAt: '2026-10-21T08:00:00Z',
+    mailStatus: 'failed', mailError: '550 recipient rejected', mailSentAt: null, earlierLink: false },
+  { id: 'R1', unitIds: ['u1', 'u2'], to: ['owner@client.test'], sentAt: '2026-10-20T08:00:00Z', createdAt: '2026-10-20T08:00:00Z',
+    mailStatus: 'sent', mailError: null, mailSentAt: '2026-10-20T08:00:05Z', earlierLink: false },
+];
+const cfs = [
+  { unitId: 'u1', status: 'PENDING', requestId: 'R3' },
+  { unitId: 'u2', status: 'PENDING', requestId: 'R1' },
+  { unitId: 'u3', status: 'PENDING', requestId: 'R2' },
+];
+let a = R.unitAsk('u3', cfs[2], reqs);
+check(a?.state === 'failed' && a.error === '550 recipient rejected' && a.earlier === null,
+  'A-103: its only e-mail failed, never asked', JSON.stringify(a));
+a = R.unitAsk('u1', cfs[0], reqs);
+check(a?.state === 'asked' && a.at === '2026-10-21T08:05:09Z', 'A-101: asked, dated when its e-mail went', JSON.stringify(a));
+a = R.unitAsk('u2', cfs[1], reqs);
+check(a?.state === 'asked' && a.at === '2026-10-20T08:00:05Z', 'A-102: asked on R1', JSON.stringify(a));
+let no = R.requestsNotOut(reqs, cfs);
+check(no.length === 1 && no[0].request.id === 'R2' && same(no[0].unitIds, ['u3']),
+  'the event flags R2 (failed, A-103 still waiting on it), though it is not the last request', JSON.stringify(no));
+// Queued, and failed after an earlier link went out.
+const queued = [{ ...reqs[0], id: 'R4', unitIds: ['u2'], mailStatus: 'pending', mailSentAt: null }, ...reqs];
+a = R.unitAsk('u2', { unitId: 'u2', status: 'PENDING', requestId: 'R4' }, queued);
+check(a?.state === 'waiting' && a.earlier?.kind === 'request' && a.earlier.at === '2026-10-20T08:00:05Z',
+  'a unit whose new e-mail is queued: not sent yet, and the R1 link still answers', JSON.stringify(a));
+a = R.unitAsk('u3', { unitId: 'u3', status: 'PENDING', requestId: 'R2', legacyLink: true }, reqs);
+check(a?.state === 'failed' && a.earlier?.kind === 'legacy', 'a failed request over a per-unit e-mail of before: that link still answers');
+check(R.unitAsk('u1', { unitId: 'u1', status: 'CONFIRMED', requestId: 'R3' }, reqs) === null
+  && R.unitAsk('u1', { unitId: 'u1', status: 'PENDING', requestId: null }, reqs) === null, 'nothing to say for an answered unit or an old per-unit row');
+check(R.requestsNotOut(reqs, [{ unitId: 'u3', status: 'CONFIRMED', requestId: 'R2' }]).length === 0,
+  'a failed request whose units were answered elsewhere is not flagged');
+check(R.mailOutcome('skipped') === 'failed' && R.mailOutcome('cancelled') === 'failed' && R.mailOutcome('sending') === 'waiting'
+  && R.mailOutcome(null) === 'out', 'outbox statuses read as the database reads them (a gone row is out)');
+const eventsSrc = src('src/pages/BuilderBuEventsPage.tsx');
+check(/const ask = unitAsk\(r\.unit_id, cf, evRequests\);/.test(eventsSrc) && /E-mail of \$\{shortDate\(ask\.at\)\} failed/.test(eventsSrc)
+  && /queued, not sent yet/.test(eventsSrc), 'BU Events: "Asked" only once the unit\'s e-mail is out, else failed or queued');
+check(/requestsNotOut\(evRequests, cfRows\)/.test(eventsSrc) && /Waiting on it: /.test(eventsSrc), 'BU Events flags every request not out that units wait on');
+const dialogSrc = src('src/components/builder/SendAgreementConfirmDialog.tsx');
+check(/unitAsk\(c\.unitId, c, requests\)/.test(dialogSrc) && /' · e-mail failed' : ' · not sent yet'/.test(dialogSrc),
+  'the pop-up badges such units "Pending · e-mail failed" or "not sent yet"');
+check(/The last e-mail to these addresses failed/.test(dialogSrc), 'and says when the To it fills in from the last request failed');
+check(/requests=\{sendFor \? requests\[sendFor\.id\] \|\| \[\] : \[\]\}/.test(eventsSrc), 'BU Events gives the pop-up the event\'s requests');
+check(/legacy_emails/.test(src('src/lib/builderAgreementConfirmData.ts')) && /mailSentAt: r\.outbox_id/.test(src('src/lib/builderAgreementConfirmData.ts')),
+  'the page reads when each e-mail went and which units an old per-unit e-mail asked');
+
+// ── Round 4 (medium, p4): the code step survives a closed tab ───────────────
+const now = Date.UTC(2026, 9, 21, 8, 0, 0);
+const step = { name: 'Rajesh Shah', email: 'owner@client.test', codeSentTo: 'owner@client.test', codeId: 'c-1', codeAt: now - 5 * 60e3,
+  proof: null, proofEmail: null, proofUntil: null };
+let back = R.readCodeStep(JSON.stringify(step), now);
+check(back?.codeId === 'c-1' && back.codeSentTo === 'owner@client.test' && back.name === 'Rajesh Shah', 'a code asked 5 minutes ago is restored', JSON.stringify(back));
+back = R.readCodeStep(JSON.stringify(step), now + 30 * 60e3);
+check(back?.codeId === null && back.email === 'owner@client.test', 'past its 30 minutes the code is dropped, the address kept', JSON.stringify(back));
+back = R.readCodeStep(JSON.stringify({ ...step, proof: 'p', proofEmail: 'owner@client.test', proofUntil: now + 60 * 60e3 }), now);
+check(back?.proof === 'p' && back.proofEmail === 'owner@client.test', 'a proof still good survives a reload');
+check(R.readCodeStep(JSON.stringify({ ...step, proof: 'p', proofEmail: 'owner@client.test', proofUntil: now - 1 }), now)?.proof === null,
+  'an expired proof is dropped');
+check(R.readCodeStep(JSON.stringify({ ...step, proof: 'p', proofEmail: 'x@y.z', proofUntil: now + 10 * 3600e3 }), now)?.proof === null,
+  'a proof claiming to last longer than 2 hours is not trusted');
+check(R.readCodeStep('{not json', now) === null && R.readCodeStep(null, now) === null && R.readCodeStep('"x"', now) === null,
+  'nothing usable stored: nothing restored');
+check(R.codeStepKey('abc') === 'bu-confirm:abc', 'one entry per link');
+const pageSrc = src('src/pages/AgreementConfirmPage.tsx');
+check(/try \{\s*return window\.localStorage\.getItem\(key\);\s*\} catch/.test(pageSrc)
+  && /try \{\s*if \(value === null\) window\.localStorage\.removeItem\(key\);\s*else window\.localStorage\.setItem\(key, value\);\s*\} catch/.test(pageSrc),
+  'every storage access is wrapped');
+check(/readCodeStep\(storeGet\(codeStepKey\(token\)\), Date\.now\(\)\)/.test(pageSrc) && /storeSet\(codeStepKey\(token\)/.test(pageSrc)
+  && /restoredFor !== token\) return;/.test(pageSrc), 'the page restores the step on load and saves it after, never over it');
+check(/until: Date\.now\(\) \+ PROOF_LIFE_MS/.test(pageSrc) && /setCodeAt\(Date\.now\(\)\)/.test(pageSrc), 'with the code\'s time and the proof\'s end');
+check(/We e-mailed a code to \$\{step\.codeSentTo\} at/.test(pageSrc), 'a restored code says where and when it went');
 
 // ── The public page ─────────────────────────────────────────────────────────
 const pu = (id, state, v = 100) => ({ unit_id: id, state, agreement_value: v });

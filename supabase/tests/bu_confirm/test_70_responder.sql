@@ -57,7 +57,8 @@ SELECT t_eq((SELECT bool_and(responded_by_email = ANY (r.to_emails || r.cc_email
 ROLLBACK;
 
 -- A per-unit link e-mailed before this change: the addresses that e-mail went
--- to, or the client master's, answer; no one else.
+-- to (the client master's when its outbox row is gone), as recorded when the
+-- change was applied, answer; no one else.
 BEGIN;
 \ir fixtures.psql
 SET LOCAL ROLE anon;
@@ -77,6 +78,11 @@ WITH mail AS (
 UPDATE builder_bu_agreement_confirmations SET outbox_id = (SELECT id FROM mail)
  WHERE unit_id = 'a1000000-0000-0000-0000-000000000001';
 $f$);
+-- This change is applied: A-101 records its e-mail's To, A-102 and A-103
+-- (their outbox rows gone) the client master's addresses as they then stood.
+SELECT t_eq(t_legacy_snapshot(), 3, 'three per-unit e-mails recorded');
+SELECT t_eq((SELECT string_agg(array_to_string(legacy_emails, ' '), ' | ' ORDER BY unit_id) FROM builder_bu_agreement_confirmations),
+            'old.owner@client.test | accounts@client.test rajesh@client.test | accounts@client.test rajesh@client.test', 'what each records');
 SELECT max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000001') AS t1,
        max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000002') AS t2,
        max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000003') AS t3

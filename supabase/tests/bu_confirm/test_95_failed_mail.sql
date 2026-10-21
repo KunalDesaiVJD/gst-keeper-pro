@@ -114,6 +114,7 @@ SET LOCAL ROLE anon;
 UPDATE clients SET email = 'owner@client.test' WHERE id = 'c1000000-0000-0000-0000-000000000001';
 SELECT t_old_app($f$INSERT INTO builder_bu_agreement_confirmations (bu_event_id, unit_id, client_id, agreement_value_at_request, status, sent_at)
 VALUES ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 4500000, 'PENDING', now())$f$);
+SELECT t_legacy_snapshot() = 1;
 SELECT token AS t1 FROM builder_bu_agreement_confirmations \gset
 SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001']::uuid[], ARRAY['new@client.test'], NULL) ->> 'outbox_id' AS ob \gset
 SELECT t_eq(t_states(:'t1'), 'A-101:PENDING', 'queued: the per-unit link still answers');

@@ -18,7 +18,7 @@ Deno.test('the code is in the e-mail, with how long it works', () => {
   assertStringIncludes(html, 'works for 30 minutes');
   assertStringIncludes(html, 'Nobody can answer for you without this code');
   assertEquals(subject, 'Your confirmation code · Shree <Heights> & Co');
-  assert(!subject.includes('042917'), 'the subject does not carry the code (it shows in notifications)');
+  assert(!subject.includes('042917'), 'the subject does not carry the code (the firm\'s message trace lists subjects)');
 });
 
 Deno.test('values from the database are escaped', () => {

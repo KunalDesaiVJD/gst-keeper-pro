@@ -17,7 +17,8 @@ import {
   type AgreementConfirmRequest, type AgreementConfirmStatus, type AgreementConfirmUnit, type AnsweredMeanwhile,
 } from '@/lib/builderAgreementConfirmData';
 import {
-  askedMeanwhile, failedMailWords, freshCandidates, masterState, meanwhileHeading, meanwhileWords, seenFor,
+  askedMeanwhile, failedMailWords, freshCandidates, mailOutcome, masterState, meanwhileHeading, meanwhileWords, seenFor,
+  unitAsk,
 } from '@/lib/builderConfirmRules';
 
 /**
@@ -39,6 +40,8 @@ export interface ConfirmCandidate extends AgreementConfirmUnit {
   respondedAt?: string | null;
   /** The request the unit is on (null: none, or a per-unit e-mail). */
   requestId?: string | null;
+  /** A per-unit e-mail of before 21 Oct 2026 asked about it. */
+  legacyLink?: boolean;
 }
 
 const STATUS_LABEL: Partial<Record<AgreementConfirmStatus['status'], string>> = {
@@ -57,8 +60,10 @@ const SendAgreementConfirmDialog: React.FC<{
   event: { id: string; buDate: string; dastavej: boolean } | null;
   candidates: ConfirmCandidate[];
   lastRequest: AgreementConfirmRequest | null;
+  /** The event's requests, newest first: whether each unit's e-mail went out. */
+  requests: AgreementConfirmRequest[];
   onSent: () => void;
-}> = ({ open, onOpenChange, clientId, projectName, event, candidates, lastRequest, onSent }) => {
+}> = ({ open, onOpenChange, clientId, projectName, event, candidates, lastRequest, requests, onSent }) => {
   const { user } = useAuth();
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
@@ -228,8 +233,9 @@ const SendAgreementConfirmDialog: React.FC<{
         // It may have gone: never invite a second click that sends it twice.
         toast.warning('The send did not report back. Check the e-mail on the Reminders page before sending again.');
       } else {
-        toast.error(`The request is recorded but the e-mail failed: ${res.reason || res.status}. `
-          + `${failedMailWords(res.earlierLink)} Fix the address and send again.`);
+        const sentNos = ticked.filter((c) => !res.skipped.some((k) => k.unitId === c.unitId)).map((c) => c.unitNo);
+        toast.error(`The request is recorded but the e-mail failed: ${(res.reason || res.status).trim().replace(/[.\s]+$/, '')}. `
+          + `${failedMailWords(res.earlierLink, sentNos)} Fix the address and send again.`);
       }
       onOpenChange(false);
       onSent();
@@ -276,6 +282,12 @@ const SendAgreementConfirmDialog: React.FC<{
               <p className="text-[11px] text-muted-foreground">
                 {toList.valid.length} address{toList.valid.length === 1 ? '' : 'es'}{toSource}.
                 Separate addresses with commas or semicolons. "Name &lt;address&gt;" is fine.
+              </p>
+            )}
+            {!toEdited && lastRequest && mailOutcome(lastRequest.mailStatus) === 'failed' && (
+              <p className="text-[11px] text-destructive [overflow-wrap:anywhere]">
+                The last e-mail to these addresses failed
+                {lastRequest.mailError ? `: ${lastRequest.mailError.trim().replace(/[.\s]+$/, '')}` : ''}. Check them before sending.
               </p>
             )}
             {!toEdited && masterInvalid.length > 0 && (
@@ -344,37 +356,57 @@ const SendAgreementConfirmDialog: React.FC<{
             </button>
           </div>
           <ul className="max-h-64 divide-y overflow-y-auto text-xs">
-            {shown.map((c) => (
-              <li key={c.unitId}>
-                <label className="flex cursor-pointer items-start gap-2 px-3 py-1.5">
-                  <Checkbox
-                    className="mt-0.5"
-                    checked={selected.has(c.unitId)}
-                    onCheckedChange={(v) => toggle(c.unitId, v === true)}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="font-medium">{c.unitNo}</span>{' '}
-                    <Badge
-                      variant={c.status === 'DISPUTED' ? 'destructive' : c.status === 'PENDING' ? 'warning' : 'secondary'}
-                      className="ml-1 text-[10px] font-medium"
-                    >
-                      {STATUS_LABEL[c.status] || c.status}
-                    </Badge>
-                    {c.status === 'DISPUTED' && c.disputeNotes && (
-                      <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                        {c.respondedByName ? `${c.respondedByName}: ` : ''}{c.disputeNotes}
-                      </span>
-                    )}
-                    {c.status === 'DISPUTED' && selected.has(c.unitId) && (
-                      <span className="mt-0.5 block text-[11px] text-amber-700 dark:text-amber-400">
-                        Sending asks again and clears this dispute. It stays in the unit's history.
-                      </span>
-                    )}
-                  </span>
-                  <span className="shrink-0 tabular-nums">{formatINR(c.agreementValue)}</span>
-                </label>
-              </li>
-            ))}
+            {shown.map((c) => {
+              // Pending, but did its e-mail go out? (round 4)
+              const ask = unitAsk(c.unitId, c, requests);
+              const notOut = ask && ask.state !== 'asked' ? ask : null;
+              return (
+                <li key={c.unitId}>
+                  <label className="flex cursor-pointer items-start gap-2 px-3 py-1.5">
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={selected.has(c.unitId)}
+                      onCheckedChange={(v) => toggle(c.unitId, v === true)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium">{c.unitNo}</span>{' '}
+                      <Badge
+                        variant={c.status === 'DISPUTED' || notOut?.state === 'failed' ? 'destructive'
+                          : c.status === 'PENDING' ? 'warning' : 'secondary'}
+                        className="ml-1 text-[10px] font-medium"
+                      >
+                        {STATUS_LABEL[c.status] || c.status}
+                        {notOut ? (notOut.state === 'failed' ? ' · e-mail failed' : ' · not sent yet') : ''}
+                      </Badge>
+                      {notOut && (
+                        <span className={`mt-0.5 block text-[11px] [overflow-wrap:anywhere] ${notOut.state === 'failed'
+                          ? 'text-destructive' : 'text-amber-700 dark:text-amber-400'}`}>
+                          {notOut.state === 'failed'
+                            ? `Its e-mail failed${notOut.error ? `: ${notOut.error.trim().replace(/[.\s]+$/, '')}` : ''}.`
+                            : 'Its e-mail is queued and has not gone yet.'}
+                          {notOut.earlier?.kind === 'request'
+                            ? ' The link e-mailed before still takes answers.'
+                            : notOut.earlier?.kind === 'legacy'
+                              ? ' The per-unit link e-mailed before still takes answers.'
+                              : notOut.state === 'failed' ? ' The client was never asked about it.' : ''}
+                        </span>
+                      )}
+                      {c.status === 'DISPUTED' && c.disputeNotes && (
+                        <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                          {c.respondedByName ? `${c.respondedByName}: ` : ''}{c.disputeNotes}
+                        </span>
+                      )}
+                      {c.status === 'DISPUTED' && selected.has(c.unitId) && (
+                        <span className="mt-0.5 block text-[11px] text-amber-700 dark:text-amber-400">
+                          Sending asks again and clears this dispute. It stays in the unit's history.
+                        </span>
+                      )}
+                    </span>
+                    <span className="shrink-0 tabular-nums">{formatINR(c.agreementValue)}</span>
+                  </label>
+                </li>
+              );
+            })}
             {!shown.length && !loadingUnits && (
               <li className="px-3 py-2 text-muted-foreground">Every unit is confirmed or accepted. Nothing is left to ask.</li>
             )}

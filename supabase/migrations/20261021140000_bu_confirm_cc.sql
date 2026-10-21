@@ -62,8 +62,9 @@
 -- Positions (docs/BUILDER_GST_POSITIONS.md section 6):
 --   * Only people the e-mail went to may answer, and they prove it. The page
 --     asks the reader's name and e-mail; the e-mail must be one of the
---     request's To or CC addresses (for a per-unit link, the address that
---     e-mail went to or the client master's) and not the firm's own. The
+--     request's To or CC addresses (for a per-unit link, the addresses that
+--     e-mail went to, recorded once when this file is applied: section 6c)
+--     and not the firm's own. The
 --     database then queues a 6-digit code to that address; the Edge Function
 --     bu-confirm-code e-mails it straight through Microsoft Graph (never
 --     through email_outbox, which the anon key can read) and does not keep a
@@ -72,12 +73,15 @@
 --     minutes and 5 tries. Limits per link, counted per caller (IP) so that
 --     another reader cannot use them up: 5 codes an hour and 10 a day to one
 --     address, 20 an hour whatever the address, 10 wrong tries a day to one
---     address; in all, 30 codes a day to one address and 60 an hour on the
---     link. A right code gives a proof (a random key, kept as a hash) good
---     for 2 hours; every answer needs it. So a staff member holding the
---     firm's copy of the e-mail, who sees the client's address in its header,
---     cannot answer as the client: the code goes to the client's mailbox. A
---     reader locked out by the limits waits a day, or the firm accepts the
+--     address. Behind them, over all callers, at most 30 codes e-mailed a
+--     day to one address and 60 an hour on the link; these count only codes
+--     the mailer sent and never refuse a caller's first 2 codes of the day
+--     to an address, so no other caller can lock a reader out. A right code
+--     gives a proof (a random key, kept as a hash) good for 2 hours; every
+--     answer needs it. So a staff member holding the firm's copy of the
+--     e-mail, who sees the client's address in its header, cannot answer as
+--     the client: the code goes to the client's mailbox. A reader who used
+--     up their own limits waits (an hour, or a day), or the firm accepts the
 --     value (Accept). Staff clear a unit only with
 --     builder_bu_agreement_override, its permission and reason.
 --   * Nobody writes around the functions. The public key only reads the
@@ -107,9 +111,17 @@
 --   * The per-unit answer function of the old e-mails
 --     (builder_bu_agreement_confirm) and its lookup are closed to the public
 --     key: a per-unit link is answered on the new page, with the same checks.
---     The addresses its e-mail went to (or the client master's) answer it;
---     the row keeps that e-mail (legacy_outbox_id) when a request asks about
---     the unit later.
+--     When this file is first applied, each row such an e-mail made records
+--     the addresses it went to (legacy_emails: its To and CC, or the client
+--     master's when its outbox row is gone) and the e-mail (legacy_outbox_id),
+--     once; nothing changes them later. Only those rows answer by their own
+--     token, and only those addresses answer them: a row a request or Accept
+--     made has a token the public key can read, but it was never e-mailed and
+--     opens nothing, and a write to clients.email or email_outbox lets nobody
+--     in (round 4, high). email_outbox.status still decides when a newer
+--     request is out; the public key can write it, but that only reopens an
+--     earlier link to the people its own e-mail went to, who must still prove
+--     their address.
 --
 -- RLS: builder_bu_confirm_requests and builder_bu_confirm_answer_history are
 -- open to public like every app table (the app has no Supabase auth session);
@@ -149,7 +161,17 @@
 --      builder_bu_confirm_code_claim, builder_bu_confirm_code_mark,
 --      builder_bu_confirm_code_verify (4 arguments, the last code_id uuid; the
 --      3-argument one is gone), builder_bu_confirm_respond (5 arguments),
---      builder_bu_confirm_firm_addresses, builder_bu_confirm_write_guard;
+--      builder_bu_confirm_firm_addresses, builder_bu_confirm_write_guard
+--      (its body mentions app.bu_confirm_legacy),
+--      builder_bu_confirm_legacy_snapshot (not executable by anon,
+--      authenticated or service_role); column legacy_emails text[]; and
+--      every row the old per-unit e-mails made has its record: SELECT
+--      count(*) FILTER (WHERE legacy_emails IS NOT NULL), count(*) FILTER
+--      (WHERE status <> 'NOT_SENT' AND (outbox_id IS NOT NULL OR sent_at IS
+--      NOT NULL)) FROM builder_bu_agreement_confirmations gives two equal
+--      numbers right after applying (the old app set outbox_id and sent_at
+--      together; a difference is a row whose outbox row is not the per-unit
+--      template: look at it before deploying the app);
 --      builder_bu_agreement_override's body sets app.bu_confirm_write;
 --      triggers trg_builder_bu_agreement_confirmations_guard,
 --      trg_builder_bu_confirm_requests_guard and
@@ -170,10 +192,18 @@
 --      = (SELECT id FROM public.builder_bu_agreement_confirmations LIMIT 1);
 --      ROLLBACK; is refused with "change only through the confirmation page"
 --      (it changes nothing either way; with no row in the table it proves
---      nothing, and step 3's trigger check stands).
+--      nothing, and step 3's trigger check stands). Once the app has made a
+--      request: with the anon key, rpc builder_bu_confirm_lookup with the
+--      token of a row whose legacy_emails is NULL (select token from
+--      builder_bu_agreement_confirmations where legacy_emails is null
+--      limit 1) returns null.
 --   5. No redeploy of send-gst-email: v5 already sends to every address in
 --      to_email and cc_email, comma or semicolon separated.
---   6. Per-unit links already sent keep working on the new page.
+--   6. Per-unit links already sent keep working on the new page, for the
+--      addresses in their row's legacy_emails (the To and CC of that e-mail;
+--      the client master's as on the day this is applied when its outbox row
+--      is gone). Applying this file again records nothing new: the record is
+--      made on the run that adds the column.
 
 BEGIN;
 
@@ -268,19 +298,29 @@ COMMENT ON COLUMN public.builder_bu_agreement_confirmations.responded_by_email I
   'E-mail the person who answered gave on the confirmation page: one the e-mail was sent to, proved by a '
   'code e-mailed to it (builder_bu_confirm_codes).';
 COMMENT ON COLUMN public.builder_bu_agreement_confirmations.legacy_outbox_id IS
-  'The per-unit e-mail sent before 21 Oct 2026 (its email_outbox row), kept when a request later asks about '
-  'the unit (outbox_id then names the request''s e-mail): the addresses it went to may still answer its link, '
-  'and a later send knows a link reached the client. NULL for a unit never e-mailed per unit. No foreign '
-  'key: a deleted outbox row leaves only the client master''s address, as before.';
+  'The per-unit e-mail sent before 21 Oct 2026 (its email_outbox row), recorded once when this change was '
+  'applied (section 6c) and never changed: a later send knows a link reached the client. NULL for a unit '
+  'never e-mailed per unit. No foreign key: the record stays when the outbox row is deleted.';
 
--- Rows of the per-unit e-mails: their own e-mail is the one they point at
--- until a request asks about them. (The flag lets this through the guard of
--- section 6b when the file runs again.)
-SELECT set_config('app.bu_confirm_write', 'on', true);
-UPDATE public.builder_bu_agreement_confirmations
-   SET legacy_outbox_id = outbox_id
- WHERE legacy_outbox_id IS NULL AND request_id IS NULL AND outbox_id IS NOT NULL;
-SELECT set_config('app.bu_confirm_write', 'off', true);
+-- legacy_emails: added here, filled once in section 6c, on the run that adds
+-- it (round 4, high: the per-unit path read its addresses live from the
+-- client master and email_outbox, both of which the public key can write, and
+-- took every row's token, also the tokens of rows a request made, which were
+-- never e-mailed).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'builder_bu_agreement_confirmations'
+                    AND column_name = 'legacy_emails') THEN
+    ALTER TABLE public.builder_bu_agreement_confirmations ADD COLUMN legacy_emails text[];
+    PERFORM set_config('app.bu_confirm_snapshot_due', 'on', true);
+  END IF;
+END $$;
+COMMENT ON COLUMN public.builder_bu_agreement_confirmations.legacy_emails IS
+  'The addresses a per-unit e-mail sent before 21 Oct 2026 went to (To and CC of its email_outbox row; the '
+  'client master''s when that row was gone), recorded once when this change was applied and never changed. '
+  'Only a row with these addresses answers by its own token, and only these addresses may answer it. NULL '
+  'for every row a request or the firm''s Accept made: their tokens were never e-mailed and open nothing.';
 
 -- ── 3. Disputes a later request cleared ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.builder_bu_confirm_answer_history (
@@ -555,11 +595,14 @@ $$;
 
 -- A link, by its token: the request (o_req) or the per-unit row (o_cf), the
 -- event, the units it reaches, and the addresses the e-mail went to (a
--- request: its To and CC; a per-unit link: the addresses that per-unit e-mail
--- went to, kept in legacy_outbox_id once a request asked about the unit
--- (round 3: the send overwrote it, and the person it went to was refused on
--- their still-open link), and the client master's). All NULL when the token
--- reaches nothing (a NOT_SENT row's token was never e-mailed).
+-- request: its To and CC; a per-unit link: legacy_emails, the addresses that
+-- per-unit e-mail went to as recorded once when this change was applied).
+-- All NULL when the token reaches nothing. Only a per-unit e-mail of before
+-- 21 Oct 2026 opens a link by a row's own token (round 4, high: every row has
+-- a token the public key can read, rows a request made too, whose tokens were
+-- never e-mailed; and the addresses were read live from clients.email and
+-- email_outbox, which the public key can write). Nothing here reads a table
+-- the public key can write.
 CREATE OR REPLACE FUNCTION public.builder_bu_confirm_link(
   _token text,
   OUT o_req uuid, OUT o_cf uuid, OUT o_event uuid, OUT o_units uuid[], OUT o_allowed text[])
@@ -581,18 +624,12 @@ BEGIN
     RETURN;
   END IF;
   SELECT * INTO v_cf FROM public.builder_bu_agreement_confirmations c
-   WHERE c.token = _token AND c.status <> 'NOT_SENT';
+   WHERE c.token = _token AND c.status <> 'NOT_SENT' AND cardinality(c.legacy_emails) > 0;
   IF NOT FOUND THEN RETURN; END IF;
   o_cf := v_cf.id;
   o_event := v_cf.bu_event_id;
   o_units := ARRAY[v_cf.unit_id];
-  o_allowed := COALESCE((SELECT public.builder_bu_confirm_addresses(cl.email)
-                           FROM public.clients cl WHERE cl.id = v_cf.client_id), '{}')
-            || COALESCE((SELECT public.builder_bu_confirm_addresses(o.to_email)
-                                || public.builder_bu_confirm_addresses(o.cc_email)
-                           FROM public.email_outbox o
-                          WHERE o.id = COALESCE(v_cf.legacy_outbox_id,
-                                                CASE WHEN v_cf.request_id IS NULL THEN v_cf.outbox_id END)), '{}');
+  o_allowed := v_cf.legacy_emails;
 END;
 $$;
 
@@ -628,7 +665,9 @@ $$;
 -- functions do for user_roles. Left alone: a cascade when its BU event, unit,
 -- client or request is deleted, and a foreign key clearing the e-mail or
 -- request a row points at when that row is deleted (only the key columns,
--- only to NULL).
+-- only to NULL). The record of a per-unit e-mail of before 21 Oct 2026
+-- (legacy_emails, legacy_outbox_id) is written once, by section 6c, and by
+-- nothing else: not by the functions either (round 4).
 CREATE OR REPLACE FUNCTION public.builder_bu_confirm_write_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -637,6 +676,15 @@ AS $$
 DECLARE
   v_keys text[];
 BEGIN
+  IF TG_TABLE_NAME = 'builder_bu_agreement_confirmations' AND TG_OP <> 'DELETE'
+     AND COALESCE(current_setting('app.bu_confirm_legacy', true), 'off') <> 'on'
+     AND ((TG_OP = 'INSERT' AND (to_jsonb(NEW) -> 'legacy_emails' <> 'null'::jsonb
+                                 OR to_jsonb(NEW) -> 'legacy_outbox_id' <> 'null'::jsonb))
+          OR (TG_OP = 'UPDATE' AND (to_jsonb(NEW) -> 'legacy_emails' IS DISTINCT FROM to_jsonb(OLD) -> 'legacy_emails'
+                                    OR to_jsonb(NEW) -> 'legacy_outbox_id' IS DISTINCT FROM to_jsonb(OLD) -> 'legacy_outbox_id'))) THEN
+    RAISE EXCEPTION 'The record of a per-unit e-mail sent before 21 Oct 2026 never changes.'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
   IF COALESCE(current_setting('app.bu_confirm_write', true), 'off') = 'on' THEN
     RETURN COALESCE(NEW, OLD);
   END IF;
@@ -737,6 +785,64 @@ BEGIN
 END;
 $$;
 GRANT EXECUTE ON FUNCTION public.builder_bu_agreement_override(uuid, uuid, uuid, text) TO anon, authenticated, service_role;
+
+-- ── 6c. Per-unit e-mails of before this change: a record made once ─────────
+-- Round 4 (high): a per-unit link took its addresses live from clients.email
+-- and from the To and CC of its email_outbox row, both of which the public key
+-- can write; and every row's token (readable by the public key) opened it,
+-- rows a request made too, whose tokens were never e-mailed. With one write to
+-- the client master, anyone could confirm every unit and open the filing gate.
+-- Now each row an old per-unit e-mail made keeps, from the moment this change
+-- is applied, the addresses that e-mail went to (legacy_emails) and the e-mail
+-- itself (legacy_outbox_id); only such a row answers by its own token, and
+-- only those addresses may answer it. A row is such a row when no request
+-- asked about it yet and its e-mail is the old per-unit template, or when it
+-- was e-mailed (sent_at) and that outbox row is gone (then the client
+-- master's address as it stands when this change is applied). The old app's
+-- direct writes are refused from then on (section 6b), so no such row can
+-- appear later. Run by this file once, on the run that adds legacy_emails;
+-- never callable with the public key.
+CREATE OR REPLACE FUNCTION public.builder_bu_confirm_legacy_snapshot()
+RETURNS integer
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  n integer;
+BEGIN
+  PERFORM set_config('app.bu_confirm_write', 'on', true);
+  PERFORM set_config('app.bu_confirm_legacy', 'on', true);
+  UPDATE public.builder_bu_agreement_confirmations c
+     SET legacy_outbox_id = s.outbox_id,
+         legacy_emails = s.emails
+    FROM (SELECT c2.id, o.id AS outbox_id,
+                 public.builder_bu_confirm_email_list(
+                   CASE WHEN o.id IS NOT NULL
+                        THEN public.builder_bu_confirm_addresses(o.to_email) || public.builder_bu_confirm_addresses(o.cc_email)
+                        ELSE public.builder_bu_confirm_addresses(cl.email) END) AS emails
+            FROM public.builder_bu_agreement_confirmations c2
+            JOIN public.clients cl ON cl.id = c2.client_id
+            LEFT JOIN public.email_outbox o ON o.id = c2.outbox_id
+           WHERE c2.legacy_emails IS NULL
+             AND c2.request_id IS NULL AND c2.status <> 'NOT_SENT'
+             AND ((o.id IS NOT NULL AND o.template_key = 'builder_bu_agreement_confirm')
+                  OR (c2.outbox_id IS NULL AND c2.sent_at IS NOT NULL))) s
+   WHERE c.id = s.id;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  PERFORM set_config('app.bu_confirm_legacy', 'off', true);
+  PERFORM set_config('app.bu_confirm_write', 'off', true);
+  RETURN n;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.builder_bu_confirm_legacy_snapshot() FROM PUBLIC, anon, authenticated, service_role;
+
+DO $$
+BEGIN
+  IF COALESCE(current_setting('app.bu_confirm_snapshot_due', true), 'off') = 'on' THEN
+    PERFORM public.builder_bu_confirm_legacy_snapshot();
+    PERFORM set_config('app.bu_confirm_snapshot_due', 'off', true);
+  END IF;
+END $$;
 
 -- ── 7. Staff: which typed addresses are the firm's own ──────────────────────
 -- For the pop-up's "The firm's own" line (a staff member's personal address
@@ -883,9 +989,9 @@ BEGIN
   END IF;
 
   -- Did a link to any of these units reach someone already? A request that is
-  -- out, or a per-unit e-mail of before 21 Oct 2026 that was sent (its own
-  -- record, kept when a request asked about the unit since: round 3). While
-  -- this e-mail is not out, that link still takes answers.
+  -- out, or a per-unit e-mail of before 21 Oct 2026 that is out (its record,
+  -- section 6c: sent, or its outbox row gone, as for a request). While this
+  -- e-mail is not out, that link still takes answers.
   v_earlier := EXISTS (
     SELECT 1
       FROM public.builder_bu_agreement_confirmations c
@@ -894,9 +1000,9 @@ BEGIN
        AND (EXISTS (SELECT 1 FROM public.builder_bu_confirm_requests r
                      WHERE r.bu_event_id = p_bu_event_id AND c.unit_id = ANY (r.unit_ids)
                        AND public.builder_bu_confirm_request_out(r.id))
-            OR EXISTS (SELECT 1 FROM public.email_outbox o
-                        WHERE o.id = COALESCE(c.legacy_outbox_id, CASE WHEN c.request_id IS NULL THEN c.outbox_id END)
-                          AND o.status = 'sent')));
+            OR (cardinality(c.legacy_emails) > 0
+                AND NOT EXISTS (SELECT 1 FROM public.email_outbox o
+                                 WHERE o.id = c.legacy_outbox_id AND o.status <> 'sent'))));
 
   BEGIN
     -- The writes below pass the guard of section 6b; an error undoes the flag
@@ -948,8 +1054,8 @@ BEGIN
            request_id = EXCLUDED.request_id,
            client_id = EXCLUDED.client_id,
            agreement_value_at_request = EXCLUDED.agreement_value_at_request,
-           -- A per-unit e-mail of before 21 Oct 2026 keeps its own record.
-           legacy_outbox_id = COALESCE(c.legacy_outbox_id, CASE WHEN c.request_id IS NULL THEN c.outbox_id END),
+           -- (A per-unit e-mail of before 21 Oct 2026 keeps its record,
+           -- legacy_emails and legacy_outbox_id: section 6c.)
            outbox_id = EXCLUDED.outbox_id,
            sent_at = EXCLUDED.sent_at,
            responded_at = NULL,
@@ -1101,10 +1207,16 @@ $$;
 -- other), counted per caller (the IP the API gateway passed on; one bucket
 -- when none) so that another reader cannot use up someone else's (round 3):
 -- 5 codes an hour and 10 a day to one address from one caller, 20 an hour
--- from one caller whatever the address; and in all, 30 a day to one address
--- and 60 an hour on a link. Returns { ok, code_id, email }; the page keeps
--- code_id (only it has it: the digits go to the mailbox) and calls the Edge
--- Function bu-confirm-code with it, which e-mails the code.
+-- from one caller whatever the address. Behind them, caps over all callers
+-- that keep a mailbox from being flooded: 30 codes e-mailed a day to one
+-- address and 60 an hour on a link. They count only codes the mailer e-mailed
+-- (a code asked for and never sent costs the address nothing), and they never
+-- refuse a caller's first 2 codes to an address in a day (round 4, low: six
+-- callers asking 5 codes each, never mailed, locked the owner out for a day,
+-- with nothing in the owner's mailbox to say why). Returns { ok, code_id,
+-- email }; the page keeps code_id (only it has it: the digits go to the
+-- mailbox) and calls the Edge Function bu-confirm-code with it, which e-mails
+-- the code.
 CREATE OR REPLACE FUNCTION public.builder_bu_confirm_code_request(_token text, _email text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -1133,8 +1245,8 @@ BEGIN
                             AND k.created_at > now() - interval '1 hour') AS mine_hour,
          count(*) FILTER (WHERE k.requested_ip IS NOT DISTINCT FROM v_ip
                             AND k.created_at > now() - interval '1 hour') AS caller_hour,
-         count(*) FILTER (WHERE k.email = v_email) AS address_day,
-         count(*) FILTER (WHERE k.created_at > now() - interval '1 hour') AS link_hour
+         count(*) FILTER (WHERE k.email = v_email AND k.sent_at IS NOT NULL) AS address_day,
+         count(*) FILTER (WHERE k.sent_at IS NOT NULL AND k.created_at > now() - interval '1 hour') AS link_hour
     INTO n
     FROM public.builder_bu_confirm_codes k
    WHERE (k.request_id = l.o_req OR k.confirmation_id = l.o_cf)
@@ -1147,12 +1259,17 @@ BEGIN
     RAISE EXCEPTION 'We have sent 5 codes to this address in the last hour. Please use the latest one, or try again later.'
       USING ERRCODE = 'check_violation';
   END IF;
-  IF n.address_day >= 30 THEN
-    RAISE EXCEPTION 'Too many codes were asked for this address today. Please try again tomorrow, or write to us at gst@vjdesai.com.'
+  IF n.caller_hour >= 20 THEN
+    RAISE EXCEPTION 'Too many codes were asked for on this link in the last hour. Please try again later.'
       USING ERRCODE = 'check_violation';
   END IF;
-  IF n.caller_hour >= 20 OR n.link_hour >= 60 THEN
-    RAISE EXCEPTION 'Too many codes were asked for on this link in the last hour. Please try again later.'
+  -- The caps over all callers, from this caller's third code of the day on.
+  IF n.mine_day >= 2 AND n.address_day >= 30 THEN
+    RAISE EXCEPTION 'Too many codes were e-mailed to this address today. Please use the latest one, try again tomorrow, or write to us at gst@vjdesai.com.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF n.mine_day >= 2 AND n.link_hour >= 60 THEN
+    RAISE EXCEPTION 'Too many codes were asked for on this link in the last hour. Please use the latest one, or try again later.'
       USING ERRCODE = 'check_violation';
   END IF;
 

@@ -28,6 +28,17 @@ BEGIN
 END $$;
 GRANT EXECUTE ON FUNCTION public.t_old_app(text) TO anon;
 
+-- What 20261021140000 does once, when it is applied (section 6c): each row a
+-- per-unit e-mail of the old app made records the addresses that e-mail went
+-- to. Fixtures call it after writing the old app's rows, as if the change were
+-- applied after them (the function itself is not callable by the public key).
+CREATE FUNCTION public.t_legacy_snapshot() RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
+BEGIN
+  RETURN public.builder_bu_confirm_legacy_snapshot();
+END $$;
+GRANT EXECUTE ON FUNCTION public.t_legacy_snapshot() TO anon;
+
 -- Send a request for event e1…01 the way the BU Events dialog does: the
 -- template filled in with {{confirm_link}} left for the function, and the
 -- statuses the pop-up showed (by default, as they are now: a pop-up opened

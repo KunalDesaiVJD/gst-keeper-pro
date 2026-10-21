@@ -112,6 +112,8 @@ interface FreshRow {
   respondedAt?: string | null;
   /** The latest request that asked about the unit (null: none, or a per-unit e-mail). */
   requestId?: string | null;
+  /** A per-unit e-mail of before 21 Oct 2026 asked about it (its link may still answer). */
+  legacyLink?: boolean;
 }
 
 /**
@@ -136,6 +138,7 @@ export function freshCandidates<T extends FreshRow>(candidates: T[], fresh: Fres
         respondedByEmail: f?.respondedByEmail ?? null,
         respondedAt: f?.respondedAt ?? null,
         requestId: f?.requestId ?? null,
+        legacyLink: f?.legacyLink ?? false,
       };
     });
 }
@@ -210,10 +213,161 @@ export function meanwhileHeading(list: { status: string }[]): string {
   return 'Answered or asked again since this pop-up opened, so nothing was sent:';
 }
 
-/** The words after a failed send: is there a link the client already holds? */
-export const failedMailWords = (earlierLink: boolean | null | undefined): string => (earlierLink
-  ? 'The earlier link still takes answers until an e-mail goes out.'
-  : 'No e-mail has reached the client yet.');
+/**
+ * The words after a failed send: is there a link to these units the client
+ * already holds? Said of the request's own units (round 4: "No e-mail has
+ * reached the client yet" was wrong when an earlier e-mail about other units
+ * had been answered).
+ */
+export const failedMailWords = (earlierLink: boolean | null | undefined, unitNos: string[] = []): string => {
+  if (earlierLink) return 'The earlier link still takes answers until an e-mail goes out.';
+  const which = unitNos.filter(Boolean);
+  return `No earlier link to ${which.length ? which.join(', ') : 'these units'} has reached the client.`;
+};
+
+/** A request as BU Events reads it, with its e-mail's outbox status. */
+export interface AskRequest {
+  id: string;
+  unitIds: string[];
+  to: string[];
+  sentAt: string | null;
+  createdAt: string;
+  /** email_outbox status: sent, pending, sending, failed, skipped, cancelled; null when the row is gone. */
+  mailStatus: string | null;
+  mailError: string | null;
+  /** When the e-mail went (email_outbox.sent_at). */
+  mailSentAt?: string | null;
+  earlierLink: boolean;
+}
+
+/** What became of a request's e-mail: out (sent, or its outbox row gone, as
+ *  the database counts it), waiting (queued or being sent), or failed
+ *  (failed, skipped or cancelled). */
+export function mailOutcome(status: string | null | undefined): 'out' | 'waiting' | 'failed' {
+  if (status === 'pending' || status === 'sending') return 'waiting';
+  if (status === 'failed' || status === 'skipped' || status === 'cancelled') return 'failed';
+  return 'out';
+}
+
+/**
+ * Whether a unit waiting on the client was really asked (round 4: BU Events
+ * said "Asked <date>" when the unit's only e-mail had failed or was still
+ * queued). requests: the event's requests, newest first.
+ *   asked     its request's e-mail is out (at: when it went)
+ *   waiting   its request's e-mail is queued or being sent
+ *   failed    its request's e-mail failed (error: why)
+ * earlier, for waiting or failed: the newest link to the unit that did reach
+ * the client and still takes answers: an earlier request whose e-mail is out
+ * (at: when), or the per-unit e-mail of before 21 Oct 2026 (legacyLink).
+ * null for a unit not waiting, or with no request (an old per-unit row).
+ */
+export function unitAsk(
+  unitId: string,
+  cf: { status: string; requestId?: string | null; legacyLink?: boolean } | undefined,
+  requests: AskRequest[],
+): {
+  state: 'asked' | 'waiting' | 'failed';
+  at: string | null;
+  error: string | null;
+  earlier: { kind: 'request'; at: string | null } | { kind: 'legacy' } | null;
+} | null {
+  if (!cf || cf.status !== 'PENDING' || !cf.requestId) return null;
+  const idx = requests.findIndex((r) => r.id === cf.requestId);
+  if (idx < 0) return null;
+  const req = requests[idx];
+  const outcome = mailOutcome(req.mailStatus);
+  if (outcome === 'out') {
+    return { state: 'asked', at: req.mailSentAt || req.sentAt || req.createdAt, error: null, earlier: null };
+  }
+  const prior = requests.slice(idx + 1).find((r) => r.unitIds.includes(unitId) && mailOutcome(r.mailStatus) === 'out');
+  return {
+    state: outcome,
+    at: req.sentAt || req.createdAt,
+    error: outcome === 'failed' ? (req.mailError || req.mailStatus) : null,
+    earlier: prior ? { kind: 'request', at: prior.mailSentAt || prior.sentAt || prior.createdAt }
+      : cf.legacyLink ? { kind: 'legacy' } : null,
+  };
+}
+
+/**
+ * The requests whose e-mail has not gone out (failed, skipped, queued or
+ * being sent) and that still hold units waiting on the client, with those
+ * units: BU Events flags each one, not only the last request (round 4).
+ */
+export function requestsNotOut(
+  requests: AskRequest[],
+  confirmations: { unitId: string; status: string; requestId?: string | null }[],
+): { request: AskRequest; unitIds: string[] }[] {
+  return requests
+    .filter((r) => mailOutcome(r.mailStatus) !== 'out')
+    .map((r) => ({
+      request: r,
+      unitIds: confirmations.filter((c) => c.requestId === r.id && c.status === 'PENDING').map((c) => c.unitId),
+    }))
+    .filter((x) => x.unitIds.length > 0);
+}
+
+// ── The public page's code step, kept per link in the reader's browser ──────
+// Round 4 (medium): the code step lived only in the page's memory, so a phone
+// mail app that closes the link's tab to show the inbox (Gmail on Android)
+// lost it: the reopened page had no Code box, the e-mailed code could not be
+// typed, and a reload dropped the 2-hour proof. The page keeps it per token in
+// localStorage and restores it on load; expired parts are dropped.
+
+/** How long a code works (builder_bu_confirm_code_claim) and a proof holds
+ *  (builder_bu_confirm_respond), less a minute so the page never offers a
+ *  dead one. */
+export const CODE_LIFE_MS = 29 * 60 * 1000;
+export const PROOF_LIFE_MS = 119 * 60 * 1000;
+
+export interface CodeStep {
+  name: string;
+  email: string;
+  /** Where the latest code went, its id (only this browser has it) and when it was asked for. */
+  codeSentTo: string | null;
+  codeId: string | null;
+  codeAt: number | null;
+  /** The proof, the address it proves and until when it holds. */
+  proof: string | null;
+  proofEmail: string | null;
+  proofUntil: number | null;
+}
+
+export const codeStepKey = (token: string): string => `bu-confirm:${token}`;
+
+const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/** The stored step, read back: a code older than its life and a proof past
+ *  its time are dropped. null when nothing usable is stored. */
+export function readCodeStep(raw: string | null | undefined, now: number): CodeStep | null {
+  if (!raw) return null;
+  let o: Record<string, unknown>;
+  try {
+    const v = JSON.parse(raw);
+    if (!v || typeof v !== 'object') return null;
+    o = v as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const step: CodeStep = {
+    name: str(o.name) ?? '',
+    email: str(o.email) ?? '',
+    codeSentTo: str(o.codeSentTo),
+    codeId: str(o.codeId),
+    codeAt: num(o.codeAt),
+    proof: str(o.proof),
+    proofEmail: str(o.proofEmail),
+    proofUntil: num(o.proofUntil),
+  };
+  if (!step.codeSentTo || !step.codeId || step.codeAt === null || now - step.codeAt > CODE_LIFE_MS || step.codeAt > now + 60_000) {
+    step.codeSentTo = null; step.codeId = null; step.codeAt = null;
+  }
+  if (!step.proof || !step.proofEmail || step.proofUntil === null || step.proofUntil <= now || step.proofUntil > now + PROOF_LIFE_MS + 60_000) {
+    step.proof = null; step.proofEmail = null; step.proofUntil = null;
+  }
+  return step.name || step.email || step.codeId || step.proof ? step : null;
+}
 
 /** A unit as the public page shows it. */
 export type PageUnitState = 'PENDING' | 'CONFIRMED' | 'DISPUTED' | 'ACCEPTED' | 'REPLACED';

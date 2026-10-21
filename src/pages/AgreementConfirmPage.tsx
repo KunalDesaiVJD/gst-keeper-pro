@@ -11,7 +11,9 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatINR } from '@/utils/builderRates';
 import { askConfirmCode, emailOk, verifyConfirmCode } from '@/lib/builderAgreementConfirmData';
-import { confirmAllTargets, pageSummary, type PageUnitState } from '@/lib/builderConfirmRules';
+import {
+  codeStepKey, confirmAllTargets, pageSummary, PROOF_LIFE_MS, readCodeStep, type CodeStep, type PageUnitState,
+} from '@/lib/builderConfirmRules';
 import { GST_FIRM } from '@/lib/gstReminders';
 import logo from '@/assets/logo.png';
 
@@ -31,6 +33,11 @@ import logo from '@/assets/logo.png';
 // (the page says an answer stands and how to object), a disputed one waits
 // for the firm. A unit whose dispute box is open is left out of "Confirm all".
 // Long addresses, notes and links wrap rather than widen the page on a phone.
+// The code step (name, address, the code's id, the proof) is kept per link in
+// this browser's localStorage and restored on load, so a phone mail app that
+// closes the tab to show the inbox, or a reload, does not lose the code
+// already e-mailed or the proof (round 4). Every access is wrapped: a private
+// window, blocked storage or a preview just starts afresh.
 
 type UnitState = PageUnitState;
 
@@ -69,6 +76,23 @@ const RESULT_WORDS: Record<string, string> = {
 
 const CONTACT = `If you have not received it, please write to us at ${GST_FIRM.email}.`;
 
+const storeGet = (key: string): string | null => {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const storeSet = (key: string, value: string | null) => {
+  try {
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+  } catch {
+    // Storage blocked or full: the step lives in the page only.
+  }
+};
+const clockTime = (ms: number) => new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+
 const AgreementConfirmPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const [page, setPage] = useState<PageData | null>(null);
@@ -81,10 +105,13 @@ const AgreementConfirmPage: React.FC = () => {
   // code was right.
   const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
   const [codeId, setCodeId] = useState<string | null>(null);
+  const [codeAt, setCodeAt] = useState<number | null>(null);
   const [code, setCode] = useState('');
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeMessage, setCodeMessage] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null);
-  const [proof, setProof] = useState<{ proof: string; email: string } | null>(null);
+  const [proof, setProof] = useState<{ proof: string; email: string; until: number } | null>(null);
+  // The stored step has been read back for this link (until then nothing is written over it).
+  const [restoredFor, setRestoredFor] = useState<string | null>(null);
   // Open dispute boxes and what has been typed in each, by unit. Answering
   // another unit leaves them as they are.
   const [disputes, setDisputes] = useState<Record<string, string>>({});
@@ -100,6 +127,34 @@ const AgreementConfirmPage: React.FC = () => {
   }, [token]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Restore the code step kept for this link, once per token.
+  useEffect(() => {
+    if (!token) return;
+    const step = readCodeStep(storeGet(codeStepKey(token)), Date.now());
+    setName(step?.name ?? '');
+    setEmail(step?.email ?? '');
+    setCodeSentTo(step?.codeSentTo ?? null);
+    setCodeId(step?.codeId ?? null);
+    setCodeAt(step?.codeAt ?? null);
+    setProof(step?.proof && step.proofEmail && step.proofUntil
+      ? { proof: step.proof, email: step.proofEmail, until: step.proofUntil } : null);
+    setCodeMessage(step?.codeSentTo && step.codeAt && !step.proof
+      ? { tone: 'ok', text: `We e-mailed a code to ${step.codeSentTo} at ${clockTime(step.codeAt)}. Type it below, or ask for a new one.` }
+      : null);
+    setRestoredFor(token);
+  }, [token]);
+
+  // Keep it as it changes.
+  useEffect(() => {
+    if (!token || restoredFor !== token) return;
+    const step: CodeStep = {
+      name, email, codeSentTo, codeId, codeAt,
+      proof: proof?.proof ?? null, proofEmail: proof?.email ?? null, proofUntil: proof?.until ?? null,
+    };
+    const empty = !name && !email && !codeId && !proof;
+    storeSet(codeStepKey(token), empty ? null : JSON.stringify(step));
+  }, [token, restoredFor, name, email, codeSentTo, codeId, codeAt, proof]);
 
   const typedEmail = email.trim().toLowerCase();
   // The proof holds only for the address it was given for.
@@ -126,6 +181,7 @@ const AgreementConfirmPage: React.FC = () => {
       }
       setCodeSentTo(person.e);
       setCodeId(res.codeId);
+      setCodeAt(Date.now());
       setCode('');
       // 'unknown': the mailer did not report back, so the code may not have gone.
       setCodeMessage(res.status === 'sent'
@@ -145,7 +201,7 @@ const AgreementConfirmPage: React.FC = () => {
     try {
       const res = await verifyConfirmCode(token, codeSentTo, code, codeId);
       if (res.proof) {
-        setProof({ proof: res.proof, email: codeSentTo });
+        setProof({ proof: res.proof, email: codeSentTo, until: Date.now() + PROOF_LIFE_MS });
         setCode('');
         setCodeMessage(null);
       } else {
@@ -186,7 +242,7 @@ const AgreementConfirmPage: React.FC = () => {
     } catch (e) {
       const msg = (e as Error).message;
       // An old proof (over 2 hours): check the address again.
-      if (/with the code we send/.test(msg)) { setProof(null); setCodeSentTo(null); setCodeId(null); }
+      if (/with the code we send/.test(msg)) { setProof(null); setCodeSentTo(null); setCodeId(null); setCodeAt(null); }
       toast.error(`Could not save your answer: ${msg}`);
       setNotice(msg);
     } finally {

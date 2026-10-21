@@ -40,7 +40,7 @@ import {
   isBuAgreementConfirmationBlocked, overrideAgreementValue,
   type AgreementConfirmRequest, type AgreementConfirmStatus, type ClearedDispute,
 } from '@/lib/builderAgreementConfirmData';
-import { failedMailWords } from '@/lib/builderConfirmRules';
+import { failedMailWords, mailOutcome, requestsNotOut, unitAsk } from '@/lib/builderConfirmRules';
 import SendAgreementConfirmDialog, { type ConfirmCandidate } from '@/components/builder/SendAgreementConfirmDialog';
 
 interface ProjectRow {
@@ -346,7 +346,7 @@ const BuilderBuEventsPage: React.FC = () => {
           cutOffSource: r.cut_off_source, cutOffDate: r.cut_off_date,
           status: c?.status || 'NOT_SENT', disputeNotes: c?.disputeNotes ?? null, respondedByName: c?.respondedByName ?? null,
           respondedByEmail: c?.respondedByEmail ?? null, respondedAt: c?.respondedAt ?? null,
-          requestId: c?.requestId ?? null,
+          requestId: c?.requestId ?? null, legacyLink: c?.legacyLink ?? false,
         };
       });
   };
@@ -573,7 +573,13 @@ const BuilderBuEventsPage: React.FC = () => {
           const cfByUnit = new Map(cfRows.map((c) => [c.unitId, c]));
           const cfConfirmed = taxable.filter((r) => isAgreementCleared(cfByUnit.get(r.unit_id)?.status)).length;
           const cfOutstanding = taxable.length - cfConfirmed;
-          const lastReq = (requests[ev.id] || [])[0] || null;
+          const evRequests = requests[ev.id] || [];
+          const lastReq = evRequests[0] || null;
+          const unitNoOf = (id: string) => units.find((u) => u.id === id)?.unit_no || '';
+          // Every other request whose e-mail has not gone out and that still
+          // holds units waiting on the client (round 4: only the last one was
+          // shown, so a unit whose only e-mail failed looked asked).
+          const notOut = requestsNotOut(evRequests, cfRows).filter((x) => x.request.id !== lastReq?.id);
           // Who answered on the page, grouped: "Confirmed by X (x@…) on 21 Oct 2026: A-101, A-102".
           const answerMap = new Map<string, { label: string; disputed: boolean; units: string[] }>();
           rows.forEach((r) => {
@@ -674,14 +680,30 @@ const BuilderBuEventsPage: React.FC = () => {
                       {lastReq.unitIds.length === 1 ? '' : 's'} to {lastReq.to.join(', ')}
                       {lastReq.cc.length > 0 && <> · CC {lastReq.cc.join(', ')}</>}
                       {lastReq.mailStatus && (
-                        <span className={cn(lastReq.mailStatus === 'failed' && 'text-destructive')}>
-                          {' '}· e-mail {lastReq.mailStatus}{lastReq.mailStatus === 'failed' && lastReq.mailError ? `: ${lastReq.mailError}` : ''}
-                          {['failed', 'skipped', 'cancelled'].includes(lastReq.mailStatus)
-                            ? `. ${failedMailWords(lastReq.earlierLink)}` : ''}
+                        <span className={cn(mailOutcome(lastReq.mailStatus) === 'failed' && 'text-destructive')}>
+                          {' '}· {mailOutcome(lastReq.mailStatus) === 'waiting'
+                            ? 'e-mail queued, not sent yet'
+                            : `e-mail ${lastReq.mailStatus}`}
+                          {lastReq.mailStatus === 'failed' && lastReq.mailError ? `: ${lastReq.mailError.trim().replace(/[.\s]+$/, '')}` : ''}
+                          {mailOutcome(lastReq.mailStatus) === 'failed'
+                            ? `. ${failedMailWords(lastReq.earlierLink, lastReq.unitIds.map(unitNoOf))}` : ''}
                         </span>
                       )}
                     </p>
                   )}
+                  {notOut.map(({ request: rq, unitIds }) => {
+                    const nos = unitIds.map(unitNoOf);
+                    const failed = mailOutcome(rq.mailStatus) === 'failed';
+                    const what = failed
+                      ? `e-mail ${rq.mailStatus}${rq.mailError ? `: ${rq.mailError.trim().replace(/[.\s]+$/, '')}` : ''}`
+                      : 'e-mail queued, not sent yet';
+                    return (
+                      <p key={rq.id} className={failed ? 'text-destructive' : 'text-amber-700 dark:text-amber-400'}>
+                        {`Request ${shortWhen(rq.sentAt || rq.createdAt)} to ${rq.to.join(', ')}: ${what}. `
+                          + `Waiting on it: ${nos.join(', ')}.${failed ? ` ${failedMailWords(rq.earlierLink, nos)}` : ''}`}
+                      </p>
+                    );
+                  })}
                   {answers.map((a) => (
                     <p key={a.label} className={cn(a.disputed && 'text-destructive')}>
                       {a.label}: {a.units.join(', ')}
@@ -766,9 +788,32 @@ const BuilderBuEventsPage: React.FC = () => {
                                       {cf.disputeNotes}
                                     </span>
                                   )}
-                                  {status === 'PENDING' && cf?.sentAt && (
-                                    <span className="mt-0.5 block text-[11px] text-muted-foreground">Asked {shortDate(cf.sentAt)}</span>
-                                  )}
+                                  {status === 'PENDING' && (() => {
+                                    // Asked only once its e-mail is out (round 4).
+                                    const ask = unitAsk(r.unit_id, cf, evRequests);
+                                    if (!ask) {
+                                      return cf?.sentAt
+                                        ? <span className="mt-0.5 block text-[11px] text-muted-foreground">Asked {shortDate(cf.sentAt)}</span>
+                                        : null;
+                                    }
+                                    if (ask.state === 'asked') {
+                                      return <span className="mt-0.5 block text-[11px] text-muted-foreground">Asked {shortDate(ask.at)}</span>;
+                                    }
+                                    const still = ask.earlier?.kind === 'request'
+                                      ? ` The link e-mailed ${shortDate(ask.earlier.at)} still takes answers.`
+                                      : ask.earlier?.kind === 'legacy'
+                                        ? ' The per-unit link e-mailed before still takes answers.'
+                                        : ask.state === 'failed' ? ' No link has reached the client: not asked yet.' : '';
+                                    return (
+                                      <span className={cn('mt-0.5 block text-[11px]', ask.state === 'failed'
+                                        ? 'text-destructive' : 'text-amber-700 dark:text-amber-400')}>
+                                        {ask.state === 'failed'
+                                          ? `E-mail of ${shortDate(ask.at)} failed${ask.error ? `: ${ask.error}` : ''}.`
+                                          : `E-mail of ${shortDate(ask.at)} queued, not sent yet.`}
+                                        {still}
+                                      </span>
+                                    );
+                                  })()}
                                   {earlier && (
                                     <span
                                       className="mt-0.5 block text-[11px] text-muted-foreground"
@@ -849,6 +894,7 @@ const BuilderBuEventsPage: React.FC = () => {
         } : null}
         candidates={sendFor ? confirmCandidates(sendFor) : []}
         lastRequest={sendFor ? (requests[sendFor.id] || [])[0] || null : null}
+        requests={sendFor ? requests[sendFor.id] || [] : []}
         onSent={() => void load(true)}
       />
 

@@ -48,5 +48,9 @@ export function codeEmail(row: ClaimedCode): { subject: string; html: string } {
       gstin: esc(row.gstin ?? ''),
     },
   });
+  // The digits stay out of the subject (round 4 asked about putting them
+  // there): the firm's Microsoft 365 message trace lists every subject the
+  // sender sent, so its admins could read a client's code there. The page
+  // keeps the code step across a closed tab instead (AgreementConfirmPage).
   return { subject: `Your confirmation code · ${row.project_name}`, html };
 }

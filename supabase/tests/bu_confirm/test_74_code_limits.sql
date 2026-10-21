@@ -64,22 +64,38 @@ SELECT set_config('request.headers', '{"cf-connecting-ip": "198.51.100.7"}', tru
 SELECT t_eq((builder_bu_confirm_code_request(:'tok', 'owner@client.test') ->> 'ok')::boolean, true, 'another caller is not held up');
 RESET ROLE;
 SELECT t_eq((SELECT count(DISTINCT requested_ip)::int FROM builder_bu_confirm_codes), 2, 'each code keeps its caller');
--- Thirty a day to one address in all, whoever asks.
+-- Thirty codes e-mailed a day to one address in all, whoever asked: from a
+-- caller's third code of the day on (the first two are never refused by it).
 DELETE FROM builder_bu_confirm_codes;
-INSERT INTO builder_bu_confirm_codes (request_id, email, requested_ip, created_at)
-SELECT id, 'owner@client.test', '192.0.2.' || g, now() - interval '3 hours' FROM builder_bu_confirm_requests, generate_series(1, 30) g;
+INSERT INTO builder_bu_confirm_codes (request_id, email, requested_ip, created_at, claimed_at, sent_at)
+SELECT id, 'owner@client.test', '192.0.2.' || g, now() - interval '3 hours', now() - interval '3 hours', now() - interval '3 hours'
+  FROM builder_bu_confirm_requests, generate_series(1, 30) g;
 SET LOCAL ROLE anon;
+SELECT set_config('request.headers', '{"cf-connecting-ip": "198.51.100.8"}', true);
+SELECT t_eq((builder_bu_confirm_code_request(:'tok', 'owner@client.test') ->> 'ok')::boolean, true, 'thirty e-mailed: a fresh caller''s first code goes');
+SELECT t_eq((builder_bu_confirm_code_request(:'tok', 'owner@client.test') ->> 'ok')::boolean, true, 'and the second');
 SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'tok', 'owner@client.test'),
-                'Too many codes were asked for this address today', 'thirty a day to one address: refused for everyone');
+                'Too many codes were e-mailed to this address today', 'the third is refused: the mailbox is not flooded');
 SELECT t_eq((builder_bu_confirm_code_request(:'tok', 'site@client.test') ->> 'ok')::boolean, true, 'another address is not');
--- Sixty an hour on a link in all.
+-- Codes asked for and never e-mailed do not count.
 RESET ROLE;
 DELETE FROM builder_bu_confirm_codes;
-INSERT INTO builder_bu_confirm_codes (request_id, email, requested_ip)
-SELECT id, 'other' || g || '@client.test', '192.0.2.' || g FROM builder_bu_confirm_requests, generate_series(1, 60) g;
+INSERT INTO builder_bu_confirm_codes (request_id, email, requested_ip, created_at)
+SELECT id, 'owner@client.test', '192.0.2.' || g, now() - interval '3 hours' FROM builder_bu_confirm_requests, generate_series(1, 40) g;
 SET LOCAL ROLE anon;
+SELECT t_eq((SELECT count(*) FROM generate_series(1, 4) WHERE (builder_bu_confirm_code_request(:'tok', 'owner@client.test') ->> 'ok')::boolean)::int,
+            4, 'forty never e-mailed: four more from one caller go');
+-- Sixty e-mailed an hour on a link in all, the same way.
+RESET ROLE;
+DELETE FROM builder_bu_confirm_codes;
+INSERT INTO builder_bu_confirm_codes (request_id, email, requested_ip, claimed_at, sent_at)
+SELECT id, 'other' || g || '@client.test', '192.0.2.' || g, now(), now() FROM builder_bu_confirm_requests, generate_series(1, 60) g;
+SET LOCAL ROLE anon;
+SELECT set_config('request.headers', '{"cf-connecting-ip": "198.51.100.9"}', true);
+SELECT t_eq((builder_bu_confirm_code_request(:'tok', 'owner@client.test') ->> 'ok')::boolean, true, 'sixty e-mailed on the link: a first code goes');
+SELECT t_eq((builder_bu_confirm_code_request(:'tok', 'owner@client.test') ->> 'ok')::boolean, true, 'and a second');
 SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'tok', 'owner@client.test'),
-                'Too many codes were asked for on this link', 'sixty on a link in an hour: refused');
+                'Too many codes were asked for on this link', 'sixty on a link in an hour: the third is refused');
 ROLLBACK;
 
 -- A code the mailer never claimed (the Edge Function not deployed, or it
@@ -95,4 +111,62 @@ SELECT t_eq(builder_bu_confirm_code_verify(:'tok', 'owner@client.test', '123456'
 SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000002']::uuid[], ARRAY['owner@client.test'], NULL) ->> 'token' AS tok2 \gset
 SELECT t_eq(builder_bu_confirm_code_verify(:'tok2', 'owner@client.test', '123456', :'cid') ->> 'message',
             'Please ask for a code first, then type it here.', 'another link');
+ROLLBACK;
+
+-- Other callers cannot lock a To or CC address out (round 4, low: six callers
+-- asking 5 codes each for the owner's address, inside their own limits and
+-- never e-mailed, used up the 30 a day over all callers; six more did the
+-- same for the CC address and the link's 60 an hour; the owner was then
+-- refused their first code for a day, with nothing in their mailbox to say
+-- why). As p4_lockout and dos_caps, every call as the public key.
+BEGIN;
+\ir fixtures.psql
+SET LOCAL ROLE anon;
+SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001']::uuid[], ARRAY['owner@client.test'], ARRAY['site@client.test']) ->> 'sent';
+-- The token and the To list are readable with the public key.
+SELECT token AS tok FROM builder_bu_confirm_requests LIMIT 1 \gset
+SELECT set_config('my.tok', :'tok', true);
+DO $$
+DECLARE i int; j int; t text := current_setting('my.tok');
+BEGIN
+  FOR i IN 1..6 LOOP
+    PERFORM set_config('request.headers', json_build_object('cf-connecting-ip', '203.0.113.' || i)::text, true);
+    FOR j IN 1..5 LOOP PERFORM builder_bu_confirm_code_request(t, 'owner@client.test'); END LOOP;
+  END LOOP;
+  FOR i IN 11..16 LOOP
+    PERFORM set_config('request.headers', json_build_object('cf-connecting-ip', '203.0.113.' || i)::text, true);
+    FOR j IN 1..5 LOOP PERFORM builder_bu_confirm_code_request(t, 'site@client.test'); END LOOP;
+  END LOOP;
+END $$;
+SELECT set_config('request.headers', '{"cf-connecting-ip": "198.51.100.7"}', true);
+SELECT builder_bu_confirm_code_request(:'tok', 'owner@client.test') ->> 'code_id' AS owner_id \gset
+SELECT t_eq(:'owner_id' <> '', true, 'the owner, from their own IP, gets their first code');
+SELECT t_eq((builder_bu_confirm_code_verify(:'tok', 'owner@client.test', t_mailbox(:'owner_id'), :'owner_id') ->> 'ok')::boolean, true,
+            'and proves the address with it');
+SELECT set_config('request.headers', '{"cf-connecting-ip": "192.0.2.55"}', true);
+SELECT t_eq((builder_bu_confirm_code_request(:'tok', 'site@client.test') ->> 'ok')::boolean, true, 'so does the CC, past sixty asked on the link');
+-- Seven more callers, now having the mailer send every code, until thirty
+-- and more are e-mailed to the owner in a day. The owner's first two still go.
+DO $$
+DECLARE i int; j int; t text := current_setting('my.tok');
+BEGIN
+  FOR i IN 21..27 LOOP
+    PERFORM set_config('request.headers', json_build_object('cf-connecting-ip', '203.0.113.' || i)::text, true);
+    FOR j IN 1..5 LOOP
+      BEGIN
+        PERFORM t_mailbox((builder_bu_confirm_code_request(t, 'owner@client.test') ->> 'code_id')::uuid);
+      EXCEPTION WHEN check_violation THEN
+        NULL;  -- the cap stops them too, from their third code on
+      END;
+    END LOOP;
+  END LOOP;
+END $$;
+SELECT set_config('request.headers', '{"cf-connecting-ip": "198.51.100.77"}', true);
+SELECT t_eq((SELECT count(*) FROM generate_series(1, 2) WHERE (builder_bu_confirm_code_request(:'tok', 'owner@client.test') ->> 'ok')::boolean)::int,
+            2, 'the owner on another network: two codes');
+SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'tok', 'owner@client.test'),
+                'Too many codes were e-mailed to this address today', 'a third, past thirty e-mailed, is refused');
+RESET ROLE;
+SELECT t_eq((SELECT count(*) FILTER (WHERE sent_at IS NOT NULL) FROM builder_bu_confirm_codes WHERE email = 'owner@client.test')::int,
+            32, 'one by the owner, then the others until the cap: 25, 4 and the last caller''s first 2');
 ROLLBACK;
