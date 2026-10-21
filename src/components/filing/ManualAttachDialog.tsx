@@ -16,6 +16,8 @@ export interface ManualAttachTarget {
   clientName: string;
   gstin: string;
   returnType: string;
+  /** The return whose rule applies (manualRuleType): the period's GSTR-1 / GSTR-3B for its twin row holding the ARN. */
+  ruleType?: string;
   periodMonth: string;
   /** The ARN the row already holds (a pull without a PDF): the PDF must show it. */
   arn: string | null;
@@ -73,7 +75,8 @@ const ManualAttachDialog: React.FC<{
   // A return with a manual route (ITC-04's PDFs are often scans) may be
   // attached when its PDF has no text to check; one that is pulled only may not.
   const unreadable = !!read?.problem && read.problem !== 'This file is not a PDF.';
-  const lenient = unreadable && !isPullOnly(target.returnType);
+  const ruleType = target.ruleType || target.returnType;
+  const lenient = unreadable && !isPullOnly(ruleType);
   const canAttach = !!file && !!read && (!!check?.ok || lenient) && !!arnUpper && !problem && sameArn && !!filedDate && !!userId && !busy;
 
   const attach = async () => {
@@ -110,15 +113,15 @@ const ManualAttachDialog: React.FC<{
         </DialogHeader>
 
         <div className="space-y-3 text-sm">
-          {isPullOnly(target.returnType) ? (
+          {isPullOnly(ruleType) ? (
             <Note tone="warn">
-              {target.returnType} is normally pulled from the portal. The superadmin allowed one manual upload
+              {ruleType} is normally pulled from the portal. The superadmin allowed one manual upload
               {target.allowedByName ? ` (${target.allowedByName})` : ''}: {target.allowance?.reason || 'no reason'}. It is used up when you attach,
               and the return shows as manual.
             </Note>
           ) : (
             <Note tone="info">
-              {(() => { const why = manualRouteReason(target.returnType) || ''; return why.charAt(0).toUpperCase() + why.slice(1); })()}, so it can be attached by hand. It shows as manual, with that reason.
+              {(() => { const why = manualRouteReason(ruleType) || ''; return why.charAt(0).toUpperCase() + why.slice(1); })()}, so it can be attached by hand. It shows as manual, with that reason.
             </Note>
           )}
 

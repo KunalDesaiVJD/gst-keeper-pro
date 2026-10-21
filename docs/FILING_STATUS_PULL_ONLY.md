@@ -60,9 +60,23 @@ the Filing status permission attaches them without an allowance, marked "manual 
 for GSTR-6 is not proven yet)". Their Pull stays on the row and in Pull filed returns; when it
 works it writes them exactly as it writes GSTR-1 / 3B (`portal`, checked PDF). Asking the attach
 for GSTR-1 (IFF) / GSTR-3B (Q) never files the client's GSTR-1 / GSTR-3B twin row without the
-allowance: the row the PDF lands on decides as well as the type asked for. To make one pulled
-only once its pull has landed Filed with its checked PDF (the migration header, step 7, has the
-query), add it to `filing_pull_only` and `PULL_ONLY_RETURN_TYPES`.
+allowance: the row the PDF lands on decides as well as the type asked for. **The period's return
+decides too** (round 4): for a monthly client the period's return is GSTR-1 / GSTR-3B
+(`filing_effective_return_type`; `effectiveFilingReturnType` in `src/lib/filingRecords.ts`, the
+row the page shows), so its GSTR-1 (IFF) / GSTR-3B (Q) twin row (both GSTR-1 types ticked on the
+client, or a row left from an old scheme: 1 live, not Filed) is refused ("For 08/2026 this client
+files GSTR-1: attach it on its GSTR-1 row ..."), whatever allowance exists. A twin row that
+already holds the ARN (recorded there before 21 Oct 2026) takes the PDF, but only under the
+allowance for GSTR-1 / GSTR-3B. The page follows the same rule (`manualRuleType`,
+`manualActions`): no paperclip or shield on such a twin row, and the allowance looked up and
+given is the one for the period's return. Before round 4 a staff member could file a monthly
+GSTR-1 by hand through its IFF row with no allowance, and the GSTR-1 row then showed "Not
+applicable". To make one pulled only once its pull has landed Filed with its checked PDF
+(`SELECT * FROM public.filing_pulls_landed()`, the migration header's step 7), add it to
+`filing_pull_only` and `PULL_ONLY_RETURN_TYPES`. `filing_pulls_landed` counts only pulls (and
+accepted conflicts) that left on the row the checked PDF they stored (`detail.stored_pdf_url`,
+written after the address check); round 3's query also counted a pull whose PDF address was
+refused and never stored (round 4).
 **Manual route, no pull:** CMP-08 and ITC-04. The e-Filed Returns pull sets a monthly period,
 which is wrong for CMP-08 (quarter) and ITC-04 (half-year), so the page offers no pull for them
 (Pull filed returns is disabled on their tabs and says so) and they are attached by hand
@@ -112,7 +126,15 @@ which is wrong for CMP-08 (quarter) and ITC-04 (half-year), so the page offers n
     and unlocked first) or keeps it (Filing Status, Exceptions to the portal pull). The conflict
     always names the row the pull meant and the ARN it holds (the panel's "Holds"), also when the
     ARN sits on another return; Accept is refused when the row now holds an ARN the conflict did
-    not show (a conflict logged before round 2, or a row changed since): keep it and pull again;
+    not show (a conflict logged before round 2, or a row changed since): keep it and pull again.
+    Accept follows the pull's rule for the PDF and date (round 4): without a checked PDF from the
+    pull, a PDF attached by hand on a return holding no ARN stays, marked "attached by hand, not
+    checked by a pull", and its typed date stays, marked, when the pull read none; a PDF and date
+    that go with the ARN the return held (the one the conflict showed), or a PDF extension
+    0.14.0's pull stored, come off (the log keeps them). Round 3's Accept took the hand PDF off
+    with nothing in the conflict saying so. The panel now says, beside each conflict and on
+    Accept, what Accept keeps and takes off (`conflictAcceptWords`), including that the return
+    holding the ARN is taken off Filed with its ARN, date and PDF;
   - `refused`: the ARN cannot be this return's (state code, tax period), the staff member lacks
     the Filing status permission, or a rule refused Filed (GSTR-1 from 09/2026 still needs its
     push or a direct-filing approval).
@@ -319,8 +341,11 @@ notice and case-folder uploads, which overwrite on purpose.
   scheme changes, the conflict's target, the permission (`test_84` now checks round 3's manual
   route for GSTR-6 / GSTR-7); `test_85`..`test_88` are round 3: a PDF attached by hand kept
   and marked, a refused pull leaving no row, a typed date kept and marked, GSTR-1 (IFF) /
-  GSTR-3B (Q) by hand but never their GSTR-1 / GSTR-3B twin; then the shared block in both
-  orders).
+  GSTR-3B (Q) by hand but never their GSTR-1 / GSTR-3B twin; `test_89`..`test_91` are round 4:
+  the period's return decides a manual upload (a monthly client's IFF / 3B (Q) twin row refused, a
+  twin holding the ARN only under the allowance), Accept keeps a PDF and date attached by hand,
+  `filing_pulls_landed` counts only pulls that stored their checked PDF; then the shared block in
+  both orders).
 - `extension/test/16-filed-return-pull.test.mjs` (fixtures `extension/test/fixtures/*.pdf`, made
   by `extension/test/_pdffixture.mjs`; sections 13 to 16 are round 2: one pull at a time, a stale
   or stopped or replaced pull reported; section 17 is round 3: "still running?" answered for the
@@ -329,4 +354,6 @@ notice and case-folder uploads, which overwrite on purpose.
   to the database, the ARN words, the PDF read in the app, the RPC calls; round 2: bulk pull and
   manual rules, pull keys by period, held-back words, the permission, one pull at a time; round
   3: the manual route, the kept PDF and typed date, the page following the extension through a
-  long bulk pull, the CMP-08 / ITC-04 button, the reply words).
+  long bulk pull, the CMP-08 / ITC-04 button, the reply words; round 4: the period's return in
+  the app as in the database, the manual rules on twin rows, the conflict panel's words, the
+  proven query).

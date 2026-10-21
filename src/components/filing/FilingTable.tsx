@@ -67,6 +67,8 @@ export interface FilingRowContext {
   pulling: boolean;
   /** The direct-filing rule holds this return back (its pull would be refused). */
   pullBlocked: boolean;
+  /** The return the client files for the period (filing_effective_return_type): a twin row follows its rule for a manual upload. */
+  effectiveType: string;
 }
 
 // A column-header filter trigger: reads as header text (muted, semibold) with a caret.
@@ -336,8 +338,9 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
             const unlockedFiled = !isFiled && !!record.arn;
             const lockedOut = !!record.is_locked && !p.canUnlockSheets;
             const allowanceOpen = ctx.allowance && !ctx.allowance.used_at ? ctx.allowance : null;
-            const { canAttach, canAllow, showAllowance } = manualActions(record, {
+            const { canAttach, canAllow, showAllowance, ruleType } = manualActions(record, {
               canEdit: p.canEditFilingStatus, isSuperadmin: p.isSuperadmin, notApplicable, lockedOut, allowance: ctx.allowance,
+              effectiveType: ctx.effectiveType,
             });
             // Pulling files a return: the Filing status permission, as the bulk button.
             const showPull = hasPortalPull(record.return_type) && !notApplicable && p.canEditFilingStatus;
@@ -513,9 +516,9 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                       )}
                       {canAttach && (
                         <button type="button" onClick={() => p.onAttach(record)} className="inline-flex items-center text-amber-700 dark:text-amber-400 hover:text-foreground"
-                          title={isPullOnly(record.return_type)
+                          title={isPullOnly(ruleType)
                             ? `Attach the filed return by hand: allowed by the superadmin (${allowanceOpen?.reason || ''})`
-                            : `Attach the filed return by hand (${manualRouteReason(record.return_type)})`}>
+                            : `Attach the filed return by hand (${manualRouteReason(ruleType)})`}>
                           <Paperclip className="h-3.5 w-3.5" />
                         </button>
                       )}

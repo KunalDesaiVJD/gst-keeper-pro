@@ -10,7 +10,11 @@
 --    GSTR-3B (monthly). GSTR-1 (IFF), GSTR-3B (Q), GSTR-6 and GSTR-7 keep a
 --    manual route, no allowance needed, until their pull is proven to work
 --    (their pull stays and writes as for GSTR-1 / 3B); CMP-08 and ITC-04 have
---    no pull yet (round 3; filing_manual_reason says which).
+--    no pull yet (round 3; filing_manual_reason says which). The period's
+--    return decides too (round 4): a monthly client's GSTR-1 (IFF) / GSTR-3B
+--    (Q) twin row is never the way to file its GSTR-1 / GSTR-3B by hand
+--    (refused, naming the row; a twin already holding the ARN takes the PDF
+--    only under the allowance for GSTR-1 / GSTR-3B).
 --    Both need the Filing status permission (filing__can_edit: GST Manager,
 --    superadmin, or an employee holding edit_filing_status). trigger_filing_status_source
 --    refuses every other write, for every level, refuses moving a row that
@@ -26,7 +30,9 @@
 --  * A different ARN is never put over a stored one: a conflict is logged for
 --    the superadmin (filing_pull_conflict_decide), naming the row meant and
 --    the ARN it holds; Accept never replaces an ARN the conflict did not show,
---    and unlocks the GSTR-3B it takes the ARN from (round 2). A pull without
+--    and unlocks the GSTR-3B it takes the ARN from (round 2); without a
+--    checked PDF it keeps the return's PDF and date attached by hand, as a
+--    pull does (round 4). A pull without
 --    a checked PDF never takes a PDF attached by hand off the row: it stays,
 --    shown as "attached by hand, not checked by a pull" (pdf_note); only a
 --    PDF stored by an extension before 0.15.0 (the System generated summary
@@ -112,7 +118,8 @@
 --    d. has_function_privilege('anon', f, 'EXECUTE') true for filing_record_pull,
 --       filing_pull_report, filing_attach_manual, filing_status_unlock, filing_status_unfile,
 --       filing_pull_conflict_decide, manual_source_allow, manual_source_revoke,
---       filing_arn_problem, filing_pdf_url_ok, filing_manual_reason, filing_pdf_from_old_pull;
+--       filing_arn_problem, filing_pdf_url_ok, filing_manual_reason, filing_pdf_from_old_pull,
+--       filing_pulls_landed;
 --       false for manual_source_take, filing__route,
 --       filing__log, filing__target_row, filing__can_edit, filing_status_on_filed,
 --       filing_queue_confirmation.
@@ -139,6 +146,18 @@
 --         AND column_name IN ('filed_source', 'manual_allowance_id', 'pulled_at', 'pdf_note', 'date_note');  -> 5
 --    i. SELECT position('Kept Filed' IN pg_get_functiondef(
 --         'public.clear_inapplicable_filing_status_after_scheme_change()'::regprocedure)) > 0;  -> true.
+--    j. Round 4: SELECT position('this client files' IN pg_get_functiondef(
+--         'public.filing_attach_manual(uuid,uuid,text,text,text,date,text)'::regprocedure)) > 0,
+--         position('Attached by hand, not checked by a pull' IN pg_get_functiondef(
+--         'public.filing_pull_conflict_decide(uuid,uuid,boolean,text)'::regprocedure)) > 0;  -> true, true.
+--       SELECT * FROM public.filing_pulls_landed();  -> no rows (nothing pulled yet).
+--       Twin rows off their period's return (read-only):
+--       SELECT f.return_type::text, count(*), count(f.arn) FROM filing_status f
+--        WHERE f.return_type::text IN ('GSTR-1 (IFF)', 'GSTR-3B (Q)')
+--          AND public.filing_effective_return_type(f.client_id, f.return_type::text, f.period_month) <> f.return_type::text
+--        GROUP BY 1;  -> 21 Oct 2026: GSTR-1 (IFF) 1 / 0 (not Filed). Such a row is attached by
+--       hand only when it already holds the ARN, under the allowance for GSTR-1 / GSTR-3B;
+--       otherwise staff use the client's GSTR-1 / GSTR-3B row (the one the page shows).
 -- 4. Deploy the app (the page calls the new functions; it needs extension 0.15.0).
 -- 5. Extension 0.15.0: copy extension/ over the extension folder on every PC that pulls
 --    (the firm's Chrome with "Run scheduled syncs in this Chrome", the office agent PC,
@@ -159,12 +178,13 @@
 --    21 Oct 2026), and keeps waiting while the extension says the pull is running, so
 --    pull one month at a time.
 --    When a GSTR-1 (IFF), GSTR-3B (Q), GSTR-6 or GSTR-7 pull has landed Filed with its
---    checked PDF (SELECT return_type, count(*) FROM filing_status_log WHERE event IN
---    ('filed', 'refreshed') AND (detail->'pulled'->>'pdf_url') IS NOT NULL GROUP BY 1),
---    make it pulled only: add it to filing_pull_only here (CREATE OR REPLACE) and to
---    PULL_ONLY_RETURN_TYPES in src/lib/filingPull.ts.
--- 8. Extension release: 0.15.0 (review rounds 1 to 3 included, manifest unchanged, no new
---    permission). Release as this repo does: the extension/ folder as it is on main is the
+--    checked PDF (SELECT * FROM public.filing_pulls_landed(); round 4: it counts only pulls
+--    that left on the row the checked PDF they stored, detail.stored_pdf_url, not one whose
+--    PDF address was refused), make it pulled only: add it to filing_pull_only here
+--    (CREATE OR REPLACE) and to PULL_ONLY_RETURN_TYPES in src/lib/filingPull.ts.
+-- 8. Extension release: 0.15.0 (review rounds 1 to 3 included; round 4 changed no extension
+--    file; manifest unchanged, no new permission). Release as this repo does: the extension/
+--    folder as it is on main is the
 --    release (no build step); note it in extension/CHANGELOG.md (done), then step 5 on every PC.
 --    Staff close any portal pull tab before the Reload (a pull running then is dropped by
 --    Chrome; the next Pull ends it and reports its returns as not pulled).
@@ -1266,6 +1286,12 @@ BEGIN
   IF v_pdf IS NULL AND v_note IS NULL THEN
     v_note := 'No PDF came with the pull.';
   END IF;
+  -- The checked PDF's address as stored (round 4): set here, after the
+  -- address check and over anything the request said, so the log tells a
+  -- pull that left its checked PDF on the row (filing_pulls_landed) from one
+  -- whose PDF was refused or never came (detail.pulled.pdf_url is what the
+  -- extension sent).
+  v_detail := v_detail || jsonb_build_object('stored_pdf_url', v_pdf);
   IF v_date IS NOT NULL AND (v_date > v_today OR v_date < to_date('01/' || p_period_month, 'DD/MM/YYYY')) THEN
     v_detail := v_detail || jsonb_build_object('date_refused', v_date);
     v_date := NULL;
@@ -1452,6 +1478,30 @@ BEGIN
 END;
 $$;
 
+-- Has a return's portal pull landed with its checked PDF? Per return type,
+-- the pulls (and conflicts the superadmin accepted) that left on the row the
+-- checked PDF the pull stored (detail.stored_pdf_url, round 4): a pull
+-- whose PDF address was refused, that brought no PDF, or that kept an
+-- earlier PDF does not count. Read before a return is made pulled only
+-- (header, step 7).
+CREATE OR REPLACE FUNCTION public.filing_pulls_landed()
+RETURNS TABLE (return_type text, landed bigint)
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+  SELECT l.return_type, count(*)
+    FROM public.filing_status_log l
+   WHERE l.event IN ('filed', 'refreshed', 'conflict_accepted')
+     AND l.route IN ('portal', 'conflict')
+     AND l.new_status = 'Filed'
+     AND l.new_pdf_url IS NOT NULL
+     AND l.new_pdf_url = l.detail ->> 'stored_pdf_url'
+   GROUP BY 1
+   ORDER BY 1;
+$$;
+GRANT EXECUTE ON FUNCTION public.filing_pulls_landed() TO anon, authenticated, service_role;
+
 -- ---------------------------------------------------------------------------
 -- 5b. The manual route
 -- ---------------------------------------------------------------------------
@@ -1493,6 +1543,7 @@ DECLARE
   v_who     text;
   v_msg     text;
   v_type    text;
+  v_eff     text;
 BEGIN
   IF p_actor_id IS NULL OR public.staff_level_of(p_actor_id) IS NULL THEN
     RAISE EXCEPTION 'Only staff can attach a filed return.' USING ERRCODE = 'insufficient_privilege';
@@ -1546,9 +1597,23 @@ BEGIN
   -- The row the PDF lands on decides as well as the type asked for (round
   -- 3): GSTR-1 (IFF) / GSTR-3B (Q) keep a manual route, so asking for one
   -- of them must not file the client's GSTR-1 / GSTR-3B twin row without
-  -- the superadmin's allowance.
+  -- the superadmin's allowance. And the period's own return decides too
+  -- (round 4): for a monthly client the period's return is GSTR-1 /
+  -- GSTR-3B (filing_effective_return_type), so its GSTR-1 (IFF) / GSTR-3B
+  -- (Q) twin row (both ticked on the client, or a row left from an old
+  -- scheme) is never the way to file it by hand: refused, naming the row
+  -- to use, where the superadmin's allowance is needed. A twin row that
+  -- already holds this ARN (recorded there before 21 Oct 2026) is where the
+  -- PDF goes, under the allowance for the period's return.
+  v_eff := public.filing_effective_return_type(p_client_id, p_return_type, p_period_month);
+  IF v_eff IS DISTINCT FROM v_target.return_type::text AND public.filing_pull_only(v_eff)
+     AND v_target.arn IS DISTINCT FROM v_arn THEN
+    RAISE EXCEPTION 'For % this client files %: attach it on its % row (a manual upload of % needs the superadmin''s allowance), not on the % row.',
+      p_period_month, v_eff, v_eff, v_eff, v_target.return_type::text USING ERRCODE = 'check_violation';
+  END IF;
   v_type := CASE WHEN public.filing_pull_only(p_return_type) THEN p_return_type
-                 WHEN public.filing_pull_only(v_target.return_type::text) THEN v_target.return_type::text END;
+                 WHEN public.filing_pull_only(v_target.return_type::text) THEN v_target.return_type::text
+                 WHEN public.filing_pull_only(v_eff) THEN v_eff END;
   IF v_type IS NOT NULL THEN
     v_allow := public.manual_source_take(p_actor_id, p_client_id, p_period_month, 'filing:' || v_type);
   END IF;
@@ -1677,7 +1742,9 @@ $$;
 -- The superadmin decides a pull's conflict. Keep: nothing changes. Accept:
 -- the pulled ARN, date and PDF go on the return; when the ARN was on another
 -- return, that one is taken off Filed first, and unlocked as Take off Filed
--- does (both logged). Accept is refused when the return now holds an ARN
+-- does (both logged). Without a checked PDF from the pull, the return's own
+-- PDF and date follow filing_record_pull's rule (round 4): attached by hand
+-- on a return holding no ARN, they stay, marked (pdf_note / date_note). Accept is refused when the return now holds an ARN
 -- the conflict did not show (old_arn, the panel's "Holds": a conflict
 -- logged before round 2 named only the other return, or the row changed
 -- since): nothing nobody saw is replaced. Keep it and pull again.
@@ -1702,6 +1769,15 @@ DECLARE
   v_target public.filing_status;
   v_holder public.filing_status;
   v_msg    text;
+  v_old_pdf    text;
+  v_same       boolean;
+  v_new_pdf    text;
+  v_new_note   text;
+  v_new_source text;
+  v_new_allow  uuid;
+  v_pdf_words  text := '';
+  v_new_date   date;
+  v_new_date_note text;
 BEGIN
   IF p_actor_id IS NULL OR public.staff_level_of(p_actor_id) IS DISTINCT FROM 'superadmin' THEN
     RAISE EXCEPTION 'Only the superadmin decides a pull conflict.' USING ERRCODE = 'insufficient_privilege';
@@ -1760,18 +1836,67 @@ BEGIN
     PERFORM public.filing__route_end();
   END IF;
 
-  v_msg := 'The superadmin accepted the pulled ARN ' || v_arn || COALESCE(': ' || NULLIF(btrim(p_note), ''), '.');
+  -- What the return shows afterwards (round 4): as filing_record_pull does
+  -- for a pull of the same ARN. Without a checked PDF from the pull, a PDF
+  -- on the return that holds no ARN or this one stays: checked by an earlier
+  -- pull, attached under the manual route (still manual), or attached by
+  -- hand before 21 Oct 2026 (marked "attached by hand, not checked by a
+  -- pull"); only one extension 0.14.0's pull stored is taken off. A PDF and
+  -- date that go with the other ARN the conflict showed (old_arn) are taken
+  -- off. The log keeps whatever is taken off (old_pdf_url, old_filed_date).
+  v_note := COALESCE(v_note, 'No PDF came with the pull.');
+  v_old_pdf := NULLIF(btrim(v_target.return_pdf_url), '');
+  v_same := v_target.arn IS NULL OR v_target.arn = v_arn;
+  v_new_source := 'portal';
+  v_new_allow := NULL;
+  IF v_pdf IS NOT NULL THEN
+    v_new_pdf := v_pdf;
+    v_new_note := NULL;
+  ELSIF v_old_pdf IS NOT NULL AND v_same AND v_target.filed_source = 'portal' AND v_target.pdf_note IS NULL THEN
+    v_new_pdf := v_old_pdf;
+    v_new_note := NULL;
+    v_pdf_words := ' No checked PDF came with the pull; the one an earlier pull checked is kept.';
+  ELSIF v_old_pdf IS NOT NULL AND v_same AND v_target.filed_source = 'manual' THEN
+    v_new_pdf := v_old_pdf;
+    v_new_note := NULL;
+    v_new_source := 'manual';
+    v_new_allow := v_target.manual_allowance_id;
+    v_pdf_words := ' No checked PDF came with the pull; the PDF attached by hand is kept, still marked manual.';
+  ELSIF v_old_pdf IS NOT NULL AND v_same AND NOT public.filing_pdf_from_old_pull(v_old_pdf) THEN
+    v_new_pdf := v_old_pdf;
+    v_new_note := 'Attached by hand, not checked by a pull. ' || v_note;
+    v_pdf_words := ' No checked PDF came with the pull; the PDF attached by hand is kept, marked as not checked by a pull.';
+  ELSE
+    v_new_pdf := NULL;
+    v_new_note := v_note || CASE
+      WHEN v_old_pdf IS NOT NULL AND NOT v_same
+        THEN format(' The PDF this return held went with ARN %s, so it was taken off (the log keeps its address).', v_target.arn)
+      WHEN v_old_pdf IS NOT NULL
+        THEN ' The PDF an earlier copy of the extension stored was not checked, so it is no longer shown (the log keeps its address).'
+      ELSE '' END;
+    v_pdf_words := CASE WHEN v_old_pdf IS NOT NULL THEN ' ' || v_new_note ELSE '' END;
+  END IF;
+  v_new_date := COALESCE(v_date, CASE WHEN v_same THEN v_target.filed_date END);
+  v_new_date_note := CASE
+    WHEN v_date IS NOT NULL OR v_new_date IS NULL OR v_new_source <> 'portal' THEN NULL
+    WHEN v_target.filed_source = 'portal' THEN v_target.date_note
+    ELSE 'Typed by hand; no pull has read the portal''s filing date yet.' END;
+
+  v_msg := 'The superadmin accepted the pulled ARN ' || v_arn || COALESCE(': ' || NULLIF(btrim(p_note), ''), '.')
+    || CASE WHEN v_date IS NULL AND v_new_date_note IS NOT NULL
+            THEN ' The portal''s filing date was not read; the date typed by hand is kept, marked as such.' ELSE '' END
+    || v_pdf_words;
   PERFORM public.filing__route('conflict', 'conflict_accepted', p_actor_id, v_msg,
-    jsonb_build_object('conflict_log_id', p_log_id), v_date, NULL);
+    jsonb_build_object('conflict_log_id', p_log_id, 'stored_pdf_url', v_pdf), v_new_date, v_new_allow);
   UPDATE public.filing_status
      SET status = 'Filed'::public.filing_status_type,
          arn = v_arn,
-         return_pdf_url = v_pdf,
-         filed_source = 'portal',
-         manual_allowance_id = NULL,
+         return_pdf_url = v_new_pdf,
+         filed_source = v_new_source,
+         manual_allowance_id = v_new_allow,
          pulled_at = v_log.at,
-         pdf_note = CASE WHEN v_pdf IS NOT NULL THEN NULL ELSE COALESCE(v_note, 'No PDF came with the pull.') END,
-         date_note = NULL,
+         pdf_note = v_new_note,
+         date_note = v_new_date_note,
          updated_by = p_actor_id,
          updated_at = now()
    WHERE id = v_target.id

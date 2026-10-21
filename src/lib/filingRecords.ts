@@ -105,6 +105,33 @@ export function getEffectiveScheme(
   return effectiveScheme;
 }
 
+/**
+ * The return a client files for the period among scheme twins: GSTR-1 or
+ * GSTR-1 (IFF), GSTR-3B or GSTR-3B (Q); any other return as it is. The same
+ * rule as filing_effective_return_type in the database (and the row
+ * generateFilingRecords shows): the scheme's returns when the client has a
+ * scheme history, else its ticked returns; GSTR-1 (IFF) only when GSTR-1 is
+ * not ticked; GSTR-3B (Q) only in a quarter-end month of a quarterly scheme.
+ */
+export function effectiveFilingReturnType(
+  client: Pick<FilingClient, 'id' | 'registration_type' | 'selected_returns'> | null | undefined,
+  returnType: string,
+  periodMonth: string,
+  schemeHistoryMap: Record<string, SchemeHistoryEntry[]>,
+): string {
+  const gstr1 = returnType === 'GSTR-1' || returnType === 'GSTR-1 (IFF)';
+  const gstr3b = returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)';
+  if (!client || (!gstr1 && !gstr3b)) return returnType;
+  const scheme = getEffectiveScheme(client.id, periodMonth, client.registration_type, schemeHistoryMap);
+  const list: string[] = (schemeHistoryMap[client.id]?.length ?? 0) > 0
+    ? RETURN_TYPES_BY_REGISTRATION[scheme as RegistrationType] || []
+    : client.selected_returns || [];
+  if (gstr1) return list.includes('GSTR-1 (IFF)') && !list.includes('GSTR-1') ? 'GSTR-1 (IFF)' : 'GSTR-1';
+  const month = parseInt((periodMonth || '').split('/')[0], 10);
+  return (scheme === 'IFF' || scheme === 'Composition') && isQuarterEndMonth(month) && list.includes('GSTR-3B (Q)')
+    ? 'GSTR-3B (Q)' : 'GSTR-3B';
+}
+
 export function isQuarterlyReturnVisibleForMonth(returnType: ReturnType, periodMonth: string): boolean {
   if (!QUARTERLY_RETURN_TYPES.includes(returnType)) return true;
   const [monthStr] = periodMonth.split('/');

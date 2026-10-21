@@ -20,7 +20,7 @@ import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
-import { generateFilingRecords } from '@/lib/filingRecords';
+import { effectiveFilingReturnType, generateFilingRecords } from '@/lib/filingRecords';
 import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
 import RequestDirectFilingDialog, { DirectFilingTarget } from '@/components/filing/RequestDirectFilingDialog';
 import DirectFilingApprovalsPanel from '@/components/filing/DirectFilingApprovalsPanel';
@@ -40,6 +40,7 @@ import {
   filingSourceText,
   hasPortalPull,
   isPullOnly,
+  manualRuleType,
   bulkPullNothingText,
   latestOutcomes,
   noPullTabText,
@@ -1128,15 +1129,23 @@ const FilingStatusPage: React.FC = () => {
       && f.return_type !== record.return_type && fam.includes(f.return_type) && f.status === 'Filed') as FilingRecord | undefined) || null;
   }, [filingRecords, selectedMonth]);
 
+  // The return the client files for the period (filing_effective_return_type):
+  // a twin row follows its rule for a manual upload (round 4, manualRuleType).
+  const effectiveTypeOf = (record: FilingRecord): string =>
+    effectiveFilingReturnType(clients.find((c) => c.id === record.client_id), record.return_type,
+      record.period_month || selectedMonth, schemeHistoryMap);
+
   const contextFor = (record: FilingRecord): FilingRowContext => {
     const period = record.period_month || selectedMonth;
+    const effectiveType = effectiveTypeOf(record);
     return {
       outcome: outcomes.get(pullKey(record.client_id, record.return_type, period)) || null,
-      allowance: liveAllowance(allowances, record.client_id, period, filingScope(record.return_type)),
+      allowance: liveAllowance(allowances, record.client_id, period, filingScope(manualRuleType(record.return_type, effectiveType))),
       usedAllowance: record.manual_allowance_id ? allowances.find((a) => a.id === record.manual_allowance_id) || null : null,
       filedTwin: filedTwinOf(record),
       pulling: !!pending[pullKey(record.client_id, record.return_type, period)],
       pullBlocked: isDirectFilingBlocked(directFilingStateFor(record)),
+      effectiveType,
     };
   };
 
@@ -1173,9 +1182,15 @@ const FilingStatusPage: React.FC = () => {
       return;
     }
     const client = clients.find((c) => c.id === record.client_id);
-    const allowance = liveAllowance(allowances, record.client_id, record.period_month || selectedMonth, filingScope(record.return_type));
-    if (isPullOnly(record.return_type) && (!allowance || allowance.used_at)) {
-      toast.error(`${record.return_type} is pulled from the portal. A manual upload needs the superadmin's allowance for this return.`);
+    const period = record.period_month || selectedMonth;
+    const ruleType = manualRuleType(record.return_type, effectiveTypeOf(record));
+    if (ruleType !== record.return_type && !record.arn) {
+      toast.error(`For ${period} this client files ${ruleType}: attach it on its ${ruleType} row (a manual upload of ${ruleType} needs the superadmin's allowance).`);
+      return;
+    }
+    const allowance = liveAllowance(allowances, record.client_id, period, filingScope(ruleType));
+    if (isPullOnly(ruleType) && (!allowance || allowance.used_at)) {
+      toast.error(`${ruleType} is pulled from the portal. A manual upload needs the superadmin's allowance for this return.`);
       return;
     }
     setAttachTarget({
@@ -1183,9 +1198,10 @@ const FilingStatusPage: React.FC = () => {
       clientName: record.clientName || client?.name || '',
       gstin: client?.gstin || '',
       returnType: record.return_type,
-      periodMonth: record.period_month || selectedMonth,
+      ruleType,
+      periodMonth: period,
       arn: record.arn,
-      allowance: isPullOnly(record.return_type) ? allowance : null,
+      allowance: isPullOnly(ruleType) ? allowance : null,
       allowedByName: allowance ? userNames[allowance.allowed_by] : undefined,
     });
   };
@@ -1193,16 +1209,18 @@ const FilingStatusPage: React.FC = () => {
   const allowManual = (record: FilingRecord) => {
     if (!isSuperadmin || !user?.id) return;
     const period = record.period_month || selectedMonth;
+    const ruleType = manualRuleType(record.return_type, effectiveTypeOf(record));
     setReasonSpec({
       title: 'Allow a manual upload',
       subtitle: `${record.clientName} · ${record.return_type} · ${period}`,
-      explain: `${record.return_type} is marked Filed only by the portal pull. When a pull cannot be done (wrong portal password, portal down, no access), you can allow one manual upload of the filed return's PDF and ARN for this client, period and return. It is logged, used up when attached, and shown as manual everywhere.`,
+      explain: `${ruleType} is marked Filed only by the portal pull. When a pull cannot be done (wrong portal password, portal down, no access), you can allow one manual upload of the filed return's PDF and ARN for this client, period and return. It is logged, used up when attached, and shown as manual everywhere.`,
       prompt: 'Why can it not be pulled?',
       placeholder: 'e.g. The client changed the portal password and is travelling; the return was filed on 11 Oct.',
       confirmText: 'Allow one manual upload',
       run: async (reason) => {
         try {
-          await allowManualSource({ actorId: user.id, clientId: record.client_id, periodMonth: period, scope: filingScope(record.return_type), reason });
+          await allowManualSource({ actorId: user.id, clientId: record.client_id, periodMonth: period,
+            scope: filingScope(ruleType), reason });
           toast.success('Manual upload allowed. Staff can now attach the filed return on this row.');
           void fetchExceptions();
         } catch (e) {

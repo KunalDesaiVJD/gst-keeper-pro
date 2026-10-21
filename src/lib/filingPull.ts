@@ -208,27 +208,87 @@ export function bulkPullNothingText(heldBack: number, byHand = 0): string {
 export const noPullTabText = (returnType: string) => `${returnType} has no portal pull yet: attach each filed return by hand on its row.`;
 
 /**
+ * The return whose rule a row follows for a manual upload (round 4, as
+ * filing_attach_manual): its own when it is pulled only; else the period's
+ * return (effectiveType: filing_effective_return_type, effectiveFilingReturnType
+ * in src/lib/filingRecords.ts) when that one is pulled only and this row is
+ * its twin. So a monthly client's GSTR-1 (IFF) / GSTR-3B (Q) row follows
+ * GSTR-1 / GSTR-3B, and its allowance is the one for GSTR-1 / GSTR-3B.
+ */
+export function manualRuleType(returnType: string, effectiveType?: string | null): string {
+  if (isPullOnly(returnType)) return returnType;
+  if (effectiveType && effectiveType !== returnType && filingFamily(returnType).includes(effectiveType) && isPullOnly(effectiveType)) {
+    return effectiveType;
+  }
+  return returnType;
+}
+
+/**
  * The manual exception on one row. canAllow: the superadmin may allow one
  * manual upload (a pull-only return with no live allowance, unless the row
  * holds a checked PDF from the portal). canAttach: a staff member with the
  * Filing status permission may attach now (a return with a manual route
  * freely until Filed with a PDF, or over a PDF attached by hand that no pull
  * checked; a pull-only return under an open allowance; never over a checked
- * portal PDF). showAllowance: the "Manual allowed by" line.
+ * portal PDF). showAllowance: the "Manual allowed by" line. Round 4: the
+ * rule is the period's return's (manualRuleType), and the twin row of a
+ * period whose return is pulled only is never attached by hand (the database
+ * refuses it, naming the row to use) unless it already holds the ARN.
  */
 export function manualActions(
-  r: { status: string | null; return_type: string; return_pdf_url: string | null; filed_source?: string | null; pdf_note?: string | null },
-  o: { canEdit: boolean; isSuperadmin: boolean; notApplicable: boolean; lockedOut: boolean; allowance: { used_at: string | null } | null },
-): { canAttach: boolean; canAllow: boolean; showAllowance: boolean } {
+  r: { status: string | null; return_type: string; return_pdf_url: string | null; filed_source?: string | null; pdf_note?: string | null; arn?: string | null },
+  o: {
+    canEdit: boolean; isSuperadmin: boolean; notApplicable: boolean; lockedOut: boolean; allowance: { used_at: string | null } | null;
+    effectiveType?: string | null;
+  },
+): { canAttach: boolean; canAllow: boolean; showAllowance: boolean; ruleType: string } {
   const pulled = holdsCheckedPortalPdf(r);
   const open = !!o.allowance && !o.allowance.used_at;
-  const pullOnly = isPullOnly(r.return_type);
+  const ruleType = manualRuleType(r.return_type, o.effectiveType);
+  const pullOnly = isPullOnly(ruleType);
+  const wrongTwin = ruleType !== r.return_type && !r.arn;
   return {
-    canAttach: o.canEdit && !o.notApplicable && !o.lockedOut
+    canAttach: o.canEdit && !o.notApplicable && !o.lockedOut && !wrongTwin
       && (pullOnly ? open && !pulled : !(r.status === 'Filed' && r.return_pdf_url) || holdsUncheckedHandPdf(r)),
-    canAllow: o.isSuperadmin && pullOnly && !o.notApplicable && !o.allowance && !pulled,
-    showAllowance: open && !pulled,
+    canAllow: o.isSuperadmin && pullOnly && !wrongTwin && !o.notApplicable && !o.allowance && !pulled,
+    showAllowance: open && !pulled && !wrongTwin,
+    ruleType,
   };
+}
+
+/**
+ * Was this PDF stored by the extension's own pull before 0.15.0 (unchecked:
+ * the System generated summary problem)? filing_pdf_from_old_pull in the
+ * database, same pattern.
+ */
+export const pdfFromOldPull = (url: string | null | undefined) =>
+  !!url && /\/return-pdfs\/[^/]+\/[0-9]{2}-[0-9]{4}\/[^/]*-[A-Za-z]{2}[0-9]{6}[A-Za-z0-9]{7}\.[Pp][Dd][Ff]$/.test(url);
+
+/**
+ * What Accept does, in words, from the conflict's log row (round 4, as
+ * filing_pull_conflict_decide): the pulled ARN goes on the return with the
+ * checked PDF the pull stored; without one, a PDF attached by hand on a
+ * return holding no ARN stays, marked as not checked by a pull, and a PDF
+ * that goes with the ARN the return holds, or that an earlier copy of the
+ * extension stored unchecked, comes off. The other return holding the ARN
+ * is taken off Filed. The log keeps whatever comes off.
+ */
+export function conflictAcceptWords(c: Pick<FilingLogRow, 'old_arn' | 'old_pdf_url' | 'detail'>): string {
+  const d = (c.detail || {}) as Record<string, unknown>;
+  const arn = String((d.pulled as { arn?: string } | undefined)?.arn || 'the pulled ARN');
+  const pulledPdf = typeof d.pulled_pdf_url === 'string' && d.pulled_pdf_url ? d.pulled_pdf_url : null;
+  const sameArn = !c.old_arn || c.old_arn === arn;
+  let s: string;
+  if (pulledPdf) s = `Accept puts ${arn} on this return with the checked PDF the pull stored.`;
+  else if (c.old_pdf_url && !sameArn) s = `Accept puts ${arn} on this return and takes off its PDF and filing date, which go with ${c.old_arn}. No checked PDF came with the pull.`;
+  else if (c.old_pdf_url && pdfFromOldPull(c.old_pdf_url)) s = `Accept puts ${arn} on this return and takes off its PDF, which an earlier copy of the extension stored unchecked. No checked PDF came with the pull.`;
+  else if (c.old_pdf_url) s = `Accept puts ${arn} on this return and keeps its PDF attached by hand, marked as not checked by a pull.`;
+  else s = `Accept puts ${arn} on this return. No checked PDF came with the pull.`;
+  if (d.arn_on) s += ` The return now holding ${arn} is taken off Filed: its ARN, filing date and PDF are cleared.`;
+  if ((c.old_pdf_url && !sameArn) || (c.old_pdf_url && !pulledPdf && pdfFromOldPull(c.old_pdf_url)) || d.arn_on || (pulledPdf && c.old_pdf_url)) {
+    s += ' The log keeps what is taken off.';
+  }
+  return s;
 }
 
 /** What a client's "all" asks for: every return but one unlocked for correction. */

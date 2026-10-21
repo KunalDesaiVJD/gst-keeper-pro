@@ -29,6 +29,11 @@
 //    follows the extension through a long bulk pull instead of giving up
 //    after 15 minutes; Pull filed returns on CMP-08 / ITC-04 says they have no
 //    pull; reply evidence says a pulled row was read from the portal.
+//  - round 4: a twin row follows the period's return for a manual upload (a
+//    monthly client's GSTR-1 (IFF) / GSTR-3B (Q) row is never attached by
+//    hand without the allowance for GSTR-1 / GSTR-3B); the conflict panel says
+//    what Accept keeps and takes off; the header's "pull proven" query counts
+//    only pulls that stored their checked PDF.
 //   node scripts/verify-filing-pull-only.mjs
 // Fictional data; Supabase is replaced by a recorder. Exits 1 on any failure.
 import { createRequire } from 'node:module';
@@ -107,7 +112,7 @@ const out = await build({
   stdin: {
     contents: `export * as L from './src/lib/filingPull'; export * as M from './src/lib/manualSourceAllowances'; export * as C from './src/lib/filedPdfCheck';
       export * as D from './src/lib/directFilingApprovals'; export { fetchFiledPdf } from './src/utils/filedReturnReports';
-      export { filingStatus } from './src/lib/reply/recipes/filing';`,
+      export { filingStatus } from './src/lib/reply/recipes/filing'; export * as R from './src/lib/filingRecords';`,
     resolveDir: root, loader: 'ts',
   },
   bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
@@ -121,7 +126,7 @@ const out = await build({
   }],
   define: { 'import.meta.env': '{}' },
 });
-const { L, M, C, D, fetchFiledPdf, filingStatus } = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
+const { L, M, C, D, R, fetchFiledPdf, filingStatus } = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
 
 // The database's words (filing_arn_problem; supabase/tests/filing_pull/test_20).
 const G = '24ABCDE1234F1Z5';
@@ -400,6 +405,66 @@ check('round 3: a manual row says whether an exception allowed it; an old row ke
   rs.manualFree === 'Filed (Filing Status tracker, attached by hand; not fetched from the portal)'
   && rs.manualAllowed === 'Filed (Filing Status tracker, attached by hand under a superadmin exception; not fetched from the portal)'
   && rs.legacy === 'Filed (Filing Status tracker; not fetched from the portal)', JSON.stringify(rs));
+
+// ── 2e. Round 4 ───────────────────────────────────────────────────────────
+// Finding 1: the period's return decides a manual upload, as
+// filing_attach_manual does (supabase/tests/filing_pull/test_89). The
+// clients of the SQL stub: FICTIONAL FABRICS monthly, IMAGINARY IMPEX on IFF,
+// TWIN TRADERS ticking both GSTR-1 types.
+const eff = R.effectiveFilingReturnType || (() => undefined);
+const FAB = { id: 'f', registration_type: 'Regular', selected_returns: ['GSTR-1', 'GSTR-3B'] };
+const IMP = { id: 'i', registration_type: 'IFF', selected_returns: ['GSTR-1 (IFF)', 'GSTR-3B (Q)'] };
+const TWIN = { id: 't', registration_type: 'Regular', selected_returns: ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B'] };
+const hist = { h: [{ old_scheme: 'Regular', new_scheme: 'IFF', effective_from_date: '2026-07-01' }] };
+const HIS = { id: 'h', registration_type: 'IFF', selected_returns: ['GSTR-1', 'GSTR-3B'] };
+const effSeen = [eff(FAB, 'GSTR-1 (IFF)', '08/2026', {}), eff(FAB, 'GSTR-3B (Q)', '09/2026', {}), eff(IMP, 'GSTR-1', '06/2026', {}),
+  eff(IMP, 'GSTR-3B', '06/2026', {}), eff(IMP, 'GSTR-3B (Q)', '05/2026', {}), eff(TWIN, 'GSTR-1 (IFF)', '04/2026', {}), eff(FAB, 'GSTR-6', '08/2026', {}),
+  eff(HIS, 'GSTR-1', '06/2026', hist), eff(HIS, 'GSTR-1', '08/2026', hist), eff(HIS, 'GSTR-3B', '09/2026', hist)].join();
+check('round 4: the period\'s return, as filing_effective_return_type', effSeen
+  === 'GSTR-1,GSTR-3B,GSTR-1 (IFF),GSTR-3B (Q),GSTR-3B,GSTR-1,GSTR-6,GSTR-1,GSTR-1 (IFF),GSTR-3B (Q)', effSeen);
+const iffRow = { status: 'Prepared', return_type: 'GSTR-1 (IFF)', return_pdf_url: null, filed_source: null, arn: null };
+const q3bRow = { status: 'Prepared', return_type: 'GSTR-3B (Q)', return_pdf_url: null, filed_source: null, arn: null };
+const staff = { ...base, isSuperadmin: false };
+const a1 = acts(iffRow, { ...staff, effectiveType: 'GSTR-1' });
+const a2 = acts(q3bRow, { ...staff, effectiveType: 'GSTR-3B' });
+const a3 = acts(iffRow, { ...base, effectiveType: 'GSTR-1' });
+const a4 = acts(iffRow, { ...staff, effectiveType: 'GSTR-1', allowance: { used_at: null } });
+check('round 4: a monthly client\'s IFF / 3B (Q) twin row is never attached by hand, nor allowed', a1.canAttach === false && a2.canAttach === false
+  && a3.canAllow === false && a4.canAttach === false, JSON.stringify({ a1, a2, a3, a4 }));
+const holder = { status: 'Filed', return_type: 'GSTR-1 (IFF)', return_pdf_url: null, filed_source: 'portal', arn: 'AA270426123456X', pdf_note: 'No PDF came with the pull.' };
+const h1 = acts(holder, { ...staff, effectiveType: 'GSTR-1' });
+const h2 = acts(holder, { ...staff, effectiveType: 'GSTR-1', allowance: { used_at: null } });
+const h3 = acts(holder, { ...base, effectiveType: 'GSTR-1' });
+check('round 4: a twin row holding the ARN follows GSTR-1: only under its allowance', h1.canAttach === false && h2.canAttach === true && h3.canAllow === true
+  && h2.ruleType === 'GSTR-1' && (L.manualRuleType ? L.manualRuleType('GSTR-1 (IFF)', 'GSTR-1') : '') === 'GSTR-1', JSON.stringify({ h1, h2, h3 }));
+const i1 = acts(iffRow, { ...staff, effectiveType: 'GSTR-1 (IFF)' });
+check('round 4: an IFF client\'s own IFF row keeps its manual route', i1.canAttach === true && i1.ruleType === 'GSTR-1 (IFF)'
+  && acts(q3bRow, { ...staff, effectiveType: 'GSTR-3B (Q)' }).canAttach === true, JSON.stringify(i1));
+check('round 4: the page and table use the period\'s return', /effectiveType: ctx\.effectiveType/.test(table) && /isPullOnly\(ruleType\)/.test(table)
+  && /filingScope\(manualRuleType\(record\.return_type, effectiveType\)\)/.test(page)
+  && /const ruleType = manualRuleType\(record\.return_type, effectiveTypeOf\(record\)\);/.test(page) && /scope: filingScope\(ruleType\)/.test(page));
+// Finding 2: the conflict panel says what Accept keeps and takes off
+// (test_90 checks the database side).
+const words = L.conflictAcceptWords || (() => '');
+const HAND = 'https://mlgxmhzlqykwdvvybhnk.supabase.co/storage/v1/object/public/return-pdfs/c1/GSTR-3B/08-2026/1758000000000_GSTR3B_Aug.pdf';
+const OLD = 'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/c1/04-2026/GSTR-3B-AB240426123456X.pdf';
+const w1 = words({ old_arn: null, old_pdf_url: HAND, detail: { pulled: { arn: 'AB240826123456X' }, arn_on: 'x' } });
+const w2 = words({ old_arn: 'AB2402260000ZZZ', old_pdf_url: HAND, detail: { pulled: { arn: 'AB240226123456X' }, arn_on: 'x' } });
+const w3 = words({ old_arn: null, old_pdf_url: OLD, detail: { pulled: { arn: 'AB240426123456X' }, arn_on: 'x' } });
+const w4 = words({ old_arn: null, old_pdf_url: HAND, detail: { pulled: { arn: 'AB240826123456X' }, pulled_pdf_url: 'https://x/c.pdf' } });
+check('round 4: Accept keeps a PDF attached by hand, and says so', /keeps its PDF attached by hand, marked as not checked by a pull/.test(w1)
+  && /is taken off Filed/.test(w1), w1);
+check('round 4: Accept says what it takes off', /takes off its PDF and filing date, which go with AB2402260000ZZZ/.test(w2)
+  && /stored unchecked/.test(w3) && /with the checked PDF the pull stored/.test(w4) && L.pdfFromOldPull && L.pdfFromOldPull(OLD) && !L.pdfFromOldPull(HAND), [w2, w3, w4].join(' | '));
+const panel = fs.readFileSync(path.join(root, 'src/components/filing/FilingExceptionsPanel.tsx'), 'utf8');
+check('round 4: the panel shows it beside the conflict and on Accept', /\{conflictAcceptWords\(c\)\}/.test(panel) && /title=\{conflictAcceptWords\(c\)\}/.test(panel));
+check('round 4: the database keeps a PDF attached by hand on Accept', /filing_pull_conflict_decide/.test(mig)
+  && /v_same AND NOT public\.filing_pdf_from_old_pull\(v_old_pdf\) THEN\s+v_new_pdf := v_old_pdf;\s+v_new_note := 'Attached by hand, not checked by a pull\. ' \|\| v_note;/.test(
+    mig.slice(mig.indexOf('CREATE OR REPLACE FUNCTION public.filing_pull_conflict_decide('))));
+// Finding 3: "is this return's pull proven?" counts only pulls that stored their checked PDF.
+check('round 4: the header\'s proven query is filing_pulls_landed, not the pulled address', /SELECT \* FROM public\.filing_pulls_landed\(\)/.test(mig)
+  && !/\(detail->'pulled'->>'pdf_url'\) IS NOT NULL GROUP BY 1/.test(mig) && /v_detail := v_detail \|\| jsonb_build_object\('stored_pdf_url', v_pdf\);/.test(mig)
+  && /AND l\.new_pdf_url = l\.detail ->> 'stored_pdf_url'/.test(mig));
 
 // ── 3. Reading a PDF in the app (the extension's checker) ─────────────────
 const fx = (f) => new Blob([fs.readFileSync(path.join(root, 'extension/test/fixtures', f))], { type: 'application/pdf' });

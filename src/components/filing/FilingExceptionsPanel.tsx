@@ -6,7 +6,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { SectionCard } from '@/components/gstr9/ui';
 import { WS_BTN, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/components/workspace/theme';
 import { cn } from '@/lib/utils';
-import { decideConflict, type FilingLogRow } from '@/lib/filingPull';
+import { conflictAcceptWords, decideConflict, type FilingLogRow } from '@/lib/filingPull';
 import { revokeManualSource, type ManualSourceAllowance } from '@/lib/manualSourceAllowances';
 
 const fmtWhen = (iso: string | null | undefined) =>
@@ -91,11 +91,14 @@ const FilingExceptionsPanel: React.FC<{
                   <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums')}>{c.period_month}</td>
                   <td className={cn(WS_TD, 'font-mono text-xs')}>{c.old_arn || '—'}</td>
                   <td className={cn(WS_TD, 'font-mono text-xs')}>{pulledArn(c)}</td>
-                  <td className={cn(WS_TD, 'whitespace-pre-wrap text-xs')}>{c.message}</td>
+                  <td className={cn(WS_TD, 'whitespace-pre-wrap text-xs')}>
+                    {c.message}
+                    <div className="mt-1 text-muted-foreground">{conflictAcceptWords(c)}</div>
+                  </td>
                   <td className={cn(WS_TD, 'border-r-0 text-xs')}>
                     {isSuperadmin ? (
                       <div className="flex gap-1.5">
-                        <Button size="sm" className={WS_BTN} disabled={busy === c.id} onClick={() => decide(c, true)} title="Put the pulled ARN, date and PDF on the return">
+                        <Button size="sm" className={WS_BTN} disabled={busy === c.id} onClick={() => decide(c, true)} title={conflictAcceptWords(c)}>
                           {busy === c.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Accept
                         </Button>
                         <Button size="sm" variant="outline" className={WS_BTN} disabled={busy === c.id} onClick={() => decide(c, false)} title="Keep the return as it is">
