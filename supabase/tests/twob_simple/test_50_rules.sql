@@ -38,9 +38,9 @@ SELECT public.t_raises(format($q$SELECT public.twob_prior_books_apply(public.t_m
 
 -- A book entry made in August on its copy stops the Not in Books entry's removal.
 SELECT public.t_raises(format($q$SELECT public.twob_prior_books_apply(public.t_manager(), '%s', '07/2026', '[{"table": "bills_not_in_books", "op": "delete", "id": "%s"}]'::jsonb, false)$q$, :'R', :'nib'),
-  'NIB SUPPLIER N-1: Aug-26 has booked this entry; undo that book entry first', 'a booked copy stops the removal');
+  'NIB SUPPLIER N-1: Aug-26 (filed) has booked this entry, so it cannot be removed or its amounts changed', 'a booked copy stops the removal');
 SELECT public.t_raises(format($q$SELECT public.twob_prior_books_apply(public.t_manager(), '%s', '07/2026', '[{"table": "bills_not_in_books", "op": "update", "id": "%s", "values": {"input_cgst": 95}}]'::jsonb, false)$q$, :'R', :'nib'),
-  'Aug-26 has booked this entry', 'a booked copy stops an amount change');
+  'Aug-26 (filed) has booked this entry', 'a booked copy stops an amount change');
 SELECT public.t_ok(format($q$SELECT public.twob_prior_books_apply(public.t_manager(), '%s', '07/2026', '[{"table": "bills_not_in_books", "op": "update", "id": "%s", "values": {"supplier_gstin": "24NIBSU0000A1Z6"}}]'::jsonb, false)$q$, :'R', :'nib'),
   'a GSTIN correction passes');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE client_id = :'R' AND supplier_gstin = '24NIBSU0000A1Z6'), 3, 'the GSTIN reaches Aug and Sep-26');

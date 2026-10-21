@@ -8,9 +8,11 @@
 # (01_fixtures.sql), the SQL tests (test_*.sql, written as PostgREST runs
 # them: SET ROLE anon with the JWT claims set; a test's "timing:" notices are
 # printed), the two-session tests (test_*.sh, e.g. a reclaim committed while a
-# removal runs) and the GSTR-3B gates test (gates.test.mjs: the app's own
-# gate code run against this database before and after a permitted change,
-# and against origin/main's code before it).
+# removal runs, the lock order of the door and filing), the GSTR-3B gates test
+# (gates.test.mjs: the app's own gate code run against this database before
+# and after a permitted change, and against origin/main's code before it) and
+# the app's own writes (app_writes.test.mjs: a stale page's reclaim, the
+# open-month delete, the words after filing).
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.
@@ -71,7 +73,9 @@ done
 for t in "$here"/test_*.sh; do
   if TWOB_TEST_DB="$db" bash "$t"; then :; else echo "FAIL $(basename "$t")"; status=1; fi
 done
-if [ -f "$here/gates.test.mjs" ]; then
-  if TWOB_TEST_DB="$db" node "$here/gates.test.mjs"; then :; else status=1; fi
-fi
+for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs; do
+  if [ -f "$t" ]; then
+    if TWOB_TEST_DB="$db" node "$t"; then :; else status=1; fi
+  fi
+done
 exit $status

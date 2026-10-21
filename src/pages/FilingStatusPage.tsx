@@ -33,7 +33,7 @@ import { markFiledForPeriod } from '@/lib/advanceSetoffOverrides';
 import RequestDirectFilingDialog, { DirectFilingTarget } from '@/components/filing/RequestDirectFilingDialog';
 import DirectFilingApprovalsPanel from '@/components/filing/DirectFilingApprovalsPanel';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { canChangePriorBooks, describeRerun, fetchEverFiled, monthName, nextMonthCarried, reopenFiled, rerunCarry, type NextMonthCarried } from '@/lib/twobPriorMonth';
+import { canChangePriorBooks, describeFilingCarry, describeRerun, fetchEverFiled, monthName, nextMonthCarried, reopenFiled, rerunCarry, type NextMonthCarried } from '@/lib/twobPriorMonth';
 import { filingSuspendedCheck } from '@/lib/suspendedRecoCalc';
 import {
   DirectFilingApproval,
@@ -1144,16 +1144,11 @@ const FilingStatusPage: React.FC = () => {
           .eq('id', record.id); // Only lock this specific record
         
         // The carry into the next month was made by the database with the
-        // status (docs §13): only when that month held no carried entries
-        // and was not filed. Say which happened.
-        const next = nextHeld ? monthName(nextHeld.nextPeriod) : 'The next month';
-        if (nextHeld?.nextPrior) {
-          toast.warning(`${record.return_type} filed and sheets are locked. ${next} is filed already, so nothing was carried into it: a GST Manager or the superadmin corrects its books entries on Import 2B or 2B Reconciliation.`, { duration: 15000 });
-        } else if (nextHeld && (nextHeld.carried2B > 0 || nextHeld.carriedBooks > 0)) {
-          toast.warning(`${record.return_type} filed and sheets are locked. ${next} already held carried entries, so nothing was carried into it and its own reclaims and book entries stay. A GST Manager or the superadmin can bring it in line with Re-run carry forward, the button next to this record.`, { duration: 15000 });
-        } else {
-          toast.success(`${record.return_type} filed. 2B and ITC sheets are now locked, and this month's pending 2B entries were carried into ${nextHeld ? next : 'the next month'}.`);
-        }
+        // status (docs §13), each list only when that month held no carried
+        // entries on it. Say which happened, list by list.
+        const carry = describeFilingCarry(record.return_type, nextHeld);
+        if (carry.tone === 'warning') toast.warning(carry.text, { duration: 15000 });
+        else toast.success(carry.text);
       } else if (newStatus === 'Filed') {
         toast.success('Status updated to Filed.');
       } else if (wasFiledBefore) {

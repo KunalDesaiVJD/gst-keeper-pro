@@ -125,6 +125,8 @@ export interface TwobChangeResult {
   /** A Not in 2B entry posted from Import 2B: what happens to its books register row ('remove' | 'change'), or null. */
   booksRow: string | null;
   refusal: string | null;
+  /** An added entry the month or a later month already holds: not added (the rest goes ahead). */
+  note: string | null;
 }
 
 export interface TwobApplyResult {
@@ -132,6 +134,8 @@ export interface TwobApplyResult {
   dryRun: boolean;
   changes: TwobChangeResult[];
   refusals: { index: number; entry: string | null; message: string }[];
+  /** Added entries not added, because the month or a later month already holds them. */
+  notes: { index: number; entry: string | null; message: string }[];
   /** Copies reached per later month. */
   laterMonths: { period: string; count: number }[];
 }
@@ -157,9 +161,14 @@ const parseApply = (data: unknown): TwobApplyResult => {
         }),
         booksRow: typeof t.books_row === 'string' ? t.books_row : null,
         refusal: typeof c.refusal === 'string' ? c.refusal : null,
+        note: typeof c.note === 'string' ? c.note : null,
       };
     }),
     refusals: (Array.isArray(d.refusals) ? d.refusals : []).map((r) => {
+      const x = r as Raw;
+      return { index: Number(x.index) || 0, entry: typeof x.entry === 'string' ? x.entry : null, message: String(x.message) };
+    }),
+    notes: (Array.isArray(d.notes) ? d.notes : []).map((r) => {
       const x = r as Raw;
       return { index: Number(x.index) || 0, entry: typeof x.entry === 'string' ? x.entry : null, message: String(x.message) };
     }),
@@ -190,6 +199,14 @@ export async function applyPriorBooks(
 export const refusalLines = (r: TwobApplyResult): string[] =>
   r.refusals.map((x) => `${x.entry ? `${x.entry}: ` : ''}${x.message}.`);
 
+/** The entries not added, one sentence each ("JAY INFRASTRUCTURE 16/2026-27: Sep-26 already holds this 2B document ...; it is not added again."). */
+export const noteLines = (r: TwobApplyResult): string[] =>
+  r.notes.map((x) => `${x.entry ? `${x.entry}: ` : ''}${x.message}.`);
+
+/** Whether applying would write anything (every change refused or held: nothing). */
+export const previewChangesSomething = (r: TwobApplyResult): boolean =>
+  r.changes.some((c) => !c.refusal && !!c.action && c.action !== 'none') || r.laterMonths.length > 0;
+
 /** "This month: 2 removed, 1 changed. Also changes Aug-26 (2), Sep-26 (2)." */
 export function describePriorPreview(r: TwobApplyResult, period: string): string {
   const count = (a: string) => r.changes.filter((c) => !c.refusal && c.action === a).length;
@@ -208,7 +225,11 @@ export function describePriorPreview(r: TwobApplyResult, period: string): string
     booksGone && `${booksGone} Import 2B books ${booksGone === 1 ? 'row goes' : 'rows go'} too, so Post does not add ${booksGone === 1 ? 'it' : 'them'} back`,
     booksChanged && `${booksChanged} Import 2B books ${booksChanged === 1 ? 'row changes' : 'rows change'} the same way`,
   ].filter(Boolean);
-  return here + later + (books.length ? ` ${books.join('; ')}.` : '');
+  const notes = noteLines(r);
+  const notAdded = notes.length
+    ? ` Not added, already held: ${notes.slice(0, 5).join(' ')}${notes.length > 5 ? ` And ${notes.length - 5} more.` : ''}`
+    : '';
+  return here + later + (books.length ? ` ${books.join('; ')}.` : '') + notAdded;
 }
 
 type ConfirmFn = (opts: { title: string; description?: string; confirmText?: string; destructive?: boolean }) => Promise<boolean>;
@@ -236,7 +257,7 @@ export async function previewAndApplyPriorBooks(opts: {
   confirmText?: string;
   destructive?: boolean;
   confirmAlways?: boolean;
-  notify: { error: (msg: string) => void };
+  notify: { error: (msg: string) => void; info?: (msg: string) => void };
 }): Promise<PriorApplyOutcome> {
   const { actorId, clientId, period, changes, confirm, notify } = opts;
   if (changes.length === 0) return { applied: false, result: null };
@@ -249,6 +270,10 @@ export async function previewAndApplyPriorBooks(opts: {
   }
   if (!preview.ok) {
     notify.error(`Nothing was saved. ${refusalLines(preview).join(' ')}`);
+    return { applied: false, result: preview };
+  }
+  if (!previewChangesSomething(preview)) {
+    if (preview.notes.length) (notify.info || notify.error)(`Nothing to save. ${noteLines(preview).join(' ')}`);
     return { applied: false, result: preview };
   }
   const reachesLater = preview.laterMonths.length > 0;
@@ -349,11 +374,36 @@ export function describeRerun(r: RerunResult): { lines: string[]; nothingToDo: b
   const list = (name: string, l: RerunList) => {
     if (l.add.length) lines.push(`${name}: add ${l.add.length} to ${next} (${listNames(l.add)}).`);
     if (l.remove.length) lines.push(`${name}: remove ${l.remove.length} carried ${l.remove.length === 1 ? 'copy' : 'copies'} from ${next} that ${monthName(r.period)} no longer holds (${listNames(l.remove)}).`);
-    if (l.keep.length) lines.push(`${name}: keep ${l.keep.length} carried ${l.keep.length === 1 ? 'copy' : 'copies'} that ${monthName(r.period)} no longer holds, because ${l.keep.length === 1 ? 'it holds' : 'they hold'} ${next}'s own decision (${listNames(l.keep)}).`);
+    if (l.keep.length) lines.push(`${name}: keep ${l.keep.length} carried ${l.keep.length === 1 ? 'copy' : 'copies'} in ${next} that ${monthName(r.period)} no longer holds, because ${l.keep.length === 1 ? 'it holds' : 'they hold'} a reclaim, Expense out or book entry (${listNames(l.keep)}).`);
     for (const c of l.conflict) lines.push(`${name}: ${entryLabel(c)} is left as it is: ${c.message || 'its copy holds a decision'}.`);
   };
   list('Not in 2B', r.bills2B);
   list('Not in Books', r.billsBooks);
   const nothingToDo = !r.bills2B.add.length && !r.bills2B.remove.length && !r.billsBooks.add.length && !r.billsBooks.remove.length;
   return { lines, nothingToDo };
+}
+
+/**
+ * What filing a month carried into the next month, per list, from what the
+ * next month held just before (nextMonthCarried): each list is carried only
+ * when the next month held no carried entries on it (docs §13). A next month
+ * filed already takes them too, and so do the months after it up to the open
+ * month. Returns the toast's tone and words.
+ */
+export function describeFilingCarry(returnType: string, next: NextMonthCarried | null): { tone: 'success' | 'warning'; text: string } {
+  const head = `${returnType} filed. 2B and ITC sheets are now locked.`;
+  if (!next) return { tone: 'success', text: `${head} This month's pending 2B entries were carried into the next month.` };
+  const month = monthName(next.nextPeriod);
+  const into = next.nextPrior ? `${month} (filed already) and the months after it up to the open month` : month;
+  const carried = [next.carried2B === 0 && 'Not in 2B', next.carriedBooks === 0 && 'Not in Books'].filter(Boolean) as string[];
+  const held = [next.carried2B > 0 && 'Not in 2B', next.carriedBooks > 0 && 'Not in Books'].filter(Boolean) as string[];
+  if (held.length === 0) return { tone: 'success', text: `${head} This month's pending 2B entries were carried into ${into}.` };
+  const fix = next.nextPrior
+    ? 'A GST Manager or the superadmin corrects its books entries on Import 2B or 2B Reconciliation.'
+    : 'A GST Manager or the superadmin can bring it in line with Re-run carry forward, the button next to this record.';
+  const heldText = `${month} already held carried ${held.join(' and ')} entries, so ${held.length === 1 ? 'that list was' : 'they were'} not carried and its own reclaims and book entries stay. ${fix}`;
+  return {
+    tone: 'warning',
+    text: carried.length ? `${head} ${carried.join(' and ')} entries were carried into ${into}. ${heldText}` : `${head} ${heldText}`,
+  };
 }

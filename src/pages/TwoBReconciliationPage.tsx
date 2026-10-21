@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { writePostVersion } from '@/lib/postImport2B';
+import { deleteOpenMonthRows, holdsDecision } from '@/lib/twobPendingWrites';
 import {
   OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchTwobMonthState, ledgerCellReadOnly, previewAndApplyPriorBooks,
   type TwobChange, type TwobMonthState,
@@ -956,7 +957,7 @@ const TwoBReconciliationPage: React.FC = () => {
         actorId: user.id, clientId: selectedClientId, period: selectedMonth, changes, confirm,
         title: 'Save changes to a filed month?', confirmText: 'Save',
         destructive: changes.some((c) => c.op === 'delete'),
-        notify: { error: (m) => toast.error(m, { duration: 15000 }) },
+        notify: { error: (m) => toast.error(m, { duration: 15000 }), info: (m) => toast.info(m, { duration: 15000 }) },
       });
       if (!outcome.applied) return;
       const version = await writePostVersion(selectedClientId, selectedMonth, user.id);
@@ -991,17 +992,23 @@ const TwoBReconciliationPage: React.FC = () => {
       return;
     }
 
+    // A carried entry deleted here that holds a reclaim, Expense out or book
+    // entry takes it with it: say so first.
+    const goneDecided = [
+      ...billsNotIn2B.filter((b) => deletedRows2B.includes(b.id)),
+      ...billsNotInBooks.filter((b) => deletedRowsBooks.includes(b.id)),
+    ].filter((b) => b.is_carried_forward && holdsDecision(b));
+    if (goneDecided.length > 0 && !(await confirm({
+      title: 'Delete entries with a reclaim or book entry?',
+      description: `${goneDecided.length} carried ${goneDecided.length === 1 ? 'entry you delete holds' : 'entries you delete hold'} a reclaim, Expense out or book entry (${goneDecided.slice(0, 4).map((b) => [b.supplier_name, b.supplier_invoice_number].filter(Boolean).join(' ')).join(', ')}${goneDecided.length > 4 ? ` and ${goneDecided.length - 4} more` : ''}). Deleting ${goneDecided.length === 1 ? 'it removes' : 'them removes'} that too.`,
+      confirmText: 'Delete',
+      destructive: true,
+    }))) return;
+
     setIsSaving(true);
     try {
       // Get next version number
       const currentVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
-      
-      // Mark all existing versions as not current
-      await supabase
-        .from('twob_versions')
-        .update({ is_current: false })
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth);
 
       // First, apply database changes (inserts/updates/deletes)
       // Delete removed rows
@@ -1047,17 +1054,20 @@ const TwoBReconciliationPage: React.FC = () => {
         }
         return ids.length;
       };
+      // A carried entry's reclaim, Expense out or book entry goes first, in
+      // the same Save (the database refuses to delete a carried entry that
+      // holds its own month's decision directly).
       let laterCopies = 0;
       if (deletedRows2B.length > 0) {
         const gone = billsNotIn2B.filter((b) => deletedRows2B.includes(b.id));
-        const { error } = await supabase.from('bills_not_in_2b').delete().in('id', deletedRows2B);
-        fail('Could not delete', error);
+        const { error } = await deleteOpenMonthRows('bills_not_in_2b', gone);
+        if (error) throw new Error(`Could not delete: ${error}`);
         laterCopies += await removeLaterCopies('bills_not_in_2b', gone.filter((b) => !b.is_carried_forward));
       }
       if (deletedRowsBooks.length > 0) {
         const gone = billsNotInBooks.filter((b) => deletedRowsBooks.includes(b.id));
-        const { error } = await supabase.from('bills_not_in_books').delete().in('id', deletedRowsBooks);
-        fail('Could not delete', error);
+        const { error } = await deleteOpenMonthRows('bills_not_in_books', gone);
+        if (error) throw new Error(`Could not delete: ${error}`);
         laterCopies += await removeLaterCopies('bills_not_in_books', gone.filter((b) => !b.is_carried_forward));
       }
       if (laterCopies) toast.info(`Also removed ${laterCopies} carried-forward cop${laterCopies === 1 ? 'y' : 'ies'} in later months`);
@@ -1166,7 +1176,15 @@ const TwoBReconciliationPage: React.FC = () => {
         billsNotIn2B: versionBills2B,
         billsNotInBooks: versionBillsBooks,
       };
-      
+
+      // The earlier versions stop being current only now, once every write
+      // above went through (a refused delete leaves them as they were).
+      await supabase
+        .from('twob_versions')
+        .update({ is_current: false })
+        .eq('client_id', selectedClientId)
+        .eq('period_month', selectedMonth);
+
       const { error: versionError } = await supabase.from('twob_versions').insert([{
         client_id: selectedClientId,
         period_month: selectedMonth,

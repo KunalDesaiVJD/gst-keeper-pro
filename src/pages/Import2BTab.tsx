@@ -26,7 +26,7 @@ import {
 } from '@/lib/postImport2B';
 import {
   OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_MANAGER_MSG, PRIOR_MONTH_DOCS_MSG, applyPriorBooks, canChangePriorBooks, describePriorPreview,
-  fetchTwobMonthState, isPriorPeriod, previewAndApplyPriorBooks, refusalLines, type TwobChange, type TwobMonthState,
+  fetchTwobMonthState, isPriorPeriod, noteLines, previewAndApplyPriorBooks, previewChangesSomething, refusalLines, type TwobChange, type TwobMonthState,
 } from '@/lib/twobPriorMonth';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import {
@@ -39,6 +39,7 @@ import {
 import ReclaimMatchDialog, { ReclaimInvoiceLite } from '@/components/dialogs/ReclaimMatchDialog';
 import EmailBillsNotInBooksDialog from '@/components/import2b/EmailBillsNotInBooksDialog';
 import { cn } from '@/lib/utils';
+import { recordReclaim, updatePendingEntry } from '@/lib/twobPendingWrites';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import {
   WS_PAGE, WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL,
@@ -1690,17 +1691,16 @@ const Import2BTab: React.FC = () => {
   const confirmReclaim = async (pendingId: string, docId: string) => {
     if (readOnly) { toast.error(PRIOR_MONTH_DOCS_MSG); return; }
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
-    const nowIso = new Date().toISOString();
     const doc = twoBDocs.find((d) => d.id === docId);
-    const { error: err2B } = await supabase.from('bills_not_in_2b').update({
-      reclaim_month: currentLabel, reclaim_subtype: null, reclaimed_via_doc_id: docId,
-      updated_by: user?.id, updated_at: nowIso,
-    }).eq('id', pendingId);
-    if (err2B) { toast.error('Reclaim failed: ' + err2B.message); return; }
-    const { error: errDoc } = await supabase.from('twob_import_docs').update({
-      itc_action: 'RECLAIM', updated_by: user?.id, updated_at: nowIso,
-    }).eq('id', docId);
-    if (errDoc) { toast.error('Reclaim failed: ' + errDoc.message); return; }
+    // The entry first, and the document only when the entry is still in this
+    // month (a filed month's correction may have removed this copy since the
+    // page was opened): never a Reclaim document without its entry.
+    const res = await recordReclaim({ pendingId, docId, label: currentLabel, userId: user?.id });
+    if (!res.ok) {
+      toast.error(res.gone ? res.message : 'Reclaim failed: ' + res.message, { duration: 12000 });
+      if (res.gone) await fetchAll();
+      return;
+    }
     toast.success('Reclaim linked and recorded.');
     // The amendments counted against this document follow its new treatment,
     // as on Save.
@@ -1917,7 +1917,8 @@ const Import2BTab: React.FC = () => {
     if (!selectedClient || !selectedMonth || !user?.id) return null;
     const outcome = await previewAndApplyPriorBooks({
       actorId: user.id, clientId: selectedClient, period: selectedMonth, changes, confirm, title,
-      confirmText: destructive ? 'Delete' : 'Save', destructive, confirmAlways, notify: { error: (m) => toast.error(m, { duration: 15000 }) },
+      confirmText: destructive ? 'Delete' : 'Save', destructive, confirmAlways,
+      notify: { error: (m) => toast.error(m, { duration: 15000 }), info: (m) => toast.info(m, { duration: 15000 }) },
     });
     return outcome.applied ? outcome.result : null;
   };
@@ -2166,6 +2167,10 @@ const Import2BTab: React.FC = () => {
       toast.error(`Nothing was posted. ${refusalLines(preview).join(' ')}`, { duration: 20000 });
       return;
     }
+    if (!previewChangesSomething(preview)) {
+      toast.info(`Nothing to post. ${noteLines(preview).join(' ')}`, { duration: 20000 });
+      return;
+    }
     if (!(await confirm({
       title: 'Post to Reconciliation in a filed month?',
       description: (
@@ -2281,10 +2286,8 @@ const Import2BTab: React.FC = () => {
     if (readOnly) { toast.error(PRIOR_MONTH_DOCS_MSG); return; }
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const row = pendingBills2B.find((r) => r.id === id);
-    const { error } = await supabase.from('bills_not_in_2b')
-      .update({ reclaim_month: currentLabel, reclaim_subtype: 'EXPENSE_OUT', updated_by: user?.id, updated_at: new Date().toISOString() })
-      .eq('id', id);
-    if (error) { toast.error('Save failed: ' + error.message); return; }
+    const res = await updatePendingEntry('bills_not_in_2b', id, { reclaim_month: currentLabel, reclaim_subtype: 'EXPENSE_OUT' }, user?.id);
+    if (!res.ok) { toast.error(res.gone ? res.message : 'Save failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
     setPendingBills2B((prev) => prev.filter((r) => r.id !== id));
     if (row) setExpensedOutItems((prev) => [{ ...row, reclaim_month: currentLabel, reclaim_subtype: 'EXPENSE_OUT' }, ...prev]);
     toast.success('Marked as expense out.');
@@ -2295,10 +2298,8 @@ const Import2BTab: React.FC = () => {
     if (readOnly) { toast.error(PRIOR_MONTH_DOCS_MSG); return; }
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const row = expensedOutItems.find((r) => r.id === id);
-    const { error } = await supabase.from('bills_not_in_2b')
-      .update({ reclaim_month: null, reclaim_subtype: null, updated_by: user?.id, updated_at: new Date().toISOString() })
-      .eq('id', id);
-    if (error) { toast.error('Undo failed: ' + error.message); return; }
+    const res = await updatePendingEntry('bills_not_in_2b', id, { reclaim_month: null, reclaim_subtype: null }, user?.id);
+    if (!res.ok) { toast.error(res.gone ? res.message : 'Undo failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
     setExpensedOutItems((prev) => prev.filter((r) => r.id !== id));
     if (row) setPendingBills2B((prev) => [{ ...row, reclaim_month: null, reclaim_subtype: null }, ...prev]);
     toast.success('Expense out undone — back in Awaiting reclaim.');
@@ -2308,9 +2309,8 @@ const Import2BTab: React.FC = () => {
     if (readOnly) { toast.error(PRIOR_MONTH_DOCS_MSG); return; }
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const patch = value === 'blank' ? { book_entry_month: null } : { book_entry_month: currentLabel };
-    const { error } = await supabase.from('bills_not_in_books')
-      .update({ ...patch, updated_by: user?.id, updated_at: new Date().toISOString() }).eq('id', id);
-    if (error) { toast.error('Save failed: ' + error.message); return; }
+    const res = await updatePendingEntry('bills_not_in_books', id, patch, user?.id);
+    if (!res.ok) { toast.error(res.gone ? res.message : 'Save failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
     setPendingBillsBooks((prev) => prev.filter((r) => value === 'blank' ? true : r.id !== id));
     if (value !== 'blank') toast.success('Book entry recorded.');
   };

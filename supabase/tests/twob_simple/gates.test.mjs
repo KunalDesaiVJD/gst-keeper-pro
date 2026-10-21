@@ -338,6 +338,48 @@ for (const [C, name, liberal] of [
   check('Screens: an employee (the page read-only) edits nothing in a prior month', cell({ readOnly: true, canPriorBooks: false }) === true);
 }
 
+// ── 4. A month filed after its next month (round 2, Q1): July is marked
+// Filed after August, so its two pending entries are carried into filed
+// August and open September then. Every gate of August and September stays
+// as it was, except the Suspended Reco books side, which takes July's
+// entries (that is the carry); August's figures are recorded first. ──────
+{
+  const C = '91000000-0000-0000-0000-000000000004';
+  const MONTHS2 = ['08/2026', '09/2026'];
+  psql(`SELECT set_config('twob.write', 'system', false);
+        INSERT INTO public.clients (id, name, gstin) VALUES ('${C}', 'Gates late filing', '24GLATE0000A1Z5');
+        INSERT INTO public.itc_summaries (client_id, period_month, data, is_locked) VALUES
+          ('${C}', '07/2026', public.t_itc(50000, 270), false), ('${C}', '08/2026', public.t_itc(60000, 45), true), ('${C}', '09/2026', public.t_itc(70000, 0), false);
+        INSERT INTO public.suspended_reco (client_id, period_month, opening_cgst, opening_sgst, portal_cgst, portal_sgst) VALUES
+          ('${C}', '08/2026', 0, 0, 45, 45), ('${C}', '09/2026', 45, 45, 0, 0);
+        INSERT INTO public.gst_receivable_reco (client_id, period_month, opening_cgst, opening_sgst, opening_igst, books_closing_cgst, books_closing_sgst, books_closing_igst,
+          utilized_cgst, utilized_sgst, utilized_igst, drc_cgst, drc_sgst, drc_igst)
+        VALUES ('${C}', '09/2026', 59955, 59955, 0, 129955, 129955, 0, 0, 0, 0, 0, 0, 0);
+        INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
+          taxable_value, input_cgst, input_sgst, reversal_month, is_carried_forward) VALUES
+          ('${C}', '07/2026', '2026-07-03', 'JUL SUP', 'J-1', '24JULSU0000A1Z5', 1000, 90, 90, 'Jul 26', false),
+          ('${C}', '07/2026', '2026-07-04', 'JUL SUP', 'J-2', '24JULSU0000A1Z5', 2000, 180, 180, 'Jul 26', false),
+          ('${C}', '08/2026', '2026-08-05', 'AUG SUP', 'A-1', '24AUGSU0000A1Z5', 500, 45, 45, 'Aug 26', false);
+        SELECT set_config('twob.write', '', false);`);
+  asApp(`INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES ('${C}', 'GSTR-3B', '08/2026', 'Filed'), ('${C}', 'GSTR-3B', '09/2026', 'Data Received');`);
+  asApp(`INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES ('${C}', 'GSTR-3B', '07/2026', 'Filed');`);
+  check('Late filing: July\'s entries reach filed August and open September',
+    psql(`SELECT count(*) FROM public.bills_not_in_2b WHERE client_id = '${C}' AND supplier_name = 'JUL SUP' AND period_month IN ('08/2026', '09/2026')`).trim() === '4');
+  const snap = snapshot();
+  // Before: the same database as the round-1 version left it (July filed,
+  // nothing carried, nothing recorded); after: as this one leaves it.
+  const without = {
+    ...snap,
+    bills_not_in_2b: snap.bills_not_in_2b.filter((r) => !(r.client_id === C && r.supplier_name === 'JUL SUP' && r.period_month !== '07/2026')),
+    twob_filed_figures: snap.twob_filed_figures.filter((r) => r.client_id !== C),
+  };
+  const before = await gates(without, C, MONTHS2);
+  const after = await gates(snap, C, MONTHS2);
+  // The books side takes July's two pending entries: the difference falls by them.
+  const move = { cgst: -270, sgst: -270, igst: 0 };
+  compare('Late filing', before, after, { '08/2026': move, '09/2026': move });
+}
+
 let failed = 0;
 for (const r of results) {
   if (r.ok) console.log(`ok   gates: ${r.name}`);

@@ -115,11 +115,16 @@ SET ROLE anon;
 SELECT public.t_eq(to_regprocedure('public.twob_carry_after_filing(uuid, text)') IS NULL, true, 'R5: twob_carry_after_filing is gone');
 SELECT public.twob_prior_books_apply(public.t_manager(), :'E', '07/2026', '[{"table": "bills_not_in_books", "op": "insert", "values": {"date": "2026-07-21", "supplier_name": "NIB NEW", "input_cgst": 9, "input_sgst": 9, "bill_in_2b_month": "Jul 26"}}]'::jsonb, false) -> 'later_months' AS e_later \gset
 SELECT public.t_eq(:'e_later'::jsonb, '[]'::jsonb, 'R5: no later month holds a Not in Books list, so none is made');
--- July unlocked and filed again: August is filed, so nothing is carried into it.
+-- July unlocked and filed again: filed August holds no carried Not in Books
+-- rows, so July's list is carried into it and on into open September (round
+-- 2, D1: the filings that would have carried it have passed). Its Not in 2B
+-- list, carried before, is left as it is.
 UPDATE public.filing_status SET status = 'Prepared Pending', is_locked = false, filed_date = NULL WHERE client_id = :'E' AND period_month = '07/2026';
 UPDATE public.filing_status SET status = 'Filed', filed_date = '2026-10-21' WHERE client_id = :'E' AND period_month = '07/2026';
-SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE client_id = :'E' AND period_month = '08/2026'), 0,
-  'R5: re-filing July carries nothing into filed August');
+SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE client_id = :'E' AND period_month IN ('08/2026', '09/2026') AND is_carried_forward), 2,
+  'R5: re-filing July carries its Not in Books entry into filed August and open September');
+SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'E' AND period_month = '08/2026'), 2,
+  'R5: August''s Not in 2B list is left as it is');
 RESET ROLE;
 
 -- ---------------------------------------------------------------------------
@@ -196,17 +201,20 @@ SELECT public.t_eq(:'h_prev'::jsonb -> 'changes' -> 0 -> 'this' ->> 'books_row',
 SELECT public.twob_prior_books_apply(public.t_manager(), :'H', '07/2026', format('[{"table": "bills_not_in_2b", "op": "delete", "id": "%s"}]', :'h_t1')::jsonb, false) AS h_done \gset
 SELECT public.t_eq((SELECT count(*)::integer FROM public.books_register WHERE id = :'h_book'), 0, 'R12: the books row that posted T-1 is gone, so Post cannot add it back');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'H' AND supplier_invoice_number = 'T-1'), 0, 'R12: T-1 gone from July, August and September');
--- Adding T-2 again (July holds it) or an entry August holds as carried: refused.
-SELECT public.t_raises(format($q$SELECT public.twob_prior_books_apply(public.t_manager(), '%s', '07/2026', '[{"table": "bills_not_in_2b", "op": "insert", "values": {"date": "2026-07-16", "supplier_name": "OTHER SUPPLIER", "supplier_invoice_number": "T-2", "supplier_gstin": "24OTHER0000A1Z5", "taxable_value": 5555.56, "input_igst": 0, "input_cgst": 500, "input_sgst": 500, "reversal_month": "Jul 26"}}]'::jsonb, false)$q$, :'H'),
-  'OTHER SUPPLIER T-2: Jul-26 already holds this entry on its Not in 2B list; remove the books entry, or that entry, first.', 'R12: a document July holds is not added twice');
+-- Adding T-2 again (July holds it) or an entry August holds as carried: not
+-- added, and named (round 2: a note, the rest of the call goes ahead).
+SELECT public.twob_prior_books_apply(public.t_manager(), :'H', '07/2026', '[{"table": "bills_not_in_2b", "op": "insert", "values": {"date": "2026-07-16", "supplier_name": "OTHER SUPPLIER", "supplier_invoice_number": "T-2", "supplier_gstin": "24OTHER0000A1Z5", "taxable_value": 5555.56, "input_igst": 0, "input_cgst": 500, "input_sgst": 500, "reversal_month": "Jul 26"}}]'::jsonb, false) AS h_twice \gset
+SELECT public.t_eq(:'h_twice'::jsonb -> 'notes' -> 0 ->> 'message', 'Jul-26 already holds this entry on its Not in 2B list; it is not added again', 'R12: a document July holds is not added twice');
+SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'H' AND supplier_invoice_number = 'T-2'), 3, 'R12: T-2 still once a month');
 RESET ROLE;
 SELECT set_config('twob.write', 'system', false);
 INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_cgst, input_sgst, reversal_month, is_carried_forward)
 VALUES (:'H', '08/2026', '2026-06-30', 'ORPHAN CO', 'O-9', '24ORPHA0000A1Z5', 100, 9, 9, 'Jun 26', true);
 SELECT set_config('twob.write', '', false);
 SET ROLE anon;
-SELECT public.t_raises(format($q$SELECT public.twob_prior_books_apply(public.t_manager(), '%s', '07/2026', '[{"table": "bills_not_in_2b", "op": "insert", "values": {"date": "2026-06-30", "supplier_name": "ORPHAN CO", "supplier_invoice_number": "O-9", "supplier_gstin": "24ORPHA0000A1Z5", "taxable_value": 100, "input_cgst": 9, "input_sgst": 9, "reversal_month": "Jul 26"}}]'::jsonb, false)$q$, :'H'),
-  'Aug-26 already holds this entry as a carried entry; it is not added again.', 'R12: a document August carries is not given a second copy');
+SELECT public.twob_prior_books_apply(public.t_manager(), :'H', '07/2026', '[{"table": "bills_not_in_2b", "op": "insert", "values": {"date": "2026-06-30", "supplier_name": "ORPHAN CO", "supplier_invoice_number": "O-9", "supplier_gstin": "24ORPHA0000A1Z5", "taxable_value": 100, "input_cgst": 9, "input_sgst": 9, "reversal_month": "Jul 26"}}]'::jsonb, false) AS h_orphan \gset
+SELECT public.t_eq(:'h_orphan'::jsonb -> 'notes' -> 0 ->> 'message', 'Aug-26 already holds this entry on its Not in 2B list; it is not added again', 'R12: a document August carries is not given a second copy');
+SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'H' AND supplier_invoice_number = 'O-9'), 1, 'R12: ORPHAN CO still only in August');
 -- A changed entry keeps its books row in step (the next Post does not undo it).
 SELECT id AS h_t2 FROM public.bills_not_in_2b WHERE client_id = :'H' AND period_month = '07/2026' AND supplier_invoice_number = 'T-2' \gset
 RESET ROLE;

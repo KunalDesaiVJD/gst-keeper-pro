@@ -57,9 +57,11 @@ SELECT public.t_raises($$UPDATE public.twob_import_docs SET posted_at = now() WH
 SELECT public.t_ok($$UPDATE public.bills_not_in_2b SET is_locked = false WHERE client_id = '20000000-0000-0000-0000-000000000001' AND period_month = '07/2026'$$, 'Jul-26: unlocking the rows');
 SELECT public.t_ok($$UPDATE public.bills_not_in_2b SET is_locked = true WHERE client_id = '20000000-0000-0000-0000-000000000001' AND period_month = '07/2026'$$, 'Jul-26: locking the rows');
 SELECT public.t_ok($$UPDATE public.bills_not_in_books SET is_locked = true, updated_at = now() WHERE client_id = '20000000-0000-0000-0000-000000000001' AND period_month = '07/2026'$$, 'Jul-26: locking Not in Books');
--- ... and a link cleared, as its document's deletion clears it (ON DELETE SET NULL).
-SELECT public.t_ok($$UPDATE public.bills_not_in_books SET source_doc_id = NULL WHERE client_id = '20000000-0000-0000-0000-000000000001' AND period_month = '07/2026'$$, 'Jul-26: a cleared link');
-SELECT public.t_raises($$UPDATE public.bills_not_in_books SET source_doc_id = '20000000-0000-0000-0000-0000000000d7' WHERE client_id = '20000000-0000-0000-0000-000000000001' AND period_month = '07/2026'$$,
+-- A link is cleared only once the row it names is gone (ON DELETE SET NULL;
+-- test_90_round2.sql): clearing it by hand is refused.
+SELECT public.t_raises($$UPDATE public.bills_not_in_books SET source_doc_id = NULL WHERE client_id = '20000000-0000-0000-0000-000000000001' AND period_month = '07/2026'$$,
+  'This month is filed', 'Jul-26: clearing a link to a document that is there refused');
+SELECT public.t_raises($$UPDATE public.bills_not_in_books SET source_doc_id = '20000000-0000-0000-0000-0000000000d9' WHERE client_id = '20000000-0000-0000-0000-000000000001' AND period_month = '07/2026'$$,
   'This month is filed', 'Jul-26: setting a link refused');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'G' AND period_month = '07/2026'), 19, 'Jul-26: every row still there');
 
