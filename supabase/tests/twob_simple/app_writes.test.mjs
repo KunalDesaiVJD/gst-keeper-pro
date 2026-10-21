@@ -30,7 +30,19 @@
 //       describeCarryGap), after the extension's markFiled too, gone after a
 //       Re-run;
 //   F2/F6 a prior month's carried Not in Books copy is read-only on 2B
-//       Reconciliation, as one from a 2B document (priorNibLockReason).
+//       Reconciliation, as one from a 2B document (priorNibLockReason);
+// and of the fifth round (21 Oct 2026):
+//   7   2B Reconciliation's open-month Save from a page loaded before a filed
+//       month's correction writes nothing and names the entry; an update
+//       sends only the columns changed, while the row holds the loaded
+//       figures (findChangedElsewhere, updateOpenMonthRow);
+//   2/4/8/9 the words of an empty list, a re-filed reopened month and a
+//       month Re-run brought entries into; Re-run with nothing to add clears
+//       the warning;
+//   3/6 Restore names the own entries it left out; only carried Not in Books
+//       copies that follow a 2B document are read-only (fetchNibFollows2B);
+//   11  Suspended Reco's reads fail closed with the read named
+//       (readSuspendedRecoInputs).
 // The modules are bundled as they are (esbuild) with a stand-in supabase
 // client that sends each query to the test database through psql, as anon.
 // Run by run.sh with TWOB_TEST_DB set; PG* variables as for psql.
@@ -66,6 +78,7 @@ globalThis.__asApp = (sql) => {
 const FAKE_SUPABASE = `
 const lit = (v) => v === null || v === undefined ? 'NULL'
   : typeof v === 'number' || typeof v === 'boolean' ? String(v)
+  : typeof v === 'object' ? "'" + JSON.stringify(v).replace(/'/g, "''") + "'::jsonb"
   : "'" + String(v).replace(/'/g, "''") + "'";
 const col = (c) => '"' + c.replace(/"/g, '') + '"';
 class Q {
@@ -92,15 +105,21 @@ class Q {
     return Promise.resolve(res).then(ok, ko);
   }
 }
-export const supabase = { from: (t) => new Q(t), rpc: async () => ({ data: null, error: { message: 'no rpc here' } }) };
+// rpc(fn, args): the database function called with named arguments, as anon.
+const rpc = async (fn, args) => {
+  const r = globalThis.__asApp('SELECT to_jsonb(public.' + col(fn) + '(' + Object.entries(args || {}).map(([k, v]) => col(k) + ' => ' + lit(v)).join(', ') + '))');
+  return r.err ? { data: null, error: { message: r.err } } : { data: JSON.parse(r.out), error: null };
+};
+export const supabase = { from: (t) => new Q(t), rpc };
 `;
 
 const out = await build({
   stdin: {
     contents: `
-export { recordReclaim, updatePendingEntry, deleteOpenMonthRows, ENTRY_GONE_MSG } from './src/lib/twobPendingWrites';
+export { recordReclaim, updatePendingEntry, deleteOpenMonthRows, ENTRY_GONE_MSG, findChangedElsewhere, updateOpenMonthRow,
+  CHANGED_ELSEWHERE_MSG } from './src/lib/twobPendingWrites';
 export { describeFilingCarry, describeRerun, describePriorPreview, fetchCarryGaps, describeCarryGap, priorNibLockReason,
-  PRIOR_NIB_FROM_2B_MSG, PRIOR_NIB_CARRIED_MSG } from './src/lib/twobPriorMonth';
+  PRIOR_NIB_FROM_2B_MSG, PRIOR_NIB_CARRIED_MSG, PRIOR_NIB_UNKNOWN_MSG, fetchNibFollows2B, restoreVersion, rerunCarry } from './src/lib/twobPriorMonth';
 `,
     resolveDir: root, loader: 'ts',
   },
@@ -207,11 +226,11 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
     && into.lines[into.lines.length - 1] === 'Then re-run Aug-26 to carry them on into Sep-26.', into.lines.join(' | '));
   const preview = A.describePriorPreview({
     ok: true, dryRun: true, refusals: [], laterMonths: [{ period: '08/2026', count: 1 }],
-    notes: [{ index: 1, entry: 'V J DESAI 38/2026-27', message: 'Apr-26 holds this entry as its own entry, so Apr-26 and the months after it are left as they are', kind: 'stop' }],
+    notes: [{ index: 1, entry: 'V J DESAI 38/2026-27', message: 'Apr-26 holds this entry as its own entry too; that entry and its copies stay as they are', kind: 'stop' }],
     changes: [{ index: 0, table: 'bills_not_in_2b', op: 'insert', entry: 'LATE BILL L-1', action: 'add', id: 'n', later: [{ period: '08/2026', action: 'add', id: 'c' }], booksRow: null, refusal: null, note: null }],
   }, '07/2026');
   check('Q13 (S3, S2): the door\'s preview names the months an added entry reaches, and where a change stops',
-    preview.includes('Each added entry is also added to Aug-26.') && preview.includes('Left as they are: V J DESAI 38/2026-27: Apr-26 holds this entry as its own entry')
+    preview.includes('Each added entry is also added to Aug-26.') && preview.includes('Not changed: V J DESAI 38/2026-27: Apr-26 holds this entry as its own entry too')
     && !preview.includes('No later month holds'), preview);
 }
 
@@ -251,18 +270,115 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
   const gaps = await A.fetchCarryGaps('07/2026');
   const mine = gaps.get(C) || [];
   const words = A.describeCarryGap('07/2026', mine);
-  check('F7: Filing Status reads that July\'s lists were not carried (both lists)', mine.length === 2
+  check('F7: Filing Status reads that July\'s Not in 2B list was not carried (its empty Not in Books list is not reported, round 5)', mine.length === 1
     && words.startsWith("Jul-26's entries were not carried into the next month when it was marked Filed.")
-    && words.includes('Not in 2B: not carried, because Aug-26 is filed already.') && words.includes('Re-run carry forward'), `${mine.length} ${words}`);
+    && words.includes('Not in 2B: not carried, because Aug-26 is filed already.') && !words.includes('Not in Books') && words.includes('Re-run carry forward'), `${mine.length} ${words}`);
   const rr = globalThis.__asApp(`SELECT public.twob_carry_rerun(public.t_manager(), '${C}', '07/2026', false) IS NOT NULL`);
   check('F7: Re-run from July runs', rr.out === 't', rr.err);
   check('F7: ... and the warning is gone', !(await A.fetchCarryGaps('07/2026')).has(C));
 
-  check('F2/F6: a carried Not in Books copy of a filed month is read-only, with the reason',
-    A.priorNibLockReason(true, { source_doc_id: null, is_carried_forward: true }) === A.PRIOR_NIB_CARRIED_MSG
-    && A.priorNibLockReason(true, { source_doc_id: 'd', is_carried_forward: true }) === A.PRIOR_NIB_FROM_2B_MSG
-    && A.priorNibLockReason(true, { source_doc_id: null, is_carried_forward: false }) === null
-    && A.priorNibLockReason(false, { source_doc_id: 'd', is_carried_forward: true }) === null);
+  // Round 5 (S6): only a copy that follows a 2B document is read-only; one
+  // of a typed entry, or whose entry is gone, changes through the door.
+  const follows = new Set(['c-2b']);
+  check('F2/F6 (round 5): a carried Not in Books copy of a filed month is read-only only when it follows a 2B document, with the reason',
+    A.priorNibLockReason(true, { id: 'c-2b', source_doc_id: null, is_carried_forward: true }, follows) === A.PRIOR_NIB_CARRIED_MSG
+    && A.priorNibLockReason(true, { id: 'c-typed', source_doc_id: null, is_carried_forward: true }, follows) === null
+    && A.priorNibLockReason(true, { id: 'c-typed', source_doc_id: null, is_carried_forward: true }, null) === A.PRIOR_NIB_UNKNOWN_MSG
+    && A.priorNibLockReason(true, { source_doc_id: 'd', is_carried_forward: true }, follows) === A.PRIOR_NIB_FROM_2B_MSG
+    && A.priorNibLockReason(true, { source_doc_id: null, is_carried_forward: false }, null) === null
+    && A.priorNibLockReason(false, { source_doc_id: 'd', is_carried_forward: true }, null) === null);
+}
+
+// ── Round 5 (21 Oct 2026). ────────────────────────────────────────────────
+// 7 (high): a 2B Reconciliation page of open September, loaded before a GST
+// Manager corrects T-1 in filed July to 800, saves a reclaim on T-1's copy:
+// the Save writes nothing (the pre-check names the entry), and the update
+// itself, conditional on the loaded figures, writes nothing either; a page
+// loaded after the correction records the reclaim and sends only that column.
+{
+  const C = 'a8000000-0000-0000-0000-000000000051';
+  psql(`SELECT public.t_make_tamnna('${C}', 'R5 stale save'); UPDATE public.clients SET liberal_2b_reconciliation = true WHERE id = '${C}'`);
+  const loadSep = () => JSON.parse(psql(`SELECT row_to_json(t) FROM public.bills_not_in_2b t WHERE client_id = '${C}' AND period_month = '09/2026' AND supplier_invoice_number = 'T-1'`));
+  const stale = loadSep();
+  const t1 = psql(`SELECT id FROM public.bills_not_in_2b WHERE client_id = '${C}' AND period_month = '07/2026' AND supplier_invoice_number = 'T-1'`);
+  const fix = globalThis.__asApp(`SELECT public.twob_prior_books_apply(public.t_manager(), '${C}', '07/2026', '[{"table":"bills_not_in_2b","op":"update","id":"${t1}","values":{"input_cgst":800,"input_sgst":800}}]'::jsonb, false) ->> 'ok'`);
+  check('7: the GST Manager corrects T-1 in filed July to 800 (August and September with it)', fix.out === 'true', fix.err);
+  const edited = { ...stale, reclaim_month: 'Sep 26' };
+  const named = await A.findChangedElsewhere('bills_not_in_2b', [stale]);
+  check('7: the stale page\'s Save is stopped before writing, naming the entry', named.length === 1 && named[0] === `TAMNNA SUPPLIER T-1 ${A.CHANGED_ELSEWHERE_MSG}`, JSON.stringify(named));
+  const upd = await A.updateOpenMonthRow('bills_not_in_2b', stale, edited, '00000000-0000-0000-0000-0000000000a3');
+  check('7: the update itself, from the stale row, writes nothing and says so', !upd.ok && upd.gone && upd.message.startsWith('TAMNNA SUPPLIER T-1 was changed elsewhere'), JSON.stringify(upd));
+  check('7: September\'s T-1 keeps the correction (800) and no reclaim',
+    psql(`SELECT input_cgst || '/' || input_sgst || '/' || COALESCE(reclaim_month, '-') FROM public.bills_not_in_2b WHERE id = '${stale.id}'`) === '800.00/800.00/-');
+  const fresh = loadSep();
+  check('7: a page loaded after the correction finds nothing changed elsewhere', (await A.findChangedElsewhere('bills_not_in_2b', [fresh])).length === 0);
+  const ok = await A.updateOpenMonthRow('bills_not_in_2b', fresh, { ...fresh, reclaim_month: 'Sep 26' }, '00000000-0000-0000-0000-0000000000a3');
+  check('7: ... and its reclaim is recorded, the amounts left as the correction left them', ok.ok
+    && psql(`SELECT input_cgst || '/' || input_sgst || '/' || reclaim_month FROM public.bills_not_in_2b WHERE id = '${fresh.id}'`) === '800.00/800.00/Sep 26', JSON.stringify(ok));
+  const goneRow = { ...fresh, id: '00000000-0000-0000-0000-00000000dead' };
+  check('7: a row removed elsewhere is named too', (await A.findChangedElsewhere('bills_not_in_2b', [goneRow])).length === 1);
+}
+
+// 2 / 9 / 4 / 8: the words of the carry record's new outcomes, and the
+// Re-run that has nothing to add still clearing the warning (Filing Status
+// records it; here through rerunCarry as the page calls it).
+{
+  const refiled = A.describeFilingCarry('GSTR-3B', '07/2026', [{ list: 'bills_not_in_2b', nextPeriod: '08/2026', outcome: 'refiled', rows: 0, how: 'carried' }]);
+  check('4/10: filed again after a reopen: says nothing is carried again and August may lack the entries added since, and names Re-run', refiled.tone === 'warning'
+    && refiled.text.includes('Not in 2B: not carried again. Jul-26 was reopened as Filed by mistake after its entries were carried into Aug-26')
+    && refiled.text.includes('Aug-26 may lack the entries added since') && refiled.text.includes('Re-run carry forward'), refiled.text);
+  const pending = A.describeCarryGap('08/2026', [{ list: 'bills_not_in_2b', nextPeriod: '09/2026', outcome: 'rerun_pending', rows: 0, how: 'carried' }]);
+  check('8: a filed month given entries by a Re-run says to re-run it into the next month', pending.startsWith('Aug-26 holds entries Re-run carry forward brought in after it was filed')
+    && pending.includes('Not in 2B: Re-run carry forward brought entries of Jul-26 into Aug-26 after it was filed; re-run Aug-26 to carry them on into Sep-26.'), pending);
+  const empty = A.describeFilingCarry('GSTR-3B', '07/2026', [
+    { list: 'bills_not_in_2b', nextPeriod: '08/2026', outcome: 'carried', rows: 0 }, { list: 'bills_not_in_books', nextPeriod: '08/2026', outcome: 'carried', rows: 0 }]);
+  check('2: an empty month is not worded as not carried', empty.tone === 'success' && empty.text.includes('Not in 2B: nothing to carry.') && !empty.text.includes('not carried'), empty.text);
+
+  // The AMBER GUM shape: June filed by markFiled after July; Re-run has nothing to add.
+  const C = 'a8000000-0000-0000-0000-000000000052';
+  psql(`SELECT set_config('twob.write', 'system', false);
+        INSERT INTO public.clients (id, name, gstin) VALUES ('${C}', 'R5 nothing to add', '24NOTHI0000A1Z5');
+        INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_cgst, input_sgst, reversal_month, is_carried_forward) VALUES
+          ('${C}', '06/2026', '2026-06-04', 'AMBER SUP', 'AG-1', '24AMBER0000A1Z5', 1000, 90, 90, 'Jun 26', false),
+          ('${C}', '07/2026', '2026-06-04', 'AMBER SUP', 'AG-1', '24AMBER0000A1Z5', 1000, 90, 90, 'Jun 26', true);`);
+  globalThis.__asApp(`INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES ('${C}', 'GSTR-3B', '07/2026', 'Filed'), ('${C}', 'GSTR-3B', '06/2026', 'Prepared Pending')`);
+  globalThis.__asApp(`INSERT INTO public.filing_status (client_id, return_type, period_month, status, arn) VALUES ('${C}', 'GSTR-3B', '06/2026', 'Filed', 'AA2406260000009')
+    ON CONFLICT (client_id, return_type, period_month) DO UPDATE SET status = EXCLUDED.status, arn = EXCLUDED.arn`);
+  check('9: June shows the warning (Not in 2B only)', ((await A.fetchCarryGaps('06/2026')).get(C) || []).length === 1);
+  const prev = await A.rerunCarry('00000000-0000-0000-0000-0000000000a2', C, '06/2026', true);
+  check('9: Re-run\'s preview has nothing to do', A.describeRerun(prev).nothingToDo, JSON.stringify(prev));
+  await A.rerunCarry('00000000-0000-0000-0000-0000000000a2', C, '06/2026', false);
+  check('9: applied with nothing to do (as Filing Status now does when the row is warned), the warning goes', !(await A.fetchCarryGaps('06/2026')).has(C));
+}
+
+// 3 and 6: the restore names what it left out; the screen reads which
+// carried Not in Books copies follow a 2B document.
+{
+  const C = 'a8000000-0000-0000-0000-000000000053';
+  psql(`SELECT set_config('twob.write', 'system', false);
+        INSERT INTO public.clients (id, name, gstin, liberal_2b_reconciliation) VALUES ('${C}', 'R5 restore words', '24RESTW0000A1Z5', true);
+        INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_cgst, input_sgst, reversal_month, is_carried_forward)
+        VALUES ('${C}', '09/2026', '2026-07-20', 'SUP', 'X-9', '24SUPPL0000A1Z5', 500, 50, 50, 'Jul 26', true);`);
+  const res = await A.restoreVersion('00000000-0000-0000-0000-0000000000a1', C, '09/2026',
+    [{ date: '2026-07-20', supplier_name: 'SUP', supplier_invoice_number: 'X-9', supplier_gstin: '24SUPPL0000A1Z5', taxable_value: 500, input_igst: 0, input_cgst: 50, input_sgst: 50, reversal_month: 'Sep 26', is_carried_forward: false }], []);
+  check('3: the restore says which own entry it left out (the month holds it as a carried entry)', res.own2B === 0 && res.leftOut.join() === 'SUP X-9', JSON.stringify(res));
+
+  const F = 'a8000000-0000-0000-0000-000000000054';
+  const DOC = 'a8000000-0000-0000-0000-0000000000f1';
+  psql(`SELECT set_config('twob.write', 'system', false);
+        INSERT INTO public.clients (id, name, gstin) VALUES ('${F}', 'R5 follows 2B', '24FOLLO0000A1Z5');
+        INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_cgst, input_sgst, itc_action)
+        VALUES ('${DOC}', '${F}', '07/2026', '2026-07-12', 'TWOB SUP', 'D-7', '24TWOBS0000A1Z5', 1000, 90, 90, 'NOT_IN_BOOKS');
+        INSERT INTO public.bills_not_in_books (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_cgst, input_sgst, bill_in_2b_month, is_carried_forward, source_doc_id) VALUES
+          ('${F}', '07/2026', '2026-07-12', 'TWOB SUP', 'D-7', '24TWOBS0000A1Z5', 1000, 90, 90, 'Jul 26', false, '${DOC}'),
+          ('${F}', '08/2026', '2026-07-12', 'TWOB SUP', 'D-7', '24TWOBS0000A1Z5', 1000, 90, 90, 'Jul 26', true, NULL),
+          ('${F}', '08/2026', '2026-03-02', 'ORPHAN SUP', 'O-1', '24ORPHA0000A1Z5', 300, 27, 27, 'Mar 26', true, NULL);`);
+  const set = await A.fetchNibFollows2B(F, '08/2026');
+  const d7 = psql(`SELECT id FROM public.bills_not_in_books WHERE client_id = '${F}' AND period_month = '08/2026' AND supplier_invoice_number = 'D-7'`);
+  const o1 = psql(`SELECT id FROM public.bills_not_in_books WHERE client_id = '${F}' AND period_month = '08/2026' AND supplier_invoice_number = 'O-1'`);
+  check('6: the screen reads that August\'s D-7 copy follows a 2B document and the orphan O-1 does not',
+    set.has(d7) && !set.has(o1) && A.priorNibLockReason(true, { id: o1, source_doc_id: null, is_carried_forward: true }, set) === null
+    && A.priorNibLockReason(true, { id: d7, source_doc_id: null, is_carried_forward: true }, set) === A.PRIOR_NIB_CARRIED_MSG, JSON.stringify([...set]));
 }
 
 // ── S4, S6 and F15: the push gate and the Post plan, on stand-in data. ──────
@@ -295,6 +411,7 @@ const memOut = await build({
     contents: `
 export { runPushRecoCheck, pushRecoBlocks } from './src/lib/pushRecoGate';
 export { planImport2BPost, planToPriorChanges, priorPlanLeftOut } from './src/lib/postImport2B';
+export { readSuspendedRecoInputs } from './src/lib/suspendedRecoCalc';
 `,
     resolveDir: root, loader: 'ts',
   },
@@ -379,6 +496,26 @@ const B = await import('data:text/javascript;base64,' + Buffer.from(memOut.outpu
     && changes.every((c) => c.table !== 'bills_not_in_books'), JSON.stringify(changes));
   const left = B.priorPlanLeftOut(plan);
   check('S6: ... and names what it leaves out', !!left && left.startsWith('Not posted: 1 Not in Books entry from this month\'s 2B documents (1 to add: JAY INFRASTRUCTURE 16/2026-27)'), left);
+}
+
+{
+  // 11 (low): Suspended Reco's reads fail closed with the read named (the page
+  // then refuses Save, Upload, Not Applicable and Override), never zeros.
+  globalThis.__mem = {
+    suspended_reco: [{ client_id: 'c', period_month: '09/2026', opening_cgst: 1000, opening_sgst: 1000, opening_igst: 0, opening_source: 'csv' }],
+    bills_not_in_2b: [], itc_summaries: [],
+  };
+  globalThis.__failTables = [];
+  const ok = await B.readSuspendedRecoInputs('c', '09/2026');
+  check('11: with every read answering, the opening uploaded from the CSV is read', ok.suspended?.opening_source === 'csv' && Number(ok.suspended?.opening_cgst) === 1000, JSON.stringify(ok));
+  for (const [table, words] of [['suspended_reco', 'the Suspended Reco (suspended_reco) of 09/2026'], ['bills_not_in_2b', 'the Not in 2B list (bills_not_in_2b) of 09/2026'],
+    ['itc_summaries', 'the ITC Summary (itc_summaries) of 09/2026']]) {
+    globalThis.__failTables = [table];
+    let err = null;
+    try { await B.readSuspendedRecoInputs('c', '09/2026'); } catch (e) { err = e.message; }
+    check(`11: a failing ${table} read stops the load with the read named`, (err || '').startsWith(`Could not read ${words}`), err);
+  }
+  globalThis.__failTables = [];
 }
 
 let failed = 0;

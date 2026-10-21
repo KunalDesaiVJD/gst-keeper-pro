@@ -283,7 +283,13 @@ const FilingStatusPage: React.FC = () => {
       const preview = await rerunCarry(user.id, record.client_id, record.period_month, true);
       const { lines, nothingToDo } = describeRerun(preview);
       if (nothingToDo) {
-        toast.info(`${monthName(preview.nextPeriod)} already holds every entry of ${monthName(preview.period)}.${lines.length ? ` ${lines.join(' ')}` : ''}`, { duration: 10000 });
+        // Nothing to add or remove: when the row carries the "not carried"
+        // warning, the Re-run is still recorded (it writes nothing else), so
+        // the warning goes (docs §13).
+        const gap = (carryGaps.get(record.client_id)?.length ?? 0) > 0;
+        if (gap) await rerunCarry(user.id, record.client_id, record.period_month, false);
+        toast.info(`${monthName(preview.nextPeriod)} already holds every entry of ${monthName(preview.period)}.${lines.length ? ` ${lines.join(' ')}` : ''}${gap ? ' Recorded: the warning on this row is cleared.' : ''}`, { duration: 10000 });
+        if (gap) fetchFilingRecords();
         return;
       }
       if (!(await confirm({

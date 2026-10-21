@@ -11,6 +11,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { fetchFiledFigures } from '@/lib/itcAutoLink';
+import { readSuspendedRecoInputs } from '@/lib/suspendedRecoCalc';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -148,13 +149,12 @@ const SuspendedRecoPage: React.FC = () => {
     setPortalCgst(0); setPortalSgst(0); setPortalIgst(0);
     setBooksCgst(0); setBooksSgst(0); setBooksIgst(0);
     try {
+      // Every read of the month fails closed with the read named (docs §13):
+      // a failed read leaves loadError set, which refuses Save, Upload, Not
+      // Applicable and Override, never saving zeros over the uploaded opening.
+      const inputs = await readSuspendedRecoInputs(selectedClientId, selectedMonth);
       // Fetch portal data from suspended_reco table (opening balance only)
-      const { data: suspendedData } = await supabase
-        .from('suspended_reco')
-        .select('*')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth)
-        .maybeSingle();
+      const suspendedData = inputs.suspended;
       
       if (suspendedData) {
         const sd = suspendedData as any;
@@ -239,12 +239,7 @@ const SuspendedRecoPage: React.FC = () => {
       const patterns = getMonthPatterns(selectedMonth);
 
       // 4B(2)(i): reversal bills where reversal_month matches current month
-      const { data: reversalBills } = await supabase
-        .from('bills_not_in_2b')
-        .select('input_igst, input_cgst, input_sgst, reversal_month')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth)
-        .not('reversal_month', 'is', null);
+      const reversalBills = inputs.reversalBills;
 
       const matchingReversals = (reversalBills || []).filter(b => monthMatchesFn(b.reversal_month, patterns));
       const row4B2i = matchingReversals.reduce((acc, b) => ({
@@ -254,12 +249,7 @@ const SuspendedRecoPage: React.FC = () => {
       }), { cgst: 0, sgst: 0, igst: 0 });
 
       // 5.4: reclaim bills where reclaim_month matches current month (excluding EXPENSE_OUT, handled via 4D 1.2)
-      const { data: reclaimBills } = await supabase
-        .from('bills_not_in_2b')
-        .select('input_igst, input_cgst, input_sgst, reclaim_month, reclaim_subtype')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth)
-        .not('reclaim_month', 'is', null);
+      const reclaimBills = inputs.reclaimBills;
 
       const matchingReclaims = (reclaimBills || []).filter(b => monthMatchesFn(b.reclaim_month, patterns));
       // Split the current-month reclaims into their two accounting buckets so
@@ -284,12 +274,7 @@ const SuspendedRecoPage: React.FC = () => {
       // amount takes over whenever it's present. See row4D12 below.
       let row4D12FromItc = { cgst: 0, sgst: 0, igst: 0 };
 
-      const { data: itcData } = await supabase
-        .from('itc_summaries')
-        .select('data')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth)
-        .maybeSingle();
+      const itcData = inputs.itcData;
 
       // A prior month changed after filing: the current total from the
       // figures recorded then; only the books side follows the books (docs
@@ -341,12 +326,8 @@ const SuspendedRecoPage: React.FC = () => {
       setPortalSgst(row4B2iUsed.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst);
       setPortalIgst(row4B2iUsed.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst);
 
-      // Fetch books data from bills_not_in_2b 
-      const { data: booksData } = await supabase
-        .from('bills_not_in_2b')
-        .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth);
+      // Books data from bills_not_in_2b
+      const booksData = inputs.booksData;
       
       if (booksData && booksData.length > 0) {
         const filteredData = booksData.filter(row => {

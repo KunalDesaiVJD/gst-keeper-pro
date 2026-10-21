@@ -51,6 +51,60 @@ function readOrThrow<T>(res: { data: T; error: { message: string } | null }, wha
   return res.data;
 }
 
+/**
+ * The reads of the Suspended Reco page (SuspendedRecoPage fetchData), each
+ * failing closed with the read named: the page then shows the reason and
+ * refuses Save, Upload, Not Applicable and Override, never saving zeros over
+ * an uploaded opening or a Current Total without 4B(2)(i) and 5.4 (docs §13).
+ */
+export interface SuspendedRecoInputs {
+  /** The month's suspended_reco row (opening and its source), or null. */
+  suspended: Record<string, unknown> | null;
+  reversalBills: { input_igst: number | null; input_cgst: number | null; input_sgst: number | null; reversal_month: string | null }[];
+  reclaimBills: { input_igst: number | null; input_cgst: number | null; input_sgst: number | null; reclaim_month: string | null; reclaim_subtype: string | null }[];
+  itcData: { data: unknown } | null;
+  booksData: { input_cgst: number | null; input_sgst: number | null; input_igst: number | null; reversal_month: string | null; reclaim_month: string | null }[];
+}
+
+export async function readSuspendedRecoInputs(clientId: string, periodMonth: string): Promise<SuspendedRecoInputs> {
+  const suspended = readOrThrow(await supabase
+    .from('suspended_reco')
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth)
+    .maybeSingle(), `the Suspended Reco (suspended_reco) of ${periodMonth}`);
+  const reversalBills = readOrThrow(await supabase
+    .from('bills_not_in_2b')
+    .select('input_igst, input_cgst, input_sgst, reversal_month')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth)
+    .not('reversal_month', 'is', null), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
+  const reclaimBills = readOrThrow(await supabase
+    .from('bills_not_in_2b')
+    .select('input_igst, input_cgst, input_sgst, reclaim_month, reclaim_subtype')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth)
+    .not('reclaim_month', 'is', null), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
+  const itcData = readOrThrow(await supabase
+    .from('itc_summaries')
+    .select('data')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth)
+    .maybeSingle(), `the ITC Summary (itc_summaries) of ${periodMonth}`);
+  const booksData = readOrThrow(await supabase
+    .from('bills_not_in_2b')
+    .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
+  return {
+    suspended: (suspended as Record<string, unknown> | null) ?? null,
+    reversalBills: (reversalBills || []) as SuspendedRecoInputs['reversalBills'],
+    reclaimBills: (reclaimBills || []) as SuspendedRecoInputs['reclaimBills'],
+    itcData: (itcData as { data: unknown } | null) ?? null,
+    booksData: (booksData || []) as SuspendedRecoInputs['booksData'],
+  };
+}
+
 export async function computeSuspendedRecoDiff(clientId: string, periodMonth: string): Promise<RecoDiffResult> {
   const [mm, yyyy] = periodMonth.split('/').map(Number);
   const monthSortKey = mm && yyyy ? yyyy * 100 + mm : 0;

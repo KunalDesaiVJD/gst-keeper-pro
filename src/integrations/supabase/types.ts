@@ -11906,6 +11906,10 @@ export type Database = {
         Args: { p_actor_id: string; p_client_id: string; p_period: string; p_bills_2b: Json; p_bills_books: Json }
         Returns: Json
       }
+      twob_nib_2b_copies: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: string[]
+      }
       staff_end_sessions: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_target_user_id: string }
         Returns: string

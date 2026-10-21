@@ -76,19 +76,23 @@ SELECT public.twob_prior_books_apply(public.t_manager(), :'B', '08/2026', jsonb_
   'id', (SELECT id FROM public.bills_not_in_books WHERE client_id = :'B' AND period_month = '08/2026' AND supplier_invoice_number = 'D-7'))), true) AS f2_del \gset
 SELECT public.t_eq((:'f2_del'::jsonb ->> 'ok')::boolean, false, 'F2: removing August''s copy of D-7 through the door is refused');
 SELECT public.t_eq(:'f2_del'::jsonb -> 'refusals' -> 0 ->> 'message',
-  'This Not in Books entry is carried from an earlier month. In a filed month it changes only in the month that holds it as its own entry, and the change reaches its copies',
-  'F2: ... in words');
+  'This Not in Books entry is a copy of an entry from a 2B document and follows the filed 2B, so it is neither changed nor removed in a filed month. Only books entries change in a filed month',
+  'F2: ... in words (round 5: refused because July holds D-7 from a 2B document)');
 SELECT public.t_raises(format($q$SELECT public.twob_prior_books_apply(public.t_manager(), '%s', '08/2026', jsonb_build_array(jsonb_build_object('table', 'bills_not_in_books', 'op', 'update',
   'id', (SELECT id FROM public.bills_not_in_books WHERE client_id = '%s' AND period_month = '08/2026' AND supplier_invoice_number = 'D-7'), 'values', '{"input_cgst": 10, "input_sgst": 10}'::jsonb)), false)$q$, :'B', :'B'),
-  'is carried from an earlier month', 'F6: re-amounting it is refused too');
+  'is a copy of an entry from a 2B document', 'F6: re-amounting it is refused too');
 SELECT public.t_raises(format($q$SELECT public.twob_prior_books_apply(public.t_manager(), '%s', '07/2026', jsonb_build_array(jsonb_build_object('table', 'bills_not_in_books', 'op', 'delete',
   'id', (SELECT id FROM public.bills_not_in_books WHERE client_id = '%s' AND period_month = '07/2026' AND supplier_invoice_number = 'D-7'))), false)$q$, :'B', :'B'),
   'comes from a 2B document', 'F2: July''s entry from the 2B document is refused, as before (S6)');
 SELECT public.t_eq((SELECT array_agg(period_month ORDER BY period_month) FROM public.bills_not_in_books WHERE client_id = :'B' AND supplier_invoice_number = 'D-7'),
   ARRAY['07/2026', '08/2026', '09/2026'], 'F2: every month keeps D-7, so open September still waits for its book entry');
-SELECT public.t_raises(format($q$SELECT public.twob_prior_books_apply(public.t_manager(), '%s', '08/2026', jsonb_build_array(jsonb_build_object('table', 'bills_not_in_books', 'op', 'update',
-  'id', (SELECT id FROM public.bills_not_in_books WHERE client_id = '%s' AND period_month = '08/2026' AND supplier_invoice_number = 'T-7'), 'values', '{"supplier_invoice_number": "T-77"}'::jsonb)), false)$q$, :'B', :'B'),
-  'is carried from an earlier month', 'F6: a typed entry''s copy is not corrected on its own either');
+-- Round 5 (S6): a typed entry's copy is a books entry; it changes through the
+-- door (here previewed only), with its later copies.
+SELECT public.t_eq(public.twob_prior_books_apply(public.t_manager(), :'B', '08/2026', jsonb_build_array(jsonb_build_object('table', 'bills_not_in_books', 'op', 'update',
+  'id', (SELECT id FROM public.bills_not_in_books WHERE client_id = :'B' AND period_month = '08/2026' AND supplier_invoice_number = 'T-7'), 'values', '{"supplier_invoice_number": "T-77"}'::jsonb)), true)
+  - 'changes' - 'notes' - 'period' - 'dry_run',
+  '{"ok": true, "refusals": [], "later_months": [{"count": 1, "period": "09/2026"}]}'::jsonb,
+  'F6 (round 5): a typed entry''s copy changes through the door, with September''s copy');
 SELECT public.twob_prior_books_apply(public.t_manager(), :'B', '07/2026', jsonb_build_array(jsonb_build_object('table', 'bills_not_in_books', 'op', 'update',
   'id', (SELECT id FROM public.bills_not_in_books WHERE client_id = :'B' AND period_month = '07/2026' AND supplier_invoice_number = 'T-7'),
   'values', '{"supplier_invoice_number": "T-77"}'::jsonb)), false) -> 'later_months' AS f6_later \gset
@@ -164,19 +168,19 @@ SELECT set_config('request.jwt.claims', '{"role":"anon"}', false);
 INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES (:'F', 'GSTR-3B', '08/2026', 'Data Received'), (:'F', 'GSTR-3B', '09/2026', 'Filed');
 INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES (:'F', 'GSTR-3B', '07/2026', 'Filed');
 SELECT public.t_eq((SELECT array_agg(list || ':' || last_outcome || ':' || (carried_at IS NULL) ORDER BY list) FROM public.twob_carry_log WHERE client_id = :'F' AND period_month = '07/2026'),
-  ARRAY['bills_not_in_2b:next_prior:true', 'bills_not_in_books:next_prior:true'],
-  'F4: July''s record says August only counts as filed (September is), not that August is filed');
+  ARRAY['bills_not_in_2b:next_prior:true', 'bills_not_in_books:carried:false'],
+  'F4: July''s record says August only counts as filed (September is), not that August is filed (round 5: its empty Not in Books list counts as carried)');
 SELECT public.twob_carry_rerun(public.t_manager(), :'F', '07/2026', true) AS f4_prev \gset
 SELECT public.t_eq((:'f4_prev'::jsonb ->> 'next_filed')::boolean AND NOT (:'f4_prev'::jsonb ->> 'next_own_filed')::boolean, true,
   'F8: Re-run of July says August counts as filed but is not filed itself');
 SELECT public.twob_carry_rerun(public.t_manager(), :'F', '07/2026', false) IS NOT NULL AS f4_applied \gset
 SELECT public.t_eq((SELECT array_agg(carried_how || ':' || last_outcome || ':' || (carried_at IS NOT NULL) ORDER BY list) FROM public.twob_carry_log WHERE client_id = :'F' AND period_month = '07/2026'),
-  ARRAY['rerun:rerun:true', 'rerun:rerun:true'], 'F7: the Re-run is recorded, so July''s row is no longer marked');
+  ARRAY['rerun:rerun:true', 'carried:rerun:true'], 'F7: the Re-run is recorded, so July''s row is no longer marked');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'F' AND period_month = '08/2026' AND supplier_invoice_number = 'J-1'), 1,
   'F8: ... and J-1 is in August');
 UPDATE public.filing_status SET status = 'Filed' WHERE client_id = :'F' AND period_month = '08/2026';
 SELECT public.t_eq((SELECT array_agg(last_outcome ORDER BY list) FROM public.twob_carry_log WHERE client_id = :'F' AND period_month = '08/2026'),
-  ARRAY['next_filed', 'next_filed'], 'F12: August, filed after September, says September is filed (it is)');
+  ARRAY['next_filed', 'carried'], 'F12: August, filed after September, says September is filed (it is; its empty Not in Books list has nothing to carry)');
 SELECT public.t_eq((public.twob_carry_rerun(public.t_manager(), :'F', '08/2026', true) ->> 'next_own_filed')::boolean, true,
   'F8: Re-run of August says September is filed itself');
 -- July unlocked and filed again: nothing more is carried (the Re-run was its first carry).
@@ -191,8 +195,8 @@ VALUES (:'G', 'GSTR-3B', '07/2026', 'Filed', 'AA240726123456X', '2026-08-19')
 ON CONFLICT (client_id, return_type, period_month) DO UPDATE SET status = EXCLUDED.status, arn = EXCLUDED.arn, filed_date = EXCLUDED.filed_date;
 SELECT public.t_eq((SELECT array_agg(list || ':' || last_outcome ORDER BY list) FROM public.twob_carry_log
                      WHERE client_id = :'G' AND period_month = '07/2026' AND carried_at IS NULL),
-  ARRAY['bills_not_in_2b:next_filed', 'bills_not_in_books:next_filed'],
-  'F7: after the extension''s markFiled, the record Filing Status reads marks July''s lists as not carried');
+  ARRAY['bills_not_in_2b:next_filed'],
+  'F7: after the extension''s markFiled, the record Filing Status reads marks July''s Not in 2B list as not carried (its Not in Books list is empty)');
 SELECT public.twob_carry_rerun(public.t_manager(), :'G', '07/2026', false) IS NOT NULL AS f7_applied \gset
 SELECT public.t_eq((SELECT count(*)::integer FROM public.twob_carry_log WHERE client_id = :'G' AND period_month = '07/2026' AND carried_at IS NULL), 0,
   'F7: ... until a Re-run from July');

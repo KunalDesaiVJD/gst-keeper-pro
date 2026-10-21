@@ -36,9 +36,9 @@ import { cn } from '@/lib/utils';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { writePostVersion } from '@/lib/postImport2B';
-import { deleteOpenMonthRows, holdsDecision } from '@/lib/twobPendingWrites';
+import { deleteOpenMonthRows, findChangedElsewhere, holdsDecision, updateOpenMonthRow } from '@/lib/twobPendingWrites';
 import {
-  OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchTwobMonthState, ledgerCellReadOnly, priorNibLockReason,
+  OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchNibFollows2B, fetchTwobMonthState, ledgerCellReadOnly, priorNibLockReason,
   previewAndApplyPriorBooks, restoreBlockedReason, restoreVersion, type RestoreRow, type TwobChange, type TwobMonthState,
 } from '@/lib/twobPriorMonth';
 import {
@@ -124,6 +124,10 @@ const TwoBReconciliationPage: React.FC = () => {
   const [isLocked, setIsLocked] = useState(false);
   // Prior month (docs §13), as the database reads it (twob_month_state).
   const [monthState, setMonthState] = useState<TwobMonthState>(OPEN_MONTH);
+  // A prior month's carried Not in Books rows that follow a 2B document
+  // (twob_nib_2b_copies): read-only there; null when they could not be read
+  // (every carried Not in Books row is then read-only).
+  const [nibFollows2B, setNibFollows2B] = useState<Set<string> | null>(new Set());
   const confirm = useConfirm();
   const [versions, setVersions] = useState<TwoBVersion[]>([]);
   const [lastSavedInfo, setLastSavedInfo] = useState<LastSavedInfo | null>(null);
@@ -376,10 +380,14 @@ const TwoBReconciliationPage: React.FC = () => {
     setIsLocked(lockState);
     // A month state that cannot be read leaves the month read-only: the
     // database would refuse a prior month's writes anyway.
-    setMonthState(await fetchTwobMonthState(selectedClientId, selectedMonth).catch((err: Error) => {
+    const state = await fetchTwobMonthState(selectedClientId, selectedMonth).catch((err: Error) => {
       toast.error(`${err.message}. The month is shown read-only; reload to try again.`);
       return { ...OPEN_MONTH, isPrior: true };
-    }));
+    });
+    setMonthState(state);
+    setNibFollows2B(state.isPrior
+      ? await fetchNibFollows2B(selectedClientId, selectedMonth).catch(() => null)
+      : new Set());
     setHasUnsavedChanges(false);
   }, [selectedClientId, selectedMonth]);
 
@@ -1008,6 +1016,40 @@ const TwoBReconciliationPage: React.FC = () => {
     }))) return;
 
     setIsSaving(true);
+    // A row changed or removed elsewhere since the page loaded (another tab,
+    // or a GST Manager's correction of a filed month that reached this
+    // month's copy) is never written over with the page's old figures: the
+    // Save then writes nothing and the page reloads (docs §13).
+    const reloadStale = async (lines: string[]) => {
+      toast.error(`${lines.slice(0, 3).join(' ')}${lines.length > 3 ? ` And ${lines.length - 3} more.` : ''}`, { duration: 15000 });
+      setDeletedRows2B([]);
+      setDeletedRowsBooks([]);
+      await fetchBillsData();
+    };
+    // The rows this Save deletes or updates, as the page loaded them.
+    const changedRows = (local: BillRecord[], loaded: BillRecord[], deleted: string[]): BillRecord[] => {
+      const byId = new Map(loaded.map((b) => [b.id, b]));
+      const edited = local.filter((b) => !b.id.startsWith('temp-'))
+        .map((b) => ({ was: byId.get(b.id), now: b }))
+        .filter((x) => !!x.was && JSON.stringify(x.was) !== JSON.stringify(x.now))
+        .map((x) => x.was as BillRecord);
+      return [...loaded.filter((b) => deleted.includes(b.id)), ...edited];
+    };
+    try {
+      const stale = [
+        ...await findChangedElsewhere('bills_not_in_2b', changedRows(localBills2B, billsNotIn2B, deletedRows2B)),
+        ...await findChangedElsewhere('bills_not_in_books', changedRows(localBillsBooks, billsNotInBooks, deletedRowsBooks)),
+      ];
+      if (stale.length > 0) {
+        await reloadStale(stale);
+        setIsSaving(false);
+        return;
+      }
+    } catch (error) {
+      toast.error(`Nothing was saved: ${(error as Error).message}`);
+      setIsSaving(false);
+      return;
+    }
     try {
       // Get next version number
       const currentVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
@@ -1088,15 +1130,12 @@ const TwoBReconciliationPage: React.FC = () => {
             savedBills2B.push(bill);
           }
         } else {
-          // Update existing record
+          // Update existing record: only the columns changed here, and only
+          // while the row still holds what the page loaded.
           const original = billsNotIn2B.find(b => b.id === bill.id);
           if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
-            const { id, ...updates } = bill;
-            const { error: updErr } = await supabase
-              .from('bills_not_in_2b')
-              .update({ ...updates, updated_at: new Date().toISOString() })
-              .eq('id', id);
-            fail('Could not update a row', updErr);
+            const res = await updateOpenMonthRow('bills_not_in_2b', original, bill, user?.id);
+            if (!res.ok) throw Object.assign(new Error(res.message), { stale: res.gone });
           }
           savedBills2B.push(bill);
         }
@@ -1116,15 +1155,12 @@ const TwoBReconciliationPage: React.FC = () => {
             savedBillsBooks.push(bill);
           }
         } else {
-          // Update existing record
+          // Update existing record: only the columns changed here, and only
+          // while the row still holds what the page loaded.
           const original = billsNotInBooks.find(b => b.id === bill.id);
           if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
-            const { id, ...updates } = bill;
-            const { error: updErr } = await supabase
-              .from('bills_not_in_books')
-              .update({ ...updates, updated_at: new Date().toISOString() })
-              .eq('id', id);
-            fail('Could not update a row', updErr);
+            const res = await updateOpenMonthRow('bills_not_in_books', original, bill, user?.id);
+            if (!res.ok) throw Object.assign(new Error(res.message), { stale: res.gone });
           }
           savedBillsBooks.push(bill);
         }
@@ -1223,7 +1259,13 @@ const TwoBReconciliationPage: React.FC = () => {
       }
     } catch (error: any) {
       console.error('Error saving:', error);
-      toast.error('Failed to save: ' + error.message);
+      if (error?.stale) {
+        // Changed elsewhere between the check and this write: the rows
+        // written before it stay; the page shows the month as it is now.
+        await reloadStale([`${error.message} The rows saved before it stay saved.`]);
+      } else {
+        toast.error('Failed to save: ' + error.message);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -1324,6 +1366,8 @@ const TwoBReconciliationPage: React.FC = () => {
       setHasUnsavedChanges(false);
       toast.success(`Restored the month's own entries to version ${version.versionNumber}. New version ${newVersionNumber} created.${restored.carriedKept
         ? ` Its ${restored.carriedKept} carried ${restored.carriedKept === 1 ? 'entry stays' : 'entries stay'} as ${restored.carriedKept === 1 ? 'it stands' : 'they stand'}: they follow the filed months, so a restore does not change them.`
+        : ''}${restored.leftOut.length
+        ? ` Left out, because this month now holds ${restored.leftOut.length === 1 ? 'it as a carried entry' : 'them as carried entries'}: ${restored.leftOut.slice(0, 5).join(', ')}${restored.leftOut.length > 5 ? ` and ${restored.leftOut.length - 5} more` : ''}.`
         : ''}`, { duration: 10000 });
       setShowVersionHistory(false);
     } catch (error: any) {
@@ -1348,7 +1392,7 @@ const TwoBReconciliationPage: React.FC = () => {
     // In a prior month a GST Manager / the superadmin corrects a carried entry's date, supplier,
     // number, GSTIN and amounts here too (each Save goes through the previewed door, docs §13),
     // except a Not in Books entry posted from a 2B document, which follows the filed 2B, and a carried
-    // Not in Books copy, which changes through its own month's entry (followsTwoB; priorNibLockReason).
+    // Not in Books copy of such an entry (followsTwoB; priorNibLockReason, twob_nib_2b_copies).
     const shouldBeReadOnly = followsTwoB || ledgerCellReadOnly({ readOnly, isCarriedForward, editableForCF: isEditableForCF, isSuperadmin, isPrior, canPriorBooks });
     
     if (shouldBeReadOnly) {
@@ -1999,7 +2043,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             maxDateForReturnPeriod,
-                            !!priorNibLockReason(isPrior, row)
+                            !!priorNibLockReason(isPrior, row, nibFollows2B)
                           )}
                         </td>
                         <td className={tdCls}>
@@ -2012,7 +2056,7 @@ const TwoBReconciliationPage: React.FC = () => {
                               row.is_carried_forward || false,
                               false,
                               undefined,
-                              !!priorNibLockReason(isPrior, row)
+                              !!priorNibLockReason(isPrior, row, nibFollows2B)
                             )}
                             {row.is_carried_forward && (
                               <Badge variant="info" className="shrink-0 px-1.5 text-[10px] font-medium">CF</Badge>
@@ -2028,7 +2072,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            !!priorNibLockReason(isPrior, row)
+                            !!priorNibLockReason(isPrior, row, nibFollows2B)
                           )}
                         </td>
                         <td className={tdCls}>
@@ -2040,7 +2084,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            !!priorNibLockReason(isPrior, row)
+                            !!priorNibLockReason(isPrior, row, nibFollows2B)
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2052,7 +2096,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            !!priorNibLockReason(isPrior, row)
+                            !!priorNibLockReason(isPrior, row, nibFollows2B)
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2064,7 +2108,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            !!priorNibLockReason(isPrior, row)
+                            !!priorNibLockReason(isPrior, row, nibFollows2B)
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2076,7 +2120,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            !!priorNibLockReason(isPrior, row)
+                            !!priorNibLockReason(isPrior, row, nibFollows2B)
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2088,7 +2132,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            !!priorNibLockReason(isPrior, row)
+                            !!priorNibLockReason(isPrior, row, nibFollows2B)
                           )}
                         </td>
                         <td className={tdCls}>
@@ -2113,7 +2157,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.id.startsWith('temp-')
                           )}
                         </td>
-                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && !priorNibLockReason(isPrior, row) && (
+                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && !priorNibLockReason(isPrior, row, nibFollows2B) && (
                           <td className={tdCls}>
                             <Button
                               variant="ghost"
@@ -2128,8 +2172,8 @@ const TwoBReconciliationPage: React.FC = () => {
                           </td>
                         )}
                         {canDeleteHere && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td className={WS_TD}></td>}
-                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && !!priorNibLockReason(isPrior, row) && (
-                          <td className={WS_TD} title={priorNibLockReason(isPrior, row) || undefined}></td>
+                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && !!priorNibLockReason(isPrior, row, nibFollows2B) && (
+                          <td className={WS_TD} title={priorNibLockReason(isPrior, row, nibFollows2B) || undefined}></td>
                         )}
                       </tr>
                     ))}

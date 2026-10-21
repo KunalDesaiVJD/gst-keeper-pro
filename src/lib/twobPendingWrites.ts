@@ -84,3 +84,76 @@ export async function deleteOpenMonthRows(table: LedgerTable, rows: DeletableRow
   const { error } = await supabase.from(table).delete().in('id', rows.map((r) => r.id));
   return { error: error ? error.message : null };
 }
+
+// ---- 2B Reconciliation's open-month Save -----------------------------------------
+
+/** The columns a GST Manager's correction of a filed month can change on a later month's copy (twob_prior_books_apply). */
+export const DOOR_COLUMNS = ['date', 'supplier_name', 'supplier_invoice_number', 'supplier_gstin',
+  'taxable_value', 'input_igst', 'input_cgst', 'input_sgst'] as const;
+
+/** Said when a row the page loaded was changed or removed elsewhere since: nothing of the Save is written. */
+export const CHANGED_ELSEWHERE_MSG = 'was changed elsewhere since this page was loaded (another tab, or a correction of a filed month that reached this month). Nothing was saved; the page shows the month as it is now.';
+
+type Cell = string | number | boolean | null | undefined;
+/** A ledger row as the page loaded it (select '*'), or as edited there. */
+type LedgerRow = { id: string };
+const cell = (r: LedgerRow, k: string): Cell => (r as unknown as Record<string, Cell>)[k];
+
+const sameDoorValue = (k: string, a: Cell, b: Cell): boolean => {
+  if (k === 'date' || k === 'supplier_name' || k === 'supplier_invoice_number' || k === 'supplier_gstin') {
+    return String(a ?? '').trim() === String(b ?? '').trim();
+  }
+  return Math.round((Number(a) || 0) * 100) === Math.round((Number(b) || 0) * 100);
+};
+
+const entryName = (r: LedgerRow) => [cell(r, 'supplier_name'), cell(r, 'supplier_invoice_number')]
+  .map((x) => String(x ?? '').trim()).filter(Boolean).join(' ') || 'An entry';
+
+/**
+ * Before an open month's Save writes anything: the rows it updates or
+ * deletes, read again, against the page's loaded copies. A row that is gone,
+ * or whose date, supplier, number, GSTIN or amounts differ (a filed month's
+ * correction reached it meanwhile), is named; the Save then writes nothing.
+ * Throws when the rows cannot be read.
+ */
+export async function findChangedElsewhere(table: LedgerTable, loaded: readonly LedgerRow[]): Promise<string[]> {
+  if (loaded.length === 0) return [];
+  const ids = loaded.map((r) => r.id);
+  const { data, error } = await supabase.from(table).select(`id, ${DOOR_COLUMNS.join(', ')}`).in('id', ids);
+  if (error) throw new Error(`Could not check the entries before saving: ${error.message}`);
+  const now = new Map(((data || []) as unknown as LedgerRow[]).map((r) => [r.id, r]));
+  return loaded.filter((r) => {
+    const cur = now.get(r.id);
+    return !cur || DOOR_COLUMNS.some((k) => !sameDoorValue(k, cell(r, k), cell(cur, k)));
+  }).map((r) => `${entryName(r)} ${CHANGED_ELSEWHERE_MSG}`);
+}
+
+/**
+ * Updates one row of an open month with only the columns the user changed
+ * (edited against the row as loaded), and only while the row still holds the
+ * loaded date, supplier, number, GSTIN and amounts. gone: the row was changed
+ * or removed elsewhere, nothing written. ok with nothing to write when no
+ * column differs.
+ */
+export async function updateOpenMonthRow(
+  table: LedgerTable, loaded: LedgerRow, edited: LedgerRow, userId: string | undefined,
+): Promise<PendingWriteResult> {
+  const skip = new Set(['id', 'created_at', 'updated_at', 'updated_by', 'version']);
+  const patch: Record<string, Cell> = {};
+  for (const k of Object.keys(edited)) {
+    if (skip.has(k)) continue;
+    if (JSON.stringify(cell(edited, k) ?? null) !== JSON.stringify(cell(loaded, k) ?? null)) patch[k] = cell(edited, k) ?? null;
+  }
+  if (Object.keys(patch).length === 0) return OK;
+  let q = supabase.from(table)
+    .update({ ...patch, updated_by: userId ?? null, updated_at: new Date().toISOString() } as never)
+    .eq('id', loaded.id);
+  for (const k of DOOR_COLUMNS) {
+    const v = cell(loaded, k);
+    q = v === null || v === undefined ? q.is(k, null) : q.eq(k, v as string);
+  }
+  const { data, error } = await q.select('id');
+  if (error) return { ok: false, gone: false, message: error.message };
+  if (!data || data.length === 0) return { ok: false, gone: true, message: `${entryName(loaded)} ${CHANGED_ELSEWHERE_MSG}` };
+  return OK;
+}

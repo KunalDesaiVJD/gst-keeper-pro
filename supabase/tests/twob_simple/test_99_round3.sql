@@ -250,8 +250,8 @@ SELECT public.twob_prior_books_apply(public.t_manager(), :'N', '12/2025',
 SELECT public.t_eq((:'f12'::jsonb ->> 'ok')::boolean, true, 'F12: April''s reclaim in September does not refuse removing December''s entry');
 SELECT public.t_eq(:'f12'::jsonb -> 'later_months', '[{"count": 1, "period": "01/2026"}, {"count": 1, "period": "02/2026"}]'::jsonb,
   'F12: only December''s own copies (Jan and Feb-26) go with it');
-SELECT public.t_eq(:'f12'::jsonb -> 'notes' -> 0 ->> 'message', 'Apr-26 holds this entry as its own entry, so Apr-26 and the months after it are left as they are',
-  'F12: the preview says where it stops');
+SELECT public.t_eq(:'f12'::jsonb -> 'notes' -> 0 ->> 'message', 'Apr-26 holds this entry as its own entry too; that entry and its copies stay as they are',
+  'F12: the preview names April''s own entry, which stays (round 5: copies are paired one to one, April''s first)');
 SELECT public.t_eq((SELECT count(*) FROM public.bills_not_in_2b WHERE client_id = :'N' AND public.twob_period_key(period_month) >= public.twob_period_key('04/2026')), :'f12_from_apr'::bigint,
   'F12: April''s entries and their copies to October all stay');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'N' AND public.twob_period_key(period_month) < public.twob_period_key('04/2026')), 0,

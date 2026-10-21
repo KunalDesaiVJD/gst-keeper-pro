@@ -58,7 +58,7 @@ SELECT public.t_eq(has_function_privilege('anon', 'public.staff_level_of(uuid)',
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob_carry_first(uuid, text)', 'EXECUTE'), false, 'anon cannot call twob_carry_first');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob__apply_ledger(uuid, uuid, text, text, text, uuid, jsonb, text[], text[], uuid[], text[], text[], boolean[], text, uuid[], text)', 'EXECUTE'), false, 'anon cannot call twob__apply_ledger');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob__match_copies(text, uuid, text, jsonb)', 'EXECUTE'), false, 'anon cannot call twob__match_copies');
-SELECT public.t_eq(has_function_privilege('anon', 'public.twob__held_inserts(text, uuid, text, jsonb)', 'EXECUTE'), false, 'anon cannot call twob__held_inserts');
+SELECT public.t_eq(has_function_privilege('anon', 'public.twob__held_inserts(text, uuid, text, jsonb, uuid[])', 'EXECUTE'), false, 'anon cannot call twob__held_inserts');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob__freeze_figures(uuid, text[], uuid)', 'EXECUTE'), false, 'anon cannot call twob__freeze_figures');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob__apply_books_register(uuid, uuid, text, text, uuid, jsonb)', 'EXECUTE'), false, 'anon cannot call twob__apply_books_register');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob__ledger_insert(text, uuid, text, jsonb, text[], text[], uuid)', 'EXECUTE'), false, 'anon cannot call twob__ledger_insert');

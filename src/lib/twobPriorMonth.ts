@@ -29,16 +29,41 @@ export const PRIOR_MONTH_DOCS_MSG = 'This month is filed. Its 2B documents and t
 export const PRIOR_NIB_FROM_2B_MSG = 'This Not in Books entry comes from a 2B document and follows the filed 2B, so it is neither changed nor removed in a filed month. Only books entries change.';
 
 /**
- * Why a carried Not in Books copy cannot change on its own in a prior month:
- * it changes through the entry in the month that holds it as its own entry
- * (the change reaches every copy), as its chain may start at a 2B document's
- * entry, which never changes in a filed month (docs §13).
+ * Why a carried Not in Books copy cannot change in a prior month: it is a
+ * copy of an invoice an earlier month holds as an entry from a 2B document,
+ * and follows the filed 2B like that entry (twob_nib_2b_copies; docs §13).
+ * Copies of typed entries, and copies whose entry is gone, change through
+ * the door like any books entry.
  */
-export const PRIOR_NIB_CARRIED_MSG = 'This Not in Books entry is carried from an earlier month. In a filed month it changes only in the month that holds it as its own entry, and the change reaches this copy.';
+export const PRIOR_NIB_CARRIED_MSG = 'This Not in Books entry is a copy of an entry from a 2B document and follows the filed 2B, so it is neither changed nor removed in a filed month. Only books entries change.';
 
-/** Whether a Not in Books row of a prior month is read-only for everyone (from a 2B document, or a carried copy), and why. */
-export const priorNibLockReason = (isPrior: boolean, row: { source_doc_id?: string | null; is_carried_forward?: boolean | null }): string | null =>
-  !isPrior ? null : row.source_doc_id ? PRIOR_NIB_FROM_2B_MSG : row.is_carried_forward ? PRIOR_NIB_CARRIED_MSG : null;
+/** When the copies that follow a 2B document could not be read: every carried Not in Books entry stays read-only. */
+export const PRIOR_NIB_UNKNOWN_MSG = 'Could not read whether this carried Not in Books entry follows a 2B document, so it is read-only here. Reload the page to try again.';
+
+/**
+ * Whether a Not in Books row of a prior month is read-only for everyone, and
+ * why: one from a 2B document, or a carried copy that follows one
+ * (follows2B: the month's such copies, from fetchNibFollows2B; null when they
+ * could not be read, and then every carried copy is read-only).
+ */
+export const priorNibLockReason = (
+  isPrior: boolean,
+  row: { id?: string; source_doc_id?: string | null; is_carried_forward?: boolean | null },
+  follows2B: ReadonlySet<string> | null = null,
+): string | null => {
+  if (!isPrior) return null;
+  if (row.source_doc_id) return PRIOR_NIB_FROM_2B_MSG;
+  if (!row.is_carried_forward) return null;
+  if (!follows2B) return PRIOR_NIB_UNKNOWN_MSG;
+  return row.id && follows2B.has(row.id) ? PRIOR_NIB_CARRIED_MSG : null;
+};
+
+/** The month's carried Not in Books rows that follow a 2B document (twob_nib_2b_copies). Throws when it cannot be read. */
+export async function fetchNibFollows2B(clientId: string, period: string): Promise<Set<string>> {
+  const { data, error } = await supabase.rpc('twob_nib_2b_copies', { p_client_id: clientId, p_period: period });
+  if (error) throw new Error(error.message);
+  return new Set(((data || []) as string[]).map(String));
+}
 
 export interface TwobLaterMonth {
   period: string;
@@ -66,6 +91,13 @@ export const monthName = (period: string): string => {
   const [mm, yyyy] = (period || '').split('/');
   const m = Number(mm);
   return m >= 1 && m <= 12 && yyyy ? `${MONTHS[m - 1]}-${yyyy.slice(-2)}` : period;
+};
+
+/** "08/2026" -> "07/2026". */
+const previousPeriod = (period: string): string => {
+  const [mm, yyyy] = (period || '').split('/').map(Number);
+  if (!mm || !yyyy) return period;
+  return mm === 1 ? `12/${yyyy - 1}` : `${String(mm - 1).padStart(2, '0')}/${yyyy}`;
 };
 
 /** "08/2026" -> a number that orders months. */
@@ -151,8 +183,8 @@ export interface TwobApplyResult {
   refusals: { index: number; entry: string | null; message: string }[];
   /**
    * held: an added entry not added, because the month or a later month
-   * already holds it. stop: a change that stops at a later month holding the
-   * entry as its own entry (that month and the months after it are left).
+   * already holds it. stop: a later month holds the changed entry's invoice
+   * as its own entry too (that entry and its copies stay as they are).
    */
   notes: { index: number; entry: string | null; message: string; kind: 'held' | 'stop' }[];
   /** Copies reached per later month. */
@@ -247,7 +279,7 @@ export function describePriorPreview(r: TwobApplyResult, period: string): string
     + (addMonths.length ? ` Each added entry is also added to ${addMonths.map(monthName).join(', ')}.` : '');
   const stops = noteLines(r, 'stop');
   const stopped = stops.length
-    ? ` Left as they are: ${stops.slice(0, 5).join(' ')}${stops.length > 5 ? ` And ${stops.length - 5} more.` : ''}`
+    ? ` Not changed: ${stops.slice(0, 5).join(' ')}${stops.length > 5 ? ` And ${stops.length - 5} more.` : ''}`
     : '';
   const booksGone = r.changes.filter((c) => !c.refusal && c.booksRow === 'remove').length;
   const booksChanged = r.changes.filter((c) => !c.refusal && c.booksRow === 'change').length;
@@ -340,7 +372,9 @@ export interface CarryOutcome {
   /**
    * carried | next_held | next_filed (the next month is filed itself) |
    * next_prior (it counts as filed: a later month is filed) | done_before |
-   * backfill | rerun
+   * backfill | rerun | reopened (Filed by mistake, reopened) | refiled (filed
+   * again after that: nothing carried again) | rerun_pending (a Re-run of
+   * the month before brought entries in after the month was filed)
    */
   outcome: string;
   rows: number;
@@ -408,6 +442,13 @@ function carryLines(period: string, outcomes: CarryOutcome[]): { lines: string[]
       return o.rows ? `${listName(o.list)}: ${o.rows} ${o.rows === 1 ? 'entry' : 'entries'} carried into ${next}.` : `${listName(o.list)}: nothing to carry.`;
     }
     notCarried = true;
+    if (o.outcome === 'rerun_pending') {
+      return `${listName(o.list)}: Re-run carry forward brought entries of ${monthName(previousPeriod(period))} into ${monthName(period)} after it was filed; re-run ${monthName(period)} to carry them on into ${next}.`;
+    }
+    if (o.outcome === 'refiled') {
+      return `${listName(o.list)}: not carried again. ${monthName(period)} was reopened as Filed by mistake after its entries were carried into ${next}, and filing it again carries nothing by itself, so ${next} may lack the entries added since.`;
+    }
+    if (o.outcome === 'reopened') return `${listName(o.list)}: ${monthName(period)} was reopened as Filed by mistake; its entries are carried again only by Re-run carry forward.`;
     if (o.outcome === 'next_held') return `${listName(o.list)}: not carried, because ${next} already held carried entries on it (its own reclaims and book entries stay).`;
     if (o.outcome === 'next_filed') return `${listName(o.list)}: not carried, because ${next} is filed already.`;
     if (o.outcome === 'next_prior') return `${listName(o.list)}: not carried, because ${next} counts as filed: a later month is filed.`;
@@ -424,7 +465,10 @@ function carryLines(period: string, outcomes: CarryOutcome[]): { lines: string[]
  */
 export function describeCarryGap(period: string, gaps: CarryOutcome[]): string {
   const { lines } = carryLines(period, gaps);
-  return `${monthName(period)}'s entries were not carried into the next month when it was marked Filed. ${lines.join(' ')}${RERUN_HINT}`;
+  const head = gaps.every((g) => g.outcome === 'rerun_pending')
+    ? `${monthName(period)} holds entries Re-run carry forward brought in after it was filed, and they are not in the next month yet.`
+    : `${monthName(period)}'s entries were not carried into the next month when it was marked Filed.`;
+  return `${head} ${lines.join(' ')}${RERUN_HINT}`;
 }
 
 /**
@@ -527,8 +571,12 @@ export function describeRerun(r: RerunResult): { lines: string[]; nothingToDo: b
  */
 export type RestoreRow = Record<string, string | number | boolean | null>;
 
-/** What a restore did: the month's own entries restored, its carried entries kept as they stand. */
-export interface RestoreResult { own2B: number; ownBooks: number; carriedKept: number }
+/**
+ * What a restore did: the month's own entries restored, its carried entries
+ * kept as they stand, and the version's own entries left out because the
+ * month now holds them as carried entries (named, "SUP X-9").
+ */
+export interface RestoreResult { own2B: number; ownBooks: number; carriedKept: number; leftOut: string[] }
 
 /**
  * Replaces an open month's own entries on its two lists with a saved
@@ -548,6 +596,8 @@ export async function restoreVersion(actorId: string, clientId: string, period: 
   return {
     own2B: Number(d.bills_not_in_2b) || 0, ownBooks: Number(d.bills_not_in_books) || 0,
     carriedKept: (Number(d.carried_kept_2b) || 0) + (Number(d.carried_kept_books) || 0),
+    leftOut: (Array.isArray(d.left_out) ? (d.left_out as Raw[]) : [])
+      .map((e) => [e.supplier_name, e.supplier_invoice_number].filter((x) => typeof x === 'string' && x.trim()).join(' ') || 'an entry'),
   };
 }
 
