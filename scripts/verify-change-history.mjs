@@ -87,9 +87,9 @@ function standIn(rows, log) {
           const q = {
             eq(c, v) { log.push(['eq', c, v]); preds.push((r) => r[c] === v); return q; },
             in(c, v) { log.push(['in', c, v]); preds.push((r) => v.includes(r[c])); return q; },
-            gte(c, v) { log.push(['gte', c, v]); preds.push((r) => new Date(r[c]) >= new Date(v)); return q; },
+            gte(c, v) { log.push(['gte', c, v]); preds.push((r) => r[c] !== null && r[c] !== undefined && cmp(c, r[c], v) >= 0); return q; },
             lt(c, v) { log.push(['lt', c, v]); preds.push((r) => new Date(r[c]) < new Date(v)); return q; },
-            lte(c, v) { log.push(['lte', c, v]); preds.push((r) => cmp(c, r[c], v) <= 0); return q; },
+            lte(c, v) { log.push(['lte', c, v]); preds.push((r) => r[c] !== null && r[c] !== undefined && cmp(c, r[c], v) <= 0); return q; },
             limit(n) { log.push(['limit', n]); limit = n; return q; },
             or(f) { log.push(['or', f]); const parts = splitTop(f).map(condition); preds.push((r) => parts.some((p) => p(r))); return q; },
             order(c, o) { log.push(['order', c, o.ascending]); orders.push([c, o.ascending]); return q; },
@@ -123,8 +123,19 @@ const C1 = '20000000-0000-0000-0000-000000000001';
 const C2 = '20000000-0000-0000-0000-000000000002';
 const SAM = '10000000-0000-0000-0000-000000000001';
 const GITA = '10000000-0000-0000-0000-000000000002';
-const row = (o) => ({ key: 'g' + o.log_id, seq: o.log_id, log: 'gst_change_log', row_id: null, row_label: null, client_id: C1, period_month: '09/2026',
-  financial_year: null, actor_id: GITA, actor_name: 'Gita', actor_source: 'app', actor_basis: 'header', request_id: null, ...o });
+// The view's fy: the row's own year, else its month's (gst_change_log_fy).
+const fyOf = (fy, month) => {
+  if (fy) return fy;
+  const m = month?.match(/^(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  const start = Number(m[2]) - (Number(m[1]) >= 4 ? 0 : 1);
+  return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
+};
+const row = (o) => {
+  const r = { key: 'g' + o.log_id, seq: o.log_id, log: 'gst_change_log', row_id: null, row_label: null, client_id: C1, period_month: '09/2026',
+    financial_year: null, actor_id: GITA, actor_name: 'Gita', actor_source: 'app', actor_basis: 'header', request_id: null, ...o };
+  return { ...r, fy: fyOf(r.financial_year, r.period_month) };
+};
 const FIXTURE = [
   row({ log_id: 1, at: '2026-10-20T05:00:00+00:00', table_name: 'filing_status', op: 'UPDATE', row_label: 'GSTR-3B',
     changed: { arn: { old: null, new: 'AA240926000001' }, status: { old: 'Prepared', new: 'Filed' }, filed_date: { old: null, new: '2026-10-20' } } }),
@@ -144,10 +155,10 @@ const FIXTURE = [
     changed: { status: { old: 'unsold', new: 'booked' } } }),
   row({ log_id: 9, at: '2026-10-21T07:00:00+00:00', table_name: 'filing_status', op: 'UPDATE', changed: { _error: 'division by zero' } }),
   { key: 'a17', log: 'annual_return_change_log', log_id: 17, seq: -17, at: '2026-10-19T04:30:00+00:00', table_name: 'annual_return_docs', row_id: 'gstr9_t4',
-    row_label: 'B2C supplies', client_id: C1, period_month: null, financial_year: '2025-26', op: 'UPDATE', actor_id: GITA, actor_name: 'Gita',
+    row_label: 'B2C supplies', client_id: C1, period_month: null, financial_year: '2025-26', fy: '2025-26', op: 'UPDATE', actor_id: GITA, actor_name: 'Gita',
     actor_source: 'app', actor_basis: 'row', changed: { 't4.a.taxable': { old: 1000, new: 1500 } }, request_id: null },
   { key: 'l00000000', log: 'client_liberal_log', log_id: null, seq: -1125899906842700, at: '2026-10-18T04:30:00+00:00', table_name: 'clients', row_id: C1, row_label: null,
-    client_id: C1, period_month: null, financial_year: null, op: 'UPDATE', actor_id: SAM, actor_name: 'Sam', actor_source: 'app', actor_basis: 'row',
+    client_id: C1, period_month: null, financial_year: null, fy: null, op: 'UPDATE', actor_id: SAM, actor_name: 'Sam', actor_source: 'app', actor_basis: 'row',
     changed: { liberal_2b_reconciliation: { old: false, new: true } }, request_id: null },
 ];
 const names = { [SAM]: 'Sam', [GITA]: 'Gita' };
@@ -158,7 +169,8 @@ const names = { [SAM]: 'Sam', [GITA]: 'Gita' };
   await H.loadChangeHistory(standIn(FIXTURE, log), { clientId: C1, month: '09/2026', page: 'filing', actorId: GITA, from: '2026-10-01', to: '2026-10-21' }, null, 50);
   eq(log[0], ['from', 'gst_change_history'], 'reads the view');
   ok(log[1][1].split(',').includes('changed') && log[1][1].split(',').includes('actor_basis') && log[1][1].split(',').includes('seq'), 'selects the columns it shows, and seq');
-  ok(log.some((l) => l[0] === 'eq' && l[1] === 'client_id' && l[2] === C1), 'client filter');
+  ok(log.some((l) => l[0] === 'gte' && l[1] === 'client_id' && l[2] === C1) && log.some((l) => l[0] === 'lte' && l[1] === 'client_id' && l[2] === C1),
+    'client filter, leading: a range of one client (so the client index is read, round 2)');
   ok(log.some((l) => l[0] === 'eq' && l[1] === 'period_month' && l[2] === '09/2026'), 'month filter');
   ok(log.some((l) => l[0] === 'or' && l[1] === 'table_name.in.(filing_status),and(table_name.eq.manual_source_allowances,row_label.like."filing:*")'),
     'page filter: its tables, and the manual entries allowed for its returns');
@@ -166,7 +178,8 @@ const names = { [SAM]: 'Sam', [GITA]: 'Gita' };
     'person filter: one indexed column (the view names the Annual Return log\'s people)');
   ok(log.some((l) => l[0] === 'gte' && l[2] === '2026-10-01T00:00:00+05:30'), 'from: the start of the day in India');
   ok(log.some((l) => l[0] === 'lt' && l[2] === '2026-10-22T00:00:00+05:30'), 'to: inclusive, up to the next day in India');
-  eq(log.filter((l) => l[0] === 'order'), [['order', 'at', false], ['order', 'seq', false]], 'newest first by (at, seq): the index order, a stable order');
+  eq(log.filter((l) => l[0] === 'order'), [['order', 'client_id', true], ['order', 'at', false], ['order', 'seq', false]],
+    'newest first by (at, seq), led by the one client: the index order, a stable order');
   eq(log.find((l) => l[0] === 'limit'), ['limit', 51], 'one page and one more row to know if there is more');
   ok(!log.some((l) => l[0] === 'range'), 'no offsets');
 }
@@ -184,8 +197,13 @@ const names = { [SAM]: 'Sam', [GITA]: 'Gita' };
   const log = [];
   await H.loadChangeHistory(standIn(FIXTURE, log), { financialYear: '2025-26', page: 'builder' });
   const ors = log.filter((l) => l[0] === 'or').map((l) => l[1]);
-  ok(ors.includes('financial_year.eq.2025-26,period_month.in.(04/2025,05/2025,06/2025,07/2025,08/2025,09/2025,10/2025,11/2025,12/2025,01/2026,02/2026,03/2026)'),
-    'financial year: its own rows and its twelve months');
+  ok(log.some((l) => l[0] === 'gte' && l[1] === 'fy' && l[2] === '2025-26') && log.some((l) => l[0] === 'lte' && l[1] === 'fy' && l[2] === '2025-26')
+    && !ors.some((o) => /financial_year|period_month/.test(o)),
+    'financial year: one indexed column, fy (its own year, else its month\'s), never an or over twelve months');
+  eq(log.filter((l) => l[0] === 'order').map((l) => l[1]), ['fy', 'at', 'seq'], 'a year with no client: led by the year (round 2: never the whole log)');
+  const lead = (f) => { const l = []; return H.loadChangeHistory(standIn(FIXTURE, l), f).then(() => l.filter((x) => x[0] === 'order')[0]?.[1] ?? null); };
+  eq([await lead({ month: '09/2026' }), await lead({ actorId: SAM }), await lead({ clientId: C1, financialYear: '2025-26' }), await lead({ from: '2026-10-01' })],
+    ['period_month', 'actor_id', 'client_id', 'at'], 'the lead: a month, else a person, the client before a year, nothing for dates alone');
   ok(ors.includes('table_name.like.builder_*'), 'Builder: every builder table');
 }
 {
@@ -394,9 +412,13 @@ if (file) {
     && (r.changed?.data?.changes ?? []).some((c) => c.path === 'section4A[5.1].igst' && c.new === 999999));
   ok(!!deep && H.describeChange(deep, names).lines.some((l) => l.label === 'Figures: Table 4A, 5.1, IGST' && l.new === '9,99,999'),
     'a deeply padded ITC Summary: the 5.1 change reads');
-  const partialRows = rows.filter((r) => r.changed && r.changed._partial === true);
-  ok(partialRows.length >= 4 && partialRows.every((r) => r.row_id && r.client_id && /Recorded in part/.test(H.describeChange(r, names).note ?? '')),
-    `rows the logger could read only in part (${partialRows.length}): each with its row, client and a note`);
+  // Round 2: the logger refuses a statement it cannot read, never logs it in part.
+  eq(rows.filter((r) => r.changed && (r.changed._partial === true || typeof r.changed._error === 'string')).length, 0,
+    'no row the logger could read only in part');
+  eq(rows.filter((r) => r.log === 'gst_change_log' && r.fy !== fyOf(r.financial_year, r.period_month)).length, 0,
+    'fy on every row: its own year, else its month\'s');
+  const fyRows = await H.loadChangeHistory(standIn(rows, []), { financialYear: '2026-27' });
+  ok(fyRows.rows.length > 0 && fyRows.rows.every((r) => r.fy === '2026-27'), 'a financial year, no client: only that year\'s rows');
   const pulled = rows.find((r) => r.row_id === '31000000-0000-0000-0000-000000000001' && r.actor_source === 'extension' && r.op === 'UPDATE');
   if (pulled) eq([H.whoLabel(pulled), H.whoNote(pulled)], ['Extension', 'no person recorded'], 'a scheduled pull after Esha\'s save: the extension, no person');
   const sheet = H.exportRows(rows.slice(0, 500), { clientName: () => '' });

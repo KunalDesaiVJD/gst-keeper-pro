@@ -1,8 +1,8 @@
--- The logger never loses which row, client and month changed (round 1
--- review): a crafted, deeply nested JSON value is walked only 20 levels deep,
--- and when the logger cannot read a statement it still logs every row with
--- its key, client, month, who and the columns that changed, as fingerprints
--- where large. Writes as PostgREST runs them.
+-- The logger never fails on what a user saves (round 1 review): a crafted,
+-- deeply nested JSON value is walked only 20 levels deep. A statement whose
+-- rows the logger cannot read at all (only a wrong expression of a table's
+-- attach could do that; none in the migration can) is refused, never saved
+-- untraced (round 2). Writes as PostgREST runs them.
 SET search_path = public, extensions;
 SET ROLE anon;
 SELECT t_request('anon', '{"x-gst-actor":"10000000-0000-0000-0000-000000000003","x-gst-source":"app","x-gst-request":"t45-deep"}');
@@ -40,8 +40,10 @@ SELECT t_eq((SELECT count(*) FROM gst_change_log WHERE row_id = '45000000-0000-0
 RESET ROLE;
 
 -- 2. A statement the logger cannot read (its client expression divides by
--- zero for one row): each row is still logged with its key, client, month,
--- who and what changed.
+-- zero for one row) is refused with the error, and nothing is saved or
+-- logged: no change without its trace (round 2: the logger opens no
+-- subtransaction, so it cannot save the row and log it later). A row the
+-- logger can read is saved and logged as usual.
 CREATE TABLE public.t_odd2 (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), client_id uuid, period_month text, n int, note text,
                             payload jsonb, updated_by uuid);
 GRANT ALL ON public.t_odd2 TO anon;
@@ -49,35 +51,31 @@ SELECT gst_change_log_attach('t_odd2', p_client => '(CASE WHEN r.n = 0 THEN (1 /
                              p_month => '(CASE WHEN r.n = 0 THEN (1 / r.n)::text ELSE r.period_month END)');
 SET ROLE anon;
 SELECT t_request('anon', '{"x-gst-actor":"10000000-0000-0000-0000-000000000002","x-gst-source":"app","x-gst-request":"t45-odd"}');
-INSERT INTO t_odd2 (id, client_id, period_month, n, note, payload) VALUES
- ('45000000-0000-0000-0000-000000000011', '20000000-0000-0000-0000-000000000001', '09/2026', 0, 'first', ('{"big":"' || repeat('x', 600) || '"}')::jsonb),
- ('45000000-0000-0000-0000-000000000012', '20000000-0000-0000-0000-000000000002', '09/2026', 1, 'second', NULL);
+SELECT t_raises($$INSERT INTO t_odd2 (id, client_id, period_month, n, note) VALUES
+ ('45000000-0000-0000-0000-000000000011', '20000000-0000-0000-0000-000000000001', '09/2026', 0, 'first'),
+ ('45000000-0000-0000-0000-000000000012', '20000000-0000-0000-0000-000000000002', '09/2026', 1, 'second')$$,
+  'division by zero', 'a statement the logger cannot read is refused with the error');
+SELECT t_eq((SELECT count(*) FROM t_odd2)::int, 0, 'nothing of it was saved');
+SELECT t_eq((SELECT count(*) FROM gst_change_log WHERE table_name = 't_odd2')::int, 0, 'and nothing logged');
+INSERT INTO t_odd2 (id, client_id, period_month, n, note) VALUES
+ ('45000000-0000-0000-0000-000000000012', '20000000-0000-0000-0000-000000000002', '09/2026', 1, 'second');
+SELECT t_raises($$UPDATE t_odd2 SET n = 0, note = 'second, changed' WHERE id = '45000000-0000-0000-0000-000000000012'$$,
+  'division by zero', 'an update the logger cannot read is refused too');
 RESET ROLE;
-SELECT t_eq((SELECT count(*) FROM t_odd2)::int, 2, 'the save went through');
-SELECT t_eq((SELECT string_agg(row_id || ' ' || COALESCE(client_id::text, '-') || ' ' || COALESCE(period_month, '-') || ' ' || actor_name
-                               || ' ' || (changed ->> '_partial') || ' ' || (changed ->> 'note'), ', ' ORDER BY row_id)
-               FROM gst_change_log WHERE table_name = 't_odd2' AND op = 'INSERT'),
-            '45000000-0000-0000-0000-000000000011 20000000-0000-0000-0000-000000000001 09/2026 Gita true first, '
-            || '45000000-0000-0000-0000-000000000012 20000000-0000-0000-0000-000000000002 09/2026 Gita true second',
-            'every row logged with its key, client, month and person');
-SELECT t_eq((SELECT (changed ->> '_error') || ':' || (changed -> 'payload' ->> 'summary') FROM gst_change_log
-              WHERE table_name = 't_odd2' AND op = 'INSERT' AND row_id = '45000000-0000-0000-0000-000000000011'),
-            'division by zero:true', 'with the error, and JSON as a fingerprint');
--- An update the logger cannot read, without a header: the stamp it wrote names the person.
-SELECT t_request('anon', NULL);
-SET ROLE anon;
-UPDATE t_odd2 SET n = 0, note = 'second, changed', updated_by = '10000000-0000-0000-0000-000000000001'
- WHERE id = '45000000-0000-0000-0000-000000000012';
-SELECT t_request('anon', '{"x-gst-source":"extension"}');
-UPDATE t_odd2 SET note = 'first, changed' WHERE id = '45000000-0000-0000-0000-000000000011';
-RESET ROLE;
-SELECT t_eq((SELECT string_agg(row_id || ' ' || COALESCE(client_id::text, '-') || ' ' || COALESCE(actor_name, '-') || ' ' || actor_basis
-                               || ' ' || (changed -> 'note' ->> 'old') || '->' || (changed -> 'note' ->> 'new'), ', ' ORDER BY id)
-               FROM gst_change_log WHERE table_name = 't_odd2' AND op = 'UPDATE'),
-            '45000000-0000-0000-0000-000000000012 20000000-0000-0000-0000-000000000002 Sam row second->second, changed, '
-            || '45000000-0000-0000-0000-000000000011 20000000-0000-0000-0000-000000000001 - none first->first, changed',
-            'updates: the changed columns old and new; who from the header or a written stamp, else no one');
-SELECT t_eq((SELECT count(*) FROM gst_change_log WHERE table_name = 't_odd2' AND (row_id IS NULL OR client_id IS NULL))::int, 0,
-            'never a row without its key or client');
+SELECT t_eq((SELECT n || ' ' || note FROM t_odd2), '1 second', 'the row is as it was');
+SELECT t_eq((SELECT string_agg(op || ' ' || client_id || ' ' || period_month || ' ' || actor_name, ', ') FROM gst_change_log WHERE table_name = 't_odd2'),
+            'INSERT 20000000-0000-0000-0000-000000000002 09/2026 Gita', 'the row the logger could read: saved and logged');
+-- The error names the logger, so whoever reads the database log knows why.
+DO $$
+DECLARE v_ctx text;
+BEGIN
+  BEGIN
+    UPDATE t_odd2 SET n = 0 WHERE id = '45000000-0000-0000-0000-000000000012';
+  EXCEPTION WHEN division_by_zero THEN
+    GET STACKED DIAGNOSTICS v_ctx = PG_EXCEPTION_CONTEXT;
+  END;
+  PERFORM t_eq(v_ctx ~ 'gst_change_log_for_t_odd2', true, 'the error''s context names the logger of t_odd2');
+END $$;
 DROP TABLE public.t_odd2;
+DROP FUNCTION public.gst_change_log_for_t_odd2();
 DELETE FROM gst_change_log_tables WHERE table_name = 't_odd2';

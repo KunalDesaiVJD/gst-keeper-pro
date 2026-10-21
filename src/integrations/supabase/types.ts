@@ -5712,6 +5712,7 @@ export type Database = {
           changed: Json
           client_id: string | null
           financial_year: string | null
+          fy: string | null
           id: number
           op: string
           period_month: string | null
@@ -5730,6 +5731,7 @@ export type Database = {
           changed: Json
           client_id?: string | null
           financial_year?: string | null
+          fy?: string | null
           id?: number
           op: string
           period_month?: string | null
@@ -5748,6 +5750,7 @@ export type Database = {
           changed?: Json
           client_id?: string | null
           financial_year?: string | null
+          fy?: string | null
           id?: number
           op?: string
           period_month?: string | null
@@ -10611,6 +10614,7 @@ export type Database = {
           changed: Json | null
           client_id: string | null
           financial_year: string | null
+          fy: string | null
           key: string | null
           log: string | null
           log_id: number | null

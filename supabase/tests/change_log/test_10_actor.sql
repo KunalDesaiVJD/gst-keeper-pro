@@ -128,8 +128,8 @@ UPDATE clients SET gst_password = 'Portal-Secret-9', gst_password_changed_at = '
 SELECT t_eq((SELECT jsonb_object_keys(changed) FROM gst_change_log WHERE table_name = 'clients' ORDER BY id DESC LIMIT 1),
             'gst_password_changed_at', 'a portal password change shows as its date, never the password');
 UPDATE clients SET liberal_2b_reconciliation = true WHERE id = '20000000-0000-0000-0000-000000000001';
-SELECT t_eq((SELECT count(*) FROM gst_change_log WHERE table_name = 'clients' AND changed ? 'liberal_2b_reconciliation')::int, 0,
-            'the Liberal switch is left to its own log (client_liberal_log)');
+SELECT t_eq((SELECT changed -> 'liberal_2b_reconciliation' FROM gst_change_log WHERE table_name = 'clients' ORDER BY id DESC LIMIT 1),
+            '{"old": false, "new": true}'::jsonb, 'the Liberal switch is logged on the client too (round 2: it outlives the client)');
 UPDATE clients SET name = 'SUNRISE TRADERS LLP', gstin = '24AAAAA0000A2Z4' WHERE id = '20000000-0000-0000-0000-000000000001';
 SELECT t_eq((SELECT changed -> 'name' ->> 'new' FROM gst_change_log WHERE table_name = 'clients' ORDER BY id DESC LIMIT 1),
             'SUNRISE TRADERS LLP', 'a GST field change is logged');

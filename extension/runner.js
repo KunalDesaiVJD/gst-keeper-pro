@@ -253,6 +253,10 @@
       startedAt: Date.now(), lastActivityAt: Date.now(), runId: claimed.run_id || null,
       logSync: mode === 'notices' || mode === 'notices_bundle',
       runner: { jobId: claimed.id, agentId: agentOf(c), captchaWaitSecs: waitSecs },
+      // The person who queued the job (portal_jobs.requested_by, e.g. a pull
+      // queued from the app), so its writes name them in the change log; a
+      // scheduled job names no one.
+      actorId: typeof claimed.requested_by === 'string' ? claimed.requested_by : null,
       clients: [{ clientId: client.id, creds: { user: client.gst_user_id, name: client.name, gstin: client.gstin, selectedReturns: client.selected_returns || [] } }],
       tabId: tab.id,
     };

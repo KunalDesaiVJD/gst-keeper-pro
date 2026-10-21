@@ -54,7 +54,7 @@ export interface HistoryPage {
 
 export const HISTORY_PAGES: HistoryPage[] = [
   { key: 'import2b', label: 'Import 2B', tables: ['twob_import_docs', 'books_register'] },
-  { key: 'twob_reco', label: '2B Reconciliation', tables: ['bills_not_in_2b', 'bills_not_in_books', 'twob_versions'] },
+  { key: 'twob_reco', label: '2B Reconciliation', tables: ['bills_not_in_2b', 'bills_not_in_books', 'twob_versions', 'twob_ever_filed', 'twob_filed_figures', 'twob_carry_log'] },
   { key: 'itc', label: 'ITC Summary', tables: ['itc_summaries', 'itc_versions'] },
   { key: 'suspended', label: 'Suspended Reco', tables: ['suspended_reco'], allowances: ['reco:suspended'] },
   { key: 'receivable', label: 'GST Receivable Reco', tables: ['gst_receivable_reco'], allowances: ['reco:receivable'] },
@@ -79,6 +79,9 @@ const TABLE_LABELS: Record<string, string> = {
   bills_not_in_2b: 'Not in 2B',
   bills_not_in_books: 'Not in Books',
   twob_versions: '2B saved versions',
+  twob_ever_filed: 'Months filed',
+  twob_filed_figures: 'Figures as filed',
+  twob_carry_log: 'Carry on filing',
   itc_summaries: 'ITC Summary',
   itc_versions: 'ITC saved versions',
   suspended_reco: 'Suspended Reco',
@@ -666,14 +669,32 @@ export function pageCondition(page: HistoryPage): string {
   return parts.join(',');
 }
 
+export type HistoryLead = 'client_id' | 'period_month' | 'fy' | 'actor_id';
+
+/**
+ * The filter a read leads with: the client, else the month, else the year,
+ * else the person. It is sent as a range (gte and lte of one value) and the
+ * read is ordered by it first, so the database reads the index that holds
+ * exactly those rows, newest first. Sent as an equality alone, the database
+ * may read the whole log newest first hoping to meet them soon, which takes
+ * long for a quiet year or month (round 2 review).
+ */
+export function historyLead(f: HistoryFilters): HistoryLead | null {
+  if (f.clientId) return 'client_id';
+  if (f.month) return 'period_month';
+  if (f.financialYear) return 'fy';
+  if (f.actorId) return 'actor_id';
+  return null;
+}
+
 export function applyHistoryFilters(q: HistoryQuery, f: HistoryFilters): HistoryQuery {
   let out = q;
-  if (f.clientId) out = out.eq('client_id', f.clientId);
-  if (f.month) out = out.eq('period_month', f.month);
-  if (f.financialYear) {
-    const months = monthsOfFinancialYear(f.financialYear);
-    out = out.or(`financial_year.eq.${quoteValue(f.financialYear)}` + (months.length ? `,period_month.in.(${months.map(quoteValue).join(',')})` : ''));
-  }
+  const lead = historyLead(f);
+  const is = (column: HistoryLead, value: string) => (lead === column ? out.gte(column, value).lte(column, value) : out.eq(column, value));
+  if (f.clientId) out = is('client_id', f.clientId);
+  if (f.month) out = is('period_month', f.month);
+  // The year of the change (its own year, else its month's), one indexed column.
+  if (f.financialYear) out = is('fy', f.financialYear);
   if (f.table) out = out.eq('table_name', f.table);
   else if (f.page === 'builder') out = out.or('table_name.like.builder_*');
   else if (f.page) {
@@ -681,7 +702,7 @@ export function applyHistoryFilters(q: HistoryQuery, f: HistoryFilters): History
     if (page) out = page.returns?.length || page.allowances?.length ? out.or(pageCondition(page)) : out.in('table_name', page.tables);
   }
   // A person is actor_id in every log (the view matches the Annual Return log's names).
-  if (f.actorId) out = out.eq('actor_id', f.actorId);
+  if (f.actorId) out = is('actor_id', f.actorId);
   // India time: a day runs from 00:00 +05:30.
   if (f.from) out = out.gte('at', `${f.from}T00:00:00+05:30`);
   if (f.to) out = out.lt('at', `${nextDay(f.to)}T00:00:00+05:30`);
@@ -709,6 +730,9 @@ export async function loadChangeHistory(source: HistorySource, f: HistoryFilters
   const size = Math.max(1, Math.min(pageSize, HISTORY_MAX_READ - 1));
   let q = applyHistoryFilters(source.from('gst_change_history').select(HISTORY_COLUMNS), f);
   if (cursor) q = q.lte('at', cursor.at).or(`at.lt.${quoteValue(cursor.at)},seq.lt.${cursor.seq}`);
+  // One value of the leading filter: ordering by it first changes nothing but the index read.
+  const lead = historyLead(f);
+  if (lead) q = q.order(lead, { ascending: true });
   q = q.order('at', { ascending: false }).order('seq', { ascending: false }).limit(size + 1);
   const { data, error } = await q;
   if (error) throw new Error(error.message);

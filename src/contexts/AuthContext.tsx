@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { sessionsEndedAt } from '@/lib/staffLevels';
+import { setChangeLogActor } from '@/lib/changeLogHeaders';
 import { toast } from 'sonner';
 
 type UserRole = 'superadmin' | 'gst_manager' | 'employee' | 'client';
@@ -200,7 +201,13 @@ const fetchUserPermissions = async (userId: string): Promise<UserPermissions> =>
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<AppUser | null>(null);
+  const [user, setUserState] = useState<AppUser | null>(null);
+  // Every request this tab sends names this tab's user (the change log's
+  // x-gst-actor), set the moment the user changes, before any page reacts.
+  const setUser = useCallback((next: AppUser | null) => {
+    setChangeLogActor(next?.id ?? null);
+    setUserState(next);
+  }, []);
   const [isLoading, setIsLoading] = useState(true);
   const [pendingFirstLogin, setPendingFirstLogin] = useState<{ userId: string; firstName: string } | null>(null);
 
@@ -321,7 +328,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     initAuth();
-  }, [fetchUserData]);
+  }, [fetchUserData, setUser]);
 
   const login = useCallback(async (identifier: string, password: string): Promise<{ success: boolean; isFirstLogin?: boolean }> => {
     try {
@@ -422,7 +429,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       return { success: false };
     }
-  }, []);
+  }, [setUser]);
 
   const completeFirstLogin = useCallback(async (newPassword: string): Promise<boolean> => {
     if (!pendingFirstLogin) {
@@ -519,7 +526,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.error('Failed to set password. Please try again.');
       return false;
     }
-  }, [pendingFirstLogin]);
+  }, [pendingFirstLogin, setUser]);
 
   const logout = useCallback(async () => {
     localStorage.removeItem(FALLBACK_AUTH_KEY);
@@ -531,7 +538,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     toast.success('Logged Out', {
       description: 'You have been successfully logged out.',
     });
-  }, []);
+  }, [setUser]);
 
   // Role-based permission checks - Superadmin has all permissions by default
   const isStaffRole = useCallback((): boolean => {
@@ -712,7 +719,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
-  }, [user]);
+  }, [user, setUser]);
 
   // ── Advance set-off gate (docs/ADVANCE_SETOFF_POSITIONS.md §6) ───────────
   // Two separate powers, deliberately not one helper: raising a request and

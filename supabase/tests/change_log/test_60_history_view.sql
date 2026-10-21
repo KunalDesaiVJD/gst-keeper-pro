@@ -1,7 +1,7 @@
 -- One history to read (gst_change_history): this log, the Annual Return
 -- figure log and the Liberal switch log, each in the same shape. Deletes that
 -- cascade from a client are logged; a TRUNCATE is recorded; a statement the
--- logger cannot read is still saved and leaves an error row.
+-- logger cannot read is refused.
 SET search_path = public, extensions;
 
 -- The existing logs, as their own triggers write them.
@@ -48,21 +48,22 @@ TRUNCATE gst_cash_ledger_entries;
 SELECT t_eq((SELECT op || ':' || (changed ->> 'rows') FROM gst_change_log WHERE table_name = 'gst_cash_ledger_entries' ORDER BY id DESC LIMIT 1),
             'TRUNCATE:2', 'a truncate is recorded');
 
--- The logger never blocks a save: a statement it cannot read leaves an error row.
+-- A statement the logger cannot read is refused (test_45); an expression
+-- that can never be read is refused when attaching.
 CREATE TABLE public.t_odd (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), client_id uuid, n int);
 GRANT ALL ON public.t_odd TO anon;
 SELECT gst_change_log_attach('t_odd', p_client => '(CASE WHEN r.n = 0 THEN (1 / r.n)::text ELSE r.client_id::text END)::uuid', p_month => 'NULL');
 SET ROLE anon;
-INSERT INTO t_odd (client_id, n) VALUES ('20000000-0000-0000-0000-000000000001', 0);
+SELECT t_raises($$INSERT INTO t_odd (client_id, n) VALUES ('20000000-0000-0000-0000-000000000001', 0)$$, 'division by zero', 'refused');
 RESET ROLE;
-SELECT t_eq((SELECT count(*) FROM t_odd)::int, 1, 'the save went through');
-SELECT t_eq((SELECT op || ':' || (changed ->> '_error') FROM gst_change_log WHERE table_name = 't_odd'), 'INSERT:division by zero',
-            'and the log says it could not read it');
+SELECT t_eq((SELECT count(*) FROM t_odd)::int + (SELECT count(*) FROM gst_change_log WHERE table_name = 't_odd')::int, 0,
+            'nothing saved, nothing logged');
 -- A wrong expression is caught when attaching, never at a save
 SELECT t_raises($$SELECT gst_change_log_attach('t_odd', p_month => 'r.no_such_column')$$, 'no_such_column', 'attach checks its expressions');
 SELECT t_raises($$SELECT gst_change_log_attach('t_odd', p_summary => '{raw}')$$, 'no column raw', 'attach checks its column lists');
 SELECT t_eq(gst_change_log_attach('no_such_table'), 'no_such_table: missing, skipped', 'a missing table is skipped');
 DROP TABLE public.t_odd;
+DROP FUNCTION public.gst_change_log_for_t_odd();
 DELETE FROM gst_change_log_tables WHERE table_name = 't_odd';
 
 -- A row moved to a new key (a builder opening balance keyed by its unit): both

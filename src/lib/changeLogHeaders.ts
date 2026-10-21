@@ -4,8 +4,8 @@
 // The app has no Supabase auth session (auth.uid() is NULL), so the database
 // cannot know the user by itself. Every request to /rest/v1 (tables and RPCs)
 // carries:
-//   x-gst-actor    the signed-in user's id (staff user_id, or the client id
-//                  for the client portal), read from the saved sign-in
+//   x-gst-actor    the user signed in in this tab (staff user_id, or the
+//                  client id for the client portal)
 //   x-gst-source   'app'
 //   x-gst-request  the page and a short random id, so the rows one request
 //                  wrote can be found together
@@ -13,28 +13,24 @@
 // /rest/v1 gets them: the API gateway allows any header there (checked in a
 // browser against the live project on 21 Oct 2026), but each Edge Function
 // lists the headers it allows and would refuse these.
+//
+// The person is this tab's own: AuthContext sets it whenever its user
+// changes (setChangeLogActor). It is never read from the saved sign-in at
+// request time: another tab's sign-in overwrites that, while this tab still
+// shows, and saves as, its own user (round 2 review).
 
-export const AUTH_STORAGE_KEY = 'vjdesai_user';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-let lastRaw: string | null | undefined;
-let lastId: string | null = null;
+let tabActor: string | null = null;
 
-/** The signed-in user's id from the saved sign-in, or null. */
-export function currentActorId(storage: Pick<Storage, 'getItem'> | null = typeof localStorage === 'undefined' ? null : localStorage): string | null {
-  try {
-    const raw = storage ? storage.getItem(AUTH_STORAGE_KEY) : null;
-    if (raw !== lastRaw) {
-      lastRaw = raw;
-      lastId = null;
-      const parsed: unknown = raw ? JSON.parse(raw) : null;
-      const id = parsed && typeof parsed === 'object' ? (parsed as { id?: unknown }).id : null;
-      if (typeof id === 'string' && UUID_RE.test(id)) lastId = id;
-    }
-    return lastId;
-  } catch {
-    return null;
-  }
+/** This tab's signed-in user (AuthContext calls it with every change of user; null when signed out). */
+export function setChangeLogActor(id: string | null | undefined): void {
+  tabActor = typeof id === 'string' && UUID_RE.test(id) ? id : null;
+}
+
+/** The user signed in in this tab, or null. */
+export function currentActorId(): string | null {
+  return tabActor;
 }
 
 function shortId(): string {

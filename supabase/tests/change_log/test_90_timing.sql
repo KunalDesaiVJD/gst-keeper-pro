@@ -1,7 +1,8 @@
 -- Speed: a 1,000-row Import 2B insert and a 1,000-row ledger update (and a
 -- 1,000-row delete) stay under 1 s with the logger on, as the public key with
--- the app's header. Prints the times with and without the logger, and the
--- size of a log row (for the volume estimate in docs/GST_CHANGE_LOG.md).
+-- the app's header; 1,000 statements of one row or none stay cheap and open
+-- no subtransaction (round 2). Prints the times with and without the logger,
+-- and the size of a log row (for the volume estimate in docs/GST_CHANGE_LOG.md).
 SET search_path = public, extensions;
 CREATE TEMP TABLE t_time (what text, ms numeric);
 GRANT ALL ON t_time TO anon;
@@ -80,6 +81,68 @@ SELECT t_eq((SELECT count(*) FROM gst_change_log WHERE request_id = 't90' AND ta
 SELECT t_eq((SELECT count(*) FROM gst_change_log WHERE request_id = 't90' AND table_name = 'bills_not_in_books' AND op = 'DELETE')::int, 1000, '1,000 deletes logged');
 SELECT t_eq((SELECT changed FROM gst_change_log WHERE request_id = 't90' AND table_name = 'bills_not_in_books' AND op = 'UPDATE' LIMIT 1) ?& ARRAY['input_igst', 'book_entry_month', 'updated_by'],
             true, 'each update names its changed columns');
+
+-- 3. Round 2: a statement that changes one row or none costs little, and the
+-- logger opens no subtransaction (a function that saves row by row stayed
+-- fast and never overflowed the subtransaction cache). 1,000 statements in a
+-- loop, as a row-by-row function makes them; first without the logger.
+INSERT INTO bills_not_in_2b (client_id, period_month, supplier_name, supplier_invoice_number, input_igst, updated_by)
+SELECT '20000000-0000-0000-0000-000000000002', '08/2026', 'LOOP ' || g, 'L/' || g, g, '10000000-0000-0000-0000-000000000003'
+  FROM generate_series(1, 1000) g;
+CREATE TEMP TABLE t_loop_ids AS SELECT id, row_number() OVER (ORDER BY id) AS n FROM bills_not_in_2b
+ WHERE client_id = '20000000-0000-0000-0000-000000000002' AND supplier_name LIKE 'LOOP %';
+GRANT SELECT ON t_loop_ids TO anon;
+CREATE OR REPLACE FUNCTION pg_temp.t_loops(p_label text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE t0 timestamptz; r record; i int;
+BEGIN
+  t0 := clock_timestamp();
+  FOR r IN SELECT id FROM t_loop_ids ORDER BY n LOOP
+    UPDATE bills_not_in_2b SET input_igst = input_igst + 1 WHERE id = r.id;
+  END LOOP;
+  INSERT INTO t_time VALUES ('1,000 one-row updates, ' || p_label, round(extract(epoch FROM clock_timestamp() - t0) * 1000, 1));
+  t0 := clock_timestamp();
+  FOR i IN 1 .. 1000 LOOP
+    UPDATE bills_not_in_2b SET input_igst = 0 WHERE id = '00000000-0000-0000-0000-000000000000';
+  END LOOP;
+  INSERT INTO t_time VALUES ('1,000 updates of no row, ' || p_label, round(extract(epoch FROM clock_timestamp() - t0) * 1000, 1));
+  t0 := clock_timestamp();
+  FOR i IN 1 .. 1000 LOOP
+    DELETE FROM bills_not_in_2b WHERE id = '00000000-0000-0000-0000-000000000000';
+  END LOOP;
+  INSERT INTO t_time VALUES ('1,000 deletes of no row, ' || p_label, round(extract(epoch FROM clock_timestamp() - t0) * 1000, 1));
+END $$;
+GRANT EXECUTE ON FUNCTION pg_temp.t_loops(text) TO anon;
+ALTER TABLE bills_not_in_2b DISABLE TRIGGER gst_change_log_upd;
+ALTER TABLE bills_not_in_2b DISABLE TRIGGER gst_change_log_del;
+SET ROLE anon;
+SELECT t_request('anon', '{"x-gst-actor":"10000000-0000-0000-0000-000000000003","x-gst-source":"app","x-gst-request":"t90-loop-off"}');
+SELECT pg_temp.t_loops('logger off');
+RESET ROLE;
+ALTER TABLE bills_not_in_2b ENABLE TRIGGER gst_change_log_upd;
+ALTER TABLE bills_not_in_2b ENABLE TRIGGER gst_change_log_del;
+SET ROLE anon;
+SELECT t_request('anon', '{"x-gst-actor":"10000000-0000-0000-0000-000000000003","x-gst-source":"app","x-gst-request":"t90-loop"}');
+SELECT pg_temp.t_loops('logger on');
+RESET ROLE;
+SELECT t_eq((SELECT ms < 700 FROM t_time WHERE what = '1,000 one-row updates, logger on'), true, '1,000 one-row updates under 0.7 s (was about 1 s)');
+SELECT t_eq((SELECT ms < 100 FROM t_time WHERE what = '1,000 updates of no row, logger on'), true, '1,000 updates of no row under 0.1 s (was about 0.55 s)');
+SELECT t_eq((SELECT ms < 100 FROM t_time WHERE what = '1,000 deletes of no row, logger on'), true, '1,000 deletes of no row under 0.1 s (was about 0.17 s)');
+SELECT t_eq((SELECT count(*) FROM gst_change_log WHERE request_id = 't90-loop')::int, 1000, 'each one-row update logged once, the rest nothing');
+-- No subtransaction: 100 logged statements in one transaction.
+BEGIN;
+SET ROLE anon;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT id FROM t_loop_ids ORDER BY n LIMIT 100 LOOP
+    UPDATE bills_not_in_2b SET input_igst = input_igst + 1 WHERE id = r.id;
+  END LOOP;
+END $$;
+RESET ROLE;
+SELECT t_eq((SELECT s.subxact_count || ' ' || s.subxact_overflowed FROM pg_stat_get_backend_idset() b(id)
+               CROSS JOIN LATERAL pg_stat_get_backend_subxact(b.id) s WHERE pg_stat_get_backend_pid(b.id) = pg_backend_pid()),
+            '0 false', '100 logged statements in one transaction open no subtransaction');
+COMMIT;
 
 DO $$
 DECLARE r record;

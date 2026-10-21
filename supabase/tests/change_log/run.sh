@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Replays 20261021130000_gst_change_log.sql on a throwaway local database and
-# runs the SQL tests in this folder, then the app-level check of the Change
-# history page's loading (scripts/verify-change-history.mjs) on the log rows
-# the tests produced. The migration is applied twice (it must be safe to
+# Replays 20261021130000_gst_change_log.sql on a throwaway local database (the
+# live tables stubbed in 00_stub.sql, the sibling migrations' GST tables in
+# 00b_sibling_tables.sql) and runs the SQL tests in this folder, then the
+# app-level check of the Change history page's loading
+# (scripts/verify-change-history.mjs) on the log rows the tests produced, and
+# the two-tab check of the person each request names
+# (scripts/verify-change-log-actor.mjs). The migration is applied twice (it must be safe to
 # re-run). A second database checks that the migration leaves a sibling
 # branch's manual_source_allow / manual_source_revoke alone. Needs a local
 # PostgreSQL 15+ and node; connection from the usual PG* variables, e.g.
@@ -18,6 +21,7 @@ psql_q() { psql -X -q -v ON_ERROR_STOP=1 -d "$db" "$@"; }
 createdb "$db"
 trap 'dropdb --if-exists --force "$db"; dropdb --if-exists --force "$db2"; rm -f "$here/.last_error"; [ -n "${KEEP_ROWS:-}" ] || rm -f "$here/.rows.json"' EXIT
 psql_q -f "$here/00_stub.sql" >/dev/null
+psql_q -f "$here/00b_sibling_tables.sql" >/dev/null
 psql_q -f "$mig" >/dev/null 2>&1 || { echo "FAILED applying the migration"; psql_q -f "$mig" 2>&1 | grep -v NOTICE | tail -5; exit 1; }
 psql_q -f "$mig" >/dev/null 2>&1 || { echo "FAILED re-applying the migration"; exit 1; }
 psql_q -f "$here/01_fixtures.sql" >/dev/null
@@ -36,6 +40,8 @@ rm -f "$here/.last_out"
 # The app-level check, on the rows the tests left in the log (as the app reads them: the view).
 psql -X -q -At -d "$db" -c "SELECT COALESCE(json_agg(h ORDER BY h.at DESC, h.key DESC), '[]') FROM gst_change_history h" > "$here/.rows.json"
 if node "$root/scripts/verify-change-history.mjs" "$here/.rows.json"; then echo "ok   verify-change-history.mjs (on the test log)"; else echo "FAIL verify-change-history.mjs"; status=1; fi
+# Round 2: each tab's requests name the user signed in in that tab.
+if node "$root/scripts/verify-change-log-actor.mjs" >/dev/null; then echo "ok   verify-change-log-actor.mjs (two tabs, two users)"; else echo "FAIL verify-change-log-actor.mjs"; status=1; fi
 
 # A long read holding a logged table: a re-apply gives up after 5 s (lock_timeout)
 # instead of queueing the app's queries behind it, and changes nothing.

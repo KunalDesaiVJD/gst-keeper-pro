@@ -1,8 +1,9 @@
 -- The platform pieces 20261021130000_gst_change_log.sql expects, as on the
 -- live project: Supabase's roles, pgcrypto, staff_level_of, and every table
 -- the change log attaches to, with the live columns and primary keys (read
--- from the live catalog on 21 Oct 2026; no constraints beyond the keys and
--- the few foreign keys the cascade tests need). Fictional rows only.
+-- from the live catalog on 21 Oct 2026; no constraints beyond the keys, the
+-- ledgers' client keys and every ON DELETE CASCADE key of the builder tables,
+-- which the cascade tests need). Fictional rows only.
 DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -102,7 +103,7 @@ CREATE TABLE public.annual_return_change_log (
 );
 CREATE TABLE public.client_liberal_log (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  client_id uuid,
+  client_id uuid REFERENCES public.clients(id) ON DELETE CASCADE,
   liberal boolean,
   changed_by uuid,
   changed_by_name text,
@@ -1875,6 +1876,55 @@ ALTER TABLE public.bills_not_in_2b ADD FOREIGN KEY (client_id) REFERENCES public
 ALTER TABLE public.builder_projects ADD FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE CASCADE;
 ALTER TABLE public.builder_units ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
 ALTER TABLE public.builder_bookings ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+-- Every other ON DELETE CASCADE key of the builder tables, as live (21 Oct
+-- 2026): a deleted unit or project takes its bookings, receipts, invoices ...
+ALTER TABLE public.builder_advance_adjustments ADD FOREIGN KEY (invoice_id) REFERENCES public.builder_invoices(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_advance_adjustments ADD FOREIGN KEY (receipt_id) REFERENCES public.builder_receipts(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_booking_members ADD FOREIGN KEY (booking_id) REFERENCES public.builder_bookings(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_bounce_offsets ADD FOREIGN KEY (reversal_id) REFERENCES public.builder_bounce_reversals(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_bounce_reversals ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_bounce_reversals ADD FOREIGN KEY (receipt_id) REFERENCES public.builder_receipts(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_bounce_reversals ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_bu_agreement_confirmations ADD FOREIGN KEY (bu_event_id) REFERENCES public.builder_bu_events(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_bu_agreement_confirmations ADD FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_bu_agreement_confirmations ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_bu_event_units ADD FOREIGN KEY (bu_event_id) REFERENCES public.builder_bu_events(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_bu_event_units ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_bu_events ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_cancellations ADD FOREIGN KEY (booking_id) REFERENCES public.builder_bookings(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_cancellations ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_cancellations ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_client_settings ADD FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_conversions ADD FOREIGN KEY (from_unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_conversions ADD FOREIGN KEY (to_unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_credit_notes ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_dastavej_late_interest ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_dastavej_late_interest ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_excess_tax ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_excess_tax ADD FOREIGN KEY (receipt_id) REFERENCES public.builder_receipts(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_excess_tax ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_fsi_consents ADD FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_fsi_consents ADD FOREIGN KEY (fsi_working_id) REFERENCES public.builder_fsi_workings(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_fsi_consents ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_fsi_workings ADD FOREIGN KEY (bu_event_id) REFERENCES public.builder_bu_events(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_fsi_workings ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_historical_receipts ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_invoices ADD FOREIGN KEY (booking_id) REFERENCES public.builder_bookings(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_invoices ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_itc_reversal_workings ADD FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_itc_reversal_workings ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_itc_reversal_years ADD FOREIGN KEY (working_id) REFERENCES public.builder_itc_reversal_workings(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_opening_balance_adjustments ADD FOREIGN KEY (invoice_id) REFERENCES public.builder_invoices(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_opening_balance_adjustments ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_opening_balances ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_project_groups ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_receipts ADD FOREIGN KEY (booking_id) REFERENCES public.builder_bookings(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_receipts ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_reclassification_periods ADD FOREIGN KEY (reclassification_id) REFERENCES public.builder_reclassifications(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_reclassifications ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_refund_payments ADD FOREIGN KEY (cancellation_id) REFERENCES public.builder_cancellations(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_unit_charges ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.builder_unit_classification_history ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
 
 -- Every table open to public, as live (CLAUDE.md).
 DO $$

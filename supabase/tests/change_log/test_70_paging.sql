@@ -71,14 +71,20 @@ SELECT t_eq((SELECT count(*) || ' ' || count(DISTINCT key) FROM t_pages), '600 6
 SELECT t_eq((SELECT count(*) FROM t_pages p JOIN gst_change_log l ON 'g' || l.id = p.key WHERE l.request_id = 't70-late')::int, 0,
             'changes saved after the first page start a new first page, never inside the later pages');
 
--- 3. The page queries use an index on a large log (200,000 rows, rolled back).
+-- 3. The page queries use an index on a large log (200,000 rows over the
+-- last two years, a change every five minutes, each to the month before it,
+-- as the firm works; rolled back). Round 2: a year or a month with no client
+-- read the whole log newest first.
 BEGIN;
-INSERT INTO gst_change_log (at, table_name, row_id, client_id, period_month, op, actor_id, actor_source, actor_basis, changed)
-SELECT now() - (g || ' seconds')::interval, 'bills_not_in_books', g::text,
-       CASE WHEN g % 50 = 0 THEN '20000000-0000-0000-0000-000000000001'::uuid ELSE gen_random_uuid() END, '09/2026', 'UPDATE',
+INSERT INTO gst_change_log (at, table_name, row_id, client_id, period_month, fy, op, actor_id, actor_source, actor_basis, changed)
+SELECT t.at, 'bills_not_in_books', g::text,
+       CASE WHEN g % 50 = 0 THEN '20000000-0000-0000-0000-000000000001'::uuid ELSE gen_random_uuid() END, m.p,
+       gst_change_log_fy(NULL, m.p), 'UPDATE',
        CASE WHEN g % 1000 = 0 THEN '10000000-0000-0000-0000-000000000001'::uuid END, 'app', 'header',
        jsonb_build_object('input_igst', jsonb_build_object('old', g, 'new', g + 1))
-  FROM generate_series(1, 200000) g;
+  FROM generate_series(1, 200000) g
+ CROSS JOIN LATERAL (SELECT now() - make_interval(secs => g * 300) AS at) t
+ CROSS JOIN LATERAL (SELECT CASE WHEN g % 50 = 0 THEN '09/2026' ELSE to_char(t.at - interval '20 days', 'MM/YYYY') END AS p) m;
 ANALYZE gst_change_log;
 CREATE TEMP TABLE t_plans (what text, plan text, ms numeric);
 GRANT ALL ON t_plans TO anon;
@@ -95,15 +101,42 @@ SET ROLE anon;
 SELECT pg_temp.t_plan('first page, no filter', $q$SELECT key, at, seq, changed FROM gst_change_history ORDER BY at DESC, seq DESC LIMIT 201$q$);
 SELECT pg_temp.t_plan('next page, no filter', $q$SELECT key, at, seq FROM gst_change_history
   WHERE at <= now() - interval '5000 seconds' AND (at < now() - interval '5000 seconds' OR seq < 1) ORDER BY at DESC, seq DESC LIMIT 201$q$);
-SELECT pg_temp.t_plan('one person', $q$SELECT key FROM gst_change_history WHERE actor_id = '10000000-0000-0000-0000-000000000001'
+-- As the app sends them (src/lib/changeHistory.ts): the leading filter (the
+-- client, else the month, else the year, else the person) as a range of one
+-- value, and the order led by it, so the read is that filter's index.
+SELECT pg_temp.t_plan('one person', $q$SELECT key FROM gst_change_history WHERE actor_id >= '10000000-0000-0000-0000-000000000001'
+  AND actor_id <= '10000000-0000-0000-0000-000000000001' ORDER BY actor_id, at DESC, seq DESC LIMIT 201$q$);
+SELECT pg_temp.t_plan('one client and month', $q$SELECT key FROM gst_change_history WHERE client_id >= '20000000-0000-0000-0000-000000000001' AND client_id <= '20000000-0000-0000-0000-000000000001'
+  AND period_month = '09/2026' ORDER BY client_id, at DESC, seq DESC LIMIT 201$q$);
+SELECT pg_temp.t_plan('one client and a year with no changes', $q$SELECT key FROM gst_change_history WHERE client_id >= '20000000-0000-0000-0000-000000000001' AND client_id <= '20000000-0000-0000-0000-000000000001'
+  AND fy = '2025-26' ORDER BY client_id, at DESC, seq DESC LIMIT 201$q$);
+SELECT pg_temp.t_plan('a financial year, no client', $q$SELECT key FROM gst_change_history WHERE fy >= '2025-26' AND fy <= '2025-26'
+  ORDER BY fy, at DESC, seq DESC LIMIT 201$q$);
+SELECT pg_temp.t_plan('a financial year with no changes', $q$SELECT key FROM gst_change_history WHERE fy >= '2019-20' AND fy <= '2019-20'
+  ORDER BY fy, at DESC, seq DESC LIMIT 201$q$);
+SELECT pg_temp.t_plan('a financial year, next page', $q$SELECT key FROM gst_change_history WHERE fy >= '2025-26' AND fy <= '2025-26'
+  AND at <= now() - interval '400 days' AND (at < now() - interval '400 days' OR seq < 1) ORDER BY fy, at DESC, seq DESC LIMIT 201$q$);
+SELECT pg_temp.t_plan('a month, no client', $q$SELECT key FROM gst_change_history WHERE period_month >= '05/2025' AND period_month <= '05/2025'
+  ORDER BY period_month, at DESC, seq DESC LIMIT 201$q$);
+-- Round 2 review: the same year sent as an equality alone reads the log newest first.
+SELECT pg_temp.t_plan('(an equality alone, for comparison)', $q$SELECT key FROM gst_change_history WHERE fy = '2025-26'
   ORDER BY at DESC, seq DESC LIMIT 201$q$);
-SELECT pg_temp.t_plan('one client and month', $q$SELECT key FROM gst_change_history WHERE client_id = '20000000-0000-0000-0000-000000000001'
-  AND period_month = '09/2026' ORDER BY at DESC, seq DESC LIMIT 201$q$);
 RESET ROLE;
 SELECT t_eq((SELECT string_agg(what, ', ') FROM t_plans WHERE plan ~ 'Seq Scan on gst_change_log'), NULL::text, 'no page query scans the whole log');
+SELECT t_eq((SELECT string_agg(what, ', ') FROM t_plans WHERE what NOT LIKE '(%' AND (substring(plan from 'Rows Removed by Filter: ([0-9]+)'))::int > 5000), NULL::text,
+            'no page query reads thousands of rows it does not show');
 SELECT t_eq((SELECT plan ~ 'gst_change_log_at_id' FROM t_plans WHERE what = 'first page, no filter'), true, 'the first page reads the (at, id) index');
 SELECT t_eq((SELECT plan ~ 'gst_change_log_at_id' FROM t_plans WHERE what = 'next page, no filter'), true, 'the next page too, from where it left off');
 SELECT t_eq((SELECT plan ~ 'gst_change_log_actor_at' FROM t_plans WHERE what = 'one person'), true, 'one person: the (actor, at) index');
+SELECT t_eq((SELECT string_agg(what, ', ') FROM t_plans WHERE what LIKE 'one client%' AND plan !~ 'gst_change_log_client_month_at'), NULL::text,
+            'one client, with a month or a year: the (client, month, at) index');
+SELECT t_eq((SELECT string_agg(what, ', ' ORDER BY what) FROM t_plans WHERE what LIKE 'a financial year%' AND plan !~ 'gst_change_log_fy_at'), NULL::text,
+            'a year with no client, with or without changes, next page too: the (fy, at) index');
+SELECT t_eq((SELECT plan ~ 'gst_change_log_month_at' FROM t_plans WHERE what = 'a month, no client'), true, 'a month with no client: the (month, at) index');
+SELECT t_eq((SELECT (substring(plan from 'gst_change_log_fy_at on gst_change_log l \(actual rows=([0-9]+)'))::int <= 202 FROM t_plans WHERE what = 'a financial year, no client'),
+            true, 'a year reads about a page of the log, not the whole year');
+SELECT t_eq((SELECT (substring(plan from 'Rows Removed by Filter: ([0-9]+)'))::int > 10000 FROM t_plans WHERE what = '(an equality alone, for comparison)'),
+            true, 'for comparison: the year as an equality alone reads tens of thousands of rows (why the app leads with a range)');
 DO $$
 DECLARE r record;
 BEGIN
