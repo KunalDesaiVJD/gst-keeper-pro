@@ -3318,6 +3318,10 @@
       location.href = 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger';
       return;
     }
+    // 0.16.0: the GSTR-3B push gate trusts this pull, so the page must be this
+    // client's before anything is read or saved: the header's GSTIN, as the
+    // push checks it. Another client's: the job stops, nothing saved.
+    if (await headerShowsOther(job, cur, progress, true)) return;
     // GST Receivable Reco keeps the OPENING balance: its own closing is computed as
     // Opening + Net ITC available - ITC utilised, so this must be the start-of-period
     // figure or that formula double-counts.
@@ -3401,6 +3405,8 @@
       await chainOrStop(job, 'ledgers', proceedToLiabilityLedger);
       return;
     }
+    // 0.16.0: this client's page only (see handleLedger).
+    if (await headerShowsOther(job, cur, progress, true)) return;
     // Suspended Reco takes the CLOSING balance of the month's range (the balance
     // after the previous month's return was filed) — confirmed by the user.
     const bal = await readLedgerBalance('closing');
@@ -3714,13 +3720,16 @@
   // 0.8.8: on a returns page, just before a push acts: the header's GSTIN, when
   // it shows one, must be the job's client's (a session can change under a job
   // if someone logs another client in elsewhere in this Chrome). True when the
-  // push was stopped.
-  async function headerShowsOther(job, cur, progress) {
+  // push was stopped. 0.16.0: the reco pulls ask it too (saving true) before
+  // they save, because the GSTR-3B push gate trusts what they save.
+  async function headerShowsOther(job, cur, progress, saving) {
     const expected = String((cur.creds && cur.creds.gstin) || '').trim().toUpperCase();
     const shown = headerGstin();
     if (!expected || !shown || shown === expected) return false;
     await stopForIdentity(job, cur, progress, 'The GST portal is logged in as ' + shown + ', not ' + cur.creds.name + ' (' + expected
-      + '), so nothing was pushed. Someone may have logged another client in, in this Chrome: push again.');
+      + (saving
+        ? '), so nothing was saved for this client. Someone may have logged another client in, in this Chrome: pull again.'
+        : '), so nothing was pushed. Someone may have logged another client in, in this Chrome: push again.'));
     return true;
   }
   async function stopForIdentity(job, cur, progress, message) {

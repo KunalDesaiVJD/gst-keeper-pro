@@ -10,14 +10,20 @@ interface Props {
   onRecheck?: () => void;
   /** One line (the reco pages) or the full panel (the GSTR-3B page). */
   compact?: boolean;
+  /**
+   * The page has typed figures that are not saved: the gate answered for the
+   * saved ones, so "ready" is not shown until Save (round 2 of the review).
+   */
+  stale?: boolean;
   className?: string;
 }
 
 // What the GSTR-3B push gate says for the client and month shown
 // (gstr3b_push_gate; src/lib/gstr3bPushGate.ts): ready, or blocked with the
 // reasons, and where each reco's opening came from.
-const Gstr3bGateNote: React.FC<Props> = ({ gate, loading, onRecheck, compact, className }) => {
-  const ok = !!gate?.ok && !loading;
+const Gstr3bGateNote: React.FC<Props> = ({ gate, loading, onRecheck, compact, stale, className }) => {
+  const ok = !!gate?.ok && !loading && !stale;
+  const staleOk = !!gate?.ok && !loading && !!stale;
   const parts = gate && !gate.error ? [
     gate.suspended ? `Suspended Reco: ${gatePartLabel(gate.suspended)}${gate.suspended.override ? ` · opening overridden by ${gate.suspended.override.by_name || 'someone'}` : ''}${gate.suspended.waived ? ' · difference waived (Builder, no ITC)' : ''}` : '',
     gate.receivable?.required ? `GST Receivable Reco: ${gatePartLabel(gate.receivable)}${gate.receivable.override ? ` · opening overridden by ${gate.receivable.override.by_name || 'someone'}` : ''}` : '',
@@ -28,22 +34,27 @@ const Gstr3bGateNote: React.FC<Props> = ({ gate, loading, onRecheck, compact, cl
       role="status"
       className={cn(
         'flex items-start gap-2 rounded-md border px-3 py-2 text-xs',
-        loading ? 'border-border bg-muted/30' : ok ? 'border-success/40 bg-success/5' : 'border-destructive/40 bg-destructive/5',
+        loading || staleOk ? 'border-border bg-muted/30' : ok ? 'border-success/40 bg-success/5' : 'border-destructive/40 bg-destructive/5',
         className,
       )}
     >
       {loading
         ? <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
         : ok ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+        : staleOk ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         : <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />}
       <div className="min-w-0 flex-1 space-y-0.5">
         <p className="font-medium text-foreground">
           {loading ? 'Checking the GSTR-3B push gate…'
             : ok ? 'GSTR-3B push: ready.'
+            : staleOk ? 'GSTR-3B push: not checked yet for the figures typed here.'
             : 'GSTR-3B push and JSON download are locked.'}
         </p>
         {ok && <p className="text-muted-foreground">{gateReadyText(gate)}</p>}
-        {!loading && gate && !ok && (
+        {!loading && stale && (
+          <p className="text-muted-foreground">Based on the saved figures. Save to check again.</p>
+        )}
+        {!loading && gate && !ok && !staleOk && (
           compact
             ? <p className="text-muted-foreground">{gate.reasons.map((r) => r.message).join(' ')}</p>
             : <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">{gate.reasons.map((r) => <li key={r.code + r.message}>{r.message}</li>)}</ul>
@@ -51,7 +62,7 @@ const Gstr3bGateNote: React.FC<Props> = ({ gate, loading, onRecheck, compact, cl
         {!loading && !compact && parts.length > 0 && (
           <p className="text-muted-foreground">{parts.join(' · ')}</p>
         )}
-        {!loading && !ok && !compact && (
+        {!loading && !ok && !staleOk && !compact && (
           <p className="text-muted-foreground">
             Pull both recos from the portal (Suspended Reco or GST Receivable Reco, Pull). A difference is cleared by
             correcting the books, or by an opening override by the superadmin or a GST Manager. If the pull cannot be done,

@@ -26,10 +26,10 @@ import ManualSourceAllowanceControl from '@/components/manualSource/ManualSource
 import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
 import { fetchManualSourceAllowances, liveAllowance, staffNames, type ManualSourceAllowance } from '@/lib/manualSource';
 import {
-  extensionCanPull, fetchRecoLog, fmtDateTime, needsExtensionMessage, openingManualState, pulledLabel, recordManualOpening,
+  extensionCanPull, fetchRecoLog, fmtDateTime, needsExtensionMessage, openingManualState, openingSourceText, pulledLabel, recordManualOpening,
   recordOverride, recoLogActionLabel, recoScope, suspendedSavePayload, type OpeningSource, type RecoLogEntry,
 } from '@/lib/recoSources';
-import { checkGstr3bPushGate, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
+import { checkGstr3bPushGate, headsTally, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
 
 /** Dense workspace table; the last column drops its right rule (the wrapper draws it). */
 const TABLE_CLS = cn(WS_TABLE, '[&_tr>*:last-child]:border-r-0');
@@ -603,6 +603,9 @@ const SuspendedRecoPage: React.FC = () => {
   // stack into a combined raw gap over ₹10 and show a "difference" here even
   // though every column reads 0.
   const diffTotal = normalizeZero(diffCgst + diffSgst + diffIgst);
+  // Every head and the total, as the GSTR-3B push gate checks (round 2 of the
+  // review): heads that offset (IGST against CGST + SGST) do not tally.
+  const diffTallies = headsTally({ cgst: diffCgst, sgst: diffSgst, igst: diffIgst, total: diffTotal });
 
   const formatNumber = (num: number): string => {
     if (num === 0 || Object.is(num, -0)) return '0';
@@ -666,6 +669,19 @@ const SuspendedRecoPage: React.FC = () => {
     window.postMessage({ __gstkPullLedgers: { clientId: selectedClientId, period_month: selectedMonth, actorId: user?.id ?? null } }, '*');
   };
 
+  // Where the opening came from, for the Excel export: pulled, manual
+  // (allowed by X: reason), overridden (round 2 of the review).
+  const exportOpeningSource = () => {
+    const exportNames = new Map(names);
+    if (openingPullerName) exportNames.set('puller', openingPullerName);
+    if (openingOverrideBy && openingOverriderName) exportNames.set(openingOverrideBy, openingOverriderName);
+    return openingSourceText(selectedMonth, {
+      opening_source: openingSource, opening_portal_pulled_at: openingPulledAt, opening_portal_pulled_by: 'puller',
+      opening_portal_empty: openingPortalEmpty, opening_allowance_id: openingAllowanceId,
+      opening_override_justification: openingOverrideJustification, opening_override_by: openingOverrideBy,
+    }, allowances.find((a) => a.id === openingAllowanceId) ?? null, exportNames);
+  };
+
   // Where the opening came from: pulled (who, when), manual (allowed by
   // whom, why), or neither (then the GSTR-3B push stays locked).
   const sourceBadge = !useNewFlow ? null : (
@@ -726,6 +742,7 @@ const SuspendedRecoPage: React.FC = () => {
                   portalCgst, portalSgst, portalIgst,
                   booksCgst, booksSgst, booksIgst,
                   diffCgst, diffSgst, diffIgst,
+                  openingSource: exportOpeningSource(),
                 });
                 toast.success('Excel exported successfully');
               }}>
@@ -817,8 +834,8 @@ const SuspendedRecoPage: React.FC = () => {
             <KpiTile
               label="Difference"
               value={formatNumber(diffTotal)}
-              hint={diffTotal !== 0 ? 'Opening + current − books' : 'Reconciled'}
-              tone={diffTotal !== 0 ? 'error' : 'ok'}
+              hint={diffTallies ? 'Reconciled' : diffTotal === 0 ? 'Heads differ: each must tally' : 'Opening + current − books'}
+              tone={diffTallies ? 'ok' : 'error'}
             />
           </div>
 
@@ -953,8 +970,8 @@ const SuspendedRecoPage: React.FC = () => {
                               Override
                             </Button>
                           )}
-                          {/* Not offered over a pulled month (a manual entry cannot replace it); an open one can still be revoked. */}
-                          {selectedClientId && (!isPulled || allowance) && (
+                          {/* Not offered over a pulled month (a manual entry cannot replace it; the pull closes an open one). */}
+                          {selectedClientId && !isPulled && (
                             <ManualSourceAllowanceControl
                               clientId={selectedClientId}
                               clientName={selectedClientData?.name}
@@ -962,6 +979,7 @@ const SuspendedRecoPage: React.FC = () => {
                               scope={SCOPE}
                               what="Suspended Reco"
                               allowance={allowance}
+                              openingAllowanceId={openingAllowanceId}
                               names={names}
                               onChanged={() => { fetchData(); checkGate(); }}
                             />

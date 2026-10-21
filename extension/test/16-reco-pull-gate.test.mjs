@@ -18,7 +18,9 @@
 //     actor (no direct table write left), saves nothing without one (the
 //     popup's full sync), saves an empty reversal month only when the page
 //     says there are no records, and classifyLedgerRows reads ITC utilised
-//     as 0 when ledger rows were read with no set-off debit.
+//     as 0 when ledger rows were read with no set-off debit;
+//   - round 2: both ledger pulls save nothing, and stop, when the portal
+//     header shows another client's GSTIN (headerShowsOther, as the push).
 //   node test/16-reco-pull-gate.test.mjs
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -247,6 +249,54 @@ ok(cx.classifyLedgerRows([]).utilised === null, 'no ledger row read: ITC utilise
 }
 const c3 = cx.classifyLedgerRows([credit, setoff, drc, rcm]);
 ok(eq(c3.utilised, { igst: 10, cgst: 200, sgst: 200 }) && eq(c3.drc, { igst: 0, cgst: 7, sgst: 7 }), 'the set-off debit is ITC utilised; other debits but reverse charge are DRC-03');
+
+// ── Round 2: a pull saves only for the client the portal page shows ────────
+// handleLedger and handleReversal, with headerShowsOther, cut from content.js
+// and run with the page helpers stubbed. The header shows another GSTIN (a
+// session switched by someone in this Chrome): nothing is saved and the job
+// stops with the reason; the job's own GSTIN (or none shown) saves as before.
+{
+  const cut = (name) => {
+    const k = content.indexOf('\n  async function ' + name + '(');
+    return content.slice(k + 1, content.indexOf('\n  }\n', k) + 4);
+  };
+  const run = async (fn, shown) => {
+    const saved = [];
+    const stopped = [];
+    const replaced = [];
+    const ctx = vm.createContext({
+      url: fn === 'handleLedger' ? 'https://return.gst.gov.in/returns/auth/ledger/detailedledger' : 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger',
+      location: { pathname: '/returns/auth/ledger/x', href: '' },
+      document: { body: { innerText: '' } },
+      waitFor: async () => true,
+      loadLedgerPeriod: async () => ({ ok: true, from: '01/09/2026', to: '30/09/2026' }),
+      readLedgerBalance: async () => ({ igst: 0, cgst: 5, sgst: 5, cess: 0, raw: [] }),
+      readLedgerRows: () => [],
+      classifyLedgerRows: () => ({ utilised: null, drc: { igst: 0, cgst: 0, sgst: 0 } }),
+      ledgerSaysNoRecords: () => false, shownPeriod: () => '01/09/2026 - 30/09/2026', debugPanel: () => {}, banner: () => {},
+      sleep: async () => {}, inr: (n) => String(n), setJob: async () => {}, chainOrStop: async () => {}, proceedToLiabilityLedger: async () => {},
+      headerGstin: () => shown,
+      stopForIdentity: async (job, cur, progress, message) => { stopped.push(message); return 'stopped'; },
+      GSTKdb: {
+        recordRecoPull: async (x) => { saved.push(x); return { ok: true }; },
+        replaceCreditLedgerTxns: async (...a) => { replaced.push(a); },
+      },
+    });
+    vm.runInContext(cut('headerShowsOther') + '\n' + cut(fn) + '\nthis.fn = ' + fn + ';', ctx);
+    await ctx.fn({ period: '09/2026', actorId: 'u-1', mode: 'ledgers' }, { clientId: 'c1', creds: { gstin: '24AAAAA0000A1Z5', name: 'CLIENT A' } }, '');
+    return { saved, stopped, replaced };
+  };
+  for (const fn of ['handleReversal', 'handleLedger']) {
+    const other = await run(fn, '24BBBBB9999B1Z5');
+    ok(other.saved.length === 0 && other.replaced.length === 0, `${fn}: another client's GSTIN in the header: nothing saved`);
+    ok(other.stopped.length === 1 && /logged in as 24BBBBB9999B1Z5, not CLIENT A \(24AAAAA0000A1Z5\), so nothing was saved for this client\..*pull again\./.test(other.stopped[0]),
+      `${fn}: and the job stops saying so`);
+    const same = await run(fn, '24AAAAA0000A1Z5');
+    ok(same.saved.length === 1 && same.saved[0].clientId === 'c1' && same.stopped.length === 0, `${fn}: the job's own GSTIN in the header: saved`);
+    const none = await run(fn, null);
+    ok(none.saved.length === 1 && none.stopped.length === 0, `${fn}: no GSTIN in the header (cannot be checked): saved, as before`);
+  }
+}
 
 console.log(fail ? `\n${fail} check(s) FAILED` : '\nall checks passed');
 process.exit(fail ? 1 : 0);

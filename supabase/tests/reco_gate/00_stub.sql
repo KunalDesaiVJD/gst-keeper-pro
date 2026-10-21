@@ -68,6 +68,7 @@ CREATE TABLE public.filing_status (
   period_month text NOT NULL,
   status public.filing_status_type,
   is_nil boolean DEFAULT false,
+  pushed_at timestamptz,
   UNIQUE (client_id, return_type, period_month)
 );
 CREATE TABLE public.bills_not_in_2b (
@@ -108,6 +109,41 @@ CREATE TABLE public.gstr3b_push_versions (
   skipped jsonb,
   payload jsonb
 );
+-- How a push is recorded (20261009200000, cut down to what the gate needs):
+-- filing_record_push stamps the GSTR-3B row Pushed (unless Filed), and the
+-- trigger on gstr3b_push_versions calls it for every 'ok' row, as live
+-- before 20261021120000.
+CREATE OR REPLACE FUNCTION public.filing_record_push(p_client_id uuid, p_return_type text, p_period_month text, p_actor uuid, p_at timestamptz)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.filing_status (client_id, return_type, period_month, status, pushed_at)
+  VALUES (p_client_id, p_return_type::public.return_type, p_period_month, 'Pushed', p_at)
+  ON CONFLICT (client_id, return_type, period_month) DO UPDATE SET
+    pushed_at = EXCLUDED.pushed_at,
+    status = CASE WHEN public.filing_status.status::text = 'Filed' THEN public.filing_status.status ELSE 'Pushed' END;
+  RETURN 'Pushed';
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.gstr3b_push_versions_record_push()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.status IS DISTINCT FROM 'ok' THEN RETURN NULL; END IF;
+  IF NEW.period_month !~ '^(0[1-9]|1[0-2])/[0-9]{4}$' THEN RETURN NULL; END IF;
+  PERFORM public.filing_record_push(NEW.client_id, 'GSTR-3B', NEW.period_month, NEW.actor_id, NEW.action_at);
+  RETURN NULL;
+END;
+$$;
+CREATE TRIGGER trg_gstr3b_push_versions_record_push
+  AFTER INSERT ON public.gstr3b_push_versions
+  FOR EACH ROW EXECUTE FUNCTION public.gstr3b_push_versions_record_push();
 
 -- The recos as live (20260123070206, 20260623200000, 20260713180000 and later).
 CREATE TABLE public.suspended_reco (

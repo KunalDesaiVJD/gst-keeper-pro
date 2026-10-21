@@ -16,28 +16,35 @@ interface SuspendedRecoData {
   diffCgst: number;
   diffSgst: number;
   diffIgst: number;
+  /** Where the opening came from: pulled (who, when), manual (allowed by X: reason), overridden. */
+  openingSource?: string;
 }
 
-export const exportSuspendedRecoToExcel = (data: SuspendedRecoData) => {
-  const workbook = XLSX.utils.book_new();
-
+/** The sheet's rows (exported for the checks in scripts/verify-reco-gate.mjs). */
+export const suspendedRecoSheetRows = (data: SuspendedRecoData): (string | number)[][] => {
   const openingTotal = data.openingCgst + data.openingSgst + data.openingIgst;
   const portalTotal = data.portalCgst + data.portalSgst + data.portalIgst;
   const booksTotal = data.booksCgst + data.booksSgst + data.booksIgst;
   const diffTotal = data.diffCgst + data.diffSgst + data.diffIgst;
 
-  const sheetData = [
+  return [
     ['Suspended Reconciliation'],
     [`Client: ${data.clientName}`, '', `GSTIN: ${data.clientGstin}`, '', `Month: ${data.month}`],
     [],
     ['PARTICULARS', 'CGST', 'SGST', 'IGST', 'TOTAL'],
     ['OPENING BALANCE AS PER PORTAL', data.openingCgst, data.openingSgst, data.openingIgst, openingTotal],
+    ...(data.openingSource ? [[`Opening source: ${data.openingSource}`]] : []),
     ['CURRENT TOTAL AS PER SUSPENDED RECO', data.portalCgst, data.portalSgst, data.portalIgst, portalTotal],
     [],
     ['CLOSING BALANCE AS PER BOOKS', data.booksCgst, data.booksSgst, data.booksIgst, booksTotal],
     [],
     ['DIFFERENCE', data.diffCgst, data.diffSgst, data.diffIgst, diffTotal],
   ];
+};
+
+export const exportSuspendedRecoToExcel = (data: SuspendedRecoData) => {
+  const workbook = XLSX.utils.book_new();
+  const sheetData = suspendedRecoSheetRows(data);
 
   const sheet = XLSX.utils.aoa_to_sheet(sheetData);
   sheet['!cols'] = [

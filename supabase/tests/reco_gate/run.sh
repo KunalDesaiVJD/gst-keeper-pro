@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Replays the reco migrations on a throwaway local database and runs the tests
 # in this folder: the pull-only guard, manual allowances, the override, the
-# GSTR-3B push gate and the round 1 review's defects
+# GSTR-3B push gate and the round 1 and round 2 reviews' defects
 # (20261021120000_reco_pull_push_gate.sql, applied twice: it must be safe to
 # re-run), shared_block.sh (the allowance table shared with the filing
 # branch), then parity.mjs, which runs the app's own
@@ -30,6 +30,8 @@ for t in "$here"/test_*.sql; do
   if psql_q -f "$t" >/dev/null 2>"$here/.last_error"; then echo "ok   $(basename "$t")"; else echo "FAIL $(basename "$t")"; cat "$here/.last_error"; status=1; fi
 done
 rm -f "$here/.last_error"
+# Round 2, defect 4: an insert racing Clear Data in another session is still checked.
+if bash "$here/race.sh"; then :; else status=1; fi
 # The allowance table and functions shared with the filing branch: identical, and either order applies.
 if bash "$here/shared_block.sh"; then :; else status=1; fi
 # The app's calculations and the database's, on the same rows, in a fresh database.

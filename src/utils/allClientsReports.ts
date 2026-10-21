@@ -16,6 +16,7 @@ import { computeGstr1OutputTax } from './computeGstr1OutputTax';
 import { computeTotal4A } from './builderPartialItc';
 import type { RecoViewData } from '@/lib/itcReco/viewTypes';
 import { downloadReportXlsx } from '@/lib/reportExport/excel';
+import { fetchOpeningSourceTexts } from '@/lib/recoSources';
 
 interface ClientRow { id: string; name: string; gstin: string; }
 
@@ -321,6 +322,10 @@ export const buildCreditClosingAllClients = async (month: string): Promise<Repor
   (itcRes.data || []).forEach((r: any) => itcByClient.set(r.client_id, r.data));
   const gstr1ByClient = new Map<string, any>();
   (gstr1Res.data || []).forEach((r: any) => gstr1ByClient.set(r.client_id, r.raw_json));
+  // Where each opening came from: pulled, manual (allowed by X: reason),
+  // overridden, or not pulled (the firm's decision of 21 Oct 2026: manual
+  // data is shown as manual everywhere).
+  const sources = await fetchOpeningSourceTexts(Array.from(grByClient.values()));
 
   const rows = clients.map((client, idx) => {
     const c = computeCreditClosing(grByClient.get(client.id), itcByClient.get(client.id), gstr1ByClient.get(client.id), month);
@@ -330,16 +335,17 @@ export const buildCreditClosingAllClients = async (month: string): Promise<Repor
       client.gstin || '',
       c.closingCgst, c.closingSgst, c.closingIgst, c.closingCgst + c.closingSgst + c.closingIgst,
       c.payableCgst, c.payableSgst, c.payableIgst, c.payableCgst + c.payableSgst + c.payableIgst,
+      sources.get(`${client.id}|${month}`) ?? 'No row (not pulled)',
     ];
   });
 
   return {
     title: 'Credit Ledger — Closing Balance — All Clients',
     subtitle: `Month: ${formatMonthLabel(month)}`,
-    headers: ['Sr No.', 'Client Name', 'GSTIN', 'CGST', 'SGST', 'IGST', 'TOTAL', 'GST Payable CGST', 'GST Payable SGST', 'GST Payable IGST', 'GST Payable TOTAL'],
+    headers: ['Sr No.', 'Client Name', 'GSTIN', 'CGST', 'SGST', 'IGST', 'TOTAL', 'GST Payable CGST', 'GST Payable SGST', 'GST Payable IGST', 'GST Payable TOTAL', 'Opening Source'],
     rows,
     fileNameBase: `Credit_Ledger_All_Clients_${month.replace('/', '-')}`,
-    columnWidths: [6, 35, 18, 14, 14, 14, 14, 14, 14, 14, 14],
+    columnWidths: [6, 35, 18, 14, 14, 14, 14, 14, 14, 14, 14, 40],
   };
 };
 
@@ -408,6 +414,7 @@ export const buildCreditClosingPerClient = async (clientId: string, anyMonthInFy
   (itcRes.data || []).forEach((r: any) => itcByMonth.set(r.period_month, r.data));
   const gstr1ByShort = new Map<string, any>();
   (gstr1Res.data || []).forEach((r: any) => gstr1ByShort.set(r.period_month, r.raw_json));
+  const sources = await fetchOpeningSourceTexts(Array.from(grByMonth.values()));
 
   let tCl = 0, tCS = 0, tCI = 0, tPC = 0, tPS = 0, tPI = 0;
   const rows: (string | number)[][] = months.map((m, idx) => {
@@ -419,17 +426,18 @@ export const buildCreditClosingPerClient = async (clientId: string, anyMonthInFy
       formatMonthLabel(m),
       c.closingCgst, c.closingSgst, c.closingIgst, c.closingCgst + c.closingSgst + c.closingIgst,
       c.payableCgst, c.payableSgst, c.payableIgst, c.payableCgst + c.payableSgst + c.payableIgst,
+      sources.get(`${clientId}|${m}`) ?? 'No row (not pulled)',
     ];
   });
-  rows.push(['', 'TOTAL', tCl, tCS, tCI, tCl + tCS + tCI, tPC, tPS, tPI, tPC + tPS + tPI]);
+  rows.push(['', 'TOTAL', tCl, tCS, tCI, tCl + tCS + tCI, tPC, tPS, tPI, tPC + tPS + tPI, '']);
 
   return {
     title: 'Credit Ledger — Closing Balance — All Months',
     subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   ${fyLabel}`,
-    headers: ['Sr No.', 'Month', 'CGST', 'SGST', 'IGST', 'TOTAL', 'GST Payable CGST', 'GST Payable SGST', 'GST Payable IGST', 'GST Payable TOTAL'],
+    headers: ['Sr No.', 'Month', 'CGST', 'SGST', 'IGST', 'TOTAL', 'GST Payable CGST', 'GST Payable SGST', 'GST Payable IGST', 'GST Payable TOTAL', 'Opening Source'],
     rows,
     fileNameBase: `Credit_Ledger_${client.name.replace(/\s+/g, '_')}_${fyLabel.replace(/\s+/g, '_')}`,
-    columnWidths: [6, 18, 14, 14, 14, 14, 14, 14, 14, 14],
+    columnWidths: [6, 18, 14, 14, 14, 14, 14, 14, 14, 14, 40],
   };
 };
 

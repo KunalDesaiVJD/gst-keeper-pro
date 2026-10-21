@@ -237,13 +237,14 @@ BEGIN
   v := public.reco_record_pull(e, 'suspended', ch, '09/2026', '{"igst":0,"cgst":600,"sgst":600}', NULL, NULL, '0.16.0');
   PERFORM public.reco_record_pull(e, 'receivable', ch, '09/2026', z, z, z, '0.16.0');
   PERFORM t_eq(v->>'allowance_closed', a.id::text, 'D10: the pull closes the open allowance');
-  PERFORM t_eq((SELECT used_by FROM public.manual_source_allowances WHERE id = a.id), e, 'D10: as used by the puller');
+  -- Round 2: closed as revoked by the puller, never as used (it was not used for a manual entry).
+  PERFORM t_eq((SELECT revoked_by::text || '/' || coalesce(used_by::text, 'unused') FROM public.manual_source_allowances WHERE id = a.id),
+    e::text || '/unused', 'D10: revoked by the puller, not marked used');
   PERFORM t_eq((SELECT reason FROM public.reco_opening_log WHERE client_id = ch AND reco = 'suspended' AND action = 'pull'),
-    'The manual entry allowed for the month was closed by this pull.', 'D10: and the log says so');
+    'The manual entry allowed for the month (not used) was closed by this pull.', 'D10: and the log says so');
   PERFORM t_raises(format($q$SELECT public.reco_manual_opening(%L, 'suspended', %L, '09/2026', 'not_applicable', NULL)$q$, e, ch),
     'already pulled from the portal', 'D10: Not Applicable cannot replace the pulled figure');
   -- Even with a fresh allowance, a pulled month is not entered by hand.
-  PERFORM public.manual_source_revoke(s, a.id);
   PERFORM public.manual_source_allow(s, ch, '09/2026', 'reco:suspended', 'Second try by hand');
   PERFORM t_raises(format($q$SELECT public.reco_manual_opening(%L, 'suspended', %L, '09/2026', 'not_applicable', NULL)$q$, e, ch),
     'already pulled from the portal', 'D10: not even under a new allowance');

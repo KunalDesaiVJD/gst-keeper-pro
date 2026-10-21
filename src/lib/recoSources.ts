@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { compareVersions } from '@/lib/extensionVersion';
-import { manualSourceLabel, type ManualSourceAllowance } from '@/lib/manualSource';
+import { manualSourceLabel, staffNames, type ManualSourceAllowance } from '@/lib/manualSource';
 
 // Where a Suspended Reco / GST Receivable Reco opening comes from (the firm's
 // decisions of 21 Oct 2026, migration 20261021120000):
@@ -200,3 +200,93 @@ export const fmtDate = (iso: string | null | undefined) =>
 /** "Pulled from portal 21 Oct 2026 by Asha" (", no balance on the portal" for an empty month) */
 export const pulledLabel = (at: string | null | undefined, byName: string | null | undefined, empty?: boolean) =>
   `Pulled from portal ${fmtDate(at)}${byName ? ` by ${byName}` : ''}${empty ? ', no balance on the portal' : ''}`;
+
+/** The opening-side columns of a reco row that say where its opening came from. */
+export interface OpeningSourceRow {
+  client_id?: string | null;
+  period_month?: string | null;
+  opening_source?: string | null;
+  opening_portal_pulled_at?: string | null;
+  opening_portal_pulled_by?: string | null;
+  opening_portal_empty?: boolean | null;
+  opening_allowance_id?: string | null;
+  opening_override_justification?: string | null;
+  opening_override_by?: string | null;
+}
+
+/**
+ * Where an opening came from, in one line, for the exports and reports that
+ * show it (round 2 of the review: "manual (allowed by X: reason)" is shown
+ * everywhere, so are a pull and an override). allowance is the one the row's
+ * opening_allowance_id names, if any; names maps staff ids to first names.
+ */
+export function openingSourceText(
+  periodMonth: string,
+  row: OpeningSourceRow | null | undefined,
+  allowance: Pick<ManualSourceAllowance, 'id' | 'allowed_by' | 'reason' | 'revoked_at'> | null | undefined,
+  names: Map<string, string>,
+): string {
+  if (!row) return 'No row (not pulled)';
+  const pullOnly = isPullOnlyPeriod(periodMonth);
+  const src = row.opening_source || 'manual';
+  let text: string;
+  if (src === 'portal' && row.opening_portal_pulled_at) {
+    text = pulledLabel(row.opening_portal_pulled_at, row.opening_portal_pulled_by ? names.get(row.opening_portal_pulled_by) : null, !!row.opening_portal_empty);
+  } else if ((src === 'csv' || src === 'not_applicable') && allowance && allowance.id === row.opening_allowance_id) {
+    text = allowance.revoked_at
+      ? 'Manual entry revoked'
+      : `${src === 'csv' ? 'CSV upload' : 'Not applicable'}, ${manualSourceLabel(names.get(allowance.allowed_by), allowance.reason)}`;
+  } else if (src === 'csv') {
+    text = pullOnly ? 'CSV upload, not allowed' : 'CSV upload';
+  } else if (src === 'not_applicable') {
+    text = pullOnly ? 'Not applicable, not allowed' : 'Not applicable';
+  } else if (src === 'portal') {
+    text = pullOnly ? 'Not pulled (no pull recorded)' : 'From the portal';
+  } else {
+    text = pullOnly ? 'Not pulled' : 'Typed';
+  }
+  if (row.opening_override_justification) {
+    const by = row.opening_override_by ? names.get(row.opening_override_by) : null;
+    text += `; opening overridden by ${by || 'someone'}: ${row.opening_override_justification}`;
+  }
+  return text;
+}
+
+/**
+ * openingSourceText for many reco rows at once (the all-clients and
+ * per-client reports): reads the allowances the rows name and the staff
+ * names they need. Keyed by "client_id|period_month".
+ */
+export async function fetchOpeningSourceTexts(rows: OpeningSourceRow[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!rows.length) return out;
+  const allowanceIds = Array.from(new Set(rows.map((r) => r.opening_allowance_id).filter((x): x is string => !!x)));
+  let allowances: Pick<ManualSourceAllowance, 'id' | 'allowed_by' | 'reason' | 'revoked_at'>[] = [];
+  if (allowanceIds.length) {
+    const { data } = await supabase.from('manual_source_allowances').select('id, allowed_by, reason, revoked_at').in('id', allowanceIds);
+    allowances = (data ?? []) as typeof allowances;
+  }
+  const byId = new Map(allowances.map((a) => [a.id, a]));
+  const names = await staffNames([
+    ...rows.flatMap((r) => [r.opening_portal_pulled_by, r.opening_override_by]),
+    ...allowances.map((a) => a.allowed_by),
+  ]);
+  for (const r of rows) {
+    const key = `${r.client_id}|${r.period_month}`;
+    out.set(key, openingSourceText(r.period_month || '', r, r.opening_allowance_id ? byId.get(r.opening_allowance_id) : null, names));
+  }
+  return out;
+}
+
+type BookHeads = { cgst: number; sgst: number; igst: number };
+
+/** GST Receivable Reco: the books closing typed on the page differs from the one saved. */
+export const booksUnsaved = (typed: BookHeads, saved: BookHeads): boolean =>
+  typed.cgst !== saved.cgst || typed.sgst !== saved.sgst || typed.igst !== saved.igst;
+
+/**
+ * Said when Override, Upload or Not Applicable is pressed with a books
+ * closing typed but not saved: those write through their own doors and then
+ * reload the row, which would drop the typed figures (round 2 of the review).
+ */
+export const UNSAVED_BOOKS_MESSAGE = 'Save your changes first. The books closing you typed is not saved yet.';

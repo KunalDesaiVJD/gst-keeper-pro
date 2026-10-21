@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { allowManualSource, manualSourceLabel, revokeManualSource, type ManualSourceAllowance } from '@/lib/manualSource';
+import { allowManualSource, allowanceControlLabel, revokeManualSource, type ManualSourceAllowance } from '@/lib/manualSource';
 import { fmtDateTime } from '@/lib/recoSources';
 
 interface Props {
@@ -22,6 +22,8 @@ interface Props {
   what: string;
   /** The live (not revoked) allowance for this client, month and scope, if any. */
   allowance: ManualSourceAllowance | null;
+  /** The allowance the opening shown was entered under (opening_allowance_id), if any. */
+  openingAllowanceId?: string | null;
   /** First names by user id. */
   names: Map<string, string>;
   onChanged: () => void;
@@ -31,7 +33,7 @@ interface Props {
 // the portal pull cannot be done, or revokes it. Everyone else sees whether
 // one is open. The database checks who acts (manual_source_allow /
 // manual_source_revoke, migration 20261021120000).
-const ManualSourceAllowanceControl: React.FC<Props> = ({ clientId, clientName, periodMonth, scope, what, allowance, names, onChanged }) => {
+const ManualSourceAllowanceControl: React.FC<Props> = ({ clientId, clientName, periodMonth, scope, what, allowance, openingAllowanceId, names, onChanged }) => {
   const { user } = useAuth();
   const confirm = useConfirm();
   const isSuperadmin = user?.role === 'superadmin';
@@ -39,7 +41,7 @@ const ManualSourceAllowanceControl: React.FC<Props> = ({ clientId, clientName, p
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const label = allowance ? manualSourceLabel(names.get(allowance.allowed_by), allowance.reason) : '';
+  const label = allowance ? allowanceControlLabel(allowance, openingAllowanceId, names.get(allowance.allowed_by)) : '';
 
   const allow = async () => {
     if (!user?.id) return;
@@ -95,7 +97,7 @@ const ManualSourceAllowanceControl: React.FC<Props> = ({ clientId, clientName, p
       {allowance ? (
         <>
           <span className="text-[11px] text-muted-foreground" title={`Allowed ${fmtDateTime(allowance.allowed_at)}${allowance.used_at ? `, used ${fmtDateTime(allowance.used_at)}` : ', not used yet'}`}>
-            {label}{allowance.used_at ? '' : ' · not used yet'}
+            {label}
           </span>
           <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={revoke} disabled={busy}>
             <ShieldOff className="h-3 w-3" /> Revoke

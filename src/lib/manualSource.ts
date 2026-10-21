@@ -68,3 +68,23 @@ export async function staffNames(ids: (string | null | undefined)[]): Promise<Ma
 export function manualSourceLabel(allowedByName: string | null | undefined, reason: string | null | undefined): string {
   return `manual (allowed by ${allowedByName || 'the superadmin'}: ${(reason || '').trim() || 'no reason given'})`;
 }
+
+/**
+ * What the superadmin sees beside Allow / Revoke for a live allowance (round
+ * 2 of the review): the "manual (allowed by X: reason)" label only for the
+ * allowance the opening shown was entered under (openingAllowanceId). An
+ * unused one says so; a used one that the opening is not from (its data was
+ * cleared) says that, so a pulled or empty month never reads as manual.
+ */
+export function allowanceControlLabel(
+  a: Pick<ManualSourceAllowance, 'id' | 'reason' | 'used_at'>,
+  openingAllowanceId: string | null | undefined,
+  allowedByName: string | null | undefined,
+): string {
+  const who = allowedByName || 'the superadmin';
+  const why = (a.reason || '').trim() || 'no reason given';
+  if (!a.used_at) return `Manual entry allowed by ${who}: ${why} · not used yet`;
+  if (openingAllowanceId && a.id === openingAllowanceId) return manualSourceLabel(allowedByName, a.reason);
+  const used = new Date(a.used_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return `Manual entry used ${used} (allowed by ${who}: ${why}); the opening shown is not from it`;
+}

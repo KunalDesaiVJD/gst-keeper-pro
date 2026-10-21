@@ -184,13 +184,18 @@ BEGIN
   PERFORM t_eq(r.opening_cgst, 520::numeric, 'and brings the new figure');
   PERFORM t_eq(r.opening_portal_pulled_by, m, 'and names the new puller');
 
+  -- The pull closed the allowance the manual entry used: revoked by the
+  -- puller (round 2), so no live allowance is left over a pulled month.
+  SELECT to_jsonb(z) INTO a FROM public.manual_source_allowances z WHERE client_id = c1 AND period_month = '09/2026' AND scope = 'reco:suspended';
+  PERFORM t_eq(a->>'revoked_by', e::text, 'the pull closed the used allowance, as revoked by the puller');
+  PERFORM t_eq(a->>'used_by', e::text, 'and it still says who used it for the manual entry');
   -- Revoke: the superadmin's alone; a second revoke changes nothing.
-  SELECT to_jsonb(z) INTO a FROM public.manual_source_allowances z WHERE client_id = c1 AND scope = 'reco:suspended' AND revoked_at IS NULL;
+  a := to_jsonb(public.manual_source_allow(s, c1, '10/2026', 'reco:suspended', 'portal down for the October pull'));
   PERFORM t_raises(format($q$SELECT public.manual_source_revoke(%L, %L)$q$, e, a->>'id'), 'Only the superadmin', 'an employee cannot revoke');
   v := to_jsonb(public.manual_source_revoke(s, (a->>'id')::uuid));
   PERFORM t_eq(v->>'revoked_by', s::text, 'the revoke records who');
   PERFORM t_eq(to_jsonb(public.manual_source_revoke(s, (a->>'id')::uuid))->>'revoked_at', v->>'revoked_at', 'a second revoke changes nothing');
-  a := to_jsonb(public.manual_source_allow(s, c1, '09/2026', 'reco:suspended', 'portal locked the account again'));
+  a := to_jsonb(public.manual_source_allow(s, c1, '10/2026', 'reco:suspended', 'portal locked the account again'));
   PERFORM t_eq(a->>'revoked_at', NULL, 'a new allowance can follow a revoked one');
 
   -- Everything is in the log, with who and why.

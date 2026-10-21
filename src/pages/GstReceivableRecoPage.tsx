@@ -32,10 +32,11 @@ import ManualSourceAllowanceControl from '@/components/manualSource/ManualSource
 import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
 import { fetchManualSourceAllowances, liveAllowance, staffNames, type ManualSourceAllowance } from '@/lib/manualSource';
 import {
-  extensionCanPull, fetchRecoLog, fmtDateTime, needsExtensionMessage, openingManualState, pulledLabel, receivableSavePayload,
-  recordManualOpening, recordOverride, recoLogActionLabel, recoScope, type OpeningSource, type RecoLogEntry,
+  booksUnsaved, extensionCanPull, fetchRecoLog, fmtDateTime, needsExtensionMessage, openingManualState, openingSourceText, pulledLabel,
+  receivableSavePayload, recordManualOpening, recordOverride, recoLogActionLabel, recoScope, UNSAVED_BOOKS_MESSAGE,
+  type OpeningSource, type RecoLogEntry,
 } from '@/lib/recoSources';
-import { checkGstr3bPushGate, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
+import { checkGstr3bPushGate, headsTally, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
 
 const SCOPE = recoScope('receivable');
 
@@ -156,6 +157,9 @@ const GstReceivableRecoPage: React.FC = () => {
   const [booksClosingCgst, setBooksClosingCgst] = useState(0);
   const [booksClosingSgst, setBooksClosingSgst] = useState(0);
   const [booksClosingIgst, setBooksClosingIgst] = useState(0);
+  // The books closing as last saved (or loaded): typed figures that differ
+  // are not saved yet (booksDirty).
+  const [savedBooks, setSavedBooks] = useState({ cgst: 0, sgst: 0, igst: 0 });
 
   // Auto-fetched values (NOT persisted — computed live each render from
   // itc_summaries / gstr1_data so the view stays in sync with source tables)
@@ -270,6 +274,7 @@ const GstReceivableRecoPage: React.FC = () => {
         setBooksClosingCgst(Number(r.books_closing_cgst) || 0);
         setBooksClosingSgst(Number(r.books_closing_sgst) || 0);
         setBooksClosingIgst(Number(r.books_closing_igst) || 0);
+        setSavedBooks({ cgst: Number(r.books_closing_cgst) || 0, sgst: Number(r.books_closing_sgst) || 0, igst: Number(r.books_closing_igst) || 0 });
         // From the credit ledger (pulled, or an allowed manual entry): its
         // set-off debit, none seen being 0. Only a row not yet pulled shows
         // the GSTR-1 estimate (gstReceivableRecoCalc.ts, §13 of the 2B doc).
@@ -316,6 +321,7 @@ const GstReceivableRecoPage: React.FC = () => {
         setOpeningOverrideBy(null);
         setOpeningOverriderName(null);
         setBooksClosingCgst(0); setBooksClosingSgst(0); setBooksClosingIgst(0);
+        setSavedBooks({ cgst: 0, sgst: 0, igst: 0 });
         setUtilizedFromCsv(false);
         setDrcCgst(0); setDrcSgst(0); setDrcIgst(0);
         setOpeningPulledAt(null);
@@ -579,6 +585,10 @@ const GstReceivableRecoPage: React.FC = () => {
   const allowance = liveAllowance(allowances, SCOPE);
   const isPulled = openingSource === 'portal' && !!openingPulledAt;
   const canEnterManually = !!allowance && !allowance.used_at && !isPulled;
+  // Typed books closing not saved yet: Override, Upload and Not Applicable
+  // wait for Save (they reload the row), and the gate note says it has not
+  // checked these figures (round 2 of the review).
+  const booksDirty = isStaff && booksUnsaved({ cgst: booksClosingCgst, sgst: booksClosingSgst, igst: booksClosingIgst }, savedBooks);
   // The allowance this opening was entered under; a revoked one no longer counts.
   const { label: manualLabel, revoked: manualRevoked } = openingManualState(allowances, openingAllowanceId, names);
 
@@ -586,6 +596,7 @@ const GstReceivableRecoPage: React.FC = () => {
 
   const handleUploadClick = () => {
     if (!isStaff) return;
+    if (booksDirty) { toast.error(UNSAVED_BOOKS_MESSAGE); return; }
     fileInputRef.current?.click();
   };
 
@@ -683,6 +694,7 @@ const GstReceivableRecoPage: React.FC = () => {
 
   const handleNotApplicable = async () => {
     if (!isStaff || !selectedClientId || !selectedMonth) return;
+    if (booksDirty) { toast.error(UNSAVED_BOOKS_MESSAGE); return; }
     setIsSaving(true);
     try {
       if (!user?.id) { toast.error('Sign in again.'); return; }
@@ -706,6 +718,7 @@ const GstReceivableRecoPage: React.FC = () => {
 
   const handleOverrideSave = async (values: { cgst: number; sgst: number; igst: number; justification: string }) => {
     if (!canManualOverride() || !selectedClientId || !selectedMonth || !user?.id) return;
+    if (booksDirty) { toast.error(UNSAVED_BOOKS_MESSAGE); return; }
     setIsSaving(true);
     try {
       // Through reco_override_opening: the database checks who acts, keeps
@@ -755,6 +768,19 @@ const GstReceivableRecoPage: React.FC = () => {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // Where the opening came from, for the Excel export: pulled, manual
+  // (allowed by X: reason), overridden (round 2 of the review).
+  const exportOpeningSource = () => {
+    const exportNames = new Map(names);
+    if (openingPullerName) exportNames.set('puller', openingPullerName);
+    if (openingOverrideBy && openingOverriderName) exportNames.set(openingOverrideBy, openingOverriderName);
+    return openingSourceText(selectedMonth, {
+      opening_source: openingSource, opening_portal_pulled_at: openingPulledAt, opening_portal_pulled_by: 'puller',
+      opening_portal_empty: openingPortalEmpty, opening_allowance_id: openingAllowanceId,
+      opening_override_justification: openingOverrideJustification, opening_override_by: openingOverrideBy,
+    }, allowances.find((a) => a.id === openingAllowanceId) ?? null, exportNames);
   };
 
   // ─────────────────── Derived totals + formatting ────────────────────────
@@ -824,6 +850,8 @@ const GstReceivableRecoPage: React.FC = () => {
   const diffSgst = applyTolerance(portalClosingSgst - booksClosingSgst);
   const diffIgst = applyTolerance(portalClosingIgst - booksClosingIgst);
   const diffTotal = applyTolerance(portalClosingTotal - booksClosingTotal);
+  // Every head and the total, as the GSTR-3B push gate checks (round 2).
+  const diffTallies = headsTally({ cgst: diffCgst, sgst: diffSgst, igst: diffIgst, total: diffTotal });
 
   const renderBooksCell = (value: number, onChange: (val: number) => void) => {
     if (!isStaff) return <span className="block px-2 py-1.5 text-right tabular-nums">{formatNumber(value)}</span>;
@@ -935,6 +963,7 @@ const GstReceivableRecoPage: React.FC = () => {
                   portalClosingCgst, portalClosingSgst, portalClosingIgst,
                   booksClosingCgst, booksClosingSgst, booksClosingIgst,
                   diffCgst, diffSgst, diffIgst,
+                  openingSource: exportOpeningSource(),
                 });
                 toast.success('Excel exported successfully');
               }}>
@@ -1012,8 +1041,8 @@ const GstReceivableRecoPage: React.FC = () => {
             <KpiTile
               label="Difference"
               value={formatNumber(diffTotal)}
-              hint={diffTotal === 0 ? 'Tallies (within ₹10)' : 'Portal − books'}
-              tone={diffTotal === 0 ? 'ok' : 'error'}
+              hint={diffTallies ? 'Tallies (within ₹10 per head)' : diffTotal === 0 ? 'Heads differ: each must tally' : 'Portal − books'}
+              tone={diffTallies ? 'ok' : 'error'}
             />
           </div>
 
@@ -1123,15 +1152,15 @@ const GstReceivableRecoPage: React.FC = () => {
                               </>
                             )}
                             {canManualOverride() && (
-                              <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => setShowOverrideDialog(true)}
+                              <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => { if (booksDirty) { toast.error(UNSAVED_BOOKS_MESSAGE); return; } setShowOverrideDialog(true); }}
                                 disabled={!selectedClientId || isSaving || !(isPulled || manualLabel)}
                                 title={isPulled || manualLabel ? 'Override the pulled opening, with a reason' : 'Pull it from the portal first. An override corrects a pulled opening.'}>
                                 <Edit3 className="h-3 w-3" />
                                 Override
                               </Button>
                             )}
-                            {/* Not offered over a pulled month (a manual entry cannot replace it); an open one can still be revoked. */}
-                            {selectedClientId && (!isPulled || allowance) && (
+                            {/* Not offered over a pulled month (a manual entry cannot replace it; the pull closes an open one). */}
+                            {selectedClientId && !isPulled && (
                               <ManualSourceAllowanceControl
                                 clientId={selectedClientId}
                                 clientName={selectedClientData?.name}
@@ -1139,6 +1168,7 @@ const GstReceivableRecoPage: React.FC = () => {
                                 scope={SCOPE}
                                 what="GST Receivable Reco"
                                 allowance={allowance}
+                                openingAllowanceId={openingAllowanceId}
                                 names={names}
                                 onChanged={() => { fetchData(); checkGate(); }}
                               />
@@ -1236,12 +1266,12 @@ const GstReceivableRecoPage: React.FC = () => {
                   </tr>
 
                   {/* Difference */}
-                  <tr className={cn('font-semibold', diffTotal !== 0 ? 'bg-destructive/5' : 'bg-success/10')}>
+                  <tr className={cn('font-semibold', !diffTallies ? 'bg-destructive/5' : 'bg-success/10')}>
                     <td className={cn(WS_TD, 'border-b-0')}>
                       <span className="inline-flex items-center gap-2">
                         Difference
-                        <Badge variant={diffTotal === 0 ? 'success' : 'destructive'} className="text-[10px] font-medium">
-                          {diffTotal === 0 ? 'Tallies' : 'Differs'}
+                        <Badge variant={diffTallies ? 'success' : 'destructive'} className="text-[10px] font-medium">
+                          {diffTallies ? 'Tallies' : 'Differs'}
                         </Badge>
                       </span>
                     </td>
@@ -1259,7 +1289,7 @@ const GstReceivableRecoPage: React.FC = () => {
                 Not pulled yet: ITC utilised is an estimate from the GSTR-1. Pull from the portal to read the credit ledger.
               </Note>
             )}
-            <Gstr3bGateNote compact gate={gate} loading={gateLoading} onRecheck={checkGate} />
+            <Gstr3bGateNote compact gate={gate} loading={gateLoading} onRecheck={checkGate} stale={booksDirty} />
             <Note>
               Differences of ₹10 or less per head are treated as nil. The opening, ITC utilised and DRC-03 come only from
               the portal pull; the superadmin may allow a manual entry when a pull cannot be done.

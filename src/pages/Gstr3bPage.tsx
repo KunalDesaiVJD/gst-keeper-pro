@@ -52,7 +52,18 @@ interface Gstr3bPushVersion {
   filled_count: number | null;
   skipped: string[] | null;
   payload: unknown | null;
+  /** The database's own gate answer when the row was written (migration 20261021120000). */
+  gate?: { ok?: boolean; reasons?: { message?: string }[] } | null;
 }
+
+/**
+ * A push the portal took although the reco check did not pass when it was
+ * recorded (an extension older than 0.16.0, or the recos changed during the
+ * push): the database keeps the row but does not mark the return Pushed.
+ */
+const pushedWithoutGate = (v: Pick<Gstr3bPushVersion, 'status' | 'gate'>) => v.status === 'ok' && !!v.gate && v.gate.ok === false;
+const gateReasonsOf = (v: Pick<Gstr3bPushVersion, 'gate'>) =>
+  (v.gate?.reasons ?? []).map((r) => r?.message).filter(Boolean).join(' ');
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const toShort = (mmYyyy: string) => {
@@ -778,6 +789,11 @@ const Gstr3bPage: React.FC = () => {
                   {versions[0].status === 'ok' ? 'succeeded' : versions[0].status === 'partial' ? 'partly filled' : 'failed'}
                 </Badge>
               )}
+              {pushedWithoutGate(versions[0]) && (
+                <Badge variant="destructive" className="text-[10px] font-medium" title={gateReasonsOf(versions[0])}>
+                  without a passing reco check, not marked Pushed
+                </Badge>
+              )}
             </p>
           )}
         </div>
@@ -1092,6 +1108,11 @@ const Gstr3bPage: React.FC = () => {
                           {v.status === 'ok' ? `Filled ${v.filled_count ?? 0}` : v.status === 'partial' ? `Partly filled ${v.filled_count ?? 0}` : v.status || '—'}
                         </Badge>
                         {severity === 'critical' && <AlertTriangle className="inline-block h-3.5 w-3.5 ml-1 text-destructive" />}
+                        {pushedWithoutGate(v) && (
+                          <Badge variant="destructive" className="ml-1 text-[10px] font-medium" title={gateReasonsOf(v)}>
+                            Reco check failed: not marked Pushed
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs max-w-md">{v.summary || '—'}</TableCell>
                       <TableCell>

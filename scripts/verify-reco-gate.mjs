@@ -19,7 +19,15 @@
 //    and Not Applicable never show over a pulled opening; a revoked
 //    allowance gives no "manual (allowed ...)" label; the reco pages show only
 //    the latest gate answer; "ready" says what it rests on (pulled, manual,
-//    waived, no pull needed before Jun 2026).
+//    waived, no pull needed before Jun 2026);
+//  - round 2: every head must tally, not only the total (headsTally, the
+//    pages' Tallies / Differs); a superadmin sees "manual (allowed by ...)"
+//    only for the allowance the opening was entered under; GST Receivable
+//    Reco refuses Override / Upload / Not Applicable while a typed books
+//    closing is unsaved, and its gate note says it has not checked the typed
+//    figures; before Jun 2026 the parts line names the source plainly; the
+//    Excel exports and the credit-ledger reports say where each opening came
+//    from; Push History flags a push recorded without a passing gate.
 //
 //   node scripts/verify-reco-gate.mjs
 //
@@ -67,6 +75,10 @@ fs.writeFileSync(entry, [
   "export * from '@/lib/gstr3bPushGate';",
   "export * from '@/lib/recoSources';",
   "export { computeGstReceivableRecoDiff, utilisedFromLedger } from '@/lib/gstReceivableRecoCalc';",
+  "export { allowanceControlLabel, manualSourceLabel } from '@/lib/manualSource';",
+  "export { suspendedRecoSheetRows } from '@/utils/suspendedRecoExcelExport';",
+  "export { gstReceivableRecoSheetRows } from '@/utils/gstReceivableRecoExcelExport';",
+  "export { buildCreditClosingAllClients, buildCreditClosingPerClient } from '@/utils/allClientsReports';",
 ].join('\n'));
 const out = path.join(tmp, 'bundle.mjs');
 await build({
@@ -283,6 +295,112 @@ check('utilised: pulled with no set-off debit, the books at the opening tally', 
 globalThis.__db.gst_receivable_reco[0].opening_source = 'manual';
 d = await lib.computeGstReceivableRecoDiff(CLIENT, P);
 check('utilised: the same row not pulled shows the GSTR-1 estimate (₹180 used)', d && d.total === -180, JSON.stringify(d));
+
+// ── Round 2 of the review ──────────────────────────────────────────────────
+// 1. Heads that offset do not tally.
+check('r2 heads: IGST 1,000 against CGST 500 + SGST 500 does not tally', lib.headsTally({ igst: 1000, cgst: -500, sgst: -500, total: 0 }) === false);
+check('r2 heads: every head and the total at 0 tallies', lib.headsTally({ igst: 0, cgst: 0, sgst: 0, total: 0 }) === true && lib.headsTally(null) === true);
+check('r2 heads: "ready" does not call offsetting heads "no difference" when waived',
+  ready({ status: 'pulled', required_pull: true, waived: true, difference: { igst: 1000, cgst: -500, sgst: -500, total: 0 } }, { required: false })
+    .startsWith('Suspended Reco is pulled; its difference is waived (Builder, no ITC).'));
+const suspPage = fs.readFileSync(path.join(root, 'src/pages/SuspendedRecoPage.tsx'), 'utf8');
+const recvPage2 = fs.readFileSync(path.join(root, 'src/pages/GstReceivableRecoPage.tsx'), 'utf8');
+check('r2 heads: both reco pages say Tallies / Reconciled only when every head tallies',
+  /const diffTallies = headsTally\(\{ cgst: diffCgst, sgst: diffSgst, igst: diffIgst, total: diffTotal \}\);/.test(suspPage)
+  && /const diffTallies = headsTally\(\{ cgst: diffCgst, sgst: diffSgst, igst: diffIgst, total: diffTotal \}\);/.test(recvPage2)
+  && /\{diffTallies \? 'Tallies' : 'Differs'\}/.test(recvPage2) && /hint=\{diffTallies \? 'Reconciled'/.test(suspPage)
+  && !/diffTotal === 0 \? 'Tallies'/.test(recvPage2));
+
+// 6. The manual label belongs to the allowance the opening was entered under.
+const al = { id: 'a1', reason: 'portal password wrong', used_at: '2026-10-21T06:00:00Z' };
+check('r2 allowance: the opening entered under it reads manual (allowed by ...)',
+  lib.allowanceControlLabel(al, 'a1', 'Sam') === 'manual (allowed by Sam: portal password wrong)');
+check('r2 allowance: a used one the opening is not from does not read manual',
+  /^Manual entry used 21 Oct 2026 \(allowed by Sam: portal password wrong\); the opening shown is not from it$/.test(lib.allowanceControlLabel(al, null, 'Sam'))
+  && !/^manual \(/.test(lib.allowanceControlLabel(al, 'other', 'Sam')));
+check('r2 allowance: an unused one says so', lib.allowanceControlLabel({ ...al, used_at: null }, null, 'Sam') === 'Manual entry allowed by Sam: portal password wrong · not used yet');
+const ctrl = fs.readFileSync(path.join(root, 'src/components/manualSource/ManualSourceAllowanceControl.tsx'), 'utf8');
+check('r2 allowance: the control labels through allowanceControlLabel with the opening\'s allowance',
+  /allowanceControlLabel\(allowance, openingAllowanceId, names\.get\(allowance\.allowed_by\)\)/.test(ctrl) && !/manualSourceLabel\(names/.test(ctrl));
+check('r2 allowance: neither reco page shows the control over a pulled month, and both pass the opening\'s allowance',
+  [suspPage, recvPage2].every((t) => /\{selectedClientId && !isPulled && \(\s*<ManualSourceAllowanceControl/.test(t)
+    && /openingAllowanceId=\{openingAllowanceId\}/.test(t) && !/\(!isPulled \|\| allowance\)/.test(t)));
+
+// 7. Typed books closing not saved: Override, Upload, Not Applicable refuse.
+check('r2 books: typed and saved compared head by head',
+  lib.booksUnsaved({ cgst: 777, sgst: 0, igst: 0 }, { cgst: 0, sgst: 0, igst: 0 }) === true
+  && lib.booksUnsaved({ cgst: 5, sgst: 6, igst: 7 }, { cgst: 5, sgst: 6, igst: 7 }) === false);
+const recvBody = (start) => { const i = recvPage2.indexOf(start); return i < 0 ? '' : recvPage2.slice(i, i + 400); };
+check('r2 books: Override (button and save), Upload and Not Applicable stop while the books closing is unsaved',
+  /if \(booksDirty\) \{ toast\.error\(UNSAVED_BOOKS_MESSAGE\); return; \}/.test(recvBody('const handleUploadClick'))
+  && /if \(booksDirty\) \{ toast\.error\(UNSAVED_BOOKS_MESSAGE\); return; \}/.test(recvBody('const handleNotApplicable'))
+  && /if \(booksDirty\) \{ toast\.error\(UNSAVED_BOOKS_MESSAGE\); return; \}/.test(recvBody('const handleOverrideSave'))
+  && /onClick=\{\(\) => \{ if \(booksDirty\) \{ toast\.error\(UNSAVED_BOOKS_MESSAGE\); return; \} setShowOverrideDialog\(true\); \}\}/.test(recvPage2));
+check('r2 books: the saved books closing is what fetchData loaded', (recvPage2.match(/setSavedBooks\(/g) || []).length === 2
+  && /const booksDirty = isStaff && booksUnsaved\(\{ cgst: booksClosingCgst, sgst: booksClosingSgst, igst: booksClosingIgst \}, savedBooks\);/.test(recvPage2));
+
+// 8. The gate note does not say "ready" for typed figures it has not checked.
+check('r2 stale: the receivable page passes the unsaved state to its gate note', /<Gstr3bGateNote compact gate=\{gate\} loading=\{gateLoading\} onRecheck=\{checkGate\} stale=\{booksDirty\} \/>/.test(recvPage2));
+check('r2 stale: the note is not ready while stale, and says to save',
+  /const ok = !!gate\?\.ok && !loading && !stale;/.test(note) && /Based on the saved figures\. Save to check again\./.test(note)
+  && /GSTR-3B push: not checked yet for the figures typed here\./.test(note));
+
+// 9. Before Jun 2026 the parts line names the source plainly.
+check('r2 pre-June: a typed opening is not called "not pulled"', lib.gatePartLabel({ status: 'not_pulled', source: 'manual', required_pull: false }) === 'Opening typed');
+check('r2 pre-June: a CSV opening is not called "not allowed"', lib.gatePartLabel({ status: 'not_pulled', source: 'csv', required_pull: false }) === 'Opening from a CSV upload');
+check('r2 pre-June: no row, and a pull still reads pulled',
+  lib.gatePartLabel({ status: 'missing', required_pull: false }) === 'No row (opening 0)'
+  && lib.gatePartLabel({ status: 'pulled', required_pull: false, pulled_at: '2026-05-21T05:00:00Z' }).startsWith('Pulled from portal'));
+check('r2 pre-June: from Jun 2026 an entry by hand is still "not allowed"', lib.gatePartLabel({ status: 'not_pulled', source: 'csv', required_pull: true }) === 'Not pulled (entered by hand, not allowed)');
+
+// 10. Exports and reports say where each opening came from.
+const names2 = new Map([['sam', 'Sam'], ['emil', 'Emil'], ['gita', 'Gita']]);
+const manualRow = { opening_source: 'not_applicable', opening_allowance_id: 'a1' };
+const srcText = lib.openingSourceText('09/2026', manualRow, { id: 'a1', allowed_by: 'sam', reason: 'portal password wrong', revoked_at: null }, names2);
+check('r2 source: an allowed manual entry reads manual (allowed by X: reason)', srcText === 'Not applicable, manual (allowed by Sam: portal password wrong)', srcText);
+check('r2 source: pulled, with an override',
+  /^Pulled from portal 21 Oct 2026 by Emil; opening overridden by Gita: Reclaim posted late$/.test(lib.openingSourceText('09/2026',
+    { opening_source: 'portal', opening_portal_pulled_at: '2026-10-21T05:00:00Z', opening_portal_pulled_by: 'emil', opening_override_justification: 'Reclaim posted late', opening_override_by: 'gita' }, null, names2)));
+check('r2 source: not pulled, and no row', lib.openingSourceText('09/2026', { opening_source: 'manual' }, null, names2) === 'Not pulled'
+  && lib.openingSourceText('09/2026', null, null, names2) === 'No row (not pulled)');
+const sRows = lib.suspendedRecoSheetRows({ clientName: 'P2', clientGstin: 'G', month: '09/2026', openingCgst: 0, openingSgst: 0, openingIgst: 0,
+  portalCgst: 0, portalSgst: 0, portalIgst: 0, booksCgst: 0, booksSgst: 0, booksIgst: 0, diffCgst: 0, diffSgst: 0, diffIgst: 0, openingSource: srcText });
+check('r2 source: the Suspended Reco export has the source under the opening row',
+  sRows[4][0] === 'OPENING BALANCE AS PER PORTAL' && sRows[5][0] === `Opening source: ${srcText}`, JSON.stringify(sRows.slice(4, 6)));
+const gRows = lib.gstReceivableRecoSheetRows({ clientName: 'P2', clientGstin: 'G', month: '09/2026', openingCgst: 0, openingSgst: 0, openingIgst: 0,
+  availedCgst: 0, availedSgst: 0, availedIgst: 0, utilizedCgst: 0, utilizedSgst: 0, utilizedIgst: 0, drcCgst: 0, drcSgst: 0, drcIgst: 0,
+  portalClosingCgst: 0, portalClosingSgst: 0, portalClosingIgst: 0, booksClosingCgst: 0, booksClosingSgst: 0, booksClosingIgst: 0,
+  diffCgst: 0, diffSgst: 0, diffIgst: 0, openingSource: srcText });
+check('r2 source: the GST Receivable Reco export too', gRows[4][0] === 'OPENING BALANCE AS PER PORTAL' && gRows[5][0] === `Opening source: ${srcText}`, JSON.stringify(gRows.slice(4, 6)));
+check('r2 source: both pages pass it', [suspPage, recvPage2].every((t) => /openingSource: exportOpeningSource\(\),/.test(t)));
+globalThis.__db = {
+  clients: [{ id: 'p1', name: 'P1 PULLED', gstin: 'G1' }, { id: 'p2', name: 'P2 MANUAL', gstin: 'G2' }, { id: 'p3', name: 'P3 NONE', gstin: 'G3' }],
+  gst_receivable_reco: [
+    { client_id: 'p1', period_month: '09/2026', opening_source: 'portal', opening_portal_pulled_at: '2026-10-21T05:00:00Z', opening_portal_pulled_by: 'emil' },
+    { client_id: 'p2', period_month: '09/2026', opening_source: 'not_applicable', opening_allowance_id: 'a1' },
+  ],
+  manual_source_allowances: [{ id: 'a1', allowed_by: 'sam', reason: 'portal password wrong', revoked_at: null }],
+  profiles: [{ user_id: 'sam', first_name: 'Sam' }, { user_id: 'emil', first_name: 'Emil' }],
+  itc_summaries: [], gstr1_data: [],
+};
+const credAll = await lib.buildCreditClosingAllClients('09/2026');
+const srcCol = credAll.headers.indexOf('Opening Source');
+check('r2 source: the all-clients credit-ledger report has an Opening Source column',
+  srcCol === credAll.headers.length - 1 && credAll.rows.every((r) => r.length === credAll.headers.length), JSON.stringify(credAll.headers));
+check('r2 source: pulled, manual and no row read as such',
+  /^Pulled from portal 21 Oct 2026 by Emil$/.test(credAll.rows[0][srcCol])
+  && credAll.rows[1][srcCol] === 'Not applicable, manual (allowed by Sam: portal password wrong)'
+  && credAll.rows[2][srcCol] === 'No row (not pulled)', JSON.stringify(credAll.rows.map((r) => r[srcCol])));
+const credOne = await lib.buildCreditClosingPerClient('p2', '09/2026');
+const m9 = credOne.rows.find((r) => r[1] === 'Sep 2026');
+check('r2 source: the per-client months report too', credOne.headers.at(-1) === 'Opening Source' && m9 && m9.at(-1) === 'Not applicable, manual (allowed by Sam: portal password wrong)'
+  && credOne.rows.at(-1)[1] === 'TOTAL' && credOne.rows.at(-1).length === credOne.headers.length, JSON.stringify(m9));
+globalThis.__db = {};
+
+// 3. Push History flags a push the database recorded without a passing gate.
+check('r2 push record: Push History flags an ok push whose recorded gate failed',
+  /const pushedWithoutGate = \(v: Pick<Gstr3bPushVersion, 'status' \| 'gate'>\) => v\.status === 'ok' && !!v\.gate && v\.gate\.ok === false;/.test(page)
+  && (page.match(/pushedWithoutGate\((v|versions\[0\])\) && \(/g) || []).length === 2 && /Reco check failed: not marked Pushed/.test(page));
 
 fs.rmSync(tmp, { recursive: true, force: true });
 const failed = results.filter((r) => !r.ok);

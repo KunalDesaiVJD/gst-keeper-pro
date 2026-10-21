@@ -10,8 +10,10 @@
 --      reco_record_pull, which needs a staff member (the app user who pressed
 --      Pull), stamps who and when (server time) and logs the extension
 --      version. It keeps an override made against the same portal figure and
---      clears one made against another, clears the CSV stamps, and uses up an
---      open manual allowance for the month. A month whose statement has no
+--      clears one made against another (an override made before this
+--      migration has no base: it is kept and its base set from the pull),
+--      clears the CSV stamps, and closes the month's live manual allowance
+--      (revoked, with the puller as revoked_by). A month whose statement has no
 --      balance row on the portal is saved as 0 and marked so
 --      (opening_portal_empty). A reco row never moves to another client or
 --      month. Typed books figures (books_closing_*) and the Suspended Reco's
@@ -46,10 +48,16 @@
 -- (0.16.0) before it opens the portal. It passes only when, for that client
 -- and month:
 --  * Suspended Reco is pulled (or allowed manual) and its difference is 0
---    after the ₹10 tolerance per head (Builder + NO_ITC: the difference is
---    waived, as before; the pull is still needed);
+--    under every head and in total, after the ₹10 tolerance per head
+--    (Builder + NO_ITC: the difference is waived, as before; the pull is
+--    still needed);
 --  * GST Receivable Reco (from 06/2026) is pulled (or allowed manual) and its
---    difference is 0 after the ₹10 tolerance.
+--    difference is 0 under every head and in total, after the ₹10 tolerance.
+-- Heads that offset (IGST on the portal, CGST + SGST in the books) do not
+-- pass. Every Push History row (gstr3b_push_versions) gets the database's own
+-- gate answer when it is written, in place of what was sent; an 'ok' push
+-- whose gate does not pass (an extension older than 0.16.0, a forged row) is
+-- recorded but does not mark the return Pushed.
 -- Nil returns are included. A missing row blocks. Any error blocks ("fails
 -- closed"); the app treats an error calling it the same way. Before 06/2026
 -- it checks only the Suspended Reco difference, with no tolerance, as the
@@ -69,6 +77,15 @@
 --
 -- Re-runnable. Changes no existing row (adds columns with defaults).
 --
+-- Round 2 of the review (this file is still not applied live): the gate
+-- checks each head, not only the total; an override made before this
+-- migration survives a re-pull of the same figure; a recorded push carries
+-- the database's gate answer and only a passing one marks Pushed
+-- (gstr3b_push_versions_gate, gstr3b_push_versions_record_push); the guards
+-- check every insert (no "the row exists" shortcut, which an insert racing
+-- Clear Data slipped past); a pull closes a live allowance as revoked, not as
+-- used. Tests: supabase/tests/reco_gate/test_40_round2.sql and race.sh.
+--
 -- ===========================================================================
 -- Live apply (project gcquafqxbykxkbexcdpy ONLY; never SUPABASE_PROJECT_REF)
 -- ===========================================================================
@@ -79,12 +96,19 @@
 --      SELECT to_regclass('public.manual_source_allowances');                        -- NULL, or the filing
 --        -- branch's table if 20261021110000 went first: then also
 --        -- SELECT count(*) FROM manual_source_allowances;  (note it)
---      SELECT opening_source, count(*) FROM suspended_reco GROUP BY 1 ORDER BY 1;    -- 21 Oct 11:18 UTC: csv 8,
+--      SELECT opening_source, count(*) FROM suspended_reco GROUP BY 1 ORDER BY 1;    -- 21 Oct 13:10 UTC: csv 8,
 --        -- manual 354, not_applicable 2, portal 126 (490 rows)
 --      SELECT opening_source, count(*) FROM gst_receivable_reco GROUP BY 1 ORDER BY 1; -- csv 5, manual 3, portal 132 (140)
 --      SELECT count(*) FROM suspended_reco WHERE opening_override_justification IS NOT NULL;      -- 8
 --      SELECT count(*) FROM gst_receivable_reco WHERE opening_override_justification IS NOT NULL; -- 0
---      SELECT count(*) FROM gstr3b_push_versions;                                    -- 272
+--      SELECT count(*) FROM gstr3b_push_versions;                                    -- 273 (21 Oct 13:10 UTC; 259 'ok')
+--      SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.gstr3b_push_versions'::regclass
+--        AND NOT tgisinternal ORDER BY 1;     -- gstr3b_push_versions_assign_trg, trg_gstr3b_push_versions_record_push
+--        (plus the change log's trigger if 20261021130000 went first)
+--      SELECT to_regprocedure('public.filing_record_push(uuid,text,text,uuid,timestamptz)') IS NOT NULL;  -- true
+--      SELECT c.name, s.period_month FROM suspended_reco s JOIN clients c ON c.id = s.client_id
+--        WHERE s.opening_override_justification IS NOT NULL ORDER BY 2, 1;           -- the 8 overrides made
+--        -- before this migration (no base); 09/2026: PRIDE DRUGS & PHARMA PRIVATE LIMITED. Note them.
 --      SELECT count(*) FROM suspended_reco WHERE opening_source = 'portal' AND opening_portal_pulled_at IS NULL;  -- 0
 --      (the same on gst_receivable_reco: 0; a pull row without a time would read as not pulled)
 --      SELECT count(DISTINCT client_id) FROM (SELECT client_id FROM suspended_reco
@@ -98,7 +122,11 @@
 --    a. The counts in step 1 are unchanged; reco_opening_log has 0 rows;
 --       manual_source_allowances has 0 rows (or the number noted in step 1).
 --    b. SELECT count(*) FROM suspended_reco WHERE opening_portal_empty;           -- 0 (and on gst_receivable_reco)
---       SELECT count(*) FROM suspended_reco WHERE opening_override_base IS NOT NULL;  -- 0
+--       SELECT count(*) FROM suspended_reco WHERE opening_override_base IS NOT NULL;  -- 0 (the 8 legacy overrides
+--         -- get a base on their first pull, which keeps them: "kept (no base was recorded; ...)")
+--       SELECT count(*) FROM gstr3b_push_versions WHERE gate IS NOT NULL;         -- 0 (old rows are not touched)
+--       SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.gstr3b_push_versions'::regclass AND NOT tgisinternal;
+--         -- now also trg_gstr3b_push_versions_gate
 --    c. SELECT has_function_privilege('anon', p, 'execute') FROM unnest(ARRAY[
 --         'public.gstr3b_push_gate(uuid,text)', 'public.manual_source_allow(uuid,uuid,text,text,text)',
 --         'public.manual_source_revoke(uuid,uuid)', 'public.reco_record_pull(uuid,text,uuid,text,jsonb,jsonb,jsonb,text,boolean)',
@@ -112,7 +140,9 @@
 --         SELECT g->>'ok', count(*) FROM (SELECT public.gstr3b_push_gate(f.client_id, f.period_month) g
 --           FROM filing_status f WHERE f.return_type::text IN ('GSTR-3B','GSTR-3B (Q)')
 --           AND f.period_month = '09/2026') x GROUP BY 1;
---       On a copy of the live rows of 21 Oct 11:17 UTC the wider base (a 3B row,
+--       On a copy of the live rows of 21 Oct 13:10 UTC (round 2; round 1's gate
+--       gives the same verdicts and reasons on it: no pulled row has heads
+--       that offset) the wider base (a 3B row,
 --       a reco row or a push: 86 clients) gave 38 pass, 48 blocked: 42 with
 --       no row for one or both recos (not pulled), 4 entered by hand and not
 --       allowed (TAMNNA INFRASTRUCTURE-GUJARAT, SORATH BUILDERS, K V INFOCOM,
@@ -127,6 +157,11 @@
 --           -> 4xx "From Jun 2026 the opening balance comes only from the portal pull..."
 --         PATCH the same row {"period_month":"08/2026"}
 --           -> 4xx "A reco row stays with its client and month..."
+--         POST /rest/v1/suspended_reco {"client_id":"<a client with a 09/2026 row>","period_month":"09/2026",
+--           "opening_source":"portal","opening_portal_pulled_at":"2026-10-21T00:00:00Z"}
+--           -> 4xx "From Jun 2026 the opening balance comes only from the portal pull..." (not a duplicate key)
+--         PATCH /rest/v1/gstr3b_push_versions?id=eq.<any existing id> {"gate":{"ok":true}}
+--           -> 4xx "A recorded push keeps its client, month and gate check."
 --         POST /rest/v1/rpc/reco_record_pull {"p_actor_id":null,"p_reco":"suspended",
 --           "p_client_id":"<id>","p_period":"09/2026","p_opening":{"igst":0,"cgst":0,"sgst":0}}
 --           -> 4xx "A pull is saved only for a staff member..."
@@ -140,7 +175,13 @@
 --    one), and the app asks for 0.16.0 before a GSTR-3B push
 --    (MIN_EXTENSION_VERSION). The popup's full sync no longer saves the recos
 --    (it has no app user): pulls are made from the reco pages. No Edge
---    Function changes.
+--    Function changes. Until every Chrome runs 0.16.0, an older copy can
+--    still push without asking the gate (the app refuses to start it, but a
+--    page left open from before the deploy can): such a push is recorded with
+--    the database's own gate answer, shows in Push History as "Reco check
+--    failed: not marked Pushed" when the gate does not pass, and does not mark
+--    the return Pushed. After the release, check:
+--      SELECT count(*) FROM gstr3b_push_versions WHERE status = 'ok' AND gate->>'ok' = 'false';  -- 0 expected
 -- 5. After the release, pull one Nil client whose reversal ledger is empty
 --    (PROMED ENTERPRISES LLP or UNITED DEVELOPERS-NO ITC, 09/2026) and check
 --    Suspended Reco shows "Pulled from portal ..., no balance on the portal".
@@ -149,8 +190,10 @@
 --    content.js looks for (ledgerSaysNoRecords): report it.
 -- Undo: DROP TRIGGER trg_suspended_reco_source_guard ON public.suspended_reco;
 --       DROP TRIGGER trg_gst_receivable_reco_source_guard ON public.gst_receivable_reco;
---       then re-run 20261020150000 for the old override guard. The new
---       columns, tables and functions can stay.
+--       DROP TRIGGER trg_gstr3b_push_versions_gate ON public.gstr3b_push_versions;
+--       then re-run 20261020150000 for the old override guard, and section 3
+--       of 20261009200000 for the old gstr3b_push_versions_record_push. The
+--       new columns, tables and functions can stay.
 
 BEGIN;
 
@@ -631,7 +674,6 @@ DECLARE
   v_key integer := public.reco_period_key(NEW.period_month);
   v_new jsonb;
   v_old jsonb;
-  v_exists boolean;
   k text;
   v_fields text[] := ARRAY['opening_cgst', 'opening_sgst', 'opening_igst',
                            'opening_source', 'opening_csv_period_month', 'opening_csv_uploaded_at', 'opening_csv_uploaded_by',
@@ -653,12 +695,12 @@ BEGIN
   END IF;
   v_new := to_jsonb(NEW);
   IF TG_OP = 'INSERT' THEN
-    -- An upsert of an existing row fires this first; its UPDATE half decides.
-    EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I WHERE client_id = $1 AND period_month = $2)', TG_TABLE_NAME)
-      INTO v_exists USING NEW.client_id, NEW.period_month;
-    IF v_exists THEN
-      RETURN NEW;
-    END IF;
+    -- Every insert is checked, an upsert of an existing row included (its
+    -- UPDATE half is then checked too). The app's Saves carry no portal-side
+    -- figure, so they pass with the column defaults. Round 2 of the review:
+    -- an "a row exists, let the UPDATE decide" shortcut let an insert through
+    -- unchecked when the row was being deleted by a transaction not yet
+    -- committed (Clear Data): the insert then went in as a plain insert.
     IF NEW.opening_source IS DISTINCT FROM 'manual'
        OR NEW.opening_csv_period_month IS NOT NULL OR NEW.opening_csv_uploaded_at IS NOT NULL
        OR NEW.opening_csv_uploaded_by IS NOT NULL OR NEW.opening_portal_pulled_at IS NOT NULL
@@ -709,21 +751,15 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-DECLARE
-  v_exists boolean;
 BEGIN
   IF coalesce(current_setting('app.reco_write', true), '') IN ('pull', 'manual', 'override') THEN
     RETURN NEW;
   END IF;
   IF TG_OP = 'INSERT' THEN
+    -- Every insert, an upsert of an existing row included (no "the row
+    -- exists" shortcut: round 2 of the review, as in reco_source_guard).
     IF NEW.opening_override_justification IS NULL AND NEW.opening_override_at IS NULL
        AND NEW.opening_override_by IS NULL AND NEW.opening_override_base IS NULL THEN
-      RETURN NEW;
-    END IF;
-    -- An upsert of an existing row fires this first; its UPDATE half decides.
-    EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I WHERE client_id = $1 AND period_month = $2)', TG_TABLE_NAME)
-      INTO v_exists USING NEW.client_id, NEW.period_month;
-    IF v_exists THEN
       RETURN NEW;
     END IF;
   ELSIF NEW.opening_override_justification IS NOT DISTINCT FROM OLD.opening_override_justification
@@ -782,9 +818,11 @@ REVOKE ALL ON FUNCTION public.reco_door(text, uuid, text, text) FROM PUBLIC, ano
 -- a pull nobody can be named for is refused (the popup's full sync no longer
 -- saves the recos). p_no_rows: the month's statement loaded with no balance
 -- row (nothing on the portal), saved as 0 and marked so. Clears the CSV
--- stamps and the allowance link; uses up a live, unused manual entry
--- allowance for the month (no longer needed); keeps an override made
--- against the same portal figure, clears one made against another. The
+-- stamps and the allowance link; closes the month's live manual entry
+-- allowance, used or not (revoked by the puller: no longer needed); keeps
+-- an override made against the same portal figure, clears one made against
+-- another, and keeps one with no recorded base (made before this
+-- migration), taking the pulled figure as its base. The
 -- log row names who, the extension version and what happened to an
 -- override or allowance.
 DROP FUNCTION IF EXISTS public.reco_record_pull(uuid, text, uuid, text, jsonb, jsonb, jsonb, text);
@@ -806,9 +844,12 @@ DECLARE
   v_base jsonb;
   v_had_override boolean := false;
   v_keep boolean := false;
+  v_unknown_base boolean := false;
+  v_pulled jsonb;
   v_name text;
   v_notes text[] := ARRAY[]::text[];
   v_closed uuid;
+  v_closed_used boolean;
   v_id uuid;
   oi numeric; oc numeric; os numeric;
 BEGIN
@@ -829,6 +870,7 @@ BEGIN
     RAISE EXCEPTION 'The pull sent no opening balance.' USING ERRCODE = 'invalid_parameter_value';
   END IF;
   oi := public.reco_head(v_open, 'igst'); oc := public.reco_head(v_open, 'cgst'); os := public.reco_head(v_open, 'sgst');
+  v_pulled := jsonb_build_object('igst', coalesce(oi, 0), 'cgst', coalesce(oc, 0), 'sgst', coalesce(os, 0));
 
   -- The row as it stands, locked: is there an override, and was it made
   -- against the figure the portal shows now?
@@ -840,22 +882,44 @@ BEGIN
   IF v_old IS NOT NULL AND v_old->>'opening_override_justification' IS NOT NULL THEN
     v_had_override := true;
     v_base := v_old->'opening_override_base';
-    v_keep := jsonb_typeof(v_base) = 'object'
-      AND public.reco_num(v_base->'igst') = oi AND public.reco_num(v_base->'cgst') = oc AND public.reco_num(v_base->'sgst') = os;
     SELECT first_name INTO v_name FROM public.profiles WHERE user_id = NULLIF(v_old->>'opening_override_by', '')::uuid;
-    v_notes := v_notes || (CASE WHEN v_keep
-      THEN 'Override by ' || coalesce(v_name, 'unknown') || ' kept: the portal figure is the one it was made against.'
-      ELSE 'Override by ' || coalesce(v_name, 'unknown') || ' cleared: the portal figure is not the one it was made against.' END);
+    IF jsonb_typeof(v_base) IS DISTINCT FROM 'object' THEN
+      -- An override made before this migration has no base: the figure it
+      -- was made against is unknown, not different. Keep it and take this
+      -- pull's figure as its base, so the next pull compares against it.
+      v_keep := true;
+      v_unknown_base := true;
+      v_notes := v_notes || ('Override by ' || coalesce(v_name, 'unknown')
+        || ' kept (no base was recorded; base set from this pull).');
+    ELSE
+      v_keep := public.reco_num(v_base->'igst') = oi AND public.reco_num(v_base->'cgst') = oc AND public.reco_num(v_base->'sgst') = os;
+      v_notes := v_notes || (CASE WHEN v_keep
+        THEN 'Override by ' || coalesce(v_name, 'unknown') || ' kept: the portal figure is the one it was made against.'
+        ELSE 'Override by ' || coalesce(v_name, 'unknown') || ' cleared: the portal figure is not the one it was made against.' END);
+    END IF;
   END IF;
   IF v_empty THEN
     v_notes := v_notes || 'No balance row on the portal for the month; saved as 0.'::text;
   END IF;
-  -- An open manual entry allowance is no longer needed: the pull uses it up.
-  IF EXISTS (SELECT 1 FROM public.manual_source_allowances
-              WHERE client_id = p_client_id AND period_month = p_period AND scope = v_scope
-                AND revoked_at IS NULL AND used_at IS NULL) THEN
-    v_closed := (public.manual_source_take(p_actor_id, p_client_id, p_period, v_scope)).id;
-    v_notes := v_notes || 'The manual entry allowed for the month was closed by this pull.'::text;
+  -- A live manual entry allowance for the month (used or not) is closed by
+  -- the pull: revoked, with the puller as revoked_by, so the shared table
+  -- tells "closed by a pull" (revoked, never used, or used before the pull)
+  -- from "used for a manual entry" (used, not revoked). The pulled opening
+  -- is not manual, and nothing shows it as manual any more. Written here
+  -- with app.manual_source_write, the switch the allowance guard reads; the
+  -- shared functions are left as they are (manual_source_revoke is the
+  -- superadmin's).
+  SELECT id, used_at IS NOT NULL INTO v_closed, v_closed_used
+    FROM public.manual_source_allowances
+   WHERE client_id = p_client_id AND period_month = p_period AND scope = v_scope AND revoked_at IS NULL
+   FOR UPDATE;
+  IF v_closed IS NOT NULL THEN
+    PERFORM set_config('app.manual_source_write', 'on', true);
+    UPDATE public.manual_source_allowances SET revoked_at = v_now, revoked_by = p_actor_id WHERE id = v_closed;
+    PERFORM set_config('app.manual_source_write', '', true);
+    v_notes := v_notes || (CASE WHEN v_closed_used
+      THEN 'The manual entry allowed for the month (used) was closed by this pull.'
+      ELSE 'The manual entry allowed for the month (not used) was closed by this pull.' END);
   END IF;
 
   PERFORM public.reco_door('pull', p_actor_id, NULLIF(array_to_string(v_notes, ' '), ''), p_ext_version);
@@ -877,7 +941,7 @@ BEGIN
       opening_override_justification = CASE WHEN v_keep THEN r.opening_override_justification END,
       opening_override_at = CASE WHEN v_keep THEN r.opening_override_at END,
       opening_override_by = CASE WHEN v_keep THEN r.opening_override_by END,
-      opening_override_base = CASE WHEN v_keep THEN r.opening_override_base END,
+      opening_override_base = CASE WHEN v_unknown_base THEN v_pulled WHEN v_keep THEN r.opening_override_base END,
       opening_allowance_id = NULL, updated_by = p_actor_id, updated_at = v_now
     RETURNING r.id INTO v_id;
   ELSE
@@ -901,7 +965,7 @@ BEGIN
       opening_override_justification = CASE WHEN v_keep THEN r.opening_override_justification END,
       opening_override_at = CASE WHEN v_keep THEN r.opening_override_at END,
       opening_override_by = CASE WHEN v_keep THEN r.opening_override_by END,
-      opening_override_base = CASE WHEN v_keep THEN r.opening_override_base END,
+      opening_override_base = CASE WHEN v_unknown_base THEN v_pulled WHEN v_keep THEN r.opening_override_base END,
       opening_allowance_id = NULL,
       utilized_igst = EXCLUDED.utilized_igst, utilized_cgst = EXCLUDED.utilized_cgst, utilized_sgst = EXCLUDED.utilized_sgst,
       drc_igst = EXCLUDED.drc_igst, drc_cgst = EXCLUDED.drc_cgst, drc_sgst = EXCLUDED.drc_sgst,
@@ -1079,9 +1143,16 @@ BEGIN
         USING ERRCODE = 'insufficient_privilege';
     END IF;
   END IF;
+  -- The base is the figure the first override replaced. A re-override keeps
+  -- it. An override made before this migration has none (SQL NULL, read
+  -- here as JSON null): the replaced figure is unknown, so the base stays
+  -- NULL (never JSON null) and the next pull keeps the override and sets the
+  -- base from what it pulls (reco_record_pull). The current opening is not
+  -- used for it: on an overridden row that is the earlier override's figure.
   v_base := CASE
     WHEN v_old IS NULL THEN NULL
-    WHEN v_old->>'opening_override_justification' IS NOT NULL THEN v_old->'opening_override_base'
+    WHEN v_old->>'opening_override_justification' IS NOT NULL THEN
+      CASE WHEN jsonb_typeof(v_old->'opening_override_base') = 'object' THEN v_old->'opening_override_base' END
     ELSE jsonb_build_object('igst', coalesce(public.reco_num(v_old->'opening_igst'), 0),
                             'cgst', coalesce(public.reco_num(v_old->'opening_cgst'), 0),
                             'sgst', coalesce(public.reco_num(v_old->'opening_sgst'), 0)) END;
@@ -1472,6 +1543,42 @@ BEGIN
 END;
 $$;
 
+-- A reco's difference as a gate reason, or NULL when every head and the
+-- total are 0 (after the ₹10 tolerance per head, from 06/2026). Round 2 of
+-- the review: the total alone let heads that offset pass (IGST ₹1,000 on the
+-- portal against CGST ₹500 + SGST ₹500 in the books: the credit sits under
+-- the wrong head), so each head is checked too.
+CREATE OR REPLACE FUNCTION public.reco_diff_message(p_name text, p_label text, p_diff jsonb)
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+  v_total numeric := coalesce((p_diff->>'total')::numeric, 0);
+  v_heads text[] := ARRAY[]::text[];
+  v_abs numeric := 0;
+  h text;
+  v numeric;
+BEGIN
+  FOREACH h IN ARRAY ARRAY['igst', 'cgst', 'sgst'] LOOP
+    v := coalesce((p_diff->>h)::numeric, 0);
+    IF v <> 0 THEN
+      v_heads := v_heads || (upper(h) || ' ₹' || to_char(v, 'FM999999999990.00'));
+      v_abs := v_abs + abs(v);
+    END IF;
+  END LOOP;
+  IF v_total = 0 AND cardinality(v_heads) = 0 THEN
+    RETURN NULL;
+  END IF;
+  -- Heads that do not offset: the total says it all, as before.
+  IF cardinality(v_heads) = 0 OR v_abs = abs(v_total) THEN
+    RETURN p_name || ' for ' || p_label || ' has a difference of ₹' || to_char(v_total, 'FM999999999990.00') || '.';
+  END IF;
+  RETURN p_name || ' for ' || p_label || ' has a difference under ' || array_to_string(v_heads, ', ')
+    || ' (total ₹' || to_char(v_total, 'FM999999999990.00') || '). Each head must tally, not only the total.';
+END;
+$$;
+
 -- The GSTR-3B push gate. Never raises: any error is a "could not run"
 -- reason with ok false.
 CREATE OR REPLACE FUNCTION public.gstr3b_push_gate(p_client_id uuid, p_period text)
@@ -1490,6 +1597,7 @@ DECLARE
   s_src jsonb; g_src jsonb;
   s_diff jsonb; g_diff jsonb;
   s_status text; g_status text;
+  s_msg text; g_msg text;
   v_suspended jsonb; v_receivable jsonb;
 BEGIN
   BEGIN
@@ -1523,9 +1631,9 @@ BEGIN
           ELSE 'Suspended Reco for ' || v_label || ' is not pulled from the portal.' END);
     ELSE
       s_diff := public.suspended_reco_difference(p_client_id, p_period);
-      IF (s_diff->>'total')::numeric <> 0 AND NOT v_noitc THEN
-        v_reasons := v_reasons || jsonb_build_object('code', 'suspended_difference', 'message',
-          'Suspended Reco for ' || v_label || ' has a difference of ₹' || to_char((s_diff->>'total')::numeric, 'FM999999999990.00') || '.');
+      s_msg := public.reco_diff_message('Suspended Reco', v_label, s_diff);
+      IF s_msg IS NOT NULL AND NOT v_noitc THEN
+        v_reasons := v_reasons || jsonb_build_object('code', 'suspended_difference', 'message', s_msg);
       END IF;
     END IF;
     v_suspended := s_src || jsonb_build_object('required_pull', v_new, 'difference', s_diff, 'waived', v_noitc);
@@ -1549,9 +1657,9 @@ BEGIN
             ELSE 'GST Receivable Reco for ' || v_label || ' is not pulled from the portal.' END);
       ELSE
         g_diff := public.gst_receivable_reco_difference(p_client_id, p_period);
-        IF (g_diff->>'total')::numeric <> 0 THEN
-          v_reasons := v_reasons || jsonb_build_object('code', 'receivable_difference', 'message',
-            'GST Receivable Reco for ' || v_label || ' has a difference of ₹' || to_char((g_diff->>'total')::numeric, 'FM999999999990.00') || '.');
+        g_msg := public.reco_diff_message('GST Receivable Reco', v_label, g_diff);
+        IF g_msg IS NOT NULL THEN
+          v_reasons := v_reasons || jsonb_build_object('code', 'receivable_difference', 'message', g_msg);
         END IF;
       END IF;
       v_receivable := g_src || jsonb_build_object('required', true, 'difference', g_diff);
@@ -1576,5 +1684,63 @@ $$;
 GRANT EXECUTE ON FUNCTION public.gstr3b_push_gate(uuid, text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.suspended_reco_difference(uuid, text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.gst_receivable_reco_difference(uuid, text) TO anon, authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- 7. A recorded GSTR-3B push carries the database's own gate answer
+-- ---------------------------------------------------------------------------
+-- Round 2 of the review: the gate column was filled by whoever wrote the row
+-- (anyone with the anon key, or nothing at all from an extension older than
+-- 0.16.0, which pushes without asking), and every 'ok' row marked the return
+-- Pushed (20261009200000). Now the database asks gstr3b_push_gate itself as
+-- the row is written and stores that answer in gate, in place of what was
+-- sent (whether the sender said it passed is kept as gate.sent_ok). An 'ok'
+-- row whose gate does not pass is still recorded, because the portal has the
+-- draft and it must stay traceable: Push History shows it as "pushed without
+-- a passing reco check", and it does not mark the return Pushed. The gate,
+-- the client and the month of a recorded push never change afterwards.
+CREATE OR REPLACE FUNCTION public.gstr3b_push_versions_gate()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.gate IS DISTINCT FROM OLD.gate OR NEW.client_id IS DISTINCT FROM OLD.client_id
+       OR NEW.period_month IS DISTINCT FROM OLD.period_month THEN
+      RAISE EXCEPTION 'A recorded push keeps its client, month and gate check.' USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN NEW;
+  END IF;
+  NEW.gate := public.gstr3b_push_gate(NEW.client_id, NEW.period_month)
+    || jsonb_build_object('checked_by', 'database',
+         'sent_ok', CASE WHEN jsonb_typeof(NEW.gate) = 'object' THEN NEW.gate->'ok' END);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_gstr3b_push_versions_gate ON public.gstr3b_push_versions;
+CREATE TRIGGER trg_gstr3b_push_versions_gate
+  BEFORE INSERT OR UPDATE ON public.gstr3b_push_versions
+  FOR EACH ROW EXECUTE FUNCTION public.gstr3b_push_versions_gate();
+
+-- As 20261009200000, but only a push whose gate passed (the database's own
+-- answer above) marks the return Pushed.
+CREATE OR REPLACE FUNCTION public.gstr3b_push_versions_record_push()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.status IS DISTINCT FROM 'ok' THEN RETURN NULL; END IF;
+  IF NEW.period_month !~ '^(0[1-9]|1[0-2])/[0-9]{4}$' THEN RETURN NULL; END IF;
+  IF (NEW.gate->>'ok') IS DISTINCT FROM 'true' THEN RETURN NULL; END IF;
+
+  PERFORM public.filing_record_push(
+    NEW.client_id, 'GSTR-3B', NEW.period_month, NEW.actor_id, NEW.action_at);
+  RETURN NULL;
+END;
+$$;
 
 COMMIT;
