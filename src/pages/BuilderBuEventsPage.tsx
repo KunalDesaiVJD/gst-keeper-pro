@@ -36,9 +36,11 @@ import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import { postBuEvent, prepareBuEvent, unpostBuEvent, type PreparedEvent } from '@/lib/builderBuPosting';
 import {
-  isAgreementCleared, isBuAgreementConfirmationBlocked, overrideAgreementValue, requestAgreementConfirmations,
-  type AgreementConfirmStatus,
+  fetchAgreementConfirmations, fetchConfirmRequests, isAgreementCleared, isBuAgreementConfirmationBlocked,
+  overrideAgreementValue,
+  type AgreementConfirmRequest, type AgreementConfirmStatus,
 } from '@/lib/builderAgreementConfirmData';
+import SendAgreementConfirmDialog, { type ConfirmCandidate } from '@/components/builder/SendAgreementConfirmDialog';
 
 interface ProjectRow {
   id: string; client_id: string; name: string; is_metro: boolean; grouping_label: string;
@@ -69,6 +71,17 @@ interface EventUnitRow {
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+const shortDate = (iso: string | null | undefined) => (iso
+  ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
+const shortWhen = (iso: string | null | undefined) => (iso
+  ? new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
+  : '');
+/** "Confirmed by Rajesh Shah (rajesh@client.com) on 21 Oct 2026". */
+const answeredBy = (c: AgreementConfirmStatus | undefined): string | null => {
+  if (!c?.respondedByName || (c.status !== 'CONFIRMED' && c.status !== 'DISPUTED')) return null;
+  return `${c.status === 'CONFIRMED' ? 'Confirmed' : 'Disputed'} by ${c.respondedByName}`
+    + `${c.respondedByEmail ? ` (${c.respondedByEmail})` : ''}${c.respondedAt ? ` on ${shortDate(c.respondedAt)}` : ''}`;
+};
 const currentPeriod = () => {
   const d = new Date();
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
@@ -97,9 +110,10 @@ const BuilderBuEventsPage: React.FC = () => {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventUnits, setEventUnits] = useState<Record<string, EventUnitRow[]>>({});
   const [confirmations, setConfirmations] = useState<Record<string, AgreementConfirmStatus[]>>({});
+  const [requests, setRequests] = useState<Record<string, AgreementConfirmRequest[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isSendingConfirm, setIsSendingConfirm] = useState<string | null>(null);
+  const [sendFor, setSendFor] = useState<EventRow | null>(null);
 
   const [dialog, setDialog] = useState(false);
   const [form, setForm] = useState(emptyEvent);
@@ -149,18 +163,13 @@ const BuilderBuEventsPage: React.FC = () => {
         ((eu || []) as unknown as EventUnitRow[]).forEach((r) => { (emap[r.bu_event_id] ||= []).push(r); });
         setEventUnits(emap);
 
-        const { data: cf } = await supabase
-          .from('builder_bu_agreement_confirmations').select('bu_event_id, unit_id, status, dispute_notes')
-          .in('bu_event_id', eventRows.map((e) => e.id));
-        type CfRow = { bu_event_id: string; unit_id: string; status: string; dispute_notes: string | null };
-        const cmap: Record<string, AgreementConfirmStatus[]> = {};
-        ((cf || []) as unknown as CfRow[]).forEach((r) => {
-          (cmap[r.bu_event_id] ||= []).push({
-            unitId: r.unit_id, status: r.status as AgreementConfirmStatus['status'], disputeNotes: r.dispute_notes,
-          });
-        });
+        const ids = eventRows.map((e) => e.id);
+        const [cmap, reqs] = await Promise.all([fetchAgreementConfirmations(ids), fetchConfirmRequests(ids)]);
         setConfirmations(cmap);
-      } else { setEventUnits({}); setConfirmations({}); }
+        const rmap: Record<string, AgreementConfirmRequest[]> = {};
+        reqs.forEach((r) => { (rmap[r.buEventId] ||= []).push(r); });
+        setRequests(rmap);
+      } else { setEventUnits({}); setConfirmations({}); setRequests({}); }
     } catch (e) {
       toast.error(`Could not load: ${(e as Error).message}`);
     } finally {
@@ -312,33 +321,23 @@ const BuilderBuEventsPage: React.FC = () => {
 
   /** Every taxable unit's agreement value must be client-confirmed before an
    *  event can post — a client who later changes it without telling the firm
-   *  can never leave the firm exposed. */
-  const handleSendConfirmations = async (ev: EventRow) => {
-    if (!project) return;
-    const rows = (eventUnits[ev.id] || []).filter((r) => r.booked_at_cutoff);
-    if (!rows.length) return;
-    setIsSendingConfirm(ev.id);
-    try {
-      const res = await requestAgreementConfirmations({
-        buEventId: ev.id,
-        clientId: project.client_id,
-        projectName: project.name,
-        buDate: ev.bu_date,
-        staffName: user?.firstName ?? null,
-        userId: user?.id ?? null,
-        units: rows.map((r) => ({
-          unitId: r.unit_id, unitNo: units.find((u) => u.id === r.unit_id)?.unit_no || '',
-          agreementValue: r.agreement_value, cutOffSource: r.cut_off_source,
-        })),
+   *  can never leave the firm exposed. The units still outstanding (pending,
+   *  disputed or never sent) go in one e-mail to whoever staff type in. */
+  const confirmCandidates = (ev: EventRow): ConfirmCandidate[] => {
+    const cf = new Map((confirmations[ev.id] || []).map((c) => [c.unitId, c]));
+    const order = new Map(units.map((u, i) => [u.id, i]));
+    return (eventUnits[ev.id] || [])
+      .filter((r) => r.booked_at_cutoff && !isAgreementCleared(cf.get(r.unit_id)?.status))
+      .sort((a, b) => (order.get(a.unit_id) ?? 0) - (order.get(b.unit_id) ?? 0))
+      .map((r) => {
+        const c = cf.get(r.unit_id);
+        return {
+          unitId: r.unit_id, unitNo: units.find((x) => x.id === r.unit_id)?.unit_no || '',
+          agreementValue: Number(r.agreement_value) || 0,
+          cutOffSource: r.cut_off_source, cutOffDate: r.cut_off_date,
+          status: c?.status || 'NOT_SENT', disputeNotes: c?.disputeNotes ?? null, respondedByName: c?.respondedByName ?? null,
+        };
       });
-      if (res.ok) toast.success(`Confirmation request sent for ${res.sent} unit(s)`);
-      else toast.error(res.reason || 'Could not send confirmation requests');
-      await load();
-    } catch (e) {
-      toast.error(`Could not send: ${(e as Error).message}`);
-    } finally {
-      setIsSendingConfirm(null);
-    }
   };
 
   /**
@@ -563,6 +562,17 @@ const BuilderBuEventsPage: React.FC = () => {
           const cfByUnit = new Map(cfRows.map((c) => [c.unitId, c]));
           const cfConfirmed = taxable.filter((r) => isAgreementCleared(cfByUnit.get(r.unit_id)?.status)).length;
           const cfOutstanding = taxable.length - cfConfirmed;
+          const lastReq = (requests[ev.id] || [])[0] || null;
+          // Who answered on the page, grouped: "Confirmed by X (x@…) on 21 Oct 2026: A-101, A-102".
+          const answerMap = new Map<string, { label: string; disputed: boolean; units: string[] }>();
+          rows.forEach((r) => {
+            const label = answeredBy(cfByUnit.get(r.unit_id));
+            if (!label) return;
+            const entry = answerMap.get(label) || { label, disputed: label.startsWith('Disputed'), units: [] };
+            entry.units.push(units.find((u) => u.id === r.unit_id)?.unit_no || '');
+            answerMap.set(label, entry);
+          });
+          const answers = [...answerMap.values()];
 
           return (
             <SectionCard
@@ -593,15 +603,13 @@ const BuilderBuEventsPage: React.FC = () => {
                   <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setOpenEvent(isOpen ? null : ev.id)}>
                     {isOpen ? 'Hide working' : 'Show working'}
                   </Button>
-                  {canPost && ev.status !== 'POSTED' && taxable.length > 0 && (
+                  {canPost && ev.status !== 'POSTED' && cfOutstanding > 0 && (
                     <Button
                       variant="outline" size="sm" className={WS_BTN}
-                      onClick={() => void handleSendConfirmations(ev)}
-                      disabled={isSendingConfirm === ev.id}
+                      onClick={() => setSendFor(ev)}
+                      title="Type the To and CC addresses, choose the units, send one e-mail"
                     >
-                      {isSendingConfirm === ev.id
-                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        : <Send className="h-3.5 w-3.5" />}
+                      <Send className="h-3.5 w-3.5" />
                       {cfRows.length ? 'Re-send confirmations' : 'Send confirmation requests'}
                     </Button>
                   )}
@@ -646,6 +654,28 @@ const BuilderBuEventsPage: React.FC = () => {
                 <KpiTile label="CGST + SGST" value={formatINR(tot.cgst + tot.sgst)} />
                 <KpiTile label="Interest u/s 50" value={tot.interest > 0 ? formatINR(tot.interest) : '—'} tone={tot.interest > 0 ? 'warn' : 'neutral'} />
               </div>
+
+              {(lastReq || answers.length > 0) && (
+                <div className="space-y-0.5 text-xs text-muted-foreground">
+                  {lastReq && (
+                    <p>
+                      Last request {shortWhen(lastReq.sentAt || lastReq.createdAt)} for {lastReq.unitIds.length} unit
+                      {lastReq.unitIds.length === 1 ? '' : 's'} to {lastReq.to.join(', ')}
+                      {lastReq.cc.length > 0 && <> · CC {lastReq.cc.join(', ')}</>}
+                      {lastReq.mailStatus && (
+                        <span className={cn(lastReq.mailStatus === 'failed' && 'text-destructive')}>
+                          {' '}· e-mail {lastReq.mailStatus}{lastReq.mailStatus === 'failed' && lastReq.mailError ? `: ${lastReq.mailError}` : ''}
+                        </span>
+                      )}
+                    </p>
+                  )}
+                  {answers.map((a) => (
+                    <p key={a.label} className={cn(a.disputed && 'text-destructive')}>
+                      {a.label}: {a.units.join(', ')}
+                    </p>
+                  ))}
+                </div>
+              )}
 
               {ev.status === 'POSTED' && (
                 <Note tone="warn">
@@ -713,6 +743,17 @@ const BuilderBuEventsPage: React.FC = () => {
                                   <Badge variant={variant} className="text-[10px] font-medium">
                                     {status === 'NOT_SENT' ? 'Not sent' : status === 'OVERRIDDEN' ? 'Accepted by firm' : status}
                                   </Badge>
+                                  {answeredBy(cf) && (
+                                    <span className="mt-0.5 block text-[11px] text-muted-foreground">{answeredBy(cf)}</span>
+                                  )}
+                                  {status === 'DISPUTED' && cf?.disputeNotes && (
+                                    <span className="mt-0.5 block text-[11px] text-muted-foreground" title={cf.disputeNotes}>
+                                      {cf.disputeNotes}
+                                    </span>
+                                  )}
+                                  {status === 'PENDING' && cf?.sentAt && (
+                                    <span className="mt-0.5 block text-[11px] text-muted-foreground">Asked {shortDate(cf.sentAt)}</span>
+                                  )}
                                   {status === 'OVERRIDDEN' && cf?.overrideReason && (
                                     <span className="mt-0.5 block text-[11px] text-muted-foreground" title={cf.overrideReason}>
                                       {cf.overrideReason}
@@ -726,11 +767,6 @@ const BuilderBuEventsPage: React.FC = () => {
                                     >
                                       Accept without confirmation
                                     </button>
-                                  )}
-                                  {status === 'DISPUTED' && cf?.disputeNotes && (
-                                    <span className="mt-0.5 block text-[11px] text-muted-foreground" title={cf.disputeNotes}>
-                                      {cf.disputeNotes}
-                                    </span>
                                   )}
                                 </>
                               );
@@ -774,6 +810,21 @@ const BuilderBuEventsPage: React.FC = () => {
           );
         })
       )}
+
+      <SendAgreementConfirmDialog
+        open={!!sendFor}
+        onOpenChange={(v) => { if (!v) setSendFor(null); }}
+        clientId={project.client_id}
+        projectName={project.name}
+        event={sendFor ? {
+          id: sendFor.id,
+          buDate: sendFor.bu_date,
+          dastavej: (eventUnits[sendFor.id] || []).length === 1 && eventUnits[sendFor.id][0].cut_off_source === 'DASTAVEJ',
+        } : null}
+        candidates={sendFor ? confirmCandidates(sendFor) : []}
+        lastRequest={sendFor ? (requests[sendFor.id] || [])[0] || null : null}
+        onSent={() => void load()}
+      />
 
       {/* ── New event dialog ─────────────────────────────────────────────── */}
       <Dialog open={dialog} onOpenChange={setDialog}>

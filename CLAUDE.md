@@ -61,6 +61,7 @@ unavailable on invoiced amounts, the BU cut-off deducts value *taxed* rather tha
 value *received*, and the 1%/5% cap on FSI is summed per unit rather than
 blended. Changing one of these without reading why it is that way will produce
 wrong tax, not just a failing test.
+BU agreement value confirmation: one e-mail per send to typed To/CC addresses, one link listing the outstanding units, anyone who got it may answer (name and e-mail recorded per unit); a new request replaces the earlier link for its units; the posting gate still reads `builder_bu_agreement_confirmations` (`20261021140000`, tests in `supabase/tests/bu_confirm/`, §6 of the positions doc).
 
 ## Import 2B → 2B Reconciliation → Suspended Reco → GSTR-3B
 

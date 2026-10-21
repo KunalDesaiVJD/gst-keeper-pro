@@ -189,6 +189,45 @@ The reason is kept on the unit's confirmation row
 (`builder_bu_agreement_override`, migration `20261015100000`). A client's own
 confirmation is never replaced.
 
+**Who is asked, and who may answer (firm decision, 21/10/2026).** "BU
+confirmation request can be sent to multiple emails in CC if needed & anyone
+can provide confirmation for the outstanding figures & the email can be typed
+directly on the button pressed."
+
+- "Send confirmation requests" opens a pop-up. Staff type the To addresses
+  (filled from the client master, or from the last request, and editable) and
+  any CC addresses. Sending works when the client master has no e-mail.
+- The pop-up lists the outstanding units (pending, disputed or never sent)
+  with their agreement values. Staff may untick any. Confirmed and accepted
+  units are never asked again.
+- One e-mail per send, not one per unit, with one link
+  (`builder_bu_confirm_requests`). The link's page lists every unit in it. The
+  reader may confirm all at once, or confirm or dispute each unit. A dispute
+  needs a note.
+- Anyone who got the e-mail, in To or CC, may answer. The page asks their name
+  and e-mail (both required) and keeps them, with the time, on each unit they
+  answer (`responded_by_name`, `responded_by_email`, `responded_at`). The BU
+  Events page shows "Confirmed by <name> (<email>) on <date>" per unit and on
+  the event.
+- Only an open unit takes an answer. A confirmed unit stays confirmed: the
+  next reader sees who confirmed it and cannot dispute it there (a client's own
+  confirmation is never replaced). A disputed unit waits for staff, who correct
+  the working and send a new request for it.
+- A new request for a unit replaces the earlier one for that unit. The earlier
+  link then shows the unit as "replaced by a newer request" and takes no
+  answer for it. Per-unit links e-mailed before this change keep working until
+  a new request asks about their unit.
+- The posting gate is unchanged. The per-unit rows in
+  `builder_bu_agreement_confirmations` stay the record it reads; CONFIRMED or
+  OVERRIDDEN clears a unit.
+
+*Migration `20261021140000_bu_confirm_cc.sql` (send, lookup and answer
+functions; template `builder_bu_agreement_confirm_request`, editable under
+Reminders, Templates, Builder); tests `supabase/tests/bu_confirm/`;
+`src/lib/builderAgreementConfirmData.ts`,
+`src/components/builder/SendAgreementConfirmDialog.tsx`,
+`src/pages/AgreementConfirmPage.tsx`.*
+
 *At posting time:*
 - The posted figures must equal the confirmed or accepted ones. If a unit's
   agreement value or differential moved since the event was prepared, posting

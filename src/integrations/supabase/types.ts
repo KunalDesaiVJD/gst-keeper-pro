@@ -2270,7 +2270,10 @@ export type Database = {
           override_reason: string | null
           overridden_at: string | null
           overridden_by: string | null
+          request_id: string | null
           responded_at: string | null
+          responded_by_email: string | null
+          responded_by_name: string | null
           response_ip: string | null
           sent_at: string | null
           status: string
@@ -2290,7 +2293,10 @@ export type Database = {
           override_reason?: string | null
           overridden_at?: string | null
           overridden_by?: string | null
+          request_id?: string | null
           responded_at?: string | null
+          responded_by_email?: string | null
+          responded_by_name?: string | null
           response_ip?: string | null
           sent_at?: string | null
           status?: string
@@ -2310,7 +2316,10 @@ export type Database = {
           override_reason?: string | null
           overridden_at?: string | null
           overridden_by?: string | null
+          request_id?: string | null
           responded_at?: string | null
+          responded_by_email?: string | null
+          responded_by_name?: string | null
           response_ip?: string | null
           sent_at?: string | null
           status?: string
@@ -2341,6 +2350,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "builder_bu_agreement_confirmations_request_id_fkey"
+            columns: ["request_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_confirm_requests"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "builder_bu_agreement_confirmations_unit_id_fkey"
             columns: ["unit_id"]
             isOneToOne: false
@@ -2359,6 +2375,70 @@ export type Database = {
             columns: ["unit_id"]
             isOneToOne: false
             referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_bu_confirm_requests: {
+        Row: {
+          bu_event_id: string
+          cc_emails: string[]
+          client_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          outbox_id: string | null
+          sent_at: string | null
+          to_emails: string[]
+          token: string
+          unit_ids: string[]
+        }
+        Insert: {
+          bu_event_id: string
+          cc_emails?: string[]
+          client_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          outbox_id?: string | null
+          sent_at?: string | null
+          to_emails: string[]
+          token?: string
+          unit_ids: string[]
+        }
+        Update: {
+          bu_event_id?: string
+          cc_emails?: string[]
+          client_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          outbox_id?: string | null
+          sent_at?: string | null
+          to_emails?: string[]
+          token?: string
+          unit_ids?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_bu_confirm_requests_bu_event_id_fkey"
+            columns: ["bu_event_id"]
+            isOneToOne: false
+            referencedRelation: "builder_bu_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_confirm_requests_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_bu_confirm_requests_outbox_id_fkey"
+            columns: ["outbox_id"]
+            isOneToOne: false
+            referencedRelation: "email_outbox"
             referencedColumns: ["id"]
           },
         ]
@@ -11657,6 +11737,28 @@ export type Database = {
       builder_bu_agreement_confirm: {
         Args: { _action: string; _notes: string; _token: string }
         Returns: boolean
+      }
+      builder_bu_confirm_lookup: {
+        Args: { _token: string }
+        Returns: Json
+      }
+      builder_bu_confirm_request_send: {
+        Args: {
+          p_actor_id: string
+          p_bu_event_id: string
+          p_cc: string[]
+          p_link_base: string
+          p_render_vars: Json
+          p_subject: string
+          p_body: string
+          p_to: string[]
+          p_unit_ids: string[]
+        }
+        Returns: Json
+      }
+      builder_bu_confirm_respond: {
+        Args: { _answers: Json; _email: string; _name: string; _token: string }
+        Returns: Json
       }
       builder_bu_agreement_override: {
         Args: { p_actor_id: string; p_bu_event_id: string; p_reason: string; p_unit_id: string }
