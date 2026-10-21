@@ -108,9 +108,10 @@
 -- Live apply (project gcquafqxbykxkbexcdpy ONLY; never SUPABASE_PROJECT_REF)
 -- ===========================================================================
 -- Merged release (controls-integration): live order 20261021160000, 100000, 110000,
--- this file, 150000. Step 4 ships ONE extension, 0.17.0, which carries this file's
--- 0.16.0, the filing branch's 0.15.0 and the change log's headers (the popup shows
--- 0.17.0; MIN_EXTENSION_VERSION stays 0.16.0).
+-- this file, 150000, each applied in turn with no app deploy in between. Step 4 is done
+-- once, after 20261021150000: ONE app deploy and ONE extension, 0.17.0, which carries
+-- this file's 0.16.0, the filing branch's 0.15.0 and the change log's headers (the popup
+-- shows 0.17.0; MIN_EXTENSION_VERSION stays 0.16.0).
 -- 1. Dry checks (SELECT only, management API read_only), note the numbers:
 --      SELECT to_regprocedure('public.staff_level_of(uuid)') IS NOT NULL;            -- true
 --      SELECT to_regprocedure('public.opening_override_guard()') IS NOT NULL;        -- true
@@ -144,11 +145,34 @@
 --      (the same on gst_receivable_reco: 0; a pull row without a time would read as not pulled)
 --      SELECT count(DISTINCT client_id) FROM (SELECT client_id FROM suspended_reco
 --        UNION SELECT client_id FROM gst_receivable_reco) u;                         -- 73 (of 127 clients)
+--      GST Receivable Reco rows whose figures move at the app deploy (the deliberate change
+--      of docs/2B_RECONCILIATION_FLOW.md §14: a pulled or allowed row with no ITC utilised
+--      read, utilized_* NULL, as extension 0.14.0 writes a pull that saw no set-off debit,
+--      takes 0 from the credit ledger instead of the GSTR-1 estimate):
+--      SELECT period_month, count(*) FROM gst_receivable_reco
+--       WHERE opening_source <> 'manual' AND utilized_cgst IS NULL AND utilized_sgst IS NULL
+--         AND utilized_igst IS NULL
+--       GROUP BY 1 ORDER BY 1;
+--        -- note them (on a copy of the live rows, 34 such rows with the previous month's
+--        -- GSTR-1 data present, 32 of whose difference changed, e.g. 06/2026 ₹18,125.14 ->
+--        -- ₹19,925.14). From 06/2026 their ITC utilised reads 0 and the difference and the
+--        -- gate change with it. Tell the staff at the release; for a 09/2026 GSTR-3B still to
+--        -- be pushed, re-pull its GST Receivable Reco with 0.17.0 (which writes the utilised
+--        -- figures it read, 0 included) before relying on the gate.
+--      Quiet time: no long query on suspended_reco, gst_receivable_reco or
+--      gstr3b_push_versions right now (expect no rows):
+--      SELECT pid, now() - xact_start AS running, left(query, 80) FROM pg_stat_activity
+--       WHERE state <> 'idle' AND xact_start < now() - interval '30 seconds';
 --    Ask staff to finish any Override in an open reco page: from the apply on,
 --    an override is saved only by the new app (reco_override_opening).
 -- 2. Apply this file once (it has its own BEGIN / COMMIT; safe to apply again).
 --    With the filing branch's 20261021110000: either order works (the shared
---    block is identical); apply both before the app goes out.
+--    block is identical); apply both before the app goes out. It sets
+--    lock_timeout = 5 s: adding columns takes an exclusive lock on
+--    suspended_reco, gst_receivable_reco and gstr3b_push_versions, held to
+--    COMMIT, and behind a long query that would queue every app read of them.
+--    On "canceling statement due to lock timeout" nothing was changed (one
+--    transaction): wait a minute and apply it again.
 -- 3. After checks:
 --    a. The counts in step 1 are unchanged; reco_opening_log has 0 rows;
 --       manual_source_allowances has 0 rows (or the number noted in step 1).
@@ -208,12 +232,12 @@
 --           -> 4xx "GSTR-3B is marked Pushed only by a push whose reconciliation check passes. ..."
 --           and SELECT status FROM filing_status WHERE client_id = '<it>' AND period_month = '10/2026'
 --           is what it was before.
--- 4. Release in this order, the same hour: this migration (and the filing
---    branch's), the app (Vercel), then extension 0.16.0 in every office
---    Chrome: copy extension/ over the extension folder on every PC that pulls
---    or pushes (the firm's Chrome with "Run scheduled syncs in this Chrome",
---    the office agent PC, staff PCs), chrome://extensions -> Reload, check the
---    popup shows 0.16.0. Until it is loaded a pull from an older extension is
+-- 4. Release in this order, the same hour, once 20261021150000 is applied
+--    (merged release): the app (Vercel), then extension 0.17.0 (it carries
+--    0.16.0) in every office Chrome: copy extension/ over the extension folder
+--    on every PC that pulls or pushes (the firm's Chrome with "Run scheduled
+--    syncs in this Chrome", the office agent PC, staff PCs),
+--    chrome://extensions -> Reload, check the popup shows 0.17.0. Until it is loaded a pull from an older extension is
 --    refused by the guard (the reco pages ask for 0.16.0 before they start
 --    one), and the app asks for 0.16.0 before a GSTR-3B push
 --    (MIN_EXTENSION_VERSION). The popup's full sync no longer saves the recos
@@ -240,6 +264,10 @@
 --       and functions can stay.
 
 BEGIN;
+-- Adding columns takes an exclusive lock on the reco tables and
+-- gstr3b_push_versions, held to COMMIT: give up rather than queue the app's
+-- queries behind a long report.
+SET LOCAL lock_timeout = '5s';
 
 -- ---------------------------------------------------------------------------
 -- 1. Manual source allowances (shared with the filing branch: keep identical)

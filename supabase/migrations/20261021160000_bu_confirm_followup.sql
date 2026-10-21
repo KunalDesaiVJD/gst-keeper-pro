@@ -67,7 +67,15 @@
 -- node scripts/verify-bu-confirm.mjs.
 --
 -- Live-apply steps (project gcquafqxbykxkbexcdpy only; never the project in
--- SUPABASE_PROJECT_REF), in this order:
+-- SUPABASE_PROJECT_REF), in this order.
+-- Merged release (controls-integration): live order this file,
+-- 20261021100000, 20261021110000, 20261021120000, 20261021150000, each applied
+-- in turn with no app deploy in between; the app goes out ONCE, after
+-- 20261021150000 (step 3). The merged app calls functions of every one of
+-- those files (gstr3b_push_gate, filing_record_pull, gst_change_history):
+-- deployed after this file alone, every GSTR-3B push and JSON download is
+-- locked ("Could not find the function public.gstr3b_push_gate") and no return
+-- can be marked Filed.
 --   1. Deploy the Edge Function bu-confirm-code again
 --      (supabase/functions/bu-confirm-code, default verify_jwt): its e-mail
 --      now carries the code's reference. It needs nothing from this file (the
@@ -79,8 +87,17 @@
 --   2. Apply this file to gcquafqxbykxkbexcdpy (management API database query
 --      or the SQL editor). It is safe before the app: the old page and pop-up
 --      call the same functions with the same arguments (the send returns one
---      more key, earlier_units; the code request one more, ref).
---   3. Deploy the app.
+--      more key, earlier_units; the code request one more, ref). Apply it at a
+--      quiet time (SELECT pid, now() - xact_start, left(query, 80) FROM
+--      pg_stat_activity WHERE state <> 'idle' AND xact_start < now() -
+--      interval '30 seconds' gives no rows): it adds columns to
+--      builder_bu_confirm_codes and builder_bu_confirm_requests (an exclusive
+--      lock each, held to COMMIT) and sets lock_timeout = 5 s, so behind a long
+--      query it stops with "canceling statement due to lock timeout", changes
+--      nothing (one transaction), and is applied again a minute later.
+--   3. Deploy the app only once 20261021150000 is applied (merged release:
+--      one deploy, after the last file of the live order; never right after
+--      this file).
 --   4. Check the objects exist: columns caller and typed_elsewhere_at on
 --      builder_bu_confirm_codes (SELECT count(*) FILTER (WHERE requested_ip IS
 --      NOT NULL AND caller IS NULL) FROM builder_bu_confirm_codes gives 0),
@@ -101,6 +118,9 @@
 --      "This link is not valid."
 
 BEGIN;
+-- Adding columns takes an exclusive lock on the two tables, held to COMMIT:
+-- give up rather than queue the app's queries behind a long report.
+SET LOCAL lock_timeout = '5s';
 
 -- ── 1. Who is one caller ────────────────────────────────────────────────────
 -- One IPv4 address, or one IPv6 /64 (a home or office line, or a single cloud

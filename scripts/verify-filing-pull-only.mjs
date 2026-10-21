@@ -34,6 +34,15 @@
 //    hand without the allowance for GSTR-1 / GSTR-3B); the conflict panel says
 //    what Accept keeps and takes off; the header's "pull proven" query counts
 //    only pulls that stored their checked PDF.
+//  - integration round (controls-integration): Filing Status rows key the
+//    Import 2B actions (not carried warning, Re-run, Filed by mistake) on the
+//    row's own return type, so a quarterly client's GSTR-3B (Q) row on the
+//    GSTR-3B tab has them (drawn by the real React); "Filed by mistake" never
+//    shows on a row holding an ARN or a filing source (Unlock keeps both), and
+//    the Unlock warning no longer points to it; Accept says that a GSTR-3B it
+//    takes off Filed stays filed for Import 2B and names the repair; the four
+//    21 Oct migrations that alter tables set lock_timeout and hold the app
+//    deploy until 20261021150000.
 //   node scripts/verify-filing-pull-only.mjs
 // Fictional data; Supabase is replaced by a recorder. Exits 1 on any failure.
 import { createRequire } from 'node:module';
@@ -112,7 +121,8 @@ const out = await build({
   stdin: {
     contents: `export * as L from './src/lib/filingPull'; export * as M from './src/lib/manualSourceAllowances'; export * as C from './src/lib/filedPdfCheck';
       export * as D from './src/lib/directFilingApprovals'; export { fetchFiledPdf } from './src/utils/filedReturnReports';
-      export { filingStatus } from './src/lib/reply/recipes/filing'; export * as R from './src/lib/filingRecords';`,
+      export { filingStatus } from './src/lib/reply/recipes/filing'; export * as R from './src/lib/filingRecords';
+      export * as T from './src/lib/twobPriorMonth';`,
     resolveDir: root, loader: 'ts',
   },
   bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
@@ -126,7 +136,7 @@ const out = await build({
   }],
   define: { 'import.meta.env': '{}' },
 });
-const { L, M, C, D, R, fetchFiledPdf, filingStatus } = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
+const { L, M, C, D, R, T, fetchFiledPdf, filingStatus } = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
 
 // The database's words (filing_arn_problem; supabase/tests/filing_pull/test_20).
 const G = '24ABCDE1234F1Z5';
@@ -465,6 +475,119 @@ check('round 4: the database keeps a PDF attached by hand on Accept', /filing_pu
 check('round 4: the header\'s proven query is filing_pulls_landed, not the pulled address', /SELECT \* FROM public\.filing_pulls_landed\(\)/.test(mig)
   && !/\(detail->'pulled'->>'pdf_url'\) IS NOT NULL GROUP BY 1/.test(mig) && /v_detail := v_detail \|\| jsonb_build_object\('stored_pdf_url', v_pdf\);/.test(mig)
   && /AND l\.new_pdf_url = l\.detail ->> 'stored_pdf_url'/.test(mig));
+
+// ── 2c. Integration round (controls-integration verification) ─────────────
+// Finding 4: the row's own return type, not the tab's. The GSTR-3B tab shows
+// a quarterly client's GSTR-3B (Q) row; twob_ever_filed records it as such.
+const gaps = new Map([['cq', [{ list: 'bills_not_in_2b' }]], ['cm', [{ list: 'bills_not_in_2b' }]]]);
+const ever = new Set(['cq|GSTR-3B (Q)', 'cm|GSTR-3B', 'cu|GSTR-3B']);
+const rowQ = { client_id: 'cq', return_type: 'GSTR-3B (Q)', status: 'Prepared Pending', arn: null, filed_source: null };
+const rowUnlocked = { client_id: 'cm', return_type: 'GSTR-3B', status: 'Prepared Pending', arn: 'AA240926123456X', filed_source: 'portal' };
+const rowSourceOnly = { client_id: 'cu', return_type: 'GSTR-3B', status: 'Prepared', arn: null, filed_source: 'portal' };
+const rowCleared = { client_id: 'cu', return_type: 'GSTR-3B', status: 'Prepared', arn: null, filed_source: null };
+const acts2 = (r, can = true) => (T.filingRowTwobActions ? T.filingRowTwobActions(r, { everFiled: ever, carryGaps: gaps, canChangePriorBooks: can }) : {});
+check('integration: a GSTR-3B (Q) row has the warning, Re-run and Filed by mistake', JSON.stringify(acts2(rowQ)) === '{"carryGap":true,"rerun":true,"reopen":true}', JSON.stringify(acts2(rowQ)));
+check('integration: a row Unlock left holding its ARN has the warning and Re-run, never Filed by mistake',
+  JSON.stringify(acts2(rowUnlocked)) === '{"carryGap":true,"rerun":true,"reopen":false}', JSON.stringify(acts2(rowUnlocked)));
+check('integration: a filing source alone keeps Filed by mistake off; cleared (Take off Filed), it shows',
+  acts2(rowSourceOnly).reopen === false && acts2(rowCleared).reopen === true);
+check('integration: Re-run and Filed by mistake are a GST Manager\'s or the superadmin\'s', acts2(rowQ, false).rerun === false && acts2(rowQ, false).reopen === false
+  && acts2(rowQ, false).carryGap === true);
+check('integration: the table reads them per row, never from the tab\'s return type', /const twob = filingRowTwobActions\(record, p\);/.test(table)
+  && !/\(returnType === 'GSTR-3B' \|\| returnType === 'GSTR-3B \(Q\)'\)/.test(table) && !/p\.everFiled\.has\(`\$\{record\.client_id\}\|\$\{returnType\}`\)/.test(table));
+
+// The same, drawn by the real React (static HTML; no effects run).
+const ssr = await build({
+  stdin: {
+    contents: `
+      import React from 'react';
+      import { renderToStaticMarkup } from 'react-dom/server';
+      import FilingTable from './src/components/filing/FilingTable';
+      export const draw = (props) => renderToStaticMarkup(React.createElement(FilingTable, props));
+    `,
+    resolveDir: root, loader: 'tsx',
+  },
+  bundle: true, format: 'esm', platform: 'node', write: false, jsx: 'automatic', logLevel: 'silent',
+  plugins: [{
+    name: 'stub',
+    setup(b) {
+      b.onResolve({ filter: /^@\/integrations\/supabase\/client$/ }, () => ({ path: 'supabase', namespace: 'stub' }));
+      b.onResolve({ filter: /^@\// }, (a) => b.resolve(`./${a.path.slice(2)}`, { resolveDir: path.join(root, 'src'), kind: a.kind }));
+      b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: FAKE_SUPABASE, loader: 'js' }));
+    },
+  }],
+  define: { 'import.meta.env': '{}', 'process.env.NODE_ENV': '"production"' },
+  banner: { js: `import { createRequire as __cr } from 'node:module'; const require = __cr(${JSON.stringify(path.join(root, 'package.json'))});` },
+});
+const { draw } = await import('data:text/javascript;base64,' + Buffer.from(ssr.outputFiles[0].text).toString('base64'));
+const noop = () => {};
+const base3B = { target_date: 20, filed_date: null, remarks: null, is_locked: false, updated_by: null, updated_at: null, return_pdf_url: null, period_month: '09/2026' };
+const drawn = draw({
+  records: [], rows: [
+    { ...base3B, ...rowQ, id: 'fq', clientName: 'IMAGINARY IMPEX', filingFrequency: 'Quarterly' },
+    { ...base3B, ...rowUnlocked, id: 'fm', clientName: 'FICTIONAL FABRICS', filingFrequency: 'Monthly' },
+  ],
+  returnType: 'GSTR-3B',
+  contextFor: (r) => ({ outcome: null, allowance: null, usedAllowance: null, filedTwin: null, pulling: false, pullBlocked: false, effectiveType: r.return_type }),
+  userNames: {}, allStatuses: [], selectedStatuses: [], toggleStatus: noop, clearStatuses: noop, selectedFrequencies: [], toggleFrequency: noop,
+  clearFrequencies: noop, selectedTargetDates: [], toggleTargetDate: noop, clearTargetDates: noop, selectedRemarks: [], toggleRemark: noop, clearRemarks: noop,
+  canUnlockSheets: true, canEditFilingStatus: true, isSuperadmin: false, extReady: true, extOutdated: false, pullRunning: false,
+  gstr1DataClientIds: new Set(), gstr1IsNilByClient: new Map(), retryingCarryForwardId: null, everFiled: ever, carryGaps: gaps, canChangePriorBooks: true,
+  directFilingBadge: () => null, onStatusChange: noop, onRemarksChange: noop, onRetryCarryForward: noop, onReopenFiled: noop, onUnlock: noop, onPull: noop,
+  onPullClient: noop, onAttach: noop, onAllowManual: noop, onUnfile: noop, onOpenFiling: noop,
+});
+const rowHtml = (name) => (drawn.split('<tr').find((x) => x.includes(name)) || '');
+const has = (html, title) => html.includes(`title="${title}`);
+const qHtml = rowHtml('IMAGINARY IMPEX');
+const mHtml = rowHtml('FICTIONAL FABRICS');
+check('integration (drawn): the GSTR-3B (Q) row shows the not carried warning, Re-run and Filed by mistake',
+  !!qHtml && has(qHtml, 'Entries not carried into the next month') && has(qHtml, 'Re-run carry forward to next month') && has(qHtml, 'Filed by mistake: reopen this month'),
+  qHtml.slice(0, 300));
+check('integration (drawn): the unlocked GSTR-3B row (ARN kept) shows the warning and Re-run, not Filed by mistake',
+  !!mHtml && has(mHtml, 'Entries not carried into the next month') && has(mHtml, 'Re-run carry forward to next month') && !has(mHtml, 'Filed by mistake'),
+  mHtml.slice(0, 300));
+
+// Finding 1: the Unlock warning no longer invites a reopen; Take off Filed's does.
+const warnFn = page.slice(page.indexOf('const warnStillFiled'), page.indexOf('const warnStillFiled') + 1400);
+const unlockWords = (warnFn.match(/how === 'unlock'\s*\?\s*`([^`]*)`/) || [])[1] || '';
+const unfileWords = (warnFn.match(/:\s*`([^`]*)`,\s*\{ duration/) || [])[1] || '';
+check('integration: after Unlock the warning says the return is still filed on the portal, and does not point to Filed by mistake',
+  /still filed on the portal/.test(unlockWords) && !/Filed by mistake/.test(unlockWords) && /Filed by mistake/.test(unfileWords), unlockWords);
+check('integration: Unlock and Take off Filed each give their own warning', /warnStillFiled\(record, 'unlock'\)/.test(page) && /warnStillFiled\(record, 'unfile'\)/.test(page));
+
+// Finding 3: Accept says that a GSTR-3B it takes off Filed stays filed for
+// Import 2B and how to repair it; the page warns after Accept too.
+const conflict = (holderType) => ({ return_type: 'GSTR-3B', period_month: '06/2026', old_arn: null, old_pdf_url: null,
+  detail: { pulled: { arn: 'AB240626123456X' }, arn_on: 'h1', arn_on_return_type: holderType, arn_on_period: '07/2026' } });
+const wHolder = words(conflict('GSTR-3B'));
+check('integration: Accept says the GSTR-3B it takes off Filed stays filed for Import 2B, and names the repair',
+  /Import 2B and 2B Reconciliation still treat GSTR-3B 07\/2026 as filed/.test(wHolder) && /"Filed by mistake"/.test(wHolder)
+  && /Re-run carry forward on GSTR-3B 06\/2026/.test(wHolder), wHolder);
+check('integration: ... not for a GSTR-1 holder', !/Import 2B/.test(words(conflict('GSTR-1'))));
+check('integration: ... and a conflict without the holder\'s return type reads as this return\'s family',
+  /Import 2B and 2B Reconciliation still treat that GSTR-3B as filed/.test(words({ ...conflict(undefined), detail: { pulled: { arn: 'X' }, arn_on: 'h1' } })));
+const panelSrc = fs.readFileSync(path.join(root, 'src/components/filing/FilingExceptionsPanel.tsx'), 'utf8');
+check('integration: after Accept the panel warns with the same words, from the return Accept took off Filed',
+  /const res = await decideConflict\(userId, c\.id, accept\);/.test(panelSrc) && /unfiledHolderWords\(res\?\.unfiled,/.test(panelSrc));
+check('integration: the database names the holder in the conflict and in Accept\'s answer', /'arn_on_return_type', v_holder\.return_type::text/.test(mig)
+  && /'unfiled', CASE WHEN v_holder\.id IS NOT NULL AND v_holder\.id <> v_target\.id/.test(mig));
+
+// Findings 6 and 7: the merged release's migrations hold the app deploy and
+// give up on a held lock rather than queue the app behind it.
+for (const f of ['20261021160000_bu_confirm_followup.sql', '20261021100000_twob_prior_month_simple.sql', '20261021110000_filing_status_pull_only.sql',
+  '20261021120000_reco_pull_push_gate.sql', '20261021150000_gst_change_log.sql']) {
+  const src = fs.readFileSync(path.join(root, 'supabase/migrations', f), 'utf8');
+  const afterBegin = src.slice(src.search(/^BEGIN;$/m), src.search(/^BEGIN;$/m) + 400);
+  check(`integration: ${f.slice(0, 14)} sets lock_timeout right after BEGIN`, /^BEGIN;\n(--[^\n]*\n)*SET LOCAL lock_timeout = '5s';/m.test(afterBegin), afterBegin.slice(0, 200));
+  const header = src.slice(0, src.search(/^BEGIN;$/m));
+  check(`integration: ${f.slice(0, 14)}'s header names the merged release`, /Merged release/.test(header));
+  check(`integration: ${f.slice(0, 14)}'s header deploys no app before 20261021150000`, f.startsWith('20261021150000')
+    || (!/^--\s+\d\.\s+Deploy the app\.?$/m.test(header) && !/Deploy the app \(the page calls/.test(header) && !/only after step 2 \(Vercel deploys/.test(header)));
+}
+const recoHdr = fs.readFileSync(path.join(root, 'supabase/migrations/20261021120000_reco_pull_push_gate.sql'), 'utf8');
+check('integration: the reco header counts the Receivable rows whose utilised figure moves at the deploy, and ships 0.17.0',
+  /opening_source <> 'manual' AND utilized_cgst IS NULL AND utilized_sgst IS NULL/.test(recoHdr) && !/popup shows 0\.16\.0\./.test(recoHdr));
+check('integration: the filing header lists returns holding another period\'s ARN', /substr\(f\.arn, 5, 4\) <> left\(f\.period_month, 2\) \|\| right\(f\.period_month, 2\)/.test(mig));
 
 // ── 3. Reading a PDF in the app (the extension's checker) ─────────────────
 const fx = (f) => new Blob([fs.readFileSync(path.join(root, 'extension/test/fixtures', f))], { type: 'application/pdf' });

@@ -6,7 +6,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { SectionCard } from '@/components/gstr9/ui';
 import { WS_BTN, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/components/workspace/theme';
 import { cn } from '@/lib/utils';
-import { conflictAcceptWords, decideConflict, type FilingLogRow } from '@/lib/filingPull';
+import { conflictAcceptWords, decideConflict, unfiledHolderWords, type FilingLogRow } from '@/lib/filingPull';
 import { revokeManualSource, type ManualSourceAllowance } from '@/lib/manualSourceAllowances';
 
 const fmtWhen = (iso: string | null | undefined) =>
@@ -49,8 +49,14 @@ const FilingExceptionsPanel: React.FC<{
     if (!userId) return;
     setBusy(c.id);
     try {
-      await decideConflict(userId, c.id, accept);
+      const res = await decideConflict(userId, c.id, accept);
       toast.success(accept ? 'The pulled ARN is on the return now.' : 'Kept as it was.');
+      // The GSTR-3B Accept took off Filed stays filed for Import 2B and 2B
+      // Reconciliation until a GST Manager reopens it (docs §13).
+      const after = accept ? unfiledHolderWords(res?.unfiled, { return_type: c.return_type, period_month: c.period_month }) : '';
+      if (after) {
+        toast.warning(`${res?.unfiled?.client_id && res.unfiled.client_id !== c.client_id ? `${client(res.unfiled.client_id)}: ` : ''}${after}`, { duration: 20000 });
+      }
       onChanged();
     } catch (e) {
       toast.error((e as Error).message, { duration: 10000 });

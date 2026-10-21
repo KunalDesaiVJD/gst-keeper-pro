@@ -398,8 +398,8 @@ guard('live-apply order', () => {
   const steps = head.slice(head.indexOf('Live-apply steps'));
   const step = (n) => ((steps.match(new RegExp(`^--\\s+${n}\\.\\s+([^\\n]*)`, 'm')) || [])[1] || '');
   check(/^Deploy the Edge Function bu-confirm-code/.test(step(1)) && /^Apply this file to gcquafqxbykxkbexcdpy/.test(step(2))
-    && /^Deploy the app/.test(step(3)),
-    'the Edge Function goes first, then the file, then the app (no message names a mark the e-mail lacks)',
+    && /^Deploy the app only once 20261021150000 is applied/.test(step(3)),
+    'the Edge Function goes first, then the file, then the app, once the merged release\'s last file is in (no message names a mark the e-mail lacks)',
     `1: ${step(1)} | 2: ${step(2)} | 3: ${step(3)}`);
   const pgx = src('src/pages/AgreementConfirmPage.tsx');
   check(/A code from an e-mail with another mark was asked\s+for elsewhere: it does not work here, and typed here it stops working there too\./.test(pgx),

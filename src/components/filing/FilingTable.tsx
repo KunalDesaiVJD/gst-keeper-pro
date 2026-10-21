@@ -17,7 +17,7 @@ import {
   type FilingLogRow,
 } from '@/lib/filingPull';
 import type { ManualSourceAllowance } from '@/lib/manualSourceAllowances';
-import { describeCarryGap, type CarryOutcome } from '@/lib/twobPriorMonth';
+import { describeCarryGap, filingRowTwobActions, type CarryOutcome } from '@/lib/twobPriorMonth';
 import { MIN_EXTENSION_VERSION } from '@/lib/extensionVersion';
 
 export interface FilingRecord {
@@ -346,6 +346,9 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
             const twin = ctx.filedTwin;
             const notApplicable = !!twin && !isFiled;
             const unlockedFiled = !isFiled && !!record.arn;
+            // Keyed on the row's own return type: this tab shows a quarterly
+            // client's GSTR-3B (Q) row (docs §13).
+            const twob = filingRowTwobActions(record, p);
             const lockedOut = !!record.is_locked && !p.canUnlockSheets;
             const allowanceOpen = ctx.allowance && !ctx.allowance.used_at ? ctx.allowance : null;
             const { canAttach, canAllow, showAllowance, ruleType } = manualActions(record, {
@@ -428,8 +431,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                           month (it was filed, or counted as filed, already; docs
                           §13): said here until a Re-run from this month, also when
                           the extension's pull filed it. */}
-                      {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && p.everFiled.has(`${record.client_id}|${returnType}`)
-                        && (p.carryGaps.get(record.client_id)?.length ?? 0) > 0 && (
+                      {twob.carryGap && (
                         <Popover>
                           <PopoverTrigger asChild>
                             <button className="shrink-0" title="Entries not carried into the next month">
@@ -447,8 +449,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                       {/* Re-run runs from a month recorded as Filed (docs §13):
                           an unfiled month carries when it is filed. The database
                           also refuses it into a filed next month. */}
-                      {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && p.canChangePriorBooks
-                        && p.everFiled.has(`${record.client_id}|${returnType}`) && (
+                      {twob.rerun && (
                         <button
                           type="button"
                           className="shrink-0 disabled:opacity-50"
@@ -461,8 +462,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                             : <RefreshCw className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />}
                         </button>
                       )}
-                      {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && p.canChangePriorBooks
-                        && record.status !== 'Filed' && p.everFiled.has(`${record.client_id}|${returnType}`) && (
+                      {twob.reopen && (
                         <button
                           type="button"
                           className="shrink-0"

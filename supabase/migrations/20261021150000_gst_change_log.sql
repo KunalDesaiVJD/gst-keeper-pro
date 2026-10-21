@@ -87,6 +87,10 @@
 -- ===========================================================================
 -- Live apply (project gcquafqxbykxkbexcdpy ONLY; never SUPABASE_PROJECT_REF)
 -- ===========================================================================
+-- Merged release (controls-integration): live order 20261021160000, 100000,
+-- 110000, 120000, then this file, last; none of them is followed by an app
+-- deploy. The app goes out ONCE, at step 4 below, after this file: it calls
+-- functions of every one of them.
 -- Order: in filename order, after the other 21 Oct 2026 migrations:
 -- 20261021100000 (prior months), 20261021110000 (filing), 20261021120000
 -- (reco) and 20261021140000 (BU confirmation, live since 21 Oct). Round 3

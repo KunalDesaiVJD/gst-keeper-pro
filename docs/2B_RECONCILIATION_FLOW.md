@@ -877,6 +877,25 @@ and why. Filing Status says so whenever a GSTR-3B is moved away from Filed
 superadmin's, do that: Filed itself comes only from the portal pull or an
 attach the superadmin allowed, `docs/FILING_STATUS_PULL_ONLY.md`).
 
+A return filed on the portal is never "Filed by mistake". Unlock leaves the
+row's ARN and filing source (`filed_source`) on it, because the return is
+still filed there, so the month stays prior: `twob_reopen_filed` refuses while
+any row of the return (GSTR-3B or GSTR-3B (Q) for the period) is Filed, or
+holds an ARN or a filing source ("Filed on the portal: ... still holds ARN
+..."), and the row shows no "Filed by mistake" button. When the ARN really
+belongs to another return, the superadmin's Take off Filed clears it first;
+then a GST Manager can reopen the month. Reopen takes the client's lock before
+it reads the rows, so a pull filing the month meanwhile is either seen and the
+reopen refused, or runs after it and records the month as filed again.
+
+Accepting a pull conflict (`filing_pull_conflict_decide`) takes the other
+return holding the ARN off Filed, but its month stays recorded as filed here:
+if that return is a GSTR-3B / GSTR-3B (Q) not filed on the portal, a GST
+Manager reopens it with "Filed by mistake" on its row, then uses Re-run carry
+forward on the accepted return's row (its carry was skipped while the other
+month counted as filed). The Accept words on Filing Status say so, naming the
+other return's month.
+
 **Who may change what in a prior month.**
 
 - Only a GST Manager or the superadmin, and only books entries: Not in 2B and
@@ -1394,6 +1413,14 @@ a reason, and everything must be traceable. Migration
   put its GSTR-1 estimate there. The estimate is shown only on a row not yet
   pulled ("Estimate, not pulled"). 0.16.0 saves 0 when ledger rows were read
   without a set-off debit, and nothing when no row was read.
+  Rows already on file move at the app deploy: a pulled row whose utilised
+  figures are empty (what 0.14.0 wrote for a pull that saw no set-off debit)
+  read the GSTR-1 estimate before and reads 0 now, so its difference and the
+  gate change (on a copy of the live rows, 32 of 34 such rows, e.g. 06/2026
+  ₹18,125.14 became ₹19,925.14). The 20261021120000 header counts them
+  before the apply (step 1); staff are told at the release, and a 09/2026
+  GSTR-3B still to be pushed has its GST Receivable Reco pulled again with
+  0.17.0 before the gate is relied on.
 - Periods before 06/2026 keep the typed opening, as before.
 
 **The gate.** `gstr3b_push_gate(client, period)` decides for the GSTR-3B

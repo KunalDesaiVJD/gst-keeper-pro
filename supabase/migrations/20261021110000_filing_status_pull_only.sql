@@ -65,9 +65,11 @@
 --
 -- LIVE APPLY (project gcquafqxbykxkbexcdpy only; never SUPABASE_PROJECT_REF)
 -- Merged release (controls-integration): live order 20261021160000, 100000, this file,
--- 120000, 150000. Steps 5 and 8 ship ONE extension, 0.17.0, which carries this file's
--- 0.15.0, the reco branch's 0.16.0 and the change log's headers; the app asks for 0.16.0
--- (MIN_EXTENSION_VERSION), so the popup shows 0.17.0 after the Reload, never 0.15.0.
+-- 120000, 150000, each applied in turn with no app deploy in between; then ONE app deploy
+-- and ONE extension, 0.17.0, which carries this file's 0.15.0, the reco branch's 0.16.0
+-- and the change log's headers; the app asks for 0.16.0 (MIN_EXTENSION_VERSION), so the
+-- popup shows 0.17.0 after the Reload, never 0.15.0. Steps 4, 5, 7 and 8 below are done
+-- once, after 20261021150000.
 -- 1. Dry checks, SELECT only (management API, read_only):
 --    a. SELECT count(*) total, count(*) FILTER (WHERE status::text = 'Filed') filed,
 --              count(arn) arns, count(return_pdf_url) pdfs FROM filing_status;
@@ -112,8 +114,25 @@
 --         checked PDF keeps them, marked "not checked by a pull"), true/true 379 (stored by
 --         extension 0.14.0's pull: such a pull takes them off, the log keeps the address; 26 of
 --         the 28 System generated summaries on the repair list are among them).
+--    l. Returns holding an ARN of another tax period (the old page did not check it; such a row
+--       makes the right return's pull a conflict, and Accept takes the holder off Filed):
+--       SELECT c.name, f.return_type::text, f.period_month, f.status::text, f.arn
+--         FROM filing_status f JOIN clients c ON c.id = f.client_id
+--        WHERE f.arn IS NOT NULL AND f.return_type::text <> 'ITC-04'
+--          AND substr(f.arn, 5, 4) <> left(f.period_month, 2) || right(f.period_month, 2)
+--        ORDER BY 1, 3;  -> note them. For a GSTR-3B / GSTR-3B (Q) among them: once the right
+--       return's conflict is accepted, the holder's month stays filed for Import 2B and 2B
+--       Reconciliation (twob_ever_filed). If it is not filed on the portal, a GST Manager reopens
+--       it ("Filed by mistake" on its row), then uses Re-run carry forward on the accepted
+--       return's row (its carry was skipped as 'next_filed'). The Accept words say so.
 --    i. Staff finish or close any portal pull tab: a 0.14.0 pull fails from the apply on.
--- 2. Apply this file (it has its own BEGIN / COMMIT).
+--    m. Quiet time: no long query on filing_status right now (expect no rows):
+--       SELECT pid, now() - xact_start AS running, left(query, 80) FROM pg_stat_activity
+--        WHERE state <> 'idle' AND xact_start < now() - interval '30 seconds';
+-- 2. Apply this file (it has its own BEGIN / COMMIT). It sets lock_timeout = 5 s: adding the
+--    columns takes an ACCESS EXCLUSIVE lock on filing_status, and behind a long query it would
+--    queue every app read of the table. On "canceling statement due to lock timeout" nothing
+--    was changed (one transaction): wait a minute and apply it again.
 -- 3. Verify, SELECT only:
 --    a. The counts of 1a and 1g, unchanged.
 --    b. SELECT count(*) FROM filing_status_log;  -> 0 (nothing is logged until a write).
@@ -162,13 +181,16 @@
 --        GROUP BY 1;  -> 21 Oct 2026: GSTR-1 (IFF) 1 / 0 (not Filed). Such a row is attached by
 --       hand only when it already holds the ARN, under the allowance for GSTR-1 / GSTR-3B;
 --       otherwise staff use the client's GSTR-1 / GSTR-3B row (the one the page shows).
--- 4. Deploy the app (the page calls the new functions; it needs extension 0.15.0).
--- 5. Extension 0.15.0: copy extension/ over the extension folder on every PC that pulls
---    (the firm's Chrome with "Run scheduled syncs in this Chrome", the office agent PC,
---    staff PCs), chrome://extensions -> Reload, check the popup shows 0.15.0. Older copies
---    are refused by the app (MIN_EXTENSION_VERSION 0.15.0) and by this guard.
+-- 4. Merged release: do NOT deploy the app here. Hold it until 20261021150000 (the last file
+--    of the live order) is applied; the app goes out once, after it (it calls this file's
+--    functions and 20261021120000's gstr3b_push_gate, which does not exist until that file).
+-- 5. Extension 0.17.0 (carries this file's 0.15.0): copy extension/ over the extension
+--    folder on every PC that pulls (the firm's Chrome with "Run scheduled syncs in this
+--    Chrome", the office agent PC, staff PCs), chrome://extensions -> Reload, check the popup
+--    shows 0.17.0. Older copies are refused by the app (MIN_EXTENSION_VERSION 0.16.0) and by
+--    this guard.
 -- 6. No Edge Function deploy: send-gst-email sends the outbox rows this queues.
--- 7. Repair: pull again with 0.15.0 the returns on the repair lists (28 GSTR-3B system
+-- 7. Repair: pull again with 0.17.0 the returns on the repair lists (28 GSTR-3B system
 --    summaries, 7 wrong-return or wrong-month PDFs, 5 GSTR-1 rows holding a GSTR-1A,
 --    89 Filed without an ARN, 82 dates that are not the ARN date). The same ARN refreshes
 --    (a new PDF address; the log keeps the old one); a different ARN waits for the
@@ -186,8 +208,8 @@
 --    that left on the row the checked PDF they stored, detail.stored_pdf_url, not one whose
 --    PDF address was refused), make it pulled only: add it to filing_pull_only here
 --    (CREATE OR REPLACE) and to PULL_ONLY_RETURN_TYPES in src/lib/filingPull.ts.
--- 8. Extension release: 0.15.0 (review rounds 1 to 3 included; round 4 changed no extension
---    file; manifest unchanged, no new permission). Release as this repo does: the extension/
+-- 8. Extension release: 0.17.0, which carries 0.15.0 (review rounds 1 to 3 included; round 4
+--    changed no extension file; manifest unchanged, no new permission). Release as this repo does: the extension/
 --    folder as it is on main is the
 --    release (no build step); note it in extension/CHANGELOG.md (done), then step 5 on every PC.
 --    Staff close any portal pull tab before the Reload (a pull running then is dropped by
@@ -199,6 +221,9 @@
 --       columns, tables and functions can stay.
 
 BEGIN;
+-- Adding columns takes an exclusive lock on filing_status, held to COMMIT:
+-- give up rather than queue the app's queries behind a long report.
+SET LOCAL lock_timeout = '5s';
 
 -- A pulled GSTR-3B (Q) is locked here and carried forward by
 -- auto_lock_on_filed, which carries GSTR-3B (Q) only from 20261021100000
@@ -1324,7 +1349,9 @@ BEGIN
         || ' Nothing was changed. The superadmin decides which is right.';
       v_log := public.filing__log(p_client_id, COALESCE(v_target.return_type::text, p_return_type), p_period_month, v_target.id,
         'conflict', 'portal', p_actor_id, v_msg,
-        v_detail || jsonb_build_object('arn_on', v_holder.id, 'pulled_filed_date', v_date, 'pulled_pdf_url', v_pdf, 'pulled_pdf_note', v_note));
+        v_detail || jsonb_build_object('arn_on', v_holder.id, 'arn_on_return_type', v_holder.return_type::text,
+          'arn_on_period', v_holder.period_month, 'arn_on_client_id', v_holder.client_id,
+          'pulled_filed_date', v_date, 'pulled_pdf_url', v_pdf, 'pulled_pdf_note', v_note));
       RETURN jsonb_build_object('outcome', 'conflict', 'message', v_msg, 'log_id', v_log, 'id', v_target.id,
         'return_type', COALESCE(v_target.return_type::text, p_return_type));
     END IF;
@@ -1911,7 +1938,13 @@ BEGIN
      SET resolved_at = now(), resolved_by = p_actor_id,
          resolution = 'Accepted' || COALESCE(': ' || NULLIF(btrim(p_note), ''), '.')
    WHERE id = p_log_id;
-  RETURN jsonb_build_object('outcome', 'accepted', 'id', v_target.id, 'return_type', v_target.return_type::text);
+  -- The return taken off Filed (integration round): a GSTR-3B / GSTR-3B (Q) stays a
+  -- filed month for Import 2B and 2B Reconciliation (twob_ever_filed) until
+  -- a GST Manager reopens it, so the page names it.
+  RETURN jsonb_build_object('outcome', 'accepted', 'id', v_target.id, 'return_type', v_target.return_type::text,
+    'unfiled', CASE WHEN v_holder.id IS NOT NULL AND v_holder.id <> v_target.id
+      THEN jsonb_build_object('id', v_holder.id, 'client_id', v_holder.client_id,
+             'return_type', v_holder.return_type::text, 'period_month', v_holder.period_month) END);
 END;
 $$;
 

@@ -238,12 +238,18 @@ const FilingStatusPage: React.FC = () => {
     else toast.success(text, { duration: 10000 });
   }, []);
 
-  // A GSTR-3B / GSTR-3B (Q) taken off Filed or unlocked: its month stays
-  // filed for Import 2B and 2B Reconciliation (docs §13) until a GST Manager
-  // or the superadmin reopens it as Filed by mistake.
-  const warnStillFiled = (record: FilingRecord) => {
+  // A GSTR-3B / GSTR-3B (Q) unlocked or taken off Filed: its month stays
+  // filed for Import 2B and 2B Reconciliation (docs §13). Unlock keeps the
+  // ARN (the return is still filed on the portal), so it is never "Filed by
+  // mistake" (twob_reopen_filed refuses it): only after the superadmin's
+  // Take off Filed, which clears the ARN, can a GST Manager reopen the month.
+  const warnStillFiled = (record: FilingRecord, how: 'unlock' | 'unfile') => {
     if (!filingFamily('GSTR-3B').includes(record.return_type)) return;
-    toast.warning(`Import 2B and 2B Reconciliation still treat ${monthName(record.period_month || selectedMonth)} as filed. If Filed was set by mistake, a GST Manager or the superadmin reopens it there with the "Filed by mistake" button on this row.`, { duration: 15000 });
+    const month = monthName(record.period_month || selectedMonth);
+    toast.warning(how === 'unlock'
+      ? `Import 2B and 2B Reconciliation still treat ${month} as filed: the return keeps its ARN and is still filed on the portal, so only a GST Manager or the superadmin changes its books entries there. Pull it again to mark it Filed again. If the ARN belongs to another return, the superadmin takes it off Filed first.`
+      : `Import 2B and 2B Reconciliation still treat ${month} as filed. If it is not filed on the portal, a GST Manager or the superadmin reopens it there with the "Filed by mistake" button on this row.`,
+    { duration: 15000 });
   };
 
   // Re-run carry forward (docs §13): a GST Manager or the superadmin, with a
@@ -817,8 +823,8 @@ const FilingStatusPage: React.FC = () => {
       // carry forward brings the next month in line without wiping its own
       // reclaims and book entries.
 
-      toast.success('All sheets unlocked. GSTR-3B shows Not to File until it is pulled again; its ARN, filing date and PDF are kept. Next month\'s carried-forward items were left untouched. For Import 2B and 2B Reconciliation the month stays filed: only a GST Manager or the superadmin changes its books entries.');
-      warnStillFiled(record);
+      toast.success('All sheets unlocked. GSTR-3B shows Not to File until it is pulled again; its ARN, filing date and PDF are kept. Next month\'s carried-forward items were left untouched.');
+      warnStillFiled(record, 'unlock');
       fetchFilingRecords();
     } catch (error: any) {
       toast.error('Failed to unlock: ' + error.message);
@@ -1235,7 +1241,7 @@ const FilingStatusPage: React.FC = () => {
           await unfileReturn(user.id, record.id, reason);
           if (filingFamily('GSTR-3B').includes(record.return_type)) await unlockMonthSheets(record.client_id, record.period_month);
           toast.success('Taken off Filed.');
-          warnStillFiled(record);
+          warnStillFiled(record, 'unfile');
           refreshSoon();
         } catch (e) {
           toast.error((e as Error).message);

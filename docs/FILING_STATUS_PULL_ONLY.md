@@ -134,7 +134,12 @@ which is wrong for CMP-08 (quarter) and ITC-04 (half-year), so the page offers n
     0.14.0's pull stored, come off (the log keeps them). Round 3's Accept took the hand PDF off
     with nothing in the conflict saying so. The panel now says, beside each conflict and on
     Accept, what Accept keeps and takes off (`conflictAcceptWords`), including that the return
-    holding the ARN is taken off Filed with its ARN, date and PDF;
+    holding the ARN is taken off Filed with its ARN, date and PDF. The conflict names that return
+    (`detail.arn_on_return_type` / `arn_on_period`) and Accept answers with it (`unfiled`): a
+    GSTR-3B / GSTR-3B (Q) taken off Filed stays a filed month for Import 2B and 2B
+    Reconciliation, so the words, and a warning after Accept, say that if it is not filed on the
+    portal a GST Manager reopens it ("Filed by mistake" on its row) and then uses Re-run carry
+    forward on the accepted return (its carry was skipped while that month counted as filed);
   - `refused`: the ARN cannot be this return's (state code, tax period), the staff member lacks
     the Filing status permission, or a rule refused Filed (GSTR-1 from 09/2026 still needs its
     push or a direct-filing approval).
@@ -271,7 +276,12 @@ a message naming 20261021100000, and leaves nothing behind.
   unlocks a GSTR-3B row and its month's sheets. Neither opens the month again for Import 2B and
   2B Reconciliation: once Filed it stays a prior month there (`twob_ever_filed`, 20261021100000,
   `docs/2B_RECONCILIATION_FLOW.md` §13) until a GST Manager or the superadmin uses **Filed by
-  mistake** on the row; the page says so after either.
+  mistake** on the row; the page says so after either. Filed by mistake is offered, and accepted
+  by `twob_reopen_filed`, only on a row holding no ARN and no filing source: after Unlock the
+  return is still filed on the portal, so it is refused ("Filed on the portal: ... still holds
+  ARN ...") and the Unlock warning says the month stays filed; only after the superadmin's Take
+  off Filed can the month be reopened. The row's Import 2B controls follow the row's own return
+  type, so a quarterly client's GSTR-3B (Q) row on the GSTR-3B tab has them too.
 - **The carry forward** of a GSTR-3B / GSTR-3B (Q) runs in the database when the row becomes
   Filed (`auto_lock_on_filed` → `twob_carry_first`), whichever door filed it. The page says what
   it carried, list by list (`describeFilingCarry`), when a pull answers "filed" and after an

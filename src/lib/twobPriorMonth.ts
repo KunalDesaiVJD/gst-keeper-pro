@@ -484,6 +484,29 @@ export async function reopenFiled(actorId: string, clientId: string, returnType:
   return fetchTwobMonthState(clientId, period);
 }
 
+/**
+ * What a Filing Status row offers for Import 2B and 2B Reconciliation (docs
+ * §13), keyed on the row's own return type: the GSTR-3B tab also shows a
+ * quarterly client's GSTR-3B (Q) row, recorded as such in twob_ever_filed.
+ *  - carryGap: the "Entries not carried into the next month" warning;
+ *  - rerun: Re-run carry forward (a GST Manager or the superadmin);
+ *  - reopen: "Filed by mistake", only on a row that holds no filed return:
+ *    not Filed, no ARN and no filing source. Unlock keeps both (the return is
+ *    still filed on the portal), and twob_reopen_filed refuses such a row;
+ *    the superadmin's Take off Filed clears them first.
+ */
+export function filingRowTwobActions(
+  r: { client_id: string; return_type: string; status: string | null; arn: string | null; filed_source?: string | null },
+  o: { everFiled: Set<string>; carryGaps: Map<string, unknown[]>; canChangePriorBooks: boolean },
+): { carryGap: boolean; rerun: boolean; reopen: boolean } {
+  const recorded = (r.return_type === 'GSTR-3B' || r.return_type === 'GSTR-3B (Q)') && o.everFiled.has(`${r.client_id}|${r.return_type}`);
+  return {
+    carryGap: recorded && (o.carryGaps.get(r.client_id)?.length ?? 0) > 0,
+    rerun: recorded && o.canChangePriorBooks,
+    reopen: recorded && o.canChangePriorBooks && r.status !== 'Filed' && !r.arn && !r.filed_source,
+  };
+}
+
 /** The returns of a month recorded as Filed for Import 2B and 2B Reconciliation and not reopened ("clientId|returnType"). */
 export async function fetchEverFiled(period: string): Promise<Set<string>> {
   const { data, error } = await supabase.from('twob_ever_filed').select('client_id, return_type')

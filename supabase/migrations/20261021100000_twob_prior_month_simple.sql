@@ -20,7 +20,9 @@
 --    twob_ever_filed (back-filled here, then written by a trigger), so
 --    unlocking the sheets does not open the month again. A return marked
 --    Filed by mistake is reopened by a GST Manager or the superadmin, with a
---    reason (twob_reopen_filed).
+--    reason (twob_reopen_filed), once no row of the return holds Filed, an
+--    ARN or a filing source: a return Unlock left holding its portal ARN
+--    is never reopened; the superadmin's Take off Filed clears it first.
 -- 2. In a prior month only a GST Manager or the superadmin changes anything,
 --    and only books entries: Not in 2B rows, the Import 2B books register,
 --    and Not in Books rows typed without a 2B source. A Not in Books entry
@@ -125,6 +127,14 @@
 -- file twice, as a role that is not a superuser).
 --
 -- LIVE APPLY (project gcquafqxbykxkbexcdpy only; never SUPABASE_PROJECT_REF):
+-- Merged release (controls-integration): live order 20261021160000, this file,
+-- 20261021110000, 20261021120000, 20261021150000, each applied in turn with no
+-- app deploy in between; the app goes out ONCE, after 20261021150000 (step 4).
+-- The merged app calls functions of every one of those files
+-- (gstr3b_push_gate, filing_record_pull, gst_change_history): deployed after
+-- this file alone, every GSTR-3B push and JSON download stays locked ("Could
+-- not find the function public.gstr3b_push_gate") and no return can be marked
+-- Filed until extension 0.17.0 and the later files are out.
 --  1. Dry checks, reads only, before applying (figures of 21 Oct 2026 from
 --     anon reads):
 --       -- Filed returns to record (1,369, of them 31 GSTR-3B (Q)):
@@ -159,8 +169,18 @@
 --              (SELECT count(*) FROM pg_proc WHERE proname LIKE 'twob%');   -- NULL, NULL, NULL, staff_level_of, 0
 --       -- The filing trigger as 20260814190000 left it (BEFORE UPDATE only):
 --       SELECT tgname, pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = 'public.filing_status'::regclass AND NOT tgisinternal;
+--     Quiet time: no long query on the 2B tables or filing_status right now
+--     (expect no rows):
+--       SELECT pid, now() - xact_start AS running, left(query, 80) FROM pg_stat_activity
+--        WHERE state <> 'idle' AND xact_start < now() - interval '30 seconds';
 --  2. Apply this file as one statement batch (it is one transaction). It
---     needs no superuser: no function stores a custom setting.
+--     needs no superuser: no function stores a custom setting. It sets
+--     lock_timeout = 5 s: its triggers are dropped and created again on
+--     bills_not_in_2b, bills_not_in_books, books_register, twob_import_docs
+--     and filing_status (an exclusive lock each, held to COMMIT), and behind a
+--     long query that would queue every app read of those tables. On
+--     "canceling statement due to lock timeout" nothing was changed (one
+--     transaction): wait a minute and apply it again.
 --  3. Check (reads only):
 --       SELECT count(*) FROM public.twob_ever_filed;                 -- = step 1's first count (1,369)
 --       SELECT count(*), count(*) FILTER (WHERE carried_how = 'backfill') FROM public.twob_carry_log;
@@ -195,8 +215,9 @@
 --     and with the anon key (POST /rest/v1/rpc/...): twob_month_state for SORATH BUILDERS
 --     (73449b01-54bd-405d-84ee-0f8877b296d2) and 07/2026 gives is_prior true; for a
 --     client's month after its latest filed one, false.
---  4. Deploy the app built from this commit, only after step 2 (Vercel deploys
---     on merge: merge after step 2). Deployed before it, its screens would
+--  4. Deploy the app built from this commit only once 20261021150000 is applied
+--     (merged release: one deploy, after the last file of the live order;
+--     Vercel deploys on merge, so merge then). Deployed before this file, its screens would
 --     show every month read-only, its GSTR-3B Push would stay locked for
 --     every client, and Suspended Reco would refuse Save, Upload, Not
 --     Applicable and Override (GST Receivable Reco shows no 4C): the filed
@@ -285,6 +306,10 @@
 
 
 BEGIN;
+-- Triggers are dropped and created again on the 2B tables and filing_status
+-- (an exclusive lock each, held to COMMIT): give up rather than queue the
+-- app's queries behind a long report.
+SET LOCAL lock_timeout = '5s';
 
 -- ---------------------------------------------------------------------------
 -- 1. Months
@@ -2390,7 +2415,17 @@ $$;
 -- 7. A return marked Filed by mistake
 -- ---------------------------------------------------------------------------
 -- A GST Manager or the superadmin reopens it for Import 2B and 2B
--- Reconciliation once its status is no longer Filed, writing why. The record
+-- Reconciliation once its status is no longer Filed, writing why. Never a
+-- return filed on the portal: while a row of the return (GSTR-3B or GSTR-3B
+-- (Q), the period's twins included) still holds an ARN or a filing source
+-- (filed_source, 20261021110000), as Unlock leaves it, the reopen is refused;
+-- the superadmin's Take off Filed (filing_status_unfile) clears both first.
+-- The client's lock is taken before the rows are read, so a pull filing the
+-- month meanwhile (auto_lock_on_filed takes the same lock) is either seen
+-- here and refused, or runs after the reopen and records the month as filed
+-- again (trg_twob_record_filed). The rows are read without FOR UPDATE: a
+-- pull locks its row before this lock, and the reverse order here would
+-- deadlock with it. The record
 -- stays (reopened_at, reopened_by, reopen_reason); the months it no longer
 -- keeps prior read their live lists again (their recorded figures go). Its
 -- next month keeps the entries the mistaken filing carried into it, and its
@@ -2407,6 +2442,7 @@ SET search_path = public
 AS $$
 DECLARE
   v_through integer;
+  v_row record;
 BEGIN
   IF p_actor_id IS NULL OR COALESCE(public.staff_level_of(p_actor_id), '') NOT IN ('superadmin', 'gst_manager') THEN
     RAISE EXCEPTION 'Only a GST Manager or the superadmin can reopen a return marked Filed by mistake.';
@@ -2414,12 +2450,27 @@ BEGIN
   IF NULLIF(btrim(COALESCE(p_reason, '')), '') IS NULL THEN
     RAISE EXCEPTION 'Write why Filed was set by mistake.';
   END IF;
-  IF EXISTS (SELECT 1 FROM public.filing_status f
-              WHERE f.client_id = p_client_id AND f.return_type::text = p_return_type AND f.period_month = p_period
-                AND f.status::text = 'Filed') THEN
-    RAISE EXCEPTION 'Its status is still Filed. Change the status first, then reopen it.';
-  END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('twob:' || p_client_id::text, 0));
+  -- Read after the lock (a new snapshot): a pull that filed the month while
+  -- this waited is seen. filed_source through to_jsonb: the column comes
+  -- with 20261021110000, which is applied after this file.
+  FOR v_row IN
+    SELECT f.return_type::text AS return_type, f.status::text AS status, f.arn,
+           to_jsonb(f) ->> 'filed_source' AS filed_source
+      FROM public.filing_status f
+     WHERE f.client_id = p_client_id AND f.period_month = p_period
+       AND f.return_type::text IN ('GSTR-3B', 'GSTR-3B (Q)')
+     ORDER BY (f.return_type::text = p_return_type) DESC
+  LOOP
+    IF v_row.status = 'Filed' THEN
+      RAISE EXCEPTION 'Its status is still Filed. Change the status first, then reopen it.';
+    END IF;
+    IF v_row.arn IS NOT NULL OR v_row.filed_source IS NOT NULL THEN
+      RAISE EXCEPTION 'Filed on the portal: % % still holds % (Unlock keeps it), so the month stays filed. If the return is not filed on the portal, the superadmin takes it off Filed first (Take off Filed); then it can be reopened.',
+        v_row.return_type, p_period,
+        CASE WHEN v_row.arn IS NOT NULL THEN 'ARN ' || v_row.arn ELSE 'its filing source (' || v_row.filed_source || ')' END;
+    END IF;
+  END LOOP;
   UPDATE public.twob_ever_filed
      SET reopened_at = now(), reopened_by = p_actor_id, reopen_reason = btrim(p_reason)
    WHERE client_id = p_client_id AND return_type = p_return_type AND period_month = p_period AND reopened_at IS NULL;

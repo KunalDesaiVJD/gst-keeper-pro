@@ -273,7 +273,7 @@ export const pdfFromOldPull = (url: string | null | undefined) =>
  * extension stored unchecked, comes off. The other return holding the ARN
  * is taken off Filed. The log keeps whatever comes off.
  */
-export function conflictAcceptWords(c: Pick<FilingLogRow, 'old_arn' | 'old_pdf_url' | 'detail'>): string {
+export function conflictAcceptWords(c: Pick<FilingLogRow, 'old_arn' | 'old_pdf_url' | 'detail'> & Partial<Pick<FilingLogRow, 'return_type' | 'period_month'>>): string {
   const d = (c.detail || {}) as Record<string, unknown>;
   const arn = String((d.pulled as { arn?: string } | undefined)?.arn || 'the pulled ARN');
   const pulledPdf = typeof d.pulled_pdf_url === 'string' && d.pulled_pdf_url ? d.pulled_pdf_url : null;
@@ -288,7 +288,31 @@ export function conflictAcceptWords(c: Pick<FilingLogRow, 'old_arn' | 'old_pdf_u
   if ((c.old_pdf_url && !sameArn) || (c.old_pdf_url && !pulledPdf && pdfFromOldPull(c.old_pdf_url)) || d.arn_on || (pulledPdf && c.old_pdf_url)) {
     s += ' The log keeps what is taken off.';
   }
+  if (d.arn_on) {
+    // A conflict logged before the integration round does not name the holder's return:
+    // twins share one ARN, so it is taken to be of this return's family.
+    const holderType = typeof d.arn_on_return_type === 'string' ? d.arn_on_return_type : c.return_type || null;
+    const holderPeriod = typeof d.arn_on_period === 'string' ? d.arn_on_period : null;
+    const extra = unfiledHolderWords({ return_type: holderType, period_month: holderPeriod }, c.return_type ? { return_type: c.return_type, period_month: c.period_month || null } : null);
+    if (extra) s += ` ${extra}`;
+  }
   return s;
+}
+
+/**
+ * What a GSTR-3B / GSTR-3B (Q) taken off Filed by an accepted conflict still
+ * needs (docs §13; '' for any other return): Accept does not reopen its month
+ * for Import 2B and 2B Reconciliation (twob_ever_filed keeps it filed), and
+ * the accepted return's carry was skipped while that month counted as filed.
+ */
+export function unfiledHolderWords(
+  holder: { return_type: string | null; period_month: string | null } | null | undefined,
+  accepted?: { return_type: string; period_month: string | null } | null,
+): string {
+  if (!holder?.return_type || !filingFamily('GSTR-3B').includes(holder.return_type)) return '';
+  const where = holder.period_month ? `${holder.return_type} ${holder.period_month}` : `that ${holder.return_type}`;
+  const rerun = accepted ? `${accepted.return_type}${accepted.period_month ? ` ${accepted.period_month}` : ''}` : 'the accepted return';
+  return `Import 2B and 2B Reconciliation still treat ${where} as filed. If it is not filed on the portal, a GST Manager or the superadmin reopens it with "Filed by mistake" on its Filing Status row, then uses Re-run carry forward on ${rerun} (its carry into the next month was skipped while ${holder.period_month || 'that month'} counted as filed). If it is filed, pull it again.`;
 }
 
 /** What a client's "all" asks for: every return but one unlocked for correction. */
@@ -468,9 +492,14 @@ export const unlockFiled = (actorId: string, clientId: string, periodMonth: stri
 export const unfileReturn = (actorId: string, id: string, reason: string) =>
   rpc<unknown>('filing_status_unfile', { p_actor_id: actorId, p_id: id, p_reason: reason });
 
-/** The superadmin decides a pull conflict: accept the pulled ARN, or keep what is there. */
+/**
+ * The superadmin decides a pull conflict: accept the pulled ARN, or keep what
+ * is there. unfiled: the other return Accept took off Filed, null when none.
+ */
 export const decideConflict = (actorId: string, logId: string, accept: boolean, note?: string) =>
-  rpc<{ outcome: string }>('filing_pull_conflict_decide', { p_actor_id: actorId, p_log_id: logId, p_accept: accept, p_note: note ?? null });
+  rpc<{ outcome: string; id?: string; return_type?: string;
+    unfiled?: { id: string; client_id: string; return_type: string; period_month: string } | null }>(
+    'filing_pull_conflict_decide', { p_actor_id: actorId, p_log_id: logId, p_accept: accept, p_note: note ?? null });
 
 /** Where a manually attached PDF goes in the return-pdfs bucket. */
 export const manualPdfPath = (clientId: string, returnType: string, periodMonth: string, arn: string) =>
