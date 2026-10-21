@@ -28,6 +28,7 @@ import { fetchGstr3b } from '@/utils/fetchGstr3b';
 import type { Gstr3bResult } from '@/utils/buildGstr3bJson';
 import { exportGstr3bToPDF } from '@/utils/gstr3bPdf';
 import { askGateForClick, checkGstr3bPushGate, gateReasonsText, type Gstr3bGateResult } from '@/lib/gstr3bPushGate';
+import { draftMismatch, forSelection, selectionKey, tagForSelection, type ForSelection } from '@/lib/gstr3bSelection';
 import { extensionCanPull, needsExtensionMessage } from '@/lib/recoSources';
 import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
 import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
@@ -223,7 +224,17 @@ const Gstr3bPage: React.FC = () => {
   const { user, isStaffRole, canEditFilingStatus, canExportData } = useAuth();
   const isStaff = isStaffRole();
   const [clients, setClients] = useState<Client[]>([]);
-  const [result, setResult] = useState<Gstr3bResult | null>(null);
+  // Everything this page loads is kept with the client and month it was
+  // loaded for, and read back only while that pair is selected
+  // (src/lib/gstr3bSelection.ts; round 3 of the review): a switch shows no
+  // draft and no gate answer until the new pair's arrive, and one that comes
+  // back after a switch is dropped. selKeyRef is the pair selected now, for
+  // the checks after an await.
+  const selKey = selectionKey(selectedClient, selectedMonth);
+  const selKeyRef = useRef(selKey);
+  selKeyRef.current = selKey;
+  const [loaded, setLoaded] = useState<ForSelection<Gstr3bResult> | null>(null);
+  const result = forSelection(loaded, selectedClient, selectedMonth);
   const [isLoading, setIsLoading] = useState(false);
   // NIL Return flag, shared with GSTR-1's filing_status.is_nil mechanism.
   const [isNilReturn, setIsNilReturn] = useState(false);
@@ -234,7 +245,12 @@ const Gstr3bPage: React.FC = () => {
   // same reasoning: don't let the tool alter a draft behind what was already
   // submitted to GSTN.
   const [filingStatus, setFilingStatus] = useState<string | null>(null);
-  const isFiled = filingStatus === 'Filed';
+  // Which client and month filingStatus was read for: until it is this
+  // pair's, the push stays locked (it could be another client's "not Filed").
+  const [filingFor, setFilingFor] = useState('');
+  const filingKnown = filingFor !== '' && filingFor === selKey;
+  const isFiled = filingKnown && filingStatus === 'Filed';
+  const filingSeq = useRef(0);
   // GSTR-3B can only genuinely be NIL if GSTR-1 for the same client/period
   // was also NIL — they cover the same underlying outward/inward activity.
   // Gate the checkbox on GSTR-1's own is_nil flag so it isn't offered (and
@@ -245,7 +261,8 @@ const Gstr3bPage: React.FC = () => {
   // end and its 'GSTR-1 (IFF)', else the plain types. Read off the plain rows,
   // an IFF client's status and NIL ticks were ones Filing Status never shows.
   const fetchFilingStatus = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) { setIsNilReturn(false); setFilingStatus(null); setGstr1IsNil(false); return; }
+    const seq = ++filingSeq.current;
+    if (!selectedClient || !selectedMonth) { setIsNilReturn(false); setFilingStatus(null); setGstr1IsNil(false); setFilingFor(''); return; }
     const [type3b, type1] = await Promise.all([
       effectiveFilingReturnType(selectedClient, 'GSTR-3B', selectedMonth),
       effectiveFilingReturnType(selectedClient, 'GSTR-1', selectedMonth),
@@ -256,9 +273,12 @@ const Gstr3bPage: React.FC = () => {
       supabase.from('filing_status').select('is_nil')
         .eq('client_id', selectedClient).eq('return_type', type1).eq('period_month', selectedMonth).maybeSingle(),
     ]);
+    // A newer read (another client or month, or a refresh) took over.
+    if (seq !== filingSeq.current) return;
     setIsNilReturn(!!(gstr3bRes.data as any)?.is_nil);
     setFilingStatus(((gstr3bRes.data as any)?.status || null) as string | null);
     setGstr1IsNil(!!(gstr1Res.data as any)?.is_nil);
+    setFilingFor(selectionKey(selectedClient, selectedMonth));
   }, [selectedClient, selectedMonth]);
   useEffect(() => { fetchFilingStatus(); }, [fetchFilingStatus]);
 
@@ -314,7 +334,9 @@ const Gstr3bPage: React.FC = () => {
   const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null);
   const [expandedDiffId, setExpandedDiffId] = useState<string | null>(null);
 
+  const versionsSeq = useRef(0);
   const fetchVersions = useCallback(async () => {
+    const seq = ++versionsSeq.current;
     if (!selectedClient || !selectedMonth) { setVersions([]); return; }
     const { data } = await supabase
       .from('gstr3b_push_versions')
@@ -330,6 +352,7 @@ const Gstr3bPage: React.FC = () => {
         .from('profiles').select('user_id, first_name').in('user_id', actorIds);
       nameMap = new Map((profiles || []).map((p) => [p.user_id, p.first_name || 'Unknown']));
     }
+    if (seq !== versionsSeq.current) return; // another client or month was asked for since
     setVersions(rows.map((r) => ({ ...r, actor_name: r.actor_id ? (nameMap.get(r.actor_id) || 'Unknown') : 'System' })));
   }, [selectedClient, selectedMonth]);
 
@@ -484,17 +507,24 @@ const Gstr3bPage: React.FC = () => {
   const selectedClientData = clients.find((c) => c.id === selectedClient);
   const selectedClientName = selectedClientData?.name || '';
 
+  // A switch clears the draft and builds the new pair's; a build that
+  // finishes after a newer one started (another client or month) is dropped.
+  const computeSeq = useRef(0);
   const compute = useCallback(async () => {
-    if (!selectedClient || !selectedMonth) { setResult(null); return; }
+    const seq = ++computeSeq.current;
+    setLoaded(null);
+    if (!selectedClient || !selectedMonth) { setIsLoading(false); return; }
     setIsLoading(true);
     try {
       const gstin = clients.find((c) => c.id === selectedClient)?.gstin || '';
-      setResult(await fetchGstr3b(selectedClient, gstin, selectedMonth));
+      const built = await fetchGstr3b(selectedClient, gstin, selectedMonth);
+      if (seq !== computeSeq.current) return;
+      setLoaded(tagForSelection(selectedClient, selectedMonth, built));
     } catch (e: any) {
+      if (seq !== computeSeq.current) return;
       toast.error('Failed to build GSTR-3B: ' + (e?.message || 'unknown'));
-      setResult(null);
     } finally {
-      setIsLoading(false);
+      if (seq === computeSeq.current) setIsLoading(false);
     }
   }, [selectedClient, selectedMonth, clients]);
 
@@ -510,17 +540,20 @@ const Gstr3bPage: React.FC = () => {
   // §8, §13). It fails closed: while it loads, on any error and for a missing
   // row the push and the JSON are locked. Push and JSON ask it again at the
   // click, so a page left open cannot use an old answer.
-  const [gate, setGate] = useState<Gstr3bGateResult | null>(null);
+  // The answer is kept with the client and month it was asked for, and is
+  // read back only for that pair (gate is null for any other).
+  const [gateFor, setGateFor] = useState<ForSelection<Gstr3bGateResult> | null>(null);
+  const gate = forSelection(gateFor, selectedClient, selectedMonth);
   const [gateLoading, setGateLoading] = useState(false);
   const gateSeq = useRef(0);
 
   const checkGate = useCallback(async () => {
     const seq = ++gateSeq.current;
-    if (!selectedClient || !selectedMonth) { setGate(null); setGateLoading(false); return; }
+    if (!selectedClient || !selectedMonth) { setGateFor(null); setGateLoading(false); return; }
     setGateLoading(true);
     const g = await checkGstr3bPushGate(selectedClient, selectedMonth);
     if (seq !== gateSeq.current) return;
-    setGate(g);
+    setGateFor(tagForSelection(selectedClient, selectedMonth, g));
     setGateLoading(false);
   }, [selectedClient, selectedMonth]);
 
@@ -534,12 +567,25 @@ const Gstr3bPage: React.FC = () => {
 
   const gateBlocks = gateLoading || !gate || !gate.ok;
 
-  // Asks the gate again at the moment of a push or download; false (with the
-  // reasons shown) unless it passes now.
+  // Asks the gate again at the moment of a push or download, for the client
+  // and month selected at the click; null (with the reasons shown) unless it
+  // passes now. An answer that comes back after the client or month changed
+  // stops the click and is not shown for the pair selected since.
   const gatePassesNow = async (what: string): Promise<Gstr3bGateResult | null> => {
-    if (!selectedClient || !selectedMonth) return null;
-    const { gate: g, allowed, message } = await askGateForClick(selectedClient, selectedMonth, what);
-    setGate(g);
+    const clientId = selectedClient;
+    const month = selectedMonth;
+    const key = selectionKey(clientId, month);
+    if (!key) return null;
+    const seq = ++gateSeq.current;
+    const { gate: g, allowed, message } = await askGateForClick(clientId, month, what);
+    if (selKeyRef.current !== key) {
+      toast.error(`${what} was stopped: the client or month changed while it was being checked. Nothing was sent.`, { duration: 15000 });
+      return null;
+    }
+    if (seq === gateSeq.current) {
+      setGateFor(tagForSelection(clientId, month, g));
+      setGateLoading(false);
+    }
     if (!allowed) {
       toast.error(message, { duration: 15000 });
       return null;
@@ -547,18 +593,34 @@ const Gstr3bPage: React.FC = () => {
     return g;
   };
 
+  // The click's client and month are still the ones selected (after an await).
+  const stillSelected = (key: string, what: string): boolean => {
+    if (selKeyRef.current === key) return true;
+    toast.error(`${what} was stopped: the client or month changed. Nothing was sent.`, { duration: 15000 });
+    return false;
+  };
+
   const s = result?.summary;
 
   const handleDownloadJson = async () => {
     if (!canExportData()) { toast.error('Needs the Export data permission — ask a GST Manager to add it to your position'); return; }
-    if (!result) return;
+    // The draft, client and month of this click. The draft on screen is this
+    // pair's (forSelection); its GSTIN and return period are checked too.
+    const key = selKey;
+    const draft = result;
+    const gstin = selectedClientData?.gstin || '';
+    const month = selectedMonth;
+    if (!draft || isLoading) { toast.error('Wait for the GSTR-3B draft to finish loading.'); return; }
+    const off = draftMismatch(draft.json, gstin, month);
+    if (off) { toast.error(`The GSTR-3B JSON download is locked. ${off}`, { duration: 15000 }); return; }
     // The JSON can be uploaded to the portal by hand, so it is gated like the push.
     if (!(await gatePassesNow('The GSTR-3B JSON download'))) return;
-    const blob = new Blob([JSON.stringify(result.json, null, 2)], { type: 'application/json' });
+    if (!stillSelected(key, 'The GSTR-3B JSON download')) return;
+    const blob = new Blob([JSON.stringify(draft.json, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `GSTR3B_${(selectedClientData?.gstin || selectedClientName || 'client')}_${(selectedMonth || '').replace('/', '-')}.json`;
+    a.download = `GSTR3B_${gstin}_${month.replace('/', '-')}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -587,7 +649,15 @@ const Gstr3bPage: React.FC = () => {
   });
 
   const handlePush = async () => {
-    if (!result || !selectedClient || !selectedMonth) return;
+    // The draft, client and month of this click; the message below sends
+    // these, never what is selected when the awaits come back.
+    const key = selKey;
+    const draft0 = result;
+    const clientId = selectedClient;
+    const month = selectedMonth;
+    const client = selectedClientData;
+    if (!clientId || !month) return;
+    if (!draft0 || isLoading) { toast.error('Wait for the GSTR-3B draft to finish loading.'); return; }
     if (!canEditFilingStatus()) { toast.error('Needs the Filing status & portal push permission — ask a GST Manager to add it to your position'); return; }
     if (!extReady) {
       toast.error('Install / enable the GST Keeper browser extension to push from this page.');
@@ -597,15 +667,21 @@ const Gstr3bPage: React.FC = () => {
       toast.error(needsExtensionMessage(extVersion));
       return;
     }
-    if (!selectedClientData?.gstin) {
+    if (!client?.gstin) {
       toast.error('Selected client has no GSTIN on file.');
       return;
     }
+    if (!filingKnown || isFiled) {
+      toast.error(isFiled ? 'GSTR-3B already Filed for this period — push is locked.' : 'Still reading the filing status of this return. Try again in a moment.');
+      return;
+    }
+    const off = draftMismatch(draft0.json, client.gstin, month);
+    if (off) { toast.error(`Push to GST Portal is locked. ${off}`, { duration: 15000 }); return; }
     // Asked again now, not the answer from when the page loaded. The
     // extension asks it once more before it opens the portal.
     if (!(await gatePassesNow('Push to GST Portal'))) return;
     // Every amount to 2 decimals, and nothing the portal would refuse (see roundDraft / draftProblems).
-    const draft = roundDraft(result.json);
+    const draft = roundDraft(draft0.json);
     const bad = draftProblems(draft);
     if (bad.length) {
       toast.error(
@@ -618,7 +694,7 @@ const Gstr3bPage: React.FC = () => {
     // With no ITC Summary, Table 4 is all zero (buildGstr3bJson's flag), and
     // the extension types those zeros over the ITC the portal filled from
     // GSTR-2B. Sometimes right (a period with no credit), so it asks.
-    if (result.flags.some((f) => f.startsWith('No ITC Summary'))) {
+    if (draft0.flags.some((f) => f.startsWith('No ITC Summary'))) {
       const go = await confirm({
         title: 'No ITC Summary for this period',
         description: 'There is no ITC Summary for this period, so Table 4 would be typed as 0 and overwrite the ITC the portal filled from GSTR-2B. Push anyway?',
@@ -632,19 +708,21 @@ const Gstr3bPage: React.FC = () => {
     const { data: g1 } = await supabase
       .from('gstr1_data')
       .select('raw_json')
-      .eq('client_id', selectedClient)
-      .eq('period_month', toShort(selectedMonth))
+      .eq('client_id', clientId)
+      .eq('period_month', toShort(month))
       .maybeSingle();
     const advanceOk = await advanceGate.evaluate({
-      clientId: selectedClient,
-      clientName: selectedClientData?.name || '',
-      gstin: selectedClientData.gstin,
-      periodMonth: selectedMonth,
+      clientId,
+      clientName: client.name || '',
+      gstin: client.gstin,
+      periodMonth: month,
       draftJson: (g1 as { raw_json?: unknown } | null)?.raw_json ?? null,
-      regularSubType: selectedClientData?.regular_sub_type,
-      registrationType: selectedClientData?.registration_type,
+      regularSubType: client.regular_sub_type,
+      registrationType: client.registration_type,
     });
     if (!advanceOk) return;
+    // The confirmations above wait for a person: the pair must still be the one shown.
+    if (!stillSelected(key, 'Push to GST Portal')) return;
 
     setIsPushing(true);
     setPushResult(null);
@@ -652,8 +730,8 @@ const Gstr3bPage: React.FC = () => {
     window.postMessage(
       {
         __gstkPushGstr3b: {
-          clientId: selectedClient,
-          period_month: selectedMonth,
+          clientId,
+          period_month: month,
           actorId: user?.id ?? null,
           gstr3bJson: draft,
         },
@@ -677,10 +755,12 @@ const Gstr3bPage: React.FC = () => {
               size="sm"
               className={WS_BTN}
               onClick={handleDownloadJson}
-              disabled={!canExportData() || gateBlocks}
+              disabled={!canExportData() || gateBlocks || isLoading}
               title={!canExportData()
                 ? 'Needs the Export data permission — ask a GST Manager to add it to your position'
-                : gateBlocks
+                : isLoading
+                  ? 'Building GSTR-3B…'
+                  : gateBlocks
                   ? `JSON download is locked. ${gateReasonsText(gateLoading ? null : gate)}`
                   : 'Download the GSTR-3B JSON'}
             >
@@ -700,14 +780,16 @@ const Gstr3bPage: React.FC = () => {
               <Button
                 onClick={handlePush}
                 size="sm"
-                disabled={isPushing || !extReady || isFiled || gateBlocks || !canEditFilingStatus()}
+                disabled={isPushing || isLoading || !extReady || !filingKnown || isFiled || gateBlocks || !canEditFilingStatus()}
                 className={WS_BTN}
                 title={
                   !canEditFilingStatus()
                     ? 'Needs the Filing status & portal push permission — ask a GST Manager to add it to your position'
                     : isFiled
                     ? 'GSTR-3B already Filed for this period — push is locked'
-                    : gateLoading
+                    : isLoading || !filingKnown
+                      ? 'Building GSTR-3B…'
+                      : gateLoading
                       ? 'Checking Suspended Reco / GST Receivable Reco…'
                       : gateBlocks
                         ? `Push is locked. ${gateReasonsText(gate)}`
@@ -749,7 +831,7 @@ const Gstr3bPage: React.FC = () => {
               className={WS_CONTROL}
             />
           </div>
-          {isStaff && selectedClient && selectedMonth && gstr1IsNil && (
+          {isStaff && selectedClient && selectedMonth && filingKnown && gstr1IsNil && (
             <div className="flex h-8 items-center gap-2" title="This period had zero activity for GSTR-3B.">
               <Checkbox
                 id="gstr3b-nil-return"

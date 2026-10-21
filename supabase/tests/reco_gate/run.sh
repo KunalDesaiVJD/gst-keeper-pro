@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Replays the reco migrations on a throwaway local database and runs the tests
 # in this folder: the pull-only guard, manual allowances, the override, the
-# GSTR-3B push gate and the round 1 and round 2 reviews' defects
+# GSTR-3B push gate and the round 1, 2 and 3 reviews' defects
 # (20261021120000_reco_pull_push_gate.sql, applied twice: it must be safe to
 # re-run), shared_block.sh (the allowance table shared with the filing
 # branch), then parity.mjs, which runs the app's own

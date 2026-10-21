@@ -873,8 +873,14 @@ a reason, and everything must be traceable. Migration
   the first pull keeps it and takes the pulled figure as its base ("kept (no
   base was recorded; base set from this pull)"); a re-override of such a row
   leaves the base empty for that pull to set. Live, 8 Suspended Reco
-  overrides are of this kind. Before 0.16.0 a re-pull left an old
-  "Overridden" stamp on 2 rows.
+  overrides are of this kind. Before 0.16.0 a re-pull wrote the pulled figure
+  over an override and left its stamps: an override with no base whose last
+  pull is later than the override (`reco_override_superseded`) no longer
+  applies, so the next pull clears it ("cleared: a later pull had already
+  replaced it") instead of keeping it under the new figure, and a re-override
+  of such a row takes the pulled opening as its base (round 3 of the review).
+  Live, 2 rows: NAVRATNA S G HIGHWAY 06/2026 and SORATH BUILDERS 08/2026,
+  both Filed; they keep the "Overridden" label until they are pulled again.
 - The pull saves only for the client the portal page shows: both ledger
   steps check the page header's GSTIN first, as the push does (0.16.0), and
   stop with nothing saved when it is another client's.
@@ -965,11 +971,31 @@ has the draft, but it does not mark the return Pushed, and Push History shows
 it as "Reco check failed: not marked Pushed" with the reasons. This covers an
 extension older than 0.16.0, which pushes without asking, and a forged row.
 The gate, client and month of a recorded push never change afterwards.
-Filing Status shows such a return as not Pushed; it does not yet show the
+`mark_filing_pushed`, the other way into Pushed (the GSTR-1 page and the
+extension's GSTR-1 NIL push), refuses a GSTR-3B or GSTR-3B (Q) whose gate
+does not pass, with the reasons (round 3 of the review); no page calls it for
+a GSTR-3B. Filing Status shows such a return as not Pushed; it does not yet show the
 flag itself (the page is being reworked on the filing branch).
 "Ready" on the pages says what it rests on, per reco: pulled, an allowed
 manual entry, a waived Builder difference, or no pull needed before
 Jun 2026; the reco pages show only the answer for the client on screen.
+
+**The GSTR-3B page keeps everything with its client and month** (round 3 of
+the review, `src/lib/gstr3bSelection.ts`). The draft, the gate answer and the
+filing status are each kept with the client and month they were loaded for
+and shown only while that pair is selected: a switch clears them and loads
+the new pair's, and an answer that comes back after a switch is dropped. The
+JSON download and the push take the draft, client and month of the click,
+check that the draft's GSTIN and return period are that client's and month's,
+ask the gate for that pair, and stop ("... was stopped: the client or month
+changed. Nothing was sent.") if another pair is selected by the time the
+checks and confirmations end. Both buttons are locked while the draft
+builds, and the push until that return's filing status is read. Before, a
+draft still building for the client selected before could be downloaded or
+pushed under the new client's passing gate (another client's figures typed
+into this client's portal form), and a late gate answer from a JSON or Push
+click showed "ready" for the client selected since. The GSTR-3B preview
+dialog (`Gstr3bPreviewDialog`, unused today) keeps its draft the same way.
 
 The differences are `suspended_reco_difference` and
 `gst_receivable_reco_difference`, ports of `src/lib/suspendedRecoCalc.ts`

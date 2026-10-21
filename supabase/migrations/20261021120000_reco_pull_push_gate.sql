@@ -11,8 +11,9 @@
 --      Pull), stamps who and when (server time) and logs the extension
 --      version. It keeps an override made against the same portal figure and
 --      clears one made against another (an override made before this
---      migration has no base: it is kept and its base set from the pull),
---      clears the CSV stamps, and closes the month's live manual allowance
+--      migration has no base: it is kept and its base set from the pull,
+--      unless an older extension's pull had already written over it, when
+--      it is cleared), clears the CSV stamps, and closes the month's live manual allowance
 --      (revoked, with the puller as revoked_by). A month whose statement has no
 --      balance row on the portal is saved as 0 and marked so
 --      (opening_portal_empty). A reco row never moves to another client or
@@ -57,7 +58,8 @@
 -- pass. Every Push History row (gstr3b_push_versions) gets the database's own
 -- gate answer when it is written, in place of what was sent; an 'ok' push
 -- whose gate does not pass (an extension older than 0.16.0, a forged row) is
--- recorded but does not mark the return Pushed.
+-- recorded but does not mark the return Pushed. mark_filing_pushed, the other
+-- door to Pushed, refuses a GSTR-3B whose gate does not pass (section 8).
 -- Nil returns are included. A missing row blocks. Any error blocks ("fails
 -- closed"); the app treats an error calling it the same way. Before 06/2026
 -- it checks only the Suspended Reco difference, with no tolerance, as the
@@ -86,6 +88,16 @@
 -- Clear Data slipped past); a pull closes a live allowance as revoked, not as
 -- used. Tests: supabase/tests/reco_gate/test_40_round2.sql and race.sh.
 --
+-- Round 3 of the review: an override made before this migration that an
+-- older extension's pull then wrote over (the opening is that pull's figure,
+-- the stamps were left: reco_override_superseded) is cleared by the next
+-- pull, not kept, and a re-override of such a row takes the pulled opening
+-- as its base; mark_filing_pushed marks a GSTR-3B / GSTR-3B (Q) Pushed only
+-- when gstr3b_push_gate passes (section 8). Test:
+-- supabase/tests/reco_gate/test_50_round3.sql. The GSTR-3B page's own part
+-- (draft, gate answer and filing status kept with their client and month,
+-- src/lib/gstr3bSelection.ts) is checked by scripts/verify-reco-gate.mjs.
+--
 -- ===========================================================================
 -- Live apply (project gcquafqxbykxkbexcdpy ONLY; never SUPABASE_PROJECT_REF)
 -- ===========================================================================
@@ -109,6 +121,15 @@
 --      SELECT c.name, s.period_month FROM suspended_reco s JOIN clients c ON c.id = s.client_id
 --        WHERE s.opening_override_justification IS NOT NULL ORDER BY 2, 1;           -- the 8 overrides made
 --        -- before this migration (no base); 09/2026: PRIDE DRUGS & PHARMA PRIVATE LIMITED. Note them.
+--      SELECT c.name, s.period_month FROM suspended_reco s JOIN clients c ON c.id = s.client_id
+--        WHERE s.opening_override_justification IS NOT NULL
+--          AND s.opening_portal_pulled_at > s.opening_override_at ORDER BY 2, 1;    -- 21 Oct (round 3): 2,
+--        -- NAVRATNA S G HIGHWAY PROPERTIES 06/2026 and SORATH BUILDERS 08/2026: overridden, then pulled by
+--        -- the old extension, which wrote the pulled figure over the override and left its stamps. Their
+--        -- next pull clears the override ("cleared: a later pull had already replaced it"); until then
+--        -- they keep the "Overridden" label. Both months are Filed: re-pull them from Suspended Reco if
+--        -- the label should go now. (The same on gst_receivable_reco: 0 overrides.)
+--      SELECT has_function_privilege('anon', 'public.mark_filing_pushed(uuid,text,text,uuid)', 'execute');  -- true
 --      SELECT count(*) FROM suspended_reco WHERE opening_source = 'portal' AND opening_portal_pulled_at IS NULL;  -- 0
 --      (the same on gst_receivable_reco: 0; a pull row without a time would read as not pulled)
 --      SELECT count(DISTINCT client_id) FROM (SELECT client_id FROM suspended_reco
@@ -132,6 +153,10 @@
 --         'public.manual_source_revoke(uuid,uuid)', 'public.reco_record_pull(uuid,text,uuid,text,jsonb,jsonb,jsonb,text,boolean)',
 --         'public.reco_manual_opening(uuid,text,uuid,text,text,jsonb,jsonb,jsonb,text)',
 --         'public.reco_override_opening(uuid,text,uuid,text,jsonb,text)', 'public.reco_clear(uuid,text,uuid,text[])']) p;  -- all true
+--       SELECT has_function_privilege('anon', 'public.mark_filing_pushed(uuid,text,text,uuid)', 'execute'),
+--              position('gstr3b_push_gate' in prosrc) > 0
+--         FROM pg_proc WHERE oid = 'public.mark_filing_pushed(uuid,text,text,uuid)'::regprocedure;  -- true, true
+--       SELECT to_regprocedure('public.reco_override_superseded(jsonb)') IS NOT NULL;  -- true
 --       SELECT has_function_privilege('anon', 'public.manual_source_take(uuid,uuid,text,text)', 'execute'),
 --              has_function_privilege('anon', 'public.reco_door(text,uuid,text,text)', 'execute');  -- false, false
 --       SELECT to_regprocedure('public.reco_record_pull(uuid,text,uuid,text,jsonb,jsonb,jsonb,text)');  -- NULL (old signature gone)
@@ -165,6 +190,14 @@
 --         POST /rest/v1/rpc/reco_record_pull {"p_actor_id":null,"p_reco":"suspended",
 --           "p_client_id":"<id>","p_period":"09/2026","p_opening":{"igst":0,"cgst":0,"sgst":0}}
 --           -> 4xx "A pull is saved only for a staff member..."
+--         Only for a client and month whose gate says no (with a passing one this call WOULD mark
+--         its GSTR-3B Pushed): first SELECT public.gstr3b_push_gate('<id>', '10/2026')->>'ok';  -- 'false'
+--         (on 21 Oct every 10/2026 client was blocked), then
+--         POST /rest/v1/rpc/mark_filing_pushed {"p_client_id":"<that client>","p_return_type":"GSTR-3B",
+--           "p_period_month":"10/2026","p_actor":null}
+--           -> 4xx "GSTR-3B is marked Pushed only by a push whose reconciliation check passes. ..."
+--           and SELECT status FROM filing_status WHERE client_id = '<it>' AND period_month = '10/2026'
+--           is what it was before.
 -- 4. Release in this order, the same hour: this migration (and the filing
 --    branch's), the app (Vercel), then extension 0.16.0 in every office
 --    Chrome: copy extension/ over the extension folder on every PC that pulls
@@ -192,8 +225,9 @@
 --       DROP TRIGGER trg_gst_receivable_reco_source_guard ON public.gst_receivable_reco;
 --       DROP TRIGGER trg_gstr3b_push_versions_gate ON public.gstr3b_push_versions;
 --       then re-run 20261020150000 for the old override guard, and section 3
---       of 20261009200000 for the old gstr3b_push_versions_record_push. The
---       new columns, tables and functions can stay.
+--       of 20261009200000 for the old gstr3b_push_versions_record_push, and
+--       its section 2 for the old mark_filing_pushed. The new columns, tables
+--       and functions can stay.
 
 BEGIN;
 
@@ -800,6 +834,24 @@ BEGIN
 END;
 $$;
 
+-- Round 3 of the review: an override with no recorded base (made before this
+-- migration) that a later pull has written over. Before this migration an
+-- older extension's pull replaced the opening and left the override's
+-- stamps (live: SORATH BUILDERS 08/2026, NAVRATNA S G HIGHWAY 06/2026), so
+-- the row reads "overridden" over a pulled figure. Such an override no
+-- longer applies: the next pull clears it (reco_record_pull), and a
+-- re-override takes the current, pulled opening as its base
+-- (reco_override_opening). r is the row as to_jsonb gives it.
+CREATE OR REPLACE FUNCTION public.reco_override_superseded(r jsonb)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT coalesce(r->>'opening_override_justification' IS NOT NULL
+     AND jsonb_typeof(r->'opening_override_base') IS DISTINCT FROM 'object'
+     AND (NULLIF(r->>'opening_portal_pulled_at', ''))::timestamptz > (NULLIF(r->>'opening_override_at', ''))::timestamptz, false);
+$$;
+
 -- Sets (or, with NULLs, clears) what the doors tell the triggers.
 CREATE OR REPLACE FUNCTION public.reco_door(p_mode text, p_actor uuid, p_note text DEFAULT NULL, p_ext text DEFAULT NULL)
 RETURNS void
@@ -822,7 +874,8 @@ REVOKE ALL ON FUNCTION public.reco_door(text, uuid, text, text) FROM PUBLIC, ano
 -- allowance, used or not (revoked by the puller: no longer needed); keeps
 -- an override made against the same portal figure, clears one made against
 -- another, and keeps one with no recorded base (made before this
--- migration), taking the pulled figure as its base. The
+-- migration), taking the pulled figure as its base, unless an earlier pull
+-- had already written over it (reco_override_superseded: cleared). The
 -- log row names who, the extension version and what happened to an
 -- override or allowance.
 DROP FUNCTION IF EXISTS public.reco_record_pull(uuid, text, uuid, text, jsonb, jsonb, jsonb, text);
@@ -883,10 +936,18 @@ BEGIN
     v_had_override := true;
     v_base := v_old->'opening_override_base';
     SELECT first_name INTO v_name FROM public.profiles WHERE user_id = NULLIF(v_old->>'opening_override_by', '')::uuid;
-    IF jsonb_typeof(v_base) IS DISTINCT FROM 'object' THEN
-      -- An override made before this migration has no base: the figure it
-      -- was made against is unknown, not different. Keep it and take this
-      -- pull's figure as its base, so the next pull compares against it.
+    IF jsonb_typeof(v_base) IS DISTINCT FROM 'object' AND public.reco_override_superseded(v_old) THEN
+      -- Round 3 of the review: an override made before this migration that
+      -- an older extension's pull has since written over (its opening is
+      -- that pull's figure; only the stamps were left behind). It no longer
+      -- applies: cleared like an override made against another figure.
+      v_notes := v_notes || ('Override by ' || coalesce(v_name, 'unknown')
+        || ' cleared: a later pull had already replaced it.');
+    ELSIF jsonb_typeof(v_base) IS DISTINCT FROM 'object' THEN
+      -- An override made before this migration, after the last pull, has no
+      -- base: the figure it was made against is unknown, not different. Keep
+      -- it and take this pull's figure as its base, so the next pull
+      -- compares against it.
       v_keep := true;
       v_unknown_base := true;
       v_notes := v_notes || ('Override by ' || coalesce(v_name, 'unknown')
@@ -1149,9 +1210,12 @@ BEGIN
   -- NULL (never JSON null) and the next pull keeps the override and sets the
   -- base from what it pulls (reco_record_pull). The current opening is not
   -- used for it: on an overridden row that is the earlier override's figure.
+  -- Except (round 3 of the review) when a later pull has written over that
+  -- legacy override (reco_override_superseded): the current opening is then
+  -- the pulled figure, and is the base.
   v_base := CASE
     WHEN v_old IS NULL THEN NULL
-    WHEN v_old->>'opening_override_justification' IS NOT NULL THEN
+    WHEN v_old->>'opening_override_justification' IS NOT NULL AND NOT public.reco_override_superseded(v_old) THEN
       CASE WHEN jsonb_typeof(v_old->'opening_override_base') = 'object' THEN v_old->'opening_override_base' END
     ELSE jsonb_build_object('igst', coalesce(public.reco_num(v_old->'opening_igst'), 0),
                             'cgst', coalesce(public.reco_num(v_old->'opening_cgst'), 0),
@@ -1742,5 +1806,48 @@ BEGIN
   RETURN NULL;
 END;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- 8. mark_filing_pushed: a GSTR-3B is marked Pushed only through the gate
+-- ---------------------------------------------------------------------------
+-- Round 3 of the review: mark_filing_pushed (20261009200000, anon EXECUTE)
+-- marked any return Pushed for whoever called it, so a GSTR-3B whose recos
+-- do not pass could be marked Pushed with one REST call, the "forged row"
+-- that section 7 closes on gstr3b_push_versions. No page or extension calls
+-- it for a GSTR-3B (a GSTR-3B push is recorded by the trigger on
+-- gstr3b_push_versions); for GSTR-3B and GSTR-3B (Q) it now asks
+-- gstr3b_push_gate and refuses unless it passes. Every other return type
+-- (the GSTR-1 page and the extension's GSTR-1 NIL push) works as before.
+-- Same signature, body otherwise as 20261009200000, same grants. The filing
+-- branch (20261021110000) does not redefine it: either order works.
+CREATE OR REPLACE FUNCTION public.mark_filing_pushed(
+  p_client_id    uuid,
+  p_return_type  text,
+  p_period_month text,
+  p_actor        uuid DEFAULT NULL
+)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_gate jsonb;
+BEGIN
+  -- Any spelling of GSTR-3B (the push family is GSTR-3B and GSTR-3B (Q)).
+  IF upper(regexp_replace(coalesce(p_return_type, ''), '[^A-Za-z0-9]', '', 'g')) LIKE 'GSTR3B%' THEN
+    v_gate := public.gstr3b_push_gate(p_client_id, p_period_month);
+    IF (v_gate->>'ok') IS DISTINCT FROM 'true' THEN
+      RAISE EXCEPTION 'GSTR-3B is marked Pushed only by a push whose reconciliation check passes. %',
+        coalesce((SELECT string_agg(r->>'message', ' ') FROM jsonb_array_elements(v_gate->'reasons') r), 'The check did not pass.')
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
+  END IF;
+  RETURN public.filing_record_push(p_client_id, p_return_type, p_period_month, p_actor, now());
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.mark_filing_pushed(uuid, text, text, uuid)
+  TO anon, authenticated, service_role;
 
 COMMIT;

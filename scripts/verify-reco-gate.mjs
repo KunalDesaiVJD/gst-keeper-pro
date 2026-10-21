@@ -27,7 +27,13 @@
 //    closing is unsaved, and its gate note says it has not checked the typed
 //    figures; before Jun 2026 the parts line names the source plainly; the
 //    Excel exports and the credit-ledger reports say where each opening came
-//    from; Push History flags a push recorded without a passing gate.
+//    from; Push History flags a push recorded without a passing gate;
+//  - round 3: the GSTR-3B page keeps its draft, its gate answer and its
+//    filing status with the client and month they were loaded for
+//    (src/lib/gstr3bSelection.ts): a switch clears them, a late answer for
+//    another pair is dropped, and the JSON download and the push send only
+//    the draft of the pair selected at the click, whose GSTIN and return
+//    period match, while that pair is still selected.
 //
 //   node scripts/verify-reco-gate.mjs
 //
@@ -76,6 +82,7 @@ fs.writeFileSync(entry, [
   "export * from '@/lib/recoSources';",
   "export { computeGstReceivableRecoDiff, utilisedFromLedger } from '@/lib/gstReceivableRecoCalc';",
   "export { allowanceControlLabel, manualSourceLabel } from '@/lib/manualSource';",
+  "export { draftMismatch, forSelection, selectionKey, tagForSelection } from '@/lib/gstr3bSelection';",
   "export { suspendedRecoSheetRows } from '@/utils/suspendedRecoExcelExport';",
   "export { gstReceivableRecoSheetRows } from '@/utils/gstReceivableRecoExcelExport';",
   "export { buildCreditClosingAllClients, buildCreditClosingPerClient } from '@/utils/allClientsReports';",
@@ -180,14 +187,14 @@ check('page: the push asks the gate before it messages the extension',
 check('page: the JSON download asks the gate before it makes the file',
   json.includes("await gatePassesNow('The GSTR-3B JSON download')") && json.indexOf('gatePassesNow') < json.indexOf('new Blob('), json.slice(0, 200));
 check('page: a refused click stops (return)', /if \(!\(await gatePassesNow\('Push to GST Portal'\)\)\) return;/.test(push) && /if \(!\(await gatePassesNow\('The GSTR-3B JSON download'\)\)\) return;/.test(json));
-check('page: gatePassesNow uses askGateForClick', /askGateForClick\(selectedClient, selectedMonth, what\)/.test(page));
+check('page: gatePassesNow uses askGateForClick', /const clientId = selectedClient;\s*const month = selectedMonth;[\s\S]*?askGateForClick\(clientId, month, what\)/.test(body('gatePassesNow')));
 check('page: locked while loading, on no answer and on "no"', /const gateBlocks = gateLoading \|\| !gate \|\| !gate\.ok;/.test(page));
-check('page: the push button is disabled by the gate', /disabled=\{isPushing \|\| !extReady \|\| isFiled \|\| gateBlocks \|\| !canEditFilingStatus\(\)\}/.test(page));
-check('page: the JSON button is disabled by the gate', /disabled=\{!canExportData\(\) \|\| gateBlocks\}/.test(page));
+check('page: the push button is disabled by the gate', /disabled=\{isPushing \|\| isLoading \|\| !extReady \|\| !filingKnown \|\| isFiled \|\| gateBlocks \|\| !canEditFilingStatus\(\)\}/.test(page));
+check('page: the JSON button is disabled by the gate', /disabled=\{!canExportData\(\) \|\| gateBlocks \|\| isLoading\}/.test(page));
 check('page: the push needs extension 0.16.0', /if \(!extensionCanPull\(extVersion\)\) \{\s*toast\.error\(needsExtensionMessage\(extVersion\)\);\s*return;/.test(push));
 const preview = fs.readFileSync(path.join(root, 'src/components/portal/Gstr3bPreviewDialog.tsx'), 'utf8');
 check('preview dialog: its JSON download asks the gate first too',
-  /const \{ allowed, message \} = await askGateForClick\(clientId, periodMonth, 'The GSTR-3B JSON download'\);\s*if \(!allowed\)/.test(preview)
+  /const \{ allowed, message \} = await askGateForClick\(clientId, periodMonth, 'The GSTR-3B JSON download'\);\s*if \(keyRef\.current !== key\) \{[^\n]*\}\s*if \(!allowed\)/.test(preview)
   && preview.indexOf('askGateForClick(clientId') < preview.indexOf('new Blob('));
 check('page: no difference of its own any more', !/computeSuspendedRecoDiff|computeGstReceivableRecoDiff|hasRecoDiff/.test(page));
 
@@ -401,6 +408,60 @@ globalThis.__db = {};
 check('r2 push record: Push History flags an ok push whose recorded gate failed',
   /const pushedWithoutGate = \(v: Pick<Gstr3bPushVersion, 'status' \| 'gate'>\) => v\.status === 'ok' && !!v\.gate && v\.gate\.ok === false;/.test(page)
   && (page.match(/pushedWithoutGate\((v|versions\[0\])\) && \(/g) || []).length === 2 && /Reco check failed: not marked Pushed/.test(page));
+
+// ── Round 3 of the review: the GSTR-3B page is keyed to its client and month ──
+// The helpers, as values.
+const tagged = lib.tagForSelection('c-1', '09/2026', { draft: 'C1' });
+check('r3 keyed: a value reads back for its own client and month', lib.forSelection(tagged, 'c-1', '09/2026')?.draft === 'C1');
+check('r3 keyed: and for no other pair, or none', lib.forSelection(tagged, 'c-10', '09/2026') === null
+  && lib.forSelection(tagged, 'c-1', '10/2026') === null && lib.forSelection(null, 'c-1', '09/2026') === null
+  && lib.forSelection(tagged, '', '09/2026') === null);
+check('r3 keyed: the key needs both', lib.selectionKey('c-1', '09/2026') === 'c-1|09/2026' && lib.selectionKey('', '09/2026') === '' && lib.selectionKey('c-1', null) === '');
+// The verifier's case: C10's draft on screen while C1 is selected.
+const c10Draft = { gstin: '24AAAAA0010A1Z5', ret_period: '092026' };
+check('r3 draft: another client\'s draft does not go out', /is for GSTIN 24AAAAA0010A1Z5, not 24AAAAA0001A1Z5/.test(lib.draftMismatch(c10Draft, '24AAAAA0001A1Z5', '09/2026') || ''));
+check('r3 draft: another month\'s draft does not go out', /another month/.test(lib.draftMismatch(c10Draft, '24AAAAA0010A1Z5', '10/2026') || ''));
+check('r3 draft: a draft built before the GSTIN was known does not go out', !!lib.draftMismatch({ gstin: '', ret_period: '092026' }, '24AAAAA0010A1Z5', '09/2026'));
+check('r3 draft: no draft, or a client with no GSTIN, does not go out', !!lib.draftMismatch(null, 'G', '09/2026') && /no GSTIN/.test(lib.draftMismatch(c10Draft, '', '09/2026') || ''));
+check('r3 draft: its own draft goes out', lib.draftMismatch(c10Draft, ' 24aaaaa0010a1z5 ', '09/2026') === null);
+
+// The page's wiring.
+check('r3 page: the draft is kept with its pair and read back through forSelection',
+  /const \[loaded, setLoaded\] = useState<ForSelection<Gstr3bResult> \| null>\(null\);\s*const result = forSelection\(loaded, selectedClient, selectedMonth\);/.test(page)
+  && !/setResult\(/.test(page));
+const compute = page.slice(page.indexOf('const compute = useCallback'), page.indexOf('}, [selectedClient, selectedMonth, clients]);'));
+check('r3 page: a switch clears the draft and a late build is dropped',
+  /const seq = \+\+computeSeq\.current;\s*setLoaded\(null\);/.test(compute)
+  && /if \(seq !== computeSeq\.current\) return;\s*setLoaded\(tagForSelection\(selectedClient, selectedMonth, built\)\);/.test(compute), compute.slice(0, 300));
+check('r3 page: the gate answer is kept with its pair and read back through forSelection',
+  /const gate = forSelection\(gateFor, selectedClient, selectedMonth\);/.test(page) && !/setGate\(/.test(page)
+  && (page.match(/setGateFor\(tagForSelection\(/g) || []).length === 2);
+const gpn = body('gatePassesNow');
+check('r3 page: a click\'s late gate answer is dropped when the pair changed, and is not shown',
+  gpn.indexOf('if (selKeyRef.current !== key) {') > gpn.indexOf('await askGateForClick')
+  && gpn.indexOf('return null;', gpn.indexOf('if (selKeyRef.current !== key) {')) < gpn.indexOf('setGateFor(')
+  && /if \(seq === gateSeq\.current\) \{\s*setGateFor\(tagForSelection\(clientId, month, g\)\);/.test(gpn), gpn.slice(0, 400));
+check('r3 page: the JSON download takes the click\'s draft, checks it is that client\'s and month\'s, and that the pair is still selected',
+  /const key = selKey;\s*const draft = result;/.test(json) && /if \(!draft \|\| isLoading\)/.test(json)
+  && json.indexOf('draftMismatch(draft.json, gstin, month)') < json.indexOf('gatePassesNow')
+  && json.indexOf("stillSelected(key, 'The GSTR-3B JSON download')") > json.indexOf('gatePassesNow')
+  && json.indexOf("stillSelected(key, 'The GSTR-3B JSON download')") < json.indexOf('new Blob(')
+  && /new Blob\(\[JSON\.stringify\(draft\.json/.test(json) && !/result\.json/.test(json), json.slice(0, 400));
+check('r3 page: the push takes the click\'s draft, client and month, checks them, and sends only those',
+  /const key = selKey;\s*const draft0 = result;\s*const clientId = selectedClient;\s*const month = selectedMonth;/.test(push)
+  && /if \(!draft0 \|\| isLoading\)/.test(push)
+  && push.indexOf('draftMismatch(draft0.json, client.gstin, month)') < push.indexOf('gatePassesNow')
+  && push.indexOf("stillSelected(key, 'Push to GST Portal')") > push.indexOf('advanceGate.evaluate')
+  && push.indexOf("stillSelected(key, 'Push to GST Portal')") < push.indexOf('__gstkPushGstr3b')
+  && /__gstkPushGstr3b: \{\s*clientId,\s*period_month: month,/.test(push)
+  && !/result\.|selectedClient\b|selectedMonth\b|selectedClientData/.test(push.slice(push.indexOf('const client = selectedClientData;') + 40)), push.slice(0, 400));
+check('r3 page: the push is locked until this pair\'s filing status is read',
+  /const filingKnown = filingFor !== '' && filingFor === selKey;\s*const isFiled = filingKnown && filingStatus === 'Filed';/.test(page)
+  && /if \(!filingKnown \|\| isFiled\)/.test(push) && /if \(seq !== filingSeq\.current\) return;/.test(page));
+check('r3 page: Push History drops a late answer for another pair', /if \(seq !== versionsSeq\.current\) return;/.test(page));
+check('r3 preview dialog: keyed the same way',
+  /const result = forSelection\(loaded, clientId, periodMonth\);/.test(preview) && /draftMismatch\(draft\.json, gstin, periodMonth\)/.test(preview)
+  && /if \(seq === buildSeq\.current\) setLoaded\(tagForSelection\(clientId, periodMonth, built\)\);/.test(preview));
 
 fs.rmSync(tmp, { recursive: true, force: true });
 const failed = results.filter((r) => !r.ok);
