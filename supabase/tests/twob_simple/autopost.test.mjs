@@ -237,6 +237,25 @@ await both('4 re-import figures', (t) => `UPDATE public.twob_import_docs SET tax
 await both('5 counted figures', (t) => `UPDATE public.twob_import_docs SET base_taxable_value = 110, base_input_igst = 20 WHERE id = '${id(t, 105)}';
   UPDATE public.twob_import_docs SET base_taxable_value = 600, base_input_igst = 100 WHERE id = '${id(t, 107)}';
   UPDATE public.twob_import_docs SET itc_action = 'NOT_IN_BOOKS' WHERE id = '${id(t, 108)}';`);
+// 5b. A books row paired with a 2B document (A: the one call,
+// twob_import2b_save_book; B: the document and the row as the page wrote
+// them before, then Post).
+await both('5b pairing in one call', (t, client) => (t === 'a'
+  ? `SELECT public.twob_import2b_save_book(public.t_manager(), '${id(t, 201)}', '{"book_treatment":"MISMATCHED","matched_2b_id":"${id(t, 101)}"}'::jsonb, NULL, '${id(t, 101)}');`
+  : `UPDATE public.twob_import_docs SET matched_book_id = '${id(t, 201)}', itc_action = 'MISMATCHED' WHERE id = '${id(t, 101)}' AND client_id = '${client}';
+     UPDATE public.books_register SET book_treatment = 'MISMATCHED', matched_2b_id = '${id(t, 101)}' WHERE id = '${id(t, 201)}';`));
+// 5c. A reclaim (A: the one call, twob_import2b_reclaim; B: the entry and
+// the document as the page wrote them before, then Post): a Not in Books
+// document reclaims a pending Not in 2B entry.
+await both('5c reclaim in one call', (t, client) => {
+  const entry = psql(`SELECT id FROM public.bills_not_in_2b WHERE source_book_id = '${id(t, 204)}'`);
+  return t === 'a'
+    ? `SELECT public.twob_import2b_reclaim(public.t_manager(), '${client}', '${M}', '${entry}', '${id(t, 114)}');`
+    : `UPDATE public.bills_not_in_2b SET reclaim_month = 'Sep 26', reclaimed_via_doc_id = '${id(t, 114)}' WHERE id = '${entry}';
+       UPDATE public.twob_import_docs SET itc_action = 'RECLAIM' WHERE id = '${id(t, 114)}';`;
+});
+check('5c reclaim in one call: the entry was there to reclaim', psql(`SELECT count(*) FROM public.bills_not_in_2b WHERE source_book_id = '${id('a', 204)}' AND reclaim_month = 'Sep 26'`) === '1');
+
 // 6. A books row deleted (B: Import 2B's delete took back its entry, then Post).
 {
   const ra = run(`DELETE FROM public.books_register WHERE id = '${id('a', 202)}' OR id = '${id('a', 205)}' OR id = '${id('a', 206)}';`);

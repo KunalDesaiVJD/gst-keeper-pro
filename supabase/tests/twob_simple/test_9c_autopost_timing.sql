@@ -5,17 +5,22 @@
 --      page chunks them);
 --   T2 a re-import that changes the figures of all 1,000 (one update a
 --      document, as the merge writes them): 1,000 statements in one
---      transaction under 1 s; and as the page sends them, 1,000 requests
---      each committed on its own, the write-through adding under 1.5 ms a
---      request to the same requests written by hand (the document and its
---      entry, as Post wrote them; the page sends them 8 at a time, and a
---      request's round trip over the network, tens of ms, is what the
---      person waits for);
+--      transaction, and as the page sends them, 1,000 requests each
+--      committed on its own, the write-through adding under 1 s in all
+--      (1 ms a request) to the same requests written by hand (the document
+--      and its entry, as Post wrote them; the page sends them 8 at a time,
+--      and a request's round trip over the network, tens of ms, is what the
+--      person waits for). Both runs with synchronous_commit off: the disk's
+--      flush at each commit is the same for both and varied by more than
+--      the write-through costs, so it is left out of the comparison;
 --   T3 Save of 1,000 treatment changes, in chunks of 100 (Not in Books to
 --      Matched: 1,000 entries taken back), and back;
 --   T4 1,000 books rows added Not in 2B in one statement;
 --   T5 the catch-up of a month of 1,000 + 1,000 rows never posted;
---   T6 Delete 2B of a month of 1,000 Not in Books documents.
+--   T6 Delete 2B of a month of 1,000 Not in Books documents;
+--   T7 Clear Data of one month holding 1,000 Not in Books documents and 500
+--      Not in 2B books rows, all posted (the dialog calls it once a month,
+--      each call within the 3 s anon calls run under), written again.
 -- Fictional.
 SELECT set_config('twob.write', 'system', false);
 INSERT INTO public.clients (id, name, gstin) VALUES
@@ -38,7 +43,7 @@ ANALYZE public.bills_not_in_books;
 
 SET ROLE anon;
 SELECT set_config('request.jwt.claims', '{"role":"anon"}', false);
-SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a3","x-gst-source":"app"}', false);
+SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a4","x-gst-source":"app"}', false);
 DO $$
 DECLARE
   t0 timestamptz;
@@ -53,12 +58,12 @@ BEGIN
   INSERT INTO public.twob_import_docs (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
     taxable_value, input_igst, doc_type, itc_action, updated_by)
   SELECT c, '07/2026', date '2026-07-01' + (g % 28), 'SUPPLIER ' || (g % 50), 'INV/' || g, '24SUPPL' || lpad((g % 50)::text, 4, '0') || 'A1Z5',
-         1000 + g, 180, CASE WHEN g % 10 = 0 THEN 'CREDIT_NOTE' ELSE 'INVOICE' END, 'NOT_IN_BOOKS', '00000000-0000-0000-0000-0000000000a3'
+         1000 + g, 180, CASE WHEN g % 10 = 0 THEN 'CREDIT_NOTE' ELSE 'INVOICE' END, 'NOT_IN_BOOKS', '00000000-0000-0000-0000-0000000000a4'
     FROM generate_series(1, 500) g;
   INSERT INTO public.twob_import_docs (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
     taxable_value, input_igst, doc_type, itc_action, updated_by)
   SELECT c, '07/2026', date '2026-07-01' + (g % 28), 'SUPPLIER ' || (g % 50), 'INV/' || g, '24SUPPL' || lpad((g % 50)::text, 4, '0') || 'A1Z5',
-         1000 + g, 180, CASE WHEN g % 10 = 0 THEN 'CREDIT_NOTE' ELSE 'INVOICE' END, 'NOT_IN_BOOKS', '00000000-0000-0000-0000-0000000000a3'
+         1000 + g, 180, CASE WHEN g % 10 = 0 THEN 'CREDIT_NOTE' ELSE 'INVOICE' END, 'NOT_IN_BOOKS', '00000000-0000-0000-0000-0000000000a4'
     FROM generate_series(501, 1000) g;
   ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
   RAISE NOTICE 'timing: T1 import of 1,000 Not in Books documents (2 statements), written through: % ms', ms;
@@ -73,25 +78,41 @@ ANALYZE public.twob_import_docs;
 ANALYZE public.bills_not_in_books;
 SET ROLE anon;
 -- T2: 1,000 statements in one transaction, then as the merge sends them, a
--- request (a transaction) each, committed one by one.
+-- request (a transaction) each, committed one by one. Each against the same
+-- statements written by hand (the document and its entry, the write-through
+-- off): the write-through must add under 1 s to the 1,000. (Without the
+-- change log the 1,000 written through take about 0.7 s in all; with
+-- 20261021150000 applied first, as live, its own logging adds about 0.35 s
+-- to both sides.)
 DO $$
 DECLARE
   t0 timestamptz;
   ms numeric;
+  hand numeric;
   c constant uuid := '9c000000-0000-0000-0000-000000000001';
   ids uuid[];
   i integer;
 BEGIN
   SELECT array_agg(id ORDER BY id) INTO ids FROM public.twob_import_docs WHERE client_id = c;
+  PERFORM set_config('twob.write', 'system', true);
+  t0 := clock_timestamp();
+  FOR i IN 1 .. 1000 LOOP
+    UPDATE public.twob_import_docs SET taxable_value = taxable_value + 1, input_igst = 184 WHERE id = ids[i];
+    UPDATE public.bills_not_in_books SET taxable_value = taxable_value + 1, input_igst = sign(input_igst) * 184 WHERE source_doc_id = ids[i];
+  END LOOP;
+  hand := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  PERFORM set_config('twob.write', '', true);
   t0 := clock_timestamp();
   FOR i IN 1 .. 1000 LOOP
     UPDATE public.twob_import_docs SET taxable_value = taxable_value + 1, input_igst = 181 WHERE id = ids[i];
   END LOOP;
   ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
-  RAISE NOTICE 'timing: T2 re-import changing 1,000 documents'' figures (1,000 statements, one transaction), written through: % ms', ms;
+  RAISE NOTICE 'timing: T2 re-import changing 1,000 documents'' figures (1,000 statements, one transaction): % ms written through, % ms by hand: % ms more',
+    ms, hand, ms - hand;
   PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE client_id = c AND abs(input_igst) = 181), 1000, 'T2: 1,000 entries follow');
-  PERFORM public.t_eq(ms < 1000, true, 'timing: T2 under 1 s');
+  PERFORM public.t_eq(ms - hand < 1000, true, 'timing: T2 the write-through adds under 1 s to 1,000 statements in one transaction');
 END $$;
+SET synchronous_commit = off;
 DO $$
 DECLARE
   t0 timestamptz;
@@ -121,8 +142,9 @@ BEGIN
   RAISE NOTICE 'timing: T2 ... as the page sends them (1,000 requests, each committed): % ms written through, % ms by hand: % ms a request more',
     ms, hand, round((ms - hand) / 1000, 2);
   PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE client_id = c AND abs(input_igst) = 182), 1000, 'T2: 1,000 entries follow, request by request');
-  PERFORM public.t_eq(ms - hand < 1500, true, 'timing: T2 the write-through adds under 1.5 ms a request');
+  PERFORM public.t_eq(ms - hand < 1000, true, 'timing: T2 the write-through adds under 1 s to 1,000 requests');
 END $$;
+RESET synchronous_commit;
 DO $$
 DECLARE
   t0 timestamptz;
@@ -137,7 +159,7 @@ BEGIN
   -- T3
   t0 := clock_timestamp();
   FOR i IN 0 .. 9 LOOP
-    UPDATE public.twob_import_docs SET itc_action = 'MATCHED', updated_by = '00000000-0000-0000-0000-0000000000a3' WHERE id = ANY (ids[i * 100 + 1 : i * 100 + 100]);
+    UPDATE public.twob_import_docs SET itc_action = 'MATCHED', updated_by = '00000000-0000-0000-0000-0000000000a4' WHERE id = ANY (ids[i * 100 + 1 : i * 100 + 100]);
   END LOOP;
   ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
   RAISE NOTICE 'timing: T3 Save of 1,000 treatments (10 chunks of 100), 1,000 entries taken back: % ms', ms;
@@ -157,7 +179,7 @@ BEGIN
   INSERT INTO public.books_register (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
     taxable_value, input_cgst, input_sgst, book_treatment, doc_type, updated_by)
   SELECT c, '07/2026', date '2026-07-01' + (g % 28), 'VENDOR ' || (g % 40), 'P/' || g, '24VENDO' || lpad((g % 40)::text, 4, '0') || 'A1Z5',
-         500 + g, 45, 45, 'NOT_IN_2B', 'INVOICE', '00000000-0000-0000-0000-0000000000a3'
+         500 + g, 45, 45, 'NOT_IN_2B', 'INVOICE', '00000000-0000-0000-0000-0000000000a4'
     FROM generate_series(1, 1000) g;
   ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
   RAISE NOTICE 'timing: T4 1,000 books rows added Not in 2B, written through: % ms', ms;
@@ -186,5 +208,34 @@ BEGIN
   PERFORM public.t_eq((r ->> 'deleted')::integer, 1000, 'T6: 1,000 documents deleted');
   PERFORM public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE client_id = c), 0, 'T6: their entries gone');
   PERFORM public.t_eq(ms < 1000, true, 'timing: T6 under 1 s');
+END $$;
+
+-- T7: Clear Data, one month a call.
+RESET ROLE;
+SELECT set_config('twob.write', 'system', false);
+INSERT INTO public.clients (id, name, gstin) VALUES ('9c000000-0000-0000-0000-000000000003', 'AP TIMING CLEAR', '24APTCL0000A1Z5');
+INSERT INTO public.twob_import_docs (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, doc_type, itc_action)
+SELECT '9c000000-0000-0000-0000-000000000003', '05/2026', date '2026-05-01' + (g % 28), 'DOC ' || g, 'D/' || g, '24DOCSS0000A1Z5', 1000 + g, 180, 'INVOICE', 'NOT_IN_BOOKS'
+  FROM generate_series(1, 1000) g;
+INSERT INTO public.books_register (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_cgst, input_sgst, book_treatment, doc_type)
+SELECT '9c000000-0000-0000-0000-000000000003', '05/2026', date '2026-05-01' + (g % 28), 'BOOK ' || g, 'B/' || g, '24BOOKS0000A1Z5', 1000 + g, 90, 90, 'NOT_IN_2B', 'INVOICE'
+  FROM generate_series(1, 500) g;
+SELECT set_config('twob.write', '', false);
+SELECT (public.twob_import2b_catch_up(public.t_manager(), '9c000000-0000-0000-0000-000000000003', '05/2026', false) ->> 'written')::integer AS t7_posted \gset
+ANALYZE public.bills_not_in_2b;
+ANALYZE public.bills_not_in_books;
+SET ROLE anon;
+DO $$
+DECLARE
+  t0 timestamptz;
+  ms numeric;
+  r jsonb;
+BEGIN
+  t0 := clock_timestamp();
+  r := public.twob_clear_year(public.t_manager(), '9c000000-0000-0000-0000-000000000003', ARRAY['05/2026']);
+  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+  RAISE NOTICE 'timing: T7 Clear Data of one month, 1,000 + 500 entries cleared and written again: % ms', ms;
+  PERFORM public.t_eq(concat_ws('|', r ->> 'deleted', r ->> 'reposted'), '1500|1500', 'T7: 1,500 cleared, 1,500 written again');
+  PERFORM public.t_eq(ms < 1000, true, 'timing: T7 one month under 1 s');
 END $$;
 RESET ROLE;

@@ -294,29 +294,38 @@ export const previewChangesLedger = (r: TwobApplyResult): boolean =>
   r.changes.some((c) => c.derived && !c.refusal && !!c.action && c.action !== 'none');
 
 /**
- * "Jul-26: 2 removed, 1 changed. Also changes Aug-26 (2), Sep-26 (2)." A
- * save of books rows with their write-through (twob_import2b_prior_save)
- * names the 2B Reconciliation entries that follow apart: "Jul-26: 1 changed.
- * The 2B Reconciliation ledger follows: Not in 2B 1 changed."
+ * A preview: "Jul-26: 2 to remove, 1 to change. Also changes Aug-26 (2),
+ * Sep-26 (2)."; once applied (r.dryRun false): "Jul-26: 2 removed, 1
+ * changed. ...". A save of books rows with their write-through
+ * (twob_import2b_prior_save) names the 2B Reconciliation entries that follow
+ * apart: "Jul-26: 1 to change. The 2B Reconciliation ledger follows: Not in
+ * 2B 1 to change."; a catch-up, which changes no books row, names only them
+ * ("Jul-26: the Not in 2B list follows the books register: 1 to add."), never
+ * "nothing changes" beside a change. An entry already on the ledger that is
+ * linked to its books row, not added again, is named as linked.
  */
 export function describePriorPreview(r: TwobApplyResult, period: string): string {
+  const done = !r.dryRun;
   const count = (a: string, derived: boolean) => r.changes.filter((c) => !c.refusal && c.action === a && c.derived === derived).length;
-  const words = (derived: boolean) => [
-    count('add', derived) && `${count('add', derived)} added`,
-    count('change', derived) && `${count('change', derived)} changed`,
-    count('remove', derived) && `${count('remove', derived)} removed`,
-  ].filter(Boolean);
+  const verb: Record<string, string> = done
+    ? { add: 'added', change: 'changed', remove: 'removed', link: 'already on the ledger, linked to its books row' }
+    : { add: 'to add', change: 'to change', remove: 'to remove', link: 'already on the ledger, to be linked to its books row' };
+  const words = (derived: boolean) => ['add', 'change', 'remove', 'link']
+    .map((a) => count(a, derived) && `${count(a, derived)} ${verb[a]}`).filter(Boolean);
   const parts = words(false);
   const follow = words(true);
-  const here = `${monthName(period)}: ${parts.length ? parts.join(', ') : 'nothing changes'}.`
-    + (follow.length ? ` The 2B Reconciliation ledger follows: Not in 2B ${follow.join(', ')}.` : '');
+  const here = parts.length
+    ? `${monthName(period)}: ${parts.join(', ')}.` + (follow.length ? ` The 2B Reconciliation ledger follows: Not in 2B ${follow.join(', ')}.` : '')
+    : follow.length
+      ? `${monthName(period)}: the Not in 2B list of the 2B Reconciliation ledger follows the books register: ${follow.join(', ')}.`
+      : `${monthName(period)}: nothing changes.`;
   // An added entry reaches every later month up to the open month (docs §13): say which.
   const addMonths = [...new Set(r.changes.filter((c) => !c.refusal && c.action === 'add').flatMap((c) => c.later.map((l) => l.period)))]
     .sort((a, b) => periodKey(a) - periodKey(b));
   const later = (r.laterMonths.length
-    ? ` Also changes ${r.laterMonths.map((m) => `${monthName(m.period)} (${m.count})`).join(', ')}.`
-    : ' No other month changes.')
-    + (addMonths.length ? ` Each added entry is also added to ${addMonths.map(monthName).join(', ')}.` : '');
+    ? ` Also ${done ? 'changed' : 'changes'} ${r.laterMonths.map((m) => `${monthName(m.period)} (${m.count})`).join(', ')}.`
+    : ` No other month ${done ? 'changed' : 'changes'}.`)
+    + (addMonths.length ? ` Each added entry ${done ? 'was' : 'is'} also added to ${addMonths.map(monthName).join(', ')}.` : '');
   const stops = noteLines(r, 'stop');
   const stopped = stops.length
     ? ` Not changed: ${stops.slice(0, 5).join(' ')}${stops.length > 5 ? ` And ${stops.length - 5} more.` : ''}`
@@ -324,7 +333,7 @@ export function describePriorPreview(r: TwobApplyResult, period: string): string
   const booksGone = r.changes.filter((c) => !c.refusal && c.booksRow === 'remove').length;
   const booksChanged = r.changes.filter((c) => !c.refusal && c.booksRow === 'change').length;
   const books = [
-    booksGone && `${booksGone} Import 2B books ${booksGone === 1 ? 'row goes' : 'rows go'} too, so Post does not add ${booksGone === 1 ? 'it' : 'them'} back`,
+    booksGone && `${booksGone} Import 2B books ${booksGone === 1 ? 'row goes' : 'rows go'} too, so ${booksGone === 1 ? 'its' : 'their'} write-through does not add ${booksGone === 1 ? 'it' : 'them'} back`,
     booksChanged && `${booksChanged} Import 2B books ${booksChanged === 1 ? 'row changes' : 'rows change'} the same way`,
   ].filter(Boolean);
   const notes = noteLines(r, 'held');

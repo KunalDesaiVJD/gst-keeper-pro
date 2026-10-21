@@ -36,7 +36,7 @@ SELECT set_config('twob.write', '', false);
 
 SET ROLE anon;
 SELECT set_config('request.jwt.claims', '{"role":"anon"}', false);
-SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a3","x-gst-source":"app"}', false);
+SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a4","x-gst-source":"app"}', false);
 
 CREATE TEMP VIEW l2 AS SELECT * FROM public.bills_not_in_2b;
 CREATE TEMP VIEW lb AS SELECT * FROM public.bills_not_in_books;
@@ -56,7 +56,7 @@ UPDATE public.books_register SET date = '2026-07-15' WHERE id = 'a9000000-0000-0
 SELECT public.t_eq((SELECT concat_ws('|', supplier_name, supplier_invoice_number, date, taxable_value, input_cgst, input_sgst, reversal_month,
                                      reclaim_month IS NULL, is_carried_forward, updated_by)
                       FROM l2 WHERE source_book_id = 'a9000000-0000-0000-0000-0000000000b1'),
-  'KAVERI TRADERS|K/101|2026-07-15|1000.00|90.00|90.00|Jul 26|t|f|00000000-0000-0000-0000-0000000000a3',
+  'KAVERI TRADERS|K/101|2026-07-15|1000.00|90.00|90.00|Jul 26|t|f|00000000-0000-0000-0000-0000000000a4',
   'A2: the save that gives it a date posts it: trimmed name, this month as reversal month, the user named by the request');
 -- A3: an amount change updates the entry, never its decision; a decision on
 -- it stays through the update (Post's rule).

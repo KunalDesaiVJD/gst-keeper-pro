@@ -13,12 +13,19 @@
 //  - twob_clear_year: 2B Reconciliation's Clear Data in one call, the entries
 //    Import 2B posts written again at once;
 //  - twob_import2b_flush_version: the month's version brought up to date once
-//    a save is done (versions are coalesced per minute).
+//    a save is done (versions are coalesced per minute);
+//  - twob_import2b_save_book: a books row saved with its pairing (the 2B
+//    document it leaves and the one it pairs with), all of it or none;
+//  - twob_import2b_reclaim (src/lib/twobPendingWrites.ts): a reclaim, the
+//    entry and its 2B document together.
+// Every save that changes the ledger needs the Import 2B & post permission
+// (work_2b_import), as Post did; the database refuses it otherwise.
 // A prior month's books rows are saved with their write-through through the
 // door (twob_import2b_prior_save, src/lib/twobPriorMonth.ts).
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import type { PostPlan } from '@/lib/postImport2B';
-import { planCountsText, priorPlanLeftOut } from '@/lib/postImport2B';
+import { planCountsText } from '@/lib/postImport2B';
 
 type Raw = Record<string, unknown>;
 
@@ -32,6 +39,8 @@ export interface CatchUpResult {
   skipped: { list: string; id: string; number: string | null; reason: string }[];
   /** Entries a catch-up would take back that hold a reclaim, Expense out or book entry: nothing is written. */
   refusals: { entry: string | null; message: string }[];
+  /** Where to undo what the refusals name (Import 2B's Pending items, or the reclaiming document). */
+  undoHint: string | null;
   version: number | null;
 }
 
@@ -55,6 +64,7 @@ const parseCatchUp = (data: unknown): CatchUpResult => {
       const r = x as Raw;
       return { entry: typeof r.entry === 'string' ? r.entry : null, message: String(r.message) };
     }),
+    undoHint: typeof d.undo_hint === 'string' ? d.undo_hint : null,
     version: typeof d.version === 'number' ? d.version : null,
   };
 };
@@ -72,14 +82,47 @@ export async function catchUpMonth(actorId: string, clientId: string, period: st
   return parseCatchUp(data);
 }
 
-/** "Not in 2B: 1 to add, 2 to remove. Not in Books: 3 to add (1 linked to an entry already on the ledger)." */
-export function describeCatchUp(r: CatchUpResult): string {
+/** "1 added, 2 changed, 1 removed": what a list had done to it; '' when nothing. */
+export function doneCountsText(ins: number, upd: number, ret: number): string {
+  return [ins && `${ins} added`, upd && `${upd} changed`, ret && `${ret} removed`].filter(Boolean).join(', ');
+}
+
+/**
+ * The preview ("Not in 2B: 1 to add, 2 to remove. Not in Books: 3 to add (1
+ * linked to an entry already on the ledger).") or, once applied (done), what
+ * was done ("Not in 2B: 1 added, 2 removed.").
+ */
+export function describeCatchUp(r: CatchUpResult, done = false): string {
   const part = (name: string, c: ListCounts) => {
-    const text = planCountsText(c.add + c.link, c.change, c.remove);
+    const text = done ? doneCountsText(c.add + c.link, c.change, c.remove) : planCountsText(c.add + c.link, c.change, c.remove);
     if (!text) return null;
-    return `${name}: ${text}${c.link ? ` (${c.link} already on the ledger as ${c.link === 1 ? 'an entry' : 'entries'} of their own, linked instead of added again)` : ''}.`;
+    const linked = c.link
+      ? ` (${c.link} already on the ledger as ${c.link === 1 ? 'an entry' : 'entries'} of their own, ${done ? 'linked' : 'to be linked'} instead of added again)`
+      : '';
+    return `${name}: ${text}${linked}.`;
   };
   return [part('Not in 2B', r.bills2B), part('Not in Books', r.billsBooks)].filter(Boolean).join(' ');
+}
+
+/**
+ * A books row of the open month saved with its pairing in one call
+ * (twob_import2b_save_book): the 2B document it leaves released, the one it
+ * pairs with paired, and the row saved, with their write-throughs, or none of
+ * it (a refusal names the entry and what to undo). Throws with the
+ * database's words. pairedWas: the paired document's treatment before (its
+ * amendments follow it).
+ */
+export async function saveBookWithPairing(o: {
+  actorId: string; bookId: string; values: Record<string, string | number | null>;
+  releaseDocId?: string | null; pairDocId?: string | null;
+}): Promise<{ pairedWas: string | null }> {
+  const { data, error } = await supabase.rpc('twob_import2b_save_book', {
+    p_actor_id: o.actorId, p_book_id: o.bookId, p_values: o.values as unknown as Json,
+    p_release_doc_id: o.releaseDocId ?? null, p_pair_doc_id: o.pairDocId ?? null,
+  });
+  if (error) throw new Error(error.message);
+  const d = (data || {}) as Raw;
+  return { pairedWas: typeof d.paired_was === 'string' ? d.paired_was : null };
 }
 
 /** The refusals as sentences ("SUPPLIER INV-1: Oct-26 has booked this entry; undo that book entry first."). */
@@ -88,24 +131,23 @@ export const catchUpRefusalLines = (r: CatchUpResult) => r.refusals.map((x) => `
 /**
  * The plain line a month out of step shows on Import 2B (null: in step), from
  * Post's plan of the month. In a filed month only the Not in 2B side can be
- * brought up to date (through the door); its Not in Books side follows the
- * filed 2B and is named apart.
+ * brought up to date (through the door, by a GST Manager or the superadmin);
+ * its Not in Books side follows the filed 2B, which nothing on this page can
+ * change, so it is left out of the line (a line no one can clear would stay
+ * for good; the migration's header lists those months for the lead).
  */
 export function outOfStepLine(plan: PostPlan | null, isPrior: boolean): { text: string; actionable: boolean } | null {
   if (!plan) return null;
   const n2b = planCountsText(plan.insertBills2B.length, plan.updateBills2B.length, plan.retractBills2B.length);
   const nib = planCountsText(plan.insertBillsBooks.length, plan.updateBillsBooks.length, plan.retractBillsBooks.length);
-  if (!n2b && !nib) return null;
   if (isPrior) {
-    // Only the Not in 2B side changes in a filed month (the door); the Not in
-    // Books side follows the filed 2B (priorPlanLeftOut names it).
-    const left = priorPlanLeftOut(plan);
-    const lead = 'The 2B Reconciliation ledger of this filed month is not in step with its Import 2B (it was saved before saves wrote through).';
+    if (!n2b) return null;
     return {
-      text: [lead, n2b ? `Not in 2B: ${n2b}.` : null, left].filter(Boolean).join(' '),
-      actionable: !!n2b,
+      text: `The Not in 2B list of this filed month's 2B Reconciliation ledger is not in step with its Import 2B books register (saved before saves wrote through): ${n2b}.`,
+      actionable: true,
     };
   }
+  if (!n2b && !nib) return null;
   return {
     text: `The 2B Reconciliation ledger is not in step with this month's Import 2B (saved before saves wrote through, or changed on 2B Reconciliation since): `
       + [n2b && `Not in 2B ${n2b}`, nib && `Not in Books ${nib}`].filter(Boolean).join('; ') + '.',

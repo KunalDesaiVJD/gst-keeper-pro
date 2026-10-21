@@ -30,27 +30,29 @@ export async function updatePendingEntry(
   return OK;
 }
 
+/** Said when the 2B document a reclaim names is no longer in the month. */
+export const DOC_GONE_MSG = 'This 2B document is no longer in this month. Nothing was saved; the page shows the month as it is now.';
+
 /**
- * Reclaims a pending Not in 2B entry against a 2B document: the entry first,
- * and the document becomes Reclaim only when the entry was still there.
+ * Reclaims a pending Not in 2B entry against a 2B document of the open month
+ * (twob_import2b_reclaim): the entry takes this month as its reclaim month
+ * and the document becomes Reclaim in one transaction, or neither. The
+ * document's write-through can refuse the whole of it (its Not in Books entry
+ * holds a book entry, or the user lacks Import 2B & post), and then nothing
+ * is written and the message says what to undo. gone: the entry or the
+ * document is no longer there (or the entry no longer awaits a reclaim).
+ * was: the document's treatment before (its amendments follow it).
  */
 export async function recordReclaim(o: {
-  pendingId: string; docId: string; label: string; userId: string | undefined;
-}): Promise<PendingWriteResult> {
-  const entry = await updatePendingEntry('bills_not_in_2b', o.pendingId,
-    { reclaim_month: o.label, reclaim_subtype: null, reclaimed_via_doc_id: o.docId }, o.userId);
-  if (!entry.ok) return entry;
-  const { data, error } = await supabase.from('twob_import_docs').update({
-    itc_action: 'RECLAIM', updated_by: o.userId ?? null, updated_at: new Date().toISOString(),
-  }).eq('id', o.docId).select('id');
+  actorId: string; clientId: string; period: string; pendingId: string; docId: string;
+}): Promise<PendingWriteResult & { was?: string | null }> {
+  const { data, error } = await supabase.rpc('twob_import2b_reclaim', {
+    p_actor_id: o.actorId, p_client_id: o.clientId, p_period: o.period, p_pending_id: o.pendingId, p_doc_id: o.docId,
+  });
   if (error) return { ok: false, gone: false, message: error.message };
-  if (!data || data.length === 0) {
-    // The document went meanwhile: the entry is put back as it was.
-    await supabase.from('bills_not_in_2b').update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null })
-      .eq('id', o.pendingId);
-    return { ok: false, gone: true, message: 'This 2B document is no longer in this month. Nothing was saved; the page shows the month as it is now.' };
-  }
-  return OK;
+  const d = (data || {}) as Record<string, unknown>;
+  if (d.ok === true) return { ok: true, gone: false, message: '', was: typeof d.was === 'string' ? d.was : null };
+  return { ok: false, gone: true, message: d.what === 'document' ? DOC_GONE_MSG : ENTRY_GONE_MSG };
 }
 
 /** The ledger columns of an entry the open-month delete reads. */

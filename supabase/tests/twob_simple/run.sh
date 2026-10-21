@@ -19,7 +19,10 @@
 # the database's write-through on one and planImport2BPost +
 # postImport2BToLedger on the other, ledgers compared after every save kind;
 # test_9a/9b/9c: the write-through's rules, two sessions saving at once, and
-# 1,000-row saves under a second).
+# 1,000-row saves under a second; test_9d/9e: the first verification round's
+# findings, a reclaim and a pairing in one call each, who may change the
+# ledger, a filed month's twin linked, rounding, versions as the saver's,
+# and Delete 2B / Clear Data against a save running at the same moment).
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.

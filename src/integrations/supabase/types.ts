@@ -12376,6 +12376,14 @@ export type Database = {
         Args: { p_actor_id: string; p_client_id: string; p_period: string; p_dry_run?: boolean }
         Returns: Json
       }
+      twob_import2b_reclaim: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_pending_id: string; p_doc_id: string }
+        Returns: Json
+      }
+      twob_import2b_save_book: {
+        Args: { p_actor_id: string; p_book_id: string; p_values: Json; p_release_doc_id?: string | null; p_pair_doc_id?: string | null }
+        Returns: Json
+      }
       twob_import2b_prior_save: {
         Args: { p_actor_id: string; p_client_id: string; p_period: string; p_changes: Json; p_dry_run?: boolean; p_whole_month?: boolean }
         Returns: Json

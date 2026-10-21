@@ -77,12 +77,20 @@ in the database and in the same statement, to the live `bills_not_in_2b` /
 month-to-month carry-forward already read from, by Post's rules
 (`planImport2BPost` in `src/lib/postImport2B.ts`, mirrored row for row by the
 triggers of `20261021170000_import2b_autopost.sql`; a save that would take
-back an entry holding a reclaim, Expense out or book entry is refused). A
-prior month's books row is saved with its entry through the door
-(`twob_import2b_prior_save`); a month out of step gets "Bring the
-reconciliation up to date" (`twob_import2b_catch_up`); Delete 2B and Clear
-Data are one call each; versions are coalesced per minute (§15 of the doc;
-tests `supabase/tests/twob_simple/`, `autopost.test.mjs`). `2B Reconciliation`
+back an entry holding a reclaim, Expense out or book entry is refused and
+says where to undo it, e.g. Pending items' Booked list). A save that changes
+the ledger needs Import 2B & post (`work_2b_import`, page and DB, the user
+`x-gst-actor` names). A reclaim (`twob_import2b_reclaim`) and a books row's
+pairing (`twob_import2b_save_book`) are one call each, all or nothing; a
+re-import skips and names a refused row. A prior month's books row is saved
+with its entry through the door (`twob_import2b_prior_save`; an identical
+unlinked entry is linked, not added); a month out of step gets "Bring the
+reconciliation up to date" (`twob_import2b_catch_up`; a filed month's line
+shows its Not in 2B side only); Delete 2B is one call, Clear Data one call a
+month (both stop at once, never deadlock, when a save of the month is
+running); versions are coalesced per minute and recorded as the saver's
+(§15 of the doc; tests `supabase/tests/twob_simple/` test_9a to 9e,
+`autopost.test.mjs`). `2B Reconciliation`
 (`TwoBReconciliationPage.tsx`) is **read-only for Strict clients** (the
 default) — display, export, version history/restore, and destructive Clear
 Data only. A per-client `clients.liberal_2b_reconciliation` flag

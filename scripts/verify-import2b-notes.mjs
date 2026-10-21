@@ -637,6 +637,30 @@ await run('no post', async () => {
   check('… and the books register and 2B rows show the reason on the row',
     tab.includes('Not on the 2B Reconciliation ledger: ${why.toLowerCase()}') && tab.includes('docNotPostedReason(')
       && tab.includes('bookNotPostedReason(b)') && tab.includes('Not on the ledger: {notPosted.toLowerCase()}'));
+  // Verification round 1 (21 Oct 2026).
+  const pend = fs.readFileSync(path.join(root, 'src/lib/twobPendingWrites.ts'), 'utf8');
+  const auto = fs.readFileSync(path.join(root, 'src/lib/import2bAutopost.ts'), 'utf8');
+  check('… a books row whose entry is still on the ledger at its earlier figures says so, not "not on the ledger"',
+    tab.includes('linkedEntries.get(b.id)') && tab.includes('On the ledger as last saved') && tab.includes('{notPosted && !onLedger && ('));
+  check('a reclaim is one call (entry and document together, or neither): the page never flips a document to Reclaim itself',
+    pend.includes("supabase.rpc('twob_import2b_reclaim'") && !/itc_action:\s*'RECLAIM'/.test(code) && !/itc_action:\s*'RECLAIM'/.test(pend)
+      && /CREATE OR REPLACE FUNCTION public\.twob_import2b_reclaim\(/.test(sql));
+  check('a books row\'s pairing is one call (documents and row together, or none): no separate pairing write in the page',
+    auto.includes("supabase.rpc('twob_import2b_save_book'") && /saveBookWithPairing\(/.test(code)
+      && !/matched_book_id:\s*bookId,\s*\n?\s*\.\.\.\(claimable/.test(code) && !code.includes('const pairDoc = async')
+      && /CREATE OR REPLACE FUNCTION public\.twob_import2b_save_book\(/.test(sql));
+  check('… a re-import re-matches every books row it can, naming the ones refused, and keeps going past a refused figure or treatment',
+    /refused\.push\(/.test(code) && code.includes('re.refused.length') && code.includes('refusedRows.push(') && code.includes('isRefusal(error.message)'));
+  check('a save that changes the ledger needs Import 2B & post, in the page and in the database',
+    ['const saveBookRow', 'const setBookTreatment', 'const addBookRow', 'const saveActions', 'const saveBase', 'const handleDocActionChange', 'const applyBulk']
+      .every((fn) => new RegExp(`${fn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]{0,700}NEEDS_POST_MSG`).test(code))
+      && /permission_key = 'work_2b_import'[\s\S]{0,400}needs the Import 2B & post permission/.test(sql));
+  check('a booked entry can be undone on Import 2B (Pending items, Booked), as the refusal says',
+    code.includes('const undoBookEntry') && tab.includes('Undo book entry') && sql.includes('a book entry under Pending items, Booked (Undo book entry)'));
+  check('a re-import keeps a document gone from 2B only for a book entry or a filed entry, not for an entry with no decision',
+    code.includes("select('source_doc_id, book_entry_month, is_locked')") && code.includes("((r.book_entry_month || '').trim() || r.is_locked)"));
+  check('a plain load takes no version (a page after its own save does, recorded as the saver\'s)',
+    code.includes('fetchAll({ flush: false })') && code.includes('if (flush) await flushVersion(') && sql.includes('changed_by'));
 });
 
 // ── Report ──────────────────────────────────────────────────────────────────

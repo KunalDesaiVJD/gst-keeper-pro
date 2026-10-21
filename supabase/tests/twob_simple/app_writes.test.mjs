@@ -150,7 +150,7 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
   const t1 = psql(`SELECT id FROM public.bills_not_in_2b WHERE client_id = '${C}' AND period_month = '07/2026' AND supplier_invoice_number = 'T-1'`);
   const removed = globalThis.__asApp(`SELECT public.twob_prior_books_apply(public.t_manager(), '${C}', '07/2026', '[{"table":"bills_not_in_2b","op":"delete","id":"${t1}"}]'::jsonb, false) ->> 'ok'`);
   check('Q8: the GST Manager removes T-1 in filed July (and September\'s copy with it)', removed.out === 'true', removed.err);
-  const res = await A.recordReclaim({ pendingId: pending, docId: DOC, label: 'Sep 26', userId: '00000000-0000-0000-0000-0000000000a3' });
+  const res = await A.recordReclaim({ actorId: '00000000-0000-0000-0000-0000000000a3', clientId: C, period: '09/2026', pendingId: pending, docId: DOC });
   check('Q8: the stale page\'s reclaim is not recorded, and says the entry is gone', !res.ok && res.gone && res.message === A.ENTRY_GONE_MSG, JSON.stringify(res));
   check('Q8: the 2B document stays Matched, so its ITC stays in 5.1',
     psql(`SELECT itc_action FROM public.twob_import_docs WHERE id = '${DOC}'`) === 'MATCHED');
@@ -166,7 +166,7 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
         INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, itc_action)
         VALUES ('${DOC2}', '${C2}', '09/2026', '2026-07-15', 'TAMNNA SUPPLIER', 'T-1', '24TSUPP0000A1Z5', 11111.11, 0, 1000, 1000, 'MATCHED');`);
   const pending2 = psql(`SELECT id FROM public.bills_not_in_2b WHERE client_id = '${C2}' AND period_month = '09/2026' AND supplier_invoice_number = 'T-1'`);
-  const ok = await A.recordReclaim({ pendingId: pending2, docId: DOC2, label: 'Sep 26', userId: '00000000-0000-0000-0000-0000000000a3' });
+  const ok = await A.recordReclaim({ actorId: '00000000-0000-0000-0000-0000000000a3', clientId: C2, period: '09/2026', pendingId: pending2, docId: DOC2 });
   check('Q8: a reclaim of a copy that is there is recorded', ok.ok, JSON.stringify(ok));
   check('Q8: ... the entry reclaimed and the document Reclaim',
     psql(`SELECT reclaim_month || ' ' || (SELECT itc_action FROM public.twob_import_docs WHERE id = '${DOC2}') FROM public.bills_not_in_2b WHERE id = '${pending2}'`) === 'Sep 26 RECLAIM');
@@ -232,6 +232,22 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
   check('Q13 (S3, S2): the door\'s preview names the months an added entry reaches, and where a change stops',
     preview.includes('Each added entry is also added to Aug-26.') && preview.includes('Not changed: V J DESAI 38/2026-27: Apr-26 holds this entry as its own entry too')
     && !preview.includes('No later month holds'), preview);
+  // Autopost round 1: a filed month's catch-up changes no books row, only
+  // the ledger: never "nothing changes" beside a change; applied, past tense;
+  // an entry already held is named as linked.
+  const catchUp = (dryRun) => ({
+    ok: true, dryRun, refusals: [], laterMonths: [{ period: '08/2026', count: 1 }], notes: [],
+    changes: [
+      { index: 0, table: 'bills_not_in_2b', op: 'insert', entry: 'LATE BOOK LB/1', action: 'add', id: 'n', later: [{ period: '08/2026', action: 'add', id: 'c' }], booksRow: null, refusal: null, note: null, derived: true },
+      { index: 1, table: 'bills_not_in_2b', op: 'update', entry: 'TWIN CO TW/1', action: 'link', id: 't', later: [], booksRow: null, refusal: null, note: null, derived: true },
+    ],
+  });
+  const before = A.describePriorPreview(catchUp(true), '07/2026');
+  check('Autopost: the filed month\'s catch-up preview names the ledger changes, never "nothing changes"',
+    !before.includes('nothing changes') && before.startsWith('Jul-26: the Not in 2B list of the 2B Reconciliation ledger follows the books register: 1 to add, 1 already on the ledger, to be linked to its books row.'), before);
+  const after = A.describePriorPreview(catchUp(false), '07/2026');
+  check('Autopost: ... applied, in the past tense', after.startsWith('Jul-26: the Not in 2B list of the 2B Reconciliation ledger follows the books register: 1 added, 1 already on the ledger, linked to its books row. Also changed Aug-26 (1).')
+    && after.includes('Each added entry was also added to Aug-26.'), after);
 }
 
 // ── Round 4: the words when the next month only counts as filed (F4, F8,
@@ -411,6 +427,7 @@ const memOut = await build({
     contents: `
 export { runPushRecoCheck, pushRecoBlocks } from './src/lib/pushRecoGate';
 export { planImport2BPost, planToPriorChanges, priorPlanLeftOut } from './src/lib/postImport2B';
+export { outOfStepLine, describeCatchUp } from './src/lib/import2bAutopost';
 export { readSuspendedRecoInputs } from './src/lib/suspendedRecoCalc';
 `,
     resolveDir: root, loader: 'ts',
@@ -495,7 +512,26 @@ const B = await import('data:text/javascript;base64,' + Buffer.from(memOut.outpu
   check('S6: a prior month\'s Post sends no Not in Books change from a 2B document', plan.insertBillsBooks.length === 1
     && changes.every((c) => c.table !== 'bills_not_in_books'), JSON.stringify(changes));
   const left = B.priorPlanLeftOut(plan);
-  check('S6: ... and names what it leaves out', !!left && left.startsWith('Not on the ledger: 1 Not in Books entry from this month\'s 2B documents (1 to add: JAY INFRASTRUCTURE 16/2026-27)'), left);
+  check('S6: ... and names what it leaves out (in the filed month\'s catch-up confirm, never "not on the ledger")',
+    !!left && left.startsWith('This filed month\'s Not in Books list differs from its 2B documents for 1 entry (1 not on it: JAY INFRASTRUCTURE 16/2026-27)')
+    && !left.includes('Not on the ledger'), left);
+  // Autopost round 1: the filed month's standing line leaves its Not in
+  // Books side out (nothing on the page can change it, so the line would
+  // never go); an open month's line names both sides.
+  const nibOnly = { ...plan, insertBills2B: [], updateBills2B: [], retractBills2B: [] };
+  check('Autopost: a filed month out of step on its Not in Books side only shows no line', B.outOfStepLine(nibOnly, true) === null,
+    JSON.stringify(B.outOfStepLine(nibOnly, true)));
+  check('Autopost: ... an open month shows it', (B.outOfStepLine(nibOnly, false)?.text || '').includes('Not in Books 1 to add'));
+  const n2b = { ...nibOnly, insertBills2B: [{ row: plan.insertBillsBooks[0].row }] };
+  const line = B.outOfStepLine(n2b, true);
+  check('Autopost: a filed month out of step on its Not in 2B side: the line names that side only, with the action',
+    !!line && line.actionable && line.text.includes('Not in 2B list') && line.text.endsWith('1 to add.') && !line.text.includes('Not in Books'), JSON.stringify(line));
+  const done = B.describeCatchUp({ dryRun: false, written: 2, bills2B: { add: 1, link: 0, change: 0, remove: 0 }, billsBooks: { add: 0, link: 1, change: 0, remove: 0 },
+    skipped: [], refusals: [], undoHint: null, version: 3 }, true);
+  check('Autopost: after a catch-up the toast says what was done, past tense', done === 'Not in 2B: 1 added. Not in Books: 1 added (1 already on the ledger as an entry of their own, linked instead of added again).', done);
+  const preview = B.describeCatchUp({ dryRun: true, written: 1, bills2B: { add: 1, link: 0, change: 0, remove: 0 }, billsBooks: { add: 0, link: 0, change: 0, remove: 0 },
+    skipped: [], refusals: [], undoHint: null, version: null });
+  check('Autopost: ... the preview says what it will do', preview === 'Not in 2B: 1 to add.', preview);
 }
 
 {

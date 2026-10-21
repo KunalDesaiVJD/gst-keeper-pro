@@ -24,18 +24,26 @@ SET app.staff_roles_write = 'on';
 INSERT INTO public.profiles (user_id, first_name) VALUES
   ('00000000-0000-0000-0000-0000000000a1', 'Super'),
   ('00000000-0000-0000-0000-0000000000a2', 'Manager'),
-  ('00000000-0000-0000-0000-0000000000a3', 'Employee')
+  ('00000000-0000-0000-0000-0000000000a3', 'Employee'),
+  ('00000000-0000-0000-0000-0000000000a4', 'Poster')
 ON CONFLICT DO NOTHING;
 INSERT INTO public.user_roles (user_id, role) VALUES
   ('00000000-0000-0000-0000-0000000000a1', 'superadmin'),
   ('00000000-0000-0000-0000-0000000000a2', 'gst_manager'),
-  ('00000000-0000-0000-0000-0000000000a3', 'employee')
+  ('00000000-0000-0000-0000-0000000000a3', 'employee'),
+  ('00000000-0000-0000-0000-0000000000a4', 'employee')
 ON CONFLICT DO NOTHING;
 RESET app.staff_roles_write;
+-- a4: an employee whose position holds Import 2B & post (work_2b_import);
+-- a3 holds no permission.
+INSERT INTO public.user_permissions (user_id, permission_key) VALUES
+  ('00000000-0000-0000-0000-0000000000a4', 'work_2b_import')
+ON CONFLICT DO NOTHING;
 
 CREATE OR REPLACE FUNCTION public.t_superadmin() RETURNS uuid LANGUAGE sql IMMUTABLE AS $$ SELECT '00000000-0000-0000-0000-0000000000a1'::uuid $$;
 CREATE OR REPLACE FUNCTION public.t_manager() RETURNS uuid LANGUAGE sql IMMUTABLE AS $$ SELECT '00000000-0000-0000-0000-0000000000a2'::uuid $$;
 CREATE OR REPLACE FUNCTION public.t_employee() RETURNS uuid LANGUAGE sql IMMUTABLE AS $$ SELECT '00000000-0000-0000-0000-0000000000a3'::uuid $$;
+CREATE OR REPLACE FUNCTION public.t_poster() RETURNS uuid LANGUAGE sql IMMUTABLE AS $$ SELECT '00000000-0000-0000-0000-0000000000a4'::uuid $$;
 
 -- A saved ITC Summary as the app keeps it (the rows the gates read).
 CREATE OR REPLACE FUNCTION public.t_itc(p_51 numeric, p_4b2i numeric, p_54 numeric DEFAULT 0) RETURNS jsonb
@@ -194,5 +202,5 @@ LANGUAGE sql STABLE AS $$
     SELECT id, date FROM public.bills_not_in_2b WHERE client_id = p_client AND period_month = p_period AND supplier_name = p_supplier
      ORDER BY date, id LIMIT p_limit) x;
 $$;
-GRANT EXECUTE ON FUNCTION public.t_superadmin(), public.t_manager(), public.t_employee(), public.t_books_side(uuid, text),
+GRANT EXECUTE ON FUNCTION public.t_superadmin(), public.t_manager(), public.t_employee(), public.t_poster(), public.t_books_side(uuid, text),
   public.t_count(uuid, text, text), public.t_saved_digest(uuid), public.t_ids(uuid, text, text, integer) TO anon;

@@ -682,7 +682,9 @@ in one module, `src/lib/twobDocs.ts`.
   red with the reason on the row, and the write-through (formerly Post to
   Reconciliation) skips it and takes back what it posted (`bookHasMinus`,
   `bookNotPostedReason`, `postImport2B.ts`; the database's plan gives the same
-  reason, §15). Before, ORVIX's Sep-26 entry
+  reason, §15; a row posted before and left without a date or supplier says
+  it is on the ledger as last saved, since that entry stays and still
+  counts). Before, ORVIX's Sep-26 entry
   2/CN/2026-27 (−360 CGST and SGST, Not in 2B) went into the ledger as a
   minus reversal: row 5.1 came out 360 short of the matched invoices and
   4B(2) minus 360, which the portal refuses (the push check stopped it).
@@ -955,7 +957,8 @@ other return's month.
   typed without a 2B source change. Import 2B in a prior month writes the
   books side only (a books register save writes its Not in 2B entry through
   the door, §15); Bring the reconciliation up to date there names the Not in
-  Books entries it leaves out.
+  Books entries it leaves out in its confirm, and the page's standing line
+  leaves that side out (nothing there can change it).
 - A carried Not in Books copy follows a 2B document too when an earlier
   month holds the same invoice (GSTIN or supplier, number, date) as an entry
   from a 2B document (a copy does not carry the `source_doc_id`):
@@ -1271,14 +1274,15 @@ the client shown before.
 | Path | Open month | Prior month |
 |---|---|---|
 | Import 2B: Excel import, portal pull, delete 2B, amendments | written through to the ledger in the same statement (§15); Delete 2B in one call (`twob_import2b_delete_2b`) | refused |
-| Import 2B: reclaim, Expense out, undo, book entry | as before; nothing saved when the entry is gone | refused |
-| Import 2B: books register add, edit, treatment, type, delete | written through (§15) | GST Manager / superadmin, through the door, with the row's Not in 2B write-through (`twob_import2b_prior_save`) |
+| Import 2B: reclaim | one call, entry and document together (`twob_import2b_reclaim`, §15); nothing saved when the entry is gone | refused |
+| Import 2B: Expense out, undo, book entry, undo book entry | as before; nothing saved when the entry is gone | refused |
+| Import 2B: books register add, edit, treatment, type, delete | written through (§15; a pairing in one call, `twob_import2b_save_book`); Import 2B & post, the delete Delete 2B rows | GST Manager / superadmin, through the door, with the row's Not in 2B write-through (`twob_import2b_prior_save`; an identical unlinked entry the month holds is linked, not added) |
 | Import 2B: Bring the reconciliation up to date (Post to Reconciliation until 21 Oct 2026) | staff who may post, previewed (`twob_import2b_catch_up`) | GST Manager / superadmin, through the door; books side only, the Not in Books side from 2B documents named and left out |
 | 2B Reconciliation: Save (Liberal) | as before, but only the columns changed, and nothing when a row changed elsewhere since the page loaded; a deleted carried entry's decision is undone first, after a confirm | GST Manager / superadmin, through the door; months stay as filed |
 | 2B Reconciliation: delete | as before | GST Manager / superadmin, through the door |
 | 2B Reconciliation: Import Excel | as before | refused |
 | 2B Reconciliation: Restore | the superadmin, the client's latest month holding entries only (`twob_restore_version`); its own entries only, its carried entries kept | refused |
-| Clear Data (2B Reconciliation) | one call (`twob_clear_year`); Import 2B's entries written again at once (§15) | the month is kept |
+| Clear Data (2B Reconciliation) | one call a month (`twob_clear_year`); Import 2B's entries written again at once (§15; the dialog says so) | the month is kept |
 | Filing Status: Filed by the pull or an allowed attach (lock and first carry) | the first carry, once, into an open next month with no carried list | the same; never into a filed month, never again on a re-file |
 | Filing Status / 2B Reconciliation: Unlock sheets | allowed | allowed; the month stays prior |
 | Filing Status: Re-run carry forward | refused (file the month first) | GST Manager / superadmin, previewed, one month at a time: into the open next month adds, removes and keeps; into a filed next month adds only, and marks it to be re-run on; recorded even with nothing to add |
@@ -1546,26 +1550,28 @@ itself would automatically change the next report wherever required."
 
 Import 2B has no **Post to Reconciliation** button any more. Every save on
 the tab changes the 2B Reconciliation ledger (`bills_not_in_2b` /
-`bills_not_in_books`) in the database, in the same statement as the save:
+`bills_not_in_books`) in the database, in the same transaction as the save:
 the save and its ledger rows are kept together or not at all. ITC Summary
 (rows 5.1, 5.4, 4B(2)(i), 4D), Suspended Reco, GST Receivable Reco,
 carry-forward, the e-mailed list (§11) and the reports still read the
 ledger, unchanged, so they change as soon as the save is made.
 Migration `20261021170000_import2b_autopost.sql`; page `Import2BTab.tsx`
-with `src/lib/import2bAutopost.ts`.
+with `src/lib/import2bAutopost.ts` and `src/lib/twobPendingWrites.ts`.
 
 **What writes through (an open month).** Triggers on `books_register` and
 `twob_import_docs` re-plan the rows a statement touched and write the ledger
-before the statement ends:
+before the statement ends; a save that writes more than one row is one call:
 
 | Save on Import 2B | What the ledger does |
 |---|---|
 | Books register: add, edit, Type, treatment | the row's Not in 2B entry is added, changed or taken back |
+| Books register: a cell that pairs or unpairs the row with a 2B document (the Doc no. / GSTIN / amounts, the Type, a re-import's re-match) | one call, `twob_import2b_save_book`: the document it leaves released, the one it pairs with paired, the row saved, with their entries, or none of it |
 | Books register: delete | its entry is taken back, unless filed (locked) or holding a reclaim, Expense out or book entry (then it stays, unlinked, as the delete always left it; the page says so first) |
-| 2B documents: Save of treatments (one, bulk), pairing, Enter counted | the document's Not in Books entry is added, changed or taken back |
-| Import / re-import / portal pull (each of its writes) | new Not in Books documents post; changed figures follow; a document the merge deletes takes back its entry |
-| Delete 2B | one call, `twob_import2b_delete_2b` (permission Delete 2B rows), as the page's steps did before: the reclaims the documents made are released, their Not in Books entries deleted, then the documents; a filed (locked) entry and its document are kept and counted |
-| Clear Data (2B Reconciliation) | one call, `twob_clear_year`: the year's open months cleared, then Import 2B's entries written again at once (Import 2B still holds the rows); filed months kept |
+| 2B documents: Save of treatments (one, bulk), Enter counted | the document's Not in Books entry is added, changed or taken back |
+| Reclaim (from a document or from Pending items) | one call, `twob_import2b_reclaim`: the entry reclaimed and the document Reclaim (its Not in Books entry taken back), or neither |
+| Import / re-import / portal pull (each of its writes) | new Not in Books documents post; changed figures follow; a document the merge deletes takes back its entry; a row whose figures or treatment the write-through refuses keeps them and is named, and the rest of the file is imported |
+| Delete 2B | one call, `twob_import2b_delete_2b` (permission Delete 2B rows): the reclaims the documents made are released, their Not in Books entries deleted, then the documents; a filed (locked) entry and its document are kept and counted |
+| Clear Data (2B Reconciliation) | `twob_clear_year`, one call a month: the open month cleared, then Import 2B's entries written again at once (Import 2B still holds the rows; the dialog says so before CLEAR is typed); filed months kept |
 
 **The rules are Post's, unchanged** (`planImport2BPost` in
 `src/lib/postImport2B.ts`; `twob__autopost_plan` is the same plan in SQL,
@@ -1577,34 +1583,81 @@ amendment never posts; an amendment that changes no figure does not post and
 takes back what it posted; a Not in Books credit note posts negative; an
 update writes the date, supplier, number, GSTIN and amounts only, never a
 reversal, reclaim, Expense out, book entry or in-2B month; a new entry takes
-the month as its reversal (in-2B) month. A row left off the ledger says why
-on the row ("Not on the ledger: missing date"; the debit note and minus
-reasons as in §10), from `bookNotPostedReason` / `docNotPostedReason`, which
-the database's plan repeats word for word.
+the month as its reversal (in-2B) month; an amendment's difference is
+rounded to the paisa as JavaScript's `Math.round` rounds it (half up, so
+-0.005 is 0.00), so a figure typed with a third decimal plans the same in
+both. A row left off the ledger says why on the row ("Not on the ledger:
+missing date"; the debit note and minus reasons as in §10), from
+`bookNotPostedReason` / `docNotPostedReason`, which the database's plan
+repeats word for word; a books row posted before and since left without a
+date or supplier says "On the ledger as last saved (SUPPLIER, date, ₹tax):
+missing date; it follows once given", since its entry stays and is still
+reversed.
 
 **Where it differs from Post** (so nothing is lost or doubled silently now
 that no one reviews a Post dialog):
 
 - A save that would take back an entry holding a reclaim, an Expense out or a
-  book entry is refused and names it ("Not saved: this change would take an
-  entry off the 2B Reconciliation ledger that holds a reclaim, Expense out or
-  book entry. KAVERI TRADERS K/101: Jul-26 has expensed out this entry; undo
-  that first."). Post deleted the entry with its decision.
+  book entry is refused, names it and says where to undo it ("Not saved: this
+  change would take an entry off the 2B Reconciliation ledger that holds a
+  reclaim, Expense out or book entry. KAVERI TRADERS K/101: Jul-26 has
+  expensed out this entry; undo that first. Undo it on Import 2B, then save
+  again: an Expense out under Pending items, Expensed out (Undo)."). Post
+  deleted the entry with its decision. Every such decision can be undone on
+  Import 2B: Expensed out (Undo), **Booked** (Undo book entry: the month's
+  booked Not in Books entries are listed under Pending items since 21 Oct
+  2026, so a Strict client's book entry no longer needs the superadmin on 2B
+  Reconciliation), and a reclaim by changing the treatment of the 2B
+  document that reclaims it.
 - An entry to add that the month already holds as its own, unlinked and
   identical (the document key: GSTIN or supplier, number, date and amounts),
   is linked instead of added twice, one to one (rows put back by Restore,
-  §3, or typed on 2B Reconciliation).
+  §3, or typed on 2B Reconciliation). In a filed month too: the door would
+  leave such an entry out as "already held" and the month would stay out of
+  step for good (SORATH BUILDERS 07/2026), so `twob_import2b_prior_save`
+  links it (a link moves no figure) and the preview says "already on the
+  ledger, to be linked to its books row".
 - Nothing stamps the month as posted (`posted_at` is left as it was).
+- A re-import no longer keeps a document that has left 2B only because the
+  write-through gave it a Not in Books entry: an entry with no decision does
+  not keep it (the document goes, and its entry with it); a book entry or a
+  filed (locked) entry still does, as a reclaim's evidence and an amendment
+  counted against it do.
+
+**Who may.** A save that changes the ledger is the **Import 2B & post**
+permission's (`work_2b_import`; a GST Manager and the superadmin hold every
+permission), as Post was: the reading taken here of "updation itself would
+automatically change the next report" is that the person who may change the
+reports is still the one who may post. Without it, Import 2B is shown with
+its 2B treatments and books register read-only and a note saying why; the
+Pending items decisions (Link & Reclaim, Expense out, book entry and their
+undo) and the deletes (Delete 2B rows) stay as they were. The database
+refuses a save that would change the ledger when the user the request names
+(`x-gst-actor`) lacks it ("Not saved: this change would change the 2B
+Reconciliation ledger, which needs the Import 2B & post permission"), and
+nothing of the save is kept; a save that changes nothing on the ledger goes
+through for any staff, and a request naming no user (the app of before this
+release, a system writer) is not checked. If the firm prefers every staff
+save to post, drop the check in `twob__autopost_touch` and the page's
+`canPost` and rename the permission.
 
 **Race-safe.** The client's lock (the one every writer of a client's 2B
 lists takes: the door, the carry, Re-run, filing) is held while the plan is
-read and written; the entries taken back or changed are locked and read
-again first, so a reclaim saved meanwhile refuses the save rather than being
-deleted; a unique index allows one ledger row per books row and one per 2B
-document. Two people saving the same month: the second waits and finds the
-first's entry, so one row is posted once (`test_9b_autopost_race.sh`). A
-month marked Filed while a save of it waits stops that save: "Not saved:
-Dec-26 was just marked filed. Reload the page."
+read and written; the entries taken back are locked and read again first, so
+a reclaim saved meanwhile refuses the save rather than being deleted; a
+unique index allows one ledger row per books row and one per 2B document.
+Two people saving the same month: the second waits and finds the first's
+entry, so one row is posted once (`test_9b_autopost_race.sh`). A month
+marked Filed while a save of it waits stops that save: "Not saved: Dec-26
+was just marked filed. Reload the page." A save takes its row's lock and
+then the client's (in its write-through); the reclaim and pairing calls take
+theirs in that same order. The calls that take the client's lock first and
+then the month's rows (Delete 2B, Clear Data, the catch-up) take those rows
+without waiting: when a save of the month is running at that moment they
+stop at once ("Nothing was changed: Sep-26 of this client is being saved by
+someone else right now. Try again in a moment.") and the save goes through,
+where before PostgreSQL broke the deadlock by aborting one of them
+(`test_9e_autopost_locks.sh`).
 
 **A prior month (§13).** The guard still refuses every direct write, and
 the triggers post nothing there. A GST Manager or the superadmin saves a
@@ -1612,9 +1665,9 @@ books register row through `twob_import2b_prior_save`: the row and its Not
 in 2B entry go through the door (`twob_prior_books_apply`), the later
 months' carried copies included, in one transaction, after a preview that
 shows the row, the ledger's change ("The 2B Reconciliation ledger follows:
-Not in 2B 1 changed") and the later months, and asks first. The Not in
-Books side follows the filed 2B and is never posted in a prior month.
-Employees: read-only, as before.
+Not in 2B 1 to change") and the later months, and asks first. A cell left
+without a change saves nothing. The Not in Books side follows the filed 2B
+and is never posted in a prior month. Employees: read-only, as before.
 
 **A month out of step.** A month saved before this change (and never
 posted, or changed after its last Post), or one whose entries were changed
@@ -1624,36 +1677,49 @@ this month's Import 2B ...: Not in Books 6 to add.") and, for staff who may
 post (permission Import 2B & post), **Bring the reconciliation up to date**:
 a preview of what it adds, links, changes and takes back, with the rows it
 leaves out and why, then the same rules applied
-(`twob_import2b_catch_up`). Nothing was posted by the migration. In a filed
-month only its Not in 2B side can be brought up to date (GST Manager or
-superadmin, through the door, `twob_import2b_prior_save` with
-`p_whole_month`); its Not in Books side is named and left out. The map of
-21 Oct 2026 (origin/main f9890f7) found 15 client-months out of step, 13 of
-them filed; the migration header lists them with a read-only query that
-gives the same list live.
+(`twob_import2b_catch_up`); afterwards the toast says what was done ("Not in
+2B: 1 added."). A refusal names where to undo. Nothing was posted by the
+migration. In a filed month only its Not in 2B side can be brought up to
+date (GST Manager or superadmin, through the door, `twob_import2b_prior_save`
+with `p_whole_month`); the line shows only that side (its Not in Books side
+follows the filed 2B, which nothing on the page can change, so a line about
+it could never go; the confirm names it). The map of 21 Oct 2026
+(origin/main f9890f7) found 15 client-months out of step, 13 of them filed
+(12 of those on the Not in Books side only); the migration header lists them
+with a read-only query that gives the same list live.
 
 **Version snapshots: coalesced per minute.** The write-through marks the
-month changed (`twob_autopost_state`); the page asks for the snapshot once a
-save is done (`twob_import2b_flush_version`), and a write-through takes one
-itself when the month's last one is more than a minute old. A snapshot
-within a minute of the month's current write-through version brings that
-version up to date in place; otherwise it adds the next version. So a burst
-of saves (an import's many writes, a Save of many rows) is one version, and
-a month gets at most about one version a minute while people work on it.
-The versions have Post's shape (`table_type` 'import2b', camelCase rows), so
-View Versions and Restore read them unchanged; the page shows "Reconciliation
+month changed, with whose save it was (`twob_autopost_state.changed_by`); a
+write-through takes a snapshot itself when the month's last one is more
+than a minute old, and the page, after its own save, asks for the months
+its saves marked to be brought up to date (`twob_import2b_flush_version`:
+every month of the client marked behind, a later month's amendment
+included). A snapshot within a minute of the month's current write-through
+version brings that version up to date in place; otherwise it adds the next
+version. A version is recorded as the saver's, never as whoever's page
+asked for it, and a plain page load takes none. So a burst of saves (an
+import's many writes, a Save of many rows) is one version, and a month gets
+at most about one version a minute while people work on it. The versions
+have Post's shape (`table_type` 'import2b', camelCase rows), so View
+Versions and Restore read them unchanged; the page shows "Reconciliation
 updated ... · vN".
 
 **Speed** (local PostgreSQL, `test_9c_autopost_timing.sql`, 1,000 rows,
 written as the app sends them): an import of 1,000 Not in Books documents
-(two inserts of 500) 0.09 s; 1,000 treatment changes in chunks of 100 about
-0.1 s each way; 1,000 books rows 0.07 s; the catch-up of 1,000 + 1,000 rows
-0.2 s (preview 0.01 s); Delete 2B of 1,000 documents 0.09 s. A re-import that
-changes the figures of 1,000 documents sends them one request each (8 at a
-time): the write-through adds about 1 ms of database time a request to
-writing the document and its entry by hand (0.7 s for 1,000 statements in one
-transaction; the change log, when applied, adds about 1.5 ms a request of its
-own), against tens of ms for each request's round trip.
+(two inserts of 500) 0.1 s; 1,000 treatment changes in chunks of 100 about
+0.1 to 0.2 s each way; 1,000 books rows 0.07 s; the catch-up of 1,000 +
+1,000 rows 0.25 s (preview 0.01 s); Delete 2B of 1,000 documents 0.15 s;
+Clear Data of a month of 1,000 + 500 entries, cleared and written again,
+0.2 s (one call a month: a year of such months in one call had run past the
+3 s anon calls run under). A re-import that changes the figures of 1,000
+documents sends them one request each (8 at a time): the write-through adds
+about 0.5 to 0.75 ms of database time a request to writing the document and
+its entry by hand (the test asserts under 1 s for the 1,000; 0.7 s for 1,000
+statements in one transaction), against tens of ms for each request's round
+trip. The user check runs on every save and is written out in the trigger
+(through `staff_level_of` it cost more than the rest of the write-through).
+With the change log (`20261021150000`) applied first, as live, its own
+logging adds about 0.35 ms a statement to both.
 
 **Who acts.** The ledger rows written take `updated_by` from the request's
 `x-gst-actor` (else the saved row's `updated_by`), so the change log
@@ -1665,23 +1731,34 @@ after 20261021100000 as a role that is not a superuser and runs, besides
 §13's tests: `test_9a_autopost.sql` (every save kind, the refusals, the
 adoption, versions, Delete 2B, Clear Data, the catch-up, a prior month
 through the door, employees refused), `test_9b_autopost_race.sh` (two
-sessions), `test_9c_autopost_timing.sql` and `autopost.test.mjs` (twin
-clients: the write-through on one, the app's own `planImport2BPost` +
-`postImport2BToLedger` on the other, the ledgers compared after every save
-kind, and the database's plan against `planImport2BPost` on a month out of
-step). `node scripts/verify-import2b-notes.mjs` checks the rules in the
-browser code and that the page has no Post.
+sessions), `test_9c_autopost_timing.sql`, `test_9d_autopost_round1.sql` (a
+reclaim and a pairing refused leave nothing behind and go through once the
+decision is undone; who may change the ledger; a filed month's twin linked;
+rounding; versions as the saver's; the catch-up's undo hint),
+`test_9e_autopost_locks.sh` (Delete 2B and Clear Data against a save at the
+same moment) and `autopost.test.mjs` (twin clients: the write-through on
+one, the app's own `planImport2BPost` + `postImport2BToLedger` on the other,
+the ledgers compared after every save kind, the pairing and reclaim calls
+included, and the database's plan against `planImport2BPost` on a month out
+of step). `app_writes.test.mjs` checks the words (the standing line of a
+filed month, the catch-up toast, the filed month's preview).
+`node scripts/verify-import2b-notes.mjs` checks the rules in the browser
+code, that the page has no Post, and that reclaims and pairings are one call
+each.
 
 **Open questions for the firm.**
 
+- Who may: Import 2B & post (above), or every staff save?
 - The refusal above: should a save instead take back the entry and its
   decision (as Post did), or keep the entry unlinked?
-- Clear Data now writes Import 2B's entries again at once. If the firm wants
-  Clear Data to leave the month empty, Import 2B's rows must be cleared too.
+- Clear Data now writes Import 2B's entries again at once (the dialog says
+  so). If the firm wants Clear Data to leave the month empty, Import 2B's
+  rows must be cleared too.
 - A 2B Reconciliation (Liberal) edit of an entry that Import 2B posted is
   overwritten by the next write-through of its source row, as Post's next run
   did.
 - Delete 2B does not re-match the books register (as before); a books row
   paired with a deleted document keeps its treatment until it is saved again.
 - The 15 out-of-step client-months are left for staff to bring up to date
-  (or not) one by one.
+  (or not) one by one; the 12 filed months that differ only on their Not in
+  Books side no longer show a line.

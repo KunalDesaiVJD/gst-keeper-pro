@@ -579,18 +579,20 @@ export function planToPriorChanges(plan: PostPlan, periodMonth: string): TwobCha
   ];
 }
 
-// The Not in Books side of a prior month's Post plan, left out of it: entries
-// from 2B documents to add, change or remove, which follow the filed 2B, not
-// the books. As one sentence for the preview, or null when there are none.
+// The Not in Books side of a prior month's plan, left out of it: entries from
+// 2B documents the plan would add, change or take off, which follow the filed
+// 2B, not the books. As one sentence for the confirm of a filed month's
+// catch-up (never the page's standing line: nothing there can change it), or
+// null when there are none.
 export function priorPlanLeftOut(plan: PostPlan): string | null {
   const n = plan.insertBillsBooks.length + plan.updateBillsBooks.length + plan.retractBillsBooks.length;
   if (n === 0) return null;
   const names = [...plan.insertBillsBooks, ...plan.updateBillsBooks].slice(0, 4)
     .map(({ row: d }) => [(d.supplier_name || '').trim(), d.supplier_invoice_number].filter(Boolean).join(' ')).filter(Boolean);
   const parts = [
-    plan.insertBillsBooks.length && `${plan.insertBillsBooks.length} to add`,
-    plan.updateBillsBooks.length && `${plan.updateBillsBooks.length} to change`,
-    plan.retractBillsBooks.length && `${plan.retractBillsBooks.length} to remove`,
+    plan.insertBillsBooks.length && `${plan.insertBillsBooks.length} not on it`,
+    plan.updateBillsBooks.length && `${plan.updateBillsBooks.length} at other figures`,
+    plan.retractBillsBooks.length && `${plan.retractBillsBooks.length} on it that the 2B documents no longer post`,
   ].filter(Boolean).join(', ');
-  return `Not on the ledger: ${n} Not in Books ${n === 1 ? 'entry' : 'entries'} from this month's 2B documents (${parts}${names.length ? `: ${names.join(', ')}${n > names.length ? ' and more' : ''}` : ''}). A filed month's Not in Books list follows its filed 2B, not the books, so it does not change here; if such an entry belongs on the list, add it in the open month.`;
+  return `This filed month's Not in Books list differs from its 2B documents for ${n} ${n === 1 ? 'entry' : 'entries'} (${parts}${names.length ? `: ${names.join(', ')}${n > names.length ? ' and more' : ''}` : ''}). It follows the filed 2B, not the books, and does not change here.`;
 }
