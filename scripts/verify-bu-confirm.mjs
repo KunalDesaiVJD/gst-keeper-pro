@@ -278,6 +278,12 @@ guard('the code step', () => {
     'a new tab (no sessionStorage) gets no proof: someone else at the same browser must ask for a code (follow-up, low)');
   check(R.readCodeStep(JSON.stringify(proved), null, now)?.proof === null,
     'a proof left in localStorage by the earlier page is not trusted');
+  {
+    const other = R.readCodeStep(stored(proved).local, null, now);
+    check(other?.codeId === null && other.codeSentTo === null && other.name === 'Rajesh Shah' && other.email === 'owner@client.test',
+      'once a code has given a proof, another tab is not offered that code (re-checking it would cancel this tab\'s proof); name and address are kept',
+      JSON.stringify(other));
+  }
   check(!('proof' in JSON.parse(stored(proved).local)) && !/"p"/.test(stored(proved).local) && JSON.parse(stored(proved).session).proof === 'p',
     'the proof is written to sessionStorage only');
   check(stored({ ...step, name: '', email: '', codeId: null, codeSentTo: null, codeAt: null }).local === null && stored(step).session === null,

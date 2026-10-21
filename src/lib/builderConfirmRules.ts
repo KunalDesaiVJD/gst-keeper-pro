@@ -426,12 +426,17 @@ export const codeStepKey = (token: string): string => `bu-confirm:${token}`;
 /** The step as stored: local (localStorage) without the proof, session
  *  (sessionStorage) with only the proof. null: nothing to keep there. */
 export function codeStepForStorage(step: CodeStep): { local: string | null; session: string | null } {
-  const local = {
-    name: step.name, email: step.email, codeSentTo: step.codeSentTo, codeId: step.codeId, codeAt: step.codeAt,
-    codeStatus: step.codeStatus,
-  };
-  const hasLocal = !!(step.name || step.email || step.codeId);
   const hasProof = !!(step.proof && step.proofEmail && step.proofUntil);
+  // Once a code has given this tab its proof, other tabs are not offered that
+  // code again: checking it twice would replace this tab's proof. They ask
+  // for a code of their own.
+  const keepCode = !hasProof;
+  const local = {
+    name: step.name, email: step.email,
+    codeSentTo: keepCode ? step.codeSentTo : null, codeId: keepCode ? step.codeId : null,
+    codeAt: keepCode ? step.codeAt : null, codeStatus: keepCode ? step.codeStatus : null,
+  };
+  const hasLocal = !!(step.name || step.email || local.codeId);
   return {
     local: hasLocal ? JSON.stringify(local) : null,
     session: hasProof ? JSON.stringify({ proof: step.proof, proofEmail: step.proofEmail, proofUntil: step.proofUntil }) : null,
