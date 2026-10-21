@@ -2266,6 +2266,7 @@ export type Database = {
           created_by: string | null
           dispute_notes: string | null
           id: string
+          legacy_outbox_id: string | null
           outbox_id: string | null
           override_reason: string | null
           overridden_at: string | null
@@ -2289,6 +2290,7 @@ export type Database = {
           created_by?: string | null
           dispute_notes?: string | null
           id?: string
+          legacy_outbox_id?: string | null
           outbox_id?: string | null
           override_reason?: string | null
           overridden_at?: string | null
@@ -2312,6 +2314,7 @@ export type Database = {
           created_by?: string | null
           dispute_notes?: string | null
           id?: string
+          legacy_outbox_id?: string | null
           outbox_id?: string | null
           override_reason?: string | null
           overridden_at?: string | null
@@ -11826,7 +11829,7 @@ export type Database = {
         Returns: Json
       }
       builder_bu_confirm_code_verify: {
-        Args: { _code: string; _email: string; _token: string }
+        Args: { _code: string; _code_id: string; _email: string; _token: string }
         Returns: Json
       }
       builder_bu_confirm_firm_addresses: {

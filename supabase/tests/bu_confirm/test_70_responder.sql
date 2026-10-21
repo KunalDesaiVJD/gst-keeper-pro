@@ -62,10 +62,13 @@ BEGIN;
 \ir fixtures.psql
 SET LOCAL ROLE anon;
 UPDATE clients SET email = 'Accounts <Accounts@Client.test>; rajesh@client.test' WHERE id = 'c1000000-0000-0000-0000-000000000001';
+SELECT t_old_app($f$
 INSERT INTO builder_bu_agreement_confirmations (bu_event_id, unit_id, client_id, agreement_value_at_request, status, sent_at)
 SELECT eu.bu_event_id, eu.unit_id, 'c1000000-0000-0000-0000-000000000001', eu.agreement_value, 'PENDING', now()
   FROM builder_bu_event_units eu
  WHERE eu.bu_event_id = 'e1000000-0000-0000-0000-000000000001' AND eu.booked_at_cutoff;
+$f$);
+SELECT t_old_app($f$
 WITH mail AS (
   INSERT INTO email_outbox (client_id, to_email, kind, template_key, subject, body, status)
   VALUES ('c1000000-0000-0000-0000-000000000001', 'old.owner@client.test', 'builder_agreement_confirm',
@@ -73,6 +76,7 @@ WITH mail AS (
   RETURNING id)
 UPDATE builder_bu_agreement_confirmations SET outbox_id = (SELECT id FROM mail)
  WHERE unit_id = 'a1000000-0000-0000-0000-000000000001';
+$f$);
 SELECT max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000001') AS t1,
        max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000002') AS t2,
        max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000003') AS t3

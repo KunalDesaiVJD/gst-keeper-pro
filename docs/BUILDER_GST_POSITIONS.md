@@ -232,11 +232,18 @@ directly on the button pressed."
   firm's copy sits in gst@vjdesai.com, and BU Events prints them. The code
   goes straight through Microsoft Graph (Edge Function `bu-confirm-code`),
   never through `email_outbox` (which the public key can read), and no copy is
-  kept in the firm's Sent Items, so staff cannot read a client's code. Limits:
-  a code works for 30 minutes and 5 tries; at most 10 wrong tries a day per
-  address per link, 5 codes an hour and 10 a day per address, 20 an hour per
-  link. Only hashes are stored, in `builder_bu_confirm_codes` (private: RLS on,
-  no policies, like `client_password_resets`).
+  kept in the firm's Sent Items, so staff cannot read a client's code. The
+  page that asked for a code gets its id, and the code is typed back with it:
+  only that page can try it, so another reader typing wrong codes "as" the
+  owner touches only their own codes. Limits, per link and counted per caller
+  (the IP the request came from) so that one reader cannot use up another's:
+  a code works for 30 minutes and 5 tries; 5 codes an hour and 10 a day to one
+  address, 20 an hour whatever the address, 10 wrong tries a day to one
+  address. In all, at most 30 codes a day to one address and 60 an hour on a
+  link. A reader still locked out waits a day, or writes to the firm, which
+  may accept the value ("Accept without confirmation"). Only hashes are
+  stored, in `builder_bu_confirm_codes` (private: RLS on, no policies, like
+  `client_password_resets`).
 - Name and e-mail are kept, with the time, on each unit answered
   (`responded_by_name`, `responded_by_email`, `responded_at`). The BU Events
   page shows "Confirmed by <name> (<email>) on <date>" per unit and on the
@@ -252,8 +259,9 @@ directly on the button pressed."
   oneself nor the firm's copy of a client's request can do it.
 - Only an open unit takes an answer. A confirmed unit stays confirmed: the
   next reader sees who confirmed it and cannot dispute it there (a client's own
-  confirmation is never replaced). A disputed unit waits for staff, who correct
-  the working and send a new request for it.
+  confirmation is never replaced); the page says an answer given there stands
+  and to write to the firm if it is wrong. A disputed unit waits for staff, who
+  correct the working and send a new request for it.
   *Open question for the firm:* "anyone can provide confirmation for the
   outstanding figures" could mean that another recipient may confirm a unit
   someone else disputed. Until the firm decides, a dispute stands. That is the
@@ -270,7 +278,10 @@ directly on the button pressed."
   link that asked about it. Per-unit links e-mailed before this change keep
   working, on the new page and with the same checks, until a newer request
   about their unit is out; the old per-unit answer function and its lookup
-  are closed to the public key.
+  are closed to the public key. The unit's row keeps that per-unit e-mail
+  (`legacy_outbox_id`) when a request asks about it, so the address it went to
+  can still answer while the request's e-mail is not out, and a later send
+  knows a link reached the client.
 - A re-send while an earlier request's e-mail still waits in the outbox
   cancels that e-mail when the new request asks everything it asked (or the
   rest is answered), so the client never gets a link that opens "replaced".
@@ -279,7 +290,17 @@ directly on the button pressed."
   (`builder_bu_confirm_requests.earlier_link`).
 - A send locks the event's rows before it checks them, so an answer given
   while it runs is either seen (a confirmation is left out, a dispute stops
-  the send) or waits for it.
+  the send) or waits for it. A colleague's request for a ticked unit sent
+  while the pop-up was open stops the send too: the pop-up says the unit was
+  asked meanwhile, and to whom, and unticks it.
+- Nobody writes around the functions. The requests, the per-unit rows and
+  the history are open to read (RLS open to public, as everywhere), but the
+  public key has no insert, update or delete grant on them, and a trigger
+  refuses every write, from any role, that the send, the page's answer or the
+  firm's Accept did not make (`builder_bu_confirm_write_guard`). So nobody can
+  add their own address to a request, point a link at another client's units,
+  or write a confirmation or a responder straight into a unit's row. Deleting a
+  BU event, unit or client still takes its rows with it.
 - The posting gate is unchanged. The per-unit rows in
   `builder_bu_agreement_confirmations` stay the record it reads; CONFIRMED or
   OVERRIDDEN clears a unit, and PENDING, DISPUTED and NOT_SENT hold it.
@@ -287,7 +308,7 @@ directly on the button pressed."
 *Migration `20261021140000_bu_confirm_cc.sql` (send, lookup, code and answer
 functions; template `builder_bu_agreement_confirm_request`, editable under
 Reminders, Templates, Builder); Edge Function `bu-confirm-code`; tests
-`supabase/tests/bu_confirm/run.sh`, `deno test
+`supabase/tests/bu_confirm/run.sh`, `deno test --allow-read
 supabase/functions/bu-confirm-code/test/` and
 `node scripts/verify-bu-confirm.mjs`; `src/lib/builderConfirmRules.ts`,
 `src/lib/builderAgreementConfirmData.ts`,

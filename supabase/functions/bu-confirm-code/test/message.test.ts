@@ -1,4 +1,4 @@
-// deno test supabase/functions/bu-confirm-code/test/
+// deno test --allow-read supabase/functions/bu-confirm-code/test/
 import { assert, assertEquals, assertStringIncludes, assertThrows } from 'jsr:@std/assert@1';
 import { checkedAddress, checkedCode, codeEmail, esc } from '../message.ts';
 

@@ -47,7 +47,8 @@ export async function fetchClientEmails(clientId: string): Promise<{ valid: stri
   return parseEmailList(data?.email || '');
 }
 
-/** A ticked unit someone answered while the pop-up was open. */
+/** A ticked unit someone answered (or a colleague asked about in another
+ *  request) while the pop-up was open. */
 export interface AnsweredMeanwhile {
   unitId: string;
   unitNo: string;
@@ -56,6 +57,10 @@ export interface AnsweredMeanwhile {
   respondedByEmail: string | null;
   respondedAt?: string | null;
   disputeNotes?: string | null;
+  /** The request the unit is on now, its To and CC. */
+  requestId?: string | null;
+  requestTo?: string[] | null;
+  requestCc?: string[] | null;
 }
 
 export interface SendConfirmResult {
@@ -80,12 +85,13 @@ export interface SendConfirmResult {
   cancelledEarlier?: number;
 }
 
-/** The status and answer time of each ticked unit as the pop-up showed it. */
-export type SeenStatuses = Record<string, { status: ConfirmStatus; responded_at: string | null }>;
+/** The status, answer time and request of each ticked unit as the pop-up showed it. */
+export type SeenStatuses = Record<string, { status: ConfirmStatus; responded_at: string | null; request_id?: string | null }>;
 
 type AnsweredRow = {
   unit_id: string; unit_no: string; status: string; responded_by_name: string | null;
   responded_by_email: string | null; responded_at?: string | null; dispute_notes?: string | null;
+  request_id?: string | null; request_to?: string[] | null; request_cc?: string[] | null;
 };
 type SendRpcResult = {
   sent?: boolean;
@@ -101,6 +107,7 @@ const toAnswered = (a: AnsweredRow): AnsweredMeanwhile => ({
   unitId: a.unit_id, unitNo: a.unit_no, status: a.status,
   respondedByName: a.responded_by_name, respondedByEmail: a.responded_by_email,
   respondedAt: a.responded_at ?? null, disputeNotes: a.dispute_notes ?? null,
+  requestId: a.request_id ?? null, requestTo: a.request_to ?? null, requestCc: a.request_cc ?? null,
 });
 
 /**
@@ -198,7 +205,8 @@ export async function requestAgreementConfirmations(params: {
     const { cleared, changed } = splitAnswered(answered);
     if (changed.length) {
       // A dispute (or any answer but a confirmation) given since the pop-up
-      // read the units: send nothing, show it.
+      // read the units, or a colleague's request about one sent meanwhile:
+      // send nothing, show it.
       return { ok: false, status: 'changed', sent: 0, skipped: [...skipped, ...cleared], changed,
                reason: 'A ticked unit was answered meanwhile.' };
     }
@@ -400,22 +408,28 @@ export async function fetchFirmAddresses(actorId: string | null, addresses: stri
 // ── The public page ─────────────────────────────────────────────────────────
 
 /** Ask for a code to the reader's address and have it e-mailed. Throws the
- *  database's refusal (not on the e-mail, the firm's own, too many codes). */
-export async function askConfirmCode(token: string, email: string): Promise<{ status: 'sent' | 'failed' | 'unknown' }> {
+ *  database's refusal (not on the e-mail, the firm's own, too many codes).
+ *  codeId goes back with the typed code: only this page has it. status
+ *  'unknown': the mailer did not report back (not deployed, failed to start),
+ *  so the code may not have gone. */
+export async function askConfirmCode(token: string, email: string):
+  Promise<{ status: 'sent' | 'failed' | 'unknown'; codeId: string }> {
   const { data, error } = await supabase.rpc('builder_bu_confirm_code_request', { _token: token, _email: email });
   if (error) throw error;
   const codeId = (data as { code_id?: string } | null)?.code_id;
   if (!codeId) throw new Error('The code could not be asked for. Please try again.');
   const { data: fn, error: fnErr } = await supabase.functions.invoke('bu-confirm-code', { body: { code_id: codeId } });
-  if (fnErr) return { status: 'unknown' };
+  if (fnErr) return { status: 'unknown', codeId };
   const status = (fn as { status?: string } | null)?.status;
-  return { status: status === 'sent' ? 'sent' : status === 'failed' ? 'failed' : 'unknown' };
+  return { status: status === 'sent' ? 'sent' : status === 'failed' ? 'failed' : 'unknown', codeId };
 }
 
-/** Check the code: a proof to send with each answer, or why not. */
-export async function verifyConfirmCode(token: string, email: string, code: string):
+/** Check the code (with the id askConfirmCode gave): a proof to send with each answer, or why not. */
+export async function verifyConfirmCode(token: string, email: string, code: string, codeId: string):
   Promise<{ proof: string | null; message: string }> {
-  const { data, error } = await supabase.rpc('builder_bu_confirm_code_verify', { _token: token, _email: email, _code: code });
+  const { data, error } = await supabase.rpc('builder_bu_confirm_code_verify', {
+    _token: token, _email: email, _code: code, _code_id: codeId,
+  });
   if (error) return { proof: null, message: error.message };
   const r = (data || {}) as { ok?: boolean; proof?: string; message?: string };
   return r.ok && r.proof ? { proof: r.proof, message: '' } : { proof: null, message: r.message || 'The code could not be checked.' };

@@ -59,6 +59,6 @@ SELECT t_eq(t_results(t_respond(:'tok', jsonb_build_array(
             'A-101:CONFIRMED,A-102:CONFIRMED', 'the others answered');
 SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-000000000001', '10/2026'), false, 'open');
 -- And the gate gives the same answer for the same statuses with NOT_SENT in play.
-UPDATE builder_bu_agreement_confirmations SET status = 'NOT_SENT' WHERE unit_id = 'a1000000-0000-0000-0000-000000000003';
+SELECT t_old_app($f$UPDATE builder_bu_agreement_confirmations SET status = 'NOT_SENT' WHERE unit_id = 'a1000000-0000-0000-0000-000000000003'$f$);
 SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-000000000001', '10/2026'), true, 'NOT_SENT blocks like PENDING');
 ROLLBACK;

@@ -47,7 +47,9 @@
 --   builder_bu_confirm_code_claim / _mark            service role: the Edge
 --                                 Function bu-confirm-code mints the code,
 --                                 e-mails it, reports back
---   builder_bu_confirm_code_verify(token, email, code)   anon: returns a proof
+--   builder_bu_confirm_code_verify(token, email, code, code_id)
+--                                 anon: returns a proof (code_id: what
+--                                 _code_request gave the asking page)
 --   builder_bu_confirm_respond(token, answers, name, email, proof)
 --                                 the public page (no login), scoped by the
 --                                 token. A request's token reaches its units;
@@ -65,14 +67,25 @@
 --     database then queues a 6-digit code to that address; the Edge Function
 --     bu-confirm-code e-mails it straight through Microsoft Graph (never
 --     through email_outbox, which the anon key can read) and does not keep a
---     copy in the firm's Sent Items. The code works for 30 minutes and 5
---     tries, at most 10 wrong tries a day per address, at most 5 codes an
---     hour and 10 a day per address, 20 an hour per link. A right code gives
---     a proof (a random key, kept as a hash) good for 2 hours; every answer
---     needs it. So a staff member holding the firm's copy of the e-mail, who
---     sees the client's address in its header, cannot answer as the client:
---     the code goes to the client's mailbox. Staff clear a unit only with
+--     copy in the firm's Sent Items. A code is typed back with the code_id
+--     the asking page got, so only that page can try it; it works for 30
+--     minutes and 5 tries. Limits per link, counted per caller (IP) so that
+--     another reader cannot use them up: 5 codes an hour and 10 a day to one
+--     address, 20 an hour whatever the address, 10 wrong tries a day to one
+--     address; in all, 30 codes a day to one address and 60 an hour on the
+--     link. A right code gives a proof (a random key, kept as a hash) good
+--     for 2 hours; every answer needs it. So a staff member holding the
+--     firm's copy of the e-mail, who sees the client's address in its header,
+--     cannot answer as the client: the code goes to the client's mailbox. A
+--     reader locked out by the limits waits a day, or the firm accepts the
+--     value (Accept). Staff clear a unit only with
 --     builder_bu_agreement_override, its permission and reason.
+--   * Nobody writes around the functions. The public key only reads the
+--     requests, the per-unit rows and the history (no insert, update or
+--     delete grants), and a trigger refuses every write to them, from any
+--     role, that the send, the page's answer or the firm's Accept did not
+--     make (section 6b). Deleting a BU event, unit or client still takes its
+--     rows with it.
 --   * The firm's own addresses (@vjdesai.com, and any staff member's e-mail in
 --     profiles) never answer. A request needs at least one address outside
 --     the firm; a refusal names the addresses that count as the firm's.
@@ -94,9 +107,14 @@
 --   * The per-unit answer function of the old e-mails
 --     (builder_bu_agreement_confirm) and its lookup are closed to the public
 --     key: a per-unit link is answered on the new page, with the same checks.
+--     The addresses its e-mail went to (or the client master's) answer it;
+--     the row keeps that e-mail (legacy_outbox_id) when a request asks about
+--     the unit later.
 --
 -- RLS: builder_bu_confirm_requests and builder_bu_confirm_answer_history are
--- open to public like every app table (the app has no Supabase auth session).
+-- open to public like every app table (the app has no Supabase auth session);
+-- the public key may only read them and builder_bu_agreement_confirmations,
+-- and the guard trigger of section 6b refuses writes outside the functions.
 -- builder_bu_confirm_codes is private (RLS on, no policies), on the footing
 -- of client_password_resets: its rows prove who answered. The page's
 -- functions are SECURITY DEFINER and touch only what the token names. The
@@ -105,7 +123,7 @@
 -- actor id is the browser's word, as for builder_bu_agreement_override.
 --
 -- Re-runnable. Tests: supabase/tests/bu_confirm/run.sh (local PostgreSQL) and
--- deno test supabase/functions/bu-confirm-code/test/.
+-- deno test --allow-read supabase/functions/bu-confirm-code/test/.
 --
 -- Live-apply steps (project gcquafqxbykxkbexcdpy only; never the project in
 -- SUPABASE_PROJECT_REF):
@@ -117,23 +135,42 @@
 --   2. Apply this file to gcquafqxbykxkbexcdpy (management API database query
 --      or the SQL editor), then deploy the app at once: the old public page
 --      calls builder_bu_agreement_confirm / _confirmation_lookup, which this
---      file closes, and the BU Events pop-up calls the new functions.
+--      file closes; the old BU Events page writes
+--      builder_bu_agreement_confirmations directly when it sends, which this
+--      file refuses (Accept already goes through builder_bu_agreement_override,
+--      which keeps working); and the new pop-up and page call the new
+--      functions.
 --   3. Check the objects exist: tables builder_bu_confirm_requests (with seq,
 --      earlier_link), builder_bu_confirm_codes, builder_bu_confirm_answer_history;
---      columns request_id, responded_by_name, responded_by_email on
---      builder_bu_agreement_confirmations, and NOT_SENT in its status check;
---      functions builder_bu_confirm_request_send (10 arguments),
---      builder_bu_confirm_lookup, builder_bu_confirm_code_request,
+--      columns request_id, responded_by_name, responded_by_email,
+--      legacy_outbox_id on builder_bu_agreement_confirmations, and NOT_SENT
+--      in its status check; functions builder_bu_confirm_request_send (10
+--      arguments), builder_bu_confirm_lookup, builder_bu_confirm_code_request,
 --      builder_bu_confirm_code_claim, builder_bu_confirm_code_mark,
---      builder_bu_confirm_code_verify, builder_bu_confirm_respond (5
---      arguments), builder_bu_confirm_firm_addresses; template row
+--      builder_bu_confirm_code_verify (4 arguments, the last code_id uuid; the
+--      3-argument one is gone), builder_bu_confirm_respond (5 arguments),
+--      builder_bu_confirm_firm_addresses, builder_bu_confirm_write_guard;
+--      builder_bu_agreement_override's body sets app.bu_confirm_write;
+--      triggers trg_builder_bu_agreement_confirmations_guard,
+--      trg_builder_bu_confirm_requests_guard and
+--      trg_builder_bu_confirm_answer_history_guard; template row
 --      builder_bu_agreement_confirm_request in email_templates (section 5
 --      of this file inserts it when missing).
 --   4. With the anon key from .env: rpc builder_bu_confirm_lookup with a
 --      made-up token returns null; select id from builder_bu_confirm_requests
 --      returns [] (not an error); select id from builder_bu_confirm_codes is
 --      refused; rpc builder_bu_confirm_code_claim, builder_bu_confirm_is_staff
---      and builder_bu_agreement_confirm are refused.
+--      and builder_bu_agreement_confirm are refused; a PATCH of
+--      builder_bu_agreement_confirmations, builder_bu_confirm_requests and
+--      builder_bu_confirm_answer_history filtered on a made-up id
+--      (?id=eq.00000000-0000-0000-0000-000000000000, so no row is touched
+--      either way) is refused with "permission denied". The management API
+--      bypasses grants but not the trigger: BEGIN; UPDATE
+--      public.builder_bu_agreement_confirmations SET status = status WHERE id
+--      = (SELECT id FROM public.builder_bu_agreement_confirmations LIMIT 1);
+--      ROLLBACK; is refused with "change only through the confirmation page"
+--      (it changes nothing either way; with no row in the table it proves
+--      nothing, and step 3's trigger check stands).
 --   5. No redeploy of send-gst-email: v5 already sends to every address in
 --      to_email and cc_email, comma or semicolon separated.
 --   6. Per-unit links already sent keep working on the new page.
@@ -176,13 +213,29 @@ ALTER TABLE public.builder_bu_confirm_requests ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS builder_bu_confirm_requests_all ON public.builder_bu_confirm_requests;
 CREATE POLICY builder_bu_confirm_requests_all ON public.builder_bu_confirm_requests
   FOR ALL TO public USING (true) WITH CHECK (true);
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.builder_bu_confirm_requests TO anon, authenticated, service_role;
+-- The app only reads it; builder_bu_confirm_request_send writes it (round 3:
+-- with write grants anyone holding the public key could add their own address
+-- to a request, or point it at another client's units). Section 6b also
+-- refuses every write outside the functions, whoever makes it.
+REVOKE ALL ON public.builder_bu_confirm_requests FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.builder_bu_confirm_requests TO anon, authenticated;
+GRANT ALL ON public.builder_bu_confirm_requests TO service_role;
 
 -- ── 2. Per-unit rows: the request, who answered, NOT_SENT ───────────────────
 ALTER TABLE public.builder_bu_agreement_confirmations
   ADD COLUMN IF NOT EXISTS request_id         uuid,
   ADD COLUMN IF NOT EXISTS responded_by_name  text,
-  ADD COLUMN IF NOT EXISTS responded_by_email text;
+  ADD COLUMN IF NOT EXISTS responded_by_email text,
+  ADD COLUMN IF NOT EXISTS legacy_outbox_id   uuid;
+
+-- The gate's record: the app only reads it. The send, the page's answer and
+-- the firm's Accept (builder_bu_agreement_override) write it (round 3: with
+-- the write grants of 20260811160000 anyone holding the public key could
+-- write CONFIRMED and a responder straight in, and the gate opened). Section
+-- 6b also refuses every write outside the functions, whoever makes it.
+REVOKE ALL ON public.builder_bu_agreement_confirmations FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.builder_bu_agreement_confirmations TO anon, authenticated;
+GRANT ALL ON public.builder_bu_agreement_confirmations TO service_role;
 
 DO $$
 BEGIN
@@ -214,6 +267,20 @@ COMMENT ON COLUMN public.builder_bu_agreement_confirmations.responded_by_name IS
 COMMENT ON COLUMN public.builder_bu_agreement_confirmations.responded_by_email IS
   'E-mail the person who answered gave on the confirmation page: one the e-mail was sent to, proved by a '
   'code e-mailed to it (builder_bu_confirm_codes).';
+COMMENT ON COLUMN public.builder_bu_agreement_confirmations.legacy_outbox_id IS
+  'The per-unit e-mail sent before 21 Oct 2026 (its email_outbox row), kept when a request later asks about '
+  'the unit (outbox_id then names the request''s e-mail): the addresses it went to may still answer its link, '
+  'and a later send knows a link reached the client. NULL for a unit never e-mailed per unit. No foreign '
+  'key: a deleted outbox row leaves only the client master''s address, as before.';
+
+-- Rows of the per-unit e-mails: their own e-mail is the one they point at
+-- until a request asks about them. (The flag lets this through the guard of
+-- section 6b when the file runs again.)
+SELECT set_config('app.bu_confirm_write', 'on', true);
+UPDATE public.builder_bu_agreement_confirmations
+   SET legacy_outbox_id = outbox_id
+ WHERE legacy_outbox_id IS NULL AND request_id IS NULL AND outbox_id IS NOT NULL;
+SELECT set_config('app.bu_confirm_write', 'off', true);
 
 -- ── 3. Disputes a later request cleared ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.builder_bu_confirm_answer_history (
@@ -241,7 +308,10 @@ ALTER TABLE public.builder_bu_confirm_answer_history ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS builder_bu_confirm_answer_history_all ON public.builder_bu_confirm_answer_history;
 CREATE POLICY builder_bu_confirm_answer_history_all ON public.builder_bu_confirm_answer_history
   FOR ALL TO public USING (true) WITH CHECK (true);
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.builder_bu_confirm_answer_history TO anon, authenticated, service_role;
+-- Read by the app, written only by the send (section 6b guards it too).
+REVOKE ALL ON public.builder_bu_confirm_answer_history FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.builder_bu_confirm_answer_history TO anon, authenticated;
+GRANT ALL ON public.builder_bu_confirm_answer_history TO service_role;
 
 -- ── 4. One-time codes (private) ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.builder_bu_confirm_codes (
@@ -431,10 +501,14 @@ AS $$
   END;
 $$;
 
--- Is a unit as the pop-up showed it? p_seen: { status, responded_at } as read
--- (no entry: taken as unanswered, so a dispute staff did not see is never
--- cleared).
-CREATE OR REPLACE FUNCTION public.builder_bu_confirm_seen_same(p_seen jsonb, p_status text, p_responded_at timestamptz)
+-- Is a unit as the pop-up showed it? p_seen: { status, responded_at,
+-- request_id } as read (no entry: taken as unanswered, so a dispute staff did
+-- not see is never cleared). request_id, when the pop-up sends it (round 3):
+-- a colleague's request for the unit sent meanwhile is reported, not
+-- silently replaced.
+DROP FUNCTION IF EXISTS public.builder_bu_confirm_seen_same(jsonb, text, timestamptz);
+CREATE OR REPLACE FUNCTION public.builder_bu_confirm_seen_same(
+  p_seen jsonb, p_status text, p_responded_at timestamptz, p_request_id uuid)
 RETURNS boolean
 LANGUAGE plpgsql
 STABLE
@@ -444,14 +518,18 @@ BEGIN
     RETURN p_status IN ('PENDING', 'NOT_SENT');
   END IF;
   RETURN COALESCE(p_seen ->> 'status', '') = p_status
-     AND (NULLIF(p_seen ->> 'responded_at', ''))::timestamptz IS NOT DISTINCT FROM p_responded_at;
+     AND (NULLIF(p_seen ->> 'responded_at', ''))::timestamptz IS NOT DISTINCT FROM p_responded_at
+     AND (NOT (p_seen ? 'request_id')
+          OR (NULLIF(p_seen ->> 'request_id', ''))::uuid IS NOT DISTINCT FROM p_request_id);
 EXCEPTION WHEN others THEN
   RETURN false;
 END;
 $$;
 
 -- The ticked units a send must not ask: confirmed or accepted, or not as the
--- pop-up showed them (answered since, a dispute included). NULL when none.
+-- pop-up showed them (answered since, a dispute included, or asked meanwhile
+-- in a colleague's request: then that request's To and CC, round 3). NULL
+-- when none.
 CREATE OR REPLACE FUNCTION public.builder_bu_confirm_changed(p_event uuid, p_units uuid[], p_seen jsonb)
 RETURNS jsonb
 LANGUAGE sql
@@ -461,23 +539,27 @@ AS $$
   SELECT jsonb_agg(jsonb_build_object(
            'unit_id', x, 'unit_no', u.unit_no, 'status', COALESCE(c.status, 'NOT_SENT'),
            'responded_by_name', c.responded_by_name, 'responded_by_email', c.responded_by_email,
-           'responded_at', c.responded_at, 'dispute_notes', c.dispute_notes)
+           'responded_at', c.responded_at, 'dispute_notes', c.dispute_notes,
+           'request_id', c.request_id, 'request_to', to_jsonb(r.to_emails), 'request_cc', to_jsonb(r.cc_emails),
+           'request_sent_at', r.sent_at)
          ORDER BY u.sort_order, u.unit_no)
     FROM unnest(p_units) x
     JOIN public.builder_units u ON u.id = x
     LEFT JOIN public.builder_bu_agreement_confirmations c ON c.bu_event_id = p_event AND c.unit_id = x
+    LEFT JOIN public.builder_bu_confirm_requests r ON r.id = c.request_id
    WHERE COALESCE(c.status, 'NOT_SENT') IN ('CONFIRMED', 'OVERRIDDEN')
       OR NOT public.builder_bu_confirm_seen_same(
                CASE WHEN jsonb_typeof(p_seen) = 'object' THEN p_seen -> x::text END,
-               COALESCE(c.status, 'NOT_SENT'), c.responded_at);
+               COALESCE(c.status, 'NOT_SENT'), c.responded_at, c.request_id);
 $$;
 
 -- A link, by its token: the request (o_req) or the per-unit row (o_cf), the
 -- event, the units it reaches, and the addresses the e-mail went to (a
--- request: its To and CC; a per-unit link: the address that e-mail went to,
--- or the newer request's once one asked about the unit, and the client
--- master's). All NULL when the token reaches nothing (a NOT_SENT row's token
--- was never e-mailed).
+-- request: its To and CC; a per-unit link: the addresses that per-unit e-mail
+-- went to, kept in legacy_outbox_id once a request asked about the unit
+-- (round 3: the send overwrote it, and the person it went to was refused on
+-- their still-open link), and the client master's). All NULL when the token
+-- reaches nothing (a NOT_SENT row's token was never e-mailed).
 CREATE OR REPLACE FUNCTION public.builder_bu_confirm_link(
   _token text,
   OUT o_req uuid, OUT o_cf uuid, OUT o_event uuid, OUT o_units uuid[], OUT o_allowed text[])
@@ -508,7 +590,9 @@ BEGIN
                            FROM public.clients cl WHERE cl.id = v_cf.client_id), '{}')
             || COALESCE((SELECT public.builder_bu_confirm_addresses(o.to_email)
                                 || public.builder_bu_confirm_addresses(o.cc_email)
-                           FROM public.email_outbox o WHERE o.id = v_cf.outbox_id), '{}');
+                           FROM public.email_outbox o
+                          WHERE o.id = COALESCE(v_cf.legacy_outbox_id,
+                                                CASE WHEN v_cf.request_id IS NULL THEN v_cf.outbox_id END)), '{}');
 END;
 $$;
 
@@ -530,6 +614,129 @@ BEGIN
   END IF;
 END;
 $$;
+
+-- ── 6b. Writes only through the functions ───────────────────────────────────
+-- Round 3 (high): the request (its To, CC, event and units), the per-unit
+-- record the gate reads (status, who answered, the dispute, the request, the
+-- token, the value asked about) and the history were open to direct writes,
+-- so the code proof could be skipped. The RLS policies stay open to public
+-- (CLAUDE.md: the app has no auth session); the public key may only read
+-- (sections 1 to 3), and this trigger refuses every insert, update and
+-- delete, from any role, unless a confirmation function made it: the send,
+-- the page's answer and the firm's Accept set app.bu_confirm_write for their
+-- own writes (transaction-local) and clear it again, as the staff level
+-- functions do for user_roles. Left alone: a cascade when its BU event, unit,
+-- client or request is deleted, and a foreign key clearing the e-mail or
+-- request a row points at when that row is deleted (only the key columns,
+-- only to NULL).
+CREATE OR REPLACE FUNCTION public.builder_bu_confirm_write_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_keys text[];
+BEGIN
+  IF COALESCE(current_setting('app.bu_confirm_write', true), 'off') = 'on' THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+  -- Run by a foreign key's action, never by a caller's own statement.
+  IF pg_trigger_depth() > 1 THEN
+    IF TG_OP = 'DELETE' THEN
+      RETURN OLD;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+      v_keys := CASE TG_TABLE_NAME
+        WHEN 'builder_bu_agreement_confirmations' THEN ARRAY['request_id', 'outbox_id', 'updated_at']
+        WHEN 'builder_bu_confirm_requests' THEN ARRAY['outbox_id']
+        WHEN 'builder_bu_confirm_answer_history' THEN ARRAY['request_id', 'cleared_by_request']
+        ELSE '{}'::text[] END;
+      IF (to_jsonb(NEW) - v_keys) = (to_jsonb(OLD) - v_keys)
+         AND NOT EXISTS (SELECT 1 FROM unnest(v_keys) k
+                          WHERE k <> 'updated_at'
+                            AND to_jsonb(NEW) -> k IS DISTINCT FROM to_jsonb(OLD) -> k
+                            AND to_jsonb(NEW) ->> k IS NOT NULL) THEN
+        RETURN NEW;
+      END IF;
+    END IF;
+  END IF;
+  RAISE EXCEPTION 'BU agreement confirmations change only through the confirmation page and the BU Events page (Send, Accept).'
+    USING ERRCODE = 'insufficient_privilege';
+END;
+$$;
+REVOKE ALL ON FUNCTION public.builder_bu_confirm_write_guard() FROM PUBLIC, anon, authenticated;
+
+-- Named to run before the updated_at stamp of 20260811160000.
+DROP TRIGGER IF EXISTS trg_builder_bu_agreement_confirmations_guard ON public.builder_bu_agreement_confirmations;
+CREATE TRIGGER trg_builder_bu_agreement_confirmations_guard
+  BEFORE INSERT OR UPDATE OR DELETE ON public.builder_bu_agreement_confirmations
+  FOR EACH ROW EXECUTE FUNCTION public.builder_bu_confirm_write_guard();
+DROP TRIGGER IF EXISTS trg_builder_bu_confirm_requests_guard ON public.builder_bu_confirm_requests;
+CREATE TRIGGER trg_builder_bu_confirm_requests_guard
+  BEFORE INSERT OR UPDATE OR DELETE ON public.builder_bu_confirm_requests
+  FOR EACH ROW EXECUTE FUNCTION public.builder_bu_confirm_write_guard();
+DROP TRIGGER IF EXISTS trg_builder_bu_confirm_answer_history_guard ON public.builder_bu_confirm_answer_history;
+CREATE TRIGGER trg_builder_bu_confirm_answer_history_guard
+  BEFORE INSERT OR UPDATE OR DELETE ON public.builder_bu_confirm_answer_history
+  FOR EACH ROW EXECUTE FUNCTION public.builder_bu_confirm_write_guard();
+
+-- The firm's Accept (20261015100000), unchanged but for the flag: it is the
+-- only writer of an OVERRIDDEN row.
+CREATE OR REPLACE FUNCTION public.builder_bu_agreement_override(
+  p_bu_event_id uuid, p_unit_id uuid, p_actor_id uuid, p_reason text)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_role   text;
+  v_client uuid;
+  v_value  numeric;
+  v_reason text := NULLIF(btrim(COALESCE(p_reason, '')), '');
+BEGIN
+  SELECT role::text INTO v_role FROM public.user_roles WHERE user_id = p_actor_id LIMIT 1;
+  IF NOT (v_role IN ('superadmin', 'gst_manager')
+          OR (v_role = 'employee' AND EXISTS (
+                SELECT 1 FROM public.user_permissions
+                 WHERE user_id = p_actor_id AND permission_key = 'override_bu_agreement'))) THEN
+    RAISE EXCEPTION 'You are not allowed to accept an agreement value without the client''s confirmation.'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF v_role <> 'superadmin' AND (v_reason IS NULL OR length(v_reason) < 10) THEN
+    RAISE EXCEPTION 'Give a reason (at least 10 characters) for accepting the agreement value without the client''s confirmation.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  SELECT p.client_id, eu.agreement_value INTO v_client, v_value
+    FROM public.builder_bu_event_units eu
+    JOIN public.builder_bu_events ev ON ev.id = eu.bu_event_id
+    JOIN public.builder_projects p ON p.id = ev.project_id
+   WHERE eu.bu_event_id = p_bu_event_id AND eu.unit_id = p_unit_id
+   LIMIT 1;
+  IF v_client IS NULL THEN
+    RAISE EXCEPTION 'That unit is not in this BU event.' USING ERRCODE = 'no_data_found';
+  END IF;
+
+  PERFORM set_config('app.bu_confirm_write', 'on', true);
+  INSERT INTO public.builder_bu_agreement_confirmations AS c
+    (bu_event_id, unit_id, client_id, agreement_value_at_request, status,
+     overridden_by, overridden_at, override_reason, created_by)
+  VALUES (p_bu_event_id, p_unit_id, v_client, COALESCE(v_value, 0), 'OVERRIDDEN',
+          p_actor_id, now(), COALESCE(v_reason, 'Accepted by the superadmin'), p_actor_id)
+  ON CONFLICT (bu_event_id, unit_id) DO UPDATE
+    SET status = 'OVERRIDDEN',
+        overridden_by = EXCLUDED.overridden_by,
+        overridden_at = EXCLUDED.overridden_at,
+        override_reason = EXCLUDED.override_reason
+    WHERE c.status <> 'CONFIRMED';   -- a client's own confirmation is never replaced
+  PERFORM set_config('app.bu_confirm_write', 'off', true);
+
+  RETURN (SELECT status FROM public.builder_bu_agreement_confirmations
+           WHERE bu_event_id = p_bu_event_id AND unit_id = p_unit_id);
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.builder_bu_agreement_override(uuid, uuid, uuid, text) TO anon, authenticated, service_role;
 
 -- ── 7. Staff: which typed addresses are the firm's own ──────────────────────
 -- For the pop-up's "The firm's own" line (a staff member's personal address
@@ -676,7 +883,8 @@ BEGIN
   END IF;
 
   -- Did a link to any of these units reach someone already? A request that is
-  -- out, or a per-unit e-mail of before 21 Oct 2026 that was sent. While
+  -- out, or a per-unit e-mail of before 21 Oct 2026 that was sent (its own
+  -- record, kept when a request asked about the unit since: round 3). While
   -- this e-mail is not out, that link still takes answers.
   v_earlier := EXISTS (
     SELECT 1
@@ -686,10 +894,14 @@ BEGIN
        AND (EXISTS (SELECT 1 FROM public.builder_bu_confirm_requests r
                      WHERE r.bu_event_id = p_bu_event_id AND c.unit_id = ANY (r.unit_ids)
                        AND public.builder_bu_confirm_request_out(r.id))
-            OR (c.request_id IS NULL
-                AND EXISTS (SELECT 1 FROM public.email_outbox o WHERE o.id = c.outbox_id AND o.status = 'sent'))));
+            OR EXISTS (SELECT 1 FROM public.email_outbox o
+                        WHERE o.id = COALESCE(c.legacy_outbox_id, CASE WHEN c.request_id IS NULL THEN c.outbox_id END)
+                          AND o.status = 'sent')));
 
   BEGIN
+    -- The writes below pass the guard of section 6b; an error undoes the flag
+    -- with them.
+    PERFORM set_config('app.bu_confirm_write', 'on', true);
     INSERT INTO public.builder_bu_confirm_requests
       (bu_event_id, client_id, to_emails, cc_emails, unit_ids, earlier_link, created_by)
     VALUES (p_bu_event_id, v_client, v_to, v_cc, v_units, v_earlier, p_actor_id)
@@ -736,6 +948,8 @@ BEGIN
            request_id = EXCLUDED.request_id,
            client_id = EXCLUDED.client_id,
            agreement_value_at_request = EXCLUDED.agreement_value_at_request,
+           -- A per-unit e-mail of before 21 Oct 2026 keeps its own record.
+           legacy_outbox_id = COALESCE(c.legacy_outbox_id, CASE WHEN c.request_id IS NULL THEN c.outbox_id END),
            outbox_id = EXCLUDED.outbox_id,
            sent_at = EXCLUDED.sent_at,
            responded_at = NULL,
@@ -780,7 +994,9 @@ BEGIN
                              WHERE c.bu_event_id = p_bu_event_id AND c.unit_id = x
                                AND c.status IN ('CONFIRMED', 'OVERRIDDEN')));
     GET DIAGNOSTICS v_cancelled = ROW_COUNT;
+    PERFORM set_config('app.bu_confirm_write', 'off', true);
   EXCEPTION WHEN SQLSTATE 'BUC01' THEN
+    PERFORM set_config('app.bu_confirm_write', 'off', true);
     RETURN jsonb_build_object('sent', false, 'already_answered',
       COALESCE(public.builder_bu_confirm_changed(p_bu_event_id, v_units, p_seen), '[]'::jsonb));
   END;
@@ -881,10 +1097,14 @@ END;
 $$;
 
 -- The reader asks for a code: their address must be one the e-mail went to,
--- outside the firm. Limits (per link, in one queue so two requests count each
--- other): 5 codes an hour and 10 a day to one address, 20 an hour on a link.
--- Returns { ok, code_id, email }; the page then calls the Edge Function
--- bu-confirm-code with code_id, which e-mails it.
+-- outside the firm. Limits, per link (in one queue, so two requests count each
+-- other), counted per caller (the IP the API gateway passed on; one bucket
+-- when none) so that another reader cannot use up someone else's (round 3):
+-- 5 codes an hour and 10 a day to one address from one caller, 20 an hour
+-- from one caller whatever the address; and in all, 30 a day to one address
+-- and 60 an hour on a link. Returns { ok, code_id, email }; the page keeps
+-- code_id (only it has it: the digits go to the mailbox) and calls the Edge
+-- Function bu-confirm-code with it, which e-mails the code.
 CREATE OR REPLACE FUNCTION public.builder_bu_confirm_code_request(_token text, _email text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -893,8 +1113,10 @@ SET search_path = public
 AS $$
 DECLARE
   v_email text := lower(btrim(COALESCE(_email, '')));
+  v_ip    text := public.builder_bu_confirm_request_ip();
   l       record;
   v_id    uuid;
+  n       record;
 BEGIN
   IF NOT public.builder_bu_confirm_email_ok(v_email) THEN
     RAISE EXCEPTION 'Please give a valid e-mail address.' USING ERRCODE = 'check_violation';
@@ -906,27 +1128,36 @@ BEGIN
   PERFORM public.builder_bu_confirm_check_answerer(l.o_allowed, v_email);
 
   PERFORM pg_advisory_xact_lock(hashtextextended('bu_confirm_code:' || COALESCE(l.o_req, l.o_cf)::text, 0));
-  IF (SELECT count(*) FROM public.builder_bu_confirm_codes k
-       WHERE (k.request_id = l.o_req OR k.confirmation_id = l.o_cf) AND k.email = v_email
-         AND k.created_at > now() - interval '24 hours') >= 10 THEN
+  SELECT count(*) FILTER (WHERE k.email = v_email AND k.requested_ip IS NOT DISTINCT FROM v_ip) AS mine_day,
+         count(*) FILTER (WHERE k.email = v_email AND k.requested_ip IS NOT DISTINCT FROM v_ip
+                            AND k.created_at > now() - interval '1 hour') AS mine_hour,
+         count(*) FILTER (WHERE k.requested_ip IS NOT DISTINCT FROM v_ip
+                            AND k.created_at > now() - interval '1 hour') AS caller_hour,
+         count(*) FILTER (WHERE k.email = v_email) AS address_day,
+         count(*) FILTER (WHERE k.created_at > now() - interval '1 hour') AS link_hour
+    INTO n
+    FROM public.builder_bu_confirm_codes k
+   WHERE (k.request_id = l.o_req OR k.confirmation_id = l.o_cf)
+     AND k.created_at > now() - interval '24 hours';
+  IF n.mine_day >= 10 THEN
     RAISE EXCEPTION 'We have sent 10 codes to this address today. Please try again tomorrow, or write to us at gst@vjdesai.com.'
       USING ERRCODE = 'check_violation';
   END IF;
-  IF (SELECT count(*) FROM public.builder_bu_confirm_codes k
-       WHERE (k.request_id = l.o_req OR k.confirmation_id = l.o_cf) AND k.email = v_email
-         AND k.created_at > now() - interval '1 hour') >= 5 THEN
+  IF n.mine_hour >= 5 THEN
     RAISE EXCEPTION 'We have sent 5 codes to this address in the last hour. Please use the latest one, or try again later.'
       USING ERRCODE = 'check_violation';
   END IF;
-  IF (SELECT count(*) FROM public.builder_bu_confirm_codes k
-       WHERE (k.request_id = l.o_req OR k.confirmation_id = l.o_cf)
-         AND k.created_at > now() - interval '1 hour') >= 20 THEN
+  IF n.address_day >= 30 THEN
+    RAISE EXCEPTION 'Too many codes were asked for this address today. Please try again tomorrow, or write to us at gst@vjdesai.com.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF n.caller_hour >= 20 OR n.link_hour >= 60 THEN
     RAISE EXCEPTION 'Too many codes were asked for on this link in the last hour. Please try again later.'
       USING ERRCODE = 'check_violation';
   END IF;
 
   INSERT INTO public.builder_bu_confirm_codes (request_id, confirmation_id, email, requested_ip)
-  VALUES (l.o_req, l.o_cf, v_email, public.builder_bu_confirm_request_ip())
+  VALUES (l.o_req, l.o_cf, v_email, v_ip)
   RETURNING id INTO v_id;
   RETURN jsonb_build_object('ok', true, 'code_id', v_id, 'email', v_email);
 END;
@@ -987,12 +1218,17 @@ AS $$
    WHERE id = p_code_id AND claimed_at IS NOT NULL AND sent_at IS NULL AND send_error IS NULL;
 $$;
 
--- The reader types the code. Only the latest code to that address on that
--- link counts; 5 wrong tries end a code, 10 wrong tries a day end the
--- address's codes on that link until the next day. Never raises for a wrong
--- code (the count must stay): returns { ok: false, message } or { ok: true,
--- proof, email }. The proof goes with every answer for 2 hours.
-CREATE OR REPLACE FUNCTION public.builder_bu_confirm_code_verify(_token text, _email text, _code text)
+-- The reader types the code, with the code_id their page got when it asked
+-- for it (round 3: wrong codes typed by anyone holding the link, as the
+-- owner's address, were charged to that address and locked the owner out for
+-- a day; now only the page that asked can try a code, so a stranger's wrong
+-- tries fall on their own codes). 5 wrong tries end a code; 10 wrong tries a
+-- day from one caller (the IP the code was asked from) end that caller's
+-- codes to the address on that link until the next day. Never raises for a
+-- wrong code (the count must stay): returns { ok: false, message } or
+-- { ok: true, proof, email }. The proof goes with every answer for 2 hours.
+DROP FUNCTION IF EXISTS public.builder_bu_confirm_code_verify(text, text, text);
+CREATE OR REPLACE FUNCTION public.builder_bu_confirm_code_verify(_token text, _email text, _code text, _code_id uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1012,22 +1248,22 @@ BEGIN
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('bu_confirm_code:' || COALESCE(l.o_req, l.o_cf)::text, 0));
 
+  SELECT * INTO k FROM public.builder_bu_confirm_codes c2
+   WHERE c2.id = _code_id
+     AND (c2.request_id = l.o_req OR c2.confirmation_id = l.o_cf) AND c2.email = v_email
+     FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN v_no || jsonb_build_object('message', 'Please ask for a code first, then type it here.');
+  END IF;
   IF (SELECT COALESCE(sum(c2.wrong_tries), 0) FROM public.builder_bu_confirm_codes c2
        WHERE (c2.request_id = l.o_req OR c2.confirmation_id = l.o_cf) AND c2.email = v_email
+         AND c2.requested_ip IS NOT DISTINCT FROM k.requested_ip
          AND c2.created_at > now() - interval '24 hours') >= 10 THEN
     RETURN v_no || jsonb_build_object('message',
       'Too many wrong codes for this address today. Please try again tomorrow, or write to us at gst@vjdesai.com.');
   END IF;
-
-  SELECT * INTO k FROM public.builder_bu_confirm_codes c2
-   WHERE (c2.request_id = l.o_req OR c2.confirmation_id = l.o_cf) AND c2.email = v_email
-   ORDER BY c2.seq DESC
-   LIMIT 1
-     FOR UPDATE;
-  IF NOT FOUND OR k.claimed_at IS NULL THEN
-    RETURN v_no || jsonb_build_object('message', 'Please ask for a code first, then type it here.');
-  END IF;
-  IF k.send_error IS NOT NULL THEN
+  -- Never claimed: the mailer did not run (or failed before it minted it).
+  IF k.claimed_at IS NULL OR k.send_error IS NOT NULL THEN
     RETURN v_no || jsonb_build_object('message', 'We could not e-mail that code. Please ask for a new one.');
   END IF;
   IF k.expires_at <= now() THEN
@@ -1136,6 +1372,8 @@ BEGIN
    ORDER BY unit_id
      FOR UPDATE;
 
+  -- The answers pass the guard of section 6b.
+  PERFORM set_config('app.bu_confirm_write', 'on', true);
   FOR a IN SELECT value FROM jsonb_array_elements(_answers) LOOP
     v_unit := (a ->> 'unit_id')::uuid;
     v_action := upper(a ->> 'action');
@@ -1167,6 +1405,7 @@ BEGIN
     SELECT unit_no INTO v_unit_no FROM public.builder_units WHERE id = v_unit;
     v_out := v_out || jsonb_build_object('unit_id', v_unit, 'unit_no', v_unit_no, 'result', v_result);
   END LOOP;
+  PERFORM set_config('app.bu_confirm_write', 'off', true);
 
   RETURN v_out;
 END;
@@ -1200,7 +1439,7 @@ REVOKE ALL ON FUNCTION public.builder_bu_confirm_request_send(uuid, uuid[], text
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_firm_addresses(uuid, text[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_lookup(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_code_request(text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.builder_bu_confirm_code_verify(text, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.builder_bu_confirm_code_verify(text, text, text, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_respond(text, jsonb, text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_code_claim(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_code_mark(uuid, text) FROM PUBLIC, anon, authenticated;
@@ -1209,7 +1448,7 @@ REVOKE ALL ON FUNCTION public.builder_bu_confirm_state(public.builder_bu_agreeme
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_is_staff(text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_may_send(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_request_out(uuid) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.builder_bu_confirm_seen_same(jsonb, text, timestamptz) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_bu_confirm_seen_same(jsonb, text, timestamptz, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_changed(uuid, uuid[], jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_link(text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_bu_confirm_check_answerer(text[], text) FROM PUBLIC, anon, authenticated;
@@ -1219,7 +1458,7 @@ GRANT EXECUTE ON FUNCTION public.builder_bu_confirm_request_send(uuid, uuid[], t
 GRANT EXECUTE ON FUNCTION public.builder_bu_confirm_firm_addresses(uuid, text[]) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.builder_bu_confirm_lookup(text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.builder_bu_confirm_code_request(text, text) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.builder_bu_confirm_code_verify(text, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.builder_bu_confirm_code_verify(text, text, text, uuid) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.builder_bu_confirm_respond(text, jsonb, text, text, text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.builder_bu_confirm_code_claim(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_bu_confirm_code_mark(uuid, text) TO service_role;

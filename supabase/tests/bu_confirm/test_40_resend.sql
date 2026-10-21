@@ -62,9 +62,11 @@ SELECT t_eq(t_states(:'tok2'), 'A-102:CONFIRMED,A-103:ACCEPTED', 'the page shows
 SELECT t_eq(t_results(t_respond(:'tok2', jsonb_build_array(
               t_answer('a1000000-0000-0000-0000-000000000003', 'DISPUTE', 'no')), 'Site Office', 'site@client.test')),
             'A-103:ALREADY_ACCEPTED', 'an accepted unit takes no answer');
-SELECT t_eq(t_send(ARRAY['a1000000-0000-0000-0000-000000000003']::uuid[], ARRAY['owner@client.test'], NULL)::text,
-            '{"sent": false, "already_answered": [{"status": "OVERRIDDEN", "unit_id": "a1000000-0000-0000-0000-000000000003", "unit_no": "A-103", "responded_at": null, "dispute_notes": null, "responded_by_name": null, "responded_by_email": null}]}',
+SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000003']::uuid[], ARRAY['owner@client.test'], NULL) AS r103 \gset
+SELECT t_eq((:'r103'::jsonb #- '{already_answered,0,request_id}' #- '{already_answered,0,request_sent_at}')::text,
+            '{"sent": false, "already_answered": [{"status": "OVERRIDDEN", "unit_id": "a1000000-0000-0000-0000-000000000003", "unit_no": "A-103", "request_cc": ["site@client.test"], "request_to": ["owner@client.test"], "responded_at": null, "dispute_notes": null, "responded_by_name": null, "responded_by_email": null}]}',
             'an accepted unit is not re-sent');
+SELECT t_eq(:'r103'::jsonb -> 'already_answered' -> 0 ->> 'request_id', :'req2', 'the report names the unit''s request');
 SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-000000000001', '10/2026'), false, 'every unit cleared');
 
 -- Deleting the event takes its requests with it.

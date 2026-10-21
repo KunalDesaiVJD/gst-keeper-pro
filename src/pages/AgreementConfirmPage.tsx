@@ -25,10 +25,12 @@ import logo from '@/assets/logo.png';
 // queues a 6-digit code to it (e-mailed by the Edge Function bu-confirm-code),
 // and the code typed back gives a proof sent with each answer. So holding the
 // link and knowing an address on it is not enough: the reader must read that
-// mailbox. Name and e-mail are recorded on each unit they answer. Only an
-// open unit takes an answer: a confirmed one stays confirmed, a disputed one
-// waits for the firm. A unit whose dispute box is open is left out of
-// "Confirm all".
+// mailbox. The code is typed back with the id the request gave this page, so
+// only this page can try it. Name and e-mail are recorded on each unit they
+// answer. Only an open unit takes an answer: a confirmed one stays confirmed
+// (the page says an answer stands and how to object), a disputed one waits
+// for the firm. A unit whose dispute box is open is left out of "Confirm all".
+// Long addresses, notes and links wrap rather than widen the page on a phone.
 
 type UnitState = PageUnitState;
 
@@ -74,12 +76,14 @@ const AgreementConfirmPage: React.FC = () => {
   const [savingUnit, setSavingUnit] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  // The code step: where the code went, what was typed, and the proof (with
-  // the address it proves) once the code was right.
+  // The code step: where the code went (and its id, which only this page
+  // has), what was typed, and the proof (with the address it proves) once the
+  // code was right.
   const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
+  const [codeId, setCodeId] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [codeBusy, setCodeBusy] = useState(false);
-  const [codeMessage, setCodeMessage] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  const [codeMessage, setCodeMessage] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null);
   const [proof, setProof] = useState<{ proof: string; email: string } | null>(null);
   // Open dispute boxes and what has been typed in each, by unit. Answering
   // another unit leaves them as they are.
@@ -121,8 +125,12 @@ const AgreementConfirmPage: React.FC = () => {
         return;
       }
       setCodeSentTo(person.e);
+      setCodeId(res.codeId);
       setCode('');
-      setCodeMessage({ tone: 'ok', text: `We have e-mailed a 6-digit code to ${person.e}. It works for 30 minutes. If it is not there in a minute or two, look in the spam folder, or ask for a new one.` });
+      // 'unknown': the mailer did not report back, so the code may not have gone.
+      setCodeMessage(res.status === 'sent'
+        ? { tone: 'ok', text: `We have e-mailed a 6-digit code to ${person.e}. It works for 30 minutes. If it is not there in a minute or two, look in the spam folder, or ask for a new one.` }
+        : { tone: 'warn', text: `We could not confirm the code was sent to ${person.e}. If it is not there in a minute, ask for a new one, or write to us at ${GST_FIRM.email}.` });
     } catch (e) {
       setCodeMessage({ tone: 'bad', text: (e as Error).message });
     } finally {
@@ -131,11 +139,11 @@ const AgreementConfirmPage: React.FC = () => {
   };
 
   const checkCode = async () => {
-    if (!token || !codeSentTo) return;
+    if (!token || !codeSentTo || !codeId) return;
     setCodeBusy(true);
     setCodeMessage(null);
     try {
-      const res = await verifyConfirmCode(token, codeSentTo, code);
+      const res = await verifyConfirmCode(token, codeSentTo, code, codeId);
       if (res.proof) {
         setProof({ proof: res.proof, email: codeSentTo });
         setCode('');
@@ -178,7 +186,7 @@ const AgreementConfirmPage: React.FC = () => {
     } catch (e) {
       const msg = (e as Error).message;
       // An old proof (over 2 hours): check the address again.
-      if (/with the code we send/.test(msg)) { setProof(null); setCodeSentTo(null); }
+      if (/with the code we send/.test(msg)) { setProof(null); setCodeSentTo(null); setCodeId(null); }
       toast.error(`Could not save your answer: ${msg}`);
       setNotice(msg);
     } finally {
@@ -257,7 +265,7 @@ const AgreementConfirmPage: React.FC = () => {
         <CardTitle className="text-lg">
           {page.units.length === 1 ? 'Confirm the agreement value' : 'Confirm the agreement values'}
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="[overflow-wrap:anywhere]">
           {page.project_name}
           {page.bu_date ? `, dated ${longDate(page.bu_date)}` : ''}
           {page.units.length > 1 ? ` · ${page.units.length} units` : ''}
@@ -265,21 +273,22 @@ const AgreementConfirmPage: React.FC = () => {
       </div>
 
       {open.length > 0 ? (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="min-w-0 space-y-1">
             <Label htmlFor="cf-name">Your name</Label>
             <Input id="cf-name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
           </div>
-          <div className="space-y-1">
+          <div className="min-w-0 space-y-1">
             <Label htmlFor="cf-email">Your e-mail</Label>
             <Input id="cf-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
           </div>
           {proved ? (
-            <p className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400 sm:col-span-2">
-              <CheckCircle2 className="h-4 w-4" /> {proved.email} is checked. You can answer below.
+            <p className="flex min-w-0 items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400 sm:col-span-2">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 [overflow-wrap:anywhere]">{proved.email} is checked. You can answer below.</span>
             </p>
           ) : (
-            <div className="space-y-2 sm:col-span-2">
+            <div className="min-w-0 space-y-2 sm:col-span-2">
               <p className="text-xs text-muted-foreground">
                 Anyone our e-mail was sent to (To or CC) may answer. Please give the address it reached you at: we
                 e-mail a short code there to check it is yours. We keep your name and e-mail with each answer.
@@ -308,7 +317,8 @@ const AgreementConfirmPage: React.FC = () => {
                 )}
               </div>
               {codeMessage && (
-                <p className={cn('text-xs', codeMessage.tone === 'bad' ? 'text-destructive' : 'text-muted-foreground')}>
+                <p className={cn('text-xs [overflow-wrap:anywhere]', codeMessage.tone === 'bad' ? 'text-destructive'
+                  : codeMessage.tone === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground')}>
                   {codeMessage.text}
                 </p>
               )}
@@ -317,17 +327,17 @@ const AgreementConfirmPage: React.FC = () => {
         </div>
       ) : summary.restReplaced ? (
         <div className="flex items-center justify-center gap-2 rounded-md border p-3 text-sm">
-          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
           Every unit still on this link has an answer. The others were asked again in a newer e-mail.
         </div>
       ) : (
         <div className="flex items-center justify-center gap-2 rounded-md border p-3 text-sm">
-          <CheckCircle2 className="h-5 w-5 text-emerald-600" /> Every unit here has an answer. Thank you.
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" /> Every unit here has an answer. Thank you.
         </div>
       )}
 
       {notice && (
-        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 [overflow-wrap:anywhere] dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
           {notice}
         </p>
       )}
@@ -339,10 +349,10 @@ const AgreementConfirmPage: React.FC = () => {
           return (
             <li key={u.unit_id} className={cn('px-3 py-2.5', u.state === 'REPLACED' && 'opacity-60')}>
               <div className="flex items-center justify-between gap-3">
-                <span className="font-medium">Unit {u.unit_no}</span>
-                <span className="tabular-nums font-semibold">Rs. {formatINR(u.agreement_value)}</span>
+                <span className="min-w-0 font-medium [overflow-wrap:anywhere]">Unit {u.unit_no}</span>
+                <span className="shrink-0 tabular-nums font-semibold">Rs. {formatINR(u.agreement_value)}</span>
               </div>
-              {line && <p className={cn('mt-1 text-xs', line.tone)}>{line.text}</p>}
+              {line && <p className={cn('mt-1 text-xs [overflow-wrap:anywhere]', line.tone)}>{line.text}</p>}
               {u.state === 'PENDING' && disputes[u.unit_id] === undefined && (
                 <div className="mt-2 flex justify-end gap-2">
                   <Button
@@ -397,6 +407,12 @@ const AgreementConfirmPage: React.FC = () => {
           );
         })}
       </ul>
+
+      {page.units.some((u) => u.state === 'CONFIRMED' || u.state === 'DISPUTED') && (
+        <p className="px-1 text-xs text-muted-foreground">
+          An answer given here stands. If you think it is wrong, write to us at {GST_FIRM.email}.
+        </p>
+      )}
 
       {page.units.length > 1 && (
         <div className="flex items-center justify-between px-1 text-sm">

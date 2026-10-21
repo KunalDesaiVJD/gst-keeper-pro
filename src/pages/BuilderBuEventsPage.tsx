@@ -346,6 +346,7 @@ const BuilderBuEventsPage: React.FC = () => {
           cutOffSource: r.cut_off_source, cutOffDate: r.cut_off_date,
           status: c?.status || 'NOT_SENT', disputeNotes: c?.disputeNotes ?? null, respondedByName: c?.respondedByName ?? null,
           respondedByEmail: c?.respondedByEmail ?? null, respondedAt: c?.respondedAt ?? null,
+          requestId: c?.requestId ?? null,
         };
       });
   };

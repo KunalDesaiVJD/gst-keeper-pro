@@ -10,7 +10,9 @@ q() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$db" -c "SET ROLE anon; $1" | grep -
 fail=0
 expect() { if [ "$2" = "$3" ]; then echo "ok   race: $1"; else echo "FAIL race: $1: expected [$3], got [$2]"; fail=1; fi; }
 reset() {
-  psql -X -q -v ON_ERROR_STOP=1 -d "$db" -c "DELETE FROM t_proofs; DELETE FROM builder_bu_confirm_answer_history; DELETE FROM builder_bu_agreement_confirmations; DELETE FROM builder_bu_confirm_requests; DELETE FROM email_outbox;" >/dev/null
+  # As the owner, with the confirmation functions' flag (the guard refuses
+  # other writes, test_15).
+  psql -X -q -v ON_ERROR_STOP=1 -d "$db" -c "SET app.bu_confirm_write = on; DELETE FROM t_proofs; DELETE FROM builder_bu_confirm_answer_history; DELETE FROM builder_bu_agreement_confirmations; DELETE FROM builder_bu_confirm_requests; DELETE FROM email_outbox;" >/dev/null
 }
 U1=a1000000-0000-0000-0000-000000000001; U2=a1000000-0000-0000-0000-000000000002; U3=a1000000-0000-0000-0000-000000000003
 E1=e1000000-0000-0000-0000-000000000001; S=10000000-0000-0000-0000-000000000001

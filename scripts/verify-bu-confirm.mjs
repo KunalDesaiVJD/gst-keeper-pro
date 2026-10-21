@@ -17,7 +17,12 @@
 //    sends the proof with each answer (round 2), leaves a unit whose dispute
 //    box is open out of "Confirm all", keeps the other drafts when one unit is
 //    answered, and does not say "every unit has an answer" when some were
-//    moved to a newer e-mail (src/pages/AgreementConfirmPage.tsx).
+//    moved to a newer e-mail (src/pages/AgreementConfirmPage.tsx);
+//  - round 3: the pop-up sends each unit's request and words a colleague's
+//    request sent meanwhile as that, with its To and CC; it shows why Send is
+//    off; the page types a code back with its code_id, says so when the code
+//    may not have gone, wraps long addresses and notes at phone width, and
+//    says an answer given there stands.
 // The database side is tested in supabase/tests/bu_confirm/run.sh.
 //
 //   node scripts/verify-bu-confirm.mjs
@@ -120,10 +125,35 @@ check(fresh.length && R.freshCandidates(page, [{ unitId: 'u2', status: 'DISPUTED
   'the pop-up keeps each unit\'s answer time, to send it back');
 // Failed first send (round 2, defect: "the earlier link still takes answers" when there was none).
 check(R.failedMailWords(false) === 'No e-mail has reached the client yet.', 'no earlier link: says no e-mail reached the client');
+
+// Round 3 (low): a colleague's request sent while the pop-up was open is not "answered ... (changed)".
+check(same(R.seenFor([{ unitId: 'u1', status: 'PENDING', requestId: 'r1' }, { unitId: 'u2', status: 'NOT_SENT', requestId: null }, { unitId: 'u3', status: 'PENDING' }]),
+  { u1: { status: 'PENDING', responded_at: null, request_id: 'r1' }, u2: { status: 'NOT_SENT', responded_at: null, request_id: null },
+    u3: { status: 'PENDING', responded_at: null } }),
+  'seenFor sends each unit\'s request when the pop-up knows it, and none when it does not');
+check(R.freshCandidates(page, [{ unitId: 'u1', status: 'PENDING', requestId: 'r9' }])[0].requestId === 'r9', 'the pop-up keeps each unit\'s request');
+const asked = { unitNo: 'A-101', status: 'PENDING', respondedByName: null, requestTo: ['priya@client.test'], requestCc: ['accounts@client.test'] };
+check(R.meanwhileWords?.(asked) === 'A-101 (asked meanwhile in another request to priya@client.test, CC accounts@client.test)',
+  'a unit a colleague asked about: "asked meanwhile in another request to <To>, CC <CC>"', R.meanwhileWords?.(asked));
+check(R.meanwhileWords?.({ unitNo: 'A-102', status: 'DISPUTED', respondedByName: 'Meena', respondedByEmail: 'meena@ca.test' }) === 'A-102 (disputed by Meena, meena@ca.test)',
+  'a dispute keeps its words');
+check(R.meanwhileWords?.({ unitNo: 'A-103', status: 'OVERRIDDEN' }) === 'A-103 (accepted by the firm)', 'an acceptance too');
+check(!/changed/.test(R.meanwhileWords?.(asked)) && !/Answered/.test(R.meanwhileHeading?.([asked])), 'never "answered" or "changed" when nobody answered');
+check(R.meanwhileHeading?.([asked]) === 'Asked meanwhile in another request, so nothing was sent:'
+  && R.meanwhileHeading?.([{ status: 'DISPUTED' }]) === 'Answered since this pop-up opened, so nothing was sent:'
+  && /Answered or asked again/.test(R.meanwhileHeading?.([asked, { status: 'DISPUTED' }])), 'the heading says which happened');
 check(/earlier link still takes answers/.test(R.failedMailWords(true)), 'an earlier link: says it still answers');
 
 const dialog = src('src/components/builder/SendAgreementConfirmDialog.tsx');
 check(/seen: seenFor\(ticked\)/.test(dialog), 'the pop-up sends the statuses it showed');
+check(/requestId: c\?\.requestId \?\? null/.test(src('src/pages/BuilderBuEventsPage.tsx')), 'BU Events gives the pop-up each unit\'s request');
+check(/meanwhileHeading\(changedNotice\)/.test(dialog) && /meanwhileWords\(a\)/.test(dialog) && !/'changed'\}`/.test(dialog),
+  'the pop-up words what happened meanwhile from the rules');
+// Round 3 (low): a disabled Send shows no tooltip, so the reason is a line of its own.
+check(/\{problem && !problemShown && \(\s*<p className="text-xs text-destructive"[^>]*>\{problem\}<\/p>/.test(dialog),
+  'the reason Send is off is shown above the buttons when no hint says it');
+check(/\(!toList\.valid\.length && master === 'empty'\)/.test(dialog) && /\(everyone\.length > 0 && !outsideFirm\.length\)/.test(dialog),
+  'and not twice when a hint under a box already says it');
 check(/res\.status === 'changed'[\s\S]{0,600}?setChangedNotice\(res\.changed\)[\s\S]{0,300}?next\.delete\(c\.unitId\)[\s\S]{0,500}?void reloadUnits\(\);\s*return;/.test(dialog),
   'a dispute given meanwhile stops the send: shown, unticked, list reloaded, pop-up kept open');
 check(/Sending asks again and clears this dispute\. It stays in the unit's history\./.test(dialog), 'a ticked disputed unit says sending clears it');
@@ -170,7 +200,14 @@ check(!s.allAnswered && !s.restReplaced && s.open === 1, 'an open unit: the form
 
 const pg = src('src/pages/AgreementConfirmPage.tsx');
 // Round 2 (defect: anyone holding the link answered as the client by typing their address).
-check(/askConfirmCode\(token, person\.e\)/.test(pg) && /verifyConfirmCode\(token, codeSentTo, code\)/.test(pg), 'the page e-mails a code and checks it');
+check(/askConfirmCode\(token, person\.e\)/.test(pg) && /verifyConfirmCode\(token, codeSentTo, code, codeId\)/.test(pg), 'the page e-mails a code and checks it');
+// Round 3 (low): only the page that asked can try a code.
+check(/setCodeId\(res\.codeId\)/.test(pg) && /_code_id: codeId/.test(data), 'the code goes back with the id only the asking page has');
+check(/res\.status === 'sent'\s*\?[\s\S]{0,300}?We have e-mailed[\s\S]{0,300}?We could not confirm the code was sent/.test(pg),
+  'a code the mailer did not report on is not said to be e-mailed');
+check(/grid grid-cols-1 gap-3 sm:grid-cols-2/.test(pg) && (pg.match(/\[overflow-wrap:anywhere\]/g) || []).length >= 5 && /min-w-0 space-y-1/.test(pg),
+  'long addresses, notes and links wrap at phone width (one column of minmax(0,1fr), min-w-0, overflow-wrap)');
+check(/An answer given here stands\. If you think it is wrong, write to us at \{GST_FIRM\.email\}\./.test(pg), 'the page says an answer given there stands');
 check(/_proof: proved\.proof/.test(pg), 'every answer carries the proof');
 check(/proof\.email === typedEmail/.test(pg), 'the proof holds only for the address it was given for');
 check(/const busy = savingUnit !== null \|\| !proved;/.test(pg), 'no answer buttons until the address is checked');

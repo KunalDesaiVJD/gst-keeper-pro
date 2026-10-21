@@ -1,14 +1,32 @@
 -- Test helpers, created after the migrations (they call the new functions).
 
 -- The statuses of some units of an event as the BU Events pop-up reads them:
--- { "<unit_id>": { "status", "responded_at" } } (NOT_SENT for a unit with no row).
-CREATE FUNCTION public.t_seen(p_units uuid[], p_event uuid DEFAULT 'e1000000-0000-0000-0000-000000000001')
+-- { "<unit_id>": { "status", "responded_at" } } (NOT_SENT for a unit with no row),
+-- and the unit's request with p_request (as the pop-up sends it since round 3;
+-- without it, as an older page did).
+CREATE FUNCTION public.t_seen(p_units uuid[], p_event uuid DEFAULT 'e1000000-0000-0000-0000-000000000001',
+                               p_request boolean DEFAULT false)
 RETURNS jsonb LANGUAGE sql AS $$
   SELECT COALESCE(jsonb_object_agg(x::text, jsonb_build_object('status', COALESCE(c.status, 'NOT_SENT'),
-                                                                'responded_at', c.responded_at)), '{}'::jsonb)
+                                                                'responded_at', c.responded_at)
+                                            || CASE WHEN p_request THEN jsonb_build_object('request_id', c.request_id)
+                                                    ELSE '{}'::jsonb END), '{}'::jsonb)
     FROM unnest(p_units) x
     LEFT JOIN public.builder_bu_agreement_confirmations c ON c.bu_event_id = p_event AND c.unit_id = x;
 $$;
+
+-- What the app wrote straight into builder_bu_agreement_confirmations before
+-- 20261021140000 (the per-unit e-mails, their rows and outbox links), which
+-- the guard now refuses: fixtures only. Runs the statement as the owner with
+-- the confirmation functions' flag, then clears it.
+CREATE FUNCTION public.t_old_app(p_sql text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
+BEGIN
+  PERFORM set_config('app.bu_confirm_write', 'on', true);
+  EXECUTE p_sql;
+  PERFORM set_config('app.bu_confirm_write', 'off', true);
+END $$;
+GRANT EXECUTE ON FUNCTION public.t_old_app(text) TO anon;
 
 -- Send a request for event e1…01 the way the BU Events dialog does: the
 -- template filled in with {{confirm_link}} left for the function, and the
@@ -56,12 +74,13 @@ END $$;
 GRANT EXECUTE ON FUNCTION public.t_mailbox(uuid) TO anon;
 
 -- The reader asks for a code (as anon), reads it in their mailbox, types it
--- (as anon): the proof the page then sends with each answer.
+-- with the code_id the request gave the page (as anon): the proof the page
+-- then sends with each answer.
 CREATE FUNCTION public.t_proof(p_token text, p_email text) RETURNS text LANGUAGE plpgsql AS $$
-DECLARE v jsonb;
+DECLARE v jsonb; v_id uuid;
 BEGIN
-  v := public.builder_bu_confirm_code_verify(p_token, p_email,
-         public.t_mailbox((public.builder_bu_confirm_code_request(p_token, p_email) ->> 'code_id')::uuid));
+  v_id := (public.builder_bu_confirm_code_request(p_token, p_email) ->> 'code_id')::uuid;
+  v := public.builder_bu_confirm_code_verify(p_token, p_email, public.t_mailbox(v_id), v_id);
   IF NOT COALESCE((v ->> 'ok')::boolean, false) THEN
     RAISE EXCEPTION 'code refused: %', v ->> 'message';
   END IF;

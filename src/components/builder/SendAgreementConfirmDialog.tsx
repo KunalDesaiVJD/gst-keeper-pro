@@ -16,7 +16,9 @@ import {
   requestAgreementConfirmations,
   type AgreementConfirmRequest, type AgreementConfirmStatus, type AgreementConfirmUnit, type AnsweredMeanwhile,
 } from '@/lib/builderAgreementConfirmData';
-import { failedMailWords, freshCandidates, masterState, seenFor } from '@/lib/builderConfirmRules';
+import {
+  askedMeanwhile, failedMailWords, freshCandidates, masterState, meanwhileHeading, meanwhileWords, seenFor,
+} from '@/lib/builderConfirmRules';
 
 /**
  * BU Events → "Send confirmation request": one e-mail to everyone typed in To
@@ -25,7 +27,9 @@ import { failedMailWords, freshCandidates, masterState, seenFor } from '@/lib/bu
  * can answer on the page it links to (src/pages/AgreementConfirmPage.tsx),
  * after proving their address with a code. The statuses are read again each
  * time the pop-up opens and sent with the send: a unit answered since is
- * never asked over its answer (a dispute stops the send and is shown here).
+ * never asked over its answer (a dispute stops the send and is shown here),
+ * and a colleague's request about a unit sent meanwhile is shown, with its To
+ * and CC, rather than replaced unseen.
  */
 export interface ConfirmCandidate extends AgreementConfirmUnit {
   status: AgreementConfirmStatus['status'];
@@ -33,16 +37,17 @@ export interface ConfirmCandidate extends AgreementConfirmUnit {
   respondedByName?: string | null;
   respondedByEmail?: string | null;
   respondedAt?: string | null;
+  /** The request the unit is on (null: none, or a per-unit e-mail). */
+  requestId?: string | null;
 }
 
 const STATUS_LABEL: Partial<Record<AgreementConfirmStatus['status'], string>> = {
   NOT_SENT: 'Not sent', PENDING: 'Pending', DISPUTED: 'Disputed',
 };
 
-/** "A-101 (confirmed by Rajesh Shah, rajesh@client.com)". */
-const answeredWords = (a: AnsweredMeanwhile) => `${a.unitNo} (${a.status === 'OVERRIDDEN' ? 'accepted by the firm'
-  : a.status === 'DISPUTED' ? 'disputed' : a.status === 'CONFIRMED' ? 'confirmed' : 'changed'}`
-  + `${a.respondedByName ? ` by ${a.respondedByName}${a.respondedByEmail ? `, ${a.respondedByEmail}` : ''}` : ''})`;
+/** "A-101 (confirmed by Rajesh Shah, rajesh@client.com)", or "A-101 (asked
+ *  meanwhile in another request to priya@client.com)". */
+const answeredWords = (a: AnsweredMeanwhile) => meanwhileWords(a);
 
 const SendAgreementConfirmDialog: React.FC<{
   open: boolean;
@@ -154,6 +159,14 @@ const SendAgreementConfirmDialog: React.FC<{
           : !outsideFirm.length ? 'Add at least one address outside the firm. The firm\'s own addresses cannot answer.'
             : !ticked.length ? 'Tick at least one unit.'
               : null;
+  // Already said in red under the box it belongs to (To, CC, the firm's own)
+  // or by the unit list; otherwise shown above the buttons, since a disabled
+  // button shows no tooltip.
+  const problemShown = !!problem && (
+    toList.invalid.length > 0 || ccList.invalid.length > 0
+    || (!toList.valid.length && master === 'empty')
+    || (everyone.length > 0 && !outsideFirm.length)
+    || (!ticked.length && !shown.length));
 
   const send = async () => {
     if (!event) return;
@@ -177,16 +190,18 @@ const SendAgreementConfirmDialog: React.FC<{
         toast.info(`Answered meanwhile, so left out: ${res.skipped.map(answeredWords).join('; ')}.`);
       }
       if (res.status === 'changed') {
-        // A dispute given since the pop-up read the units: nothing was sent.
-        // Show it, untick it, and let staff decide.
+        // A dispute given since the pop-up read the units, or a colleague's
+        // request about one: nothing was sent. Show it, untick it, and let
+        // staff decide.
         setChangedNotice(res.changed);
         setSelected((prev) => {
           const next = new Set(prev);
           res.changed.forEach((c) => next.delete(c.unitId));
           return next;
         });
-        toast.warning(`Not sent: ${res.changed.map(answeredWords).join('; ')} since this pop-up opened. `
-          + 'Read it below. It is unticked now: send for the others, or tick it to ask again.');
+        const one = res.changed.length === 1;
+        toast.warning(`Not sent. Since this pop-up opened: ${res.changed.map(answeredWords).join('; ')}. `
+          + `Read it below. ${one ? 'It is' : 'They are'} unticked now: send for the others, or tick ${one ? 'it' : 'them'} to ask again.`);
         onSent();
         void reloadUnits();
         return;
@@ -295,7 +310,7 @@ const SendAgreementConfirmDialog: React.FC<{
 
         {changedNotice.length > 0 && (
           <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
-            <p className="font-medium">Answered since this pop-up opened, so nothing was sent:</p>
+            <p className="font-medium">{meanwhileHeading(changedNotice)}</p>
             <ul className="mt-1 list-disc space-y-0.5 pl-4">
               {changedNotice.map((c) => (
                 <li key={c.unitId}>
@@ -304,8 +319,13 @@ const SendAgreementConfirmDialog: React.FC<{
               ))}
             </ul>
             <p className="mt-1">
-              {changedNotice.length === 1 ? 'It is' : 'They are'} unticked. Send for the others, or tick a disputed unit
-              to ask again once the working is right (that clears the dispute; it stays in the unit's history).
+              {changedNotice.length === 1 ? 'It is' : 'They are'} unticked. Send for the others
+              {changedNotice.some((c) => c.status === 'DISPUTED')
+                ? ', or tick a disputed unit to ask again once the working is right (that clears the dispute; it stays in the unit\'s history)'
+                : ''}
+              .
+              {changedNotice.some(askedMeanwhile)
+                && ' A unit asked in another request waits on that e-mail. Tick it only to ask again here: once this e-mail is out, that link stops taking answers for it.'}
             </p>
           </div>
         )}
@@ -370,6 +390,10 @@ const SendAgreementConfirmDialog: React.FC<{
           e-mail is out, the earlier link no longer takes answers for the ticked units; answers already given on
           other units stay. A unit left unticked still holds up posting and filing until it is asked or accepted.
         </p>
+
+        {problem && !problemShown && (
+          <p className="text-xs text-destructive" role="alert">{problem}</p>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={sending}>Cancel</Button>

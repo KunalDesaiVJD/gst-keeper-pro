@@ -110,6 +110,8 @@ interface FreshRow {
   respondedByName?: string | null;
   respondedByEmail?: string | null;
   respondedAt?: string | null;
+  /** The latest request that asked about the unit (null: none, or a per-unit e-mail). */
+  requestId?: string | null;
 }
 
 /**
@@ -133,6 +135,7 @@ export function freshCandidates<T extends FreshRow>(candidates: T[], fresh: Fres
         respondedByName: f?.respondedByName ?? null,
         respondedByEmail: f?.respondedByEmail ?? null,
         respondedAt: f?.respondedAt ?? null,
+        requestId: f?.requestId ?? null,
       };
     });
 }
@@ -140,11 +143,18 @@ export function freshCandidates<T extends FreshRow>(candidates: T[], fresh: Fres
 /**
  * What the pop-up showed for each ticked unit, sent with the send: the
  * database leaves out (and reports) any unit answered since, a dispute
- * included, so a dispute staff never saw is never cleared.
+ * included, so a dispute staff never saw is never cleared; and, with the
+ * unit's request, any unit a colleague asked about meanwhile, so their
+ * request is not replaced unseen. A unit whose request the pop-up does not
+ * know is sent without one (the database then does not compare it).
  */
-export function seenFor(units: { unitId: string; status: ConfirmStatus; respondedAt?: string | null }[]):
-  Record<string, { status: ConfirmStatus; responded_at: string | null }> {
-  return Object.fromEntries(units.map((u) => [u.unitId, { status: u.status, responded_at: u.respondedAt ?? null }]));
+export function seenFor(units: { unitId: string; status: ConfirmStatus; respondedAt?: string | null; requestId?: string | null }[]):
+  Record<string, { status: ConfirmStatus; responded_at: string | null; request_id?: string | null }> {
+  return Object.fromEntries(units.map((u) => [u.unitId, {
+    status: u.status,
+    responded_at: u.respondedAt ?? null,
+    ...(u.requestId !== undefined ? { request_id: u.requestId } : {}),
+  }]));
 }
 
 /**
@@ -158,6 +168,46 @@ export function splitAnswered<T extends { status: string }>(answered: T[]): { cl
     cleared: answered.filter((a) => isClearedStatus(a.status as ConfirmStatus)),
     changed: answered.filter((a) => !isClearedStatus(a.status as ConfirmStatus)),
   };
+}
+
+/** A unit the send found changed since the pop-up read it. */
+export interface MeanwhileUnit {
+  unitNo: string;
+  status: string;
+  respondedByName?: string | null;
+  respondedByEmail?: string | null;
+  /** The unit's request now, when a colleague's request asked about it. */
+  requestTo?: string[] | null;
+  requestCc?: string[] | null;
+}
+
+/** Nobody answered it: a colleague's request asked about it meanwhile. */
+export const askedMeanwhile = (a: { status: string }): boolean => a.status === 'PENDING' || a.status === 'NOT_SENT';
+
+/**
+ * One unit in the pop-up's "since this pop-up opened" list and toast:
+ * "A-101 (confirmed by Rajesh Shah, rajesh@client.com)", or, when nobody
+ * answered but a colleague's request asked about it meanwhile,
+ * "A-101 (asked meanwhile in another request to priya@client.com, CC accounts@client.com)".
+ */
+export function meanwhileWords(a: MeanwhileUnit): string {
+  if (askedMeanwhile(a)) {
+    const to = (a.requestTo || []).join(', ');
+    const cc = (a.requestCc || []).join(', ');
+    return `${a.unitNo} (asked meanwhile in another request${to ? ` to ${to}` : ''}${cc ? `, CC ${cc}` : ''})`;
+  }
+  const what = a.status === 'OVERRIDDEN' ? 'accepted by the firm'
+    : a.status === 'DISPUTED' ? 'disputed' : a.status === 'CONFIRMED' ? 'confirmed' : 'answered';
+  const by = a.respondedByName ? ` by ${a.respondedByName}${a.respondedByEmail ? `, ${a.respondedByEmail}` : ''}` : '';
+  return `${a.unitNo} (${what}${by})`;
+}
+
+/** The heading over that list: answered, asked again elsewhere, or both. */
+export function meanwhileHeading(list: { status: string }[]): string {
+  const asked = list.filter(askedMeanwhile).length;
+  if (asked === list.length) return 'Asked meanwhile in another request, so nothing was sent:';
+  if (asked === 0) return 'Answered since this pop-up opened, so nothing was sent:';
+  return 'Answered or asked again since this pop-up opened, so nothing was sent:';
 }
 
 /** The words after a failed send: is there a link the client already holds? */
