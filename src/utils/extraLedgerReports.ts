@@ -169,10 +169,13 @@ export const buildRcmLedgerPerClient = async (clientId: string, anyMonthInFy: st
 export const buildFilingStatusReport = async (month: string): Promise<ReportTable> => {
   const [clientsRes, filingRes] = await Promise.all([
     supabase.from('clients').select('id, name, gstin').order('name'),
-    supabase.from('filing_status').select('id, client_id, return_type, status, filed_date, arn, filed_source, manual_allowance_id').eq('period_month', month),
+    supabase.from('filing_status').select('id, client_id, return_type, status, filed_date, arn, filed_source, manual_allowance_id, return_pdf_url, pdf_note, date_note').eq('period_month', month),
   ]);
   const clients: ClientLite[] = (clientsRes.data || []) as any;
-  type Rec = { id: string; client_id: string; return_type: string; status: string; filed_date: string | null; arn: string | null; filed_source: string | null; manual_allowance_id: string | null };
+  type Rec = {
+    id: string; client_id: string; return_type: string; status: string; filed_date: string | null; arn: string | null; filed_source: string | null;
+    manual_allowance_id: string | null; return_pdf_url: string | null; pdf_note: string | null; date_note: string | null;
+  };
   const records: Rec[] = (filingRes.data || []) as any;
   // Where each filed return came from: Portal, manual (allowed by X: reason), ...
   const sources = await fetchFilingSourceTexts(records);

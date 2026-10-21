@@ -1,9 +1,10 @@
 -- Round 2, defects 1 and 5. A pull that brings no checked PDF never lets a
--- PDF stored before it read as the pulled one. A PDF that no pull ever
--- checked (a System generated summary stored by 0.14.0, another month's
--- return attached by hand) is taken off the row (the log keeps its address)
--- and the row says why; a PDF an earlier pull checked is kept; a PDF attached
--- by hand under the superadmin's allowance is kept and still marked manual.
+-- PDF stored before it read as the pulled one. A PDF stored by extension
+-- 0.14.0's own pull (where the System generated summaries are) is taken off
+-- the row (the log keeps its address) and the row says why; a PDF an
+-- earlier pull checked is kept; a PDF attached by hand under the
+-- superadmin's allowance is kept and still marked manual. Round 3: any
+-- other PDF attached by hand is kept too, marked not checked (test_85).
 
 -- A row written before this migration (as 0.14.0 left 28 of them): Filed,
 -- its PDF the System generated summary, no source.
@@ -56,8 +57,9 @@ SELECT t_eq((SELECT filed_source || '/' || (manual_allowance_id IS NOT NULL)::te
               FROM public.filing_status WHERE client_id = '11111111-1111-1111-1111-111111111111' AND return_type = 'GSTR-3B' AND period_month = '07/2026'),
   'manual/true/manual-AB240726123456X-1.pdf/no note', 'the manual PDF stays, still marked manual');
 
--- A Filed row with no ARN (89 of them live) and a PDF: the pull's ARN goes
--- on, the unchecked PDF comes off.
+-- A Filed row with no ARN (89 of them live) and a PDF attached by hand: the
+-- pull's ARN goes on; round 3 (the firm's decision): the PDF attached by hand
+-- stays, marked as not checked by a pull (round 2 took it off).
 SET LOCAL ROLE postgres;
 SET LOCAL session_replication_role = replica;
 INSERT INTO public.filing_status (client_id, return_type, period_month, status, return_pdf_url)
@@ -67,6 +69,7 @@ SET LOCAL session_replication_role = origin;
 SET LOCAL ROLE anon;
 SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-1', '08/2026', 'AA240826123456X', '2026-09-10',
   NULL, 'No PDF came with the pull.', '00000000-0000-0000-0000-00000000000c'))->>'outcome', 'filed', 'ARN from the portal');
-SELECT t_eq((SELECT arn || '/' || COALESCE(return_pdf_url, 'no pdf') FROM public.filing_status
+SELECT t_eq((SELECT arn || '/' || regexp_replace(COALESCE(return_pdf_url, 'no pdf'), '^.*/', '') || '/' || left(COALESCE(pdf_note, 'no note'), 40)
+              FROM public.filing_status
               WHERE client_id = '11111111-1111-1111-1111-111111111111' AND return_type = 'GSTR-1' AND period_month = '08/2026'),
-  'AA240826123456X/no pdf', 'the PDF of a row with no ARN was not checked: taken off');
+  'AA240826123456X/GSTR-1.pdf/Attached by hand, not checked by a pull.', 'the PDF attached by hand to a row with no ARN stays, marked not checked');

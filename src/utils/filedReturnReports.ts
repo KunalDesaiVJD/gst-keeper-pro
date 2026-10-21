@@ -152,12 +152,15 @@ export interface FiledPdf { url: string; note: string | null }
 export const fetchFiledPdf = async (clientId: string, period: string, returnTypes: string[]): Promise<FiledPdf | null> => {
   const { data } = await supabase
     .from('filing_status')
-    .select('id, status, arn, return_pdf_url, filed_source, manual_allowance_id, return_type')
+    .select('id, status, arn, return_pdf_url, filed_source, manual_allowance_id, return_type, pdf_note, filed_date, date_note')
     .eq('client_id', clientId).eq('period_month', period)
     .in('return_type', returnTypes)
     .not('return_pdf_url', 'is', null)
     .limit(1).maybeSingle();
-  const row = data as unknown as { id: string; status: string | null; arn: string | null; return_pdf_url: string | null; filed_source: string | null; manual_allowance_id: string | null; return_type: string } | null;
+  const row = data as unknown as {
+    id: string; status: string | null; arn: string | null; return_pdf_url: string | null; filed_source: string | null; manual_allowance_id: string | null;
+    return_type: string; pdf_note: string | null; filed_date: string | null; date_note: string | null;
+  } | null;
   if (!row?.return_pdf_url) return null;
   const notes = await fetchFilingSourceTexts([row]);
   return { url: row.return_pdf_url, note: notes.get(row.id) ?? null };

@@ -40,10 +40,19 @@ export function filingStatus(ctx: RecipeContext, data: PortalData): RecipeResult
         days = Math.max(0, daysBetween(due, ctx.today));
         pending.push(`${FILED_LABEL[type]} ${periodLabel(p)}`);
       } else if (fs?.status === 'Filed') {
-        // The tracker's own source: a manual row (a superadmin exception) is said to be one.
-        status = fs.source === 'manual'
-          ? 'Filed (Filing Status tracker, attached by hand under a superadmin exception; not fetched from the portal)'
-          : 'Filed (Filing Status tracker; not fetched from the portal)';
+        // The tracker's own source (round 3): a row the extension's pull read
+        // from the portal says so (its date too, unless it was typed by hand);
+        // a manual row says whether a superadmin exception allowed it; a row
+        // recorded before 21 Oct 2026 keeps the tracker's words.
+        status = fs.source === 'portal'
+          ? (fs.dateNote
+            ? 'Filed (Filing Status, read from the portal by the extension\'s pull; the filing date was typed by hand)'
+            : 'Filed (Filing Status, read from the portal by the extension\'s pull)')
+          : fs.source === 'manual'
+            ? (fs.allowanceId
+              ? 'Filed (Filing Status tracker, attached by hand under a superadmin exception; not fetched from the portal)'
+              : 'Filed (Filing Status tracker, attached by hand; not fetched from the portal)')
+            : 'Filed (Filing Status tracker; not fetched from the portal)';
         filedOn = fs.filedDate; arn = fs.arn; refs = trackerRef; filed += 1;
         if (filedOn) days = Math.max(0, daysBetween(due, filedOn));
       } else {

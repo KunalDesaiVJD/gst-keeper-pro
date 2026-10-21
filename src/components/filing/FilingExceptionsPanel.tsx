@@ -67,7 +67,7 @@ const FilingExceptionsPanel: React.FC<{
           <Badge variant="info" className="px-1.5 text-[10px] tabular-nums">{filingAllowances.length} manual allowance{filingAllowances.length === 1 ? '' : 's'} in {periodMonth}</Badge>
         </span>
       }
-      description="Returns are marked Filed only by the portal pull. A manual upload needs the superadmin's allowance for that client, period and return, with a reason. A pull that brings a different ARN changes nothing until the superadmin decides."
+      description="GSTR-1 and GSTR-3B are marked Filed only by the portal pull. A manual upload of one needs the superadmin's allowance for that client, period and return, with a reason. A pull that brings a different ARN changes nothing until the superadmin decides."
     >
       {conflicts.length > 0 && (
         <div className={WS_TABLE_WRAP}>

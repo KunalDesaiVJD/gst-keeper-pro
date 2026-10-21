@@ -471,6 +471,64 @@ ok(stop.ok && stop.data === true && !storage.gstk_active_job && ended.length ===
 const popupSrc = read('popup.js');
 ok(/active\.mode === 'returnpdf'[\s\S]{0,200}GSTKdb\.endReturnPull\(active\.requestId/.test(popupSrc), 'the popup\'s Stop goes through endReturnPull for a filed-return pull');
 
+// 17. Round 3: the page follows the pull by asking the extension whether it
+//     is still running (it used to give up 15 minutes after the start, in
+//     the middle of every long bulk pull). The background answers for the
+//     request named; a pull past the idle limit is ended and reported before
+//     the answer, so "running" is never said of a pull that is over; the
+//     app bridge relays the question and the answer, for the app's origin only.
+reset();
+let st = await bgCall('returnPullStatus', 'req-19');
+ok(st.ok && st.data && st.data.live === false && st.data.running === null, '(v) no pull running: not live', st);
+await bgCall('startReturnPull', { items: [{ clientId: 'c1', return_type: 'GSTR-1', period_month: '09/2026' }, { clientId: 'c1', return_type: 'GSTR-3B', period_month: '09/2026' }],
+  actorId: 'u-staff', requestId: 'req-19' });
+st = await bgCall('returnPullStatus', 'req-19');
+ok(st.ok && st.data.live === true && st.data.requestId === 'req-19' && st.data.total === 2 && st.data.done === 0, '(v) the running pull: live, with its returns', st);
+const other = await bgCall('returnPullStatus', 'req-other');
+ok(other.ok && other.data.live === false && other.data.running === 'req-19', '(v) another request is not this pull', other);
+// Still running 40 minutes after the start (a long bulk pull, last step a
+// minute ago): live, so the page keeps waiting.
+storage.gstk_active_job = { ...storage.gstk_active_job, startedAt: Date.now() - 40 * 60 * 1000, lastActivityAt: Date.now() - 60 * 1000,
+  retResults: [{ clientId: 'c1', return_type: 'GSTR-1', period_month: '09/2026', outcome: 'filed', message: '' }] };
+st = await bgCall('returnPullStatus', 'req-19');
+ok(st.ok && st.data.live === true && st.data.done === 1, '(v) a long pull still working is live, however long since the start', st);
+// Idle 11 minutes: ended and reported, then the answer says not live.
+storage.gstk_active_job = { ...storage.gstk_active_job, lastActivityAt: Date.now() - 11 * 60 * 1000 };
+calls.length = 0;
+st = await bgCall('returnPullStatus', 'req-19');
+ended = rpcCalls('filing_pull_report').filter((b) => b.p_detail && b.p_detail.request_id === 'req-19');
+ok(st.ok && st.data.live === false && !storage.gstk_active_job, '(v) an idle pull is ended before the answer: not live', st);
+ok(ended.length === 1 && ended[0].p_return_type === 'GSTR-3B' && /idle/.test(ended[0].p_message)
+  && storage.gstk_return_pull_result && storage.gstk_return_pull_result.requestId === 'req-19', '(v) and its return not reached is reported, the page told', ended);
+// The app bridge: the question from the app's page goes to the background,
+// the answer comes back to the page; another origin gets nothing.
+reset();
+await bgCall('startReturnPull', { items: two, actorId: 'u-staff', requestId: 'req-20' });
+async function bridge(origin, msg) {
+  const listeners = [];
+  const posted = [];
+  const win = {
+    console, setTimeout, clearTimeout, Promise, JSON, Object, Array, String,
+    chrome: chromeFor(null), location: { origin },
+    addEventListener: (type, fn) => { if (type === 'message') listeners.push(fn); },
+    postMessage: (data) => { posted.push(data); },
+  };
+  win.window = win;
+  const ctx = vm.createContext(win);
+  vm.runInContext(read('appbridge.js'), ctx, { filename: 'appbridge.js' });
+  // The page's own window, as the bridge sees it (the context's global).
+  const self = vm.runInContext('globalThis', ctx);
+  for (const fn of listeners) fn({ source: self, origin, data: msg });
+  await new Promise((r) => setTimeout(r, 50));
+  return posted.filter((d) => d.__gstkReturnPullAlive).map((d) => d.__gstkReturnPullAlive);
+}
+let alive = await bridge('https://gst.vjdesai.com', { __gstkReturnPullAsk: { requestId: 'req-20' } });
+ok(alive.length === 1 && alive[0].live === true && alive[0].requestId === 'req-20', '(v) the bridge relays the question and the answer', alive);
+alive = await bridge('https://gst.vjdesai.com', { __gstkReturnPullAsk: { requestId: 'req-gone' } });
+ok(alive.length === 1 && alive[0].live === false, '(v) a request that is not running: not live', alive);
+alive = await bridge('https://evil.example', { __gstkReturnPullAsk: { requestId: 'req-20' } });
+ok(alive.length === 0, '(v) another origin gets no answer', alive);
+
 // 9. The extension never writes filing_status itself.
 ok(!calls.some((c) => /\/rest\/v1\/filing_status/.test(c.url)), '(iv) no direct filing_status write anywhere');
 const gone = [await bgCall('markFiled', {}), await bgCall('upsertFilingStatus', [])];

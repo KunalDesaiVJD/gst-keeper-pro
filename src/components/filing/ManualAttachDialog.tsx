@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Note } from '@/components/gstr9/ui';
 import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL } from '@/components/workspace/theme';
 import { supabase } from '@/integrations/supabase/client';
-import { arnProblem, attachManual, isPullOnly, manualPdfPath } from '@/lib/filingPull';
+import { arnProblem, attachManual, isPullOnly, manualPdfPath, manualRouteReason } from '@/lib/filingPull';
 import { readFiledPdf, type ReadFiledPdf } from '@/lib/filedPdfCheck';
 import type { ManualSourceAllowance } from '@/lib/manualSourceAllowances';
 
@@ -70,8 +70,8 @@ const ManualAttachDialog: React.FC<{
   const problem = arnUpper ? arnProblem(target.gstin, target.returnType, target.periodMonth, arnUpper) : null;
   const check = read && !read.problem && arnUpper ? read.check({ arn: arnUpper, returnType: target.returnType }) : null;
   const sameArn = !target.arn || target.arn === arnUpper;
-  // A return with no pull yet (ITC-04's PDFs are often scans) may be attached
-  // when its PDF has no text to check; one that is pulled only may not.
+  // A return with a manual route (ITC-04's PDFs are often scans) may be
+  // attached when its PDF has no text to check; one that is pulled only may not.
   const unreadable = !!read?.problem && read.problem !== 'This file is not a PDF.';
   const lenient = unreadable && !isPullOnly(target.returnType);
   const canAttach = !!file && !!read && (!!check?.ok || lenient) && !!arnUpper && !problem && sameArn && !!filedDate && !!userId && !busy;
@@ -118,7 +118,7 @@ const ManualAttachDialog: React.FC<{
             </Note>
           ) : (
             <Note tone="info">
-              {target.returnType} has no portal pull yet, so it is attached by hand. It shows as manual.
+              {(() => { const why = manualRouteReason(target.returnType) || ''; return why.charAt(0).toUpperCase() + why.slice(1); })()}, so it can be attached by hand. It shows as manual, with that reason.
             </Note>
           )}
 

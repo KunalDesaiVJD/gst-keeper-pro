@@ -50,6 +50,21 @@ window.addEventListener('message', (e) => {
     return;
   }
 
+  // Round 3: the Filing Status page asks whether the pull it started is still
+  // running (__gstkReturnPullAsk { requestId }, every 30 s while it waits);
+  // the answer (__gstkReturnPullAlive { requestId, live, done, total }) keeps
+  // it waiting as long as the extension runs the pull. No answer (an older
+  // extension, or none) leaves the page's own silence limit.
+  if (d.__gstkReturnPullAsk) {
+    const requestId = d.__gstkReturnPullAsk.requestId;
+    if (!requestId) return;
+    chrome.runtime.sendMessage({ gstk: true, fn: 'returnPullStatus', args: [requestId] }, (resp) => {
+      if (!(resp && resp.ok && resp.data)) return; // no answer: the page's silence limit decides
+      window.postMessage({ __gstkReturnPullAlive: resp.data }, location.origin);
+    });
+    return;
+  }
+
   // The Import 2B "Pull from portal" button asked to pull the GSTR-2B. This opens
   // a portal tab; the downloaded file arrives later via chrome.storage.onChanged.
   if (d.__gstkPull2B) {

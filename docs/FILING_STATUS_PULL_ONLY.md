@@ -4,11 +4,18 @@ The firm's decision of 21 Oct 2026, built by migration
 `20261021110000_filing_status_pull_only.sql`, extension 0.15.0 and the
 Filing Status page.
 
-1. Portal data is **pulled** by the extension, for every client, Nil returns included.
-2. When a pull cannot be done (wrong portal password, portal down, no access), the
-   **superadmin** may allow one manual upload for one client, period and return, with a
-   reason. It is logged and shows as "manual (allowed by X: reason)" wherever the return shows.
-3. Everything is traceable (`filing_status_log`).
+1. Portal data is **pulled** by the extension, for every client, Nil returns included. The firm
+   named "1 & 3B": **GSTR-1 and GSTR-3B (monthly) are pulled only** (round 3, the lead's
+   decision). GSTR-1 (IFF), GSTR-3B (Q), GSTR-6 and GSTR-7 can be pulled too, but keep a manual
+   route until their pull is proven to work (no pull of theirs has landed yet), as CMP-08 and
+   ITC-04, which have no pull.
+2. When a pull of a GSTR-1 / GSTR-3B cannot be done (wrong portal password, portal down, no
+   access), the **superadmin** may allow one manual upload for one client, period and return,
+   with a reason. It is logged and shows as "manual (allowed by X: reason)" wherever the return
+   shows. A return on its manual route shows "manual (<why>)".
+3. Everything is traceable (`filing_status_log`). Nothing attached by hand is ever taken off a
+   row by a pull that brings no checked PDF: it stays, marked "attached by hand, not checked by
+   a pull" (round 3).
 
 Read this before changing `FilingStatusPage.tsx`, `src/components/filing/*`,
 `src/lib/filingPull.ts`, `src/lib/manualSourceAllowances.ts`, `extension/filedpdf.js` or the
@@ -19,8 +26,8 @@ extension's `returnpdf` mode.
 | Route | Who | Function | Marked |
 |---|---|---|---|
 | Portal pull | the extension (0.15.0+), started from Filing Status by a staff member with the Filing status permission (`edit_filing_status`; GST Manager and superadmin always) | `filing_record_pull` | `filed_source = 'portal'` |
-| Manual attach, returns pulled only | a staff member with the Filing status permission, under the superadmin's allowance; never over a return pulled with its checked PDF | `filing_attach_manual` | `manual`, with `manual_allowance_id` |
-| Manual attach, returns with no pull yet (CMP-08, ITC-04) | a staff member with the Filing status permission | `filing_attach_manual` | `manual` |
+| Manual attach, returns pulled only (GSTR-1, GSTR-3B) | a staff member with the Filing status permission, under the superadmin's allowance; never over a return pulled with its checked PDF | `filing_attach_manual` | `manual`, with `manual_allowance_id` |
+| Manual attach, the manual route (GSTR-1 (IFF), GSTR-3B (Q), GSTR-6, GSTR-7 until their pull is proven; CMP-08, ITC-04 with no pull) | a staff member with the Filing status permission, no allowance; never over a return pulled with its checked PDF | `filing_attach_manual` | `manual`, with the reason (`filing_manual_reason`) |
 | Unlock (GSTR-3B family) | whoever the page offers it to (`canUnlockSheets`): GST Manager, superadmin, or an employee whose position holds `unlock_sheets` | `filing_status_unlock` | keeps everything |
 | Take off Filed | superadmin, with a reason | `filing_status_unfile` | clears; the log keeps it; a GSTR-3B row and its month's sheets are unlocked |
 | A pull conflict | superadmin | `filing_pull_conflict_decide` | `portal` when accepted |
@@ -28,7 +35,7 @@ extension's `returnpdf` mode.
 
 The trigger `trigger_filing_status_source` refuses every other write that makes a row Filed,
 takes it off Filed, or changes `arn`, `filed_date`, `return_pdf_url`, `filed_source`,
-`manual_allowance_id`, `pulled_at` or `pdf_note`, for every level (the app sends the acting
+`manual_allowance_id`, `pulled_at`, `pdf_note` or `date_note`, for every level (the app sends the acting
 user's id; `auth.uid()` is NULL). A row holding a filed return (Filed, or an ARN, filing date,
 PDF or source; an unlocked row too) stays on its client, period and return type on every route:
 moving one by a PATCH of `client_id`, `period_month` or `return_type` would file another month or
@@ -40,15 +47,26 @@ DELETE of its own. A move of a row holding nothing filed is still allowed and is
 `filing_status_guard_pushed` / `filing_record_push`. Status changes between the working statuses,
 remarks, target dates, NIL, locks and the push marker are not touched.
 
-**Pulled only:** GSTR-1, GSTR-1 (IFF), GSTR-3B, GSTR-3B (Q), GSTR-1A, GSTR-6, GSTR-7
-(`filing_pull_only`, `PULL_ONLY_RETURN_TYPES`). GSTR-6 and GSTR-7 joined in round 2: the page
-offers their pull, 0.15.0 maps them and checks "FORM GSTR-6 / GSTR-7" in the PDF, and all 49
-GSTR-6 / GSTR-7 PDFs on Filing Status pass that check; their manual upload now needs the
-superadmin's allowance like the others.
-**Manual route kept for now:** CMP-08 and ITC-04 only. The e-Filed Returns pull sets a monthly
-period, which is wrong for CMP-08 (quarter) and ITC-04 (half-year), so the page offers no pull
-for them and any staff member with the Filing status permission attaches them ("manual (no portal
-pull for CMP-08 yet)").
+**Pulled only (round 3):** GSTR-1 and GSTR-3B (`filing_pull_only`, `PULL_ONLY_RETURN_TYPES`): the
+monthly returns, whose pull landed 454 times (230 GSTR-3B, 224 GSTR-1) before this change. A
+manual upload of one needs the superadmin's allowance.
+**Manual route, pull offered (round 3):** GSTR-1 (IFF) (an IFF client's every GSTR-1, the
+quarter's included), GSTR-3B (Q), GSTR-6 and GSTR-7 (and GSTR-1A, which is not on the sheet). Round
+2 had made them pulled only, but no pull of theirs has ever landed (0 PDFs stored by the extension
+for any of them; 40 attached by hand in 06 to 09/2026), and the code paths they need (the
+Quarterly / QuarterN period choice, the form details for an IFF month, GSTR-6 / 7 row matching)
+run for the first time with 0.15.0. So, until a pull is proven for each, any staff member with
+the Filing status permission attaches them without an allowance, marked "manual (the portal pull
+for GSTR-6 is not proven yet)". Their Pull stays on the row and in Pull filed returns; when it
+works it writes them exactly as it writes GSTR-1 / 3B (`portal`, checked PDF). Asking the attach
+for GSTR-1 (IFF) / GSTR-3B (Q) never files the client's GSTR-1 / GSTR-3B twin row without the
+allowance: the row the PDF lands on decides as well as the type asked for. To make one pulled
+only once its pull has landed Filed with its checked PDF (the migration header, step 7, has the
+query), add it to `filing_pull_only` and `PULL_ONLY_RETURN_TYPES`.
+**Manual route, no pull:** CMP-08 and ITC-04. The e-Filed Returns pull sets a monthly period,
+which is wrong for CMP-08 (quarter) and ITC-04 (half-year), so the page offers no pull for them
+(Pull filed returns is disabled on their tabs and says so) and they are attached by hand
+("manual (CMP-08 has no portal pull yet)").
 
 ## 2. The pull (extension 0.15.0, `returnpdf` mode)
 
@@ -98,15 +116,36 @@ pull for CMP-08 yet)").
   - `refused`: the ARN cannot be this return's (state code, tax period), the staff member lacks
     the Filing status permission, or a rule refused Filed (GSTR-1 from 09/2026 still needs its
     push or a direct-filing approval).
-- **The PDF shown is a PDF a pull checked, or one attached by hand and marked manual** (round 2).
-  When a pull brings no checked PDF, a PDF an earlier pull checked is kept, a PDF attached under
-  the superadmin's allowance is kept (the row stays manual), and any other PDF (a System generated
-  summary stored by 0.14.0, a file attached by hand before 21 Oct 2026, another month's return) is
-  taken off the row: the log keeps its address (`old_pdf_url`) and `pdf_note` says why. So a row
-  Filed from the portal holds a PDF only when a pull checked it, and "Portal" beside a PDF in the
-  grid, the PDF export and the Reports Hub always means the checked filed return. The row shows
-  "No checked PDF" (the reason on hover); "Pull filed returns" asks for it again, and for every
-  Filed row never pulled; the superadmin can allow a manual upload on it.
+- **A PDF a pull did not check is never passed off as one, and one attached by hand is never
+  taken off** (round 2, then round 3 by the lead's decision). When a pull brings no checked PDF:
+  - a PDF an earlier pull checked is kept;
+  - a PDF attached by hand under an allowance or on the manual route is kept (the row stays
+    manual);
+  - any other PDF attached by hand (before 21 Oct 2026: 2,474 Filed rows live) is **kept**, the
+    row's ARN and date coming from the portal, and marked `pdf_note` = "Attached by hand, not
+    checked by a pull. <why the pull brought none>". The grid shows it in amber, "Attached by
+    hand, not checked by a pull", and the PDF export and Reports Hub say "Portal (PDF attached by
+    hand, not checked by a pull)". It is not a checked PDF: it closes no allowance, a manual
+    upload under an allowance (or the manual route) may replace it, and Pull filed returns asks
+    for it again. Round 2 took these off; the PDFs it took were nearly all right (the extension's
+    checker accepts 1,425 of the 1,467 PDFs of 2026), and getting them back needed an allowance
+    and a fresh upload;
+  - only a PDF the extension's own pull stored before 0.15.0 (`filing_pdf_from_old_pull`:
+    `<client>/<MM-YYYY>/<type>-<ARN>.pdf`, 379 rows live, among them 26 of the 28 System generated
+    summaries) is taken off: 0.14.0 could not tell the summary from the filed return, and a pull
+    that again finds no checked PDF is evidence it got the summary. The log keeps its address
+    (`old_pdf_url`); the row shows "No checked PDF" (the reason on hover), and the superadmin can
+    allow a manual upload on it.
+  So "Portal" alone beside a PDF always means the checked filed return.
+- **A filing date typed by hand is kept and marked** (round 3). When a pull reads no date
+  (formdetails, the row and the PDF all fail: every GSTR-6 so far), the date the row holds for
+  this ARN is kept; when no pull read it (filed by hand before 21 Oct 2026, or attached by hand)
+  `date_note` says "Typed by hand; no pull has read the portal's filing date yet.", the grid shows
+  "typed by hand" under it, exports say so, and Pull filed returns asks for the row again. A pull
+  that reads the date replaces it and clears the mark.
+- **A refused pull writes nothing** (round 3): the row a pull would land on is created inside the
+  block the refusal rolls back, so a refused pull (the direct-filing rule, mainly) no longer leaves
+  a new "Prepared" row where the page showed Data Pending; the log names no row then.
 - **The superadmin's allowance closes when the pull lands** (round 2): a pull that leaves the
   return with its checked PDF revokes the live allowance for it (used or not; `revoked_by` the
   staff member who pulled), and the log says so. A return pulled with its checked PDF never takes
@@ -127,8 +166,18 @@ pull for CMP-08 yet)").
   portal job took the slot) reports every return it did not reach to GST Keeper (`failed`,
   `not_reached`, "Not pulled: <why>.") and to the page ("The pull ended early: <why>"); the
   background watchdog ends an idle one even when no portal page loads, and the next Pull ends a
-  stale one first. The page's own 15-minute give-up says that the outcome is not known. A pull
-  waits keyed by client, return and period, so another month's row is never shown "Pulling".
+  stale one first. A pull waits keyed by client, return and period, so another month's row is
+  never shown "Pulling".
+- **The page follows the extension, not a clock** (round 3). It gave up 15 minutes after the
+  start, in the middle of every long bulk pull (one login and CAPTCHA per client: 97 clients in
+  09/2026), told staff to pull again and re-enabled Pull while the extension kept working. Now
+  (`PullWatch` in `src/lib/filingPull.ts`) every return's outcome counts as a sign of life, and
+  every 30 s the page asks the extension whether its pull is still running
+  (`__gstkReturnPullAsk` → `returnPullStatus` → `__gstkReturnPullAlive`); while the answer is
+  yes it waits, however long. "No" (the extension ended it: done, idle 10 minutes, 3 hours, tab
+  closed, stopped) ends the wait at once, the rows showing their outcome from the log. Only after
+  12 minutes with no sign at all (`PULL_SILENCE_MS`, longer than the extension's own idle limit:
+  the extension closed or reloaded) does the page give up, saying so.
 - The old direct writers are gone: `markFiled` and `upsertFilingStatus` (background.js). The
   database refuses 0.14.0's upsert, and the app requires 0.15.0 (`MIN_EXTENSION_VERSION`).
 
@@ -205,10 +254,16 @@ a message naming 20261021100000, and leaves nothing behind.
   the pull or the allowed manual attach goes through. A return not pushed yet shows no badge (it is
   usually still being prepared).
 - **Where it came from**, everywhere a filed return shows: the row ("Portal, pulled …", "manual
-  (allowed by X: reason)", "By hand before 21 Oct 2026"), the Filing Status PDF export and the
-  Reports Hub Filing Status Report (a Source column), the filed-return reports (the PDF link is
-  the bare address, its source beside it) and reply evidence (a tracker row attached by hand says
-  so).
+  (allowed by X: reason)", "manual (the portal pull for GSTR-6 is not proven yet)", "By hand
+  before 21 Oct 2026", a PDF or date not checked by a pull marked as such), the Filing Status PDF
+  export and the Reports Hub Filing Status Report (a Source column), the filed-return reports (the
+  PDF link is the bare address, its source beside it) and reply evidence: a row pulled from the
+  portal says "read from the portal by the extension's pull" (round 3; it used to say "not fetched
+  from the portal"), a row attached by hand says whether a superadmin exception allowed it.
+- **"Pull filed returns" on CMP-08 and ITC-04** (round 3) is disabled and says those returns have
+  no portal pull (it used to call them all Filed from the portal); on other tabs its tooltip names
+  what it asks for, the Filed rows never pulled included, and its "nothing to pull" counts the
+  returns attached by hand.
 - **Scheme twins** (GSTR-1 / GSTR-1 (IFF), GSTR-3B / GSTR-3B (Q)): one return, one ARN. A pull
   lands on the twin holding the ARN, else on the type the sheet shows for the period
   (`filing_effective_return_type`). The other twin shows "Not applicable (filed as …)" and is not
@@ -261,11 +316,17 @@ notice and case-folder uploads, which overwrite on purpose.
   `anon` with `request.jwt.claims`; `test_71`..`test_74` are round 1: no moves, the PDF address
   and who asked, no e-mail without a date, Unlock for `unlock_sheets` and Take off Filed
   unlocking; `test_80`..`test_84` are round 2: unchecked PDFs, the allowance closed by the pull,
-  scheme changes, the conflict's target, GSTR-6 / GSTR-7 and the permission; then the shared
-  block in both orders).
+  scheme changes, the conflict's target, the permission (`test_84` now checks round 3's manual
+  route for GSTR-6 / GSTR-7); `test_85`..`test_88` are round 3: a PDF attached by hand kept
+  and marked, a refused pull leaving no row, a typed date kept and marked, GSTR-1 (IFF) /
+  GSTR-3B (Q) by hand but never their GSTR-1 / GSTR-3B twin; then the shared block in both
+  orders).
 - `extension/test/16-filed-return-pull.test.mjs` (fixtures `extension/test/fixtures/*.pdf`, made
   by `extension/test/_pdffixture.mjs`; sections 13 to 16 are round 2: one pull at a time, a stale
-  or stopped or replaced pull reported).
+  or stopped or replaced pull reported; section 17 is round 3: "still running?" answered for the
+  request, a stale pull ended first, the bridge relaying it for the app's origin only).
 - `node scripts/verify-filing-pull-only.mjs` (no direct writes in the app, the side effects left
   to the database, the ARN words, the PDF read in the app, the RPC calls; round 2: bulk pull and
-  manual rules, pull keys by period, held-back words, the permission, one pull at a time).
+  manual rules, pull keys by period, held-back words, the permission, one pull at a time; round
+  3: the manual route, the kept PDF and typed date, the page following the extension through a
+  long bulk pull, the CMP-08 / ITC-04 button, the reply words).

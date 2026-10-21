@@ -12,7 +12,10 @@ import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/components/works
 import { cn } from '@/lib/utils';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
 import { FilingStatusType, filingStatusDisplayLabel } from '@/types';
-import { filingSourceText, hasPortalPull, isPullOnly, manualActions, outcomeWords, type FilingLogRow } from '@/lib/filingPull';
+import {
+  UNCHECKED_HAND_PDF, dateTypedByHand, filingSourceText, hasPortalPull, holdsUncheckedHandPdf, isPullOnly, manualActions, manualRouteReason, outcomeWords,
+  type FilingLogRow,
+} from '@/lib/filingPull';
 import type { ManualSourceAllowance } from '@/lib/manualSourceAllowances';
 
 export interface FilingRecord {
@@ -36,8 +39,10 @@ export interface FilingRecord {
   filed_source?: 'portal' | 'manual' | null;
   manual_allowance_id?: string | null;
   pulled_at?: string | null;
-  /** Why the row has no checked PDF. */
+  /** Why the row has no checked PDF; on a row still showing a PDF, why that one is not checked (attached by hand). */
   pdf_note?: string | null;
+  /** On a portal row: why the filing date shown is not the portal's (typed by hand). */
+  date_note?: string | null;
   // Joined client data
   clientName?: string;
   clientEmail?: string;
@@ -157,7 +162,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
   const sourceLine = (record: FilingRecord, ctx: FilingRowContext): React.ReactNode => {
     if (record.filed_source === 'portal') {
       return (
-        <span className="text-[10px] leading-tight text-muted-foreground" title="ARN and filing date read from the GST portal by the extension. A PDF shown here is the filed return the pull checked.">
+        <span className="text-[10px] leading-tight text-muted-foreground" title="ARN read from the GST portal by the extension. A PDF or date with no note beside it is the one the pull checked.">
           Portal{record.pulled_at ? `, pulled ${dayLabel(record.pulled_at)}` : ''}
         </span>
       );
@@ -466,7 +471,16 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                 <td className={cn(WS_TD, 'text-center')}>
                   <div className="flex flex-col items-center gap-1">
                     <div className="flex items-center justify-center gap-2">
-                      {record.return_pdf_url ? (
+                      {record.return_pdf_url && holdsUncheckedHandPdf(record) ? (
+                        // Round 3: a PDF attached by hand stays when a pull brings no
+                        // checked PDF, shown for what it is.
+                        <a href={record.return_pdf_url} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[10px] leading-tight text-amber-700 hover:text-foreground dark:text-amber-400"
+                          title={`View the PDF. ${record.pdf_note}`}>
+                          <Eye className="h-3.5 w-3.5 shrink-0" />
+                          <span className="text-left">{UNCHECKED_HAND_PDF}</span>
+                        </a>
+                      ) : record.return_pdf_url ? (
                         <a href={record.return_pdf_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/80"
                           title={record.pdf_note ? `View PDF. ${record.pdf_note}` : 'View the filed return'}>
                           <Eye className="h-3.5 w-3.5" />
@@ -501,7 +515,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                         <button type="button" onClick={() => p.onAttach(record)} className="inline-flex items-center text-amber-700 dark:text-amber-400 hover:text-foreground"
                           title={isPullOnly(record.return_type)
                             ? `Attach the filed return by hand: allowed by the superadmin (${allowanceOpen?.reason || ''})`
-                            : `Attach the filed return by hand (${record.return_type} has no portal pull yet)`}>
+                            : `Attach the filed return by hand (${manualRouteReason(record.return_type)})`}>
                           <Paperclip className="h-3.5 w-3.5" />
                         </button>
                       )}
@@ -526,6 +540,9 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                       {record.filed_date
                         ? new Date(record.filed_date).toLocaleDateString('en-IN')
                         : isFiled ? <span className="text-[10px] text-amber-700 dark:text-amber-400" title="The portal's filing date was not read. Pull again to fill it.">Date not read</span> : '-'}
+                      {dateTypedByHand(record) && (
+                        <span className="block text-[10px] leading-tight text-amber-700 dark:text-amber-400" title={record.date_note || ''}>typed by hand</span>
+                      )}
                     </span>
                     {record.updatedByName && record.updated_at && (
                       <Popover>

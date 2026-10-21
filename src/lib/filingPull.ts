@@ -2,27 +2,121 @@
 // 20261021110000, docs/FILING_STATUS_PULL_ONLY.md). Filed, the ARN, the filing
 // date and the return PDF come from the extension's portal pull
 // (filing_record_pull). The only other way in is filing_attach_manual: under
-// the superadmin's allowance for a return that is pulled (GSTR-1, GSTR-1
-// (IFF), GSTR-3B, GSTR-3B (Q), GSTR-1A, GSTR-6, GSTR-7), or as the manual
-// route kept for the returns that have no pull yet (CMP-08, ITC-04). A
-// database trigger refuses every direct write, so these are the app's only
-// writers of those columns.
+// the superadmin's allowance for a return that is pulled only (GSTR-1 and
+// GSTR-3B, the firm's "1 & 3B"), or as the manual route kept for the others:
+// GSTR-1 (IFF), GSTR-3B (Q), GSTR-6 and GSTR-7 until their pull is proven to
+// work, CMP-08 and ITC-04 which have no pull yet. A database trigger refuses
+// every direct write, so these are the app's only writers of those columns.
 import { supabase } from '@/integrations/supabase/client';
 import { allowanceBadgeText, type ManualSourceAllowance } from '@/lib/manualSourceAllowances';
 
-/** Returns that are pulled only (filing_pull_only in the database). */
-export const PULL_ONLY_RETURN_TYPES = ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)', 'GSTR-1A', 'GSTR-6', 'GSTR-7'] as const;
+/**
+ * Returns that are pulled only (filing_pull_only in the database): a manual
+ * upload of one needs the superadmin's allowance. Round 3: GSTR-1 and GSTR-3B
+ * (monthly) only. Add a return here and in filing_pull_only once its pull has
+ * landed Filed with its checked PDF.
+ */
+export const PULL_ONLY_RETURN_TYPES = ['GSTR-1', 'GSTR-3B'] as const;
 export const isPullOnly = (returnType: string) => (PULL_ONLY_RETURN_TYPES as readonly string[]).includes(returnType);
 
 /**
- * Returns the extension's e-Filed Returns pull can be asked for: every
- * pull-only return. CMP-08 and ITC-04 are left out: the pull sets a monthly
- * period, and theirs is a quarter and a half-year; they keep the manual route.
+ * Returns the extension's e-Filed Returns pull can be asked for. A pull of
+ * one writes it as it writes GSTR-1 / 3B, whether or not it is pulled only.
+ * CMP-08 and ITC-04 are left out: the pull sets a monthly period, and theirs
+ * is a quarter and a half-year.
  */
-export const hasPortalPull = (returnType: string) => isPullOnly(returnType);
+export const PORTAL_PULL_RETURN_TYPES = ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)', 'GSTR-1A', 'GSTR-6', 'GSTR-7'] as const;
+export const hasPortalPull = (returnType: string) => (PORTAL_PULL_RETURN_TYPES as readonly string[]).includes(returnType);
+
+/**
+ * Why a return may be attached by hand without an allowance (null for one
+ * that is pulled only). Same words as filing_manual_reason in the database.
+ */
+export function manualRouteReason(returnType: string): string | null {
+  if (isPullOnly(returnType)) return null;
+  if (returnType === 'CMP-08' || returnType === 'ITC-04') return `${returnType} has no portal pull yet`;
+  return `the portal pull for ${returnType || 'this return'} is not proven yet`;
+}
 
 /** Which pull a page is waiting on: one return of one client for one period. */
 export const pullKey = (clientId: string, returnType: string, periodMonth: string) => `${clientId}__${returnType}__${periodMonth}`;
+
+/**
+ * How long the page waits with no sign at all from the extension about a
+ * pull before it gives up on the returns still waiting (round 3). A sign is
+ * a return's outcome, or the extension answering "still running" when the
+ * page asks (every PULL_ASK_EVERY_MS). This is longer than the extension's
+ * own idle limit (10 minutes, after which it ends the pull itself and
+ * reports every return not reached), so a pull the extension is still
+ * running is never given up by the page, however many clients it has.
+ */
+export const PULL_SILENCE_MS = 12 * 60 * 1000;
+export const PULL_ASK_EVERY_MS = 30 * 1000;
+
+/**
+ * The pulls a page is waiting on, by request: which returns each still
+ * waits for, and when the extension last gave a sign of it. Pure (the clock
+ * is passed in), so scripts/verify-filing-pull-only.mjs runs it.
+ */
+export class PullWatch {
+  private reqs = new Map<string, { keys: Set<string>; lastSign: number; started: boolean }>();
+
+  /** A pull was asked for. */
+  start(requestId: string, keys: string[], now: number): void {
+    this.reqs.set(requestId, { keys: new Set(keys), lastSign: now, started: false });
+  }
+
+  /**
+   * The extension said it started the pull (its job is set): only from then
+   * on is it asked whether the pull is still running (before, a "no" would
+   * only mean it is still reading the clients' logins).
+   */
+  confirm(requestId: string | null | undefined, now: number): void {
+    const r = requestId ? this.reqs.get(requestId) : undefined;
+    if (r) { r.started = true; r.lastSign = now; }
+  }
+
+  /** The extension gave a sign of this pull (a return's outcome, or "still running"). */
+  sign(requestId: string | null | undefined, now: number): void {
+    const r = requestId ? this.reqs.get(requestId) : undefined;
+    if (r) r.lastSign = now;
+  }
+
+  /** One return was answered (any request); a request with nothing left goes. */
+  answered(key: string): void {
+    for (const [id, r] of this.reqs) {
+      if (r.keys.delete(key) && !r.keys.size) this.reqs.delete(id);
+    }
+  }
+
+  /** The pull is over (done, refused at the start, or the extension says it is not running): the returns still waiting. */
+  end(requestId: string | null | undefined): string[] {
+    const r = requestId ? this.reqs.get(requestId) : undefined;
+    if (!r) return [];
+    this.reqs.delete(requestId as string);
+    return [...r.keys];
+  }
+
+  /** The requests still waiting that the extension started (to ask it about). */
+  requests(): string[] {
+    return [...this.reqs].filter(([, r]) => r.started).map(([id]) => id);
+  }
+
+  /** Is the page still waiting on this request? */
+  has(requestId: string | null | undefined): boolean {
+    return !!requestId && this.reqs.has(requestId);
+  }
+
+  /** Requests with no sign for longer than PULL_SILENCE_MS: ended, with their returns still waiting. */
+  silent(now: number): { requestId: string; keys: string[] }[] {
+    const out: { requestId: string; keys: string[] }[] = [];
+    for (const [id, r] of this.reqs) {
+      if (now - r.lastSign > PULL_SILENCE_MS) out.push({ requestId: id, keys: [...r.keys] });
+    }
+    out.forEach((x) => this.reqs.delete(x.requestId));
+    return out;
+  }
+}
 
 /** The rows of one return: GSTR-1 / GSTR-1 (IFF), GSTR-3B / GSTR-3B (Q). */
 export function filingFamily(returnType: string): string[] {
@@ -62,38 +156,68 @@ export const isUnlockedFiled = (r: { status: string | null; arn: string | null }
 
 /**
  * The row holds a PDF a portal pull checked (the filed return, showing its
- * ARN). The database keeps no other PDF on a row Filed from the portal: a
- * pull without a checked PDF takes an unchecked one off (pdf_note says why).
+ * ARN). A portal row may also still show a PDF attached by hand that no pull
+ * checked (round 3: a pull without a checked PDF never takes one off); its
+ * pdf_note says so, and it is not a checked PDF.
  */
-export const holdsCheckedPortalPdf = (r: { filed_source?: string | null; return_pdf_url: string | null }) =>
-  r.filed_source === 'portal' && !!r.return_pdf_url;
+export const holdsCheckedPortalPdf = (r: { filed_source?: string | null; return_pdf_url: string | null; pdf_note?: string | null }) =>
+  r.filed_source === 'portal' && !!r.return_pdf_url && !r.pdf_note;
+
+/** The row shows a PDF attached by hand that no pull checked (kept by a pull without a checked PDF). */
+export const holdsUncheckedHandPdf = (r: { filed_source?: string | null; return_pdf_url: string | null; pdf_note?: string | null }) =>
+  r.filed_source === 'portal' && !!r.return_pdf_url && !!r.pdf_note;
+
+/** The words shown with such a PDF. */
+export const UNCHECKED_HAND_PDF = 'Attached by hand, not checked by a pull';
+
+/** The row's filing date was typed by hand and no pull has read the portal's yet (date_note). */
+export const dateTypedByHand = (r: { filed_source?: string | null; filed_date: string | null; date_note?: string | null }) =>
+  r.filed_source === 'portal' && !!r.filed_date && !!r.date_note;
 
 /**
  * What "Pull filed returns" asks for: not unlocked for correction, and not
  * Filed; or Filed but never pulled (recorded by hand before 21 Oct 2026, so
- * its PDF was never checked); or pulled without a checked PDF or the
- * portal's date. A return attached by hand under an allowance is left out
- * (its own Pull still tries).
+ * its PDF was never checked); or pulled without a checked PDF (none, or one
+ * attached by hand that no pull checked) or without the portal's date (none,
+ * or one typed by hand). A return attached by hand (under an allowance or
+ * the manual route) is left out (its own Pull still tries).
  */
-export const wantedInBulkPull = (r: { status: string | null; arn: string | null; return_pdf_url: string | null; filed_date: string | null; filed_source?: string | null }) =>
-  !isUnlockedFiled(r) && (r.status !== 'Filed' || !r.filed_source || (r.filed_source === 'portal' && (!r.return_pdf_url || !r.filed_date)));
+export const wantedInBulkPull = (r: {
+  status: string | null; arn: string | null; return_pdf_url: string | null; filed_date: string | null;
+  filed_source?: string | null; pdf_note?: string | null; date_note?: string | null;
+}) =>
+  !isUnlockedFiled(r) && (r.status !== 'Filed' || !r.filed_source
+    || (r.filed_source === 'portal' && (!holdsCheckedPortalPdf(r) || !r.filed_date || !!r.date_note)));
 
-/** What the toast says when "Pull filed returns" finds nothing to pull. */
-export function bulkPullNothingText(heldBack: number): string {
-  if (!heldBack) return 'Every return in view is Filed from the portal with its checked PDF and date.';
-  return `Nothing pulled. ${heldBack} return${heldBack === 1 ? ' was' : 's were'} not pushed through GST Keeper: the superadmin approves the direct filing first (Request approval on the row). Every other return in view is Filed from the portal.`;
+/**
+ * What the toast says when "Pull filed returns" finds nothing to pull:
+ * heldBack returns wait for the superadmin's direct-filing approval; byHand
+ * returns in view were attached by hand (their own Pull still tries).
+ */
+export function bulkPullNothingText(heldBack: number, byHand = 0): string {
+  const hand = byHand ? `, or attached by hand (${byHand}: Pull on its row checks it against the portal)` : '';
+  if (!heldBack) {
+    return byHand
+      ? `Nothing to pull. Every return in view is Filed from the portal with its checked PDF and date${hand}.`
+      : 'Every return in view is Filed from the portal with its checked PDF and date.';
+  }
+  return `Nothing pulled. ${heldBack} return${heldBack === 1 ? ' was' : 's were'} not pushed through GST Keeper: the superadmin approves the direct filing first (Request approval on the row). Every other return in view is Filed from the portal${hand}.`;
 }
+
+/** What "Pull filed returns" says on a tab whose return has no portal pull (CMP-08, ITC-04). */
+export const noPullTabText = (returnType: string) => `${returnType} has no portal pull yet: attach each filed return by hand on its row.`;
 
 /**
  * The manual exception on one row. canAllow: the superadmin may allow one
  * manual upload (a pull-only return with no live allowance, unless the row
  * holds a checked PDF from the portal). canAttach: a staff member with the
- * Filing status permission may attach now (CMP-08 / ITC-04 freely until
- * Filed with a PDF; a pull-only return under an open allowance, never over a
- * checked portal PDF). showAllowance: the "Manual allowed by" line.
+ * Filing status permission may attach now (a return with a manual route
+ * freely until Filed with a PDF, or over a PDF attached by hand that no pull
+ * checked; a pull-only return under an open allowance; never over a checked
+ * portal PDF). showAllowance: the "Manual allowed by" line.
  */
 export function manualActions(
-  r: { status: string | null; return_type: string; return_pdf_url: string | null; filed_source?: string | null },
+  r: { status: string | null; return_type: string; return_pdf_url: string | null; filed_source?: string | null; pdf_note?: string | null },
   o: { canEdit: boolean; isSuperadmin: boolean; notApplicable: boolean; lockedOut: boolean; allowance: { used_at: string | null } | null },
 ): { canAttach: boolean; canAllow: boolean; showAllowance: boolean } {
   const pulled = holdsCheckedPortalPdf(r);
@@ -101,7 +225,7 @@ export function manualActions(
   const pullOnly = isPullOnly(r.return_type);
   return {
     canAttach: o.canEdit && !o.notApplicable && !o.lockedOut
-      && (pullOnly ? open && !pulled : !(r.status === 'Filed' && r.return_pdf_url)),
+      && (pullOnly ? open && !pulled : !(r.status === 'Filed' && r.return_pdf_url) || holdsUncheckedHandPdf(r)),
     canAllow: o.isSuperadmin && pullOnly && !o.notApplicable && !o.allowance && !pulled,
     showAllowance: open && !pulled,
   };
@@ -112,19 +236,32 @@ export const wantedInClientPull = (r: { status: string | null; arn: string | nul
 
 /**
  * Where a filed return came from, in words, wherever it is shown or exported:
- * "Portal", "manual (allowed by Asha: portal down)", "manual (no portal pull
- * for CMP-08 yet)", or "By hand before 21 Oct 2026" for rows recorded before
- * the pull-only rule. null for a row holding no filed return.
+ * "Portal" (with "PDF attached by hand, not checked by a pull" or "filing
+ * date typed by hand" when the row still shows one of those), "manual
+ * (allowed by Asha: portal down)", "manual (CMP-08 has no portal pull yet)",
+ * "manual (the portal pull for GSTR-6 is not proven yet)", or "By hand before
+ * 21 Oct 2026" for rows recorded before the pull-only rule. null for a row
+ * holding no filed return.
  */
 export function filingSourceText(
-  r: { status: string | null; arn: string | null; return_type: string; filed_source?: string | null; manual_allowance_id?: string | null },
+  r: {
+    status: string | null; arn: string | null; return_type: string; filed_source?: string | null; manual_allowance_id?: string | null;
+    return_pdf_url?: string | null; pdf_note?: string | null; filed_date?: string | null; date_note?: string | null;
+  },
   allowance: Pick<ManualSourceAllowance, 'allowed_by' | 'reason'> | null | undefined,
   names: Record<string, string>,
 ): string | null {
-  if (r.filed_source === 'portal') return 'Portal';
+  if (r.filed_source === 'portal') {
+    const extra = [
+      r.return_pdf_url && r.pdf_note ? 'PDF attached by hand, not checked by a pull' : null,
+      r.filed_date && r.date_note ? 'filing date typed by hand, not read from the portal' : null,
+    ].filter(Boolean);
+    return extra.length ? `Portal (${extra.join('; ')})` : 'Portal';
+  }
   if (r.filed_source === 'manual') {
     if (allowance) return allowanceBadgeText(allowance, names);
-    return r.manual_allowance_id || isPullOnly(r.return_type) ? 'manual' : `manual (no portal pull for ${r.return_type} yet)`;
+    const why = r.manual_allowance_id ? null : manualRouteReason(r.return_type);
+    return why ? `manual (${why})` : 'manual';
   }
   if (r.status === 'Filed' || r.arn) return 'By hand before 21 Oct 2026';
   return null;
@@ -136,7 +273,10 @@ export function filingSourceText(
  * only when there is a manual row).
  */
 export async function fetchFilingSourceTexts(
-  rows: { id: string; status: string | null; arn: string | null; return_type: string; filed_source?: string | null; manual_allowance_id?: string | null }[],
+  rows: {
+    id: string; status: string | null; arn: string | null; return_type: string; filed_source?: string | null; manual_allowance_id?: string | null;
+    return_pdf_url?: string | null; pdf_note?: string | null; filed_date?: string | null; date_note?: string | null;
+  }[],
 ): Promise<Map<string, string>> {
   const ids = [...new Set(rows.map((r) => r.manual_allowance_id).filter((x): x is string => !!x))];
   const allowances = new Map<string, { allowed_by: string; reason: string }>();

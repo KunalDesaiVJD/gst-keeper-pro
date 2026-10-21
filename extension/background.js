@@ -773,6 +773,24 @@ const API = {
     armWatchdog();
     return { started: true, clients: clients.length, returns: clients.reduce((n, c) => n + c.rets.length, 0), skipped };
   },
+  // Round 3: the Filing Status page asks every 30 s whether the pull it
+  // started is still running, and waits as long as the answer is yes (it
+  // used to give up 15 minutes after the start, in the middle of every long
+  // bulk pull). A pull past the idle or 3-hour limit is ended (and reported)
+  // first, as the watchdog does, so the answer is never "running" for a pull
+  // that is over. live: this request is the running pull.
+  returnPullStatus: async (requestId) => jobSlot(async () => {
+    const cur = await liveReturnPull();
+    const total = cur ? (cur.clients || []).reduce((n, c) => n + ((c.rets || []).length), 0) : 0;
+    return {
+      requestId: requestId || null,
+      live: !!cur && !!requestId && cur.requestId === requestId,
+      running: cur ? cur.requestId || null : null,
+      done: cur ? (cur.retResults || []).length : 0,
+      total,
+      lastActivityAt: cur ? cur.lastActivityAt || cur.startedAt || null : null,
+    };
+  }),
   // The popup's Stop and the content script's idle rule end a filed-return
   // pull through here, so its returns not reached are reported (round 2).
   // Only the pull named (requestId) is ended; false when it is already gone.

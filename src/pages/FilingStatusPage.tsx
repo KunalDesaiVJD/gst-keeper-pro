@@ -31,6 +31,9 @@ import FilingExceptionsPanel from '@/components/filing/FilingExceptionsPanel';
 import { MIN_EXTENSION_VERSION, compareVersions } from '@/lib/extensionVersion';
 import {
   type FilingLogRow,
+  PULL_ASK_EVERY_MS,
+  PULL_SILENCE_MS,
+  PullWatch,
   fetchFilingLog,
   fetchOpenConflicts,
   filingFamily,
@@ -39,6 +42,7 @@ import {
   isPullOnly,
   bulkPullNothingText,
   latestOutcomes,
+  noPullTabText,
   outcomeWords,
   pullKey,
   unfileReturn,
@@ -108,10 +112,6 @@ const FILING_TABS: { value: string; type: ReturnType }[] = [
 const MISMATCH_STATUSES: readonly FilingStatusType[] = ['Mismatch in Data'];
 const DATA_PENDING_STATUSES: readonly FilingStatusType[] = ['Data Pending'];
 const FILED_STATUSES: readonly FilingStatusType[] = ['Filed'];
-
-// A pull still waiting for its outcome is given up on after this long (the
-// portal tab was left, or the page missed the answer); the log still has it.
-const PULL_WAIT_MS = 15 * 60 * 1000;
 
 interface Client {
   id: string;
@@ -950,7 +950,10 @@ const FilingStatusPage: React.FC = () => {
   const [extVersion, setExtVersion] = useState<string | null>(null);
   const extOutdated = extReady && (!extVersion || compareVersions(extVersion, MIN_EXTENSION_VERSION) < 0);
   const [pending, setPending] = useState<Record<string, number>>({});
-  const pendingByRequest = useRef<Map<string, string[]>>(new Map());
+  // Round 3: each pull is followed by what the extension says of it (each
+  // return's outcome, "still running" when asked, the end), not a fixed
+  // time from its start, which gave up on every long bulk pull.
+  const pullWatch = useRef(new PullWatch());
   // The client list for the message listener, without re-subscribing it.
   const clientsRef = useRef<Client[]>([]);
   useEffect(() => { clientsRef.current = clients; }, [clients]);
@@ -976,17 +979,21 @@ const FilingStatusPage: React.FC = () => {
       if (d.__gstkPullResult) {
         const r = d.__gstkPullResult;
         if (r.ok) {
+          pullWatch.current.confirm(r.requestId, Date.now());
           const skipped: string[] = Array.isArray(r.skipped) ? r.skipped : [];
           toast.success(`Portal opened in a new tab for ${r.returns ?? 'the'} return${r.returns === 1 ? '' : 's'}. Type the CAPTCHA there; each return shows here when it is done.`
             + (skipped.length ? ` Not pulled (no saved GST login): ${skipped.join(', ')}.` : ''), { duration: 8000 });
         } else {
           toast.error('Could not start the portal pull: ' + r.error);
-          if (r.requestId) { clearPending(pendingByRequest.current.get(r.requestId) || []); pendingByRequest.current.delete(r.requestId); }
+          if (r.requestId) clearPending(pullWatch.current.end(r.requestId));
         }
       }
       if (d.__gstkReturnPullProgress) {
         const p = d.__gstkReturnPullProgress;
-        clearPending([pullKey(p.clientId, p.return_type, p.period_month)]);
+        const k = pullKey(p.clientId, p.return_type, p.period_month);
+        pullWatch.current.sign(p.requestId, Date.now());
+        pullWatch.current.answered(k);
+        clearPending([k]);
         const who = `${clientsRef.current.find((c) => c.id === p.clientId)?.name || 'Client'} · ${p.return_type} ${p.period_month}`;
         const text = `${who}: ${p.message || outcomeWords(p.outcome)}`;
         if (p.outcome === 'filed' || p.outcome === 'refreshed') toast.success(text, { duration: 8000 });
@@ -997,10 +1004,28 @@ const FilingStatusPage: React.FC = () => {
         // database; send it now (the 15-minute job is the backstop).
         if (p.outcome === 'filed') void supabase.functions.invoke('send-gst-email', { body: {} }).catch(() => {});
       }
+      // The extension's answer to "is this pull still running?" (asked every
+      // 30 s while one waits): running keeps the page waiting, however long a
+      // bulk pull takes; not running ends it here too.
+      if (d.__gstkReturnPullAlive) {
+        const a = d.__gstkReturnPullAlive;
+        if (a.live) pullWatch.current.sign(a.requestId, Date.now());
+        else if (pullWatch.current.has(a.requestId)) {
+          // The pull's own end (__gstkReturnPullDone) is usually on its way:
+          // give it a moment, then end whatever it did not answer.
+          window.setTimeout(() => {
+            const left = pullWatch.current.end(a.requestId);
+            clearPending(left);
+            if (left.length) {
+              toast.warning(`The extension is no longer running this pull. ${left.length} return${left.length === 1 ? '' : 's'} got no answer here: each row shows its outcome from the log.`, { duration: 12000 });
+            }
+            refreshSoon();
+          }, 3000);
+        }
+      }
       if (d.__gstkReturnPullDone) {
         const r = d.__gstkReturnPullDone;
-        const keys = r.requestId ? pendingByRequest.current.get(r.requestId) || [] : [];
-        if (r.requestId) pendingByRequest.current.delete(r.requestId);
+        const keys = pullWatch.current.end(r.requestId);
         clearPending([...keys, ...((r.results || []) as PullItem[]).map((x) => pullKey(x.clientId, x.return_type, x.period_month))]);
         const results: { outcome: string }[] = r.results || [];
         const missed = results.filter((x) => x.outcome === 'not_reached').length;
@@ -1029,22 +1054,29 @@ const FilingStatusPage: React.FC = () => {
     };
   }, [clearPending, refreshSoon]);
 
-  // While pulls are running, read the log and the rows every few seconds as
-  // well (the answer also comes through the extension and realtime), and give
-  // up on one that has waited too long, saying so.
+  // While pulls are running: read the log and the rows now and then (the
+  // answer also comes through the extension and realtime), ask the
+  // extension whether each pull is still running, and give up on one only
+  // when the extension has said nothing of it for PULL_SILENCE_MS: longer
+  // than its own idle limit, after which it ends the pull and reports.
   const pendingCount = Object.keys(pending).length;
-  const pendingRef = useRef(pending);
-  useEffect(() => { pendingRef.current = pending; }, [pending]);
   useEffect(() => {
     if (!pendingCount) return;
+    let lastAsk = Date.now();
     const t = setInterval(() => {
       refreshSoon();
       const now = Date.now();
-      const stale = Object.entries(pendingRef.current).filter(([, at]) => now - at > PULL_WAIT_MS).map(([k]) => k);
-      if (!stale.length) return;
-      clearPending(stale);
-      toast.warning(`No answer from the extension for ${stale.length} return${stale.length === 1 ? '' : 's'} after 15 minutes. The outcome is not known: check the portal tab, then pull again.`, { duration: 15000 });
-    }, 5000);
+      if (now - lastAsk >= PULL_ASK_EVERY_MS) {
+        lastAsk = now;
+        for (const requestId of pullWatch.current.requests()) window.postMessage({ __gstkReturnPullAsk: { requestId } }, '*');
+      }
+      const silent = pullWatch.current.silent(now);
+      const keys = silent.flatMap((x) => x.keys);
+      if (!keys.length) return;
+      clearPending(keys);
+      const mins = Math.round(PULL_SILENCE_MS / 60000);
+      toast.warning(`No word from the extension for ${mins} minutes about ${keys.length} return${keys.length === 1 ? '' : 's'}: it may have been closed or reloaded. Check the portal tab; each row shows its outcome when it lands.`, { duration: 15000 });
+    }, 10_000);
     return () => clearInterval(t);
   }, [pendingCount, refreshSoon, clearPending]);
 
@@ -1055,6 +1087,7 @@ const FilingStatusPage: React.FC = () => {
     const answered = Object.entries(pending)
       .filter(([k, at]) => { const o = outcomes.get(k); return o && new Date(o.at).getTime() >= at - 5000; })
       .map(([k]) => k);
+    answered.forEach((k) => pullWatch.current.answered(k));
     if (answered.length) clearPending(answered);
   }, [outcomes, pending, pendingCount, clearPending]);
 
@@ -1070,8 +1103,8 @@ const FilingStatusPage: React.FC = () => {
     if (!items.length) { toast.info(`Nothing to pull for ${what}.`); return; }
     const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now());
     const keys = items.map((i) => pullKey(i.clientId, i.return_type, i.period_month));
-    pendingByRequest.current.set(requestId, keys);
     const now = Date.now();
+    pullWatch.current.start(requestId, keys, now);
     setPending((prev) => { const next = { ...prev }; keys.forEach((k) => { next[k] = now; }); return next; });
     window.postMessage({ __gstkPullReturns: { items, actorId: user?.id ?? null, requestId } }, '*');
   };
@@ -1353,12 +1386,15 @@ const FilingStatusPage: React.FC = () => {
   // never pulled, or pulled without a checked PDF or a portal filing date;
   // never one unlocked for correction (its own Pull files it again). Returns
   // held back by the direct-filing rule are counted and named, not pulled.
+  const tabHasPull = hasPortalPull(currentTabLabel);
   const pullInView = () => {
-    const wanted = applyFilters(recordsByTab[selectedTab] || [])
-      .filter((r) => hasPortalPull(r.return_type) && !filedTwinOf(r) && wantedInBulkPull(r));
+    if (!tabHasPull) { toast.info(noPullTabText(currentTabLabel)); return; }
+    const inView = applyFilters(recordsByTab[selectedTab] || []).filter((r) => hasPortalPull(r.return_type) && !filedTwinOf(r));
+    const wanted = inView.filter((r) => wantedInBulkPull(r));
     const rows = wanted.filter((r) => pullable(r));
     const heldBack = wanted.length - rows.length;
-    if (!rows.length) { toast.info(bulkPullNothingText(heldBack), { duration: heldBack ? 10000 : 4000 }); return; }
+    const byHand = inView.filter((r) => r.status === 'Filed' && r.filed_source === 'manual').length;
+    if (!rows.length) { toast.info(bulkPullNothingText(heldBack, byHand), { duration: heldBack || byHand ? 10000 : 4000 }); return; }
     const clientsN = new Set(rows.map((r) => r.client_id)).size;
     if (!window.confirm(`Pull ${rows.length} return${rows.length === 1 ? '' : 's'} of ${clientsN} client${clientsN === 1 ? '' : 's'} from the GST portal? A portal tab opens; type each client's CAPTCHA there.`
       + (heldBack ? ` ${heldBack} return${heldBack === 1 ? ' is' : 's are'} left out: not pushed through GST Keeper, so the superadmin approves the direct filing first.` : ''))) return;
@@ -1379,10 +1415,12 @@ const FilingStatusPage: React.FC = () => {
               size="sm"
               className={WS_BTN}
               onClick={pullInView}
-              disabled={!canEditFilingStatus() || pendingCount > 0}
-              title={extOutdated
-                ? `Update the GST Keeper extension to ${MIN_EXTENSION_VERSION} or later to pull filed returns`
-                : 'Pull every return in view that is not Filed, or has no PDF or filing date yet, from the GST portal'}
+              disabled={!canEditFilingStatus() || pendingCount > 0 || !tabHasPull}
+              title={!tabHasPull
+                ? noPullTabText(currentTabLabel)
+                : extOutdated
+                  ? `Update the GST Keeper extension to ${MIN_EXTENSION_VERSION} or later to pull filed returns`
+                  : 'Pull from the GST portal every return in view that is not Filed, was Filed by hand before 21 Oct 2026 and never pulled, or was pulled without a checked PDF or the portal\'s filing date. Returns attached by hand are left out; Pull on a row checks one.'}
             >
               {pendingCount ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
               Pull filed returns{pendingCount ? ` (${pendingCount} running)` : ''}
@@ -1514,7 +1552,7 @@ const FilingStatusPage: React.FC = () => {
       </Card>
 
       <Note>
-        Filed, the ARN, the filing date and the return PDF come from the GST portal: Pull reads them through the extension (one return, all of a client's, or every return in view with Pull filed returns). The PDF is kept only when it is the filed return showing its ARN. When a pull cannot be done, the superadmin can allow one manual upload for that return, with a reason; it shows as manual. A PDF no pull checked is not shown as the portal's. CMP-08 and ITC-04 have no pull yet, so they are attached by hand. Remarks save when you leave the box.
+        GSTR-1 and GSTR-3B are marked Filed only from the GST portal: Pull reads the ARN, the filing date and the return PDF through the extension (one return, all of a client's, or every return in view with Pull filed returns). The PDF is kept only when it is the filed return showing its ARN. When a pull cannot be done, the superadmin can allow one manual upload for that return, with a reason; it shows as manual. GSTR-1 (IFF), GSTR-3B (Q), GSTR-6 and GSTR-7 can be pulled, and can still be attached by hand until their pull is proven; CMP-08 and ITC-04 have no pull yet. A PDF or date no pull checked says so. Remarks save when you leave the box.
       </Note>
 
       {(isSuperadmin || conflicts.length > 0 || allowances.length > 0) && (

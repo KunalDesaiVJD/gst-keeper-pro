@@ -46,6 +46,12 @@ The firm's decision: Filing Status is pulled from the portal only (GST Keeper mi
   return it did not reach through `filing_pull_report` (`failed`, `not_reached`, "Not pulled:
   <why>.") and to the page (`gstk_return_pull_result.ended`). The background watchdog now ends an
   idle filed-return pull even when no portal page loads (`endReturnPull`, `endedReturnPull`).
+- **The page follows the pull, not a clock** (review round 3): Filing Status asks every 30 s
+  whether the pull it started is still running (`__gstkReturnPullAsk { requestId }` → background
+  `returnPullStatus` → `__gstkReturnPullAlive { requestId, live, running, done, total }`), and
+  keeps waiting while the answer is yes, however many clients a bulk pull has. A pull past the
+  idle or 3-hour limit is ended and reported before the answer, so "running" is never said of a
+  pull that is over. The page gave up 15 minutes after the start before.
 - Tests: `test/16-filed-return-pull.test.mjs`, fixtures `test/fixtures/*.pdf` (fictional, made by
   `test/_pdffixture.mjs` the way the portal's pdfmake makes them).
 
