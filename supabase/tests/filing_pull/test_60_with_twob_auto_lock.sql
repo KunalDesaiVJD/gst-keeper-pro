@@ -1,47 +1,10 @@
 -- With auto_lock_on_filed as 20261021100000 (twob-simple) defines it on
--- 21 Oct 2026 (BEFORE INSERT OR UPDATE, GSTR-3B and GSTR-3B (Q), the first
--- carry): a pull still files once, the carry runs once per filing, the
--- filing date stays the portal's (or blank), never CURRENT_DATE.
-CREATE TABLE public.t_carry_calls (client_id uuid, period text);
-CREATE FUNCTION public.twob_carry_first(p_client_id uuid, p_period text) RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER AS $$
-BEGIN
-  INSERT INTO public.t_carry_calls VALUES (p_client_id, p_period);
-  RETURN '{}'::jsonb;
-END $$;
-CREATE OR REPLACE FUNCTION public.auto_lock_on_filed()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-SET twob.write = 'system'
-AS $$
-BEGIN
-  IF TG_OP = 'INSERT' AND EXISTS (SELECT 1 FROM public.filing_status f
-                                   WHERE f.client_id = NEW.client_id AND f.return_type = NEW.return_type
-                                     AND f.period_month = NEW.period_month) THEN
-    RETURN NEW;
-  END IF;
-  IF NEW.status::text = 'Filed' AND (TG_OP = 'INSERT' OR OLD.status IS NULL OR OLD.status::text <> 'Filed') THEN
-    NEW.filed_date := COALESCE(NEW.filed_date, CURRENT_DATE);
-    IF NEW.return_type::text IN ('GSTR-3B', 'GSTR-3B (Q)') THEN
-      NEW.is_locked := TRUE;
-      UPDATE public.bills_not_in_2b SET is_locked = TRUE
-       WHERE client_id = NEW.client_id AND period_month = NEW.period_month AND is_locked IS DISTINCT FROM TRUE;
-      UPDATE public.bills_not_in_books SET is_locked = TRUE
-       WHERE client_id = NEW.client_id AND period_month = NEW.period_month AND is_locked IS DISTINCT FROM TRUE;
-      UPDATE public.itc_summaries SET is_locked = TRUE
-       WHERE client_id = NEW.client_id AND period_month = NEW.period_month;
-      PERFORM public.twob_carry_first(NEW.client_id, NEW.period_month);
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$$;
-DROP TRIGGER IF EXISTS trigger_auto_lock_on_filed ON public.filing_status;
-CREATE TRIGGER trigger_auto_lock_on_filed BEFORE INSERT OR UPDATE ON public.filing_status
-  FOR EACH ROW EXECUTE FUNCTION public.auto_lock_on_filed();
-GRANT INSERT, SELECT ON public.t_carry_calls TO anon;
+-- 21 Oct 2026 (fixtures/twob_auto_lock.sql, which run.sh puts on the stub:
+-- BEFORE INSERT OR UPDATE, GSTR-3B and GSTR-3B (Q), the first carry): a
+-- pull still files once, the carry runs once per filing, the filing date
+-- stays the portal's (or blank), never CURRENT_DATE. Round 2, defect 7: a
+-- pulled GSTR-3B (Q) is carried (the migration refuses to apply without
+-- this auto_lock_on_filed; run.sh checks that refusal).
 
 SET LOCAL ROLE anon;
 SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);

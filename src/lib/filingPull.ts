@@ -2,24 +2,27 @@
 // 20261021110000, docs/FILING_STATUS_PULL_ONLY.md). Filed, the ARN, the filing
 // date and the return PDF come from the extension's portal pull
 // (filing_record_pull). The only other way in is filing_attach_manual: under
-// the superadmin's allowance for GSTR-1 / GSTR-1 (IFF) / GSTR-3B / GSTR-3B (Q)
-// / GSTR-1A, or as the manual route kept for the returns that have no pull
-// yet (CMP-08, GSTR-6, GSTR-7, ITC-04). A database trigger refuses every
-// direct write, so these are the app's only writers of those columns.
+// the superadmin's allowance for a return that is pulled (GSTR-1, GSTR-1
+// (IFF), GSTR-3B, GSTR-3B (Q), GSTR-1A, GSTR-6, GSTR-7), or as the manual
+// route kept for the returns that have no pull yet (CMP-08, ITC-04). A
+// database trigger refuses every direct write, so these are the app's only
+// writers of those columns.
 import { supabase } from '@/integrations/supabase/client';
 import { allowanceBadgeText, type ManualSourceAllowance } from '@/lib/manualSourceAllowances';
 
 /** Returns that are pulled only (filing_pull_only in the database). */
-export const PULL_ONLY_RETURN_TYPES = ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)', 'GSTR-1A'] as const;
+export const PULL_ONLY_RETURN_TYPES = ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)', 'GSTR-1A', 'GSTR-6', 'GSTR-7'] as const;
 export const isPullOnly = (returnType: string) => (PULL_ONLY_RETURN_TYPES as readonly string[]).includes(returnType);
 
 /**
- * Returns the extension's e-Filed Returns pull can be asked for. CMP-08 and
- * ITC-04 are left out: the pull sets a monthly period, and theirs is a quarter
- * and a half-year. GSTR-6 and GSTR-7 are offered but have never been pulled
- * live; their manual route stays.
+ * Returns the extension's e-Filed Returns pull can be asked for: every
+ * pull-only return. CMP-08 and ITC-04 are left out: the pull sets a monthly
+ * period, and theirs is a quarter and a half-year; they keep the manual route.
  */
-export const hasPortalPull = (returnType: string) => !['CMP-08', 'ITC-04'].includes(returnType);
+export const hasPortalPull = (returnType: string) => isPullOnly(returnType);
+
+/** Which pull a page is waiting on: one return of one client for one period. */
+export const pullKey = (clientId: string, returnType: string, periodMonth: string) => `${clientId}__${returnType}__${periodMonth}`;
 
 /** The rows of one return: GSTR-1 / GSTR-1 (IFF), GSTR-3B / GSTR-3B (Q). */
 export function filingFamily(returnType: string): string[] {
@@ -57,9 +60,52 @@ export function arnProblem(gstin: string | null | undefined, returnType: string,
  */
 export const isUnlockedFiled = (r: { status: string | null; arn: string | null }) => r.status !== 'Filed' && !!r.arn;
 
-/** What "Pull filed returns" asks for: not unlocked for correction, and not Filed, or Filed without a checked PDF or the portal's date. */
-export const wantedInBulkPull = (r: { status: string | null; arn: string | null; return_pdf_url: string | null; filed_date: string | null }) =>
-  !isUnlockedFiled(r) && (r.status !== 'Filed' || !r.return_pdf_url || !r.filed_date);
+/**
+ * The row holds a PDF a portal pull checked (the filed return, showing its
+ * ARN). The database keeps no other PDF on a row Filed from the portal: a
+ * pull without a checked PDF takes an unchecked one off (pdf_note says why).
+ */
+export const holdsCheckedPortalPdf = (r: { filed_source?: string | null; return_pdf_url: string | null }) =>
+  r.filed_source === 'portal' && !!r.return_pdf_url;
+
+/**
+ * What "Pull filed returns" asks for: not unlocked for correction, and not
+ * Filed; or Filed but never pulled (recorded by hand before 21 Oct 2026, so
+ * its PDF was never checked); or pulled without a checked PDF or the
+ * portal's date. A return attached by hand under an allowance is left out
+ * (its own Pull still tries).
+ */
+export const wantedInBulkPull = (r: { status: string | null; arn: string | null; return_pdf_url: string | null; filed_date: string | null; filed_source?: string | null }) =>
+  !isUnlockedFiled(r) && (r.status !== 'Filed' || !r.filed_source || (r.filed_source === 'portal' && (!r.return_pdf_url || !r.filed_date)));
+
+/** What the toast says when "Pull filed returns" finds nothing to pull. */
+export function bulkPullNothingText(heldBack: number): string {
+  if (!heldBack) return 'Every return in view is Filed from the portal with its checked PDF and date.';
+  return `Nothing pulled. ${heldBack} return${heldBack === 1 ? ' was' : 's were'} not pushed through GST Keeper: the superadmin approves the direct filing first (Request approval on the row). Every other return in view is Filed from the portal.`;
+}
+
+/**
+ * The manual exception on one row. canAllow: the superadmin may allow one
+ * manual upload (a pull-only return with no live allowance, unless the row
+ * holds a checked PDF from the portal). canAttach: a staff member with the
+ * Filing status permission may attach now (CMP-08 / ITC-04 freely until
+ * Filed with a PDF; a pull-only return under an open allowance, never over a
+ * checked portal PDF). showAllowance: the "Manual allowed by" line.
+ */
+export function manualActions(
+  r: { status: string | null; return_type: string; return_pdf_url: string | null; filed_source?: string | null },
+  o: { canEdit: boolean; isSuperadmin: boolean; notApplicable: boolean; lockedOut: boolean; allowance: { used_at: string | null } | null },
+): { canAttach: boolean; canAllow: boolean; showAllowance: boolean } {
+  const pulled = holdsCheckedPortalPdf(r);
+  const open = !!o.allowance && !o.allowance.used_at;
+  const pullOnly = isPullOnly(r.return_type);
+  return {
+    canAttach: o.canEdit && !o.notApplicable && !o.lockedOut
+      && (pullOnly ? open && !pulled : !(r.status === 'Filed' && r.return_pdf_url)),
+    canAllow: o.isSuperadmin && pullOnly && !o.notApplicable && !o.allowance && !pulled,
+    showAllowance: open && !pulled,
+  };
+}
 
 /** What a client's "all" asks for: every return but one unlocked for correction. */
 export const wantedInClientPull = (r: { status: string | null; arn: string | null }) => !isUnlockedFiled(r);
@@ -71,14 +117,14 @@ export const wantedInClientPull = (r: { status: string | null; arn: string | nul
  * the pull-only rule. null for a row holding no filed return.
  */
 export function filingSourceText(
-  r: { status: string | null; arn: string | null; return_type: string; filed_source?: string | null },
+  r: { status: string | null; arn: string | null; return_type: string; filed_source?: string | null; manual_allowance_id?: string | null },
   allowance: Pick<ManualSourceAllowance, 'allowed_by' | 'reason'> | null | undefined,
   names: Record<string, string>,
 ): string | null {
   if (r.filed_source === 'portal') return 'Portal';
   if (r.filed_source === 'manual') {
     if (allowance) return allowanceBadgeText(allowance, names);
-    return isPullOnly(r.return_type) ? 'manual' : `manual (no portal pull for ${r.return_type} yet)`;
+    return r.manual_allowance_id || isPullOnly(r.return_type) ? 'manual' : `manual (no portal pull for ${r.return_type} yet)`;
   }
   if (r.status === 'Filed' || r.arn) return 'By hand before 21 Oct 2026';
   return null;
@@ -170,13 +216,13 @@ export async function fetchOpenConflicts(): Promise<FilingLogRow[]> {
 /** Pull outcomes the page shows on a row (not every change). */
 export const PULL_EVENTS = ['filed', 'refreshed', 'conflict', 'refused', 'not_found', 'failed', 'manual_attach', 'conflict_accepted'];
 
-/** The latest pull outcome per client and return type, from the month's log. */
+/** The latest pull outcome per client, return type and period, from the log (keyed by pullKey). */
 export function latestOutcomes(log: FilingLogRow[]): Map<string, FilingLogRow> {
   const m = new Map<string, FilingLogRow>();
   for (const r of log) {
     if (!PULL_EVENTS.includes(r.event)) continue;
     for (const rt of filingFamily(r.return_type)) {
-      const k = `${r.client_id}__${rt}`;
+      const k = pullKey(r.client_id, rt, r.period_month);
       if (!m.has(k)) m.set(k, r);
     }
   }

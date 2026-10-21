@@ -7,6 +7,9 @@
 # connection from the usual PG* variables, e.g.
 #   PGHOST=/tmp/pgsock PGPORT=55432 PGUSER=postgres supabase/tests/filing_pull/run.sh
 # Never point it at the live project: it creates and drops its own database.
+# The migration needs 20261021100000's auto_lock_on_filed (it refuses to
+# apply on the live one): run.sh checks that refusal on the stub, then puts
+# fixtures/twob_auto_lock.sql on it.
 #
 # Then the shared allowance block (manual_source_allowances and its
 # functions, also in the reco branch's 20261021120000): the filing migration
@@ -31,12 +34,23 @@ shared_block() { awk '/^CREATE TABLE IF NOT EXISTS public\.manual_source_allowan
 createdb "$db"
 trap '[ -n "$keep" ] || { dropdb --if-exists --force "$db"; dropdb --if-exists --force "$db2"; }' EXIT
 PGOPTIONS="$PGOPTIONS -c client_min_messages=error" psql_q -f "$here/00_stub.sql" >/dev/null
+status=0
+# Round 2, defect 7: on the live auto_lock_on_filed (no GSTR-3B (Q) carry)
+# the migration refuses to apply and names 20261021100000; nothing of it is
+# left behind. Then the stub gets 20261021100000's auto_lock_on_filed.
+if out="$(psql_q -f "$self" 2>&1 >/dev/null)"; then
+  echo "FAIL applies without 20261021100000 (a pulled GSTR-3B (Q) would never be carried)"; status=1
+elif ! grep -q '20261021100000' <<<"$out" || [ "$(psql_q -At -c "SELECT to_regclass('public.filing_status_log') IS NULL")" != t ]; then
+  echo "FAIL refusal without 20261021100000"; echo "$out"; status=1
+else
+  echo "ok   refuses to apply before 20261021100000, and leaves nothing behind"
+fi
+psql_q -f "$here/fixtures/twob_auto_lock.sql" >/dev/null
 # Applied twice: the migration must be safe to re-run.
 for pass in 1 2; do
   psql_q -f "$self" >/dev/null \
     || { echo "FAILED applying the migration (pass $pass)"; exit 1; }
 done
-status=0
 shopt -s nullglob
 for t in "$here"/test_*.sql; do
   # Each test file runs in its own transaction and is rolled back, so the
@@ -54,6 +68,7 @@ shared_block "$self" > "$block"
 if [ "$(wc -l < "$block")" -lt 100 ]; then echo "FAIL shared block: not found in the migration"; status=1; fi
 createdb "$db2"
 PGOPTIONS="$PGOPTIONS -c client_min_messages=error" psql_2 -f "$here/00_stub.sql" >/dev/null
+psql_2 -f "$here/fixtures/twob_auto_lock.sql" >/dev/null
 if out="$( { psql_2 -f "$here/fixtures/reco_first_draft_allowances.sql" && psql_2 -f "$self" \
              && psql_2 -f "$block" && psql_2 -f "$self"; } 2>&1 >/dev/null)"; then
   echo "ok   shared block: applies after the reco first draft, and the block and the migration after each other"

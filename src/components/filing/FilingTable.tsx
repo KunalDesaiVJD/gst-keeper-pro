@@ -12,7 +12,7 @@ import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/components/works
 import { cn } from '@/lib/utils';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
 import { FilingStatusType, filingStatusDisplayLabel } from '@/types';
-import { filingSourceText, hasPortalPull, isPullOnly, outcomeWords, type FilingLogRow } from '@/lib/filingPull';
+import { filingSourceText, hasPortalPull, isPullOnly, manualActions, outcomeWords, type FilingLogRow } from '@/lib/filingPull';
 import type { ManualSourceAllowance } from '@/lib/manualSourceAllowances';
 
 export interface FilingRecord {
@@ -120,6 +120,8 @@ export interface FilingTableProps {
   isSuperadmin: boolean;
   extReady: boolean;
   extOutdated: boolean;
+  /** A pull is running in the extension: one at a time, so every Pull waits. */
+  pullRunning: boolean;
   // Row facts.
   gstr1DataClientIds: Set<string>;
   gstr1IsNilByClient: Map<string, boolean>;
@@ -155,7 +157,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
   const sourceLine = (record: FilingRecord, ctx: FilingRowContext): React.ReactNode => {
     if (record.filed_source === 'portal') {
       return (
-        <span className="text-[10px] leading-tight text-muted-foreground" title="ARN and filing date read from the GST portal by the extension">
+        <span className="text-[10px] leading-tight text-muted-foreground" title="ARN and filing date read from the GST portal by the extension. A PDF shown here is the filed return the pull checked.">
           Portal{record.pulled_at ? `, pulled ${dayLabel(record.pulled_at)}` : ''}
         </span>
       );
@@ -329,14 +331,16 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
             const unlockedFiled = !isFiled && !!record.arn;
             const lockedOut = !!record.is_locked && !p.canUnlockSheets;
             const allowanceOpen = ctx.allowance && !ctx.allowance.used_at ? ctx.allowance : null;
-            const canAttach = p.canEditFilingStatus && !notApplicable && !lockedOut
-              && (!isPullOnly(record.return_type) ? !(isFiled && record.return_pdf_url) : !!allowanceOpen);
-            const canAllow = p.isSuperadmin && isPullOnly(record.return_type) && !notApplicable && !ctx.allowance
-              && !(isFiled && record.return_pdf_url);
-            const showPull = hasPortalPull(record.return_type) && !notApplicable;
+            const { canAttach, canAllow, showAllowance } = manualActions(record, {
+              canEdit: p.canEditFilingStatus, isSuperadmin: p.isSuperadmin, notApplicable, lockedOut, allowance: ctx.allowance,
+            });
+            // Pulling files a return: the Filing status permission, as the bulk button.
+            const showPull = hasPortalPull(record.return_type) && !notApplicable && p.canEditFilingStatus;
+            const pullDisabled = ctx.pulling || p.pullRunning;
             const pullTitle = !p.extReady
               ? 'GST Keeper extension not detected yet: install or enable it and reload this page'
               : p.extOutdated ? 'Update the GST Keeper extension to 0.15.0 or later to pull filed returns'
+                : p.pullRunning && !ctx.pulling ? 'A pull is running. The extension pulls one set at a time: wait for it to end, then pull again.'
                 : ctx.pullBlocked ? `Pull is held back: this ${record.return_type} was not pushed through GST Keeper. Click to Request approval of the direct filing from the superadmin first.`
                   : isFiled ? 'Pull again from the GST portal: the same ARN refreshes the date and PDF; a different ARN goes to the superadmin'
                     : 'Pull the filed return from the GST portal: its ARN, filing date and PDF';
@@ -468,13 +472,16 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                           <Eye className="h-3.5 w-3.5" />
                         </a>
                       ) : isFiled ? (
-                        <span className="text-[10px] text-muted-foreground" title={record.pdf_note || 'No PDF stored'}>No PDF</span>
+                        <span className={cn('text-[10px] leading-tight', record.pdf_note ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground')}
+                          title={record.pdf_note || 'No PDF stored'}>
+                          {record.pdf_note ? 'No checked PDF' : 'No PDF'}
+                        </span>
                       ) : null}
                       {showPull && (
                         <button
                           type="button"
                           onClick={() => p.onPull(record)}
-                          disabled={ctx.pulling}
+                          disabled={pullDisabled}
                           className={cn('inline-flex items-center gap-1 text-xs disabled:cursor-not-allowed disabled:opacity-50',
                             p.extReady && !p.extOutdated && !ctx.pullBlocked ? 'text-primary hover:text-primary/80' : 'text-muted-foreground hover:text-foreground')}
                           title={pullTitle}
@@ -484,9 +491,9 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                         </button>
                       )}
                       {showPull && (
-                        <button type="button" onClick={() => p.onPullClient(record)} disabled={ctx.pulling}
+                        <button type="button" onClick={() => p.onPullClient(record)} disabled={pullDisabled}
                           className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
-                          title={`Pull every return of ${record.clientName || 'this client'} for this month`}>
+                          title={p.pullRunning ? 'A pull is running: wait for it to end, then pull again.' : `Pull every return of ${record.clientName || 'this client'} for this month`}>
                           all
                         </button>
                       )}
@@ -505,7 +512,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                         </button>
                       )}
                     </div>
-                    {allowanceOpen && (
+                    {showAllowance && allowanceOpen && (
                       <span className="line-clamp-2 text-[10px] leading-tight text-amber-700 dark:text-amber-400" title={allowanceOpen.reason}>
                         Manual allowed by {p.userNames[allowanceOpen.allowed_by] || 'the superadmin'}: {allowanceOpen.reason}
                       </span>

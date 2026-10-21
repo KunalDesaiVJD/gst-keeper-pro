@@ -55,6 +55,8 @@
     // 0.15.0: a pulled return goes through filing_record_pull only.
     recordFiledPull: (p) => call('recordFiledPull', p),
     reportFiledPull: (p) => call('reportFiledPull', p),
+    // 0.15.0 (round 2): end a filed-return pull, reporting the returns it did not reach.
+    endReturnPull: (requestId, why) => call('endReturnPull', requestId, why),
     // 0.8.4: one e-invoice pull — upserts einvoice_docs (from the portal's
     // GSTR-1 JSON, when given) and einvoice_pulls. See background.js.
     saveEinvoicePull: (info) => call('saveEinvoicePull', info),

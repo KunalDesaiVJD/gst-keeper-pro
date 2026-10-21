@@ -18,7 +18,11 @@
 //    correction; every staff level can ask for a direct-filing approval from
 //    a held-back row; the filed-return reports keep the PDF link a bare
 //    address with its source beside it; where a filed return came from is
-//    said on the page, its PDF export, the Reports Hub and reply evidence.
+//    said on the page, its PDF export, the Reports Hub and reply evidence;
+//  - round 2: a PDF no pull checked is never shown as the portal's and the
+//    bulk pull retries it; no manual upload over a pulled return; GSTR-6 and
+//    GSTR-7 are pulled only; one pull at a time, keyed by period; returns held
+//    back are named; Pull needs the Filing status permission.
 //   node scripts/verify-filing-pull-only.mjs
 // Fictional data; Supabase is replaced by a recorder. Exits 1 on any failure.
 import { createRequire } from 'node:module';
@@ -120,18 +124,21 @@ check('ARN: another state', L.arnProblem(G, 'GSTR-3B', '08/2026', 'AB27082612345
 check('ARN: another period', L.arnProblem(G, 'GSTR-1', '08/2026', 'AA240726123456X') === 'ARN AA240726123456X is for the tax period 07/2026, not 08/2026.');
 check('ARN: not an ARN', L.arnProblem(G, 'GSTR-3B', '08/2026', 'AB2408261234') === 'AB2408261234 is not an ARN. An ARN has 15 characters: two letters, the state code, the tax period (MMYY) and seven more.');
 check('ARN: ITC-04 period code is not checked', L.arnProblem(G, 'ITC-04', '03/2026', 'AA241825001756X') === null);
-check('pull only: GSTR-1, IFF, 3B, 3B (Q), 1A; not CMP-08 / GSTR-6 / GSTR-7 / ITC-04',
-  ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)', 'GSTR-1A'].every(L.isPullOnly) && !['CMP-08', 'GSTR-6', 'GSTR-7', 'ITC-04'].some(L.isPullOnly));
+check('pull only: GSTR-1, IFF, 3B, 3B (Q), 1A, GSTR-6, GSTR-7; not CMP-08 / ITC-04 (round 2, defect 8)',
+  ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)', 'GSTR-1A', 'GSTR-6', 'GSTR-7'].every(L.isPullOnly) && !['CMP-08', 'ITC-04'].some(L.isPullOnly));
 check('no pull offered for CMP-08 and ITC-04', !L.hasPortalPull('CMP-08') && !L.hasPortalPull('ITC-04') && L.hasPortalPull('GSTR-3B (Q)'));
 check('twins are one return', L.filingFamily('GSTR-1 (IFF)').join() === 'GSTR-1,GSTR-1 (IFF)' && L.filingFamily('GSTR-3B').join() === 'GSTR-3B,GSTR-3B (Q)' && L.filingFamily('CMP-08').join() === 'CMP-08');
 
 const log = [
-  { id: '3', at: '2026-10-21T10:00:00Z', client_id: 'c1', return_type: 'GSTR-1 (IFF)', event: 'filed' },
-  { id: '2', at: '2026-10-20T10:00:00Z', client_id: 'c1', return_type: 'GSTR-1', event: 'not_found' },
-  { id: '1', at: '2026-10-19T10:00:00Z', client_id: 'c1', return_type: 'GSTR-3B', event: 'changed' },
+  { id: '3', at: '2026-10-21T10:00:00Z', client_id: 'c1', return_type: 'GSTR-1 (IFF)', period_month: '09/2026', event: 'filed' },
+  { id: '2', at: '2026-10-20T10:00:00Z', client_id: 'c1', return_type: 'GSTR-1', period_month: '09/2026', event: 'not_found' },
+  { id: '1', at: '2026-10-19T10:00:00Z', client_id: 'c1', return_type: 'GSTR-3B', period_month: '09/2026', event: 'changed' },
 ];
 const o = L.latestOutcomes(log);
-check('latest outcome per return, shared by its twins', o.get('c1__GSTR-1').id === '3' && o.get('c1__GSTR-1 (IFF)').id === '3' && !o.has('c1__GSTR-3B'));
+// Before round 2 there was no pullKey (the page keyed by client and return only).
+const pullKeyOf = L.pullKey || ((c, rt) => `${c}__${rt}`);
+const k9 = (rt) => pullKeyOf('c1', rt, '09/2026');
+check('latest outcome per return, shared by its twins', o.get(k9('GSTR-1')).id === '3' && o.get(k9('GSTR-1 (IFF)')).id === '3' && !o.has(k9('GSTR-3B')));
 
 // The calls.
 globalThis.__calls.length = 0;
@@ -156,13 +163,13 @@ check('a manual PDF goes to the client\'s folder', /^c1\/GSTR-3B\/08-2026\/manua
 // in a bulk or per-client pull; its own Pull re-files it.
 const unlocked = { status: 'Prepared Pending', arn: 'AB240826123456X', return_pdf_url: 'https://x/a.pdf', filed_date: '2026-09-18' };
 check('bulk pull: an unlocked return is left out', !L.wantedInBulkPull(unlocked) && !L.wantedInClientPull(unlocked));
-check('bulk pull: not Filed, or Filed without PDF or date, is asked for',
+check('bulk pull: not Filed, or pulled without a checked PDF or date, is asked for',
   L.wantedInBulkPull({ status: 'Prepared', arn: null, return_pdf_url: null, filed_date: null })
-  && L.wantedInBulkPull({ status: 'Filed', arn: 'AB240826123456X', return_pdf_url: null, filed_date: '2026-09-18' })
-  && L.wantedInBulkPull({ status: 'Filed', arn: 'AB240826123456X', return_pdf_url: 'https://x/a.pdf', filed_date: null })
-  && !L.wantedInBulkPull({ status: 'Filed', arn: 'AB240826123456X', return_pdf_url: 'https://x/a.pdf', filed_date: '2026-09-18' }));
+  && L.wantedInBulkPull({ status: 'Filed', arn: 'AB240826123456X', return_pdf_url: null, filed_date: '2026-09-18', filed_source: 'portal' })
+  && L.wantedInBulkPull({ status: 'Filed', arn: 'AB240826123456X', return_pdf_url: 'https://x/a.pdf', filed_date: null, filed_source: 'portal' })
+  && !L.wantedInBulkPull({ status: 'Filed', arn: 'AB240826123456X', return_pdf_url: 'https://x/a.pdf', filed_date: '2026-09-18', filed_source: 'portal' }));
 check('client pull: a Filed return is still refreshed', L.wantedInClientPull({ status: 'Filed', arn: 'AB240826123456X' }));
-check('the page\'s bulk and client pulls use these rules', /\.filter\(\(r\) => pullable\(r\) && wantedInBulkPull\(r\)\)/.test(page)
+check('the page\'s bulk and client pulls use these rules', /\.filter\(\(r\) => hasPortalPull\(r\.return_type\) && !filedTwinOf\(r\) && wantedInBulkPull\(r\)\);\s*const rows = wanted\.filter\(\(r\) => pullable\(r\)\);/.test(page)
   && /pullable\(r\) && wantedInClientPull\(r\)/.test(page));
 
 // Defect 10: every staff level can ask for the approval from a held-back row.
@@ -170,7 +177,8 @@ check('needs_request offers "Request approval" (the words the database names) to
   && D.directFilingActionLabel('rejected', false) === 'Request again' && D.directFilingActionLabel('pending', false) === 'View request'
   && D.directFilingActionLabel('pending', true) === 'Review request' && D.directFilingActionLabel('approved', false) === null && D.directFilingActionLabel('pushed', true) === null);
 const table = fs.readFileSync(path.join(root, 'src/components/filing/FilingTable.tsx'), 'utf8');
-check('the row\'s Pull is not disabled for a held-back return (it opens the request)', /disabled=\{ctx\.pulling\}/.test(table) && !/ctx\.pullBlocked && !p\.isSuperadmin/.test(table));
+check('the row\'s Pull is not disabled for a held-back return (it opens the request)', /const pullDisabled = ctx\.pulling \|\| p\.pullRunning;/.test(table)
+  && /disabled=\{pullDisabled\}/.test(table) && !/ctx\.pullBlocked && !p\.isSuperadmin/.test(table));
 check('the held-back badge shows on every return type, not only the GSTR-1 tab', /\{p\.directFilingBadge\(record\)\}/.test(table) && !/returnType === 'GSTR-1' && p\.directFilingBadge/.test(table));
 check('a held-back row\'s Pull opens the request for every staff level', /const pullOne = \(record: FilingRecord\) => \{\s*if \(isDirectFilingBlocked\(directFilingStateFor\(record\)\)\) \{\s*openDirectFilingDialog/.test(page)
   && /Request approval: direct filing/.test(fs.readFileSync(path.join(root, 'src/components/filing/RequestDirectFilingDialog.tsx'), 'utf8')));
@@ -215,6 +223,59 @@ const mig = fs.readFileSync(path.join(root, 'supabase/migrations/20261021110000_
 const unlockFn = mig.slice(mig.indexOf('CREATE OR REPLACE FUNCTION public.filing_status_unlock('), mig.indexOf('CREATE OR REPLACE FUNCTION public.filing_status_unfile('));
 check('filing_status_unlock accepts an employee holding unlock_sheets, as canUnlockSheets does', /permission_key = 'unlock_sheets'/.test(unlockFn)
   && /canUnlockSheets=\{canUnlockSheets\(\)\}/.test(page));
+
+// ── 2c. Round 2 ───────────────────────────────────────────────────────────
+// Defects 1 and 5: a PDF no pull checked never reads as the portal's. The
+// database takes it off a row Filed from the portal (test_80); here: the
+// bulk pull retries such rows and rows never pulled, and the superadmin can
+// allow a manual upload on them.
+// Helpers added in round 2 (absent before it, so the checks fail there instead of crashing).
+const missing = (f) => () => { throw new Error(f + ' is missing'); };
+const holds = L.holdsCheckedPortalPdf || missing('holdsCheckedPortalPdf');
+const acts = L.manualActions || (() => ({ canAttach: null, canAllow: null, showAllowance: null }));
+const nothingText = L.bulkPullNothingText || (() => '');
+const legacy = { status: 'Filed', arn: 'AB240926000111X', return_pdf_url: 'https://old/summary.pdf', filed_date: '2026-10-18', filed_source: null, return_type: 'GSTR-3B' };
+const pulledNoPdf = { status: 'Filed', arn: 'AB240926000111X', return_pdf_url: null, filed_date: '2026-10-18', filed_source: 'portal', return_type: 'GSTR-3B',
+  pdf_note: 'The portal gave the System generated summary, not the filed return. The PDF stored before was not checked by a pull, so it is no longer shown (the log keeps its address).' };
+const pulledPdf = { status: 'Filed', arn: 'AB240926000111X', return_pdf_url: 'https://x/checked.pdf', filed_date: '2026-10-18', filed_source: 'portal', return_type: 'GSTR-3B' };
+const manualRow = { status: 'Filed', arn: 'AB240926000111X', return_pdf_url: 'https://x/m.pdf', filed_date: '2026-10-18', filed_source: 'manual', return_type: 'GSTR-3B' };
+check('bulk pull: a Filed row never pulled (its PDF never checked) is asked for again', L.wantedInBulkPull(legacy));
+check('bulk pull: a pulled row without a checked PDF is asked for again; a checked one and a manual one are not',
+  L.wantedInBulkPull(pulledNoPdf) && !L.wantedInBulkPull(pulledPdf) && !L.wantedInBulkPull(manualRow));
+check('only a portal row with a PDF holds a checked portal PDF', !!L.holdsCheckedPortalPdf && holds(pulledPdf) && !holds(pulledNoPdf)
+  && !holds(legacy) && !holds(manualRow));
+const base = { canEdit: true, isSuperadmin: true, notApplicable: false, lockedOut: false, allowance: null };
+check('the superadmin can allow a manual upload on a row whose PDF no pull checked', acts(legacy, base).canAllow && acts(pulledNoPdf, base).canAllow);
+check('but not on a row holding the checked PDF from the portal', !acts(pulledPdf, base).canAllow);
+check('the row says "No checked PDF" with the reason visible, not a plain eye', /record\.pdf_note \? 'No checked PDF' : 'No PDF'/.test(table));
+// Defect 2: no manual upload over a pulled return, and no "Manual allowed" line on it.
+const open = { ...base, isSuperadmin: false, allowance: { used_at: null } };
+check('paperclip and "Manual allowed" line hidden on a row Filed from the portal with its checked PDF',
+  !acts(pulledPdf, open).canAttach && !acts(pulledPdf, open).showAllowance);
+check('under an open allowance a row with no checked PDF can be attached', acts(pulledNoPdf, open).canAttach && acts(legacy, open).canAttach
+  && acts(pulledNoPdf, open).showAllowance);
+check('the table uses these rules', /manualActions\(record, \{/.test(table) && /\{showAllowance && allowanceOpen && \(/.test(table));
+// Defect 8: GSTR-6 and GSTR-7 need an allowance like GSTR-1 / 3B; CMP-08 does not.
+check('GSTR-7 by hand needs an open allowance; CMP-08 does not', !acts({ status: 'Prepared', return_type: 'GSTR-7', return_pdf_url: null }, { ...base, isSuperadmin: false }).canAttach
+  && acts({ status: 'Prepared', return_type: 'CMP-08', return_pdf_url: null }, { ...base, isSuperadmin: false }).canAttach
+  && L.hasPortalPull('GSTR-6') && L.hasPortalPull('GSTR-7'));
+// Defect 9: the spinner is keyed by client, return and period.
+check('pullKey carries the period', pullKeyOf('c1', 'GSTR-3B', '09/2026') !== pullKeyOf('c1', 'GSTR-3B', '08/2026'));
+const o2 = L.latestOutcomes([{ id: 'a', at: '2026-10-21T10:00:00Z', client_id: 'c1', return_type: 'GSTR-3B', period_month: '08/2026', event: 'filed' }]);
+check('an August outcome does not answer a September pull', o2.has(pullKeyOf('c1', 'GSTR-3B', '08/2026')) && !o2.has(pullKeyOf('c1', 'GSTR-3B', '09/2026')));
+check('the page keys pending pulls and outcomes by period', !/const pullKey = /.test(page) && /pullKey\(record\.client_id, record\.return_type, period\)/.test(page)
+  && /pullKey\(p\.clientId, p\.return_type, p\.period_month\)/.test(page) && /pullKey\(i\.clientId, i\.return_type, i\.period_month\)/.test(page));
+// Defect 10: held-back rows are named, not called Filed.
+check('"Pull filed returns" names returns held back by the direct-filing rule', /7 returns were not pushed through GST Keeper: the superadmin approves the direct filing first/.test(nothingText(7))
+  && nothingText(0) === 'Every return in view is Filed from the portal with its checked PDF and date.'
+  && /toast\.info\(bulkPullNothingText\(heldBack\)/.test(page));
+// Defect 11: Pull and "all" only for whoever may change Filing Status.
+check('the row\'s Pull and "all" need the Filing status permission', /const showPull = hasPortalPull\(record\.return_type\) && !notApplicable && p\.canEditFilingStatus;/.test(table));
+// Defect 6: one pull at a time; a pull that never answers is said.
+check('while a pull runs, every Pull, "all" and Pull filed returns wait', /if \(pendingCount\) \{ toast\.info\('A pull is running/.test(page)
+  && /disabled=\{!canEditFilingStatus\(\) \|\| pendingCount > 0\}/.test(page) && /pullRunning=\{pendingCount > 0\}/.test(page));
+check('the 15-minute give-up says the outcome is not known', /The outcome is not known: check the portal tab, then pull again/.test(page));
+check('a pull the extension ended early is said, with why', /The pull ended early: \$\{r\.ended\}/.test(page));
 
 // ── 3. Reading a PDF in the app (the extension's checker) ─────────────────
 const fx = (f) => new Blob([fs.readFileSync(path.join(root, 'extension/test/fixtures', f))], { type: 'application/pdf' });

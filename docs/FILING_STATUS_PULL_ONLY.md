@@ -18,13 +18,13 @@ extension's `returnpdf` mode.
 
 | Route | Who | Function | Marked |
 |---|---|---|---|
-| Portal pull | the extension (0.15.0+), started from Filing Status | `filing_record_pull` | `filed_source = 'portal'` |
-| Manual attach, returns pulled only | a staff member, under the superadmin's allowance | `filing_attach_manual` | `manual`, with `manual_allowance_id` |
-| Manual attach, returns with no pull yet | a staff member | `filing_attach_manual` | `manual` |
+| Portal pull | the extension (0.15.0+), started from Filing Status by a staff member with the Filing status permission (`edit_filing_status`; GST Manager and superadmin always) | `filing_record_pull` | `filed_source = 'portal'` |
+| Manual attach, returns pulled only | a staff member with the Filing status permission, under the superadmin's allowance; never over a return pulled with its checked PDF | `filing_attach_manual` | `manual`, with `manual_allowance_id` |
+| Manual attach, returns with no pull yet (CMP-08, ITC-04) | a staff member with the Filing status permission | `filing_attach_manual` | `manual` |
 | Unlock (GSTR-3B family) | whoever the page offers it to (`canUnlockSheets`): GST Manager, superadmin, or an employee whose position holds `unlock_sheets` | `filing_status_unlock` | keeps everything |
 | Take off Filed | superadmin, with a reason | `filing_status_unfile` | clears; the log keeps it; a GSTR-3B row and its month's sheets are unlocked |
 | A pull conflict | superadmin | `filing_pull_conflict_decide` | `portal` when accepted |
-| Scheme change (inapplicable returns) | the `client_scheme_history` trigger | as before, logged | cleared |
+| Scheme change (inapplicable returns) | the `client_scheme_history` trigger | a filed return is kept and logged as kept (round 2); a locked row holding nothing filed is reset | unchanged |
 
 The trigger `trigger_filing_status_source` refuses every other write that makes a row Filed,
 takes it off Filed, or changes `arn`, `filed_date`, `return_pdf_url`, `filed_source`,
@@ -40,11 +40,15 @@ DELETE of its own. A move of a row holding nothing filed is still allowed and is
 `filing_status_guard_pushed` / `filing_record_push`. Status changes between the working statuses,
 remarks, target dates, NIL, locks and the push marker are not touched.
 
-**Pulled only:** GSTR-1, GSTR-1 (IFF), GSTR-3B, GSTR-3B (Q), GSTR-1A (`filing_pull_only`).
-**Manual route kept for now:** CMP-08, GSTR-6, GSTR-7, ITC-04. The extension had never pulled
-one of them (0 of 457 rows on 21 Oct 2026), and its e-Filed Returns pull sets a monthly period,
-which is wrong for CMP-08 (quarter) and ITC-04 (half-year). GSTR-6 and GSTR-7 can be pulled
-(untested live); the page offers no pull for CMP-08 and ITC-04.
+**Pulled only:** GSTR-1, GSTR-1 (IFF), GSTR-3B, GSTR-3B (Q), GSTR-1A, GSTR-6, GSTR-7
+(`filing_pull_only`, `PULL_ONLY_RETURN_TYPES`). GSTR-6 and GSTR-7 joined in round 2: the page
+offers their pull, 0.15.0 maps them and checks "FORM GSTR-6 / GSTR-7" in the PDF, and all 49
+GSTR-6 / GSTR-7 PDFs on Filing Status pass that check; their manual upload now needs the
+superadmin's allowance like the others.
+**Manual route kept for now:** CMP-08 and ITC-04 only. The e-Filed Returns pull sets a monthly
+period, which is wrong for CMP-08 (quarter) and ITC-04 (half-year), so the page offers no pull
+for them and any staff member with the Filing status permission attaches them ("manual (no portal
+pull for CMP-08 yet)").
 
 ## 2. The pull (extension 0.15.0, `returnpdf` mode)
 
@@ -84,13 +88,30 @@ which is wrong for CMP-08 (quarter) and ITC-04 (half-year). GSTR-6 and GSTR-7 ca
   (the 28 System generated summaries being repaired stay on record).
 - **One door.** `filing_record_pull` decides:
   - `filed`: the return is now Filed from the portal;
-  - `refreshed`: the row already held this ARN (date and PDF refreshed; a pull without a checked
-    PDF keeps the stored one and says it is not checked);
+  - `refreshed`: the row already held this ARN (date and PDF refreshed);
   - `conflict`: the row holds another ARN, or the ARN is on another return. Nothing changes; the
     superadmin accepts (the pulled ARN, date and PDF go on; the other return is taken off Filed
-    first) or keeps it (Filing Status, Exceptions to the portal pull);
-  - `refused`: the ARN cannot be this return's (state code, tax period), or a rule refused Filed
-    (GSTR-1 from 09/2026 still needs its push or a direct-filing approval).
+    and unlocked first) or keeps it (Filing Status, Exceptions to the portal pull). The conflict
+    always names the row the pull meant and the ARN it holds (the panel's "Holds"), also when the
+    ARN sits on another return; Accept is refused when the row now holds an ARN the conflict did
+    not show (a conflict logged before round 2, or a row changed since): keep it and pull again;
+  - `refused`: the ARN cannot be this return's (state code, tax period), the staff member lacks
+    the Filing status permission, or a rule refused Filed (GSTR-1 from 09/2026 still needs its
+    push or a direct-filing approval).
+- **The PDF shown is a PDF a pull checked, or one attached by hand and marked manual** (round 2).
+  When a pull brings no checked PDF, a PDF an earlier pull checked is kept, a PDF attached under
+  the superadmin's allowance is kept (the row stays manual), and any other PDF (a System generated
+  summary stored by 0.14.0, a file attached by hand before 21 Oct 2026, another month's return) is
+  taken off the row: the log keeps its address (`old_pdf_url`) and `pdf_note` says why. So a row
+  Filed from the portal holds a PDF only when a pull checked it, and "Portal" beside a PDF in the
+  grid, the PDF export and the Reports Hub always means the checked filed return. The row shows
+  "No checked PDF" (the reason on hover); "Pull filed returns" asks for it again, and for every
+  Filed row never pulled; the superadmin can allow a manual upload on it.
+- **The superadmin's allowance closes when the pull lands** (round 2): a pull that leaves the
+  return with its checked PDF revokes the live allowance for it (used or not; `revoked_by` the
+  staff member who pulled), and the log says so. A return pulled with its checked PDF never takes
+  a manual upload, under any allowance; a pull without a checked PDF leaves the allowance open, so
+  the PDF can still be attached by hand.
 - **Outcomes reach the page** through the extension (`__gstkReturnPullProgress`,
   `__gstkReturnPullDone`) and the log (realtime, and a poll while a pull runs), so a closed page
   sees them after a reload. `filing_pull_report` logs the outcomes that wrote nothing
@@ -99,6 +120,15 @@ which is wrong for CMP-08 (quarter) and ITC-04 (half-year). GSTR-6 and GSTR-7 ca
   closed (`failed`, "Not pulled. ...", `detail.not_reached`), so the superadmin sees why a manual
   allowance may be needed. A download that navigated instead of saving keeps the ARN and date
   already read and records them without a PDF.
+- **One pull at a time, never dropped** (round 2). The extension refuses a second pull while one
+  runs ("A pull of filed returns is already running in this browser ..."), and the page disables
+  every Pull, "all" and Pull filed returns while it waits. A pull that ends early (it sat idle 10
+  minutes at the CAPTCHA, ran 3 hours, its tab went, it was stopped from the popup, or another
+  portal job took the slot) reports every return it did not reach to GST Keeper (`failed`,
+  `not_reached`, "Not pulled: <why>.") and to the page ("The pull ended early: <why>"); the
+  background watchdog ends an idle one even when no portal page loads, and the next Pull ends a
+  stale one first. The page's own 15-minute give-up says that the outcome is not known. A pull
+  waits keyed by client, return and period, so another month's row is never shown "Pulling".
 - The old direct writers are gone: `markFiled` and `upsertFilingStatus` (background.js). The
   database refuses 0.14.0's upsert, and the app requires 0.15.0 (`MIN_EXTENSION_VERSION`).
 
@@ -143,10 +173,26 @@ the pull gets them too and none runs twice:
 
 GSTR-3B's locks and the carry forward stay with `auto_lock_on_filed`, which every route reaches
 through an UPDATE (a missing row is created first, not Filed). GSTR-3B (Q)'s carry is in that
-trigger from `20261021100000` on.
+trigger from `20261021100000` on, so this migration **refuses to apply before 20261021100000**
+(round 2): applied alone, a pulled GSTR-3B (Q) would be locked but its pending 2B items never
+carried into the next month, silently. It checks `auto_lock_on_filed` for GSTR-3B (Q), stops with
+a message naming 20261021100000, and leaves nothing behind.
 
 ## 6. Unlock, twins, the page
 
+- **A scheme change keeps filed returns** (round 2). A back-dated change on Edit Client (any staff
+  member holding Add/Edit clients) used to take every return of the old scheme off Filed, ARN and
+  date wiped, with no superadmin and no reason. Now a row holding a filed return is left as it is
+  and logged ("Kept Filed: ... Only the superadmin takes a return off Filed."); the grid shows the
+  other scheme's twin as "Not applicable"; Take off Filed (superadmin, reason) is the only way off
+  Filed. A locked row holding nothing filed is still reset to Data Pending.
+- **Pull needs the Filing status permission** (round 2), as the bulk button did: a staff member
+  without it sees no Pull or "all", and the database refuses (and logs) a pull or an attach from
+  them.
+- **"Pull filed returns" says what it leaves out** (round 2): returns held back by the
+  direct-filing rule are counted and named in the confirmation and the toast ("N returns were not
+  pushed through GST Keeper: the superadmin approves the direct filing first"), never reported as
+  Filed.
 - **Unlock** keeps the ARN, filing date and PDF (it used to wipe them: AMBER GUM 06/2026). The
   row shows Not to File with "Unlocked: filed, ARN kept"; pulling that row again (same ARN) files
   and locks it again. "Pull filed returns" and a client's "all" leave such a row out, so a
@@ -210,11 +256,16 @@ notice and case-folder uploads, which overwrite on purpose.
 ## 10. Tests
 
 - `supabase/tests/filing_pull/run.sh` (local PostgreSQL; the live trigger functions in
-  `00_stub.sql`; the migration applied twice; writes as `anon` with `request.jwt.claims`;
-  `test_71`..`test_74` are round 1: no moves, the PDF address and who asked, no e-mail without a
-  date, Unlock for `unlock_sheets` and Take off Filed unlocking; then the shared block in both
-  orders).
+  `00_stub.sql`; first the refusal on the live `auto_lock_on_filed`, then
+  `fixtures/twob_auto_lock.sql` (20261021100000's) and the migration applied twice; writes as
+  `anon` with `request.jwt.claims`; `test_71`..`test_74` are round 1: no moves, the PDF address
+  and who asked, no e-mail without a date, Unlock for `unlock_sheets` and Take off Filed
+  unlocking; `test_80`..`test_84` are round 2: unchecked PDFs, the allowance closed by the pull,
+  scheme changes, the conflict's target, GSTR-6 / GSTR-7 and the permission; then the shared
+  block in both orders).
 - `extension/test/16-filed-return-pull.test.mjs` (fixtures `extension/test/fixtures/*.pdf`, made
-  by `extension/test/_pdffixture.mjs`).
+  by `extension/test/_pdffixture.mjs`; sections 13 to 16 are round 2: one pull at a time, a stale
+  or stopped or replaced pull reported).
 - `node scripts/verify-filing-pull-only.mjs` (no direct writes in the app, the side effects left
-  to the database, the ARN words, the PDF read in the app, the RPC calls).
+  to the database, the ARN words, the PDF read in the app, the RPC calls; round 2: bulk pull and
+  manual rules, pull keys by period, held-back words, the permission, one pull at a time).

@@ -37,8 +37,10 @@ import {
   filingSourceText,
   hasPortalPull,
   isPullOnly,
+  bulkPullNothingText,
   latestOutcomes,
   outcomeWords,
+  pullKey,
   unfileReturn,
   unlockFiled,
   wantedInBulkPull,
@@ -132,7 +134,6 @@ interface Client {
 
 /** One return the extension is asked to pull. */
 interface PullItem { clientId: string; return_type: string; period_month: string }
-const pullKey = (clientId: string, returnType: string) => `${clientId}__${returnType}`;
 
 const FilingStatusPage: React.FC = () => {
   const { canUnlockSheets, isStaffRole, user, canEditFilingStatus, canExportData } = useAuth();
@@ -985,7 +986,7 @@ const FilingStatusPage: React.FC = () => {
       }
       if (d.__gstkReturnPullProgress) {
         const p = d.__gstkReturnPullProgress;
-        clearPending([pullKey(p.clientId, p.return_type)]);
+        clearPending([pullKey(p.clientId, p.return_type, p.period_month)]);
         const who = `${clientsRef.current.find((c) => c.id === p.clientId)?.name || 'Client'} · ${p.return_type} ${p.period_month}`;
         const text = `${who}: ${p.message || outcomeWords(p.outcome)}`;
         if (p.outcome === 'filed' || p.outcome === 'refreshed') toast.success(text, { duration: 8000 });
@@ -1000,10 +1001,11 @@ const FilingStatusPage: React.FC = () => {
         const r = d.__gstkReturnPullDone;
         const keys = r.requestId ? pendingByRequest.current.get(r.requestId) || [] : [];
         if (r.requestId) pendingByRequest.current.delete(r.requestId);
-        clearPending([...keys, ...((r.results || []) as PullItem[]).map((x) => pullKey(x.clientId, x.return_type))]);
+        clearPending([...keys, ...((r.results || []) as PullItem[]).map((x) => pullKey(x.clientId, x.return_type, x.period_month))]);
         const results: { outcome: string }[] = r.results || [];
         const missed = results.filter((x) => x.outcome === 'not_reached').length;
         if (r.tabClosed) toast.warning(`The portal tab was closed. ${missed} return${missed === 1 ? ' was' : 's were'} not pulled.`, { duration: 10000 });
+        else if (r.ended && missed) toast.warning(`The pull ended early: ${r.ended}. ${missed} return${missed === 1 ? ' was' : 's were'} not pulled; each is in the log.`, { duration: 12000 });
         else if (missed) toast.warning(`${missed} return${missed === 1 ? ' was' : 's were'} not reached (the portal login did not complete).`, { duration: 10000 });
         refreshSoon();
       }
@@ -1029,23 +1031,22 @@ const FilingStatusPage: React.FC = () => {
 
   // While pulls are running, read the log and the rows every few seconds as
   // well (the answer also comes through the extension and realtime), and give
-  // up on one that has waited too long.
+  // up on one that has waited too long, saying so.
   const pendingCount = Object.keys(pending).length;
+  const pendingRef = useRef(pending);
+  useEffect(() => { pendingRef.current = pending; }, [pending]);
   useEffect(() => {
     if (!pendingCount) return;
     const t = setInterval(() => {
       refreshSoon();
       const now = Date.now();
-      setPending((prev) => {
-        const stale = Object.entries(prev).filter(([, at]) => now - at > PULL_WAIT_MS).map(([k]) => k);
-        if (!stale.length) return prev;
-        const next = { ...prev };
-        stale.forEach((k) => { delete next[k]; });
-        return next;
-      });
+      const stale = Object.entries(pendingRef.current).filter(([, at]) => now - at > PULL_WAIT_MS).map(([k]) => k);
+      if (!stale.length) return;
+      clearPending(stale);
+      toast.warning(`No answer from the extension for ${stale.length} return${stale.length === 1 ? '' : 's'} after 15 minutes. The outcome is not known: check the portal tab, then pull again.`, { duration: 15000 });
     }, 5000);
     return () => clearInterval(t);
-  }, [pendingCount, refreshSoon]);
+  }, [pendingCount, refreshSoon, clearPending]);
 
   // A pull outcome newer than the request answers it, even if the
   // extension's message was missed.
@@ -1059,6 +1060,8 @@ const FilingStatusPage: React.FC = () => {
 
   const startPull = (records: FilingRecord[], what: string) => {
     if (!extReady) { toast.error('Install or enable the GST Keeper browser extension to pull from the portal.'); return; }
+    // The extension runs one pull at a time (it refuses a second one).
+    if (pendingCount) { toast.info('A pull is running. Wait for it to end, then pull again.'); return; }
     if (extOutdated) {
       toast.error(`Update the GST Keeper extension to ${MIN_EXTENSION_VERSION} or later (chrome://extensions, Reload). Older copies could store the System generated summary as the filed GSTR-3B, and GST Keeper no longer accepts their Filed writes.`, { duration: 12000 });
       return;
@@ -1066,7 +1069,7 @@ const FilingStatusPage: React.FC = () => {
     const items: PullItem[] = records.map((r) => ({ clientId: r.client_id, return_type: r.return_type, period_month: r.period_month || selectedMonth }));
     if (!items.length) { toast.info(`Nothing to pull for ${what}.`); return; }
     const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now());
-    const keys = items.map((i) => pullKey(i.clientId, i.return_type));
+    const keys = items.map((i) => pullKey(i.clientId, i.return_type, i.period_month));
     pendingByRequest.current.set(requestId, keys);
     const now = Date.now();
     setPending((prev) => { const next = { ...prev }; keys.forEach((k) => { next[k] = now; }); return next; });
@@ -1095,11 +1098,11 @@ const FilingStatusPage: React.FC = () => {
   const contextFor = (record: FilingRecord): FilingRowContext => {
     const period = record.period_month || selectedMonth;
     return {
-      outcome: outcomes.get(pullKey(record.client_id, record.return_type)) || null,
+      outcome: outcomes.get(pullKey(record.client_id, record.return_type, period)) || null,
       allowance: liveAllowance(allowances, record.client_id, period, filingScope(record.return_type)),
       usedAllowance: record.manual_allowance_id ? allowances.find((a) => a.id === record.manual_allowance_id) || null : null,
       filedTwin: filedTwinOf(record),
-      pulling: !!pending[pullKey(record.client_id, record.return_type)],
+      pulling: !!pending[pullKey(record.client_id, record.return_type, period)],
       pullBlocked: isDirectFilingBlocked(directFilingStateFor(record)),
     };
   };
@@ -1346,15 +1349,19 @@ const FilingStatusPage: React.FC = () => {
   ].filter(Boolean).length;
   const currentTabLabel = FILING_TABS.find(t => t.value === selectedTab)?.type ?? '';
 
-  // Pull every return in view that still needs it: not Filed, or Filed
-  // without a checked PDF or a portal filing date; never one unlocked for
-  // correction (its own Pull files it again).
+  // Pull every return in view that still needs it: not Filed, Filed but
+  // never pulled, or pulled without a checked PDF or a portal filing date;
+  // never one unlocked for correction (its own Pull files it again). Returns
+  // held back by the direct-filing rule are counted and named, not pulled.
   const pullInView = () => {
-    const rows = applyFilters(recordsByTab[selectedTab] || [])
-      .filter((r) => pullable(r) && wantedInBulkPull(r));
-    if (!rows.length) { toast.info('Every return in view is Filed with its PDF and date.'); return; }
+    const wanted = applyFilters(recordsByTab[selectedTab] || [])
+      .filter((r) => hasPortalPull(r.return_type) && !filedTwinOf(r) && wantedInBulkPull(r));
+    const rows = wanted.filter((r) => pullable(r));
+    const heldBack = wanted.length - rows.length;
+    if (!rows.length) { toast.info(bulkPullNothingText(heldBack), { duration: heldBack ? 10000 : 4000 }); return; }
     const clientsN = new Set(rows.map((r) => r.client_id)).size;
-    if (!window.confirm(`Pull ${rows.length} return${rows.length === 1 ? '' : 's'} of ${clientsN} client${clientsN === 1 ? '' : 's'} from the GST portal? A portal tab opens; type each client's CAPTCHA there.`)) return;
+    if (!window.confirm(`Pull ${rows.length} return${rows.length === 1 ? '' : 's'} of ${clientsN} client${clientsN === 1 ? '' : 's'} from the GST portal? A portal tab opens; type each client's CAPTCHA there.`
+      + (heldBack ? ` ${heldBack} return${heldBack === 1 ? ' is' : 's are'} left out: not pushed through GST Keeper, so the superadmin approves the direct filing first.` : ''))) return;
     startPull(rows, 'the returns in view');
   };
 
@@ -1372,7 +1379,7 @@ const FilingStatusPage: React.FC = () => {
               size="sm"
               className={WS_BTN}
               onClick={pullInView}
-              disabled={!canEditFilingStatus()}
+              disabled={!canEditFilingStatus() || pendingCount > 0}
               title={extOutdated
                 ? `Update the GST Keeper extension to ${MIN_EXTENSION_VERSION} or later to pull filed returns`
                 : 'Pull every return in view that is not Filed, or has no PDF or filing date yet, from the GST portal'}
@@ -1507,7 +1514,7 @@ const FilingStatusPage: React.FC = () => {
       </Card>
 
       <Note>
-        Filed, the ARN, the filing date and the return PDF come from the GST portal: Pull reads them through the extension (one return, all of a client's, or every return in view with Pull filed returns). The PDF is kept only when it is the filed return showing its ARN. When a pull cannot be done, the superadmin can allow one manual upload for that return, with a reason; it shows as manual. CMP-08, GSTR-6, GSTR-7 and ITC-04 have no tested pull yet, so they are attached by hand. Remarks save when you leave the box.
+        Filed, the ARN, the filing date and the return PDF come from the GST portal: Pull reads them through the extension (one return, all of a client's, or every return in view with Pull filed returns). The PDF is kept only when it is the filed return showing its ARN. When a pull cannot be done, the superadmin can allow one manual upload for that return, with a reason; it shows as manual. A PDF no pull checked is not shown as the portal's. CMP-08 and ITC-04 have no pull yet, so they are attached by hand. Remarks save when you leave the box.
       </Note>
 
       {(isSuperadmin || conflicts.length > 0 || allowances.length > 0) && (
@@ -1569,6 +1576,7 @@ const FilingStatusPage: React.FC = () => {
               isSuperadmin={isSuperadmin}
               extReady={extReady}
               extOutdated={extOutdated}
+              pullRunning={pendingCount > 0}
               gstr1DataClientIds={gstr1DataClientIds}
               gstr1IsNilByClient={gstr1IsNilByClient}
               retryingCarryForwardId={retryingCarryForwardId}

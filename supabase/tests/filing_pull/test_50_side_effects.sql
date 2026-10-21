@@ -98,11 +98,12 @@ SELECT t_eq((SELECT detail->'on_filed'->>'confirmation' FROM public.filing_statu
 SELECT t_eq((SELECT filed_after_override::text || '/' || arn FROM public.advance_setoff_overrides WHERE return_type = 'GSTR-1'),
   'true/AA240926123456X', 'GSTR-1 page''s approved override stamped');
 
--- A scheme change still clears inapplicable returns (through its route), logged.
+-- A scheme change keeps filed returns as they are (round 2: only the
+-- superadmin takes a return off Filed), and logs them as kept.
 RESET ROLE;
 INSERT INTO public.client_scheme_history (client_id, old_scheme, new_scheme, effective_from_date, changed_by)
 VALUES ('11111111-1111-1111-1111-111111111111', 'Regular', 'IFF', '2026-09-01', '00000000-0000-0000-0000-00000000000a');
 SELECT t_eq((SELECT string_agg(return_type::text || ':' || status::text || ':' || COALESCE(arn, '-'), ' ' ORDER BY return_type::text)
               FROM public.filing_status WHERE client_id = '11111111-1111-1111-1111-111111111111' AND period_month = '09/2026'),
-  'GSTR-1:Data Pending:- GSTR-3B:Data Pending:-', 'scheme change clears as before');
-SELECT t_eq((SELECT count(*)::int FROM public.filing_status_log WHERE event = 'scheme_change' AND old_arn IS NOT NULL), 2, 'cleared ARNs logged');
+  'GSTR-1:Filed:AA240926123456X GSTR-3B:Filed:AB240926123456X', 'a scheme change keeps filed returns');
+SELECT t_eq((SELECT count(*)::int FROM public.filing_status_log WHERE event = 'scheme_change' AND old_arn IS NOT NULL AND message LIKE 'Kept Filed%'), 2, 'kept returns logged');

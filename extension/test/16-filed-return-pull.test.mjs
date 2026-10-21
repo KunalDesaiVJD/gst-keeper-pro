@@ -126,6 +126,7 @@ const local = {
 };
 let tabsCreated = 0;
 let tabRemoved = null;
+let alarmFn = null;
 const chromeFor = (tabId) => ({
   storage: { local, onChanged: { addListener() {}, removeListener() {} } },
   runtime: {
@@ -134,7 +135,7 @@ const chromeFor = (tabId) => ({
     onMessage: { addListener: (fn) => { bgListener = fn; } },
     lastError: null,
   },
-  alarms: { create() {}, clear() {}, onAlarm: { addListener() {} } },
+  alarms: { create() {}, clear() {}, onAlarm: { addListener: (fn) => { alarmFn = fn; } } },
   notifications: { create() {}, onClicked: { addListener() {} } },
   tabs: { create: async () => { tabsCreated++; return { id: 1 }; }, update: async () => ({ id: 1, windowId: 1 }), onRemoved: { addListener: (fn) => { tabRemoved = fn; } } },
   windows: { update: async () => ({}) },
@@ -406,6 +407,69 @@ missed = rpcCalls('filing_pull_report').filter((b) => b.p_outcome === 'failed');
 ok(missed.length === 1 && missed[0].p_return_type === 'GSTR-3B' && /tab was closed/.test(missed[0].p_message) && missed[0].p_detail.request_id === 'req-12',
   '(v) a closed tab: the return not pulled is logged in GST Keeper', missed);
 ok(!storage.gstk_active_job && storage.gstk_return_pull_result && storage.gstk_return_pull_result.tabClosed, 'the job ends and the page hears it');
+
+// 13. Round 2: a second Pull while one is running is refused with words the
+//     page shows; the running pull goes on (it used to be replaced and
+//     report nothing).
+reset();
+const two = [{ clientId: 'c1', return_type: 'GSTR-1', period_month: '09/2026' }];
+let a1 = await bgCall('startReturnPull', { items: two, actorId: 'u-staff', requestId: 'req-A' });
+let a2 = await bgCall('startReturnPull', { items: [{ clientId: 'c1', return_type: 'GSTR-3B', period_month: '09/2026' }], actorId: 'u-staff', requestId: 'req-B' });
+ok(a1.ok && !a2.ok && /already running in this browser/.test(a2.error), '(v) a second pull is refused while one runs', a2);
+ok(storage.gstk_active_job && storage.gstk_active_job.requestId === 'req-A' && !rpcCalls('filing_pull_report').length, 'the first pull goes on, nothing reported for it');
+
+// 14. Round 2: the running pull sat idle 11 minutes (CAPTCHA not typed): the
+//     next Pull ends it first, reporting its returns, then starts.
+storage.gstk_active_job = { ...storage.gstk_active_job, startedAt: Date.now() - 11 * 60 * 1000 };
+calls.length = 0;
+a2 = await bgCall('startReturnPull', { items: [{ clientId: 'c1', return_type: 'GSTR-3B', period_month: '09/2026' }], actorId: 'u-staff', requestId: 'req-B' });
+let ended = rpcCalls('filing_pull_report').filter((b) => b.p_detail && b.p_detail.request_id === 'req-A');
+ok(a2.ok && storage.gstk_active_job.requestId === 'req-B', 'a stale pull does not block the next one', a2);
+ok(ended.length === 1 && ended[0].p_outcome === 'failed' && ended[0].p_return_type === 'GSTR-1' && /^Not pulled: the pull sat idle for more than 10 minutes/.test(ended[0].p_message)
+  && ended[0].p_detail.not_reached === true, '(v) the stale pull\'s return is logged in GST Keeper', ended);
+ok(storage.gstk_return_pull_result && storage.gstk_return_pull_result.requestId === 'req-A' && /idle/.test(storage.gstk_return_pull_result.ended)
+  && storage.gstk_return_pull_result.results.map((r) => r.return_type + ':' + r.outcome).join() === 'GSTR-1:not_reached', '(v) and its page hears it', storage.gstk_return_pull_result);
+
+// 15. Round 2: the content script's idle rule (a portal page loads after 11
+//     idle minutes) ends the pull through the background, reported.
+reset();
+storage.gstk_active_job = { mode: 'returnpdf', idx: 0, retIdx: 0, step: 'efiledpdf', startedAt: Date.now() - 12 * 60 * 1000, lastActivityAt: Date.now() - 11 * 60 * 1000, tabId: 1,
+  periodIdx: 0, period: '09/2026', actorId: 'u-staff', requestId: 'req-15',
+  clients: [{ clientId: 'c1', creds: { user: 'u', name: 'FICTIONAL FABRICS' }, rets: [{ return_type: 'GSTR-1', period_month: '09/2026' }, { return_type: 'GSTR-3B', period_month: '09/2026' }] }],
+  retResults: [] };
+await runPage(EFILED, { efiled: { options: OPTIONS, rows: [] } });
+await new Promise((r) => setTimeout(r, 100));
+ended = rpcCalls('filing_pull_report').filter((b) => b.p_detail && b.p_detail.request_id === 'req-15');
+ok(!storage.gstk_active_job && ended.length === 2 && ended.every((b) => b.p_outcome === 'failed' && /idle/.test(b.p_message)), '(v) idle on a page load: both returns logged, the job ended', ended);
+ok(storage.gstk_return_pull_result && storage.gstk_return_pull_result.requestId === 'req-15' && storage.gstk_return_pull_result.results.length === 2, '(v) the page hears both');
+
+// 16. Round 2: the background watchdog ends an idle pull even when no portal
+//     page loads; another start taking the slot ends the running pull,
+//     reported; the popup's Stop ends only the pull it names.
+reset();
+storage.gstk_active_job = { mode: 'returnpdf', idx: 0, retIdx: 0, step: 'login', startedAt: Date.now() - 11 * 60 * 1000, tabId: 1,
+  periodIdx: 0, period: '09/2026', actorId: 'u-staff', requestId: 'req-16',
+  clients: [{ clientId: 'c1', creds: { user: 'u', name: 'FICTIONAL FABRICS' }, rets: [{ return_type: 'GSTR-3B', period_month: '09/2026' }] }], retResults: [] };
+alarmFn({ name: 'gstk-watchdog' });
+await new Promise((r) => setTimeout(r, 100));
+ok(!storage.gstk_active_job && rpcCalls('filing_pull_report').filter((b) => b.p_detail.request_id === 'req-16').length === 1
+  && storage.gstk_return_pull_result && storage.gstk_return_pull_result.requestId === 'req-16', '(v) the watchdog ends an idle pull, reported');
+reset();
+await bgCall('startReturnPull', { items: two, actorId: 'u-staff', requestId: 'req-17' });
+calls.length = 0;
+const tw = await bgCall('startTwobPull', { clientId: 'c1', period_month: '09/2026' });
+ended = rpcCalls('filing_pull_report').filter((b) => b.p_detail.request_id === 'req-17');
+ok(tw.ok && storage.gstk_active_job.mode === 'twob' && ended.length === 1 && /another portal job was started/.test(ended[0].p_message)
+  && storage.gstk_return_pull_result.requestId === 'req-17', '(v) another start ends the running pull, reported', ended);
+reset();
+await bgCall('startReturnPull', { items: two, actorId: 'u-staff', requestId: 'req-18' });
+const wrong = await bgCall('endReturnPull', 'req-other', 'the pull was stopped from the extension popup');
+ok(wrong.ok && wrong.data === false && storage.gstk_active_job.requestId === 'req-18', 'Stop for another pull leaves this one alone');
+const stop = await bgCall('endReturnPull', 'req-18', 'the pull was stopped from the extension popup');
+ended = rpcCalls('filing_pull_report').filter((b) => b.p_detail.request_id === 'req-18');
+ok(stop.ok && stop.data === true && !storage.gstk_active_job && ended.length === 1 && /stopped from the extension popup/.test(ended[0].p_message), '(v) the popup\'s Stop: reported, ended', ended);
+const popupSrc = read('popup.js');
+ok(/active\.mode === 'returnpdf'[\s\S]{0,200}GSTKdb\.endReturnPull\(active\.requestId/.test(popupSrc), 'the popup\'s Stop goes through endReturnPull for a filed-return pull');
 
 // 9. The extension never writes filing_status itself.
 ok(!calls.some((c) => /\/rest\/v1\/filing_status/.test(c.url)), '(iv) no direct filing_status write anywhere');

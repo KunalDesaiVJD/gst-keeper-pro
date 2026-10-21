@@ -19,9 +19,11 @@ SET LOCAL ROLE anon;
 SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
 
 -- The pull asks for GSTR-1 (the effective type for this client): the ARN is
--- on the IFF twin, so that row is refreshed. No duplicate key.
+-- on the IFF twin, so that row is refreshed. No duplicate key. (Its PDF
+-- could not be read this time, so the PDF attached by hand before the rule
+-- comes off: round 2, test_80.)
 SELECT t_eq((public.filing_record_pull('33333333-3333-3333-3333-333333333333', 'GSTR-1', '03/2026', 'AA270326123456X', '2026-04-11',
-  'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/33333333-3333-3333-3333-333333333333/03-2026/GSTR-1-AA270326123456X.pdf', p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'return_type',
+  NULL, 'The PDF the portal gave could not be read.', p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'return_type',
   'GSTR-1 (IFF)', 'pull refreshes the twin holding the ARN');
 SELECT t_eq((SELECT string_agg(return_type::text || ':' || status::text || ':' || COALESCE(arn, '-'), ' ' ORDER BY return_type::text)
               FROM public.filing_status WHERE client_id = '33333333-3333-3333-3333-333333333333' AND period_month = '03/2026'),

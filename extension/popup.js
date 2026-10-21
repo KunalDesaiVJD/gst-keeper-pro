@@ -211,6 +211,12 @@
       try { await withTimeout(GSTKdb.runFinish(active.runId, 'stopped', 'Stopped from the extension popup.'), 8000); recorded = true; }
       catch (e) { recorded = false; }
     }
+    // 0.15.0 (round 2): a filed-return pull reports the returns it did not
+    // reach to GST Keeper and to the Filing Status page that asked.
+    if (active.mode === 'returnpdf') {
+      try { recorded = await withTimeout(GSTKdb.endReturnPull(active.requestId || null, 'the pull was stopped from the extension popup'), 8000) !== null; }
+      catch (e) { recorded = false; }
+    }
     await store.remove('gstk_active_job');
     job = null;
     btn.disabled = false;

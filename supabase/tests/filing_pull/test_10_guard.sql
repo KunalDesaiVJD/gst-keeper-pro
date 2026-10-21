@@ -96,6 +96,7 @@ SELECT t_eq(has_function_privilege('anon', 'public.filing__log(uuid, text, text,
 SELECT t_eq(has_function_privilege('anon', 'public.filing__target_row(uuid, text, text)', 'EXECUTE'), false, 'anon: not filing__target_row');
 SELECT t_eq(has_function_privilege('anon', 'public.filing_status_on_filed(public.filing_status, uuid)', 'EXECUTE'), false, 'anon: not filing_status_on_filed');
 SELECT t_eq(has_function_privilege('anon', 'public.filing_queue_confirmation(public.filing_status, uuid)', 'EXECUTE'), false, 'anon: not filing_queue_confirmation');
+SELECT t_eq(has_function_privilege('anon', 'public.filing__can_edit(uuid)', 'EXECUTE'), false, 'anon: not filing__can_edit (round 2)');
 RESET ROLE;
 SELECT t_eq((SELECT count(*)::int FROM pg_publication_tables WHERE pubname = 'supabase_realtime'
               AND tablename IN ('filing_status_log', 'manual_source_allowances', 'gstr1_direct_filing_approvals')), 3, 'realtime tables');

@@ -40,6 +40,12 @@ The firm's decision: Filing Status is pulled from the portal only (GST Keeper mi
   (`uploadPdf(path, dataUrl, { upsert: false })`; every other upload keeps overwriting), so no
   older copy can put another file under a checked one's name, and a refresh of the same ARN gives
   a new address the log keeps next to the old one.
+- **One pull at a time, and none dropped silently** (review round 2): a second `startReturnPull`
+  while one runs is refused with words the page shows; a pull that ends early (idle 10 minutes,
+  3 hours, its tab gone, Stop in the popup, or another start taking the job slot) reports every
+  return it did not reach through `filing_pull_report` (`failed`, `not_reached`, "Not pulled:
+  <why>.") and to the page (`gstk_return_pull_result.ended`). The background watchdog now ends an
+  idle filed-return pull even when no portal page loads (`endReturnPull`, `endedReturnPull`).
 - Tests: `test/16-filed-return-pull.test.mjs`, fixtures `test/fixtures/*.pdf` (fictional, made by
   `test/_pdffixture.mjs` the way the portal's pdfmake makes them).
 

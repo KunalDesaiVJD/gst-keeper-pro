@@ -264,6 +264,16 @@
   const idleMs = now - (job.lastActivityAt || job.startedAt || now);
   const totalMs = now - (job.startedAt || now);
   if (!job.runId && (idleMs > 10 * 60 * 1000 || totalMs > 3 * 60 * 60 * 1000)) {
+    // 0.15.0 (round 2): a filed-return pull reports every return it did not
+    // reach and tells its page (through the background, which ends only this
+    // pull), never a bare clearJob().
+    if (job.mode === 'returnpdf') {
+      const why = idleMs > 10 * 60 * 1000
+        ? 'the pull sat idle for more than 10 minutes (CAPTCHA not typed, or the tab left alone)'
+        : 'the pull ran for more than 3 hours and was stopped';
+      try { await GSTKdb.endReturnPull(job.requestId || null, why); } catch (e) { await clearJob(); }
+      return;
+    }
     // 0.8.6: a push's page is waiting for a result; a dropped push says so.
     const failPush = pushFailer(job);
     if (failPush) {

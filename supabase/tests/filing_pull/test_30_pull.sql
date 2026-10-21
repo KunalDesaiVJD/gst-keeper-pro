@@ -27,12 +27,12 @@ SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', '
   'refreshed', 'same ARN refreshes');
 SELECT t_eq((SELECT filed_date::text || '/' || regexp_replace(return_pdf_url, '^.*/', '') FROM public.filing_status WHERE return_type = 'GSTR-3B' AND period_month = '08/2026'),
   '2026-09-18/GSTR-3B-AB240826123456X-2.pdf', 'date kept, PDF refreshed');
--- A refresh with no checked PDF keeps the stored one and says so.
+-- A refresh with no checked PDF keeps the one an earlier pull checked, with
+-- no "not checked" note (round 2: test_80 has the unchecked cases).
 SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '08/2026', 'AB240826123456X', '2026-09-18',
   NULL, 'The portal gave the System generated summary, not the filed return.', p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'outcome', 'refreshed', 'refresh without a PDF');
-SELECT t_eq((SELECT regexp_replace(return_pdf_url, '^.*/', '') || '|' || pdf_note FROM public.filing_status WHERE return_type = 'GSTR-3B' AND period_month = '08/2026'),
-  'GSTR-3B-AB240826123456X-2.pdf|The portal gave the System generated summary, not the filed return. The PDF shown was stored before and is not checked.',
-  'stored PDF kept with a note');
+SELECT t_eq((SELECT regexp_replace(return_pdf_url, '^.*/', '') || '|' || COALESCE(pdf_note, '-') FROM public.filing_status WHERE return_type = 'GSTR-3B' AND period_month = '08/2026'),
+  'GSTR-3B-AB240826123456X-2.pdf|-', 'checked PDF kept, no note');
 
 -- A different ARN for the same return: nothing changes, a conflict waits.
 SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '08/2026', 'AB240826999999Z', '2026-09-19',
