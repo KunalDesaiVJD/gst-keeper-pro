@@ -2,7 +2,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { previousPeriodMonthKey } from '@/utils/parseElectronicCreditLedgerCsv';
 import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
 import type { RecoDiffResult } from './suspendedRecoCalc';
-import { savedReversalReclaim } from './itcAutoLink';
+import { fetchFiledFigures } from './itcAutoLink';
 
 // Mirrors the "DIFFERENCE" figure on the GST Receivable Reco page
 // (src/pages/GstReceivableRecoPage.tsx) — same source tables, same cross-head
@@ -92,7 +92,7 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
 
   const [{ data: itcData }, { data: prevFilingRows }] = prevMonth
     ? await Promise.all([
-        supabase.from('itc_summaries').select('data, is_locked').eq('client_id', clientId).eq('period_month', prevMonth).maybeSingle(),
+        supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', prevMonth).maybeSingle(),
         supabase.from('filing_status').select('status').eq('client_id', clientId).eq('period_month', prevMonth).in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']),
       ])
     : [{ data: null }, { data: null }];
@@ -109,7 +109,7 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
 
     const prevShortMonth = prevMonth ? toShortMonth(prevMonth) : '';
     const patterns = prevMonth ? getMonthPatterns(prevMonth) : null;
-    const [{ data: rcmRows }, { data: reversalBills }, { data: reclaimBills }] = await Promise.all([
+    const [{ data: rcmRows }, { data: reversalBills }, { data: reclaimBills }, filedFigures] = await Promise.all([
       prevShortMonth
         ? supabase.from('rcm_data').select('cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', prevShortMonth)
         : Promise.resolve({ data: null }),
@@ -119,6 +119,9 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
       prevMonth
         ? supabase.from('bills_not_in_2b').select('input_igst, input_cgst, input_sgst, reclaim_month, reclaim_subtype').eq('client_id', clientId).eq('period_month', prevMonth).not('reclaim_month', 'is', null)
         : Promise.resolve({ data: null }),
+      // M-1 changed after filing: its 4B(2)(i) and 5.4 as recorded then, not
+      // its live 2B lists, which a GST Manager may correct (docs §13).
+      prevMonth ? fetchFiledFigures(clientId, prevMonth) : Promise.resolve(null),
     ]);
     const liveRcmItc = (rcmRows || []).reduce(
       (acc: any, row: any) => ({
@@ -128,16 +131,12 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
       }),
       zero3,
     );
-    // The month before is filed: once its ITC Summary is locked, its
-    // 4B(2)(i) and 5.4 are read as saved then, not from its live 2B lists,
-    // which a GST Manager may still correct (docs §13).
-    const savedFigures = (itcData as { is_locked?: boolean | null }).is_locked === true ? savedReversalReclaim(itc) : null;
-    const liveReversal = savedFigures ? savedFigures.reversal : patterns
+    const liveReversal = filedFigures ? filedFigures.reversal : patterns
       ? (reversalBills || [])
           .filter((b: any) => monthMatches(b.reversal_month, patterns))
           .reduce((acc: any, b: any) => ({ igst: acc.igst + (b.input_igst || 0), cgst: acc.cgst + (b.input_cgst || 0), sgst: acc.sgst + (b.input_sgst || 0) }), zero3)
       : zero3;
-    const liveReclaim = savedFigures ? savedFigures.reclaim : patterns
+    const liveReclaim = filedFigures ? filedFigures.reclaim : patterns
       ? (reclaimBills || [])
           .filter((b: any) => b.reclaim_subtype !== 'EXPENSE_OUT' && monthMatches(b.reclaim_month, patterns))
           .reduce((acc: any, b: any) => ({ igst: acc.igst + (b.input_igst || 0), cgst: acc.cgst + (b.input_cgst || 0), sgst: acc.sgst + (b.input_sgst || 0) }), zero3)

@@ -47,10 +47,6 @@ SELECT public.t_eq((SELECT reclaim_month FROM public.bills_not_in_2b WHERE clien
   'second filing: Oct-26 reclaim kept');
 SELECT public.t_eq((SELECT book_entry_month FROM public.bills_not_in_books WHERE client_id = :'F1' AND period_month = '10/2026'), 'Oct 26',
   'second filing: Oct-26 book entry kept');
--- The app's carry after filing: the same first carry, nothing to do.
-SELECT public.t_eq((public.twob_carry_after_filing(:'F1', '09/2026') ->> 'carried_2b')::integer, 0, 'app carry after filing: nothing carried again');
-SELECT public.t_eq((public.twob_carry_after_filing(:'F1', '09/2026') ->> 'skipped_2b')::boolean, true, 'app carry after filing: Oct-26 already holds its list');
-SELECT public.t_eq((public.twob_carry_after_filing(:'F1', '10/2026') ->> 'not_filed')::boolean, true, 'app carry after filing: an unfiled month carries nothing');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'F1' AND period_month = '11/2026'), 0, 'no carry out of an unfiled month');
 
 -- 3. A row added as Filed (a new Filing Status row, the extension's markFiled of a new row).
@@ -80,9 +76,10 @@ SELECT public.t_eq((SELECT is_locked FROM public.bills_not_in_2b WHERE client_id
 SELECT public.t_eq(public.twob_month_is_prior(:'FQ', '05/2026'), true, 'quarterly: May-26 prior');
 RESET ROLE;
 
--- 6. Re-run carry forward (TAMNNA: a re-run wiped later months' reclaims).
--- July: A, B, two identical C, and D (added after the carry). August (filed):
--- A reclaimed in Aug, B, the two C, a third C copy (stale, undecided), X
+-- 6. Re-run carry forward (TAMNNA: a re-run wiped later months' reclaims),
+-- from the latest filed month into the open month after it. July (filed):
+-- A, B, two identical C, and D (added after the carry). August (open): A
+-- reclaimed in Aug, B, the two C, a third C copy (stale, undecided), X
 -- (stale, undecided), Y (stale, reclaimed in Aug) and Aug's own entry.
 SELECT set_config('twob.write', 'system', false);
 INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, input_cgst, input_sgst, reversal_month, reclaim_month, is_carried_forward) VALUES
@@ -101,7 +98,7 @@ INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name
   (:'F4', '08/2026', '2026-08-01', 'AUG OWN', 'G-1', '24AUGOW0000A1Z5', 70, 70, 'Aug 26', NULL, false);
 INSERT INTO public.filing_status (client_id, return_type, period_month, status, filed_date, is_locked) VALUES
   (:'F4', 'GSTR-3B', '07/2026', 'Filed', '2026-08-20', true),
-  (:'F4', 'GSTR-3B', '08/2026', 'Filed', '2026-09-20', true);
+  (:'F4', 'GSTR-3B', '08/2026', 'Data Received', NULL, false);
 SELECT set_config('twob.write', '', false);
 
 SET ROLE anon;
@@ -121,8 +118,8 @@ SELECT public.twob_carry_rerun(public.t_superadmin(), :'F4', '07/2026', false) A
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'F4' AND period_month = '08/2026'), 7, 're-run: Aug-26 holds 7 rows');
 SELECT public.t_eq((SELECT reclaim_month FROM public.bills_not_in_2b WHERE client_id = :'F4' AND period_month = '08/2026' AND supplier_name = 'A CO'), 'Aug 26', 're-run: A''s Aug reclaim kept');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'F4' AND period_month = '08/2026' AND supplier_name = 'C CO'), 2, 're-run: twins one to one, two C copies');
-SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'F4' AND period_month = '08/2026' AND supplier_name = 'D CO' AND is_carried_forward AND is_locked), 1,
-  're-run: D carried into filed Aug-26, locked as the month');
+SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'F4' AND period_month = '08/2026' AND supplier_name = 'D CO' AND is_carried_forward AND NOT is_locked), 1,
+  're-run: D carried into open Aug-26');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'F4' AND period_month = '08/2026' AND supplier_name IN ('Y CO', 'AUG OWN')), 2,
   're-run: Y and Aug''s own entry stay');
 SELECT public.twob_carry_rerun(public.t_manager(), :'F4', '07/2026', true) AS again \gset

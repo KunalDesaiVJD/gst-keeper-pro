@@ -52,10 +52,14 @@ SELECT public.t_eq(has_function_privilege('anon', 'public.twob_month_state(uuid,
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob_month_is_prior(uuid, text)', 'EXECUTE'), true, 'anon calls twob_month_is_prior');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob_prior_books_apply(uuid, uuid, text, jsonb, boolean)', 'EXECUTE'), true, 'anon calls twob_prior_books_apply');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob_carry_rerun(uuid, uuid, text, boolean)', 'EXECUTE'), true, 'anon calls twob_carry_rerun');
-SELECT public.t_eq(has_function_privilege('anon', 'public.twob_carry_after_filing(uuid, text)', 'EXECUTE'), true, 'anon calls twob_carry_after_filing');
+SELECT public.t_eq(has_function_privilege('anon', 'public.twob_reopen_filed(uuid, uuid, text, text, text)', 'EXECUTE'), true, 'anon calls twob_reopen_filed');
+SELECT public.t_eq(to_regprocedure('public.twob_carry_after_filing(uuid, text)') IS NULL, true, 'no carry after filing callable by anyone (the filing trigger carries)');
 SELECT public.t_eq(has_function_privilege('anon', 'public.staff_level_of(uuid)', 'EXECUTE'), true, 'anon calls staff_level_of');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob_carry_first(uuid, text)', 'EXECUTE'), false, 'anon cannot call twob_carry_first');
-SELECT public.t_eq(has_function_privilege('anon', 'public.twob__apply_ledger(uuid, uuid, text, integer, text, text, uuid, jsonb, text[], text[], uuid[])', 'EXECUTE'), false, 'anon cannot call twob__apply_ledger');
+SELECT public.t_eq(has_function_privilege('anon', 'public.twob__apply_ledger(uuid, uuid, text, text, text, uuid, jsonb, text[], text[], uuid[], text[], text[], boolean[], text, uuid[])', 'EXECUTE'), false, 'anon cannot call twob__apply_ledger');
+SELECT public.t_eq(has_function_privilege('anon', 'public.twob__match_copies(text, uuid, text, jsonb)', 'EXECUTE'), false, 'anon cannot call twob__match_copies');
+SELECT public.t_eq(has_function_privilege('anon', 'public.twob__held_inserts(text, uuid, text, jsonb)', 'EXECUTE'), false, 'anon cannot call twob__held_inserts');
+SELECT public.t_eq(has_function_privilege('anon', 'public.twob__freeze_figures(uuid, text[], uuid)', 'EXECUTE'), false, 'anon cannot call twob__freeze_figures');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob__apply_books_register(uuid, uuid, text, text, uuid, jsonb)', 'EXECUTE'), false, 'anon cannot call twob__apply_books_register');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob__ledger_insert(text, uuid, text, jsonb, text[], text[], uuid)', 'EXECUTE'), false, 'anon cannot call twob__ledger_insert');
 SELECT public.t_eq(has_function_privilege('anon', 'public.twob__ledger_update(text, uuid[], jsonb, uuid)', 'EXECUTE'), false, 'anon cannot call twob__ledger_update');
@@ -69,4 +73,9 @@ SELECT public.t_raises($$INSERT INTO public.twob_ever_filed (client_id, return_t
   'permission denied', 'anon cannot record a filing');
 SELECT public.t_raises($$DELETE FROM public.twob_ever_filed WHERE client_id = '10000000-0000-0000-0000-000000000001'$$,
   'permission denied', 'anon cannot remove a recorded filing');
+SELECT public.t_raises($$UPDATE public.twob_ever_filed SET reopened_at = now() WHERE client_id = '10000000-0000-0000-0000-000000000001'$$,
+  'permission denied', 'anon cannot reopen a recorded filing by hand');
+SELECT public.t_raises($$INSERT INTO public.twob_filed_figures (client_id, period_month) VALUES ('10000000-0000-0000-0000-000000000001', '07/2026')$$,
+  'permission denied', 'anon cannot write filed figures');
+SELECT public.t_eq((SELECT count(*)::integer FROM public.twob_filed_figures), 0, 'filed figures readable, none recorded before a change');
 RESET ROLE;

@@ -1,5 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
-import { savedReversalReclaim } from './itcAutoLink';
+import { fetchFiledFigures } from './itcAutoLink';
 
 // Mirrors the "DIFFERENCE" figure on the Suspended Reco page
 // (src/pages/SuspendedRecoPage.tsx) — same source tables, same formula, same
@@ -99,16 +99,15 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
   let row4D12FromItc = { cgst: 0, sgst: 0, igst: 0 };
   const { data: itcData } = await supabase
     .from('itc_summaries')
-    .select('data, is_locked')
+    .select('data')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
     .maybeSingle();
-  let filedFigures: ReturnType<typeof savedReversalReclaim> | null = null;
+  // A prior month changed after filing: the current total from the figures
+  // recorded then; only the books side follows the books (docs §13).
+  const filedFigures = await fetchFiledFigures(clientId, periodMonth);
   if (itcData?.data) {
     const itc = itcData.data as any;
-    // A filed month (its ITC Summary locked): the current total is what was
-    // filed, as saved then; only the books side follows the books (docs §13).
-    if (itcData.is_locked === true) filedFigures = savedReversalReclaim(itc);
     const section4A = itc.section4A || [];
     const section4B = itc.section4B || [];
     const section4D = itc.section4D || [];

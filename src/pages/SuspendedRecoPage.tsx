@@ -10,7 +10,7 @@ import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { savedReversalReclaim } from '@/lib/itcAutoLink';
+import { fetchFiledFigures } from '@/lib/itcAutoLink';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -276,22 +276,23 @@ const SuspendedRecoPage: React.FC = () => {
 
       const { data: itcData } = await supabase
         .from('itc_summaries')
-        .select('data, is_locked')
+        .select('data')
         .eq('client_id', selectedClientId)
         .eq('period_month', selectedMonth)
         .maybeSingle();
 
+      // A prior month changed after filing: the current total from the
+      // figures recorded then; only the books side follows the books (docs
+      // §13; computeSuspendedRecoDiff reads it the same way).
+      const filed = await fetchFiledFigures(selectedClientId, selectedMonth);
+      if (filed) {
+        row4B2iUsed = filed.reversal;
+        row54 = filed.reclaim;
+        row4D12FromBills = filed.expenseOut;
+      }
+
       if (itcData?.data) {
         const itc = itcData.data as any;
-        // A filed month (its ITC Summary locked): the current total is what
-        // was filed, as saved then; only the books side follows the books
-        // (docs §13; computeSuspendedRecoDiff reads it the same way).
-        if (itcData.is_locked === true) {
-          const filed = savedReversalReclaim(itc);
-          row4B2iUsed = filed.reversal;
-          row54 = filed.reclaim;
-          row4D12FromBills = filed.expenseOut;
-        }
         const section4A = itc.section4A || [];
         const section4B = itc.section4B || [];
         const section4D = itc.section4D || [];

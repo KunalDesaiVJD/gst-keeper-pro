@@ -864,6 +864,11 @@ Filed is kept in `twob_ever_filed`. The screens never work this out
 themselves: they read `twob_month_state(client, period)`, which also lists the
 later months that hold Not in 2B or Not in Books rows.
 
+A return marked Filed by mistake: once its status is changed back, a GST
+Manager or the superadmin reopens it with the "Filed by mistake" button on
+its Filing Status row, writing why (`twob_reopen_filed`). The record keeps who
+and why. Filing Status says so whenever a GSTR-3B is moved away from Filed.
+
 **Who may change what in a prior month.**
 
 - Only a GST Manager or the superadmin, and only books entries: Not in 2B and
@@ -875,6 +880,16 @@ later months that hold Not in 2B or Not in Books rows.
   changing its amounts is refused while the entry, or a later copy of it, holds
   a reclaim, an Expense out or a book entry. The message names the month:
   "Sep-26 has reclaimed this entry; undo that reclaim first."
+- Removing it or changing its amounts is also refused when a later copy sits
+  in a month not yet filed whose own reversal it is (its reversal month is
+  that later month): "Its reversal month is Sep-26, which is not filed yet;
+  correct it in Sep-26." (4 rows of 10,037 on 21 Oct 2026.)
+- An added entry takes the month itself as its reversal (in-2B) month, or
+  none: "Jul 26" for July. Any other month is refused.
+- An added entry the month already holds, or that a later month holds as a
+  carried entry, is refused: "Jul-26 already holds this entry on its Not in 2B
+  list; remove the books entry, or that entry, first."
+- One save names each entry once.
 - A books register debit note is still never posted (§10). The register still
   takes no minus amounts.
 
@@ -891,6 +906,15 @@ everything in a filed month of Import 2B or 2B Reconciliation.
   without its own decision first. If only a decided copy is left, a removal or
   amount change is refused; a change of date, supplier, number or GSTIN still
   goes through.
+- The entries and their later copies are locked before they are checked, so a
+  reclaim saved in a later month at the same moment is seen and refuses the
+  removal; it is never deleted with it.
+- An entry posted from Import 2B's books register keeps that row in step: a
+  removed entry takes its books row with it (while that row would post it
+  again), and a corrected entry corrects the books row too. So the next Post
+  neither adds a removed entry back nor undoes a correction. The preview says
+  so. A Not in Books entry posted from a 2B document that is still Not in
+  Books is not removed: the next Post would add it back.
 - An added entry gets a carried copy in every later month that already holds
   a carried list.
 - It is one transaction: all of it or none of it.
@@ -906,41 +930,71 @@ change its books entries, from Import 2B or 2B Reconciliation." Still allowed:
 - the filing lock and Unlock sheets (a change of the lock columns only);
 - a link cleared because its document was deleted;
 - the rows of a client being deleted;
-- the writes of this migration's own functions. They set `twob.write` for
-  themselves only. PostgREST cannot set it, so the browser cannot.
+- the writes of this migration's own functions. They set `twob.write` with
+  `set_config` while they run and put it back. PostgREST cannot set it, so
+  the browser cannot. (No function stores the setting: the live project's
+  `postgres` role is not a superuser and may not.)
 
-Moving a row to another month or another client is refused in every month.
+In every month:
+
+- moving a row to another month or another client is refused;
+- deleting a carried entry that holds its own month's decision (a reclaim,
+  Expense out or book entry) is refused: "OTHER SUPPLIER T-2: Aug-26 has
+  reclaimed this entry; undo that reclaim first, then remove it." A page
+  opened before this change still runs the old delete-and-copy carry and
+  Re-run; this stops it wiping a reclaim (TAMNNA). Restore and Clear Data of
+  an open month undo those decisions first, as they mean to replace the
+  month.
 
 **The carry never wipes.** When a month is filed (a status change, a row added
 as Filed, a quarterly return, the extension's mark-filed), the next month gets
-the carried list only if it holds no carried rows on that list yet
-(`twob_carry_first`). A second filing, an unlock and re-file, or the app's own
-call after filing add nothing. Changes after that reach later months through
-the one door above, not through the carry.
+the carried list only if it holds no carried rows on that list yet and is not
+filed itself (`twob_carry_first`, run by the filing trigger only; the app no
+longer carries after filing). A second filing or an unlock and re-file add
+nothing. Changes after that reach later months through the one door above,
+not through the carry. Filing Status says after filing whether the entries
+were carried, or that the next month already held its list (then Re-run
+compares them) or is filed already.
 
 **Re-run carry forward** (Filing Status) is for a GST Manager or the
 superadmin only, and always shows a preview first (`twob_carry_rerun`, with
-`p_dry_run`). Per list it:
+`p_dry_run`). It runs from the latest filed month into the month after it,
+which must not be filed: a filed next month is corrected entry by entry
+through the door (which reaches every later month), and an unfiled month
+carries when it is filed. It is refused while a month after the next one
+holds carried entries. Per list it:
 
 - adds the entries the next month lacks;
 - removes carried copies of entries the month no longer holds;
 - keeps those carried copies when they hold the next month's own reclaim,
-  Expense out or book entry, and says so.
+  Expense out or book entry, and says so;
+- leaves alone an entry whose next-month copy is the same invoice at other
+  amounts and holds a decision (TAMNNA's T-2: July at 600, August's copy at
+  500 and reclaimed). Adding July's 600 beside it would let the invoice be
+  reclaimed twice. The preview names both amounts and the reclaim to undo.
 
 Twins pair one to one. This replaces the delete-and-copy of §6 and §7.
 
 **The push checks.** A permitted change never moves a filed month's saved
 figures and never moves any check that stops a GSTR-3B push, except the books
-side of Suspended Reco. To make that so, every check that reads another, filed
-month now reads that month's saved, locked ITC Summary figures (4B(2)(i),
-5.4, 4D(1.2)) instead of working them out again from the live ledger:
+side of Suspended Reco. Applying this change moves none of them either.
 
-- Suspended Reco (page and Filing Status check, `filingSuspendedCheck`);
-- GST Receivable Reco (page and calculation);
-- ITC Summary's auto-linked rows for a locked month;
-- the GSTR-3B page of a filed month (`fetchGstr3b`).
+The 2B Reconciliation figures of a month (4B(2)(i), 5.4, 4D(1.2)) come from
+its live Not in 2B list, as before, until the door first changes that month.
+Just before that first change the door records them (`twob_filed_figures`,
+summed as the app sums them, for the month and the later filed months the
+call may write). From then on every check reads the recorded figures:
 
-An unlocked ITC Summary still reads the live ledger, as before.
+- Suspended Reco (page and push check, `computeSuspendedRecoDiff`);
+- GST Receivable Reco of the next month (page and calculation);
+- ITC Summary's auto-linked rows;
+- the GSTR-3B page (`fetchGstr3b`, through `fetchItcAutoLinkTotals`).
+
+The saved ITC Summary (`itc_summaries.data`) is not used for this: it changes
+only on a manual Save and is stale for 47 of 822 locked summaries (TAMNNA
+Sep-26: saved 5.4 is 0, the live and pushed 5.4 is 11,696.72 a head).
+Reopening a return marked Filed by mistake drops the records of the months it
+no longer keeps prior.
 
 **The screens.**
 
@@ -956,8 +1010,12 @@ An unlocked ITC Summary still reads the live ledger, as before.
   entries; adding and correcting go through Import 2B. Import Excel and Restore
   are off in a prior month; Version history says why.
 - Clear Data clears only the year's open months and names the months it kept.
-- Filing Status: Re-run carry forward shows what it adds, removes and keeps,
-  and asks first.
+- 2B Reconciliation, Liberal client, prior month: a GST Manager or the
+  superadmin corrects carried entries' date, supplier, number, GSTIN and
+  amounts too, not only the month's own entries.
+- Filing Status: Re-run carry forward shows on a month recorded as filed, and
+  shows what it adds, removes, keeps and leaves alone, and asks first. "Filed
+  by mistake" shows on a GSTR-3B no longer Filed but still recorded as filed.
 
 **Write paths, open and prior.**
 
@@ -971,14 +1029,20 @@ An unlocked ITC Summary still reads the live ledger, as before.
 | 2B Reconciliation: delete | as before | GST Manager / superadmin, through the door |
 | 2B Reconciliation: Import Excel, Restore | as before | refused |
 | Clear Data (2B Reconciliation) | as before | the month is kept |
-| Filing Status: Filed (lock and first carry) | first carry only | first carry only |
+| Filing Status: Filed (lock and first carry) | first carry only, never into a filed month | same |
 | Filing Status / 2B Reconciliation: Unlock sheets | allowed | allowed; the month stays prior |
-| Filing Status: Re-run carry forward | GST Manager / superadmin, previewed | same |
+| Filing Status: Re-run carry forward | refused (file the month first) | GST Manager / superadmin, previewed, from the latest filed month into the open next month |
+| Filing Status: Filed by mistake | not shown | GST Manager / superadmin, with a reason, once the status is not Filed |
+| 2B Reconciliation: Restore; Clear Data | the month's carried decisions are undone first | refused; the month is kept |
+| A page opened before this change: old carry, old Re-run | refused while a carried entry holds a decision | refused |
 | Extension: mark filed | first carry only | first carry only |
 | Deleting a client | allowed | allowed |
 | Any other direct write | allowed | refused by the guard |
 
-**Live data at the time (21 Oct 2026).** SORATH's July rows were deleted
-before this change, so August and September still hold the 16 carried copies.
-A GST Manager removes them in August on 2B Reconciliation; Save previews the
-September copies going too.
+**Live data at the time (21 Oct 2026).** SORATH BUILDERS: nothing to remove.
+A delete-and-copy re-run on 20 Oct 2026 (09:46 UTC) already brought August and
+September in line with July (75 Not in 2B rows each, every carried copy with a
+July counterpart). The Re-run preview for Aug-26 shows 0 to add and 0 to
+remove. July's books register still holds PERFECT INDUSTRIES 19/26-27 (Not in
+2B, no longer linked); a July Post is refused while it is there, because
+July's list already holds that invoice. Delete that books row first.

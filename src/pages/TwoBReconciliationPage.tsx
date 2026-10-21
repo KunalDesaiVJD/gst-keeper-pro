@@ -37,7 +37,7 @@ import { KpiTile, Note } from '@/components/gstr9/ui';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { writePostVersion } from '@/lib/postImport2B';
 import {
-  OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchTwobMonthState, previewAndApplyPriorBooks,
+  OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchTwobMonthState, ledgerCellReadOnly, previewAndApplyPriorBooks,
   type TwobChange, type TwobMonthState,
 } from '@/lib/twobPriorMonth';
 import {
@@ -1027,6 +1027,9 @@ const TwoBReconciliationPage: React.FC = () => {
           && Number(a.input_igst || 0) === Number(b.input_igst || 0)
           && Number(a.input_cgst || 0) === Number(b.input_cgst || 0)
           && Number(a.input_sgst || 0) === Number(b.input_sgst || 0);
+        // A later copy holding its own month's decision (a reclaim, Expense
+        // out, book entry) stays: the database refuses to delete it (docs §13).
+        const decided = (c: BillRecord) => !!(c.reclaim_month || c.reclaim_subtype || c.book_entry_month);
         const ids: string[] = [];
         for (const r of rows) {
           const perPeriod = new Map<string, string>();
@@ -1034,7 +1037,9 @@ const TwoBReconciliationPage: React.FC = () => {
             if (key(c.period_month) <= key(r.period_month) || filedSet.has(c.period_month)) continue;
             if (!perPeriod.has(c.period_month) && same(c, r) && !ids.includes(c.id)) perPeriod.set(c.period_month, c.id);
           }
-          ids.push(...perPeriod.values());
+          const kept = [...perPeriod.values()].filter((id) => decided(((copies || []) as BillRecord[]).find((c) => c.id === id) as BillRecord));
+          if (kept.length) toast.info(`${r.supplier_name} ${r.supplier_invoice_number || ''}: ${kept.length} later ${kept.length === 1 ? 'copy holds' : 'copies hold'} its own reclaim or book entry and ${kept.length === 1 ? 'stays' : 'stay'}; undo that there to remove ${kept.length === 1 ? 'it' : 'them'}.`, { duration: 10000 });
+          ids.push(...[...perPeriod.values()].filter((id) => !kept.includes(id)));
         }
         if (ids.length) {
           const { error: dErr } = await supabase.from(table).delete().in('id', ids);
@@ -1239,9 +1244,24 @@ const TwoBReconciliationPage: React.FC = () => {
       // Mark all existing versions as not current
       await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
       
-      // Delete current records
-      await supabase.from('bills_not_in_2b').delete().eq('client_id', selectedClientId).eq('period_month', selectedMonth);
-      await supabase.from('bills_not_in_books').delete().eq('client_id', selectedClientId).eq('period_month', selectedMonth);
+      // Delete current records. A carried entry's own decision (a reclaim,
+      // Expense out or book entry) is undone first: the database refuses to
+      // delete a carried entry that holds one (docs §13), and a Restore
+      // replaces the month as a whole. A refused write stops the Restore
+      // before anything is added back, so the month is never doubled.
+      const restoreStep = (what: string, e: { message: string } | null) => {
+        if (e) throw new Error(`${what}: ${e.message}`);
+      };
+      restoreStep('Could not clear the month', (await supabase.from('bills_not_in_2b')
+        .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null })
+        .eq('client_id', selectedClientId).eq('period_month', selectedMonth).eq('is_carried_forward', true)
+        .or('reclaim_month.not.is.null,reclaim_subtype.not.is.null')).error);
+      restoreStep('Could not clear the month', (await supabase.from('bills_not_in_books')
+        .update({ book_entry_month: null })
+        .eq('client_id', selectedClientId).eq('period_month', selectedMonth).eq('is_carried_forward', true)
+        .not('book_entry_month', 'is', null)).error);
+      restoreStep('Could not clear the month', (await supabase.from('bills_not_in_2b').delete().eq('client_id', selectedClientId).eq('period_month', selectedMonth)).error);
+      restoreStep('Could not clear the month', (await supabase.from('bills_not_in_books').delete().eq('client_id', selectedClientId).eq('period_month', selectedMonth)).error);
       
       // Restore bills not in 2B from version (handle both camelCase and snake_case)
       if (version.billsNotIn2B && version.billsNotIn2B.length > 0) {
@@ -1260,7 +1280,7 @@ const TwoBReconciliationPage: React.FC = () => {
           reclaim_month: b.reclaimMonth || b.reclaim_month || null,
           is_carried_forward: b.isCarriedForward ?? b.is_carried_forward ?? false,
         }));
-        await supabase.from('bills_not_in_2b').insert(records2B);
+        restoreStep('Could not restore', (await supabase.from('bills_not_in_2b').insert(records2B)).error);
       }
       
       // Restore bills not in books from version (handle both camelCase and snake_case)
@@ -1280,7 +1300,7 @@ const TwoBReconciliationPage: React.FC = () => {
           bill_in_2b_month: b.billIn2BMonth || b.bill_in_2b_month || null,
           is_carried_forward: b.isCarriedForward ?? b.is_carried_forward ?? false,
         }));
-        await supabase.from('bills_not_in_books').insert(recordsBooks);
+        restoreStep('Could not restore', (await supabase.from('bills_not_in_books').insert(recordsBooks)).error);
       }
       
       // Create a new RESTORE version entry with the restored data
@@ -1324,8 +1344,10 @@ const TwoBReconciliationPage: React.FC = () => {
     isEditableForCF: boolean = false,
     maxDate?: string
   ) => {
-    // Carried forward rows are non-editable (display only) - except columns marked as editable for CF
-    const shouldBeReadOnly = readOnly || (isCarriedForward && !isEditableForCF && !isSuperadmin);
+    // Carried forward rows are non-editable (display only) - except columns marked as editable for CF.
+    // In a prior month a GST Manager / the superadmin corrects a carried entry's date, supplier,
+    // number, GSTIN and amounts here too (each Save goes through the previewed door, docs §13).
+    const shouldBeReadOnly = ledgerCellReadOnly({ readOnly, isCarriedForward, editableForCF: isEditableForCF, isSuperadmin, isPrior, canPriorBooks });
     
     if (shouldBeReadOnly) {
       if (type === 'date' && value) {

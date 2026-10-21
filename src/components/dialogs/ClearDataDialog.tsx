@@ -108,6 +108,19 @@ const ClearDataDialog: React.FC<ClearDataDialogProps> = ({
         const open = months.filter((m) => !isPriorPeriod(m, priorThrough));
         const kept = months.filter((m) => isPriorPeriod(m, priorThrough));
         if (open.length) {
+          // A carried entry's own decision (a reclaim, Expense out, book
+          // entry) is undone first: the database refuses to delete a carried
+          // entry that holds one (docs §13); clearing the year is meant.
+          const { error: u1 } = await supabase.from('bills_not_in_2b')
+            .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null })
+            .eq('client_id', clientId).in('period_month', open).eq('is_carried_forward', true)
+            .or('reclaim_month.not.is.null,reclaim_subtype.not.is.null');
+          if (u1) throw u1;
+          const { error: u2 } = await supabase.from('bills_not_in_books')
+            .update({ book_entry_month: null })
+            .eq('client_id', clientId).in('period_month', open).eq('is_carried_forward', true)
+            .not('book_entry_month', 'is', null);
+          if (u2) throw u2;
           const { data: d1, error: e1 } = await supabase
             .from('bills_not_in_2b')
             .delete()

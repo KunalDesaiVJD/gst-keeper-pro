@@ -21,6 +21,11 @@
 // month moves (ITC Summary, Suspended Reco, Receivable Reco, push versions,
 // filing status).
 //
+// Applying this change must move no gate either: before any permitted
+// change, every gate of every month gives what origin/main's code gives
+// (bundled from the branch point), also where a filed month's saved ITC
+// Summary is stale (TAMNNA Sep-26: saved 5.4 = 0, live and pushed 5.4 not).
+//
 // Run by run.sh with TWOB_TEST_DB set; PG* variables as for psql. The app's
 // modules are bundled as they are (esbuild), with a stand-in supabase client
 // that reads a snapshot of the test database (only the columns each query
@@ -31,6 +36,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../../..');
@@ -46,7 +52,8 @@ const psql = (sql) => execFileSync('psql', ['-X', '-At', '-q', '-v', 'ON_ERROR_S
 const asApp = (sql) => psql(`SET ROLE anon; SELECT set_config('request.jwt.claims', '{"role":"anon"}', false); ${sql}`);
 
 const TABLES = ['clients', 'filing_status', 'itc_summaries', 'bills_not_in_2b', 'bills_not_in_books', 'twob_import_docs',
-  'suspended_reco', 'gst_receivable_reco', 'gstr1_data', 'rcm_data', 'gstr3b_adjustments', 'builder_rcm_postings'];
+  'books_register', 'suspended_reco', 'gst_receivable_reco', 'gstr1_data', 'rcm_data', 'gstr3b_adjustments', 'builder_rcm_postings',
+  'twob_filed_figures'];
 const snapshot = () => {
   const out = {};
   for (const t of TABLES) out[t] = JSON.parse(psql(`SELECT COALESCE(json_agg(t), '[]') FROM public.${t} t`) || '[]');
@@ -90,35 +97,58 @@ class Q {
 export const supabase = { from: (t) => new Q(t), rpc: async () => ({ data: null, error: { message: 'no rpc in the gates' } }) };
 `;
 
-const out = await build({
-  stdin: {
-    contents: `
+// The app's gate code as this branch has it, and as origin/main had it at
+// the branch point (the code running before this change is deployed).
+const bundle = async (srcRoot, entry) => {
+  const out = await build({
+    stdin: { contents: entry, resolveDir: srcRoot, loader: 'ts' },
+    bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
+    nodePaths: [path.join(root, 'node_modules')],
+    plugins: [{
+      name: 'stub',
+      setup(b) {
+        b.onResolve({ filter: /^@\/integrations\/supabase\/client$/ }, () => ({ path: 'supabase', namespace: 'stub' }));
+        b.onResolve({ filter: /^@\// }, (a) => b.resolve(`./${a.path.slice(2)}`, { resolveDir: path.join(srcRoot, 'src'), kind: a.kind }));
+        b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: FAKE_SUPABASE, loader: 'js' }));
+      },
+    }],
+    define: { 'import.meta.env': '{}' },
+  });
+  return import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
+};
+const G = await bundle(root, `
 export { fetchGstr3b } from './src/utils/fetchGstr3b';
 export { fetchItcAutoLinkTotals } from './src/lib/itcAutoLink';
 export { computeSuspendedRecoDiff, filingSuspendedCheck } from './src/lib/suspendedRecoCalc';
 export { computeGstReceivableRecoDiff } from './src/lib/gstReceivableRecoCalc';
-`,
-    resolveDir: root, loader: 'ts',
-  },
-  bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
-  plugins: [{
-    name: 'stub',
-    setup(b) {
-      b.onResolve({ filter: /^@\/integrations\/supabase\/client$/ }, () => ({ path: 'supabase', namespace: 'stub' }));
-      b.onResolve({ filter: /^@\// }, (a) => b.resolve(`./${a.path.slice(2)}`, { resolveDir: path.join(root, 'src'), kind: a.kind }));
-      b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: FAKE_SUPABASE, loader: 'js' }));
-    },
-  }],
-  define: { 'import.meta.env': '{}' },
-});
-const G = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
+export { planImport2BPost } from './src/lib/postImport2B';
+export { ledgerCellReadOnly } from './src/lib/twobPriorMonth';
+`);
+let M = null;
+{
+  const git = (args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  try {
+    const base = git(['merge-base', 'HEAD', 'origin/main']);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twob-main-'));
+    execFileSync('bash', ['-c', `git -C '${root}' archive ${base} src | tar -x -C '${dir}'`]);
+    M = await bundle(dir, `
+export { fetchGstr3b } from './src/utils/fetchGstr3b';
+export { fetchItcAutoLinkTotals } from './src/lib/itcAutoLink';
+export { computeSuspendedRecoDiff } from './src/lib/suspendedRecoCalc';
+export { computeGstReceivableRecoDiff } from './src/lib/gstReceivableRecoCalc';
+`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    console.log(`note gates: origin/main's code not bundled (${String(e.message || e).split('\n')[0]}); the before-deploy comparison is skipped`);
+  }
+}
 
-const MONTHS = ['07/2026', '08/2026', '09/2026'];
+const MONTHS3 = ['07/2026', '08/2026', '09/2026'];
 const round = (x) => JSON.parse(JSON.stringify(x, (_k, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 + 0 : v)));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const delta = (a, b, k) => Math.round(((b?.[k] ?? 0) - (a?.[k] ?? 0)) * 100) / 100;
 
-const gates = async (snap, clientId) => {
+const gates = async (snap, clientId, MONTHS = MONTHS3) => {
   globalThis.__db = snap;
   const client = snap.clients.find((c) => c.id === clientId);
   const byMonth = {};
@@ -143,10 +173,36 @@ const gates = async (snap, clientId) => {
   return byMonth;
 };
 
+// The same gates by origin/main's code (no filingSuspendedCheck there).
+const gatesMain = async (snap, clientId, MONTHS = MONTHS3) => {
+  globalThis.__db = snap;
+  const client = snap.clients.find((c) => c.id === clientId);
+  const byMonth = {};
+  for (const m of MONTHS) {
+    const draft = await M.fetchGstr3b(clientId, client.gstin || '', m);
+    byMonth[m] = round({
+      draft: { json: draft.json, flags: draft.flags, itcTyped: draft.itcTyped, summary: draft.summary },
+      autoLink: await M.fetchItcAutoLinkTotals(clientId, m),
+      receivable: await M.computeGstReceivableRecoDiff(clientId, m),
+      suspended: await M.computeSuspendedRecoDiff(clientId, m),
+    });
+  }
+  return byMonth;
+};
+const sameAsMain = (label, branch, main) => {
+  if (!main) return;
+  for (const m of Object.keys(main)) {
+    for (const k of ['draft', 'autoLink', 'receivable', 'suspended']) {
+      check(`${label} ${m}: ${k} as origin/main gives it (applying this change moves nothing)`, same(branch[m][k], main[m][k]),
+        JSON.stringify({ branch: branch[m][k]?.summary ?? branch[m][k], main: main[m][k]?.summary ?? main[m][k] }));
+    }
+  }
+};
+
 // Every gate of every month, except the Suspended Reco books side, which
 // moves by exactly the books' change in the changed and later months.
 const compare = (label, before, after, booksMove) => {
-  for (const m of MONTHS) {
+  for (const m of Object.keys(before)) {
     const a = before[m];
     const b = after[m];
     const scope = a.filed ? 'filed' : 'open';
@@ -204,6 +260,7 @@ for (const [C, name, liberal] of [
   const label = liberal ? 'SORATH (Liberal)' : 'Strict';
   const saved = psql(`SELECT public.t_saved_digest('${C}')`).trim();
   const before = await gates(snapshot(), C);
+  if (M) sameAsMain(`${label} before`, before, await gatesMain(snapshot(), C));
   check(`${label} before: Sep-26 push blocked by the Suspended Reco difference`, before['09/2026'].push.suspendedBlocks,
     JSON.stringify(before['09/2026'].suspended));
 
@@ -223,26 +280,62 @@ for (const [C, name, liberal] of [
   check(`${label} after: Sep-26 Suspended Reco difference cleared by the tally`, after['09/2026'].suspended.total === 0
     && !after['09/2026'].push.suspendedBlocks, JSON.stringify(after['09/2026'].suspended));
   check(`${label} after: Sep-26 Filing Status check passes (within ₹20)`, !after['09/2026'].filing.blocks, JSON.stringify(after['09/2026'].filing));
-  // Aug-26's GST Receivable Reco reads July's 4B(2)(i) as July's locked ITC Summary saved it, not July's live list.
+  // Aug-26's GST Receivable Reco reads July's 4B(2)(i) as recorded before the change, not July's live list.
   check(`${label}: July's live reversal moved by the tally, yet Aug-26's GST Receivable Reco did not`,
-    delta(before['07/2026'].autoLink.reversalFromReco, after['07/2026'].autoLink.reversalFromReco, 'cgst') === -8871.09
+    Number(psql(`SELECT COALESCE(sum(input_cgst), 0) FROM public.bills_not_in_2b WHERE client_id = '${C}' AND period_month = '07/2026' AND public.twob_label_matches(reversal_month, '07/2026')`))
+      === Math.round((before['07/2026'].autoLink.reversalFromReco.cgst - 8871.09) * 100) / 100
     && same(before['08/2026'].receivable, after['08/2026'].receivable),
     JSON.stringify({ jul: after['07/2026'].autoLink.reversalFromReco, a: before['08/2026'].receivable, b: after['08/2026'].receivable }));
   check(`${label}: nothing saved for any month moved (ITC Summary, Suspended Reco, Receivable Reco, push versions, filing status)`,
     psql(`SELECT public.t_saved_digest('${C}')`).trim() === saved);
 }
 
-// ── 2. A filed month whose ITC Summary is not locked: read live, as today ──
+// ── 2. TAMNNA, a stale saved summary: Sep-26 filed and locked with its
+// saved 5.4 at 0 while its live (and pushed) 5.4 is 500 a head; Oct-26 open
+// and tallied. Applying this change moves no gate (origin/main's code gives
+// the same), and removing T-1 in filed July moves only the books side. Post
+// does not add T-1 back afterwards. ──────────────────────────────────────
 {
   const C = '91000000-0000-0000-0000-000000000003';
-  psql(`SELECT public.t_make_sorath('${C}', 'Gates unlocked summary', true)`);
-  psql(`UPDATE public.itc_summaries SET is_locked = false WHERE client_id = '${C}' AND period_month = '07/2026'`);
-  const before = await gates(snapshot(), C);
-  const err = apply(C, 'public.t_manager()', changesFor(C));
-  check('Unlocked summary: the removal goes through', err === null, err);
-  const after = await gates(snapshot(), C);
-  check('Unlocked summary: Aug-26 GST Receivable Reco reads July live (as before this change), so it moves',
-    !same(before['08/2026'].receivable, after['08/2026'].receivable), JSON.stringify({ a: before['08/2026'].receivable, b: after['08/2026'].receivable }));
+  const MONTHS4 = ['07/2026', '08/2026', '09/2026', '10/2026'];
+  psql(`SELECT public.t_make_tamnna('${C}', 'Gates stale summary')`);
+  psql(`UPDATE public.filing_status SET status = 'Filed', arn = 'AA2409260000055', filed_date = '2026-10-20' WHERE client_id = '${C}' AND period_month = '09/2026';
+        UPDATE public.itc_summaries SET data = public.t_itc(70000, 0, 0), is_locked = true WHERE client_id = '${C}' AND period_month = '09/2026';
+        INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES ('${C}', 'GSTR-3B', '10/2026', 'Data Received');
+        INSERT INTO public.itc_summaries (client_id, period_month, data, is_locked) VALUES ('${C}', '10/2026', public.t_itc(80000, 0, 0), false);
+        INSERT INTO public.gst_receivable_reco (client_id, period_month, opening_cgst, opening_sgst, opening_igst, books_closing_cgst, books_closing_sgst, books_closing_igst,
+          utilized_cgst, utilized_sgst, utilized_igst, drc_cgst, drc_sgst, drc_igst)
+        VALUES ('${C}', '10/2026', 1000000, 1000000, 0, 1070500, 1070500, 0, 0, 0, 0, 0, 0, 0);`);
+  const saved = psql(`SELECT public.t_saved_digest('${C}')`).trim();
+  const before = await gates(snapshot(), C, MONTHS4);
+  if (M) sameAsMain('Stale summary before', before, await gatesMain(snapshot(), C, MONTHS4));
+  check('Stale summary before: Sep-26 shows its live 5.4 (500), not the saved 0', before['09/2026'].autoLink.reclaimFromReco.cgst === 500,
+    JSON.stringify(before['09/2026'].autoLink.reclaimFromReco));
+  const t1 = psql(`SELECT id FROM public.bills_not_in_2b WHERE client_id = '${C}' AND period_month = '07/2026' AND supplier_invoice_number = 'T-1'`).trim();
+  const err = apply(C, 'public.t_manager()', [{ table: 'bills_not_in_2b', op: 'delete', id: t1 }]);
+  check('Stale summary: the GST Manager removes T-1 in filed July', err === null, err);
+  const after = await gates(snapshot(), C, MONTHS4);
+  const move = { cgst: 1000, sgst: 1000, igst: 0 };
+  compare('Stale summary', before, after, { '07/2026': move, '08/2026': move, '09/2026': move, '10/2026': move });
+  check('Stale summary: Oct-26 GST Receivable Reco reads Sep-26 as before (5.4 = 500), so its push gate is unchanged',
+    same(before['10/2026'].receivable, after['10/2026'].receivable) && same(before['10/2026'].push.receivableBlocks, after['10/2026'].push.receivableBlocks),
+    JSON.stringify({ a: before['10/2026'].receivable, b: after['10/2026'].receivable }));
+  check('Stale summary: nothing saved for any month moved', psql(`SELECT public.t_saved_digest('${C}')`).trim() === saved);
+  globalThis.__db = snapshot();
+  const plan = await G.planImport2BPost(C, '07/2026');
+  check('Stale summary: the next Post of July does not add T-1 back', plan.insertBills2B.length === 0 && plan.updateBills2B.length === 0,
+    JSON.stringify({ insert: plan.insertBills2B.map((x) => x.row.supplier_invoice_number), update: plan.updateBills2B.length }));
+}
+
+// ── 3. 2B Reconciliation's cells in a prior month (Liberal client): a GST
+// Manager corrects a carried entry's date, supplier, number, GSTIN and
+// amounts too (SORATH: 74 + 253 carried rows were display-only); an
+// employee sees the month read-only. ──────────────────────────────────────
+{
+  const cell = (o) => G.ledgerCellReadOnly({ readOnly: false, editableForCF: false, isSuperadmin: false, isPrior: true, canPriorBooks: true, isCarriedForward: true, ...o });
+  check('Screens: a GST Manager edits a carried entry\'s cells in a prior month', cell({}) === false);
+  check('Screens: an open month keeps carried entries\' cells read-only for a GST Manager', cell({ isPrior: false }) === true);
+  check('Screens: an employee (the page read-only) edits nothing in a prior month', cell({ readOnly: true, canPriorBooks: false }) === true);
 }
 
 let failed = 0;

@@ -56,9 +56,10 @@ const sumHeads = (rows: { input_igst: number | null; input_cgst: number | null; 
 export async function fetchItcAutoLinkTotals(clientId: string, periodMonth: string): Promise<ItcAutoLinkTotals> {
   const patterns = getMonthPatterns(periodMonth);
 
-  const [eligibleFromImport2B, creditNotes, { data: reversalBills }, { data: reclaimBills }] = await Promise.all([
+  const [eligibleFromImport2B, creditNotes, filed, { data: reversalBills }, { data: reclaimBills }] = await Promise.all([
     fetchImport2BEligibleTotal(clientId, periodMonth),
     fetchImport2BCreditNotes(clientId, periodMonth),
+    fetchFiledFigures(clientId, periodMonth),
     supabase.from('bills_not_in_2b')
       .select('input_igst, input_cgst, input_sgst, reversal_month')
       .eq('client_id', clientId).eq('period_month', periodMonth)
@@ -69,10 +70,11 @@ export async function fetchItcAutoLinkTotals(clientId: string, periodMonth: stri
       .not('reclaim_month', 'is', null),
   ]);
 
-  const reversalFromReco = sumHeads((reversalBills || []).filter((b) => monthMatches(b.reversal_month, patterns)));
   const matchingReclaims = (reclaimBills || []).filter((b) => monthMatches(b.reclaim_month, patterns));
-  const reclaimFromReco = sumHeads(matchingReclaims.filter((b) => b.reclaim_subtype !== 'EXPENSE_OUT'));
-  const expenseOutFromReco = sumHeads(matchingReclaims.filter((b) => b.reclaim_subtype === 'EXPENSE_OUT'));
+  // A prior month changed after filing: its figures as recorded then (docs §13).
+  const reversalFromReco = filed ? filed.reversal : sumHeads((reversalBills || []).filter((b) => monthMatches(b.reversal_month, patterns)));
+  const reclaimFromReco = filed ? filed.reclaim : sumHeads(matchingReclaims.filter((b) => b.reclaim_subtype !== 'EXPENSE_OUT'));
+  const expenseOutFromReco = filed ? filed.expenseOut : sumHeads(matchingReclaims.filter((b) => b.reclaim_subtype === 'EXPENSE_OUT'));
 
   return {
     eligibleFromImport2B,
@@ -82,24 +84,26 @@ export async function fetchItcAutoLinkTotals(clientId: string, periodMonth: stri
   };
 }
 
-// A filed month's 2B Reconciliation figures as its ITC Summary was saved and
-// locked when the return was filed: 4B(2)(i) "current month as per 2B RECO",
-// 5.4 and 4D(1.2). A gate that reads a filed month (the next month's GST
-// Receivable Reco; the month's own Suspended Reco portal side) reads these,
-// not the month's live lists: a GST Manager's change to a filed month's books
-// entries (docs §13) moves only the books side, never what was filed.
-type SavedRow = { srNo?: string; particular?: string; igst?: unknown; cgst?: unknown; sgst?: unknown };
-const heads = (r: SavedRow | undefined): HeadTotals => ({
-  igst: Number(r?.igst) || 0, cgst: Number(r?.cgst) || 0, sgst: Number(r?.sgst) || 0,
-});
-export function savedReversalReclaim(data: unknown): { reversal: HeadTotals; reclaim: HeadTotals; expenseOut: HeadTotals } {
-  const d = (typeof data === 'string' ? JSON.parse(data) : data) as { section4A?: SavedRow[]; section4B?: SavedRow[]; section4D?: SavedRow[] } | null;
-  const rowsA = Array.isArray(d?.section4A) ? d.section4A : [];
-  const rowsB = Array.isArray(d?.section4B) ? d.section4B : [];
-  const rowsD = Array.isArray(d?.section4D) ? d.section4D : [];
+// A prior month's 2B Reconciliation figures as the database recorded them
+// just before a GST Manager first changed the month's books entries
+// (twob_filed_figures, 20261021100000; docs/2B_RECONCILIATION_FLOW.md §13):
+// 4B(2)(i) "current month as per 2B RECO", 5.4 and 4D(1.2). Every gate that
+// reads the month (its Suspended Reco and ITC Summary, the next month's GST
+// Receivable Reco, the GSTR-3B draft) reads these once they exist, so such a
+// change moves only the Suspended Reco books side. null: the month was never
+// changed after filing, and its live lists are its figures, as always.
+export interface FiledFigures { reversal: HeadTotals; reclaim: HeadTotals; expenseOut: HeadTotals }
+
+export async function fetchFiledFigures(clientId: string, periodMonth: string): Promise<FiledFigures | null> {
+  const { data, error } = await supabase.from('twob_filed_figures')
+    .select('reversal_igst, reversal_cgst, reversal_sgst, reclaim_igst, reclaim_cgst, reclaim_sgst, expense_out_igst, expense_out_cgst, expense_out_sgst')
+    .eq('client_id', clientId).eq('period_month', periodMonth).maybeSingle();
+  if (error) throw new Error(`Could not read the filed figures of ${periodMonth}: ${error.message}`);
+  if (!data) return null;
+  const n = (v: unknown) => Number(v) || 0;
   return {
-    reversal: heads(rowsB.find((r) => typeof r?.particular === 'string' && r.particular.includes('current month as per 2B RECO'))),
-    reclaim: heads(rowsA.find((r) => r?.srNo === '5.4')),
-    expenseOut: heads(rowsD.find((r) => r?.srNo === '1.2')),
+    reversal: { igst: n(data.reversal_igst), cgst: n(data.reversal_cgst), sgst: n(data.reversal_sgst) },
+    reclaim: { igst: n(data.reclaim_igst), cgst: n(data.reclaim_cgst), sgst: n(data.reclaim_sgst) },
+    expenseOut: { igst: n(data.expense_out_igst), cgst: n(data.expense_out_cgst), sgst: n(data.expense_out_sgst) },
   };
 }

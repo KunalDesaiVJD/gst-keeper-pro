@@ -66,6 +66,19 @@ export const isPriorPeriod = (period: string, priorThrough: string | null): bool
 /** A GST Manager or the superadmin: the only ones who change a prior month's books entries. */
 export const canChangePriorBooks = (role: string | null | undefined): boolean => role === 'superadmin' || role === 'gst_manager';
 
+/**
+ * Whether a 2B Reconciliation cell (date, supplier, number, GSTIN, amount) is
+ * shown read-only. A carried entry's cells are read-only, except for the
+ * superadmin and, in a prior month, for a GST Manager or the superadmin, who
+ * correct carried entries there too (each Save goes through the door, which
+ * reaches every later copy). editableForCF: a column carried entries may
+ * always edit.
+ */
+export const ledgerCellReadOnly = (o: {
+  readOnly: boolean; isCarriedForward: boolean; editableForCF: boolean;
+  isSuperadmin: boolean; isPrior: boolean; canPriorBooks: boolean;
+}): boolean => o.readOnly || (o.isCarriedForward && !o.editableForCF && !o.isSuperadmin && !(o.isPrior && o.canPriorBooks));
+
 type Raw = Record<string, unknown>;
 
 /** The month's state, as the database sees it. Throws when it cannot be read. */
@@ -109,6 +122,8 @@ export interface TwobChangeResult {
   id: string | null;
   /** The later months' copies it reaches. */
   later: { period: string; action: string; id: string }[];
+  /** A Not in 2B entry posted from Import 2B: what happens to its books register row ('remove' | 'change'), or null. */
+  booksRow: string | null;
   refusal: string | null;
 }
 
@@ -140,6 +155,7 @@ const parseApply = (data: unknown): TwobApplyResult => {
           const x = l as Raw;
           return { period: String(x.period), action: String(x.action), id: String(x.id) };
         }),
+        booksRow: typeof t.books_row === 'string' ? t.books_row : null,
         refusal: typeof c.refusal === 'string' ? c.refusal : null,
       };
     }),
@@ -186,7 +202,13 @@ export function describePriorPreview(r: TwobApplyResult, period: string): string
   const later = r.laterMonths.length
     ? ` Also changes ${r.laterMonths.map((m) => `${monthName(m.period)} (${m.count})`).join(', ')}.`
     : ' No later month holds these entries.';
-  return here + later;
+  const booksGone = r.changes.filter((c) => !c.refusal && c.booksRow === 'remove').length;
+  const booksChanged = r.changes.filter((c) => !c.refusal && c.booksRow === 'change').length;
+  const books = [
+    booksGone && `${booksGone} Import 2B books ${booksGone === 1 ? 'row goes' : 'rows go'} too, so Post does not add ${booksGone === 1 ? 'it' : 'them'} back`,
+    booksChanged && `${booksChanged} Import 2B books ${booksChanged === 1 ? 'row changes' : 'rows change'} the same way`,
+  ].filter(Boolean);
+  return here + later + (books.length ? ` ${books.join('; ')}.` : '');
 }
 
 type ConfirmFn = (opts: { title: string; description?: string; confirmText?: string; destructive?: boolean }) => Promise<boolean>;
@@ -250,16 +272,44 @@ export async function previewAndApplyPriorBooks(opts: {
 
 // ---- The carry -----------------------------------------------------------------
 
-/** After a GSTR-3B / GSTR-3B (Q) is marked Filed: the first carry into the next month (nothing when it already holds its lists). */
-export async function carryAfterFiling(clientId: string, period: string): Promise<{ carried: number; nextPeriod: string | null }> {
-  const { data, error } = await supabase.rpc('twob_carry_after_filing', { p_client_id: clientId, p_period: period });
+/**
+ * Whether the next month already holds carried entries on each list. Filing
+ * carries a month's lists into the next month only when it holds none yet
+ * (the filing trigger, docs §13); Filing Status asks first, to say which.
+ */
+export interface NextMonthCarried { nextPeriod: string; nextPrior: boolean; carried2B: number; carriedBooks: number }
+
+export async function nextMonthCarried(clientId: string, period: string): Promise<NextMonthCarried> {
+  const [mm, yyyy] = (period || '').split('/').map(Number);
+  const next = mm === 12 ? `01/${yyyy + 1}` : `${String(mm + 1).padStart(2, '0')}/${yyyy}`;
+  const state = await fetchTwobMonthState(clientId, period);
+  const m = state.laterMonths.find((x) => x.period === next);
+  return { nextPeriod: next, nextPrior: isPriorPeriod(next, state.priorThrough), carried2B: m?.carried2B ?? 0, carriedBooks: m?.carriedBooks ?? 0 };
+}
+
+/**
+ * A GSTR-3B / GSTR-3B (Q) marked Filed by mistake, its status since changed:
+ * a GST Manager or the superadmin reopens its month for Import 2B and 2B
+ * Reconciliation, writing why (twob_reopen_filed). Returns the month's state.
+ */
+export async function reopenFiled(actorId: string, clientId: string, returnType: string, period: string, reason: string): Promise<TwobMonthState> {
+  const { error } = await supabase.rpc('twob_reopen_filed', {
+    p_actor_id: actorId, p_client_id: clientId, p_return_type: returnType, p_period: period, p_reason: reason,
+  });
   if (error) throw new Error(error.message);
-  const d = (data || {}) as Raw;
-  return { carried: (Number(d.carried_2b) || 0) + (Number(d.carried_books) || 0), nextPeriod: typeof d.next_period === 'string' ? d.next_period : null };
+  return fetchTwobMonthState(clientId, period);
+}
+
+/** The returns of a month recorded as Filed for Import 2B and 2B Reconciliation and not reopened ("clientId|returnType"). */
+export async function fetchEverFiled(period: string): Promise<Set<string>> {
+  const { data, error } = await supabase.from('twob_ever_filed').select('client_id, return_type')
+    .eq('period_month', period).is('reopened_at', null);
+  if (error) throw new Error(error.message);
+  return new Set((data || []).map((r) => `${r.client_id}|${r.return_type}`));
 }
 
 export interface RerunEntry { id: string; date: string | null; supplierName: string | null; number: string | null; tax: number; message: string | null }
-export interface RerunList { add: RerunEntry[]; remove: RerunEntry[]; keep: RerunEntry[] }
+export interface RerunList { add: RerunEntry[]; remove: RerunEntry[]; keep: RerunEntry[]; conflict: RerunEntry[] }
 export interface RerunResult { period: string; nextPeriod: string; dryRun: boolean; bills2B: RerunList; billsBooks: RerunList }
 
 const parseRerunList = (v: unknown): RerunList => {
@@ -273,7 +323,7 @@ const parseRerunList = (v: unknown): RerunList => {
       tax: Number(r.tax) || 0, message: typeof r.message === 'string' ? r.message : null,
     };
   });
-  return { add: list(d.add), remove: list(d.remove), keep: list(d.keep) };
+  return { add: list(d.add), remove: list(d.remove), keep: list(d.keep), conflict: list(d.conflict) };
 };
 
 /** Re-run carry forward (a GST Manager or the superadmin): the preview (dryRun) or the change. */
@@ -300,6 +350,7 @@ export function describeRerun(r: RerunResult): { lines: string[]; nothingToDo: b
     if (l.add.length) lines.push(`${name}: add ${l.add.length} to ${next} (${listNames(l.add)}).`);
     if (l.remove.length) lines.push(`${name}: remove ${l.remove.length} carried ${l.remove.length === 1 ? 'copy' : 'copies'} from ${next} that ${monthName(r.period)} no longer holds (${listNames(l.remove)}).`);
     if (l.keep.length) lines.push(`${name}: keep ${l.keep.length} carried ${l.keep.length === 1 ? 'copy' : 'copies'} that ${monthName(r.period)} no longer holds, because ${l.keep.length === 1 ? 'it holds' : 'they hold'} ${next}'s own decision (${listNames(l.keep)}).`);
+    for (const c of l.conflict) lines.push(`${name}: ${entryLabel(c)} is left as it is: ${c.message || 'its copy holds a decision'}.`);
   };
   list('Not in 2B', r.bills2B);
   list('Not in Books', r.billsBooks);

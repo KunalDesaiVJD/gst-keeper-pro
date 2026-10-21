@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Download, ClipboardCheck, Lock, Unlock, Search, X, ChevronDown, Info, Upload, Eye, Trash2, LogIn, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
+import { Download, ClipboardCheck, Lock, Unlock, Search, X, ChevronDown, Info, Upload, Eye, Trash2, LogIn, AlertTriangle, RefreshCw, Loader2, Undo2 } from 'lucide-react';
 import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION, filingStatusDisplayLabel, isSystemOnlyFilingStatus, PENDING_FILING_STATUSES } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
@@ -33,7 +33,7 @@ import { markFiledForPeriod } from '@/lib/advanceSetoffOverrides';
 import RequestDirectFilingDialog, { DirectFilingTarget } from '@/components/filing/RequestDirectFilingDialog';
 import DirectFilingApprovalsPanel from '@/components/filing/DirectFilingApprovalsPanel';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { canChangePriorBooks, carryAfterFiling, describeRerun, monthName, rerunCarry } from '@/lib/twobPriorMonth';
+import { canChangePriorBooks, describeRerun, fetchEverFiled, monthName, nextMonthCarried, reopenFiled, rerunCarry, type NextMonthCarried } from '@/lib/twobPriorMonth';
 import { filingSuspendedCheck } from '@/lib/suspendedRecoCalc';
 import {
   DirectFilingApproval,
@@ -244,41 +244,20 @@ const FilingStatusPage: React.FC = () => {
   }, [selectedMonth, contextMonth, setContextMonth]);
   const allReturnTypes: ReturnType[] = ['GSTR-1', 'GSTR-3B', 'ITC-04', 'GSTR-6', 'GSTR-7', 'CMP-08', 'GSTR-1 (IFF)', 'GSTR-3B (Q)'];
 
-  // In-flight guard — the same (client, period) carry-forward must never run
-  // twice concurrently (e.g. a double-click, or a manual retry landing while
-  // the automatic one from filing is still running); a second run's delete
-  // could wipe what the first just inserted before re-inserting its own copy.
-  const carryForwardInFlight = useRef<Set<string>>(new Set());
-  // Record id currently retrying a carry-forward, for the button's spinner.
+  // Record id currently re-running a carry-forward, for the button's spinner.
   const [retryingCarryForwardId, setRetryingCarryForwardId] = useState<string | null>(null);
+  // The selected month's returns recorded as Filed for Import 2B and 2B
+  // Reconciliation ("clientId|returnType"; docs §13): their month stays a
+  // prior month there, whatever the status says now, until reopened.
+  const [everFiled, setEverFiled] = useState<Set<string>>(new Set());
 
-  // The carry after filing: the database's first carry (twob_carry_after_filing,
-  // 20261021100000; docs §13). It copies the month's Not in 2B / Not in Books
-  // lists into the next month only when that month holds no carried rows on
-  // the list yet, and otherwise does nothing, so a later month's reclaims and
-  // book entries are never wiped (TAMNNA, 17 Oct 2026). The filing trigger
-  // (auto_lock_on_filed) already made it when the status was saved; this is
-  // the second, harmless pass, and the one a quarterly return relied on.
-  // Returns a result instead of swallowing failures (docs §6).
-  const carryForwardToNextMonth = async (
-    clientId: string,
-    periodMonth: string,
-  ): Promise<{ success: boolean; totalCarried: number; error?: string }> => {
-    const lockKey = `${clientId}:${periodMonth}`;
-    if (carryForwardInFlight.current.has(lockKey)) {
-      return { success: false, totalCarried: 0, error: 'A carry-forward for this client/period is already running.' };
-    }
-    carryForwardInFlight.current.add(lockKey);
-    try {
-      const { carried } = await carryAfterFiling(clientId, periodMonth);
-      return { success: true, totalCarried: carried };
-    } catch (error: any) {
-      console.error('Error during carry forward:', error);
-      return { success: false, totalCarried: 0, error: error?.message || 'Unknown error' };
-    } finally {
-      carryForwardInFlight.current.delete(lockKey);
-    }
-  };
+  // The carry when a GSTR-3B / GSTR-3B (Q) is marked Filed is the database's
+  // (auto_lock_on_filed → twob_carry_first, 20261021100000; docs §13): it
+  // copies the month's Not in 2B / Not in Books lists into the next month
+  // only when that month holds no carried rows on the list yet and is not
+  // filed itself, and otherwise does nothing, so a later month's reclaims and
+  // book entries are never wiped (TAMNNA, 17 Oct 2026). The page asks before
+  // filing which of the two will happen, to say so afterwards.
 
   // Re-run carry forward (docs §13): a GST Manager or the superadmin, with a
   // preview first. It compares the month's two lists with the next month's
@@ -313,6 +292,44 @@ const FilingStatusPage: React.FC = () => {
       toast.error(`Carry-forward failed: ${err?.message || 'unknown error'}`);
     } finally {
       setRetryingCarryForwardId(null);
+    }
+  };
+
+  // A GSTR-3B marked Filed by mistake, its status since changed: a GST
+  // Manager or the superadmin reopens its month for Import 2B and 2B
+  // Reconciliation, writing why (twob_reopen_filed; docs §13). Unlock sheets
+  // does not do this: a month really filed stays prior.
+  const handleReopenFiled = async (record: FilingRecord) => {
+    if (!canChangePriorBooks(user?.role) || !user?.id) return;
+    const period = record.period_month || selectedMonth;
+    let reason = '';
+    const ok = await confirm({
+      title: `Reopen ${monthName(period)} for Import 2B and 2B Reconciliation?`,
+      description: (
+        <>
+          Only when Filed was set by mistake. The month opens again for everyone (unless a later month is filed), and its books entries change as in any open month.
+          <br /><br />
+          <textarea
+            className="w-full rounded-md border bg-background p-2 text-sm text-foreground"
+            rows={3}
+            placeholder="Why was Filed set by mistake?"
+            onChange={(e) => { reason = e.target.value; }}
+          />
+        </>
+      ),
+      confirmText: 'Reopen',
+      destructive: true,
+    });
+    if (!ok) return;
+    if (!reason.trim()) { toast.error('Write why Filed was set by mistake. Nothing was reopened.'); return; }
+    try {
+      const state = await reopenFiled(user.id, record.client_id, record.return_type, period, reason.trim());
+      toast.success(state.isPrior
+        ? `${monthName(period)} is no longer recorded as filed, but a later month is filed, so it stays a filed month for Import 2B and 2B Reconciliation.`
+        : `${monthName(period)} is open again for Import 2B and 2B Reconciliation.`, { duration: 10000 });
+      fetchFilingRecords();
+    } catch (err) {
+      toast.error(`Nothing was reopened: ${(err as Error).message}`);
     }
   };
 
@@ -377,6 +394,12 @@ const FilingStatusPage: React.FC = () => {
     }));
     
     setFilingRecords(enrichedRecords);
+    try {
+      setEverFiled(await fetchEverFiled(selectedMonth));
+    } catch (err) {
+      console.error('Error fetching the filed record for 2B:', err);
+      setEverFiled(new Set());
+    }
   }, [selectedMonth]);
 
   // Bulk lookup of which clients have GSTR-1 data saved for the period —
@@ -1006,6 +1029,19 @@ const FilingStatusPage: React.FC = () => {
       if (!advanceOk) return;
     }
 
+    // Filing a GSTR-3B carries this month's pending 2B entries into the next
+    // month only when that month holds none yet and is not filed (docs §13):
+    // ask which it will be, to say so after filing.
+    const is3B = record.return_type === 'GSTR-3B' || record.return_type === 'GSTR-3B (Q)';
+    let nextHeld: NextMonthCarried | null = null;
+    if (newStatus === 'Filed' && !wasFiledBefore && is3B) {
+      try {
+        nextHeld = await nextMonthCarried(record.client_id, record.period_month || selectedMonth);
+      } catch (err) {
+        console.error('Error reading the next month before filing:', err);
+      }
+    }
+
     try {
       if (isNewRecord) {
         // Insert new record with audit info
@@ -1107,20 +1143,16 @@ const FilingStatusPage: React.FC = () => {
           .update({ is_locked: true })
           .eq('id', record.id); // Only lock this specific record
         
-        // AUTO CARRY FORWARD: the first carry into the next month (nothing
-        // when it already holds its lists, docs §13). The status/lock updates
-        // above already committed — a carry-forward failure here must not
-        // read as "filing failed" (the outer catch's generic message), it
-        // needs its own distinct, actionable warning.
-        const cfResult = await carryForwardToNextMonth(record.client_id, record.period_month);
-        if (cfResult.success) {
-          toast.success(`${record.return_type} filed. 2B and ITC sheets are now locked, and next month holds this month's pending 2B entries.`);
+        // The carry into the next month was made by the database with the
+        // status (docs §13): only when that month held no carried entries
+        // and was not filed. Say which happened.
+        const next = nextHeld ? monthName(nextHeld.nextPeriod) : 'The next month';
+        if (nextHeld?.nextPrior) {
+          toast.warning(`${record.return_type} filed and sheets are locked. ${next} is filed already, so nothing was carried into it: a GST Manager or the superadmin corrects its books entries on Import 2B or 2B Reconciliation.`, { duration: 15000 });
+        } else if (nextHeld && (nextHeld.carried2B > 0 || nextHeld.carriedBooks > 0)) {
+          toast.warning(`${record.return_type} filed and sheets are locked. ${next} already held carried entries, so nothing was carried into it and its own reclaims and book entries stay. A GST Manager or the superadmin can bring it in line with Re-run carry forward, the button next to this record.`, { duration: 15000 });
         } else {
-          toast.warning(
-            `${record.return_type} filed and sheets are locked, but carrying data forward to next month failed `
-            + `(${cfResult.error || 'unknown error'}). A GST Manager or the superadmin can re-run it with the button next to this record.`,
-            { duration: 10000 },
-          );
+          toast.success(`${record.return_type} filed. 2B and ITC sheets are now locked, and this month's pending 2B entries were carried into ${nextHeld ? next : 'the next month'}.`);
         }
       } else if (newStatus === 'Filed') {
         toast.success('Status updated to Filed.');
@@ -1129,6 +1161,9 @@ const FilingStatusPage: React.FC = () => {
         const changedRole = user?.role || '';
         const changedOn = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ', ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
         toast.info(`Status changed from Filed to ${newStatus} by ${changedBy} (${changedRole}) on ${changedOn}`, { duration: 6000 });
+        if (is3B) {
+          toast.warning(`Import 2B and 2B Reconciliation still treat ${monthName(record.period_month || selectedMonth)} as filed. If Filed was set by mistake, a GST Manager or the superadmin reopens it there with the "Filed by mistake" button on this row.`, { duration: 15000 });
+        }
       } else {
         toast.success('Status updated successfully');
       }
@@ -1838,12 +1873,11 @@ const FilingStatusPage: React.FC = () => {
                         </PopoverContent>
                       </Popover>
                     )}
-                    {/* Not gated on status === 'Filed'. The case that most needs
-                        this button is precisely the one where the period was
-                        never filed, so its pending items never carried into the
-                        next period — gating it on Filed left staff with no way
-                        out of exactly the breakage it exists to repair. */}
-                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && canChangePriorBooks(user?.role) && (
+                    {/* Re-run runs from a month recorded as Filed (docs §13):
+                        an unfiled month carries when it is filed. The database
+                        also refuses it into a filed next month. */}
+                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && canChangePriorBooks(user?.role)
+                      && everFiled.has(`${record.client_id}|${returnType}`) && (
                       <button
                         type="button"
                         className="shrink-0 disabled:opacity-50"
@@ -1854,6 +1888,17 @@ const FilingStatusPage: React.FC = () => {
                         {retryingCarryForwardId === record.id
                           ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                           : <RefreshCw className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />}
+                      </button>
+                    )}
+                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && canChangePriorBooks(user?.role)
+                      && record.status !== 'Filed' && everFiled.has(`${record.client_id}|${returnType}`) && (
+                      <button
+                        type="button"
+                        className="shrink-0"
+                        title="Filed by mistake: reopen this month for Import 2B and 2B Reconciliation (GST Manager / superadmin)"
+                        onClick={() => handleReopenFiled(record)}
+                      >
+                        <Undo2 className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
                       </button>
                     )}
                     {returnType === 'GSTR-3B' && gstr1IsNilByClient.get(record.client_id) === true && !record.is_nil && (
