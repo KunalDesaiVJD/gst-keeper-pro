@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/gstr9/badge';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
@@ -99,8 +98,12 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
 
   // ── GSTR-1A filing status ───────────────────────────────────────────────
+  // Read from the portal (21 Oct 2026): the Filing Status pull of a GSTR-1
+  // keeps a GSTR-1A it sees as its own record (gst_filed_returns 'GSTR1A'),
+  // never on the GSTR-1 row. It is no longer ticked or typed here.
   const [gstr1aFiled, setGstr1aFiled] = useState(false);
   const [gstr1aArn, setGstr1aArn] = useState('');
+  const [gstr1aDate, setGstr1aDate] = useState<string | null>(null);
   const [gstr1aRemarks, setGstr1aRemarks] = useState('');
   const [gstr1aRecordId, setGstr1aRecordId] = useState<string | null>(null);
   const [isSavingGstr1a, setIsSavingGstr1a] = useState(false);
@@ -145,20 +148,31 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
 
   const fetchGstr1a = useCallback(async () => {
     if (!selectedClient || !selectedMonth) {
-      setGstr1aFiled(false); setGstr1aArn(''); setGstr1aRemarks(''); setGstr1aRecordId(null);
+      setGstr1aFiled(false); setGstr1aArn(''); setGstr1aDate(null); setGstr1aRemarks(''); setGstr1aRecordId(null);
       return;
     }
-    const { data } = await supabase
-      .from('filing_status')
-      .select('id, status, arn, remarks')
-      .eq('client_id', selectedClient)
-      .eq('return_type', 'GSTR-1A')
-      .eq('period_month', selectedMonth)
-      .maybeSingle();
-    const rec = data as { id: string; status: string | null; arn: string | null; remarks: string | null } | null;
+    const [{ data }, { data: pulled }] = await Promise.all([
+      supabase
+        .from('filing_status')
+        .select('id, remarks')
+        .eq('client_id', selectedClient)
+        .eq('return_type', 'GSTR-1A')
+        .eq('period_month', selectedMonth)
+        .maybeSingle(),
+      supabase
+        .from('gst_filed_returns')
+        .select('arn, filed_date, status')
+        .eq('client_id', selectedClient)
+        .eq('return_type', 'GSTR1A')
+        .eq('period_month', selectedMonth)
+        .maybeSingle(),
+    ]);
+    const rec = data as { id: string; remarks: string | null } | null;
+    const g = pulled as { arn: string | null; filed_date: string | null; status: string | null } | null;
     setGstr1aRecordId(rec?.id ?? null);
-    setGstr1aFiled(rec?.status === 'Filed');
-    setGstr1aArn(rec?.arn || '');
+    setGstr1aFiled(!!g?.arn);
+    setGstr1aArn(g?.arn || '');
+    setGstr1aDate(g?.filed_date || null);
     setGstr1aRemarks(rec?.remarks || '');
   }, [selectedClient, selectedMonth]);
 
@@ -226,15 +240,14 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
     if (!selectedClient || !selectedMonth) return;
     setIsSavingGstr1a(true);
     try {
+      // Remarks only: whether a GSTR-1A was filed, and its ARN, come from the
+      // portal (a database trigger refuses Filed / ARN typed by hand).
       const { error } = await supabase.from('filing_status').upsert(
         {
           id: gstr1aRecordId ?? undefined,
           client_id: selectedClient,
           return_type: 'GSTR-1A',
           period_month: selectedMonth,
-          status: gstr1aFiled ? 'Filed' : 'Prepared',
-          filed_date: gstr1aFiled ? new Date().toISOString().split('T')[0] : null,
-          arn: gstr1aFiled ? (gstr1aArn.trim() || null) : null,
           remarks: gstr1aRemarks.trim() || null,
           updated_by: user?.id ?? null,
           updated_at: new Date().toISOString(),
@@ -242,7 +255,7 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
         { onConflict: 'client_id,return_type,period_month' },
       );
       if (error) throw error;
-      toast.success('GSTR-1A status saved.');
+      toast.success('GSTR-1A remarks saved.');
       await fetchGstr1a();
     } catch (e: any) {
       toast.error('Could not save: ' + e.message);
@@ -417,28 +430,24 @@ const Gstr3bAdjustmentsPage: React.FC = () => {
             <TabsContent value="gstr1a" className="mt-0 space-y-3">
               <Note tone="info">
                 GSTR-1A amends GSTR-1 for the <strong>same</strong> period, before GSTR-3B is filed — used
-                correctly, it keeps GSTR-3B in sync rather than causing a mismatch. This tab is a manual
-                record of whether one was filed for this period; it doesn't pull from the GST portal. If the
-                amendment changed the output tax, log the delta as a Manual Adjustment (source "GSTR-1A")
-                as well, so it's visible when preparing GSTR-3B.
+                correctly, it keeps GSTR-3B in sync rather than causing a mismatch. Whether one was filed comes
+                from the GST portal: when Filing Status pulls this period's GSTR-1, a GSTR-1A filed for it is kept
+                here, apart from the GSTR-1. If the amendment changed the output tax, log the delta as a Manual
+                Adjustment (source "GSTR-1A") as well, so it's visible when preparing GSTR-3B.
               </Note>
 
               <SectionCard title={<>GSTR-1A — {selectedClientData?.name} — {periodLabel}</>}>
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="gstr1a-filed"
-                    checked={gstr1aFiled}
-                    onCheckedChange={(v) => setGstr1aFiled(!!v)}
-                  />
-                  <label htmlFor="gstr1a-filed" className="text-sm font-medium cursor-pointer select-none">
-                    GSTR-1A filed for this period
-                  </label>
-                </div>
-                {gstr1aFiled && (
-                  <div className="max-w-xs space-y-0.5">
-                    <Label htmlFor="gstr1a-arn" className={WS_FILTER_LABEL}>ARN</Label>
-                    <Input id="gstr1a-arn" value={gstr1aArn} onChange={(e) => setGstr1aArn(e.target.value)} placeholder="AA...." className={WS_CONTROL} />
-                  </div>
+                {gstr1aFiled ? (
+                  <p className="text-sm">
+                    <Badge variant="success" className="mr-2 px-1.5 text-[10px]">Filed</Badge>
+                    ARN <span className="font-mono">{gstr1aArn}</span>
+                    {gstr1aDate ? `, filed ${new Date(gstr1aDate).toLocaleDateString('en-IN')}` : ''}
+                    <span className="text-muted-foreground"> (from the portal pull)</span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No GSTR-1A seen on the portal for this period. Pull this period's GSTR-1 on Filing Status to check.
+                  </p>
                 )}
                 <div className="space-y-0.5">
                   <Label htmlFor="gstr1a-remarks" className={WS_FILTER_LABEL}>Remarks</Label>

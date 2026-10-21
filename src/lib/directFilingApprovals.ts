@@ -48,6 +48,21 @@ export type DirectFilingState =
 export const isDirectFilingBlocked = (state: DirectFilingState): boolean =>
   state === 'needs_request' || state === 'pending' || state === 'rejected';
 
+/**
+ * What a held-back row offers, for every staff level that may change filing
+ * status: needs_request "Request approval" (the words the database's refusal
+ * points to), rejected "Request again", pending "View request" (the
+ * superadmin: "Review request"). null when nothing is held back.
+ */
+export function directFilingActionLabel(state: DirectFilingState, isSuperadmin: boolean): string | null {
+  switch (state) {
+    case 'needs_request': return 'Request approval';
+    case 'rejected': return 'Request again';
+    case 'pending': return isSuperadmin ? 'Review request' : 'View request';
+    default: return null;
+  }
+}
+
 /** Mirror of SQL `gstr1_direct_filing_rule_applies(return_type, period)`. */
 export function directFilingRuleApplies(returnType: string | null | undefined, periodMonth: string | null | undefined): boolean {
   if (!returnType || !(DIRECT_FILING_RETURN_TYPES as readonly string[]).includes(returnType)) return false;

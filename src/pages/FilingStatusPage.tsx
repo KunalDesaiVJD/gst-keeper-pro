@@ -5,63 +5,73 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/gstr9/badge';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
-import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/components/workspace/theme';
+import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE } from '@/components/workspace/theme';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Download, ClipboardCheck, Lock, Unlock, Search, X, ChevronDown, Info, Upload, Eye, Trash2, LogIn, AlertTriangle, RefreshCw, Loader2, Undo2 } from 'lucide-react';
-import { FilingStatusType, ReturnType, QUARTERLY_RETURN_TYPES, isQuarterEndMonth, RegistrationType, RETURN_TYPES_BY_REGISTRATION, filingStatusDisplayLabel, isSystemOnlyFilingStatus, PENDING_FILING_STATUSES } from '@/types';
+import { Download, ClipboardCheck, Search, X, Loader2 } from 'lucide-react';
+import { FilingStatusType, ReturnType, PENDING_FILING_STATUSES } from '@/types';
 import { exportFilingStatusToPDF } from '@/utils/pdfExport';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { enqueueConfirmation } from '@/lib/gstReminders';
-import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { SchemeHistoryEntry } from '@/utils/schemeResolver';
-import { generateFilingRecords } from '@/lib/filingRecords';
+import { effectiveFilingReturnType, generateFilingRecords } from '@/lib/filingRecords';
 import { MultiSelectPopover } from '@/components/ui/multi-select-popover';
-import { isFsiConsentBlocked } from '@/lib/builderFsiData';
-import { isBuAgreementConfirmationBlocked } from '@/lib/builderAgreementConfirmData';
-import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDialog';
-import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
-import { markFiledForPeriod } from '@/lib/advanceSetoffOverrides';
 import RequestDirectFilingDialog, { DirectFilingTarget } from '@/components/filing/RequestDirectFilingDialog';
 import DirectFilingApprovalsPanel from '@/components/filing/DirectFilingApprovalsPanel';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { canChangePriorBooks, describeCarryGap, describeFilingCarry, describeRerun, fetchCarryGaps, fetchCarryOutcome, fetchEverFiled, monthName, reopenFiled, rerunCarry, type CarryOutcome } from '@/lib/twobPriorMonth';
-import { filingSuspendedCheck } from '@/lib/suspendedRecoCalc';
+import { canChangePriorBooks, describeFilingCarry, describeRerun, fetchCarryGaps, fetchCarryOutcome, fetchEverFiled, monthName, reopenFiled, rerunCarry, type CarryOutcome } from '@/lib/twobPriorMonth';
+import FilingTable, { type FilingRecord, type FilingRowContext } from '@/components/filing/FilingTable';
+import ManualAttachDialog, { type ManualAttachTarget } from '@/components/filing/ManualAttachDialog';
+import ReasonDialog, { type ReasonDialogSpec } from '@/components/filing/ReasonDialog';
+import FilingExceptionsPanel from '@/components/filing/FilingExceptionsPanel';
+import { MIN_EXTENSION_VERSION, compareVersions } from '@/lib/extensionVersion';
+import {
+  type FilingLogRow,
+  PULL_ASK_EVERY_MS,
+  PULL_SILENCE_MS,
+  PullWatch,
+  fetchFilingLog,
+  fetchOpenConflicts,
+  filingFamily,
+  filingSourceText,
+  hasPortalPull,
+  isPullOnly,
+  manualRuleType,
+  bulkPullNothingText,
+  latestOutcomes,
+  noPullTabText,
+  outcomeWords,
+  pullKey,
+  unfileReturn,
+  unlockFiled,
+  wantedInBulkPull,
+  wantedInClientPull,
+} from '@/lib/filingPull';
+import {
+  type ManualSourceAllowance,
+  allowManualSource,
+  fetchAllowances,
+  filingScope,
+  liveAllowance,
+} from '@/lib/manualSourceAllowances';
 import {
   DirectFilingApproval,
   DirectFilingState,
   approvalKey,
-  directFilingRuleApplies,
+  directFilingActionLabel,
   directFilingState,
   fetchDirectFilingApprovals,
   fetchUserNames,
   groupApprovals,
   isDirectFilingBlocked,
-  isDirectFilingTriggerError,
   pickApproval,
 } from '@/lib/directFilingApprovals';
-
-// Previous MM/YYYY period. Kept next to the carry-forward logic it guards:
-// the 2B chain is strictly month-by-month, so "the period before this one" has
-// to mean the same thing here as it does in carryForwardToNextMonth().
-const previousPeriodMonth = (periodMonth: string): string => {
-  const [month, year] = periodMonth.split('/');
-  let prevMonth = parseInt(month) - 1;
-  let prevYear = parseInt(year);
-  if (prevMonth < 1) {
-    prevMonth = 12;
-    prevYear--;
-  }
-  return `${String(prevMonth).padStart(2, '0')}/${prevYear}`;
-};
 
 // Normalize an accountant name by stripping the trailing "/<number>" reference
 // (e.g. "PUNITBHAI/16" / "PAVANBHAI /66" / "PRIYA,MUKESHBHAI/ 28") so the same
@@ -71,30 +81,6 @@ const normalizeAccountant = (raw: string | null | undefined): string => {
   const stripped = raw.replace(/\s*\/\s*\d+\s*$/, '').trim();
   return stripped || 'Unassigned';
 };
-
-// Left-accent + subtle tint for the Filing Status control, so a "Filed" row reads
-// differently from "Mismatch"/"Pending" at a glance — using the semantic tokens.
-const filingStatusAccent = (status: string): string => {
-  switch (status) {
-    case 'Filed': return 'border-l-4 border-l-success bg-success/5';
-    // Pushed sits one step short of Filed — close enough to read as progress,
-    // distinct enough that nobody mistakes it for a filed return.
-    case 'Pushed': return 'border-l-4 border-l-primary bg-primary/5';
-    case 'Mismatch in Data': return 'border-l-4 border-l-destructive bg-destructive/5';
-    case 'Data Pending':
-    case 'Prepared Pending': return 'border-l-4 border-l-warning bg-warning/5';
-    case 'Data Received':
-    case 'Prepared': return 'border-l-4 border-l-info bg-info/5';
-    default: return '';
-  }
-};
-
-// When GST Keeper pushed the return to the portal ("09 Oct, 3:41 pm", IST).
-// Shown under the status whatever it now says, so a push stays in view after
-// staff move the status on or the return is Filed.
-const pushedAtLabel = (iso: string): string =>
-  new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
-
 
 // MM/YYYY -> "Jul-26", matching gstr1_data.period_month (same conversion as
 // fetchGstr3b.ts / Gstr3bPage.tsx).
@@ -126,11 +112,6 @@ const FILING_TABS: { value: string; type: ReturnType }[] = [
   { value: 'cmp08', type: 'CMP-08' },
 ];
 
-// A column-header filter trigger: reads as header text (muted, semibold) with a caret.
-const HEADER_FILTER_BTN = 'h-auto gap-1 p-0 text-xs font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground';
-// A body cell holding a control (select / input / textarea): tighter padding than WS_TD.
-const CELL_CONTROL = cn(WS_TD, 'px-1.5 py-1');
-
 const MISMATCH_STATUSES: readonly FilingStatusType[] = ['Mismatch in Data'];
 const DATA_PENDING_STATUSES: readonly FilingStatusType[] = ['Data Pending'];
 const FILED_STATUSES: readonly FilingStatusType[] = ['Filed'];
@@ -154,32 +135,8 @@ interface Client {
   target_date_group2: number | null;
 }
 
-interface FilingRecord {
-  id: string;
-  client_id: string;
-  return_type: string;
-  period_month: string;
-  status: FilingStatusType;
-  target_date: number | null;
-  filed_date: string | null;
-  remarks: string | null;
-  is_locked: boolean | null;
-  updated_by: string | null;
-  updated_at: string | null;
-  arn: string | null;
-  return_pdf_url: string | null;
-  is_nil?: boolean | null;
-  /** Set when the return was pushed to the portal through GST Keeper. */
-  pushed_at?: string | null;
-  // Joined client data
-  clientName?: string;
-  clientEmail?: string;
-  contactNumber?: string;
-  accountantName?: string;
-  filingFrequency?: string;
-  updatedByName?: string;
-  updatedByRole?: string;
-}
+/** One return the extension is asked to pull. */
+interface PullItem { clientId: string; return_type: string; period_month: string }
 
 const FilingStatusPage: React.FC = () => {
   const { canUnlockSheets, isStaffRole, user, canEditFilingStatus, canExportData } = useAuth();
@@ -252,9 +209,9 @@ const FilingStatusPage: React.FC = () => {
   const [everFiled, setEverFiled] = useState<Set<string>>(new Set());
   // The selected month's lists that filing never carried into the next month
   // (twob_carry_log, carried_at NULL: the next month was filed, or counted as
-  // filed, when this one was marked Filed, on this page or by the
-  // extension's markFiled), per client. The row keeps a warning until a Re-run
-  // from the month (docs §13).
+  // filed, when this one was recorded Filed, by the extension's pull or an
+  // attach the superadmin allowed), per client. The row keeps a warning until
+  // a Re-run from the month (docs §13).
   const [carryGaps, setCarryGaps] = useState<Map<string, CarryOutcome[]>>(new Map());
 
   // The carry when a GSTR-3B / GSTR-3B (Q) is marked Filed is the database's
@@ -264,7 +221,29 @@ const FilingStatusPage: React.FC = () => {
   // list, and otherwise does nothing, so a later month's reclaims, book
   // entries and removals are never undone (TAMNNA, 17 Oct 2026). It records
   // what it did (twob_carry_log), which the page reads after filing to say
-  // so, list by list.
+  // so, list by list. Filed comes only from a pull or an allowed attach
+  // (20261021110000), so the page says it when either lands.
+  const reportFilingCarry = useCallback(async (clientId: string, returnType: string, period: string, who?: string) => {
+    if (!filingFamily('GSTR-3B').includes(returnType)) return;
+    let outcomes: CarryOutcome[] | null = null;
+    try {
+      outcomes = await fetchCarryOutcome(clientId, period);
+    } catch (err) {
+      console.error('Error reading what filing carried:', err);
+    }
+    const carry = describeFilingCarry(returnType, period, outcomes);
+    const text = who ? `${who}: ${carry.text}` : carry.text;
+    if (carry.tone === 'warning') toast.warning(text, { duration: 15000 });
+    else toast.success(text, { duration: 10000 });
+  }, []);
+
+  // A GSTR-3B / GSTR-3B (Q) taken off Filed or unlocked: its month stays
+  // filed for Import 2B and 2B Reconciliation (docs §13) until a GST Manager
+  // or the superadmin reopens it as Filed by mistake.
+  const warnStillFiled = (record: FilingRecord) => {
+    if (!filingFamily('GSTR-3B').includes(record.return_type)) return;
+    toast.warning(`Import 2B and 2B Reconciliation still treat ${monthName(record.period_month || selectedMonth)} as filed. If Filed was set by mistake, a GST Manager or the superadmin reopens it there with the "Filed by mistake" button on this row.`, { duration: 15000 });
+  };
 
   // Re-run carry forward (docs §13): a GST Manager or the superadmin, with a
   // preview first. It compares the month's two lists with the next month's
@@ -412,7 +391,7 @@ const FilingStatusPage: React.FC = () => {
       updatedByRole: r.updated_by ? (userInfo[r.updated_by]?.role || '') : undefined,
     }));
     
-    setFilingRecords(enrichedRecords);
+    setFilingRecords(enrichedRecords as FilingRecord[]);
     try {
       setEverFiled(await fetchEverFiled(selectedMonth));
     } catch (err) {
@@ -489,30 +468,6 @@ const FilingStatusPage: React.FC = () => {
     setSchemeHistoryMap(map);
   }, []);
 
-  // Resolve effective scheme for a client at a given period
-  const getEffectiveScheme = useCallback((clientId: string, periodMonth: string, currentScheme: string): string => {
-    const history = schemeHistoryMap[clientId];
-    if (!history || history.length === 0) return currentScheme;
-
-    const [mm, yyyy] = periodMonth.split('/');
-    if (!mm || !yyyy) return currentScheme;
-    const periodDate = new Date(parseInt(yyyy), parseInt(mm) - 1, 1);
-
-    let effectiveScheme = history[0].old_scheme;
-
-    for (const entry of history) {
-      const effectiveDate = new Date(entry.effective_from_date);
-      const effectiveMonthStart = new Date(effectiveDate.getFullYear(), effectiveDate.getMonth(), 1);
-      if (periodDate >= effectiveMonthStart) {
-        effectiveScheme = entry.new_scheme;
-      } else {
-        break;
-      }
-    }
-
-    return effectiveScheme;
-  }, [schemeHistoryMap]);
-
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
@@ -579,29 +534,73 @@ const FilingStatusPage: React.FC = () => {
     return m;
   }, [clients]);
 
-  // Real-time subscription
-  useEffect(() => {
-    const channel = supabase
-      .channel('filing-status-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'filing_status' }, () => {
-        fetchFilingRecords();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
-        fetchClients();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'gstr1_data' }, () => {
-        fetchGstr1DataClientIds();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'gstr1_direct_filing_approvals' }, () => {
-        fetchDirectApprovals();
-        setApprovalsPanelKey((k) => k + 1);
-      })
-      .subscribe();
+  // ── Pull outcomes, manual allowances and conflicts (20261021110000) ──────
+  const [filingLog, setFilingLog] = useState<FilingLogRow[]>([]);
+  const [conflicts, setConflicts] = useState<FilingLogRow[]>([]);
+  const [allowances, setAllowances] = useState<ManualSourceAllowance[]>([]);
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
 
+  const fetchExceptions = useCallback(async () => {
+    try {
+      const [log, open, allow] = await Promise.all([
+        fetchFilingLog(selectedMonth),
+        fetchOpenConflicts(),
+        fetchAllowances(selectedMonth, 'filing:'),
+      ]);
+      setFilingLog(log);
+      setConflicts(open);
+      setAllowances(allow);
+      setUserNames(await fetchUserNames(allow.flatMap((a) => [a.allowed_by, a.used_by, a.revoked_by])));
+    } catch (e) {
+      // A database without 20261021110000: the page still works, without them.
+      console.error('Error fetching filing log / allowances:', e);
+    }
+  }, [selectedMonth]);
+
+  useEffect(() => { void fetchExceptions(); }, [fetchExceptions]);
+
+  // Real-time updates, one channel per table. A channel naming a table that is
+  // not in the realtime publication fails as a whole, which is why this page
+  // never heard the extension's writes (its one channel also named gstr1_data
+  // and gstr1_direct_filing_approvals): a row Filed by the extension stayed
+  // "Upload PDF" on screen and was then overwritten by hand. A burst of events
+  // (a bulk pull) is read once.
+  const refreshTimer = useRef<number | null>(null);
+  const refreshSoon = useCallback(() => {
+    if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      void fetchFilingRecords();
+      void fetchExceptions();
+    }, 400);
+  }, [fetchFilingRecords, fetchExceptions]);
+
+  useEffect(() => {
+    const subscriptions: [string, string, () => void][] = [
+      ['filing-status-rows', 'filing_status', refreshSoon],
+      ['filing-status-log', 'filing_status_log', refreshSoon],
+      ['filing-status-allowances', 'manual_source_allowances', () => { void fetchExceptions(); }],
+      ['filing-status-clients', 'clients', () => { void fetchClients(); }],
+      ['filing-status-approvals', 'gstr1_direct_filing_approvals', () => { void fetchDirectApprovals(); setApprovalsPanelKey((k) => k + 1); }],
+    ];
+    const channels = subscriptions.map(([name, table, onChange]) => supabase
+      .channel(name)
+      .on('postgres_changes', { event: '*', schema: 'public', table }, onChange)
+      .subscribe((status) => { if (status === 'CHANNEL_ERROR') console.warn(`Filing Status: no live updates for ${table}`); }));
+    // gstr1_data is not in the realtime publication: read it again now and then,
+    // and everything again when the tab comes back into view.
+    const poll = setInterval(() => { void fetchGstr1DataClientIds(); }, 60_000);
+    const onVisible = () => { if (document.visibilityState === 'visible') { refreshSoon(); void fetchGstr1DataClientIds(); } };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
-      supabase.removeChannel(channel);
+      channels.forEach((c) => { void supabase.removeChannel(c); });
+      clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [fetchClients, fetchFilingRecords, fetchGstr1DataClientIds, fetchDirectApprovals]);
+  }, [fetchClients, fetchExceptions, fetchGstr1DataClientIds, fetchDirectApprovals, refreshSoon]);
+
+  const outcomes = useMemo(() => latestOutcomes(filingLog), [filingLog]);
+
 
   // GSTR-1's is_nil per client for the selected period, keyed off the raw
   // filing_status rows already fetched (filing_status.select('*') already
@@ -683,382 +682,38 @@ const FilingStatusPage: React.FC = () => {
       month: r.period_month,
       isLocked: r.is_locked || false,
       arn: r.arn || '',
+      // Where the filed return came from: Portal, manual (allowed by X: reason), ...
+      source: filingSourceText(r, r.manual_allowance_id ? allowances.find((a) => a.id === r.manual_allowance_id) : null, userNames) || '',
     }));
     
     exportFilingStatusToPDF(pdfRecords, returnType, selectedMonth);
     toast.success('PDF exported successfully');
   };
 
-  const getPeriodParts = (periodMonth: string) => {
-    const [monthStr, yearStr] = periodMonth.split('/');
-    const month = parseInt(monthStr, 10);
-    const year = parseInt(yearStr, 10);
-    if (!month || !year) return null;
-    return { month, year };
-  };
-
-  const getPreviousPeriod = (periodMonth: string) => {
-    const parts = getPeriodParts(periodMonth);
-    if (!parts) return null;
-    let month = parts.month - 1;
-    let year = parts.year;
-    if (month < 1) {
-      month = 12;
-      year--;
-    }
-    return { month, year, period: `${String(month).padStart(2, '0')}/${year}` };
-  };
-
-  const getSchemeDependencyForPeriod = useCallback((client: Client, periodMonth: string) => {
-    const parts = getPeriodParts(periodMonth);
-    const effectiveScheme = getEffectiveScheme(client.id, periodMonth, client.registration_type);
-
-    if (effectiveScheme === 'Regular') {
-      return { gstr1Type: 'GSTR-1' as ReturnType, gstr3bType: 'GSTR-3B' as ReturnType, shouldCheckGstr3b: true };
-    }
-
-    if (effectiveScheme === 'IFF') {
-      const isQuarterEnd = parts ? isQuarterEndMonth(parts.month) : false;
-      return {
-        // Under QRMP/IFF, GSTR-1 (IFF) for the first two months of a quarter is
-        // OPTIONAL, so it is not a filing prerequisite — only the mandatory
-        // quarter-end GSTR-1 is. Returning null for the optional months means a
-        // legitimately-skipped IFF month (e.g. no sales) no longer blocks the
-        // quarter-end filing, while the chain across quarter boundaries stays
-        // intact (filing month-1 of a quarter still requires the previous
-        // quarter-end GSTR-1).
-        gstr1Type: isQuarterEnd ? ('GSTR-1 (IFF)' as ReturnType) : null,
-        gstr3bType: 'GSTR-3B (Q)' as ReturnType,
-        shouldCheckGstr3b: isQuarterEnd,
-      };
-    }
-
-    return { gstr1Type: null, gstr3bType: null, shouldCheckGstr3b: false };
-  }, [getEffectiveScheme]);
-
-  const fetchFiledStatus = async (clientId: string, periodMonth: string, returnType: ReturnType) => {
-    const { data } = await supabase
-      .from('filing_status')
-      .select('status')
-      .eq('client_id', clientId)
-      .eq('period_month', periodMonth)
-      .eq('return_type', returnType)
-      .maybeSingle();
-
-    return data?.status === 'Filed';
-  };
-
-  // Advance set-off gate — the Filing Status call site. This one is the
-  // backstop: a return can reach the portal by routes this app doesn't drive,
-  // but it cannot be RECORDED as filed here without the same check passing.
-  // No persistDraft — Table 11B lives in the GSTR-1 JSON, so the correction
-  // belongs on that page (docs/ADVANCE_SETOFF_POSITIONS.md §5).
-  const advanceGate = useAdvanceSetoffGate({
-    // Per-evaluation scope is passed below: four return types pass through this
-    // one screen, and an override granted for one must not pass another.
-    returnType: 'FILING_STATUS:UNSCOPED',
-    returnLabel: 'marking Filed',
-  });
-
-  const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType, localArn?: string) => {
+  // Status by hand: only the working statuses. Pushed and Filed are evidence
+  // (a push the portal accepted, a filed return read from the portal) and a
+  // database trigger refuses them by hand; a Filed row is moved only by
+  // Unlock (GST Manager / superadmin, GSTR-3B) or Take off Filed (superadmin).
+  const handleStatusChange = async (record: FilingRecord, newStatus: FilingStatusType) => {
     if (!canEditFilingStatus()) {
       toast.error('Needs the Filing status & portal push permission — ask a GST Manager to add it to your position');
       return;
     }
-    const isNewRecord = record.id.startsWith('temp-');
-
-    // 'Pushed' is evidence that this app pushed the return to the GST portal
-    // and the portal took it. Nobody types that in — it is set by the
-    // mark_filing_pushed RPC and a database trigger rejects every other route.
-    // The dropdown already disables it; this catches any other caller.
-    if (isSystemOnlyFilingStatus(newStatus)) {
+    if (newStatus === 'Filed') {
+      toast.error('Filed comes from the GST portal: use Pull. When a pull cannot be done, the superadmin can allow a manual upload for this return.');
+      return;
+    }
+    if (newStatus === 'Pushed') {
       toast.error('"Pushed" is set automatically when a push to the GST portal succeeds. It cannot be selected by hand.');
       return;
     }
-
-    // Check if user is allowed to change from Filed status
-    const wasFiledBefore = record.status === 'Filed';
-    if (wasFiledBefore && newStatus !== 'Filed') {
-      if (!canUnlockSheets()) {
-        toast.error('Only GST Manager or Superadmin can change a Filed status.');
-        return;
-      }
+    if (record.status === 'Filed') {
+      toast.error('A filed return keeps its status. A GST Manager can unlock a filed GSTR-3B; only the superadmin takes a return off Filed.');
+      return;
     }
-
-    // Direct-filing gate (GSTR-1 / IFF from Sep-2026): a return that was not
-    // pushed through GST Keeper needs a superadmin-approved request before it
-    // can be marked Filed. Re-read this return's approvals so a decision made
-    // a moment ago elsewhere is honoured.
-    if (newStatus === 'Filed' && !wasFiledBefore && directFilingRuleApplies(record.return_type, record.period_month || selectedMonth) && !record.pushed_at) {
-      let fresh: DirectFilingApproval[];
-      try {
-        fresh = (await fetchDirectFilingApprovals([record.client_id], record.period_month || selectedMonth))
-          .filter((a) => a.return_type === record.return_type);
-      } catch {
-        fresh = approvalsFor(record);
-      }
-      const state = directFilingStateFor(record, fresh);
-      if (isDirectFilingBlocked(state)) {
-        if (state === 'pending' && !isSuperadmin) {
-          toast.info(`A direct-filing request for this ${record.return_type} is already waiting for the superadmin. It can be marked Filed once approved.`);
-        }
-        openDirectFilingDialog(record, { fromFiled: true, localArn, approvals: fresh });
-        return;
-      }
-    }
-
-    // ARN and Return PDF validation before allowing "Filed" status
-    if (newStatus === 'Filed') {
-      const arnToSave = normalizeArn(localArn ?? record.arn);
-      if (!arnToSave) {
-        toast.error('ARN is mandatory before marking as Filed. Please enter the ARN first.');
-        return;
-      }
-      const arnRegex = /^[A-Za-z0-9]{15}$/;
-      if (!arnRegex.test(arnToSave)) {
-        toast.error('Invalid ARN format. ARN must be exactly 15 alphanumeric characters.');
-        return;
-      }
-      // Check for duplicate ARN
-      const duplicateMsg = await findExistingArnOwner(arnToSave, record.id);
-      if (duplicateMsg) {
-        toast.error(duplicateMsg);
-        return;
-      }
-      if (!record.return_pdf_url || record.return_pdf_url.trim() === '') {
-        toast.error('Return PDF is mandatory before marking as Filed. Please upload the PDF first.');
-        return;
-      }
-
-      // A builder client who has instructed us not to discharge RCM on TDR/FSI
-      // cannot file that period until the instruction is on record in writing
-      // and a GST Manager has approved it. The position is the client's, and
-      // the file has to show that before anything goes out.
-      const fsiBlocked = await isFsiConsentBlocked(
-        record.client_id,
-        record.period_month || selectedMonth,
-      );
-      if (fsiBlocked) {
-        toast.error(
-          'Cannot file: a TDR/FSI liability is being held back for this period without a complete '
-          + "consent. Attach the client's written instruction and obtain GST Manager approval on the "
-          + "project's TDR/FSI page first.",
-        );
-        return;
-      }
-
-      // A BU event's differential rests on the agreement value staff keyed in
-      // for each taxable unit — that has to be confirmed by the client (a
-      // tokenized email link, no login) before the period can file, so a
-      // client who quietly changes the agreement value later can't leave the
-      // firm exposed.
-      const agreementBlocked = await isBuAgreementConfirmationBlocked(
-        record.client_id,
-        record.period_month || selectedMonth,
-      );
-      if (agreementBlocked) {
-        toast.error(
-          "Cannot file: a BU event's taxable unit(s) have an unconfirmed agreement value. Send (or "
-          + "re-send) confirmation requests on the project's BU Events page and wait for every unit to "
-          + 'come back Confirmed.',
-        );
-        return;
-      }
-    }
-    
-    // Validate previous month's obligations using the scheme that was effective in that previous period.
-    // This preserves historical correctness during IFF/Regular/Composition transitions.
-    if ((record.return_type === 'GSTR-1' || record.return_type === 'GSTR-1 (IFF)') && newStatus === 'Filed') {
-      const previous = getPreviousPeriod(selectedMonth);
-      
-      // Skip validation if previous month is before April 2025 (March 2025 or earlier)
-      const isPrevBeforeApril2025 = !previous || previous.year < 2025 || (previous.year === 2025 && previous.month < 4);
-      
-      if (!isPrevBeforeApril2025) {
-        // Determine if previous month is the first month of client registration
-        const client = clients.find(c => c.id === record.client_id);
-        let isFirstMonth = false;
-        if (client) {
-          const regDate = new Date(client.registration_date);
-          const regMonth = regDate.getMonth() + 1;
-          const regYear = regDate.getFullYear();
-          const regPeriod = `${String(regMonth).padStart(2, '0')}/${regYear}`;
-          isFirstMonth = (selectedMonth === regPeriod);
-        }
-        
-        // Skip validation for first month of registration
-        if (client && previous && !isFirstMonth) {
-          const previousDependency = getSchemeDependencyForPeriod(client, previous.period);
-
-          if (previousDependency.gstr1Type) {
-            const isPrevGstr1Filed = await fetchFiledStatus(record.client_id, previous.period, previousDependency.gstr1Type);
-            if (!isPrevGstr1Filed) {
-              toast.error(`Cannot file ${record.return_type}: Previous month's ${previousDependency.gstr1Type} (${previous.period}) must be filed first.`);
-              return;
-            }
-          }
-
-          if (previousDependency.gstr3bType && previousDependency.shouldCheckGstr3b) {
-            const isPrevGstr3bFiled = await fetchFiledStatus(record.client_id, previous.period, previousDependency.gstr3bType);
-            if (!isPrevGstr3bFiled) {
-              toast.error(`Cannot file ${record.return_type}: Previous month's ${previousDependency.gstr3bType} (${previous.period}) must be filed first.`);
-              return;
-            }
-          }
-
-          if (!previousDependency.gstr1Type && !previousDependency.gstr3bType) {
-            // Prior scheme did not have GSTR-1/GSTR-3B obligations, so do not block the first Regular filing after transition.
-          }
-        } else if (!client) {
-          toast.error('Cannot validate filing dependency because client details are missing. Please refresh and try again.');
-          return;
-        }
-      }
-    }
-
-    // GSTR-3B dependency check: require the same-period GSTR-1 applicable to the current effective scheme to be filed first
-    // Also applies to GSTR-3B (Q)
-    if ((record.return_type === 'GSTR-3B' || record.return_type === 'GSTR-3B (Q)') && newStatus === 'Filed') {
-      const client = clients.find(c => c.id === record.client_id);
-      const currentDependency = client ? getSchemeDependencyForPeriod(client, record.period_month || selectedMonth) : null;
-      const gstr1ReturnType = currentDependency?.gstr1Type || (record.return_type === 'GSTR-3B (Q)' ? 'GSTR-1 (IFF)' : 'GSTR-1');
-      const gstr1Record = filingRecords.find(
-        f => f.client_id === record.client_id && 
-             f.return_type === gstr1ReturnType && 
-             f.period_month === record.period_month
-      );
-      
-      if (!gstr1Record || gstr1Record.status !== 'Filed') {
-        toast.error(`Cannot file ${record.return_type}: ${gstr1ReturnType} must be filed first for this period.`);
-        return;
-      }
-
-      // Previous period's GSTR-3B must be filed first.
-      //
-      // This is what actually protects the 2B carry-forward chain. Pending 2B
-      // items only reach period N+1 because marking period N Filed physically
-      // copies them there; nothing ever fires for a period that is skipped.
-      // Filing Jul-2026 while Jun-2026 sat at "Prepared Pending" therefore
-      // carried only July's own rows into August, and everything older was
-      // gone for good — Jul-2026 had no copy of it to pass on. Three clients
-      // lost their backlog that way before this check existed
-      // (docs/2B_RECONCILIATION_FLOW.md §7).
-      //
-      // Only plain monthly GSTR-3B is checked: GSTR-3B (Q) is quarterly, so
-      // "the previous period" is the previous quarter-end, not last month, and
-      // the carry-forward trigger doesn't cover quarterly filings anyway.
-      if (record.return_type === 'GSTR-3B') {
-        const prevPeriod = previousPeriodMonth(record.period_month || selectedMonth);
-        const { data: prevRecord } = await supabase
-          .from('filing_status')
-          .select('status')
-          .eq('client_id', record.client_id)
-          .eq('period_month', prevPeriod)
-          .eq('return_type', 'GSTR-3B')
-          .maybeSingle();
-
-        // No row at all means this period predates the client's first period
-        // in the app (or the previous month was a different scheme) — nothing
-        // to chain from, so nothing to block.
-        if (prevRecord && prevRecord.status !== 'Filed') {
-          const msg = `Cannot file GSTR-3B for ${record.period_month}: ${prevPeriod} is still "${filingStatusDisplayLabel(prevRecord.status as FilingStatusType)}". Filing out of order drops every pending 2B item older than ${record.period_month} from the carry-forward.`;
-          // A GST Manager / Superadmin can still go ahead — a client genuinely
-          // migrated mid-year, or filed the earlier month outside this app,
-          // shouldn't be permanently stuck. They are told exactly what it
-          // costs, and the Re-run carry forward button on the earlier period
-          // puts the backlog back afterwards.
-          if (!canUnlockSheets()) {
-            toast.error(msg);
-            return;
-          }
-          if (!window.confirm(`${msg}\n\nFile anyway?`)) return;
-        }
-      }
-
-      // Check Suspended Reco difference: if difference is not zero, cannot file GSTR-3B.
-      //
-      // Skipped entirely for a NO-ITC *builder* — a promoter, i.e.
-      // regular_sub_type = 'Builder' AND builder_itc_type = 'NO_ITC'. Both
-      // halves are required: the waiver is about the promoter scheme, not
-      // about a client having no ITC for any other reason.
-      // Suspended Reco exists to prove that credit reversed under
-      // Rule 37A / s.16(2)(c) and still sitting in the portal's suspended
-      // balance matches the reversals the books are carrying, because that
-      // credit is eventually going to be reclaimed. A promoter who elected the
-      // 1%/5% no-ITC scheme never reclaims any of it: ITC Summary pins Total 4B
-      // to Total 4A for these clients precisely so Net ITC (4C) is 0 by
-      // construction, whatever the reversal rows say. The two sides therefore
-      // have no reason to converge, the difference is permanently non-zero
-      // through no error of the staff's, and the gate just blocks filing
-      // forever (reported 2026-09-16 on KRISHNA INFRA-NO ITC: a fixed
-      // -Rs 82,076.88 that nothing on the page could clear).
-      //
-      // Gated on the two flags, never on the client's name. 10 ordinary
-      // (regular_sub_type = 'Normal') clients carry "NO ITC" in their name —
-      // they are NOT promoters and do not get this waiver, whatever they are
-      // called. See docs/2B_RECONCILIATION_FLOW.md §8.
-      //
-      // Checking the sub-type as well as the ITC type is belt-and-braces
-      // today: Edit Client already nulls builder_itc_type whenever the
-      // sub-type isn't 'Builder', so every client currently carrying an ITC
-      // type is a Builder. It matters if a flag is ever left stale by a path
-      // that doesn't go through that form — a direct DB edit, an import, a
-      // future screen — at which point a non-promoter would silently inherit
-      // a filing-gate bypass.
-      const isNoItcBuilder =
-        client?.regular_sub_type === 'Builder' && client?.builder_itc_type === 'NO_ITC';
-
-      if (!isNoItcBuilder) {
-        try {
-          // Stored opening + current total less the live books side, within ₹20
-          // (filingSuspendedCheck, shared with the gates test).
-          const check = await filingSuspendedCheck(record.client_id, selectedMonth);
-          if (check.blocks) {
-            const displayDiff = check.difference === 0 ? '0' : check.difference.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-            toast.error(`Cannot file ${record.return_type}: Suspended Reconciliation difference must be within ₹20. Current difference: ${displayDiff}`);
-            return;
-          }
-        } catch (error: any) {
-          console.error('Error checking suspended reco:', error);
-          // Continue with filing if there's an error fetching suspended reco data
-        }
-      }
-    }
-
-    // Advance set-off. Outward returns only — those are the ones whose
-    // liability a missed Table 11B actually misstates. Last of the pre-filing
-    // checks, and the only one that can be passed with a manager's recorded
-    // approval rather than a correction.
-    if (
-      newStatus === 'Filed'
-      && ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)'].includes(record.return_type)
-    ) {
-      const advClient = clients.find((c) => c.id === record.client_id);
-      const advPeriod = record.period_month || selectedMonth;
-      const { data: advG1 } = await supabase
-        .from('gstr1_data')
-        .select('raw_json')
-        .eq('client_id', record.client_id)
-        .eq('period_month', toShortMonth(advPeriod))
-        .maybeSingle();
-      const advanceOk = await advanceGate.evaluate({
-        returnType: `FILING_STATUS:${record.return_type}` as const,
-        clientId: record.client_id,
-        clientName: advClient?.name || record.clientName || '',
-        gstin: advClient?.gstin || '',
-        periodMonth: advPeriod,
-        draftJson: (advG1 as { raw_json?: unknown } | null)?.raw_json ?? null,
-        regularSubType: advClient?.regular_sub_type,
-        registrationType: advClient?.registration_type,
-      });
-      if (!advanceOk) return;
-    }
-
-    const is3B = record.return_type === 'GSTR-3B' || record.return_type === 'GSTR-3B (Q)';
-
+    const isNewRecord = record.id.startsWith('temp-');
     try {
       if (isNewRecord) {
-        // Insert new record with audit info
         const { error } = await supabase
           .from('filing_status')
           .insert([{
@@ -1067,135 +722,25 @@ const FilingStatusPage: React.FC = () => {
             period_month: selectedMonth,
             status: newStatus,
             target_date: record.target_date,
-            filed_date: newStatus === 'Filed' ? new Date().toISOString().split('T')[0] : null,
             updated_by: user?.id || null,
             updated_at: new Date().toISOString(),
-            arn: newStatus === 'Filed' ? normalizeArn(localArn ?? record.arn) : null,
-            return_pdf_url: record.return_pdf_url || null,
           }]);
-        
         if (error) throw error;
       } else {
-        // Update existing record with audit info
-        const updateData: Record<string, unknown> = {
-          status: newStatus,
-          updated_by: user?.id || null,
-          updated_at: new Date().toISOString(),
-        };
-        
-        if (newStatus === 'Filed') {
-          updateData.filed_date = new Date().toISOString().split('T')[0];
-          updateData.arn = normalizeArn(localArn ?? record.arn);
-        } else {
-          // If changing from Filed to another status, clear filed_date and ARN
-          updateData.filed_date = null;
-          updateData.arn = null;
-        }
-        
         const { error } = await supabase
           .from('filing_status')
-          .update(updateData)
+          .update({ status: newStatus, updated_by: user?.id || null, updated_at: new Date().toISOString() })
           .eq('id', record.id);
-        
         if (error) throw error;
       }
-      
-      // Queue the client filing-confirmation email (a `pending` row in email_outbox;
-      // the gst@vjdesai.com sender delivers it). Best-effort — never blocks filing.
-      if (newStatus === 'Filed') {
-        void enqueueConfirmation({
-          clientId: record.client_id,
-          returnType: record.return_type,
-          periodMonth: record.period_month || selectedMonth,
-          arn: normalizeArn(localArn ?? record.arn) || '',
-          filedDate: new Date().toISOString().split('T')[0],
-          filingStatusId: isNewRecord ? null : record.id,
-          staffName: user?.firstName ?? null,
-        });
-      }
-
-      // If this return went out under an approved advance set-off override,
-      // stamp that override with the ARN. Done here, after the filing is
-      // recorded, because an approval is permission to file, not evidence that
-      // filing happened — without this the exception certificate printed
-      // "Filed under this override: No" on every return that had.
-      if (newStatus === 'Filed' && ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)'].includes(record.return_type)) {
-        await markFiledForPeriod({
-          clientId: record.client_id,
-          periodMonth: record.period_month || selectedMonth,
-          returnType: `FILING_STATUS:${record.return_type}` as const,
-          arn: normalizeArn(localArn ?? record.arn),
-        });
-      }
-
-      // When GSTR-3B or GSTR-3B (Q) is filed, lock the 2B and ITC sheets AND carry forward data
-      if (newStatus === 'Filed' && (record.return_type === 'GSTR-3B' || record.return_type === 'GSTR-3B (Q)')) {
-        // Lock bills_not_in_2b
-        await supabase
-          .from('bills_not_in_2b')
-          .update({ is_locked: true })
-          .eq('client_id', record.client_id)
-          .eq('period_month', record.period_month);
-        
-        // Lock bills_not_in_books
-        await supabase
-          .from('bills_not_in_books')
-          .update({ is_locked: true })
-          .eq('client_id', record.client_id)
-          .eq('period_month', record.period_month);
-        
-        // Lock ITC summary
-        await supabase
-          .from('itc_summaries')
-          .update({ is_locked: true })
-          .eq('client_id', record.client_id)
-          .eq('period_month', record.period_month);
-        
-        // Mark ONLY this GSTR-3B/GSTR-3B (Q) filing status as locked (not GSTR-1 or other returns)
-        await supabase
-          .from('filing_status')
-          .update({ is_locked: true })
-          .eq('id', record.id); // Only lock this specific record
-        
-        // The carry into the next month was made by the database with the
-        // status (docs §13): once, each list only when that month was not
-        // filed and held no carried entries on it. Say what it did, list by list.
-        let outcomes: CarryOutcome[] | null = null;
-        try {
-          outcomes = is3B ? await fetchCarryOutcome(record.client_id, record.period_month || selectedMonth) : null;
-        } catch (err) {
-          console.error('Error reading what filing carried:', err);
-        }
-        const carry = describeFilingCarry(record.return_type, record.period_month || selectedMonth, outcomes);
-        if (carry.tone === 'warning') toast.warning(carry.text, { duration: 15000 });
-        else toast.success(carry.text);
-      } else if (newStatus === 'Filed') {
-        toast.success('Status updated to Filed.');
-      } else if (wasFiledBefore) {
-        const changedBy = user?.firstName || 'Unknown';
-        const changedRole = user?.role || '';
-        const changedOn = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ', ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-        toast.info(`Status changed from Filed to ${newStatus} by ${changedBy} (${changedRole}) on ${changedOn}`, { duration: 6000 });
-        if (is3B) {
-          toast.warning(`Import 2B and 2B Reconciliation still treat ${monthName(record.period_month || selectedMonth)} as filed. If Filed was set by mistake, a GST Manager or the superadmin reopens it there with the "Filed by mistake" button on this row.`, { duration: 15000 });
-        }
-      } else {
-        toast.success('Status updated successfully');
-      }
-      
+      toast.success('Status updated successfully');
       fetchFilingRecords();
     } catch (error: any) {
       console.error('Error updating status:', error);
-      if (isDirectFilingTriggerError(error?.message)) {
-        // The trigger beat the UI check (e.g. an approval was withdrawn).
-        toast.error(error.message, { duration: 10000 });
-        fetchDirectApprovals();
-        fetchFilingRecords();
-        return;
-      }
       toast.error('Failed to update status: ' + error.message);
     }
   };
+
 
   const handleRemarksChange = async (record: FilingRecord, newRemarks: string) => {
     const isNewRecord = record.id.startsWith('temp-');
@@ -1233,58 +778,28 @@ const FilingStatusPage: React.FC = () => {
     }
   };
 
+  // The month's sheets of a GSTR-3B, unlocked (Unlock, and Take off Filed).
+  const unlockMonthSheets = async (clientId: string, periodMonth: string) => {
+    await supabase.from('bills_not_in_2b').update({ is_locked: false }).eq('client_id', clientId).eq('period_month', periodMonth);
+    await supabase.from('bills_not_in_books').update({ is_locked: false }).eq('client_id', clientId).eq('period_month', periodMonth);
+    await supabase.from('itc_summaries').update({ is_locked: false }).eq('client_id', clientId).eq('period_month', periodMonth);
+    await supabase.from('rcm_data').update({ is_locked: false }).eq('client_id', clientId).eq('month', periodMonth);
+  };
+
+  // Unlock a filed GSTR-3B / GSTR-3B (Q) for corrections: the database
+  // (filing_status_unlock, GST Manager or superadmin) moves it to Not to File
+  // and unlocks it, keeping its ARN, filing date and PDF; pulling it again
+  // files it again (same ARN) and locks the month again. The sheets are
+  // unlocked here, as before.
   const handleUnlock = async (record: FilingRecord) => {
     if (record.id.startsWith('temp-')) return;
-    
+    if (!user?.id) return;
     try {
-      // When unlocking, unlock ALL related sheets and change status to 'Prepared Pending'
-      // This affects: Filing Status (GSTR-3B/GSTR-3B (Q)), 2B Reconciliation, ITC Summary, RCM Summary
-      
-      // Change status back to 'Prepared Pending' and unlock for GSTR-3B/GSTR-3B (Q)
-      const { error } = await supabase
-        .from('filing_status')
-        .update({
-          status: 'Prepared Pending',
-          is_locked: false,
-          filed_date: null,
-          updated_by: user?.id || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('client_id', record.client_id)
-        .eq('period_month', record.period_month)
-        .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']);
-      
-      if (error) throw error;
-      
+      await unlockFiled(user.id, record.client_id, record.period_month);
+
       // Also unlock ALL related sheets for the same client and period
-      // Unlock bills_not_in_2b
-      await supabase
-        .from('bills_not_in_2b')
-        .update({ is_locked: false })
-        .eq('client_id', record.client_id)
-        .eq('period_month', record.period_month);
-      
-      // Unlock bills_not_in_books
-      await supabase
-        .from('bills_not_in_books')
-        .update({ is_locked: false })
-        .eq('client_id', record.client_id)
-        .eq('period_month', record.period_month);
-      
-      // Unlock ITC summaries
-      await supabase
-        .from('itc_summaries')
-        .update({ is_locked: false })
-        .eq('client_id', record.client_id)
-        .eq('period_month', record.period_month);
-      
-      // Unlock RCM data
-      await supabase
-        .from('rcm_data')
-        .update({ is_locked: false })
-        .eq('client_id', record.client_id)
-        .eq('month', record.period_month);
-      
+      await unlockMonthSheets(record.client_id, record.period_month);
+
       // Unlocking does not open the month again for Import 2B and 2B
       // Reconciliation: once Filed it stays a prior month there (docs §13).
       //
@@ -1300,13 +815,15 @@ const FilingStatusPage: React.FC = () => {
       // holds no carried rows yet (the first carry, docs §13), and Re-run
       // carry forward brings the next month in line without wiping its own
       // reclaims and book entries.
-      
-      toast.success('All sheets unlocked. GSTR-3B status changed to Prepared Pending. Next month\'s carried-forward items were left untouched. For Import 2B and 2B Reconciliation the month stays filed: only a GST Manager or the superadmin changes its books entries.');
+
+      toast.success('All sheets unlocked. GSTR-3B shows Not to File until it is pulled again; its ARN, filing date and PDF are kept. Next month\'s carried-forward items were left untouched. For Import 2B and 2B Reconciliation the month stays filed: only a GST Manager or the superadmin changes its books entries.');
+      warnStillFiled(record);
       fetchFilingRecords();
     } catch (error: any) {
       toast.error('Failed to unlock: ' + error.message);
     }
   };
+
 
   // Each accountant with their distinct client count, for the filter dropdown.
   // Reference suffixes like "/16" are stripped so variants of the same person
@@ -1409,57 +926,102 @@ const FilingStatusPage: React.FC = () => {
     return Array.from(dates).sort((a, b) => a - b);
   };
 
-  const normalizeArn = (arn?: string | null) => (arn || '').trim().toUpperCase();
-
-  const isReturnApplicableForRecordPeriod = (clientId: string, returnType: string, periodMonth: string): boolean => {
-    const client = clients.find(c => c.id === clientId);
-    if (!client) return true;
-
-    const effectiveScheme = getEffectiveScheme(clientId, periodMonth, client.registration_type) as RegistrationType;
-    const applicableReturns = RETURN_TYPES_BY_REGISTRATION[effectiveScheme] || [];
-    return applicableReturns.includes(returnType as ReturnType);
-  };
-
-  const findExistingArnOwner = async (arn: string, excludeRecordId?: string): Promise<string | null> => {
-    const normalizedArn = normalizeArn(arn);
-    if (!normalizedArn) return null;
-    let query = supabase
-      .from('filing_status')
-      .select('id, client_id, return_type, period_month, status, return_pdf_url')
-      .eq('arn', normalizedArn)
-      .eq('status', 'Filed')
-      .not('return_pdf_url', 'is', null);
-    if (excludeRecordId && !excludeRecordId.startsWith('temp-')) {
-      query = query.neq('id', excludeRecordId);
-    }
-    const { data } = await query.limit(5);
-    const match = (data || []).find(row =>
-      isReturnApplicableForRecordPeriod(row.client_id, row.return_type, row.period_month)
-    );
-
-    if (match) {
-      const client = clients.find(c => c.id === match.client_id);
-      const clientName = client?.name || 'Unknown Client';
-      return `ARN "${normalizedArn}" is already used by ${clientName} (${match.return_type}, ${match.period_month})`;
-    }
-    return null;
-  };
-
-  // ARN is now only saved to DB when status is changed to "Filed"
-  // No separate handleArnChange that persists to DB on blur
-
-  // Browser-extension bridge: the GST Keeper extension announces itself, and the
-  // per-return "Portal" button posts a request it picks up (opens the portal in a
-  // new tab, pulls that return's ARN + PDF on your own IP, and marks it Filed).
+  // ── The browser extension: pull filed returns from the portal ───────────
+  // The page asks (one return, a client's returns, or every return in view);
+  // the extension logs in, reads each return's ARN and filing date, keeps the
+  // PDF only when it is the filed return showing that ARN, and records it
+  // through filing_record_pull. Each outcome comes back here (and is in the
+  // log, so a closed page still sees it after a reload).
   const [extReady, setExtReady] = useState(false);
+  const [extVersion, setExtVersion] = useState<string | null>(null);
+  const extOutdated = extReady && (!extVersion || compareVersions(extVersion, MIN_EXTENSION_VERSION) < 0);
+  const [pending, setPending] = useState<Record<string, number>>({});
+  // Round 3: each pull is followed by what the extension says of it (each
+  // return's outcome, "still running" when asked, the end), not a fixed
+  // time from its start, which gave up on every long bulk pull.
+  const pullWatch = useRef(new PullWatch());
+  // The client list for the message listener, without re-subscribing it.
+  const clientsRef = useRef<Client[]>([]);
+  useEffect(() => { clientsRef.current = clients; }, [clients]);
+
+  const clearPending = useCallback((keys: string[]) => {
+    if (!keys.length) return;
+    setPending((prev) => {
+      const next = { ...prev };
+      keys.forEach((k) => { delete next[k]; });
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
+      if (e.source !== window) return;
       const d: any = e.data;
       if (!d || typeof d !== 'object') return;
-      if (d.__gstkExtensionReady) setExtReady(true);
+      if (d.__gstkExtensionReady) {
+        setExtReady(true);
+        setExtVersion(typeof d.version === 'string' ? d.version : null);
+      }
       if (d.__gstkPullResult) {
-        if (d.__gstkPullResult.ok) toast.success('Portal opened in a new tab — type the CAPTCHA there; the return will be marked Filed with its PDF. Refresh this page when it finishes.');
-        else toast.error('Could not start the portal pull: ' + d.__gstkPullResult.error);
+        const r = d.__gstkPullResult;
+        if (r.ok) {
+          pullWatch.current.confirm(r.requestId, Date.now());
+          const skipped: string[] = Array.isArray(r.skipped) ? r.skipped : [];
+          toast.success(`Portal opened in a new tab for ${r.returns ?? 'the'} return${r.returns === 1 ? '' : 's'}. Type the CAPTCHA there; each return shows here when it is done.`
+            + (skipped.length ? ` Not pulled (no saved GST login): ${skipped.join(', ')}.` : ''), { duration: 8000 });
+        } else {
+          toast.error('Could not start the portal pull: ' + r.error);
+          if (r.requestId) clearPending(pullWatch.current.end(r.requestId));
+        }
+      }
+      if (d.__gstkReturnPullProgress) {
+        const p = d.__gstkReturnPullProgress;
+        const k = pullKey(p.clientId, p.return_type, p.period_month);
+        pullWatch.current.sign(p.requestId, Date.now());
+        pullWatch.current.answered(k);
+        clearPending([k]);
+        const who = `${clientsRef.current.find((c) => c.id === p.clientId)?.name || 'Client'} · ${p.return_type} ${p.period_month}`;
+        const text = `${who}: ${p.message || outcomeWords(p.outcome)}`;
+        if (p.outcome === 'filed' || p.outcome === 'refreshed') toast.success(text, { duration: 8000 });
+        else if (p.outcome === 'conflict' || p.outcome === 'not_found') toast.warning(text, { duration: 12000 });
+        else toast.error(text, { duration: 12000 });
+        refreshSoon();
+        // The confirmation e-mail of a return just filed is queued by the
+        // database; send it now (the 15-minute job is the backstop).
+        if (p.outcome === 'filed') void supabase.functions.invoke('send-gst-email', { body: {} }).catch(() => {});
+        // A GSTR-3B / 3B (Q) just filed: what the database carried into the
+        // next month with it (docs §13).
+        if (p.outcome === 'filed') void reportFilingCarry(p.clientId, p.return_type, p.period_month, who);
+      }
+      // The extension's answer to "is this pull still running?" (asked every
+      // 30 s while one waits): running keeps the page waiting, however long a
+      // bulk pull takes; not running ends it here too.
+      if (d.__gstkReturnPullAlive) {
+        const a = d.__gstkReturnPullAlive;
+        if (a.live) pullWatch.current.sign(a.requestId, Date.now());
+        else if (pullWatch.current.has(a.requestId)) {
+          // The pull's own end (__gstkReturnPullDone) is usually on its way:
+          // give it a moment, then end whatever it did not answer.
+          window.setTimeout(() => {
+            const left = pullWatch.current.end(a.requestId);
+            clearPending(left);
+            if (left.length) {
+              toast.warning(`The extension is no longer running this pull. ${left.length} return${left.length === 1 ? '' : 's'} got no answer here: each row shows its outcome from the log.`, { duration: 12000 });
+            }
+            refreshSoon();
+          }, 3000);
+        }
+      }
+      if (d.__gstkReturnPullDone) {
+        const r = d.__gstkReturnPullDone;
+        const keys = pullWatch.current.end(r.requestId);
+        clearPending([...keys, ...((r.results || []) as PullItem[]).map((x) => pullKey(x.clientId, x.return_type, x.period_month))]);
+        const results: { outcome: string }[] = r.results || [];
+        const missed = results.filter((x) => x.outcome === 'not_reached').length;
+        if (r.tabClosed) toast.warning(`The portal tab was closed. ${missed} return${missed === 1 ? ' was' : 's were'} not pulled.`, { duration: 10000 });
+        else if (r.ended && missed) toast.warning(`The pull ended early: ${r.ended}. ${missed} return${missed === 1 ? ' was' : 's were'} not pulled; each is in the log.`, { duration: 12000 });
+        else if (missed) toast.warning(`${missed} return${missed === 1 ? ' was' : 's were'} not reached (the portal login did not complete).`, { duration: 10000 });
+        refreshSoon();
       }
       if (d.__gstkOpenFilingResult) {
         if (d.__gstkOpenFilingResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA; it lands on the return\'s filing page. Review and submit with OTP/DSC yourself.');
@@ -1470,8 +1032,6 @@ const FilingStatusPage: React.FC = () => {
     // Actively ask the extension if it's present. The extension announces itself
     // on load, but as a SPA our listener usually mounts AFTER that one-shot
     // message — so we ping and the extension answers (race-proof either way).
-    // A few short retries cover the extension's content script injecting slightly
-    // later than this page's React mount.
     const ping = () => window.postMessage({ __gstkAppReady: true }, '*');
     ping();
     const t1 = setTimeout(ping, 400);
@@ -1481,105 +1041,222 @@ const FilingStatusPage: React.FC = () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, []);
-  const pullFromPortal = (record: FilingRecord) => {
-    if (isDirectFilingBlocked(directFilingStateFor(record))) {
-      openDirectFilingDialog(record);
+  }, [clearPending, refreshSoon, reportFilingCarry]);
+
+  // While pulls are running: read the log and the rows now and then (the
+  // answer also comes through the extension and realtime), ask the
+  // extension whether each pull is still running, and give up on one only
+  // when the extension has said nothing of it for PULL_SILENCE_MS: longer
+  // than its own idle limit, after which it ends the pull and reports.
+  const pendingCount = Object.keys(pending).length;
+  useEffect(() => {
+    if (!pendingCount) return;
+    let lastAsk = Date.now();
+    const t = setInterval(() => {
+      refreshSoon();
+      const now = Date.now();
+      if (now - lastAsk >= PULL_ASK_EVERY_MS) {
+        lastAsk = now;
+        for (const requestId of pullWatch.current.requests()) window.postMessage({ __gstkReturnPullAsk: { requestId } }, '*');
+      }
+      const silent = pullWatch.current.silent(now);
+      const keys = silent.flatMap((x) => x.keys);
+      if (!keys.length) return;
+      clearPending(keys);
+      const mins = Math.round(PULL_SILENCE_MS / 60000);
+      toast.warning(`No word from the extension for ${mins} minutes about ${keys.length} return${keys.length === 1 ? '' : 's'}: it may have been closed or reloaded. Check the portal tab; each row shows its outcome when it lands.`, { duration: 15000 });
+    }, 10_000);
+    return () => clearInterval(t);
+  }, [pendingCount, refreshSoon, clearPending]);
+
+  // A pull outcome newer than the request answers it, even if the
+  // extension's message was missed.
+  useEffect(() => {
+    if (!pendingCount) return;
+    const answered = Object.entries(pending)
+      .filter(([k, at]) => { const o = outcomes.get(k); return o && new Date(o.at).getTime() >= at - 5000; })
+      .map(([k]) => k);
+    answered.forEach((k) => pullWatch.current.answered(k));
+    if (answered.length) clearPending(answered);
+  }, [outcomes, pending, pendingCount, clearPending]);
+
+  const startPull = (records: FilingRecord[], what: string) => {
+    if (!extReady) { toast.error('Install or enable the GST Keeper browser extension to pull from the portal.'); return; }
+    // The extension runs one pull at a time (it refuses a second one).
+    if (pendingCount) { toast.info('A pull is running. Wait for it to end, then pull again.'); return; }
+    if (extOutdated) {
+      toast.error(`Update the GST Keeper extension to ${MIN_EXTENSION_VERSION} or later (chrome://extensions, Reload). Older copies could store the System generated summary as the filed GSTR-3B, and GST Keeper no longer accepts their Filed writes.`, { duration: 12000 });
       return;
     }
-    if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
-    window.postMessage({ __gstkPullReturn: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month } }, '*');
+    const items: PullItem[] = records.map((r) => ({ clientId: r.client_id, return_type: r.return_type, period_month: r.period_month || selectedMonth }));
+    if (!items.length) { toast.info(`Nothing to pull for ${what}.`); return; }
+    const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now());
+    const keys = items.map((i) => pullKey(i.clientId, i.return_type, i.period_month));
+    const now = Date.now();
+    pullWatch.current.start(requestId, keys, now);
+    setPending((prev) => { const next = { ...prev }; keys.forEach((k) => { next[k] = now; }); return next; });
+    window.postMessage({ __gstkPullReturns: { items, actorId: user?.id ?? null, requestId } }, '*');
   };
 
   // Log the client in on the portal and open THIS return's filing page (current
   // tab's return + period). The human does the CAPTCHA and the OTP/DSC submit.
   const openFilingOnPortal = (record: FilingRecord) => {
-    if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to log in from here.'); return; }
+    if (!extReady) { toast.error('Install/enable the GST Keeper extension to log in from here.'); return; }
     window.postMessage({ __gstkOpenFiling: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month } }, '*');
   };
 
-  const handlePdfUpload = async (record: FilingRecord, file: File) => {
-    const isNewRecord = record.id.startsWith('temp-');
-    
-    // Upload file to storage
-    const fileName = `${record.client_id}/${record.return_type}/${record.period_month.replace('/', '-')}/${Date.now()}_${file.name}`;
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('return-pdfs')
-      .upload(fileName, file, { upsert: true });
-    
-    if (uploadError) {
-      toast.error('Failed to upload PDF: ' + uploadError.message);
-      return;
-    }
-    
-    const { data: { publicUrl } } = supabase.storage
-      .from('return-pdfs')
-      .getPublicUrl(fileName);
-    
-    if (isNewRecord) {
-      try {
-        const { error } = await supabase
-          .from('filing_status')
-          .insert([{
-            client_id: record.client_id,
-            return_type: record.return_type as any,
-            period_month: selectedMonth,
-            status: record.status,
-            target_date: record.target_date,
-            return_pdf_url: publicUrl,
-          }]);
-        if (error) throw error;
-        toast.success('PDF uploaded successfully');
-        fetchFilingRecords();
-      } catch (error: any) {
-        toast.error('Failed to save PDF: ' + error.message);
-      }
-    } else {
-      try {
-        const { error } = await supabase
-          .from('filing_status')
-          .update({ return_pdf_url: publicUrl })
-          .eq('id', record.id);
-        if (error) throw error;
-        toast.success('PDF uploaded successfully');
-        fetchFilingRecords();
-      } catch (error: any) {
-        toast.error('Failed to save PDF: ' + error.message);
-      }
-    }
+  // The other row of the same return (GSTR-1 / GSTR-1 (IFF), GSTR-3B / GSTR-3B
+  // (Q)) when that one is Filed and this one is not: this one is "Not
+  // applicable" (one return, one ARN; UNIQUE(arn) used to make the second
+  // impossible to file).
+  const filedTwinOf = useCallback((record: FilingRecord): FilingRecord | null => {
+    if (record.status === 'Filed') return null;
+    const fam = filingFamily(record.return_type);
+    if (fam.length < 2) return null;
+    return (filingRecords.find((f) => f.client_id === record.client_id && f.period_month === (record.period_month || selectedMonth)
+      && f.return_type !== record.return_type && fam.includes(f.return_type) && f.status === 'Filed') as FilingRecord | undefined) || null;
+  }, [filingRecords, selectedMonth]);
+
+  // The return the client files for the period (filing_effective_return_type):
+  // a twin row follows its rule for a manual upload (round 4, manualRuleType).
+  const effectiveTypeOf = (record: FilingRecord): string =>
+    effectiveFilingReturnType(clients.find((c) => c.id === record.client_id), record.return_type,
+      record.period_month || selectedMonth, schemeHistoryMap);
+
+  const contextFor = (record: FilingRecord): FilingRowContext => {
+    const period = record.period_month || selectedMonth;
+    const effectiveType = effectiveTypeOf(record);
+    return {
+      outcome: outcomes.get(pullKey(record.client_id, record.return_type, period)) || null,
+      allowance: liveAllowance(allowances, record.client_id, period, filingScope(manualRuleType(record.return_type, effectiveType))),
+      usedAllowance: record.manual_allowance_id ? allowances.find((a) => a.id === record.manual_allowance_id) || null : null,
+      filedTwin: filedTwinOf(record),
+      pulling: !!pending[pullKey(record.client_id, record.return_type, period)],
+      pullBlocked: isDirectFilingBlocked(directFilingStateFor(record)),
+      effectiveType,
+    };
   };
 
-  const handlePdfDelete = async (record: FilingRecord) => {
-    if (!record.return_pdf_url || record.id.startsWith('temp-')) return;
+  // What a pull of a set of rows asks for: returns with a pull, not a
+  // "Not applicable" twin, not held back by the direct-filing rule.
+  const pullable = (r: FilingRecord) => hasPortalPull(r.return_type) && !filedTwinOf(r) && !isDirectFilingBlocked(directFilingStateFor(r));
 
-    if (record.status === 'Filed') {
-      toast.error('Filed return PDF cannot be removed. Change the status from Filed first.');
+  const pullOne = (record: FilingRecord) => {
+    if (isDirectFilingBlocked(directFilingStateFor(record))) {
+      openDirectFilingDialog(record, { fromFiled: true });
       return;
     }
-    
-    try {
-      const { error } = await supabase
-        .from('filing_status')
-        .update({ return_pdf_url: null })
-        .eq('id', record.id);
-      if (error) throw error;
-      toast.success('PDF removed');
-      fetchFilingRecords();
-    } catch (error: any) {
-      toast.error('Failed to remove PDF: ' + error.message);
+    startPull([record], `${record.return_type} ${record.period_month}`);
+  };
+
+  // Every return of the client, but one unlocked for correction (its own
+  // Pull files it again; "all" never re-locks a correction).
+  const pullClient = (record: FilingRecord) => {
+    const rows = FILING_TABS.flatMap((t) => generateAllFilingRecords(t.type))
+      .filter((r) => r.client_id === record.client_id && pullable(r) && wantedInClientPull(r));
+    startPull(rows, `${record.clientName || 'this client'} in ${selectedMonth}`);
+  };
+
+  // ── Manual exceptions ───────────────────────────────────────────────────
+  const [attachTarget, setAttachTarget] = useState<ManualAttachTarget | null>(null);
+  const [reasonSpec, setReasonSpec] = useState<ReasonDialogSpec | null>(null);
+
+  const openAttach = (record: FilingRecord) => {
+    // A GSTR-1 / IFF held back by the direct-filing rule needs the approval
+    // first, whatever the route (the database refuses the attach too).
+    if (isDirectFilingBlocked(directFilingStateFor(record))) {
+      toast.info(`This ${record.return_type} was not pushed through GST Keeper. Request the superadmin's approval for the direct filing first; then attach it.`);
+      openDirectFilingDialog(record, { fromFiled: true });
+      return;
     }
+    const client = clients.find((c) => c.id === record.client_id);
+    const period = record.period_month || selectedMonth;
+    const ruleType = manualRuleType(record.return_type, effectiveTypeOf(record));
+    if (ruleType !== record.return_type && !record.arn) {
+      toast.error(`For ${period} this client files ${ruleType}: attach it on its ${ruleType} row (a manual upload of ${ruleType} needs the superadmin's allowance).`);
+      return;
+    }
+    const allowance = liveAllowance(allowances, record.client_id, period, filingScope(ruleType));
+    if (isPullOnly(ruleType) && (!allowance || allowance.used_at)) {
+      toast.error(`${ruleType} is pulled from the portal. A manual upload needs the superadmin's allowance for this return.`);
+      return;
+    }
+    setAttachTarget({
+      clientId: record.client_id,
+      clientName: record.clientName || client?.name || '',
+      gstin: client?.gstin || '',
+      returnType: record.return_type,
+      ruleType,
+      periodMonth: period,
+      arn: record.arn,
+      allowance: isPullOnly(ruleType) ? allowance : null,
+      allowedByName: allowance ? userNames[allowance.allowed_by] : undefined,
+    });
+  };
+
+  const allowManual = (record: FilingRecord) => {
+    if (!isSuperadmin || !user?.id) return;
+    const period = record.period_month || selectedMonth;
+    const ruleType = manualRuleType(record.return_type, effectiveTypeOf(record));
+    setReasonSpec({
+      title: 'Allow a manual upload',
+      subtitle: `${record.clientName} · ${record.return_type} · ${period}`,
+      explain: `${ruleType} is marked Filed only by the portal pull. When a pull cannot be done (wrong portal password, portal down, no access), you can allow one manual upload of the filed return's PDF and ARN for this client, period and return. It is logged, used up when attached, and shown as manual everywhere.`,
+      prompt: 'Why can it not be pulled?',
+      placeholder: 'e.g. The client changed the portal password and is travelling; the return was filed on 11 Oct.',
+      confirmText: 'Allow one manual upload',
+      run: async (reason) => {
+        try {
+          await allowManualSource({ actorId: user.id, clientId: record.client_id, periodMonth: period,
+            scope: filingScope(ruleType), reason });
+          toast.success('Manual upload allowed. Staff can now attach the filed return on this row.');
+          void fetchExceptions();
+        } catch (e) {
+          toast.error((e as Error).message);
+          throw e;
+        }
+      },
+    });
+  };
+
+  const unfile = (record: FilingRecord) => {
+    if (!isSuperadmin || !user?.id || record.id.startsWith('temp-')) return;
+    setReasonSpec({
+      title: 'Take this return off Filed',
+      subtitle: `${record.clientName} · ${record.return_type} · ${record.period_month}${record.arn ? ` · ARN ${record.arn}` : ''}`,
+      explain: `The row goes back to Prepared and loses its ARN, filing date and PDF. The log keeps what it held. Use this only when the row holds the wrong return; a pull then records the right one.${
+        filingFamily('GSTR-3B').includes(record.return_type) ? ' The return and its month\'s sheets (2B, books, ITC summary, RCM) are unlocked; for Import 2B and 2B Reconciliation the month stays filed until a GST Manager or the superadmin reopens it (Filed by mistake).' : ''}`,
+      prompt: 'Why is it taken off Filed?',
+      confirmText: 'Take off Filed',
+      destructive: true,
+      run: async (reason) => {
+        try {
+          await unfileReturn(user.id, record.id, reason);
+          if (filingFamily('GSTR-3B').includes(record.return_type)) await unlockMonthSheets(record.client_id, record.period_month);
+          toast.success('Taken off Filed.');
+          warnStillFiled(record);
+          refreshSoon();
+        } catch (e) {
+          toast.error((e as Error).message);
+          throw e;
+        }
+      },
+    });
   };
 
   // Row badge for a GSTR-1 / IFF held back by the direct-filing rule. The
   // popover shows the request, and the superadmin's note on a rejection.
-  // Shown only once a request exists. A not-yet-pushed return that nobody has
-  // tried to file is normal work in progress (it will simply be pushed), so it
-  // carries no badge — choosing Filed or Pull on it opens the request dialog.
-  const DirectFilingRowBadge = ({ record, state }: { record: FilingRecord; state: DirectFilingState }) => {
+  // Shown only once a request exists. A render function, not a component made
+  // inside the page (that remounted on every redraw and closed the popover).
+  const renderDirectFilingBadge = (record: FilingRecord) => {
+    const state: DirectFilingState = directFilingStateFor(record);
+    // Shown once a request exists (a return not pushed yet shows no badge: it
+    // is usually still being prepared; its Pull opens the request instead).
     if (state !== 'pending' && state !== 'rejected') return null;
+    const action = directFilingActionLabel(state, isSuperadmin);
     const current = pickApproval(approvalsFor(record));
-    const label = state === 'pending' ? 'Awaiting superadmin' : state === 'rejected' ? 'Rejected' : 'Approval needed';
-    const variant = state === 'pending' ? 'info' : state === 'rejected' ? 'destructive' : 'warning';
+    const label = state === 'pending' ? 'Awaiting superadmin' : 'Rejected';
+    const variant = state === 'pending' ? 'info' : 'destructive';
     const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
     return (
       <div className="mt-1 flex items-center gap-1">
@@ -1592,7 +1269,7 @@ const FilingStatusPage: React.FC = () => {
           <PopoverContent side="left" className="w-[300px] space-y-1.5 p-3 text-xs">
             <p className="font-medium text-foreground">Not pushed through GST Keeper</p>
             <p className="text-muted-foreground">
-              This {record.return_type} cannot be marked Filed or pulled from the portal until a superadmin approves a direct-filing request.
+              This {record.return_type} cannot be pulled from the portal (and so marked Filed) until a superadmin approves a direct-filing request.
             </p>
             {current && current.status !== 'approved' && (
               <div className="space-y-1 border-t pt-1.5">
@@ -1608,8 +1285,8 @@ const FilingStatusPage: React.FC = () => {
                 )}
               </div>
             )}
-            <Button size="sm" variant="outline" className={cn(WS_BTN, 'w-full')} onClick={() => openDirectFilingDialog(record)}>
-              {state === 'pending' ? (isSuperadmin ? 'Review request' : 'View request') : state === 'rejected' ? 'Request again' : 'Request approval'}
+            <Button size="sm" variant="outline" className={cn(WS_BTN, 'w-full')} onClick={() => openDirectFilingDialog(record, { fromFiled: true })}>
+              {action}
             </Button>
           </PopoverContent>
         </Popover>
@@ -1617,531 +1294,16 @@ const FilingStatusPage: React.FC = () => {
           <button
             type="button"
             className="shrink-0 text-[10px] text-primary underline-offset-2 hover:underline"
-            onClick={() => openDirectFilingDialog(record)}
+            onClick={() => openDirectFilingDialog(record, { fromFiled: true })}
             title="Explain what happened and send it to the superadmin"
           >
-            Request
+            {action}
           </button>
         )}
       </div>
     );
   };
 
-  const FilingTable = ({ records, returnType }: { records: FilingRecord[]; returnType: string }) => {
-    const filteredRecords = applyFilters(records);
-    const [editingRemarks, setEditingRemarks] = useState<Record<string, string>>({});
-    const [editingArn, setEditingArn] = useState<Record<string, string>>({});
-    const [remarkSearch, setRemarkSearch] = useState('');
-
-    // Get unique target dates for this return type
-    const uniqueTargetDates = Array.from(new Set(records.filter(r => r.target_date !== null).map(r => r.target_date!))).sort((a, b) => a - b);
-    // Distinct non-empty remarks present in this tab, for the Remarks filter.
-    const uniqueRemarks = Array.from(new Set(records.map(r => (r.remarks || '').trim()).filter(r => r !== ''))).sort((a, b) => a.localeCompare(b));
-    const remarkMatches = uniqueRemarks.filter(r => r.toLowerCase().includes(remarkSearch.toLowerCase()));
-    
-    return (
-      // One scroll box for both axes, so the muted header stays pinned while
-      // the grid scrolls sideways too.
-      <div className={cn(WS_TABLE_WRAP, 'max-h-[72vh]')}>
-        {/* Fixed layout + an explicit width on every column, and a min-width so the
-            grid scrolls horizontally instead of crushing columns into each other. */}
-        <table className={cn(WS_TABLE, 'min-w-[1320px] table-fixed')} aria-label={`${returnType} filing status`}>
-          <thead>
-            <tr>
-              <th className={cn(WS_TH, 'w-12 text-center')}>No.</th>
-              <th className={cn(WS_TH, 'w-52')}>Client name</th>
-              <th className={cn(WS_TH, 'w-28')}>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" className={HEADER_FILTER_BTN}>
-                      Frequency
-                      <ChevronDown className="h-3 w-3" />
-                      {selectedFrequencies.length > 0 && (
-                        <Badge variant="info" className="ml-0.5 h-4 px-1 text-[10px] font-medium tabular-nums">{selectedFrequencies.length}</Badge>
-                      )}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-44 p-2 bg-background border" align="start">
-                    <div className="space-y-1">
-                      <div className="text-xs font-medium text-muted-foreground mb-2">Filter by Frequency</div>
-                      {[{ v: 'Monthly', l: 'Monthly (M)' }, { v: 'Quarterly', l: 'Quarterly (Q)' }, { v: 'IFF', l: 'IFF' }].map((f) => (
-                        <div key={f.v} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
-                          <Checkbox id={`freq-${f.v}`} checked={selectedFrequencies.includes(f.v)} onCheckedChange={() => toggleFrequency(f.v)} />
-                          <label htmlFor={`freq-${f.v}`} className="text-xs cursor-pointer flex-1">{f.l}</label>
-                        </div>
-                      ))}
-                      {selectedFrequencies.length > 0 && (
-                        <Button variant="ghost" size="sm" className="w-full mt-2 h-6 text-xs" onClick={() => setSelectedFrequencies([])}>Clear</Button>
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </th>
-              <th className={cn(WS_TH, 'w-40')}>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" className={HEADER_FILTER_BTN}>
-                      Status
-                      <ChevronDown className="h-3 w-3" />
-                      {selectedStatuses.length > 0 && (
-                        <Badge variant="info" className="ml-0.5 h-4 px-1 text-[10px] font-medium tabular-nums">
-                          {selectedStatuses.length}
-                        </Badge>
-                      )}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-48 p-2 bg-background border" align="start">
-                    <div className="space-y-1">
-                      <div className="text-xs font-medium text-muted-foreground mb-2">Filter by Status</div>
-                      {allStatuses.map((status) => (
-                        <div key={status} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
-                          <Checkbox
-                            id={`status-${status}`}
-                            checked={selectedStatuses.includes(status)}
-                            onCheckedChange={() => toggleStatus(status)}
-                          />
-                          <label
-                            htmlFor={`status-${status}`}
-                            className="text-xs cursor-pointer flex-1"
-                          >
-                            {filingStatusDisplayLabel(status)}
-                          </label>
-                        </div>
-                      ))}
-                      {selectedStatuses.length > 0 && (
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="w-full mt-2 h-6 text-xs"
-                          onClick={() => setSelectedStatuses([])}
-                        >
-                          Clear
-                        </Button>
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </th>
-              <th className={cn(WS_TH, 'w-36')}>ARN</th>
-              <th className={cn(WS_TH, 'w-28 text-center')}>Return PDF</th>
-              <th className={cn(WS_TH, 'w-24')}>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" className={HEADER_FILTER_BTN}>
-                      Target
-                      <ChevronDown className="h-3 w-3" />
-                      {selectedTargetDates.length > 0 && (
-                        <Badge variant="info" className="ml-0.5 h-4 px-1 text-[10px] font-medium tabular-nums">
-                          {selectedTargetDates.length}
-                        </Badge>
-                      )}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-40 p-2 bg-background border" align="start">
-                    <div className="space-y-1">
-                      <div className="text-xs font-medium text-muted-foreground mb-2">Filter by Target Date</div>
-                      <div className="max-h-48 overflow-y-auto space-y-1">
-                        {uniqueTargetDates.map((date) => (
-                          <div key={date} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
-                            <Checkbox
-                              id={`target-${date}`}
-                              checked={selectedTargetDates.includes(date)}
-                              onCheckedChange={() => toggleTargetDate(date)}
-                            />
-                            <label 
-                              htmlFor={`target-${date}`} 
-                              className="text-xs cursor-pointer flex-1"
-                            >
-                              Day {date}
-                            </label>
-                          </div>
-                        ))}
-                      </div>
-                      {selectedTargetDates.length > 0 && (
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="w-full mt-2 h-6 text-xs"
-                          onClick={() => setSelectedTargetDates([])}
-                        >
-                          Clear
-                        </Button>
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </th>
-              <th className={cn(WS_TH, 'w-28')}>Filed date</th>
-              <th className={cn(WS_TH, 'w-48')}>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" className={HEADER_FILTER_BTN}>
-                      Remarks
-                      <ChevronDown className="h-3 w-3" />
-                      {selectedRemarks.length > 0 && (
-                        <Badge variant="info" className="ml-0.5 h-4 px-1 text-[10px] font-medium tabular-nums">{selectedRemarks.length}</Badge>
-                      )}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-64 p-2 bg-background border" align="start">
-                    <div className="space-y-1">
-                      <div className="text-xs font-medium text-muted-foreground mb-2">Filter by Remarks</div>
-                      <Input
-                        value={remarkSearch}
-                        onChange={(e) => setRemarkSearch(e.target.value)}
-                        placeholder="Search remarks..."
-                        className="h-7 text-xs mb-1"
-                      />
-                      <div className="max-h-56 overflow-y-auto space-y-1">
-                        <div className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
-                          <Checkbox id="rem-blank" checked={selectedRemarks.includes('__BLANK__')} onCheckedChange={() => toggleRemark('__BLANK__')} />
-                          <label htmlFor="rem-blank" className="text-xs italic text-muted-foreground cursor-pointer flex-1">(No remark)</label>
-                        </div>
-                        {remarkMatches.map((rem, i) => (
-                          <div key={i} className="flex items-center space-x-2 p-1 hover:bg-muted rounded">
-                            <Checkbox id={`rem-${i}`} checked={selectedRemarks.includes(rem)} onCheckedChange={() => toggleRemark(rem)} />
-                            <label htmlFor={`rem-${i}`} className="text-xs cursor-pointer flex-1 truncate" title={rem}>{rem}</label>
-                          </div>
-                        ))}
-                        {remarkMatches.length === 0 && (
-                          <div className="text-xs text-muted-foreground px-1 py-2">No matching remarks.</div>
-                        )}
-                      </div>
-                      {selectedRemarks.length > 0 && (
-                        <Button variant="ghost" size="sm" className="w-full mt-2 h-6 text-xs" onClick={() => setSelectedRemarks([])}>Clear</Button>
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </th>
-              <th className={cn(WS_TH, 'w-16 text-center', !canUnlockSheets() && 'border-r-0')}>Login</th>
-              {canUnlockSheets() && <th className={cn(WS_TH, 'w-16 border-r-0 text-center')}>Unlock</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {filteredRecords.map((record, idx) => (
-              <tr key={record.id} className={cn(WS_TR, record.is_locked && 'bg-muted/30')}>
-                <td className={cn(WS_TD, 'text-center tabular-nums text-muted-foreground')}>{idx + 1}</td>
-                <td className={cn(WS_TD, 'truncate')}>
-                  <ClientHoverDetails
-                    clientName={record.clientName || ''}
-                    accountant={record.accountantName || '-'}
-                    contact={record.contactNumber || '-'}
-                    email={record.clientEmail || '-'}
-                    lockIcon={record.is_locked ? <Lock className="ml-1.5 inline h-3 w-3 text-muted-foreground" aria-label="Locked" /> : undefined}
-                  />
-                </td>
-                <td className={WS_TD}>
-                  <Badge
-                    variant={record.filingFrequency === 'Quarterly' ? 'warning' : record.filingFrequency === 'IFF' ? 'info' : 'outline'}
-                    className="px-1.5 text-[10px] font-medium"
-                  >
-                    {record.filingFrequency === 'Quarterly' ? 'Q' : record.filingFrequency === 'IFF' ? 'IFF' : 'M'}
-                  </Badge>
-                </td>
-                <td className={CELL_CONTROL}>
-                  <div className="flex items-center gap-1">
-                    <Select
-                      value={record.status}
-                      disabled={(record.is_locked && !canUnlockSheets()) || !canEditFilingStatus()}
-                      onValueChange={(value) => handleStatusChange(record, value as FilingStatusType, editingArn[record.id])}
-                    >
-                      <SelectTrigger
-                        className={cn('h-7 w-full px-2 text-xs [appearance:none]', filingStatusAccent(record.status))}
-                        title={canEditFilingStatus() ? undefined : 'Needs the Filing status & portal push permission — ask a GST Manager to add it to your position'}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Prepared">Prepared</SelectItem>
-                        <SelectItem value="Prepared Pending">Not to File</SelectItem>
-                        <SelectItem value="Data Pending">Data Pending</SelectItem>
-                        <SelectItem value="Data Received">Data Received</SelectItem>
-                        <SelectItem value="Mismatch in Data">Mismatch in Data</SelectItem>
-                        {/* Set only by a successful push to the GST portal, never by hand.
-                            Rendered (disabled) rather than omitted so the trigger can still
-                            display it when a row IS 'Pushed' — Radix reads the label off the
-                            matching item — and so the category is visible in the list. The
-                            database trigger is what actually enforces this. */}
-                        <SelectItem
-                          value="Pushed"
-                          disabled
-                          title="Set automatically when a push to the GST portal succeeds — it cannot be chosen by hand."
-                        >
-                          Pushed
-                        </SelectItem>
-                        <SelectItem value="Filed">Filed</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {returnType === 'GSTR-1' && record.status === 'Filed' && !record.is_nil && !gstr1DataClientIds.has(record.client_id) && (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <button className="shrink-0" title="GSTR-1 data not imported">
-                            <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent side="left" className="w-[260px] p-3 text-xs">
-                          <p className="font-medium text-foreground">GSTR-1 data not imported</p>
-                          <p className="text-muted-foreground mt-1">
-                            Marked Filed, but no GSTR-1 data has been imported into GST Keeper for this period — the GSTR-3B draft will show ₹0 outward tax until this is imported.
-                          </p>
-                        </PopoverContent>
-                      </Popover>
-                    )}
-                    {/* Filing never carried this month's lists into the next
-                        month (it was filed, or counted as filed, already; docs
-                        §13): said here until a Re-run from this month, also when
-                        the extension marked it Filed. */}
-                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && everFiled.has(`${record.client_id}|${returnType}`)
-                      && (carryGaps.get(record.client_id)?.length ?? 0) > 0 && (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <button className="shrink-0" title="Entries not carried into the next month">
-                            <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent side="left" className="w-[300px] p-3 text-xs">
-                          <p className="font-medium text-foreground">Entries not carried into the next month</p>
-                          <p className="text-muted-foreground mt-1">
-                            {describeCarryGap(record.period_month || selectedMonth, carryGaps.get(record.client_id) || [])}
-                          </p>
-                        </PopoverContent>
-                      </Popover>
-                    )}
-                    {/* Re-run runs from a month recorded as Filed (docs §13):
-                        an unfiled month carries when it is filed. The database
-                        also refuses it into a filed next month. */}
-                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && canChangePriorBooks(user?.role)
-                      && everFiled.has(`${record.client_id}|${returnType}`) && (
-                      <button
-                        type="button"
-                        className="shrink-0 disabled:opacity-50"
-                        title="Re-run carry forward to next month (GST Manager / superadmin): shows what it adds and removes first, and keeps the next month's own reclaims and book entries"
-                        disabled={retryingCarryForwardId === record.id}
-                        onClick={() => handleRetryCarryForward(record)}
-                      >
-                        {retryingCarryForwardId === record.id
-                          ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                          : <RefreshCw className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />}
-                      </button>
-                    )}
-                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && canChangePriorBooks(user?.role)
-                      && record.status !== 'Filed' && everFiled.has(`${record.client_id}|${returnType}`) && (
-                      <button
-                        type="button"
-                        className="shrink-0"
-                        title="Filed by mistake: reopen this month for Import 2B and 2B Reconciliation (GST Manager / superadmin)"
-                        onClick={() => handleReopenFiled(record)}
-                      >
-                        <Undo2 className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                      </button>
-                    )}
-                    {returnType === 'GSTR-3B' && gstr1IsNilByClient.get(record.client_id) === true && !record.is_nil && (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <button className="shrink-0" title="NIL not carried forward from GSTR-1">
-                            <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent side="left" className="w-[260px] p-3 text-xs">
-                          <p className="font-medium text-foreground">NIL not carried forward</p>
-                          <p className="text-muted-foreground mt-1">
-                            GSTR-1 for this period is marked NIL — consider marking GSTR-3B NIL too (see the NIL Return checkbox on the GSTR-3B page).
-                          </p>
-                        </PopoverContent>
-                      </Popover>
-                    )}
-                  </div>
-                  {record.pushed_at && (
-                    <p className="mt-0.5 truncate text-[10px] leading-tight text-muted-foreground" title="Pushed to the GST portal through GST Keeper">
-                      Pushed {pushedAtLabel(record.pushed_at)}
-                    </p>
-                  )}
-                  {returnType === 'GSTR-1' && (
-                    <DirectFilingRowBadge record={record} state={directFilingStateFor(record)} />
-                  )}
-                </td>
-                <td className={CELL_CONTROL}>
-                  <Input
-                    value={editingArn[record.id] ?? record.arn ?? ''}
-                    onChange={(e) => {
-                      const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 15);
-                      setEditingArn(prev => ({ ...prev, [record.id]: val }));
-                    }}
-                    onBlur={() => {
-                      // ARN is kept local only - it will be saved when status is changed to "Filed"
-                    }}
-                    placeholder="AA1234567890123"
-                    className="h-7 w-full px-2 font-mono text-xs md:text-xs"
-                    maxLength={15}
-                    disabled={(record.is_locked && !canUnlockSheets()) || !canEditFilingStatus()}
-                  />
-                </td>
-                <td className={cn(WS_TD, 'text-center')}>
-                  {record.return_pdf_url ? (
-                    <div className="flex items-center justify-center gap-1">
-                      <a
-                        href={record.return_pdf_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:text-primary/80"
-                        title="View PDF"
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                      </a>
-                      {(!record.is_locked || canUnlockSheets()) && (
-                        <button
-                          onClick={() => handlePdfDelete(record)}
-                          className="text-destructive hover:text-destructive/80"
-                          title="Remove PDF"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center gap-2">
-                      {(!record.is_locked || canUnlockSheets()) && (isDirectFilingBlocked(directFilingStateFor(record)) ? (
-                        // Disabled buttons swallow hover, so the reason sits on a wrapper.
-                        <span
-                          className="inline-flex cursor-not-allowed"
-                          title={`Pull from portal is blocked: this ${record.return_type} was not pushed through GST Keeper. Pulling marks it Filed, which needs a superadmin-approved direct-filing request first.`}
-                        >
-                          <button
-                            type="button"
-                            disabled
-                            className="pointer-events-none inline-flex items-center gap-1 text-xs text-muted-foreground opacity-50"
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                            <span>Portal</span>
-                          </button>
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => pullFromPortal(record)}
-                          className={`inline-flex items-center gap-1 text-xs ${extReady ? 'text-primary hover:text-primary/80' : 'text-muted-foreground hover:text-foreground'}`}
-                          title={extReady
-                            ? 'Pull the filed return + PDF from the GST portal (via the browser extension)'
-                            : 'GST Keeper extension not detected yet — install/enable it and reload this page, then click to pull'}
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          <span>Portal</span>
-                        </button>
-                      ))}
-                      {(!record.is_locked || canUnlockSheets()) && (
-                        <label
-                          className="cursor-pointer inline-flex items-center text-muted-foreground/60 hover:text-foreground"
-                          title="Manual fallback — upload the return PDF if the portal pull didn't work"
-                        >
-                          <Upload className="h-3 w-3" />
-                          <input
-                            type="file"
-                            accept=".pdf"
-                            className="hidden"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) {
-                                if (file.type !== 'application/pdf') { toast.error('Only PDF files are allowed'); return; }
-                                handlePdfUpload(record, file);
-                              }
-                              e.target.value = '';
-                            }}
-                            disabled={record.is_locked && !canUnlockSheets()}
-                          />
-                        </label>
-                      )}
-                    </div>
-                  )}
-                </td>
-                <td className={cn(WS_TD, 'text-center tabular-nums')}>{record.target_date ?? <span className="text-muted-foreground">—</span>}</td>
-                <td className={WS_TD}>
-                  <div className="flex items-center gap-1">
-                    <span className="tabular-nums">
-                      {record.filed_date 
-                        ? new Date(record.filed_date).toLocaleDateString('en-IN')
-                        : '-'
-                      }
-                    </span>
-                    {record.updatedByName && record.updated_at && (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <button className="shrink-0">
-                            <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent side="left" className="w-[220px] p-3 text-xs">
-                          <p className={record.status !== 'Filed' ? 'text-amber-600 dark:text-amber-400' : ''}>
-                            Status changed by <strong>{record.updatedByName}</strong> ({record.updatedByRole})
-                          </p>
-                          <p className={record.status !== 'Filed' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}>
-                            on {new Date(record.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}, {new Date(record.updated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                          </p>
-                        </PopoverContent>
-                      </Popover>
-                    )}
-                  </div>
-                </td>
-                <td className={CELL_CONTROL}>
-                  <div className="flex items-start gap-1">
-                    <textarea
-                      value={editingRemarks[record.id] ?? record.remarks ?? ''}
-                      onChange={(e) => setEditingRemarks(prev => ({ ...prev, [record.id]: e.target.value }))}
-                      onBlur={() => {
-                        const newRemarks = editingRemarks[record.id];
-                        if (newRemarks !== undefined && newRemarks !== record.remarks) {
-                          handleRemarksChange(record, newRemarks);
-                        }
-                      }}
-                      placeholder="Add remarks..."
-                      className="block min-h-[28px] max-h-[80px] w-full resize-y rounded border border-input bg-background px-2 py-1 text-xs leading-snug focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={record.is_locked && !canUnlockSheets()}
-                    />
-                  </div>
-                </td>
-                <td className={cn(WS_TD, 'py-1 text-center', !canUnlockSheets() && 'border-r-0')}>
-                  <button
-                    onClick={() => openFilingOnPortal(record)}
-                    className={`inline-flex h-7 w-7 items-center justify-center rounded ${extReady ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground hover:bg-muted'}`}
-                    title={extReady
-                      ? `Log ${record.clientName || 'this client'} in and open the ${record.return_type} filing page — you do the CAPTCHA & submit with OTP/DSC`
-                      : 'GST Keeper extension not detected yet — install/enable it and reload this page'}
-                  >
-                    <LogIn className="h-3.5 w-3.5" />
-                  </button>
-                </td>
-                {canUnlockSheets() && (
-                  <td className={cn(WS_TD, 'border-r-0 py-1 text-center')}>
-                    {record.is_locked && (
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={() => handleUnlock(record)}
-                        className="h-7 px-2"
-                        title="Unlock this record"
-                      >
-                        <Unlock className="h-3 w-3" />
-                      </Button>
-                    )}
-                  </td>
-                )}
-              </tr>
-            ))}
-            {filteredRecords.length === 0 && (
-              <tr>
-                <td colSpan={canUnlockSheets() ? 11 : 10} className="px-3 py-10 text-center text-muted-foreground">
-                  <ClipboardCheck className="mx-auto mb-1.5 h-5 w-5" />
-                  <div className="font-medium text-foreground">No records</div>
-                  {records.length === 0 
-                    ? `No clients have ${returnType} selected.`
-                    : 'No records match your filters.'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
 
   if (isLoading) {
     return (
@@ -2208,7 +1370,7 @@ const FilingStatusPage: React.FC = () => {
   const stats = {
     total: tabRowsInView.length,
     filed: tabRowsInView.filter(r => r.status === 'Filed').length,
-    pending: tabRowsInView.filter(r => PENDING_FILING_STATUSES.includes(r.status)).length,
+    pending: tabRowsInView.filter(r => PENDING_FILING_STATUSES.includes(r.status) && !filedTwinOf(r)).length,
     mismatch: tabRowsInView.filter(r => r.status === 'Mismatch in Data').length,
     dataPending: tabRowsInView.filter(r => r.status === 'Data Pending').length,
     locked: tabRowsInView.filter(r => r.is_locked).length,
@@ -2227,6 +1389,25 @@ const FilingStatusPage: React.FC = () => {
   ].filter(Boolean).length;
   const currentTabLabel = FILING_TABS.find(t => t.value === selectedTab)?.type ?? '';
 
+  // Pull every return in view that still needs it: not Filed, Filed but
+  // never pulled, or pulled without a checked PDF or a portal filing date;
+  // never one unlocked for correction (its own Pull files it again). Returns
+  // held back by the direct-filing rule are counted and named, not pulled.
+  const tabHasPull = hasPortalPull(currentTabLabel);
+  const pullInView = () => {
+    if (!tabHasPull) { toast.info(noPullTabText(currentTabLabel)); return; }
+    const inView = applyFilters(recordsByTab[selectedTab] || []).filter((r) => hasPortalPull(r.return_type) && !filedTwinOf(r));
+    const wanted = inView.filter((r) => wantedInBulkPull(r));
+    const rows = wanted.filter((r) => pullable(r));
+    const heldBack = wanted.length - rows.length;
+    const byHand = inView.filter((r) => r.status === 'Filed' && r.filed_source === 'manual').length;
+    if (!rows.length) { toast.info(bulkPullNothingText(heldBack, byHand), { duration: heldBack || byHand ? 10000 : 4000 }); return; }
+    const clientsN = new Set(rows.map((r) => r.client_id)).size;
+    if (!window.confirm(`Pull ${rows.length} return${rows.length === 1 ? '' : 's'} of ${clientsN} client${clientsN === 1 ? '' : 's'} from the GST portal? A portal tab opens; type each client's CAPTCHA there.`
+      + (heldBack ? ` ${heldBack} return${heldBack === 1 ? ' is' : 's are'} left out: not pushed through GST Keeper, so the superadmin approves the direct filing first.` : ''))) return;
+    startPull(rows, 'the returns in view');
+  };
+
   return (
     <div className={WS_PAGE}>
       <PageHeader
@@ -2235,17 +1416,34 @@ const FilingStatusPage: React.FC = () => {
         subtitle="GST return filing status for all clients"
         icon={<ClipboardCheck />}
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            className={WS_BTN}
-            onClick={handleExportPDF}
-            disabled={!canExportData()}
-            title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export PDF
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className={WS_BTN}
+              onClick={pullInView}
+              disabled={!canEditFilingStatus() || pendingCount > 0 || !tabHasPull}
+              title={!tabHasPull
+                ? noPullTabText(currentTabLabel)
+                : extOutdated
+                  ? `Update the GST Keeper extension to ${MIN_EXTENSION_VERSION} or later to pull filed returns`
+                  : 'Pull from the GST portal every return in view that is not Filed, was Filed by hand before 21 Oct 2026 and never pulled, or was pulled without a checked PDF or the portal\'s filing date. Returns attached by hand are left out; Pull on a row checks one.'}
+            >
+              {pendingCount ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              Pull filed returns{pendingCount ? ` (${pendingCount} running)` : ''}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={WS_BTN}
+              onClick={handleExportPDF}
+              disabled={!canExportData()}
+              title={canExportData() ? undefined : 'Needs the Export data permission — ask a GST Manager to add it to your position'}
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export PDF
+            </Button>
+          </div>
         }
       />
 
@@ -2361,8 +1559,21 @@ const FilingStatusPage: React.FC = () => {
       </Card>
 
       <Note>
-        Status, frequency, target date and remarks filter from their column headers. Hover a client's name for the accountant and contact details. A typed ARN is saved when the status is set to Filed; remarks save when you leave the box.
+        GSTR-1 and GSTR-3B are marked Filed only from the GST portal: Pull reads the ARN, the filing date and the return PDF through the extension (one return, all of a client's, or every return in view with Pull filed returns). The PDF is kept only when it is the filed return showing its ARN. When a pull cannot be done, the superadmin can allow one manual upload for that return, with a reason; it shows as manual. GSTR-1 (IFF), GSTR-3B (Q), GSTR-6 and GSTR-7 can be pulled, and can still be attached by hand until their pull is proven; CMP-08 and ITC-04 have no pull yet. A PDF or date no pull checked says so. Remarks save when you leave the box.
       </Note>
+
+      {(isSuperadmin || conflicts.length > 0 || allowances.length > 0) && (
+        <FilingExceptionsPanel
+          periodMonth={selectedMonth}
+          isSuperadmin={isSuperadmin}
+          userId={user?.id ?? null}
+          clientNames={clientNameMap}
+          userNames={userNames}
+          allowances={allowances}
+          conflicts={conflicts}
+          onChanged={refreshSoon}
+        />
+      )}
 
       {isSuperadmin && (
         <DirectFilingApprovalsPanel
@@ -2386,12 +1597,53 @@ const FilingStatusPage: React.FC = () => {
 
         {FILING_TABS.map(t => (
           <TabsContent key={t.value} value={t.value} className="mt-0">
-            <FilingTable records={recordsByTab[t.value]} returnType={t.type} />
+            <FilingTable
+              records={recordsByTab[t.value]}
+              rows={applyFilters(recordsByTab[t.value])}
+              returnType={t.type}
+              contextFor={contextFor}
+              userNames={userNames}
+              allStatuses={allStatuses}
+              selectedStatuses={selectedStatuses}
+              toggleStatus={toggleStatus}
+              clearStatuses={() => setSelectedStatuses([])}
+              selectedFrequencies={selectedFrequencies}
+              toggleFrequency={toggleFrequency}
+              clearFrequencies={() => setSelectedFrequencies([])}
+              selectedTargetDates={selectedTargetDates}
+              toggleTargetDate={toggleTargetDate}
+              clearTargetDates={() => setSelectedTargetDates([])}
+              selectedRemarks={selectedRemarks}
+              toggleRemark={toggleRemark}
+              clearRemarks={() => setSelectedRemarks([])}
+              canUnlockSheets={canUnlockSheets()}
+              canEditFilingStatus={canEditFilingStatus()}
+              isSuperadmin={isSuperadmin}
+              extReady={extReady}
+              extOutdated={extOutdated}
+              pullRunning={pendingCount > 0}
+              gstr1DataClientIds={gstr1DataClientIds}
+              gstr1IsNilByClient={gstr1IsNilByClient}
+              retryingCarryForwardId={retryingCarryForwardId}
+              everFiled={everFiled}
+              carryGaps={carryGaps}
+              canChangePriorBooks={canChangePriorBooks(user?.role)}
+              directFilingBadge={renderDirectFilingBadge}
+              onStatusChange={(r, s) => { void handleStatusChange(r, s); }}
+              onRemarksChange={(r, rem) => { void handleRemarksChange(r, rem); }}
+              onRetryCarryForward={(r) => { void handleRetryCarryForward(r); }}
+              onReopenFiled={(r) => { void handleReopenFiled(r); }}
+              onUnlock={(r) => { void handleUnlock(r); }}
+              onPull={pullOne}
+              onPullClient={pullClient}
+              onAttach={openAttach}
+              onAllowManual={allowManual}
+              onUnfile={unfile}
+              onOpenFiling={openFilingOnPortal}
+            />
           </TabsContent>
         ))}
       </Tabs>
-
-      <AdvanceSetoffGateDialog {...advanceGate.dialogProps} />
 
       <RequestDirectFilingDialog
         target={directFilingTarget}
@@ -2405,11 +1657,27 @@ const FilingStatusPage: React.FC = () => {
           setDirectApprovals((prev) => [approval, ...prev.filter((a) => a.id !== approval.id)]);
           void fetchDirectApprovals();
           setApprovalsPanelKey((k) => k + 1);
-          // Superadmin's "Approve now" from the Filed choice carries on with
-          // the normal filing checks (ARN, PDF, dependencies…).
-          if (approved && t?.fromFiled) void handleStatusChange(t.record, 'Filed', t.localArn);
+          // Approved from Pull: the pull goes ahead.
+          if (approved && t?.fromFiled) startPull([t.record], `${t.record.return_type} ${t.record.period_month}`);
         }}
       />
+
+      <ManualAttachDialog
+        target={attachTarget}
+        userId={user?.id ?? null}
+        onClose={() => setAttachTarget(null)}
+        onDone={() => {
+          const t = attachTarget;
+          setAttachTarget(null);
+          refreshSoon();
+          // Filed by this attach (not a PDF added to a row already Filed): what
+          // the database carried into the next month with it (docs §13).
+          const before = t && filingRecords.find((r) => r.client_id === t.clientId && r.return_type === t.returnType && (r.period_month || selectedMonth) === t.periodMonth);
+          if (t && before?.status !== 'Filed') void reportFilingCarry(t.clientId, t.returnType, t.periodMonth);
+        }}
+      />
+
+      <ReasonDialog spec={reasonSpec} onClose={() => setReasonSpec(null)} />
     </div>
   );
 };

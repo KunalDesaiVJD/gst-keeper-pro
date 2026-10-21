@@ -3,7 +3,11 @@
 // missing after an empty or partly failed pull, checks the portal session's GSTIN
 // before saving, and keeps portal passwords out of chrome.storage. Older copies
 // are refused here; the database also turns their hard deletes into soft deletes.
-export const MIN_EXTENSION_VERSION = '0.4.0';
+// 0.15.0 (21 Oct 2026) is the minimum: Filing Status is pulled only, and
+// older copies could store the GSTR-3B "System generated summary" or a
+// GSTR-1A as the filed return; the database now refuses their direct Filed
+// writes (20261021110000), so they would only fail.
+export const MIN_EXTENSION_VERSION = '0.15.0';
 // Phase 1: 0.5.0 writes through the database's single ingest door (sync_ingest),
 // fills the run ledger, skips documents already stored and has the CAPTCHA
 // watchdog. Phase 3: 0.6.0 also reads applications on the portal, the
@@ -34,7 +38,11 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // gstr2a2b_pull) and no longer stops a GSTR-2B pull after its first month.
 // 0.14.0 also reads the GSTR-2A credit and debit notes, so the report can
 // compare the 2B's notes (not confirmed live; a failed read is recorded).
-export const RECOMMENDED_EXTENSION_VERSION = '0.14.0';
+// 0.15.0 pulls filed returns for Filing Status through filing_record_pull:
+// the exact return type (never a GSTR-1A for a GSTR-1), the portal's ARN and
+// filing date (never the pull's day), and the PDF only when it is the filed
+// return showing that ARN; one return, a client's, or every return in view.
+export const RECOMMENDED_EXTENSION_VERSION = '0.15.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -51,7 +59,7 @@ export function isExtensionOutdated(version: string | null | undefined): boolean
 
 export function outdatedExtensionMessage(version: string | null | undefined): string {
   return `The browser extension${version ? ` (v${version})` : ''} is out of date. Load v${MIN_EXTENSION_VERSION} or later `
-    + '(chrome://extensions → Reload, from the updated extension folder) before syncing: older copies can remove saved notices when the portal returns an error.';
+    + '(chrome://extensions → Reload, from the updated extension folder) before syncing: older copies can store the wrong return PDF, and GST Keeper no longer accepts their filed-return writes.';
 }
 
 export function isExtensionUpdateRecommended(version: string | null | undefined): boolean {
@@ -92,6 +100,7 @@ const GAINS: [string, string][] = [
   ['0.12.0', "drives an unfiled GSTR-9 the way the portal's own pages work: PREPARE-ONLINE, No on the Nil question, NEXT, then the system-computed summary"],
   ['0.13.0', 'pulls GSTR-2A and GSTR-2B together for the 2A vs 2B report, and a GSTR-2B pull over several months no longer stops after the first'],
   ['0.14.0', "reads the GSTR-2A credit and debit notes, so the 2A vs 2B report compares the 2B's notes too"],
+  ['0.15.0', "pulls filed returns for Filing Status with the portal's ARN and filing date, and keeps a PDF only when it is the filed return (never the System generated summary or a GSTR-1A)"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

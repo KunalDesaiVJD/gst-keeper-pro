@@ -135,7 +135,65 @@ function jobSlot(fn) {
   jobSlotChain = run.catch(() => {});
   return run;
 }
-const setActiveJob = (job) => jobSlot(() => chrome.storage.local.set({ gstk_active_job: job }));
+// 0.15.0 (round 2): a filed-return pull replaced by another start reports
+// the returns it did not reach (endedReturnPull) instead of vanishing.
+const setActiveJob = (job) => jobSlot(async () => {
+  const { gstk_active_job: cur } = await chrome.storage.local.get('gstk_active_job');
+  if (cur && cur.mode === 'returnpdf' && !(job && job.mode === 'returnpdf' && job.requestId === cur.requestId && job.startedAt === cur.startedAt)) {
+    await endedReturnPull(cur, 'another portal job was started in this browser before this return was pulled');
+  }
+  await chrome.storage.local.set({ gstk_active_job: job });
+});
+
+// ── A filed-return pull that ends early (0.15.0, round 2) ───────────────────
+// Its portal tab closed, it sat idle 10 minutes or ran 3 hours, it was
+// stopped from the popup, or another start took the job slot: every return
+// it did not reach is logged in GST Keeper (filing_pull_report, failed,
+// not_reached) and the page that asked hears the whole pull
+// (gstk_return_pull_result, with ended: why). The caller removes the job.
+async function endedReturnPull(job, why, extra) {
+  const done = job.retResults || [];
+  const k = (x) => x.clientId + '|' + x.return_type + '|' + x.period_month;
+  const seen = new Set(done.map(k));
+  const results = done.slice();
+  for (const c of job.clients || []) {
+    for (const r of c.rets || []) {
+      const x = { clientId: c.clientId, return_type: r.return_type, period_month: r.period_month };
+      if (seen.has(k(x))) continue;
+      seen.add(k(x));
+      results.push({ ...x, outcome: 'not_reached', message: 'Not pulled: ' + why + '.' });
+      // Logged in GST Keeper too, so Filing Status shows it after a reload.
+      await API.reportFiledPull({ clientId: c.clientId, returnType: r.return_type, periodMonth: r.period_month, outcome: 'failed',
+        message: 'Not pulled: ' + why + '.', actorId: job.actorId || null,
+        detail: { ext_version: EXT_VERSION, request_id: job.requestId || null, not_reached: true } });
+    }
+  }
+  await chrome.storage.local.set({ gstk_return_pull_result: { requestId: job.requestId || null, at: Date.now(), ended: why, results, ...(extra || {}) } });
+}
+// Why a running filed-return pull is over without anyone saying so, or null
+// while it is live: the content script's rule (10 idle minutes, 3 hours),
+// and a portal tab that is gone (a browser restart).
+async function returnPullStale(job) {
+  const now = Date.now();
+  if (now - (job.lastActivityAt || job.startedAt || now) >= IDLE_LIMIT_MS) return 'the pull sat idle for more than 10 minutes (CAPTCHA not typed, or the tab left alone)';
+  if (now - (job.startedAt || now) > RUN_LIMIT_MS) return 'the pull ran for more than 3 hours and was stopped';
+  if (job.tabId != null && chrome.tabs && chrome.tabs.get) {
+    try { await chrome.tabs.get(job.tabId); } catch (e) { return 'its portal tab is gone'; }
+  }
+  return null;
+}
+// Inside the job slot: the live filed-return pull, or null. A stale one is
+// ended (reported) and removed first.
+async function liveReturnPull() {
+  const { gstk_active_job: cur } = await chrome.storage.local.get('gstk_active_job');
+  if (!cur || cur.mode !== 'returnpdf') return null;
+  const why = await returnPullStale(cur);
+  if (!why) return cur;
+  await endedReturnPull(cur, why);
+  await chrome.storage.local.remove('gstk_active_job');
+  return null;
+}
+const RETURN_PULL_BUSY = 'A pull of filed returns is already running in this browser. Wait until it ends (or close its portal tab), then pull again.';
 
 // The REST path needs the bookkeeping columns the RPC sets on the server.
 const legacyRows = (rows, extra) => rows.map((r) => ({ ...r, ...extra }));
@@ -181,7 +239,6 @@ const API = {
     try { return await rpc('client_login_issue_set', { p_client_id: clientId, p_reason: reason || null, p_message: message ? String(message).slice(0, 500) : null }); }
     catch (e) { return null; } // a database without migration 20261010100000
   },
-  upsertFilingStatus: (rows) => post('filing_status?on_conflict=client_id,return_type,period_month', rows, 'resolution=merge-duplicates,return=minimal'),
   upsertReco: async (table, clientId, period, patchObj) => {
     const ex = await sel(`${table}?client_id=eq.${clientId}&period_month=eq.${enc(period)}&select=id&limit=1`);
     if (ex[0]) return patch(`${table}?id=eq.${ex[0].id}`, patchObj);
@@ -609,7 +666,9 @@ const API = {
   // Folder capture), multiplying how often a single slow/stuck request can
   // occur. Confirmed live 2026-08-27: a real sync hung 20+ minutes with no
   // progress and no error, on exactly this class of unbounded fetch.
-  uploadPdf: async (path, dataUrl) => {
+  // opts.upsert === false (0.15.0, a filed return's checked PDF): never put
+  // over an existing file; every other caller keeps overwriting as before.
+  uploadPdf: async (path, dataUrl, opts) => {
     const b64 = String(dataUrl).split(',')[1] || '';
     const bin = atob(b64);
     const bytes = new Uint8Array(bin.length);
@@ -621,7 +680,7 @@ const API = {
         method: 'POST',
         headers: {
           apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
-          'Content-Type': 'application/pdf', 'x-upsert': 'true',
+          'Content-Type': 'application/pdf', 'x-upsert': opts && opts.upsert === false ? 'false' : 'true',
         },
         body: bytes,
         signal: controller.signal,
@@ -633,27 +692,115 @@ const API = {
     }
   },
 
-  // Mark a return Filed (with ARN + filed_date + PDF url). Passes the app's
-  // "PDF required before Filed" trigger because return_pdf_url is set.
-  markFiled: (row) => post('filing_status?on_conflict=client_id,return_type,period_month', [row], 'resolution=merge-duplicates,return=minimal'),
+  // 0.15.0: a filed return is recorded only through filing_record_pull
+  // (20261021110000), which decides filed / refreshed / conflict / refused:
+  // the same ARN refreshes, a different ARN is never put over a stored one
+  // (the superadmin decides), and the filing date is the portal's, never the
+  // pull's day. 0.14.0's markFiled upserted filing_status directly; the
+  // database now refuses that. A database without the function (404) is
+  // older than this extension: nothing is written.
+  recordFiledPull: async (p) => {
+    try {
+      return await rpc('filing_record_pull', {
+        p_client_id: p.clientId, p_return_type: p.returnType, p_period_month: p.periodMonth,
+        p_arn: p.arn, p_filed_date: p.filedDate || null, p_pdf_url: p.pdfUrl || null, p_pdf_note: p.pdfNote || null,
+        p_actor_id: p.actorId || null, p_detail: p.detail || {},
+      });
+    } catch (e) {
+      if (isMissingRpc(e)) throw new Error('GST Keeper\'s database does not have filing_record_pull yet (migration 20261021110000). Nothing was recorded.');
+      throw e;
+    }
+  },
+  // A pull that wrote nothing (not found, failed, a GSTR-1A seen), so the
+  // Filing Status page shows it even when it was closed. Best-effort.
+  reportFiledPull: async (p) => {
+    try {
+      return await rpc('filing_pull_report', {
+        p_client_id: p.clientId, p_return_type: p.returnType, p_period_month: p.periodMonth,
+        p_outcome: p.outcome, p_message: p.message ? String(p.message).slice(0, 500) : null,
+        p_actor_id: p.actorId || null, p_detail: p.detail || {},
+      });
+    } catch (e) { return null; }
+  },
 
-  // From the app's Filing Status "Pull from portal" button: pull ONE filed
-  // return's ARN + PDF and mark it Filed. Fetches creds, opens a portal tab.
+  // From the app's Filing Status: pull filed returns (0.15.0: one return, a
+  // client's returns, or every return in view). info.items lists
+  // { clientId, return_type, period_month }; 0.14.0's app sent one return as
+  // info itself. One login per client, its returns one after another. A
+  // client without saved credentials is reported at once and left out.
+  // info.actorId is the GST Keeper user who asked; info.requestId comes back
+  // with every result.
   startReturnPull: async (info) => {
-    const c = await API.getClient(info.clientId);
-    if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
-    const [mm, yyyy] = String(info.period_month).split('/').map((n) => parseInt(n, 10));
-    const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+    // One filed-return pull at a time (round 2): a second one used to replace
+    // the first, which then reported nothing. A stale one is ended first.
+    if (await jobSlot(liveReturnPull)) throw new Error(RETURN_PULL_BUSY);
+    const items = Array.isArray(info.items) && info.items.length ? info.items
+      : [{ clientId: info.clientId, return_type: info.return_type, period_month: info.period_month }];
+    const byClient = new Map();
+    for (const it of items) {
+      if (!it || !it.clientId || !it.return_type || !/^(0[1-9]|1[0-2])\/\d{4}$/.test(String(it.period_month || ''))) continue;
+      if (!byClient.has(it.clientId)) byClient.set(it.clientId, []);
+      const rets = byClient.get(it.clientId);
+      if (!rets.some((r) => r.return_type === it.return_type && r.period_month === it.period_month)) {
+        rets.push({ return_type: it.return_type, period_month: it.period_month });
+      }
+    }
+    const clients = [];
+    const skipped = [];
+    for (const [clientId, rets] of byClient) {
+      const c = await API.getClient(clientId);
+      if (!c || !c.gst_user_id) {
+        skipped.push(c ? c.name : clientId);
+        for (const r of rets) {
+          await API.reportFiledPull({ clientId, returnType: r.return_type, periodMonth: r.period_month, outcome: 'failed',
+            message: 'This client has no saved GST portal user ID, so it was not pulled.', actorId: info.actorId || null, detail: { ext_version: EXT_VERSION } });
+        }
+        continue;
+      }
+      clients.push({ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] }, rets });
+    }
+    if (!clients.length) throw new Error(skipped.length ? 'No saved GST credentials for ' + skipped.join(', ') + '.' : 'Nothing to pull.');
+    const first = clients[0].rets[0];
+    const [mm, yyyy] = String(first.period_month).split('/').map((n) => parseInt(n, 10));
     const job = {
-      mode: 'returnpdf', period: info.period_month, fyStart, idx: 0, step: 'login', startedAt: Date.now(),
-      clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
-      ret: { return_type: info.return_type, period_month: info.period_month },
+      mode: 'returnpdf', period: first.period_month, fyStart: mm >= 4 ? yyyy : yyyy - 1, idx: 0, retIdx: 0, step: 'login', startedAt: Date.now(),
+      clients, actorId: info.actorId || null, requestId: info.requestId || null, retResults: [],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
     await setActiveJob(job);
-    return { started: true, client: c.name, return_type: info.return_type };
+    // The watchdog ends it (reported) if it sits idle 10 minutes or runs 3 hours.
+    armWatchdog();
+    return { started: true, clients: clients.length, returns: clients.reduce((n, c) => n + c.rets.length, 0), skipped };
   },
+  // Round 3: the Filing Status page asks every 30 s whether the pull it
+  // started is still running, and waits as long as the answer is yes (it
+  // used to give up 15 minutes after the start, in the middle of every long
+  // bulk pull). A pull past the idle or 3-hour limit is ended (and reported)
+  // first, as the watchdog does, so the answer is never "running" for a pull
+  // that is over. live: this request is the running pull.
+  returnPullStatus: async (requestId) => jobSlot(async () => {
+    const cur = await liveReturnPull();
+    const total = cur ? (cur.clients || []).reduce((n, c) => n + ((c.rets || []).length), 0) : 0;
+    return {
+      requestId: requestId || null,
+      live: !!cur && !!requestId && cur.requestId === requestId,
+      running: cur ? cur.requestId || null : null,
+      done: cur ? (cur.retResults || []).length : 0,
+      total,
+      lastActivityAt: cur ? cur.lastActivityAt || cur.startedAt || null : null,
+    };
+  }),
+  // The popup's Stop and the content script's idle rule end a filed-return
+  // pull through here, so its returns not reached are reported (round 2).
+  // Only the pull named (requestId) is ended; false when it is already gone.
+  endReturnPull: async (requestId, why) => jobSlot(async () => {
+    const { gstk_active_job: cur } = await chrome.storage.local.get('gstk_active_job');
+    if (!cur || cur.mode !== 'returnpdf' || (requestId && cur.requestId !== requestId)) return false;
+    await endedReturnPull(cur, String(why || 'the pull was stopped'));
+    await chrome.storage.local.remove('gstk_active_job');
+    return true;
+  }),
 
   // From the app's Import 2B "Pull from portal" button: log in, download the
   // GSTR-2B for this client+period, and stash the file for the app to import
@@ -1714,6 +1861,13 @@ function armWatchdog() {
 async function watchdogTick() {
   const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
   if (!job) { try { chrome.alarms.clear(WATCHDOG); } catch (e) { /* ignore */ } return; }
+  // A filed-return pull (round 2): ended and reported on the same rule as the
+  // content script's, even when no portal page loads to notice it.
+  if (job.mode === 'returnpdf') {
+    const why = await returnPullStale(job);
+    if (why) { await endedReturnPull(job, why); await chrome.storage.local.remove('gstk_active_job'); }
+    return;
+  }
   // Only notices runs (they carry a ledger run id); every other sync keeps the
   // content script's old rule (dropped on the next page load after 10 idle
   // minutes or 3 hours), exactly as content.js expects.
@@ -1804,6 +1958,13 @@ const EINVOICE_ENDED = 'The e-invoice pull ended (its portal tab was closed, or 
 const einvoiceTally = (g) => ({ einvoiceKept: Number(g && g.einvoiceKept) || 0, einvoiceKeepUnmatched: Number(g && g.einvoiceKeepUnmatched) || 0 });
 async function pushTabClosed(tabId) {
   const { gstk_active_job: job } = await chrome.storage.local.get('gstk_active_job');
+  // 0.15.0: a filed-return pull whose tab was closed says which returns it
+  // did and which it did not reach.
+  if (job && job.mode === 'returnpdf' && job.tabId === tabId) {
+    await endedReturnPull(job, 'the portal tab was closed before this return was pulled', { tabClosed: true });
+    await chrome.storage.local.remove('gstk_active_job');
+    return;
+  }
   const key = job && PUSH_RESULT_KEYS[job.mode];
   if (!key || job.tabId !== tabId) return;
   const c = (job.clients && job.clients[job.idx || 0]) || {};

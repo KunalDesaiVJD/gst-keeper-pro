@@ -2,6 +2,59 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-21 — Filed returns pulled for Filing Status, checked (v0.15.0)
+
+The firm's decision: Filing Status is pulled from the portal only (GST Keeper migration
+`20261021110000`, `docs/FILING_STATUS_PULL_ONLY.md`). GST Keeper now requires 0.15.0.
+
+- **The stored PDF is the filed return and shows its ARN** (`filedpdf.js`, a new content script).
+  The portal's PDFs keep their words behind Identity-H fonts; the checker reads them through each
+  font's ToUnicode map and refuses the GSTR-3B "System generated summary" (26 of 191 pulled
+  GSTR-3B PDFs before), a GSTR-1A or the GSTR-1 + GSTR-1A consolidated summary for a GSTR-1, a
+  return of another kind, and a PDF that does not print the ARN. Every PDF the click produces is
+  checked, so a summary that comes first is passed over. Nothing certain: no PDF is stored and
+  the reason is recorded with the ARN. The red "SYSTEM GENERATED" button is never clicked.
+- **Exact return type.** The Return Type option and the e-Filed Returns row must be exactly the
+  return asked for (0.14.0 took any type starting with "GSTR1": SBL-UK 09/2026 got its GSTR-1A
+  ARN on the GSTR-1 row), and the row must be the year and month asked for. A GSTR-1A seen is
+  saved as its own `gst_filed_returns` record (`GSTR1A`) and logged, never on the GSTR-1 row.
+- **ARN and filing date from the portal**: the form details (`api/formdetails`), else the row's
+  date (slashes or dashes, with or without a time), else the PDF's "Date of ARN". Never the day
+  of the pull (13 rows had it), and the two ARNs must agree.
+- **One door, and the answer is shown.** `markFiled` and `upsertFilingStatus` are gone; a pull is
+  recorded through `filing_record_pull`, which answers filed / refreshed / conflict / refused: the
+  same ARN refreshes, a different ARN changes nothing and goes to the superadmin. The banner shows
+  the answer, and the job's end says what each return came to.
+- **One return, a client's returns, or every return in view**: `startReturnPull` takes
+  `items` (one login per client), `actorId` (who asked) and `requestId`. A client without a saved
+  login is reported at once. Each outcome goes to the page (`gstk_return_pull_progress` →
+  `__gstkReturnPullProgress`) and the whole pull at the end (`gstk_return_pull_result` →
+  `__gstkReturnPullDone`, returns not reached included, also when the tab is closed); outcomes
+  that wrote nothing are logged through `filing_pull_report`.
+- **Returns not reached are logged in GST Keeper too** (review round 1): a client whose login was
+  refused or whose session kept dropping, and every return left when the portal tab is closed,
+  are reported `failed` ("Not pulled. ...") with the request id, so Filing Status shows why after
+  a reload. A download that navigated instead of saving keeps the ARN and date already read.
+- **A new file for every pull** (review round 1): a checked PDF is stored as
+  `<client>/<MM-YYYY>/<type>-<ARN>-<pull time>.pdf` and uploaded without overwrite
+  (`uploadPdf(path, dataUrl, { upsert: false })`; every other upload keeps overwriting), so no
+  older copy can put another file under a checked one's name, and a refresh of the same ARN gives
+  a new address the log keeps next to the old one.
+- **One pull at a time, and none dropped silently** (review round 2): a second `startReturnPull`
+  while one runs is refused with words the page shows; a pull that ends early (idle 10 minutes,
+  3 hours, its tab gone, Stop in the popup, or another start taking the job slot) reports every
+  return it did not reach through `filing_pull_report` (`failed`, `not_reached`, "Not pulled:
+  <why>.") and to the page (`gstk_return_pull_result.ended`). The background watchdog now ends an
+  idle filed-return pull even when no portal page loads (`endReturnPull`, `endedReturnPull`).
+- **The page follows the pull, not a clock** (review round 3): Filing Status asks every 30 s
+  whether the pull it started is still running (`__gstkReturnPullAsk { requestId }` → background
+  `returnPullStatus` → `__gstkReturnPullAlive { requestId, live, running, done, total }`), and
+  keeps waiting while the answer is yes, however many clients a bulk pull has. A pull past the
+  idle or 3-hour limit is ended and reported before the answer, so "running" is never said of a
+  pull that is over. The page gave up 15 minutes after the start before.
+- Tests: `test/16-filed-return-pull.test.mjs`, fixtures `test/fixtures/*.pdf` (fictional, made by
+  `test/_pdffixture.mjs` the way the portal's pdfmake makes them).
+
 ## 2026-10-15 — GSTR-2A credit and debit notes (v0.14.0)
 
 - The GSTR-2A pull also reads the credit and debit notes (CDN), after the B2B invoices, so the 2A vs 2B report can match the 2B's CDNR documents. Before, they were all "Not compared" (521 of 3,169 documents in one real client's year).

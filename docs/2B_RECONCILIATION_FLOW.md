@@ -867,7 +867,10 @@ later months that hold Not in 2B or Not in Books rows.
 A return marked Filed by mistake: once its status is changed back, a GST
 Manager or the superadmin reopens it with the "Filed by mistake" button on
 its Filing Status row, writing why (`twob_reopen_filed`). The record keeps who
-and why. Filing Status says so whenever a GSTR-3B is moved away from Filed.
+and why. Filing Status says so whenever a GSTR-3B is moved away from Filed
+(from 20261021110000 only Unlock, a GST Manager's, and Take off Filed, the
+superadmin's, do that: Filed itself comes only from the portal pull or an
+attach the superadmin allowed, `docs/FILING_STATUS_PULL_ONLY.md`).
 
 **Who may change what in a prior month.**
 
@@ -1231,13 +1234,13 @@ the client shown before.
 | 2B Reconciliation: Import Excel | as before | refused |
 | 2B Reconciliation: Restore | the superadmin, the client's latest month holding entries only (`twob_restore_version`); its own entries only, its carried entries kept | refused |
 | Clear Data (2B Reconciliation) | as before | the month is kept |
-| Filing Status: Filed (lock and first carry) | the first carry, once, into an open next month with no carried list | the same; never into a filed month, never again on a re-file |
+| Filing Status: Filed by the pull or an allowed attach (lock and first carry) | the first carry, once, into an open next month with no carried list | the same; never into a filed month, never again on a re-file |
 | Filing Status / 2B Reconciliation: Unlock sheets | allowed | allowed; the month stays prior |
 | Filing Status: Re-run carry forward | refused (file the month first) | GST Manager / superadmin, previewed, one month at a time: into the open next month adds, removes and keeps; into a filed next month adds only, and marks it to be re-run on; recorded even with nothing to add |
 | Filing Status: Filed by mistake | not shown | GST Manager / superadmin, with a reason, once the status is not Filed; its carry record is marked not carried |
 | 2B Reconciliation: Clear Data | the month's carried decisions are undone first | refused; the month is kept |
 | A page opened before this change: old carry, old Re-run, old Restore | its delete refused while a carried entry holds the month's own decision; a carried add refused beside a decided carried entry; an old Restore can still double the month until reloaded | refused |
-| Extension: mark filed | as Filed above | as Filed above; when nothing was carried, Filing Status marks the row until a Re-run |
+| Extension: pull (`filing_record_pull`; markFiled is gone from 0.15.0) | as Filed above | as Filed above; when nothing was carried, Filing Status marks the row until a Re-run |
 | Deleting a client | allowed | allowed |
 | Any other direct write | allowed | refused by the guard |
 

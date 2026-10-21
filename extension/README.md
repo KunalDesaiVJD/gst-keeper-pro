@@ -12,7 +12,7 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
 
 ## What it does today (v1)
 - Logs into the portal for a chosen client (you type the CAPTCHA once, in an overlay).
-- Pulls **Filing status** (ARN + filed date + status → `filing_status`).
+- Pulls **filed returns** for Filing Status (0.15.0): the exact return's ARN and the portal's filing date, and its PDF only when it is the filed return showing that ARN, recorded through `filing_record_pull` (never a direct `filing_status` write).
 - Pulls **Credit-ledger opening balance** (per head → Suspended Reco / GST Receivable Reco).
 - For the **Annual Return (GSTR-9 / 9C)** workspace (Portal data step):
   - **As-filed GSTR-3B**, all 12 months of a year in one login (`gstr3b_pull`);

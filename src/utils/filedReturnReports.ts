@@ -8,6 +8,7 @@
 // authoritative labels a reviewer would expect to see.
 
 import { supabase } from '@/integrations/supabase/client';
+import { fetchFilingSourceTexts } from '@/lib/filingPull';
 import type { ReportTable } from './allClientsReports';
 import { formatMonthLabel } from './allClientsReports';
 
@@ -143,15 +144,26 @@ export const fetchFiledReturn = async (clientId: string, period: string, returnT
 // from the JSON pulls above) lives on filing_status, not gst_filed_returns.
 // Joined in here so the PDF shows inline in the same report a reviewer is
 // already looking at, instead of a separate documents page.
-const fetchFiledPdfUrl = async (clientId: string, period: string, returnTypes: string[]): Promise<string | null> => {
+// 21 Oct 2026: with where it came from (pulled from the portal, or attached
+// by hand: "manual (allowed by X: reason)"), so the working paper says so.
+// The address and the words are two values: the link is always the bare
+// address (a cell holding both broke the link and hid the words).
+export interface FiledPdf { url: string; note: string | null }
+export const fetchFiledPdf = async (clientId: string, period: string, returnTypes: string[]): Promise<FiledPdf | null> => {
   const { data } = await supabase
     .from('filing_status')
-    .select('return_pdf_url')
+    .select('id, status, arn, return_pdf_url, filed_source, manual_allowance_id, return_type, pdf_note, filed_date, date_note')
     .eq('client_id', clientId).eq('period_month', period)
     .in('return_type', returnTypes)
     .not('return_pdf_url', 'is', null)
     .limit(1).maybeSingle();
-  return data?.return_pdf_url || null;
+  const row = data as unknown as {
+    id: string; status: string | null; arn: string | null; return_pdf_url: string | null; filed_source: string | null; manual_allowance_id: string | null;
+    return_type: string; pdf_note: string | null; filed_date: string | null; date_note: string | null;
+  } | null;
+  if (!row?.return_pdf_url) return null;
+  const notes = await fetchFilingSourceTexts([row]);
+  return { url: row.return_pdf_url, note: notes.get(row.id) ?? null };
 };
 
 export const notPulledMsg = (client: ClientLite, period: string, label: string) =>
@@ -196,8 +208,8 @@ export const buildFiledGstr3bReport = async (clientId: string, period: string): 
   rows.push(['Total cash paid', num(tt.tt_csh_pd), '', '', '', '']);
   rows.push(['Total ITC utilised', num(tt.tt_itc_pd), '', '', '', '']);
   rows.push(['Total payable', num(tt.tt_pay), '', '', '', '']);
-  const pdfUrl = await fetchFiledPdfUrl(clientId, period, ['GSTR-3B', 'GSTR-3B (Q)']);
-  rows.push(['', 'Filed Return PDF', pdfUrl || 'Not captured yet — pull it from Filing Status', '', '', '']);
+  const pdf = await fetchFiledPdf(clientId, period, ['GSTR-3B', 'GSTR-3B (Q)']);
+  rows.push(['', 'Filed Return PDF', pdf?.url || 'Not captured yet — pull it from Filing Status', pdf?.note ? `Source: ${pdf.note}` : '', '', '']);
 
   return {
     title: 'GSTR-3B (Filed on Portal)',
@@ -260,8 +272,8 @@ export const buildFiledGstr1Report = async (clientId: string, period: string): P
   if (rows.length === 0) {
     throw new Error(`GSTR-1 summary was pulled for ${client.name} in ${formatMonthLabel(period)} but had no recognisable sections — the portal's JSON shape may have changed.`);
   }
-  const pdfUrl = await fetchFiledPdfUrl(clientId, period, ['GSTR-1', 'GSTR-1 (IFF)']);
-  rows.push(['Filed Return PDF', '', pdfUrl || 'Not captured yet — pull it from Filing Status', '', '', '', '', '']);
+  const pdf = await fetchFiledPdf(clientId, period, ['GSTR-1', 'GSTR-1 (IFF)']);
+  rows.push(['Filed Return PDF', '', pdf?.url || 'Not captured yet — pull it from Filing Status', pdf?.note ? `Source: ${pdf.note}` : '', '', '', '', '']);
 
   return {
     title: 'GSTR-1 (Filed on Portal)',

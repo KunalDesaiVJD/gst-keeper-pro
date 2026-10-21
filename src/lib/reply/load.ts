@@ -130,9 +130,9 @@ export async function loadPortalData(clientId: string, needs: ReturnType<typeof 
         (r) => toFiled({ ...r, summary: {} }))
       : Promise.resolve([] as FiledReturn[]),
     needs.filingStatus || needs.gstr9
-      ? optional<FilingStatusRow>('Filing Status', () => supabase.from('filing_status').select('id, return_type, period_month, status, filed_date, arn, target_date, updated_at').eq('client_id', clientId)
+      ? optional<FilingStatusRow>('Filing Status', () => supabase.from('filing_status').select('id, return_type, period_month, status, filed_date, arn, target_date, updated_at, filed_source, manual_allowance_id, date_note').eq('client_id', clientId)
         .in('return_type', ['GSTR-1', 'GSTR-3B', 'GSTR-1 (IFF)', 'GSTR-3B (Q)', 'GSTR-9']),
-      (r) => ({ id: String(r.id), returnType: String(r.return_type), period: String(r.period_month), status: s(r.status), filedDate: s(r.filed_date), arn: s(r.arn), targetDate: n(r.target_date), updatedAt: s(r.updated_at) }))
+      (r) => ({ id: String(r.id), returnType: String(r.return_type), period: String(r.period_month), status: s(r.status), filedDate: s(r.filed_date), arn: s(r.arn), targetDate: n(r.target_date), updatedAt: s(r.updated_at), source: s(r.filed_source), allowanceId: s(r.manual_allowance_id), dateNote: s(r.date_note) }))
       : Promise.resolve([] as FilingStatusRow[]),
     needs.reclaimFys.length
       ? optional<ReclaimRow>('Credit reversal and re-claimed statement', () => supabase.from('gst_credit_reversal_reclaim_entries').select('*').eq('client_id', clientId).in('financial_year', needs.reclaimFys.map(fyLong)).order('transaction_date', { ascending: true }),
