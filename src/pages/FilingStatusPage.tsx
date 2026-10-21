@@ -33,7 +33,7 @@ import { markFiledForPeriod } from '@/lib/advanceSetoffOverrides';
 import RequestDirectFilingDialog, { DirectFilingTarget } from '@/components/filing/RequestDirectFilingDialog';
 import DirectFilingApprovalsPanel from '@/components/filing/DirectFilingApprovalsPanel';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { canChangePriorBooks, describeFilingCarry, describeRerun, fetchCarryOutcome, fetchEverFiled, monthName, reopenFiled, rerunCarry, type CarryOutcome } from '@/lib/twobPriorMonth';
+import { canChangePriorBooks, describeCarryGap, describeFilingCarry, describeRerun, fetchCarryGaps, fetchCarryOutcome, fetchEverFiled, monthName, reopenFiled, rerunCarry, type CarryOutcome } from '@/lib/twobPriorMonth';
 import { filingSuspendedCheck } from '@/lib/suspendedRecoCalc';
 import {
   DirectFilingApproval,
@@ -250,6 +250,12 @@ const FilingStatusPage: React.FC = () => {
   // Reconciliation ("clientId|returnType"; docs §13): their month stays a
   // prior month there, whatever the status says now, until reopened.
   const [everFiled, setEverFiled] = useState<Set<string>>(new Set());
+  // The selected month's lists that filing never carried into the next month
+  // (twob_carry_log, carried_at NULL: the next month was filed, or counted as
+  // filed, when this one was marked Filed, on this page or by the
+  // extension's markFiled), per client. The row keeps a warning until a Re-run
+  // from the month (docs §13).
+  const [carryGaps, setCarryGaps] = useState<Map<string, CarryOutcome[]>>(new Map());
 
   // The carry when a GSTR-3B / GSTR-3B (Q) is marked Filed is the database's
   // (auto_lock_on_filed → twob_carry_first, 20261021100000; docs §13): it
@@ -290,8 +296,11 @@ const FilingStatusPage: React.FC = () => {
       const done = await rerunCarry(user.id, record.client_id, record.period_month, false);
       const added = done.bills2B.add.length + done.billsBooks.add.length;
       const removed = done.bills2B.remove.length + done.billsBooks.remove.length;
-      toast.success(`Carry forward re-run into ${monthName(done.nextPeriod)}: ${added} added, ${removed} removed.${done.nextFiled && added
-        ? ` Re-run ${monthName(done.nextPeriod)} next to carry them on.` : ''}`, { duration: 10000 });
+      const onward = !done.nextFiled || !added ? ''
+        : done.nextOwnFiled ? ` Re-run ${monthName(done.nextPeriod)} next to carry them on.`
+          : ` Once ${monthName(done.nextPeriod)} is marked Filed itself, re-run it to carry them on.`;
+      toast.success(`Carry forward re-run into ${monthName(done.nextPeriod)}: ${added} added, ${removed} removed.${onward}`, { duration: 10000 });
+      fetchFilingRecords();
     } catch (err: any) {
       toast.error(`Carry-forward failed: ${err?.message || 'unknown error'}`);
     } finally {
@@ -403,6 +412,12 @@ const FilingStatusPage: React.FC = () => {
     } catch (err) {
       console.error('Error fetching the filed record for 2B:', err);
       setEverFiled(new Set());
+    }
+    try {
+      setCarryGaps(await fetchCarryGaps(selectedMonth));
+    } catch (err) {
+      console.error('Error fetching the carry record for 2B:', err);
+      setCarryGaps(new Map());
     }
   }, [selectedMonth]);
 
@@ -1863,6 +1878,26 @@ const FilingStatusPage: React.FC = () => {
                           <p className="font-medium text-foreground">GSTR-1 data not imported</p>
                           <p className="text-muted-foreground mt-1">
                             Marked Filed, but no GSTR-1 data has been imported into GST Keeper for this period — the GSTR-3B draft will show ₹0 outward tax until this is imported.
+                          </p>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                    {/* Filing never carried this month's lists into the next
+                        month (it was filed, or counted as filed, already; docs
+                        §13): said here until a Re-run from this month, also when
+                        the extension marked it Filed. */}
+                    {(returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)') && everFiled.has(`${record.client_id}|${returnType}`)
+                      && (carryGaps.get(record.client_id)?.length ?? 0) > 0 && (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button className="shrink-0" title="Entries not carried into the next month">
+                            <AlertTriangle className="h-3.5 w-3.5 text-warning" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent side="left" className="w-[300px] p-3 text-xs">
+                          <p className="font-medium text-foreground">Entries not carried into the next month</p>
+                          <p className="text-muted-foreground mt-1">
+                            {describeCarryGap(record.period_month || selectedMonth, carryGaps.get(record.client_id) || [])}
                           </p>
                         </PopoverContent>
                       </Popover>

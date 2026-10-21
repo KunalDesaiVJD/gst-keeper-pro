@@ -28,6 +28,18 @@ export const PRIOR_MONTH_DOCS_MSG = 'This month is filed. Its 2B documents and t
 /** Why a Not in Books entry posted from a 2B document cannot change in a prior month (it follows the filed 2B, not the books). */
 export const PRIOR_NIB_FROM_2B_MSG = 'This Not in Books entry comes from a 2B document and follows the filed 2B, so it is neither changed nor removed in a filed month. Only books entries change.';
 
+/**
+ * Why a carried Not in Books copy cannot change on its own in a prior month:
+ * it changes through the entry in the month that holds it as its own entry
+ * (the change reaches every copy), as its chain may start at a 2B document's
+ * entry, which never changes in a filed month (docs §13).
+ */
+export const PRIOR_NIB_CARRIED_MSG = 'This Not in Books entry is carried from an earlier month. In a filed month it changes only in the month that holds it as its own entry, and the change reaches this copy.';
+
+/** Whether a Not in Books row of a prior month is read-only for everyone (from a 2B document, or a carried copy), and why. */
+export const priorNibLockReason = (isPrior: boolean, row: { source_doc_id?: string | null; is_carried_forward?: boolean | null }): string | null =>
+  !isPrior ? null : row.source_doc_id ? PRIOR_NIB_FROM_2B_MSG : row.is_carried_forward ? PRIOR_NIB_CARRIED_MSG : null;
+
 export interface TwobLaterMonth {
   period: string;
   rows2B: number;
@@ -325,20 +337,49 @@ export async function previewAndApplyPriorBooks(opts: {
 export interface CarryOutcome {
   list: 'bills_not_in_2b' | 'bills_not_in_books';
   nextPeriod: string;
-  /** carried | next_held | next_filed | done_before | backfill */
+  /**
+   * carried | next_held | next_filed (the next month is filed itself) |
+   * next_prior (it counts as filed: a later month is filed) | done_before |
+   * backfill | rerun
+   */
   outcome: string;
   rows: number;
+  /** How the first carry was made (carried | next_held | backfill | rerun), or null: never carried yet. */
+  how?: string | null;
 }
+
+type CarryRow = { client_id?: string; list: string; next_period: string; last_outcome: string; carried_rows: number | null; carried_how: string | null };
+const toCarryOutcome = (r: CarryRow): CarryOutcome => ({
+  list: r.list === 'bills_not_in_books' ? 'bills_not_in_books' : 'bills_not_in_2b',
+  nextPeriod: r.next_period, outcome: r.last_outcome, rows: Number(r.carried_rows) || 0, how: r.carried_how ?? null,
+});
 
 export async function fetchCarryOutcome(clientId: string, period: string): Promise<CarryOutcome[]> {
   const { data, error } = await supabase.from('twob_carry_log')
-    .select('list, next_period, last_outcome, carried_rows')
+    .select('list, next_period, last_outcome, carried_rows, carried_how')
     .eq('client_id', clientId).eq('period_month', period);
   if (error) throw new Error(error.message);
-  return (data || []).map((r) => ({
-    list: r.list === 'bills_not_in_books' ? 'bills_not_in_books' : 'bills_not_in_2b',
-    nextPeriod: r.next_period, outcome: r.last_outcome, rows: Number(r.carried_rows) || 0,
-  }));
+  return ((data || []) as CarryRow[]).map(toCarryOutcome);
+}
+
+/**
+ * The month's lists that filing never carried (twob_carry_log rows with
+ * carried_at NULL: the next month was filed, or counted as filed, when this
+ * month was marked Filed, by hand or by the extension's markFiled), per
+ * client. Filing Status marks those rows until a Re-run has run from the
+ * month (which records it).
+ */
+export async function fetchCarryGaps(period: string): Promise<Map<string, CarryOutcome[]>> {
+  const { data, error } = await supabase.from('twob_carry_log')
+    .select('client_id, list, next_period, last_outcome, carried_rows, carried_how')
+    .eq('period_month', period).is('carried_at', null);
+  if (error) throw new Error(error.message);
+  const out = new Map<string, CarryOutcome[]>();
+  for (const r of (data || []) as CarryRow[]) {
+    const id = String(r.client_id);
+    out.set(id, [...(out.get(id) || []), toCarryOutcome(r)]);
+  }
+  return out;
 }
 
 /**
@@ -350,23 +391,40 @@ export function describeFilingCarry(returnType: string, period: string, outcomes
   if (!outcomes || outcomes.length === 0) {
     return { tone: 'warning', text: `${head} Could not read what was carried into the next month; open it on 2B Reconciliation to check.` };
   }
-  const name = (l: CarryOutcome['list']) => (l === 'bills_not_in_2b' ? 'Not in 2B' : 'Not in Books');
+  const { lines, notCarried, fix } = carryLines(period, outcomes);
+  return { tone: notCarried ? 'warning' : 'success', text: `${head} ${lines.join(' ')}${fix}` };
+}
+
+const listName = (l: CarryOutcome['list']) => (l === 'bills_not_in_2b' ? 'Not in 2B' : 'Not in Books');
+const RERUN_HINT = ' If the next month lacks entries of this month, a GST Manager or the superadmin uses Re-run carry forward on this record: it shows what it adds first.';
+
+/** The carry record's outcomes as sentences, list by list. */
+function carryLines(period: string, outcomes: CarryOutcome[]): { lines: string[]; notCarried: boolean; fix: string } {
   const order = (l: CarryOutcome['list']) => (l === 'bills_not_in_2b' ? 0 : 1);
   let notCarried = false;
   const lines = [...outcomes].sort((a, b) => order(a.list) - order(b.list)).map((o) => {
     const next = monthName(o.nextPeriod);
     if (o.outcome === 'carried') {
-      return o.rows ? `${name(o.list)}: ${o.rows} ${o.rows === 1 ? 'entry' : 'entries'} carried into ${next}.` : `${name(o.list)}: nothing to carry.`;
+      return o.rows ? `${listName(o.list)}: ${o.rows} ${o.rows === 1 ? 'entry' : 'entries'} carried into ${next}.` : `${listName(o.list)}: nothing to carry.`;
     }
     notCarried = true;
-    if (o.outcome === 'next_held') return `${name(o.list)}: not carried, because ${next} already held carried entries on it (its own reclaims and book entries stay).`;
-    if (o.outcome === 'next_filed') return `${name(o.list)}: not carried, because ${next} is filed already.`;
-    return `${name(o.list)}: not carried again; it was carried when ${monthName(period)} was first filed.`;
+    if (o.outcome === 'next_held') return `${listName(o.list)}: not carried, because ${next} already held carried entries on it (its own reclaims and book entries stay).`;
+    if (o.outcome === 'next_filed') return `${listName(o.list)}: not carried, because ${next} is filed already.`;
+    if (o.outcome === 'next_prior') return `${listName(o.list)}: not carried, because ${next} counts as filed: a later month is filed.`;
+    if (o.how === 'rerun') return `${listName(o.list)}: not carried again; Re-run carry forward brought its entries into ${next} before.`;
+    return `${listName(o.list)}: not carried again; it was carried when ${monthName(period)} was first filed.`;
   });
-  const fix = notCarried
-    ? ' If the next month lacks entries of this month, a GST Manager or the superadmin uses Re-run carry forward on this record: it shows what it adds first.'
-    : '';
-  return { tone: notCarried ? 'warning' : 'success', text: `${head} ${lines.join(' ')}${fix}` };
+  return { lines, notCarried, fix: notCarried ? RERUN_HINT : '' };
+}
+
+/**
+ * The warning Filing Status keeps on a filed GSTR-3B row whose lists filing
+ * never carried (fetchCarryGaps), until a Re-run from the month: the same
+ * words as after filing, without the filing line.
+ */
+export function describeCarryGap(period: string, gaps: CarryOutcome[]): string {
+  const { lines } = carryLines(period, gaps);
+  return `${monthName(period)}'s entries were not carried into the next month when it was marked Filed. ${lines.join(' ')}${RERUN_HINT}`;
 }
 
 /**
@@ -393,8 +451,12 @@ export async function fetchEverFiled(period: string): Promise<Set<string>> {
 export interface RerunEntry { id: string; date: string | null; supplierName: string | null; number: string | null; tax: number; message: string | null }
 /** left: carried copies the month no longer holds, left in a filed next month (Re-run only adds there). */
 export interface RerunList { add: RerunEntry[]; remove: RerunEntry[]; keep: RerunEntry[]; conflict: RerunEntry[]; left: RerunEntry[] }
-/** nextFiled: the next month is filed (an out-of-order filing repaired): Re-run only adds there. */
-export interface RerunResult { period: string; nextPeriod: string; nextFiled: boolean; dryRun: boolean; bills2B: RerunList; billsBooks: RerunList }
+/**
+ * nextFiled: the next month counts as filed (an out-of-order filing repaired):
+ * Re-run only adds there. nextOwnFiled: its own return is marked Filed (else it
+ * counts as filed only because a later month is).
+ */
+export interface RerunResult { period: string; nextPeriod: string; nextFiled: boolean; nextOwnFiled: boolean; dryRun: boolean; bills2B: RerunList; billsBooks: RerunList }
 
 const parseRerunList = (v: unknown): RerunList => {
   const d = (v || {}) as Raw;
@@ -418,7 +480,8 @@ export async function rerunCarry(actorId: string, clientId: string, period: stri
   if (error) throw new Error(error.message);
   const d = (data || {}) as Raw;
   return {
-    period: String(d.period), nextPeriod: String(d.next_period), nextFiled: d.next_filed === true, dryRun: d.dry_run === true,
+    period: String(d.period), nextPeriod: String(d.next_period), nextFiled: d.next_filed === true,
+    nextOwnFiled: d.next_own_filed === undefined ? d.next_filed === true : d.next_own_filed === true, dryRun: d.dry_run === true,
     bills2B: parseRerunList(d.bills_not_in_2b), billsBooks: parseRerunList(d.bills_not_in_books),
   };
 }
@@ -430,7 +493,11 @@ const listNames = (list: RerunEntry[]) => `${list.slice(0, 4).map(entryLabel).jo
 export function describeRerun(r: RerunResult): { lines: string[]; nothingToDo: boolean } {
   const lines: string[] = [];
   const next = monthName(r.nextPeriod);
-  if (r.nextFiled) lines.push(`${next} is filed: Re-run only adds the entries it lacks there, and removes or replaces nothing.`);
+  if (r.nextFiled) {
+    lines.push(r.nextOwnFiled
+      ? `${next} is filed: Re-run only adds the entries it lacks there, and removes or replaces nothing.`
+      : `${next} counts as filed (a later month is filed): Re-run only adds the entries it lacks there, and removes or replaces nothing.`);
+  }
   const list = (name: string, l: RerunList) => {
     if (l.add.length) lines.push(`${name}: add ${l.add.length} to ${next} (${listNames(l.add)}).`);
     if (l.remove.length) lines.push(`${name}: remove ${l.remove.length} carried ${l.remove.length === 1 ? 'copy' : 'copies'} from ${next} that ${monthName(r.period)} no longer holds (${listNames(l.remove)}).`);
@@ -444,28 +511,44 @@ export function describeRerun(r: RerunResult): { lines: string[]; nothingToDo: b
   if (r.nextFiled && !nothingToDo) {
     const [mm, yyyy] = r.nextPeriod.split('/').map(Number);
     const after = mm === 12 ? `01/${yyyy + 1}` : `${String(mm + 1).padStart(2, '0')}/${yyyy}`;
-    lines.push(`Then re-run ${next} to carry them on into ${monthName(after)}.`);
+    lines.push(r.nextOwnFiled
+      ? `Then re-run ${next} to carry them on into ${monthName(after)}.`
+      : `Once ${next} is marked Filed itself, re-run it to carry them on into ${monthName(after)}.`);
   }
   return { lines, nothingToDo };
 }
 
 // ---- Restore (2B Reconciliation) ------------------------------------------------
 
-/** One saved version's rows, as twob_restore_version takes them (snake_case). */
+/**
+ * One saved version's rows, as twob_restore_version takes them (snake_case).
+ * is_carried_forward: null when the version does not say (the database then
+ * refuses the restore).
+ */
 export type RestoreRow = Record<string, string | number | boolean | null>;
 
+/** What a restore did: the month's own entries restored, its carried entries kept as they stand. */
+export interface RestoreResult { own2B: number; ownBooks: number; carriedKept: number }
+
 /**
- * Replaces an open month's two lists with a saved version, in one call
- * (twob_restore_version, the superadmin). The database refuses a filed month
- * and any month but the client's latest month holding entries; the screen
- * says so first (restoreBlockedReason).
+ * Replaces an open month's own entries on its two lists with a saved
+ * version's, in one call (twob_restore_version, the superadmin). Its carried
+ * entries stay as they stand (a filed month's correction reaches them, and no
+ * version of this month records it; docs §13). The database refuses a filed
+ * month and any month but the client's latest month holding entries; the
+ * screen says so first (restoreBlockedReason).
  */
-export async function restoreVersion(actorId: string, clientId: string, period: string, bills2B: RestoreRow[], billsBooks: RestoreRow[]): Promise<void> {
-  const { error } = await supabase.rpc('twob_restore_version', {
+export async function restoreVersion(actorId: string, clientId: string, period: string, bills2B: RestoreRow[], billsBooks: RestoreRow[]): Promise<RestoreResult> {
+  const { data, error } = await supabase.rpc('twob_restore_version', {
     p_actor_id: actorId, p_client_id: clientId, p_period: period,
     p_bills_2b: bills2B as unknown as Json, p_bills_books: billsBooks as unknown as Json,
   });
   if (error) throw new Error(error.message);
+  const d = (data || {}) as Raw;
+  return {
+    own2B: Number(d.bills_not_in_2b) || 0, ownBooks: Number(d.bills_not_in_books) || 0,
+    carriedKept: (Number(d.carried_kept_2b) || 0) + (Number(d.carried_kept_books) || 0),
+  };
 }
 
 /**

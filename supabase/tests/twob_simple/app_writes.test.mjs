@@ -18,7 +18,19 @@
 //   S6/F15 a prior month's Post plan sends only the books side (Not in Books
 //       entries from 2B documents are left out and named), and a books name
 //       with a stray space plans no update (planToPriorChanges,
-//       priorPlanLeftOut, amountsDiffer).
+//       priorPlanLeftOut, amountsDiffer);
+// and of the fourth round (21 Oct 2026):
+//   F10 every read of the push gate fails closed with the table named, not
+//       only the filed figures (the previous month's ITC Summary, filing
+//       status, RCM, Not in 2B list, the client; the month's own rows);
+//   F4/F8/F12 the words when the next month only counts as filed (a later
+//       month is filed), after filing and in Re-run's preview;
+//   F7  the warning Filing Status keeps on a filed month's row whose lists
+//       were never carried, read from the carry record (fetchCarryGaps,
+//       describeCarryGap), after the extension's markFiled too, gone after a
+//       Re-run;
+//   F2/F6 a prior month's carried Not in Books copy is read-only on 2B
+//       Reconciliation, as one from a 2B document (priorNibLockReason).
 // The modules are bundled as they are (esbuild) with a stand-in supabase
 // client that sends each query to the test database through psql, as anon.
 // Run by run.sh with TWOB_TEST_DB set; PG* variables as for psql.
@@ -67,11 +79,11 @@ class Q {
   sql() {
     const where = this.f.length ? ' WHERE ' + this.f.join(' AND ') : '';
     const t = 'public.' + col(this.t);
-    if (this.op === 'select') return 'SELECT COALESCE(json_agg(x), \\'[]\\') FROM (SELECT ' + this.cols + ' FROM ' + t + where + ') x';
+    if (this.op === 'select') return 'SELECT COALESCE(jsonb_agg(x), \\'[]\\') FROM (SELECT ' + this.cols + ' FROM ' + t + where + ') x';
     const body = this.op === 'update'
       ? 'UPDATE ' + t + ' SET ' + Object.entries(this.vals).map(([k, v]) => col(k) + ' = ' + lit(v)).join(', ') + where
       : 'DELETE FROM ' + t + where;
-    return 'WITH x AS (' + body + ' RETURNING ' + (this.ret || 'id') + ') SELECT COALESCE(json_agg(x), \\'[]\\') FROM x';
+    return 'WITH x AS (' + body + ' RETURNING ' + (this.ret || 'id') + ') SELECT COALESCE(jsonb_agg(x), \\'[]\\') FROM x';
   }
   then(ok, ko) {
     const r = globalThis.__asApp(this.sql());
@@ -87,7 +99,8 @@ const out = await build({
   stdin: {
     contents: `
 export { recordReclaim, updatePendingEntry, deleteOpenMonthRows, ENTRY_GONE_MSG } from './src/lib/twobPendingWrites';
-export { describeFilingCarry, describeRerun, describePriorPreview } from './src/lib/twobPriorMonth';
+export { describeFilingCarry, describeRerun, describePriorPreview, fetchCarryGaps, describeCarryGap, priorNibLockReason,
+  PRIOR_NIB_FROM_2B_MSG, PRIOR_NIB_CARRIED_MSG } from './src/lib/twobPriorMonth';
 `,
     resolveDir: root, loader: 'ts',
   },
@@ -177,14 +190,14 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
   check('Q13: a carry record that cannot be read is not reported as a carry', none.tone === 'warning' && none.text.includes('Could not read what was carried'), none.text);
   const empty = { add: [], remove: [], keep: [], conflict: [], left: [] };
   const rerun = A.describeRerun({
-    period: '08/2026', nextPeriod: '09/2026', nextFiled: false, dryRun: true,
+    period: '08/2026', nextPeriod: '09/2026', nextFiled: false, nextOwnFiled: false, dryRun: true,
     bills2B: { ...empty, keep: [{ id: 'x', date: '2026-07-05', supplierName: 'GONE', number: 'G-1', tax: 140, message: 'Aug-26 (filed) has reclaimed this entry, so it cannot be removed or its amounts changed' }] },
     billsBooks: empty,
   });
   check('Q13: Re-run keeps a copy holding a carried-in reclaim without calling it Sep-26\'s own decision',
     rerun.lines.length === 1 && !rerun.lines[0].includes('own decision') && rerun.lines[0].includes('a reclaim, Expense out or book entry'), rerun.lines.join(' | '));
   const into = A.describeRerun({
-    period: '07/2026', nextPeriod: '08/2026', nextFiled: true, dryRun: true,
+    period: '07/2026', nextPeriod: '08/2026', nextFiled: true, nextOwnFiled: true, dryRun: true,
     bills2B: { ...empty, add: [{ id: 'a', date: '2026-07-10', supplierName: 'JUL OWN', number: 'J-1', tax: 200, message: null }],
       left: [{ id: 'l', date: '2026-07-01', supplierName: 'OLD', number: 'O-1', tax: 20, message: null }] },
     billsBooks: empty,
@@ -200,6 +213,56 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
   check('Q13 (S3, S2): the door\'s preview names the months an added entry reaches, and where a change stops',
     preview.includes('Each added entry is also added to Aug-26.') && preview.includes('Left as they are: V J DESAI 38/2026-27: Apr-26 holds this entry as its own entry')
     && !preview.includes('No later month holds'), preview);
+}
+
+// ── Round 4: the words when the next month only counts as filed (F4, F8,
+// F12), the warning kept on a filed month's row (F7), and the carried Not in
+// Books copy read-only (F2, F6). ─────────────────────────────────────────────
+{
+  const prior = A.describeFilingCarry('GSTR-3B', '07/2026', [
+    { list: 'bills_not_in_2b', nextPeriod: '08/2026', outcome: 'next_prior', rows: 0 },
+    { list: 'bills_not_in_books', nextPeriod: '08/2026', outcome: 'next_prior', rows: 0 }]);
+  check('F4/F12: a next month that only counts as filed is not called filed', prior.tone === 'warning'
+    && prior.text.includes('Not in 2B: not carried, because Aug-26 counts as filed: a later month is filed.')
+    && !prior.text.includes('is filed already') && prior.text.includes('Re-run carry forward'), prior.text);
+  const empty = { add: [], remove: [], keep: [], conflict: [], left: [] };
+  const onlyCounts = A.describeRerun({
+    period: '07/2026', nextPeriod: '08/2026', nextFiled: true, nextOwnFiled: false, dryRun: true,
+    bills2B: { ...empty, add: [{ id: 'a', date: '2026-07-10', supplierName: 'JUL OWN', number: 'J-1', tax: 200, message: null }] }, billsBooks: empty,
+  });
+  check('F8: Re-run into a month that only counts as filed says so, and to re-run it once it is marked Filed',
+    onlyCounts.lines[0].startsWith('Aug-26 counts as filed (a later month is filed): Re-run only adds')
+    && onlyCounts.lines[onlyCounts.lines.length - 1] === 'Once Aug-26 is marked Filed itself, re-run it to carry them on into Sep-26.', onlyCounts.lines.join(' | '));
+  const again = A.describeFilingCarry('GSTR-3B', '07/2026', [{ list: 'bills_not_in_2b', nextPeriod: '08/2026', outcome: 'done_before', rows: 0, how: 'rerun' }]);
+  check('F7: filed again after a Re-run: says Re-run brought the entries before', again.text.includes('not carried again; Re-run carry forward brought its entries into Aug-26 before'), again.text);
+
+  // The extension's markFiled of July, after August was filed: the warning
+  // Filing Status keeps on July's row, until a Re-run from July.
+  const C = 'a8000000-0000-0000-0000-000000000004';
+  psql(`SELECT set_config('twob.write', 'system', false);
+        INSERT INTO public.clients (id, name, gstin) VALUES ('${C}', 'F7 late PDF', '24LATEP0000A1Z5');
+        INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_cgst, input_sgst, reversal_month)
+        VALUES ('${C}', '07/2026', '2026-07-05', 'J SUPP', 'J-1', '24JSUPP0000A1Z5', 1000, 90, 90, 'Jul 26');`);
+  globalThis.__asApp(`INSERT INTO public.filing_status (client_id, return_type, period_month, status) VALUES ('${C}', 'GSTR-3B', '07/2026', 'Prepared Pending'), ('${C}', 'GSTR-3B', '08/2026', 'Filed')`);
+  const up = globalThis.__asApp(`INSERT INTO public.filing_status (client_id, return_type, period_month, status, arn, filed_date)
+    VALUES ('${C}', 'GSTR-3B', '07/2026', 'Filed', 'AA240726123456X', '2026-08-19')
+    ON CONFLICT (client_id, return_type, period_month) DO UPDATE SET status = EXCLUDED.status, arn = EXCLUDED.arn, filed_date = EXCLUDED.filed_date`);
+  check('F7: the extension\'s markFiled of July goes through', up.err === null, up.err);
+  const gaps = await A.fetchCarryGaps('07/2026');
+  const mine = gaps.get(C) || [];
+  const words = A.describeCarryGap('07/2026', mine);
+  check('F7: Filing Status reads that July\'s lists were not carried (both lists)', mine.length === 2
+    && words.startsWith("Jul-26's entries were not carried into the next month when it was marked Filed.")
+    && words.includes('Not in 2B: not carried, because Aug-26 is filed already.') && words.includes('Re-run carry forward'), `${mine.length} ${words}`);
+  const rr = globalThis.__asApp(`SELECT public.twob_carry_rerun(public.t_manager(), '${C}', '07/2026', false) IS NOT NULL`);
+  check('F7: Re-run from July runs', rr.out === 't', rr.err);
+  check('F7: ... and the warning is gone', !(await A.fetchCarryGaps('07/2026')).has(C));
+
+  check('F2/F6: a carried Not in Books copy of a filed month is read-only, with the reason',
+    A.priorNibLockReason(true, { source_doc_id: null, is_carried_forward: true }) === A.PRIOR_NIB_CARRIED_MSG
+    && A.priorNibLockReason(true, { source_doc_id: 'd', is_carried_forward: true }) === A.PRIOR_NIB_FROM_2B_MSG
+    && A.priorNibLockReason(true, { source_doc_id: null, is_carried_forward: false }) === null
+    && A.priorNibLockReason(false, { source_doc_id: 'd', is_carried_forward: true }) === null);
 }
 
 // ── S4, S6 and F15: the push gate and the Post plan, on stand-in data. ──────
@@ -264,6 +327,37 @@ const B = await import('data:text/javascript;base64,' + Buffer.from(memOut.outpu
   check('S4: a filed-figures read that fails blocks Push, with the reason', blocks.blocks && blocks.errorBlocks && /filed figures/.test(failed.error || ''),
     JSON.stringify({ failed, blocks }));
   check('S4: ... for a NO-ITC promoter too (its Suspended Reco waiver does not waive a check that could not run)', B.pushRecoBlocks(failed, true).blocks);
+  globalThis.__failTables = [];
+}
+{
+  // F10: Sep-26 Receivable Reco (opening 1,000 a head), filed Aug-26 with 4C
+  // 5,000 a head and books closing 6,000: every read answering, total 0. Any
+  // one read failing blocks Push with that read named, never an invented
+  // difference (before: receivable -10,000 and error null).
+  const itc = (c51) => ({ section4A: [{ srNo: '(1)', cgst: 0, sgst: 0, igst: 0 }, { srNo: '(2)', cgst: 0, sgst: 0, igst: 0 }, { srNo: '(3)', cgst: 0, sgst: 0, igst: 0 },
+    { srNo: '(4)', cgst: 0, sgst: 0, igst: 0 }, { srNo: '5.1', cgst: c51, sgst: c51, igst: 0 }, { srNo: '5.2', cgst: 0, sgst: 0, igst: 0 }, { srNo: '5.3', cgst: 0, sgst: 0, igst: 0 },
+    { srNo: '5.4', cgst: 0, sgst: 0, igst: 0 }, { srNo: '5.5', cgst: 0, sgst: 0, igst: 0 }], section4B: [], section4D: [] });
+  globalThis.__mem = {
+    clients: [{ id: 'c', builder_itc_type: null }],
+    gst_receivable_reco: [{ client_id: 'c', period_month: '09/2026', opening_cgst: 1000, opening_sgst: 1000, opening_igst: 0, books_closing_cgst: 6000, books_closing_sgst: 6000,
+      books_closing_igst: 0, utilized_cgst: 0, utilized_sgst: 0, utilized_igst: 0, drc_cgst: 0, drc_sgst: 0, drc_igst: 0 }],
+    itc_summaries: [{ client_id: 'c', period_month: '08/2026', data: itc(5000) }],
+    filing_status: [{ client_id: 'c', period_month: '08/2026', return_type: 'GSTR-3B', status: 'Filed' }],
+    suspended_reco: [], bills_not_in_2b: [], rcm_data: [], gstr1_data: [], twob_filed_figures: [],
+  };
+  globalThis.__failTables = [];
+  const ok = await B.runPushRecoCheck('c', '09/2026');
+  check('F10: with every read answering, the receivable check is 0 and does not block', ok.error === null && ok.receivable?.total === 0 && !B.pushRecoBlocks(ok, false).blocks,
+    JSON.stringify(ok));
+  for (const [table, words] of [['itc_summaries', 'ITC Summary (itc_summaries) of 08/2026'], ['filing_status', 'filing status (filing_status) of 08/2026'],
+    ['rcm_data', 'RCM figures (rcm_data) of 08/2026'], ['bills_not_in_2b', 'Not in 2B list (bills_not_in_2b)'], ['clients', 'the client'],
+    ['gst_receivable_reco', 'GST Receivable Reco of 09/2026'], ['suspended_reco', 'Suspended Reco (suspended_reco) of 09/2026']]) {
+    globalThis.__failTables = [table];
+    const r = await B.runPushRecoCheck('c', '09/2026');
+    const b = B.pushRecoBlocks(r, false);
+    check(`F10: a failing ${table} read blocks Push with the read named`, b.blocks && b.errorBlocks && (r.error || '').includes(`Could not read ${words.startsWith('the ') ? '' : 'the '}${words}`),
+      JSON.stringify({ r, b }));
+  }
   globalThis.__failTables = [];
 }
 {

@@ -43,18 +43,26 @@ const normalizeZero = (num: number): number => {
 // as the Suspended Reco page's opening-balance flow change.
 const NEW_FLOW_FROM = 202606;
 
+// Every read of the push gate fails closed (docs §13): a read that errors
+// throws with the table named, and runPushRecoCheck blocks Push with it,
+// never working from zeros that look like a real difference (or tally).
+function readOrThrow<T>(res: { data: T; error: { message: string } | null }, what: string): T {
+  if (res.error) throw new Error(`Could not read ${what}: ${res.error.message}`);
+  return res.data;
+}
+
 export async function computeSuspendedRecoDiff(clientId: string, periodMonth: string): Promise<RecoDiffResult> {
   const [mm, yyyy] = periodMonth.split('/').map(Number);
   const monthSortKey = mm && yyyy ? yyyy * 100 + mm : 0;
   const useNewFlow = monthSortKey >= NEW_FLOW_FROM;
   const applyTolerance = (value: number): number => (useNewFlow ? (Math.abs(value) <= 10 ? 0 : value) : value);
 
-  const { data: suspendedData } = await supabase
+  const suspendedData = readOrThrow(await supabase
     .from('suspended_reco')
     .select('opening_cgst, opening_sgst, opening_igst')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
-    .maybeSingle();
+    .maybeSingle(), `the Suspended Reco (suspended_reco) of ${periodMonth}`);
   const openingCgst = Number((suspendedData as any)?.opening_cgst) || 0;
   const openingSgst = Number((suspendedData as any)?.opening_sgst) || 0;
   const openingIgst = Number((suspendedData as any)?.opening_igst) || 0;
@@ -62,12 +70,12 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
   const patterns = getMonthPatterns(periodMonth);
 
   // 4B(2)(i): reversal bills where reversal_month matches current month
-  const { data: reversalBills } = await supabase
+  const reversalBills = readOrThrow(await supabase
     .from('bills_not_in_2b')
     .select('input_igst, input_cgst, input_sgst, reversal_month')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
-    .not('reversal_month', 'is', null);
+    .not('reversal_month', 'is', null), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
   const matchingReversals = (reversalBills || []).filter((b) => monthMatchesFn(b.reversal_month, patterns));
   const row4B2i = matchingReversals.reduce((acc, b) => ({
     cgst: acc.cgst + (Number(b.input_cgst) || 0),
@@ -77,12 +85,12 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
   let row4B2iUsed = row4B2i;
 
   // 5.4 / 4(D) 1.2: reclaim bills where reclaim_month matches current month
-  const { data: reclaimBills } = await supabase
+  const reclaimBills = readOrThrow(await supabase
     .from('bills_not_in_2b')
     .select('input_igst, input_cgst, input_sgst, reclaim_month, reclaim_subtype')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
-    .not('reclaim_month', 'is', null);
+    .not('reclaim_month', 'is', null), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
   const matchingReclaims = (reclaimBills || []).filter((b) => monthMatchesFn(b.reclaim_month, patterns));
   const normalReclaims = matchingReclaims.filter((b) => (b as any).reclaim_subtype !== 'EXPENSE_OUT');
   const expenseOutReclaims = matchingReclaims.filter((b) => (b as any).reclaim_subtype === 'EXPENSE_OUT');
@@ -97,12 +105,12 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
   let row4B2ii = { cgst: 0, sgst: 0, igst: 0 };
   let row55 = { cgst: 0, sgst: 0, igst: 0 };
   let row4D12FromItc = { cgst: 0, sgst: 0, igst: 0 };
-  const { data: itcData } = await supabase
+  const itcData = readOrThrow(await supabase
     .from('itc_summaries')
     .select('data')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
-    .maybeSingle();
+    .maybeSingle(), `the ITC Summary (itc_summaries) of ${periodMonth}`);
   // A prior month changed after filing: the current total from the figures
   // recorded then; only the books side follows the books (docs §13).
   const filedFigures = await fetchFiledFigures(clientId, periodMonth);
@@ -137,11 +145,11 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
   const portalSgst = row4B2iUsed.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst;
   const portalIgst = row4B2iUsed.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst;
 
-  const { data: booksData } = await supabase
+  const booksData = readOrThrow(await supabase
     .from('bills_not_in_2b')
     .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
     .eq('client_id', clientId)
-    .eq('period_month', periodMonth);
+    .eq('period_month', periodMonth), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
   let booksCgst = 0, booksSgst = 0, booksIgst = 0;
   if (booksData && booksData.length > 0) {
     const filtered = booksData.filter((row) => {

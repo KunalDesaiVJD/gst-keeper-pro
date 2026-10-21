@@ -44,8 +44,9 @@ const SuspendedRecoPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   // The month's figures could not be read (a filed month's recorded figures
-  // among them, docs §13): Save stays off until a reload reads them, so a
-  // stale Current Total is never saved for Filing Status to check (fail closed).
+  // among them, docs §13): Save, Upload, Not Applicable and Override stay off
+  // until a reload reads them, so a stale Current Total (another client's or
+  // month's) is never saved for Filing Status to check (fail closed).
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showClearData, setShowClearData] = useState(false);
   const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string } | null>(null);
@@ -142,6 +143,10 @@ const SuspendedRecoPage: React.FC = () => {
 
     setIsLoading(true);
     setLoadError(null);
+    // Nothing of the client or month shown before is kept: a load that fails
+    // halfway leaves zeros, never another client's figures.
+    setPortalCgst(0); setPortalSgst(0); setPortalIgst(0);
+    setBooksCgst(0); setBooksSgst(0); setBooksIgst(0);
     try {
       // Fetch portal data from suspended_reco table (opening balance only)
       const { data: suspendedData } = await supabase
@@ -382,15 +387,26 @@ const SuspendedRecoPage: React.FC = () => {
     }
   }, [selectedClientId, selectedMonth, fetchData]);
 
+  // Every write of this page saves the Current Total it shows: none runs
+  // while the figures are loading or could not be read (fail closed).
+  const writeRefused = (): boolean => {
+    if (loadError) {
+      toast.error(`This month's figures could not be read (${loadError}). Nothing was saved; reload the page before saving.`);
+      return true;
+    }
+    if (isLoading) {
+      toast.error('The figures are still loading. Nothing was saved; try again in a moment.');
+      return true;
+    }
+    return false;
+  };
+
   const handleSave = async () => {
     if (!selectedClientId || !selectedMonth) {
       toast.error('Please select a client and month');
       return;
     }
-    if (loadError) {
-      toast.error(`This month's figures could not be read (${loadError}). Nothing was saved; reload the page before saving.`);
-      return;
-    }
+    if (writeRefused()) return;
 
     setIsSaving(true);
     try {
@@ -432,6 +448,7 @@ const SuspendedRecoPage: React.FC = () => {
   // Upload: trigger hidden file picker
   const handleUploadClick = () => {
     if (!isStaff) return;
+    if (writeRefused()) return;
     fileInputRef.current?.click();
   };
 
@@ -444,6 +461,7 @@ const SuspendedRecoPage: React.FC = () => {
       toast.error('Select a client and month first.');
       return;
     }
+    if (writeRefused()) return;
 
     setIsSaving(true);
     try {
@@ -521,6 +539,7 @@ const SuspendedRecoPage: React.FC = () => {
   // Not Applicable: silently set zeros + mark source
   const handleNotApplicable = async () => {
     if (!isStaff || !selectedClientId || !selectedMonth) return;
+    if (writeRefused()) return;
     setIsSaving(true);
     try {
       const now = new Date().toISOString();
@@ -573,6 +592,7 @@ const SuspendedRecoPage: React.FC = () => {
   // button visibility, applied here as defense-in-depth; the database checks it too.
   const handleOverrideSave = async (values: { cgst: number; sgst: number; igst: number; justification: string }) => {
     if (!canManualOverride() || !selectedClientId || !selectedMonth) return;
+    if (writeRefused()) return;
     setIsSaving(true);
     try {
       const now = new Date().toISOString();
@@ -770,7 +790,7 @@ const SuspendedRecoPage: React.FC = () => {
             )}
 
             {isStaff && (
-              <Button size="sm" className={WS_BTN} onClick={handleSave} disabled={isSaving || !selectedClientId}>
+              <Button size="sm" className={WS_BTN} onClick={handleSave} disabled={isSaving || !selectedClientId || isLoading || !!loadError}>
                 {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 Save Changes
               </Button>
@@ -844,6 +864,11 @@ const SuspendedRecoPage: React.FC = () => {
         </Card>
       ) : (
         <>
+          {loadError && (
+            <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              The figures of this month could not be read ({loadError}). Reload the page; until then nothing here can be saved.
+            </div>
+          )}
           {/* Headline tiles: the four totals from the table below. */}
           <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
             <KpiTile label="Opening balance · portal" value={formatNumber(openingTotal)} hint={`CGST ${formatNumber(openingCgst)} · SGST ${formatNumber(openingSgst)} · IGST ${formatNumber(openingIgst)}`} />
@@ -928,7 +953,7 @@ const SuspendedRecoPage: React.FC = () => {
                             variant="outline"
                             className="h-7 px-2 text-xs"
                             onClick={handleNotApplicable}
-                            disabled={!selectedClientId || isSaving}
+                            disabled={!selectedClientId || isSaving || isLoading || !!loadError}
                           >
                             Not Applicable
                           </Button>
@@ -938,7 +963,7 @@ const SuspendedRecoPage: React.FC = () => {
                               variant="outline"
                               className="h-7 gap-1 px-2 text-xs"
                               onClick={() => setShowOverrideDialog(true)}
-                              disabled={!selectedClientId || isSaving}
+                              disabled={!selectedClientId || isSaving || isLoading || !!loadError}
                             >
                               <Edit3 className="h-3 w-3" />
                               Override
@@ -949,7 +974,7 @@ const SuspendedRecoPage: React.FC = () => {
                             variant="ghost"
                             className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
                             onClick={handleUploadClick}
-                            disabled={!selectedClientId || isSaving}
+                            disabled={!selectedClientId || isSaving || isLoading || !!loadError}
                             title="Manual fallback — upload the ledger statement if the portal sync didn't set this"
                           >
                             <Upload className="h-3 w-3" />

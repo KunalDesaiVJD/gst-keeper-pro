@@ -38,7 +38,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog';
 import { writePostVersion } from '@/lib/postImport2B';
 import { deleteOpenMonthRows, holdsDecision } from '@/lib/twobPendingWrites';
 import {
-  OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, PRIOR_NIB_FROM_2B_MSG, canChangePriorBooks, fetchTwobMonthState, ledgerCellReadOnly,
+  OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchTwobMonthState, ledgerCellReadOnly, priorNibLockReason,
   previewAndApplyPriorBooks, restoreBlockedReason, restoreVersion, type RestoreRow, type TwobChange, type TwobMonthState,
 } from '@/lib/twobPriorMonth';
 import {
@@ -1282,7 +1282,10 @@ const TwoBReconciliationPage: React.FC = () => {
         input_igst: pick(b, 'inputIgst', 'input_igst') ?? 0,
         input_cgst: pick(b, 'inputCgst', 'input_cgst') ?? 0,
         input_sgst: pick(b, 'inputSgst', 'input_sgst') ?? 0,
-        is_carried_forward: pick(b, 'isCarriedForward', 'is_carried_forward') ?? false,
+        // null when the version does not say: the database then refuses the
+        // restore rather than guess which entries were carried.
+        is_carried_forward: typeof (b.isCarriedForward ?? b.is_carried_forward) === 'boolean'
+          ? (b.isCarriedForward ?? b.is_carried_forward) as boolean : null,
       });
       const rows2B: RestoreRow[] = ((version.billsNotIn2B || []) as unknown as Record<string, unknown>[]).map((b) => ({
         ...common(b),
@@ -1294,7 +1297,7 @@ const TwoBReconciliationPage: React.FC = () => {
         book_entry_month: pick(b, 'bookEntryMonth', 'book_entry_month') || null,
         bill_in_2b_month: pick(b, 'billIn2BMonth', 'bill_in_2b_month') || null,
       }));
-      await restoreVersion(user.id, selectedClientId, selectedMonth, rows2B, rowsBooks);
+      const restored = await restoreVersion(user.id, selectedClientId, selectedMonth, rows2B, rowsBooks);
 
       // Mark all existing versions as not current, then record the RESTORE.
       await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
@@ -1319,7 +1322,9 @@ const TwoBReconciliationPage: React.FC = () => {
       await fetchBillsData();
       await fetchVersions();
       setHasUnsavedChanges(false);
-      toast.success(`Restored to version ${version.versionNumber}. New version ${newVersionNumber} created.`);
+      toast.success(`Restored the month's own entries to version ${version.versionNumber}. New version ${newVersionNumber} created.${restored.carriedKept
+        ? ` Its ${restored.carriedKept} carried ${restored.carriedKept === 1 ? 'entry stays' : 'entries stay'} as ${restored.carriedKept === 1 ? 'it stands' : 'they stand'}: they follow the filed months, so a restore does not change them.`
+        : ''}`, { duration: 10000 });
       setShowVersionHistory(false);
     } catch (error: any) {
       console.error('Error restoring version:', error);
@@ -1342,7 +1347,8 @@ const TwoBReconciliationPage: React.FC = () => {
     // Carried forward rows are non-editable (display only) - except columns marked as editable for CF.
     // In a prior month a GST Manager / the superadmin corrects a carried entry's date, supplier,
     // number, GSTIN and amounts here too (each Save goes through the previewed door, docs §13),
-    // except a Not in Books entry posted from a 2B document, which follows the filed 2B (followsTwoB).
+    // except a Not in Books entry posted from a 2B document, which follows the filed 2B, and a carried
+    // Not in Books copy, which changes through its own month's entry (followsTwoB; priorNibLockReason).
     const shouldBeReadOnly = followsTwoB || ledgerCellReadOnly({ readOnly, isCarriedForward, editableForCF: isEditableForCF, isSuperadmin, isPrior, canPriorBooks });
     
     if (shouldBeReadOnly) {
@@ -1661,7 +1667,7 @@ const TwoBReconciliationPage: React.FC = () => {
                 {!canPriorBooks
                   ? PRIOR_MONTH_MSG
                   : isLiberalClient
-                    ? 'This month is filed. You can change its books entries here: the date, supplier, number, GSTIN and amounts, add entries and delete them. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved. The reversal, reclaim, book entry and in-2B months stay as filed, and so do Not in Books entries from 2B documents.'
+                    ? 'This month is filed. You can change its books entries here: the date, supplier, number, GSTIN and amounts, add entries and delete them. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved. The reversal, reclaim, book entry and in-2B months stay as filed, and so do Not in Books entries from 2B documents. A carried Not in Books entry changes in the month that holds it as its own entry, which reaches this copy.'
                     : 'This month is filed. You can delete its entries here; add or correct them through Import 2B\'s books register and Post. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved.'}
               </span>
             </Note>
@@ -1993,7 +1999,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             maxDateForReturnPeriod,
-                            isPrior && !!row.source_doc_id
+                            !!priorNibLockReason(isPrior, row)
                           )}
                         </td>
                         <td className={tdCls}>
@@ -2006,7 +2012,7 @@ const TwoBReconciliationPage: React.FC = () => {
                               row.is_carried_forward || false,
                               false,
                               undefined,
-                              isPrior && !!row.source_doc_id
+                              !!priorNibLockReason(isPrior, row)
                             )}
                             {row.is_carried_forward && (
                               <Badge variant="info" className="shrink-0 px-1.5 text-[10px] font-medium">CF</Badge>
@@ -2022,7 +2028,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            isPrior && !!row.source_doc_id
+                            !!priorNibLockReason(isPrior, row)
                           )}
                         </td>
                         <td className={tdCls}>
@@ -2034,7 +2040,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            isPrior && !!row.source_doc_id
+                            !!priorNibLockReason(isPrior, row)
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2046,7 +2052,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            isPrior && !!row.source_doc_id
+                            !!priorNibLockReason(isPrior, row)
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2058,7 +2064,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            isPrior && !!row.source_doc_id
+                            !!priorNibLockReason(isPrior, row)
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2070,7 +2076,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            isPrior && !!row.source_doc_id
+                            !!priorNibLockReason(isPrior, row)
                           )}
                         </td>
                         <td className={tdNumCls}>
@@ -2082,7 +2088,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.is_carried_forward || false,
                             false,
                             undefined,
-                            isPrior && !!row.source_doc_id
+                            !!priorNibLockReason(isPrior, row)
                           )}
                         </td>
                         <td className={tdCls}>
@@ -2107,7 +2113,7 @@ const TwoBReconciliationPage: React.FC = () => {
                             row.id.startsWith('temp-')
                           )}
                         </td>
-                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && !(isPrior && row.source_doc_id) && (
+                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && !priorNibLockReason(isPrior, row) && (
                           <td className={tdCls}>
                             <Button
                               variant="ghost"
@@ -2122,8 +2128,8 @@ const TwoBReconciliationPage: React.FC = () => {
                           </td>
                         )}
                         {canDeleteHere && (!canDelete2BRows() || (row.is_carried_forward && user?.role !== 'superadmin' && user?.role !== 'gst_manager')) && <td className={WS_TD}></td>}
-                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && isPrior && row.source_doc_id && (
-                          <td className={WS_TD} title={PRIOR_NIB_FROM_2B_MSG}></td>
+                        {canDeleteHere && canDelete2BRows() && (!row.is_carried_forward || user?.role === 'superadmin' || user?.role === 'gst_manager') && !!priorNibLockReason(isPrior, row) && (
+                          <td className={WS_TD} title={priorNibLockReason(isPrior, row) || undefined}></td>
                         )}
                       </tr>
                     ))}

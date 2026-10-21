@@ -165,6 +165,10 @@ const GstReceivableRecoPage: React.FC = () => {
   // keep changing, so the reco intentionally shows 0 rather than a number
   // that might not match what eventually gets filed.
   const [prevReturnFiled, setPrevReturnFiled] = useState(false);
+  // The previous month's figures could not be read (its recorded filed
+  // figures among them, docs §13): the page shows no 4C rather than the
+  // figures of the client or month shown before.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const isStaff = isStaffRole();
   const selectedClientData = clients.find(c => c.id === selectedClientId);
@@ -226,6 +230,10 @@ const GstReceivableRecoPage: React.FC = () => {
   const fetchData = useCallback(async () => {
     if (!selectedClientId || !selectedMonth || !isEligibleMonth) return;
     setIsLoading(true);
+    setLoadError(null);
+    // Nothing of the client or month shown before is kept.
+    setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
+    setPrevReturnFiled(false); setHasItcSummary(false);
     try {
       // 1. Persisted gst_receivable_reco row
       const { data: rowData } = await supabase
@@ -522,6 +530,8 @@ const GstReceivableRecoPage: React.FC = () => {
         }
       }
     } catch (error: any) {
+      setLoadError(error.message);
+      setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
       toast.error('Failed to fetch data: ' + error.message);
     } finally {
       setIsLoading(false);
@@ -1058,6 +1068,11 @@ const GstReceivableRecoPage: React.FC = () => {
         </Card>
       ) : (
         <>
+          {loadError && (
+            <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              The previous month's figures could not be read ({loadError}). The Net ITC available (4C) shows 0, so the closing and the difference below are incomplete. Reload the page.
+            </div>
+          )}
           {/* Headline figures */}
           <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
             <KpiTile label="Opening as per portal" value={formatNumber(openingTotal)} hint={openingSource === 'csv' ? 'From the credit ledger' : openingSource === 'not_applicable' ? 'Marked not applicable' : 'Entered'} />

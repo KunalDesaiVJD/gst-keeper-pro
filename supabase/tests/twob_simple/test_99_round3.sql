@@ -85,7 +85,7 @@ INSERT INTO public.filing_status (client_id, return_type, period_month, status) 
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'C' AND is_carried_forward), 1,
   'F7: of the three filings only September''s (in order) carried, into October');
 SELECT public.t_eq((SELECT array_agg(period_month || ':' || last_outcome ORDER BY period_month) FROM public.twob_carry_log WHERE client_id = :'C' AND list = 'bills_not_in_2b'),
-  ARRAY['07/2026:next_filed', '08/2026:next_filed', '09/2026:carried'], 'F7: the carry record says why July and August carried nothing');
+  ARRAY['07/2026:next_prior', '08/2026:next_filed', '09/2026:carried'], 'F7: the carry record says why July and August carried nothing (round 4: August only counted as filed when July was filed)');
 SELECT public.t_raises(format($q$SELECT public.twob_carry_rerun(public.t_employee(), '%s', '07/2026', true)$q$, :'C'),
   'Only a GST Manager or the superadmin', 'F7: an employee cannot re-run');
 SELECT public.twob_carry_rerun(public.t_manager(), :'C', '07/2026', true) AS f7_prev \gset
@@ -334,8 +334,10 @@ SELECT public.t_raises(format($q$SELECT public.twob_restore_version(public.t_sup
   'An entry of this version has no date or a date that is not one. Nothing was restored.', 'S5: a bad version is refused in words');
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_2b WHERE client_id = :'R' AND period_month = '09/2026'), 2, 'S5: ... and nothing changed');
 SELECT public.twob_restore_version(public.t_superadmin(), :'R', '09/2026',
-  '[{"date":"2026-07-15","supplier_name":"TAMNNA SUPPLIER","supplier_invoice_number":"T-1","supplier_gstin":"24TSUPP0000A1Z5","taxable_value":11111.11,"input_cgst":1000,"input_sgst":1000,"reversal_month":"Jul 26","is_carried_forward":true}]'::jsonb,
+  '[{"date":"2026-07-15","supplier_name":"TAMNNA SUPPLIER","supplier_invoice_number":"T-1","supplier_gstin":"24TSUPP0000A1Z5","taxable_value":11111.11,"input_cgst":1000,"input_sgst":1000,"reversal_month":"Jul 26","is_carried_forward":true},
+    {"date":"2026-09-03","supplier_name":"SEP OWN","supplier_invoice_number":"S-9","taxable_value":100,"input_cgst":9,"input_sgst":9,"reversal_month":"Sep 26","is_carried_forward":false}]'::jsonb,
   '[]'::jsonb) AS s5 \gset
-SELECT public.t_eq((SELECT array_agg(supplier_invoice_number) FROM public.bills_not_in_2b WHERE client_id = :'R' AND period_month = '09/2026'), ARRAY['T-1'],
-  'S5: September restored to the version (T-2''s reclaimed copy replaced in the same call)');
+SELECT public.t_eq((SELECT array_agg(supplier_invoice_number || CASE WHEN is_carried_forward THEN '+c' ELSE '' END || COALESCE('/' || reclaim_month, '') ORDER BY supplier_invoice_number)
+                      FROM public.bills_not_in_2b WHERE client_id = :'R' AND period_month = '09/2026'), ARRAY['S-9', 'T-1+c', 'T-2+c/Sep 26'],
+  'S5: September''s own entries restored to the version (S-9); its carried entries stay as they stand (round 4: T-2''s reclaimed copy kept)');
 RESET ROLE;

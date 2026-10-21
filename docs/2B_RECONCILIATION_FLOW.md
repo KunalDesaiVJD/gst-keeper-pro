@@ -905,6 +905,16 @@ and why. Filing Status says so whenever a GSTR-3B is moved away from Filed.
   month." Only Not in 2B entries, the books register and Not in Books entries
   typed without a 2B source change. Import 2B's Post in a prior month posts
   the books side only and names the Not in Books entries it leaves out.
+- A carried Not in Books copy in a prior month never changes on its own,
+  whether its entry was typed or came from a 2B document (a copy does not
+  carry the `source_doc_id`, so its chain may start at a 2B document's
+  entry): "This Not in Books entry is carried from an earlier month. In a
+  filed month it changes only in the month that holds it as its own entry,
+  and the change reaches its copies." A typed entry is corrected in its own
+  month and the door carries the change to every copy; one from a 2B
+  document stays as filed in every month, so the open month keeps waiting
+  for its book entry. (Live on 21 Oct 2026: 40,812 of 45,024 Not in Books
+  rows are carried; 276 carried copies of 2B entries sat in prior months.)
 - A date or amount that is not one (a cleared date cell, "12a") is refused in
   words: "An entry needs a date.", "12a is not an amount."
 - One save names each entry once.
@@ -1014,10 +1024,19 @@ so a month whose PDF comes late is often marked after the month that follows
 it) carries nothing. Filing Status says so after filing, list by list, from
 the carry record: "Not in 2B: not carried, because Aug-26 is filed already. If
 the next month lacks entries of this month, a GST Manager or the superadmin
-uses Re-run carry forward on this record: it shows what it adds first." The
-same words name a list the next month already held ("not carried, because
-Sep-26 already held carried entries on it") and a month carried before ("not
-carried again"). An out-of-order filing is repaired only by Re-run.
+uses Re-run carry forward on this record: it shows what it adds first." When
+the next month is not filed itself and only counts as filed because a later
+month is, the record says `next_prior` and the words say so: "not carried,
+because Aug-26 counts as filed: a later month is filed." The same words name
+a list the next month already held ("not carried, because Sep-26 already held
+carried entries on it") and a month carried before ("not carried again").
+
+Filing Status also keeps a warning on the month's GSTR-3B row, from the carry
+record (`twob_carry_log` rows with `carried_at` NULL), whichever way the month
+was marked Filed: on the page, or by the extension's mark-filed when its PDF
+came. It stays until a Re-run has run from that month, which is recorded
+(`carried_how` and `last_outcome` 'rerun'); filing the month again after that
+carries nothing. An out-of-order filing is repaired only by Re-run.
 
 **Re-run carry forward** (Filing Status) is for a GST Manager or the
 superadmin only, and always shows a preview first (`twob_carry_rerun`, with
@@ -1035,7 +1054,11 @@ twins one to one, and:
 - leaves alone, the same way, an entry whose next-month copy holds a decision
   and has the same supplier and amounts under another number or date, or the
   same number, date and amounts under another supplier or GSTIN (corrected
-  there to what 2B shows, then reclaimed).
+  there to what 2B shows, then reclaimed). Same-supplier, same-amount
+  entries (a monthly rent) pair with such copies first on the same number,
+  then on the same date; when more entries than copies are left after that,
+  every one of them is named and none is added, as any of them may be the
+  corrected one (it never pairs by the order of the row ids).
 
 Into an open next month (the latest filed month's; refused while a month
 after it holds carried entries) it also removes carried copies of entries the
@@ -1048,7 +1071,11 @@ holds as left, and names a copy at other amounts as a conflict to correct
 through the door. The next month's figures are recorded first
 (`twob_filed_figures`), so no check moves except the Suspended Reco books
 side. Then the GST Manager re-runs that month into the next, and so on up to
-the open month: "Then re-run Aug-26 to carry them on into Sep-26."
+the open month: "Then re-run Aug-26 to carry them on into Sep-26." A next
+month that only counts as filed (a later month is) has no Re-run of its own
+on Filing Status until it is marked Filed itself, and the preview says so:
+"Aug-26 counts as filed (a later month is filed): Re-run only adds ... Once
+Aug-26 is marked Filed itself, re-run it to carry them on into Sep-26."
 
 This replaces the delete-and-copy of §6 and §7, and the late filing carry of
 round 2.
@@ -1082,7 +1109,17 @@ Every check that reads these figures fails closed: when they cannot be read
 (the table missing before the migration is applied, a network error), the
 GSTR-3B page blocks Push and says why (`src/lib/pushRecoGate.ts`), the
 GSTR-3B draft is not built, and ITC Summary and Suspended Reco show the
-reason and do not save until a reload reads them.
+reason and do not save until a reload reads them. The push check fails
+closed on every one of its reads, not only these figures: the previous
+month's ITC Summary, filing status, RCM and Not in 2B list, the client, and
+the month's own Suspended Reco and GST Receivable Reco rows. A read that
+errors blocks Push with that read named, never a difference worked out from
+zeros. Suspended Reco refuses Save, Upload, Not Applicable and Override
+while its figures are loading or could not be read, and starts each load
+from zeros, so it never saves another client's or month's Current Total for
+Filing Status to check. GST Receivable Reco shows 0 for 4C with the reason
+when the previous month's figures could not be read, never the figures of
+the client shown before.
 
 **The screens.**
 
@@ -1101,15 +1138,20 @@ reason and do not save until a reload reads them.
 - 2B Reconciliation, Strict client: a GST Manager or the superadmin can delete
   entries; adding and correcting go through Import 2B. Import Excel and Restore
   are off in a prior month; Version history says why.
-- 2B Reconciliation, prior month: a Not in Books entry from a 2B document is
-  read-only for everyone and has no delete button; its empty delete cell says
-  why.
+- 2B Reconciliation, prior month: a Not in Books entry from a 2B document,
+  and every carried Not in Books copy, is read-only for everyone and has no
+  delete button; its empty delete cell says why.
 - Restore (the superadmin, Version history) works only on the client's latest
   month that holds entries on either list, and is off elsewhere with the
   reason: "Restore works only on the latest month that holds entries
-  (Oct-26)". It replaces the month's two lists in one call
+  (Oct-26)". It replaces the month's own entries on both lists in one call
   (`twob_restore_version`), which refuses the same months, so a refused
-  Restore changes nothing.
+  Restore changes nothing. The month's carried entries stay as they stand:
+  a GST Manager's correction of a filed month reaches them and no version of
+  this month records it, so a restore never brings back the SORATH copies a
+  correction removed, nor drops a copy the door added. To undo a reclaim or
+  book entry on a carried entry, undo it there. A version that does not say
+  which of its rows were carried is refused.
 - Import 2B, Post in a prior month: the books side only; the Not in Books
   entries from the month's 2B documents it would add, change or remove are
   named and left out.
@@ -1122,10 +1164,12 @@ reason and do not save until a reload reads them.
   the entry in the same Save. The version history moves on only once every
   write of the Save went through.
 - Filing Status: after filing, the words say list by list what was carried,
-  read from the carry record. Re-run carry forward shows on a month recorded
-  as filed, and shows what it adds, removes, keeps and leaves alone, and asks
-  first; into a filed month it says it only adds. "Filed by mistake" shows on
-  a GSTR-3B no longer Filed but still recorded as filed.
+  read from the carry record. A filed GSTR-3B row whose lists were never
+  carried shows a warning with the same words until a Re-run from it, also
+  when the extension marked it Filed. Re-run carry forward shows on a month
+  recorded as filed, and shows what it adds, removes, keeps and leaves alone,
+  and asks first; into a filed month it says it only adds. "Filed by
+  mistake" shows on a GSTR-3B no longer Filed but still recorded as filed.
 - GSTR-3B: a Suspended Reco or GST Receivable Reco check that cannot run
   blocks Push with its reason.
 
@@ -1140,7 +1184,7 @@ reason and do not save until a reload reads them.
 | 2B Reconciliation: Save (Liberal) | as before; a deleted carried entry's decision is undone first, after a confirm | GST Manager / superadmin, through the door; months stay as filed |
 | 2B Reconciliation: delete | as before | GST Manager / superadmin, through the door |
 | 2B Reconciliation: Import Excel | as before | refused |
-| 2B Reconciliation: Restore | the superadmin, the client's latest month holding entries only (`twob_restore_version`) | refused |
+| 2B Reconciliation: Restore | the superadmin, the client's latest month holding entries only (`twob_restore_version`); its own entries only, its carried entries kept | refused |
 | Clear Data (2B Reconciliation) | as before | the month is kept |
 | Filing Status: Filed (lock and first carry) | the first carry, once, into an open next month with no carried list | the same; never into a filed month, never again on a re-file |
 | Filing Status / 2B Reconciliation: Unlock sheets | allowed | allowed; the month stays prior |
@@ -1148,7 +1192,7 @@ reason and do not save until a reload reads them.
 | Filing Status: Filed by mistake | not shown | GST Manager / superadmin, with a reason, once the status is not Filed |
 | 2B Reconciliation: Clear Data | the month's carried decisions are undone first | refused; the month is kept |
 | A page opened before this change: old carry, old Re-run, old Restore | its delete refused while a carried entry holds the month's own decision; a carried add refused beside a decided carried entry; an old Restore can still double the month until reloaded | refused |
-| Extension: mark filed | as Filed above | as Filed above |
+| Extension: mark filed | as Filed above | as Filed above; when nothing was carried, Filing Status marks the row until a Re-run |
 | Deleting a client | allowed | allowed |
 | Any other direct write | allowed | refused by the guard |
 
@@ -1184,8 +1228,10 @@ Months that are prior but not yet Filed themselves (a later month was filed
 first) carry nothing when they are filed: AMBER GUM Jun-26, GROWQ Apr-26,
 NAVRATNA Dec-25 (4 April 2026 bills typed into it; April holds them as its
 own), REVTI Jul-26 (11 Not in 2B, 67 Not in Books), SHIVON Jun-26 and SWENI
-Nov-24 (6 Not in Books bills of Nov-2025) on 21 Oct 2026. Filing Status says
-so when they are filed; Re-run brings their entries on where they belong. V J
+Nov-24 (6 Not in Books bills of Nov-2025; Dec-24 has no GSTR-3B row, so it
+only counts as filed) on 21 Oct 2026. Filing Status says so when they are
+filed, by hand or by the extension, and marks their row; Re-run brings their
+entries on where they belong. V J
 DESAI & CO LLP Jun-26 is not one of these: June and July were filed in order,
 and July's list was emptied by staff before July was filed. Filing June
 again now carries nothing.
