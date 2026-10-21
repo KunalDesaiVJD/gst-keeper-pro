@@ -8,36 +8,44 @@
 --    superadmin's manual_source_allowances entry for that client, period and
 --    return, which it uses up; or the manual route kept for CMP-08, GSTR-6,
 --    GSTR-7 and ITC-04, which have no pull yet). trigger_filing_status_source
---    refuses every other write, for every level, and refuses deleting a filed
---    row (except with its client). Same pattern as filing_status_guard_pushed:
---    the routes set a transaction-local app.filing_source.
+--    refuses every other write, for every level, refuses moving a row that
+--    holds a filed return to another client, period or return type, and
+--    refuses deleting one (except by its client's cascade). Same pattern as
+--    filing_status_guard_pushed: the routes set a transaction-local
+--    app.filing_source.
+--  * A pull is recorded only for a staff member's request (p_actor_id; the
+--    request id and extension version are logged), and a PDF only at this
+--    project's return-pdfs address in the client's folder (filing_pdf_url_ok).
 --  * The pull's filing date is the portal's, never CURRENT_DATE: the guard
 --    fires after trigger_auto_lock_on_filed and puts back the route's date.
 --  * A different ARN is never put over a stored one: a conflict is logged for
 --    the superadmin (filing_pull_conflict_decide). A Filed portal row may have
 --    no PDF (pdf_note says why). Leaving Filed no longer wipes the ARN: Unlock
---    (filing_status_unlock) keeps it; Take off Filed (filing_status_unfile,
---    superadmin, reason) clears it. Scheme twins share one ARN (no
---    duplicate-key error). Every write and pull outcome is in
---    filing_status_log. What followed a manual Filed in the page (the
---    confirmation e-mail, the advance set-off stamp, GSTR-3B (Q) locks) runs
---    here once, on every route.
+--    (filing_status_unlock, for whoever holds unlock_sheets) keeps it; Take off
+--    Filed (filing_status_unfile, superadmin, reason) clears it and unlocks a
+--    GSTR-3B. Scheme twins share one ARN (no duplicate-key error). Every write
+--    and pull outcome is in filing_status_log. What followed a manual Filed in
+--    the page (the confirmation e-mail, the advance set-off stamp, GSTR-3B (Q)
+--    locks) runs here once, on every route; no e-mail until the portal's
+--    filing date is read.
 --  * manual_source_allowances (+ its guard, manual_source_allow / _revoke /
---    _take) is shared with the reco branch: the DDL block and the three
---    functions must stay byte-identical in both migrations.
+--    _take) is shared with the reco branch: the block from its CREATE TABLE to
+--    the GRANT on manual_source_revoke is byte-identical in both migrations.
 --
 -- Changes no existing row. Safe to re-run.
 --
--- Needs: staff_level_of (20261017100000), filing_effective_return_type
--- (20261009200000). Works with either auto_lock_on_filed; 20261021100000
--- (twob-simple) adds GSTR-3B (Q)'s carry forward there, so apply it first or
--- with this one (without it a pulled GSTR-3B (Q) is locked but not carried).
+-- Needs: staff_level_of (20261017100000), user_permissions (staff positions,
+-- 20261014120000), filing_effective_return_type (20261009200000). Works with
+-- either auto_lock_on_filed; 20261021100000 (twob-simple) adds GSTR-3B (Q)'s
+-- carry forward there, so apply it first or with this one (without it a
+-- pulled GSTR-3B (Q) is locked but not carried). With 20261021120000 (reco
+-- branch), which shares the allowance block, either order works.
 --
 -- LIVE APPLY (project gcquafqxbykxkbexcdpy only; never SUPABASE_PROJECT_REF)
 -- 1. Dry checks, SELECT only (management API, read_only):
 --    a. SELECT count(*) total, count(*) FILTER (WHERE status::text = 'Filed') filed,
 --              count(arn) arns, count(return_pdf_url) pdfs FROM filing_status;
---       21 Oct 2026, 09:20 IST: 8195 / 2949 / 2860 / 2858. Note today's.
+--       21 Oct 2026: 8195 / 2949 / 2860 / 2858. Note today's.
 --    b. SELECT count(*) FROM filing_status WHERE arn !~ '^[A-Z]{2}[0-9]{6}[A-Z0-9]{7}$';  -> 0
 --    c. SELECT count(*) FROM filing_status WHERE status::text <> 'Filed'
 --         AND (arn IS NOT NULL OR filed_date IS NOT NULL);                             -> 0
@@ -47,30 +55,46 @@
 --         trigger_auto_lock_on_filed, update_filing_status_updated_at,
 --         validate_filing_status_filed_requirements_trigger), plus trg_twob_record_filed
 --         if 20261021100000 is in; no other trigger named before 'trigger_filing'.
---    e. SELECT to_regclass('public.manual_source_allowances');  -> NULL, or the reco
---         branch's table (then: SELECT count(*) FROM manual_source_allowances).
+--    e. SELECT to_regclass('public.manual_source_allowances'),
+--              pg_get_function_result(to_regprocedure('public.manual_source_allow(uuid,uuid,text,text,text)'));
+--         -> NULL, NULL (21 Oct 2026); or the reco branch's table and 'manual_source_allowances'
+--         (then: SELECT count(*) FROM manual_source_allowances). Never 'jsonb'.
 --    f. SELECT position('GSTR-3B (Q)' IN pg_get_functiondef('public.auto_lock_on_filed()'::regprocedure)) > 0;
 --         -> true once 20261021100000 is in.
---    g. Staff finish or close any portal pull tab: a 0.14.0 pull fails from the apply on.
+--    g. SELECT count(*) FROM filing_status WHERE return_pdf_url IS NOT NULL AND return_pdf_url NOT LIKE
+--         'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/' || client_id::text || '/%';
+--         -> 2051 on 21 Oct 2026 (PDFs still on the old Lovable project's storage address). They are
+--         kept as they are; only new writes are checked, and a pull of the same ARN replaces one
+--         with a checked PDF here.
+--    h. SELECT count(DISTINCT up.user_id) FROM user_permissions up JOIN user_roles ur
+--         ON ur.user_id = up.user_id AND ur.role::text = 'employee' WHERE up.permission_key = 'unlock_sheets';
+--         -> 2 on 21 Oct 2026: the employees who keep Unlock on Filing Status.
+--    i. Staff finish or close any portal pull tab: a 0.14.0 pull fails from the apply on.
 -- 2. Apply this file (it has its own BEGIN / COMMIT).
 -- 3. Verify, SELECT only:
---    a. The counts of 1a, unchanged.
+--    a. The counts of 1a and 1g, unchanged.
 --    b. SELECT count(*) FROM filing_status_log;  -> 0 (nothing is logged until a write).
 --    c. SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.filing_status'::regclass AND NOT tgisinternal;
 --         -> also trigger_filing_status_source and trg_filing_status_after_write.
 --    d. has_function_privilege('anon', f, 'EXECUTE') true for filing_record_pull,
 --       filing_pull_report, filing_attach_manual, filing_status_unlock, filing_status_unfile,
 --       filing_pull_conflict_decide, manual_source_allow, manual_source_revoke,
---       filing_arn_problem; false for manual_source_take, filing__route, filing__log,
---       filing__target_row, filing_status_on_filed, filing_queue_confirmation.
+--       filing_arn_problem, filing_pdf_url_ok; false for manual_source_take, filing__route,
+--       filing__log, filing__target_row, filing_status_on_filed, filing_queue_confirmation.
 --    e. SELECT tablename FROM pg_publication_tables WHERE pubname = 'supabase_realtime';
 --         -> also filing_status_log, manual_source_allowances, gstr1_direct_filing_approvals.
---    f. With the ANON key from .env (the app's path; the management API bypasses RLS and
+--    f. SELECT public.filing_pdf_url_ok(client_id, return_pdf_url), count(*) FROM filing_status
+--         WHERE return_pdf_url IS NOT NULL GROUP BY 1;  -> true 788 / false 2070 on 21 Oct 2026
+--         (the 2051 of 1g, and 19 old uploads named after the client with an '&' or '..'). Stored
+--         addresses are not re-checked; only new writes are.
+--    g. With the ANON key from .env (the app's path; the management API bypasses RLS and
 --       privileges): POST /rest/v1/rpc/filing_arn_problem {"p_client_id":"<a client>",
 --       "p_return_type":"GSTR-3B","p_period_month":"09/2026","p_arn":"AB990926123456X"}
 --       -> a sentence naming the state code. PATCH /rest/v1/filing_status?id=eq.<a GSTR-3B row
 --       that is not Filed> {"return_pdf_url":"x"} -> 400 "GSTR-3B is marked Filed only by the
---       portal pull ..." (refused, so nothing changes; do not try an allowed write).
+--       portal pull ..." and PATCH /rest/v1/filing_status?id=eq.<a Filed row> {"period_month":"01/2020"}
+--       -> 400 "... stays on its client, period and return type ..." (both refused, so nothing
+--       changes; do not try an allowed write).
 -- 4. Deploy the app (the page calls the new functions; it needs extension 0.15.0).
 -- 5. Extension 0.15.0: copy extension/ over the extension folder on every PC that pulls
 --    (the firm's Chrome with "Run scheduled syncs in this Chrome", the office agent PC,
@@ -79,8 +103,9 @@
 -- 6. No Edge Function deploy: send-gst-email sends the outbox rows this queues.
 -- 7. Repair: pull again with 0.15.0 the returns on the repair lists (28 GSTR-3B system
 --    summaries, 7 wrong-return or wrong-month PDFs, 5 GSTR-1 rows holding a GSTR-1A,
---    89 Filed without an ARN, 82 dates that are not the ARN date). The same ARN refreshes;
---    a different ARN waits for the superadmin under Exceptions to the portal pull.
+--    89 Filed without an ARN, 82 dates that are not the ARN date). The same ARN refreshes
+--    (a new PDF address; the log keeps the old one); a different ARN waits for the
+--    superadmin under Exceptions to the portal pull.
 -- Undo: DROP TRIGGER trigger_filing_status_source ON public.filing_status;
 --       DROP TRIGGER trg_filing_status_after_write ON public.filing_status; then re-run the
 --       old validate_filing_status_filed_requirements (20260520073517) and
@@ -97,6 +122,28 @@ BEGIN;
 -- back only through manual_source_allow / manual_source_revoke; the page that
 -- uses one marks it used through manual_source_take. Every other write is
 -- refused by the guard below.
+--
+-- Everything from the CREATE TABLE below to the GRANT on manual_source_revoke
+-- is byte for byte the same in 20261021120000_reco_pull_push_gate.sql (reco
+-- branch), so either migration applies after the other
+-- (supabase/tests/filing_pull/run.sh checks both orders, and that the two
+-- copies agree once both files are in the tree). The reco branch's first
+-- draft (never applied live) returned jsonb from manual_source_allow /
+-- _revoke and had manual_source_use instead of _take: drop those if a local
+-- database has them, so the shared definitions apply.
+DO $$
+BEGIN
+  -- to_regprocedure, not a ::regprocedure cast: the cast fails on a
+  -- database without the function (as the live one is) even behind an AND.
+  IF pg_get_function_result(to_regprocedure('public.manual_source_allow(uuid,uuid,text,text,text)')) = 'jsonb' THEN
+    DROP FUNCTION public.manual_source_allow(uuid, uuid, text, text, text);
+  END IF;
+  IF pg_get_function_result(to_regprocedure('public.manual_source_revoke(uuid,uuid)')) = 'jsonb' THEN
+    DROP FUNCTION public.manual_source_revoke(uuid, uuid);
+  END IF;
+END $$;
+DROP FUNCTION IF EXISTS public.manual_source_use(uuid, uuid, text, text);
+
 CREATE TABLE IF NOT EXISTS public.manual_source_allowances (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
@@ -333,6 +380,27 @@ AS $$
   END;
 $$;
 
+-- Is this the address of a PDF in this client's folder of the return-pdfs
+-- bucket on project gcquafqxbykxkbexcdpy? Exactly that prefix, a path of
+-- plain characters (letters, digits, space, %, brackets, dot, dash,
+-- underscore; no '..') and a .pdf ending. Anything else (another host,
+-- another client's folder, a javascript: address) is never stored as a
+-- return's PDF.
+CREATE OR REPLACE FUNCTION public.filing_pdf_url_ok(p_client_id uuid, p_url text)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT COALESCE(
+    p_client_id IS NOT NULL
+    AND left(p_url, length('https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/' || p_client_id::text || '/'))
+        = 'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/' || p_client_id::text || '/'
+    AND substr(p_url, length('https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/' || p_client_id::text || '/') + 1)
+        ~ '^[A-Za-z0-9 ()%._-]+(/[A-Za-z0-9 ()%._-]+)*\.[Pp][Dd][Ff]$'
+    AND position('..' IN p_url) = 0,
+    false);
+$$;
+
 -- NULL when the ARN can be this return's, else why not. An ARN is two
 -- letters, the state code, the tax period as MMYY and seven more characters
 -- (all 2,860 ARNs on Filing Status on 21 Oct 2026 have that form). The two
@@ -375,6 +443,7 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.filing_pull_only(text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.filing_pdf_url_ok(uuid, text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.filing_family(text) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.filing_arn_problem(uuid, text, text, text) TO anon, authenticated, service_role;
 
@@ -515,8 +584,11 @@ REVOKE ALL ON FUNCTION public.filing__log(uuid, text, text, uuid, text, text, uu
 -- Filed, and any change of arn, filed_date, return_pdf_url, filed_source,
 -- manual_allowance_id, pulled_at or pdf_note. Status changes between the
 -- other statuses, remarks, target dates, NIL, locks and the push marker are
--- not touched. A row holding a filed return is not deleted, except with its
--- client.
+-- not touched. A row holding a filed return (Filed, or an ARN, filing date,
+-- PDF or source) stays on its client, period and return type, on every route
+-- (moving one would file another month or client with this one's ARN), and
+-- is deleted only by the cascade of its client's deletion (pg_trigger_depth()
+-- > 1 and the client gone), never by a DELETE of its own.
 CREATE OR REPLACE FUNCTION public.filing_status_source_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -525,14 +597,26 @@ AS $$
 DECLARE
   v_route   text := COALESCE(NULLIF(current_setting('app.filing_source', true), ''), 'direct');
   v_changed boolean;
+  v_holds   boolean;
 BEGIN
+  IF TG_OP IN ('UPDATE', 'DELETE') THEN
+    v_holds := OLD.status::text = 'Filed' OR OLD.arn IS NOT NULL OR OLD.filed_date IS NOT NULL
+      OR NULLIF(btrim(OLD.return_pdf_url), '') IS NOT NULL OR OLD.filed_source IS NOT NULL;
+  END IF;
+
   IF TG_OP = 'DELETE' THEN
-    IF v_route <> 'direct'
-       OR (OLD.status::text IS DISTINCT FROM 'Filed' AND OLD.arn IS NULL AND NULLIF(btrim(OLD.return_pdf_url), '') IS NULL)
-       OR NOT EXISTS (SELECT 1 FROM public.clients c WHERE c.id = OLD.client_id) THEN
+    IF NOT v_holds
+       OR (pg_trigger_depth() > 1 AND NOT EXISTS (SELECT 1 FROM public.clients c WHERE c.id = OLD.client_id)) THEN
       RETURN OLD;
     END IF;
-    RAISE EXCEPTION 'A filed return, or one holding an ARN or a return PDF, cannot be deleted.'
+    RAISE EXCEPTION 'A filed return, or one holding an ARN, filing date or return PDF, cannot be deleted.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF TG_OP = 'UPDATE' AND v_holds
+     AND (NEW.client_id, NEW.period_month, NEW.return_type) IS DISTINCT FROM (OLD.client_id, OLD.period_month, OLD.return_type) THEN
+    RAISE EXCEPTION 'A filed return, or one holding an ARN, filing date or return PDF, stays on its client, period and return type (% %).',
+      OLD.return_type::text, OLD.period_month
       USING ERRCODE = 'check_violation';
   END IF;
 
@@ -650,9 +734,12 @@ $$;
 
 -- The client's filing confirmation (enqueueConfirmation() in
 -- src/lib/gstReminders.ts, which this replaces for Filing Status): skipped
--- when the client turned it off, has no e-mail or the template is off, and
--- for a return filed more than 30 days ago (a pull of an old period records
--- it without writing to the client). One per client, return and period
+-- when the client turned it off, has no e-mail or the template is off, for
+-- a return filed more than 30 days ago (a pull of an old period records it
+-- without writing to the client), and while the portal's filing date is not
+-- read (never a confirmation with a blank date, nor one for an old period
+-- whose date could not be read; filing_status_after_write queues it when a
+-- later pull reads the date). One per client, return and period
 -- (uq_email_outbox_confirmation). The 15-minute gst-send-outbox job sends it.
 CREATE OR REPLACE FUNCTION public.filing_queue_confirmation(p_row public.filing_status, p_actor uuid)
 RETURNS text
@@ -667,7 +754,10 @@ DECLARE
   v_vars   jsonb;
   v_today  date := (now() AT TIME ZONE 'Asia/Kolkata')::date;
 BEGIN
-  IF p_row.filed_date IS NOT NULL AND p_row.filed_date < v_today - 30 THEN
+  IF p_row.filed_date IS NULL THEN
+    RETURN 'skipped: filing date not read';
+  END IF;
+  IF p_row.filed_date < v_today - 30 THEN
     RETURN 'skipped: filed more than 30 days ago';
   END IF;
   IF EXISTS (SELECT 1 FROM public.client_reminder_settings s
@@ -802,12 +892,28 @@ BEGIN
     AND NEW.return_pdf_url IS NOT DISTINCT FROM OLD.return_pdf_url
     AND NEW.filed_source IS NOT DISTINCT FROM OLD.filed_source
     AND NEW.is_locked IS NOT DISTINCT FROM OLD.is_locked
-    AND NEW.pulled_at IS NOT DISTINCT FROM OLD.pulled_at THEN
+    AND NEW.pulled_at IS NOT DISTINCT FROM OLD.pulled_at
+    AND NEW.client_id IS NOT DISTINCT FROM OLD.client_id
+    AND NEW.period_month IS NOT DISTINCT FROM OLD.period_month
+    AND NEW.return_type IS NOT DISTINCT FROM OLD.return_type THEN
     RETURN NULL;
+  END IF;
+
+  -- A row moved to another client, period or return type (only a row
+  -- holding no filed return can be: the guard refuses the rest) says where
+  -- it came from.
+  IF TG_OP = 'UPDATE' AND (NEW.client_id, NEW.period_month, NEW.return_type) IS DISTINCT FROM (OLD.client_id, OLD.period_month, OLD.return_type) THEN
+    v_detail := v_detail || jsonb_build_object('moved_from', jsonb_build_object(
+      'client_id', OLD.client_id, 'period_month', OLD.period_month, 'return_type', OLD.return_type::text));
   END IF;
 
   IF NEW.status::text = 'Filed' AND (TG_OP = 'INSERT' OR OLD.status::text IS DISTINCT FROM 'Filed') THEN
     v_effects := public.filing_status_on_filed(NEW, COALESCE(v_actor, NEW.updated_by));
+  ELSIF TG_OP = 'UPDATE' AND NEW.status::text = 'Filed' AND OLD.filed_date IS NULL AND NEW.filed_date IS NOT NULL THEN
+    -- Filed earlier without the portal's date (no confirmation then): a
+    -- later pull read it, so the confirmation goes now, under the same rules
+    -- (one per return, none for a return filed more than 30 days ago).
+    v_effects := jsonb_build_object('confirmation', public.filing_queue_confirmation(NEW, COALESCE(v_actor, NEW.updated_by)));
   END IF;
 
   INSERT INTO public.filing_status_log
@@ -969,7 +1075,18 @@ BEGIN
   PERFORM public.filing__check_call(p_client_id, p_return_type, p_period_month);
   v_detail := jsonb_build_object('pulled', jsonb_build_object(
       'arn', v_arn, 'filed_date', p_filed_date, 'pdf_url', v_pdf, 'pdf_note', v_note))
+    || jsonb_build_object('ext_version', 'not given')
     || COALESCE(p_detail, '{}'::jsonb);
+
+  -- A pull is asked for by a staff member on Filing Status; the extension
+  -- passes who (p_actor_id) and the page's request id (p_detail.request_id),
+  -- and both are logged. This is a record of who asked, not a proof: the
+  -- anon key can still call this function with a staff member's id.
+  IF p_actor_id IS NULL OR public.staff_level_of(p_actor_id) IS NULL THEN
+    v_msg := 'The pull was not recorded: it did not come from a GST Keeper staff member''s request on Filing Status.';
+    v_log := public.filing__log(p_client_id, p_return_type, p_period_month, NULL, 'refused', 'portal', p_actor_id, v_msg, v_detail);
+    RETURN jsonb_build_object('outcome', 'refused', 'message', v_msg, 'log_id', v_log);
+  END IF;
 
   v_problem := public.filing_arn_problem(p_client_id, p_return_type, p_period_month, v_arn);
   IF v_problem IS NOT NULL THEN
@@ -978,9 +1095,9 @@ BEGIN
     RETURN jsonb_build_object('outcome', 'refused', 'message', 'The pull was not recorded. ' || v_problem, 'log_id', v_log);
   END IF;
 
-  IF v_pdf IS NOT NULL AND position('/storage/v1/object/public/return-pdfs/' || p_client_id::text || '/' IN v_pdf) = 0 THEN
+  IF v_pdf IS NOT NULL AND NOT public.filing_pdf_url_ok(p_client_id, v_pdf) THEN
     v_pdf := NULL;
-    v_note := 'The PDF was not in this client''s folder of return PDFs, so it was not stored.';
+    v_note := 'The PDF was not in this client''s folder of return PDFs in GST Keeper, so it was not stored.';
   END IF;
   IF v_pdf IS NULL AND v_note IS NULL THEN
     v_note := 'No PDF came with the pull.';
@@ -1133,8 +1250,8 @@ BEGIN
   IF v_problem IS NOT NULL THEN
     RAISE EXCEPTION '%', v_problem USING ERRCODE = 'check_violation';
   END IF;
-  IF v_pdf IS NULL OR position('/storage/v1/object/public/return-pdfs/' || p_client_id::text || '/' IN v_pdf) = 0 THEN
-    RAISE EXCEPTION 'Attach the filed return''s PDF (uploaded to this client''s folder).' USING ERRCODE = 'check_violation';
+  IF NOT public.filing_pdf_url_ok(p_client_id, v_pdf) THEN
+    RAISE EXCEPTION 'Attach the filed return''s PDF (uploaded to this client''s folder in GST Keeper).' USING ERRCODE = 'check_violation';
   END IF;
   IF p_filed_date IS NULL OR p_filed_date > v_today OR p_filed_date < to_date('01/' || p_period_month, 'DD/MM/YYYY') THEN
     RAISE EXCEPTION 'Give the filing date shown on the return (the date of ARN), not before the period and not in the future.'
@@ -1196,10 +1313,12 @@ $$;
 -- ---------------------------------------------------------------------------
 -- 5c. Unlock, take off Filed, and conflicts
 -- ---------------------------------------------------------------------------
--- Unlock (GST Manager or superadmin): the period's GSTR-3B / GSTR-3B (Q)
--- rows go to 'Prepared Pending' (shown as Not to File) and are unlocked, as
--- before, but keep their ARN, filing date and PDF: the return is still filed
--- on the portal, and pulling it again files the row again (same ARN). The
+-- Unlock (GST Manager, superadmin, or an employee holding unlock_sheets): the
+-- period's GSTR-3B / GSTR-3B (Q) rows go to 'Prepared Pending' (shown as Not
+-- to File) and are unlocked, as before, but keep their ARN, filing date and
+-- PDF: the return is still filed on the portal, and pulling that row again
+-- files it again (same ARN). The page's bulk and per-client pulls leave such
+-- a row out, so a correction is never re-locked behind the staff's back. The
 -- sheets themselves are unlocked by the page, as before.
 CREATE OR REPLACE FUNCTION public.filing_status_unlock(
   p_actor_id     uuid,
@@ -1214,8 +1333,16 @@ AS $$
 DECLARE
   v_n integer;
 BEGIN
-  IF p_actor_id IS NULL OR public.staff_level_of(p_actor_id) NOT IN ('superadmin', 'gst_manager') THEN
-    RAISE EXCEPTION 'Only a GST Manager or the superadmin can unlock a filed return.' USING ERRCODE = 'insufficient_privilege';
+  -- Who may unlock is who the page offers Unlock to (canUnlockSheets): a GST
+  -- Manager, the superadmin, or an employee whose position holds Unlock
+  -- sheets (unlock_sheets).
+  IF p_actor_id IS NULL
+     OR NOT (COALESCE(public.staff_level_of(p_actor_id) IN ('superadmin', 'gst_manager'), false)
+             OR (public.staff_level_of(p_actor_id) = 'employee'
+                 AND EXISTS (SELECT 1 FROM public.user_permissions up
+                              WHERE up.user_id = p_actor_id AND up.permission_key = 'unlock_sheets'))) THEN
+    RAISE EXCEPTION 'Unlocking a filed return needs the Unlock sheets permission (a GST Manager, the superadmin, or a position that holds it).'
+      USING ERRCODE = 'insufficient_privilege';
   END IF;
   PERFORM public.filing__route('unlock', 'unlocked', p_actor_id, 'Unlocked. The ARN, filing date and PDF are kept.', NULL, NULL, NULL);
   UPDATE public.filing_status
@@ -1233,7 +1360,9 @@ END;
 $$;
 
 -- Take off Filed (superadmin, with a reason): the row goes back to Prepared
--- and loses its ARN, filing date and PDF. The log keeps what it held.
+-- and loses its ARN, filing date and PDF. The log keeps what it held. A
+-- GSTR-3B / GSTR-3B (Q) is unlocked too, so staff can work the return again;
+-- the page unlocks the month's sheets, as Unlock does.
 CREATE OR REPLACE FUNCTION public.filing_status_unfile(
   p_actor_id uuid,
   p_id       uuid,
@@ -1267,6 +1396,7 @@ BEGIN
          manual_allowance_id = NULL,
          pulled_at = NULL,
          pdf_note = NULL,
+         is_locked = CASE WHEN return_type::text IN ('GSTR-3B', 'GSTR-3B (Q)') THEN false ELSE is_locked END,
          updated_by = p_actor_id,
          updated_at = now()
    WHERE id = p_id

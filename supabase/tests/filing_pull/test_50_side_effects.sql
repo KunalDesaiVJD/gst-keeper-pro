@@ -17,7 +17,7 @@ SET LOCAL ROLE anon;
 SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
 
 SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '09/2026', 'AB240926123456X', current_date - 1,
-  'https://db.test/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/09-2026/GSTR-3B-AB240926123456X.pdf',
+  'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/09-2026/GSTR-3B-AB240926123456X.pdf',
   NULL, '00000000-0000-0000-0000-00000000000c'))->>'outcome', 'filed', 'filed by the pull');
 
 -- The confirmation, rendered as the app rendered it.
@@ -41,20 +41,20 @@ SELECT t_eq((SELECT (detail->'on_filed'->>'confirmation') || '/' || (detail->'on
               WHERE event = 'filed' AND period_month = '09/2026'), 'queued/1', 'side effects recorded in the log');
 
 -- Pulled again: nothing new.
-SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '09/2026', 'AB240926123456X', current_date - 1))->>'outcome',
+SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '09/2026', 'AB240926123456X', current_date - 1, p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'outcome',
   'refreshed', 'refreshed');
 SELECT t_eq((SELECT count(*)::int FROM public.email_outbox), 1, 'no second e-mail on a refresh');
 SELECT t_eq((SELECT count(*)::int FROM public.filing_status_log WHERE detail ? 'on_filed'), 1, 'side effects ran once');
 
--- Unlock (GST Manager): unlocked, ARN and date kept; an employee cannot.
+-- Unlock (GST Manager): unlocked, ARN and date kept; an employee without unlock_sheets cannot.
 SELECT t_raises($$SELECT public.filing_status_unlock('00000000-0000-0000-0000-00000000000c', '11111111-1111-1111-1111-111111111111', '09/2026')$$,
-  'Only a GST Manager or the superadmin', 'employee cannot unlock');
+  'needs the Unlock sheets permission', 'employee without unlock_sheets cannot unlock');
 SELECT t_eq(public.filing_status_unlock('00000000-0000-0000-0000-00000000000b', '11111111-1111-1111-1111-111111111111', '09/2026'), 1, 'unlocked');
 SELECT t_eq((SELECT status::text || '/' || arn || '/' || (filed_date = current_date - 1)::text || '/' || is_locked::text || '/' || filed_source
               FROM public.filing_status WHERE client_id = '11111111-1111-1111-1111-111111111111' AND return_type = 'GSTR-3B' AND period_month = '09/2026'),
   'Prepared Pending/AB240926123456X/true/false/portal', 'unlocked row keeps the ARN, date and source');
 -- Pulled again: Filed again, locked again; still one e-mail.
-SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '09/2026', 'AB240926123456X', current_date - 1))->>'outcome',
+SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '09/2026', 'AB240926123456X', current_date - 1, p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'outcome',
   'filed', 'filed again after unlock');
 SELECT t_eq((SELECT status::text || '/' || is_locked::text FROM public.filing_status
               WHERE client_id = '11111111-1111-1111-1111-111111111111' AND return_type = 'GSTR-3B' AND period_month = '09/2026'),
@@ -65,7 +65,7 @@ SELECT t_eq((SELECT detail->'on_filed'->>'confirmation' FROM public.filing_statu
 
 -- GSTR-3B (Q): the sheets and the row are locked, the e-mail queued.
 SELECT t_eq((public.filing_record_pull('22222222-2222-2222-2222-222222222222', 'GSTR-3B (Q)', '09/2026', 'AB240926222222X', current_date - 1,
-  'https://db.test/storage/v1/object/public/return-pdfs/22222222-2222-2222-2222-222222222222/09-2026/GSTR-3B (Q)-AB240926222222X.pdf'))->>'outcome',
+  'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/22222222-2222-2222-2222-222222222222/09-2026/GSTR-3B (Q)-AB240926222222X.pdf', p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'outcome',
   'filed', '3B (Q) filed');
 SELECT t_eq((SELECT bool_and(is_locked) FROM public.bills_not_in_2b WHERE client_id = '22222222-2222-2222-2222-222222222222'), true, '3B (Q) 2B sheet locked');
 SELECT t_eq((SELECT is_locked FROM public.itc_summaries WHERE client_id = '22222222-2222-2222-2222-222222222222'), true, '3B (Q) ITC summary locked');
@@ -75,13 +75,13 @@ SELECT t_eq((SELECT count(*)::int FROM public.email_outbox WHERE client_id = '22
 -- The manual route has the same side effects (CMP-08 here).
 SELECT t_eq((public.filing_attach_manual('00000000-0000-0000-0000-00000000000c', '44444444-4444-4444-4444-444444444444',
   'CMP-08', '09/2026', 'AB240926444444X', current_date - 2,
-  'https://x/storage/v1/object/public/return-pdfs/44444444-4444-4444-4444-444444444444/CMP-08/09-2026/m.pdf'))->>'outcome',
+  'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/44444444-4444-4444-4444-444444444444/CMP-08/09-2026/m.pdf'))->>'outcome',
   'manual_attach', 'CMP-08 attached');
 SELECT t_eq((SELECT count(*)::int FROM public.email_outbox WHERE client_id = '44444444-4444-4444-4444-444444444444'), 1, 'manual route e-mails too');
 
 -- No e-mail for a return filed long ago (a pull of an old period), or when the
 -- client turned confirmations off, or has no address.
-SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '05/2026', 'AB240526123456X', '2026-06-20'))->>'outcome',
+SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '05/2026', 'AB240526123456X', '2026-06-20', p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'outcome',
   'filed', 'old return pulled');
 SELECT t_eq((SELECT count(*)::int FROM public.email_outbox WHERE period_month = '05/2026'), 0, 'no e-mail for an old filing');
 RESET ROLE;
@@ -90,7 +90,7 @@ SELECT public.mark_filing_pushed('11111111-1111-1111-1111-111111111111', 'GSTR-1
 SELECT t_eq((SELECT route || '/' || new_status FROM public.filing_status_log WHERE return_type = 'GSTR-1' AND period_month = '09/2026'),
   'push/Pushed', 'a recorded push is logged as such');
 SET LOCAL ROLE anon;
-SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-1', '09/2026', 'AA240926123456X', current_date - 1))->>'outcome',
+SELECT t_eq((public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-1', '09/2026', 'AA240926123456X', current_date - 1, p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'outcome',
   'filed', 'GSTR-1 filed');
 SELECT t_eq((SELECT count(*)::int FROM public.email_outbox WHERE return_type = 'GSTR-1'), 0, 'confirmations off: none');
 SELECT t_eq((SELECT detail->'on_filed'->>'confirmation' FROM public.filing_status_log WHERE event = 'filed' AND return_type = 'GSTR-1'),

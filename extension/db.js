@@ -51,7 +51,7 @@
     replaceRcmLiabilityItcEntries: (clientId, financialYear, rows) => call('replaceRcmLiabilityItcEntries', clientId, financialYear, rows),
     fetchCrossOriginAsBase64: (url) => call('fetchCrossOriginAsBase64', url),
     getDnrDebug: () => call('getDnrDebug'),
-    uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
+    uploadPdf: (path, dataUrl, opts) => call('uploadPdf', path, dataUrl, opts),
     // 0.15.0: a pulled return goes through filing_record_pull only.
     recordFiledPull: (p) => call('recordFiledPull', p),
     reportFiledPull: (p) => call('reportFiledPull', p),

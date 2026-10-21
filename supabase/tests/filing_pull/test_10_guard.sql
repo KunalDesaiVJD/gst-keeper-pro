@@ -11,18 +11,18 @@ SET LOCAL ROLE anon;
 SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
 
 SELECT t_raises($$UPDATE public.filing_status SET status = 'Filed', arn = 'AB240826123456X', filed_date = '2026-09-18',
-  return_pdf_url = 'https://x/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/a.pdf',
+  return_pdf_url = 'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/a.pdf',
   updated_by = '00000000-0000-0000-0000-00000000000c'
   WHERE return_type = 'GSTR-3B' AND period_month = '08/2026'$$, 'marked Filed only by the portal pull', 'employee: manual Filed refused');
 SELECT t_raises($$UPDATE public.filing_status SET status = 'Filed', arn = 'AB240826123456X', filed_date = '2026-09-18',
-  return_pdf_url = 'https://x/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/a.pdf',
+  return_pdf_url = 'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/a.pdf',
   updated_by = '00000000-0000-0000-0000-00000000000b'
   WHERE return_type = 'GSTR-3B' AND period_month = '08/2026'$$, 'marked Filed only by the portal pull', 'GST Manager: manual Filed refused');
 SELECT t_raises($$UPDATE public.filing_status SET status = 'Filed', arn = 'AB240826123456X', filed_date = '2026-09-18',
-  return_pdf_url = 'https://x/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/a.pdf',
+  return_pdf_url = 'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/a.pdf',
   updated_by = '00000000-0000-0000-0000-00000000000a'
   WHERE return_type = 'GSTR-3B' AND period_month = '08/2026'$$, 'marked Filed only by the portal pull', 'superadmin: manual Filed refused');
-SELECT t_raises($$UPDATE public.filing_status SET return_pdf_url = 'https://x/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/b.pdf'
+SELECT t_raises($$UPDATE public.filing_status SET return_pdf_url = 'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/b.pdf'
   WHERE return_type = 'GSTR-1' AND period_month = '08/2026'$$, 'marked Filed only by the portal pull', 'PDF attached by hand refused');
 SELECT t_raises($$UPDATE public.filing_status SET arn = 'AA240826123456X' WHERE return_type = 'GSTR-1' AND period_month = '08/2026'$$,
   'marked Filed only by the portal pull', 'ARN typed by hand refused');
@@ -32,12 +32,12 @@ SELECT t_raises($$UPDATE public.filing_status SET filed_source = 'portal' WHERE 
   'marked Filed only by the portal pull', 'source cannot be faked');
 SELECT t_raises($$INSERT INTO public.filing_status (client_id, return_type, period_month, status, arn, return_pdf_url)
   VALUES ('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '07/2026', 'Filed', 'AB240726123456X',
-          'https://x/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/c.pdf')$$,
+          'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/c.pdf')$$,
   'marked Filed only by the portal pull', 'Filed row inserted by hand refused');
 -- Extension 0.14.0's markFiled: an upsert on (client_id, return_type, period_month).
 SELECT t_raises($$INSERT INTO public.filing_status (client_id, return_type, period_month, status, arn, filed_date, return_pdf_url, updated_at)
   VALUES ('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '08/2026', 'Filed', 'AB240826123456X', '2026-09-18',
-          'https://x/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/d.pdf', now())
+          'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/d.pdf', now())
   ON CONFLICT (client_id, return_type, period_month) DO UPDATE
     SET status = EXCLUDED.status, arn = EXCLUDED.arn, filed_date = EXCLUDED.filed_date,
         return_pdf_url = EXCLUDED.return_pdf_url, updated_at = EXCLUDED.updated_at$$,
@@ -45,7 +45,7 @@ SELECT t_raises($$INSERT INTO public.filing_status (client_id, return_type, peri
 -- A return with no pull keeps a manual route, but not a direct one.
 SELECT t_raises($$INSERT INTO public.filing_status (client_id, return_type, period_month, status, arn, return_pdf_url)
   VALUES ('44444444-4444-4444-4444-444444444444', 'CMP-08', '09/2026', 'Filed', 'AB240926123456X',
-          'https://x/storage/v1/object/public/return-pdfs/44444444-4444-4444-4444-444444444444/e.pdf')$$,
+          'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/44444444-4444-4444-4444-444444444444/e.pdf')$$,
   'only through Attach filed return', 'CMP-08 direct Filed refused');
 
 -- Everything else stays writable.
@@ -60,7 +60,7 @@ SELECT t_eq((SELECT count(*)::int FROM public.filing_status WHERE period_month =
 -- A Filed row cannot be taken off Filed or deleted directly.
 RESET ROLE;
 SELECT (public.filing_record_pull('11111111-1111-1111-1111-111111111111', 'GSTR-3B', '08/2026', 'AB240826123456X', '2026-09-18',
-  'https://x/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/08-2026/GSTR-3B-AB240826123456X.pdf'))->>'outcome';
+  'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/11111111-1111-1111-1111-111111111111/08-2026/GSTR-3B-AB240826123456X.pdf', p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'outcome';
 SET LOCAL ROLE anon;
 SELECT t_raises($$UPDATE public.filing_status SET status = 'Mismatch in Data', updated_by = '00000000-0000-0000-0000-00000000000b'
   WHERE return_type = 'GSTR-3B' AND period_month = '08/2026'$$, 'marked Filed only by the portal pull', 'GST Manager cannot move a Filed row');

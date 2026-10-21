@@ -13,7 +13,12 @@
 //  - the app reads a PDF with the extension's own checker: the filed return
 //    is accepted with its ARN and ARN date, the System generated summary and
 //    a GSTR-1A are not (extension/test/fixtures);
-//  - the app's calls name the RPCs and arguments the migration defines.
+//  - the app's calls name the RPCs and arguments the migration defines;
+//  - round 1: bulk and per-client pulls leave out a return unlocked for
+//    correction; every staff level can ask for a direct-filing approval from
+//    a held-back row; the filed-return reports keep the PDF link a bare
+//    address with its source beside it; where a filed return came from is
+//    said on the page, its PDF export, the Reports Hub and reply evidence.
 //   node scripts/verify-filing-pull-only.mjs
 // Fictional data; Supabase is replaced by a recorder. Exits 1 on any failure.
 import { createRequire } from 'node:module';
@@ -72,12 +77,26 @@ export const supabase = {
     getPublicUrl: (p) => ({ data: { publicUrl: 'https://db.test/storage/v1/object/public/' + b + '/' + p } }),
   }) },
   functions: { invoke: async (name) => { calls.push({ invoke: name }); return { data: null, error: null }; } },
-  from: (t) => { throw new Error('fake supabase: from(' + t + ') not expected here'); },
+  // A read-only table fake: globalThis.__tables[name] are the rows; filters
+  // eq / in are applied, everything else is ignored.
+  from: (t) => {
+    const rows = () => ((globalThis.__tables || {})[t] || []);
+    const f = [];
+    const b = {
+      select: () => b, order: () => b, limit: () => b, like: () => b, is: () => b, not: () => b,
+      eq: (c, v) => { f.push((r) => r[c] === v); return b; },
+      in: (c, vs) => { f.push((r) => vs.includes(r[c])); return b; },
+      maybeSingle: async () => { calls.push({ from: t }); return { data: rows().filter((r) => f.every((x) => x(r)))[0] || null, error: null }; },
+      then: (ok, ko) => { calls.push({ from: t }); return Promise.resolve({ data: rows().filter((r) => f.every((x) => x(r))), error: null }).then(ok, ko); },
+    };
+    return b;
+  },
 };
 `;
 const out = await build({
   stdin: {
-    contents: `export * as L from './src/lib/filingPull'; export * as M from './src/lib/manualSourceAllowances'; export * as C from './src/lib/filedPdfCheck';`,
+    contents: `export * as L from './src/lib/filingPull'; export * as M from './src/lib/manualSourceAllowances'; export * as C from './src/lib/filedPdfCheck';
+      export * as D from './src/lib/directFilingApprovals'; export { fetchFiledPdf } from './src/utils/filedReturnReports';`,
     resolveDir: root, loader: 'ts',
   },
   bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
@@ -91,7 +110,7 @@ const out = await build({
   }],
   define: { 'import.meta.env': '{}' },
 });
-const { L, M, C } = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
+const { L, M, C, D, fetchFiledPdf } = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
 
 // The database's words (filing_arn_problem; supabase/tests/filing_pull/test_20).
 const G = '24ABCDE1234F1Z5';
@@ -131,6 +150,71 @@ check('allow: manual_source_allow with scope filing:GSTR-3B', rpcs[4].rpc === 'm
 check('revoke: manual_source_revoke', rpcs[5].rpc === 'manual_source_revoke' && rpcs[5].args.p_id === 'a1');
 check('the allowance badge', M.allowanceBadgeText({ allowed_by: 'u3', reason: 'portal password changed' }, { u3: 'Asha' }) === 'manual (allowed by Asha: portal password changed)');
 check('a manual PDF goes to the client\'s folder', /^c1\/GSTR-3B\/08-2026\/manual-AB240826123456X-\d+\.pdf$/.test(L.manualPdfPath('c1', 'GSTR-3B', '08/2026', 'AB240826123456X')));
+
+// ── 2b. Round 1 ───────────────────────────────────────────────────────────
+// Defect 5: a return unlocked for correction (not Filed, ARN kept) is never
+// in a bulk or per-client pull; its own Pull re-files it.
+const unlocked = { status: 'Prepared Pending', arn: 'AB240826123456X', return_pdf_url: 'https://x/a.pdf', filed_date: '2026-09-18' };
+check('bulk pull: an unlocked return is left out', !L.wantedInBulkPull(unlocked) && !L.wantedInClientPull(unlocked));
+check('bulk pull: not Filed, or Filed without PDF or date, is asked for',
+  L.wantedInBulkPull({ status: 'Prepared', arn: null, return_pdf_url: null, filed_date: null })
+  && L.wantedInBulkPull({ status: 'Filed', arn: 'AB240826123456X', return_pdf_url: null, filed_date: '2026-09-18' })
+  && L.wantedInBulkPull({ status: 'Filed', arn: 'AB240826123456X', return_pdf_url: 'https://x/a.pdf', filed_date: null })
+  && !L.wantedInBulkPull({ status: 'Filed', arn: 'AB240826123456X', return_pdf_url: 'https://x/a.pdf', filed_date: '2026-09-18' }));
+check('client pull: a Filed return is still refreshed', L.wantedInClientPull({ status: 'Filed', arn: 'AB240826123456X' }));
+check('the page\'s bulk and client pulls use these rules', /\.filter\(\(r\) => pullable\(r\) && wantedInBulkPull\(r\)\)/.test(page)
+  && /pullable\(r\) && wantedInClientPull\(r\)/.test(page));
+
+// Defect 10: every staff level can ask for the approval from a held-back row.
+check('needs_request offers "Request approval" (the words the database names) to staff', D.directFilingActionLabel('needs_request', false) === 'Request approval'
+  && D.directFilingActionLabel('rejected', false) === 'Request again' && D.directFilingActionLabel('pending', false) === 'View request'
+  && D.directFilingActionLabel('pending', true) === 'Review request' && D.directFilingActionLabel('approved', false) === null && D.directFilingActionLabel('pushed', true) === null);
+const table = fs.readFileSync(path.join(root, 'src/components/filing/FilingTable.tsx'), 'utf8');
+check('the row\'s Pull is not disabled for a held-back return (it opens the request)', /disabled=\{ctx\.pulling\}/.test(table) && !/ctx\.pullBlocked && !p\.isSuperadmin/.test(table));
+check('the held-back badge shows on every return type, not only the GSTR-1 tab', /\{p\.directFilingBadge\(record\)\}/.test(table) && !/returnType === 'GSTR-1' && p\.directFilingBadge/.test(table));
+check('a held-back row\'s Pull opens the request for every staff level', /const pullOne = \(record: FilingRecord\) => \{\s*if \(isDirectFilingBlocked\(directFilingStateFor\(record\)\)\) \{\s*openDirectFilingDialog/.test(page)
+  && /Request approval: direct filing/.test(fs.readFileSync(path.join(root, 'src/components/filing/RequestDirectFilingDialog.tsx'), 'utf8')));
+check('attaching a held-back return opens the request first', /const openAttach = \(record: FilingRecord\) => \{[\s\S]{0,300}isDirectFilingBlocked\(directFilingStateFor\(record\)\)[\s\S]{0,300}openDirectFilingDialog/.test(page));
+
+// Defect 12: Take off Filed unlocks a GSTR-3B's month sheets, as Unlock does.
+check('Take off Filed unlocks the month\'s sheets of a GSTR-3B', /await unfileReturn\(user\.id, record\.id, reason\);\s*if \(filingFamily\('GSTR-3B'\)\.includes\(record\.return_type\)\) await unlockMonthSheets/.test(page));
+
+// Defects 6 and 13: where a filed return came from, in words.
+const N = { a1: 'Asha' };
+check('source: portal', L.filingSourceText({ status: 'Filed', arn: 'X', return_type: 'GSTR-3B', filed_source: 'portal' }, null, N) === 'Portal');
+check('source: manual under an allowance', L.filingSourceText({ status: 'Filed', arn: 'X', return_type: 'GSTR-3B (Q)', filed_source: 'manual' }, { allowed_by: 'a1', reason: 'portal down' }, N)
+  === 'manual (allowed by Asha: portal down)');
+check('source: manual for a return with no pull', L.filingSourceText({ status: 'Filed', arn: 'X', return_type: 'CMP-08', filed_source: 'manual' }, null, N) === 'manual (no portal pull for CMP-08 yet)');
+check('source: before the rule', L.filingSourceText({ status: 'Filed', arn: 'X', return_type: 'GSTR-1', filed_source: null }, null, N) === 'By hand before 21 Oct 2026'
+  && L.filingSourceText({ status: 'Prepared', arn: null, return_type: 'GSTR-1', filed_source: null }, null, N) === null);
+const PDF = 'https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/c1/GSTR-3B%20(Q)/09-2026/manual-AB240926222333Q-1761030000000.pdf';
+globalThis.__tables = {
+  filing_status: [{ id: 'fs1', client_id: 'c1', period_month: '09/2026', return_type: 'GSTR-3B (Q)', status: 'Filed', arn: 'AB240926222333Q', return_pdf_url: PDF, filed_source: 'manual', manual_allowance_id: 'al1' }],
+  manual_source_allowances: [{ id: 'al1', allowed_by: 'a1', reason: 'Client changed the portal password; filed 22 Oct.' }],
+  profiles: [{ user_id: 'a1', first_name: 'Asha' }],
+};
+const fp = await fetchFiledPdf('c1', '09/2026', ['GSTR-3B', 'GSTR-3B (Q)']);
+check('filed-return report: the link is the bare address', fp && fp.url === PDF, JSON.stringify(fp));
+check('filed-return report: the source is its own value', fp && fp.note === 'manual (allowed by Asha: Client changed the portal password; filed 22 Oct.)', JSON.stringify(fp));
+const frr = fs.readFileSync(path.join(root, 'src/utils/filedReturnReports.ts'), 'utf8');
+check('filed-return reports put the address and the source in separate cells', (frr.match(/pdf\?\.url \|\| 'Not captured yet[^']*', pdf\?\.note \? `Source: \$\{pdf\.note\}` : ''/g) || []).length === 2
+  && !/\$\{row\.return_pdf_url\} — /.test(frr));
+const view = fs.readFileSync(path.join(root, 'src/components/reports/views/FiledReturnSummaryView.tsx'), 'utf8');
+check('the report view shows the source next to "View filed PDF"', /if \(note && width > 2\) out\[2\] = note;/.test(view) && /source\.replace\(\/\^source:\\s\*\/i, ''\)/.test(view));
+const pdfx = fs.readFileSync(path.join(root, 'src/utils/pdfExport.ts'), 'utf8');
+check('the Filing Status PDF export has a Source column, filled by the page', /'ARN', 'Source', 'Remarks'/.test(pdfx) && /base\.push\(record\.source \|\| '-'\)/.test(pdfx)
+  && /source: filingSourceText\(r, r\.manual_allowance_id/.test(page));
+const hub = fs.readFileSync(path.join(root, 'src/utils/extraLedgerReports.ts'), 'utf8');
+check('the Reports Hub Filing Status Report has a Source column', /headers: \['Client Name', 'GSTIN', 'Return Type', 'Status', 'Filed Date', 'Source'\]/.test(hub) && /fetchFilingSourceTexts\(records\)/.test(hub));
+const reply = fs.readFileSync(path.join(root, 'src/lib/reply/recipes/filing.ts'), 'utf8');
+check('reply evidence says when the tracker row was attached by hand', /fs\.source === 'manual'/.test(reply)
+  && /filed_source'\)\.eq\('client_id', clientId\)/.test(fs.readFileSync(path.join(root, 'src/lib/reply/load.ts'), 'utf8')));
+
+// Defect 11: the Unlock the page offers (canUnlockSheets) is the Unlock the database accepts.
+const mig = fs.readFileSync(path.join(root, 'supabase/migrations/20261021110000_filing_status_pull_only.sql'), 'utf8');
+const unlockFn = mig.slice(mig.indexOf('CREATE OR REPLACE FUNCTION public.filing_status_unlock('), mig.indexOf('CREATE OR REPLACE FUNCTION public.filing_status_unfile('));
+check('filing_status_unlock accepts an employee holding unlock_sheets, as canUnlockSheets does', /permission_key = 'unlock_sheets'/.test(unlockFn)
+  && /canUnlockSheets=\{canUnlockSheets\(\)\}/.test(page));
 
 // ── 3. Reading a PDF in the app (the extension's checker) ─────────────────
 const fx = (f) => new Blob([fs.readFileSync(path.join(root, 'extension/test/fixtures', f))], { type: 'application/pdf' });

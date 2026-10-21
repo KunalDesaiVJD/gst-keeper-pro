@@ -21,16 +21,22 @@ extension's `returnpdf` mode.
 | Portal pull | the extension (0.15.0+), started from Filing Status | `filing_record_pull` | `filed_source = 'portal'` |
 | Manual attach, returns pulled only | a staff member, under the superadmin's allowance | `filing_attach_manual` | `manual`, with `manual_allowance_id` |
 | Manual attach, returns with no pull yet | a staff member | `filing_attach_manual` | `manual` |
-| Unlock (GSTR-3B family) | GST Manager or superadmin | `filing_status_unlock` | keeps everything |
-| Take off Filed | superadmin, with a reason | `filing_status_unfile` | clears; the log keeps it |
+| Unlock (GSTR-3B family) | whoever the page offers it to (`canUnlockSheets`): GST Manager, superadmin, or an employee whose position holds `unlock_sheets` | `filing_status_unlock` | keeps everything |
+| Take off Filed | superadmin, with a reason | `filing_status_unfile` | clears; the log keeps it; a GSTR-3B row and its month's sheets are unlocked |
 | A pull conflict | superadmin | `filing_pull_conflict_decide` | `portal` when accepted |
 | Scheme change (inapplicable returns) | the `client_scheme_history` trigger | as before, logged | cleared |
 
 The trigger `trigger_filing_status_source` refuses every other write that makes a row Filed,
 takes it off Filed, or changes `arn`, `filed_date`, `return_pdf_url`, `filed_source`,
 `manual_allowance_id`, `pulled_at` or `pdf_note`, for every level (the app sends the acting
-user's id; `auth.uid()` is NULL), and refuses deleting a row that holds a filed return (except
-with its client). The routes above set a transaction-local `app.filing_source`, the pattern of
+user's id; `auth.uid()` is NULL). A row holding a filed return (Filed, or an ARN, filing date,
+PDF or source; an unlocked row too) stays on its client, period and return type on every route:
+moving one by a PATCH of `client_id`, `period_month` or `return_type` would file another month or
+client with its ARN (round 1 of the review moved a Filed August GSTR-3B into September, and
+destroyed one by moving it to a throwaway client and deleting that client). It is deleted only by
+the cascade of its client's deletion (`pg_trigger_depth() > 1` and the client gone), never by a
+DELETE of its own. A move of a row holding nothing filed is still allowed and is logged with
+`detail.moved_from`. The routes above set a transaction-local `app.filing_source`, the pattern of
 `filing_status_guard_pushed` / `filing_record_push`. Status changes between the working statuses,
 remarks, target dates, NIL, locks and the push marker are not touched.
 
@@ -62,6 +68,20 @@ which is wrong for CMP-08 (quarter) and ITC-04 (half-year). GSTR-6 and GSTR-7 ca
   `pdf_note` says why. Every blob the click produces is checked, so a summary that comes first is
   passed over. On the 1,467 return PDFs of 2026 it found the same ARN as PyMuPDF in all 1,435 that
   have one and all 28 summaries.
+- **Who asked.** A pull is recorded only for a staff member's request: the page sends who clicked
+  (`p_actor_id`, which must be staff) and its request id, the extension adds its version; all three
+  are in the log (`actor_id`, `detail.request_id`, `detail.ext_version`). This is a record, not a
+  proof: anyone with the anon key can still call `filing_record_pull` with a staff member's id and a
+  made-up ARN that fits the state and period (see §9).
+- **The PDF's address** must be this project's return-pdfs bucket, in the client's folder, ending
+  .pdf (`filing_pdf_url_ok`: `https://gcquafqxbykxkbexcdpy.supabase.co/storage/v1/object/public/return-pdfs/<client>/...`,
+  no `..`); another host, another client's folder or a `javascript:` address is never stored (the
+  pull is recorded without it, `pdf_note` says why; a manual attach is refused).
+- **A new file for every pull.** The checked PDF is stored as
+  `<client>/<MM-YYYY>/<type>-<ARN>-<pull time>.pdf` and uploaded without overwrite, so an older copy
+  of the extension (whose fixed name was `<type>-<ARN>.pdf`) cannot put another file under it, and
+  a pull of the same ARN gives a new address: the log's `old_pdf_url` keeps the file it replaced
+  (the 28 System generated summaries being repaired stay on record).
 - **One door.** `filing_record_pull` decides:
   - `filed`: the return is now Filed from the portal;
   - `refreshed`: the row already held this ARN (date and PDF refreshed; a pull without a checked
@@ -74,7 +94,11 @@ which is wrong for CMP-08 (quarter) and ITC-04 (half-year). GSTR-6 and GSTR-7 ca
 - **Outcomes reach the page** through the extension (`__gstkReturnPullProgress`,
   `__gstkReturnPullDone`) and the log (realtime, and a poll while a pull runs), so a closed page
   sees them after a reload. `filing_pull_report` logs the outcomes that wrote nothing
-  (`not_found`, `failed`, `gstr1a_seen`).
+  (`not_found`, `failed`, `gstr1a_seen`), and the returns a pull did not reach: a client whose
+  login was refused or whose session kept dropping, and every return left when the portal tab is
+  closed (`failed`, "Not pulled. ...", `detail.not_reached`), so the superadmin sees why a manual
+  allowance may be needed. A download that navigated instead of saving keeps the ARN and date
+  already read and records them without a PDF.
 - The old direct writers are gone: `markFiled` and `upsertFilingStatus` (background.js). The
   database refuses 0.14.0's upsert, and the app requires 0.15.0 (`MIN_EXTENSION_VERSION`).
 
@@ -107,9 +131,12 @@ Moved from the page to the database (`filing_status_after_write` → `filing_sta
 the pull gets them too and none runs twice:
 
 - the client's confirmation e-mail (`email_outbox`, the template `confirmation`, one per client,
-  return and period). Skipped when the client turned it off, has no e-mail, or the return was
+  return and period). Skipped when the client turned it off, has no e-mail, the return was
   filed more than 30 days ago (a pull of an old period records it without writing to the
-  client). The page asks `send-gst-email` to send at once; the 15-minute job is the backstop;
+  client), or the portal's filing date was not read (never a confirmation with a blank date, nor
+  one for an old period whose date could not be read). When a later pull reads the date, the
+  confirmation goes then, under the same rules. The page asks `send-gst-email` to send at once;
+  the 15-minute job is the backstop;
 - the advance set-off stamp: the latest approved override of the return (Filing Status's
   `FILING_STATUS:<type>` and the GSTR-1 / GSTR-3B page's) gets `filed_after_override` and the ARN;
 - GSTR-3B (Q): the month's sheets are locked (the row itself is locked by the guard).
@@ -121,8 +148,21 @@ trigger from `20261021100000` on.
 ## 6. Unlock, twins, the page
 
 - **Unlock** keeps the ARN, filing date and PDF (it used to wipe them: AMBER GUM 06/2026). The
-  row shows Not to File with "Unlocked: filed, ARN kept"; pulling it again (same ARN) files and
-  locks it again.
+  row shows Not to File with "Unlocked: filed, ARN kept"; pulling that row again (same ARN) files
+  and locks it again. "Pull filed returns" and a client's "all" leave such a row out, so a
+  correction is never re-filed and re-locked by someone else's bulk pull. **Take off Filed**
+  unlocks a GSTR-3B row and its month's sheets, so staff can work the return again.
+- **Direct filing (GSTR-1 / IFF from 09/2026, not pushed).** For every staff level the row's
+  Pull (no longer disabled) and paperclip open **Request approval: direct filing** (the words the
+  database's refusal names) instead of pulling or attaching. Once a request exists, the row shows
+  Awaiting superadmin or Rejected, on the GSTR-1 (IFF) tab as well. The superadmin approves; then
+  the pull or the allowed manual attach goes through. A return not pushed yet shows no badge (it is
+  usually still being prepared).
+- **Where it came from**, everywhere a filed return shows: the row ("Portal, pulled …", "manual
+  (allowed by X: reason)", "By hand before 21 Oct 2026"), the Filing Status PDF export and the
+  Reports Hub Filing Status Report (a Source column), the filed-return reports (the PDF link is
+  the bare address, its source beside it) and reply evidence (a tracker row attached by hand says
+  so).
 - **Scheme twins** (GSTR-1 / GSTR-1 (IFF), GSTR-3B / GSTR-3B (Q)): one return, one ARN. A pull
   lands on the twin holding the ARN, else on the type the sheet shows for the period
   (`filing_effective_return_type`). The other twin shows "Not applicable (filed as …)" and is not
@@ -147,10 +187,33 @@ filed return), 5 PDFs on rows not Filed, 82 filing dates that are not the ARN da
 fails the new check (CMP-08 09/2026 with period 09/2025). Most are fixed by pulling again with
 0.15.0 (same ARN: refreshed); a different ARN becomes a conflict for the superadmin.
 
-## 8. Tests
+## 8. Shared with the reco branch
+
+The block from `CREATE TABLE IF NOT EXISTS public.manual_source_allowances` to the `GRANT` on
+`manual_source_revoke` is byte for byte the same in this migration and in
+`20261021120000_reco_pull_push_gate.sql`: one table, one guard reading one setting
+(`app.manual_source_write`), `manual_source_allow` / `_revoke` returning the row, one internal
+`manual_source_take`. Either migration applies after the other; both drop the reco branch's first
+draft (`manual_source_allow` returning jsonb, `manual_source_use`) when a local database has it.
+`run.sh` checks both orders and, once both files are in the tree, that the two copies agree.
+
+## 9. What the anon key can still do
+
+The app has no auth session, so these are records, not locks: the anon key can call
+`filing_record_pull` with a staff member's id and a made-up ARN that fits the client's state and
+the period (it is logged, with the request id and extension version it was given), and the
+return-pdfs bucket lets anyone with the key upload and overwrite (storage policies "Anyone can
+upload / update return PDFs"; no delete). A checked PDF's name carries the pull's time, so it is
+not overwritten by accident or by an older extension; closing the bucket would also stop the
+notice and case-folder uploads, which overwrite on purpose.
+
+## 10. Tests
 
 - `supabase/tests/filing_pull/run.sh` (local PostgreSQL; the live trigger functions in
-  `00_stub.sql`; the migration applied twice; writes as `anon` with `request.jwt.claims`).
+  `00_stub.sql`; the migration applied twice; writes as `anon` with `request.jwt.claims`;
+  `test_71`..`test_74` are round 1: no moves, the PDF address and who asked, no e-mail without a
+  date, Unlock for `unlock_sheets` and Take off Filed unlocking; then the shared block in both
+  orders).
 - `extension/test/16-filed-return-pull.test.mjs` (fixtures `extension/test/fixtures/*.pdf`, made
   by `extension/test/_pdffixture.mjs`).
 - `node scripts/verify-filing-pull-only.mjs` (no direct writes in the app, the side effects left

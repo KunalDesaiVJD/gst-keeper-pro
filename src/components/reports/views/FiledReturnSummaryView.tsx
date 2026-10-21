@@ -160,6 +160,9 @@ const pdfRowCells = (cells: Row, width: number): Row => {
   if (url !== undefined && width > 1) {
     out[0] = label;
     out[1] = url;
+    // Where the PDF came from ("Source: manual (allowed by X: reason)"), in a
+    // cell of its own: the link stays the bare address.
+    if (note && width > 2) out[2] = note;
   } else {
     out[0] = url ?? `Filed return PDF: ${note || 'not captured yet'}`;
   }
@@ -313,6 +316,7 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
 
   const pdfRow = (row: ModelRow) => isUrlCell(row.cells[0]) || cellText(row.cells[0]).toLowerCase().startsWith('filed return pdf');
   const pdfUrl = (row: ModelRow) => row.cells.find((c): c is string => isUrlCell(c));
+  const pdfSource = (row: ModelRow) => row.cells.map(cellText).find((t) => /^source:/i.test(t));
 
   const renderCell = (row: ModelRow, col: number): React.ReactNode | undefined => {
     const text = row.cells[col];
@@ -322,8 +326,9 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
     }
     if (!pdfRow(row)) return undefined;
     const url = pdfUrl(row);
-    // The link is drawn as the button beside the words, not again in its own cell.
-    if (col !== 0) return url !== undefined && text === url ? <></> : undefined;
+    const source = pdfSource(row);
+    // The link and its source are drawn beside the words, not again in their own cells.
+    if (col !== 0) return url !== undefined && (text === url || (source !== undefined && cellText(text) === source)) ? <></> : undefined;
     return (
       <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="inline-flex items-center gap-1.5 font-medium not-italic text-foreground">
@@ -339,6 +344,11 @@ export const FiledReturnSummaryView: React.FC<FiledReturnSummaryViewProps> = ({ 
           </Button>
         ) : (
           <span>{cellText(text).replace(/^filed return pdf:\s*/i, '')}</span>
+        )}
+        {url !== undefined && source !== undefined && (
+          <Badge variant={/^source:\s*manual/i.test(source) ? 'warning' : 'outline'} className="px-1.5 text-[10px] font-medium">
+            {source.replace(/^source:\s*/i, '')}
+          </Badge>
         )}
       </span>
     );

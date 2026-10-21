@@ -10,7 +10,11 @@
 //  (iv)  everything goes through filing_record_pull, which answers filed /
 //        refreshed / conflict: the extension never writes filing_status
 //        itself, and it shows the answer (a conflict is not a success);
-//  (v)   the page hears each outcome, and every return asked for at the end.
+//  (v)   the page hears each outcome, and every return asked for at the end;
+//        returns not reached (the session kept dropping, the tab closed) are
+//        logged in GST Keeper too (round 1);
+//  (vi)  a checked PDF gets a new name on every pull and is uploaded without
+//        overwrite, so no other copy can replace it (round 1).
 // The REAL filedpdf.js, background.js, db.js and content.js in Node VM
 // contexts, with a stubbed chrome.*, a fake database and a fake portal.
 // Fixture PDFs: test/fixtures (fictional, made by test/_pdffixture.mjs the
@@ -81,7 +85,8 @@ ok(!H.efiledRowMatches(row(['GSTR1A', '2026-27', 'September', 'AA240926000001Z',
 ok(!H.efiledRowMatches(row(['GSTR1', '2026-27', 'August', 'AA240826123456X', '10/09/2026']), want1), 'another month\'s row does not');
 ok(!H.efiledRowMatches(row(['GSTR1', '2025-26', 'September', 'AA240925123456X', '10/10/2025']), want1), 'another year\'s row does not');
 ok(!H.efiledRowMatches(row(['GSTR1', '2026-27', 'September', 'NOT-AN-ARN', '10/10/2026']), want1), 'a row without an ARN does not');
-ok(H.filedPdfPath('c1', { return_type: 'GSTR-3B', period_month: '09/2026' }, 'AB240926123456X') === 'c1/09-2026/GSTR-3B-AB240926123456X.pdf', 'PDF path as before');
+ok(H.filedPdfPath('c1', { return_type: 'GSTR-3B', period_month: '09/2026' }, 'AB240926123456X', 1761030000000) === 'c1/09-2026/GSTR-3B-AB240926123456X-1761030000000.pdf',
+  '(vi) the PDF path carries the pull\'s time, so every pull has its own file');
 
 // ── The fake database (background.js) ─────────────────────────────────────
 const calls = [];
@@ -90,7 +95,7 @@ async function dbFetch(url, init = {}) {
   const u = String(url);
   const method = init.method || 'GET';
   const body = init.body && typeof init.body === 'string' ? JSON.parse(init.body) : init.body || null;
-  calls.push({ method, url: u, body });
+  calls.push({ method, url: u, body, headers: init.headers || {} });
   if (u.startsWith(DB + '/rest/v1/clients?id=eq.c1') && method === 'GET') {
     return new Response(JSON.stringify([{ id: 'c1', name: 'FICTIONAL FABRICS', gstin: '24ABCDE1234F1Z5', gst_user_id: 'u', selected_returns: [] }]), { status: 200 });
   }
@@ -120,6 +125,7 @@ const local = {
   remove: async (k) => { for (const key of (Array.isArray(k) ? k : [k])) delete storage[key]; },
 };
 let tabsCreated = 0;
+let tabRemoved = null;
 const chromeFor = (tabId) => ({
   storage: { local, onChanged: { addListener() {}, removeListener() {} } },
   runtime: {
@@ -130,7 +136,7 @@ const chromeFor = (tabId) => ({
   },
   alarms: { create() {}, clear() {}, onAlarm: { addListener() {} } },
   notifications: { create() {}, onClicked: { addListener() {} } },
-  tabs: { create: async () => { tabsCreated++; return { id: 1 }; }, update: async () => ({ id: 1, windowId: 1 }), onRemoved: { addListener() {} } },
+  tabs: { create: async () => { tabsCreated++; return { id: 1 }; }, update: async () => ({ id: 1, windowId: 1 }), onRemoved: { addListener: (fn) => { tabRemoved = fn; } } },
   windows: { update: async () => ({}) },
   declarativeNetRequest: { updateDynamicRules: async () => {} },
 });
@@ -292,9 +298,10 @@ calls.length = 0;
 doc = await runPage(VIEW1, { view: { kind: '1', blobs: [dataUrl(fixture('filed-gstr1a.pdf')), dataUrl(fixture('filed-gstr1.pdf'))] } });
 let up = calls.filter((c) => c.url.startsWith(DB + '/storage/v1/object/return-pdfs/'));
 let rec = rpcCalls('filing_record_pull');
-ok(up.length === 1 && up[0].url.endsWith('c1/09-2026/GSTR-1-AA240926123456X.pdf'), '(i)(ii) only the GSTR-1 PDF is uploaded', up.map((c) => c.url));
+ok(up.length === 1 && /c1\/09-2026\/GSTR-1-AA240926123456X-\d{13}\.pdf$/.test(up[0].url), '(i)(ii) only the GSTR-1 PDF is uploaded', up.map((c) => c.url));
+ok(up.length === 1 && up[0].headers['x-upsert'] === 'false', '(vi) uploaded without overwrite', up[0] && up[0].headers);
 ok(rec.length === 1 && rec[0].p_arn === 'AA240926123456X' && rec[0].p_return_type === 'GSTR-1' && rec[0].p_filed_date === '2026-10-10'
-  && /return-pdfs\/c1\/09-2026\/GSTR-1-AA240926123456X\.pdf$/.test(rec[0].p_pdf_url) && rec[0].p_pdf_note === null && rec[0].p_actor_id === 'u-staff',
+  && /return-pdfs\/c1\/09-2026\/GSTR-1-AA240926123456X-\d{13}\.pdf$/.test(rec[0].p_pdf_url) && rec[0].p_pdf_note === null && rec[0].p_actor_id === 'u-staff',
   '(iv) recorded through filing_record_pull with the ARN, the portal\'s date, the checked PDF and who asked', rec[0]);
 j = storage.gstk_active_job;
 ok(j && j.retIdx === 1 && j.step === 'efiledpdf' && lastHref === EFILED, 'then the client\'s next return (GSTR-3B) on e-Filed Returns, no new login', j && { retIdx: j.retIdx, step: j.step });
@@ -313,7 +320,7 @@ doc = await runPage(VIEW3B, { view: { kind: '3b', blobs: [dataUrl(fixture('syste
 up = calls.filter((c) => c.url.startsWith(DB + '/storage/v1/object/return-pdfs/'));
 rec = rpcCalls('filing_record_pull');
 ok(doc.clicks.includes('close-popup') && doc.clicks.includes('download'), 'the summary popup is closed and the filed return\'s button pressed', doc.clicks);
-ok(up.length === 1 && up[0].url.endsWith('c1/09-2026/GSTR-3B-AB240926123456X.pdf'), '(i) the summary is passed over; the filed GSTR-3B is the one stored', up.map((c) => c.url));
+ok(up.length === 1 && /c1\/09-2026\/GSTR-3B-AB240926123456X-\d{13}\.pdf$/.test(up[0].url) && up[0].headers['x-upsert'] === 'false', '(i) the summary is passed over; the filed GSTR-3B is the one stored', up.map((c) => c.url));
 ok(rec.length === 1 && rec[0].p_pdf_note === null && rec[0].p_filed_date === '2026-10-18', '(i) recorded with the checked PDF', rec[0]);
 ok(/1 filed, 1 conflict/.test(doc.banner()) && !/✓/.test(doc.banner()), '(iv) the end says a conflict happened, not a plain success', doc.banner());
 ok(storage.gstk_return_pull_progress && storage.gstk_return_pull_progress.outcome === 'conflict' && storage.gstk_return_pull_progress.requestId === 'req-1',
@@ -355,6 +362,50 @@ doc = await runPage(EFILED, { efiled: { options: OPTIONS, rows: [['GSTR1A', '202
 const nf = rpcCalls('filing_pull_report').find((b) => b.p_outcome === 'not_found');
 ok(nf && /No filed GSTR-1 for 09\/2026 on the portal \(the list showed GSTR1A\)/.test(nf.p_message), '(ii) only a GSTR-1A on the list: the GSTR-1 is not found, never the 1A taken', nf);
 ok(rpcCalls('filing_record_pull').length === 0, 'nothing recorded for it');
+
+// 10. Round 1: the download navigated (the tab came back to e-Filed Returns
+//     with pdfClicked set): the ARN and date already read are recorded,
+//     without a PDF and with the reason, not a bare "failed".
+reset();
+storage.gstk_active_job = { mode: 'returnpdf', idx: 0, retIdx: 0, step: 'efiledpdf', startedAt: Date.now(), lastActivityAt: Date.now(), tabId: 1,
+  periodIdx: 0, period: '09/2026', pdfClicked: true, actorId: 'u-staff', requestId: 'req-10',
+  clients: [{ clientId: 'c1', creds: { user: 'u', name: 'FICTIONAL FABRICS' }, rets: [{ return_type: 'GSTR-3B', period_month: '09/2026' }] }],
+  ret: { return_type: 'GSTR-3B', period_month: '09/2026', arn: 'AB240926123456X', filedDate: '2026-10-18', dateFrom: 'efiled row' }, retResults: [] };
+doc = await runPage(EFILED, { efiled: { options: OPTIONS, rows: [] } }, formdetails({}));
+rec = rpcCalls('filing_record_pull');
+ok(rec.length === 1 && rec[0].p_arn === 'AB240926123456X' && rec[0].p_filed_date === '2026-10-18' && rec[0].p_pdf_url === null
+  && /opened a page instead of a file/.test(rec[0].p_pdf_note), '(iii) a download that navigated keeps the ARN and date read, records no PDF and says why', rec[0]);
+ok(!rpcCalls('filing_pull_report').some((b) => b.p_outcome === 'failed'), 'not reported as failed');
+
+// 11. Round 1: the session kept dropping (third bounce to the login page):
+//     each of the client's returns not reached is logged in GST Keeper as
+//     failed, with the reason, and the page hears them as not reached.
+reset();
+storage.gstk_active_job = { mode: 'returnpdf', idx: 0, retIdx: 0, step: 'efiledpdf', startedAt: Date.now(), lastActivityAt: Date.now(), tabId: 1,
+  periodIdx: 0, period: '09/2026', retries: 2, actorId: 'u-staff', requestId: 'req-11',
+  clients: [{ clientId: 'c1', creds: { user: 'u', name: 'FICTIONAL FABRICS' }, rets: [{ return_type: 'GSTR-1', period_month: '09/2026' }, { return_type: 'GSTR-3B', period_month: '09/2026' }] }],
+  retResults: [] };
+doc = await runPage('https://services.gst.gov.in/services/login', {});
+let missed = rpcCalls('filing_pull_report').filter((b) => b.p_outcome === 'failed');
+ok(missed.length === 2 && missed.every((b) => b.p_client_id === 'c1' && /^Not pulled\. Session kept dropping for FICTIONAL FABRICS\.$/.test(b.p_message)
+  && b.p_actor_id === 'u-staff' && b.p_detail.request_id === 'req-11' && b.p_detail.not_reached === true),
+  '(v) both returns not reached are logged in GST Keeper with the reason', missed);
+ok(storage.gstk_return_pull_result && storage.gstk_return_pull_result.results.map((r) => r.return_type + ':' + r.outcome).join() === 'GSTR-1:not_reached,GSTR-3B:not_reached',
+  '(v) and the page hears them as not reached', storage.gstk_return_pull_result);
+
+// 12. Round 1: the portal tab closed with one return done: the other is
+//     logged in GST Keeper as well.
+reset();
+storage.gstk_active_job = { mode: 'returnpdf', idx: 0, retIdx: 1, step: 'efiledpdf', startedAt: Date.now(), lastActivityAt: Date.now(), tabId: 1,
+  periodIdx: 0, period: '09/2026', actorId: 'u-staff', requestId: 'req-12',
+  clients: [{ clientId: 'c1', creds: { user: 'u', name: 'FICTIONAL FABRICS' }, rets: [{ return_type: 'GSTR-1', period_month: '09/2026' }, { return_type: 'GSTR-3B', period_month: '09/2026' }] }],
+  retResults: [{ clientId: 'c1', return_type: 'GSTR-1', period_month: '09/2026', outcome: 'filed', message: '' }] };
+tabRemoved(1);
+await new Promise((r) => setTimeout(r, 100));
+missed = rpcCalls('filing_pull_report').filter((b) => b.p_outcome === 'failed');
+ok(missed.length === 1 && missed[0].p_return_type === 'GSTR-3B' && /tab was closed/.test(missed[0].p_message) && missed[0].p_detail.request_id === 'req-12',
+  '(v) a closed tab: the return not pulled is logged in GST Keeper', missed);
+ok(!storage.gstk_active_job && storage.gstk_return_pull_result && storage.gstk_return_pull_result.tabClosed, 'the job ends and the page hears it');
 
 // 9. The extension never writes filing_status itself.
 ok(!calls.some((c) => /\/rest\/v1\/filing_status/.test(c.url)), '(iv) no direct filing_status write anywhere');

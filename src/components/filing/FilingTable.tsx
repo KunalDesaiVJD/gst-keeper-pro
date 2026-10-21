@@ -12,7 +12,7 @@ import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR } from '@/components/works
 import { cn } from '@/lib/utils';
 import ClientHoverDetails from '@/components/filing/ClientHoverDetails';
 import { FilingStatusType, filingStatusDisplayLabel } from '@/types';
-import { hasPortalPull, isPullOnly, outcomeWords, type FilingLogRow } from '@/lib/filingPull';
+import { filingSourceText, hasPortalPull, isPullOnly, outcomeWords, type FilingLogRow } from '@/lib/filingPull';
 import type { ManualSourceAllowance } from '@/lib/manualSourceAllowances';
 
 export interface FilingRecord {
@@ -160,15 +160,12 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
         </span>
       );
     }
-    if (record.filed_source === 'manual') {
-      const a = ctx.usedAllowance;
-      const text = a
-        ? `manual (allowed by ${p.userNames[a.allowed_by] || 'the superadmin'}: ${a.reason})`
-        : isPullOnly(record.return_type) ? 'manual' : `manual (no portal pull for ${record.return_type} yet)`;
+    const text = filingSourceText(record, ctx.usedAllowance, p.userNames);
+    if (record.filed_source === 'manual' && text) {
       return <Badge variant="warning" className="max-w-full truncate px-1.5 text-[10px] font-medium" title={text}>{text}</Badge>;
     }
-    if (record.status === 'Filed' || record.arn) {
-      return <span className="text-[10px] leading-tight text-muted-foreground" title="Recorded before 21 Oct 2026, when Filed was still marked by hand">Entered by hand before 21 Oct 2026</span>;
+    if (text) {
+      return <span className="text-[10px] leading-tight text-muted-foreground" title="Recorded before 21 Oct 2026, when Filed was still marked by hand">{text}</span>;
     }
     return null;
   };
@@ -340,7 +337,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
             const pullTitle = !p.extReady
               ? 'GST Keeper extension not detected yet: install or enable it and reload this page'
               : p.extOutdated ? 'Update the GST Keeper extension to 0.15.0 or later to pull filed returns'
-                : ctx.pullBlocked ? `Pull is held back: this ${record.return_type} was not pushed through GST Keeper. A superadmin-approved direct-filing request comes first.`
+                : ctx.pullBlocked ? `Pull is held back: this ${record.return_type} was not pushed through GST Keeper. Click to Request approval of the direct filing from the superadmin first.`
                   : isFiled ? 'Pull again from the GST portal: the same ARN refreshes the date and PDF; a different ARN goes to the superadmin'
                     : 'Pull the filed return from the GST portal: its ARN, filing date and PDF';
             return (
@@ -445,7 +442,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                       Unlocked: filed, ARN kept
                     </p>
                   )}
-                  {returnType === 'GSTR-1' && p.directFilingBadge(record)}
+                  {p.directFilingBadge(record)}
                 </td>
                 <td className={WS_TD}>
                   <div className="flex min-w-0 flex-col gap-0.5">
@@ -477,7 +474,7 @@ const FilingTable: React.FC<FilingTableProps> = (p) => {
                         <button
                           type="button"
                           onClick={() => p.onPull(record)}
-                          disabled={ctx.pulling || ctx.pullBlocked && !p.isSuperadmin}
+                          disabled={ctx.pulling}
                           className={cn('inline-flex items-center gap-1 text-xs disabled:cursor-not-allowed disabled:opacity-50',
                             p.extReady && !p.extOutdated && !ctx.pullBlocked ? 'text-primary hover:text-primary/80' : 'text-muted-foreground hover:text-foreground')}
                           title={pullTitle}

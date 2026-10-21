@@ -23,6 +23,7 @@ CREATE TYPE public.filing_status_type AS ENUM ('Prepared', 'Data Pending', 'Mism
 
 CREATE TABLE public.profiles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL UNIQUE, first_name text NOT NULL);
 CREATE TABLE public.user_roles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL, role public.app_role NOT NULL, UNIQUE (user_id, role));
+CREATE TABLE public.user_permissions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL, permission_key text NOT NULL, granted_by uuid, granted_at timestamptz DEFAULT now());
 CREATE TABLE public.clients (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   gstin text NOT NULL,
@@ -105,7 +106,7 @@ CREATE TABLE public.gst_filed_returns (
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['profiles','user_roles','clients','client_scheme_history','filing_status','bills_not_in_2b',
+  FOREACH t IN ARRAY ARRAY['profiles','user_roles','user_permissions','clients','client_scheme_history','filing_status','bills_not_in_2b',
     'bills_not_in_books','itc_summaries','email_templates','client_reminder_settings','email_outbox',
     'advance_setoff_overrides','gstr1_direct_filing_approvals','gst_filed_returns'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
@@ -544,11 +545,17 @@ GRANT EXECUTE ON FUNCTION public.t_eq(anyelement, anyelement, text), public.t_ra
 INSERT INTO public.profiles (user_id, first_name) VALUES
   ('00000000-0000-0000-0000-00000000000a', 'Asha'),      -- superadmin
   ('00000000-0000-0000-0000-00000000000b', 'Bharat'),    -- GST Manager
-  ('00000000-0000-0000-0000-00000000000c', 'Chetan');    -- employee
+  ('00000000-0000-0000-0000-00000000000c', 'Chetan'),    -- employee
+  ('00000000-0000-0000-0000-00000000000d', 'Divya');     -- employee whose position holds unlock_sheets
 INSERT INTO public.user_roles (user_id, role) VALUES
   ('00000000-0000-0000-0000-00000000000a', 'superadmin'),
   ('00000000-0000-0000-0000-00000000000b', 'gst_manager'),
-  ('00000000-0000-0000-0000-00000000000c', 'employee');
+  ('00000000-0000-0000-0000-00000000000c', 'employee'),
+  ('00000000-0000-0000-0000-00000000000d', 'employee');
+INSERT INTO public.user_permissions (user_id, permission_key) VALUES
+  ('00000000-0000-0000-0000-00000000000c', 'edit_filing_status'),
+  ('00000000-0000-0000-0000-00000000000d', 'edit_filing_status'),
+  ('00000000-0000-0000-0000-00000000000d', 'unlock_sheets');
 INSERT INTO public.clients (id, gstin, name, registration_type, email, selected_returns) VALUES
   ('11111111-1111-1111-1111-111111111111', '24ABCDE1234F1Z5', 'FICTIONAL FABRICS', 'Regular', 'owner@fabrics.example', '{GSTR-1,GSTR-3B}'),
   ('22222222-2222-2222-2222-222222222222', '24PQRSX5678K1Z2', 'IMAGINARY IMPEX', 'IFF', 'desk@impex.example', '{GSTR-1 (IFF),GSTR-3B (Q)}'),

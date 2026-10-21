@@ -514,6 +514,10 @@
       location.href = job.mode === 'gstr9_pull' ? 'https://return.gst.gov.in/returns2/auth/annualreturn' : 'https://return.gst.gov.in/returns/auth/dashboard';
       return;
     }
+    // 0.15.0: returns of this client the pull did not reach (a refused
+    // password, a session that kept dropping) are logged in GST Keeper as
+    // well, so Filing Status shows why after a reload.
+    if (job.mode === 'returnpdf') await reportUnreached(job, job.clients[job.idx], bannerWords());
     job.idx++;
     // 0.15.0: a filed-return pull starts each client at its first return.
     job.retIdx = 0;
@@ -1216,9 +1220,13 @@
     if (p && !p.includes(MONTHS[mm - 1])) return false;
     return /^[A-Z]{2}[0-9]{6}[A-Z0-9]{7}$/.test(info.arn);
   }
-  // Where a pulled return's PDF is stored (as since 0.3).
-  function filedPdfPath(clientId, ret, arn) {
-    return clientId + '/' + String(ret.period_month).replace('/', '-') + '/' + ret.return_type + '-' + arn + '.pdf';
+  // Where a pulled return's checked PDF is stored. 0.15.0: a new name for
+  // every pull (the pull's time on the end), uploaded without overwrite, so
+  // an older copy of the extension cannot put another file under a checked
+  // one's name, and a pull of the same ARN gives a new address that the log
+  // keeps next to the old one.
+  function filedPdfPath(clientId, ret, arn, stamp) {
+    return clientId + '/' + String(ret.period_month).replace('/', '-') + '/' + ret.return_type + '-' + arn + '-' + stamp + '.pdf';
   }
   // ── end of filed-return pull helpers ──────────────────────────────────
 
@@ -1272,6 +1280,23 @@
     job.retIdx = 0;
     delete job.pdfClicked; delete job.viewClicked; delete job.summaryClicked; delete job.ret;
     await advance(job);
+  }
+
+  // The client's returns this pull did not reach (its login was refused,
+  // the session kept dropping): logged in GST Keeper as failed, with the
+  // reason, and kept for the page as not reached.
+  async function reportUnreached(job, cur, why) {
+    if (!cur) return;
+    const done = new Set((job.retResults || []).filter((r) => r.clientId === cur.clientId).map((r) => r.return_type + '|' + r.period_month));
+    for (const r of cur.rets || []) {
+      if (done.has(r.return_type + '|' + r.period_month)) continue;
+      const message = 'Not pulled. ' + (why || 'The portal login for this client did not complete') + '.';
+      try {
+        await GSTKdb.reportFiledPull({ clientId: cur.clientId, returnType: r.return_type, periodMonth: r.period_month, outcome: 'failed', message,
+          actorId: job.actorId || null, detail: { ext_version: EXT_VERSION, request_id: job.requestId || null, not_reached: true } });
+      } catch (e) { /* the page still hears it */ }
+      job.retResults = (job.retResults || []).concat([{ clientId: cur.clientId, return_type: r.return_type, period_month: r.period_month, outcome: 'not_reached', message }]);
+    }
   }
 
   // Every return asked for, with its outcome (one not reached: the login
@@ -1334,7 +1359,7 @@
     let pdf = { url: null, note: captured.reason || null, form: captured.check && captured.check.form, arnDate: captured.check && captured.check.arnDate };
     if (captured.dataUrl) {
       try {
-        pdf.url = await GSTKdb.uploadPdf(filedPdfPath(cur.clientId, ret, ret.arn), captured.dataUrl);
+        pdf.url = await GSTKdb.uploadPdf(filedPdfPath(cur.clientId, ret, ret.arn, Date.now()), captured.dataUrl, { upsert: false });
         pdf.note = null;
       } catch (e) {
         pdf = { url: null, note: 'The checked PDF could not be uploaded (' + ((e && e.message) || e) + ').' };
@@ -1353,7 +1378,9 @@
   // only when it is that return and shows that ARN, then records it all
   // through filing_record_pull. 0.15.0.
   async function handleReturnPdf(job, cur) {
-    const ret = currentRet(job, cur);
+    // The ARN and date already read (job.ret) survive a download that
+    // navigated and brought the tab back here, as in handleReturnView.
+    const ret = Object.assign({}, currentRet(job, cur), job.ret || {});
     if (!/efiledReturns/.test(url)) { location.href = 'https://return.gst.gov.in/returns/auth/efiledReturns'; return; }
     // If we already clicked the download once and bounced back here, the link
     // opened a viewer/page instead of downloading a file — no loop.

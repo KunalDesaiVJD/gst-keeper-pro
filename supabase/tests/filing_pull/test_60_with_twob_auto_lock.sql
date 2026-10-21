@@ -48,12 +48,12 @@ SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
 
 -- GSTR-3B (Q), no portal date: Filed, carried once, date blank.
 SELECT t_eq((public.filing_record_pull('22222222-2222-2222-2222-222222222222', 'GSTR-3B (Q)', '09/2026', 'AB240926222222X', NULL,
-  NULL, 'No PDF came with the pull.'))->>'outcome', 'filed', 'filed');
+  NULL, 'No PDF came with the pull.', p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'outcome', 'filed', 'filed');
 SELECT t_eq((SELECT count(*)::int FROM public.t_carry_calls), 1, 'carried once');
 SELECT t_eq((SELECT filed_date FROM public.filing_status WHERE client_id = '22222222-2222-2222-2222-222222222222' AND period_month = '09/2026'),
   NULL::date, 'no CURRENT_DATE from auto_lock_on_filed');
 -- Refreshed: no second carry.
-SELECT t_eq((public.filing_record_pull('22222222-2222-2222-2222-222222222222', 'GSTR-3B (Q)', '09/2026', 'AB240926222222X', current_date - 1))->>'outcome',
+SELECT t_eq((public.filing_record_pull('22222222-2222-2222-2222-222222222222', 'GSTR-3B (Q)', '09/2026', 'AB240926222222X', current_date - 1, p_actor_id => '00000000-0000-0000-0000-00000000000c'))->>'outcome',
   'refreshed', 'refreshed');
 SELECT t_eq((SELECT count(*)::int FROM public.t_carry_calls), 1, 'still carried once');
 SELECT t_eq((SELECT filed_date FROM public.filing_status WHERE client_id = '22222222-2222-2222-2222-222222222222' AND period_month = '09/2026'),

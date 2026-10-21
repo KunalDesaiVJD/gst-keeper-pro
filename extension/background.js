@@ -608,7 +608,9 @@ const API = {
   // Folder capture), multiplying how often a single slow/stuck request can
   // occur. Confirmed live 2026-08-27: a real sync hung 20+ minutes with no
   // progress and no error, on exactly this class of unbounded fetch.
-  uploadPdf: async (path, dataUrl) => {
+  // opts.upsert === false (0.15.0, a filed return's checked PDF): never put
+  // over an existing file; every other caller keeps overwriting as before.
+  uploadPdf: async (path, dataUrl, opts) => {
     const b64 = String(dataUrl).split(',')[1] || '';
     const bin = atob(b64);
     const bytes = new Uint8Array(bin.length);
@@ -620,7 +622,7 @@ const API = {
         method: 'POST',
         headers: {
           apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
-          'Content-Type': 'application/pdf', 'x-upsert': 'true',
+          'Content-Type': 'application/pdf', 'x-upsert': opts && opts.upsert === false ? 'false' : 'true',
         },
         body: bytes,
         signal: controller.signal,
@@ -1868,7 +1870,13 @@ async function pushTabClosed(tabId) {
     for (const c of job.clients || []) {
       for (const r of c.rets || []) {
         const x = { clientId: c.clientId, return_type: r.return_type, period_month: r.period_month };
-        if (!seen.has(k(x))) results.push({ ...x, outcome: 'not_reached', message: 'The portal tab was closed before this return was pulled.' });
+        if (!seen.has(k(x))) {
+          results.push({ ...x, outcome: 'not_reached', message: 'The portal tab was closed before this return was pulled.' });
+          // Logged in GST Keeper too, so Filing Status shows it after a reload.
+          await API.reportFiledPull({ clientId: c.clientId, returnType: r.return_type, periodMonth: r.period_month, outcome: 'failed',
+            message: 'Not pulled: the portal tab was closed before this return was pulled.', actorId: job.actorId || null,
+            detail: { ext_version: EXT_VERSION, request_id: job.requestId || null, not_reached: true } });
+        }
       }
     }
     await chrome.storage.local.set({ gstk_return_pull_result: { requestId: job.requestId || null, at: Date.now(), tabClosed: true, results } });

@@ -202,6 +202,8 @@ export interface FilingStatusRecord {
   month: string; // MM/YYYY
   isLocked: boolean;
   arn?: string | null;
+  /** Where the filed return came from: "Portal", "manual (allowed by X: reason)", "By hand before 21 Oct 2026". */
+  source?: string;
 }
 
 // Dashboard Metrics

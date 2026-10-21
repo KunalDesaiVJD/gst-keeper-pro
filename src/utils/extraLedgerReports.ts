@@ -4,6 +4,7 @@
 // Utilized, Client Master).
 
 import { supabase } from '@/integrations/supabase/client';
+import { fetchFilingSourceTexts } from '@/lib/filingPull';
 import type { ReportTable } from './allClientsReports';
 import { fyMonthsForKey, formatMonthLabel } from './allClientsReports';
 import type { Gstr3bSummary, TypedAmt } from './filedReturnReports';
@@ -168,11 +169,15 @@ export const buildRcmLedgerPerClient = async (clientId: string, anyMonthInFy: st
 export const buildFilingStatusReport = async (month: string): Promise<ReportTable> => {
   const [clientsRes, filingRes] = await Promise.all([
     supabase.from('clients').select('id, name, gstin').order('name'),
-    supabase.from('filing_status').select('client_id, return_type, status, filed_date').eq('period_month', month),
+    supabase.from('filing_status').select('id, client_id, return_type, status, filed_date, arn, filed_source, manual_allowance_id').eq('period_month', month),
   ]);
   const clients: ClientLite[] = (clientsRes.data || []) as any;
-  const filingByClient = new Map<string, { return_type: string; status: string; filed_date: string | null }[]>();
-  (filingRes.data || []).forEach((r: any) => {
+  type Rec = { id: string; client_id: string; return_type: string; status: string; filed_date: string | null; arn: string | null; filed_source: string | null; manual_allowance_id: string | null };
+  const records: Rec[] = (filingRes.data || []) as any;
+  // Where each filed return came from: Portal, manual (allowed by X: reason), ...
+  const sources = await fetchFilingSourceTexts(records);
+  const filingByClient = new Map<string, Rec[]>();
+  records.forEach((r) => {
     const arr = filingByClient.get(r.client_id) || [];
     arr.push(r);
     filingByClient.set(r.client_id, arr);
@@ -182,21 +187,21 @@ export const buildFilingStatusReport = async (month: string): Promise<ReportTabl
   clients.forEach((client) => {
     const records = filingByClient.get(client.id) || [];
     if (records.length === 0) {
-      rows.push([client.name, client.gstin || '—', '—', 'No filing record', '—']);
+      rows.push([client.name, client.gstin || '—', '—', 'No filing record', '—', '—']);
       return;
     }
     records
       .sort((a, b) => a.return_type.localeCompare(b.return_type))
-      .forEach((r) => rows.push([client.name, client.gstin || '—', r.return_type, r.status || '—', r.filed_date || '—']));
+      .forEach((r) => rows.push([client.name, client.gstin || '—', r.return_type, r.status || '—', r.filed_date || '—', sources.get(r.id) || '—']));
   });
 
   return {
     title: 'Filing Status Report',
     subtitle: `Month: ${formatMonthLabel(month)}   |   One row per client per return type`,
-    headers: ['Client Name', 'GSTIN', 'Return Type', 'Status', 'Filed Date'],
+    headers: ['Client Name', 'GSTIN', 'Return Type', 'Status', 'Filed Date', 'Source'],
     rows,
     fileNameBase: `Filing_Status_Report_${month.replace('/', '-')}`,
-    columnWidths: [35, 18, 14, 18, 14],
+    columnWidths: [35, 18, 14, 18, 14, 30],
   };
 };
 

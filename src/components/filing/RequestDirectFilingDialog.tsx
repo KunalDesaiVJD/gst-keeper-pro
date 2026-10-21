@@ -92,7 +92,7 @@ const RequestDirectFilingDialog: React.FC<{
     <Dialog open onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle className="text-base">Direct-filing approval needed</DialogTitle>
+          <DialogTitle className="text-base">Request approval: direct filing</DialogTitle>
           <DialogDescription className="text-xs">
             {target.clientName} · {target.returnType} · {target.periodMonth}
           </DialogDescription>

@@ -7,6 +7,7 @@
 // yet (CMP-08, GSTR-6, GSTR-7, ITC-04). A database trigger refuses every
 // direct write, so these are the app's only writers of those columns.
 import { supabase } from '@/integrations/supabase/client';
+import { allowanceBadgeText, type ManualSourceAllowance } from '@/lib/manualSourceAllowances';
 
 /** Returns that are pulled only (filing_pull_only in the database). */
 export const PULL_ONLY_RETURN_TYPES = ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)', 'GSTR-1A'] as const;
@@ -47,6 +48,68 @@ export function arnProblem(gstin: string | null | undefined, returnType: string,
     return `ARN ${arn} is for the tax period ${arn.slice(4, 6)}/20${arn.slice(6, 8)}, not ${periodMonth}.`;
   }
   return null;
+}
+
+/**
+ * A row unlocked for correction (filing_status_unlock): not Filed, its ARN
+ * kept. Its own Pull files it again; a bulk or per-client pull leaves it out,
+ * so a correction is never re-locked behind the staff's back.
+ */
+export const isUnlockedFiled = (r: { status: string | null; arn: string | null }) => r.status !== 'Filed' && !!r.arn;
+
+/** What "Pull filed returns" asks for: not unlocked for correction, and not Filed, or Filed without a checked PDF or the portal's date. */
+export const wantedInBulkPull = (r: { status: string | null; arn: string | null; return_pdf_url: string | null; filed_date: string | null }) =>
+  !isUnlockedFiled(r) && (r.status !== 'Filed' || !r.return_pdf_url || !r.filed_date);
+
+/** What a client's "all" asks for: every return but one unlocked for correction. */
+export const wantedInClientPull = (r: { status: string | null; arn: string | null }) => !isUnlockedFiled(r);
+
+/**
+ * Where a filed return came from, in words, wherever it is shown or exported:
+ * "Portal", "manual (allowed by Asha: portal down)", "manual (no portal pull
+ * for CMP-08 yet)", or "By hand before 21 Oct 2026" for rows recorded before
+ * the pull-only rule. null for a row holding no filed return.
+ */
+export function filingSourceText(
+  r: { status: string | null; arn: string | null; return_type: string; filed_source?: string | null },
+  allowance: Pick<ManualSourceAllowance, 'allowed_by' | 'reason'> | null | undefined,
+  names: Record<string, string>,
+): string | null {
+  if (r.filed_source === 'portal') return 'Portal';
+  if (r.filed_source === 'manual') {
+    if (allowance) return allowanceBadgeText(allowance, names);
+    return isPullOnly(r.return_type) ? 'manual' : `manual (no portal pull for ${r.return_type} yet)`;
+  }
+  if (r.status === 'Filed' || r.arn) return 'By hand before 21 Oct 2026';
+  return null;
+}
+
+/**
+ * The words above for a set of rows, keyed by row id: reads the allowances
+ * the manual rows were attached under and who gave them (two small queries,
+ * only when there is a manual row).
+ */
+export async function fetchFilingSourceTexts(
+  rows: { id: string; status: string | null; arn: string | null; return_type: string; filed_source?: string | null; manual_allowance_id?: string | null }[],
+): Promise<Map<string, string>> {
+  const ids = [...new Set(rows.map((r) => r.manual_allowance_id).filter((x): x is string => !!x))];
+  const allowances = new Map<string, { allowed_by: string; reason: string }>();
+  const names: Record<string, string> = {};
+  if (ids.length) {
+    const { data } = await supabase.from('manual_source_allowances' as never).select('id, allowed_by, reason').in('id', ids);
+    for (const a of (data as unknown as { id: string; allowed_by: string; reason: string }[]) || []) allowances.set(a.id, a);
+    const who = [...new Set([...allowances.values()].map((a) => a.allowed_by))];
+    if (who.length) {
+      const { data: people } = await supabase.from('profiles').select('user_id, first_name').in('user_id', who);
+      for (const p of (people as { user_id: string; first_name: string | null }[]) || []) if (p.first_name) names[p.user_id] = p.first_name;
+    }
+  }
+  const out = new Map<string, string>();
+  for (const r of rows) {
+    const t = filingSourceText(r, r.manual_allowance_id ? allowances.get(r.manual_allowance_id) : null, names);
+    if (t) out.set(r.id, t);
+  }
+  return out;
 }
 
 export type PullOutcome = 'filed' | 'refreshed' | 'conflict' | 'refused' | 'not_found' | 'failed' | 'gstr1a_seen' | 'not_reached';

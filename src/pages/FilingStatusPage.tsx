@@ -34,12 +34,15 @@ import {
   fetchFilingLog,
   fetchOpenConflicts,
   filingFamily,
+  filingSourceText,
   hasPortalPull,
   isPullOnly,
   latestOutcomes,
   outcomeWords,
   unfileReturn,
   unlockFiled,
+  wantedInBulkPull,
+  wantedInClientPull,
 } from '@/lib/filingPull';
 import {
   type ManualSourceAllowance,
@@ -52,6 +55,7 @@ import {
   DirectFilingApproval,
   DirectFilingState,
   approvalKey,
+  directFilingActionLabel,
   directFilingState,
   fetchDirectFilingApprovals,
   fetchUserNames,
@@ -695,6 +699,8 @@ const FilingStatusPage: React.FC = () => {
       month: r.period_month,
       isLocked: r.is_locked || false,
       arn: r.arn || '',
+      // Where the filed return came from: Portal, manual (allowed by X: reason), ...
+      source: filingSourceText(r, r.manual_allowance_id ? allowances.find((a) => a.id === r.manual_allowance_id) : null, userNames) || '',
     }));
     
     exportFilingStatusToPDF(pdfRecords, returnType, selectedMonth);
@@ -789,6 +795,14 @@ const FilingStatusPage: React.FC = () => {
     }
   };
 
+  // The month's sheets of a GSTR-3B, unlocked (Unlock, and Take off Filed).
+  const unlockMonthSheets = async (clientId: string, periodMonth: string) => {
+    await supabase.from('bills_not_in_2b').update({ is_locked: false }).eq('client_id', clientId).eq('period_month', periodMonth);
+    await supabase.from('bills_not_in_books').update({ is_locked: false }).eq('client_id', clientId).eq('period_month', periodMonth);
+    await supabase.from('itc_summaries').update({ is_locked: false }).eq('client_id', clientId).eq('period_month', periodMonth);
+    await supabase.from('rcm_data').update({ is_locked: false }).eq('client_id', clientId).eq('month', periodMonth);
+  };
+
   // Unlock a filed GSTR-3B / GSTR-3B (Q) for corrections: the database
   // (filing_status_unlock, GST Manager or superadmin) moves it to Not to File
   // and unlocks it, keeping its ARN, filing date and PDF; pulling it again
@@ -801,10 +815,7 @@ const FilingStatusPage: React.FC = () => {
       await unlockFiled(user.id, record.client_id, record.period_month);
 
       // Also unlock ALL related sheets for the same client and period
-      await supabase.from('bills_not_in_2b').update({ is_locked: false }).eq('client_id', record.client_id).eq('period_month', record.period_month);
-      await supabase.from('bills_not_in_books').update({ is_locked: false }).eq('client_id', record.client_id).eq('period_month', record.period_month);
-      await supabase.from('itc_summaries').update({ is_locked: false }).eq('client_id', record.client_id).eq('period_month', record.period_month);
-      await supabase.from('rcm_data').update({ is_locked: false }).eq('client_id', record.client_id).eq('month', record.period_month);
+      await unlockMonthSheets(record.client_id, record.period_month);
 
       // Next period's carried-forward rows are deliberately LEFT IN PLACE.
       //
@@ -1105,9 +1116,11 @@ const FilingStatusPage: React.FC = () => {
     startPull([record], `${record.return_type} ${record.period_month}`);
   };
 
+  // Every return of the client, but one unlocked for correction (its own
+  // Pull files it again; "all" never re-locks a correction).
   const pullClient = (record: FilingRecord) => {
     const rows = FILING_TABS.flatMap((t) => generateAllFilingRecords(t.type))
-      .filter((r) => r.client_id === record.client_id && pullable(r));
+      .filter((r) => r.client_id === record.client_id && pullable(r) && wantedInClientPull(r));
     startPull(rows, `${record.clientName || 'this client'} in ${selectedMonth}`);
   };
 
@@ -1116,6 +1129,13 @@ const FilingStatusPage: React.FC = () => {
   const [reasonSpec, setReasonSpec] = useState<ReasonDialogSpec | null>(null);
 
   const openAttach = (record: FilingRecord) => {
+    // A GSTR-1 / IFF held back by the direct-filing rule needs the approval
+    // first, whatever the route (the database refuses the attach too).
+    if (isDirectFilingBlocked(directFilingStateFor(record))) {
+      toast.info(`This ${record.return_type} was not pushed through GST Keeper. Request the superadmin's approval for the direct filing first; then attach it.`);
+      openDirectFilingDialog(record, { fromFiled: true });
+      return;
+    }
     const client = clients.find((c) => c.id === record.client_id);
     const allowance = liveAllowance(allowances, record.client_id, record.period_month || selectedMonth, filingScope(record.return_type));
     if (isPullOnly(record.return_type) && (!allowance || allowance.used_at)) {
@@ -1162,13 +1182,15 @@ const FilingStatusPage: React.FC = () => {
     setReasonSpec({
       title: 'Take this return off Filed',
       subtitle: `${record.clientName} · ${record.return_type} · ${record.period_month}${record.arn ? ` · ARN ${record.arn}` : ''}`,
-      explain: 'The row goes back to Prepared and loses its ARN, filing date and PDF. The log keeps what it held. Use this only when the row holds the wrong return; a pull then records the right one.',
+      explain: `The row goes back to Prepared and loses its ARN, filing date and PDF. The log keeps what it held. Use this only when the row holds the wrong return; a pull then records the right one.${
+        filingFamily('GSTR-3B').includes(record.return_type) ? ' The return and its month\'s sheets (2B, books, ITC summary, RCM) are unlocked, so staff can work it again.' : ''}`,
       prompt: 'Why is it taken off Filed?',
       confirmText: 'Take off Filed',
       destructive: true,
       run: async (reason) => {
         try {
           await unfileReturn(user.id, record.id, reason);
+          if (filingFamily('GSTR-3B').includes(record.return_type)) await unlockMonthSheets(record.client_id, record.period_month);
           toast.success('Taken off Filed.');
           refreshSoon();
         } catch (e) {
@@ -1185,7 +1207,10 @@ const FilingStatusPage: React.FC = () => {
   // inside the page (that remounted on every redraw and closed the popover).
   const renderDirectFilingBadge = (record: FilingRecord) => {
     const state: DirectFilingState = directFilingStateFor(record);
+    // Shown once a request exists (a return not pushed yet shows no badge: it
+    // is usually still being prepared; its Pull opens the request instead).
     if (state !== 'pending' && state !== 'rejected') return null;
+    const action = directFilingActionLabel(state, isSuperadmin);
     const current = pickApproval(approvalsFor(record));
     const label = state === 'pending' ? 'Awaiting superadmin' : 'Rejected';
     const variant = state === 'pending' ? 'info' : 'destructive';
@@ -1218,7 +1243,7 @@ const FilingStatusPage: React.FC = () => {
               </div>
             )}
             <Button size="sm" variant="outline" className={cn(WS_BTN, 'w-full')} onClick={() => openDirectFilingDialog(record, { fromFiled: true })}>
-              {state === 'pending' ? (isSuperadmin ? 'Review request' : 'View request') : 'Request again'}
+              {action}
             </Button>
           </PopoverContent>
         </Popover>
@@ -1229,7 +1254,7 @@ const FilingStatusPage: React.FC = () => {
             onClick={() => openDirectFilingDialog(record, { fromFiled: true })}
             title="Explain what happened and send it to the superadmin"
           >
-            Request
+            {action}
           </button>
         )}
       </div>
@@ -1322,10 +1347,11 @@ const FilingStatusPage: React.FC = () => {
   const currentTabLabel = FILING_TABS.find(t => t.value === selectedTab)?.type ?? '';
 
   // Pull every return in view that still needs it: not Filed, or Filed
-  // without a checked PDF or a portal filing date.
+  // without a checked PDF or a portal filing date; never one unlocked for
+  // correction (its own Pull files it again).
   const pullInView = () => {
     const rows = applyFilters(recordsByTab[selectedTab] || [])
-      .filter((r) => pullable(r) && (r.status !== 'Filed' || !r.return_pdf_url || !r.filed_date));
+      .filter((r) => pullable(r) && wantedInBulkPull(r));
     if (!rows.length) { toast.info('Every return in view is Filed with its PDF and date.'); return; }
     const clientsN = new Set(rows.map((r) => r.client_id)).size;
     if (!window.confirm(`Pull ${rows.length} return${rows.length === 1 ? '' : 's'} of ${clientsN} client${clientsN === 1 ? '' : 's'} from the GST portal? A portal tab opens; type each client's CAPTCHA there.`)) return;

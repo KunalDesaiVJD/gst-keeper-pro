@@ -62,7 +62,7 @@ value *received*, and the 1%/5% cap on FSI is summed per unit rather than
 blended. Changing one of these without reading why it is that way will produce
 wrong tax, not just a failing test.
 
-**Filing Status is pulled only** (20261021110000, extension 0.15.0): Filed, ARN, filing date and PDF come from `filing_record_pull` (the extension's checked pull) or `filing_attach_manual` (a superadmin's `manual_source_allowances` entry, or CMP-08 / GSTR-6 / GSTR-7 / ITC-04 which have no pull yet); a trigger refuses every other write, side effects of Filed run in the database, every change is in `filing_status_log`; read `docs/FILING_STATUS_PULL_ONLY.md` first.
+**Filing Status is pulled only** (20261021110000, extension 0.15.0): Filed, ARN, filing date and PDF come from `filing_record_pull` (the extension's checked pull, for a staff member's request, PDF only at this project's return-pdfs address) or `filing_attach_manual` (a superadmin's `manual_source_allowances` entry, or CMP-08 / GSTR-6 / GSTR-7 / ITC-04 which have no pull yet); a trigger refuses every other write and any move of a filed row, side effects of Filed run in the database (no e-mail until the portal's date is read), every change is in `filing_status_log`; the allowance block is byte-identical with the reco branch's 20261021120000; read `docs/FILING_STATUS_PULL_ONLY.md` first.
 
 ## Import 2B → 2B Reconciliation → Suspended Reco → GSTR-3B
 

@@ -31,6 +31,15 @@ The firm's decision: Filing Status is pulled from the portal only (GST Keeper mi
   `__gstkReturnPullProgress`) and the whole pull at the end (`gstk_return_pull_result` →
   `__gstkReturnPullDone`, returns not reached included, also when the tab is closed); outcomes
   that wrote nothing are logged through `filing_pull_report`.
+- **Returns not reached are logged in GST Keeper too** (review round 1): a client whose login was
+  refused or whose session kept dropping, and every return left when the portal tab is closed,
+  are reported `failed` ("Not pulled. ...") with the request id, so Filing Status shows why after
+  a reload. A download that navigated instead of saving keeps the ARN and date already read.
+- **A new file for every pull** (review round 1): a checked PDF is stored as
+  `<client>/<MM-YYYY>/<type>-<ARN>-<pull time>.pdf` and uploaded without overwrite
+  (`uploadPdf(path, dataUrl, { upsert: false })`; every other upload keeps overwriting), so no
+  older copy can put another file under a checked one's name, and a refresh of the same ARN gives
+  a new address the log keeps next to the old one.
 - Tests: `test/16-filed-return-pull.test.mjs`, fixtures `test/fixtures/*.pdf` (fictional, made by
   `test/_pdffixture.mjs` the way the portal's pdfmake makes them).
 

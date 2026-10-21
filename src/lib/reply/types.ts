@@ -183,6 +183,8 @@ export interface FilingStatusRow {
   arn: string | null;
   targetDate: number | null;
   updatedAt: string | null;
+  /** 'portal' (pulled by the extension), 'manual' (attached by hand under a superadmin exception), or null (recorded before 21 Oct 2026). */
+  source?: string | null;
 }
 
 /** Electronic credit reversal and re-claimed statement (gst_credit_reversal_reclaim_entries). */
