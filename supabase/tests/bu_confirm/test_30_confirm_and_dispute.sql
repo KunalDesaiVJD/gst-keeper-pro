@@ -10,13 +10,13 @@ SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-
               ARRAY['owner@client.test', 'director@client.test'], ARRAY['meena@ca.test']) ->> 'token' AS tok \gset
 
 -- A dispute without a note: nothing is recorded, not even the confirmation.
-SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_array(
+SELECT t_raises(format($q$SELECT t_respond(%L, jsonb_build_array(
                    t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM'),
                    t_answer('a1000000-0000-0000-0000-000000000002', 'DISPUTE', '   ')), 'Meena Patel', 'meena@ca.test')$q$, :'tok'),
                 'what has changed for unit A-102', 'a dispute needs a note');
 SELECT t_eq(t_states(:'tok'), 'A-101:PENDING,A-102:PENDING,A-103:PENDING', 'nothing recorded');
 
-SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok', jsonb_build_array(
+SELECT t_eq(t_results(t_respond(:'tok', jsonb_build_array(
               t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM'),
               t_answer('a1000000-0000-0000-0000-000000000002', 'DISPUTE', 'Agreement revised to Rs. 54 lakh on 2 Sep 2026')),
               'Meena Patel', 'meena@ca.test')),
@@ -30,7 +30,7 @@ SELECT t_eq((SELECT u ->> 'dispute_notes' FROM jsonb_array_elements(builder_bu_c
 SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-000000000001', '10/2026'), true, 'still blocked');
 
 -- Another reader: the dispute stands; the open unit takes their answer.
-SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok', jsonb_build_array(
+SELECT t_eq(t_results(t_respond(:'tok', jsonb_build_array(
               t_answer('a1000000-0000-0000-0000-000000000002', 'CONFIRM'),
               t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Ravi Mehta', 'Director@Client.test')),
             'A-102:ALREADY_DISPUTED,A-103:CONFIRMED', 'a disputed unit waits for staff; the open one is confirmed');

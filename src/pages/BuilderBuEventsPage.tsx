@@ -36,10 +36,11 @@ import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
 import { postBuEvent, prepareBuEvent, unpostBuEvent, type PreparedEvent } from '@/lib/builderBuPosting';
 import {
-  fetchAgreementConfirmations, fetchConfirmRequests, isAgreementCleared, isBuAgreementConfirmationBlocked,
-  overrideAgreementValue,
-  type AgreementConfirmRequest, type AgreementConfirmStatus,
+  fetchAgreementConfirmations, fetchClearedDisputes, fetchConfirmRequests, isAgreementCleared,
+  isBuAgreementConfirmationBlocked, overrideAgreementValue,
+  type AgreementConfirmRequest, type AgreementConfirmStatus, type ClearedDispute,
 } from '@/lib/builderAgreementConfirmData';
+import { failedMailWords } from '@/lib/builderConfirmRules';
 import SendAgreementConfirmDialog, { type ConfirmCandidate } from '@/components/builder/SendAgreementConfirmDialog';
 
 interface ProjectRow {
@@ -111,6 +112,8 @@ const BuilderBuEventsPage: React.FC = () => {
   const [eventUnits, setEventUnits] = useState<Record<string, EventUnitRow[]>>({});
   const [confirmations, setConfirmations] = useState<Record<string, AgreementConfirmStatus[]>>({});
   const [requests, setRequests] = useState<Record<string, AgreementConfirmRequest[]>>({});
+  // Disputes a later request asked about again, newest first, by event.
+  const [clearedDisputes, setClearedDisputes] = useState<Record<string, ClearedDispute[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [sendFor, setSendFor] = useState<EventRow | null>(null);
@@ -125,9 +128,10 @@ const BuilderBuEventsPage: React.FC = () => {
 
   const canPost = canPostBuEvent();
 
-  const load = useCallback(async () => {
+  // quiet: refresh in place (the send pop-up stays mounted, with what staff typed).
+  const load = useCallback(async (quiet = false) => {
     if (!projectId) return;
-    setIsLoading(true);
+    if (!quiet) setIsLoading(true);
     try {
       const { data: proj, error } = await supabase
         .from('builder_projects').select('*').eq('id', projectId).maybeSingle();
@@ -164,12 +168,17 @@ const BuilderBuEventsPage: React.FC = () => {
         setEventUnits(emap);
 
         const ids = eventRows.map((e) => e.id);
-        const [cmap, reqs] = await Promise.all([fetchAgreementConfirmations(ids), fetchConfirmRequests(ids)]);
+        const [cmap, reqs, hist] = await Promise.all([
+          fetchAgreementConfirmations(ids), fetchConfirmRequests(ids), fetchClearedDisputes(ids),
+        ]);
         setConfirmations(cmap);
         const rmap: Record<string, AgreementConfirmRequest[]> = {};
         reqs.forEach((r) => { (rmap[r.buEventId] ||= []).push(r); });
         setRequests(rmap);
-      } else { setEventUnits({}); setConfirmations({}); setRequests({}); }
+        const hmap: Record<string, ClearedDispute[]> = {};
+        hist.forEach((h) => { (hmap[h.buEventId] ||= []).push(h); });
+        setClearedDisputes(hmap);
+      } else { setEventUnits({}); setConfirmations({}); setRequests({}); setClearedDisputes({}); }
     } catch (e) {
       toast.error(`Could not load: ${(e as Error).message}`);
     } finally {
@@ -336,6 +345,7 @@ const BuilderBuEventsPage: React.FC = () => {
           agreementValue: Number(r.agreement_value) || 0,
           cutOffSource: r.cut_off_source, cutOffDate: r.cut_off_date,
           status: c?.status || 'NOT_SENT', disputeNotes: c?.disputeNotes ?? null, respondedByName: c?.respondedByName ?? null,
+          respondedByEmail: c?.respondedByEmail ?? null, respondedAt: c?.respondedAt ?? null,
         };
       });
   };
@@ -666,7 +676,7 @@ const BuilderBuEventsPage: React.FC = () => {
                         <span className={cn(lastReq.mailStatus === 'failed' && 'text-destructive')}>
                           {' '}· e-mail {lastReq.mailStatus}{lastReq.mailStatus === 'failed' && lastReq.mailError ? `: ${lastReq.mailError}` : ''}
                           {['failed', 'skipped', 'cancelled'].includes(lastReq.mailStatus)
-                            ? '. The earlier link still takes answers until an e-mail goes out.' : ''}
+                            ? `. ${failedMailWords(lastReq.earlierLink)}` : ''}
                         </span>
                       )}
                     </p>
@@ -733,6 +743,8 @@ const BuilderBuEventsPage: React.FC = () => {
                             ) : (() => {
                               const cf = cfByUnit.get(r.unit_id);
                               const status = cf?.status || 'NOT_SENT';
+                              // The latest dispute a later request asked about again.
+                              const earlier = (clearedDisputes[ev.id] || []).find((h) => h.unitId === r.unit_id);
                               const variant = status === 'CONFIRMED' || status === 'OVERRIDDEN'
                                 ? 'success'
                                 : status === 'DISPUTED'
@@ -755,6 +767,17 @@ const BuilderBuEventsPage: React.FC = () => {
                                   )}
                                   {status === 'PENDING' && cf?.sentAt && (
                                     <span className="mt-0.5 block text-[11px] text-muted-foreground">Asked {shortDate(cf.sentAt)}</span>
+                                  )}
+                                  {earlier && (
+                                    <span
+                                      className="mt-0.5 block text-[11px] text-muted-foreground"
+                                      title={earlier.notes || undefined}
+                                    >
+                                      Earlier disputed{earlier.respondedByName ? ` by ${earlier.respondedByName}` : ''}
+                                      {earlier.respondedByEmail ? ` (${earlier.respondedByEmail})` : ''}
+                                      {earlier.respondedAt ? ` on ${shortDate(earlier.respondedAt)}` : ''}
+                                      {earlier.notes ? `: ${earlier.notes}` : ''}. Asked again {shortDate(earlier.clearedAt)}.
+                                    </span>
                                   )}
                                   {status === 'OVERRIDDEN' && cf?.overrideReason && (
                                     <span className="mt-0.5 block text-[11px] text-muted-foreground" title={cf.overrideReason}>
@@ -825,7 +848,7 @@ const BuilderBuEventsPage: React.FC = () => {
         } : null}
         candidates={sendFor ? confirmCandidates(sendFor) : []}
         lastRequest={sendFor ? (requests[sendFor.id] || [])[0] || null : null}
-        onSent={() => void load()}
+        onSent={() => void load(true)}
       />
 
       {/* ── New event dialog ─────────────────────────────────────────────── */}

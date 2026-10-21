@@ -1,6 +1,7 @@
 // Pure rules of the BU agreement value confirmation (no Supabase here, so
 // scripts/verify-bu-confirm.mjs can run them): which typed addresses are
-// valid, which are the firm's own, which units the pop-up still offers, and
+// valid, which are the firm's own, which units the pop-up still offers, what
+// it sends back as seen, how a send's "answered meanwhile" list splits, and
 // what the public page's "Confirm all" covers. The database holds the same
 // address rules (supabase/migrations/20261021140000_bu_confirm_cc.sql:
 // builder_bu_confirm_email_ok, builder_bu_confirm_is_staff).
@@ -23,35 +24,60 @@ export const isFirmAddress = (a: string): boolean => {
   return domain === FIRM_DOMAIN || domain.endsWith(`.${FIRM_DOMAIN}`);
 };
 
-/** Split on commas, semicolons and new lines that are not inside quotes. */
-const splitParts = (text: string): string[] => {
-  const parts: string[] = [];
+/** Split on commas, semicolons and new lines that are not inside quotes; each
+ *  piece keeps the separator that ended it. */
+const splitParts = (text: string): { text: string; sep: string }[] => {
+  const parts: { text: string; sep: string }[] = [];
   let cur = '';
   let quoted = false;
   for (const ch of text) {
     if (ch === '"') quoted = !quoted;
     if (!quoted && (ch === ',' || ch === ';' || ch === '\n' || ch === '\r')) {
-      parts.push(cur);
+      parts.push({ text: cur, sep: ch });
       cur = '';
     } else {
       cur += ch;
     }
   }
-  parts.push(cur);
+  parts.push({ text: cur, sep: '' });
   return parts;
+};
+
+const HAS_BRACKET_ADDRESS = /<[^<>]*@[^<>]*>/;
+
+/**
+ * Outlook copies "Last, First <address>" with the name unquoted, so a comma
+ * inside a name looks like a separator. Pieces with no "@", each ended by a
+ * comma, join the piece after them when that one holds an <address>: they are
+ * part of that address's name.
+ */
+const joinNames = (parts: { text: string; sep: string }[]): string[] => {
+  const nameBit = (p: { text: string; sep: string }) => !p.text.includes('@') && !!p.text.trim() && p.sep === ',';
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    let j = i;
+    while (j < parts.length - 1 && nameBit(parts[j])) j++;
+    if (j > i && HAS_BRACKET_ADDRESS.test(parts[j].text)) {
+      out.push(parts.slice(i, j + 1).map((p) => p.text).join(','));
+      i = j;
+    } else {
+      out.push(parts[i].text);
+    }
+  }
+  return out;
 };
 
 /**
  * Addresses typed or pasted into a To or CC box: separated by commas,
  * semicolons, new lines or spaces. "Name <address>" (as Outlook copies it,
- * the name quoted or not) gives the address inside the angle brackets.
- * Trimmed, lower case, each once, in the order typed.
+ * the name quoted or not, "Last, First" included) gives the address inside
+ * the angle brackets. Trimmed, lower case, each once, in the order typed.
  */
 export function parseEmailList(text: string): { valid: string[]; invalid: string[] } {
   const seen = new Set<string>();
   const valid: string[] = [];
   const invalid: string[] = [];
-  for (const part of splitParts(text || '')) {
+  for (const part of joinNames(splitParts(text || ''))) {
     const bracket = /<([^<>]*)>/.exec(part);
     const tokens = bracket ? [bracket[1]] : part.split(/\s+/);
     for (const raw of tokens) {
@@ -64,6 +90,14 @@ export function parseEmailList(text: string): { valid: string[]; invalid: string
   return { valid, invalid };
 }
 
+/** What the client master's e-mail gave the To box: nothing at all, only
+ *  addresses that are not valid, or at least one good address. */
+export function masterState(list: { valid: string[]; invalid: string[] } | null): 'empty' | 'invalid' | 'ok' | null {
+  if (!list) return null;
+  if (list.valid.length) return 'ok';
+  return list.invalid.length ? 'invalid' : 'empty';
+}
+
 /** A unit's confirmation status as the pop-up and the BU Events page read it. */
 export type ConfirmStatus = 'PENDING' | 'CONFIRMED' | 'DISPUTED' | 'OVERRIDDEN' | 'NOT_SENT';
 
@@ -74,6 +108,8 @@ interface FreshRow {
   status: ConfirmStatus;
   disputeNotes?: string | null;
   respondedByName?: string | null;
+  respondedByEmail?: string | null;
+  respondedAt?: string | null;
 }
 
 /**
@@ -95,9 +131,39 @@ export function freshCandidates<T extends FreshRow>(candidates: T[], fresh: Fres
         status: f?.status ?? 'NOT_SENT',
         disputeNotes: f?.disputeNotes ?? null,
         respondedByName: f?.respondedByName ?? null,
+        respondedByEmail: f?.respondedByEmail ?? null,
+        respondedAt: f?.respondedAt ?? null,
       };
     });
 }
+
+/**
+ * What the pop-up showed for each ticked unit, sent with the send: the
+ * database leaves out (and reports) any unit answered since, a dispute
+ * included, so a dispute staff never saw is never cleared.
+ */
+export function seenFor(units: { unitId: string; status: ConfirmStatus; respondedAt?: string | null }[]):
+  Record<string, { status: ConfirmStatus; responded_at: string | null }> {
+  return Object.fromEntries(units.map((u) => [u.unitId, { status: u.status, responded_at: u.respondedAt ?? null }]));
+}
+
+/**
+ * A send's "answered meanwhile" list, split: units confirmed or accepted
+ * (final: the send drops them and goes again on its own) and units answered
+ * otherwise, a dispute above all (the send stops: staff must see it before a
+ * new request clears it).
+ */
+export function splitAnswered<T extends { status: string }>(answered: T[]): { cleared: T[]; changed: T[] } {
+  return {
+    cleared: answered.filter((a) => isClearedStatus(a.status as ConfirmStatus)),
+    changed: answered.filter((a) => !isClearedStatus(a.status as ConfirmStatus)),
+  };
+}
+
+/** The words after a failed send: is there a link the client already holds? */
+export const failedMailWords = (earlierLink: boolean | null | undefined): string => (earlierLink
+  ? 'The earlier link still takes answers until an e-mail goes out.'
+  : 'No e-mail has reached the client yet.');
 
 /** A unit as the public page shows it. */
 export type PageUnitState = 'PENDING' | 'CONFIRMED' | 'DISPUTED' | 'ACCEPTED' | 'REPLACED';

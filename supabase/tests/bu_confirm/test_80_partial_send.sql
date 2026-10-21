@@ -16,7 +16,7 @@ SELECT t_eq((SELECT agreement_value_at_request FROM builder_bu_agreement_confirm
 SELECT t_eq(t_states(:'tok'), 'A-101:PENDING,A-102:PENDING', 'the link asks only about the ticked units');
 
 -- Both asked units confirmed: the period is still blocked by the one not asked.
-SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok', jsonb_build_array(
+SELECT t_eq(t_results(t_respond(:'tok', jsonb_build_array(
               t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM'),
               t_answer('a1000000-0000-0000-0000-000000000002', 'CONFIRM')), 'Owner', 'owner@client.test')),
             'A-101:CONFIRMED,A-102:CONFIRMED', 'both answered');
@@ -26,10 +26,11 @@ SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-0
 -- A NOT_SENT row's own token was never e-mailed: it opens nothing and answers nothing.
 SELECT token AS t3 FROM builder_bu_agreement_confirmations WHERE unit_id = 'a1000000-0000-0000-0000-000000000003' \gset
 SELECT t_eq(builder_bu_confirm_lookup(:'t3'), NULL::jsonb, 'a NOT_SENT token shows nothing');
-SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Owner', 'owner@client.test')$q$, :'t3'),
+SELECT t_raises(format($q$SELECT t_respond(%L, jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Owner', 'owner@client.test')$q$, :'t3'),
                 'not valid', 'a NOT_SENT token answers nothing');
-SELECT t_eq(builder_bu_agreement_confirm(:'t3', 'CONFIRM', NULL), false, 'nor through the old function');
-SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Owner', 'owner@client.test')$q$, :'tok'),
+SELECT t_raises(format('SELECT builder_bu_agreement_confirm(%L, %L, NULL)', :'t3', 'CONFIRM'), 'permission denied', 'nor through the old function (closed)');
+SELECT t_raises(format('SELECT builder_bu_confirm_code_request(%L, %L)', :'t3', 'owner@client.test'), 'not valid', 'nor can a code be asked for on it');
+SELECT t_raises(format($q$SELECT t_respond(%L, jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Owner', 'owner@client.test')$q$, :'tok'),
                 'not in this request', 'nor through the request link');
 
 -- A second send for the unit left out: the same row moves to PENDING; no new rows.
@@ -38,7 +39,7 @@ SELECT t_eq((SELECT count(*) FROM builder_bu_agreement_confirmations)::int, 3, '
 SELECT t_eq((SELECT status FROM builder_bu_agreement_confirmations WHERE unit_id = 'a1000000-0000-0000-0000-000000000003'), 'PENDING', 'asked now');
 SELECT t_eq(t_states(:'tok'), 'A-101:CONFIRMED,A-102:CONFIRMED', 'the first link is untouched');
 SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-000000000001', '10/2026'), true, 'still shut while it waits');
-SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok2', jsonb_build_array(
+SELECT t_eq(t_results(t_respond(:'tok2', jsonb_build_array(
               t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Owner', 'owner@client.test')), 'A-103:CONFIRMED', 'answered');
 SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-000000000001', '10/2026'), false, 'every taxable unit cleared: open');
 ROLLBACK;
@@ -52,7 +53,7 @@ SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-
 SELECT t_eq(builder_bu_agreement_override('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000003',
                                           '10000000-0000-0000-0000-000000000002', 'Confirmed on the phone by the director'),
             'OVERRIDDEN', 'the GST Manager accepts the unit not asked');
-SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok', jsonb_build_array(
+SELECT t_eq(t_results(t_respond(:'tok', jsonb_build_array(
               t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM'),
               t_answer('a1000000-0000-0000-0000-000000000002', 'CONFIRM')), 'Owner', 'owner@client.test')),
             'A-101:CONFIRMED,A-102:CONFIRMED', 'the others answered');

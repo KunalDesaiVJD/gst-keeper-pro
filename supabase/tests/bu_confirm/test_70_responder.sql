@@ -28,14 +28,14 @@ SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-
               ARRAY['junior@vjdesai.com'], ARRAY['owner@client.test'], '10000000-0000-0000-0000-000000000003') ->> 'token' AS tok \gset
 SELECT t_eq((SELECT to_emails || cc_emails FROM builder_bu_confirm_requests), ARRAY['junior@vjdesai.com', 'owner@client.test'],
             'a firm address may get a copy when a client address is on it');
-SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_array(
+SELECT t_raises(format($q$SELECT t_respond(%L, jsonb_build_array(
                    t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM'), t_answer('a1000000-0000-0000-0000-000000000002', 'CONFIRM'),
                    t_answer('a1000000-0000-0000-0000-000000000003', 'CONFIRM')), 'Rajesh Shah', 'rajesh@client.test')$q$, :'tok'),
                 'reached you at', 'an address not on the e-mail is refused');
-SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_array(
+SELECT t_raises(format($q$SELECT t_respond(%L, jsonb_build_array(
                    t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')), 'Junior', 'Junior@VJDesai.com')$q$, :'tok'),
                 'staff cannot answer', 'the firm''s address on the e-mail is refused');
-SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_array(
+SELECT t_raises(format($q$SELECT t_respond(%L, jsonb_build_array(
                    t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')), 'Jay', 'jay.junior@gmail.test')$q$, :'tok'),
                 'staff cannot answer', 'a staff member''s own address is refused even off the firm''s domain');
 SELECT t_eq((SELECT count(*) FROM builder_bu_agreement_confirmations WHERE status <> 'PENDING' OR responded_by_email IS NOT NULL)::int, 0,
@@ -46,7 +46,7 @@ SELECT t_eq(builder_bu_agreement_confirmation_blocked('c1000000-0000-0000-0000-0
 SELECT t_raises($$SELECT builder_bu_confirm_is_staff('sam@vjdesai.com')$$, 'permission denied', 'anon cannot probe staff addresses');
 
 -- The client on the e-mail answers. A client login's profile is not staff.
-SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok', jsonb_build_array(
+SELECT t_eq(t_results(t_respond(:'tok', jsonb_build_array(
               t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')), 'Owner', ' OWNER@client.test ')),
             'A-101:CONFIRMED', 'an address on the e-mail answers');
 SELECT t_eq((SELECT responded_by_email FROM builder_bu_agreement_confirmations WHERE unit_id = 'a1000000-0000-0000-0000-000000000001'),
@@ -77,14 +77,35 @@ SELECT max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000001'
        max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000002') AS t2,
        max(token) FILTER (WHERE unit_id = 'a1000000-0000-0000-0000-000000000003') AS t3
   FROM builder_bu_agreement_confirmations \gset
-SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')), 'Xavier', 'someone@client.test')$q$, :'t1'),
+SELECT t_raises(format($q$SELECT t_respond(%L, jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')), 'Xavier', 'someone@client.test')$q$, :'t1'),
                 'reached you at', 'per-unit link: a stranger is refused');
-SELECT t_raises(format($q$SELECT builder_bu_confirm_respond(%L, jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')), 'Sam', 'sam@vjdesai.com')$q$, :'t1'),
+SELECT t_raises(format($q$SELECT t_respond(%L, jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')), 'Sam', 'sam@vjdesai.com')$q$, :'t1'),
                 'staff cannot answer', 'per-unit link: staff are refused');
-SELECT t_eq(t_results(builder_bu_confirm_respond(:'t1', jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')), 'Old Owner', 'old.owner@client.test')),
+SELECT t_eq(t_results(t_respond(:'t1', jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')), 'Old Owner', 'old.owner@client.test')),
             'A-101:CONFIRMED', 'the address that e-mail went to answers');
-SELECT t_eq(t_results(builder_bu_confirm_respond(:'t2', jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000002', 'CONFIRM')), 'Accounts', 'accounts@client.test')),
+SELECT t_eq(t_results(t_respond(:'t2', jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000002', 'CONFIRM')), 'Accounts', 'accounts@client.test')),
             'A-102:CONFIRMED', 'the client master''s address answers ("Name <addr>" read)');
-SELECT t_eq(t_results(builder_bu_confirm_respond(:'t3', jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000003', 'DISPUTE', 'Revised')), 'Rajesh', 'Rajesh@client.test')),
+SELECT t_eq(t_results(t_respond(:'t3', jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000003', 'DISPUTE', 'Revised')), 'Rajesh', 'Rajesh@client.test')),
             'A-103:DISPUTED', 'so does its second address');
+ROLLBACK;
+
+-- The pop-up learns which typed addresses count as the firm's own (round 2,
+-- defect: a staff member's personal address passed the pop-up and the
+-- refusal did not name it). Only for someone who may send.
+BEGIN;
+\ir fixtures.psql
+SET LOCAL ROLE anon;
+SELECT t_eq(builder_bu_confirm_firm_addresses('10000000-0000-0000-0000-000000000003',
+              ARRAY['owner@client.test', ' Jay.Junior@Gmail.test ', 'gst@vjdesai.com', 'a@mail.vjdesai.com', 'mira.manager@vjdesai.com', 'owner@client.test']),
+            ARRAY['jay.junior@gmail.test', 'gst@vjdesai.com', 'a@mail.vjdesai.com', 'mira.manager@vjdesai.com'],
+            'the firm''s domain, its subdomains and staff profile e-mails, in the order typed');
+SELECT t_eq(builder_bu_confirm_firm_addresses('10000000-0000-0000-0000-000000000001', ARRAY['owner@client.test']), '{}'::text[], 'none');
+SELECT t_raises($$SELECT builder_bu_confirm_firm_addresses('10000000-0000-0000-0000-000000000004', ARRAY['sam@vjdesai.com'])$$,
+                'not allowed', 'an employee without post_bu_event cannot probe');
+SELECT t_raises($$SELECT builder_bu_confirm_firm_addresses(NULL, ARRAY['sam@vjdesai.com'])$$, 'not allowed', 'nor can no one');
+SELECT t_raises($$SELECT builder_bu_confirm_firm_addresses('10000000-0000-0000-0000-000000000009', ARRAY['sam@vjdesai.com'])$$, 'not allowed', 'nor a client login');
+-- The refusal names the addresses that count as the firm's.
+SELECT t_raises($$SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001']::uuid[], ARRAY['jay.junior@gmail.test'], ARRAY['gst@vjdesai.com'],
+                                 '10000000-0000-0000-0000-000000000003')$$,
+                'These are the firm''s own and cannot answer: jay.junior@gmail.test, gst@vjdesai.com.', 'the refusal names them');
 ROLLBACK;

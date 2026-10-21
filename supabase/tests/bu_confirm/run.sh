@@ -4,7 +4,8 @@
 # throwaway local database, each twice (they must be safe to re-run), and runs
 # the SQL tests in this folder, then the two-session cases (race.sh) on a copy
 # of the database. Every test calls the functions as the public key (anon), as
-# the app and the public page do. Needs a local PostgreSQL
+# the app and the public page do; only the Edge Function's part (claiming a
+# code and reporting it sent) runs as the owner, in t_mailbox (01_helpers.sql). Needs a local PostgreSQL
 # 15/16; connection from the usual PG* variables, e.g.
 #   PGHOST=/tmp/pgsock PGPORT=55432 PGUSER=postgres supabase/tests/bu_confirm/run.sh
 # Never point it at the live project: it creates and drops its own database.

@@ -10,16 +10,20 @@ SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-
                     'a1000000-0000-0000-0000-000000000003']::uuid[], ARRAY['owner@client.test'], ARRAY['accounts@client.test']) AS r1 \gset
 SELECT :'r1'::jsonb ->> 'token' AS tok1, :'r1'::jsonb ->> 'request_id' AS req1 \gset
 SELECT t_eq((:'r1'::jsonb ->> 'sent')::boolean, true, 'a send says it was sent');
+-- Staff open the pop-up now: every unit pending.
+SELECT t_seen(ARRAY['a1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000002',
+                    'a1000000-0000-0000-0000-000000000003']::uuid[]) AS seen0 \gset
 
 -- A CC reader confirms A-101; the firm accepts A-103.
-SELECT t_eq(t_results(builder_bu_confirm_respond(:'tok1', jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')),
+SELECT t_eq(t_results(t_respond(:'tok1', jsonb_build_array(t_answer('a1000000-0000-0000-0000-000000000001', 'CONFIRM')),
                                                  'Accounts', 'accounts@client.test')), 'A-101:CONFIRMED', 'answered by a CC reader');
 SELECT t_eq(builder_bu_agreement_override('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000003',
                                           '10000000-0000-0000-0000-000000000001', ''), 'OVERRIDDEN', 'accepted');
 
 -- Staff, from a stale list, re-send all three.
 SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000002',
-                    'a1000000-0000-0000-0000-000000000003']::uuid[], ARRAY['owner@client.test'], NULL) AS r2 \gset
+                    'a1000000-0000-0000-0000-000000000003']::uuid[], ARRAY['owner@client.test'], NULL,
+              p_seen => :'seen0'::jsonb) AS r2 \gset
 SELECT t_eq((:'r2'::jsonb ->> 'sent')::boolean, false, 'not sent');
 SELECT t_eq(:'r2'::jsonb ? 'request_id', false, 'no request');
 SELECT t_eq((SELECT string_agg((x ->> 'unit_no') || ':' || (x ->> 'status') || ':' || COALESCE(x ->> 'responded_by_email', '-'), ',' ORDER BY n)
@@ -32,8 +36,10 @@ SELECT t_eq((SELECT request_id::text FROM builder_bu_agreement_confirmations WHE
 SELECT t_eq(t_states(:'tok1'), 'A-101:CONFIRMED,A-102:PENDING,A-103:ACCEPTED', 'the first link is untouched');
 
 -- The browser sends again without them: it goes.
-SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000002']::uuid[], ARRAY['owner@client.test'], NULL) AS r3 \gset
+SELECT t_send(ARRAY['a1000000-0000-0000-0000-000000000002']::uuid[], ARRAY['owner@client.test'], NULL,
+              p_seen => :'seen0'::jsonb) AS r3 \gset
 SELECT t_eq((:'r3'::jsonb ->> 'sent')::boolean AND (:'r3'::jsonb ->> 'units')::int = 1, true, 'sent for the one left');
+UPDATE email_outbox SET status = 'sent' WHERE id = (:'r3'::jsonb ->> 'outbox_id')::uuid;
 SELECT t_eq(t_states(:'tok1'), 'A-101:CONFIRMED,A-102:REPLACED,A-103:ACCEPTED', 'the first link: replaced only where asked again');
 
 -- The message the old refusal carried is gone from the function.

@@ -12,23 +12,27 @@ import { toast } from 'sonner';
 import { Loader2, Send } from 'lucide-react';
 import { formatINR } from '@/utils/builderRates';
 import {
-  fetchAgreementConfirmationStatus, fetchClientEmails, isFirmAddress, parseEmailList, requestAgreementConfirmations,
+  fetchAgreementConfirmationStatus, fetchClientEmails, fetchFirmAddresses, isFirmAddress, parseEmailList,
+  requestAgreementConfirmations,
   type AgreementConfirmRequest, type AgreementConfirmStatus, type AgreementConfirmUnit, type AnsweredMeanwhile,
 } from '@/lib/builderAgreementConfirmData';
-import { freshCandidates } from '@/lib/builderConfirmRules';
+import { failedMailWords, freshCandidates, masterState, seenFor } from '@/lib/builderConfirmRules';
 
 /**
  * BU Events → "Send confirmation request": one e-mail to everyone typed in To
  * and CC, listing the units still outstanding (pending, disputed or never
  * sent). Staff may untick any. Anyone the e-mail goes to, outside the firm,
- * can answer on the page it links to (src/pages/AgreementConfirmPage.tsx).
- * The statuses are read again each time the pop-up opens, so a unit answered
- * since BU Events loaded is not offered.
+ * can answer on the page it links to (src/pages/AgreementConfirmPage.tsx),
+ * after proving their address with a code. The statuses are read again each
+ * time the pop-up opens and sent with the send: a unit answered since is
+ * never asked over its answer (a dispute stops the send and is shown here).
  */
 export interface ConfirmCandidate extends AgreementConfirmUnit {
   status: AgreementConfirmStatus['status'];
   disputeNotes?: string | null;
   respondedByName?: string | null;
+  respondedByEmail?: string | null;
+  respondedAt?: string | null;
 }
 
 const STATUS_LABEL: Partial<Record<AgreementConfirmStatus['status'], string>> = {
@@ -36,7 +40,8 @@ const STATUS_LABEL: Partial<Record<AgreementConfirmStatus['status'], string>> = 
 };
 
 /** "A-101 (confirmed by Rajesh Shah, rajesh@client.com)". */
-const answeredWords = (a: AnsweredMeanwhile) => `${a.unitNo} (${a.status === 'OVERRIDDEN' ? 'accepted by the firm' : 'confirmed'}`
+const answeredWords = (a: AnsweredMeanwhile) => `${a.unitNo} (${a.status === 'OVERRIDDEN' ? 'accepted by the firm'
+  : a.status === 'DISPUTED' ? 'disputed' : a.status === 'CONFIRMED' ? 'confirmed' : 'changed'}`
   + `${a.respondedByName ? ` by ${a.respondedByName}${a.respondedByEmail ? `, ${a.respondedByEmail}` : ''}` : ''})`;
 
 const SendAgreementConfirmDialog: React.FC<{
@@ -53,13 +58,19 @@ const SendAgreementConfirmDialog: React.FC<{
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
   const [toEdited, setToEdited] = useState(false);
-  const [fromMaster, setFromMaster] = useState<boolean | null>(null);
+  const [master, setMaster] = useState<ReturnType<typeof masterState>>(null);
   const [masterInvalid, setMasterInvalid] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [fresh, setFresh] = useState<AgreementConfirmStatus[] | null>(null);
   const [loadingTo, setLoadingTo] = useState(false);
   const [loadingUnits, setLoadingUnits] = useState(false);
   const [sending, setSending] = useState(false);
+  // Typed addresses the database counts as the firm's (a staff member's own
+  // address, which the browser cannot tell).
+  const [dbFirm, setDbFirm] = useState<string[]>([]);
+  // Units answered (a dispute above all) after the pop-up read them: the send
+  // stopped; shown until the next send.
+  const [changedNotice, setChangedNotice] = useState<AnsweredMeanwhile[]>([]);
 
   const eventId = event?.id;
   // The units' statuses now, not as the page loaded them: a reader may have
@@ -85,11 +96,13 @@ const SendAgreementConfirmDialog: React.FC<{
     setFresh(null);
     setToEdited(false);
     setMasterInvalid([]);
+    setChangedNotice([]);
+    setDbFirm([]);
     void reloadUnits();
     if (lastRequest) {
       setTo(lastRequest.to.join(', '));
       setCc(lastRequest.cc.join(', '));
-      setFromMaster(null);
+      setMaster(null);
       return;
     }
     setTo('');
@@ -99,10 +112,10 @@ const SendAgreementConfirmDialog: React.FC<{
       .then((list) => {
         if (!live) return;
         setTo(list.valid.join(', '));
-        setFromMaster(list.valid.length > 0);
+        setMaster(masterState(list));
         setMasterInvalid(list.invalid);
       })
-      .catch(() => { if (live) setFromMaster(false); })
+      .catch(() => { if (live) setMaster(null); })
       .finally(() => { if (live) setLoadingTo(false); });
     return () => { live = false; };
     // Only when the pop-up opens for an event: later edits are the user's.
@@ -114,8 +127,21 @@ const SendAgreementConfirmDialog: React.FC<{
   const toList = useMemo(() => parseEmailList(to), [to]);
   const ccList = useMemo(() => parseEmailList(cc), [cc]);
   const ccOnly = ccList.valid.filter((a) => !toList.valid.includes(a));
-  const firmCopies = [...toList.valid, ...ccOnly].filter(isFirmAddress);
-  const outsideFirm = [...toList.valid, ...ccOnly].filter((a) => !isFirmAddress(a));
+  const everyone = [...toList.valid, ...ccOnly];
+  const everyoneKey = everyone.join(',');
+  const userId = user?.id ?? null;
+  // Ask the database which typed addresses are the firm's own, a moment after typing stops.
+  useEffect(() => {
+    if (!open || !everyoneKey) { setDbFirm([]); return; }
+    let live = true;
+    const t = window.setTimeout(() => {
+      fetchFirmAddresses(userId, everyoneKey.split(',')).then((list) => { if (live) setDbFirm(list); });
+    }, 400);
+    return () => { live = false; window.clearTimeout(t); };
+  }, [open, everyoneKey, userId]);
+  const isFirm = (a: string) => isFirmAddress(a) || dbFirm.includes(a);
+  const firmCopies = everyone.filter(isFirm);
+  const outsideFirm = everyone.filter((a) => !isFirm(a));
   const ticked = shown.filter((c) => selected.has(c.unitId));
   const total = ticked.reduce((a, c) => a + (Number(c.agreementValue) || 0), 0);
   const allTicked = ticked.length === shown.length && shown.length > 0;
@@ -145,14 +171,33 @@ const SendAgreementConfirmDialog: React.FC<{
         to: toList.valid,
         cc: ccOnly,
         units: ticked,
+        seen: seenFor(ticked),
       });
       if (res.skipped.length) {
         toast.info(`Answered meanwhile, so left out: ${res.skipped.map(answeredWords).join('; ')}.`);
       }
+      if (res.status === 'changed') {
+        // A dispute given since the pop-up read the units: nothing was sent.
+        // Show it, untick it, and let staff decide.
+        setChangedNotice(res.changed);
+        setSelected((prev) => {
+          const next = new Set(prev);
+          res.changed.forEach((c) => next.delete(c.unitId));
+          return next;
+        });
+        toast.warning(`Not sent: ${res.changed.map(answeredWords).join('; ')} since this pop-up opened. `
+          + 'Read it below. It is unticked now: send for the others, or tick it to ask again.');
+        onSent();
+        void reloadUnits();
+        return;
+      }
       const who = `${toList.valid.join(', ')}${ccOnly.length ? ` (CC ${ccOnly.join(', ')})` : ''}`;
       const what = `${res.sent} unit${res.sent === 1 ? '' : 's'}`;
+      const cancelled = res.cancelledEarlier
+        ? ` The earlier e-mail still waiting to go was cancelled${res.cancelledEarlier > 1 ? ` (${res.cancelledEarlier})` : ''}.`
+        : '';
       if (res.ok) {
-        toast.success(`Confirmation request for ${what} sent to ${who}.`);
+        toast.success(`Confirmation request for ${what} sent to ${who}.${cancelled}`);
       } else if (res.status === 'answered') {
         toast.info('Every ticked unit was answered meanwhile. Nothing was sent.');
       } else if (!res.requestId) {
@@ -163,13 +208,13 @@ const SendAgreementConfirmDialog: React.FC<{
         void reloadUnits();
         return;
       } else if (res.status === 'pending') {
-        toast.warning(`Queued for ${what}, but not sent yet: it goes out with the next send run. ${res.reason || ''}`);
+        toast.warning(`Queued for ${what}, but not sent yet: it goes out with the next send run. ${res.reason || ''}${cancelled}`);
       } else if (res.status === 'sending' || res.status === 'unknown') {
         // It may have gone: never invite a second click that sends it twice.
         toast.warning('The send did not report back. Check the e-mail on the Reminders page before sending again.');
       } else {
         toast.error(`The request is recorded but the e-mail failed: ${res.reason || res.status}. `
-          + 'The earlier link still takes answers until an e-mail goes out. Fix the address and send again.');
+          + `${failedMailWords(res.earlierLink)} Fix the address and send again.`);
       }
       onOpenChange(false);
       onSent();
@@ -186,7 +231,7 @@ const SendAgreementConfirmDialog: React.FC<{
     return next;
   });
 
-  const toSource = toEdited ? '' : lastRequest ? ', as on the last request' : fromMaster ? ', from the client master' : '';
+  const toSource = toEdited ? '' : lastRequest ? ', as on the last request' : master === 'ok' ? ', from the client master' : '';
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!sending) onOpenChange(v); }}>
@@ -195,8 +240,8 @@ const SendAgreementConfirmDialog: React.FC<{
           <DialogTitle>Send confirmation request</DialogTitle>
           <DialogDescription>
             {projectName}. One e-mail goes to everyone below, with one link. Anyone it goes to can confirm or
-            dispute the values on that page, giving their name and the address it reached them at. The firm's
-            own addresses get a copy but cannot answer.
+            dispute the values on that page, with their name and the address it reached them at; a code e-mailed
+            to that address proves it is theirs. The firm's own addresses get a copy but cannot answer.
           </DialogDescription>
         </DialogHeader>
 
@@ -210,7 +255,7 @@ const SendAgreementConfirmDialog: React.FC<{
             />
             {toList.invalid.length > 0 ? (
               <p className="text-[11px] text-destructive">Not valid: {toList.invalid.join(', ')}</p>
-            ) : !toList.valid.length && fromMaster === false ? (
+            ) : !toList.valid.length && master === 'empty' ? (
               <p className="text-[11px] text-destructive">The client has no e-mail on record: type it here (and add it in Edit Client).</p>
             ) : (
               <p className="text-[11px] text-muted-foreground">
@@ -248,6 +293,23 @@ const SendAgreementConfirmDialog: React.FC<{
           )}
         </div>
 
+        {changedNotice.length > 0 && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+            <p className="font-medium">Answered since this pop-up opened, so nothing was sent:</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              {changedNotice.map((c) => (
+                <li key={c.unitId}>
+                  {answeredWords(c)}{c.disputeNotes ? `: ${c.disputeNotes}` : ''}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1">
+              {changedNotice.length === 1 ? 'It is' : 'They are'} unticked. Send for the others, or tick a disputed unit
+              to ask again once the working is right (that clears the dispute; it stays in the unit's history).
+            </p>
+          </div>
+        )}
+
         <div className="rounded-md border">
           <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5 text-xs">
             <span className="font-medium">
@@ -283,6 +345,11 @@ const SendAgreementConfirmDialog: React.FC<{
                         {c.respondedByName ? `${c.respondedByName}: ` : ''}{c.disputeNotes}
                       </span>
                     )}
+                    {c.status === 'DISPUTED' && selected.has(c.unitId) && (
+                      <span className="mt-0.5 block text-[11px] text-amber-700 dark:text-amber-400">
+                        Sending asks again and clears this dispute. It stays in the unit's history.
+                      </span>
+                    )}
                   </span>
                   <span className="shrink-0 tabular-nums">{formatINR(c.agreementValue)}</span>
                 </label>
@@ -299,9 +366,9 @@ const SendAgreementConfirmDialog: React.FC<{
         </div>
         <p className="text-[11px] text-muted-foreground">
           Confirmed and accepted units are not listed
-          {droppedSinceLoad > 0 ? ` (${droppedSinceLoad} answered since this page loaded)` : ''}. Sending again
-          replaces the earlier link for the ticked units; answers already given on other units stay. A unit left
-          unticked still holds up posting and filing until it is asked or accepted.
+          {droppedSinceLoad > 0 ? ` (${droppedSinceLoad} answered since this page loaded)` : ''}. Once the new
+          e-mail is out, the earlier link no longer takes answers for the ticked units; answers already given on
+          other units stay. A unit left unticked still holds up posting and filing until it is asked or accepted.
         </p>
 
         <DialogFooter>

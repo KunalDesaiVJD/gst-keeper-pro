@@ -10,7 +10,7 @@ import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatINR } from '@/utils/builderRates';
-import { emailOk } from '@/lib/builderAgreementConfirmData';
+import { askConfirmCode, emailOk, verifyConfirmCode } from '@/lib/builderAgreementConfirmData';
 import { confirmAllTargets, pageSummary, type PageUnitState } from '@/lib/builderConfirmRules';
 import { GST_FIRM } from '@/lib/gstReminders';
 import logo from '@/assets/logo.png';
@@ -21,10 +21,14 @@ import logo from '@/assets/logo.png';
 // which still works here as a list of one. The token, not a session, scopes
 // every call (builder_bu_confirm_lookup / builder_bu_confirm_respond).
 // Anyone the e-mail was sent to (To or CC) may answer; the page asks their
-// name and e-mail, the database checks the e-mail against the request, and
-// both are recorded on each unit they answer. Only an open unit takes an
-// answer: a confirmed one stays confirmed, a disputed one waits for the firm.
-// A unit whose dispute box is open is left out of "Confirm all".
+// name and e-mail, the database checks the e-mail against the request and
+// queues a 6-digit code to it (e-mailed by the Edge Function bu-confirm-code),
+// and the code typed back gives a proof sent with each answer. So holding the
+// link and knowing an address on it is not enough: the reader must read that
+// mailbox. Name and e-mail are recorded on each unit they answer. Only an
+// open unit takes an answer: a confirmed one stays confirmed, a disputed one
+// waits for the firm. A unit whose dispute box is open is left out of
+// "Confirm all".
 
 type UnitState = PageUnitState;
 
@@ -70,6 +74,13 @@ const AgreementConfirmPage: React.FC = () => {
   const [savingUnit, setSavingUnit] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  // The code step: where the code went, what was typed, and the proof (with
+  // the address it proves) once the code was right.
+  const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [codeMessage, setCodeMessage] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  const [proof, setProof] = useState<{ proof: string; email: string } | null>(null);
   // Open dispute boxes and what has been typed in each, by unit. Answering
   // another unit leaves them as they are.
   const [disputes, setDisputes] = useState<Record<string, string>>({});
@@ -86,23 +97,67 @@ const AgreementConfirmPage: React.FC = () => {
 
   useEffect(() => { void load(); }, [load]);
 
+  const typedEmail = email.trim().toLowerCase();
+  // The proof holds only for the address it was given for.
+  const proved = proof && proof.email === typedEmail ? proof : null;
+
   const who = () => {
     const n = name.trim().replace(/\s+/g, ' ');
-    const e = email.trim().toLowerCase();
     if (n.length < 2) { toast.error('Please give your name.'); return null; }
-    if (!emailOk(e)) { toast.error('Please give a valid e-mail address.'); return null; }
-    return { n, e };
+    if (!emailOk(typedEmail)) { toast.error('Please give a valid e-mail address.'); return null; }
+    return { n, e: typedEmail };
+  };
+
+  const sendCode = async () => {
+    if (!token) return;
+    const person = who();
+    if (!person) return;
+    setCodeBusy(true);
+    setCodeMessage(null);
+    try {
+      const res = await askConfirmCode(token, person.e);
+      if (res.status === 'failed') {
+        setCodeMessage({ tone: 'bad', text: `We could not e-mail the code to ${person.e}. Please try again, or write to us at ${GST_FIRM.email}.` });
+        return;
+      }
+      setCodeSentTo(person.e);
+      setCode('');
+      setCodeMessage({ tone: 'ok', text: `We have e-mailed a 6-digit code to ${person.e}. It works for 30 minutes. If it is not there in a minute or two, look in the spam folder, or ask for a new one.` });
+    } catch (e) {
+      setCodeMessage({ tone: 'bad', text: (e as Error).message });
+    } finally {
+      setCodeBusy(false);
+    }
+  };
+
+  const checkCode = async () => {
+    if (!token || !codeSentTo) return;
+    setCodeBusy(true);
+    setCodeMessage(null);
+    try {
+      const res = await verifyConfirmCode(token, codeSentTo, code);
+      if (res.proof) {
+        setProof({ proof: res.proof, email: codeSentTo });
+        setCode('');
+        setCodeMessage(null);
+      } else {
+        setCodeMessage({ tone: 'bad', text: res.message });
+      }
+    } finally {
+      setCodeBusy(false);
+    }
   };
 
   const respond = async (answers: { unit_id: string; action: 'CONFIRM' | 'DISPUTE'; notes?: string }[], key: string) => {
     if (!token || !answers.length) return;
     const person = who();
     if (!person) return;
+    if (!proved) { toast.error('Please check your e-mail address with the code first.'); return; }
     setSavingUnit(key);
     setNotice(null);
     try {
       const { data, error } = await supabase.rpc('builder_bu_confirm_respond', {
-        _token: token, _answers: answers, _name: person.n, _email: person.e,
+        _token: token, _answers: answers, _name: person.n, _email: person.e, _proof: proved.proof,
       });
       if (error) throw error;
       const results = (data || []) as unknown as Answer[];
@@ -122,6 +177,8 @@ const AgreementConfirmPage: React.FC = () => {
       await load();
     } catch (e) {
       const msg = (e as Error).message;
+      // An old proof (over 2 hours): check the address again.
+      if (/with the code we send/.test(msg)) { setProof(null); setCodeSentTo(null); }
       toast.error(`Could not save your answer: ${msg}`);
       setNotice(msg);
     } finally {
@@ -217,10 +274,46 @@ const AgreementConfirmPage: React.FC = () => {
             <Label htmlFor="cf-email">Your e-mail</Label>
             <Input id="cf-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
           </div>
-          <p className="text-xs text-muted-foreground sm:col-span-2">
-            Anyone our e-mail was sent to (To or CC) may answer. Please give the e-mail address it reached you at.
-            We keep your name and e-mail with each answer.
-          </p>
+          {proved ? (
+            <p className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400 sm:col-span-2">
+              <CheckCircle2 className="h-4 w-4" /> {proved.email} is checked. You can answer below.
+            </p>
+          ) : (
+            <div className="space-y-2 sm:col-span-2">
+              <p className="text-xs text-muted-foreground">
+                Anyone our e-mail was sent to (To or CC) may answer. Please give the address it reached you at: we
+                e-mail a short code there to check it is yours. We keep your name and e-mail with each answer.
+              </p>
+              <div className="flex flex-wrap items-end gap-2">
+                <Button
+                  size="sm" variant={codeSentTo === typedEmail ? 'outline' : 'default'} disabled={codeBusy}
+                  onClick={() => void sendCode()}
+                >
+                  {codeBusy && !codeSentTo && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {codeSentTo === typedEmail ? 'E-mail a new code' : 'E-mail me a code'}
+                </Button>
+                {codeSentTo && codeSentTo === typedEmail && (
+                  <>
+                    <div className="space-y-1">
+                      <Label htmlFor="cf-code" className="text-xs">Code</Label>
+                      <Input
+                        id="cf-code" value={code} onChange={(e) => setCode(e.target.value)}
+                        inputMode="numeric" autoComplete="one-time-code" maxLength={9} className="h-8 w-28 tracking-widest"
+                      />
+                    </div>
+                    <Button size="sm" disabled={codeBusy || code.replace(/\D/g, '').length !== 6} onClick={() => void checkCode()}>
+                      {codeBusy && <Loader2 className="h-4 w-4 animate-spin" />} Check code
+                    </Button>
+                  </>
+                )}
+              </div>
+              {codeMessage && (
+                <p className={cn('text-xs', codeMessage.tone === 'bad' ? 'text-destructive' : 'text-muted-foreground')}>
+                  {codeMessage.text}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       ) : summary.restReplaced ? (
         <div className="flex items-center justify-center gap-2 rounded-md border p-3 text-sm">
@@ -242,7 +335,7 @@ const AgreementConfirmPage: React.FC = () => {
       <ul className="divide-y rounded-md border">
         {page.units.map((u) => {
           const line = stateLine(u);
-          const busy = savingUnit !== null;
+          const busy = savingUnit !== null || !proved;
           return (
             <li key={u.unit_id} className={cn('px-3 py-2.5', u.state === 'REPLACED' && 'opacity-60')}>
               <div className="flex items-center justify-between gap-3">
@@ -315,7 +408,7 @@ const AgreementConfirmPage: React.FC = () => {
       {open.length > 1 && allTargets.length > 0 && (
         <div className="space-y-1">
           <Button
-            className="w-full" disabled={savingUnit !== null}
+            className="w-full" disabled={savingUnit !== null || !proved}
             onClick={() => void respond(allTargets.map((id) => ({ unit_id: id, action: 'CONFIRM' as const })), 'all')}
           >
             {savingUnit === 'all' && <Loader2 className="h-4 w-4 animate-spin" />}
