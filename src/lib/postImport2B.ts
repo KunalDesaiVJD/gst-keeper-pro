@@ -1,10 +1,21 @@
-// Import 2B — Phase 4: the write-through engine.
+// Import 2B — the write-through to the 2B Reconciliation ledger.
 //
 // Import 2B (twob_import_docs / books_register) is the single place staff
-// classify documents. "Post to Reconciliation" syncs the two exception
-// buckets into the live bills_not_in_2b / bills_not_in_books running sheets
-// that ITC Summary, Suspended Reco and month-to-month carry-forward already
-// read from — none of that downstream engine changes.
+// classify documents. Every save there writes through to the two exception
+// buckets, the live bills_not_in_2b / bills_not_in_books running sheets that
+// ITC Summary, Suspended Reco and month-to-month carry-forward already read
+// from, in the same statement (database triggers of 20261021170000; docs §15).
+// There is no "Post to Reconciliation" any more (the firm, 21 Oct 2026: "No
+// need of Post to Reconciliation in Import 2B tab, as updation itself would
+// automatically change the next report wherever required").
+//
+// This module keeps Post's plan, which the write-through follows row for row
+// (twob__autopost_plan is the same plan in SQL, tested against this one):
+// planImport2BPost says what the ledger of a month needs to follow Import 2B.
+// The page runs it to show a month that is out of step (posted before this
+// change, or changed on 2B Reconciliation since) and why a row is not posted;
+// postImport2BToLedger writes a plan the way Post did, and is now only the
+// reference the database's write-through is tested against.
 //
 // GST-law mapping (see docs/2B_RECONCILIATION_FLOW.md for the full reasoning):
 //  - twob_import_docs.itc_action = NOT_IN_BOOKS  → bills_not_in_books row
@@ -19,10 +30,10 @@
 //    directly. INELIGIBLE / ITC_OF_OTHERS / MISMATCHED / NOT_ELIGIBLE never
 //    produce a ledger row — they are not a 2B-vs-books timing gap.
 //
-// Sync is idempotent and non-destructive to rows this engine doesn't own:
+// Idempotent and non-destructive to rows the write-through doesn't own:
 // only bills_not_in_2b/books rows carrying a source_book_id/source_doc_id
-// link are inserted/updated/retracted here. Carried-forward copies and
-// legacy manually-added rows (no link) are never touched.
+// link are inserted/updated/retracted. Carried-forward copies and legacy
+// manually-added rows (no link) are never touched.
 //
 // Notes and amendments (firm decision, 14 Oct 2026, §10 of the doc): every
 // figure is read through src/lib/twobDocs.ts. A supplier debit note counts
@@ -91,6 +102,13 @@ interface LedgerRow {
   input_sgst: number | null;
 }
 
+/**
+ * The same amount to the paisa. The ledger stores two decimals: a figure typed
+ * with more is stored rounded and is the same amount, so it never plans an
+ * update that changes nothing (twob__ledger_differs takes the same tolerance).
+ */
+const samePaise = (a: number, b: number) => Math.abs(a - b) <= 0.005000001;
+
 // The supplier name as Post writes it (trimmed, or "Unknown supplier"), so a
 // books name with a stray space does not plan an update that changes nothing.
 const amountsDiffer = (a: LedgerRow, b: { date: string; supplier_name: string; supplier_invoice_number: string | null; supplier_gstin: string | null; taxable_value: number; input_igst: number; input_cgst: number; input_sgst: number }) =>
@@ -98,10 +116,10 @@ const amountsDiffer = (a: LedgerRow, b: { date: string; supplier_name: string; s
   (a.supplier_name || '').trim() !== ((b.supplier_name || '').trim() || 'Unknown supplier') ||
   (a.supplier_invoice_number || '') !== (b.supplier_invoice_number || '') ||
   (a.supplier_gstin || '') !== (b.supplier_gstin || '') ||
-  Number(a.taxable_value || 0) !== b.taxable_value ||
-  Number(a.input_igst || 0) !== b.input_igst ||
-  Number(a.input_cgst || 0) !== b.input_cgst ||
-  Number(a.input_sgst || 0) !== b.input_sgst;
+  !samePaise(Number(a.taxable_value || 0), b.taxable_value) ||
+  !samePaise(Number(a.input_igst || 0), b.input_igst) ||
+  !samePaise(Number(a.input_cgst || 0), b.input_cgst) ||
+  !samePaise(Number(a.input_sgst || 0), b.input_sgst);
 
 /** A books row with a minus amount: a supplier credit note, which the books register does not take. */
 export const bookHasMinus = (b: { taxable_value?: number | null; input_igst?: number | null; input_cgst?: number | null; input_sgst?: number | null }) =>
@@ -113,6 +131,38 @@ export const BOOK_MINUS_REASON = 'Minus amount: amounts in the books register ar
 export const bookIsPurchaseReturn = (b: { doc_type?: string | null }) => b.doc_type === 'DEBIT_NOTE';
 
 export const BOOK_DEBIT_NOTE_REASON = 'Debit note (purchase return): no effect until the supplier\'s credit note is in 2B; that 2B row then reduces ITC (row 5.3)';
+
+/**
+ * Why a Not in 2B books row is not on the ledger, or null when it posts:
+ * a debit note (purchase return) or a minus row never posts (what it posted
+ * is taken back); a row without a date or a supplier is not posted yet (what
+ * it posted stays as it is). The plan and the page's rows read this one rule.
+ */
+export function bookNotPostedReason(b: { doc_type?: string | null; date?: string | null; supplier_name?: string | null; taxable_value?: number | null; input_igst?: number | null; input_cgst?: number | null; input_sgst?: number | null }): string | null {
+  if (bookIsPurchaseReturn(b)) return BOOK_DEBIT_NOTE_REASON;
+  if (bookHasMinus(b)) return BOOK_MINUS_REASON;
+  if (!b.date) return 'Missing date';
+  if (!b.supplier_name || !b.supplier_name.trim()) return 'Missing supplier name';
+  return null;
+}
+
+/** A Not in 2B books row that posts, or will once complete: not a debit note, no minus amount. */
+export const bookPostable = (b: { doc_type?: string | null; taxable_value?: number | null; input_igst?: number | null; input_cgst?: number | null; input_sgst?: number | null }) =>
+  !bookIsPurchaseReturn(b) && !bookHasMinus(b);
+
+/** An amendment whose difference is zero (a number or date correction): nothing to post. */
+export const docChangesNothing = (d: TwobDocLike) => {
+  if (!d.is_amendment) return false;
+  const e = signedEffect(d);
+  return [e.taxable, e.igst, e.cgst, e.sgst].every((v) => Math.abs(v) < 0.005);
+};
+
+/** Why a Not in Books 2B document is not on the ledger, or null when it posts (its zero-change amendment aside). */
+export function docNotPostedReason(d: { date?: string | null; supplier_name?: string | null }): string | null {
+  if (!d.date) return 'Missing date';
+  if (!d.supplier_name || !d.supplier_name.trim()) return 'Missing supplier name';
+  return null;
+}
 
 export interface PostPlan {
   insertBills2B: { row: BookRegRow }[];
@@ -133,11 +183,12 @@ const ledgerFiguresOf = (d: TwoBDocRow) => {
   return { taxable_value: e.taxable, input_igst: e.igst, input_cgst: e.cgst, input_sgst: e.sgst };
 };
 
-// Dry-run: compute what a post would do, without writing anything. Used to
-// show a confirm dialog with real counts before touching the ledger. Only the
-// rows that post are read (books NOT_IN_2B, docs NOT_IN_BOOKS), every page of
-// them: PostgREST returns at most 1000 rows a request, and a truncated read
-// here would retract or duplicate ledger rows.
+// What the ledger of a month needs to follow Import 2B, without writing
+// anything: the write-through's plan (twob__autopost_plan is the same in
+// SQL). Import 2B runs it to say when a month is out of step and why a row
+// is not posted. Only the rows that post are read (books NOT_IN_2B, docs
+// NOT_IN_BOOKS), every page of them: PostgREST returns at most 1000 rows a
+// request, and a truncated read would plan wrong retractions or additions.
 export async function planImport2BPost(clientId: string, periodMonth: string): Promise<PostPlan> {
   const LEDGER_COLUMNS = 'id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst';
   const [books, docs, ledger2B, ledgerBooks] = await Promise.all([
@@ -167,11 +218,10 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
   const byBookId = new Map(ledger2B.map((l) => [l.source_book_id as string, l]));
   const postable = new Set<string>();
   for (const b of notIn2B) {
-    if (bookIsPurchaseReturn(b)) { plan.skippedBooks.push({ row: b, reason: BOOK_DEBIT_NOTE_REASON }); continue; }
-    if (bookHasMinus(b)) { plan.skippedBooks.push({ row: b, reason: BOOK_MINUS_REASON }); continue; }
-    postable.add(b.id);
-    if (!b.date) { plan.skippedBooks.push({ row: b, reason: 'Missing date' }); continue; }
-    if (!b.supplier_name || !b.supplier_name.trim()) { plan.skippedBooks.push({ row: b, reason: 'Missing supplier name' }); continue; }
+    if (bookPostable(b)) postable.add(b.id);
+    const reason = bookNotPostedReason(b);
+    if (reason) { plan.skippedBooks.push({ row: b, reason }); continue; }
+    if (!b.date || !b.supplier_name) continue;   // (for the type checker: the reason above covers both)
     const existing = byBookId.get(b.id);
     if (!existing) {
       plan.insertBills2B.push({ row: b });
@@ -197,10 +247,11 @@ export async function planImport2BPost(clientId: string, periodMonth: string): P
   const byDocId = new Map(ledgerBooks.map((l) => [l.source_doc_id as string, l]));
   for (const d of notInBooks) {
     const fig = ledgerFiguresOf(d);
-    if (d.is_amendment && [fig.taxable_value, fig.input_igst, fig.input_cgst, fig.input_sgst].every((v) => Math.abs(v) < 0.005)) continue;
+    if (docChangesNothing(d)) continue;
     kept.add(d.id);
-    if (!d.date) { plan.skippedDocs.push({ row: d, reason: 'Missing date' }); continue; }
-    if (!d.supplier_name || !d.supplier_name.trim()) { plan.skippedDocs.push({ row: d, reason: 'Missing supplier name' }); continue; }
+    const reason = docNotPostedReason(d);
+    if (reason) { plan.skippedDocs.push({ row: d, reason }); continue; }
+    if (!d.date || !d.supplier_name) continue;   // (for the type checker: the reason above covers both)
     const existing = byDocId.get(d.id);
     if (!existing) {
       plan.insertBillsBooks.push({ row: d });
@@ -289,6 +340,22 @@ export async function fetchImport2BHeld(clientId: string, periodMonth: string): 
 export const import2BHeldMessage = (n: number) =>
   `${n} ${n === 1 ? 'amendment' : 'amendments'} held in Import 2B, not counted: settle ${n === 1 ? 'it' : 'them'} there`;
 
+/**
+ * Why each row of the month is not on the ledger, by its id (books rows and 2B
+ * documents): a missing date or supplier, a books debit note (purchase
+ * return) or a minus amount. Import 2B shows it on the row.
+ */
+export function skipReasonsOf(plan: PostPlan): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const { row, reason } of [...plan.skippedBooks, ...plan.skippedDocs]) out.set(row.id, reason);
+  return out;
+}
+
+/** "3 to add, 1 to change, 2 to remove" for one list of a plan; '' when nothing. */
+export function planCountsText(ins: number, upd: number, ret: number): string {
+  return [ins && `${ins} to add`, upd && `${upd} to change`, ret && `${ret} to remove`].filter(Boolean).join(', ');
+}
+
 export const isPostPlanEmpty = (p: PostPlan) =>
   p.insertBills2B.length === 0 && p.updateBills2B.length === 0 && p.retractBills2B.length === 0 &&
   p.insertBillsBooks.length === 0 && p.updateBillsBooks.length === 0 && p.retractBillsBooks.length === 0;
@@ -300,9 +367,11 @@ export interface PostResult {
   versionNumber: number | null;
 }
 
-// Execute a previously computed plan, stamp posted_at/posted_by on every
-// classified row for the period, and write a twob_versions snapshot so
-// "View Versions" on 2B Reconciliation keeps an audit trail of each post.
+// Post as it was, kept as the reference the database's write-through is
+// tested against (supabase/tests/twob_simple/autopost.test.mjs): executes a
+// previously computed plan, stamps posted_at/posted_by on every classified
+// row for the period, and writes a twob_versions snapshot. The app no longer
+// calls it: every Import 2B save writes through by itself (docs §15).
 export async function postImport2BToLedger(
   clientId: string,
   periodMonth: string,
@@ -417,11 +486,12 @@ export async function postImport2BToLedger(
   };
 }
 
-// The version snapshot a Post leaves (and a prior month's Save on 2B
-// Reconciliation): the month's two lists as they now stand, in the shape
+// The version snapshot a prior month's Save on 2B Reconciliation leaves (and
+// Post did): the month's two lists as they now stand, in the shape
 // TwoBReconciliationPage's "Save Changes" writes, so View Versions keeps
-// working unchanged. Never fails the caller: returns the version number, or
-// null when it could not be written.
+// working unchanged. Import 2B's write-through takes its own
+// (twob__autopost_snapshot, coalesced per minute). Never fails the caller:
+// returns the version number, or null when it could not be written.
 export async function writePostVersion(clientId: string, periodMonth: string, userId: string | undefined): Promise<number | null> {
   const nowIso = new Date().toISOString();
   let versionNumber: number | null = null;
@@ -478,13 +548,14 @@ export async function writePostVersion(clientId: string, periodMonth: string, us
   return versionNumber;
 }
 
-// Post's plan for a prior month, as the changes twob_prior_books_apply takes
+// The plan for a prior month, as the changes twob_prior_books_apply takes
 // (src/lib/twobPriorMonth.ts): the books side only, the same retractions, new
-// entries and updates of Not in 2B postImport2BToLedger writes, each also
+// entries and updates of Not in 2B the write-through makes, each also
 // reaching the later months' carried copies of the entry. The Not in Books
 // side follows the month's 2B documents, which stay as filed, so it is left
-// out (priorPlanLeftOut names it; docs §13). The posting stamps are not
-// written: a prior month's 2B documents do not change.
+// out (priorPlanLeftOut names it; docs §13). Import 2B counts it to say what a
+// filed month's Not in 2B side lacks; twob_import2b_prior_save sends the same
+// changes, worked out in the database.
 export function planToPriorChanges(plan: PostPlan, periodMonth: string): TwobChange[] {
   const label = periodMonthLabel(periodMonth);
   const fields = (r: { date: string | null; supplier_name: string | null; supplier_invoice_number: string | null; supplier_gstin: string | null }) => ({
@@ -521,5 +592,5 @@ export function priorPlanLeftOut(plan: PostPlan): string | null {
     plan.updateBillsBooks.length && `${plan.updateBillsBooks.length} to change`,
     plan.retractBillsBooks.length && `${plan.retractBillsBooks.length} to remove`,
   ].filter(Boolean).join(', ');
-  return `Not posted: ${n} Not in Books ${n === 1 ? 'entry' : 'entries'} from this month's 2B documents (${parts}${names.length ? `: ${names.join(', ')}${n > names.length ? ' and more' : ''}` : ''}). A filed month's Not in Books list follows its filed 2B, not the books, so it does not change here.`;
+  return `Not on the ledger: ${n} Not in Books ${n === 1 ? 'entry' : 'entries'} from this month's 2B documents (${parts}${names.length ? `: ${names.join(', ')}${n > names.length ? ' and more' : ''}` : ''}). A filed month's Not in Books list follows its filed 2B, not the books, so it does not change here; if such an entry belongs on the list, add it in the open month.`;
 }

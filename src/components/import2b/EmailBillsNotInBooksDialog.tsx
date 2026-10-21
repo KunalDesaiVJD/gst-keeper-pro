@@ -169,7 +169,7 @@ const EmailBillsNotInBooksDialog: React.FC<{
           )}
           {sum.unposted > 0 && (
             <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
-              Includes {sum.unposted} document{sum.unposted === 1 ? '' : 's'} marked Not in Books this month but not yet posted to Reconciliation.
+              Includes {sum.unposted} document{sum.unposted === 1 ? '' : 's'} marked Not in Books this month but not on the 2B Reconciliation ledger (no date or supplier in the 2B file, or a filed month).
             </p>
           )}
 

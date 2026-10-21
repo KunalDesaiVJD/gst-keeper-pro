@@ -1,14 +1,16 @@
 // Import 2B → e-mail the client its bills not in books (15 Oct 2026).
 //
 // The list is every document the client's suppliers reported in GSTR-2B that
-// the client has not yet recorded in its books, as the ledger will hold it
-// after the next Post to Reconciliation:
+// the client has not yet recorded in its books, as the ledger holds it (every
+// Import 2B save writes through to it, docs §15):
 //  - the month's open Not in Books ledger rows (bills_not_in_books with no
 //    book_entry_month), which carry earlier months' items forward; a row this
 //    month's Import 2B posted follows its document as it is now (left out if
-//    it is no longer Not in Books, at its current figures if they changed);
-//  - this month's 2B documents marked Not in Books that were never posted
-//    (so a send never has to wait for Post to Reconciliation).
+//    it is no longer Not in Books, at its current figures if they changed: a
+//    month out of step, posted before saves wrote through);
+//  - this month's 2B documents marked Not in Books that are not on the
+//    ledger (no date or supplier in the 2B file, a filed month's documents,
+//    or a month out of step).
 // Amounts are what the ledger holds, with their sign (twobDocs.signedEffect):
 // a credit note parked Not in Books (17 Oct 2026) is negative, and an
 // amendment counts at its difference, so it may be negative too.
@@ -166,7 +168,7 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
   for (const l of ledger) {
     const d = l.source_doc_id ? docById.get(l.source_doc_id) : undefined;
     if (d) {
-      // Posted from this month's Import 2B: as the next Post will leave it.
+      // Posted from this month's Import 2B: as its document stands now.
       if (!isOpenDoc(d)) continue;
       const e = signedEffect(d);
       out.push({

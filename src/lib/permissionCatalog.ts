@@ -43,7 +43,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'view_change_history', group: 'returns', label: 'Change history', description: 'See who changed what on the GST working pages, and when (Change history, History buttons)' },
 
   // 2B, ITC, RCM & update sheet
-  { key: 'work_2b_import', group: 'reco', label: 'Import 2B & post', description: 'Import 2B / books, pull 2B from the portal and Post to Reconciliation' },
+  { key: 'work_2b_import', group: 'reco', label: 'Import 2B & post', description: 'Import 2B / books, pull 2B from the portal, and bring a month\'s 2B Reconciliation ledger up to date (saves reach it by themselves)' },
   { key: 'import_excel', group: 'reco', label: 'Import Excel (2B Reconciliation)', description: 'Import Excel into the 2B Reconciliation page (Liberal clients)' },
   { key: 'delete_2b_rows', group: 'reco', label: 'Delete 2B rows', description: 'Delete 2B and books rows on Import 2B and 2B Reconciliation' },
   { key: 'clear_data', group: 'reco', label: 'Clear data', description: "Wipe a period's 2B / ITC / RCM / Suspended Reco data (Clear Data)" },

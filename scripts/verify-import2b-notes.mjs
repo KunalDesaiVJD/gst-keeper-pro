@@ -7,8 +7,13 @@
 //  - the treatments offered (src/lib/twobDocs.ts allowedActions), and an
 //    amendment's default and base when the version it amends is parked
 //    (defaultAction, baseFrom, refollowAction);
-//  - Post to Reconciliation (src/lib/postImport2B.ts): the ledger row, with
-//    its sign, and row 5.1 / 5.3 leaving parked documents out;
+//  - the write-through to the 2B Reconciliation ledger (no Post since 21 Oct
+//    2026, docs §15): Post's rules, planImport2BPost in
+//    src/lib/postImport2B.ts, which the database's twob__autopost_plan
+//    follows row for row (supabase/tests/twob_simple/autopost.test.mjs); here
+//    postImport2BToLedger writes the plan into the in-memory store as the
+//    database does: the ledger row, with its sign, row 5.1 / 5.3 leaving
+//    parked documents out, and the page's out-of-step line before and after;
 //  - the e-mailed list (src/lib/billsNotInBooksMail.ts), at the ledger's
 //    figures, its credit in words and never a negative "₹-…";
 //  - once booked, the note is reduced in ITC Summary row 5.2, the one row
@@ -116,6 +121,7 @@ const load = async (contents) => {
 const M = await load(`
 export * as T from './src/lib/twobDocs';
 export * as P from './src/lib/postImport2B';
+export * as W from './src/lib/import2bAutopost';
 export * as B from './src/lib/billsNotInBooksMail';
 export * as I from './src/utils/builderPartialItc';
 export * as G from './src/utils/buildGstr3bJson';
@@ -126,7 +132,7 @@ export * as H from './src/lib/itcHeads';
 export * as X from './src/utils/matchTwob';
 export * as Q from './src/utils/gstr2bReports';
 `);
-const { T, P, B, I, G, R, A, F, H, X, Q } = M;
+const { T, P, W, B, I, G, R, A, F, H, X, Q } = M;
 
 const doc = (o) => ({
   is_amendment: false, original_doc_type: null, reverse_charge: false, bucket: 'available', itc_available: true,
@@ -200,7 +206,7 @@ await run('amendments', async () => {
     next === 'NOT_IN_BOOKS' && T.sameBase(T.baseFrom(cnParked, counted), counted), next);
 });
 
-// ── 3. Post to Reconciliation and rows 5.1 / 5.3 ────────────────────────────
+// ── 3. The write-through (Post's rules) and rows 5.1 / 5.3 ──────────────────
 const C = 'client-1';
 const M9 = '09/2026';
 const at = (o) => doc({ client_id: C, period_month: M9, date: '2026-09-10', supplier_name: 'Supplier', supplier_gstin: '24AAAAA0000A1Z5', full_2b: true, ...o });
@@ -225,10 +231,14 @@ globalThis.__db = { twob_import_docs: DOCS.map((d) => ({ ...d })), books_registe
 await run('post', async () => {
   const plan = await P.planImport2BPost(C, M9);
   const ins = new Set(plan.insertBillsBooks.map(({ row }) => row.id));
-  check('Post plans a Not in Books row for the invoice and the debit note', ins.has('inv1') && ins.has('dn1'), [...ins]);
+  check('the write-through plans a Not in Books row for the invoice and the debit note', ins.has('inv1') && ins.has('dn1'), [...ins]);
   check('… and for each credit note marked Not in Books (plain, IMS declared, amended)', ins.has('cn1') && ins.has('cn2') && ins.has('cna'), [...ins]);
   check('… with nothing skipped', plan.skippedDocs.length === 0, plan.skippedDocs.map((s) => `${s.row.supplier_invoice_number}: ${s.reason}`).join('; '));
   check('… and no row for a Matched document', !ins.has('cn3') && !ins.has('inv2'));
+  // Saved before saves wrote through: the page says the month is out of step.
+  const line = W.outOfStepLine(plan, false);
+  check('a month whose ledger lacks them reads as out of step, naming the count, with the action offered',
+    !!line && line.actionable && line.text.includes('Not in Books 6 to add'), JSON.stringify(line));
   await P.postImport2BToLedger(C, M9, 'user-1', plan);
   const ledger = globalThis.__db.bills_not_in_books;
   const bySrc = new Map(ledger.map((l) => [l.source_doc_id, l]));
@@ -239,7 +249,8 @@ await run('post', async () => {
   check('… every new row open (no book entry month) and in 2B since Sep 26',
     ledger.length > 0 && ledger.every((l) => l.book_entry_month === null && l.bill_in_2b_month === 'Sep 26'));
   const again = await P.planImport2BPost(C, M9);
-  check('posting again changes nothing (the figures written are the figures planned)', P.isPostPlanEmpty(again), JSON.stringify({
+  check('writing through again changes nothing (the figures written are the figures planned), and the out-of-step line goes',
+    P.isPostPlanEmpty(again) && W.outOfStepLine(again, false) === null, JSON.stringify({
     ins: again.insertBillsBooks.length, upd: again.updateBillsBooks.map(({ row }) => row.id), ret: again.retractBillsBooks.length }));
 
   // Back to Matched: the row it posted is retracted, and it counts in 5.3.
@@ -516,7 +527,9 @@ await run('books minus', async () => {
     P.bookHasMinus?.({ taxable_value: -4000, input_cgst: -360 }) === true && P.bookHasMinus?.({ taxable_value: 0, input_cgst: -0.01 }) === true
       && P.bookHasMinus?.({ taxable_value: 1000, input_igst: 0, input_cgst: 90, input_sgst: 90 }) === false && P.bookHasMinus?.({}) === false);
   const plan = await P.planImport2BPost(BC, BM);
-  check('Post to Reconciliation posts the invoice and skips the minus row with the reason',
+  check('bookNotPostedReason names a minus row (the reason the books register shows on the row)',
+    P.bookNotPostedReason?.(db.books_register[1]) === P.BOOK_MINUS_REASON && P.bookNotPostedReason?.(db.books_register[0]) === null);
+  check('the write-through posts the invoice and skips the minus row with the reason',
     plan.insertBills2B.map(({ row }) => row.id).join() === 'bk-inv'
       && plan.skippedBooks.some(({ row, reason }) => row.id === 'bk-cn' && reason.startsWith('Minus amount')),
     JSON.stringify({ ins: plan.insertBills2B.map(({ row }) => row.id), skipped: plan.skippedBooks.map(({ row, reason }) => `${row.id}: ${reason}`) }));
@@ -549,7 +562,9 @@ await run('books purchase return', async () => {
   check('bookIsPurchaseReturn: a books debit note only', P.bookIsPurchaseReturn?.({ doc_type: 'DEBIT_NOTE' }) === true
     && P.bookIsPurchaseReturn?.({ doc_type: 'INVOICE' }) === false && P.bookIsPurchaseReturn?.({}) === false);
   const plan = await P.planImport2BPost(BC, BM);
-  check('Post to Reconciliation posts the invoice and leaves the debit note out with the reason',
+  check('bookNotPostedReason names a books debit note (the reason the books register shows on the row)',
+    P.bookNotPostedReason?.(db.books_register[1]) === P.BOOK_DEBIT_NOTE_REASON && P.bookNotPostedReason?.(db.books_register[0]) === null);
+  check('the write-through posts the invoice and leaves the debit note out with the reason',
     plan.insertBills2B.map(({ row }) => row.id).join() === 'bk-inv2'
       && plan.skippedBooks.some(({ row, reason }) => row.id === 'bk-dn' && reason.startsWith('Debit note (purchase return)')),
     JSON.stringify({ ins: plan.insertBills2B.map(({ row }) => row.id), skipped: plan.skippedBooks.map(({ row, reason }) => `${row.id}: ${reason}`) }));
@@ -593,6 +608,35 @@ await run('books purchase return', async () => {
   const tab = fs.readFileSync(path.join(root, 'src/pages/Import2BTab.tsx'), 'utf8');
   check('the books register labels the type "Debit note (purchase return)" and nets it in the totals',
     tab.includes("label: 'Debit note (purchase return)'") && tab.includes('const bookTotals = sumBooksNet(books);'));
+});
+
+// ── 9. No Post on Import 2B (the firm, 21 Oct 2026; docs §15) ───────────────
+// Every save writes through in the database, by these same rules: the page
+// has no Post button and writes no ledger row of its own for a save; the
+// database's plan gives the same reasons for a row it leaves out; a month
+// out of step is brought up to date by an action that previews it.
+await run('no post', async () => {
+  const tab = fs.readFileSync(path.join(root, 'src/pages/Import2BTab.tsx'), 'utf8');
+  const sql = fs.readFileSync(path.join(root, 'supabase/migrations/20261021170000_import2b_autopost.sql'), 'utf8');
+  const code = tab.replace(/^\s*\/\/.*$/gm, '');
+  check('Import 2B has no Post to Reconciliation button and never posts from the browser',
+    !code.includes('Post to Reconciliation') && !/postImport2BToLedger\s*\(/.test(code) && !/writePostVersion\s*\(/.test(code));
+  check('… no save writes a ledger row of its own (inserts and deletes of the two lists are the database\'s)',
+    !/from\('bills_not_in_(2b|books)'\)\s*\.(insert|delete|upsert)\(/.test(code));
+  check('… a month out of step offers "Bring the reconciliation up to date", previewed first',
+    tab.includes('Bring the reconciliation up to date') && /catchUpMonth\([^)]*true\)/.test(code));
+  const sqlText = (t) => t.replace(/'/g, "''");
+  check('the database leaves out the rows Post left out, with the same reasons (debit note, minus row, no date, no supplier)',
+    [P.BOOK_DEBIT_NOTE_REASON, P.BOOK_MINUS_REASON, 'Missing date', 'Missing supplier name'].every((r) => sql.includes(`'${sqlText(r)}'`)));
+  check('… and writes through on every save of both tables (added, changed, deleted rows)',
+    ['books_register', 'twob_import_docs'].every((t) => ['added', 'changed', 'gone'].every((k) =>
+      new RegExp(`CREATE TRIGGER trg_twob_zz_autopost_${k}[\\s\\S]{0,200}ON public\\.${t}`).test(sql))));
+  check('docNotPostedReason: a 2B document without a date or supplier is not posted, and says so',
+    P.docNotPostedReason?.({ date: null, supplier_name: 'A' }) === 'Missing date' && P.docNotPostedReason?.({ date: '2026-09-01', supplier_name: ' ' }) === 'Missing supplier name'
+      && P.docNotPostedReason?.({ date: '2026-09-01', supplier_name: 'A' }) === null);
+  check('… and the books register and 2B rows show the reason on the row',
+    tab.includes('Not on the 2B Reconciliation ledger: ${why.toLowerCase()}') && tab.includes('docNotPostedReason(')
+      && tab.includes('bookNotPostedReason(b)') && tab.includes('Not on the ledger: {notPosted.toLowerCase()}'));
 });
 
 // ── Report ──────────────────────────────────────────────────────────────────

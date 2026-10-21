@@ -1714,7 +1714,7 @@ const TwoBReconciliationPage: React.FC = () => {
                   ? PRIOR_MONTH_MSG
                   : isLiberalClient
                     ? 'This month is filed. You can change its books entries here: the date, supplier, number, GSTIN and amounts, add entries and delete them. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved. The reversal, reclaim, book entry and in-2B months stay as filed, and so do Not in Books entries from 2B documents. A carried Not in Books entry changes in the month that holds it as its own entry, which reaches this copy.'
-                    : 'This month is filed. You can delete its entries here; add or correct them through Import 2B\'s books register and Post. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved.'}
+                    : 'This month is filed. You can delete its entries here; add or correct them through Import 2B\'s books register, whose saves reach this list by themselves. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved.'}
               </span>
             </Note>
           )}

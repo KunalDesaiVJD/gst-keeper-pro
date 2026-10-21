@@ -12372,6 +12372,26 @@ export type Database = {
         Args: { p_client_id: string; p_period: string }
         Returns: string[]
       }
+      twob_import2b_catch_up: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_dry_run?: boolean }
+        Returns: Json
+      }
+      twob_import2b_prior_save: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_changes: Json; p_dry_run?: boolean; p_whole_month?: boolean }
+        Returns: Json
+      }
+      twob_import2b_delete_2b: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string }
+        Returns: Json
+      }
+      twob_clear_year: {
+        Args: { p_actor_id: string; p_client_id: string; p_months: string[] }
+        Returns: Json
+      }
+      twob_import2b_flush_version: {
+        Args: { p_actor_id: string | null; p_client_id: string; p_period: string }
+        Returns: Json
+      }
       staff_end_sessions: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_target_user_id: string }
         Returns: string

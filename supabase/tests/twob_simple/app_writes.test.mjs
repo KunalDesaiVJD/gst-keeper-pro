@@ -495,7 +495,7 @@ const B = await import('data:text/javascript;base64,' + Buffer.from(memOut.outpu
   check('S6: a prior month\'s Post sends no Not in Books change from a 2B document', plan.insertBillsBooks.length === 1
     && changes.every((c) => c.table !== 'bills_not_in_books'), JSON.stringify(changes));
   const left = B.priorPlanLeftOut(plan);
-  check('S6: ... and names what it leaves out', !!left && left.startsWith('Not posted: 1 Not in Books entry from this month\'s 2B documents (1 to add: JAY INFRASTRUCTURE 16/2026-27)'), left);
+  check('S6: ... and names what it leaves out', !!left && left.startsWith('Not on the ledger: 1 Not in Books entry from this month\'s 2B documents (1 to add: JAY INFRASTRUCTURE 16/2026-27)'), left);
 }
 
 {

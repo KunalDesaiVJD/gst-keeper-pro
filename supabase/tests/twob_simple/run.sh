@@ -14,7 +14,12 @@
 # the app's own writes and words (app_writes.test.mjs: a stale page's
 # reclaim, the open-month delete, the words after filing and of Re-run, the
 # GSTR-3B push gate failing closed, a prior month's Post plan, the stale
-# open-month Save, Suspended Reco's reads).
+# open-month Save, Suspended Reco's reads) and Import 2B's write-through
+# against Post as it was (autopost.test.mjs: twin clients, the same saves,
+# the database's write-through on one and planImport2BPost +
+# postImport2BToLedger on the other, ledgers compared after every save kind;
+# test_9a/9b/9c: the write-through's rules, two sessions saving at once, and
+# 1,000-row saves under a second).
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.
@@ -57,12 +62,15 @@ END \$\$;
 ALTER DEFAULT PRIVILEGES FOR ROLE $owner IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES FOR ROLE $owner IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 SQL
-f=20261021100000_twob_prior_month_simple.sql
 psql_owner() { PGOPTIONS="--client-min-messages=warning" psql -X -q -v ON_ERROR_STOP=1 -U "$owner" -d "$db" "$@"; }
-psql_owner -f "$mig/$f" >/dev/null 2>"$errf" || { echo "FAILED applying $f as $owner (not a superuser)"; cat "$errf"; exit 1; }
-psql_owner -f "$mig/$f" >/dev/null 2>"$errf" || { echo "FAILED re-applying $f as $owner"; cat "$errf"; exit 1; }
+# The prior-month rule, then Import 2B's write-through (20261021170000,
+# docs §15), each applied twice.
+for f in 20261021100000_twob_prior_month_simple.sql 20261021170000_import2b_autopost.sql; do
+  psql_owner -f "$mig/$f" >/dev/null 2>"$errf" || { echo "FAILED applying $f as $owner (not a superuser)"; cat "$errf"; exit 1; }
+  psql_owner -f "$mig/$f" >/dev/null 2>"$errf" || { echo "FAILED re-applying $f as $owner"; cat "$errf"; exit 1; }
+done
 [ "$(psql_q -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = '$owner'")" = "f" ] || { echo "FAILED: $owner is a superuser"; exit 1; }
-echo "ok   migration applied twice, by a role that is not a superuser"
+echo "ok   migrations applied twice, by a role that is not a superuser"
 psql_q -f "$here/01_fixtures.sql" >/dev/null
 status=0
 shopt -s nullglob
@@ -75,7 +83,7 @@ done
 for t in "$here"/test_*.sh; do
   if TWOB_TEST_DB="$db" bash "$t"; then :; else echo "FAIL $(basename "$t")"; status=1; fi
 done
-for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs; do
+for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs; do
   if [ -f "$t" ]; then
     if TWOB_TEST_DB="$db" node "$t"; then :; else status=1; fi
   fi

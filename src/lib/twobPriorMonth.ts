@@ -174,6 +174,12 @@ export interface TwobChangeResult {
   refusal: string | null;
   /** An added entry the month or a later month already holds: not added (the rest goes ahead). */
   note: string | null;
+  /**
+   * A 2B Reconciliation entry the save of a books row brought with it (Import
+   * 2B's write-through in a prior month, twob_import2b_prior_save), not a
+   * change the screen sent.
+   */
+  derived: boolean;
 }
 
 export interface TwobApplyResult {
@@ -213,6 +219,7 @@ const parseApply = (data: unknown): TwobApplyResult => {
         booksRow: typeof t.books_row === 'string' ? t.books_row : null,
         refusal: typeof c.refusal === 'string' ? c.refusal : null,
         note: typeof c.note === 'string' ? c.note : null,
+        derived: c.derived === true,
       };
     }),
     refusals: (Array.isArray(d.refusals) ? d.refusals : []).map((r) => {
@@ -249,6 +256,27 @@ export async function applyPriorBooks(
   return parseApply(data);
 }
 
+/**
+ * A prior month's Import 2B books rows saved with their Not in 2B
+ * write-through, through the door (twob_import2b_prior_save, a GST Manager or
+ * the superadmin; docs §15): changes are books register changes only, the
+ * 2B Reconciliation entries they post, change or take back (and those
+ * entries' later copies) are worked out in the database and come back as
+ * derived changes. wholeMonth: every books row of the month (a month out of
+ * step brought up to date). dryRun: the preview. Applying is all or nothing:
+ * a refusal throws with the database's words.
+ */
+export async function applyPriorSave(
+  actorId: string, clientId: string, period: string, changes: TwobChange[], dryRun: boolean, wholeMonth = false,
+): Promise<TwobApplyResult> {
+  const { data, error } = await supabase.rpc('twob_import2b_prior_save', {
+    p_actor_id: actorId, p_client_id: clientId, p_period: period,
+    p_changes: changes as unknown as Json, p_dry_run: dryRun, p_whole_month: wholeMonth,
+  });
+  if (error) throw new Error(error.message);
+  return parseApply(data);
+}
+
 /** The refusals as one sentence each ("PERFECT INDUSTRIES 19/26-27: Sep-26 has reclaimed this entry; undo that reclaim first."). */
 export const refusalLines = (r: TwobApplyResult): string[] =>
   r.refusals.map((x) => `${x.entry ? `${x.entry}: ` : ''}${x.message}.`);
@@ -261,15 +289,27 @@ export const noteLines = (r: TwobApplyResult, kind?: 'held' | 'stop'): string[] 
 export const previewChangesSomething = (r: TwobApplyResult): boolean =>
   r.changes.some((c) => !c.refusal && !!c.action && c.action !== 'none') || r.laterMonths.length > 0;
 
-/** "Jul-26: 2 removed, 1 changed. Also changes Aug-26 (2), Sep-26 (2)." */
+/** Whether the 2B Reconciliation ledger changes with the save (a derived entry added, changed or removed). */
+export const previewChangesLedger = (r: TwobApplyResult): boolean =>
+  r.changes.some((c) => c.derived && !c.refusal && !!c.action && c.action !== 'none');
+
+/**
+ * "Jul-26: 2 removed, 1 changed. Also changes Aug-26 (2), Sep-26 (2)." A
+ * save of books rows with their write-through (twob_import2b_prior_save)
+ * names the 2B Reconciliation entries that follow apart: "Jul-26: 1 changed.
+ * The 2B Reconciliation ledger follows: Not in 2B 1 changed."
+ */
 export function describePriorPreview(r: TwobApplyResult, period: string): string {
-  const count = (a: string) => r.changes.filter((c) => !c.refusal && c.action === a).length;
-  const parts = [
-    count('add') && `${count('add')} added`,
-    count('change') && `${count('change')} changed`,
-    count('remove') && `${count('remove')} removed`,
+  const count = (a: string, derived: boolean) => r.changes.filter((c) => !c.refusal && c.action === a && c.derived === derived).length;
+  const words = (derived: boolean) => [
+    count('add', derived) && `${count('add', derived)} added`,
+    count('change', derived) && `${count('change', derived)} changed`,
+    count('remove', derived) && `${count('remove', derived)} removed`,
   ].filter(Boolean);
-  const here = `${monthName(period)}: ${parts.length ? parts.join(', ') : 'nothing changes'}.`;
+  const parts = words(false);
+  const follow = words(true);
+  const here = `${monthName(period)}: ${parts.length ? parts.join(', ') : 'nothing changes'}.`
+    + (follow.length ? ` The 2B Reconciliation ledger follows: Not in 2B ${follow.join(', ')}.` : '');
   // An added entry reaches every later month up to the open month (docs §13): say which.
   const addMonths = [...new Set(r.changes.filter((c) => !c.refusal && c.action === 'add').flatMap((c) => c.later.map((l) => l.period)))]
     .sort((a, b) => periodKey(a) - periodKey(b));
@@ -295,6 +335,63 @@ export function describePriorPreview(r: TwobApplyResult, period: string): string
 }
 
 type ConfirmFn = (opts: { title: string; description?: string; confirmText?: string; destructive?: boolean }) => Promise<boolean>;
+
+/**
+ * A prior month's books rows saved with their 2B Reconciliation write-through
+ * (applyPriorSave): the preview first (refusals shown, nothing saved), then,
+ * when the ledger or a later month changes with it (or confirmAlways), the
+ * confirm naming what changes, then the save and its write-through together.
+ * A books cell whose row posts nothing is saved without a confirm.
+ */
+export async function previewAndApplyPriorSave(opts: {
+  actorId: string;
+  clientId: string;
+  period: string;
+  changes: TwobChange[];
+  wholeMonth?: boolean;
+  confirm: ConfirmFn;
+  title: string;
+  confirmText?: string;
+  destructive?: boolean;
+  confirmAlways?: boolean;
+  /** Words put before the preview in the confirm. */
+  lead?: string;
+  notify: { error: (msg: string) => void; info?: (msg: string) => void };
+}): Promise<PriorApplyOutcome> {
+  const { actorId, clientId, period, changes, confirm, notify } = opts;
+  if (changes.length === 0 && !opts.wholeMonth) return { applied: false, result: null };
+  let preview: TwobApplyResult;
+  try {
+    preview = await applyPriorSave(actorId, clientId, period, changes, true, !!opts.wholeMonth);
+  } catch (err) {
+    notify.error((err as Error).message);
+    return { applied: false, result: null };
+  }
+  if (!preview.ok) {
+    notify.error(`Nothing was saved. ${refusalLines(preview).join(' ')}`);
+    return { applied: false, result: preview };
+  }
+  if (!previewChangesSomething(preview)) {
+    if (preview.notes.length) (notify.info || notify.error)(`Nothing to save. ${noteLines(preview).join(' ')}`);
+    return { applied: false, result: preview };
+  }
+  if ((opts.confirmAlways ?? true) || preview.laterMonths.length > 0 || previewChangesLedger(preview)) {
+    const ok = await confirm({
+      title: opts.title,
+      description: `${opts.lead ? `${opts.lead} ` : ''}${describePriorPreview(preview, period)}`,
+      confirmText: opts.confirmText || 'Save',
+      destructive: opts.destructive,
+    });
+    if (!ok) return { applied: false, result: preview };
+  }
+  try {
+    const result = await applyPriorSave(actorId, clientId, period, changes, false, !!opts.wholeMonth);
+    return { applied: true, result };
+  } catch (err) {
+    notify.error(`Nothing was saved: ${(err as Error).message}`);
+    return { applied: false, result: null };
+  }
+}
 
 export interface PriorApplyOutcome {
   /** Applied (false: refused, cancelled or failed; a message was shown). */

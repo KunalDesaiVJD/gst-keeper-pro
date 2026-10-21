@@ -120,6 +120,21 @@ CREATE TABLE public.bills_not_in_books (
   version integer DEFAULT 1
 );
 
+-- 2B Reconciliation's saved versions (20260103112822 + action_type of 20260206095416).
+CREATE TABLE public.twob_versions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid REFERENCES public.clients(id) ON DELETE CASCADE NOT NULL,
+  period_month text NOT NULL,
+  table_type text NOT NULL,
+  version_number integer DEFAULT 1,
+  version_data jsonb,
+  updated_by uuid,
+  updated_at timestamptz DEFAULT now(),
+  is_current boolean DEFAULT true,
+  action_type text DEFAULT 'SAVE',
+  restored_from_version_id uuid REFERENCES public.twob_versions(id)
+);
+
 CREATE FUNCTION public.update_updated_at_column() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END $$;
 CREATE TRIGGER update_bills_not_in_2b_updated_at BEFORE UPDATE ON public.bills_not_in_2b FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
@@ -192,7 +207,7 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['user_roles', 'user_permissions', 'profiles', 'clients', 'filing_status', 'itc_summaries',
                            'bills_not_in_2b', 'bills_not_in_books', 'suspended_reco', 'gst_receivable_reco', 'gstr1_data',
-                           'rcm_data', 'gstr3b_adjustments', 'gstr3b_push_versions'] LOOP
+                           'rcm_data', 'gstr3b_adjustments', 'gstr3b_push_versions', 'twob_versions'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('CREATE POLICY "open" ON public.%I FOR ALL TO public USING (true) WITH CHECK (true)', t);
   END LOOP;

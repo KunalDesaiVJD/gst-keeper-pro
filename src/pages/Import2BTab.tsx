@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
-import { Upload, Loader2, Trash2, Plus, Lock, X, RefreshCw, Inbox, FileSpreadsheet, Send, Clock, ChevronDown } from 'lucide-react';
+import { Upload, Loader2, Trash2, Plus, Lock, X, RefreshCw, Inbox, FileSpreadsheet, Clock, ChevronDown } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -22,13 +22,16 @@ import { toast } from 'sonner';
 import { parseGstr2bFile } from '@/utils/parseGstr2b';
 import { classifyBookAgainst2b, invoiceSimilar, TwoBLite, ClassifyResult } from '@/utils/matchTwob';
 import {
-  periodMonthLabel, planImport2BPost, postImport2BToLedger, isPostPlanEmpty, fetchImport2BCreditNotes, bookHasMinus, bookIsPurchaseReturn,
-  planToPriorChanges, priorPlanLeftOut, writePostVersion,
+  periodMonthLabel, planImport2BPost, fetchImport2BCreditNotes, bookHasMinus, bookIsPurchaseReturn,
+  priorPlanLeftOut, bookNotPostedReason, docNotPostedReason, docChangesNothing, type PostPlan,
 } from '@/lib/postImport2B';
 import {
   OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_MANAGER_MSG, PRIOR_MONTH_DOCS_MSG, applyPriorBooks, canChangePriorBooks, describePriorPreview,
-  fetchTwobMonthState, isPriorPeriod, noteLines, previewAndApplyPriorBooks, previewChangesSomething, refusalLines, type TwobChange, type TwobMonthState,
+  fetchTwobMonthState, isPriorPeriod, previewAndApplyPriorSave, refusalLines, type TwobChange, type TwobMonthState,
 } from '@/lib/twobPriorMonth';
+import {
+  catchUpMonth, catchUpRefusalLines, deleteImported2BMonth, describeCatchUp, flushVersion, outOfStepLine, type CatchUpResult,
+} from '@/lib/import2bAutopost';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import {
   docTypeOf, isCreditNote, fullFigures, effectFigures, signedEffect, docLabel, docTone, DOC_TYPE_LABEL,
@@ -50,9 +53,12 @@ import {
 // twob_import_docs staging table (the whole B2B family: invoices, supplier
 // debit and credit notes, their amendments, and the Rule 37A reversal and IMS
 // rejected sheets; RCM rows are kept but hidden here), let staff classify each
-// document, and enter books invoices and debit notes missing from 2B. "Post to
-// Reconciliation" writes the exceptions through to bills_not_in_2b /
-// bills_not_in_books (src/lib/postImport2B.ts).
+// document, and enter books invoices and debit notes missing from 2B. Every
+// save writes the exceptions through to bills_not_in_2b / bills_not_in_books
+// in the same statement (database triggers of 20261021170000; docs §15):
+// there is no "Post to Reconciliation" any more. A month the ledger is out of
+// step with (posted before that change) is named, with "Bring the
+// reconciliation up to date" (src/lib/import2bAutopost.ts).
 //
 // What each kind of document does (src/lib/twobDocs.ts, firm's positions of
 // 14 Oct 2026): a debit note is claimed like an invoice; a credit note reduces
@@ -63,8 +69,8 @@ import {
 // net ITC effect (signedEffect), so totals add up the way ITC Summary reads them.
 //
 // A re-import MERGES into the month: a document already here (same docKey)
-// keeps its id, treatment, books pairing and posting stamp, so classifications,
-// ledger rows and reclaim links survive. A document no longer in the file is
+// keeps its id, treatment, books pairing and (old) posting stamp, so
+// classifications, ledger rows and reclaim links survive. A document no longer in the file is
 // deleted only when nothing depends on it.
 
 interface Client { id: string; name: string; gstin: string }
@@ -202,7 +208,7 @@ const BOOK_DOC_TYPES = [
   { value: 'DEBIT_NOTE', label: 'Debit note (purchase return)' },
 ];
 
-const BOOK_DEBIT_NOTE_MSG = 'Debit note (purchase return): no effect on ITC until the supplier\'s credit note is in 2B. That 2B row then reduces ITC (row 5.3); Post to Reconciliation leaves this row out.';
+const BOOK_DEBIT_NOTE_MSG = 'Debit note (purchase return): no effect on ITC until the supplier\'s credit note is in 2B. That 2B row then reduces ITC (row 5.3); this row never reaches the 2B Reconciliation ledger.';
 
 const TONES: TwobTone[] = ['invoice', 'debit', 'credit', 'amendment'];
 
@@ -343,6 +349,70 @@ const ACTION_TONE: Record<string, 'ok' | 'warn' | 'error' | 'neutral'> = {
   HELD: 'warn',
 };
 
+// The ledger side of the page, which every save may change (the database
+// writes it through): Zone 4's pending items with their types, the month's
+// last version, and what the ledger lacks to follow Import 2B (Post's plan,
+// empty when in step). Throws when a read fails, the plan aside.
+async function loadLedgerSide(actorId: string | null, clientId: string, month: string) {
+  // The month's version brought up to date with what this page's saves
+  // wrote through (coalesced per minute: twob_import2b_flush_version).
+  await flushVersion(actorId, clientId, month);
+  const [pending2BRes, pendingBooksRes, expensedOutRes, lastVersionRes, stepPlan] = await Promise.all([
+    // Zone 4 — still-open ledger items for this period (reclaim not yet
+    // assigned / not yet booked), whichever period first posted them.
+    supabase.from('bills_not_in_2b').select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, reversal_month, reclaim_month, reclaim_subtype, source_book_id')
+      .eq('client_id', clientId).eq('period_month', month).is('reclaim_month', null).order('date'),
+    supabase.from('bills_not_in_books').select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, book_entry_month, bill_in_2b_month, source_doc_id')
+      .eq('client_id', clientId).eq('period_month', month).is('book_entry_month', null).order('date'),
+    // Expensed out — kept separately so a mistaken write-off can be undone.
+    supabase.from('bills_not_in_2b').select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, reversal_month, reclaim_month, reclaim_subtype, source_book_id')
+      .eq('client_id', clientId).eq('period_month', month).eq('reclaim_subtype', 'EXPENSE_OUT').order('date'),
+    supabase.from('twob_versions').select('updated_at, version_number')
+      .eq('client_id', clientId).eq('period_month', month).eq('is_current', true)
+      .order('version_number', { ascending: false }).limit(1),
+    // What the ledger lacks to follow Import 2B: empty when in step.
+    planImport2BPost(clientId, month).then(
+      (plan) => ({ plan, error: null as string | null }),
+      (err: Error) => ({ plan: null, error: err.message }),
+    ),
+  ]);
+  if (pending2BRes.error) throw pending2BRes.error;
+  if (pendingBooksRes.error) throw pendingBooksRes.error;
+  if (expensedOutRes.error) throw expensedOutRes.error;
+
+  // The type of each pending reversed item, from the books row that posted
+  // it (carried-forward copies have none, and read as invoices).
+  const pending2B = (pending2BRes.data || []) as PendingBill2B[];
+  const expensedOut = (expensedOutRes.data || []) as PendingBill2B[];
+  const bookIds = [...new Set([...pending2B, ...expensedOut].map((r) => r.source_book_id).filter((v): v is string => !!v))];
+  const bookType = new Map<string, string>();
+  for (const part of chunk(bookIds)) {
+    const { data } = await supabase.from('books_register').select('id, doc_type').in('id', part);
+    (data || []).forEach((b) => bookType.set(b.id, b.doc_type));
+  }
+  const withType = (r: PendingBill2B): PendingBill2B => ({ ...r, doc_type: r.source_book_id ? bookType.get(r.source_book_id) ?? null : null });
+  // And of each item awaiting book entry, from the 2B document that posted
+  // it (a debit note, a credit note, or an amendment's difference).
+  const pendingBooks = (pendingBooksRes.data || []) as PendingBillBooks[];
+  const sourceDocIds = [...new Set(pendingBooks.map((r) => r.source_doc_id).filter((v): v is string => !!v))];
+  const sourceType = new Map<string, { doc_type: string; is_amendment: boolean }>();
+  for (const part of chunk(sourceDocIds)) {
+    const { data } = await supabase.from('twob_import_docs').select('id, doc_type, is_amendment').in('id', part);
+    (data || []).forEach((d) => sourceType.set(d.id, { doc_type: d.doc_type, is_amendment: d.is_amendment }));
+  }
+  const lastRow = (lastVersionRes.data || [])[0];
+  return {
+    pending2B: pending2B.map(withType),
+    pendingBooks: pendingBooks.map((r) => ({ ...r, ...(r.source_doc_id ? sourceType.get(r.source_doc_id) : undefined) })),
+    expensedOut: expensedOut.map(withType),
+    lastVersion: lastRow ? { at: lastRow.updated_at as string, version: lastRow.version_number } : null,
+    plan: stepPlan.plan,
+    planError: stepPlan.error,
+  };
+}
+
+type LedgerSide = Awaited<ReturnType<typeof loadLedgerSide>>;
+
 /** A KPI tile that also acts as a filter toggle. */
 const TileButton: React.FC<{ active: boolean; onClick: () => void; title: string; children: React.ReactNode }> = ({ active, onClick, title, children }) => (
   <button
@@ -389,8 +459,14 @@ const Import2BTab: React.FC = () => {
   const [pendingBills2B, setPendingBills2B] = useState<PendingBill2B[]>([]);
   const [pendingBillsBooks, setPendingBillsBooks] = useState<PendingBillBooks[]>([]);
   const [expensedOutItems, setExpensedOutItems] = useState<PendingBill2B[]>([]);
-  const [isPosting, setIsPosting] = useState(false);
-  const [lastPosted, setLastPosted] = useState<{ at: string; version: number | null } | null>(null);
+  // The month's last 2B Reconciliation version (the write-through's snapshot,
+  // or a 2B Reconciliation save).
+  const [lastVersion, setLastVersion] = useState<{ at: string; version: number | null } | null>(null);
+  // What the ledger lacks to follow this month's Import 2B (Post's plan; empty
+  // when in step), and why it could not be read.
+  const [outOfStep, setOutOfStep] = useState<PostPlan | null>(null);
+  const [stepError, setStepError] = useState<string | null>(null);
+  const [isCatchingUp, setIsCatchingUp] = useState(false);
   const [reclaimDialog, setReclaimDialog] = useState<ReclaimDialogState | null>(null);
   // Zone 4's three sub-tables can each run to dozens of rows — collapsible,
   // open by default.
@@ -467,6 +543,15 @@ const Import2BTab: React.FC = () => {
   selectionRef.current = { client: selectedClient, month: selectedMonth };
   const loadSeq = useRef(0);
 
+  const showLedgerSide = useCallback((l: LedgerSide) => {
+    setPendingBills2B(l.pending2B);
+    setPendingBillsBooks(l.pendingBooks);
+    setExpensedOutItems(l.expensedOut);
+    setLastVersion(l.lastVersion);
+    setOutOfStep(l.plan);
+    setStepError(l.planError);
+  }, []);
+
   const fetchAll = useCallback(async () => {
     if (selectionRef.current.client !== selectedClient || selectionRef.current.month !== selectedMonth) return;
     const seq = ++loadSeq.current;
@@ -475,12 +560,13 @@ const Import2BTab: React.FC = () => {
     setBulkValue('');
     if (!selectedClient || !selectedMonth) {
       setTwoBDocs([]); setBooks([]); setRcmHidden(0); setLastImportedAt(null); setImporterName(null); setMonthState(OPEN_MONTH);
-      setPendingBills2B([]); setPendingBillsBooks([]); setExpensedOutItems([]); setLastPosted(null); setEarlierById({});
+      setPendingBills2B([]); setPendingBillsBooks([]); setExpensedOutItems([]); setLastVersion(null); setEarlierById({});
+      setOutOfStep(null); setStepError(null);
       return;
     }
     setIsLoading(true);
     try {
-      const [docs, rcmRes, booksRes, state, pending2BRes, pendingBooksRes, expensedOutRes, lastVersionRes] = await Promise.all([
+      const [docs, rcmRes, booksRes, state, ledgerSide] = await Promise.all([
         // Paged: a large client's month can pass PostgREST's 1000-row cap.
         fetchAllRows<TwoBDoc>('twob_import_docs', '*', (q) => q
           .eq('client_id', selectedClient).eq('period_month', selectedMonth)
@@ -495,39 +581,8 @@ const Import2BTab: React.FC = () => {
           toast.error(`${err.message}. The month is shown read-only; reload to try again.`);
           return { ...OPEN_MONTH, isPrior: true };
         }),
-        // Zone 4 — still-open ledger items for this period (reclaim not yet
-        // assigned / not yet booked), whichever period first posted them.
-        supabase.from('bills_not_in_2b').select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, reversal_month, reclaim_month, reclaim_subtype, source_book_id')
-          .eq('client_id', selectedClient).eq('period_month', selectedMonth).is('reclaim_month', null).order('date'),
-        supabase.from('bills_not_in_books').select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, book_entry_month, bill_in_2b_month, source_doc_id')
-          .eq('client_id', selectedClient).eq('period_month', selectedMonth).is('book_entry_month', null).order('date'),
-        // Expensed out — kept separately so a mistaken write-off can be undone.
-        supabase.from('bills_not_in_2b').select('id, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, reversal_month, reclaim_month, reclaim_subtype, source_book_id')
-          .eq('client_id', selectedClient).eq('period_month', selectedMonth).eq('reclaim_subtype', 'EXPENSE_OUT').order('date'),
-        supabase.from('twob_versions').select('updated_at, version_number')
-          .eq('client_id', selectedClient).eq('period_month', selectedMonth).eq('is_current', true).maybeSingle(),
+        loadLedgerSide(user?.id ?? null, selectedClient, selectedMonth),
       ]);
-
-      // The type of each pending reversed item, from the books row that posted
-      // it (carried-forward copies have none, and read as invoices).
-      const pending2B = (pending2BRes.data || []) as PendingBill2B[];
-      const expensedOut = (expensedOutRes.data || []) as PendingBill2B[];
-      const bookIds = [...new Set([...pending2B, ...expensedOut].map((r) => r.source_book_id).filter((v): v is string => !!v))];
-      const bookType = new Map<string, string>();
-      for (const part of chunk(bookIds)) {
-        const { data } = await supabase.from('books_register').select('id, doc_type').in('id', part);
-        (data || []).forEach((b) => bookType.set(b.id, b.doc_type));
-      }
-      const withType = (r: PendingBill2B): PendingBill2B => ({ ...r, doc_type: r.source_book_id ? bookType.get(r.source_book_id) ?? null : null });
-      // And of each item awaiting book entry, from the 2B document that posted
-      // it (a debit note, a credit note, or an amendment's difference).
-      const pendingBooks = (pendingBooksRes.data || []) as PendingBillBooks[];
-      const sourceDocIds = [...new Set(pendingBooks.map((r) => r.source_doc_id).filter((v): v is string => !!v))];
-      const sourceType = new Map<string, { doc_type: string; is_amendment: boolean }>();
-      for (const part of chunk(sourceDocIds)) {
-        const { data } = await supabase.from('twob_import_docs').select('id, doc_type, is_amendment').in('id', part);
-        (data || []).forEach((d) => sourceType.set(d.id, { doc_type: d.doc_type, is_amendment: d.is_amendment }));
-      }
 
       // The earlier versions this month's amendments amend, as they stand now.
       const amendsIds = [...new Set(docs.map((d) => d.amends_doc_id).filter((v): v is string => !!v))];
@@ -550,10 +605,7 @@ const Import2BTab: React.FC = () => {
       const latest = docs.reduce<TwoBDoc | null>((a, d) => (!a || (d.imported_at || '') > (a.imported_at || '') ? d : a), null);
       setLastImportedAt(latest?.imported_at ?? null);
       setMonthState(state);
-      setPendingBills2B(pending2B.map(withType));
-      setPendingBillsBooks(pendingBooks.map((r) => ({ ...r, ...(r.source_doc_id ? sourceType.get(r.source_doc_id) : undefined) })));
-      setExpensedOutItems(expensedOut.map(withType));
-      setLastPosted(lastVersionRes.data ? { at: lastVersionRes.data.updated_at as string, version: lastVersionRes.data.version_number } : null);
+      showLedgerSide(ledgerSide);
 
       const importedById = latest?.imported_by ?? null;
       if (importedById) {
@@ -567,7 +619,23 @@ const Import2BTab: React.FC = () => {
     } finally {
       if (!overtaken()) setIsLoading(false);
     }
-  }, [selectedClient, selectedMonth]);
+  }, [selectedClient, selectedMonth, user?.id, showLedgerSide]);
+
+  // After a save that does not reload the page (a books cell, a treatment):
+  // the ledger side read again, without the page's loading state, so the
+  // pending items, the version and the out-of-step line follow the save.
+  const refreshStep = async () => {
+    if (!selectedClient || !selectedMonth) return;
+    const client = selectedClient;
+    const month = selectedMonth;
+    try {
+      const l = await loadLedgerSide(user?.id ?? null, client, month);
+      if (selectionRef.current.client !== client || selectionRef.current.month !== month) return;
+      showLedgerSide(l);
+    } catch (err) {
+      if (selectionRef.current.client === client && selectionRef.current.month === month) setStepError(errMsg(err));
+    }
+  };
 
   useEffect(() => { fetchClients(); }, [fetchClients]);
   useEffect(() => { fetchAll(); }, [fetchAll]);
@@ -685,22 +753,21 @@ const Import2BTab: React.FC = () => {
     return { changed, filed };
   };
 
-  // Names what syncAmendments did: the amendments brought in line (and the
-  // months to post again, where one is Not in Books before or after: it moved
-  // to or from Not in Books, or its base changed, and its posted entry holds
-  // revised minus base), and the ones in a filed month that were left as
-  // counted. Every changed amendment had its treatment or its base rewritten
-  // (syncAmendments skips one that keeps both).
+  // Names what syncAmendments did: the amendments brought in line (their Not
+  // in Books entries followed by themselves, in each month: the database
+  // writes every change through), and the ones in a filed month that were
+  // left as counted. Every changed amendment had its treatment or its base
+  // rewritten (syncAmendments skips one that keeps both).
   const reportSynced = (r: { changed: SyncedAmendment[]; filed: ExistingDoc[] }) => {
     const label = (d: ExistingDoc) => `${d.supplier_invoice_number || '(no number)'} (${periodMonthLabel(d.period_month) || d.period_month})`;
     if (r.changed.length > 0) {
-      const repost = [...new Set(r.changed
+      const followed = [...new Set(r.changed
         .filter(({ doc, action }) => action === 'NOT_IN_BOOKS' || doc.itc_action === 'NOT_IN_BOOKS')
         .map(({ doc }) => periodMonthLabel(doc.period_month) || doc.period_month))];
       toast.info(
         `${plural(r.changed.length, 'amendment')} counted against a re-treated document now ${r.changed.length === 1 ? 'counts' : 'count'} against its treatment as it stands: `
         + `${listNos(r.changed.map(({ doc }) => label(doc)))}.`
-        + (repost.length ? ` A Not in Books entry changed: Post to Reconciliation again for ${repost.join(', ')}.` : ''),
+        + (followed.length ? ` Their Not in Books entries on the 2B Reconciliation ledger followed (${followed.join(', ')}).` : ''),
         { duration: 20000 },
       );
     }
@@ -1549,11 +1616,9 @@ const Import2BTab: React.FC = () => {
   // Awaiting reclaim, and the Not in Books entries they posted leave the
   // ledger. A document whose Not in Books entry is filed (locked) stays, with
   // its entry, so a re-import merges into it instead of posting the entry
-  // twice. Done chunk by chunk over one list of ids: each chunk is released
-  // and then deleted by the same ids, so a failure part-way leaves every
-  // chunk either whole or cleanly gone.
+  // twice. One call (twob_import2b_delete_2b): all of it or none of it.
   const deleteImported2B = async () => {
-    if (readOnly || !selectedClient || !selectedMonth || twoBDocs.length === 0) return;
+    if (readOnly || !selectedClient || !selectedMonth || twoBDocs.length === 0 || !user?.id) return;
     if (!canDelete2BRows()) { toast.error('Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'); return; }
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     if (!(await confirm({
@@ -1565,45 +1630,18 @@ const Import2BTab: React.FC = () => {
     }))) return;
     // Under the month's lock, taken after the confirm: an import that started
     // while it was open refuses this, and one that arrives while this runs
-    // is refused.
+    // is refused. The database refuses a month filed meanwhile.
     const clientId = selectedClient;
     const month = selectedMonth;
+    const actorId = user.id;
     const ran = await withMonthLock(clientId, month, IMPORT_RUNNING_MSG, IMPORT_RUNNING_MSG, async () => {
       try {
-        // Read the month afresh, as an import does: the page's copy is from
-        // its last load, and the return may have been filed since.
-        try {
-          if ((await fetchTwobMonthState(clientId, month)).isPrior) { toast.error(PRIOR_MONTH_DOCS_MSG); return; }
-        } catch (err) {
-          toast.error(`${errMsg(err)}. Nothing was deleted; try again.`);
-          return;
-        }
-        const nowIso = new Date().toISOString();
-        const ids = (await fetchAllRows<{ id: string }>('twob_import_docs', 'id', (q) => q
-          .eq('client_id', clientId).eq('period_month', month).order('id'))).map((r) => r.id);
-        let keptFiled = 0;
-        for (const part of chunk(ids)) {
-          const { error: relErr } = await supabase.from('bills_not_in_2b')
-            .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null, updated_by: user?.id, updated_at: nowIso })
-            .in('reclaimed_via_doc_id', part);
-          if (relErr) throw relErr;
-          const { error: nibErr } = await supabase.from('bills_not_in_books').delete()
-            .in('source_doc_id', part).not('is_locked', 'is', true).not('is_carried_forward', 'is', true);
-          if (nibErr) throw nibErr;
-          const { data: filedRows, error: filedErr } = await supabase.from('bills_not_in_books').select('source_doc_id').in('source_doc_id', part);
-          if (filedErr) throw filedErr;
-          const stay = new Set((filedRows || []).map((r) => r.source_doc_id));
-          const gone = part.filter((id) => !stay.has(id));
-          keptFiled += part.length - gone.length;
-          if (gone.length === 0) continue;
-          const { error } = await supabase.from('twob_import_docs').delete().in('id', gone);
-          if (error) throw error;
-        }
+        const { keptFiled } = await deleteImported2BMonth(actorId, clientId, month);
         toast.success(keptFiled
           ? `Imported 2B cleared, except ${plural(keptFiled, 'document')} whose Not in Books entry is filed (kept with it).`
           : 'Imported 2B cleared.');
       } catch (err) {
-        toast.error('Delete failed: ' + errMsg(err));
+        toast.error('Delete failed, nothing was deleted: ' + errMsg(err));
       }
     });
     if (ran) await fetchAll();
@@ -1910,13 +1948,16 @@ const Import2BTab: React.FC = () => {
   };
 
   // ---- Books register --------------------------------------------------------
-  // In a prior month every books change goes through the one door
-  // (twob_prior_books_apply), a GST Manager or the superadmin only; a books
-  // register row stays in its month, so a cell is saved without a confirm,
-  // while a removal that reaches the ledger is shown first.
+  // An open month: each save writes through to the 2B Reconciliation ledger
+  // in the database, in the same statement (docs §15). A prior month: every
+  // books change goes through the one door with its Not in 2B write-through
+  // (twob_import2b_prior_save), a GST Manager or the superadmin only. A cell
+  // whose row posts nothing is saved without a confirm; when the ledger or a
+  // later month changes with it, the preview is shown and the save and the
+  // ledger change are confirmed together.
   const applyPriorBooksHere = async (changes: TwobChange[], title: string, confirmAlways: boolean, destructive = false) => {
     if (!selectedClient || !selectedMonth || !user?.id) return null;
-    const outcome = await previewAndApplyPriorBooks({
+    const outcome = await previewAndApplyPriorSave({
       actorId: user.id, clientId: selectedClient, period: selectedMonth, changes, confirm, title,
       confirmText: destructive ? 'Delete' : 'Save', destructive, confirmAlways,
       notify: { error: (m) => toast.error(m, { duration: 15000 }), info: (m) => toast.info(m, { duration: 15000 }) },
@@ -1981,10 +2022,12 @@ const Import2BTab: React.FC = () => {
           supplier_gstin: row.supplier_gstin, taxable_value: row.taxable_value, input_igst: row.input_igst,
           input_cgst: row.input_cgst, input_sgst: row.input_sgst, doc_type: docTypeOf(row) === 'DEBIT_NOTE' ? 'DEBIT_NOTE' : 'INVOICE',
         },
-      }], 'Save the books entry', false);
+      }], 'Save the books entry and its 2B Reconciliation entry', false);
       if (!saved) {
         const { data } = await supabase.from('books_register').select('*').eq('id', id).maybeSingle();
         if (data) updateBookLocal(id, data as BookRow);
+      } else {
+        refreshStep();
       }
       return;
     }
@@ -2009,6 +2052,10 @@ const Import2BTab: React.FC = () => {
       return;
     }
 
+    // The row and its 2B Reconciliation entry are saved together (the
+    // database writes it through in the same statement), or neither: a save
+    // that would take back an entry holding a reclaim, Expense out or book
+    // entry is refused with the entry named.
     const { error } = await supabase.from('books_register').update({
       date: row.date, supplier_name: row.supplier_name, supplier_invoice_number: row.supplier_invoice_number,
       supplier_gstin: row.supplier_gstin, taxable_value: row.taxable_value,
@@ -2017,11 +2064,17 @@ const Import2BTab: React.FC = () => {
       book_treatment: next.treatment, matched_2b_id: next.matched2bId,
       updated_by: user?.id, updated_at: new Date().toISOString(),
     }).eq('id', id);
-    if (error) { toast.error('Save failed: ' + error.message); return; }
+    if (error) {
+      toast.error('Save failed: ' + error.message, { duration: 15000 });
+      const { data } = await supabase.from('books_register').select('*').eq('id', id).maybeSingle();
+      if (data) updateBookLocal(id, data as BookRow);
+      return;
+    }
     if (next.treatment !== found.book_treatment || next.matched2bId !== found.matched_2b_id) {
       updateBookLocal(id, { book_treatment: next.treatment, matched_2b_id: next.matched2bId });
-      if (next.matched2bId || found.matched_2b_id) fetchAll();
+      if (next.matched2bId || found.matched_2b_id) { fetchAll(); return; }
     }
+    refreshStep();
   };
 
   // Changing a books row's type re-matches it (a debit note, the client's
@@ -2036,23 +2089,32 @@ const Import2BTab: React.FC = () => {
   const setBookTreatment = async (id: string, treatment: string) => {
     if (booksReadOnly) return;
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
+    const was = books.find((r) => r.id === id)?.book_treatment;
     if (isPrior) {
-      const was = books.find((r) => r.id === id)?.book_treatment;
       updateBookLocal(id, { book_treatment: treatment });
-      const saved = await applyPriorBooksHere([{ table: 'books_register', op: 'update', id, values: { book_treatment: treatment } }], 'Save the treatment', false);
+      const saved = await applyPriorBooksHere([{ table: 'books_register', op: 'update', id, values: { book_treatment: treatment } }], 'Save the treatment and its 2B Reconciliation entry', false);
       if (!saved && was) updateBookLocal(id, { book_treatment: was });
+      else if (saved) refreshStep();
       return;
     }
     updateBookLocal(id, { book_treatment: treatment });
+    // Written through with the treatment (an entry added, or taken back), or
+    // refused with it (an entry holding a decision is never taken back).
     const { error } = await supabase.from('books_register')
       .update({ book_treatment: treatment, updated_by: user?.id, updated_at: new Date().toISOString() }).eq('id', id);
-    if (error) toast.error('Save failed: ' + error.message);
+    if (error) {
+      toast.error('Save failed: ' + error.message, { duration: 15000 });
+      if (was) updateBookLocal(id, { book_treatment: was });
+      return;
+    }
+    refreshStep();
   };
 
   // Deleting a books row also takes back the Not in 2B reversal it posted to
-  // the ledger, as a re-post would; the ledger's link is cleared on delete, so
-  // nothing else could. A reversal that is filed (locked) or already
-  // reclaimed stays, and is named.
+  // the ledger, in the same statement (the database's write-through, before
+  // the key's ON DELETE SET NULL unlinks it). A reversal that is filed
+  // (locked) or already reclaimed or expensed out stays, unlinked, and is
+  // named first.
   const deleteBookRow = async (id: string) => {
     if (booksReadOnly) return;
     if (!canDelete2BRows()) { toast.error('Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'); return; }
@@ -2070,10 +2132,6 @@ const Import2BTab: React.FC = () => {
       destructive: true,
     }))) return;
     const retract = (posted || []).filter((l) => !l.is_locked && !l.reclaim_month).map((l) => l.id);
-    if (retract.length > 0) {
-      const { error } = await supabase.from('bills_not_in_2b').delete().in('id', retract);
-      if (error) { toast.error('Could not remove its reversal from the ledger: ' + error.message); return; }
-    }
     if (row?.matched_2b_id) {
       try {
         await releaseDoc(row.matched_2b_id, id, twoBDocs);
@@ -2140,146 +2198,87 @@ const Import2BTab: React.FC = () => {
     fetchAll();
   };
 
-  // ---- Post to Reconciliation -------------------------------------------------
-  // Writes NOT_IN_BOOKS / NOT_IN_2B rows through to the live bills_not_in_2b /
-  // bills_not_in_books ledger that ITC Summary, Suspended Reco and
-  // carry-forward read from. 2B Reconciliation itself is read-only — this is
-  // the only place that ledger gets written for this period.
+  // ---- The ledger out of step ---------------------------------------------------
+  // Every save writes through by itself (docs §15). A month whose ledger is
+  // not in step with its Import 2B (posted before that change, or changed on
+  // 2B Reconciliation since) says so, and staff who may post bring it up to
+  // date with the same rules, previewed: an open month by
+  // twob_import2b_catch_up; a filed month's Not in 2B side by a GST Manager
+  // or the superadmin, through the door (its Not in Books side follows the
+  // filed 2B and is named).
   const currentLabel = useMemo(() => periodMonthLabel(selectedMonth), [selectedMonth]);
+  const stepLine = useMemo(() => outOfStepLine(outOfStep, isPrior), [outOfStep, isPrior]);
+  const canCatchUp = !!stepLine?.actionable && isStaff && !isImporting
+    && (isPrior ? canPriorBooks : canWork2BImport());
 
-  const postPriorMonth = async (plan: Awaited<ReturnType<typeof planImport2BPost>>, parts: string[]) => {
-    if (!selectedClient || !selectedMonth || !user?.id) return;
+  const bringUpToDate = async () => {
+    if (!selectedClient || !selectedMonth || !user?.id || !canCatchUp) return;
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const clientId = selectedClient;
     const month = selectedMonth;
     const actorId = user.id;
-    const changes = planToPriorChanges(plan, month);
-    // The Not in Books side follows the filed 2B and is not posted (docs §13).
-    const leftOut = priorPlanLeftOut(plan);
-    const shown = parts.filter((p) => !p.startsWith('Bills Not in Books'));
-    if (changes.length === 0) {
-      toast.info(`Nothing to post. ${[leftOut, ...shown].filter(Boolean).join(' ')}`, { duration: 20000 });
-      return;
-    }
-    let preview;
+    setIsCatchingUp(true);
     try {
-      preview = await applyPriorBooks(actorId, clientId, month, changes, true);
-    } catch (err) {
-      toast.error('Post failed: ' + errMsg(err));
-      return;
-    }
-    if (!preview.ok) {
-      toast.error(`Nothing was posted. ${refusalLines(preview).join(' ')}`, { duration: 20000 });
-      return;
-    }
-    if (!previewChangesSomething(preview)) {
-      toast.info(`Nothing to post. ${[...noteLines(preview), leftOut].filter(Boolean).join(' ')}`, { duration: 20000 });
-      return;
-    }
-    if (!(await confirm({
-      title: 'Post to Reconciliation in a filed month?',
-      description: (
-        <>
-          This updates the 2B Reconciliation ledger of {selectedClientName} for {month}, and the later months that hold these entries:
-          <br /><br />
-          {shown.map((p, i) => <React.Fragment key={i}>{p}<br /></React.Fragment>)}
-          <br />
-          {describePriorPreview(preview, month)}
-          {leftOut && <><br /><br />{leftOut}</>}
-        </>
-      ),
-      confirmText: 'Post',
-    }))) return;
-    await withMonthLock(clientId, month, IMPORT_RUNNING_MSG, IMPORT_RUNNING_MSG, async () => {
-      const current = await planImport2BPost(clientId, month);
-      if (JSON.stringify(current) !== JSON.stringify(plan)) {
-        toast.error('This month changed while the confirm was open (a change in another tab). Nothing was posted; click Post again to see what it would do now.');
+      if (isPrior) {
+        const left = outOfStep ? priorPlanLeftOut(outOfStep) : null;
+        const outcome = await previewAndApplyPriorSave({
+          actorId, clientId, period: month, changes: [], wholeMonth: true, confirm,
+          title: 'Bring the reconciliation up to date in a filed month?',
+          lead: `This updates the 2B Reconciliation ledger of ${selectedClientName} for ${month} to follow its Import 2B books register, and the later months that hold these entries.`,
+          confirmText: 'Bring up to date',
+          notify: { error: (m) => toast.error(m, { duration: 20000 }), info: (m) => toast.info(m, { duration: 20000 }) },
+        });
+        if (outcome.applied && outcome.result) {
+          toast.success(`Brought up to date. ${describePriorPreview(outcome.result, month)}${left ? ` ${left}` : ''}`, { duration: 15000 });
+        }
         await fetchAll();
         return;
       }
+      let preview: CatchUpResult;
       try {
-        const result = await applyPriorBooks(actorId, clientId, month, planToPriorChanges(current, month), false);
-        const version = await writePostVersion(clientId, month, actorId);
-        toast.success(`Posted to Reconciliation${version ? ` — v${version}` : ''}. ${describePriorPreview(result, month)}`);
+        preview = await catchUpMonth(actorId, clientId, month, true);
       } catch (err) {
-        toast.error('Nothing was posted: ' + errMsg(err));
-      }
-      await fetchAll();
-    });
-  };
-
-  const handlePostToReconciliation = async () => {
-    if ((isPrior ? booksReadOnly : readOnly) || !selectedClient || !selectedMonth) return;
-    if (!canWork2BImport()) { toast.error('Needs the Import 2B & post permission — ask a GST Manager to add it to your position'); return; }
-    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
-    setIsPosting(true);
-    try {
-      const plan = await planImport2BPost(selectedClient, selectedMonth);
-      if (isPostPlanEmpty(plan) && plan.skippedBooks.length === 0 && plan.skippedDocs.length === 0) {
-        toast.info('Nothing to post — the ledger already matches your classifications.');
+        toast.error(errMsg(err), { duration: 15000 });
         return;
       }
-      const parts: string[] = [];
-      const net2B = plan.insertBills2B.length + plan.updateBills2B.length + plan.retractBills2B.length;
-      const netBooks = plan.insertBillsBooks.length + plan.updateBillsBooks.length + plan.retractBillsBooks.length;
-      if (net2B) parts.push(`Bills Not in 2B: ${plan.insertBills2B.length} new, ${plan.updateBills2B.length} updated, ${plan.retractBills2B.length} removed`);
-      if (netBooks) parts.push(`Bills Not in Books: ${plan.insertBillsBooks.length} new, ${plan.updateBillsBooks.length} updated, ${plan.retractBillsBooks.length} removed`);
-      // Skipped rows, by reason (a missing date or supplier), with the first
-      // few document numbers of each.
+      if (preview.refusals.length > 0) {
+        toast.error(`Nothing was changed: the ledger holds entries Import 2B no longer posts that carry a reclaim, Expense out or book entry. ${catchUpRefusalLines(preview).join(' ')}`, { duration: 30000 });
+        return;
+      }
+      if (preview.written === 0) {
+        toast.info('The 2B Reconciliation ledger already follows this month\'s Import 2B.');
+        await fetchAll();
+        return;
+      }
       const skippedByReason = new Map<string, string[]>();
-      [...plan.skippedBooks, ...plan.skippedDocs].forEach(({ row, reason }) => {
-        skippedByReason.set(reason, [...(skippedByReason.get(reason) || []), row.supplier_invoice_number || '(no number)']);
-      });
-      for (const [reason, nos] of skippedByReason) {
-        parts.push(`Not posted, ${plural(nos.length, 'row')}: ${reason} (${nos.slice(0, 5).join(', ')}${nos.length > 5 ? ` and ${nos.length - 5} more` : ''})`);
-      }
-      if (skippedByReason.size) parts.push('Fix the rows not posted in the tables above.');
-
-      // A prior month: the plan goes through the one door, its preview first
-      // (what changes here and in each later month holding the entries).
-      if (isPrior) {
-        await postPriorMonth(plan, parts);
-        return;
-      }
-
+      preview.skipped.forEach(({ number, reason }) => skippedByReason.set(reason, [...(skippedByReason.get(reason) || []), number || '(no number)']));
       if (!(await confirm({
-        title: 'Post to Reconciliation?',
+        title: 'Bring the reconciliation up to date?',
         description: (
           <>
-            This will update the live 2B Reconciliation ledger for {selectedClientName} — {selectedMonth}:
+            This updates the 2B Reconciliation ledger of {selectedClientName} for {month} to follow its Import 2B:
             <br /><br />
-            {parts.map((p, i) => <React.Fragment key={i}>{p}<br /></React.Fragment>)}
+            {describeCatchUp(preview)}
+            {[...skippedByReason].map(([reason, nos]) => (
+              <React.Fragment key={reason}><br />Not posted, {plural(nos.length, 'row')}: {reason} ({listNos(nos)}).</React.Fragment>
+            ))}
           </>
         ),
-        confirmText: 'Post',
-      }))) {
-        return;
-      }
-
-      // Posted under the month's lock, taken after the confirm, and only
-      // what was confirmed: the plan is read again under the lock, and a
-      // month changed while the confirm was open (an import, or a change in
-      // another tab) posts nothing.
-      const clientId = selectedClient;
-      const month = selectedMonth;
+        confirmText: 'Bring up to date',
+      }))) return;
+      // Under the month's lock, taken after the confirm; the database plans
+      // again under the client's lock, so it writes what the month needs now.
       await withMonthLock(clientId, month, IMPORT_RUNNING_MSG, IMPORT_RUNNING_MSG, async () => {
-        const current = await planImport2BPost(clientId, month);
-        if (JSON.stringify(current) !== JSON.stringify(plan)) {
-          toast.error('This month changed while the confirm was open (an import, or a change in another tab). Nothing was posted; click Post again to see what it would do now.');
-          await fetchAll();
-          return;
+        try {
+          const done = await catchUpMonth(actorId, clientId, month, false);
+          toast.success(`Brought up to date${done.version ? ` — v${done.version}` : ''}. ${describeCatchUp(done) || 'Nothing left to change.'}`, { duration: 15000 });
+        } catch (err) {
+          toast.error('Nothing was changed: ' + errMsg(err), { duration: 20000 });
         }
-        const result = await postImport2BToLedger(clientId, month, user?.id, current);
-        toast.success(
-          `Posted to Reconciliation${result.versionNumber ? ` — v${result.versionNumber}` : ''}. ` +
-          `${result.inserted2B + result.insertedBooks} new, ${result.updated2B + result.updatedBooks} updated, ${result.retracted2B + result.retractedBooks} removed.` +
-          (result.skipped ? ` ${result.skipped} row(s) skipped.` : ''),
-        );
-        await fetchAll();
       });
-    } catch (err: any) {
-      toast.error('Post failed: ' + (err?.message || 'Unknown error'));
+      await fetchAll();
     } finally {
-      setIsPosting(false);
+      setIsCatchingUp(false);
     }
   };
 
@@ -2455,6 +2454,14 @@ const Import2BTab: React.FC = () => {
     }
     if (d.bucket === 'reversal') out.push({ text: 'Rule 37A ITC reversal: reverse it in 4B(2)(ii)' });
     if (d.bucket === 'rejected') out.push({ text: 'Rejected in IMS' });
+    // Saved Not in Books, it is on the 2B Reconciliation ledger, unless it
+    // lacks a date or supplier (the plan's rule, docNotPostedReason), or as
+    // an amendment changes no figure.
+    if (d.itc_action === 'NOT_IN_BOOKS' && action === 'NOT_IN_BOOKS') {
+      const why = docNotPostedReason(d);
+      if (why) out.push({ text: `Not on the 2B Reconciliation ledger: ${why.toLowerCase()} (the 2B file gives none)`, warn: true });
+      else if (docChangesNothing(d)) out.push({ text: 'Changes no figure: nothing to put on the 2B Reconciliation ledger' });
+    }
     return out;
   };
 
@@ -2544,20 +2551,6 @@ const Import2BTab: React.FC = () => {
               <Upload className="h-3.5 w-3.5" />
               Import file
             </Button>
-            {(twoBDocs.length > 0 || books.length > 0) && (
-              <Button
-                size="sm"
-                className={WS_BTN}
-                onClick={handlePostToReconciliation}
-                disabled={isPosting || (isPrior ? booksWriteLocked : writeLocked) || pendingCount > 0 || !canWork2BImport()}
-                title={isPrior && !canPriorBooks ? PRIOR_MONTH_MSG : !canWork2BImport() ? 'Needs the Import 2B & post permission — ask a GST Manager to add it to your position' : pendingCount > 0
-                  ? 'Save your row-action changes first — Post to Reconciliation reads the saved classifications.'
-                  : 'Write NOT_IN_BOOKS / NOT_IN_2B classifications through to the live 2B Reconciliation ledger'}
-              >
-                {isPosting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                Post to Reconciliation
-              </Button>
-            )}
             {selectedClient && selectedMonth && (twoBDocs.length > 0 || pendingBillsBooks.length > 0) && (
               <EmailBillsNotInBooksDialog
                 clientId={selectedClient}
@@ -2604,8 +2597,8 @@ const Import2BTab: React.FC = () => {
                 Imported {new Date(lastImportedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                 {importerName ? ` by ${importerName}` : ''}
                 <br />{twoBDocs.length} docs{rcmHidden ? ` · ${rcmHidden} RCM hidden` : ''}
-                {lastPosted && (
-                  <><br />Posted to Reconciliation {new Date(lastPosted.at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}{lastPosted.version ? ` · v${lastPosted.version}` : ''}</>
+                {lastVersion && (
+                  <><br />Reconciliation updated {new Date(lastVersion.at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}{lastVersion.version ? ` · v${lastVersion.version}` : ''}</>
                 )}
               </div>
             )}
@@ -2617,6 +2610,32 @@ const Import2BTab: React.FC = () => {
         <Note tone="warn">
           <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> {canPriorBooks ? PRIOR_MONTH_MANAGER_MSG : PRIOR_MONTH_MSG}</span>
         </Note>
+      )}
+
+      {/* Every save writes through to the 2B Reconciliation ledger (docs §15);
+          a month saved before that, or changed on 2B Reconciliation since, says so. */}
+      {selectedClient && selectedMonth && !isLoading && stepLine && (
+        <Note tone="warn">
+          <span>{stepLine.text}</span>
+          {stepLine.actionable && isStaff && (
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn(WS_BTN, 'ml-2 align-middle')}
+              onClick={bringUpToDate}
+              disabled={!canCatchUp || isCatchingUp}
+              title={isPrior && !canPriorBooks ? PRIOR_MONTH_MSG : !isPrior && !canWork2BImport()
+                ? 'Needs the Import 2B & post permission — ask a GST Manager to add it to your position'
+                : 'Shows what it changes first'}
+            >
+              {isCatchingUp ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Bring the reconciliation up to date
+            </Button>
+          )}
+        </Note>
+      )}
+      {selectedClient && selectedMonth && !isLoading && stepError && (
+        <Note tone="warn">Could not check whether the 2B Reconciliation ledger follows this month's Import 2B: {stepError}. Reload to try again.</Note>
       )}
 
       {isLoading ? (
@@ -2980,6 +2999,9 @@ const Import2BTab: React.FC = () => {
                       ) : books.map((b) => {
                         const tone = docTone({ doc_type: b.doc_type });
                         const minus = bookHasMinus(b);
+                        // A Not in 2B row without a date or supplier is not on the
+                        // ledger yet (a debit note and a minus row have their own marks).
+                        const notPosted = b.book_treatment === 'NOT_IN_2B' && !minus && !bookIsPurchaseReturn(b) ? bookNotPostedReason(b) : null;
                         return (
                         <tr key={b.id} className={cn(WS_TR, TONE_ROW[tone], minus && 'bg-destructive/10')}
                           title={minus ? 'Minus amount: amounts here are always plus. Enter a debit note (purchase return) at plus amounts with Type "Debit note (purchase return)".'
@@ -3031,6 +3053,12 @@ const Import2BTab: React.FC = () => {
                             <select className={cn(rowSelectCls, 'm-0.5 w-[calc(100%-4px)]')} value={b.book_treatment} disabled={booksWriteLocked} onChange={(e) => setBookTreatment(b.id, e.target.value)}>
                               {BOOK_TREATMENTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
+                            {notPosted && (
+                              <div className="px-1.5 pb-0.5 text-[10px] font-medium leading-tight text-amber-700 dark:text-amber-300"
+                                title="This row reaches the 2B Reconciliation ledger once it has a date and a supplier">
+                                Not on the ledger: {notPosted.toLowerCase()}
+                              </div>
+                            )}
                           </td>
                           {!booksReadOnly && (
                             <td className="border-b border-r px-1 text-center">
@@ -3087,8 +3115,8 @@ const Import2BTab: React.FC = () => {
               <Note>
                 Matched invoices and debit notes claim at the 2B figure and feed ITC Summary row 5.1; matched credit
                 notes reduce ITC through row 5.3; an amendment counts only its difference over the version already
-                counted. "Not in Books" and "Not in 2B" rows only reach the live ledger once you click{' '}
-                <span className="font-medium">Post to Reconciliation</span> above.
+                counted. "Not in Books" documents and "Not in 2B" books rows reach the 2B Reconciliation ledger as you
+                save them (a row without a date or supplier, a debit note or a minus row says on the row why it does not).
               </Note>
             </CardContent>
           </Card>

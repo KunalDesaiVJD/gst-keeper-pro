@@ -70,10 +70,19 @@ BU agreement value confirmation: one e-mail per send to typed To/CC addresses, o
 ## Import 2B → 2B Reconciliation → Suspended Reco → GSTR-3B
 
 `twob_import_docs` / `books_register` (Import 2B tab) is the **only**
-data-entry surface for 2B classification, RCM aside. "Post to Reconciliation"
-(`src/lib/postImport2B.ts`) writes through to the live `bills_not_in_2b` /
+data-entry surface for 2B classification, RCM aside. There is no "Post to
+Reconciliation" (the firm, 21 Oct 2026): every Import 2B save writes through,
+in the database and in the same statement, to the live `bills_not_in_2b` /
 `bills_not_in_books` ledger that ITC Summary, Suspended Reco and
-month-to-month carry-forward already read from. `2B Reconciliation`
+month-to-month carry-forward already read from, by Post's rules
+(`planImport2BPost` in `src/lib/postImport2B.ts`, mirrored row for row by the
+triggers of `20261021170000_import2b_autopost.sql`; a save that would take
+back an entry holding a reclaim, Expense out or book entry is refused). A
+prior month's books row is saved with its entry through the door
+(`twob_import2b_prior_save`); a month out of step gets "Bring the
+reconciliation up to date" (`twob_import2b_catch_up`); Delete 2B and Clear
+Data are one call each; versions are coalesced per minute (§15 of the doc;
+tests `supabase/tests/twob_simple/`, `autopost.test.mjs`). `2B Reconciliation`
 (`TwoBReconciliationPage.tsx`) is **read-only for Strict clients** (the
 default) — display, export, version history/restore, and destructive Clear
 Data only. A per-client `clients.liberal_2b_reconciliation` flag
