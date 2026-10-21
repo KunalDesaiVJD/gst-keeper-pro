@@ -10150,6 +10150,147 @@ export type Database = {
           },
         ]
       }
+      twob_carry_log: {
+        Row: {
+          carried_at: string | null
+          carried_how: string | null
+          carried_rows: number
+          client_id: string
+          last_at: string
+          last_outcome: string
+          list: string
+          next_period: string
+          period_month: string
+        }
+        Insert: {
+          carried_at?: string | null
+          carried_how?: string | null
+          carried_rows?: number
+          client_id: string
+          last_at?: string
+          last_outcome: string
+          list: string
+          next_period: string
+          period_month: string
+        }
+        Update: {
+          carried_at?: string | null
+          carried_how?: string | null
+          carried_rows?: number
+          client_id?: string
+          last_at?: string
+          last_outcome?: string
+          list?: string
+          next_period?: string
+          period_month?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "twob_carry_log_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      twob_ever_filed: {
+        Row: {
+          client_id: string
+          cover_key: number | null
+          first_filed_at: string
+          period_month: string
+          reopen_reason: string | null
+          reopened_at: string | null
+          reopened_by: string | null
+          return_type: string
+        }
+        Insert: {
+          client_id: string
+          cover_key?: never
+          first_filed_at?: string
+          period_month: string
+          reopen_reason?: string | null
+          reopened_at?: string | null
+          reopened_by?: string | null
+          return_type: string
+        }
+        Update: {
+          client_id?: string
+          cover_key?: never
+          first_filed_at?: string
+          period_month?: string
+          reopen_reason?: string | null
+          reopened_at?: string | null
+          reopened_by?: string | null
+          return_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "twob_ever_filed_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      twob_filed_figures: {
+        Row: {
+          client_id: string
+          expense_out_cgst: number
+          expense_out_igst: number
+          expense_out_sgst: number
+          frozen_at: string
+          frozen_by: string | null
+          period_month: string
+          reclaim_cgst: number
+          reclaim_igst: number
+          reclaim_sgst: number
+          reversal_cgst: number
+          reversal_igst: number
+          reversal_sgst: number
+        }
+        Insert: {
+          client_id: string
+          expense_out_cgst?: number
+          expense_out_igst?: number
+          expense_out_sgst?: number
+          frozen_at?: string
+          frozen_by?: string | null
+          period_month: string
+          reclaim_cgst?: number
+          reclaim_igst?: number
+          reclaim_sgst?: number
+          reversal_cgst?: number
+          reversal_igst?: number
+          reversal_sgst?: number
+        }
+        Update: {
+          client_id?: string
+          expense_out_cgst?: number
+          expense_out_igst?: number
+          expense_out_sgst?: number
+          frozen_at?: string
+          frozen_by?: string | null
+          period_month?: string
+          reclaim_cgst?: number
+          reclaim_igst?: number
+          reclaim_sgst?: number
+          reversal_cgst?: number
+          reversal_igst?: number
+          reversal_sgst?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "twob_filed_figures_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_permissions: {
         Row: {
           granted_at: string | null
@@ -11944,6 +12085,34 @@ export type Database = {
       staff_assign_position: {
         Args: { p_actor_id: string; p_position_id: string | null; p_user_id: string }
         Returns: undefined
+      }
+      twob_month_state: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: Json
+      }
+      twob_month_is_prior: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: boolean
+      }
+      twob_prior_books_apply: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_changes: Json; p_dry_run?: boolean }
+        Returns: Json
+      }
+      twob_reopen_filed: {
+        Args: { p_actor_id: string; p_client_id: string; p_return_type: string; p_period: string; p_reason: string }
+        Returns: Json
+      }
+      twob_carry_rerun: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_dry_run?: boolean }
+        Returns: Json
+      }
+      twob_restore_version: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_bills_2b: Json; p_bills_books: Json }
+        Returns: Json
+      }
+      twob_nib_2b_copies: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: string[]
       }
       staff_end_sessions: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_target_user_id: string }

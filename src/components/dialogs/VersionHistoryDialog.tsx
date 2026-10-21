@@ -31,6 +31,8 @@ interface VersionHistoryDialogProps {
   onOpenChange: (open: boolean) => void;
   versions: TwoBVersion[];
   onRestore: (version: TwoBVersion) => void;
+  /** Set when the month cannot be restored (a prior month, docs §13): Restore is hidden and this is shown. */
+  restoreBlockedReason?: string | null;
   onVersionDeleted?: () => void;
   clientName: string;
   month: string;
@@ -41,6 +43,7 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
   onOpenChange,
   versions,
   onRestore,
+  restoreBlockedReason,
   onVersionDeleted,
   clientName,
   month,
@@ -51,8 +54,8 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [viewingVersion, setViewingVersion] = useState<TwoBVersion | null>(null);
 
-  // Only superadmin can restore versions and delete versions
-  const canRestore = user?.role === 'superadmin';
+  // Only superadmin can restore versions and delete versions; a prior month is never restored.
+  const canRestore = user?.role === 'superadmin' && !restoreBlockedReason;
   const canDelete = user?.role === 'superadmin';
 
   const handleDownloadVersion = (version: TwoBVersion) => {
@@ -302,7 +305,7 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
 
           {!canRestore && versions.length > 0 && (
             <p className="text-xs text-muted-foreground text-center mt-4">
-              Only Superadmin can restore previous versions.
+              {restoreBlockedReason || 'Only Superadmin can restore previous versions.'}
             </p>
           )}
         </DialogContent>
@@ -313,7 +316,8 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({
           <AlertDialogHeader>
             <AlertDialogTitle>Restore Version {confirmRestore?.versionNumber}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will replace all current data with the data from version {confirmRestore?.versionNumber}. 
+              This will replace the month's own entries with those of version {confirmRestore?.versionNumber}.
+              Its carried entries stay as they stand: they follow the filed months, so a restore does not change them.
               A new version snapshot will be created to track this restore action.
               Make sure you have saved or downloaded the current data if needed.
             </AlertDialogDescription>

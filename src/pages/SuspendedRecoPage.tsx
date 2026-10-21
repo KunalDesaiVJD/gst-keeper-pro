@@ -10,6 +10,8 @@ import { exportSuspendedRecoToExcel } from '@/utils/suspendedRecoExcelExport';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { fetchFiledFigures } from '@/lib/itcAutoLink';
+import { readSuspendedRecoInputs } from '@/lib/suspendedRecoCalc';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -42,6 +44,11 @@ const SuspendedRecoPage: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  // The month's figures could not be read (a filed month's recorded figures
+  // among them, docs §13): Save, Upload, Not Applicable and Override stay off
+  // until a reload reads them, so a stale Current Total (another client's or
+  // month's) is never saved for Filing Status to check (fail closed).
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showClearData, setShowClearData] = useState(false);
   const [lastSavedBy, setLastSavedBy] = useState<{ name: string; role: string; time: string } | null>(null);
   // Opening balance portal values (editable for legacy <Jun-26; for Jun-26+ set via Upload/NA/Override flow)
@@ -136,14 +143,18 @@ const SuspendedRecoPage: React.FC = () => {
     if (!selectedClientId || !selectedMonth) return;
 
     setIsLoading(true);
+    setLoadError(null);
+    // Nothing of the client or month shown before is kept: a load that fails
+    // halfway leaves zeros, never another client's figures.
+    setPortalCgst(0); setPortalSgst(0); setPortalIgst(0);
+    setBooksCgst(0); setBooksSgst(0); setBooksIgst(0);
     try {
+      // Every read of the month fails closed with the read named (docs §13):
+      // a failed read leaves loadError set, which refuses Save, Upload, Not
+      // Applicable and Override, never saving zeros over the uploaded opening.
+      const inputs = await readSuspendedRecoInputs(selectedClientId, selectedMonth);
       // Fetch portal data from suspended_reco table (opening balance only)
-      const { data: suspendedData } = await supabase
-        .from('suspended_reco')
-        .select('*')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth)
-        .maybeSingle();
+      const suspendedData = inputs.suspended;
       
       if (suspendedData) {
         const sd = suspendedData as any;
@@ -228,12 +239,7 @@ const SuspendedRecoPage: React.FC = () => {
       const patterns = getMonthPatterns(selectedMonth);
 
       // 4B(2)(i): reversal bills where reversal_month matches current month
-      const { data: reversalBills } = await supabase
-        .from('bills_not_in_2b')
-        .select('input_igst, input_cgst, input_sgst, reversal_month')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth)
-        .not('reversal_month', 'is', null);
+      const reversalBills = inputs.reversalBills;
 
       const matchingReversals = (reversalBills || []).filter(b => monthMatchesFn(b.reversal_month, patterns));
       const row4B2i = matchingReversals.reduce((acc, b) => ({
@@ -243,12 +249,7 @@ const SuspendedRecoPage: React.FC = () => {
       }), { cgst: 0, sgst: 0, igst: 0 });
 
       // 5.4: reclaim bills where reclaim_month matches current month (excluding EXPENSE_OUT, handled via 4D 1.2)
-      const { data: reclaimBills } = await supabase
-        .from('bills_not_in_2b')
-        .select('input_igst, input_cgst, input_sgst, reclaim_month, reclaim_subtype')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth)
-        .not('reclaim_month', 'is', null);
+      const reclaimBills = inputs.reclaimBills;
 
       const matchingReclaims = (reclaimBills || []).filter(b => monthMatchesFn(b.reclaim_month, patterns));
       // Split the current-month reclaims into their two accounting buckets so
@@ -261,8 +262,9 @@ const SuspendedRecoPage: React.FC = () => {
         sgst: acc.sgst + (Number(b.input_sgst) || 0),
         igst: acc.igst + (Number(b.input_igst) || 0),
       }), { cgst: 0, sgst: 0, igst: 0 });
-      const row54 = sumHeads(normalReclaims);
-      const row4D12FromBills = sumHeads(expenseOutReclaims);
+      let row54 = sumHeads(normalReclaims);
+      let row4D12FromBills = sumHeads(expenseOutReclaims);
+      let row4B2iUsed = row4B2i;
 
       // 4B(2)(ii) and 5.5: read from saved ITC summary (these are editable, not auto-linked)
       let row4B2ii = { cgst: 0, sgst: 0, igst: 0 };
@@ -272,12 +274,17 @@ const SuspendedRecoPage: React.FC = () => {
       // amount takes over whenever it's present. See row4D12 below.
       let row4D12FromItc = { cgst: 0, sgst: 0, igst: 0 };
 
-      const { data: itcData } = await supabase
-        .from('itc_summaries')
-        .select('data')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth)
-        .maybeSingle();
+      const itcData = inputs.itcData;
+
+      // A prior month changed after filing: the current total from the
+      // figures recorded then; only the books side follows the books (docs
+      // §13; computeSuspendedRecoDiff reads it the same way).
+      const filed = await fetchFiledFigures(selectedClientId, selectedMonth);
+      if (filed) {
+        row4B2iUsed = filed.reversal;
+        row54 = filed.reclaim;
+        row4D12FromBills = filed.expenseOut;
+      }
 
       if (itcData?.data) {
         const itc = itcData.data as any;
@@ -315,16 +322,12 @@ const SuspendedRecoPage: React.FC = () => {
       };
 
       // Updated formula: (4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)
-      setPortalCgst(row4B2i.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst);
-      setPortalSgst(row4B2i.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst);
-      setPortalIgst(row4B2i.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst);
+      setPortalCgst(row4B2iUsed.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst);
+      setPortalSgst(row4B2iUsed.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst);
+      setPortalIgst(row4B2iUsed.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst);
 
-      // Fetch books data from bills_not_in_2b 
-      const { data: booksData } = await supabase
-        .from('bills_not_in_2b')
-        .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth);
+      // Books data from bills_not_in_2b
+      const booksData = inputs.booksData;
       
       if (booksData && booksData.length > 0) {
         const filteredData = booksData.filter(row => {
@@ -348,7 +351,8 @@ const SuspendedRecoPage: React.FC = () => {
         setBooksIgst(0);
       }
     } catch (error: any) {
-      toast.error('Failed to fetch data: ' + error.message);
+      setLoadError(error.message);
+      toast.error('Failed to fetch data: ' + error.message + '. Reload the page before saving.');
     } finally {
       setIsLoading(false);
     }
@@ -364,11 +368,26 @@ const SuspendedRecoPage: React.FC = () => {
     }
   }, [selectedClientId, selectedMonth, fetchData]);
 
+  // Every write of this page saves the Current Total it shows: none runs
+  // while the figures are loading or could not be read (fail closed).
+  const writeRefused = (): boolean => {
+    if (loadError) {
+      toast.error(`This month's figures could not be read (${loadError}). Nothing was saved; reload the page before saving.`);
+      return true;
+    }
+    if (isLoading) {
+      toast.error('The figures are still loading. Nothing was saved; try again in a moment.');
+      return true;
+    }
+    return false;
+  };
+
   const handleSave = async () => {
     if (!selectedClientId || !selectedMonth) {
       toast.error('Please select a client and month');
       return;
     }
+    if (writeRefused()) return;
 
     setIsSaving(true);
     try {
@@ -410,6 +429,7 @@ const SuspendedRecoPage: React.FC = () => {
   // Upload: trigger hidden file picker
   const handleUploadClick = () => {
     if (!isStaff) return;
+    if (writeRefused()) return;
     fileInputRef.current?.click();
   };
 
@@ -422,6 +442,7 @@ const SuspendedRecoPage: React.FC = () => {
       toast.error('Select a client and month first.');
       return;
     }
+    if (writeRefused()) return;
 
     setIsSaving(true);
     try {
@@ -499,6 +520,7 @@ const SuspendedRecoPage: React.FC = () => {
   // Not Applicable: silently set zeros + mark source
   const handleNotApplicable = async () => {
     if (!isStaff || !selectedClientId || !selectedMonth) return;
+    if (writeRefused()) return;
     setIsSaving(true);
     try {
       const now = new Date().toISOString();
@@ -551,6 +573,7 @@ const SuspendedRecoPage: React.FC = () => {
   // button visibility, applied here as defense-in-depth; the database checks it too.
   const handleOverrideSave = async (values: { cgst: number; sgst: number; igst: number; justification: string }) => {
     if (!canManualOverride() || !selectedClientId || !selectedMonth) return;
+    if (writeRefused()) return;
     setIsSaving(true);
     try {
       const now = new Date().toISOString();
@@ -748,7 +771,7 @@ const SuspendedRecoPage: React.FC = () => {
             )}
 
             {isStaff && (
-              <Button size="sm" className={WS_BTN} onClick={handleSave} disabled={isSaving || !selectedClientId}>
+              <Button size="sm" className={WS_BTN} onClick={handleSave} disabled={isSaving || !selectedClientId || isLoading || !!loadError}>
                 {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 Save Changes
               </Button>
@@ -822,6 +845,11 @@ const SuspendedRecoPage: React.FC = () => {
         </Card>
       ) : (
         <>
+          {loadError && (
+            <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              The figures of this month could not be read ({loadError}). Reload the page; until then nothing here can be saved.
+            </div>
+          )}
           {/* Headline tiles: the four totals from the table below. */}
           <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
             <KpiTile label="Opening balance · portal" value={formatNumber(openingTotal)} hint={`CGST ${formatNumber(openingCgst)} · SGST ${formatNumber(openingSgst)} · IGST ${formatNumber(openingIgst)}`} />
@@ -906,7 +934,7 @@ const SuspendedRecoPage: React.FC = () => {
                             variant="outline"
                             className="h-7 px-2 text-xs"
                             onClick={handleNotApplicable}
-                            disabled={!selectedClientId || isSaving}
+                            disabled={!selectedClientId || isSaving || isLoading || !!loadError}
                           >
                             Not Applicable
                           </Button>
@@ -916,7 +944,7 @@ const SuspendedRecoPage: React.FC = () => {
                               variant="outline"
                               className="h-7 gap-1 px-2 text-xs"
                               onClick={() => setShowOverrideDialog(true)}
-                              disabled={!selectedClientId || isSaving}
+                              disabled={!selectedClientId || isSaving || isLoading || !!loadError}
                             >
                               <Edit3 className="h-3 w-3" />
                               Override
@@ -927,7 +955,7 @@ const SuspendedRecoPage: React.FC = () => {
                             variant="ghost"
                             className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
                             onClick={handleUploadClick}
-                            disabled={!selectedClientId || isSaving}
+                            disabled={!selectedClientId || isSaving || isLoading || !!loadError}
                             title="Manual fallback — upload the ledger statement if the portal sync didn't set this"
                           >
                             <Upload className="h-3 w-3" />

@@ -27,6 +27,7 @@ import {
   formatPeriodLabel,
 } from '@/utils/parseElectronicCreditLedgerCsv';
 import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
+import { fetchFiledFigures } from '@/lib/itcAutoLink';
 
 type OpeningSource = 'manual' | 'csv' | 'not_applicable';
 
@@ -164,6 +165,10 @@ const GstReceivableRecoPage: React.FC = () => {
   // keep changing, so the reco intentionally shows 0 rather than a number
   // that might not match what eventually gets filed.
   const [prevReturnFiled, setPrevReturnFiled] = useState(false);
+  // The previous month's figures could not be read (its recorded filed
+  // figures among them, docs §13): the page shows no 4C rather than the
+  // figures of the client or month shown before.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const isStaff = isStaffRole();
   const selectedClientData = clients.find(c => c.id === selectedClientId);
@@ -225,6 +230,10 @@ const GstReceivableRecoPage: React.FC = () => {
   const fetchData = useCallback(async () => {
     if (!selectedClientId || !selectedMonth || !isEligibleMonth) return;
     setIsLoading(true);
+    setLoadError(null);
+    // Nothing of the client or month shown before is kept.
+    setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
+    setPrevReturnFiled(false); setHasItcSummary(false);
     try {
       // 1. Persisted gst_receivable_reco row
       const { data: rowData } = await supabase
@@ -356,14 +365,18 @@ const GstReceivableRecoPage: React.FC = () => {
           }),
           zero3
         );
-        const liveReversal = patterns
+        // M-1 changed after filing: its 4B(2)(i) and 5.4 as recorded then,
+        // not its live 2B lists, which a GST Manager may correct (docs §13);
+        // as the push gate reads them (computeGstReceivableRecoDiff).
+        const filedFigures = prevMonth ? await fetchFiledFigures(selectedClientId, prevMonth) : null;
+        const liveReversal = filedFigures ? filedFigures.reversal : patterns
           ? (reversalBills || [])
               .filter((b: any) => monthMatches(b.reversal_month, patterns))
               .reduce((acc: any, b: any) => ({
                 igst: acc.igst + (b.input_igst || 0), cgst: acc.cgst + (b.input_cgst || 0), sgst: acc.sgst + (b.input_sgst || 0),
               }), zero3)
           : zero3;
-        const liveReclaim = patterns
+        const liveReclaim = filedFigures ? filedFigures.reclaim : patterns
           ? (reclaimBills || [])
               .filter((b: any) => b.reclaim_subtype !== 'EXPENSE_OUT' && monthMatches(b.reclaim_month, patterns))
               .reduce((acc: any, b: any) => ({
@@ -517,6 +530,8 @@ const GstReceivableRecoPage: React.FC = () => {
         }
       }
     } catch (error: any) {
+      setLoadError(error.message);
+      setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
       toast.error('Failed to fetch data: ' + error.message);
     } finally {
       setIsLoading(false);
@@ -1053,6 +1068,11 @@ const GstReceivableRecoPage: React.FC = () => {
         </Card>
       ) : (
         <>
+          {loadError && (
+            <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              The previous month's figures could not be read ({loadError}). The Net ITC available (4C) shows 0, so the closing and the difference below are incomplete. Reload the page.
+            </div>
+          )}
           {/* Headline figures */}
           <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
             <KpiTile label="Opening as per portal" value={formatNumber(openingTotal)} hint={openingSource === 'csv' ? 'From the credit ledger' : openingSource === 'not_applicable' ? 'Marked not applicable' : 'Entered'} />

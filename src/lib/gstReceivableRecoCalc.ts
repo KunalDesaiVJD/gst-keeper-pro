@@ -2,6 +2,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { previousPeriodMonthKey } from '@/utils/parseElectronicCreditLedgerCsv';
 import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
 import type { RecoDiffResult } from './suspendedRecoCalc';
+import { fetchFiledFigures } from './itcAutoLink';
 
 // Mirrors the "DIFFERENCE" figure on the GST Receivable Reco page
 // (src/pages/GstReceivableRecoPage.tsx) — same source tables, same cross-head
@@ -59,6 +60,14 @@ const monthMatches = (storedMonth: string | null, patterns: ReturnType<typeof ge
 
 const applyTolerance = (v: number) => (Math.abs(v) <= 10 ? 0 : v);
 
+// Every read of the push gate fails closed (docs §13): a read that errors
+// throws with the table named, and runPushRecoCheck blocks Push with it,
+// never working from zeros that look like a real difference (or tally).
+function readOrThrow<T>(res: { data: T; error: { message: string } | null }, what: string): T {
+  if (res.error) throw new Error(`Could not read ${what}: ${res.error.message}`);
+  return res.data;
+}
+
 // Returns null for periods before GST Receivable Reco existed (Jun-26) — the
 // page itself has nothing to reconcile before that, so there's no diff to flag.
 export async function computeGstReceivableRecoDiff(clientId: string, periodMonth: string): Promise<RecoDiffResult | null> {
@@ -66,12 +75,12 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
   const monthSortKey = mm && yyyy ? yyyy * 100 + mm : 0;
   if (monthSortKey < RECEIVABLE_FROM) return null;
 
-  const { data: rowData } = await supabase
+  const rowData = readOrThrow(await supabase
     .from('gst_receivable_reco' as any)
     .select('opening_cgst, opening_sgst, opening_igst, books_closing_cgst, books_closing_sgst, books_closing_igst, utilized_cgst, utilized_sgst, utilized_igst, drc_cgst, drc_sgst, drc_igst')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
-    .maybeSingle();
+    .maybeSingle(), `the GST Receivable Reco of ${periodMonth}`);
   const r = rowData as any;
   const openingCgst = Number(r?.opening_cgst) || 0;
   const openingSgst = Number(r?.opening_sgst) || 0;
@@ -89,12 +98,14 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
 
   const prevMonth = previousPeriodMonthKey(periodMonth);
 
-  const [{ data: itcData }, { data: prevFilingRows }] = prevMonth
+  const [itcData, prevFilingRows] = prevMonth
     ? await Promise.all([
-        supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', prevMonth).maybeSingle(),
-        supabase.from('filing_status').select('status').eq('client_id', clientId).eq('period_month', prevMonth).in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']),
+        supabase.from('itc_summaries').select('data').eq('client_id', clientId).eq('period_month', prevMonth).maybeSingle()
+          .then((r) => readOrThrow(r, `the ITC Summary (itc_summaries) of ${prevMonth}`)),
+        supabase.from('filing_status').select('status').eq('client_id', clientId).eq('period_month', prevMonth).in('return_type', ['GSTR-3B', 'GSTR-3B (Q)'])
+          .then((r) => readOrThrow(r, `the filing status (filing_status) of ${prevMonth}`)),
       ])
-    : [{ data: null }, { data: null }];
+    : [null, null];
   const prevReturnFiled = !!prevFilingRows?.some((f: any) => f.status === 'Filed');
 
   let availedCgst = 0, availedSgst = 0, availedIgst = 0;
@@ -108,16 +119,22 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
 
     const prevShortMonth = prevMonth ? toShortMonth(prevMonth) : '';
     const patterns = prevMonth ? getMonthPatterns(prevMonth) : null;
-    const [{ data: rcmRows }, { data: reversalBills }, { data: reclaimBills }] = await Promise.all([
+    const [rcmRows, reversalBills, reclaimBills, filedFigures] = await Promise.all([
       prevShortMonth
         ? supabase.from('rcm_data').select('cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18').eq('client_id', clientId).eq('month', prevShortMonth)
-        : Promise.resolve({ data: null }),
+          .then((r) => readOrThrow(r, `the RCM figures (rcm_data) of ${prevMonth}`))
+        : Promise.resolve(null),
       prevMonth
         ? supabase.from('bills_not_in_2b').select('input_igst, input_cgst, input_sgst, reversal_month').eq('client_id', clientId).eq('period_month', prevMonth).not('reversal_month', 'is', null)
-        : Promise.resolve({ data: null }),
+          .then((r) => readOrThrow(r, `the Not in 2B list (bills_not_in_2b) of ${prevMonth}`))
+        : Promise.resolve(null),
       prevMonth
         ? supabase.from('bills_not_in_2b').select('input_igst, input_cgst, input_sgst, reclaim_month, reclaim_subtype').eq('client_id', clientId).eq('period_month', prevMonth).not('reclaim_month', 'is', null)
-        : Promise.resolve({ data: null }),
+          .then((r) => readOrThrow(r, `the Not in 2B list (bills_not_in_2b) of ${prevMonth}`))
+        : Promise.resolve(null),
+      // M-1 changed after filing: its 4B(2)(i) and 5.4 as recorded then, not
+      // its live 2B lists, which a GST Manager may correct (docs §13).
+      prevMonth ? fetchFiledFigures(clientId, prevMonth) : Promise.resolve(null),
     ]);
     const liveRcmItc = (rcmRows || []).reduce(
       (acc: any, row: any) => ({
@@ -127,12 +144,12 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
       }),
       zero3,
     );
-    const liveReversal = patterns
+    const liveReversal = filedFigures ? filedFigures.reversal : patterns
       ? (reversalBills || [])
           .filter((b: any) => monthMatches(b.reversal_month, patterns))
           .reduce((acc: any, b: any) => ({ igst: acc.igst + (b.input_igst || 0), cgst: acc.cgst + (b.input_cgst || 0), sgst: acc.sgst + (b.input_sgst || 0) }), zero3)
       : zero3;
-    const liveReclaim = patterns
+    const liveReclaim = filedFigures ? filedFigures.reclaim : patterns
       ? (reclaimBills || [])
           .filter((b: any) => b.reclaim_subtype !== 'EXPENSE_OUT' && monthMatches(b.reclaim_month, patterns))
           .reduce((acc: any, b: any) => ({ igst: acc.igst + (b.input_igst || 0), cgst: acc.cgst + (b.input_cgst || 0), sgst: acc.sgst + (b.input_sgst || 0) }), zero3)
@@ -157,11 +174,11 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
     );
     const total4A = { cgst: rows1To4.cgst + total5.cgst, sgst: rows1To4.sgst + total5.sgst, igst: rows1To4.igst + total5.igst };
 
-    const { data: clientRow } = await supabase
+    const clientRow = readOrThrow(await supabase
       .from('clients')
       .select('builder_itc_type, commercial_area, residential_area')
       .eq('id', clientId)
-      .maybeSingle();
+      .maybeSingle(), 'the client');
     const isNoITC = (clientRow as any)?.builder_itc_type === 'NO_ITC';
     const isPartialITC = (clientRow as any)?.builder_itc_type === 'PARTIAL_ITC' || isNoITC;
 
@@ -204,9 +221,10 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
 
   if (!utilizedFromCsv) {
     const shortMonth = prevMonth ? toShortMonth(prevMonth) : '';
-    const { data: gstr1Data } = shortMonth
-      ? await supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', shortMonth).maybeSingle()
-      : { data: null };
+    const gstr1Data = shortMonth
+      ? readOrThrow(await supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', shortMonth).maybeSingle(),
+        `the GSTR-1 data (gstr1_data) of ${prevMonth}`)
+      : null;
     if (gstr1Data?.raw_json) {
       // GSTR-3B 3.1(a) + 3.1(b) tax (zero rated IGST included), as the page.
       const out = computeGstr1OutputTax(gstr1Data.raw_json, prevMonth || '');

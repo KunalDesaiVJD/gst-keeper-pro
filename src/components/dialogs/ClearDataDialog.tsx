@@ -14,6 +14,7 @@ import { AlertTriangle, Trash2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { fetchTwobMonthState, isPriorPeriod, monthName } from '@/lib/twobPriorMonth';
 
 interface ClearDataDialogProps {
   open: boolean;
@@ -100,19 +101,46 @@ const ClearDataDialog: React.FC<ClearDataDialogProps> = ({
       let totalDeleted = 0;
 
       if (module === '2B Reconciliation') {
-        const { data: d1 } = await supabase
-          .from('bills_not_in_2b')
-          .delete()
-          .eq('client_id', clientId)
-          .in('period_month', months)
-          .select('id');
-        const { data: d2 } = await supabase
-          .from('bills_not_in_books')
-          .delete()
-          .eq('client_id', clientId)
-          .in('period_month', months)
-          .select('id');
-        totalDeleted = (d1?.length || 0) + (d2?.length || 0);
+        // A prior month (filed, or a later month filed; docs §13) is never
+        // cleared: its entries change only one by one, by a GST Manager or the
+        // superadmin. Clear Data clears the year's open months.
+        const { priorThrough } = await fetchTwobMonthState(clientId, months[months.length - 1]);
+        const open = months.filter((m) => !isPriorPeriod(m, priorThrough));
+        const kept = months.filter((m) => isPriorPeriod(m, priorThrough));
+        if (open.length) {
+          // A carried entry's own decision (a reclaim, Expense out, book
+          // entry) is undone first: the database refuses to delete a carried
+          // entry that holds one (docs §13); clearing the year is meant.
+          const { error: u1 } = await supabase.from('bills_not_in_2b')
+            .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null })
+            .eq('client_id', clientId).in('period_month', open).eq('is_carried_forward', true)
+            .or('reclaim_month.not.is.null,reclaim_subtype.not.is.null');
+          if (u1) throw u1;
+          const { error: u2 } = await supabase.from('bills_not_in_books')
+            .update({ book_entry_month: null })
+            .eq('client_id', clientId).in('period_month', open).eq('is_carried_forward', true)
+            .not('book_entry_month', 'is', null);
+          if (u2) throw u2;
+          const { data: d1, error: e1 } = await supabase
+            .from('bills_not_in_2b')
+            .delete()
+            .eq('client_id', clientId)
+            .in('period_month', open)
+            .select('id');
+          if (e1) throw e1;
+          const { data: d2, error: e2 } = await supabase
+            .from('bills_not_in_books')
+            .delete()
+            .eq('client_id', clientId)
+            .in('period_month', open)
+            .select('id');
+          if (e2) throw e2;
+          totalDeleted = (d1?.length || 0) + (d2?.length || 0);
+        }
+        if (kept.length) {
+          const keptLabel = kept.length === 1 ? monthName(kept[0]) : `${monthName(kept[0])} to ${monthName(kept[kept.length - 1])}`;
+          toast.info(`${keptLabel} ${kept.length === 1 ? 'is' : 'are'} filed and ${kept.length === 1 ? 'was' : 'were'} not cleared: a filed month's entries change only one by one, by a GST Manager or the superadmin.`, { duration: 15000 });
+        }
       } else if (module === 'ITC Summary') {
         const { data } = await supabase
           .from('itc_summaries')
