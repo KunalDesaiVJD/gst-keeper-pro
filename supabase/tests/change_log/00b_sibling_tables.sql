@@ -2,8 +2,9 @@
 -- their columns and keys as those files write them (no constraints beyond the
 -- keys and the cascades): 20261021100000 (prior months: twob_ever_filed,
 -- twob_filed_figures, twob_carry_log) and 20261021140000 (BU confirmation
--- e-mails). run.sh loads this before the change log, as the live project will
--- have them when the change log is applied last (see its header).
+-- e-mails, live since 21 Oct: two tables and five columns on
+-- builder_bu_agreement_confirmations). run.sh loads this before the change
+-- log, as both sort before it and the live project will have them.
 CREATE TABLE public.twob_ever_filed (
   client_id      uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
   return_type    text NOT NULL,
@@ -72,5 +73,11 @@ CREATE TABLE public.builder_bu_confirm_answer_history (
   cleared_by         uuid,
   cleared_by_request uuid
 );
+ALTER TABLE public.builder_bu_agreement_confirmations
+  ADD COLUMN IF NOT EXISTS request_id         uuid REFERENCES public.builder_bu_confirm_requests(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS responded_by_name  text,
+  ADD COLUMN IF NOT EXISTS responded_by_email text,
+  ADD COLUMN IF NOT EXISTS legacy_outbox_id   uuid,
+  ADD COLUMN IF NOT EXISTS legacy_emails      text[];
 GRANT ALL ON public.twob_ever_filed, public.twob_filed_figures, public.twob_carry_log,
   public.builder_bu_confirm_requests, public.builder_bu_confirm_answer_history TO anon, authenticated, service_role;

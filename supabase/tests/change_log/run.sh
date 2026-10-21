@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Replays 20261021130000_gst_change_log.sql on a throwaway local database (the
+# Replays 20261021150000_gst_change_log.sql on a throwaway local database (the
 # live tables stubbed in 00_stub.sql, the sibling migrations' GST tables in
 # 00b_sibling_tables.sql) and runs the SQL tests in this folder, then the
 # app-level check of the Change history page's loading
@@ -14,8 +14,16 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../../.." && pwd)"
-mig="$here/../../migrations/20261021130000_gst_change_log.sql"
+mig="$here/../../migrations/20261021150000_gst_change_log.sql"
 db="change_log_test_$$"
+# Round 3 review: replayed in filename order (a fresh environment, a rebuild),
+# this file must come after every other 21 Oct 2026 migration, whose GST
+# tables it attaches (a table missing when it runs is skipped, unlogged).
+for sib in 20261021100000_twob_prior_month_simple.sql 20261021110000_filing_status_pull_only.sql \
+           20261021120000_reco_pull_push_gate.sql 20261021140000_bu_confirm_cc.sql; do
+  if [[ ! "$(basename "$mig")" > "$sib" ]]; then echo "FAIL $(basename "$mig") sorts before $sib: a filename-order replay leaves its tables unlogged"; exit 1; fi
+done
+echo "ok   the change log sorts after the other 21 Oct migrations (filename-order replay attaches their tables)"
 db2="change_log_sibling_$$"
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 -d "$db" "$@"; }
 createdb "$db"

@@ -1,7 +1,9 @@
 -- Speed: a 1,000-row Import 2B insert and a 1,000-row ledger update (and a
 -- 1,000-row delete) stay under 1 s with the logger on, as the public key with
--- the app's header; 1,000 statements of one row or none stay cheap and open
--- no subtransaction (round 2). Prints the times with and without the logger,
+-- the app's header, the statement and its log write at COMMIT together;
+-- 1,000 statements of one row or none stay cheap and open no subtransaction
+-- (round 2). Prints the times with and without the logger (the log write
+-- apart: "log written at COMMIT", run here by SET CONSTRAINTS ... IMMEDIATE),
 -- and the size of a log row (for the volume estimate in docs/GST_CHANGE_LOG.md).
 SET search_path = public, extensions;
 CREATE TEMP TABLE t_time (what text, ms numeric);
@@ -16,14 +18,19 @@ SELECT '20000000-0000-0000-0000-000000000002', '08/2026', DATE '2026-08-01' + (g
        '10000000-0000-0000-0000-000000000003', 1
   FROM generate_series(1, 1000) g;
 
+-- The statement, then the log write its COMMIT makes (timed apart); returns both together.
 CREATE OR REPLACE FUNCTION pg_temp.t_run(p_label text, p_sql text) RETURNS numeric LANGUAGE plpgsql AS $$
-DECLARE t0 timestamptz; ms numeric;
+DECLARE t0 timestamptz; t1 timestamptz; ms numeric; wr numeric;
 BEGIN
   t0 := clock_timestamp();
   EXECUTE p_sql;
-  ms := round(extract(epoch FROM clock_timestamp() - t0) * 1000, 1);
-  INSERT INTO t_time VALUES (p_label, ms);
-  RETURN ms;
+  t1 := clock_timestamp();
+  SET CONSTRAINTS public.gst_change_log_flush IMMEDIATE;
+  SET CONSTRAINTS public.gst_change_log_flush DEFERRED;
+  ms := round(extract(epoch FROM t1 - t0) * 1000, 1);
+  wr := round(extract(epoch FROM clock_timestamp() - t1) * 1000, 1);
+  INSERT INTO t_time VALUES (p_label, ms), (p_label || ', log written at COMMIT', wr);
+  RETURN ms + wr;
 END $$;
 
 -- The Import 2B insert, as the app sends it (one statement, 1,000 rows).
@@ -101,6 +108,10 @@ BEGIN
   END LOOP;
   INSERT INTO t_time VALUES ('1,000 one-row updates, ' || p_label, round(extract(epoch FROM clock_timestamp() - t0) * 1000, 1));
   t0 := clock_timestamp();
+  SET CONSTRAINTS public.gst_change_log_flush IMMEDIATE;
+  SET CONSTRAINTS public.gst_change_log_flush DEFERRED;
+  INSERT INTO t_time VALUES ('1,000 one-row updates, ' || p_label || ', log written at COMMIT', round(extract(epoch FROM clock_timestamp() - t0) * 1000, 1));
+  t0 := clock_timestamp();
   FOR i IN 1 .. 1000 LOOP
     UPDATE bills_not_in_2b SET input_igst = 0 WHERE id = '00000000-0000-0000-0000-000000000000';
   END LOOP;
@@ -124,7 +135,8 @@ SET ROLE anon;
 SELECT t_request('anon', '{"x-gst-actor":"10000000-0000-0000-0000-000000000003","x-gst-source":"app","x-gst-request":"t90-loop"}');
 SELECT pg_temp.t_loops('logger on');
 RESET ROLE;
-SELECT t_eq((SELECT ms < 700 FROM t_time WHERE what = '1,000 one-row updates, logger on'), true, '1,000 one-row updates under 0.7 s (was about 1 s)');
+SELECT t_eq((SELECT sum(ms) < 700 FROM t_time WHERE what LIKE '1,000 one-row updates, logger on%'), true,
+            '1,000 one-row updates and their log write under 0.7 s (was about 1 s)');
 SELECT t_eq((SELECT ms < 100 FROM t_time WHERE what = '1,000 updates of no row, logger on'), true, '1,000 updates of no row under 0.1 s (was about 0.55 s)');
 SELECT t_eq((SELECT ms < 100 FROM t_time WHERE what = '1,000 deletes of no row, logger on'), true, '1,000 deletes of no row under 0.1 s (was about 0.17 s)');
 SELECT t_eq((SELECT count(*) FROM gst_change_log WHERE request_id = 't90-loop')::int, 1000, 'each one-row update logged once, the rest nothing');

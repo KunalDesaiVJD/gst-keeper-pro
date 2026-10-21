@@ -1,6 +1,6 @@
 // 0.17.0: every database request from the extension says where it comes from
 // and, while a job the app started is running, who started it, so the change
-// log (gst_change_log, migration 20261021130000) can name the person. Runs the
+// log (gst_change_log, migration 20261021150000) can name the person. Runs the
 // REAL background.js in a Node VM, as 11-session-identity does.
 //   - every /rest/v1 request (select, insert, upsert, patch, delete, RPC)
 //     carries x-gst-source: extension and an x-gst-request id

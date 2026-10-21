@@ -2,23 +2,31 @@
 -- with the app's header are each logged once, with the actor and the client,
 -- and nothing fails inside the logger (no "_error" rows). History tables log
 -- only the update and the delete. The list is the migration's own (section
--- 6): 107 tables with the sibling migrations' (00b_sibling_tables.sql), 95
--- full, 3 record (portal uploads and pushes) and 9 history.
+-- 6): 109 tables with the sibling migrations' (00b_sibling_tables.sql), 97
+-- full (round 3: DRC-03 payments and refund applications added), 5 record
+-- (portal uploads and pushes; round 3: scheme changes and unit
+-- classifications, whose inserts are the only record) and 7 history.
 SET search_path = public, extensions;
 
-SELECT t_eq((SELECT count(*) FROM gst_change_log_tables)::int, 107, 'tables attached');
-SELECT t_eq((SELECT count(*) FROM gst_change_log_tables WHERE mode = 'history')::int, 9, 'history tables');
+SELECT t_eq((SELECT count(*) FROM gst_change_log_tables)::int, 109, 'tables attached');
+SELECT t_eq((SELECT count(*) FROM gst_change_log_tables WHERE mode = 'history')::int, 7, 'history tables');
 SELECT t_eq((SELECT string_agg(table_name, ',' ORDER BY table_name) FROM gst_change_log_tables WHERE mode = 'record'),
-            'gstr1_upload_versions,gstr1_upload_versions_quarantine,gstr3b_push_versions', 'record tables: the portal uploads and pushes');
+            'builder_unit_classification_history,client_scheme_history,gstr1_upload_versions,gstr1_upload_versions_quarantine,gstr3b_push_versions',
+            'record tables: the portal uploads and pushes, scheme changes and unit classifications');
 SELECT t_eq((SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'gst_change_log_%' AND NOT tgisinternal)::int,
-            98 * 4 + 9 * 3 + 2 + 8 * 2, 'triggers (4 per full or record table, 3 per history table, 2 guarding the log, 2 on each builder parent)');
-SELECT t_eq((SELECT count(*) FROM gst_change_log_tables t WHERE to_regprocedure('public.' || public.gst_change_log_fn_name(t.table_name) || '()') IS NULL)::int, 0,
+            102 * 4 + 7 * 3 + 2 + 8 * 2 + 1, 'triggers (4 per full or record table, 3 per history table, 2 guarding the log, 2 on each builder parent, the flush)');
+SELECT t_eq((SELECT count(*) FROM gst_change_log_tables t
+              WHERE to_regprocedure('public.' || public.gst_change_log_fn_name(t.table_name) || '(bigint,uuid,text,text,text)') IS NULL)::int, 0,
             'each table has its own logger function');
+SELECT t_eq((SELECT count(*) FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid
+              WHERE g.tgname IN ('gst_change_log_ins', 'gst_change_log_upd', 'gst_change_log_del')
+                AND (g.tgtype & 1) = 0)::int, 0, 'round 3: every logger trigger is a row trigger (no statement-level work)');
 SELECT t_eq((SELECT count(*) FROM unnest(ARRAY['twob_import_docs', 'books_register', 'bills_not_in_2b', 'bills_not_in_books',
   'itc_summaries', 'suspended_reco', 'gst_receivable_reco', 'filing_status', 'gstr1_data', 'gstr1_manual_entries',
   'gstr3b_adjustments', 'gstr3b_push_versions', 'rcm_data', 'rcm_masters', 'rcm_versions', 'advance_receipts',
   'advance_adjustments', 'advance_opening_balances', 'advance_setoff_overrides', 'builder_units', 'builder_receipts',
-  'clients', 'gst_credit_ledger_transactions', 'manual_source_allowances', 'twob_versions', 'itc_versions']) t
+  'clients', 'gst_credit_ledger_transactions', 'manual_source_allowances', 'twob_versions', 'itc_versions',
+  'client_scheme_history', 'gst_drc03_filings', 'gst_refund_applications', 'builder_bu_agreement_confirmations']) t
   WHERE t NOT IN (SELECT table_name FROM gst_change_log_tables))::int, 0, 'the GST working tables named by the firm are all attached');
 -- Never logged twice: these have complete logs of their own.
 SELECT t_eq((SELECT count(*) FROM gst_change_log_tables WHERE table_name IN ('annual_return_docs', 'annual_return_change_log',
@@ -58,7 +66,7 @@ DECLARE
   v_from bigint;
   v_id text := quote_literal('50000000-0000-0000-0000-000000000000');
 BEGIN
-  FOR t IN SELECT table_name, mode, key_columns, only_columns FROM gst_change_log_tables ORDER BY table_name LOOP
+  FOR t IN SELECT table_name, mode, key_columns, only_columns, private_columns FROM gst_change_log_tables ORDER BY table_name LOOP
     SELECT COALESCE(max(id), 0) INTO v_from FROM gst_change_log;
     v_cols := ''; v_vals := ''; v_where := '';
     FOR c IN SELECT a.attname::text AS name, format_type(a.atttypid, a.atttypmod) AS type, a.attname = ANY (t.key_columns) AS is_key
@@ -100,6 +108,7 @@ BEGIN
        AND a.attname NOT LIKE '%\_by' AND a.attname NOT LIKE '%\_id'
        AND (format_type(a.atttypid, a.atttypmod) IN ('text', 'integer', 'boolean') OR format_type(a.atttypid, a.atttypmod) LIKE 'numeric%')
        AND (t.only_columns IS NULL OR a.attname = ANY (t.only_columns))
+       AND NOT (a.attname = ANY (t.private_columns))
      ORDER BY a.attnum LIMIT 1;
     IF v_col IS NULL THEN
       SELECT a.attname, 'timestamp' INTO v_col, v_type FROM pg_attribute a
@@ -112,6 +121,9 @@ BEGIN
     EXECUTE format('INSERT INTO public.%I (%s) VALUES (%s)', t.table_name, substr(v_cols, 3), substr(v_vals, 3));
     EXECUTE format('UPDATE public.%I SET %s WHERE %s', t.table_name, v_set, v_where);
     EXECUTE format('DELETE FROM public.%I WHERE %s', t.table_name, v_where);
+    -- The log is written at COMMIT; this one block is one transaction, so write it here.
+    SET CONSTRAINTS public.gst_change_log_flush IMMEDIATE;
+    SET CONSTRAINTS public.gst_change_log_flush DEFERRED;
     INSERT INTO t_seen
     SELECT t.table_name, string_agg(op, ',' ORDER BY id), string_agg(DISTINCT COALESCE(actor_name, '-') || '/' || actor_basis, ','),
            count(*) FILTER (WHERE changed ? '_error'), count(DISTINCT client_id)
@@ -121,7 +133,7 @@ END $$;
 RESET ROLE;
 SELECT set_config('app.manual_source_write', '', false);
 
-SELECT t_eq((SELECT count(*) FROM t_seen)::int, 107, 'every table written');
+SELECT t_eq((SELECT count(*) FROM t_seen)::int, 109, 'every table written');
 SELECT t_eq((SELECT string_agg(table_name || '=' || COALESCE(ops, '(none)'), '; ') FROM t_seen s
               WHERE ops IS DISTINCT FROM (SELECT CASE WHEN mode IN ('full', 'record') THEN 'INSERT,UPDATE,DELETE' ELSE 'UPDATE,DELETE' END
                                             FROM gst_change_log_tables x WHERE x.table_name = s.table_name)),

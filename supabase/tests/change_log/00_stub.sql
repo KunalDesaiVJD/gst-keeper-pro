@@ -1,4 +1,4 @@
--- The platform pieces 20261021130000_gst_change_log.sql expects, as on the
+-- The platform pieces 20261021150000_gst_change_log.sql expects, as on the
 -- live project: Supabase's roles, pgcrypto, staff_level_of, and every table
 -- the change log attaches to, with the live columns and primary keys (read
 -- from the live catalog on 21 Oct 2026; no constraints beyond the keys, the
@@ -1138,6 +1138,61 @@ CREATE TABLE public.gst_cash_ledger_entries (
   pulled_at timestamp with time zone,
   created_at timestamp with time zone DEFAULT now()
 );
+-- DRC-03 payments and refund applications, as the notices sync keeps them
+-- (20260817180000 and later; columns as live on 21 Oct 2026).
+CREATE TABLE public.gst_drc03_filings (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  client_id uuid NOT NULL,
+  arn text,
+  cause_of_payment text,
+  filed_date date,
+  period_from date,
+  period_to date,
+  cash_amount numeric,
+  credit_amount numeric,
+  status text,
+  pulled_at timestamp with time zone NOT NULL DEFAULT now(),
+  pulled_by uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  financial_year text,
+  section text,
+  taxable_value numeric,
+  igst_amount numeric,
+  cgst_amount numeric,
+  sgst_amount numeric,
+  cess_amount numeric,
+  interest_amount numeric,
+  late_fee_amount numeric,
+  penalty_amount numeric,
+  pdf_url text,
+  portal_key text,
+  first_seen_at timestamp with time zone,
+  last_seen_at timestamp with time zone,
+  deleted_at timestamp with time zone,
+  portal_hash text
+);
+CREATE TABLE public.gst_refund_applications (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  client_id uuid NOT NULL,
+  arn text,
+  refund_type text,
+  source_ledger text,
+  filed_date date,
+  claimed_amount numeric,
+  sanctioned_amount numeric,
+  status text,
+  pulled_at timestamp with time zone NOT NULL DEFAULT now(),
+  pulled_by uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  documents jsonb,
+  portal_key text,
+  first_seen_at timestamp with time zone,
+  last_seen_at timestamp with time zone,
+  deleted_at timestamp with time zone,
+  portal_hash text
+);
 CREATE TABLE public.gst_challans (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   client_id uuid,
@@ -1885,6 +1940,8 @@ ALTER TABLE public.builder_bounce_offsets ADD FOREIGN KEY (reversal_id) REFERENC
 ALTER TABLE public.builder_bounce_reversals ADD FOREIGN KEY (project_id) REFERENCES public.builder_projects(id) ON DELETE CASCADE;
 ALTER TABLE public.builder_bounce_reversals ADD FOREIGN KEY (receipt_id) REFERENCES public.builder_receipts(id) ON DELETE CASCADE;
 ALTER TABLE public.builder_bounce_reversals ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
+ALTER TABLE public.gst_drc03_filings ADD FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE CASCADE;
+ALTER TABLE public.gst_refund_applications ADD FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE CASCADE;
 ALTER TABLE public.builder_bu_agreement_confirmations ADD FOREIGN KEY (bu_event_id) REFERENCES public.builder_bu_events(id) ON DELETE CASCADE;
 ALTER TABLE public.builder_bu_agreement_confirmations ADD FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE CASCADE;
 ALTER TABLE public.builder_bu_agreement_confirmations ADD FOREIGN KEY (unit_id) REFERENCES public.builder_units(id) ON DELETE CASCADE;
@@ -1955,12 +2012,19 @@ BEGIN
     RAISE EXCEPTION 'FAILED %: expected [%], got [%]', p_label, p_expected, p_actual;
   END IF;
 END $$;
--- Passes when p_sql raises an error whose message contains p_like.
+-- Passes when p_sql, or its COMMIT, raises an error whose message contains
+-- p_like. The change log is written at COMMIT (a deferred trigger,
+-- gst_change_log_flush); SET CONSTRAINTS ... IMMEDIATE runs it here, so an
+-- error writing the log shows as the commit would show it.
 CREATE FUNCTION public.t_raises(p_sql text, p_like text, p_label text) RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
   BEGIN
     EXECUTE p_sql;
+    IF to_regclass('public.gst_change_log_pending') IS NOT NULL THEN
+      SET CONSTRAINTS public.gst_change_log_flush IMMEDIATE;
+      SET CONSTRAINTS public.gst_change_log_flush DEFERRED;
+    END IF;
   EXCEPTION WHEN OTHERS THEN
     IF position(p_like in SQLERRM) = 0 THEN
       RAISE EXCEPTION 'FAILED %: raised [%], expected it to mention [%]', p_label, SQLERRM, p_like;

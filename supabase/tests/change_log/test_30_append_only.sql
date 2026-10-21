@@ -19,6 +19,15 @@ SELECT t_raises($$INSERT INTO gst_change_log (table_name, op, actor_source, acto
                 'permission denied', 'the public key cannot write a made-up log row');
 SELECT t_raises($$TRUNCATE gst_change_log$$, 'permission denied', 'the public key cannot empty the log');
 SELECT t_raises($$DELETE FROM gst_change_log_tables$$, 'permission denied', 'the public key cannot unlist a table');
+-- Round 3: the rows kept until COMMIT are as closed as the log: no made-up
+-- row to be written at COMMIT, no kept row taken away before it.
+SELECT t_raises($$INSERT INTO gst_change_log_stage (txid, table_name, op, n) VALUES (txid_current(), 'filing_status', 'I', '{"id": "x"}')$$,
+                'permission denied', 'the public key cannot add a made-up row to be logged at COMMIT');
+SELECT t_raises($$DELETE FROM gst_change_log_stage$$, 'permission denied', 'nor take a kept row away');
+SELECT t_raises($$INSERT INTO gst_change_log_pending (txid) VALUES (1)$$, 'permission denied', 'nor mark a transaction');
+SELECT t_raises($$SELECT count(*) FROM gst_change_log_stage$$, 'permission denied', 'nor read the rows kept for open transactions');
+SELECT t_raises($$SELECT public.gst_change_log_for_filing_status(txid_current(), NULL, 'Nobody', 'app', NULL)$$, 'permission denied',
+                'nor write a table''s log itself');
 RESET ROLE;
 
 -- 2. The service key (Edge Functions) neither
@@ -53,12 +62,21 @@ SELECT t_eq(has_table_privilege('service_role', 'public.gst_change_log', 'DELETE
 SELECT t_eq(has_function_privilege('anon', 'public.gst_change_log_whoami()', 'execute'), true, 'the app can ask who it is recorded as');
 SELECT t_eq(has_function_privilege('anon', 'public.manual_source_allow(uuid,uuid,text,text,text)', 'execute'), true, 'the superadmin screen can allow');
 SELECT t_eq(has_function_privilege('anon', 'public.manual_source_revoke(uuid,uuid)', 'execute'), true, 'the superadmin screen can revoke');
-SELECT t_eq(has_function_privilege('anon', 'public.gst_change_log_attach(text,text,text,text,text[],text[],text[],text,text)', 'execute'),
+SELECT t_eq(has_function_privilege('anon', 'public.gst_change_log_attach(text,text,text,text,text[],text[],text[],text,text,text[])', 'execute'),
             false, 'the public key cannot attach or re-point the logger');
-SELECT t_eq(has_function_privilege('service_role', 'public.gst_change_log_attach(text,text,text,text,text[],text[],text[],text,text)', 'execute'),
+SELECT t_eq(has_function_privilege('service_role', 'public.gst_change_log_attach(text,text,text,text,text[],text[],text[],text,text,text[])', 'execute'),
             false, 'nor the service key');
 SELECT t_eq(has_function_privilege('anon', 'public.gst_change_log_context()', 'execute'), false, 'the context is internal');
 SELECT t_eq(has_function_privilege('anon', 'public.gst_change_log_client_of(text,uuid)', 'execute'), false, 'the client lookup is internal');
+SELECT t_eq(has_function_privilege('anon', 'public.gst_change_log_flush()', 'execute') OR has_function_privilege('anon', 'public.gst_change_log_stage_row()', 'execute')
+            OR has_function_privilege('service_role', 'public.gst_change_log_flush()', 'execute'), false, 'the row trigger and the flush are internal');
+SELECT t_eq((SELECT count(*) FROM gst_change_log_tables t
+              WHERE has_function_privilege('anon', 'public.' || public.gst_change_log_fn_name(t.table_name) || '(bigint,uuid,text,text,text)', 'execute')
+                 OR has_function_privilege('authenticated', 'public.' || public.gst_change_log_fn_name(t.table_name) || '(bigint,uuid,text,text,text)', 'execute'))::int,
+            0, 'no API role may run a table''s log writer');
+SELECT t_eq(has_table_privilege('anon', 'public.gst_change_log_stage', 'SELECT') OR has_table_privilege('anon', 'public.gst_change_log_stage', 'INSERT')
+            OR has_table_privilege('service_role', 'public.gst_change_log_stage', 'INSERT') OR has_table_privilege('anon', 'public.gst_change_log_pending', 'INSERT'),
+            false, 'the kept rows and the marks are open to no API role');
 
 -- 5. whoami, as the app calls it (a read)
 SET ROLE anon;

@@ -20,10 +20,10 @@ import {
   WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR,
 } from '@/components/workspace/theme';
 import {
-  DEFAULT_DAYS, HISTORY_PAGES, allowanceIdsOf, describeChange, exportRows, filtersFromSearch, filtersToSearch, formatStamp,
-  loadAllChangeHistory, loadAllowances, loadChangeHistory, monthLabel, pageOfTable, sourceLabel, tableLabel, whoLabel, whoNote,
-  withDefaultRange,
-  type AllowanceSource, type HistoryCursor, type HistoryFilters, type HistoryRow, type HistorySource,
+  DEFAULT_DAYS, HISTORY_PAGES, allowanceIdsOf, clientLabel, describeChange, exportRows, filtersFromSearch, filtersToSearch, formatStamp,
+  historyClients, loadAllChangeHistory, loadAllowances, loadChangeHistory, loadDeletedClients, monthLabel, pageOfTable, sourceLabel,
+  tableLabel, whoLabel, whoNote, withDefaultRange,
+  type AllowanceSource, type DeletedClientSource, type HistoryCursor, type HistoryFilters, type HistoryRow, type HistorySource,
 } from '@/lib/changeHistory';
 
 const ALL = '__all__';
@@ -53,6 +53,7 @@ function fyOptions() {
 
 const source = supabase as unknown as HistorySource;
 const allowanceSource = supabase as unknown as AllowanceSource;
+const deletedSource = supabase as unknown as DeletedClientSource;
 
 const ChangeHistoryPage: React.FC = () => {
   const { canViewChangeHistory, canExportData } = useAuth();
@@ -76,6 +77,12 @@ const ChangeHistoryPage: React.FC = () => {
       return data ?? [];
     },
   });
+  // Clients deleted since the log began: named as their delete kept them.
+  const deletedQ = useQuery({
+    queryKey: ['change-history-deleted-clients'],
+    enabled: allowed,
+    queryFn: () => loadDeletedClients(deletedSource),
+  });
   const staffQ = useQuery({
     queryKey: ['change-history-staff'],
     enabled: allowed,
@@ -98,10 +105,10 @@ const ChangeHistoryPage: React.FC = () => {
   });
 
   const names = useMemo(() => Object.fromEntries((staffQ.data ?? []).map((p) => [p.user_id, p.first_name])), [staffQ.data]);
-  const clientName = useMemo(() => {
-    const m = new Map((clientsQ.data ?? []).map((c) => [c.id, c.name]));
-    return (id: string | null) => (id ? m.get(id) ?? '(deleted client)' : '');
-  }, [clientsQ.data]);
+  const clients = useMemo(() => historyClients(clientsQ.data ?? [], deletedQ.data ?? []), [clientsQ.data, deletedQ.data]);
+  const clientById = useMemo(() => new Map(clients.map((c) => [c.id, c])), [clients]);
+  const clientName = useMemo(() => (id: string | null) => clientLabel(id ? clientById.get(id) : undefined, id), [clientById]);
+  const clientGstin = useMemo(() => (id: string | null) => (id ? clientById.get(id)?.gstin ?? '' : ''), [clientById]);
   // Nothing narrowing the history (no client, month, year or dates): the last 30 days.
   const effective = useMemo(() => withDefaultRange(filters), [filters]);
   const { defaulted, ...queryFilters } = effective;
@@ -132,9 +139,9 @@ const ChangeHistoryPage: React.FC = () => {
       const { rows: all, capped } = await loadAllChangeHistory(source, queryFilters, EXPORT_LIMIT);
       if (!all.length) { toast.info('Nothing to export for these filters.'); return; }
       const exportAllowances = await loadAllowances(allowanceSource, allowanceIdsOf(all));
-      const sheetRows = exportRows(all, { clientName, names, allowances: exportAllowances });
+      const sheetRows = exportRows(all, { clientName, clientGstin, names, allowances: exportAllowances });
       const ws = XLSX.utils.json_to_sheet(sheetRows);
-      ws['!cols'] = [18, 22, 22, 26, 10, 18, 22, 26, 14, 30, 24, 24, 30, 24].map((wch) => ({ wch }));
+      ws['!cols'] = [18, 22, 22, 26, 17, 10, 18, 22, 26, 14, 30, 24, 24, 30, 24].map((wch) => ({ wch }));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Change history');
       const about = [
@@ -224,7 +231,7 @@ const ChangeHistoryPage: React.FC = () => {
             <label className="w-full min-w-0 space-y-0.5 sm:w-64">
               <span className={WS_FILTER_LABEL}>Client</span>
               <SearchableSelect
-                options={[{ value: ALL, label: 'All clients' }, ...(clientsQ.data ?? []).map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin ?? undefined }))]}
+                options={[{ value: ALL, label: 'All clients' }, ...clients.map((c) => ({ value: c.id, label: clientLabel(c, c.id), sublabel: c.gstin ?? undefined }))]}
                 value={filters.clientId ?? ALL}
                 onValueChange={(v) => setFilters({ clientId: v === ALL ? null : v })}
                 placeholder="All clients"
@@ -332,7 +339,12 @@ const ChangeHistoryPage: React.FC = () => {
                     <div className="font-medium">{whoLabel(r)}</div>
                     {note && <div className="text-[11px] text-muted-foreground">{note}</div>}
                   </td>
-                  <td className={cn(WS_TD, 'text-xs')}>{clientName(r.client_id)}</td>
+                  <td className={cn(WS_TD, 'text-xs')}>
+                    <div>{clientName(r.client_id)}</div>
+                    {r.client_id && clientById.get(r.client_id)?.deleted && clientGstin(r.client_id) && (
+                      <div className="text-[11px] text-muted-foreground">{clientGstin(r.client_id)}</div>
+                    )}
+                  </td>
                   <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>
                     {r.period_month ? monthLabel(r.period_month) : r.financial_year ? `FY ${r.financial_year}` : ''}
                   </td>

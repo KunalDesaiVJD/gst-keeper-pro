@@ -1,7 +1,7 @@
 // Change history: what the Change history page and the History buttons read.
 //
 // The database keeps every change to the GST working tables in
-// gst_change_log (migration 20261021130000_gst_change_log.sql) and shows it,
+// gst_change_log (migration 20261021150000_gst_change_log.sql) and shows it,
 // with the Annual Return figure log and the Liberal switch log, in the view
 // gst_change_history. This file holds the pure parts the page uses: the
 // pages and tables, readable names for columns, the filters as a query, the
@@ -66,7 +66,7 @@ export const HISTORY_PAGES: HistoryPage[] = [
   { key: 'update_sheet', label: 'GST Update Sheet', tables: ['gst_running_updates', 'gst_update_versions', 'gst_update_row_versions'] },
   { key: 'advances', label: 'Advances', tables: ['advance_receipts', 'advance_adjustments', 'advance_opening_balances', 'advance_setoff_overrides', 'contract_projects', 'contract_ra_bills'] },
   { key: 'clients', label: 'Clients', tables: ['clients', 'client_annual_turnover', 'client_scheme_history', 'audit_log'] },
-  { key: 'portal', label: 'Portal pulls', tables: ['gst_credit_ledger_transactions', 'gst_cash_ledger_entries', 'gst_liability_ledger_entries', 'gst_credit_reversal_reclaim_entries', 'gst_rcm_liability_itc_entries', 'gst_filed_returns', 'gstr2a_import_docs', 'gst_challans', 'gst_taxpayer_profile'] },
+  { key: 'portal', label: 'Portal pulls', tables: ['gst_credit_ledger_transactions', 'gst_cash_ledger_entries', 'gst_liability_ledger_entries', 'gst_credit_reversal_reclaim_entries', 'gst_rcm_liability_itc_entries', 'gst_filed_returns', 'gstr2a_import_docs', 'gst_challans', 'gst_taxpayer_profile', 'gst_drc03_filings', 'gst_refund_applications'] },
   { key: 'allowances', label: 'Manual entries allowed', tables: ['manual_source_allowances'] },
   { key: 'annual', label: 'Annual Return', tables: ['annual_return_docs', 'annual_return_bs_pl_uploads', 'annual_return_carry_forward', 'reconciliation_reasons', 'expense_head_mappings', 'itc_reversal_lines', 'duties_taxes_input_monthly', 'duties_taxes_output_monthly', 'books_purchase_lines', 'books_turnover_lines', 'pl_input_lines', 'pl_output_lines', 'annexure3_other_payments', 'rcm_annual_return_lines', 'portal_tax_payment_entries', 'gstr9_output_lines', 'gstr9_table14_differential_tax', 'gstr9_table15_demands_refunds', 'gstr9_table16_composition_deemed_approval', 'gstr9c_certification', 'gstr9c_part_v_additional_liability', 'gstr9c_table11_additional_liability', 'gstr9c_table12_net_itc', 'gstr9c_table16_tax_payable_unreconciled_itc', 'gstr9c_table5_turnover_reco', 'gstr9c_table7_taxable_turnover_reco', 'gstr9c_table9_rate_wise_liability_reco'] },
   // Every builder_* table; listed by prefix in pageOfTable.
@@ -121,6 +121,9 @@ const TABLE_LABELS: Record<string, string> = {
   gstr2a_import_docs: 'GSTR-2A documents',
   gst_challans: 'Challans (portal)',
   gst_taxpayer_profile: 'Taxpayer profile (portal)',
+  gst_drc03_filings: 'DRC-03 payments (portal)',
+  gst_refund_applications: 'Refund applications (portal)',
+  builder_unit_classification_history: 'Builder unit classification',
   manual_source_allowances: 'Manual entry allowed',
   annual_return_docs: 'Annual Return workings',
 };
@@ -209,6 +212,11 @@ const COLUMN_LABELS: Record<string, string> = {
   liberal_2b_reconciliation: 'Liberal 2B Reconciliation',
   name: 'Name',
   gstin: 'GSTIN',
+  old_scheme: 'Scheme before',
+  new_scheme: 'New scheme',
+  effective_from_date: 'Effective from',
+  cause_of_payment: 'Cause of payment',
+  deleted_at: 'Removed on the portal',
 };
 
 /** A column's name for people. */
@@ -757,10 +765,78 @@ export async function loadAllChangeHistory(source: HistorySource, f: HistoryFilt
 }
 
 // ---------------------------------------------------------------------------
+// Clients, deleted ones too
+// ---------------------------------------------------------------------------
+/** A client as the page shows it: a live one, or one deleted, named as its delete kept it. */
+export interface HistoryClient { id: string; name: string; gstin: string | null; deleted: boolean }
+
+/** A client's delete as the log kept it (the delete of a client row keeps its name and GSTIN). */
+export interface DeletedClientRow { client_id: string | null; at: string; changed: unknown }
+
+/** The read the page makes of the deleted clients (supabase-js's, or a stand-in in the check). */
+export interface DeletedClientSource {
+  from(view: 'gst_change_history'): {
+    select(columns: string): {
+      eq(column: string, value: string): DeletedClientQuery;
+    };
+  };
+}
+interface DeletedClientQuery extends PromiseLike<{ data: unknown[] | null; error: { message: string } | null }> {
+  eq(column: string, value: string): DeletedClientQuery;
+  order(column: string, options: { ascending: boolean }): DeletedClientQuery;
+  range(from: number, to: number): DeletedClientQuery;
+}
+
+/**
+ * Every client deleted since the log began, newest delete first (round 3
+ * review: a deleted client's rows all read "(deleted client)" and it could
+ * not be chosen, though the log keeps its name and GSTIN). Pages of 1,000.
+ */
+export async function loadDeletedClients(source: DeletedClientSource): Promise<DeletedClientRow[]> {
+  const out: DeletedClientRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await source.from('gst_change_history').select('client_id,at,changed')
+      .eq('table_name', 'clients').eq('op', 'DELETE')
+      .order('at', { ascending: false }).range(from, from + 999);
+    if (error) throw new Error(error.message);
+    const got = (data ?? []) as DeletedClientRow[];
+    out.push(...got);
+    if (got.length < 1000) return out;
+  }
+}
+
+/**
+ * The clients for the page and its filter: the live ones, then each deleted
+ * one by the name and GSTIN its last delete kept, in name order.
+ */
+export function historyClients(live: Array<{ id: string; name: string; gstin: string | null }>, gone: DeletedClientRow[]): HistoryClient[] {
+  const out: HistoryClient[] = live.map((c) => ({ id: c.id, name: c.name, gstin: c.gstin ?? null, deleted: false }));
+  const seen = new Set(out.map((c) => c.id));
+  for (const g of gone) {
+    if (!g.client_id || seen.has(g.client_id)) continue;
+    seen.add(g.client_id);
+    const c = asObject(g.changed);
+    const name = typeof c.name === 'string' && c.name.trim() ? c.name.trim() : null;
+    const gstin = typeof c.gstin === 'string' && c.gstin.trim() ? c.gstin.trim() : null;
+    out.push({ id: g.client_id, name: name ?? gstin ?? g.client_id.slice(0, 8), gstin, deleted: true });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** "SUNRISE TRADERS", "GONE BUILDERS (deleted)", or "(deleted client)" when the log kept no name. */
+export function clientLabel(c: HistoryClient | undefined, id: string | null): string {
+  if (!id) return '';
+  if (!c) return '(deleted client)';
+  return c.deleted ? `${c.name} (deleted)` : c.name;
+}
+
+// ---------------------------------------------------------------------------
 // Excel
 // ---------------------------------------------------------------------------
 export interface ExportContext {
   clientName: (id: string | null) => string;
+  /** The client's GSTIN (a deleted client's as its delete kept it). */
+  clientGstin?: (id: string | null) => string;
   names?: Record<string, string>;
   allowances?: Record<string, AllowanceInfo>;
 }
@@ -775,6 +851,7 @@ export function exportRows(rows: HistoryRow[], ctx: ExportContext): Array<Record
       Who: whoLabel(r),
       'How recorded': [sourceLabel(r.actor_source), whoNote(r)].filter(Boolean).join(', '),
       Client: ctx.clientName(r.client_id),
+      GSTIN: ctx.clientGstin ? ctx.clientGstin(r.client_id) : '',
       Month: r.period_month ? monthLabel(r.period_month) : (r.financial_year ? `FY ${r.financial_year}` : ''),
       Page: pageOfTable(r.table_name)?.label ?? '',
       Sheet: tableLabel(r.table_name),

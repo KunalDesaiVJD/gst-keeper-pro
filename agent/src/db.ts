@@ -16,7 +16,7 @@ export interface Db {
 export function makeDb(cfg: Pick<AgentConfig, 'supabaseUrl' | 'anonKey'>, fetchImpl: typeof fetch = fetch): Db {
   const base = cfg.supabaseUrl + '/rest/v1/';
   // x-gst-source: the database's change log (gst_change_log, migration
-  // 20261021130000) records what this agent writes as the office agent.
+  // 20261021150000) records what this agent writes as the office agent.
   const headers = {
     apikey: cfg.anonKey, Authorization: 'Bearer ' + cfg.anonKey, 'Content-Type': 'application/json',
     'x-gst-source': 'agent',

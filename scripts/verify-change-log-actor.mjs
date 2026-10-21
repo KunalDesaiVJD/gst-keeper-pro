@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Checks that every request names the user signed in in the tab that sends
-// it (round 2 review of the change log, migration 20261021130000): two tabs of
+// it (round 2 review of the change log, migration 20261021150000): two tabs of
 // one browser share localStorage, so a second sign-in in tab B overwrites the
 // saved sign-in while tab A still shows, and saves as, its own user. The
 // headers come from src/lib/changeLogHeaders.ts, whose person AuthContext

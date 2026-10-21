@@ -14,25 +14,40 @@
 --    the leaves that changed ("section4A[5.1].igst: 1000 -> 1200"), walked 20
 --    levels deep at most (below that a differing part is one fingerprinted
 --    leaf, so a crafted document cannot make the logger fail).
---  * Filled by AFTER ... FOR EACH STATEMENT triggers with transition tables,
---    one INSERT ... SELECT per statement. Each table has its own plpgsql
---    logger, gst_change_log_for_<table>, written by gst_change_log_attach()
---    with fixed SQL, so a connection plans it once (round 2: one generic
---    logger built and planned its SQL on every statement inside an exception
---    block, about 1 ms each, and overflowed the subtransaction cache). A
---    statement that changed no row returns at once; nothing opens a
---    subtransaction; a statement whose rows the logger cannot read (only a
---    wrong attach expression could do that) is refused, never saved untraced.
---    History tables (twob_versions, itc_versions, rcm_versions,
---    gst_update_*versions, client_scheme_history,
---    builder_unit_classification_history, audit_log,
+--  * Kept as each row changes, written at COMMIT (round 3). A row trigger on
+--    every logged table (gst_change_log_stage_row, one function for all)
+--    keeps the row as it was and as it is in the UNLOGGED table
+--    gst_change_log_stage and marks the transaction once
+--    (gst_change_log_pending); at COMMIT a deferred trigger
+--    (gst_change_log_flush) writes the transaction's log rows table by
+--    table, each with its own function gst_change_log_for_<table> (written by
+--    gst_change_log_attach() with fixed SQL, planned once per connection).
+--    Round 2 wrote the log at the end of every statement, about 0.2 ms a
+--    statement: a function that saves entry by entry (1,000 prior-month
+--    removals are 3,000 statements) spent more time logging than saving and
+--    failed twob-simple's own 1 s timing gate. Now a save pays about 15 to
+--    20 µs a row and nothing per statement (a statement that changes no row
+--    fires nothing); the log rows are written once, set-based, at COMMIT.
+--    What a savepoint rolls back goes with it (kept rows and mark alike).
+--    Nothing opens a subtransaction. A save whose rows the log cannot read
+--    (only a wrong attach expression could do that) fails its COMMIT: it is
+--    refused, never saved untraced.
+--    'record' tables are logged on insert too, with a deleted row kept whole:
+--    the GSTR-1 upload and GSTR-3B push logs, a client's scheme change
+--    (client_scheme_history: its effective date and notes are the only record
+--    of why filing rows were reset) and a unit's classification
+--    (builder_unit_classification_history: its rate code and affordable flag
+--    live only there) (round 3). 'history' tables (twob_versions,
+--    itc_versions, rcm_versions, gst_update_*versions, audit_log,
 --    builder_bu_confirm_answer_history) are watched for UPDATE and DELETE
---    only, and a deleted one is kept whole: their inserts are already the
---    record. The GSTR-1 upload and GSTR-3B push logs ('record') are logged on
---    insert too. annual_return_docs has a complete log
---    (annual_return_change_log), shown with this one in gst_change_history;
---    the Liberal switch is logged here as well as in client_liberal_log,
---    which goes with a deleted client.
+--    only: their inserts are already the record. annual_return_docs has a
+--    complete log (annual_return_change_log), shown with this one in
+--    gst_change_history; the Liberal switch is logged here as well as in
+--    client_liberal_log, which goes with a deleted client.
+--    Round 3 also logs the portal's DRC-03 payments and refund applications
+--    (gst_drc03_filings, gst_refund_applications: a re-pull that only touches
+--    when they were seen is no change) and the BU agreement confirmations of
+--    20261021140000 (never a link's token: p_private).
 --  * Builder rows reach their client through their project, unit, booking
 --    ...; before a parent row is deleted its client is kept for the deleting
 --    transaction (gst_change_log_gone), so the rows its delete cascades to
@@ -41,19 +56,21 @@
 --    x-gst-source (app / extension / agent) and x-gst-request on every
 --    /rest/v1 request (src/lib/changeLogHeaders.ts, set by AuthContext;
 --    extension 0.17.0, both runners; the office agent). PostgREST puts
---    request headers in request.headers. Proven in Chromium on 21 Oct 2026
---    against the live project: the API gateway's preflight allows these
---    headers on /rest/v1 (Edge Functions keep their own list, so the app
---    never sends them there). Without the header the actor comes only from a
---    saved-by stamp the statement itself wrote (on INSERT the row's stamp, on
---    UPDATE a stamp whose value changed; actor_basis 'row'), never from one
---    the last editor left; else no one (actor_basis 'none'). The header is
---    trusted as every p_actor_id in this database is: the app has no auth
---    session (CLAUDE.md).
+--    request headers in request.headers (they last to the COMMIT, where the
+--    log reads them once). Proven in Chromium on 21 Oct 2026 against the live
+--    project: the API gateway's preflight allows these headers on /rest/v1
+--    (Edge Functions keep their own list, so the app never sends them
+--    there). Without the header the actor comes only from a saved-by stamp
+--    the change itself wrote (on INSERT the row's stamp, on UPDATE a stamp
+--    whose value changed; actor_basis 'row'), never from one the last editor
+--    left; else no one (actor_basis 'none'). The header is trusted as every
+--    p_actor_id in this database is: the app has no auth session (CLAUDE.md).
 --  * Append-only: the log is select-only to every API role (RLS SELECT for
 --    public, no write grants) and a trigger refuses UPDATE and TRUNCATE for
 --    every role and DELETE unless a future superadmin-run retention function
---    turns app.gst_change_log_retention on (none exists).
+--    turns app.gst_change_log_retention on (none exists). The kept rows and
+--    the marks are open to no API role (no grants, RLS with no policy): no
+--    one can add a made-up row to be logged at COMMIT, or take one away.
 --  * Reading: the history leads each read with its narrowest filter (client,
 --    month, financial year, person) as a range of one value and orders by it
 --    first, so each read is one index (round 2: a year or a month with no
@@ -70,40 +87,49 @@
 -- ===========================================================================
 -- Live apply (project gcquafqxbykxkbexcdpy ONLY; never SUPABASE_PROJECT_REF)
 -- ===========================================================================
--- Order: apply this file LAST of the 21 Oct 2026 migrations, after
+-- Order: in filename order, after the other 21 Oct 2026 migrations:
 -- 20261021100000 (prior months), 20261021110000 (filing), 20261021120000
--- (reco) and 20261021140000 (BU confirmation): it attaches their GST tables
--- only if they exist (a missing table is skipped). If one of them goes live
--- after this file, apply this file again after it (re-runnable), or, as the
+-- (reco) and 20261021140000 (BU confirmation, live since 21 Oct). Round 3
+-- renamed this file from 20261021130000 so a replay in filename order (a
+-- fresh environment, a rebuild) attaches their tables; a table missing when
+-- it runs is skipped. If one of 100000 / 110000 / 120000 goes live after
+-- this file, apply this file again after it (re-runnable), or, as the
 -- postgres role, run the lines of section 6 that name its tables, e.g.
 --   SELECT public.gst_change_log_attach('twob_ever_filed');
 --   SELECT public.gst_change_log_attach('twob_filed_figures');
 --   SELECT public.gst_change_log_attach('twob_carry_log', p_label => 'r.list');
--- (20261021140000: the builder_bu_confirm_requests and
--- builder_bu_confirm_answer_history lines of section 6, as written there).
+-- 20261021160000 (BU follow-up, sorts after this file) needs nothing: the
+-- column it adds to builder_bu_confirm_requests (earlier_units) is logged as
+-- it comes (that table is logged by p_private, not p_only), and it adds
+-- columns only to builder_bu_confirm_codes, which is not logged.
 -- Apply at a quiet time (not during a bulk import or a report run): attaching
--- takes a short ACCESS EXCLUSIVE lock on each of the 107 tables, held until
+-- takes a short ACCESS EXCLUSIVE lock on each of the 109 tables, held until
 -- COMMIT. The file sets lock_timeout = 5 s: if a long query holds a table, the
 -- apply stops with "canceling statement due to lock timeout", changes nothing
 -- (one transaction), and is simply run again a minute later. A re-run takes the
 -- same locks again (it re-attaches every trigger), so it is not free either.
 -- 1. Dry checks (SELECT only), note the numbers:
---      SELECT to_regclass('public.gst_change_log');                               -- NULL
+--      SELECT to_regclass('public.gst_change_log'), to_regclass('public.gst_change_log_stage');  -- NULL, NULL
 --      SELECT to_regprocedure('public.staff_level_of(uuid)') IS NOT NULL;          -- true
 --      SELECT current_setting('server_version_num')::int >= 160000;               -- true (17.6 on 21 Oct; pg_input_is_valid)
 --      SELECT to_regclass('public.manual_source_allowances');                     -- the filing/reco table
 --      SELECT count(*) FROM unnest(ARRAY['twob_ever_filed','twob_filed_figures','twob_carry_log',
 --        'builder_bu_confirm_requests','builder_bu_confirm_answer_history','filing_status_log',
 --        'reco_opening_log']) t WHERE to_regclass('public.' || t) IS NOT NULL;      -- 7 (the sibling migrations are in)
+--      SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public'
+--         AND table_name = 'builder_bu_agreement_confirmations'
+--         AND column_name IN ('token', 'request_id', 'responded_by_email');       -- 3 (20261021140000 is in)
 --      SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'gst_change_log%';       -- 0
 --      SELECT pg_size_pretty(pg_database_size(current_database()));                -- 137 MB on 21 Oct
 --      SELECT count(*) FROM unnest(ARRAY['twob_import_docs','books_register','bills_not_in_2b',
 --        'bills_not_in_books','itc_summaries','suspended_reco','gst_receivable_reco','filing_status',
---        'gstr1_data','clients']) t WHERE to_regclass('public.' || t) IS NOT NULL;  -- 10
+--        'gstr1_data','clients','gst_drc03_filings','gst_refund_applications','client_scheme_history']) t
+--        WHERE to_regclass('public.' || t) IS NOT NULL;                           -- 13
 --      Row counts to compare after: SELECT (SELECT count(*) FROM filing_status),
 --        (SELECT count(*) FROM bills_not_in_books), (SELECT count(*) FROM twob_import_docs),
---        (SELECT count(*) FROM clients), (SELECT count(*) FROM builder_receipts);
---        -- 21 Oct: 8195, 45024, 3559, 127, and the builder receipts
+--        (SELECT count(*) FROM clients), (SELECT count(*) FROM builder_receipts),
+--        (SELECT count(*) FROM gst_drc03_filings);
+--        -- 21 Oct: 8195, 45024, 3559, 127, the builder receipts, 254
 --      No long query on the GST tables right now (expect no rows):
 --      SELECT pid, now() - xact_start AS running, left(query, 80) FROM pg_stat_activity
 --       WHERE state <> 'idle' AND xact_start < now() - interval '30 seconds';
@@ -111,15 +137,22 @@
 --    triggers and changes nothing else). On "lock timeout": wait a minute and
 --    apply again.
 -- 3. After checks:
---      SELECT mode, count(*) FROM gst_change_log_tables GROUP BY 1;  -- full 95, record 3, history 9 (107)
---        (with every sibling migration in; without 20261021100000: full 92; without
---         20261021140000: full 94, history 8. A smaller number names a missing table:
+--      SELECT mode, count(*) FROM gst_change_log_tables GROUP BY 1;  -- full 97, record 5, history 7 (109)
+--        (with every sibling migration in; without 20261021100000: full 94; without
+--         20261021140000: full 96, history 6. A smaller number names a missing table:
 --         SELECT table_name FROM gst_change_log_tables ORDER BY 1)
+--      SELECT table_name, private_columns FROM gst_change_log_tables WHERE private_columns <> '{}';
+--        -- builder_bu_agreement_confirmations {token}, builder_bu_confirm_requests {token}
 --      SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace
---         AND starts_with(proname, 'gst_change_log_for_');            -- 107, one logger per table
+--         AND starts_with(proname, 'gst_change_log_for_') AND pronargs = 5;  -- 109, one log writer per table
 --      SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'gst_change_log_%' AND NOT tgisinternal;
---        -- (95 + 3)*4 + 9*3 = 419, plus 2 on gst_change_log itself, plus 16 (keep / forget
---        -- on the 8 builder parents) = 437
+--        -- (97 + 5)*4 + 7*3 = 429 row triggers (and truncate), plus 2 on gst_change_log itself,
+--        -- 16 (keep / forget on the 8 builder parents) and the flush = 448
+--      SELECT count(*) FROM pg_trigger WHERE tgname IN ('gst_change_log_ins','gst_change_log_upd','gst_change_log_del')
+--         AND (tgtype & 1) = 0;                                       -- 0 (every one a row trigger)
+--      SELECT relname, relpersistence FROM pg_class WHERE relname IN ('gst_change_log_stage','gst_change_log_pending');
+--        -- both 'u' (unlogged)
+--      SELECT tgdeferrable, tginitdeferred FROM pg_trigger WHERE tgname = 'gst_change_log_flush';  -- t, t
 --      SELECT string_agg(indexname, ',' ORDER BY indexname) FROM pg_indexes WHERE tablename = 'gst_change_log';
 --        -- gst_change_log_actor_at,gst_change_log_at_id,gst_change_log_client_month_at,gst_change_log_fy_at,
 --        -- gst_change_log_month_at,gst_change_log_pkey,gst_change_log_table_row
@@ -129,13 +162,19 @@
 --        ORDER BY fy, at DESC, seq DESC LIMIT 201;  -- an Index (Only) Scan using gst_change_log_fy_at
 --      SELECT count(*) FROM gst_change_log;                         -- 0 until the first save
 --      SELECT count(*) FROM gst_change_log_gone;                    -- 0 until a builder parent is deleted
+--      SELECT (SELECT count(*) FROM gst_change_log_stage), (SELECT count(*) FROM gst_change_log_pending);
+--        -- 0, 0: kept rows live only until their transaction ends
 --      The row counts of step 1 unchanged.
 --      SELECT has_table_privilege('anon', 'public.gst_change_log', 'SELECT'),        -- true
 --             has_table_privilege('anon', 'public.gst_change_log', 'INSERT'),        -- false
 --             has_table_privilege('anon', 'public.gst_change_log', 'DELETE'),        -- false
 --             has_table_privilege('anon', 'public.gst_change_log_gone', 'INSERT'),   -- false
+--             has_table_privilege('anon', 'public.gst_change_log_stage', 'INSERT'),  -- false
+--             has_table_privilege('anon', 'public.gst_change_log_stage', 'SELECT'),  -- false
+--             has_table_privilege('anon', 'public.gst_change_log_pending', 'INSERT'),-- false
 --             has_function_privilege('anon', 'public.gst_change_log_whoami()', 'execute'),  -- true
---             has_function_privilege('anon', 'public.gst_change_log_attach(text,text,text,text,text[],text[],text[],text,text)', 'execute'); -- false
+--             has_function_privilege('anon', 'public.gst_change_log_for_filing_status(bigint,uuid,text,text,text)', 'execute'), -- false
+--             has_function_privilege('anon', 'public.gst_change_log_attach(text,text,text,text,text[],text[],text[],text,text,text[])', 'execute'); -- false
 --    With the anon key from .env (a read; the header reaches the database):
 --      curl "$URL/rest/v1/rpc/gst_change_log_whoami" -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
 --        -H "x-gst-actor: <a staff user_id>" -H "x-gst-source: app" -H "x-gst-request: check-1"
@@ -143,27 +182,33 @@
 --    and a refused delete (changes nothing):
 --      curl -X DELETE "$URL/rest/v1/gst_change_log?id=eq.1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY"
 --      -> 401/403 "permission denied for table gst_change_log"
---    After the app is deployed and someone saves anything:
+--    After the app is deployed and someone saves anything (the log row is there
+--    once the save's request has returned):
 --      SELECT actor_source, actor_basis, count(*) FROM gst_change_log GROUP BY 1, 2;
 --      -- app / header for the app's saves; extension / header once 0.17.0 runs a pull
+--      SELECT (SELECT count(*) FROM gst_change_log_stage), (SELECT count(*) FROM gst_change_log_pending);
+--      -- 0, 0 between requests (a non-zero count that stays means a transaction is still open)
 --      SELECT pg_size_pretty(pg_total_relation_size('public.gst_change_log'));    -- watch monthly
 -- 4. Release the same day, in this order: this migration, the app (Vercel:
---    sends the headers, each tab its own user; Change history page),
---    extension 0.17.0 in every office Chrome (chrome://extensions -> Reload
---    from the updated folder; sends x-gst-source: extension and the app
---    user's id for every job the app started, and the requester's for a job
---    someone queued, on the Chrome runner and the agent), the office agent
---    (git pull, npm ci, restart the service; sends x-gst-source: agent and
---    the job's requester to the extension). Until each part is updated its
---    writes are still logged, with no person unless they write a saved-by
---    stamp (actor_source 'unknown'). No Edge Function changes.
+--    sends the headers, each tab its own user; Change history page, deleted
+--    clients by their kept name and GSTIN), extension 0.17.0 in every office
+--    Chrome (chrome://extensions -> Reload from the updated folder; sends
+--    x-gst-source: extension and the app user's id for every job the app
+--    started, and the requester's for a job someone queued, on the Chrome
+--    runner and the agent), the office agent (git pull, npm ci, restart the
+--    service; sends x-gst-source: agent and the job's requester to the
+--    extension). Until each part is updated its writes are still logged, with
+--    no person unless they write a saved-by stamp (actor_source 'unknown').
+--    No Edge Function changes.
 --    MIN_EXTENSION_VERSION is not raised now: an older extension still works
 --    and is still logged. Once every office Chrome shows 0.17.0, raise it to
 --    0.17.0 (src/lib/extensionVersion.ts) so no write arrives without the
 --    source.
 -- 5. Later migrations: one that renames or drops a column of a logged table
---    must attach that table again in the same file (the logger names the
---    columns it reads; a save whose logger cannot run is refused).
+--    must attach that table again in the same file (the log writer names the
+--    columns it reads; a save whose log cannot be written fails its COMMIT).
+--    A new column is logged as it comes, except on a table logged in part by
+--    p_only (clients: add it to the list and attach again).
 
 BEGIN;
 -- Attaching takes a short exclusive lock on each logged table, held to COMMIT:
@@ -338,7 +383,10 @@ DECLARE
   k int;
 BEGIN
   IF y ~ '^[0-9]{4}-[0-9]{2}$' THEN RETURN y; END IF;
-  IF y ~ '^[0-9]{4}-[0-9]{4}$' THEN RETURN left(y, 5) || right(y, 2); END IF;
+  IF y ~ '^[0-9]{4}-[0-9]{4}$' THEN
+    IF right(y, 4)::int = left(y, 4)::int + 1 THEN RETURN left(y, 5) || right(y, 2); END IF;
+    y := NULL;  -- several years (a DRC-03 for 2017-2022): no one financial year
+  END IF;
   IF p_month ~ '^(0[1-9]|1[0-2])/[0-9]{4}$' THEN
     k := right(p_month, 4)::int - CASE WHEN left(p_month, 2)::int >= 4 THEN 0 ELSE 1 END;
     RETURN k::text || '-' || lpad(((k + 1) % 100)::text, 2, '0');
@@ -368,7 +416,7 @@ CREATE TABLE IF NOT EXISTS public.gst_change_log (
 );
 ALTER TABLE public.gst_change_log ADD COLUMN IF NOT EXISTS fy text;
 COMMENT ON TABLE public.gst_change_log IS
-  'Every change to the GST working tables (gst_change_log_tables), append-only. 20261021130000_gst_change_log.sql, docs/GST_CHANGE_LOG.md.';
+  'Every change to the GST working tables (gst_change_log_tables), append-only. 20261021150000_gst_change_log.sql, docs/GST_CHANGE_LOG.md.';
 
 -- The history reads newest first, a page at a time ((at, id) keyset): the
 -- whole log, a client and month, a month or a year of every client, one row,
@@ -403,6 +451,7 @@ CREATE TABLE IF NOT EXISTS public.gst_change_log_tables (
   only_columns text[],
   attached_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE public.gst_change_log_tables ADD COLUMN IF NOT EXISTS private_columns text[] NOT NULL DEFAULT '{}';
 -- full: insert, update, delete logged. history: a table that is its own
 -- record (saved versions), update and delete logged, a deleted row kept whole.
 -- record: a log of portal uploads and pushes, also shown on insert (payload as
@@ -446,12 +495,11 @@ CREATE TRIGGER gst_change_log_guard_truncate
 -- x-gst-source (app / extension / agent), x-gst-request. No headers at all is
 -- a direct database session (migration, pg_cron, SQL editor): 'system'; the
 -- service_role key (Edge Functions): 'system'; the public key without the
--- header (an old tab, an old extension): 'unknown'. Read once per logged
--- statement and opens no subtransaction (a value that is not JSON, which
--- PostgREST never sends, is read as no headers); what it found is kept for
--- the rest of the transaction while the headers stay the same
--- (gst_change_log.context), so a function that saves row by row reads them
--- once.
+-- header (an old tab, an old extension): 'unknown'. Read once per COMMIT
+-- (by the flush, section 5; whoami too) and opens no subtransaction (a value
+-- that is not JSON, which PostgREST never sends, is read as no headers); what
+-- it found is kept for the rest of the transaction while the headers stay the
+-- same (gst_change_log.context).
 CREATE OR REPLACE FUNCTION public.gst_change_log_context(
   OUT actor uuid, OUT actor_name text, OUT source text, OUT request text)
 LANGUAGE plpgsql
@@ -507,13 +555,13 @@ $$;
 -- A staff member's first name, or a client's name for the client portal.
 -- (The helpers the loggers call are plpgsql, not sql: PostgreSQL plans an sql
 -- function's body again in every statement that calls it, plpgsql once per
--- connection.)
+-- connection. Called only inside the flush and the context, which run as the
+-- owner, so neither needs SECURITY DEFINER nor its search_path switch per
+-- row; no API role may call them.)
 CREATE OR REPLACE FUNCTION public.gst_change_log_actor_name(p_id uuid)
 RETURNS text
 LANGUAGE plpgsql
 STABLE
-SECURITY DEFINER
-SET search_path = public
 AS $$
 BEGIN
   IF p_id IS NULL THEN RETURN NULL; END IF;
@@ -725,15 +773,14 @@ END;
 $$;
 
 -- The client of a builder row deleted with its parent. A builder row reaches
--- its client through its project, unit, booking ...; a delete that cascades
--- removes the parent before the child's statement is logged (the cascade's
--- statements are logged after the parent's statement ends; round 2: the
--- receipts, bookings and charges of a deleted unit were logged with no
--- client). So before a parent row goes, gst_change_log_keep_client() keeps
--- its client here, with the deleting transaction, and
+-- its client through its project, unit, booking ...; when its log row is
+-- written (at COMMIT, round 3) a parent deleted in that transaction is gone
+-- (round 2: the receipts, bookings and charges of a deleted unit were logged
+-- with no client). So before a parent row goes, gst_change_log_keep_client()
+-- keeps its client here, with the deleting transaction, and
 -- gst_change_log_client_of() reads it once the parent is gone. The next
 -- delete of a parent removes what finished transactions kept (a few rows at
--- most). Read by the logger, written only by those triggers.
+-- most). Read by the log writers, written only by those triggers.
 CREATE TABLE IF NOT EXISTS public.gst_change_log_gone (
   id uuid PRIMARY KEY,
   client_id uuid NOT NULL,
@@ -741,7 +788,7 @@ CREATE TABLE IF NOT EXISTS public.gst_change_log_gone (
 );
 CREATE INDEX IF NOT EXISTS gst_change_log_gone_txid ON public.gst_change_log_gone (txid);
 COMMENT ON TABLE public.gst_change_log_gone IS
-  'The client of a builder parent row being deleted, for the change log of the rows its delete cascades to; kept for the deleting transaction. 20261021130000_gst_change_log.sql.';
+  'The client of a builder parent row being deleted, for the change log of the rows its delete cascades to; kept for the deleting transaction. 20261021150000_gst_change_log.sql.';
 ALTER TABLE public.gst_change_log_gone ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS gst_change_log_gone_read ON public.gst_change_log_gone;
 CREATE POLICY gst_change_log_gone_read ON public.gst_change_log_gone FOR SELECT TO public USING (true);
@@ -755,8 +802,6 @@ CREATE OR REPLACE FUNCTION public.gst_change_log_client_of(p_kind text, p_id uui
 RETURNS uuid
 LANGUAGE plpgsql
 STABLE
-SECURITY DEFINER
-SET search_path = public
 AS $$
 DECLARE
   v uuid;
@@ -835,23 +880,38 @@ END;
 $$;
 
 -- ===========================================================================
--- 5. The loggers
+-- 5. The loggers: kept as each row changes, written to the log at COMMIT
 -- ===========================================================================
--- Each logged table has its own trigger function, gst_change_log_for_<table>,
--- written by gst_change_log_attach (below) from how the table is read: its
--- key, client, month, year and name, its saved-by stamps, its JSON columns.
--- Its SQL is fixed, so a connection plans it once and reuses the plan; a
--- statement that changed no row returns at once; nothing on the way opens a
--- subtransaction (round 2: one function for every table built and planned
--- its SQL on every statement inside an exception block, about 1 ms each, so
--- a loop of one-row saves ran 3 to 6 times slower and a long one overflowed
--- the subtransaction cache). A logger error is not caught: the save is
--- refused with it, so nothing changes without its trace. Every expression is
--- checked against the table when attaching, and the ones in section 6 are
--- column reads and lookups that cannot fail, so this never happens in use.
--- Who: the x-gst-actor header; without it, a stamp column this statement
--- wrote (on INSERT the row's own stamp; on UPDATE only a stamp that changed,
--- never one left as the last editor stamped it); else no one.
+-- Round 3: the save itself only keeps each changed row. A row trigger on
+-- every logged table (gst_change_log_stage_row, one function for all) copies
+-- the row as it was and as it is into gst_change_log_stage, about 15 µs a
+-- row, and marks the transaction (gst_change_log_pending, once). At COMMIT a
+-- deferred trigger (gst_change_log_flush) writes the log rows of the whole
+-- transaction, table by table, each by its own function
+-- gst_change_log_for_<table> (written by gst_change_log_attach from how the
+-- table is read: its key, client, month, year and name, its saved-by stamps,
+-- its JSON columns): one INSERT ... SELECT for all the table's rows, planned
+-- once per connection. Round 2 logged at the end of every statement, about
+-- 0.2 ms a statement and 0.05 ms a row; a function that saves entry by entry
+-- (the prior-month door: 1,000 removals are 3,000 statements) spent more time
+-- logging than saving (round 3 review). A statement that changes no row costs
+-- nothing (no row trigger fires).
+-- Nothing is lost or half-kept: the staged rows are part of the transaction
+-- (a rolled-back savepoint takes its rows and its mark with it), the log rows
+-- are written before the transaction commits, and an error writing them
+-- (only a wrong attach expression could cause one; every expression is
+-- checked when attaching) fails the COMMIT, so the save is refused, never
+-- kept untraced. The stage is UNLOGGED (no WAL: its rows live only until
+-- their transaction commits) and open to no API role.
+-- Who: the x-gst-actor header, read once at COMMIT (a request's headers do
+-- not change within it); without it, a stamp column the change itself wrote
+-- (on INSERT the row's own stamp; on UPDATE only a stamp that changed, never
+-- one left as the last editor stamped it); else no one.
+-- Within one transaction the log rows go table by table (in the order each
+-- table was first written), each table's rows in the order they changed; a
+-- transaction's rows share one moment (now()), as before.
+-- Reading the log in the transaction that wrote it shows nothing yet; SET
+-- CONSTRAINTS ALL IMMEDIATE writes what is kept so far (the tests use it).
 CREATE OR REPLACE FUNCTION public.gst_change_log_fn_name(p_table text)
 RETURNS text
 LANGUAGE sql
@@ -861,7 +921,7 @@ AS $$
               ELSE 'gst_change_log_for_' || left(p_table, 35) || '_' || left(md5(p_table), 8) END
 $$;
 
--- TRUNCATE skips the row triggers: record that it happened and how many rows went.
+-- TRUNCATE skips the row triggers: record at once that it happened and how many rows went.
 CREATE OR REPLACE FUNCTION public.gst_change_log_truncate()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -882,10 +942,128 @@ BEGIN
 END;
 $$;
 
+-- The rows changed by transactions still open: the row as it was (o) and as
+-- it is (n), each whole as JSON (a table logged in part keeps only the
+-- columns its log reads: clients never its passwords). Emptied by the flush
+-- before COMMIT. Large values go out of line uncompressed (STORAGE EXTERNAL):
+-- they are read back once, moments later.
+CREATE UNLOGGED TABLE IF NOT EXISTS public.gst_change_log_stage (
+  id bigserial,
+  txid bigint NOT NULL,
+  table_name text NOT NULL,
+  op "char" NOT NULL,
+  o jsonb,
+  n jsonb
+);
+ALTER TABLE public.gst_change_log_stage ALTER COLUMN o SET STORAGE EXTERNAL, ALTER COLUMN n SET STORAGE EXTERNAL;
+CREATE INDEX IF NOT EXISTS gst_change_log_stage_txid ON public.gst_change_log_stage (txid);
+COMMENT ON TABLE public.gst_change_log_stage IS
+  'Rows changed by open transactions, written to gst_change_log at their COMMIT (gst_change_log_flush). 20261021150000_gst_change_log.sql.';
+-- One row per open transaction that kept rows; its deferred trigger is the flush.
+CREATE UNLOGGED TABLE IF NOT EXISTS public.gst_change_log_pending (
+  txid bigint PRIMARY KEY
+);
+COMMENT ON TABLE public.gst_change_log_pending IS
+  'An open transaction with rows in gst_change_log_stage; its deferred trigger writes them to gst_change_log at COMMIT. 20261021150000_gst_change_log.sql.';
+DO $do$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['gst_change_log_stage', 'gst_change_log_pending'] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon, authenticated, service_role', t);
+  END LOOP;
+  EXECUTE 'REVOKE ALL ON SEQUENCE public.gst_change_log_stage_id_seq FROM PUBLIC, anon, authenticated, service_role';
+END
+$do$;
+
+-- The row trigger of every logged table: keep the row (as it was, as it is)
+-- and mark the transaction once. Its arguments, when given, are the only
+-- columns kept, or, after a first '-', the columns never kept (a link's
+-- token). (Each branch one statement: this runs for every row saved.)
+CREATE OR REPLACE FUNCTION public.gst_change_log_stage_row()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_NARGS > 0 AND TG_ARGV[0] = '-' THEN
+    INSERT INTO public.gst_change_log_stage (txid, table_name, op, o, n)
+    VALUES (txid_current(), TG_TABLE_NAME, left(TG_OP, 1)::"char",
+            CASE WHEN TG_OP <> 'INSERT' THEN to_jsonb(OLD) - TG_ARGV[1:TG_NARGS - 1] END,
+            CASE WHEN TG_OP <> 'DELETE' THEN to_jsonb(NEW) - TG_ARGV[1:TG_NARGS - 1] END);
+  ELSIF TG_NARGS > 0 THEN
+    INSERT INTO public.gst_change_log_stage (txid, table_name, op, o, n)
+    SELECT txid_current(), TG_TABLE_NAME, left(TG_OP, 1)::"char",
+           (SELECT jsonb_object_agg(k, x.o -> k) FROM unnest(TG_ARGV) k WHERE x.o ? k),
+           (SELECT jsonb_object_agg(k, x.n -> k) FROM unnest(TG_ARGV) k WHERE x.n ? k)
+      FROM (SELECT CASE WHEN TG_OP <> 'INSERT' THEN to_jsonb(OLD) END AS o,
+                   CASE WHEN TG_OP <> 'DELETE' THEN to_jsonb(NEW) END AS n) x;
+  ELSIF TG_OP = 'UPDATE' THEN
+    INSERT INTO public.gst_change_log_stage (txid, table_name, op, o, n)
+    VALUES (txid_current(), TG_TABLE_NAME, 'U', to_jsonb(OLD), to_jsonb(NEW));
+  ELSIF TG_OP = 'INSERT' THEN
+    INSERT INTO public.gst_change_log_stage (txid, table_name, op, n)
+    VALUES (txid_current(), TG_TABLE_NAME, 'I', to_jsonb(NEW));
+  ELSE
+    INSERT INTO public.gst_change_log_stage (txid, table_name, op, o)
+    VALUES (txid_current(), TG_TABLE_NAME, 'D', to_jsonb(OLD));
+  END IF;
+  IF current_setting('gst_change_log.pending', true) IS DISTINCT FROM 'on' THEN
+    INSERT INTO public.gst_change_log_pending (txid) VALUES (txid_current()) ON CONFLICT DO NOTHING;
+    PERFORM set_config('gst_change_log.pending', 'on', true);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- At COMMIT (deferred): write the transaction's kept rows to the log, table
+-- by table. Clears the mark first, so a write made after this (by another
+-- deferred trigger) marks the transaction again and is written too.
+CREATE OR REPLACE FUNCTION public.gst_change_log_flush()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_tx bigint := NEW.txid;
+  v_ctx record;
+  t record;
+BEGIN
+  PERFORM set_config('gst_change_log.pending', '', true);
+  DELETE FROM public.gst_change_log_pending WHERE txid = v_tx;
+  SELECT * INTO v_ctx FROM public.gst_change_log_context();
+  FOR t IN
+    SELECT s.table_name, min(s.id) AS first_id
+      FROM public.gst_change_log_stage s
+     WHERE s.txid = v_tx
+     GROUP BY s.table_name
+     ORDER BY 2
+  LOOP
+    EXECUTE format('SELECT public.%I($1, $2, $3, $4, $5)', public.gst_change_log_fn_name(t.table_name))
+      USING v_tx, v_ctx.actor, v_ctx.actor_name, v_ctx.source, v_ctx.request;
+  END LOOP;
+  RETURN NULL;
+END;
+$$;
+DROP TRIGGER IF EXISTS gst_change_log_flush ON public.gst_change_log_pending;
+CREATE CONSTRAINT TRIGGER gst_change_log_flush
+  AFTER INSERT ON public.gst_change_log_pending
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION public.gst_change_log_flush();
+
 -- Attaches the logger to one table (re-runnable; a table that does not
--- exist is skipped): writes its logger function and its four triggers.
--- Expressions are SQL on the row (alias r) and are checked against the table
--- here, so a wrong column fails the migration, never a save.
+-- exist is skipped): writes its function gst_change_log_for_<table> (the
+-- table's part of the flush) and its row triggers. Expressions are SQL on
+-- the row (alias r) and are checked against the table here, and the
+-- function is run once on nothing, so a wrong column fails the migration,
+-- never a save. p_only: the only columns logged (and kept); p_private:
+-- columns never kept or logged (a column added later is logged, unlike with
+-- p_only).
+-- (Round 2's attach had no p_private: dropped so a call is never ambiguous.)
+DROP FUNCTION IF EXISTS public.gst_change_log_attach(text, text, text, text, text[], text[], text[], text, text);
 CREATE OR REPLACE FUNCTION public.gst_change_log_attach(
   p_table text,
   p_client text DEFAULT 'r.client_id',
@@ -895,7 +1073,8 @@ CREATE OR REPLACE FUNCTION public.gst_change_log_attach(
   p_skip text[] DEFAULT '{}',
   p_only text[] DEFAULT NULL,
   p_mode text DEFAULT 'full',
-  p_label text DEFAULT NULL)
+  p_label text DEFAULT NULL,
+  p_private text[] DEFAULT '{}')
 RETURNS text
 LANGUAGE plpgsql
 SET search_path = public
@@ -908,9 +1087,7 @@ DECLARE
   v_bad text;
   v_label text := p_label;
   v_key_r text;
-  v_join text;
-  v_n_gone text;
-  v_o_gone text;
+  v_key_moved text;
   v_actor_ins text := 'NULL::uuid';
   v_actor_upd text := 'NULL::uuid';
   v_summary text := quote_literal(p_summary::text) || '::text[]';
@@ -920,15 +1097,22 @@ DECLARE
   v_keep_full text := CASE WHEN p_mode IN ('history', 'record') THEN 'true' ELSE 'false' END;
   v_row_new text;
   v_row_old text;
-  v_who text;
   v_m text;
   v_y text;
+  v_kept text[];
+  v_args text := '';
+  v_cols text;
+  v_fy_expr text;
+  v_diff text;
 BEGIN
   IF v_rel IS NULL THEN
     RETURN p_table || ': missing, skipped';
   END IF;
   IF p_mode NOT IN ('full', 'history', 'record') THEN
     RAISE EXCEPTION 'gst_change_log_attach(%): mode must be full, history or record', p_table;
+  END IF;
+  IF p_only IS NOT NULL AND cardinality(p_private) > 0 THEN
+    RAISE EXCEPTION 'gst_change_log_attach(%): give p_only or p_private, not both', p_table;
   END IF;
   SELECT array_agg(a.attname::text ORDER BY array_position(i.indkey::int2[], a.attnum))
     INTO v_key
@@ -950,7 +1134,7 @@ BEGIN
    WHERE EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = v_rel AND a.attname = k.c
                     AND NOT a.attisdropped AND a.atttypid = 'uuid'::regtype);
   SELECT string_agg(x, ', ') INTO v_bad
-    FROM unnest(p_summary || p_skip || COALESCE(p_only, '{}')) x
+    FROM unnest(p_summary || p_skip || COALESCE(p_only, '{}') || p_private) x
    WHERE NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = v_rel AND a.attname = x AND a.attnum > 0 AND NOT a.attisdropped);
   IF v_bad IS NOT NULL THEN
     RAISE EXCEPTION 'gst_change_log_attach(%): no column %', p_table, v_bad;
@@ -972,31 +1156,26 @@ BEGIN
   EXECUTE format('SELECT (%s)::uuid, public.gst_change_log_month((%s)::text), (%s)::text, (%s)::text FROM public.%I r LIMIT 0',
                  p_client, p_month, p_fy, v_label, p_table);
 
-  -- The pieces of the logger's SQL.
+  -- The pieces of the table's SQL. r is the row (typed, from its JSON); s
+  -- the kept row: s.o as it was, s.n as it is.
   v_key_r := 'concat_ws(''|'', ' || (SELECT string_agg('r.' || quote_ident(k) || '::text', ', ' ORDER BY o) FROM unnest(v_key) WITH ORDINALITY u(k, o)) || ')';
-  v_join := (SELECT string_agg('o.' || quote_ident(k) || ' = n.' || quote_ident(k), ' AND ') FROM unnest(v_key) k);
+  v_key_moved := (SELECT string_agg(format('(s.o -> %1$L) IS DISTINCT FROM (s.n -> %1$L)', k), ' OR ') FROM unnest(v_key) k);
   v_hide := quote_literal((v_key || ARRAY['client_id'])::text) || '::text[]';
-  -- A side of the join that has no row (a key column of a real row is never NULL).
-  v_n_gone := 'n.' || quote_ident(v_key[1]) || ' IS NULL';
-  v_o_gone := 'o.' || quote_ident(v_key[1]) || ' IS NULL';
   -- An inserted or deleted row: on a table without JSON columns, every
   -- filled column, read by built-in functions (most rows logged are ledger
   -- rows); otherwise gst_change_log_row, which fingerprints large JSON.
   IF cardinality(p_summary) = 0 AND p_only IS NULL
      AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = v_rel AND a.attnum > 0 AND NOT a.attisdropped
                         AND a.atttypid IN ('json'::regtype, 'jsonb'::regtype)) THEN
-    v_row_new := format('(jsonb_strip_nulls(to_jsonb(r.*)) - %s)', v_hide);
-    v_row_old := v_row_new;
+    v_row_new := format('(jsonb_strip_nulls(s.n) - %s)', v_hide);
+    v_row_old := format('(jsonb_strip_nulls(s.o) - %s)', v_hide);
   ELSE
-    v_row_new := format('public.gst_change_log_row(to_jsonb(r.*), %s, %s, %s, false)', v_summary, v_hide, v_only);
-    v_row_old := format('public.gst_change_log_row(to_jsonb(r.*), %s, %s, %s, %s)', v_summary, v_hide, v_only, v_keep_full);
+    v_row_new := format('public.gst_change_log_row(s.n, %s, %s, %s, false)', v_summary, v_hide, v_only);
+    v_row_old := format('public.gst_change_log_row(s.o, %s, %s, %s, %s)', v_summary, v_hide, v_only, v_keep_full);
   END IF;
-  -- The person's name: the header's; for a saved-by stamp, looked up (a
-  -- function call: a subquery here would make every row re-read the join).
-  v_who := 'CASE WHEN v_actor IS NOT NULL THEN v_name WHEN a.id IS NOT NULL THEN public.gst_change_log_actor_name(a.id) END';
   IF cardinality(v_actor) > 0 THEN
-    v_actor_ins := (SELECT string_agg('r.' || quote_ident(a), ', ' ORDER BY o) FROM unnest(v_actor) WITH ORDINALITY u(a, o)) || ', NULL::uuid';
-    v_actor_upd := (SELECT string_agg(format('CASE WHEN n.%1$I IS DISTINCT FROM o.%1$I THEN n.%1$I END', a), ', ' ORDER BY o)
+    v_actor_ins := (SELECT string_agg(format('(s.n ->> %L)::uuid', a), ', ' ORDER BY o) FROM unnest(v_actor) WITH ORDINALITY u(a, o)) || ', NULL::uuid';
+    v_actor_upd := (SELECT string_agg(format('CASE WHEN (s.n -> %1$L) IS DISTINCT FROM (s.o -> %1$L) THEN (s.n ->> %1$L)::uuid END', a), ', ' ORDER BY o)
                       FROM unnest(v_actor) WITH ORDINALITY u(a, o)) || ', NULL::uuid';
   END IF;
 
@@ -1006,111 +1185,137 @@ BEGIN
   v_y := format('(%s)::text', p_fy);
   -- Checked here, so a month or year that cannot be read fails the migration.
   EXECUTE format('SELECT %s, public.gst_change_log_fy(%s, %s) FROM public.%I r LIMIT 0', v_m, v_y, v_m, p_table);
+  -- The year of a change with no year column of its own, from its month
+  -- (x.m is MM/YYYY or NULL), worked out in place (gst_change_log_fy, without
+  -- a function call per row).
+  v_fy_expr := CASE WHEN p_fy = 'NULL' THEN
+    '(CASE WHEN x.m IS NULL THEN NULL ELSE (right(x.m, 4)::int - (left(x.m, 2)::int < 4)::int)::text || ''-'' '
+    || '|| lpad(((right(x.m, 4)::int - (left(x.m, 2)::int < 4)::int + 1) % 100)::text, 2, ''0'') END)'
+    ELSE 'public.gst_change_log_fy(x.y, x.m)' END;
 
-  -- On UPDATE, n is the new row and o the old one, joined on the key (a
-  -- full join, so the plan stays a hash or merge join whatever the number of
-  -- rows); r is the new row, or the old one when the key itself changed (so
-  -- a moved row keeps its client and month on both sides). Whole rows are
-  -- always written alias.* (a table may have a column named like an alias).
-  -- Each helper is a function call, not SQL written out here: the plan is
-  -- cached, but its expressions are set up again for every statement.
+  -- The row r, typed, with only the columns its key and expressions read
+  -- (read from its JSON as jsonb_populate_record would, column by column).
+  SELECT string_agg(quote_ident(a.attname) || ' ' || format_type(a.atttypid, a.atttypmod), ', ' ORDER BY a.attnum)
+    INTO v_cols
+    FROM pg_attribute a
+   WHERE a.attrelid = v_rel AND a.attnum > 0 AND NOT a.attisdropped
+     AND (a.attname = ANY (v_key)
+          OR a.attname IN (SELECT m[1] FROM regexp_matches(concat_ws(' ', p_client, p_month, p_fy, v_label),
+                                                           '\mr\.([a-z_][a-z0-9_]*)', 'g') m));
+  -- An update's changed columns, {column: {old, new}} (JSON values and
+  -- lists as the leaves that changed): gst_change_log_diff's SQL, written in
+  -- place (a function call per row cost a planned statement per row).
+  v_diff := format($d$(SELECT jsonb_object_agg(e.key, CASE
+           WHEN jsonb_typeof(s.o -> e.key) IN ('object', 'array') OR jsonb_typeof(e.value) IN ('object', 'array')
+             THEN public.gst_change_log_json_change(s.o -> e.key, e.value, e.key = ANY (%1$s))
+           ELSE jsonb_build_object('old', s.o -> e.key, 'new', e.value)
+         END)
+    FROM jsonb_each(s.n) e
+   WHERE (s.o -> e.key) IS DISTINCT FROM e.value
+     AND NOT (e.key = ANY (%2$s))%3$s)$d$, v_summary, v_skip,
+    CASE WHEN p_only IS NULL THEN '' ELSE format(' AND e.key = ANY (%s)', v_only) END);
+
+  -- A table logged in part keeps only what its log reads: the listed
+  -- columns, its key, its stamps and the columns its expressions name.
+  IF p_only IS NOT NULL THEN
+    SELECT array_agg(DISTINCT c ORDER BY c) INTO v_kept
+      FROM (SELECT unnest(p_only || v_key || v_actor) AS c
+            UNION SELECT m[1] FROM regexp_matches(concat_ws(' ', p_client, p_month, p_fy, v_label), '\mr\.([a-z_][a-z0-9_]*)', 'g') m) x
+     WHERE EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = v_rel AND a.attname = x.c AND a.attnum > 0 AND NOT a.attisdropped);
+    v_args := (SELECT string_agg(quote_literal(c), ', ' ORDER BY c) FROM unnest(v_kept) c);
+  ELSIF cardinality(p_private) > 0 THEN
+    IF EXISTS (SELECT 1 FROM unnest(p_private) c WHERE c = ANY (v_key)) THEN
+      RAISE EXCEPTION 'gst_change_log_attach(%): a key column cannot be private', p_table;
+    END IF;
+    v_args := '''-'', ' || (SELECT string_agg(quote_literal(c), ', ' ORDER BY c) FROM unnest(p_private) c);
+  END IF;
+
+  -- The table's part of the flush: its kept rows of transaction p_txid, as
+  -- log rows, in the order they changed. A row whose key changed is logged
+  -- under its old key and its new one, each with both sides. An update of
+  -- skipped columns only (updated_at) is no change. Whole rows are always
+  -- written alias.* (a table may have a column named like an alias).
   EXECUTE format($gen$
-CREATE OR REPLACE FUNCTION public.%1$I()
-RETURNS trigger
+CREATE OR REPLACE FUNCTION public.%1$I(p_txid bigint, p_actor uuid, p_name text, p_source text, p_request text)
+RETURNS void
 LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
 AS $fn$
--- The change log of public.%2$I. Written by gst_change_log_attach
--- (20261021130000_gst_change_log.sql): attach the table again to change it.
-DECLARE
-  v_actor uuid;
-  v_name text;
-  v_source text;
-  v_request text;
+-- The change log of public.%2$I, written at COMMIT by gst_change_log_flush.
+-- Written by gst_change_log_attach (20261021150000_gst_change_log.sql):
+-- attach the table again to change it.
 BEGIN
-  IF TG_OP = 'DELETE' THEN
-    PERFORM FROM gst_cl_old LIMIT 1;
-  ELSE
-    PERFORM FROM gst_cl_new LIMIT 1;
-  END IF;
-  IF NOT FOUND THEN
-    RETURN NULL;
-  END IF;
-  SELECT c.actor, c.actor_name, c.source, c.request INTO v_actor, v_name, v_source, v_request
-    FROM public.gst_change_log_context() c;
-  IF TG_OP = 'INSERT' THEN
-    INSERT INTO public.gst_change_log
-      (table_name, row_id, row_label, client_id, period_month, financial_year, fy, op, actor_id, actor_name, actor_source, actor_basis, changed, request_id)
-    SELECT %2$L, %3$s, left((%4$s)::text, 120), (%5$s)::uuid, %6$s, %7$s, public.gst_change_log_fy(%7$s, %6$s), 'INSERT',
-           a.id, %8$s, v_source,
-           CASE WHEN v_actor IS NOT NULL THEN 'header' WHEN a.id IS NOT NULL THEN 'row' ELSE 'none' END,
-           %9$s, v_request
-      FROM gst_cl_new r
-     CROSS JOIN LATERAL (SELECT COALESCE(v_actor, %10$s) AS id) a;
-  ELSIF TG_OP = 'UPDATE' THEN
-    INSERT INTO public.gst_change_log
-      (table_name, row_id, row_label, client_id, period_month, financial_year, fy, op, actor_id, actor_name, actor_source, actor_basis, changed, request_id)
-    SELECT %2$L, %3$s, left((%4$s)::text, 120), (%5$s)::uuid, %6$s, %7$s, public.gst_change_log_fy(%7$s, %6$s), 'UPDATE',
-           a.id, %8$s, v_source,
-           CASE WHEN v_actor IS NOT NULL THEN 'header' WHEN a.id IS NOT NULL THEN 'row' ELSE 'none' END,
-           d.changed, v_request
-      FROM gst_cl_new n
-      FULL JOIN gst_cl_old o ON %11$s
-     CROSS JOIN LATERAL (SELECT n.* WHERE NOT (%12$s) UNION ALL SELECT o.* WHERE %12$s) r
-     CROSS JOIN LATERAL (SELECT CASE
-         WHEN %12$s OR %13$s THEN jsonb_build_object('_key_changed', true,
-           'old', public.gst_change_log_row(to_jsonb(o.*), %14$s, '{}'::text[], %15$s, false),
-           'new', public.gst_change_log_row(to_jsonb(n.*), %14$s, '{}'::text[], %15$s, false))
-         ELSE public.gst_change_log_diff(to_jsonb(o.*), to_jsonb(n.*), %14$s, %16$s, %15$s) END AS changed OFFSET 0) d
-     CROSS JOIN LATERAL (SELECT COALESCE(v_actor, %17$s) AS id) a
-     WHERE d.changed IS NOT NULL;
-  ELSE
-    INSERT INTO public.gst_change_log
-      (table_name, row_id, row_label, client_id, period_month, financial_year, fy, op, actor_id, actor_name, actor_source, actor_basis, changed, request_id)
-    SELECT %2$L, %3$s, left((%4$s)::text, 120), (%5$s)::uuid, %6$s, %7$s, public.gst_change_log_fy(%7$s, %6$s), 'DELETE',
-           v_actor, v_name, v_source, CASE WHEN v_actor IS NOT NULL THEN 'header' ELSE 'none' END,
-           %18$s, v_request
-      FROM gst_cl_old r;
-  END IF;
-  RETURN NULL;
+  WITH s AS (
+    DELETE FROM public.gst_change_log_stage g
+     WHERE g.txid = p_txid AND g.table_name = %2$L
+    RETURNING g.id, g.op, g.o, g.n)
+  INSERT INTO public.gst_change_log
+    (table_name, row_id, row_label, client_id, period_month, financial_year, fy, op, actor_id, actor_name, actor_source, actor_basis, changed, request_id)
+  SELECT %2$L, %3$s, left((%4$s)::text, 120), (%5$s)::uuid, x.m, x.y, %17$s,
+         CASE s.op WHEN 'I' THEN 'INSERT' WHEN 'U' THEN 'UPDATE' ELSE 'DELETE' END,
+         a.id, CASE WHEN p_actor IS NOT NULL THEN p_name WHEN a.id IS NOT NULL THEN public.gst_change_log_actor_name(a.id) END,
+         p_source, CASE WHEN p_actor IS NOT NULL THEN 'header' WHEN a.id IS NOT NULL THEN 'row' ELSE 'none' END,
+         d.changed, p_request
+    FROM s
+   CROSS JOIN LATERAL (SELECT false AS old_side UNION ALL SELECT true WHERE s.op = 'U' AND (%6$s)) k
+   CROSS JOIN LATERAL jsonb_to_record(CASE WHEN k.old_side THEN s.o ELSE COALESCE(s.n, s.o) END) AS r(%16$s)
+   CROSS JOIN LATERAL (SELECT %7$s AS m, %8$s AS y OFFSET 0) x
+   CROSS JOIN LATERAL (SELECT CASE s.op
+       WHEN 'I' THEN %9$s
+       WHEN 'D' THEN %10$s
+       ELSE CASE WHEN %6$s THEN jsonb_build_object('_key_changed', true,
+              'old', public.gst_change_log_row(s.o, %11$s, '{}'::text[], %12$s, false),
+              'new', public.gst_change_log_row(s.n, %11$s, '{}'::text[], %12$s, false))
+            ELSE %18$s END
+     END AS changed OFFSET 0) d
+   CROSS JOIN LATERAL (SELECT CASE s.op WHEN 'D' THEN p_actor WHEN 'I' THEN COALESCE(p_actor, %14$s)
+                                        ELSE COALESCE(p_actor, %15$s) END AS id) a
+   WHERE d.changed IS NOT NULL
+   ORDER BY s.id, k.old_side;
 END
 $fn$
-$gen$, v_fn, p_table, v_key_r, v_label, p_client, v_m, v_y, v_who, v_row_new, v_actor_ins,
-       v_join, v_n_gone, v_o_gone, v_summary, v_only, v_skip, v_actor_upd, v_row_old);
+$gen$, v_fn, p_table, v_key_r, v_label, p_client, v_key_moved, v_m, v_y, v_row_new, v_row_old,
+       v_summary, v_only, v_skip, v_actor_ins, v_actor_upd, v_cols, v_fy_expr, v_diff);
+  EXECUTE format('REVOKE ALL ON FUNCTION public.%I(bigint, uuid, text, text, text) FROM PUBLIC, anon, authenticated, service_role', v_fn);
+  -- Run once on nothing: plans its SQL, so an error shows here.
+  EXECUTE format('SELECT public.%I(-1, NULL, NULL, NULL, NULL)', v_fn);
 
   EXECUTE format('DROP TRIGGER IF EXISTS gst_change_log_ins ON public.%I', p_table);
   EXECUTE format('DROP TRIGGER IF EXISTS gst_change_log_upd ON public.%I', p_table);
   EXECUTE format('DROP TRIGGER IF EXISTS gst_change_log_del ON public.%I', p_table);
   EXECUTE format('DROP TRIGGER IF EXISTS gst_change_log_trunc ON public.%I', p_table);
+  -- Round 2's statement logger of this table (never applied live).
+  EXECUTE format('DROP FUNCTION IF EXISTS public.%I()', v_fn);
   IF p_mode IN ('full', 'record') THEN
-    EXECUTE format('CREATE TRIGGER gst_change_log_ins AFTER INSERT ON public.%I REFERENCING NEW TABLE AS gst_cl_new '
-                   'FOR EACH STATEMENT EXECUTE FUNCTION public.%I()', p_table, v_fn);
+    EXECUTE format('CREATE TRIGGER gst_change_log_ins AFTER INSERT ON public.%I '
+                   'FOR EACH ROW EXECUTE FUNCTION public.gst_change_log_stage_row(%s)', p_table, v_args);
   END IF;
-  EXECUTE format('CREATE TRIGGER gst_change_log_upd AFTER UPDATE ON public.%I REFERENCING OLD TABLE AS gst_cl_old NEW TABLE AS gst_cl_new '
-                 'FOR EACH STATEMENT EXECUTE FUNCTION public.%I()', p_table, v_fn);
-  EXECUTE format('CREATE TRIGGER gst_change_log_del AFTER DELETE ON public.%I REFERENCING OLD TABLE AS gst_cl_old '
-                 'FOR EACH STATEMENT EXECUTE FUNCTION public.%I()', p_table, v_fn);
+  -- An update that rewrote the row as it was (same bytes) is no change.
+  EXECUTE format('CREATE TRIGGER gst_change_log_upd AFTER UPDATE ON public.%I '
+                 'FOR EACH ROW WHEN (OLD *<> NEW) EXECUTE FUNCTION public.gst_change_log_stage_row(%s)', p_table, v_args);
+  EXECUTE format('CREATE TRIGGER gst_change_log_del AFTER DELETE ON public.%I '
+                 'FOR EACH ROW EXECUTE FUNCTION public.gst_change_log_stage_row(%s)', p_table, v_args);
   EXECUTE format('CREATE TRIGGER gst_change_log_trunc BEFORE TRUNCATE ON public.%I '
                  'FOR EACH STATEMENT EXECUTE FUNCTION public.gst_change_log_truncate()', p_table);
-  EXECUTE format('REVOKE ALL ON FUNCTION public.%I() FROM PUBLIC, anon, authenticated', v_fn);
 
   INSERT INTO public.gst_change_log_tables
-    (table_name, mode, client_expr, month_expr, fy_expr, label_expr, key_columns, actor_columns, summary_columns, skip_columns, only_columns, attached_at)
-  VALUES (p_table, p_mode, p_client, p_month, p_fy, v_label, v_key, v_actor, p_summary, p_skip, p_only, now())
+    (table_name, mode, client_expr, month_expr, fy_expr, label_expr, key_columns, actor_columns, summary_columns, skip_columns, only_columns,
+     private_columns, attached_at)
+  VALUES (p_table, p_mode, p_client, p_month, p_fy, v_label, v_key, v_actor, p_summary, p_skip, p_only, p_private, now())
   ON CONFLICT (table_name) DO UPDATE SET
     mode = EXCLUDED.mode, client_expr = EXCLUDED.client_expr, month_expr = EXCLUDED.month_expr,
     fy_expr = EXCLUDED.fy_expr, label_expr = EXCLUDED.label_expr, key_columns = EXCLUDED.key_columns, actor_columns = EXCLUDED.actor_columns,
     summary_columns = EXCLUDED.summary_columns, skip_columns = EXCLUDED.skip_columns,
-    only_columns = EXCLUDED.only_columns, attached_at = EXCLUDED.attached_at;
+    only_columns = EXCLUDED.only_columns, private_columns = EXCLUDED.private_columns, attached_at = EXCLUDED.attached_at;
   RETURN p_table || ': ' || p_mode;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.gst_change_log_attach(text, text, text, text, text[], text[], text[], text, text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.gst_change_log_attach(text, text, text, text, text[], text[], text[], text, text, text[]) FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.gst_change_log_client_of(text, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.gst_change_log_actor_name(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.gst_change_log_context() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.gst_change_log_stage_row() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.gst_change_log_flush() FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.gst_change_log_whoami() TO anon, authenticated, service_role;
 
 -- ===========================================================================
@@ -1169,6 +1374,13 @@ BEGIN
     UNION ALL SELECT public.gst_change_log_attach('gstr2a_import_docs')
     UNION ALL SELECT public.gst_change_log_attach('gst_challans', p_month => 'r.challan_date')
     UNION ALL SELECT public.gst_change_log_attach('gst_taxpayer_profile', p_month => 'NULL', p_summary => '{profile_json}')
+    -- DRC-03 payments (Annual Return set-offs name them) and refund
+    -- applications, as the notices sync pulls them; a re-pull that only
+    -- touches when it was seen or pulled is no change
+    UNION ALL SELECT public.gst_change_log_attach('gst_drc03_filings', p_month => 'NULL', p_fy => 'r.financial_year',
+      p_skip => '{last_seen_at,pulled_at,pulled_by,portal_hash}', p_label => 'concat_ws('' · '', r.arn, r.cause_of_payment)')
+    UNION ALL SELECT public.gst_change_log_attach('gst_refund_applications', p_month => 'NULL',
+      p_skip => '{last_seen_at,pulled_at,pulled_by,portal_hash}', p_label => 'concat_ws('' · '', r.arn, r.refund_type)')
     UNION ALL SELECT public.gst_change_log_attach('portal_gstr1_category_figures', p_month => 'NULL', p_fy => 'r.financial_year')
     -- Annual return inputs by financial year (annual_return_docs has its own log)
     UNION ALL SELECT public.gst_change_log_attach('annual_return_bs_pl_uploads', p_month => 'NULL', p_fy => 'r.financial_year')
@@ -1212,11 +1424,12 @@ BEGIN
     UNION ALL SELECT public.gst_change_log_attach('builder_historical_receipts', p_client => 'public.gst_change_log_client_of(''unit'', r.unit_id)', p_month => 'r.receipt_date')
     UNION ALL SELECT public.gst_change_log_attach('builder_bu_events', p_client => 'public.gst_change_log_client_of(''project'', r.project_id)', p_month => 'r.posting_period')
     UNION ALL SELECT public.gst_change_log_attach('builder_bu_event_units', p_client => 'public.gst_change_log_client_of(''unit'', r.unit_id)', p_month => 'NULL')
-    UNION ALL SELECT public.gst_change_log_attach('builder_bu_agreement_confirmations', p_month => 'NULL')
-    -- BU confirmation e-mails (20261021140000): never the link's token; the
+    -- BU agreement confirmations and their e-mails (20261021140000, live
+    -- since 21 Oct; skipped where missing): never a link's token; the
     -- one-time codes (builder_bu_confirm_codes) are private and not logged
-    UNION ALL SELECT public.gst_change_log_attach('builder_bu_confirm_requests', p_month => 'NULL',
-      p_only => '{bu_event_id,to_emails,cc_emails,unit_ids,earlier_link,created_by,sent_at,outbox_id}', p_label => 'array_to_string(r.to_emails, '', '')')
+    UNION ALL SELECT public.gst_change_log_attach('builder_bu_agreement_confirmations', p_month => 'NULL', p_private => '{token}')
+    UNION ALL SELECT public.gst_change_log_attach('builder_bu_confirm_requests', p_month => 'NULL', p_private => '{token}',
+      p_label => 'array_to_string(r.to_emails, '', '')')
     UNION ALL SELECT public.gst_change_log_attach('builder_cancellations', p_client => 'public.gst_change_log_client_of(''project'', r.project_id)', p_month => 'r.cancellation_date')
     UNION ALL SELECT public.gst_change_log_attach('builder_refund_payments', p_client => 'public.gst_change_log_client_of(''cancellation'', r.cancellation_id)')
     UNION ALL SELECT public.gst_change_log_attach('builder_conversions', p_client => 'public.gst_change_log_client_of(''unit'', r.from_unit_id)')
@@ -1231,7 +1444,12 @@ BEGIN
     UNION ALL SELECT public.gst_change_log_attach('builder_itc_reversal_workings', p_month => 'r.posting_period')
     UNION ALL SELECT public.gst_change_log_attach('builder_itc_reversal_years', p_client => 'public.gst_change_log_client_of(''itc_reversal_working'', r.working_id)', p_month => 'NULL', p_fy => 'r.financial_year')
     -- Portal uploads and pushes: each one shown when made (the payload as a
-    -- fingerprint); edited or deleted, logged too, a deleted one kept whole
+    -- fingerprint); edited or deleted, logged too, a deleted one kept whole.
+    -- So are a scheme change (round 3: its effective date and notes are the
+    -- only record of why filing rows were reset) and a unit's
+    -- classification (its rate code and affordable flag live only there)
+    UNION ALL SELECT public.gst_change_log_attach('client_scheme_history', p_month => 'NULL', p_mode => 'record')
+    UNION ALL SELECT public.gst_change_log_attach('builder_unit_classification_history', p_client => 'public.gst_change_log_client_of(''unit'', r.unit_id)', p_month => 'NULL', p_mode => 'record')
     UNION ALL SELECT public.gst_change_log_attach('gstr1_upload_versions', p_summary => '{payload,errors}', p_mode => 'record')
     UNION ALL SELECT public.gst_change_log_attach('gstr1_upload_versions_quarantine', p_summary => '{payload,errors}', p_mode => 'record')
     UNION ALL SELECT public.gst_change_log_attach('gstr3b_push_versions', p_summary => '{payload}', p_mode => 'record')
@@ -1241,8 +1459,6 @@ BEGIN
     UNION ALL SELECT public.gst_change_log_attach('rcm_versions', p_month => 'NULL', p_fy => 'r.financial_year', p_summary => '{version_data}', p_mode => 'history')
     UNION ALL SELECT public.gst_change_log_attach('gst_update_versions', p_month => 'NULL', p_summary => '{version_data}', p_mode => 'history')
     UNION ALL SELECT public.gst_change_log_attach('gst_update_row_versions', p_client => 'public.gst_change_log_client_of(''running_update'', r.row_id)', p_month => 'NULL', p_mode => 'history')
-    UNION ALL SELECT public.gst_change_log_attach('client_scheme_history', p_month => 'NULL', p_mode => 'history')
-    UNION ALL SELECT public.gst_change_log_attach('builder_unit_classification_history', p_client => 'public.gst_change_log_client_of(''unit'', r.unit_id)', p_month => 'NULL', p_mode => 'history')
     UNION ALL SELECT public.gst_change_log_attach('builder_bu_confirm_answer_history', p_client => 'public.gst_change_log_client_of(''unit'', r.unit_id)', p_month => 'NULL', p_mode => 'history')
     UNION ALL SELECT public.gst_change_log_attach('audit_log', p_month => 'NULL', p_fy => 'r.financial_year', p_mode => 'history')
   LOOP

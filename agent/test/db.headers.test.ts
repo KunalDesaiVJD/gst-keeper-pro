@@ -1,5 +1,5 @@
 // The agent's database requests say they come from the office agent, for the
-// change log (gst_change_log, migration 20261021130000), and keep the key headers.
+// change log (gst_change_log, migration 20261021150000), and keep the key headers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeDb } from '../src/db.js';

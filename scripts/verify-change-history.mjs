@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Checks how the Change history page loads and reads the change log
 // (src/lib/changeHistory.ts over the view gst_change_history, migration
-// 20261021130000_gst_change_log.sql):
+// 20261021150000_gst_change_log.sql):
 //   - the filters become the query PostgREST is sent (client, month, FY,
 //     page, table, person, dates in India time), newest first, one page at a
 //     time, each page starting below the last row read (keyset on at, seq);
@@ -123,11 +123,17 @@ const C1 = '20000000-0000-0000-0000-000000000001';
 const C2 = '20000000-0000-0000-0000-000000000002';
 const SAM = '10000000-0000-0000-0000-000000000001';
 const GITA = '10000000-0000-0000-0000-000000000002';
-// The view's fy: the row's own year, else its month's (gst_change_log_fy).
+// The view's fy, as gst_change_log_fy: the row's own year (2025-26; 2025-2026 read as
+// 2025-26, a span of several years as none), else its month's.
 const fyOf = (fy, month) => {
-  if (fy) return fy;
+  let y = fy?.trim() || null;
+  if (y && /^\d{4}-\d{2}$/.test(y)) return y;
+  if (y && /^\d{4}-\d{4}$/.test(y)) {
+    if (Number(y.slice(5)) === Number(y.slice(0, 4)) + 1) return y.slice(0, 5) + y.slice(7);
+    y = null;
+  }
   const m = month?.match(/^(\d{2})\/(\d{4})$/);
-  if (!m) return null;
+  if (!m) return y;
   const start = Number(m[2]) - (Number(m[1]) >= 4 ? 0 : 1);
   return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
 };
@@ -351,9 +357,41 @@ const names = { [SAM]: 'Sam', [GITA]: 'Gita' };
 {
   const sheet = H.exportRows(FIXTURE, { clientName: (id) => (id === C1 ? 'SUNRISE TRADERS' : id === C2 ? 'MOONLIGHT FABRICS' : ''), names });
   eq(sheet.length, 3 + 1 + 1 + 3 + 4 + 3 + 1 + 1 + 1 + 1 + 1, 'one row per changed field, one for a change with none');
-  eq(sheet[0], { When: '20 Oct 2026, 10:30', Who: 'Gita', 'How recorded': 'App', Client: 'SUNRISE TRADERS', Month: 'Sep 2026', Page: 'Filing Status',
+  eq(sheet[0], { When: '20 Oct 2026, 10:30', Who: 'Gita', 'How recorded': 'App', Client: 'SUNRISE TRADERS', GSTIN: '', Month: 'Sep 2026', Page: 'Filing Status',
     Sheet: 'Filing Status', Row: 'GSTR-3B', Action: 'Changed', Field: 'ARN', Old: '(empty)', New: 'AA240926000001', Note: '', Request: '' }, 'an export row');
   ok(sheet.some((r) => r.Month === 'FY 2025-26' && r.Page === 'Annual Return'), 'the Annual Return row by financial year');
+}
+
+// ── 4b. Deleted clients keep the name and GSTIN the log kept (round 3) ─────
+{
+  const GONE = '20000000-0000-0000-0000-000000000077';
+  const live = [{ id: C1, name: 'SUNRISE TRADERS', gstin: '24AAAAA0000A1Z5' }];
+  const gone = [
+    { client_id: GONE, at: '2026-10-21T06:00:00Z', changed: { name: 'GONE BUILDERS', gstin: '24GGGGG2525G1Z1', registration_type: 'Regular' } },
+    { client_id: GONE, at: '2026-10-01T06:00:00Z', changed: { name: 'GONE BUILDERS OLD NAME', gstin: '24GGGGG2525G1Z1' } },
+    { client_id: C1, at: '2026-09-01T06:00:00Z', changed: { name: 'SUNRISE (an earlier client of this id)' } },
+    { client_id: '20000000-0000-0000-0000-000000000078', at: '2026-10-20T06:00:00Z', changed: { gstin: '24NONAM0000N1Z1' } },
+  ];
+  const clients = H.historyClients(live, gone);
+  eq(clients.map((c) => `${H.clientLabel(c, c.id)}|${c.gstin ?? ''}`),
+    ['24NONAM0000N1Z1 (deleted)|24NONAM0000N1Z1', 'GONE BUILDERS (deleted)|24GGGGG2525G1Z1', 'SUNRISE TRADERS|24AAAAA0000A1Z5'],
+    'the filter lists each deleted client once, by the name and GSTIN of its last delete; a live client stays as it is');
+  eq([H.clientLabel(undefined, GONE), H.clientLabel(undefined, null)], ['(deleted client)', ''], 'a client the log never named');
+  const byId = new Map(clients.map((c) => [c.id, c]));
+  const sheet = H.exportRows([row({ log_id: 900, at: '2026-10-21T07:00:00Z', table_name: 'bills_not_in_books', op: 'DELETE', client_id: GONE,
+      changed: { supplier_name: 'ACME' } })],
+    { clientName: (id) => H.clientLabel(id ? byId.get(id) : undefined, id), clientGstin: (id) => (id ? byId.get(id)?.gstin ?? '' : '') });
+  eq([sheet[0].Client, sheet[0].GSTIN], ['GONE BUILDERS (deleted)', '24GGGGG2525G1Z1'], 'the export names the deleted client and its GSTIN');
+  const log = [];
+  const got = await H.loadDeletedClients(standIn([
+    ...gone.map((g, i) => ({ ...row({ log_id: 950 + i, table_name: 'clients', op: 'DELETE', client_id: g.client_id, at: g.at, changed: g.changed }) })),
+    row({ log_id: 960, table_name: 'clients', op: 'UPDATE', client_id: GONE, at: '2026-10-21T07:00:00Z', changed: { name: { old: 'A', new: 'B' } } }),
+  ], log));
+  eq(got.map((g) => g.at), ['2026-10-21T06:00:00Z', '2026-10-20T06:00:00Z', '2026-10-01T06:00:00Z', '2026-09-01T06:00:00Z'],
+    'the deletes of clients only, newest first');
+  eq(log.filter((l) => ['eq', 'select', 'order', 'range'].includes(l[0])),
+    [['select', 'client_id,at,changed'], ['eq', 'table_name', 'clients'], ['eq', 'op', 'DELETE'], ['order', 'at', false], ['range', 0, 999]],
+    'one read of the view: the clients\' deletes, a page of 1,000');
 }
 
 // ── 5. Links and the address bar ────────────────────────────────────────────
@@ -423,6 +461,23 @@ if (file) {
   if (pulled) eq([H.whoLabel(pulled), H.whoNote(pulled)], ['Extension', 'no person recorded'], 'a scheduled pull after Esha\'s save: the extension, no person');
   const sheet = H.exportRows(rows.slice(0, 500), { clientName: () => '' });
   ok(sheet.length >= 500 && sheet.every((r) => typeof r.When === 'string' && r.When.length > 0), 'the export of 500 real changes');
+  // Round 3: every client the tests deleted reads by its kept name and GSTIN, on the page, in the filter and in the export.
+  const gone = await H.loadDeletedClients(standIn(rows, []));
+  const fixtures = [{ id: C1, name: 'SUNRISE TRADERS', gstin: '24AAAAA0000A1Z5' }, { id: C2, name: 'MOONLIGHT FABRICS', gstin: '24BBBBB1111B1Z6' }];
+  const clients = H.historyClients(fixtures, gone);
+  const byId = new Map(clients.map((c) => [c.id, c]));
+  ok(gone.length >= 3, `the test log holds clients' deletes (${gone.length})`);
+  eq(rows.filter((r) => r.client_id && H.clientLabel(byId.get(r.client_id), r.client_id) === '(deleted client)').map((r) => r.client_id)
+      .filter((v, i, a) => a.indexOf(v) === i), [], 'no row of a deleted client reads "(deleted client)"');
+  const goneBuilders = clients.find((c) => c.gstin === '24GGGGG2525G1Z1');
+  ok(!!goneBuilders && goneBuilders.deleted && H.clientLabel(goneBuilders, goneBuilders.id) === 'GONE BUILDERS (deleted)',
+    'GONE BUILDERS is in the filter, by its kept name');
+  if (goneBuilders) {
+    const its = await H.loadChangeHistory(standIn(rows, []), { clientId: goneBuilders.id });
+    const out = H.exportRows(its.rows, { clientName: (id) => H.clientLabel(id ? byId.get(id) : undefined, id), clientGstin: (id) => (id ? byId.get(id)?.gstin ?? '' : '') });
+    ok(its.rows.length > 1 && out.every((r) => r.Client === 'GONE BUILDERS (deleted)' && r.GSTIN === '24GGGGG2525G1Z1'),
+      `chosen in the filter: its ${its.rows.length} changes, each exported with its name and GSTIN`);
+  }
 }
 
 console.log(fail ? `${fail} of ${count} checks FAILED` : `${count} of ${count} checks passed`);

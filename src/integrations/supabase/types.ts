@@ -5773,6 +5773,7 @@ export type Database = {
           mode: string
           month_expr: string
           only_columns: string[] | null
+          private_columns: string[]
           skip_columns: string[]
           summary_columns: string[]
           table_name: string
@@ -5787,6 +5788,7 @@ export type Database = {
           mode: string
           month_expr: string
           only_columns?: string[] | null
+          private_columns?: string[]
           skip_columns: string[]
           summary_columns: string[]
           table_name: string
@@ -5801,6 +5803,7 @@ export type Database = {
           mode?: string
           month_expr?: string
           only_columns?: string[] | null
+          private_columns?: string[]
           skip_columns?: string[]
           summary_columns?: string[]
           table_name?: string

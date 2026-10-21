@@ -8,18 +8,27 @@ it, when, from where, and what changed. The record cannot be edited or deleted.
 Staff read it on the **Change history** page (`/change-history`) and through the
 **History** button on the main GST working pages.
 
-Migration: `supabase/migrations/20261021130000_gst_change_log.sql` (live-apply
+Migration: `supabase/migrations/20261021150000_gst_change_log.sql` (live-apply
 steps in its header). Tests: `supabase/tests/change_log/run.sh`.
 
 ## 1. What is logged
 
-One row per changed row, written by `AFTER ... FOR EACH STATEMENT` triggers with
-transition tables (one `INSERT ... SELECT` per statement, not one per row). Each
-table has its own logger function, `gst_change_log_for_<table>`, written by
-`gst_change_log_attach()` (section 8); `gst_change_log_tables` lists every
-attached table and how it is read.
+One row per changed row. A save keeps each changed row as it changes, and the
+log rows are written when the save commits (round 3, section 6):
 
-**Full** (insert, update, delete, truncate), 95 tables:
+- a row trigger on every logged table (`gst_change_log_stage_row`, one function
+  for all) copies the row as it was and as it is into `gst_change_log_stage`
+  (UNLOGGED, open to no API role) and marks the transaction once
+  (`gst_change_log_pending`);
+- at COMMIT a deferred trigger (`gst_change_log_flush`) writes the
+  transaction's log rows, table by table, each with the table's own function
+  `gst_change_log_for_<table>` (written by `gst_change_log_attach()`, section 8),
+  one `INSERT ... SELECT` for all its rows, and empties what it kept.
+
+What a savepoint or a function's exception block rolls back is neither kept nor
+logged. `gst_change_log_tables` lists every attached table and how it is read.
+
+**Full** (insert, update, delete, truncate), 97 tables:
 
 - Import 2B and 2B Reconciliation: `twob_import_docs`, `books_register`,
   `bills_not_in_2b`, `bills_not_in_books`.
@@ -36,30 +45,46 @@ attached table and how it is read.
 - The superadmin's manual-entry exceptions: `manual_source_allowances`.
 - Portal pulls: the credit, cash and liability ledgers, the reversal and RCM
   ledgers, `gst_filed_returns`, `einvoice_docs`, `gstr2a_import_docs`,
-  `gst_challans`, `gst_taxpayer_profile`, `portal_gstr1_category_figures`.
+  `gst_challans`, `gst_taxpayer_profile`, `portal_gstr1_category_figures`, and
+  (round 3) the DRC-03 payments `gst_drc03_filings` (Annual Return set-offs
+  name them) and refund applications `gst_refund_applications`, as the notices
+  sync pulls them. A re-pull that only touches when a row was seen or pulled
+  (`last_seen_at`, `pulled_at`, `pulled_by`, `portal_hash`) is no change; a
+  status change or the portal dropping one (`deleted_at`) is. A DRC-03 for one
+  year has that financial year (`2025-2026` read as `2025-26`); one for several
+  years (`2017-2022`) has none.
 - Annual Return inputs kept outside the workings: the books, P&L, duties and
   taxes, RCM, carry-forward and reason tables, and the old `gstr9_*` /
   `gstr9c_*` tables.
-- Every `builder_*` table (30), except the classification history below, and
-  the BU confirmation e-mails `builder_bu_confirm_requests` (migration
-  20261021140000: who it went to and which units, never the link's token).
+- Every `builder_*` table (30), except the classification history below, the
+  BU agreement confirmations `builder_bu_agreement_confirmations` (with the
+  request each was asked on and who answered) and the BU confirmation e-mails
+  `builder_bu_confirm_requests` (migration 20261021140000: who it went to and
+  which units). A link's token, of a request or of a unit, is never kept or
+  logged (`p_private`); every other column is, one added later too.
 
-**Record** (insert, update, delete; the payload as a fingerprint; a deleted row
-kept whole), 3 tables: `gstr1_upload_versions`, `gstr1_upload_versions_quarantine`,
-`gstr3b_push_versions`. A GSTR-1 upload or a GSTR-3B push shows in the history
-when it is made, with who, the status and the summary.
+**Record** (insert, update, delete; a payload as a fingerprint; a deleted row
+kept whole), 5 tables: `gstr1_upload_versions`, `gstr1_upload_versions_quarantine`,
+`gstr3b_push_versions`, `client_scheme_history` and
+`builder_unit_classification_history`. A GSTR-1 upload or a GSTR-3B push shows
+in the history when it is made, with who, the status and the summary. So do a
+client's scheme change (round 3: its effective date and notes are the only
+record of why the filing rows of the months it covers were reset; the Edit
+Client save shows as the scheme change and the client's new registration type)
+and a unit's classification (its rate code and affordable flag live only in
+that history).
 
-**History** (update and delete only; a deleted row is kept whole), 9 tables:
+**History** (update and delete only; a deleted row is kept whole), 7 tables:
 `twob_versions`, `itc_versions`, `rcm_versions`, `gst_update_versions`,
-`gst_update_row_versions`, `client_scheme_history`,
-`builder_unit_classification_history`, `audit_log`,
-`builder_bu_confirm_answer_history`. A new version is itself the
-record, so its insert is not logged again; anyone switching one off, editing a
-snapshot or deleting a version is.
+`gst_update_row_versions`, `audit_log`, `builder_bu_confirm_answer_history`. A
+new version is itself the record, so its insert is not logged again; anyone
+switching one off, editing a snapshot or deleting a version is.
 
 The sibling migrations' tables are attached only if they exist when this
-migration is applied (attach skips a missing table): apply it last (its
-header).
+migration is applied (attach skips a missing table). Round 3 renamed the file
+from 20261021130000 to 20261021150000, so it sorts after all of them
+(20261021100000, 110000, 120000, 140000) and a replay in filename order
+attaches their tables (`run.sh` checks the order).
 
 **Not logged again:** `annual_return_docs` (complete per-figure log in
 `annual_return_change_log`), shown in the same history view. The Liberal switch
@@ -71,11 +96,25 @@ are not merged into the view: every change they describe is a change of
 `filing_status`, `suspended_reco` or `gst_receivable_reco`, which this log has
 with the person, the old and new values and the manual-entry badge; what they
 add is the pull outcome that changed nothing (refused, not found, failed, a
-conflict), which the Filing Status and reco pages show from those logs. Not GST
-working, not logged: the notices module (it has `notice_events`), staff and
-positions (`staff_position_log`), portal job and sync tables, e-mail queues, and
-the BU confirmation one-time codes (`builder_bu_confirm_codes`: private, RLS
-with no policies; their hashes must not reach a log everyone can read).
+conflict), which the Filing Status and reco pages show from those logs.
+
+Not logged here, with what each keeps instead:
+
+- The notices and litigation module. `notice_events` records changes of
+  `gst_notices` and `gst_case_folder_items`, issues added, changed or removed
+  (`notice_issues`), a draft's creation and status (`notice_drafts`), document
+  requests (`notice_doc_requests`), payments linked or unlinked
+  (`notice_payments`; not an edit of one) and documents added to a matter;
+  `matter_stage_history` keeps a matter's stages. `litigation_matters` (other
+  than its stage), `matter_payments` and `matter_deadlines` (worked out by
+  `notice_clocks_refresh`) keep no history. Round 1 to 2 said "the notices
+  module has `notice_events`" as if it covered all of it; it does not (round 3
+  review). The DRC-03 payments and refund applications the sync pulls are
+  logged here (above).
+- Staff and positions (`staff_position_log`), portal job and sync tables,
+  e-mail queues: not GST working.
+- The BU confirmation one-time codes (`builder_bu_confirm_codes`: private, RLS
+  with no policies; their hashes must not reach a log everyone can read).
 
 **Never logged:** passwords. `clients` is logged only for `gstin`, `name`,
 `registration_type`, `registration_date`, `selected_returns`,
@@ -94,7 +133,7 @@ its date.
 | `at` | the transaction's time (`now()`): every row of one save has the same time |
 | `table_name`, `row_id`, `row_label` | the table, the row's key, and its name for people (supplier and invoice number, the return type, the unit number; up to 120 characters) |
 | `client_id`, `period_month`, `financial_year` | the client (builder rows through their project or unit, also when the delete of a parent cascaded to them), the month as `MM/YYYY` whatever the table's own spelling (`Sep-26`, a date, `MMYYYY`), the financial year for FY tables |
-| `fy` | the financial year of the change: `financial_year`, else the year of `period_month` (`2026-27`); the history's year filter reads it alone (index `gst_change_log_fy_at`) |
+| `fy` | the financial year of the change: `financial_year` (`2026-27`; `2026-2027` read as `2026-27`; a span of several years as none), else the year of `period_month`; the history's year filter reads it alone (index `gst_change_log_fy_at`) |
 | `op` | `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE` |
 | `actor_id`, `actor_name` | who; the name is resolved when the row is written, so it stays after the person is removed |
 | `actor_source` | `app`, `extension`, `agent`, `system`, `unknown` (section 3) |
@@ -122,13 +161,17 @@ its date.
   row (a version) is kept whole.
 - `TRUNCATE`: `{"rows": n}`.
 
-A statement whose rows the logger cannot read (only a wrong expression in a
-table's attach could do that; the ones in the migration are column reads and
-lookups that cannot fail) is refused with the database's error, whose context
+A save whose rows the log cannot read (only a wrong expression in a table's
+attach could do that; the ones in the migration are column reads and lookups
+that cannot fail) fails its COMMIT with the database's error, whose context
 names `gst_change_log_for_<table>`: nothing changes without its trace. Round 1
 logged such a statement in part instead, but that needed an exception block,
 a subtransaction on every logged statement (round 2 review). The app still
 reads the round 1 `_error` / `_partial` shape; no such row is written.
+
+A key change (a builder opening balance moved to another unit) is one log row
+under the old key and one under the new, each with both sides
+(`"_key_changed": true, "old": {...}, "new": {...}`).
 
 ## 3. Who did it
 
@@ -204,6 +247,11 @@ recorded as Gita, from the app").
 - `gst_change_log_tables` is select-only too, and `gst_change_log_attach` is not
   callable from the API: no one can re-point or switch off the logger without
   a migration.
+- The rows kept until COMMIT (`gst_change_log_stage`) and the marks
+  (`gst_change_log_pending`) have RLS with no policy and no grant for any API
+  role, and no API role may run the row trigger, the flush or a table's log
+  writer: no one can add a made-up row to be logged at COMMIT, read another
+  transaction's kept rows, or take a kept row away (test_30).
 - The history outlives the client: `client_id` has no foreign key.
 - What remains: the database owner can drop the trigger (DDL). That is outside
   the app's reach and would be a migration in this repo.
@@ -231,7 +279,11 @@ recorded as Gita, from the app").
   client's own rows.
 - Page `/change-history` (`src/pages/ChangeHistoryPage.tsx`): filters client,
   month or financial year, page (a group of tables), person, date range (India
-  time). With no client, month, year or dates it shows the last 30 days. Who,
+  time). A client deleted since the log began keeps the name and GSTIN its
+  delete logged (`loadDeletedClients`, `historyClients`): "GONE BUILDERS
+  (deleted)" with its GSTIN under it, on its rows, in the Client filter (so its
+  removed rows can be found) and in the export (round 3 review; "(deleted
+  client)" only when the log never named it). With no client, month, year or dates it shows the last 30 days. Who,
   when, client, month, page, action and "field: old → new" per line; an added
   or removed JSON working (the ITC Summary's first save) reads as its figures,
   cell by cell ("Figures: Table 4A, 5.1, IGST: 1,000"; empty and zero ones left
@@ -240,8 +292,9 @@ recorded as Gita, from the app").
   at it (`manual_allowance_id`, `opening_allowance_id`; "manual" alone for
   `filed_source` / `opening_source` = manual). Load more (200 at a time).
   Export Excel: pages of 500 (the API sends at most 1,000 rows a request), one
-  sheet row per changed field, text never cut, up to 5,000 changes, an "About"
-  sheet with the filters and whether the file is complete; needs Export data.
+  sheet row per changed field with the client and its GSTIN, text never cut, up
+  to 5,000 changes, an "About" sheet with the filters and whether the file is
+  complete; needs Export data.
 - A page's rows: its tables, plus for GSTR-1 and GSTR-3B the Filing Status rows
   of their returns (`row_label` is the return: the Nil switch, Pushed, Filed),
   plus the manual allowances for its scope (`filing:*`, `filing:GSTR-3B*`,
@@ -258,56 +311,67 @@ recorded as Gita, from the app").
 
 ## 6. Speed and size
 
-Local PostgreSQL 16, as the public key with the app's header (test_90):
+**Round 3: kept per row, written at COMMIT.** Round 2 wrote the log at the end
+of every statement (a statement trigger with transition tables): about 0.15 to
+0.2 ms a statement that changed a row, whatever its size. A function that saves
+entry by entry pays that per statement: the prior months door removes an entry
+in three small statements (its books row, the entry's link to it, the entry and
+its three carried copies), so 1,000 removals were 3,000 statements and spent
+more time logging than saving, and twob-simple's own 1 s timing gate failed
+(round 3 review). Now a save only keeps each changed row (one row trigger, one
+small insert into an unlogged table: about 15 to 20 µs a row, nothing per
+statement, nothing for a statement that changes no row), and the log rows are
+written once, set-based, when the transaction commits (about 30 to 40 µs a
+row: most of it is the log's seven indexes).
 
-| | without the logger | with it (round 2) | round 1 |
+Local PostgreSQL 16, as the public key with the app's header (test_90 and
+test_92; the shared machine gives a spread):
+
+| | without the logger | round 3: the save / its COMMIT | round 2 | round 1 |
+|---|---|---|---|---|
+| Import 2B insert, 1,000 rows, one statement | 5–7 ms | 29–51 ms / 30–44 ms | 46 ms | 86–145 ms |
+| ledger update, 1,000 rows, one statement | 6–9 ms | 30–32 ms / 45–48 ms | 87 ms | 109–192 ms |
+| ledger delete, 1,000 rows, one statement | | 17 ms / 27–32 ms | 37 ms | 50–94 ms |
+| 1,000 one-row updates (a row-by-row function) | 11–13 ms | 38–42 ms / 38–41 ms | 170–200 ms | about 1,000 ms |
+| 1,000 updates or deletes of no row | 3 ms | 3 ms / none | 7–8 ms | 170–550 ms |
+| 1,000 removals in 3,000 statements (best of 3) | 36–49 ms | 151–177 ms / 170–187 ms | about 650 ms added | |
+
+(`test_90_timing.sql` fails above 1 s for a bulk statement and its COMMIT, 0.7 s
+for the one-row loop with its COMMIT, 0.1 s for the loops of no row, and if
+100 logged statements in one transaction open any subtransaction;
+`test_92_many_statements.sql` fails if the logger adds 0.25 s or more to the
+3,000-statement call, or 0.5 s or more with its COMMIT.)
+
+The prior months branch's own timing test
+(`supabase/tests/twob_simple/test_80_timing.sql`, migration 20261021100000,
+copied from that worktree on 21 Oct and run with this migration applied after
+its migrations, by the same non-superuser role; its whole `run.sh` passes: every
+SQL test, gates 101/101, app 59/59):
+
+| step (its limit) | without the log | round 2 | round 3 (the call) |
 |---|---|---|---|
-| Import 2B insert, 1,000 rows, one statement | 5 ms | 46 ms | 86–145 ms |
-| ledger update, 1,000 rows, one statement | 7 ms | 87 ms | 109–192 ms |
-| ledger delete, 1,000 rows, one statement | | 37 ms | 50–94 ms |
-| 1,000 one-row updates (a row-by-row function) | 12 ms | 170–200 ms | about 1,000 ms |
-| 1,000 updates of no row | 4 ms | 8 ms | about 550 ms |
-| 1,000 deletes of no row | 3 ms | 7 ms | about 170 ms |
+| 1,000-row Post preview (1 s) | 323–365 ms | 688–1,035 ms | 418–476 ms |
+| 1,000-row Post applied (1 s) | 326–360 ms | 725–1,006 ms | 419–544 ms |
+| 1,000 removals, 3,000 statements (1 s) | 555–750 ms | 1,249–1,529 ms (fails) | 764–844 ms |
+| 1,000 entries into six later months, applied (1 s) | 489–703 ms | 1,137 ms (fails) | 761–820 ms |
+| guarded update of 2,000 rows, one statement (0.5 s) | 111–136 ms | 521 ms (fails) | 217–269 ms |
 
-(`supabase/tests/change_log/test_90_timing.sql`, which fails above 1 s for the
-bulk statements, 0.7 s for the one-row loop and 0.1 s for the loops of no row,
-and if 100 logged statements in one transaction open any subtransaction.)
+Those times are the call, as the test measures it; the log rows are written at
+the COMMIT after it. Measured end to end, the 1,000 removals in their own
+transaction (best of five runs, call / COMMIT): without the log 525 ms / 1 ms,
+round 2 1,326 ms / 2 ms, round 3 744 ms / 193 ms. So the log now adds about
+0.4 s to that request instead of about 0.8 s, and only a fifth of it inside the
+function.
 
-How the logger stays cheap (round 2): each table's logger is plpgsql with
-fixed SQL, so a connection plans it once; a statement that changed no row
-returns after one read of its transition table; the request headers are read
-once per transaction while they stay the same (`gst_change_log.context`); no
-exception block, so no subtransaction (round 1 opened one per statement, and
-after 64 in one transaction the cache overflowed); the helpers it calls are
-plpgsql, not sql (PostgreSQL plans an sql function's body again in every
-statement that calls it); a row with no JSON column is read by built-in
-functions; the person's name is a function call, not a subquery (a subquery
-there made a 2,000-row update read its join 2,000 times: 1.3 s, now 0.24 s).
-What remains is the log row itself (seven indexes) and, on UPDATE, comparing
-the old and new row: about 0.1 ms a row, and about 0.15 ms for each statement
-that changes a row.
-
-**A function that saves row by row** pays that 0.15 ms per statement. The prior
-months branch's timing test (`supabase/tests/twob_simple/test_80_timing.sql`,
-migration 20261021100000) run with this migration applied, on this machine
-(shared, so a spread):
-
-| step | without the log | round 1 (review) | round 2 |
-|---|---|---|---|
-| 1,000-row Post preview | 340–515 ms | 1,322–1,534 ms | 690–920 ms |
-| 1,000-row Post applied | 307–458 ms | 1,531–1,790 ms | 730–960 ms |
-| 1,000 removals (3,000 statements, 5,000 rows logged) | 536–833 ms | 2,818–3,608 ms | 1,370–1,820 ms |
-| 1,000 entries into six later months (7,000 rows logged) | 412–697 ms | | 880–1,390 ms |
-| guarded update of 2,000 rows (one statement) | 141–185 ms | 576–637 ms | 460–520 ms |
-
-All stay well under the live 3 s limit. Three of that test's own budgets (1 s
-for the removals and the six-month insert, 0.5 s for the guarded update) are
-exceeded with the log: that is the cost of logging thousands of rows written by
-thousands of statements, not of the logger's machinery. Its functional tests
-all pass with this migration applied.
+Reading the log inside the transaction that wrote it shows nothing yet: the
+rows appear when it commits (the app reads it in later requests). A test or a
+maintenance script that must see them earlier runs `SET CONSTRAINTS
+public.gst_change_log_flush IMMEDIATE` (the tests do).
 
 A log row is about 960 bytes for an Import 2B insert, 720 for a ledger delete,
-460 for a ledger update (heap only; the four indexes add about 200 bytes).
+460 for a ledger update (heap only; the indexes add about 200 bytes). The kept
+rows take room only while their transaction is open (the table is emptied at
+COMMIT; autovacuum reclaims it).
 
 Volume, from the live write counters (21 Oct 2026, 167 days since the last
 reset) over the attached tables: about 22,300 inserts, 13,800 updates and 7,600
@@ -337,25 +401,33 @@ than logging less.
   be deleted (`annual_return_periods` keeps it), so nothing is lost; the Liberal
   switch is now in this log too.
 - Server-side bulk work (backfills in a migration, pg_cron) is logged as
-  `system`, row by row.
+  `system`, row by row, at its COMMIT.
+- Within one transaction the log rows are written table by table (in the order
+  each table was first changed), each table's rows in the order they changed;
+  all of them have the transaction's time. A TRUNCATE (no row triggers) is
+  logged at once, before the rows of its transaction.
+- A table logged in part by `p_only` (`clients`) logs a column added later
+  only once it is added to the list and the table is attached again.
 
 ## 8. Adding a table
 
 In a new migration: `SELECT public.gst_change_log_attach('my_table', ...)`.
-It writes the table's logger function (`gst_change_log_for_my_table`) and its
-four triggers.
+It writes the table's log writer (`gst_change_log_for_my_table`, run at COMMIT)
+and its row triggers (insert, update, delete) and truncate trigger.
 Arguments: `p_client` (SQL on the row `r`; default `r.client_id`), `p_month`
 (default `r.period_month`, any spelling), `p_fy`, `p_summary` (JSON columns kept
 as fingerprints), `p_skip` (columns never compared), `p_only` (log only these
-columns), `p_mode` (`full`, `history` or `record`), `p_label` (the row's name; by default
-the first two of the usual name columns). It checks the expressions and column
+columns), `p_private` (columns never kept or logged, such as a link's token;
+the others are logged, one added later too), `p_mode` (`full`, `history` or
+`record`), `p_label` (the row's name; by default the first two of the usual
+name columns). It checks the expressions and column
 names against the table, so a mistake fails the migration, never a save. Add
 the table to a page in `HISTORY_PAGES` (`src/lib/changeHistory.ts`).
 
 **A migration that renames or drops a column of a logged table must attach the
 table again** (same arguments, in the same migration): the logger's SQL names
 the columns its key, client, month, label and saved-by stamps come from, and a
-save whose logger cannot run is refused. New columns need nothing: rows are
-read whole. A builder table whose client comes through a parent that a delete
+save whose log cannot be written fails its COMMIT. New columns need nothing:
+rows are kept whole (except on a `p_only` table). A builder table whose client comes through a parent that a delete
 can cascade from also needs its parent in `gst_change_log_keep_client()` and in
 the list that attaches `gst_change_log_keep` (section 6 of the migration).

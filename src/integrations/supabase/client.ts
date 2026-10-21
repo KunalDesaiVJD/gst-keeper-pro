@@ -16,6 +16,6 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
     autoRefreshToken: true,
   },
   // Names the signed-in user on every /rest/v1 request, for the change log
-  // (src/lib/changeLogHeaders.ts, migration 20261021130000_gst_change_log.sql).
+  // (src/lib/changeLogHeaders.ts, migration 20261021150000_gst_change_log.sql).
   global: { fetch: changeLogFetch },
 });

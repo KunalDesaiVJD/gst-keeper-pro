@@ -61,9 +61,12 @@ SELECT t_eq((SELECT count(*) FROM t_odd)::int + (SELECT count(*) FROM gst_change
 -- A wrong expression is caught when attaching, never at a save
 SELECT t_raises($$SELECT gst_change_log_attach('t_odd', p_month => 'r.no_such_column')$$, 'no_such_column', 'attach checks its expressions');
 SELECT t_raises($$SELECT gst_change_log_attach('t_odd', p_summary => '{raw}')$$, 'no column raw', 'attach checks its column lists');
+SELECT t_raises($$SELECT gst_change_log_attach('t_odd', p_month => 'NULL', p_private => '{nope}')$$, 'no column nope', 'and its private columns');
+SELECT t_raises($$SELECT gst_change_log_attach('t_odd', p_month => 'NULL', p_private => '{id}')$$, 'a key column cannot be private', 'a key is never private');
+SELECT t_raises($$SELECT gst_change_log_attach('t_odd', p_month => 'NULL', p_only => '{n}', p_private => '{client_id}')$$, 'not both', 'p_only or p_private, not both');
 SELECT t_eq(gst_change_log_attach('no_such_table'), 'no_such_table: missing, skipped', 'a missing table is skipped');
 DROP TABLE public.t_odd;
-DROP FUNCTION public.gst_change_log_for_t_odd();
+DROP FUNCTION public.gst_change_log_for_t_odd(bigint, uuid, text, text, text);
 DELETE FROM gst_change_log_tables WHERE table_name = 't_odd';
 
 -- A row moved to a new key (a builder opening balance keyed by its unit): both

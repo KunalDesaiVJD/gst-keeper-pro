@@ -51,7 +51,7 @@ const dnrReady = (async () => {
 })();
 
 // 0.17.0: who is acting, for the change log (gst_change_log, migration
-// 20261021130000). Every /rest/v1 request says it comes from the extension
+// 20261021150000). Every /rest/v1 request says it comes from the extension
 // and, while a job the app started is running, names the app user who started
 // it (the job's actorId, the same id the app sends). A scheduled sync names no
 // one. Storage uploads (another API) are left as they were.

@@ -1,5 +1,5 @@
 // Who is acting, sent with every database request so the change log
-// (gst_change_log, migration 20261021130000) can name the person.
+// (gst_change_log, migration 20261021150000) can name the person.
 //
 // The app has no Supabase auth session (auth.uid() is NULL), so the database
 // cannot know the user by itself. Every request to /rest/v1 (tables and RPCs)

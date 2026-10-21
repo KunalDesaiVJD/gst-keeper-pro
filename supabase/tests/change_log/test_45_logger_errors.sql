@@ -1,8 +1,9 @@
 -- The logger never fails on what a user saves (round 1 review): a crafted,
--- deeply nested JSON value is walked only 20 levels deep. A statement whose
--- rows the logger cannot read at all (only a wrong expression of a table's
--- attach could do that; none in the migration can) is refused, never saved
--- untraced (round 2). Writes as PostgREST runs them.
+-- deeply nested JSON value is walked only 20 levels deep. A save whose rows
+-- the logger cannot read at all (only a wrong expression of a table's attach
+-- could do that; none in the migration can) is refused, never saved untraced
+-- (round 2; round 3: the log is written at COMMIT, so the COMMIT fails and
+-- the save with it). Writes as PostgREST runs them.
 SET search_path = public, extensions;
 SET ROLE anon;
 SELECT t_request('anon', '{"x-gst-actor":"10000000-0000-0000-0000-000000000003","x-gst-source":"app","x-gst-request":"t45-deep"}');
@@ -39,11 +40,11 @@ SELECT t_eq((SELECT count(*) FROM gst_change_log WHERE row_id = '45000000-0000-0
 SELECT t_eq((SELECT count(*) FROM gst_change_log WHERE row_id = '45000000-0000-0000-0000-000000000001')::int, 4, 'every save logged');
 RESET ROLE;
 
--- 2. A statement the logger cannot read (its client expression divides by
--- zero for one row) is refused with the error, and nothing is saved or
--- logged: no change without its trace (round 2: the logger opens no
--- subtransaction, so it cannot save the row and log it later). A row the
--- logger can read is saved and logged as usual.
+-- 2. A save the logger cannot read (its client expression divides by zero
+-- for one row) is refused with the error at COMMIT (t_raises runs the
+-- COMMIT's log write), and nothing is saved or logged: no change without its
+-- trace (the logger opens no subtransaction, so it cannot keep the row and
+-- drop its log). A row the logger can read is saved and logged as usual.
 CREATE TABLE public.t_odd2 (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), client_id uuid, period_month text, n int, note text,
                             payload jsonb, updated_by uuid);
 GRANT ALL ON public.t_odd2 TO anon;
@@ -71,11 +72,12 @@ DECLARE v_ctx text;
 BEGIN
   BEGIN
     UPDATE t_odd2 SET n = 0 WHERE id = '45000000-0000-0000-0000-000000000012';
+    SET CONSTRAINTS public.gst_change_log_flush IMMEDIATE;  -- the COMMIT's log write, here
   EXCEPTION WHEN division_by_zero THEN
     GET STACKED DIAGNOSTICS v_ctx = PG_EXCEPTION_CONTEXT;
   END;
   PERFORM t_eq(v_ctx ~ 'gst_change_log_for_t_odd2', true, 'the error''s context names the logger of t_odd2');
 END $$;
 DROP TABLE public.t_odd2;
-DROP FUNCTION public.gst_change_log_for_t_odd2();
+DROP FUNCTION public.gst_change_log_for_t_odd2(bigint, uuid, text, text, text);
 DELETE FROM gst_change_log_tables WHERE table_name = 't_odd2';
