@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeDb } from '../src/db.js';
+import { agentJobStart } from '../src/jobStart.js';
 
 test('every request carries x-gst-source: agent and a request id', async () => {
   const seen: Array<{ url: string; headers: Record<string, string> }> = [];
@@ -23,4 +24,13 @@ test('every request carries x-gst-source: agent and a request id', async () => {
     assert.equal('x-gst-actor' in s.headers, false);
   }
   assert.equal(seen[1].headers.Prefer, 'return=minimal');
+});
+
+test('a job someone queued names them to the extension; a scheduled one names no one', () => {
+  const base = { id: 'j1', client_id: 'c1', payload: { periods: ['09/2026'] }, run_id: 'r1' };
+  const gita = '10000000-0000-0000-0000-000000000002';
+  assert.deepEqual(agentJobStart({ ...base, requested_by: gita }, 'notices_bundle'),
+    { clientId: 'c1', mode: 'notices_bundle', periods: ['09/2026'], runId: 'r1', jobId: 'j1', startUrl: undefined, actorId: gita });
+  assert.equal(agentJobStart({ ...base, requested_by: null }, 'notices_bundle').actorId, null);
+  assert.equal(agentJobStart(base, 'notices_bundle', 'https://x').actorId, null);
 });

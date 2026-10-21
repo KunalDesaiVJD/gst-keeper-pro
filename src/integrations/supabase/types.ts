@@ -10619,6 +10619,7 @@ export type Database = {
           request_id: string | null
           row_id: string | null
           row_label: string | null
+          seq: number | null
           table_name: string | null
         }
         Relationships: []

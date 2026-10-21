@@ -5,8 +5,9 @@ Notable changes to the browser extension (`extension/`). Newest first.
 ## 2026-10-21 — Who did it, for the change log (v0.17.0)
 
 - Every request to the database (`/rest/v1`, tables and RPCs) now says it comes from the extension (`x-gst-source: extension`) and carries a request id (`x-gst-request`). While a job the app started is running, it also names the app user who started it (`x-gst-actor`, the job's `actorId`, the same id the app sends). A scheduled sync names no one. The database's change log (`gst_change_log`, migration `20261021130000_gst_change_log.sql`) records these with every row the extension writes, so a pull shows as "Extension, for Gita" in Change history.
+- Every job the app starts keeps the user's `actorId` from the app's message: the ledger pull (`startLedgerPull`), the return pull (`startReturnPull`), the 2B and 2A pulls, the filing page (`startFilingOpen`), the section and all-clients pulls, as the GSTR-1 upload, the e-invoice pull and the GSTR-3B push already did. An office-agent job (`startAgentJob`) keeps the person who queued it. `appbridge.js` passes the messages on unchanged.
 - Uploads to Storage (return PDFs) are unchanged: another API, not logged there.
-- Nothing else changes. An older extension still works; its writes are logged with the person from the row's own stamp, or none.
+- Nothing else changes. An older extension still works; its writes are logged with no person unless they write a saved-by field themselves.
 - Numbered after 0.15.0 (filing pull) and 0.16.0 (reco pull) on their branches; release once all three are merged.
 - Test `test/17-actor-headers.test.mjs`.
 

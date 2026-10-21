@@ -16,7 +16,7 @@ db="change_log_test_$$"
 db2="change_log_sibling_$$"
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 -d "$db" "$@"; }
 createdb "$db"
-trap 'dropdb --if-exists "$db"; dropdb --if-exists "$db2"; rm -f "$here/.last_error"; [ -n "${KEEP_ROWS:-}" ] || rm -f "$here/.rows.json"' EXIT
+trap 'dropdb --if-exists --force "$db"; dropdb --if-exists --force "$db2"; rm -f "$here/.last_error"; [ -n "${KEEP_ROWS:-}" ] || rm -f "$here/.rows.json"' EXIT
 psql_q -f "$here/00_stub.sql" >/dev/null
 psql_q -f "$mig" >/dev/null 2>&1 || { echo "FAILED applying the migration"; psql_q -f "$mig" 2>&1 | grep -v NOTICE | tail -5; exit 1; }
 psql_q -f "$mig" >/dev/null 2>&1 || { echo "FAILED re-applying the migration"; exit 1; }
@@ -36,6 +36,21 @@ rm -f "$here/.last_out"
 # The app-level check, on the rows the tests left in the log (as the app reads them: the view).
 psql -X -q -At -d "$db" -c "SELECT COALESCE(json_agg(h ORDER BY h.at DESC, h.key DESC), '[]') FROM gst_change_history h" > "$here/.rows.json"
 if node "$root/scripts/verify-change-history.mjs" "$here/.rows.json"; then echo "ok   verify-change-history.mjs (on the test log)"; else echo "FAIL verify-change-history.mjs"; status=1; fi
+
+# A long read holding a logged table: a re-apply gives up after 5 s (lock_timeout)
+# instead of queueing the app's queries behind it, and changes nothing.
+psql -X -q -d "$db" -c "BEGIN; LOCK TABLE public.twob_import_docs IN ACCESS SHARE MODE; SELECT pg_sleep(20); COMMIT;" >/dev/null 2>&1 &
+holder=$!
+sleep 1
+t0=$(date +%s)
+if out=$(timeout 15 psql -X -q -v ON_ERROR_STOP=1 -d "$db" -f "$mig" 2>&1); then lock_ok=no; else lock_ok=yes; fi
+took=$(( $(date +%s) - t0 ))
+kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true
+if [ "$lock_ok" = yes ] && echo "$out" | grep -q "lock timeout" && [ "$took" -lt 12 ]; then
+  echo "ok   a re-apply behind a long read stops at the lock timeout (${took} s), nothing half-done"
+else
+  echo "FAIL the apply did not stop at the lock timeout (took ${took} s)"; echo "$out" | grep -v NOTICE | tail -3; status=1
+fi
 
 # A sibling branch (reco) already made the allowance RPCs, returning jsonb: they stay.
 createdb "$db2"

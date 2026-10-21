@@ -1519,7 +1519,7 @@ const Import2BTab: React.FC = () => {
     if (editLocked) { toast.error(LOCKED_MSG); return; }
     if (pendingCount > 0) { toast.error(UNSAVED_MSG); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension, then reload this page.'); return; }
-    window.postMessage({ __gstkPull2B: { clientId: selectedClient, period_month: selectedMonth } }, '*');
+    window.postMessage({ __gstkPull2B: { clientId: selectedClient, period_month: selectedMonth, actorId: user?.id ?? null } }, '*');
     toast.info('Opening the portal in a new tab — type the CAPTCHA there; the GSTR-2B will import here automatically when it finishes.');
   };
 

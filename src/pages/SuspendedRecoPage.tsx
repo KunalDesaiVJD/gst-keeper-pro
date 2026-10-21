@@ -686,7 +686,7 @@ const SuspendedRecoPage: React.FC = () => {
     if (!selectedClientId || !selectedMonth) { toast.error('Select a client and month first'); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
     pulledRef.current = true;
-    window.postMessage({ __gstkPullLedgers: { clientId: selectedClientId, period_month: selectedMonth } }, '*');
+    window.postMessage({ __gstkPullLedgers: { clientId: selectedClientId, period_month: selectedMonth, actorId: user?.id ?? null } }, '*');
   };
 
   const sourceBadge = !useNewFlow ? null

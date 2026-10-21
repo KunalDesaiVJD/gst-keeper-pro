@@ -2,13 +2,15 @@
 -- with the app's header are each logged once, with the actor and the client,
 -- and nothing fails inside the logger (no "_error" rows). History tables log
 -- only the update and the delete. The list is the migration's own (section
--- 6): 102 tables, 91 full and 11 history.
+-- 6): 102 tables, 91 full, 3 record (portal uploads and pushes) and 8 history.
 SET search_path = public, extensions;
 
 SELECT t_eq((SELECT count(*) FROM gst_change_log_tables)::int, 102, 'tables attached');
-SELECT t_eq((SELECT count(*) FROM gst_change_log_tables WHERE mode = 'history')::int, 11, 'history tables');
+SELECT t_eq((SELECT count(*) FROM gst_change_log_tables WHERE mode = 'history')::int, 8, 'history tables');
+SELECT t_eq((SELECT string_agg(table_name, ',' ORDER BY table_name) FROM gst_change_log_tables WHERE mode = 'record'),
+            'gstr1_upload_versions,gstr1_upload_versions_quarantine,gstr3b_push_versions', 'record tables: the portal uploads and pushes');
 SELECT t_eq((SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'gst_change_log_%' AND NOT tgisinternal)::int,
-            91 * 4 + 11 * 3 + 2, 'triggers (4 per full table, 3 per history table, 2 guarding the log)');
+            94 * 4 + 8 * 3 + 2, 'triggers (4 per full or record table, 3 per history table, 2 guarding the log)');
 SELECT t_eq((SELECT count(*) FROM unnest(ARRAY['twob_import_docs', 'books_register', 'bills_not_in_2b', 'bills_not_in_books',
   'itc_summaries', 'suspended_reco', 'gst_receivable_reco', 'filing_status', 'gstr1_data', 'gstr1_manual_entries',
   'gstr3b_adjustments', 'gstr3b_push_versions', 'rcm_data', 'rcm_masters', 'rcm_versions', 'advance_receipts',
@@ -118,7 +120,7 @@ SELECT set_config('app.manual_source_write', '', false);
 
 SELECT t_eq((SELECT count(*) FROM t_seen)::int, 102, 'every table written');
 SELECT t_eq((SELECT string_agg(table_name || '=' || COALESCE(ops, '(none)'), '; ') FROM t_seen s
-              WHERE ops IS DISTINCT FROM (SELECT CASE WHEN mode = 'full' THEN 'INSERT,UPDATE,DELETE' ELSE 'UPDATE,DELETE' END
+              WHERE ops IS DISTINCT FROM (SELECT CASE WHEN mode IN ('full', 'record') THEN 'INSERT,UPDATE,DELETE' ELSE 'UPDATE,DELETE' END
                                             FROM gst_change_log_tables x WHERE x.table_name = s.table_name)),
             NULL::text, 'each table: its insert, update and delete logged once each (history tables: update and delete)');
 SELECT t_eq((SELECT string_agg(table_name || '=' || actors, '; ') FROM t_seen WHERE actors <> 'Esha/header'), NULL::text,

@@ -1567,14 +1567,14 @@ const FilingStatusPage: React.FC = () => {
       return;
     }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
-    window.postMessage({ __gstkPullReturn: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month } }, '*');
+    window.postMessage({ __gstkPullReturn: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month, actorId: user?.id ?? null } }, '*');
   };
 
   // Log the client in on the portal and open THIS return's filing page (current
   // tab's return + period). The human does the CAPTCHA and the OTP/DSC submit.
   const openFilingOnPortal = (record: FilingRecord) => {
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to log in from here.'); return; }
-    window.postMessage({ __gstkOpenFiling: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month } }, '*');
+    window.postMessage({ __gstkOpenFiling: { clientId: record.client_id, return_type: record.return_type, period_month: record.period_month, actorId: user?.id ?? null } }, '*');
   };
 
   const handlePdfUpload = async (record: FilingRecord, file: File) => {

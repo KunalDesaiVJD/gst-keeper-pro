@@ -411,6 +411,8 @@ const API = {
       startedAt: Date.now(), lastActivityAt: Date.now(), runId: info.runId || null,
       logSync: mode === 'notices' || mode === 'notices_bundle',
       agent: { jobId: info.jobId || null },
+      // 0.17.0: the person who queued the job (portal_jobs.requested_by), for the change log; none for a scheduled one.
+      actorId: info.actorId || null,
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     // The job is stored before the tab loads the portal, so the first page
@@ -666,6 +668,7 @@ const API = {
     const fyStart = mm >= 4 ? yyyy : yyyy - 1;
     const job = {
       mode: 'returnpdf', period: info.period_month, fyStart, idx: 0, step: 'login', startedAt: Date.now(),
+      actorId: info.actorId || null,
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
       ret: { return_type: info.return_type, period_month: info.period_month },
     };
@@ -683,6 +686,7 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'twob', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
+      actorId: info.actorId || null,
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
@@ -705,6 +709,7 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'twoa', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
+      actorId: info.actorId || null,
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
@@ -730,6 +735,7 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'filing', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
+      actorId: info.actorId || null,
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
       ret: { return_type: info.return_type, period_month: info.period_month },
     };
@@ -758,6 +764,7 @@ const API = {
     if (!c || !c.gst_user_id) throw new Error('This client has no saved GST credentials.');
     const job = {
       mode: 'ledgers', period: info.period_month, idx: 0, step: 'login', startedAt: Date.now(),
+      actorId: info.actorId || null,
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
@@ -786,6 +793,7 @@ const API = {
       : [info.period_month || ''];
     const job = {
       mode: info.mode, period: periods[0], periods, periodIdx: 0, idx: 0, step: 'login', startedAt: Date.now(),
+      actorId: info.actorId || null,
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
       // 0.13.0: gstr2a2b_pull's per-period list of what to fetch ({ 'MM/YYYY': ['2A', '2B'] }).
       want: (info.want && typeof info.want === 'object' && !Array.isArray(info.want)) ? info.want : null,
@@ -853,6 +861,7 @@ const API = {
     const runId = isNotices ? await API.runStart(info.mode, withCreds.length) : null;
     const job = {
       mode: info.mode, period: info.period_month || '', idx: 0, step: 'login', startedAt: Date.now(), runId,
+      actorId: info.actorId || null,
       // Only the Notices Dashboard's Sync All records a Company List
       // sync-log row per client — every other section (refunds/drc03/
       // taxpayerprofile/etc) uses this exact same job machinery unchanged.

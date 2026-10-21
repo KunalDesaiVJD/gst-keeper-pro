@@ -8,6 +8,9 @@
 //   - a scheduled job (no actorId) or no job: no x-gst-actor
 //   - an actorId that is not a uuid is never sent
 //   - the API key headers and Prefer are unchanged; Storage uploads get none
+//   - every job the app starts (through the real appbridge.js and start
+//     functions) and every agent job keeps the person's id, and the pull's
+//     writes carry it; without one, no one is named
 //   node test/17-actor-headers.test.mjs
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -19,10 +22,12 @@ const ANON = 'anon-key';
 const GITA = '10000000-0000-0000-0000-000000000002';
 
 const calls = [];
+const CLIENT = { id: 'c1', name: 'SUNRISE TRADERS', gstin: '24AAAAA0000A1Z5', gst_user_id: 'sunrise_gst', selected_returns: ['GSTR-1', 'GSTR-3B'] };
 async function dbFetch(url, init = {}) {
   const u = String(url);
   calls.push({ method: init.method || 'GET', url: u, headers: { ...(init.headers || {}) } });
   if (u.startsWith(DB + '/rest/v1/rpc/')) return new Response('{"ok":true}', { status: 200 });
+  if ((init.method || 'GET') === 'GET' && u.startsWith(DB + '/rest/v1/clients?')) return new Response(JSON.stringify([CLIENT]), { status: 200 });
   if ((init.method || 'GET') === 'GET') return new Response('[]', { status: 200 });
   return new Response(null, { status: 201 });
 }
@@ -115,6 +120,65 @@ ok(!!up && !('x-gst-actor' in up.headers) && !('x-gst-source' in up.headers), 's
 // 5. The popup's own reads (db.js) say they come from the extension.
 const dbSrc = read('db.js');
 ok((dbSrc.match(/'x-gst-source': 'extension'/g) || []).length === 2, 'the popup reads carry x-gst-source');
+
+// 6. Jobs the app starts, through the real bridge (appbridge.js) and the real
+// start functions: each stores the app user's id on the job, so the pull's
+// writes name them. Round 1 review: the ledger, return, 2B, 2A, section,
+// all-clients and filing-page jobs named no one.
+const posted = [];
+const appListeners = [];
+const appWindow = {
+  addEventListener: (type, fn) => { if (type === 'message') appListeners.push(fn); },
+  postMessage: (m) => { posted.push(m); },
+};
+const appCtx = vm.createContext({
+  window: appWindow, location: { origin: 'https://gst.vjdesai.com' }, console, setTimeout, clearTimeout, Promise, JSON, Date,
+  chrome: {
+    runtime: { getManifest: chromeStub.runtime.getManifest, lastError: null, sendMessage: (msg, cb) => bgListener(msg, {}, (r) => cb && cb(r)) },
+    storage: { local, onChanged: { addListener() {} } },
+  },
+});
+vm.runInContext(read('appbridge.js'), appCtx, { filename: 'appbridge.js' });
+const fromApp = async (data) => {
+  for (const fn of appListeners) fn({ source: appWindow, origin: 'https://gst.vjdesai.com', data });
+  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5));
+};
+const starts = [
+  ['__gstkPullLedgers (reco Pull)', { __gstkPullLedgers: { clientId: 'c1', period_month: '09/2026' } }, 'ledgers'],
+  ['__gstkPullReturn (Filing Status Portal)', { __gstkPullReturn: { clientId: 'c1', return_type: 'GSTR-3B', period_month: '09/2026' } }, 'returnpdf'],
+  ['__gstkPull2B (Import 2B)', { __gstkPull2B: { clientId: 'c1', period_month: '09/2026' } }, 'twob'],
+  ['__gstkPull2A (GSTR-2A)', { __gstkPull2A: { clientId: 'c1', period_month: '09/2026' } }, 'twoa'],
+  ['__gstkOpenFiling (filing page)', { __gstkOpenFiling: { clientId: 'c1', return_type: 'GSTR-3B', period_month: '09/2026' } }, 'filing'],
+  ['__gstkPullSection (Reports Hub, GSTR-9)', { __gstkPullSection: { clientId: 'c1', mode: 'cashledger', period_month: '09/2026' } }, 'cashledger'],
+  ['__gstkPullSectionAllClients (Company List)', { __gstkPullSectionAllClients: { mode: 'taxpayerprofile', clientIds: ['c1'] } }, 'taxpayerprofile'],
+];
+for (const [name, data, mode] of starts) {
+  const key = Object.keys(data)[0];
+  for (const actorId of [GITA, null]) {
+    await local.remove('gstk_active_job');
+    await fromApp({ [key]: { ...data[key], ...(actorId ? { actorId } : {}) } });
+    const { gstk_active_job: job } = await local.get('gstk_active_job');
+    calls.length = 0;
+    await bgCall('upsertFilingStatus', [{ client_id: 'c1', return_type: 'GSTR-3B', period_month: '09/2026', status: 'Filed' }]);
+    await bgCall('upsertReco', 'suspended_reco', 'c1', '09/2026', { opening_igst: 10 });
+    const writes = restCalls().filter((c) => c.method !== 'GET');
+    if (actorId) {
+      ok(!!job && job.mode === mode && job.actorId === GITA, `${name}: the job keeps the app user`);
+      ok(writes.length >= 2 && writes.every((c) => c.headers['x-gst-actor'] === GITA && c.headers['x-gst-source'] === 'extension'),
+        `${name}: its writes name the app user`);
+    } else {
+      ok(!!job && job.mode === mode && !job.actorId && writes.every((c) => !('x-gst-actor' in c.headers)), `${name}: no user sent, no one named`);
+    }
+  }
+}
+// The office agent passes the person who queued the job (portal_jobs.requested_by).
+await local.remove('gstk_active_job');
+await bgCall('startAgentJob', { clientId: 'c1', mode: 'notices_bundle', periods: ['09/2026'], runId: 'r1', jobId: 'j1', actorId: GITA });
+ok((await local.get('gstk_active_job')).gstk_active_job?.actorId === GITA, 'an agent job keeps the person who queued it');
+await local.remove('gstk_active_job');
+await bgCall('startAgentJob', { clientId: 'c1', mode: 'notices_bundle', periods: ['09/2026'], runId: 'r2', jobId: 'j2', actorId: null });
+ok(!(await local.get('gstk_active_job')).gstk_active_job?.actorId, 'a scheduled agent job names no one');
+await local.remove('gstk_active_job');
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed');
 process.exit(fail ? 1 : 0);

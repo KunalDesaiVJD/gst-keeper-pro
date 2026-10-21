@@ -37,13 +37,17 @@ every attached table and how it is read.
   `gstr9c_*` tables.
 - Every `builder_*` table (30), except the classification history below.
 
-**History** (update and delete only; a deleted row is kept whole), 11 tables:
+**Record** (insert, update, delete; the payload as a fingerprint; a deleted row
+kept whole), 3 tables: `gstr1_upload_versions`, `gstr1_upload_versions_quarantine`,
+`gstr3b_push_versions`. A GSTR-1 upload or a GSTR-3B push shows in the history
+when it is made, with who, the status and the summary.
+
+**History** (update and delete only; a deleted row is kept whole), 8 tables:
 `twob_versions`, `itc_versions`, `rcm_versions`, `gst_update_versions`,
-`gst_update_row_versions`, `gstr1_upload_versions`,
-`gstr1_upload_versions_quarantine`, `gstr3b_push_versions`,
-`client_scheme_history`, `builder_unit_classification_history`, `audit_log`.
-A new version is itself the record, so its insert is not logged again; anyone
-switching one off, editing a snapshot or deleting a version is.
+`gst_update_row_versions`, `client_scheme_history`,
+`builder_unit_classification_history`, `audit_log`. A new version is itself the
+record, so its insert is not logged again; anyone switching one off, editing a
+snapshot or deleting a version is.
 
 **Not logged again:** `annual_return_docs` (complete per-figure log in
 `annual_return_change_log`) and the Liberal switch (`client_liberal_log`). Both
@@ -69,7 +73,7 @@ portal job and sync tables, e-mail queues.
 | `op` | `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE` |
 | `actor_id`, `actor_name` | who; the name is resolved when the row is written, so it stays after the person is removed |
 | `actor_source` | `app`, `extension`, `agent`, `system`, `unknown` (section 3) |
-| `actor_basis` | `header` (the request named the person), `row` (taken from the row's own stamp), `none` |
+| `actor_basis` | `header` (the request named the person), `row` (a saved-by stamp this change wrote), `none` |
 | `changed` | what changed (below) |
 | `request_id`, `txid` | the request (page and a short id from the app) and the database transaction |
 
@@ -82,13 +86,23 @@ portal job and sync tables, e-mail queues.
 - **JSON columns**: small ones (the ITC Summary's `data`) as the leaves that
   changed, named by `srNo` / `label`, at most 100:
   `{"data": {"changes": [{"path": "section4A[5.1].igst", "old": 1000, "new": 1200}], "more": false}}`.
+  A part added or removed (a new row of a table) is listed leaf by leaf, from or
+  to empty. The walk goes 20 levels deep at most: no working nests deeper, and
+  below that a part that differs is one leaf kept as fingerprints (`"deep": true`),
+  so a crafted document cannot make the logger fail.
   Large ones (named per table: GSTR-1 `raw_json`, version snapshots, upload and
   push payloads, the portal's `raw` / `full_json` / `profile_json`), and any JSON
   over 64 KB, as a fingerprint: `md5`, `bytes`, key or item count, and on UPDATE
   the top-level keys that changed (`"keys_changed": ["hsn"]`). A deleted history
   row (a version) is kept whole.
-- `{"_error": "..."}`: the logger could not read the statement. The save still
-  went through; this row says it happened. Never seen in the tests.
+- `{"_error": "...", "_partial": true, ...}`: the logger could not read the
+  statement in full (a table's expression failed). The save still went through,
+  and each row is still logged with its key, client, month and person (each read
+  on its own, from the column of the same name when the table's expression fails)
+  and its changed columns (filled columns on INSERT / DELETE), small values as
+  they are, larger ones as fingerprints. Only if even that fails, one row for the
+  statement with `{"_error": "..."}` alone. Never seen in the tests outside the
+  forced-error cases.
 - `TRUNCATE`: `{"rows": n}`.
 
 ## 3. Who did it
@@ -104,8 +118,13 @@ cannot know the user by itself. Every request to `/rest/v1` carries:
 App: `src/lib/changeLogHeaders.ts`, the Supabase client's `global.fetch`
 (`src/integrations/supabase/client.ts`). Extension 0.17.0: `background.js`
 (`actorHeaders`), with the app user's id while a job the app started is running
-(the job's `actorId`); a scheduled sync names no one. Office agent:
-`agent/src/db.ts` (`x-gst-source: agent`).
+(the job's `actorId`): every start message the app sends carries `actorId:
+user.id` (reco Pull, Filing Status Portal and filing page, Import 2B pull,
+Reports Hub and GSTR-9 section pulls, Company List / Notices bulk pulls, GSTR-1
+upload, e-invoice pull, GSTR-3B push), `appbridge.js` passes it on, and every
+`start*` keeps it on the job. An office-agent job carries the person who queued
+it (`portal_jobs.requested_by`, `agent/src/jobStart.ts`); a scheduled sync names
+no one. Office agent: `agent/src/db.ts` (`x-gst-source: agent`).
 
 PostgREST puts request headers in `request.headers`; `gst_change_log_context()`
 reads them. **CORS, checked in Chromium on 21 Oct 2026 against the live
@@ -116,13 +135,17 @@ Function lists its own allowed headers (`authorization, x-client-info, apikey,
 content-type`) and the browser refused the same headers there, so the app adds
 them only to `/rest/v1` requests (never to `/functions/v1` or `/storage/v1`).
 
-Without the header the actor comes from the row's own stamp: on UPDATE the
-first stamp column that changed (`updated_by`, `posted_by`, `decided_by`,
-`revoked_by`, ...), else the row's `updated_by` / `created_by` / ...; on INSERT
-the first filled one. These rows are marked `actor_basis = 'row'` ("from the
-row's own stamp" on the page): a Liberal-mode edit that copies the old row
-keeps the previous author, so a row stamp can be wrong. A DELETE has no stamp
-of its own: without the header no person is recorded.
+Without the header a person is named only from a saved-by stamp the change
+itself wrote: on INSERT the row's first filled stamp (`updated_by`,
+`imported_by`, `posted_by`, `created_by`, ...); on UPDATE only a stamp column
+whose value this statement changed. A stamp left as the last editor set it is
+never used: a scheduled pull, an old extension or a service-key remark that
+follows Gita's save is not Gita's (`actor_id` NULL, `actor_basis = 'none'`, "no
+person recorded"). A stamp written again with the same value is not proof
+either. Rows named from a stamp are `actor_basis = 'row'` ("from the saved-by
+field this change wrote"); the extension or agent is then the doer, "Extension,
+saved as Gita", never "for Gita". A DELETE has no stamp of its own: without the
+header no person is recorded.
 
 `actor_source`: the header's word when it is `app`, `extension` or `agent`; else
 `system` for the service key (Edge Functions) and for a direct database session
@@ -157,14 +180,32 @@ recorded as Gita, from the app").
 ## 5. Reading it
 
 - View `gst_change_history` (security invoker): this log, `annual_return_change_log`
-  (a figure path as the field, `changed_by` as the name) and `client_liberal_log`,
-  one shape, newest first.
+  (a figure path as the field, `changed_by` as the name, matched to the one staff
+  member of that first name as `actor_id`) and `client_liberal_log`, one shape.
+  Newest first is `ORDER BY at DESC, seq DESC`: `seq` is this log's id (index
+  `gst_change_log_at_id`), the Annual Return log's id negated, a Liberal switch's
+  below both; the ranges never meet and stay within what a browser reads exactly.
+- Paging is keyset: the next page is `at <= last.at AND (at < last.at OR seq <
+  last.seq)`, so changes saved while the page is open never repeat or hide a row,
+  and every page query reads an index (test_70: 0.1 to 0.5 ms on 200,000 rows).
+  The person filter is `actor_id` alone (index `gst_change_log_actor_at`).
 - Page `/change-history` (`src/pages/ChangeHistoryPage.tsx`): filters client,
   month or financial year, page (a group of tables), person, date range (India
-  time); who, when, client, month, page, action and "field: old → new" per line;
-  a manual-entry allowance shows as "manual (allowed by X: reason)"; Load more
-  (200 at a time); Export Excel (one sheet row per changed field, up to 5,000
-  changes, needs Export data).
+  time). With no client, month, year or dates it shows the last 30 days. Who,
+  when, client, month, page, action and "field: old → new" per line; an added
+  or removed JSON working (the ITC Summary's first save) reads as its figures,
+  cell by cell ("Figures: Table 4A, 5.1, IGST: 1,000"; empty and zero ones left
+  out). A manual entry shows the badge "manual (allowed by X: reason)": on the
+  allowance's own rows (given, used, taken back) and on the working that points
+  at it (`manual_allowance_id`, `opening_allowance_id`; "manual" alone for
+  `filed_source` / `opening_source` = manual). Load more (200 at a time).
+  Export Excel: pages of 500 (the API sends at most 1,000 rows a request), one
+  sheet row per changed field, text never cut, up to 5,000 changes, an "About"
+  sheet with the filters and whether the file is complete; needs Export data.
+- A page's rows: its tables, plus for GSTR-1 and GSTR-3B the Filing Status rows
+  of their returns (`row_label` is the return: the Nil switch, Pushed, Filed),
+  plus the manual allowances for its scope (`filing:*`, `filing:GSTR-3B*`,
+  `reco:suspended`, `reco:receivable`).
 - **History** on ITC Summary, Suspended Reco, GST Receivable Reco, Import 2B,
   2B Reconciliation, Filing Status (the month, all clients), GSTR-1 and GSTR-3B:
   opens the page filtered to that client and month
@@ -181,14 +222,15 @@ Local PostgreSQL 16, as the public key with the app's header (test_90):
 
 | | without the logger | with it |
 |---|---|---|
-| Import 2B insert, 1,000 rows | 5–8 ms | 87–118 ms |
-| ledger update, 1,000 rows | 6–10 ms | 108–152 ms |
-| ledger delete, 1,000 rows | | 45–81 ms |
+| Import 2B insert, 1,000 rows | 5–9 ms | 86–145 ms |
+| ledger update, 1,000 rows | 6–10 ms | 109–192 ms |
+| ledger delete, 1,000 rows | | 50–94 ms |
 
-(five runs of `supabase/tests/change_log/test_90_timing.sql`; the test fails above 1 s)
+(runs of `supabase/tests/change_log/test_90_timing.sql` with the four indexes;
+the test fails above 1 s)
 
 A log row is about 960 bytes for an Import 2B insert, 720 for a ledger delete,
-460 for a ledger update (heap only; the three indexes add about 150 bytes).
+460 for a ledger update (heap only; the four indexes add about 200 bytes).
 
 Volume, from the live write counters (21 Oct 2026, 167 days since the last
 reset) over the attached tables: about 22,300 inserts, 13,800 updates and 7,600
@@ -207,8 +249,10 @@ than logging less.
   row names the client, in the same transaction (`txid`).
 - `rcm_masters` and `expense_head_mappings` have no client.
 - A tab opened before the release, and an extension before 0.17.0, send no
-  header: their writes are logged with the row's stamp, or no person.
-- The extension names a person only for jobs the app started (`actorId`).
+  header: their writes are logged with a stamp they wrote, or no person. Raise
+  `MIN_EXTENSION_VERSION` to 0.17.0 once every office Chrome runs it.
+- The extension names a person only for jobs the app started or someone queued
+  (`actorId`); scheduled syncs and the popup's own pulls name no one.
 - Server-side bulk work (backfills in a migration, pg_cron) is logged as
   `system`, row by row.
 
@@ -218,7 +262,7 @@ In a new migration: `SELECT public.gst_change_log_attach('my_table', ...)`.
 Arguments: `p_client` (SQL on the row `r`; default `r.client_id`), `p_month`
 (default `r.period_month`, any spelling), `p_fy`, `p_summary` (JSON columns kept
 as fingerprints), `p_skip` (columns never compared), `p_only` (log only these
-columns), `p_mode` (`full` or `history`), `p_label` (the row's name; by default
+columns), `p_mode` (`full`, `history` or `record`), `p_label` (the row's name; by default
 the first two of the usual name columns). It checks the expressions and column
 names against the table, so a mistake fails the migration, never a save. Add
 the table to a page in `HISTORY_PAGES` (`src/lib/changeHistory.ts`).

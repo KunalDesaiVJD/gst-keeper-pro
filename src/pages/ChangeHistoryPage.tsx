@@ -20,9 +20,10 @@ import {
   WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_TR,
 } from '@/components/workspace/theme';
 import {
-  HISTORY_PAGES, describeChange, exportRows, filtersFromSearch, filtersToSearch, formatStamp, loadChangeHistory,
-  monthLabel, pageOfTable, sourceLabel, tableLabel, whoLabel, whoNote,
-  type HistoryFilters, type HistoryRow, type HistorySource,
+  DEFAULT_DAYS, HISTORY_PAGES, allowanceIdsOf, describeChange, exportRows, filtersFromSearch, filtersToSearch, formatStamp,
+  loadAllChangeHistory, loadAllowances, loadChangeHistory, monthLabel, pageOfTable, sourceLabel, tableLabel, whoLabel, whoNote,
+  withDefaultRange,
+  type AllowanceSource, type HistoryCursor, type HistoryFilters, type HistoryRow, type HistorySource,
 } from '@/lib/changeHistory';
 
 const ALL = '__all__';
@@ -51,6 +52,7 @@ function fyOptions() {
 }
 
 const source = supabase as unknown as HistorySource;
+const allowanceSource = supabase as unknown as AllowanceSource;
 
 const ChangeHistoryPage: React.FC = () => {
   const { canViewChangeHistory, canExportData } = useAuth();
@@ -100,39 +102,60 @@ const ChangeHistoryPage: React.FC = () => {
     const m = new Map((clientsQ.data ?? []).map((c) => [c.id, c.name]));
     return (id: string | null) => (id ? m.get(id) ?? '(deleted client)' : '');
   }, [clientsQ.data]);
-  const actorName = filters.actorId ? names[filters.actorId] ?? null : null;
-  const queryFilters: HistoryFilters = { ...filters, actorName };
+  // Nothing narrowing the history (no client, month, year or dates): the last 30 days.
+  const effective = useMemo(() => withDefaultRange(filters), [filters]);
+  const { defaulted, ...queryFilters } = effective;
 
   const historyQ = useInfiniteQuery({
     queryKey: ['change-history', queryFilters],
     enabled: allowed,
-    initialPageParam: 0,
+    initialPageParam: null as HistoryCursor | null,
     queryFn: ({ pageParam }) => loadChangeHistory(source, queryFilters, pageParam),
-    getNextPageParam: (last, all) => (last.hasMore ? all.length : undefined),
+    getNextPageParam: (last) => last.next ?? undefined,
   });
   const rows: HistoryRow[] = useMemo(() => (historyQ.data?.pages ?? []).flatMap((p) => p.rows), [historyQ.data]);
+  // The allowances these rows were entered under, for the "manual (allowed by X: reason)" badge.
+  const allowanceIds = useMemo(() => allowanceIdsOf(rows), [rows]);
+  const allowancesQ = useQuery({
+    queryKey: ['change-history-allowances', allowanceIds],
+    enabled: allowed && allowanceIds.length > 0,
+    queryFn: () => loadAllowances(allowanceSource, allowanceIds),
+  });
+  const allowances = allowancesQ.data ?? {};
 
   useEffect(() => { setExpanded({}); }, [params]);
 
   const handleExport = async () => {
     setExporting(true);
     try {
-      const all: HistoryRow[] = [];
-      for (let page = 0; all.length < EXPORT_LIMIT; page++) {
-        const { rows: got, hasMore } = await loadChangeHistory(source, queryFilters, page, 1000);
-        all.push(...got);
-        if (!hasMore) break;
-      }
+      // Pages of 500, each starting below the last row read, so a busy month is never cut at the API's 1,000-row reply.
+      const { rows: all, capped } = await loadAllChangeHistory(source, queryFilters, EXPORT_LIMIT);
       if (!all.length) { toast.info('Nothing to export for these filters.'); return; }
-      const sheetRows = exportRows(all.slice(0, EXPORT_LIMIT), { clientName, names });
+      const exportAllowances = await loadAllowances(allowanceSource, allowanceIdsOf(all));
+      const sheetRows = exportRows(all, { clientName, names, allowances: exportAllowances });
       const ws = XLSX.utils.json_to_sheet(sheetRows);
       ws['!cols'] = [18, 22, 22, 26, 10, 18, 22, 26, 14, 30, 24, 24, 30, 24].map((wch) => ({ wch }));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Change history');
-      const parts = ['Change history', filters.clientId ? clientName(filters.clientId) : '', filters.month ? monthLabel(filters.month) : filters.financialYear ?? '']
+      const about = [
+        ['Change history', ''],
+        ['Exported on', formatStamp(new Date().toISOString())],
+        ['Client', queryFilters.clientId ? clientName(queryFilters.clientId) : 'All clients'],
+        ['Month', queryFilters.month ? monthLabel(queryFilters.month) : queryFilters.financialYear ? `FY ${queryFilters.financialYear}` : 'Any'],
+        ['Page', HISTORY_PAGES.find((p) => p.key === queryFilters.page)?.label ?? 'All pages'],
+        ['Person', queryFilters.actorId ? names[queryFilters.actorId] ?? queryFilters.actorId : 'Anyone'],
+        ['From', queryFilters.from ?? ''],
+        ['To', queryFilters.to ?? ''],
+        ['Changes', all.length.toLocaleString('en-IN')],
+        ['Complete', capped ? `No. Only the newest ${EXPORT_LIMIT.toLocaleString('en-IN')} changes are in this file. Narrow the filters for the rest.` : 'Yes'],
+      ];
+      const aboutWs = XLSX.utils.aoa_to_sheet(about);
+      aboutWs['!cols'] = [{ wch: 14 }, { wch: 80 }];
+      XLSX.utils.book_append_sheet(wb, aboutWs, 'About');
+      const parts = ['Change history', queryFilters.clientId ? clientName(queryFilters.clientId) : '', queryFilters.month ? monthLabel(queryFilters.month) : queryFilters.financialYear ?? '']
         .filter(Boolean).join(' ').replace(/[\\/:*?"<>|]/g, '-');
       XLSX.writeFile(wb, `${parts}.xlsx`);
-      if (all.length >= EXPORT_LIMIT) toast.info(`The first ${EXPORT_LIMIT.toLocaleString('en-IN')} changes were exported. Narrow the filters for the rest.`);
+      if (capped) toast.info(`Only the newest ${EXPORT_LIMIT.toLocaleString('en-IN')} changes were exported. Narrow the filters for the rest.`);
     } catch (e) {
       toast.error('Export failed: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
@@ -186,6 +209,12 @@ const ChangeHistoryPage: React.FC = () => {
           {whoami.actor_id
             ? <>Your changes are recorded as <span className="font-medium text-foreground">{whoami.actor_name ?? whoami.actor_id.slice(0, 8)}</span>, from the {sourceLabel(whoami.source).toLowerCase()}.</>
             : <>Your changes reach the database without your name. Sign out and in again.</>}
+        </p>
+      )}
+
+      {defaulted && (
+        <p className="text-[11px] text-muted-foreground">
+          Showing the last {DEFAULT_DAYS} days. Pick a client, a month or dates to see more.
         </p>
       )}
 
@@ -246,7 +275,7 @@ const ChangeHistoryPage: React.FC = () => {
             </label>
             <label className="w-36 min-w-0 space-y-0.5">
               <span className={WS_FILTER_LABEL}>From</span>
-              <Input type="date" className={WS_CONTROL} value={filters.from ?? ''} onChange={(e) => setFilters({ from: e.target.value || null })} />
+              <Input type="date" className={WS_CONTROL} value={filters.from ?? (defaulted ? queryFilters.from ?? '' : '')} onChange={(e) => setFilters({ from: e.target.value || null })} />
             </label>
             <label className="w-36 min-w-0 space-y-0.5">
               <span className={WS_FILTER_LABEL}>To</span>
@@ -290,11 +319,10 @@ const ChangeHistoryPage: React.FC = () => {
                 description={hasFilters ? 'Nothing matches these filters.' : 'Changes appear here as soon as anyone saves.'} />
             )}
             {rows.map((r) => {
-              const view = describeChange(r, names);
+              const view = describeChange(r, names, allowances);
               const open = !!expanded[r.key];
               const lines = open ? view.lines : view.lines.slice(0, LINES_SHOWN);
               const note = whoNote(r);
-              const isAllowance = r.table_name === 'manual_source_allowances' && !!view.note && view.note.startsWith('manual (');
               const pageLabel = pageOfTable(r.table_name)?.label ?? tableLabel(r.table_name);
               const sub = [tableLabel(r.table_name) !== pageLabel ? tableLabel(r.table_name) : null, r.row_label].filter(Boolean).join(' · ');
               return (
@@ -330,9 +358,8 @@ const ChangeHistoryPage: React.FC = () => {
                         {open ? 'Show fewer' : `Show all ${view.lines.length}`}
                       </button>
                     )}
-                    {view.note && (isAllowance
-                      ? <Badge variant="warning" className="mt-1 whitespace-normal text-[11px] font-normal">{view.note}</Badge>
-                      : <p className="mt-0.5 text-[11px] text-muted-foreground">{view.note}</p>)}
+                    {view.badge && <Badge variant="warning" className="mt-1 whitespace-normal text-[11px] font-normal">{view.badge}</Badge>}
+                    {view.note && <p className="mt-0.5 text-[11px] text-muted-foreground">{view.note}</p>}
                   </td>
                 </tr>
               );
