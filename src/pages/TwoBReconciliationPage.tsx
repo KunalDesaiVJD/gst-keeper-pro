@@ -1385,7 +1385,7 @@ const TwoBReconciliationPage: React.FC = () => {
         : ''}${restored.linked
         ? ` ${restored.linked} ${restored.linked === 1 ? 'entry is' : 'entries are'} linked again to the Import 2B ${restored.linked === 1 ? 'row' : 'rows'} that post ${restored.linked === 1 ? 'it' : 'them'}: a change there changes ${restored.linked === 1 ? 'it' : 'them'}, never adds a second one; Import 2B says when the ledger is not in step with it.`
         : ''}${restored.reclaimsBack.length
-        ? ` Restored in Awaiting reclaim, without the version's reclaim (a reclaim needs its 2B document in this month, Reclaim and evidencing no other reclaim): ${restored.reclaimsBack.slice(0, 5).join('; ')}${restored.reclaimsBack.length > 5 ? `; and ${restored.reclaimsBack.length - 5} more` : ''}.`
+        ? ` Restored in Awaiting reclaim, without the version's reclaim (a reclaim comes back only with its 2B document known for certain, in this month, Reclaim and evidencing no other reclaim; reclaim these again on Import 2B): ${restored.reclaimsBack.slice(0, 5).join('; ')}${restored.reclaimsBack.length > 5 ? `; and ${restored.reclaimsBack.length - 5} more` : ''}.`
         : ''}`, { duration: restored.reclaimsBack.length ? 20000 : 10000 });
       setShowVersionHistory(false);
     } catch (error: any) {

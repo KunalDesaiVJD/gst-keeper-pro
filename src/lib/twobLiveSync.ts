@@ -95,10 +95,11 @@ export function changeShown(change: LedgerChange, view: { clientId: string; peri
  * and reloaded the page a second time, with a toast). And a row's earlier
  * changes in the burst are shown when its last one is (verification round
  * 8): 2B Reconciliation's Restore deletes the month's own entries and adds
- * them back with their ids, then links some (an insert, then an update), so
- * its delete of a row the reloaded page holds, or its insert before the
- * link, read as someone else's change, and the superadmin was told after
- * their own Restore that the ledger "was changed elsewhere".
+ * them back with their ids (round 8 then linked some by an update; since
+ * round 9 the insert carries the link), so its delete of a row the reloaded
+ * page holds, or its insert before the link, read as someone else's change,
+ * and the superadmin was told after their own Restore that the ledger "was
+ * changed elsewhere".
  */
 export function changesShown(changes: readonly LedgerChange[], view: { clientId: string; period: string },
   rows: ReadonlyMap<string, object>): boolean {

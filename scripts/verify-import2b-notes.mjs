@@ -853,17 +853,37 @@ await run('no post', async () => {
   // Round 7 (22 Oct 2026): Restore of a version that names no document for
   // its reclaim, out of Reclaim against the reclaim the page showed, one lock
   // order for Restore and the saves, and the RESTORE version as written.
-  check('round 7 F1 / round 8 H: Restore holds a reclaim whose version names no document to the month\'s original invoice or debit note it is (the same document, else, but for a Liberal client, by its amounts within the Link & Reclaim dialog\'s Rs. 2): linked when Reclaim and evidencing nothing, otherwise Awaiting reclaim, named; a Strict client\'s with no document found comes back in Awaiting reclaim, named; only a Liberal client\'s comes back as typed',
-    /md AS MATERIALIZED \(\s+SELECT d\.id, d\.itc_action, concat_ws\(' ', NULLIF\(btrim\(COALESCE\(d\.supplier_name, ''\)\), ''\), d\.supplier_invoice_number\) AS label,/.test(sql)
-      && /public\.twob_doc_ident\(d\.supplier_gstin, d\.supplier_name, d\.supplier_invoice_number, d\.date\) AS ident,\s+d\.itc_action = 'RECLAIM' AND NOT EXISTS \(SELECT 1 FROM public\.bills_not_in_2b z WHERE z\.reclaimed_via_doc_id = d\.id\) AS free/.test(sql)
-      && /AND NOT COALESCE\(d\.is_amendment, false\) AND COALESCE\(d\.doc_type, 'INVOICE'\) IN \('INVOICE', 'DEBIT_NOTE'\)\s+AND EXISTS \(SELECT 1 FROM e1 WHERE e1\.lookup\)\),/.test(sql)
-      && /SELECT e1\.\*, COALESCE\(e1\.named, fi\.id, fa\.id\) AS via, fa\.label AS by_amounts/.test(sql)
-      && /SELECT md\.id FROM md WHERE e1\.lookup AND md\.ident = e1\.ident\s+ORDER BY md\.free DESC, md\.id LIMIT 1\) fi ON true/.test(sql)
-      && /WHERE e1\.lookup AND fi\.id IS NULL AND NOT v_liberal\s+AND abs\(md\.tv - e1\.etv\) <= 2 AND abs\(md\.ig - e1\.eig\) <= 2 AND abs\(md\.cg - e1\.ecg\) <= 2 AND abs\(md\.sg - e1\.esg\) <= 2\s+ORDER BY md\.free DESC, \(md\.gstin <> '' AND md\.gstin = e1\.egstin\) DESC,/.test(sql)
-      && /OR \(k\.via IS NULL AND NOT v_liberal\)\), false\) AS reclaim_back,/.test(sql)
-      && /k\.via_rn = 1 AND k\.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k\.via_kept IS NULL/.test(sql)
-      && /SELECT COALESCE\(c\.liberal_2b_reconciliation, false\) INTO v_liberal FROM public\.clients c WHERE c\.id = p_client_id;/.test(sql)
-      && sql.includes("CASE WHEN kk.via IS NULL THEN 'its 2B document cannot be found in this month"));
+  // Round 9 (22 Oct 2026, the lead's decision: simplify, never guess): no
+  // document is looked for by its amounts; a reclaim comes back reclaimed
+  // only with its document known exactly, else Awaiting reclaim, named.
+  const restoreFn = (() => {
+    const at = sql.indexOf('CREATE OR REPLACE FUNCTION public.twob_restore_version_linked(');
+    return at < 0 ? '' : sql.slice(at, sql.indexOf('\n$$;', at));
+  })();
+  check('round 7 F1 / round 9: Restore brings a reclaim back reclaimed only with its 2B document known exactly (named by the version, else by the month\'s entry of that id, else the month\'s only original invoice or debit note that is the same document; named ones first), on the usual terms; never by its amounts; otherwise Awaiting reclaim, named, for a Strict and a Liberal client alike while the month holds any 2B document; only a Liberal client\'s in a month with no 2B document comes back as typed',
+    restoreFn.length > 0
+      && /COALESCE\(public\.twob__try_uuid\(x\.x ->> 'reclaimed_via_doc_id'\),\s+public\.twob__try_uuid\(v_cur2b -> \(x\.x ->> 'id'\) ->> 'via'\)\) AS named,/.test(restoreFn)
+      && /md AS MATERIALIZED \(\s+SELECT public\.twob_doc_ident\(d\.supplier_gstin, d\.supplier_name, d\.supplier_invoice_number, d\.date\) AS ident,\s+\(array_agg\(d\.id\)\)\[1\] AS id, count\(\*\) AS n/.test(restoreFn)
+      && /AND NOT COALESCE\(d\.is_amendment, false\) AND COALESCE\(d\.doc_type, 'INVOICE'\) IN \('INVOICE', 'DEBIT_NOTE'\)\s+AND EXISTS \(SELECT 1 FROM e1 WHERE e1\.ident IS NOT NULL\)\s+GROUP BY 1\),/.test(restoreFn)
+      && /COALESCE\(e1\.named, CASE WHEN md\.n = 1 THEN md\.id END\) AS via\s+FROM e1 LEFT JOIN md ON md\.ident = e1\.ident\),/.test(restoreFn)
+      && /row_number\(\) OVER \(PARTITION BY e\.via, e\.reclaimed ORDER BY e\.by_name DESC, e\.o\) AS via_rn,/.test(restoreFn)
+      && /first_value\(e\.x\) OVER \(PARTITION BY e\.via, e\.reclaimed ORDER BY e\.by_name DESC, e\.o\) AS via_first,/.test(restoreFn)
+      && /k\.via_rn = 1 AND k\.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k\.via_kept IS NULL/.test(restoreFn)
+      && /OR \(k\.via IS NULL AND \(v_has_2b OR NOT v_liberal\)\)\), false\) AS reclaim_back/.test(restoreFn)
+      && /v_has_2b := EXISTS \(SELECT 1 FROM public\.twob_import_docs d WHERE d\.client_id = p_client_id AND d\.period_month = p_period\);/.test(restoreFn)
+      && /SELECT COALESCE\(c\.liberal_2b_reconciliation, false\) INTO v_liberal FROM public\.clients c WHERE c\.id = p_client_id;/.test(restoreFn)
+      && (restoreFn.match(/; reclaim it again on Import 2B'/g) || []).length === 3
+      && !/abs\(md\.|by_amounts|etv|found by its amounts\)/.test(restoreFn.replace(/--[^\n]*/g, '')));
+  check('round 9: Restore links an entry to its books row / 2B document as it adds it (never an update of the entries just added, planned as a nested loop and recorded twice by the change log), the two sides paired by grouping and the rows already holding an entry read once, so a 1,000 + 1,000 Restore stays well inside an anon request\'s 3 s with the change log',
+    /GROUP BY r\.k, r\.rn\),/.test(restoreFn) && /GROUP BY r\.kd, r\.rn\),/.test(restoreFn)
+      && /AND b\.id NOT IN \(SELECT z\.source_book_id FROM public\.bills_not_in_2b z\s+WHERE z\.client_id = p_client_id AND z\.source_book_id IS NOT NULL\)\s+AND b\.id NOT IN \(SELECT kk\.src FROM kk WHERE kk\.src_ok AND kk\.src_rn = 1\)\),/.test(restoreFn)
+      && /AND d\.id NOT IN \(SELECT z\.source_doc_id FROM public\.bills_not_in_books z\s+WHERE z\.client_id = p_client_id AND z\.source_doc_id IS NOT NULL\)\s+AND d\.id NOT IN \(SELECT k\.src FROM k WHERE k\.src_ok AND k\.src_rn = 1\)\),/.test(restoreFn)
+      && /CASE WHEN kk\.src_ok AND kk\.src_rn = 1 THEN kk\.src ELSE rp\.bid END,/.test(restoreFn)
+      && /CASE WHEN k\.src_ok AND k\.src_rn = 1 THEN k\.src ELSE rp\.did END,/.test(restoreFn)
+      && /FROM kk LEFT JOIN rp ON rp\.o = kk\.o AND rp\.bid IS NOT NULL/.test(restoreFn)
+      && /FROM k LEFT JOIN rp ON rp\.o = k\.o AND rp\.did IS NOT NULL/.test(restoreFn)
+      && !/UPDATE public\.bills_not_in_2b t SET source_book_id|UPDATE public\.bills_not_in_books t SET source_doc_id/.test(restoreFn)
+      && /CASE WHEN e\.via IS NOT NULL\s+THEN \(SELECT CASE WHEN d\.client_id = p_client_id AND d\.period_month = p_period THEN d\.itc_action END\s+FROM public\.twob_import_docs d WHERE d\.id = e\.via\) END AS via_now,/.test(restoreFn));
   check('round 7 F2: out of Reclaim only while the reclaim the document evidences is the one the page shows (loaded with the ledger side, sent with the Save, checked with the entries held)',
     /CREATE OR REPLACE FUNCTION public\.twob_import2b_unreclaim\(\s+p_actor_id uuid, p_client_id uuid, p_period text, p_doc_id uuid, p_action text, p_expect_entry uuid\)/.test(sql)
       && sql.includes('DROP FUNCTION IF EXISTS public.twob_import2b_unreclaim(uuid, uuid, text, uuid, text);')

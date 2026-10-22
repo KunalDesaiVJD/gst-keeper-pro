@@ -106,13 +106,14 @@ which release it first, take it out; one named while not Reclaim, recorded
 before, can only become Reclaim); an entry names its reclaiming document only
 while it holds the reclaim (`twob__reclaim_via_tidy`); Restore brings a
 version's reclaim back only on those terms, else the entry comes back
-Awaiting reclaim, named (`reclaims_back`), a reclaim the version holds
-without naming its document (every version of before) held to the month's
-original invoice or debit note it is (the same document by `twob_doc_ident`,
-else, but for a Liberal client, by its amounts within the Link & Reclaim
-dialog's Rs. 2: a books entry without GSTIN or numbered otherwise) and
-linked to it; a Strict client's with no document found (Delete 2B since)
-comes back Awaiting reclaim, named; only a Liberal client's comes back as
+Awaiting reclaim, named (`reclaims_back`); a reclaim comes back reclaimed
+only with its document known exactly, never by its amounts (round 9): the
+one the version names, else the one the month's entry of that id names,
+else the month's only original invoice or debit note that is the same
+document (`twob_doc_ident`), named ones first, and is linked to it;
+otherwise, whenever the month holds any 2B document, Strict and Liberal
+alike, it comes back Awaiting reclaim, named ("reclaim it again on Import
+2B"); only a Liberal client's in a month with no 2B document comes back as
 typed; Restore takes the month's Reclaim documents before the client's lock
 (the saves' order: documents, client, entries), then the month's books rows
 and documents without waiting (a delete of one running stops it with a plain

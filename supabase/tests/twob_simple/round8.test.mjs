@@ -5,8 +5,9 @@
 // naming the user):
 //   L4  2B Reconciliation hears its own Restore live: the Restore
 //       (restoreVersion, twob_restore_version_linked) deletes the month's own
-//       entries and adds them back with their ids, and links an entry it adds
-//       to its Import 2B row (an insert, then an update). The page keeps what
+//       entries and adds them back with their ids, linking an entry it adds
+//       to its Import 2B row (round 8: an insert, then an update; since round
+//       9 the insert carries the link). The page keeps what
 //       it hears while the Restore runs and looks at it again against the
 //       month as it reloads it (TwoBReconciliationPage: savingRef / endSave,
 //       as a Save does); that burst is the page's own and is shown already
@@ -124,7 +125,8 @@ await run('L4', async () => {
   // A version of the month as the Save of this release records it (each
   // entry with its id, its reclaim's document and its Import 2B link), and
   // R-1's entry as a version of before holds it under another id (no link):
-  // the Restore adds it, then links it to R-1 (an insert, then an update).
+  // the Restore adds it linked to R-1 (round 9: in the insert; round 8 added
+  // it, then linked it by an update).
   const v = JSON.parse(psql(`SELECT jsonb_agg(to_jsonb(t) - 'adopted_from' ORDER BY t.id) FROM public.bills_not_in_2b t WHERE t.client_id = '${C}'`));
   const r1 = v.find((r) => r.supplier_invoice_number === 'R-1');
   const version = [...v.filter((r) => r !== r1), { ...r1, id: id(31), source_book_id: null }];
@@ -134,9 +136,10 @@ await run('L4', async () => {
   const res = await (async () => { globalThis.__actor = SUPER; return A.restoreVersion(SUPER, C, '10/2026', version, []); })();
   const burst = heard();
   const rows = loaded();
-  check('L4: the Restore writes: the entries deleted, added back with their ids, one linked after it is added',
+  check('L4: the Restore writes: the entries deleted, added back with their ids, one linked as it is added (no second write of it)',
     res && burst.filter((c) => c.eventType === 'DELETE').length === 2 && burst.filter((c) => c.eventType === 'INSERT').length === 2
-      && burst.some((c) => c.eventType === 'UPDATE' && c.new.id === id(31) && c.new.source_book_id === id(21))
+      && burst.some((c) => c.eventType === 'INSERT' && c.new.id === id(31) && c.new.source_book_id === id(21))
+      && !burst.some((c) => c.eventType === 'UPDATE')
       && rows.has(id(1)) && rows.has(id(31)) && rows.get(id(31)).source_book_id === id(21), JSON.stringify(burst.map((c) => [c.eventType, c.new?.id ?? c.old?.id])));
   check('L4: what the page heard of its own Restore, looked at against the month as it reloads it, is shown already: no "changed elsewhere", no second reload (round 7: news)',
     A.changesShown(burst, view, rows) === true);

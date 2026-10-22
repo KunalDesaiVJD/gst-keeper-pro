@@ -1987,12 +1987,13 @@ changes are small.
   entry was reclaimed, after the document had been taken out of Reclaim,
   brought the reclaim back against a Matched document: its ITC counted in
   5.1 and again in 5.4, and Pending items no longer listed the entry, so
-  only another Restore undid it. A reclaim the version holds without naming
-  a document is held to the same terms against the month's original invoice
-  or debit note it is since round 7, found by its amounts too since round 8
-  (below); a Strict client's with no document found comes back in Awaiting
-  reclaim, named; only a Liberal client's comes back as the version holds
-  it.
+  only another Restore undid it. Since round 9 (below) a reclaim comes back
+  reclaimed only with its document known exactly (named by the version, by
+  the month's entry of that id, or the month's only document that is the
+  same document, since round 7), never by its amounts; otherwise, whenever
+  the month holds any 2B document, it comes back in Awaiting reclaim,
+  named, for a Strict and a Liberal client alike; only a Liberal client's
+  in a month holding no 2B document comes back as the version holds it.
 - **One page's saves of one books row run one at a time** (`queueBookSave`,
   `src/lib/import2bGuardedSaves.ts`). Two cells left in quick succession
   (Tab past the SGST that CGST fills, or typing in a second cell before the
@@ -2025,10 +2026,10 @@ from the apply; the app is deployed right after it).
   version's first one), the reclaim comes back linked to it
   (`reclaimed_via_doc_id`), so `twob__reclaim_evidence_guard` holds the
   document Reclaim from then on; otherwise the entry comes back in Awaiting
-  reclaim and the Restore names it with why, as in round 6. (Round 8,
-  below: a document that is not the same document by `twob_doc_ident` is
-  found by its amounts, and a Strict client's reclaim with no document found
-  comes back in Awaiting reclaim; round 7 brought both back as typed.)
+  reclaim and the Restore names it with why, as in round 6. (Round 7
+  brought a reclaim with no such document back as typed; round 8 looked for
+  one by its amounts; round 9 brings it back in Awaiting reclaim, named,
+  below.)
 - **Out of Reclaim only for the reclaim the page shows.** Import 2B reads,
   with its ledger side, the reclaim each 2B document evidences
   (`loadReclaimEvidence`), shows it on a Reclaim document's row ("Evidence
@@ -2071,6 +2072,9 @@ before out of Reclaim, deletes during a Restore** (verification of 22 Oct
 2026).
 
 - **A Strict client's reclaim never comes back without its document.**
+  (The amount lookup described here was taken out in round 9, below: it
+  moved reclaims between entries. What it was for still holds: such a
+  reclaim comes back in Awaiting reclaim, named.)
   Import 2B's Link & Reclaim pairs an entry with a 2B document by their
   amounts alone (each head within Rs. 2), so a books entry and its document
   are often not the same document by `twob_doc_ident`: bank charges booked
@@ -2121,7 +2125,8 @@ before out of Reclaim, deletes during a Restore** (verification of 22 Oct
   treatment or figures is not held up by it.
 - **2B Reconciliation hears its own Restore as its own.** The Restore
   deletes the month's own entries and adds them back with their ids, then
-  links some (an insert, then an update); the page heard that as someone
+  links some (an insert, then an update; since round 9 the insert carries
+  the link); the page heard that as someone
   else's change and told the superadmin, after their own Restore, that the
   ledger "was changed elsewhere". It now keeps what it hears while the
   Restore runs and looks at it again against the month it reloads, as a
@@ -2138,6 +2143,60 @@ before out of Reclaim, deletes during a Restore** (verification of 22 Oct
   failed about half the time. The second preview round 4 removed is caught
   by the count of previews made in the save, not by the time; an anon
   request has 3 s on Supabase.
+
+**Round 9: Restore never guesses a reclaim's document** (the lead's
+decision of 22 Oct 2026 on the eighth verification: simplify, never guess).
+
+- **A reclaim comes back reclaimed only with its 2B document known
+  exactly.** In this order: (1) the document the version names
+  (`reclaimedViaDocId`, in every version written from this release); (2)
+  the one the month's entry of that id names now; (3) the month's only
+  original invoice or debit note that is the same document
+  (`twob_doc_ident`: GSTIN or supplier, number and date). A document named
+  by (1) or (2) goes to its own reclaim first, before an entry found as the
+  same document. Then on the usual terms: while that document is Reclaim and
+  evidences no other reclaim, the reclaim comes back linked to it.
+- **Otherwise it comes back in Awaiting reclaim, named, for a Strict and a
+  Liberal client alike**, whenever the month holds any 2B document ("its 2B
+  document cannot be found: this version does not name it, and no 2B
+  document of this month has its GSTIN or supplier, number and date;
+  reclaim it again on Import 2B"; "... cannot be told: ... 2 2B documents
+  of this month have ..." when two are the same document). Only a Liberal
+  client's reclaim in a month holding no 2B document at all (typed on 2B
+  Reconciliation) comes back as typed; a Strict client's comes back in
+  Awaiting reclaim then too (round 8: after Delete 2B, the re-import's
+  document counted in 5.1 beside it).
+- **Why no amounts.** Round 8 looked for the document by its amounts, one
+  row at a time, and so: moved reclaims between entries of equal amounts
+  (two rents of Rs. 50,000, each reclaimed with its own invoice, the books
+  numbering them R-SEP and R-OCT: after Clear Data, a Restore of a version
+  of before linked R-SEP to the September rent and named R-OCT as
+  "evidencing the reclaim of R-SEP", the October rent left Reclaim and
+  counted nowhere, 5.4 halved; with the September rent taken out of Reclaim
+  first, R-SEP took the October rent and R-OCT lost its reclaim, undoing the
+  user's decision); linked a reclaim to another supplier's free Reclaim
+  document while its own was Matched (one invoice in 5.1 and in 5.4, the
+  other supplier's document held as its evidence); and left a Liberal
+  client's Import 2B reclaim (paired by its amounts) as typed beside its
+  document's count in 5.1. None of these can happen now (`test_9o`).
+- **Reclaim it again on Import 2B.** The Restore's toast names each entry
+  that came back in Awaiting reclaim. Its document may still be Reclaim and
+  evidence nothing (after Clear Data): it counts nowhere until the reclaim
+  is recorded again: take the document out of Reclaim (Save), then Link &
+  Reclaim the entry from Pending items. A version written from this release
+  names each reclaim's document, so its Restore brings every reclaim back
+  with its own document.
+- **Timing.** A 1,000 + 1,000 Restore of a version of before took 2.2 to
+  2.7 s with the change log applied (an anon request has 3 s): the entries
+  just added were linked to their books rows (2B documents) by an update
+  the planner took for one row and joined by a nested loop, sorting the
+  other side once per entry, and the change log recorded each entry twice.
+  Now each entry is linked as it is added (the two sides numbered in one
+  list and paired by grouping; the rows already holding an entry read once,
+  as the client's links; a reclaim's document read by its id): about 0.6
+  to 0.8 s with the change log, its flush at commit included (`test_9o`
+  times it, the median of three under 1.5 s), and the Change history shows
+  one insert per restored entry.
 
 **The e-mail pop-up's reasons** (round 3, §11). A Not in Books document of
 the month not on the ledger is named with its own reason: no date or
@@ -2264,11 +2323,16 @@ Restore left the month; each check recorded as in round 5),
 4) and `round8.test.mjs` (the eighth round: a Strict client's reclaim
 restored from a version that names no document when the books entry has no
 GSTIN, is numbered otherwise, or its document went with Delete 2B and came
-back with the re-import, found by its amounts and linked or back in Awaiting
-reclaim and named, a Liberal client's typed reclaim as typed; a pair recorded
-before the rule out of Reclaim; a books row and a 2B document deleted while a
-Restore runs, without a deadlock; the page's own Restore heard as its own;
-each check recorded as in round 5) and
+back with the re-import, back in Awaiting reclaim and named, and reclaimed
+again on Import 2B; a pair recorded before the rule out of Reclaim; a books
+row and a 2B document deleted while a Restore runs, without a deadlock; the
+page's own Restore heard as its own; each check recorded as in round 5),
+`test_9o_autopost_round9.sql` (the ninth round: no reclaim restored by its
+amounts, so none moves to another entry's or another supplier's document
+and a Liberal client's is not counted twice; a named reclaim first; two
+documents of one identity not guessed; a Liberal client's typed reclaim in
+a month without 2B documents as typed; three 1,000-row Restores timed with
+their commit; each check recorded as in round 5) and
 `autopost.test.mjs` (twin
 clients: the write-through on one, the app's own `planImport2BPost` +
 `postImport2BToLedger` on the other, the ledgers compared after every save
@@ -2295,9 +2359,10 @@ call's order, Restore's reclaims back and the page's words, a books row's
 saves one at a time) and the round-7 rules (Restore's document found for a
 reclaim naming none, out of Reclaim sent and checked with the reclaim shown,
 Restore's lock order, the RESTORE version from the Restore's rows) and the
-round-8 rules (the document found by its amounts, a Strict client's reclaim
-without one back in Awaiting reclaim, a pair of before out of Reclaim, the
-month's rows taken without waiting);
+round-8 rules (a pair of before out of Reclaim, the month's rows taken
+without waiting) and the round-9 rules (a reclaim back only with its
+document known exactly, never by its amounts, else Awaiting reclaim, named,
+Strict and Liberal alike; the relink in the insert, paired by grouping);
 `node scripts/verify-twob-live.mjs` checks 2B Reconciliation's live updates
 (which changes concern the month, the banner instead of a reload under unsaved
 edits, Save sending only the changed rows, a reload clearing the pending
@@ -2306,7 +2371,8 @@ change heard during a Save looked at again when it ends, every column
 guarded, the delete confirm from the rows read back, the edits kept when
 nothing was written; round 5: a row's change read with its delete, the
 version list reloaded live and version numbers from the database; round 8:
-the page's own Restore heard as its own).
+the page's own Restore heard as its own; round 9: with the link in the
+insert too).
 
 **Open questions for the firm.**
 

@@ -7,12 +7,12 @@
 --      the 2B one by twob_doc_ident (Import 2B's Link & Reclaim pairs them by
 --      their amounts alone): a books entry without the supplier's GSTIN, one
 --      numbered as the books wrote it, or a document gone with Delete 2B and
---      imported again. The document is found by its amounts (the same GSTIN,
---      then the nearest amounts first) and held to the usual terms: linked
---      when Reclaim and evidencing nothing, otherwise the entry back in
---      Awaiting reclaim, named; a Strict client's reclaim with no document
---      found at all comes back in Awaiting reclaim, named. Only a Liberal
---      client's reclaim comes back as typed. Before (round 7): each came back
+--      imported again. Each comes back in Awaiting reclaim, named ("reclaim
+--      it again on Import 2B"): since round 9 a document is never looked for
+--      by its amounts (round 8's lookup moved reclaims between entries:
+--      test_9o), and a reclaim comes back reclaimed only with its document
+--      known exactly. Only a Liberal client's reclaim in a month holding no
+--      2B document comes back as typed. Before (round 7): each came back
 --      reclaimed with no document beside the document's count in 5.1 (5.1
 --      140 and 5.4 140), nothing said, the documents free to move after.
 --   L2 A document two entries name, recorded before the one-reclaim rule
@@ -96,7 +96,7 @@ INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier
   ('7e100000-0000-0000-0000-0000000001d1', :'G', '10/2026', '2026-09-20', 'BANK OF INDIA', 'BC-77', '24BOIBK0000A1Z5', 1000, 0, 90, 90, 'INVOICE', 'MATCHED'),
   ('7e100000-0000-0000-0000-0000000001d2', :'G', '10/2026', '2026-09-21', 'GAMMA', 'G/2026/0042', '24GAMMA0000A1Z5', 2000, 0, 50, 50, 'INVOICE', 'MATCHED'),
   -- J: JL/77, its books entry numbered JL-0077-A; another document of the
-  -- same amounts by another supplier, Matched (not chosen: J-1 is Reclaim).
+  -- same amounts by another supplier, Matched.
   ('7e100000-0000-0000-0000-0000000002d1', :'J', '10/2026', '2026-09-22', 'JULIET', 'JL/77', '24JULIE0000A1Z5', 1000, 0, 90, 90, 'INVOICE', 'MATCHED'),
   ('7e100000-0000-0000-0000-0000000002d2', :'J', '10/2026', '2026-09-23', 'KILO', 'K-5', '24KILOO0000A1Z5', 1000, 0, 90, 90, 'INVOICE', 'MATCHED'),
   -- D: A-1, Matched.
@@ -143,14 +143,17 @@ SELECT public.t8_eq(public.t8_itc(:'G', 'Oct 26'), '140.00|0.00',
   'H(a, b): ... each document''s ITC counted once (before: 5.1 140 and 5.4 140)');
 SELECT public.t8_eq((SELECT string_agg(x ->> 'supplier_invoice_number' || ': ' || (x ->> 'message'), ' / ' ORDER BY x ->> 'supplier_invoice_number')
                        FROM jsonb_array_elements(:'hg'::jsonb -> 'reclaims_back') x),
-  'BC-77: its 2B document (BANK OF INDIA BC-77, found by its amounts) is Matched now, not Reclaim / G-42/26-27: its 2B document (GAMMA G/2026/0042, found by its amounts) is Matched now, not Reclaim',
-  'H(a, b): ... and the Restore names each, with the document found and why (before: nothing said)');
+  'BC-77: its 2B document cannot be found: this version does not name it, and no 2B document of this month has its GSTIN or supplier, number and date; reclaim it again on Import 2B'
+  || ' / G-42/26-27: its 2B document cannot be found: this version does not name it, and no 2B document of this month has its GSTIN or supplier, number and date; reclaim it again on Import 2B',
+  'H(a, b): ... and the Restore names each, with why (before: nothing said; round 8: found by its amounts)');
 
 -- (c) JL-0077-A reclaimed with JL/77; a version of before; the entries taken
 -- away by a Restore of a version without them (JL/77 stays Reclaim,
--- evidencing nothing); the version of before restored: the reclaim back,
--- linked to JL/77 found by its amounts (Reclaim and free first, over KILO
--- K-5 of the same amounts), and the document held Reclaim again.
+-- evidencing nothing); the version of before restored: JL-0077-A is not the
+-- same document as JL/77, and KILO K-5 has the same amounts, so nothing
+-- tells which document it was reclaimed with: back in Awaiting reclaim,
+-- named (round 8 linked it to JL/77 by its amounts; round 9 never guesses),
+-- and reclaimed again on Import 2B as the message says.
 SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a4","x-gst-source":"app"}', false);
 SELECT public.t8_eq(public.twob_import2b_reclaim(public.t_poster(), :'J', '10/2026', '7e100000-0000-0000-0000-0000000002e1',
   '7e100000-0000-0000-0000-0000000002d1', 'MATCHED') ->> 'ok', 'true', 'H(c): JL-0077-A reclaimed with JL/77');
@@ -159,13 +162,19 @@ SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-00
 SELECT (public.twob_restore_version_linked(public.t_superadmin(), :'J', '10/2026', '[]'::jsonb, '[]'::jsonb) ->> 'bills_not_in_2b') AS j0 \gset
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'J', '10/2026', :'vj'::jsonb, '[]'::jsonb) AS hj \gset
 SELECT public.t8_eq(concat_ws('|', public.t8_entries(:'J'),
-                              (SELECT reclaimed_via_doc_id::text FROM public.bills_not_in_2b WHERE client_id = :'J'),
-                              jsonb_array_length(:'hj'::jsonb -> 'reclaims_back'), public.t8_itc(:'J', 'Oct 26')),
-  'JL-0077-A:Oct 26:t|7e100000-0000-0000-0000-0000000002d1|0|90.00|90.00',
-  'H(c): restored, the reclaim back linked to JL/77 found by its amounts (Reclaim, evidencing nothing), nothing said; 5.4 90 once (before: no document named)');
+                              position('reclaim it again on Import 2B' in COALESCE(:'hj'::jsonb -> 'reclaims_back' -> 0 ->> 'message', '')) > 0,
+                              public.t8_itc(:'J', 'Oct 26')),
+  'JL-0077-A:-:f|t|90.00|0.00',
+  'H(c): restored, JL-0077-A back in Awaiting reclaim, named, no document guessed (before: reclaimed, no document named; round 8: linked by its amounts)');
 SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a4","x-gst-source":"app"}', false);
+SELECT public.t8_eq(concat_ws('|',
+  public.twob_import2b_unreclaim(public.t_poster(), :'J', '10/2026', '7e100000-0000-0000-0000-0000000002d1', 'MATCHED', NULL) ->> 'ok',
+  public.twob_import2b_reclaim(public.t_poster(), :'J', '10/2026', '7e100000-0000-0000-0000-0000000002e1', '7e100000-0000-0000-0000-0000000002d1', 'MATCHED') ->> 'ok'),
+  'true|true', 'H(c): ... reclaimed again on Import 2B (JL/77 out of Reclaim, then Link & Reclaim)');
+SELECT public.t8_eq(concat_ws('|', public.t8_entries(:'J'), public.t8_itc(:'J', 'Oct 26')), 'JL-0077-A:Oct 26:t|90.00|90.00',
+  'H(c): ... linked, 5.4 90 once');
 SELECT public.t8_raises($q$UPDATE public.twob_import_docs SET itc_action = 'MISMATCHED' WHERE id = '7e100000-0000-0000-0000-0000000002d1'$q$,
-  'so it stays Reclaim', 'H(c): ... so JL/77 is held Reclaim again (before: it could be made Mismatched, its ITC in 5.1 and 5.4)');
+  'so it stays Reclaim', 'H(c): ... and JL/77 held Reclaim again');
 
 -- (d) A-1 reclaimed; a version of before; Delete 2B (the reclaim released,
 -- the documents gone); the superadmin restores the version; the 2B file
@@ -179,7 +188,7 @@ SELECT public.t8_eq(public.twob_import2b_delete_2b(public.t_manager(), :'D', '10
 SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a1","x-gst-source":"app"}', false);
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'D', '10/2026', :'vd'::jsonb, '[]'::jsonb) AS hd \gset
 SELECT public.t8_eq(concat_ws('|', public.t8_entries(:'D'),
-                              position('cannot be found in this month' in COALESCE(:'hd'::jsonb -> 'reclaims_back' -> 0 ->> 'message', '')) > 0),
+                              position('this month holds no 2B document; reclaim it again on Import 2B' in COALESCE(:'hd'::jsonb -> 'reclaims_back' -> 0 ->> 'message', '')) > 0),
   'A-1:-:f|t', 'H(d): the version restored with no document in the month: A-1 back in Awaiting reclaim, named (before: reclaimed, no document, nothing said)');
 SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a4","x-gst-source":"app"}', false);
 INSERT INTO public.twob_import_docs (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
@@ -188,16 +197,21 @@ VALUES (:'D', '10/2026', '2026-09-20', 'ALPHA', 'A-1', '24ALPHA0000A1Z5', 1000, 
 SELECT public.t8_eq(public.t8_itc(:'D', 'Oct 26'), '90.00|0.00',
   'H(d): ... the 2B file imported again: A-1''s ITC counted once (before: 5.1 90 and 5.4 90)');
 
--- (e) A Liberal client's reclaim typed on 2B Reconciliation (no document; a
--- document of the same amounts, another supplier, Matched): comes back as
--- typed, nothing said. A Strict client's reclaim with no document of it
+-- (e) A Liberal client's reclaim typed on 2B Reconciliation, the month
+-- holding a 2B document (MIKE M-1, Matched, of the same amounts): its
+-- document is not known exactly, so it comes back in Awaiting reclaim,
+-- named, as a Strict client's (round 9: round 8 brought it back as typed,
+-- and a Liberal client's Import 2B reclaim, paired by its amounts, so
+-- counted twice: test_9o). With no 2B document in the month it comes back
+-- as typed (test_9l (e)). A Strict client's reclaim with no document of it
 -- anywhere: back in Awaiting reclaim, named.
 SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a1","x-gst-source":"app"}', false);
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'L', '10/2026',
   '[{"id":"7e100000-0000-0000-0000-0000000004e1","date":"2026-09-24","supplier_name":"LIMA","supplier_invoice_number":"L-1","supplier_gstin":"24LIMAA0000A1Z5","taxable_value":1000,"input_igst":0,"input_cgst":60,"input_sgst":60,"reversal_month":"Sep 26","reclaim_month":"Oct 26","is_carried_forward":false}]'::jsonb,
   '[]'::jsonb) AS hl \gset
-SELECT public.t8_eq(concat_ws('|', public.t8_entries(:'L'), jsonb_array_length(:'hl'::jsonb -> 'reclaims_back')),
-  'L-1:Oct 26:f|0', 'H(e): a Liberal client''s typed reclaim comes back as typed, nothing said');
+SELECT public.t8_eq(concat_ws('|', public.t8_entries(:'L'),
+                              position('reclaim it again on Import 2B' in COALESCE(:'hl'::jsonb -> 'reclaims_back' -> 0 ->> 'message', '')) > 0),
+  'L-1:-:f|t', 'H(e): a Liberal client''s reclaim whose document is not known, the month holding a 2B document: back in Awaiting reclaim, named (round 8: as typed)');
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'S', '10/2026',
   '[{"id":"7e100000-0000-0000-0000-0000000005e1","date":"2026-09-24","supplier_name":"SIERRA","supplier_invoice_number":"S-1","supplier_gstin":"24SIERR0000A1Z5","taxable_value":1000,"input_igst":0,"input_cgst":60,"input_sgst":60,"reversal_month":"Sep 26","reclaim_month":"Oct 26","is_carried_forward":false}]'::jsonb,
   '[]'::jsonb) AS hs \gset

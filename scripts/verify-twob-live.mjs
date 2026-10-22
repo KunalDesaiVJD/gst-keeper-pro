@@ -152,6 +152,10 @@ if (typeof L.changesShown === 'function') {
     L.changesShown([{ eventType: 'DELETE', new: {}, old: { id: 'r1' } }, { eventType: 'INSERT', new: { ...kept, reclaim_month: 'Oct 26' }, old: {} }], v, rows8) === false);
   check('… and a row the page holds, deleted (not added back), is still news beside a Restore\'s burst',
     L.changesShown([...restoreBurst.slice(1), { eventType: 'DELETE', new: {}, old: { id: 'r1' } }], v, rows8) === false);
+  // Round 9: the Restore links an entry as it adds it (the insert carries
+  // the link, no update after).
+  check('round 9: the page\'s own Restore with the link in the insert (deleted, added back with their ids and links) is shown already',
+    L.changesShown([...restoreBurst.slice(0, 3), { eventType: 'INSERT', new: linked, old: {} }], v, rows8) === true);
 } else check('round 5: changesShown exists', false, 'missing');
 
 // ── The page's wiring ───────────────────────────────────────────────────────

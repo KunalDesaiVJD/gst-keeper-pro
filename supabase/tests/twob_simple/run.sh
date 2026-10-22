@@ -58,12 +58,19 @@
 # the same moment without a deadlock; the RESTORE version as the Restore
 # left the month; test_9n, test_9m (cases 3 and 4) and round8.test.mjs: the
 # eighth round's: a Strict client's reclaim restored from a version that
-# names no document, found by its amounts when it is not the same document
-# (no GSTIN on the books entry, numbered otherwise, Delete 2B and imported
-# again) and held to its terms, or back in Awaiting reclaim, named; a pair
-# recorded before the one-reclaim rule out of Reclaim; a books row or 2B
-# document deleted while a Restore runs, without a deadlock; the page
-# hearing its own Restore as its own.
+# names no document when it is not the same document (no GSTIN on the books
+# entry, numbered otherwise, Delete 2B and imported again): back in Awaiting
+# reclaim, named; a pair recorded before the one-reclaim rule out of
+# Reclaim; a books row or 2B document deleted while a Restore runs, without
+# a deadlock; the page hearing its own Restore as its own; test_9o: the
+# ninth round's: Restore never looks for a reclaim's document by its
+# amounts (a reclaim comes back reclaimed only with its document known
+# exactly: named by the version, by the month's entry of that id, or the
+# month's only document that is the same one, named ones first; otherwise
+# back in Awaiting reclaim, named, for a Strict and a Liberal client alike
+# while the month holds any 2B document), so no reclaim moves to another
+# entry's or another supplier's document and a Liberal client's is not
+# counted twice; a 1,000 + 1,000 Restore timed.
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.

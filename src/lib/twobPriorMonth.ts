@@ -809,7 +809,8 @@ export interface VersionData { billsNotIn2B: ReturnType<typeof versionRows2B>; b
  * month now holds them as carried entries (named, "SUP X-9"). reclaimsBack:
  * entries whose reclaim did not come back with them (verification round 6:
  * their 2B document is not Reclaim now, is gone, or evidences another
- * reclaim), restored in Awaiting reclaim, each named with why. versionData:
+ * reclaim; round 9: or is not known for certain, never guessed from the
+ * amounts), restored in Awaiting reclaim, each named with why. versionData:
  * the month's two lists as the Restore left them, which the page records as
  * the RESTORE version (verification round 7: it recorded the version
  * restored, its reclaims that came back in Awaiting reclaim and its entries
