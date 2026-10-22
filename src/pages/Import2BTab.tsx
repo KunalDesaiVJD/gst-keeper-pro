@@ -52,7 +52,8 @@ import {
   recordReclaim, UNDO_EXPENSE_OUT_PATCH, updatePendingEntry,
 } from '@/lib/twobPendingWrites';
 import {
-  bookChanges, bookExpect, isBookChangedError, saveBookGuarded, saveDocTreatments, DOC_CHANGED_ELSEWHERE_MSG, type BookValues,
+  bookChangedMsg, bookChanges, bookExpect, bookLanded, bookShownAgain, isBookChangedError, queueBookSave, RowQueue, saveBookGuarded,
+  saveDocTreatments, DOC_CHANGED_ELSEWHERE_MSG, type BookSaveState, type BookValues,
 } from '@/lib/import2bGuardedSaves';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import {
@@ -137,6 +138,13 @@ interface BookRow {
   book_treatment: string;
   matched_2b_id: string | null;
   doc_type: string; // INVOICE / DEBIT_NOTE
+}
+
+/** A books save as the user's event left it: the view it was made in and the row's typing count then. */
+interface BookTicket {
+  client: string | null | undefined;
+  month: string;
+  edits: number;
 }
 
 // Zone 4 — pending items still open on the live ledger (reclaim not yet
@@ -527,6 +535,16 @@ const Import2BTab: React.FC = () => {
   // began before a save landed shows that row as saved, not as it read it.
   const bookSaveClock = useRef(0);
   const bookSavesRef = useRef<Map<string, { at: number; row: BookRow }>>(new Map());
+  // This page's saves of one books row run one at a time, in order
+  // (verification round 6): each waits for the one before, then puts the
+  // user's edits on the row as that save left it (rebaseBookEdit). When a
+  // row was last shown again as it is (a refusal, a Cancel; on the save
+  // clock), a save of it queued before that is dropped.
+  const bookQueueRef = useRef(new RowQueue());
+  const bookShownAgainRef = useRef<Map<string, number>>(new Map());
+  const bookSaveState: BookSaveState<BookRow> = {
+    loaded: savedBooksRef, saves: bookSavesRef, shownAgain: bookShownAgainRef, clock: bookSaveClock, queue: bookQueueRef,
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
   // The earlier versions this month's amendments amend (by id): their period
   // and current treatment, for the line under each amendment.
@@ -2194,6 +2212,7 @@ const Import2BTab: React.FC = () => {
 
   const rememberBook = (row: BookRow) => { savedBooksRef.current.set(row.id, row); };
   const restoreBook = async (id: string) => {
+    bookShownAgain(bookSaveState, id);
     const client = selectedClient;
     const month = selectedMonth;
     const { data } = await supabase.from('books_register').select('*').eq('id', id).maybeSingle();
@@ -2204,9 +2223,7 @@ const Import2BTab: React.FC = () => {
   // on screen it replaces the row unless the user typed in it meanwhile
   // (edits: bookEdits(id) when the save began), whose typing stays.
   const bookSaved = (row: BookRow, edits: number) => {
-    bookSaveClock.current += 1;
-    bookSavesRef.current.set(row.id, { at: bookSaveClock.current, row });
-    rememberBook(row);
+    bookLanded(bookSaveState, row);
     if (bookEdits(row.id) === edits) updateBookLocal(row.id, row);
     else updateBookLocal(row.id, { book_treatment: row.book_treatment, matched_2b_id: row.matched_2b_id });
   };
@@ -2231,18 +2248,29 @@ const Import2BTab: React.FC = () => {
   // columns changed against the row as loaded are sent, and only while the
   // row still holds every column as loaded (verification round 5: a stale
   // tab's save of one cell wrote its whole old row back, undoing another
-  // user's treatment or figures, and the ledger followed at once).
-  const saveBookRow = async (id: string, classify: boolean, patch: Partial<BookRow> = {}): Promise<boolean> => {
+  // user's treatment or figures, and the ledger followed at once). The
+  // user's edits are taken now, against the row as the page holds it now,
+  // and saved after this page's earlier save of the row has landed
+  // (verification round 6).
+  const saveBookRow = (id: string, classify: boolean, patch: Partial<BookRow> = {}): Promise<boolean> => {
     const found = books.find((r) => r.id === id);
-    if (!found || booksReadOnly) return false;
-    const client = selectedClient;
-    const month = selectedMonth;
-    const edits = bookEdits(id);
-    const row = { ...found, ...patch };
-    const loaded = savedBooksRef.current.get(id);
-    let next = { treatment: row.book_treatment, matched2bId: row.matched_2b_id };
+    if (!found || booksReadOnly) return Promise.resolve(false);
+    const t: BookTicket = { client: selectedClient, month: selectedMonth, edits: bookEdits(id) };
+    return queueBookSave(bookSaveState, {
+      id, next: bookValues({ ...found, ...patch }), refuse: (base) => refuseBook(id, base),
+      save: (loaded, row) => saveBookRowNow(id, classify, t, loaded, row),
+    });
+  };
+  // A queued save of a row not loaded here, or changed elsewhere since the
+  // user's edit: said, and the row shown again as it is now.
+  const refuseBook = (id: string, base: BookRow | undefined) => bookRefused(id, base
+    ? bookChangedMsg(base) : 'this row was not loaded on this page; it is shown again as it is now.');
+  // loaded: the row as this page holds it now (the save is guarded by it);
+  // row: the user's edits on it.
+  const saveBookRowNow = async (id: string, classify: boolean, t: BookTicket, loaded: BookRow, row: BookRow): Promise<boolean> => {
+    const { client, month, edits } = t;
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return false; }
-    if (!loaded) { await bookRefused(id, 'this row was not loaded on this page; it is shown again as it is now.'); return false; }
+    let next = { treatment: row.book_treatment, matched2bId: row.matched_2b_id };
     // Books rows are always positive. The client's debit note (a purchase
     // return, the supplier's credit note) is entered at plus amounts with its
     // own Type and waits for the supplier's credit note in 2B, which reduces
@@ -2348,44 +2376,49 @@ const Import2BTab: React.FC = () => {
   };
 
   // The Treatment select: only the treatment is sent, and only while the row
-  // still holds every column as the page loaded it (verification round 5).
-  const setBookTreatment = async (id: string, treatment: string) => {
-    if (booksReadOnly) return;
-    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
+  // still holds every column as the page loaded it (verification round 5),
+  // after this page's earlier save of the row has landed (round 6).
+  const setBookTreatment = (id: string, treatment: string): Promise<void> => {
+    if (booksReadOnly) return Promise.resolve();
     const found = books.find((r) => r.id === id);
-    const loaded = savedBooksRef.current.get(id);
     if (!mayPost && found && bookSaveTouchesLedger({ ...found, book_treatment: treatment }, linkedEntries.has(id))) {
       toast.error(NEEDS_POST_SAVE_MSG, { duration: 15000 });
-      return;
+      return Promise.resolve();
     }
-    if (!loaded || !user?.id) return;
-    if (loaded.book_treatment === treatment) { updateBookLocal(id, { book_treatment: treatment }); return; }
-    const client = selectedClient;
-    const month = selectedMonth;
-    const edits = bookEdits(id);
+    const t: BookTicket = { client: selectedClient, month: selectedMonth, edits: bookEdits(id) };
+    updateBookLocal(id, { book_treatment: treatment });
+    return queueBookSave(bookSaveState, {
+      id, next: { book_treatment: treatment }, refuse: (base) => refuseBook(id, base),
+      save: (loaded) => setBookTreatmentNow(id, treatment, t, loaded),
+    }).then(() => undefined);
+  };
+  const setBookTreatmentNow = async (id: string, treatment: string, t: BookTicket, loaded: BookRow): Promise<boolean> => {
+    if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); await restoreBook(id); return false; }
+    if (!user?.id) return false;
+    const { client, month, edits } = t;
+    if (loaded.book_treatment === treatment) { updateBookLocal(id, { book_treatment: treatment }); return true; }
     if (isPrior) {
-      updateBookLocal(id, { book_treatment: treatment });
       const saved = await applyPriorBooksHere([{ table: 'books_register', op: 'update', id, values: { book_treatment: treatment } }],
         'Save the treatment and its 2B Reconciliation entry', false, false, { [id]: bookExpect(loaded) });
-      if (!isCurrentView(client, month)) return;
-      if (!saved) { await restoreBook(id); return; }
+      if (!isCurrentView(client, month)) return false;
+      if (!saved) { await restoreBook(id); return false; }
       await readBackBook(id, edits);
       refreshStep();
-      return;
+      return true;
     }
-    updateBookLocal(id, { book_treatment: treatment });
     // Written through with the treatment (an entry added, or taken back), or
     // refused with it (an entry holding a decision is never taken back).
     try {
       const res = await saveBookGuarded({ actorId: user.id, bookId: id, loaded, values: { book_treatment: treatment } });
-      if (!res.ok || !res.row) { if (isCurrentView(client, month)) await bookRefused(id, res.message); return; }
-      if (!isCurrentView(client, month)) return;
+      if (!res.ok || !res.row) { if (isCurrentView(client, month)) await bookRefused(id, res.message); return false; }
+      if (!isCurrentView(client, month)) return true;
       bookSaved(res.row, edits);
     } catch (err) {
       if (isCurrentView(client, month)) await bookRefused(id, errMsg(err));
-      return;
+      return false;
     }
     refreshStep();
+    return true;
   };
 
   // Deleting a books row also takes back the Not in 2B reversal it posted to

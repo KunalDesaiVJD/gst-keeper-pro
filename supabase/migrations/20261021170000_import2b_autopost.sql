@@ -127,23 +127,34 @@
 --     before calls it), so applying either file again never undoes the
 --     other.
 --  7. The money rules, held by the database whichever screen, tab or app
---     version writes (verification round 5):
---      - one reclaim per 2B document: twob_import2b_reclaim takes the
---        treatment the page showed (p_expect_action) and writes nothing when
---        the document holds another one now or already evidences a reclaim
---        (before, a stale tab reclaimed a second entry with one document and
---        5.4 counted its ITC twice); a unique index on
---        bills_not_in_2b(reclaimed_via_doc_id) holds it for every other
---        writer, created only when no document is named twice (section 1;
---        otherwise a warning names them); Restore keeps one reclaim per
---        document;
+--     version writes (verification rounds 5 and 6):
+--      - one reclaim per 2B document, and only with a document that is
+--        Reclaim: an entry newly names a document only while that document
+--        is Reclaim and no other entry names it, whoever writes it
+--        (twob__reclaim_via_check, round 6; the document's row and lock held
+--        while it checks, so two writers at once are seen); before, a stale
+--        tab reclaimed a second entry with one document and 5.4 counted its
+--        ITC twice, and a Restore put back a reclaim against a document no
+--        longer Reclaim (counted in 5.1 and 5.4). twob_import2b_reclaim
+--        also takes the treatment the page showed (p_expect_action) and
+--        writes nothing, with the page's words, when the document holds
+--        another one now or already evidences a reclaim, and makes the
+--        document Reclaim before the entry names it. A pair recorded before
+--        stays as it is (the check is on a new naming). A unique index on
+--        bills_not_in_2b(reclaimed_via_doc_id) holds it a second time where
+--        no document is named twice (section 1; not on live, see step 1).
+--        Restore brings a reclaim back only while its document is in the
+--        month, Reclaim and evidencing no other; otherwise the entry comes
+--        back in Awaiting reclaim, named (reclaims_back);
 --      - a document stays Reclaim, and is not deleted, while an entry is
 --        reclaimed against it (twob__reclaim_evidence_guard): only
 --        twob_import2b_unreclaim and Delete 2B, which put the entry back in
 --        Awaiting reclaim first in the same transaction, take it out (before,
 --        a stale tab's Save made it Mismatched: its ITC in 5.1 and again in
 --        5.4; a re-import's delete left the reclaim with no document);
---        twob_import2b_unreclaim refuses a document no longer Reclaim;
+--        twob_import2b_unreclaim refuses a document no longer Reclaim; a
+--        document a reclaim recorded before names while it is not Reclaim
+--        can only be made Reclaim (round 6);
 --      - an entry names its reclaiming document only while it holds the
 --        reclaim (twob__reclaim_via_tidy): a reclaim cleared or made an
 --        Expense out lets the document go in the same write;
@@ -171,7 +182,12 @@
 -- document Reclaim while reclaimed against, a reclaim cleared letting its
 -- document go, a stale books save refused in an open and a filed month,
 -- Pending items over data of before, version numbers; each check recorded,
--- so run on the code of before each fails or passes on its own) and autopost.test.mjs
+-- so run on the code of before each fails or passes on its own),
+-- test_9j_autopost_round6.sql, test_9k_reclaim_race.sh and round6.test.mjs
+-- (the sixth round's: Restore and a reclaim's document; one reclaim per
+-- document held without the index, beside a pair recorded before, against
+-- the app of before's own writes and two sessions at once; two saves of one
+-- books row from one page) and autopost.test.mjs
 -- (the write-through against planImport2BPost + postImport2BToLedger on
 -- twin clients, after every save kind; own entries adopted then taken back).
 --
@@ -203,7 +219,14 @@
 -- first, then the document) and its Delete 2B (the reclaims released, then
 -- the documents) still go through, and its re-import already keeps a
 -- reclaim's document. It calls none of the functions whose signature this
--- round changed (they are new in this release).
+-- round changed (they are new in this release). Its Reclaim on Import 2B
+-- (round 6) is refused from the moment this file is applied: it names the
+-- document in the entry before it makes the document Reclaim, two requests,
+-- and an entry now names only a Reclaim document ("Not saved: the 2B
+-- document ... is Matched on Import 2B, not Reclaim ..."; nothing is
+-- written). Deploy the app straight after applying (step 5); its Reclaim
+-- is one call that does both. A tab of before left open after the deploy
+-- is refused the same way until it is reloaded.
 -- Already applied in an earlier form? Applying this file again is safe
 -- (re-runnable) and brings it to this form: the earlier signatures of
 -- twob__autopost_apply, twob_import2b_catch_up and twob_import2b_prior_save
@@ -223,7 +246,8 @@
 --       -- evidence of more than one reclaim. The unique index
 --       -- bills_not_in_2b_reclaimed_via_uq is created only when this lists
 --       -- none; otherwise the file is applied without it and warns (the
---       -- reclaim call still refuses a second reclaim with one document).
+--       -- rule is held without it, for every new reclaim, by the trigger
+--       -- trg_twob_zz_reclaim_via_one, round 6).
 --       SELECT c.name, d.period_month, d.supplier_name, d.supplier_invoice_number, t.reclaimed_via_doc_id,
 --              count(*) AS entries, string_agg(concat_ws(' ', t.supplier_invoice_number, t.reclaim_month), ', ') AS reclaims
 --         FROM public.bills_not_in_2b t
@@ -240,16 +264,30 @@
 --       --   two carried entries of Jul-26: July's 5.4 counts 2,700 + 2,700
 --       --   on one document's 1,350 + 1,350.
 --       -- So, as live stands, the index is NOT created (the file warns and
---       -- goes on). For the lead: Jul-26 is filed (its 5.4 as filed); which
---       -- of the two the document evidences (invoice 25, by its number), and
---       -- whether REDEL 5 has its own document, is the firm's to decide;
---       -- once one entry no longer names it, apply this file again to add
---       -- the index. Nothing here changes either entry.
+--       -- goes on). It is not needed for the rule: every new reclaim, by any
+--       -- writer, is held to one per document by the trigger
+--       -- trg_twob_zz_reclaim_via_one (round 6), which leaves this pair as it
+--       -- is. For the lead: Jul-26 is a filed month, so nothing in the app
+--       -- changes these two entries (twob_guard refuses every write to a
+--       -- filed month's rows, a link cleared included; "Filed by mistake"
+--       -- is for a return not filed on the portal, and reopens the whole
+--       -- month). Which of the two the
+--       -- document evidences (invoice 25, by its number), whether REDEL 5
+--       -- has its own document, and whether July's record should change at
+--       -- all (its 5.4 is as filed) is the firm's to decide. If it should, a
+--       -- reviewed one-off SQL run as the owner, in one transaction, with
+--       -- set_config('twob.write', 'system', true), clearing
+--       -- reclaimed_via_doc_id (and, if so decided, reclaim_month) on the
+--       -- one entry; applying this file again then creates the index.
+--       -- Nothing here changes either entry.
 --       -- Also read then (not refused by this file, for the lead): one
---       -- reclaim whose document is no longer Reclaim, the state round 5's
---       -- trigger now prevents: ELENZA CALLISTA BUILDCON-NO ITC, 07/2026,
---       -- Shashikant Singh A-2 reclaimed Jul 26 against its own document,
---       -- now Ineligible. And 3 Reclaim documents that no entry names.
+--       -- reclaim whose document is no longer Reclaim, the state rounds 5
+--       -- and 6 now prevent (a named document stays Reclaim; an entry names
+--       -- only a Reclaim document; this one, recorded before, can only be
+--       -- made Reclaim again): ELENZA CALLISTA BUILDCON-NO ITC, 07/2026
+--       -- (filed), Shashikant Singh A-2 reclaimed Jul 26 against its own
+--       -- document, now Ineligible. And 3 Reclaim documents that no entry
+--       -- names.
 --       SELECT c.name, t.period_month, t.supplier_invoice_number, t.reclaim_month, d.itc_action
 --         FROM public.bills_not_in_2b t JOIN public.twob_import_docs d ON d.id = t.reclaimed_via_doc_id
 --         JOIN public.clients c ON c.id = t.client_id
@@ -280,10 +318,10 @@
 --       -- and the check a delete runs as its caller: t, t
 --       SELECT to_regprocedure('public.twob__acting_user()') IS NOT NULL,
 --              to_regprocedure('public.twob__may_post(uuid)') IS NOT NULL;
---       -- round 5: the reclaim's rules and the guarded books saves: 3, t, f, f
---       -- (the index t only once the dry check above lists no document):
---       SELECT (SELECT count(*) FROM pg_trigger WHERE tgname IN ('trg_twob_zz_reclaim_via', 'trg_twob_zz_reclaim_evidence',
---                'trg_twob_zz_reclaim_evidence_gone')),
+--       -- rounds 5 and 6: the reclaim's rules and the guarded books saves: 4, t, f, f
+--       -- (the index only once the dry check above lists no document):
+--       SELECT (SELECT count(*) FROM pg_trigger WHERE tgname IN ('trg_twob_zz_reclaim_via', 'trg_twob_zz_reclaim_via_one',
+--                'trg_twob_zz_reclaim_evidence', 'trg_twob_zz_reclaim_evidence_gone')),
 --              to_regprocedure('public.twob__expect_differs(jsonb, jsonb)') IS NOT NULL,
 --              to_regprocedure('public.twob_import2b_reclaim(uuid, uuid, text, uuid, uuid)') IS NOT NULL,
 --              to_regprocedure('public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean, text)') IS NOT NULL;
@@ -336,7 +374,9 @@
 --  trg_twob_zz_autopost_* on books_register and twob_import_docs; the old
 --  app's Post works again. The round-5 triggers (trg_twob_zz_reclaim_via,
 --  trg_twob_zz_reclaim_evidence, trg_twob_zz_reclaim_evidence_gone) and the
---  unique index hold for the old app as well and can stay. The unique indexes, the adopted_from columns and
+--  unique index hold for the old app as well and can stay; drop
+--  trg_twob_zz_reclaim_via_one too (round 6), or the old app's Reclaim stays
+--  refused (it names the document before making it Reclaim). The unique indexes, the adopted_from columns and
 --  the two trg_twob_zz_carried_decision triggers can stay (the old app's
 --  Restore calls twob_restore_version, untouched).
 
@@ -386,10 +426,12 @@ DROP INDEX IF EXISTS public.idx_bills_not_in_books_source_doc_id;
 -- One reclaim per 2B document (verification round 5): a document is the
 -- evidence of at most one entry's reclaim (ITC Summary 5.4 counts each
 -- reclaim, so a second one on the same document counts its ITC twice).
--- Created only when no document is named by two entries now; otherwise the
--- file goes on without it, says which, and twob_import2b_reclaim still
--- refuses a second reclaim with one document (applying the file again once
--- they are put right creates it). It serves every lookup the plain index of
+-- The rule is held for every new reclaim, by every writer, by the trigger
+-- trg_twob_zz_reclaim_via_one (section 6, round 6), which leaves a pair
+-- recorded before as it is. This unique index is a second hold, created
+-- only when no document is named by two entries now; otherwise the file
+-- goes on without it and says which (live has one such pair, in a filed
+-- month: see the header, step 1). It serves every lookup the plain index of
 -- 20260814130000 did, which then goes.
 DO $$
 DECLARE
@@ -410,7 +452,7 @@ BEGIN
       ON public.bills_not_in_2b (reclaimed_via_doc_id) WHERE reclaimed_via_doc_id IS NOT NULL;
     DROP INDEX IF EXISTS public.idx_bills_not_in_2b_reclaimed_via_doc_id;
   ELSE
-    RAISE WARNING 'One reclaim per 2B document is not enforced by an index yet: these 2B documents are each the evidence of more than one reclaim, so ITC Summary 5.4 counts their ITC more than once: %. Keep one reclaim per document, then apply this file again to add the index (bills_not_in_2b_reclaimed_via_uq). Until then a second reclaim with one document is still refused (twob_import2b_reclaim); everything else in this file is applied.', v;
+    RAISE WARNING 'These 2B documents are each the evidence of more than one reclaim, recorded before this file (ITC Summary 5.4 counts their ITC more than once): %. They are left as they are (in a filed month only a reviewed one-off correction can change them; see the header, step 1), so the unique index bills_not_in_2b_reclaimed_via_uq is not created. One reclaim per document still holds for every new reclaim, whoever writes it (trigger trg_twob_zz_reclaim_via_one); everything else in this file is applied.', v;
   END IF;
 END $$;
 
@@ -1841,9 +1883,27 @@ CREATE TRIGGER trg_twob_zz_carried_decision BEFORE UPDATE OF book_entry_month ON
 --    Import 2B tab's Save made a reclaimed document Mismatched, so its ITC
 --    counted in 5.1 and again through the reclaim in 5.4; a re-import's
 --    delete left the reclaim counted with no document;
---    twob__reclaim_evidence_guard);
---  - one reclaim per document: the unique index of section 1, and
---    twob_import2b_reclaim's own check.
+--    twob__reclaim_evidence_guard); a document named by a reclaim recorded
+--    before these rules while it was not Reclaim can only be made Reclaim
+--    (round 6);
+--  - an entry newly names a document (any writer: a stale tab of any app
+--    version, a Restore, a direct write) only while that document is Reclaim
+--    and no other entry names it (twob__reclaim_via_check, verification
+--    round 6): one reclaim per document, and never a reclaim against a
+--    document counted in 5.1 (Matched, Mismatched) or not at all
+--    (Ineligible). Before, a Restore put back a reclaim against a document
+--    taken out of Reclaim since (its ITC in 5.1 and 5.4), and on live, where
+--    the unique index of section 1 cannot be created (a filed month already
+--    holds a document named twice), a stale tab of the app of before
+--    reclaimed a second entry with one document. The document's row is held
+--    (FOR SHARE) and the document's own lock taken while it is checked, so
+--    two writers naming one document at once, or a document taken out of
+--    Reclaim while it is named, are seen by whichever comes second. An entry
+--    that already names its document keeps it (the check is on a new
+--    naming only), so a filed month's pair recorded before stays as filed;
+--  - one reclaim per document also by the unique index of section 1, where
+--    the data allows it, and by twob_import2b_reclaim's own check (which
+--    says so in the page's words).
 -- A client being deleted takes its documents and entries with it.
 CREATE OR REPLACE FUNCTION public.twob__reclaim_via_tidy()
 RETURNS trigger
@@ -1859,6 +1919,56 @@ CREATE TRIGGER trg_twob_zz_reclaim_via BEFORE INSERT OR UPDATE OF reclaim_month,
   FOR EACH ROW WHEN (NEW.reclaimed_via_doc_id IS NOT NULL
                      AND (NEW.reclaim_subtype IS NOT NULL OR NULLIF(btrim(COALESCE(NEW.reclaim_month, '')), '') IS NULL))
   EXECUTE FUNCTION public.twob__reclaim_via_tidy();
+
+-- Fires after trg_twob_zz_reclaim_via (by name), so an entry that no longer
+-- holds its reclaim has already let its document go.
+CREATE OR REPLACE FUNCTION public.twob__reclaim_via_check()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_doc record;
+  v_other jsonb;
+  v_entry text;
+  v_docname text;
+BEGIN
+  IF NEW.reclaimed_via_doc_id IS NULL
+     OR (TG_OP = 'UPDATE' AND NEW.reclaimed_via_doc_id IS NOT DISTINCT FROM OLD.reclaimed_via_doc_id) THEN
+    RETURN NEW;
+  END IF;
+  -- The document's own lock: two writers naming it at once wait for each
+  -- other here, and the second reads what the first saved.
+  PERFORM pg_advisory_xact_lock(hashtextextended('twob-reclaim-doc:' || NEW.reclaimed_via_doc_id::text, 0));
+  SELECT d.itc_action, d.supplier_name, d.supplier_invoice_number INTO v_doc
+    FROM public.twob_import_docs d WHERE d.id = NEW.reclaimed_via_doc_id
+     FOR SHARE;
+  IF NOT FOUND THEN
+    RETURN NEW;   -- no such document: the foreign key refuses it
+  END IF;
+  v_entry := COALESCE(public.twob__entry_name(to_jsonb(NEW)), 'this entry');
+  v_docname := COALESCE(' ' || public.twob__entry_name(to_jsonb(v_doc)), '');
+  IF v_doc.itc_action IS DISTINCT FROM 'RECLAIM' THEN
+    RAISE EXCEPTION 'Not saved: the 2B document% is % on Import 2B, not Reclaim, so it cannot be the evidence of the reclaim of %. Reclaim it on Import 2B (reload the page if it does not offer it): the entry and the document are saved together there. Nothing was saved.',
+      v_docname, public.twob__treatment_label(v_doc.itc_action), v_entry
+      USING ERRCODE = 'check_violation';
+  END IF;
+  SELECT to_jsonb(t) INTO v_other FROM public.bills_not_in_2b t
+   WHERE t.reclaimed_via_doc_id = NEW.reclaimed_via_doc_id AND t.id <> NEW.id ORDER BY t.id LIMIT 1;
+  IF v_other IS NOT NULL THEN
+    RAISE EXCEPTION 'Not saved: the 2B document% is already the evidence of the reclaim of % (%, %); one document evidences one reclaim, so % cannot be reclaimed with it. Nothing was saved.',
+      v_docname, COALESCE(public.twob__entry_name(v_other), 'another entry'),
+      COALESCE(NULLIF(btrim(COALESCE(v_other ->> 'reclaim_month', '')), ''), 'reclaimed'), public.twob_month_name(v_other ->> 'period_month'), v_entry
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_twob_zz_reclaim_via_one ON public.bills_not_in_2b;
+CREATE TRIGGER trg_twob_zz_reclaim_via_one BEFORE INSERT OR UPDATE OF reclaimed_via_doc_id ON public.bills_not_in_2b
+  FOR EACH ROW WHEN (NEW.reclaimed_via_doc_id IS NOT NULL)
+  EXECUTE FUNCTION public.twob__reclaim_via_check();
 
 CREATE OR REPLACE FUNCTION public.twob__reclaim_evidence_guard()
 RETURNS trigger
@@ -1883,13 +1993,20 @@ BEGIN
     RAISE EXCEPTION 'Not deleted: % is the evidence of %. Take it out of Reclaim on Import 2B first (Save puts that entry back in Awaiting reclaim), or use Delete 2B. Nothing was deleted.',
       v_doc, v_what USING ERRCODE = 'check_violation';
   END IF;
+  IF OLD.itc_action IS DISTINCT FROM 'RECLAIM' THEN
+    -- Recorded before these rules (a reclaim against a document no longer
+    -- Reclaim): it may only become Reclaim again, never another treatment
+    -- (each would count its ITC again beside the reclaim, or not at all).
+    RAISE EXCEPTION 'Not saved: % is the evidence of % although it is %, which was recorded before this rule; it can only be made Reclaim again. Nothing was saved.',
+      v_doc, v_what, public.twob__treatment_label(OLD.itc_action) USING ERRCODE = 'check_violation';
+  END IF;
   RAISE EXCEPTION 'Not saved: % is the evidence of %, so it stays Reclaim. To change it, take it out of Reclaim on Import 2B as the page shows it now (reload it if it does not show Reclaim): Save then puts that entry back in Awaiting reclaim with it. Nothing was saved.',
     v_doc, v_what USING ERRCODE = 'check_violation';
 END;
 $$;
 DROP TRIGGER IF EXISTS trg_twob_zz_reclaim_evidence ON public.twob_import_docs;
 CREATE TRIGGER trg_twob_zz_reclaim_evidence BEFORE UPDATE OF itc_action ON public.twob_import_docs
-  FOR EACH ROW WHEN (OLD.itc_action = 'RECLAIM' AND NEW.itc_action IS DISTINCT FROM 'RECLAIM')
+  FOR EACH ROW WHEN (NEW.itc_action IS DISTINCT FROM OLD.itc_action AND NEW.itc_action IS DISTINCT FROM 'RECLAIM')
   EXECUTE FUNCTION public.twob__reclaim_evidence_guard();
 DROP TRIGGER IF EXISTS trg_twob_zz_reclaim_evidence_gone ON public.twob_import_docs;
 CREATE TRIGGER trg_twob_zz_reclaim_evidence_gone BEFORE DELETE ON public.twob_import_docs
@@ -1968,7 +2085,6 @@ AS $$
 DECLARE
   v_doc record;
   v_other jsonb;
-  n integer;
 BEGIN
   IF p_client_id IS NULL OR public.twob_period_key(p_period) IS NULL OR p_pending_id IS NULL OR p_doc_id IS NULL THEN
     RAISE EXCEPTION 'Choose the entry and the 2B document.';
@@ -2009,17 +2125,22 @@ BEGIN
                         COALESCE(public.twob__entry_name(v_other), 'another entry'),
                         COALESCE(NULLIF(btrim(COALESCE(v_other ->> 'reclaim_month', '')), ''), 'reclaimed'), public.twob_month_name(v_other ->> 'period_month')));
   END IF;
-  UPDATE public.bills_not_in_2b t
-     SET reclaim_month = public.twob_period_label(p_period), reclaim_subtype = NULL, reclaimed_via_doc_id = p_doc_id,
-         updated_by = p_actor_id, updated_at = now()
+  -- The entry, still awaiting a reclaim, held; then the document made
+  -- Reclaim, then the entry names it (an entry names only a Reclaim
+  -- document: twob__reclaim_via_check, round 6).
+  PERFORM 1 FROM public.bills_not_in_2b t
    WHERE t.id = p_pending_id AND t.client_id = p_client_id AND t.period_month = p_period
-     AND NULLIF(btrim(COALESCE(t.reclaim_month, '')), '') IS NULL AND t.reclaim_subtype IS NULL;
-  GET DIAGNOSTICS n = ROW_COUNT;
-  IF n = 0 THEN
+     AND NULLIF(btrim(COALESCE(t.reclaim_month, '')), '') IS NULL AND t.reclaim_subtype IS NULL
+     FOR NO KEY UPDATE;
+  IF NOT FOUND THEN
     RETURN jsonb_build_object('ok', false, 'gone', true, 'what', 'entry',
       'message', 'This entry is no longer awaiting a reclaim in this month. It was changed elsewhere (another tab, or a correction of a filed month that reached this month). Nothing was saved; the page shows the month as it is now.');
   END IF;
   UPDATE public.twob_import_docs SET itc_action = 'RECLAIM', updated_by = p_actor_id, updated_at = now() WHERE id = p_doc_id;
+  UPDATE public.bills_not_in_2b t
+     SET reclaim_month = public.twob_period_label(p_period), reclaim_subtype = NULL, reclaimed_via_doc_id = p_doc_id,
+         updated_by = p_actor_id, updated_at = now()
+   WHERE t.id = p_pending_id;
   RETURN jsonb_build_object('ok', true, 'was', v_doc.itc_action);
 END;
 $$;
@@ -2692,11 +2813,17 @@ $$;
 -- (Post's or a 2B Reconciliation Save, which named only the entry's id), the
 -- link the month's entry of that id holds now; kept only while that row is
 -- still in this client's month, once per row; failing both, by the document
--- itself (below). Its adopted_from goes with it,
--- the 2B document a reclaim names (reclaimed_via_doc_id) while it is still
--- in the month (once: the first reclaim of the version naming it, and only
--- when no entry the month keeps names it; verification round 5, one reclaim
--- per document), and an entry keeps its id when no row holds it. Everything
+-- itself (below). Its adopted_from goes with it, and an entry keeps its id
+-- when no row holds it. A reclaim the version made with a 2B document
+-- (reclaimed_via_doc_id) comes back with it only while that document is
+-- still in the month, is Reclaim now, and evidences no other reclaim (the
+-- month's kept entries', or the version's first one naming it); otherwise
+-- the entry comes back in Awaiting reclaim, and 'reclaims_back' names it
+-- with why (verification round 6; round 5 dropped only the link, and the
+-- reclaim still counted in 5.4 beside the document's count in 5.1). A
+-- reclaim that names no document (typed on 2B Reconciliation for a Liberal
+-- client, or a version of before 21 Oct whose entry is gone) comes back as
+-- the version holds it. Everything
 -- else as before: the month's carried entries are never touched, the
 -- version's carried rows are left out, and so is a version's own entry the
 -- month now holds as a carried entry (named in left_out).
@@ -2722,6 +2849,7 @@ DECLARE
   v_cur2b jsonb;
   v_curbk jsonb;
   v_linked integer := 0;
+  v_reclaims_back jsonb;
 BEGIN
   IF p_actor_id IS NULL OR COALESCE(public.staff_level_of(p_actor_id), '') <> 'superadmin' THEN
     RAISE EXCEPTION 'Only the superadmin can restore a version.';
@@ -2844,34 +2972,62 @@ BEGIN
            row_number() OVER (PARTITION BY e.vid ORDER BY e.o) AS vid_rn,
            row_number() OVER (PARTITION BY e.src ORDER BY e.o) AS src_rn,
            row_number() OVER (PARTITION BY e.via, e.reclaimed ORDER BY e.o) AS via_rn,
+           first_value(e.x) OVER (PARTITION BY e.via, e.reclaimed ORDER BY e.o) AS via_first,
            EXISTS (SELECT 1 FROM public.books_register b WHERE b.id = e.src AND b.client_id = p_client_id AND b.period_month = p_period)
-             AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.source_book_id = e.src) AS src_ok
+             AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.source_book_id = e.src) AS src_ok,
+           -- The document's treatment now (NULL: no longer in this month),
+           -- and an entry the month keeps that it already evidences.
+           (SELECT d.itc_action FROM public.twob_import_docs d
+             WHERE d.id = e.via AND d.client_id = p_client_id AND d.period_month = p_period) AS via_now,
+           (SELECT to_jsonb(z) FROM public.bills_not_in_2b z WHERE z.reclaimed_via_doc_id = e.via ORDER BY z.id LIMIT 1) AS via_kept
       FROM e),
+  -- A reclaim the version made with a 2B document comes back only while
+  -- that document is in the month, is Reclaim now, and evidences no other
+  -- reclaim (the month's kept entries, or the version's own first one);
+  -- otherwise the entry comes back in Awaiting reclaim, named with why
+  -- (verification round 6: before, a reclaim against a document taken out of
+  -- Reclaim since, or a version's second reclaim on one document, came back
+  -- counted in 5.4 beside the document's own count in 5.1).
+  kk AS (
+    SELECT k.*,
+           COALESCE(k.reclaimed AND k.via IS NOT NULL
+             AND NOT (k.via_rn = 1 AND k.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k.via_kept IS NULL), false) AS reclaim_back
+      FROM k),
   ins AS (
     INSERT INTO public.bills_not_in_2b (
       id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
       taxable_value, input_igst, input_cgst, input_sgst, reversal_month, reclaim_month, reclaim_subtype, reclaimed_via_doc_id,
       is_carried_forward, source_book_id, adopted_from, updated_by, updated_at)
-    SELECT CASE WHEN k.vid IS NOT NULL AND k.vid_rn = 1 AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.id = k.vid)
-                THEN k.vid ELSE gen_random_uuid() END,
-           p_client_id, p_period, public.twob__try_date(k.x ->> 'date'), k.x ->> 'supplier_name',
-           NULLIF(k.x ->> 'supplier_invoice_number', ''), NULLIF(k.x ->> 'supplier_gstin', ''),
-           COALESCE(public.twob__try_num(k.x ->> 'taxable_value'), 0), COALESCE(public.twob__try_num(k.x ->> 'input_igst'), 0),
-           COALESCE(public.twob__try_num(k.x ->> 'input_cgst'), 0), COALESCE(public.twob__try_num(k.x ->> 'input_sgst'), 0),
-           NULLIF(btrim(COALESCE(k.x ->> 'reversal_month', '')), ''), NULLIF(btrim(COALESCE(k.x ->> 'reclaim_month', '')), ''),
-           NULLIF(btrim(COALESCE(k.x ->> 'reclaim_subtype', '')), ''),
-           CASE WHEN k.reclaimed AND k.via_rn = 1
-                 AND EXISTS (SELECT 1 FROM public.twob_import_docs d WHERE d.id = k.via AND d.client_id = p_client_id AND d.period_month = p_period)
-                 AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.reclaimed_via_doc_id = k.via)
-                THEN k.via END,
+    SELECT CASE WHEN kk.vid IS NOT NULL AND kk.vid_rn = 1 AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.id = kk.vid)
+                THEN kk.vid ELSE gen_random_uuid() END,
+           p_client_id, p_period, public.twob__try_date(kk.x ->> 'date'), kk.x ->> 'supplier_name',
+           NULLIF(kk.x ->> 'supplier_invoice_number', ''), NULLIF(kk.x ->> 'supplier_gstin', ''),
+           COALESCE(public.twob__try_num(kk.x ->> 'taxable_value'), 0), COALESCE(public.twob__try_num(kk.x ->> 'input_igst'), 0),
+           COALESCE(public.twob__try_num(kk.x ->> 'input_cgst'), 0), COALESCE(public.twob__try_num(kk.x ->> 'input_sgst'), 0),
+           NULLIF(btrim(COALESCE(kk.x ->> 'reversal_month', '')), ''),
+           CASE WHEN NOT kk.reclaim_back THEN NULLIF(btrim(COALESCE(kk.x ->> 'reclaim_month', '')), '') END,
+           CASE WHEN NOT kk.reclaim_back THEN NULLIF(btrim(COALESCE(kk.x ->> 'reclaim_subtype', '')), '') END,
+           CASE WHEN kk.reclaimed AND NOT kk.reclaim_back THEN kk.via END,
            false,
-           CASE WHEN k.src_ok AND k.src_rn = 1 THEN k.src END,
-           CASE WHEN k.src_ok AND k.src_rn = 1 THEN k.af END,
+           CASE WHEN kk.src_ok AND kk.src_rn = 1 THEN kk.src END,
+           CASE WHEN kk.src_ok AND kk.src_rn = 1 THEN kk.af END,
            p_actor_id, now()
-      FROM k
-     ORDER BY k.o
+      FROM kk
+     ORDER BY kk.o
     RETURNING source_book_id)
-  SELECT count(*), count(*) FILTER (WHERE ins.source_book_id IS NOT NULL) INTO n2b, v_linked FROM ins;
+  SELECT (SELECT count(*) FROM ins), (SELECT count(*) FROM ins WHERE ins.source_book_id IS NOT NULL),
+         COALESCE((SELECT jsonb_agg(public.twob__entry_json(jsonb_build_object('period_month', p_period, 'date', kk.x ->> 'date',
+             'supplier_name', kk.x ->> 'supplier_name', 'supplier_invoice_number', kk.x ->> 'supplier_invoice_number',
+             'input_igst', public.twob__try_num(kk.x ->> 'input_igst'), 'input_cgst', public.twob__try_num(kk.x ->> 'input_cgst'),
+             'input_sgst', public.twob__try_num(kk.x ->> 'input_sgst')),
+             CASE WHEN kk.via_now IS NULL THEN 'its 2B document is no longer in this month'
+                  WHEN kk.via_now IS DISTINCT FROM 'RECLAIM' THEN format('its 2B document is %s now, not Reclaim', public.twob__treatment_label(kk.via_now))
+                  WHEN kk.via_kept IS NOT NULL THEN format('its 2B document already evidences the reclaim of %s',
+                                                          COALESCE(public.twob__entry_name(kk.via_kept), 'another entry'))
+                  ELSE format('its 2B document evidences the reclaim of %s in this version (one document, one reclaim)',
+                              COALESCE(public.twob__entry_name(kk.via_first), 'another entry')) END)
+             ORDER BY kk.o) FROM kk WHERE kk.reclaim_back), '[]'::jsonb)
+    INTO n2b, v_linked, v_reclaims_back;
   WITH e AS (
     SELECT x.x, x.o, public.twob__try_uuid(x.x ->> 'id') AS vid,
            COALESCE(public.twob__try_uuid(x.x ->> 'source_doc_id'),
@@ -2958,7 +3114,8 @@ BEGIN
   SELECT v_linked + count(*) INTO v_linked FROM u;
   PERFORM set_config('twob.write', COALESCE(v_prev, ''), true);
   RETURN jsonb_build_object('period', p_period, 'bills_not_in_2b', n2b, 'bills_not_in_books', nbk,
-                            'carried_kept_2b', c2b, 'carried_kept_books', cbk, 'left_out', v_left, 'linked', v_linked);
+                            'carried_kept_2b', c2b, 'carried_kept_books', cbk, 'left_out', v_left, 'linked', v_linked,
+                            'reclaims_back', v_reclaims_back);
 END;
 $$;
 
@@ -3108,6 +3265,7 @@ REVOKE ALL ON FUNCTION
   public.twob__autopost_gone(),
   public.twob__autopost_gone_done(),
   public.twob__reclaim_via_tidy(),
+  public.twob__reclaim_via_check(),
   public.twob__reclaim_evidence_guard()
 FROM PUBLIC, anon, authenticated;
 

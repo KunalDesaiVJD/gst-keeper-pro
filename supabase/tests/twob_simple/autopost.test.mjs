@@ -258,8 +258,9 @@ await both('5c reclaim in one call', (t, client) => {
   const entry = psql(`SELECT id FROM public.bills_not_in_2b WHERE source_book_id = '${id(t, 204)}'`);
   return t === 'a'
     ? `SELECT public.twob_import2b_reclaim(public.t_manager(), '${client}', '${M}', '${entry}', '${id(t, 114)}', (SELECT itc_action FROM public.twob_import_docs WHERE id = '${id(t, 114)}'));`
-    : `UPDATE public.bills_not_in_2b SET reclaim_month = 'Sep 26', reclaimed_via_doc_id = '${id(t, 114)}' WHERE id = '${entry}';
-       UPDATE public.twob_import_docs SET itc_action = 'RECLAIM' WHERE id = '${id(t, 114)}';`;
+    // The document first: an entry names only a Reclaim document (round 6).
+    : `UPDATE public.twob_import_docs SET itc_action = 'RECLAIM' WHERE id = '${id(t, 114)}';
+       UPDATE public.bills_not_in_2b SET reclaim_month = 'Sep 26', reclaimed_via_doc_id = '${id(t, 114)}' WHERE id = '${entry}';`;
 });
 check('5c reclaim in one call: the entry was there to reclaim', psql(`SELECT count(*) FROM public.bills_not_in_2b WHERE source_book_id = '${id('a', 204)}' AND reclaim_month = 'Sep 26'`) === '1');
 
@@ -277,10 +278,12 @@ check('5c reclaim in one call: the entry was there to reclaim', psql(`SELECT cou
 }
 // 7. Delete 2B (A: the one call; B: Import 2B's delete as it was, then Post).
 // O/1 reclaimed with another document of the month than 5c's (one reclaim
-// per document since verification round 5).
+// per document since verification round 5), Reclaim (an entry names only a
+// Reclaim document, round 6).
 {
   psql(`SELECT set_config('twob.write', 'system', false);
     UPDATE public.bills_not_in_books SET is_locked = true WHERE source_doc_id IN ('${id('a', 102)}', '${id('b', 102)}');
+    UPDATE public.twob_import_docs SET itc_action = 'RECLAIM' WHERE id IN ('${id('a', 113)}', '${id('b', 113)}');
     INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, input_igst, reversal_month, reclaim_month, reclaimed_via_doc_id) VALUES
       ('${A}', '${M}', '2026-08-30', 'OLD', 'O/1', 252, 'Aug 26', 'Sep 26', '${id('a', 113)}'),
       ('${B}', '${M}', '2026-08-30', 'OLD', 'O/1', 252, 'Aug 26', 'Sep 26', '${id('b', 113)}');`);

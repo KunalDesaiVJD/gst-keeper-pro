@@ -727,9 +727,12 @@ export type RestoreRow = Record<string, string | number | boolean | null | Recor
 /**
  * What a restore did: the month's own entries restored, its carried entries
  * kept as they stand, and the version's own entries left out because the
- * month now holds them as carried entries (named, "SUP X-9").
+ * month now holds them as carried entries (named, "SUP X-9"). reclaimsBack:
+ * entries whose reclaim did not come back with them (verification round 6:
+ * their 2B document is not Reclaim now, is gone, or evidences another
+ * reclaim), restored in Awaiting reclaim, each named with why.
  */
-export interface RestoreResult { own2B: number; ownBooks: number; carriedKept: number; leftOut: string[]; linked: number }
+export interface RestoreResult { own2B: number; ownBooks: number; carriedKept: number; leftOut: string[]; linked: number; reclaimsBack: string[] }
 
 /**
  * Replaces an open month's own entries on its two lists with a saved
@@ -754,6 +757,8 @@ export async function restoreVersion(actorId: string, clientId: string, period: 
     linked: Number(d.linked) || 0,
     leftOut: (Array.isArray(d.left_out) ? (d.left_out as Raw[]) : [])
       .map((e) => [e.supplier_name, e.supplier_invoice_number].filter((x) => typeof x === 'string' && x.trim()).join(' ') || 'an entry'),
+    reclaimsBack: (Array.isArray(d.reclaims_back) ? (d.reclaims_back as Raw[]) : [])
+      .map((e) => `${[e.supplier_name, e.supplier_invoice_number].filter((x) => typeof x === 'string' && x.trim()).join(' ') || 'an entry'}${typeof e.message === 'string' && e.message ? ` (${e.message})` : ''}`),
   };
 }
 

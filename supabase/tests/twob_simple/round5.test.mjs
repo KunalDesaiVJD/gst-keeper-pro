@@ -270,6 +270,9 @@ await run('I4', async () => {
           IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_twob_zz_reclaim_via') THEN
             ALTER TABLE public.bills_not_in_2b DISABLE TRIGGER trg_twob_zz_reclaim_via;
           END IF;
+          IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_twob_zz_reclaim_via_one') THEN
+            ALTER TABLE public.bills_not_in_2b DISABLE TRIGGER trg_twob_zz_reclaim_via_one;
+          END IF;
         END $$;
         SELECT set_config('twob.write', 'system', false);
         UPDATE public.bills_not_in_2b SET reclaim_month = NULL, reclaim_subtype = NULL, reclaimed_via_doc_id = '${id(13)}' WHERE id = '${id(3)}';
@@ -277,6 +280,9 @@ await run('I4', async () => {
         DO $$ BEGIN
           IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_twob_zz_reclaim_via') THEN
             ALTER TABLE public.bills_not_in_2b ENABLE TRIGGER trg_twob_zz_reclaim_via;
+          END IF;
+          IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_twob_zz_reclaim_via_one') THEN
+            ALTER TABLE public.bills_not_in_2b ENABLE TRIGGER trg_twob_zz_reclaim_via_one;
           END IF;
         END $$;`);
   // The page's own patches (before this round: the reclaim and Expense out columns only).

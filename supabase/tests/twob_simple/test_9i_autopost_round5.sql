@@ -7,8 +7,10 @@
 --      document another user has just reclaimed with is refused, nothing
 --      written (before: both counted in 5.4); a reclaim with a document
 --      whose treatment changed since the page showed it is refused; the
---      unique index refuses any other writer; Restore of a version holding
---      two reclaims on one document keeps one;
+--      unique index refuses any other writer (round 6: the trigger
+--      trg_twob_zz_reclaim_via_one, first, and where the index cannot be
+--      made); Restore of a version holding two reclaims on one document keeps
+--      one, the other back in Awaiting reclaim (round 6);
 --   I2 a document leaves Reclaim, or is deleted, only with its reclaim
 --      released in the same transaction (twob_import2b_unreclaim, Delete 2B):
 --      a stale page's Save, a bulk change and a re-import's delete are
@@ -151,9 +153,11 @@ SELECT public.t5_eq(concat_ws('|', :'i1c'::jsonb ->> 'ok', position('it is Ineli
                               (SELECT itc_action FROM public.twob_import_docs WHERE id = '5e000000-0000-0000-0000-0000000000d2'),
                               (SELECT COALESCE(reclaim_month, '-') FROM public.bills_not_in_2b WHERE id = '5e000000-0000-0000-0000-0000000000e2')),
   'false|t|INELIGIBLE|-', 'I1: a reclaim with a document whose treatment changed since the page showed it is refused; the Ineligible stays');
+-- (Round 6: refused first by trg_twob_zz_reclaim_via_one, which holds on
+-- live too, where the unique index cannot be created.)
 SELECT public.t5_raises($q$UPDATE public.bills_not_in_2b SET reclaim_month = 'Oct 26', reclaimed_via_doc_id = '5e000000-0000-0000-0000-0000000000d1'
                             WHERE id = '5e000000-0000-0000-0000-0000000000e3'$q$,
-  'bills_not_in_2b_reclaimed_via_uq', 'I1: any other writer naming a document a second entry already names is refused (unique index)');
+  'is already the evidence of the reclaim of ALPHA A-1', 'I1: any other writer naming a document a second entry already names is refused');
 SELECT public.t5_raises(format($q$SELECT public.twob_import2b_reclaim(public.t_poster(), '%s', '10/2026', '5e000000-0000-0000-0000-0000000000e3',
                                   '5e000000-0000-0000-0000-0000000000d3', NULL)$q$, :'R'),
   'Say which treatment the page showed', 'I1: a reclaim must say the treatment the page showed');
@@ -227,6 +231,13 @@ SELECT public.t5_eq(public.twob_restore_version_linked(public.t_superadmin(), :'
 SELECT public.t5_eq((SELECT string_agg(concat_ws(':', supplier_invoice_number, COALESCE(reclaimed_via_doc_id::text, '-')), ',' ORDER BY supplier_invoice_number DESC)
                        FROM public.bills_not_in_2b WHERE client_id = :'R6'),
   'J-1:5e000000-0000-0000-0000-0000000000a6,J-0:-', 'I1: ... the document names one reclaim (the version''s first); the other is restored without it');
+-- Round 6: and the other comes back Awaiting reclaim, so 5.4 counts the one
+-- document's ITC once (round 5 dropped only the link: 5.4 counted 180 on 90).
+SELECT public.t5_eq((SELECT string_agg(concat_ws(':', supplier_invoice_number, COALESCE(reclaim_month, '-')), ',' ORDER BY supplier_invoice_number DESC)
+                       FROM public.bills_not_in_2b WHERE client_id = :'R6'),
+  'J-1:Oct 26,J-0:-', 'I1: ... the other is restored in Awaiting reclaim (round 6)');
+SELECT public.t5_eq((SELECT sum(input_cgst)::numeric(12,2) FROM public.bills_not_in_2b WHERE client_id = :'R6' AND reclaim_month = 'Oct 26' AND reclaim_subtype IS NULL),
+  90.00::numeric(12,2), 'I1: ... 5.4 CGST for Oct 26 is the one document''s 90 (round 6)');
 
 -- ---------------------------------------------------------------------------
 -- I3. A books row is saved only while it holds what the page loaded.

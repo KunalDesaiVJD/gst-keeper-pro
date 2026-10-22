@@ -88,16 +88,25 @@ included). A reclaim (`twob_import2b_reclaim`), a document out of
 Reclaim (`twob_import2b_unreclaim`) and a books row's pairing
 (`twob_import2b_save_book`) are one call each, all or nothing. The money
 rules are database invariants, whatever screen, tab or app version writes:
-one reclaim per 2B document (unique index `bills_not_in_2b_reclaimed_via_uq`,
-created only when live has no document named twice, and the reclaim call
-refusing a document already evidencing one or no longer holding the
-treatment the page showed, `p_expect_action`); a document stays Reclaim, and
-undeleted, while an entry is reclaimed against it (`twob__reclaim_evidence_guard`:
-only `twob_import2b_unreclaim` and Delete 2B, which release it first, take it
-out); an entry names its reclaiming document only while it holds the reclaim
-(`twob__reclaim_via_tidy`); a books row is saved only while it holds what
-the page loaded (changed columns only, guarded; `p_expect` on the pairing and
-filed-month calls; `src/lib/import2bGuardedSaves.ts`), and the treatment Save
+an entry newly names a 2B document only while it is Reclaim and no other
+entry names it (trigger `twob__reclaim_via_check`, the document locked while
+it checks; it holds on live, where the unique index
+`bills_not_in_2b_reclaimed_via_uq` cannot be made because a filed July
+document already evidences two reclaims, left as filed; the index is a second
+hold where the data allows), so the app of before's Reclaim (entry before
+document) is refused once this migration is applied, and the reclaim call
+also refuses, in the page's words, a document already evidencing one or no
+longer holding the treatment the page showed (`p_expect_action`); a document
+stays Reclaim, and undeleted, while an entry is reclaimed against it
+(`twob__reclaim_evidence_guard`: only `twob_import2b_unreclaim` and Delete 2B,
+which release it first, take it out; one named while not Reclaim, recorded
+before, can only become Reclaim); an entry names its reclaiming document only
+while it holds the reclaim (`twob__reclaim_via_tidy`); Restore brings a
+version's reclaim back only on those terms, else the entry comes back
+Awaiting reclaim, named (`reclaims_back`); a books row is saved only while it
+holds what the page loaded (changed columns only, guarded; `p_expect` on the
+pairing and filed-month calls; one page's saves of a row one at a time,
+`queueBookSave`; `src/lib/import2bGuardedSaves.ts`), and the treatment Save
 writes each document only while it holds the treatment loaded; a re-import
 skips and names a refused row, and keeps (and lists) a document gone from 2B
 while it has a Not in Books entry (`src/lib/twobReimport.ts`). An own unlinked entry of the same bill is

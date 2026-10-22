@@ -246,7 +246,7 @@ SELECT set_config('twob.write', 'system', false);
 INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, doc_type, itc_action) VALUES
   ('a9000000-0000-0000-0000-0000000000f1', :'E', '08/2026', '2026-08-01', 'E SUP', 'E/1', '24ESUPP0000A1Z5', 100, 18, 'INVOICE', 'NOT_IN_BOOKS'),
   ('a9000000-0000-0000-0000-0000000000f2', :'E', '08/2026', '2026-08-02', 'E SUP', 'E/2', '24ESUPP0000A1Z5', 200, 36, 'INVOICE', 'NOT_IN_BOOKS'),
-  ('a9000000-0000-0000-0000-0000000000f3', :'E', '08/2026', '2026-08-03', 'E SUP', 'E/3', '24ESUPP0000A1Z5', 300, 54, 'INVOICE', 'MATCHED');
+  ('a9000000-0000-0000-0000-0000000000f3', :'E', '08/2026', '2026-08-03', 'E SUP', 'E/3', '24ESUPP0000A1Z5', 300, 54, 'INVOICE', 'RECLAIM');
 INSERT INTO public.bills_not_in_books (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, bill_in_2b_month, is_locked, source_doc_id) VALUES
   (:'E', '08/2026', '2026-08-01', 'E SUP', 'E/1', '24ESUPP0000A1Z5', 100, 18, 'Aug 26', false, 'a9000000-0000-0000-0000-0000000000f1'),
   (:'E', '08/2026', '2026-08-02', 'E SUP', 'E/2', '24ESUPP0000A1Z5', 200, 36, 'Aug 26', true, 'a9000000-0000-0000-0000-0000000000f2');

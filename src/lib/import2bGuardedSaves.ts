@@ -154,3 +154,110 @@ export async function saveBookGuarded<T extends RowLike>(o: { actorId: string; b
   if (rows.length > 0) return { ok: true, row: rows[0], message: '' };
   return { ok: false, row: null, message: bookChangedMsg(o.loaded) };
 }
+
+// ---- One page's saves of one books row, one at a time (verification round 6) ----
+//
+// Two cells of a row left in quick succession (Tab past the SGST that CGST
+// fills, or typing in a second cell before the first save lands) made two
+// saves at once, each guarded by the row as loaded before either landed: the
+// second was refused as changed elsewhere ("another tab or another user"),
+// the row reloaded and its typing lost. Now each save of a row waits for this
+// page's save of it before, then puts the user's edits (typed against the row
+// as the page held it at that moment) on the row as that save left it.
+
+/** Tasks run one at a time per key, in the order queued; a task failing does not stop the next. */
+export class RowQueue {
+  private tails = new Map<string, Promise<void>>();
+
+  run<R>(key: string, task: () => Promise<R>): Promise<R> {
+    const prev = this.tails.get(key) ?? Promise.resolve();
+    const out = prev.then(task);
+    const tail = out.then(() => undefined, () => undefined);
+    this.tails.set(key, tail);
+    void tail.then(() => { if (this.tails.get(key) === tail) this.tails.delete(key); });
+    return out;
+  }
+
+  /** Whether a task of this key is queued or running. */
+  busy(key: string): boolean {
+    return this.tails.has(key);
+  }
+}
+
+/** A page's books saves (React refs, read when each save runs): the rows as loaded or last saved, this
+ * page's saves as they landed and when each row was last shown again as it is, on one clock; the queue. */
+export interface BookSaveState<T extends RowLike> {
+  loaded: { current: Map<string, T> };
+  saves: { current: Map<string, { at: number; row: T }> };
+  shownAgain: { current: Map<string, number> };
+  clock: { current: number };
+  queue: { current: RowQueue };
+}
+
+/** A books save landed: the row as saved is what the next save of it starts from and is guarded by. */
+export function bookLanded<T extends RowLike & { id: string }>(st: BookSaveState<T>, row: T): void {
+  st.clock.current += 1;
+  st.saves.current.set(row.id, { at: st.clock.current, row });
+  st.loaded.current.set(row.id, row);
+}
+
+/** A books row shown again as it is (a refusal, a Cancel): a save of it queued before this is dropped. */
+export function bookShownAgain<T extends RowLike>(st: BookSaveState<T>, id: string): void {
+  st.clock.current += 1;
+  st.shownAgain.current.set(id, st.clock.current);
+}
+
+/**
+ * One books save from the page. The user's edits (next: the row's save
+ * columns as on screen) are taken now, against the row as the page holds it
+ * now; the save runs after this page's earlier save of the row has landed,
+ * on the row as that save left it (rebaseBookEdit). save: the page's own
+ * save (loaded: the row it is guarded by; row: the edits on it). refuse: the
+ * row was not loaded, or changed elsewhere since (base: the row as the page
+ * held it); said, and shown again. A save queued before the row was shown
+ * again is dropped (false), nothing said.
+ */
+export function queueBookSave<T extends RowLike & { id: string }>(st: BookSaveState<T>, o: {
+  id: string; next: BookValues; save: (loaded: T, row: T) => Promise<boolean>; refuse: (base: T | undefined) => Promise<void>;
+}): Promise<boolean> {
+  const base = st.loaded.current.get(o.id);
+  const typed = base ? bookChanges(base, o.next) : {};
+  const at = st.clock.current;
+  return st.queue.current.run(o.id, async () => {
+    if (!base) { await o.refuse(undefined); return false; }
+    const own = st.saves.current.get(o.id);
+    const now = st.loaded.current.get(o.id);
+    const rb = rebaseBookEdit({
+      base, typed, now, ownSince: own && own.at > at ? own.row : null, shownAgain: (st.shownAgain.current.get(o.id) ?? -1) > at,
+    });
+    if (rb.kind === 'shown-again') return false;
+    if (rb.kind === 'changed' || !now) { await o.refuse(base); return false; }
+    return o.save(now, rb.row);
+  });
+}
+
+/** Whether two books rows hold the same values in every save column. */
+export const sameBookRow = (a: RowLike, b: RowLike): boolean => BOOK_SAVE_COLUMNS.every((k) => same(k, cell(a, k), cell(b, k)));
+
+/**
+ * The row a queued books save starts from. base: the row as the page held it
+ * (loaded or last saved) when the user left the cell; typed: the user's edits
+ * against base (bookChanges); now: the row as the page holds it now; ownSince:
+ * the row as this page's own save left it, when one landed since; shownAgain:
+ * the row was shown again as it is (a refusal, a Cancel) since.
+ *  - ok: now is base, or what this page's own save made of it: the edits go
+ *    on it, and the save is guarded by it;
+ *  - shown-again: dropped, nothing said (the refusal or Cancel said it);
+ *  - changed: now is neither (a reload brought another user's change):
+ *    refused as changed elsewhere.
+ */
+export function rebaseBookEdit<T extends RowLike>(o: {
+  base: T; typed: BookValues; now: T | undefined; ownSince: T | null; shownAgain: boolean;
+}): { kind: 'ok'; row: T } | { kind: 'shown-again' } | { kind: 'changed' } {
+  if (o.shownAgain) return { kind: 'shown-again' };
+  if (!o.now) return { kind: 'changed' };
+  if (o.now === o.base || sameBookRow(o.now, o.base) || (o.ownSince !== null && sameBookRow(o.now, o.ownSince))) {
+    return { kind: 'ok', row: { ...o.now, ...o.typed } as T };
+  }
+  return { kind: 'changed' };
+}

@@ -197,7 +197,7 @@ INSERT INTO public.books_register (id, client_id, period_month, date, supplier_n
   ('af000000-0000-0000-0000-0000000005b1', :'R', '09/2026', '2026-09-05', 'IOTA', 'I-1', '24IOTAA0000A1Z5', 3000, 300, 300, 'NOT_IN_2B', 'INVOICE');
 INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
   taxable_value, input_cgst, input_sgst, doc_type, itc_action) VALUES
-  ('af000000-0000-0000-0000-0000000005d1', :'R', '09/2026', '2026-09-06', 'ZETA', 'Z-1', '24ZETAA0000A1Z5', 7000, 700, 700, 'INVOICE', 'MATCHED');
+  ('af000000-0000-0000-0000-0000000005d1', :'R', '09/2026', '2026-09-06', 'ZETA', 'Z-1', '24ZETAA0000A1Z5', 7000, 700, 700, 'INVOICE', 'RECLAIM');
 SELECT public.twob_import2b_flush_version(public.t_poster(), :'R', '09/2026');
 SELECT public.t_eq((SELECT version_data -> 'billsNotIn2B' -> 0 ->> 'sourceBookId' FROM public.twob_versions WHERE client_id = :'R' ORDER BY version_number DESC LIMIT 1),
   'af000000-0000-0000-0000-0000000005b1', 'F5: the write-through''s version records each entry''s Import 2B link');

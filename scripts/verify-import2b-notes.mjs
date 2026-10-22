@@ -785,17 +785,17 @@ await run('no post', async () => {
       && (sql.match(/twob__prior_save_preview\(p_actor_id, p_client_id, p_period, v_phase1, v_unlinks, p_whole_month\)/g) || []).length === 1);
   // Round 5 (22 Oct 2026): the money rules held by the database, and the
   // page's saves guarded by what it loaded.
-  check('round 5 I1: a reclaim sends the treatment the page shows; the database refuses another treatment and a document already evidencing a reclaim, and one reclaim per document is a unique index (created when none is doubled)',
+  check('round 5 I1: a reclaim sends the treatment the page shows; the database refuses another treatment and a document already evidencing a reclaim, and one reclaim per document is also a unique index (created when none is doubled)',
     /expectAction: doc\.itc_action,/.test(code) && pend.includes('p_expect_action: o.expectAction,')
       && /IF v_doc\.itc_action IS DISTINCT FROM p_expect_action THEN/.test(sql)
       && /WHERE t\.reclaimed_via_doc_id = p_doc_id AND t\.id <> p_pending_id/.test(sql)
       && /CREATE UNIQUE INDEX IF NOT EXISTS bills_not_in_2b_reclaimed_via_uq\s+ON public\.bills_not_in_2b \(reclaimed_via_doc_id\) WHERE reclaimed_via_doc_id IS NOT NULL;/.test(sql)
-      && /RAISE WARNING 'One reclaim per 2B document is not enforced by an index yet/.test(sql));
+      && /RAISE WARNING 'These 2B documents are each the evidence of more than one reclaim, recorded before this file/.test(sql));
   check('round 5 I2: the treatment Save writes each document only while it holds the treatment loaded; the database keeps a document Reclaim (and undeleted) while an entry is reclaimed against it',
     /changes: known\.map\(\(\[id, to\]\) => \(\{ id, from: savedAction\(id\) as string, to \}\)\),/.test(code)
       && !/\.update\(\{ itc_action: action, updated_by: user\?\.id, updated_at: nowIso \}\)\s*\.in\('id', part\)/.test(code)
       && /\.in\('id', part\)\.eq\('client_id', o\.clientId\)\.eq\('period_month', o\.period\)\.eq\('itc_action', from\)/.test(guardedLib)
-      && /CREATE TRIGGER trg_twob_zz_reclaim_evidence BEFORE UPDATE OF itc_action ON public\.twob_import_docs\s+FOR EACH ROW WHEN \(OLD\.itc_action = 'RECLAIM' AND NEW\.itc_action IS DISTINCT FROM 'RECLAIM'\)/.test(sql)
+      && /CREATE TRIGGER trg_twob_zz_reclaim_evidence BEFORE UPDATE OF itc_action ON public\.twob_import_docs\s+FOR EACH ROW WHEN \(NEW\.itc_action IS DISTINCT FROM OLD\.itc_action AND NEW\.itc_action IS DISTINCT FROM 'RECLAIM'\)/.test(sql)
       && /CREATE TRIGGER trg_twob_zz_reclaim_evidence_gone BEFORE DELETE ON public\.twob_import_docs/.test(sql)
       && /IF v_was IS DISTINCT FROM 'RECLAIM' THEN/.test(sql)
       && /CREATE TRIGGER trg_twob_zz_reclaim_via BEFORE INSERT OR UPDATE OF reclaim_month, reclaim_subtype, reclaimed_via_doc_id ON public\.bills_not_in_2b/.test(sql));
@@ -818,6 +818,36 @@ await run('no post', async () => {
   check('round 5 I5: the Import 2B & post description says which saves need it (the others are open to all staff)',
     catalog.includes('the Import 2B saves that change the 2B Reconciliation ledger') && catalog.includes('Other Import 2B saves are open to all staff')
       && !catalog.includes('each such save changes the 2B Reconciliation ledger by itself'));
+  // Round 6 (22 Oct 2026): one reclaim per document, and only with a Reclaim
+  // document, held for every writer without the index (live cannot have
+  // it); Restore held to it; one page's saves of a books row one at a time.
+  const prior = readOr('src/lib/twobPriorMonth.ts');
+  const reco = readOr('src/pages/TwoBReconciliationPage.tsx');
+  check('round 6 H1/H2: an entry newly names only a Reclaim document no other entry names, whoever writes (a trigger, the document locked while it checks), so it holds without the unique index',
+    /CREATE TRIGGER trg_twob_zz_reclaim_via_one BEFORE INSERT OR UPDATE OF reclaimed_via_doc_id ON public\.bills_not_in_2b\s+FOR EACH ROW WHEN \(NEW\.reclaimed_via_doc_id IS NOT NULL\)/.test(sql)
+      && /pg_advisory_xact_lock\(hashtextextended\('twob-reclaim-doc:' \|\| NEW\.reclaimed_via_doc_id::text, 0\)\)/.test(sql)
+      && /FROM public\.twob_import_docs d WHERE d\.id = NEW\.reclaimed_via_doc_id\s+FOR SHARE;/.test(sql)
+      && /IF v_doc\.itc_action IS DISTINCT FROM 'RECLAIM' THEN\s+RAISE EXCEPTION 'Not saved: the 2B document% is % on Import 2B, not Reclaim/.test(sql)
+      && /WHERE t\.reclaimed_via_doc_id = NEW\.reclaimed_via_doc_id AND t\.id <> NEW\.id/.test(sql)
+      && !/IF current_setting\('twob\.write'[^;]*\s+RETURN NEW;\s+END IF;\s+-- The document's own lock/.test(sql));
+  check('round 6 H1: the reclaim call makes the document Reclaim before the entry names it (the entry held first, still awaiting)',
+    /FOR NO KEY UPDATE;\s+IF NOT FOUND THEN\s+RETURN jsonb_build_object\('ok', false, 'gone', true, 'what', 'entry',[\s\S]{0,400}UPDATE public\.twob_import_docs SET itc_action = 'RECLAIM', updated_by = p_actor_id, updated_at = now\(\) WHERE id = p_doc_id;\s+UPDATE public\.bills_not_in_2b t\s+SET reclaim_month = public\.twob_period_label\(p_period\)/.test(sql));
+  check('round 6 H1: Restore brings a reclaim back only while its document is in the month, Reclaim and evidencing no other; the rest come back Awaiting reclaim, named (reclaims_back), and the page says so',
+    /k\.via_rn = 1 AND k\.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k\.via_kept IS NULL/.test(sql)
+      && /CASE WHEN NOT kk\.reclaim_back THEN NULLIF\(btrim\(COALESCE\(kk\.x ->> 'reclaim_month', ''\)\), ''\) END,/.test(sql)
+      && /'reclaims_back', v_reclaims_back/.test(sql)
+      && prior.includes('reclaimsBack: (Array.isArray(d.reclaims_back)')
+      && reco.includes('restored.reclaimsBack.length') && reco.includes('Restored in Awaiting reclaim, without the version\'s reclaim'));
+  check('round 6 H1: a document a reclaim recorded before names while not Reclaim can only be made Reclaim again',
+    sql.includes("it can only be made Reclaim again. Nothing was saved."));
+  check('round 6 M: one page\'s saves of a books row run one at a time (cells, Type, Treatment), each on the row as the save before left it; a refusal or Cancel drops the saves queued behind it',
+    /return queueBookSave\(bookSaveState, \{\s+id, next: bookValues\(\{ \.\.\.found, \.\.\.patch \}\), refuse: \(base\) => refuseBook\(id, base\),\s+save: \(loaded, row\) => saveBookRowNow\(id, classify, t, loaded, row\),/.test(code)
+      && /return queueBookSave\(bookSaveState, \{\s+id, next: \{ book_treatment: treatment \}, refuse: \(base\) => refuseBook\(id, base\),/.test(code)
+      && /const restoreBook = async \(id: string\) => \{\s+bookShownAgain\(bookSaveState, id\);/.test(code)
+      && /const bookSaved = \(row: BookRow, edits: number\) => \{\s+bookLanded\(bookSaveState, row\);/.test(code)
+      && /const setBookDocType = async[\s\S]{0,200}await saveBookRow\(id, true, \{ doc_type: docType \}\);/.test(code)
+      && guardedLib.includes('export class RowQueue') && guardedLib.includes('export function rebaseBookEdit')
+      && guardedLib.includes('return st.queue.current.run(o.id, async () => {'));
   check('round 2: "this row never reaches the ledger" is said for a debit note only once its save went through',
     /const saved = await saveBookRow\(id, true, \{ doc_type: docType \}\);\s*if \(saved && docType === 'DEBIT_NOTE'\) toast\.info\(BOOK_DEBIT_NOTE_MSG/.test(code));
   check('round 2: a book entry or Expense out carried in from a filed month has no Undo on Import 2B, and the database refuses the change',

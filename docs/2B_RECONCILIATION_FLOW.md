@@ -1886,12 +1886,16 @@ changes are small.
   evidence of a reclaim ("... already the evidence of the reclaim of ...;
   one document evidences one reclaim"). Before, a tab not reloaded reclaimed
   a second entry with a document another user had just reclaimed with, and
-  5.4 counted its ITC twice. A unique index on
-  `bills_not_in_2b(reclaimed_via_doc_id)` holds it for any other writer; the
-  migration creates it only when no document is named by two entries, and
-  otherwise goes on without it and says which (its header lists the one live
-  document so named on 22 Oct 2026). A Restore of a version holding two
-  reclaims on one document keeps the first.
+  5.4 counted its ITC twice. For any other writer the rule is held by a
+  trigger since round 6 (below); a unique index on
+  `bills_not_in_2b(reclaimed_via_doc_id)` holds it a second time where the
+  data allows: the migration creates it only when no document is named by
+  two entries, and otherwise goes on without it and says which. On live it
+  is not created (one filed July document is named by two reclaims, recorded
+  before; its header lists it). A Restore of a version holding two reclaims
+  on one document brings back the first; round 6 brings the other back in
+  Awaiting reclaim (round 5 dropped only its link, and its reclaim still
+  counted in 5.4).
 - **A document stays Reclaim while an entry is reclaimed against it**, and
   is not deleted (`twob__reclaim_evidence_guard`): a change of its treatment
   or a delete is refused ("... is the evidence of the reclaim of ..., so it
@@ -1934,7 +1938,8 @@ changes are small.
   meanwhile; a load begun before it shows it as saved too (before,
   switching month away and back during a save showed the old figures beside
   a Pending items entry with the new ones, and the next blur of an untouched
-  cell wrote the old figures back).
+  cell wrote the old figures back). One page's saves of one row run one at a
+  time since round 6 (below).
 - **Lows.** 2B Reconciliation's own Save of a carried entry holding its own
   decision (the decision undone, then the row deleted) is no longer read as
   someone else's change: a row's change is read with its delete in the same
@@ -1943,6 +1948,58 @@ changes are small.
   reloads the version list (before, a second "Version 1" beside Import 2B's
   snapshot). The Import 2B & post description in Settings says which saves
   need it and that the others are open to all staff.
+
+**Round 6: the reclaim's rules for every writer, and Restore held to them**
+(verification of 22 Oct 2026).
+
+- **An entry names a 2B document only while that document is Reclaim and
+  no other entry names it**, whoever writes (`twob__reclaim_via_check`, the
+  trigger `trg_twob_zz_reclaim_via_one` on `bills_not_in_2b`): a new naming
+  of a document that is Matched, Mismatched, Ineligible or any other
+  treatment is refused ("Not saved: the 2B document ... is Matched on Import
+  2B, not Reclaim ..."), and so is a second naming of one document ("... is
+  already the evidence of the reclaim of ...; one document evidences one
+  reclaim"). The document's row and its own lock are held while it checks,
+  so two tabs naming one document at once, or a document taken out of
+  Reclaim while a tab names it, are seen by whichever comes second. It holds
+  without the unique index, as live stands: before, a tab of the app of
+  before left open (or any direct write) still reclaimed a second entry
+  with one document on live, where the index could not be made. An entry
+  that already names its document keeps it (only a new naming is checked),
+  so the filed July pair recorded before stays as filed: Jul-26 is a filed
+  month, so nothing in the app changes it, and correcting that record
+  is the firm's decision (a reviewed one-off SQL; the migration header,
+  step 1). Import 2B's reclaim (`twob_import2b_reclaim`) makes the document
+  Reclaim, then names it, in one call. **The app of before's Reclaim names
+  the document before making it Reclaim, two requests, so it is refused from
+  the moment the migration is applied until its tab is reloaded into this
+  app**; deploy the app straight after applying.
+- **A document named by a reclaim recorded before while it was not Reclaim**
+  (live has one, in a filed month) can only be made Reclaim again: any other
+  treatment would count its ITC beside the reclaim, or not at all.
+- **Restore brings a version's reclaim back only while its document is in
+  the month, is Reclaim now, and evidences no other reclaim** (an entry the
+  month keeps, or the version's first one naming it). Otherwise the entry
+  comes back in Awaiting reclaim and the Restore names it with why ("its 2B
+  document is Matched now, not Reclaim", "... is no longer in this month",
+  "... already evidences the reclaim of ...": `reclaims_back`, said by the
+  page after the Restore). Before, a Restore of a version taken while an
+  entry was reclaimed, after the document had been taken out of Reclaim,
+  brought the reclaim back against a Matched document: its ITC counted in
+  5.1 and again in 5.4, and Pending items no longer listed the entry, so
+  only another Restore undid it. A reclaim the version made without a
+  document (typed on 2B Reconciliation for a Liberal client, or a version of
+  before 21 Oct whose entry is gone) comes back as the version holds it.
+- **One page's saves of one books row run one at a time** (`queueBookSave`,
+  `src/lib/import2bGuardedSaves.ts`). Two cells left in quick succession
+  (Tab past the SGST that CGST fills, or typing in a second cell before the
+  first save lands) each wait for the save before, then put the user's
+  edits, taken when the cell was left, on the row as that save left it.
+  Before, the second save was guarded by the row as loaded before the first
+  landed, refused as "changed elsewhere (another tab or another user)", the
+  row reloaded and the second edit lost. A row really changed elsewhere is
+  still refused, once, and the saves queued behind that refusal are dropped
+  with it.
 
 **The e-mail pop-up's reasons** (round 3, §11). A Not in Books document of
 the month not on the ledger is named with its own reason: no date or
@@ -2050,7 +2107,14 @@ cleared or expensed out letting its document go; Restore keeping one
 reclaim per document; a stale books save refused in an open and a filed
 month, through the page's own calls; Pending items over an entry still
 naming a document; the next version number from the database; each check
-recorded, so run on the code of before each fails or passes on its own) and `autopost.test.mjs` (twin
+recorded, so run on the code of before each fails or passes on its own),
+`test_9j_autopost_round6.sql`, `test_9k_reclaim_race.sh` and
+`round6.test.mjs` (the sixth round: Restore and a reclaim's document, the
+rest named; an entry naming only a Reclaim document no other names, held
+without the unique index beside a filed pair recorded before, against the
+app of before's own writes and two sessions at once; two saves of one books
+row from one page both kept through the page's queue; each check recorded
+as in round 5) and `autopost.test.mjs` (twin
 clients: the write-through on one, the app's own `planImport2BPost` +
 `postImport2BToLedger` on the other, the ledgers compared after every save
 kind, the pairing and reclaim calls included; the database's plan and its
@@ -2070,7 +2134,10 @@ pairing call asking no permission itself and a delete off the ledger
 needing it, a filed month's save running the door once) and the round-5
 rules (the reclaim's expected treatment and the database's one reclaim per
 document, the treatment Save and books saves guarded by what was loaded,
-changed columns only, a landed save shown as saved, the Settings words);
+changed columns only, a landed save shown as saved, the Settings words) and
+the round-6 rules (the naming trigger held without the index, the reclaim
+call's order, Restore's reclaims back and the page's words, a books row's
+saves one at a time);
 `node scripts/verify-twob-live.mjs` checks 2B Reconciliation's live updates
 (which changes concern the month, the banner instead of a reload under unsaved
 edits, Save sending only the changed rows, a reload clearing the pending
