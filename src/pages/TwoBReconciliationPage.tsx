@@ -37,9 +37,9 @@ import { cn } from '@/lib/utils';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { writePostVersion } from '@/lib/postImport2B';
-import { deleteOpenMonthRows, findChangedElsewhere, holdsDecision, updateOpenMonthRow } from '@/lib/twobPendingWrites';
+import { checkRowsUnchanged, holdsDecision, OpenMonthSaveError, writeOpenMonthSave } from '@/lib/twobPendingWrites';
 import {
-  LEDGER_CHANGED_BANNER, LEDGER_RELOADED_MSG, ledgerChangeConcerns, liveChangeAction, rowsToSave, type LedgerChange,
+  changeShown, LEDGER_CHANGED_BANNER, LEDGER_RELOADED_MSG, ledgerChangeConcerns, liveChangeAction, rowsToSave, type LedgerChange,
 } from '@/lib/twobLiveSync';
 import {
   OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchNibFollows2B, fetchTwobMonthState, ledgerCellReadOnly, priorNibLockReason,
@@ -142,11 +142,17 @@ const TwoBReconciliationPage: React.FC = () => {
   // edit began never overwrites it.
   const editGenRef = useRef(0);
   // A Save is running (set at once, before the state re-renders): a change
-  // heard meanwhile waits, since the Save reloads the month when it ends.
+  // heard meanwhile is kept, and looked at again when the Save ends against
+  // the month the Save reloaded (verification round 4: it was dropped).
   const savingRef = useRef(false);
-  // The page's own Save heard back after it reloaded: until then, a change
-  // stamped by this user is not news.
-  const quietUntilRef = useRef(0);
+  const heardDuringSaveRef = useRef<LedgerChange[]>([]);
+  // The rows the page shows as loaded, by id (set when a load lands): a
+  // change it already shows as it is (its own Save, heard after the Save's
+  // reload) is not news, whoever made it (round 4: before, every change
+  // stamped by this user was ignored for 5 s after a Save, from any tab).
+  const shownRowsRef = useRef<Map<string, BillRecord>>(new Map());
+  // The live handler's way in for the changes heard during a Save.
+  const liveKickRef = useRef<((changes: LedgerChange[]) => void) | null>(null);
   const [isLocked, setIsLocked] = useState(false);
   // Prior month (docs §13), as the database reads it (twob_month_state).
   const [monthState, setMonthState] = useState<TwobMonthState>(OPEN_MONTH);
@@ -391,6 +397,7 @@ const TwoBReconciliationPage: React.FC = () => {
     }
     const notIn2B = (res2B.data || []) as BillRecord[];
     const notInBooks = (resBooks.data || []) as BillRecord[];
+    shownRowsRef.current = new Map([...notIn2B, ...notInBooks].map((b) => [b.id, b]));
     setBillsNotIn2B(notIn2B);
     setLocalBills2B(notIn2B);
     setBillsNotInBooks(notInBooks);
@@ -496,6 +503,7 @@ const TwoBReconciliationPage: React.FC = () => {
       fetchBillsData();
       fetchVersions();
     } else {
+      shownRowsRef.current = new Map();
       setBillsNotIn2B([]);
       setBillsNotInBooks([]);
       setLocalBills2B([]);
@@ -511,19 +519,16 @@ const TwoBReconciliationPage: React.FC = () => {
     }
   }, [selectedClientId, selectedMonth, fetchBillsData, fetchVersions]);
 
-  // Whether the page holds unsaved edits or pending deletes, and the rows it
-  // loaded, as of the latest render (read by the live-change handler).
+  // Whether the page holds unsaved edits or pending deletes, as of the
+  // latest render (read by the live-change handler).
   const dirty = hasUnsavedChanges || deletedRows2B.length > 0 || deletedRowsBooks.length > 0;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
-  const loadedIdsRef = useRef<Set<string>>(new Set());
-  loadedIdsRef.current = useMemo(() => new Set([...billsNotIn2B, ...billsNotInBooks].map((b) => b.id)), [billsNotIn2B, billsNotInBooks]);
-  const userIdRef = useRef(user?.id);
-  userIdRef.current = user?.id;
 
   // Changes to this month's ledger heard live (every Import 2B save writes it
-  // now; docs §15): never over unsaved edits or pending deletes (the banner
-  // instead), never during a Save (it reloads at its end), otherwise one
+  // now; docs §15): a change the page already shows as it is is not news;
+  // never over unsaved edits or pending deletes (the banner instead); during
+  // a Save, kept and looked at again when it ends (round 4); otherwise one
   // reload per burst (an import writes many rows) and one note. A change to
   // another month or client is ignored. A delete carries only its row id,
   // so deletes are heard unfiltered and kept when they name a row shown.
@@ -531,25 +536,33 @@ const TwoBReconciliationPage: React.FC = () => {
     if (!selectedClientId || !selectedMonth) return;
     const clientId = selectedClientId;
     const period = selectedMonth;
+    const view = { clientId, period };
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const onChange = (change: LedgerChange) => {
-      if (!ledgerChangeConcerns(change, { clientId, period, ids: loadedIdsRef.current })) return;
-      const by = change.new && typeof change.new.updated_by === 'string' ? change.new.updated_by : null;
-      if (by && by === userIdRef.current && Date.now() < quietUntilRef.current) return;
+    let pending: LedgerChange[] = [];
+    // Decided when it runs: an edit or a Save begun meanwhile counts.
+    const settle = () => {
+      timer = null;
+      const changes = pending;
+      pending = [];
       const act = liveChangeAction({ saving: savingRef.current, dirty: dirtyRef.current });
-      if (act === 'wait') return;
+      if (act === 'wait') { heardDuringSaveRef.current.push(...changes); return; }
+      if (changes.every((c) => changeShown(c, view, shownRowsRef.current))) return;
       if (act === 'banner') { setLedgerChanged(true); return; }
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        // Checked again when it runs: an edit begun meanwhile stays.
-        const now = liveChangeAction({ saving: savingRef.current, dirty: dirtyRef.current });
-        if (now === 'wait') return;
-        if (now === 'banner') { setLedgerChanged(true); return; }
-        toast.info(LEDGER_RELOADED_MSG, { id: 'twob-ledger-reloaded' });
-        void fetchBillsData({ ifClean: true });
-      }, 400);
+      toast.info(LEDGER_RELOADED_MSG, { id: 'twob-ledger-reloaded' });
+      void fetchBillsData({ ifClean: true });
     };
+    const hear = (changes: LedgerChange[], wait: number) => {
+      pending.push(...changes);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(settle, wait);
+    };
+    const onChange = (change: LedgerChange) => {
+      if (!ledgerChangeConcerns(change, { clientId, period, ids: shownRowsRef.current })) return;
+      if (savingRef.current) { heardDuringSaveRef.current.push(change); return; }
+      if (changeShown(change, view, shownRowsRef.current)) return;
+      hear([change], 400);
+    };
+    liveKickRef.current = (changes) => hear(changes, 0);
     const channel = supabase
       .channel(`2b-reconciliation-${clientId}-${period}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bills_not_in_2b', filter: `client_id=eq.${clientId}` }, onChange)
@@ -560,9 +573,22 @@ const TwoBReconciliationPage: React.FC = () => {
 
     return () => {
       if (timer) clearTimeout(timer);
+      liveKickRef.current = null;
+      heardDuringSaveRef.current = [];
       supabase.removeChannel(channel);
     };
   }, [selectedClientId, selectedMonth, fetchBillsData]);
+
+  // A Save ends: the changes heard while it ran are looked at again, against
+  // the month as the Save reloaded it (or as loaded, when nothing was
+  // written): what the page does not show yet reloads it, or, with edits
+  // kept, raises the banner.
+  const endSave = () => {
+    savingRef.current = false;
+    const heard = heardDuringSaveRef.current;
+    heardDuringSaveRef.current = [];
+    if (heard.length > 0) liveKickRef.current?.(heard);
+  };
 
   // Reload (or discard): the month as it is now, the edits and the pending
   // deletes cleared together; asked first while there is something to lose.
@@ -992,34 +1018,41 @@ const TwoBReconciliationPage: React.FC = () => {
   const hasMandatoryFieldErrors = validationErrors.length > 0;
 
   // Before any Save writes: the rows it updates or deletes, read again
-  // against the figures the page loaded (findChangedElsewhere). When any of
-  // them changed elsewhere (Import 2B's write-through, another tab, a filed
-  // month's correction), nothing is written and the user is asked to reload;
-  // the edits stay until reloaded or discarded (verification round 3).
-  // Returns true when the Save may go on.
+  // against the page's loaded copies (checkRowsUnchanged): every column they
+  // hold, their months, reclaim, Expense out, book entry, reclaiming document
+  // and link with the figures (verification round 4: the figures alone let a
+  // Save write a stale Expense out over a reclaim Import 2B recorded
+  // meanwhile). When any of them changed elsewhere (Import 2B's
+  // write-through, another tab, a filed month's correction), nothing is
+  // written and the user is asked to reload; the edits stay until reloaded or
+  // discarded (verification round 3). Returns the rows as read now (what the
+  // Save decides from), or null when it must not go on.
   const checkNotChangedElsewhere = async (
     plan2B: ReturnType<typeof rowsToSave<BillRecord>>, planBooks: ReturnType<typeof rowsToSave<BillRecord>>,
-  ): Promise<boolean> => {
+  ): Promise<{ current2B: Map<string, BillRecord>; currentBooks: Map<string, BillRecord> } | null> => {
     let stale: string[];
+    let current2B: Map<string, BillRecord>;
+    let currentBooks: Map<string, BillRecord>;
     try {
-      stale = [
-        ...await findChangedElsewhere('bills_not_in_2b', [...plan2B.deletes, ...plan2B.updates.map((u) => u.loaded)]),
-        ...await findChangedElsewhere('bills_not_in_books', [...planBooks.deletes, ...planBooks.updates.map((u) => u.loaded)]),
-      ];
+      const a = await checkRowsUnchanged('bills_not_in_2b', [...plan2B.deletes, ...plan2B.updates.map((u) => u.loaded)]);
+      const b = await checkRowsUnchanged('bills_not_in_books', [...planBooks.deletes, ...planBooks.updates.map((u) => u.loaded)]);
+      stale = [...a.stale, ...b.stale];
+      current2B = a.current;
+      currentBooks = b.current;
     } catch (error) {
-      toast.error(`Nothing was saved: ${(error as Error).message}`);
-      return false;
+      toast.error(`Nothing was saved: ${(error as Error).message} Your changes are still on the page.`);
+      return null;
     }
-    if (stale.length === 0) return true;
+    if (stale.length === 0) return { current2B, currentBooks };
     setLedgerChanged(true);
     if (await confirm({
       title: 'This month changed since you loaded it',
-      description: `${stale.slice(0, 3).join(' ')}${stale.length > 3 ? ` And ${stale.length - 3} more.` : ''} Reload to see the month as it is now; your unsaved changes on this page are then discarded. Keep them to copy them first.`,
+      description: `${stale.slice(0, 3).join(' ')}${stale.length > 3 ? ` And ${stale.length - 3} more.` : ''} Nothing was saved. Reload to see the month as it is now; your unsaved changes on this page are then discarded. Keep them to copy them first.`,
       confirmText: 'Reload',
       cancelText: 'Keep my changes',
       destructive: true,
     })) await fetchBillsData();
-    return false;
+    return null;
   };
 
   // A prior month's Save: the removals, added rows and changed date,
@@ -1065,15 +1098,18 @@ const TwoBReconciliationPage: React.FC = () => {
       await fetchVersions();
       toast.success(`Changes saved${version ? `. Version ${version} created` : ''}.`);
     } finally {
-      savingRef.current = false;
-      quietUntilRef.current = Date.now() + 5000;
+      endSave();
       setIsSaving(false);
     }
   };
 
   // Save all changes to database: only the rows the user added, changed or
-  // deleted are sent (rowsToSave), each update guarded by the figures it
-  // loaded (updateOpenMonthRow), after the check above.
+  // deleted are sent (rowsToSave), each update and delete guarded by
+  // everything the row held when loaded (updateOpenMonthRow,
+  // deleteOpenMonthRows), after the check above. A Save that stops before
+  // writing anything keeps the edits on the page (verification round 4:
+  // before, any failure reloaded the month and the edits were lost though
+  // nothing had been written).
   const handleSaveAll = async () => {
     if (!selectedClientId || !canSaveHere) return;
     
@@ -1096,105 +1132,51 @@ const TwoBReconciliationPage: React.FC = () => {
     const plan2B = rowsToSave(localBills2B, billsNotIn2B, deletedRows2B);
     const planBooks = rowsToSave(localBillsBooks, billsNotInBooks, deletedRowsBooks);
 
-    // A carried entry deleted here that holds a reclaim, Expense out or book
-    // entry takes it with it: say so first.
-    const goneDecided = [...plan2B.deletes, ...planBooks.deletes].filter((b) => b.is_carried_forward && holdsDecision(b));
-    if (goneDecided.length > 0 && !(await confirm({
-      title: 'Delete entries with a reclaim or book entry?',
-      description: `${goneDecided.length} carried ${goneDecided.length === 1 ? 'entry you delete holds' : 'entries you delete hold'} a reclaim, Expense out or book entry (${goneDecided.slice(0, 4).map((b) => [b.supplier_name, b.supplier_invoice_number].filter(Boolean).join(' ')).join(', ')}${goneDecided.length > 4 ? ` and ${goneDecided.length - 4} more` : ''}). Deleting ${goneDecided.length === 1 ? 'it removes' : 'them removes'} that too.`,
-      confirmText: 'Delete',
-      destructive: true,
-    }))) return;
-
     setIsSaving(true);
     savingRef.current = true;
+    // Whether the writes went through (a failure before any of them, or in
+    // them before the first one was written, keeps the edits).
+    let wrote = false;
     try {
       // A row changed or removed elsewhere since the page loaded is never
-      // written over with the page's old figures: the Save writes nothing
-      // and asks to reload (docs §13, §15).
-      if (!(await checkNotChangedElsewhere(plan2B, planBooks))) return;
+      // written over with the page's old copy: the Save writes nothing and
+      // asks to reload (docs §13, §15).
+      const checked = await checkNotChangedElsewhere(plan2B, planBooks);
+      if (!checked) return;
+      // Decided from the rows as read now (the same as loaded, checked).
+      const del2B = plan2B.deletes.map((b) => checked.current2B.get(b.id) ?? b);
+      const delBooks = planBooks.deletes.map((b) => checked.currentBooks.get(b.id) ?? b);
+
+      // A carried entry deleted here that holds a reclaim, Expense out or book
+      // entry takes it with it: say so first.
+      const goneDecided = [...del2B, ...delBooks].filter((b) => b.is_carried_forward && holdsDecision(b));
+      if (goneDecided.length > 0 && !(await confirm({
+        title: 'Delete entries with a reclaim or book entry?',
+        description: `${goneDecided.length} carried ${goneDecided.length === 1 ? 'entry you delete holds' : 'entries you delete hold'} a reclaim, Expense out or book entry (${goneDecided.slice(0, 4).map((b) => [b.supplier_name, b.supplier_invoice_number].filter(Boolean).join(' ')).join(', ')}${goneDecided.length > 4 ? ` and ${goneDecided.length - 4} more` : ''}). Deleting ${goneDecided.length === 1 ? 'it removes' : 'them removes'} that too.`,
+        confirmText: 'Delete',
+        destructive: true,
+      }))) return;
 
       // Get next version number
       const currentVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
 
-      // First, apply database changes (inserts/updates/deletes)
-      // Delete removed rows
+      // The writes (writeOpenMonthSave): the deletes (a carried entry's own
+      // reclaim, Expense out or book entry undone with it; the copies the
+      // carry made of a deleted own row in later open months with them), the
+      // added rows, then the changed ones (only the columns changed here);
+      // each delete and update only while the row still holds what it held.
       const fail = (what: string, e: { message: string } | null) => {
         if (e) throw new Error(`${what}: ${e.message}`);
       };
-      // Deleting an invoice here also removes the copies the carry-forward
-      // made of it in later months whose GSTR-3B is not filed — otherwise it
-      // would still sit in those months' pending list.
-      const removeLaterCopies = async (table: 'bills_not_in_2b' | 'bills_not_in_books', rows: BillRecord[]) => {
-        if (!rows.length) return 0;
-        const { data: filed } = await supabase.from('filing_status').select('period_month')
-          .eq('client_id', selectedClientId).in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']).eq('status', 'Filed');
-        const filedSet = new Set(((filed || []) as { period_month: string }[]).map((f) => f.period_month));
-        const key = (p: string) => { const [m, y] = p.split('/'); return Number(y) * 100 + Number(m); };
-        const { data: copies, error } = await supabase.from(table).select('*')
-          .eq('client_id', selectedClientId).eq('is_carried_forward', true);
-        fail('Could not read later months', error);
-        const same = (a: BillRecord, b: BillRecord) => a.date === b.date && a.supplier_name === b.supplier_name
-          && (a.supplier_invoice_number || '') === (b.supplier_invoice_number || '')
-          && (a.supplier_gstin || '') === (b.supplier_gstin || '')
-          && Number(a.taxable_value || 0) === Number(b.taxable_value || 0)
-          && Number(a.input_igst || 0) === Number(b.input_igst || 0)
-          && Number(a.input_cgst || 0) === Number(b.input_cgst || 0)
-          && Number(a.input_sgst || 0) === Number(b.input_sgst || 0);
-        // A later copy holding its own month's decision (a reclaim, Expense
-        // out, book entry) stays: the database refuses to delete it (docs §13).
-        const decided = (c: BillRecord) => !!(c.reclaim_month || c.reclaim_subtype || c.book_entry_month);
-        const ids: string[] = [];
-        for (const r of rows) {
-          const perPeriod = new Map<string, string>();
-          for (const c of (copies || []) as BillRecord[]) {
-            if (key(c.period_month) <= key(r.period_month) || filedSet.has(c.period_month)) continue;
-            if (!perPeriod.has(c.period_month) && same(c, r) && !ids.includes(c.id)) perPeriod.set(c.period_month, c.id);
-          }
-          const kept = [...perPeriod.values()].filter((id) => decided(((copies || []) as BillRecord[]).find((c) => c.id === id) as BillRecord));
-          if (kept.length) toast.info(`${r.supplier_name} ${r.supplier_invoice_number || ''}: ${kept.length} later ${kept.length === 1 ? 'copy holds' : 'copies hold'} its own reclaim or book entry and ${kept.length === 1 ? 'stays' : 'stay'}; undo that there to remove ${kept.length === 1 ? 'it' : 'them'}.`, { duration: 10000 });
-          ids.push(...[...perPeriod.values()].filter((id) => !kept.includes(id)));
-        }
-        if (ids.length) {
-          const { error: dErr } = await supabase.from(table).delete().in('id', ids);
-          fail('Could not remove later copies', dErr);
-        }
-        return ids.length;
-      };
-      // A carried entry's reclaim, Expense out or book entry goes first, in
-      // the same Save (the database refuses to delete a carried entry that
-      // holds its own month's decision directly).
-      let laterCopies = 0;
-      if (plan2B.deletes.length > 0) {
-        const { error } = await deleteOpenMonthRows('bills_not_in_2b', plan2B.deletes);
-        if (error) throw new Error(`Could not delete: ${error}`);
-        laterCopies += await removeLaterCopies('bills_not_in_2b', plan2B.deletes.filter((b) => !b.is_carried_forward));
-      }
-      if (planBooks.deletes.length > 0) {
-        const { error } = await deleteOpenMonthRows('bills_not_in_books', planBooks.deletes);
-        if (error) throw new Error(`Could not delete: ${error}`);
-        laterCopies += await removeLaterCopies('bills_not_in_books', planBooks.deletes.filter((b) => !b.is_carried_forward));
-      }
-      if (laterCopies) toast.info(`Also removed ${laterCopies} carried-forward cop${laterCopies === 1 ? 'y' : 'ies'} in later months`);
-
-      // Added rows, then the changed ones: only the columns changed here, and
-      // only while each row still holds what the page loaded.
-      for (const bill of plan2B.inserts) {
-        const { id, ...billData } = bill;
-        const { error: insErr } = await supabase.from('bills_not_in_2b').insert([billData]).select().single();
-        fail('Could not add a row', insErr);
-      }
-      for (const bill of planBooks.inserts) {
-        const { id, ...billData } = bill;
-        const { error: insErr } = await supabase.from('bills_not_in_books').insert([billData]).select().single();
-        fail('Could not add a row', insErr);
-      }
-      for (const [table, plan] of [['bills_not_in_2b', plan2B], ['bills_not_in_books', planBooks]] as const) {
-        for (const { loaded, edited } of plan.updates) {
-          const res = await updateOpenMonthRow(table, loaded, edited, user?.id);
-          if (!res.ok) throw Object.assign(new Error(res.message), { stale: res.gone });
-        }
-      }
+      const done = await writeOpenMonthSave({
+        clientId: selectedClientId, userId: user?.id,
+        deletes: { bills_not_in_2b: del2B, bills_not_in_books: delBooks },
+        inserts: { bills_not_in_2b: plan2B.inserts, bills_not_in_books: planBooks.inserts },
+        updates: { bills_not_in_2b: plan2B.updates, bills_not_in_books: planBooks.updates },
+      });
+      wrote = true;
+      done.kept.forEach((m) => toast.info(m, { duration: 10000 }));
+      if (done.laterCopies) toast.info(`Also removed ${done.laterCopies} carried-forward cop${done.laterCopies === 1 ? 'y' : 'ies'} in later months`);
 
       // The version records the month as the database now holds it (rows
       // others changed meanwhile included), not the page's copy.
@@ -1301,6 +1283,13 @@ const TwoBReconciliationPage: React.FC = () => {
       }
     } catch (error: any) {
       console.error('Error saving:', error);
+      if (error instanceof OpenMonthSaveError ? !error.wrote : !wrote) {
+        // Nothing reached the database: the edits and pending deletes stay
+        // on the page (a row changed elsewhere raises the banner, with Reload).
+        if (error?.stale) setLedgerChanged(true);
+        toast.error(`${error?.stale ? error.message : `Failed to save: ${error.message}`} Nothing was saved; your changes are still on the page. ${error?.stale ? 'Reload to see the month as it is now (your changes are then discarded).' : 'Correct what is named and save again, or reload.'}`, { duration: 15000 });
+        return;
+      }
       // A failure part-way: the rows written before it stay, so the page
       // shows the month as it is now (what was not written is named).
       toast.error(error?.stale
@@ -1308,8 +1297,7 @@ const TwoBReconciliationPage: React.FC = () => {
         : `Failed to save: ${error.message} Rows saved before it stay saved; the page shows the month as it is now.`, { duration: 15000 });
       await fetchBillsData();
     } finally {
-      savingRef.current = false;
-      quietUntilRef.current = Date.now() + 5000;
+      endSave();
       setIsSaving(false);
     }
   };

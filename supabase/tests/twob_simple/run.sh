@@ -31,7 +31,14 @@
 # on the ledger as last saved or not, a Pending items button acting only on
 # its own month, the e-mail pop-up's reason per document, and an employee
 # without Import 2B & post asked up front exactly what the database lets
-# through).
+# through); test_9h and round4.test.mjs: the fourth round's: 2B
+# Reconciliation's Save and Import 2B's Pending items never write over a
+# decision recorded elsewhere meanwhile (every column guarded; a Save stopped
+# before its first write says so, and the page keeps the edits), an
+# employee's pairing that changes nothing on the ledger saved through the
+# page's own call, a delete taking an entry off the ledger needing the
+# permission, and a filed month's save running the door once (timed at
+# 1,000 rows).
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.
@@ -95,7 +102,7 @@ done
 for t in "$here"/test_*.sh; do
   if TWOB_TEST_DB="$db" bash "$t"; then :; else echo "FAIL $(basename "$t")"; status=1; fi
 done
-for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs; do
+for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs "$here"/round4.test.mjs; do
   if [ -f "$t" ]; then
     if TWOB_TEST_DB="$db" node "$t"; then :; else status=1; fi
   fi

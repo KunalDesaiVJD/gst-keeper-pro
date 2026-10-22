@@ -132,7 +132,7 @@ export const supabase = { from: (t) => new Q(t), rpc };
 const out = await build({
   stdin: {
     contents: `
-export { updatePendingEntry, ENTRY_GONE_MSG } from './src/lib/twobPendingWrites';
+export { updatePendingEntry, ENTRY_GONE_MSG, EXPECT_AWAITING_RECLAIM, EXPECT_AWAITING_BOOK_ENTRY } from './src/lib/twobPendingWrites';
 export { catchUpMonth, catchUpSkippedLines, outOfStepLine, fetchStep, docChangeTouchesLedger, bookSaveTouchesLedger, LEDGER_SAVES_NOTE } from './src/lib/import2bAutopost';
 export { previewAndApplyPriorSave } from './src/lib/twobPriorMonth';
 export { loadBillsNotInBooks, unpostedSentence } from './src/lib/billsNotInBooksMail';
@@ -201,16 +201,17 @@ INSERT INTO public.filing_status (client_id, return_type, period_month, status, 
 await run('M2', async () => {
   globalThis.__actor = POSTER;
   const res = await A.updatePendingEntry('bills_not_in_2b', id(2), { reclaim_month: 'Sep 26', reclaim_subtype: 'EXPENSE_OUT' }, POSTER,
-    { clientId: C, period: '09/2026' });
+    { clientId: C, period: '09/2026' }, A.EXPECT_AWAITING_RECLAIM);
   check('M2: Expense out from Sep-26 on an Oct-26 entry (shown under Sep by a late read) reads as gone', !res.ok && res.gone && res.message === A.ENTRY_GONE_MSG,
     JSON.stringify(res));
   check('M2: ... and the Oct-26 entry is not stamped with Sep\'s label (no month\'s 4D(1.2) would count it)',
     psql(`SELECT COALESCE(reclaim_month, '-') || '|' || COALESCE(reclaim_subtype, '-') FROM public.bills_not_in_2b WHERE id = '${id(2)}'`) === '-|-');
-  const book = await A.updatePendingEntry('bills_not_in_books', id(3), { book_entry_month: 'Sep 26' }, POSTER, { clientId: C, period: '09/2026' });
+  const book = await A.updatePendingEntry('bills_not_in_books', id(3), { book_entry_month: 'Sep 26' }, POSTER, { clientId: C, period: '09/2026' },
+    A.EXPECT_AWAITING_BOOK_ENTRY);
   check('M2: a book entry from Sep-26 on an Oct-26 Not in Books entry reads as gone, nothing written', !book.ok && book.gone
     && psql(`SELECT COALESCE(book_entry_month, '-') FROM public.bills_not_in_books WHERE id = '${id(3)}'`) === '-', JSON.stringify(book));
   const own = await A.updatePendingEntry('bills_not_in_2b', id(2), { reclaim_month: 'Oct 26', reclaim_subtype: 'EXPENSE_OUT' }, POSTER,
-    { clientId: C, period: '10/2026' });
+    { clientId: C, period: '10/2026' }, A.EXPECT_AWAITING_RECLAIM);
   check('M2: ... from its own month it is written', own.ok
     && psql(`SELECT reclaim_month || '|' || reclaim_subtype FROM public.bills_not_in_2b WHERE id = '${id(2)}'`) === 'Oct 26|EXPENSE_OUT', JSON.stringify(own));
   psql(`UPDATE public.bills_not_in_2b SET reclaim_month = NULL, reclaim_subtype = NULL WHERE id = '${id(2)}'`);

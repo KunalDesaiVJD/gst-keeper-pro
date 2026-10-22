@@ -1684,17 +1684,31 @@ the 2B Reconciliation ledger, which needs the Import 2B & post
 permission"), and a row whose every save would change the ledger is shown
 read-only with the reason; the rest (a treatment between Matched,
 Mismatched, Ineligible, ITC of Others and Held; Mismatched and Not
-Eligible books rows; a Not in 2B row still without a date or supplier; a
-new blank row) saves as before. The note on the page says which saves
-change the ledger (`LEDGER_SAVES_NOTE`). The Pending items decisions (Link
-& Reclaim, Expense out, book entry and their undo) and the deletes (Delete
-2B rows) stay as they were. The database refuses a save that would change
-the ledger when the user the request names (`x-gst-actor`) lacks it, and
-nothing of the save is kept; a save that changes nothing on the ledger goes
-through for any staff, and a request naming no user (the app of before this
-release, a system writer) is not checked. If the firm prefers every staff
-save to post, drop the check in `twob__autopost_touch` and the page's
-`mayPost` and rename the permission.
+Eligible books rows, a row the matcher pairs with a 2B document included;
+a Not in 2B row still without a date or supplier; a new blank row) saves as
+before. The note on the page says which saves change the ledger
+(`LEDGER_SAVES_NOTE`). The Pending items decisions (Link & Reclaim, Expense
+out, book entry and their undo) and Delete 2B (Delete 2B rows) stay as they
+were. The database refuses a save that would change the ledger when the
+user the request names (`x-gst-actor`) lacks it, and nothing of the save is
+kept; a save that changes nothing on the ledger goes through for any staff.
+Since verification round 4: a books row's pairing (`twob_import2b_save_book`,
+the call the page sends when the matcher pairs a row with a 2B document)
+asks no permission itself; its write-throughs refuse, for the call's own
+user (`p_actor_id`, `twob__acting_user`), only the part that would change
+the ledger (pairing a Not in Books document that has an entry; a Not in 2B
+row with a date and supplier), so an employee without the permission saves
+a Mismatched row against a Matched document, as the direct writes of before
+let them (round 3 had refused every such call, though the page and this
+note said it saves). A books row or 2B document deleted so that its entry
+leaves the ledger, or an own entry it was linked to is put back, is such a
+save too (`twob__autopost_gone`, round 4; before, only the page asked). The
+app names its user on every request (`changeLogFetch`), the app of before
+this release too, so the check applies to it from the moment the migration
+is applied (the header says to grant the permission first); a request
+naming no user (a system writer) is not checked. If the firm prefers every
+staff save to post, drop the checks in `twob__autopost_touch` and
+`twob__autopost_gone` and the page's `mayPost` and rename the permission.
 
 **Race-safe.** The client's lock (the one every writer of a client's 2B
 lists takes: the door, the carry, Re-run, filing) is held while the plan is
@@ -1725,9 +1739,16 @@ writes only what its preview showed (verification round 3): the dry run
 returns the preview's digest (`twob__prior_digest`: every change the door
 names, what happens to it here and in each later month, the figures of the
 entries the save brings with it, without row ids), the save sends it back,
-and the database previews again under the client's lock and saves nothing
-when the digest differs ("Nothing was saved: Jul-26 of this client changed
-while the confirm was open ... Look at it again and save once more"). A
+and the save, made under the client's lock, is digested the same way and
+undone when the digest differs ("Nothing was saved: Jul-26 of this client
+changed while the confirm was open ... Look at it again and save once
+more"; a door refusal the preview did not have, such as a row removed
+meanwhile, says the same with the door's reason). The door runs once for
+the save (verification round 4): before, the save first made the preview a
+second time under the lock, which ran the door three more times, and 1,000
+books rows took 1.9 s (2.5 s with the change log), near the 3 s anon calls
+run under; now about 1.0 s (1.3 s with the change log;
+`test_9h_autopost_round4.sql` counts that no second preview is made). A
 cell left without a change saves nothing. The Not in Books side follows the
 filed 2B and is never posted in a prior month. Employees: read-only, as
 before.
@@ -1788,8 +1809,42 @@ clears the edits and the pending deletes together (before, a reload left the
 pending deletes armed, so the next Save deleted a row the screen showed
 again, an entry Import 2B posted or a reversal among them). A clean page
 reloads once per burst of changes (an import writes many rows), with one
-note; a change heard while it saves waits for the save's own reload. Import
-Excel (which reloads the month) is refused while edits are unsaved.
+note. Import Excel (which reloads the month) is refused while edits are
+unsaved.
+
+Round 4 (verification of 22 Oct 2026):
+
+- **Save guards every column a row holds**, not only its figures: its
+  reversal, reclaim and in-2B months, its reclaim, Expense out and
+  reclaiming document, its book entry, its Import 2B link and what a link
+  kept (`checkRowsUnchanged`, `updateOpenMonthRow`, `deleteOpenMonthRows`
+  in `src/lib/twobPendingWrites.ts`; the bookkeeping stamps aside). Guarded
+  on the figures alone, a Save wrote a staged Expense out over a reclaim
+  Import 2B recorded meanwhile (the document stayed Reclaim, its ITC in no
+  row: 5.4 dropped to 0), and a pending delete removed an entry reclaimed
+  meanwhile. Now the check before the Save names such a row and nothing is
+  written ("This month changed since you loaded it ... Nothing was saved.
+  Reload / Keep my changes"); each update and delete is also made only while
+  the row holds all of it, so a change landing between the check and the
+  write stops there too.
+- **The Save decides from the rows read back**: the "Delete entries with a
+  reclaim or book entry?" confirm and the decision a delete of a carried
+  entry undoes come from the rows as the check read them, not the copies
+  loaded.
+- **A Save that stops before its first write keeps the edits** and pending
+  deletes (with the banner when a row changed elsewhere; "Nothing was saved;
+  your changes are still on the page"). Before, every failure reloaded the
+  month, and the edits were lost though nothing had been written. A Save
+  that stops after some rows were written still shows the month as it is
+  now and says which rows stayed saved (`writeOpenMonthSave`,
+  `OpenMonthSaveError.wrote`).
+- **A change heard while the page saves is kept** and looked at again when
+  the Save ends, against the month the Save reloaded: what the page does not
+  show yet reloads it (or, with edits kept, raises the banner). Before, it
+  was dropped, and the page went on without it. A change the page already
+  shows as it is (its own Save, heard after its reload) is not news
+  (`changeShown`); before, every change stamped by the same user was ignored
+  for 5 s after a Save, from any tab.
 
 **Import 2B keeps to the month it shows** (round 3). Every read and save
 result is keyed to the (client, month) it was started for
@@ -1804,6 +1859,20 @@ only on it, and the database writes a pending decision only while the entry
 is in that client and month (`updatePendingEntry`, scoped). A row added,
 saved or deleted is shown only while its month is still selected; a reclaim
 dialog or counted-figures dialog left open closes when the month changes.
+Round 4: the reads are numbered with one count that never restarts, keeping
+the latest read of each (client, month); before, the count restarted when a
+month was shown again, so a refresh held from an earlier visit (Oct-26, then
+Sep-26, then Oct-26 again) carried the same number as the later visit's and
+landed over it, showing an entry expensed out meanwhile as awaiting reclaim,
+with working buttons. And a Pending items decision is written only while
+the entry still holds the decision the list showed (Expense out: no
+reclaim, Expense out or reclaiming document; its Undo: that Expense out and
+no reclaiming document; a book entry: none; its Undo: that book entry);
+otherwise nothing is written and the page reloads ("This entry was changed
+elsewhere since the page showed it ..."). Before, Expense out from a list
+read before another tab's reclaim wrote over the reclaim (the document
+stayed Reclaim, its ITC counted nowhere), and an Undo would have cleared
+such a reclaim and left its document named.
 
 **The e-mail pop-up's reasons** (round 3, §11). A Not in Books document of
 the month not on the ledger is named with its own reason: no date or
@@ -1866,6 +1935,9 @@ its entry by hand (the test asserts under 1 s for the 1,000; 0.7 s for 1,000
 statements in one transaction), against tens of ms for each request's round
 trip. The user check runs on every save and is written out in the trigger
 (through `staff_level_of` it cost more than the rest of the write-through).
+A filed month brought up to date through the door, 1,000 books rows, with
+its preview's digest: about 1.0 s (1.3 s with the change log), the door run
+once for the save (`test_9h_autopost_round4.sql`; round 4).
 With the change log (`20261021150000`) applied first, as live, its own
 logging adds about 0.35 ms a statement to both.
 
@@ -1892,7 +1964,13 @@ and `round3.test.mjs` (the third round: the catch-up and a filed month's save
 write only what their confirm showed; the rows left out on the ledger as last
 saved or not; a Pending items button acting only on its own month; the e-mail
 pop-up's reason per document; an employee asked up front exactly what the
-database lets through) and `autopost.test.mjs` (twin
+database lets through), `test_9h_autopost_round4.sql` and `round4.test.mjs`
+(the fourth round: 2B Reconciliation's Save and Import 2B's Pending items
+never write over a decision recorded elsewhere meanwhile, a Save stopped
+before its first write saying so; an employee's pairing that changes nothing
+on the ledger saved through the page's own call, one that would refused; a
+delete taking an entry off the ledger needing the permission; a filed
+month's save running the door once, at 1,000 rows) and `autopost.test.mjs` (twin
 clients: the write-through on one, the app's own `planImport2BPost` +
 `postImport2BToLedger` on the other, the ledgers compared after every save
 kind, the pairing and reclaim calls included; the database's plan and its
@@ -1905,11 +1983,18 @@ of Reclaim are one call each, that the line is the database's, and the
 round-2 words (a document's entry as last saved, the debit note's words only
 once saved, no Undo for a filed decision), and the round-3 rules (the re-import
 keep rule, reads keyed to the month shown, each save asked up front, the
-line's and the e-mail pop-up's words, the digests sent back);
+line's and the e-mail pop-up's words, the digests sent back) and the round-4
+rules (a read of an earlier visit to a month never the latest, each Pending
+items decision written only while the entry holds what the list showed, the
+pairing call asking no permission itself and a delete off the ledger
+needing it, a filed month's save running the door once);
 `node scripts/verify-twob-live.mjs` checks 2B Reconciliation's live updates
 (which changes concern the month, the banner instead of a reload under unsaved
 edits, Save sending only the changed rows, a reload clearing the pending
-deletes with the edits).
+deletes with the edits; round 4: which changes the page already shows, a
+change heard during a Save looked at again when it ends, every column
+guarded, the delete confirm from the rows read back, the edits kept when
+nothing was written).
 
 **Open questions for the firm.**
 

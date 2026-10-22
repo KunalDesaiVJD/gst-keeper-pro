@@ -13,6 +13,16 @@
 //  - a reload or a discard clears the edits and the pending deletes together
 //    (before, a reload left the pending deletes armed and the next Save
 //    deleted a row the screen showed again).
+// Verification round 4:
+//  - a change the page already shows as it is (its own Save, heard after
+//    the Save's reload) is not news (changeShown); any other change is,
+//    whoever made it and from whichever tab (before, every change stamped by
+//    the same user was ignored for 5 s after a Save);
+//  - a change heard while the page saves is kept and looked at again when
+//    the Save ends (before, it was dropped: the page went on without it);
+//  - Save decides its delete confirm from the rows read back, guards every
+//    column (not only the figures) and, stopped before its first write,
+//    keeps the edits instead of reloading them away.
 // The pure parts are run; the page's wiring is read from its source.
 //
 //   node scripts/verify-twob-live.mjs
@@ -75,6 +85,28 @@ if (typeof L.rowsToSave === 'function') {
     plan.deletes.length === 1 && plan.deletes[0].id === 'c' && !plan.updates.some((u) => u.edited.id === 'a'), JSON.stringify(plan));
 } else check('rowsToSave exists', false, 'missing');
 
+// ── Round 4: which changes the page already shows ───────────────────────────
+if (typeof L.changeShown === 'function') {
+  const v = { clientId: 'c1', period: '10/2026' };
+  const shownRow = { id: 'r1', client_id: 'c1', period_month: '10/2026', supplier_name: 'S', taxable_value: 12000, input_cgst: 900,
+    reclaim_month: null, reclaim_subtype: null, adopted_from: null, updated_at: '2026-10-22T10:00:00+00:00', updated_by: 'u1' };
+  const rows = new Map([['r1', shownRow]]);
+  const shown = (change) => L.changeShown(change, v, rows);
+  check('round 4: the page\'s own Save heard after its reload (same content, other stamps) is shown already: nothing to reload or say',
+    shown({ eventType: 'UPDATE', new: { ...shownRow, updated_at: '2026-10-22T10:00:01+00:00', updated_by: 'u1' }, old: { id: 'r1' } }) === true);
+  check('… also with amounts sent as text ("12000.00"), as a live change may carry them',
+    shown({ eventType: 'UPDATE', new: { ...shownRow, taxable_value: '12000.00', input_cgst: '900.00' }, old: { id: 'r1' } }) === true);
+  check('a row another user added (B10-7) is news, whoever wrote it and from whichever tab',
+    shown({ eventType: 'INSERT', new: { id: 'r7', client_id: 'c1', period_month: '10/2026', supplier_name: 'B10-7', updated_by: 'u1' }, old: {} }) === false);
+  check('a decision changed on a row shown (a reclaim recorded on Import 2B) is news',
+    shown({ eventType: 'UPDATE', new: { ...shownRow, reclaim_month: 'Oct 26' }, old: { id: 'r1' } }) === false);
+  check('a delete of a row the page no longer shows is shown already; of a row it shows, news',
+    shown({ eventType: 'DELETE', new: {}, old: { id: 'gone' } }) === true && shown({ eventType: 'DELETE', new: {}, old: { id: 'r1' } }) === false);
+  check('a row moved to another month: shown already once the page no longer holds it',
+    shown({ eventType: 'UPDATE', new: { id: 'r9', client_id: 'c1', period_month: '11/2026' }, old: { id: 'r9' } }) === true
+      && shown({ eventType: 'UPDATE', new: { ...shownRow, period_month: '11/2026' }, old: { id: 'r1' } }) === false);
+} else check('round 4: changeShown exists', false, 'missing');
+
 // ── The page's wiring ───────────────────────────────────────────────────────
 const page = fs.readFileSync(path.join(root, 'src/pages/TwoBReconciliationPage.tsx'), 'utf8');
 const code = page.replace(/^\s*\/\/.*$/gm, '');
@@ -85,20 +117,44 @@ check('… and a reload heard live lands only on a page with no edits (an edit b
   /opts\.ifClean && \(editGenRef\.current !== gen \|\| dirtyRef\.current\)/.test(fetchBody) && fetchBody.includes('setLedgerChanged(true)'));
 check('… and only for the (client, month) it was started for, and the latest',
   /seq === loadSeq\.current && selectionRef\.current\.client === client && selectionRef\.current\.month === month/.test(fetchBody));
-check('the live handler ignores other months, waits while saving, shows the banner while edits are unsaved, else reloads once per burst',
-  /ledgerChangeConcerns\(change, \{ clientId, period, ids: loadedIdsRef\.current \}\)/.test(code)
+check('the live handler ignores other months, shows the banner while edits are unsaved, else reloads once per burst',
+  /ledgerChangeConcerns\(change, \{ clientId, period, ids: shownRowsRef\.current \}\)/.test(code)
     && /liveChangeAction\(\{ saving: savingRef\.current, dirty: dirtyRef\.current \}\)/.test(code)
     && /if \(act === 'banner'\) \{ setLedgerChanged\(true\); return; \}/.test(code)
-    && /clearTimeout\(timer\);\s*timer = setTimeout\(/.test(code) && code.includes("fetchBillsData({ ifClean: true })")
+    && /clearTimeout\(timer\);\s*timer = setTimeout\(settle, wait\);/.test(code) && code.includes("fetchBillsData({ ifClean: true })")
     && !/\}, \(\) => \{\s*fetchBillsData\(\);\s*toast\.info\('2B data updated by another user'\);/.test(code));
+check('round 4: a change heard while the page saves is kept, and looked at again when the Save ends (both Saves)',
+  /if \(savingRef\.current\) \{ heardDuringSaveRef\.current\.push\(change\); return; \}/.test(code)
+    && /if \(act === 'wait'\) \{ heardDuringSaveRef\.current\.push\(\.\.\.changes\); return; \}/.test(code)
+    && /const endSave = \(\) => \{\s*savingRef\.current = false;\s*const heard = heardDuringSaveRef\.current;\s*heardDuringSaveRef\.current = \[\];\s*if \(heard\.length > 0\) liveKickRef\.current\?\.\(heard\);/.test(code)
+    && (code.match(/\} finally \{\s*endSave\(\);\s*setIsSaving\(false\);/g) || []).length === 2,
+  'the wait path drops the change, or a Save does not replay what it heard');
+check('round 4: no quiet window by user: a change is ignored only when the page already shows it (changeShown)',
+  !code.includes('quietUntilRef') && /if \(changeShown\(change, view, shownRowsRef\.current\)\) return;/.test(code)
+    && /if \(changes\.every\(\(c\) => changeShown\(c, view, shownRowsRef\.current\)\)\) return;/.test(code)
+    && /shownRowsRef\.current = new Map\(\[\.\.\.notIn2B, \.\.\.notInBooks\]\.map\(\(b\) => \[b\.id, b\]\)\);/.test(fetchBody));
 check('… hears deletes (which carry only a row id) and every change of the client',
   /event: 'DELETE', schema: 'public', table: 'bills_not_in_2b' \}/.test(code) && /event: 'DELETE', schema: 'public', table: 'bills_not_in_books' \}/.test(code));
 check('the banner and a Reload (discard) are on the page', code.includes('{LEDGER_CHANGED_BANNER}') && /onClick=\{\(\) => void reloadMonth\(\)\}/.test(code));
-check('Save sends only the changed rows, checks them against the figures loaded first, and refuses with a reload prompt',
+const pendLib = fs.readFileSync(path.join(root, 'src/lib/twobPendingWrites.ts'), 'utf8');
+check('Save sends only the changed rows, checks them against the rows loaded first, and refuses with a reload prompt',
   /const plan2B = rowsToSave\(localBills2B, billsNotIn2B, deletedRows2B\);/.test(code)
-    && /if \(!\(await checkNotChangedElsewhere\(plan2B, planBooks\)\)\) return;/.test(code)
+    && /const checked = await checkNotChangedElsewhere\(plan2B, planBooks\);\s*if \(!checked\) return;/.test(code)
     && /title: 'This month changed since you loaded it'[\s\S]{0,400}confirmText: 'Reload',\s*cancelText: 'Keep my changes'/.test(code)
-    && /for \(const \{ loaded, edited \} of plan\.updates\) \{\s*const res = await updateOpenMonthRow\(table, loaded, edited, user\?\.id\);/.test(code));
+    && /updates: \{ bills_not_in_2b: plan2B\.updates, bills_not_in_books: planBooks\.updates \}/.test(code)
+    && /for \(const \{ loaded, edited \} of o\.updates\[table\]\) \{\s*const res = await updateOpenMonthRow\(table, loaded, edited, o\.userId\);/.test(pendLib));
+check('round 4: every column a row holds guards its update and delete (not only the figures); the check reads them all',
+  /const \{ data, error \} = await guarded\(q, loaded\)\.select\('id'\);/.test(pendLib)
+    && /await guarded\(supabase\.from\(table\)\.delete\(\), guard\)\.select\('id'\)/.test(pendLib)
+    && /await guarded\(supabase\.from\(table\)\.update\(DECISION_CLEARED\[table\] as never\), row\)\.select\('\*'\)/.test(pendLib)
+    && /supabase\.from\(table\)\.select\('\*'\)\.in\('id', ids\)/.test(pendLib) && !pendLib.includes('DOOR_COLUMNS'));
+check('round 4: the delete confirm and the decisions a delete undoes come from the rows read back, not the copies loaded',
+  /const del2B = plan2B\.deletes\.map\(\(b\) => checked\.current2B\.get\(b\.id\) \?\? b\);/.test(code)
+    && /const goneDecided = \[\.\.\.del2B, \.\.\.delBooks\]\.filter\(/.test(code)
+    && /deletes: \{ bills_not_in_2b: del2B, bills_not_in_books: delBooks \}/.test(code)
+    && code.indexOf('const checked = await checkNotChangedElsewhere(plan2B, planBooks);') < code.indexOf('const goneDecided'));
+check('round 4: a Save stopped before its first write keeps the edits and pending deletes (the banner when a row changed), never reloading them away',
+  /if \(error instanceof OpenMonthSaveError \? !error\.wrote : !wrote\) \{[\s\S]{0,200}if \(error\?\.stale\) setLedgerChanged\(true\);[\s\S]{0,700}return;\s*\}[\s\S]{0,600}await fetchBillsData\(\);/.test(code));
 check('… a filed month\'s Save is checked the same way before its preview',
   /const savePriorMonth = async[\s\S]{0,2500}checkNotChangedElsewhere\(plan2B, planBooks\)[\s\S]{0,300}previewAndApplyPriorBooks/.test(code));
 check('a Save marks itself at once, so a change heard during it waits',

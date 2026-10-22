@@ -47,7 +47,10 @@ import {
 import ReclaimMatchDialog, { ReclaimInvoiceLite } from '@/components/dialogs/ReclaimMatchDialog';
 import EmailBillsNotInBooksDialog from '@/components/import2b/EmailBillsNotInBooksDialog';
 import { cn } from '@/lib/utils';
-import { decisionIsOwn, periodOfLabel, recordReclaim, releaseReclaim, updatePendingEntry } from '@/lib/twobPendingWrites';
+import {
+  decisionIsOwn, EXPECT_AWAITING_BOOK_ENTRY, EXPECT_AWAITING_RECLAIM, expectBooked, expectExpensedOut, periodOfLabel, recordReclaim,
+  releaseReclaim, updatePendingEntry,
+} from '@/lib/twobPendingWrites';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import {
   WS_PAGE, WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL,
@@ -2538,8 +2541,10 @@ const Import2BTab: React.FC = () => {
   // Each acts on the entry of the (client, month) the Pending items were read
   // for, only while it is the one selected, and the database writes it only
   // while the entry is in that month (verification round 3: an Oct-26 entry
-  // shown under Sep-26 was expensed out with Sep's label). The page shows
-  // the result only while that month is still selected.
+  // shown under Sep-26 was expensed out with Sep's label) and still holds the
+  // decision the list showed (verification round 4: an Expense out from a
+  // stale list wrote over a reclaim recorded meanwhile in another tab). The
+  // page shows the result only while that month is still selected.
   const pendingScope = (): { clientId: string; period: string } | null => {
     if (!selectedClient || !selectedMonth || !ledgerShown) { toast.error(OTHER_VIEW_MSG, { duration: 12000 }); return null; }
     return { clientId: selectedClient, period: selectedMonth };
@@ -2551,7 +2556,8 @@ const Import2BTab: React.FC = () => {
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const row = pendingBills2B.find((r) => r.id === id);
     const label = periodMonthLabel(scope.period);
-    const res = await updatePendingEntry('bills_not_in_2b', id, { reclaim_month: label, reclaim_subtype: 'EXPENSE_OUT' }, user?.id, scope);
+    const res = await updatePendingEntry('bills_not_in_2b', id, { reclaim_month: label, reclaim_subtype: 'EXPENSE_OUT' }, user?.id, scope,
+      EXPECT_AWAITING_RECLAIM);
     if (!res.ok) { toast.error(res.gone ? res.message : 'Save failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
     toast.success('Marked as expense out.');
     if (!isCurrentView(scope.clientId, scope.period)) return;
@@ -2587,7 +2593,8 @@ const Import2BTab: React.FC = () => {
     const row = expensedOutItems.find((r) => r.id === id);
     const filed = row ? filedCarriedDecision(row, 'bills_not_in_2b') : null;
     if (filed) { toast.error(`${monthName(filed)} (filed) expensed out this entry. ${FILED_DECISION_TITLE}`, { duration: 12000 }); return; }
-    const res = await updatePendingEntry('bills_not_in_2b', id, { reclaim_month: null, reclaim_subtype: null }, user?.id, scope);
+    const res = await updatePendingEntry('bills_not_in_2b', id, { reclaim_month: null, reclaim_subtype: null }, user?.id, scope,
+      expectExpensedOut(row?.reclaim_month));
     if (!res.ok) { toast.error(res.gone ? res.message : 'Undo failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
     toast.success('Expense out undone — back in Awaiting reclaim.');
     if (!isCurrentView(scope.clientId, scope.period)) return;
@@ -2602,7 +2609,7 @@ const Import2BTab: React.FC = () => {
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const label = periodMonthLabel(scope.period);
     const patch = value === 'blank' ? { book_entry_month: null } : { book_entry_month: label };
-    const res = await updatePendingEntry('bills_not_in_books', id, patch, user?.id, scope);
+    const res = await updatePendingEntry('bills_not_in_books', id, patch, user?.id, scope, EXPECT_AWAITING_BOOK_ENTRY);
     if (!res.ok) { toast.error(res.gone ? res.message : 'Save failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
     if (value !== 'blank') toast.success('Book entry recorded.');
     if (!isCurrentView(scope.clientId, scope.period)) return;
@@ -2622,7 +2629,8 @@ const Import2BTab: React.FC = () => {
     const row = bookedItems.find((r) => r.id === id);
     const filed = row ? filedCarriedDecision(row, 'bills_not_in_books') : null;
     if (filed) { toast.error(`${monthName(filed)} (filed) booked this entry. ${FILED_DECISION_TITLE}`, { duration: 12000 }); return; }
-    const res = await updatePendingEntry('bills_not_in_books', id, { book_entry_month: null }, user?.id, scope);
+    const res = await updatePendingEntry('bills_not_in_books', id, { book_entry_month: null }, user?.id, scope,
+      expectBooked(row?.book_entry_month));
     if (!res.ok) { toast.error(res.gone ? res.message : 'Undo failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
     toast.success('Book entry undone — back in Awaiting book entry.');
     if (!isCurrentView(scope.clientId, scope.period)) return;

@@ -117,6 +117,7 @@ const out = await build({
   stdin: {
     contents: `
 export { recordReclaim, updatePendingEntry, deleteOpenMonthRows, ENTRY_GONE_MSG, findChangedElsewhere, updateOpenMonthRow,
+  EXPECT_AWAITING_RECLAIM, EXPECT_AWAITING_BOOK_ENTRY, expectBooked,
   CHANGED_ELSEWHERE_MSG, releaseReclaim, decisionIsOwn, labelKey, periodOfLabel, DOC_GONE_MSG } from './src/lib/twobPendingWrites';
 export { describeFilingCarry, describeRerun, describePriorPreview, fetchCarryGaps, describeCarryGap, priorNibLockReason,
   PRIOR_NIB_FROM_2B_MSG, PRIOR_NIB_CARRIED_MSG, PRIOR_NIB_UNKNOWN_MSG, fetchNibFollows2B, restoreVersion, rerunCarry } from './src/lib/twobPriorMonth';
@@ -154,9 +155,11 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
   check('Q8: the stale page\'s reclaim is not recorded, and says the entry is gone', !res.ok && res.gone && res.message === A.ENTRY_GONE_MSG, JSON.stringify(res));
   check('Q8: the 2B document stays Matched, so its ITC stays in 5.1',
     psql(`SELECT itc_action FROM public.twob_import_docs WHERE id = '${DOC}'`) === 'MATCHED');
-  const exp = await A.updatePendingEntry('bills_not_in_2b', pending, { reclaim_month: 'Sep 26', reclaim_subtype: 'EXPENSE_OUT' }, undefined, { clientId: C, period: '09/2026' });
+  const exp = await A.updatePendingEntry('bills_not_in_2b', pending, { reclaim_month: 'Sep 26', reclaim_subtype: 'EXPENSE_OUT' }, undefined, { clientId: C, period: '09/2026' },
+    A.EXPECT_AWAITING_RECLAIM);
   check('Q8: an Expense out on the gone copy says so too', !exp.ok && exp.gone, JSON.stringify(exp));
-  const book = await A.updatePendingEntry('bills_not_in_books', pending, { book_entry_month: 'Sep 26' }, undefined, { clientId: C, period: '09/2026' });
+  const book = await A.updatePendingEntry('bills_not_in_books', pending, { book_entry_month: 'Sep 26' }, undefined, { clientId: C, period: '09/2026' },
+    A.EXPECT_AWAITING_BOOK_ENTRY);
   check('Q8: a book entry on a gone entry says so too', !book.ok && book.gone, JSON.stringify(book));
   // The same reclaim on a copy that is there is recorded, the document with it.
   const C2 = 'a8000000-0000-0000-0000-000000000002';
@@ -198,7 +201,8 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
     !A.decisionIsOwn('bills_not_in_books', row) && A.periodOfLabel(row.book_entry_month) === '08/2026'
       && A.labelKey('Sep 26') === 2026 * 12 + 8 && A.labelKey('september-2026') === 2026 * 12 + 8 && A.labelKey('26') === null
       && A.decisionIsOwn('bills_not_in_books', { ...row, book_entry_month: 'Sep 26' }), JSON.stringify(row));
-  const undo = await A.updatePendingEntry('bills_not_in_books', row.id, { book_entry_month: null }, '00000000-0000-0000-0000-0000000000a3', { clientId: C, period: '09/2026' });
+  const undo = await A.updatePendingEntry('bills_not_in_books', row.id, { book_entry_month: null }, '00000000-0000-0000-0000-0000000000a3', { clientId: C, period: '09/2026' },
+    A.expectBooked(row.book_entry_month));
   check('Round 2 F3: Undo book entry on it is refused, naming the filed month', !undo.ok && !undo.gone
     && undo.message.includes('Aug-26 (filed) booked this entry'), JSON.stringify(undo));
   const del = await A.deleteOpenMonthRows('bills_not_in_books', [row]);

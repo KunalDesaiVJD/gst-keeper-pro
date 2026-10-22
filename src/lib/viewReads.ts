@@ -21,19 +21,28 @@ export interface ViewReads {
   isLatest(view: string, ticket: number | null): boolean;
 }
 
-/** Numbered reads of the view `shown()` returns. */
+/**
+ * Numbered reads of the view `shown()` returns. One count for every read,
+ * never restarted, and the latest read begun for each view: a read from an
+ * earlier visit to a view (switched away and back while it was in flight)
+ * is never the latest of the later visit (verification round 4: the count
+ * restarted when a view was shown again, so an Oct-26 refresh held from the
+ * first visit carried the same number as one of the second visit's and
+ * landed over it, showing an entry expensed out meanwhile as still awaiting
+ * reclaim, with working buttons).
+ */
 export function createViewReads(shown: () => string): ViewReads {
-  let view = '';
   let n = 0;
+  const latest = new Map<string, number>();
   return {
     begin(v) {
       if (v !== shown()) return null;
-      if (v !== view) { view = v; n = 0; }
       n += 1;
+      latest.set(v, n);
       return n;
     },
     isLatest(v, ticket) {
-      return ticket !== null && v === view && ticket === n && v === shown();
+      return ticket !== null && latest.get(v) === ticket && v === shown();
     },
   };
 }

@@ -121,8 +121,11 @@ SELECT public.t_eq(public.twob_import2b_save_book(public.t_poster(), 'ad000000-0
 SELECT public.t_eq((SELECT (SELECT count(*) FROM public.bills_not_in_books WHERE source_doc_id = 'ad000000-0000-0000-0000-0000000000d3')
                          || ':' || (SELECT count(*) FROM public.bills_not_in_2b WHERE source_book_id = 'ad000000-0000-0000-0000-0000000000b3')), '0:0',
   'R2: ... both entries taken back (the document is claimed in 5.1)');
+-- (Round 4: the call no longer asks for the permission itself; the
+-- write-through refuses the part that would change the ledger, for the
+-- call's own user.)
 SELECT public.t_raises($q$SELECT public.twob_import2b_save_book(public.t_employee(), 'ad000000-0000-0000-0000-0000000000b1', '{"input_igst":1}'::jsonb)$q$,
-  'Needs the Import 2B & post permission', 'R2: an employee without Import 2B & post is refused');
+  'needs the Import 2B & post permission', 'R2: an employee without Import 2B & post is refused a save that would change the ledger');
 SELECT public.t_raises($q$SELECT public.twob_import2b_save_book(public.t_poster(), 'ad000000-0000-0000-0000-0000000000b1', '{"posted_at":"2026-01-01"}'::jsonb)$q$,
   'A books row saves its date, supplier, number, GSTIN, amounts, type and treatment here (posted_at)', 'R2: only the row''s own columns');
 

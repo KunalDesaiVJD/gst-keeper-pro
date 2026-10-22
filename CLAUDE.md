@@ -80,9 +80,11 @@ triggers of `20261021170000_import2b_autopost.sql`; a save that would take
 back an entry holding a reclaim, Expense out or book entry is refused and
 says where to undo it, e.g. Pending items' Booked list). A save that changes
 the ledger needs Import 2B & post (`work_2b_import`, DB: the user
-`x-gst-actor` names; the page asks each save first with
+`x-gst-actor` names, a pairing call's `p_actor_id`, a delete taking an entry
+off included; the page asks each save first with
 `docChangeTouchesLedger` / `bookSaveTouchesLedger`, and every other save stays
-open to all staff). A reclaim (`twob_import2b_reclaim`), a document out of
+open to all staff, a books row's pairing that changes nothing on the ledger
+included). A reclaim (`twob_import2b_reclaim`), a document out of
 Reclaim (`twob_import2b_unreclaim`) and a books row's pairing
 (`twob_import2b_save_book`) are one call each, all or nothing; a re-import
 skips and names a refused row, and keeps (and lists) a document gone from 2B
@@ -95,17 +97,23 @@ step shows a line read in one statement (`twob_import2b_step`) and "Bring the
 reconciliation up to date" (`twob_import2b_catch_up`; a filed month's line
 shows its Not in 2B side only); the catch-up and a filed month's save write
 only what their confirm showed (the preview's digest sent back; a month
-changed meanwhile writes nothing); Import 2B keys every read and save result
-to the (client, month) it was started for (`src/lib/viewReads.ts`; Pending
-items' buttons write only in that month); 2B Reconciliation never reloads
-over unsaved edits or pending deletes (a banner instead; Save sends only the
-changed rows, guarded; `src/lib/twobLiveSync.ts`); Delete 2B is one call, Clear Data one call a
+changed meanwhile writes nothing; a filed month's save runs the door once and
+digests what it saved); Import 2B keys every read and save result
+to the (client, month) it was started for (`src/lib/viewReads.ts`, one count
+never restarted; Pending items' buttons write only in that month, and only
+while the entry still holds the decision the list showed); 2B Reconciliation
+never reloads over unsaved edits or pending deletes (a banner instead; a
+change heard during its Save is looked at again when it ends; Save sends only
+the changed rows, each update and delete guarded by every column the row held,
+its reclaim, Expense out, book entry and link with the figures, and keeps the
+edits when it stops before writing; `src/lib/twobLiveSync.ts`,
+`writeOpenMonthSave`); Delete 2B is one call, Clear Data one call a
 month (both stop at once, never deadlock, when a save of the month is
 running); versions are coalesced per minute, recorded as the saver's, and
 carry each entry's link, which Restore (`twob_restore_version_linked`) puts
 back; a decision carried into an open month from a filed month cannot be
 changed there (`twob__carried_decision_guard`) (§15 of the doc; tests
-`supabase/tests/twob_simple/` test_9a to 9g, `autopost.test.mjs`, `round3.test.mjs`;
+`supabase/tests/twob_simple/` test_9a to 9h, `autopost.test.mjs`, `round3.test.mjs`, `round4.test.mjs`;
 `node scripts/verify-twob-live.mjs`). `2B Reconciliation`
 (`TwoBReconciliationPage.tsx`) is **read-only for Strict clients** (the
 default) — display, export, version history/restore, and destructive Clear

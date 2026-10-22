@@ -716,7 +716,7 @@ await run('no post', async () => {
   check('round 3: Import 2B keys its refresh, its Pending items and their buttons to the (client, month) shown',
     /const refreshStep = async \(\) => \{[\s\S]{0,400}const lseq = ledgerReads\.begin\(view\);\s*if \(lseq === null\) return;/.test(code)
       && !code.includes('++ledgerSeq') && code.includes('ledgerShown && (pendingBills2B.length > 0')
-      && (code.match(/updatePendingEntry\([^;]*, scope\)/g) || []).length === 4
+      && (code.match(/updatePendingEntry\([^;]*, scope,/g) || []).length === 4
       && code.includes('if (!isCurrentView(scope.clientId, scope.period)) return;')
       && code.includes('if (reclaimDialog.view !== currentView)')
       && /if \(!isCurrentView\(client, month\)\) return;\s*rememberBook\(data as BookRow\);/.test(code),
@@ -732,6 +732,45 @@ await run('no post', async () => {
     /catchUpMonth\(actorId, clientId, month, false, preview\.digest\)/.test(code)
       && fs.readFileSync(path.join(root, 'src/lib/twobPriorMonth.ts'), 'utf8').includes('applyPriorSave(actorId, clientId, period, changes, false, !!opts.wholeMonth, preview.digest)')
       && /IF p_digest IS NOT NULL AND NOT p_dry_run AND p_digest IS DISTINCT FROM v_digest THEN/.test(sql));
+  // Round 4: one count for every read, never restarted, and the latest read
+  // per view: a read held from an earlier visit to a month (switched away and
+  // back) is never the latest of the later visit. Before, the count restarted
+  // when the month was shown again, so the held read of the first visit
+  // carried the same number as the second visit's refresh and landed over
+  // it (an entry expensed out meanwhile shown awaiting reclaim, buttons on).
+  {
+    let at = 'c|10/2026';
+    const r4 = V.createViewReads(() => at);
+    r4.begin('c|10/2026');
+    const heldFirstVisit = r4.begin('c|10/2026');
+    at = 'c|09/2026';
+    r4.begin('c|09/2026');
+    at = 'c|10/2026';
+    r4.begin('c|10/2026');
+    const secondVisitRefresh = r4.begin('c|10/2026');
+    check('round 4: switched away and back, a read held from the first visit is not the latest of the second (its refresh is)',
+      !r4.isLatest('c|10/2026', heldFirstVisit) && r4.isLatest('c|10/2026', secondVisitRefresh) && heldFirstVisit !== secondVisitRefresh,
+      JSON.stringify({ heldFirstVisit, secondVisitRefresh }));
+  }
+  check('round 4: each Pending items decision is written only while the entry holds the decision the list showed',
+    /updatePendingEntry\('bills_not_in_2b', id, \{ reclaim_month: label, reclaim_subtype: 'EXPENSE_OUT' \}, user\?\.id, scope,\s*EXPECT_AWAITING_RECLAIM\)/.test(code)
+      && /updatePendingEntry\('bills_not_in_2b', id, \{ reclaim_month: null, reclaim_subtype: null \}, user\?\.id, scope,\s*expectExpensedOut\(row\?\.reclaim_month\)\)/.test(code)
+      && /updatePendingEntry\('bills_not_in_books', id, patch, user\?\.id, scope, EXPECT_AWAITING_BOOK_ENTRY\)/.test(code)
+      && /updatePendingEntry\('bills_not_in_books', id, \{ book_entry_month: null \}, user\?\.id, scope,\s*expectBooked\(row\?\.book_entry_month\)\)/.test(code)
+      && /for \(const \[k, v\] of Object\.entries\(expect\)\) q = v === null \? q\.is\(k, null\) : q\.eq\(k, v\);/.test(pend)
+      && pend.includes("EXPECT_AWAITING_RECLAIM: PendingExpect = { reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null }")
+      && pend.includes("({ reclaim_month: label ?? null, reclaim_subtype: 'EXPENSE_OUT', reclaimed_via_doc_id: null })"));
+  check('round 4: the employee\'s pairing call asks no permission itself (the write-through refuses only what changes the ledger, for the call\'s own user), and a delete taking an entry off the ledger needs it',
+    !/CREATE OR REPLACE FUNCTION public\.twob_import2b_save_book\([\s\S]{0,900}twob__staff_may\(p_actor_id, 'work_2b_import'\)/.test(sql)
+      && /CREATE OR REPLACE FUNCTION public\.twob_import2b_save_book\([\s\S]{0,1600}PERFORM set_config\('twob\.actor', p_actor_id::text, true\);/.test(sql)
+      && /v_req uuid := public\.twob__acting_user\(\);/.test(sql)
+      && /CREATE OR REPLACE FUNCTION public\.twob__autopost_gone\(\)[\s\S]{0,4500}IF v_req IS NOT NULL AND NOT public\.twob__may_post\(v_req\) THEN/.test(sql)
+      && W.LEDGER_SAVES_NOTE.includes('deleting a books row whose entry would leave the ledger')
+      && W.LEDGER_SAVES_NOTE.includes('books rows that are Mismatched or Not Eligible'));
+  check('round 4: a filed month\'s save runs the door once and digests what it saved (no second preview under the lock)',
+    /IF p_dry_run THEN\s*RETURN public\.twob__prior_save_preview\([^;]*\);\s*END IF;\s*-- The door refusing/.test(sql)
+      && /IF p_digest IS NOT NULL AND p_digest IS DISTINCT FROM public\.twob__prior_digest\(v_out, v_derived -> 'door'\) THEN/.test(sql)
+      && (sql.match(/twob__prior_save_preview\(p_actor_id, p_client_id, p_period, v_phase1, v_unlinks, p_whole_month\)/g) || []).length === 1);
   check('round 2: "this row never reaches the ledger" is said for a debit note only once its save went through',
     /const saved = await saveBookRow\(id, true, \{ doc_type: docType \}\);\s*if \(saved && docType === 'DEBIT_NOTE'\) toast\.info\(BOOK_DEBIT_NOTE_MSG/.test(code));
   check('round 2: a book entry or Expense out carried in from a filed month has no Undo on Import 2B, and the database refuses the change',

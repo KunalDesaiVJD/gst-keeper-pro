@@ -46,8 +46,13 @@
 --     ledger themselves.
 --     Who may (verification round 1): a save that changes the ledger needs
 --     Import 2B & post (work_2b_import), as Post did; the user the request
---     names (x-gst-actor) without it is refused, nothing of the save kept;
---     a save that changes nothing on the ledger goes through for any staff.
+--     names (x-gst-actor; twob_import2b_save_book's p_actor_id for its call)
+--     without it is refused, nothing of the save kept; a save that changes
+--     nothing on the ledger goes through for any staff, a books row's
+--     pairing call included (round 4: that call no longer asks for the
+--     permission itself). A books row or 2B document deleted so that its
+--     entry leaves the ledger or is put back is such a save too (round 4,
+--     twob__autopost_gone).
 --     A refusal says where to undo the decision (twob__undo_hint): Import
 --     2B's Pending items list booked entries with Undo book entry since this
 --     round. A reclaim (twob_import2b_reclaim), a document taken out of
@@ -88,9 +93,12 @@
 --     dry run returns a digest of the plan (twob__autopost_digest) or of the
 --     door's preview (twob__prior_digest, built without row ids by
 --     twob__prior_save_preview), the apply sends it back (p_digest), and the
---     plan or preview made again under the client's lock must have it, or
---     nothing is written ("changed while the confirm was open"; as Post
---     re-planned under the lock and posted nothing when the plan differed).
+--     plan made again under the client's lock, or the prior-month save as it
+--     is made there (round 4: digested as its preview was, the door run once;
+--     a second preview had run it three more times, 1.9 s for 1,000 rows),
+--     must have it, or nothing is written ("changed while the confirm was
+--     open"; as Post re-planned under the lock and posted nothing when the
+--     plan differed).
 --     A row the catch-up leaves out says whether its entry stays on the
 --     ledger as last saved ('on_ledger').
 --  5. Delete 2B (twob_import2b_delete_2b) is one call, 2B Reconciliation's
@@ -130,19 +138,34 @@
 -- test_9e_autopost_locks.sh (the first verification round's findings),
 -- test_9f_autopost_round2.sql (the second round's), test_9g_autopost_round3.sql
 -- and round3.test.mjs (the third round's: the digests, the rows left out,
--- the app's scoped and gated calls) and autopost.test.mjs
+-- the app's scoped and gated calls), test_9h_autopost_round4.sql and
+-- round4.test.mjs (the fourth round's: the employee's pairing, a delete off
+-- the ledger needing Import 2B & post, the prior-month save's one door run;
+-- the app's guarded Saves and Pending items decisions) and autopost.test.mjs
 -- (the write-through against planImport2BPost + postImport2BToLedger on
 -- twin clients, after every save kind; own entries adopted then taken back).
 --
 -- LIVE APPLY (project gcquafqxbykxkbexcdpy only; never SUPABASE_PROJECT_REF):
 -- after the rest of the 21 Oct release (20261021160000, 100000, 110000,
--- 120000, 150000) and BEFORE the app goes out: the app no longer has Post,
+-- 120000, 150000; all applied on 22 Oct 2026) and BEFORE the app goes out:
+-- the app no longer has Post,
 -- so without this file its saves would not reach the ledger, and it calls
 -- twob_import2b_reclaim / twob_import2b_save_book / twob_import2b_unreclaim /
 -- twob_import2b_step / twob_restore_version_linked. The app of before (still
--- with Post) keeps working against it in the meantime: its saves write
--- through here (it names no user in its requests, so the Import 2B & post
--- check does not apply to it), and its Post then finds nothing left to do.
+-- with Post, live since 22 Oct 2026) keeps working against it in the
+-- meantime: its saves write through here and its Post then finds nothing
+-- left to do. It names its user on every request (x-gst-actor, through
+-- changeLogFetch), so the Import 2B & post check applies to it from the
+-- moment this file is applied: its employees without the permission are
+-- refused every save that would change the ledger (marking a document Not
+-- in Books, completing a Not in 2B books row, deleting a posted books row:
+-- "Not saved: this change would change the 2B Reconciliation ledger, which
+-- needs the Import 2B & post permission"), which that app allowed (only
+-- its Post asked for it). So, before applying: give Import 2B & post to
+-- every employee who works Import 2B (the read-only query at the end of
+-- step 3 lists who lacks it; run it first), or deploy the app straight
+-- after applying (step 5), whose page asks
+-- each save first and says which saves need the permission.
 -- Already applied in an earlier form? Applying this file again is safe
 -- (re-runnable) and brings it to this form: the earlier signatures of
 -- twob__autopost_apply, twob_import2b_catch_up and twob_import2b_prior_save
@@ -178,11 +201,18 @@
 --              to_regprocedure('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)') IS NOT NULL,
 --              (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public'
 --                AND table_name IN ('bills_not_in_2b', 'bills_not_in_books') AND column_name = 'adopted_from');  -- t, t, t, 2
+--       -- round 4: the user a save is checked for (a pairing call's own, else the request's),
+--       -- and the check a delete runs as its caller: t, t
+--       SELECT to_regprocedure('public.twob__acting_user()') IS NOT NULL,
+--              to_regprocedure('public.twob__may_post(uuid)') IS NOT NULL;
 --       -- No entry is linked as an own entry yet (the column is new): 0
 --       SELECT (SELECT count(*) FROM public.bills_not_in_2b WHERE adopted_from IS NOT NULL)
 --            + (SELECT count(*) FROM public.bills_not_in_books WHERE adopted_from IS NOT NULL);
---       -- Who holds Import 2B & post (an employee without it sees Import 2B read-only,
---       -- Pending items aside); give it to anyone who works Import 2B before the app goes out:
+--       -- Who lacks Import 2B & post: from now on (the app of before too, see above)
+--       -- each of them is refused a save that would change the ledger (a document
+--       -- into or out of Not in Books, a Not in 2B books row with a date and supplier,
+--       -- a delete taking an entry off); every other save stays open to them, and the
+--       -- new app asks each save first. Give it to anyone who works Import 2B:
 --       SELECT p.first_name, r.role FROM public.user_roles r JOIN public.profiles p ON p.user_id = r.user_id
 --        WHERE r.role = 'employee' AND NOT EXISTS (SELECT 1 FROM public.user_permissions u
 --              WHERE u.user_id = r.user_id AND u.permission_key = 'work_2b_import') ORDER BY 1;
@@ -424,6 +454,19 @@ BEGIN
 END;
 $$;
 
+-- The user a save's write-through is checked for (Import 2B & post): the one
+-- a call of this release names for its own writes (twob.actor, set by
+-- twob_import2b_save_book from its p_actor_id while it writes, as the other
+-- calls check their p_actor_id; verification round 4), else the one the
+-- request names (x-gst-actor), else NULL (a system writer: not checked).
+CREATE OR REPLACE FUNCTION public.twob__acting_user()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT COALESCE(public.twob__try_uuid(current_setting('twob.actor', true)), public.twob__request_actor());
+$$;
+
 -- A GST Manager, the superadmin, or an employee whose position holds p_key.
 CREATE OR REPLACE FUNCTION public.twob__staff_may(p_actor_id uuid, p_key text)
 RETURNS boolean
@@ -437,6 +480,19 @@ AS $$
          OR (public.staff_level_of(p_actor_id) = 'employee'
              AND EXISTS (SELECT 1 FROM public.user_permissions up
                           WHERE up.user_id = p_actor_id AND up.permission_key = p_key)));
+$$;
+
+-- Whether p_user may change the ledger (Import 2B & post), for a check that
+-- runs as the caller (twob__autopost_gone, a row trigger kept without
+-- SECURITY DEFINER): twob__staff_may is not the caller's to run. Reads only.
+CREATE OR REPLACE FUNCTION public.twob__may_post(p_user uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT public.twob__staff_may(p_user, 'work_2b_import');
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -1262,7 +1318,10 @@ $$;
 -- was; the user the request names (x-gst-actor) without it is refused, and
 -- nothing of the save is kept. A save that changes nothing on the ledger
 -- goes through for any staff, as before. A request naming no user (a
--- system writer, or the app of before this release) is not checked here.
+-- system writer) is not checked here; the app names its user on every
+-- request (x-gst-actor), the app of before this release too, and
+-- twob_import2b_save_book's writes are checked for its p_actor_id
+-- (twob__acting_user).
 CREATE OR REPLACE FUNCTION public.twob__autopost_touch(
   p_client_id uuid, p_period text, p_book_ids uuid[], p_doc_ids uuid[], p_by uuid)
 RETURNS void
@@ -1271,7 +1330,7 @@ AS $$
 DECLARE
   v jsonb;
   v_actor uuid;
-  v_req uuid := public.twob__request_actor();
+  v_req uuid := public.twob__acting_user();
 BEGIN
   IF p_client_id IS NULL OR public.twob_period_key(p_period) IS NULL THEN
     RETURN;
@@ -1435,7 +1494,13 @@ $$;
 -- (adopted_from) is put back as it was and unlinked, never removed (round
 -- 2). The month is marked for a snapshot at the end of the
 -- statement. Row level, so kept cheap: no SECURITY DEFINER, one index probe
--- when nothing was posted.
+-- when nothing was posted. Who may (verification round 4): a delete that
+-- takes an entry off the ledger or puts one back is the Import 2B & post
+-- permission's, as every other save that changes the ledger
+-- (twob__autopost_touch): the user the request names without it is
+-- refused and nothing of the delete is kept. A delete that leaves the
+-- ledger as it is (no entry, or one that stays: filed, or holding a
+-- decision, only unlinked) goes through for any staff, as before.
 CREATE OR REPLACE FUNCTION public.twob__autopost_gone()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1445,6 +1510,7 @@ DECLARE
   v_rows integer := 0;
   v_key text;
   v_marks text;
+  v_req uuid;
 BEGIN
   IF COALESCE(current_setting('twob.write', true), '') IN ('rpc', 'system') THEN
     RETURN OLD;
@@ -1494,6 +1560,11 @@ BEGIN
   END IF;
   n := n + v_rows;
   IF n > 0 THEN
+    v_req := public.twob__acting_user();
+    IF v_req IS NOT NULL AND NOT public.twob__may_post(v_req) THEN
+      RAISE EXCEPTION 'Not saved: this change would change the 2B Reconciliation ledger, which needs the Import 2B & post permission. Ask a GST Manager to add it to your position.'
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
     v_key := OLD.client_id::text || '|' || OLD.period_month || ';';
     v_marks := COALESCE(current_setting('twob.autopost_marks', true), '');
     IF strpos(v_marks, v_key) = 0 THEN
@@ -1727,8 +1798,16 @@ $$;
 -- save takes them: the rows first, then the client's lock (in their
 -- write-throughs). p_values: the row's date, supplier, number, GSTIN,
 -- amounts, doc_type, book_treatment and matched_2b_id (only the keys sent
--- are written). Import 2B & post. Returns {ok, paired_was} (the paired
--- document's treatment before, for its amendments to follow).
+-- are written). Any staff level; who may is as for every save
+-- (verification round 4): the write-throughs refuse, for p_actor_id
+-- (twob__acting_user), any part that would
+-- change the ledger without Import 2B & post (pairing a Not in Books
+-- document that has an entry, a Not in 2B row with a date and supplier),
+-- and nothing of the call is kept; a pairing that changes nothing on the
+-- ledger (a Mismatched books row against a Matched document) saves for an
+-- employee without it, as the direct writes of before did. Returns {ok,
+-- paired_was} (the paired document's treatment before, for its amendments
+-- to follow).
 CREATE OR REPLACE FUNCTION public.twob_import2b_save_book(
   p_actor_id uuid, p_book_id uuid, p_values jsonb, p_release_doc_id uuid DEFAULT NULL, p_pair_doc_id uuid DEFAULT NULL)
 RETURNS jsonb
@@ -1742,9 +1821,11 @@ DECLARE
   v_pair text;
   v_bad text;
 BEGIN
-  IF NOT public.twob__staff_may(p_actor_id, 'work_2b_import') THEN
-    RAISE EXCEPTION 'Needs the Import 2B & post permission. Ask a GST Manager to add it to your position.';
+  IF p_actor_id IS NULL OR COALESCE(public.staff_level_of(p_actor_id), '') NOT IN ('superadmin', 'gst_manager', 'employee') THEN
+    RAISE EXCEPTION 'Only staff save the books register.';
   END IF;
+  -- The write-throughs below check this user when the request names none.
+  PERFORM set_config('twob.actor', p_actor_id::text, true);
   p_values := COALESCE(p_values, '{}'::jsonb);
   IF jsonb_typeof(p_values) <> 'object' THEN
     RAISE EXCEPTION 'No values were sent.';
@@ -1798,6 +1879,7 @@ BEGIN
     matched_2b_id = CASE WHEN p_values ? 'matched_2b_id' THEN r.matched_2b_id ELSE b.matched_2b_id END,
     updated_by = p_actor_id, updated_at = now()
    WHERE b.id = p_book_id;
+  PERFORM set_config('twob.actor', '', true);
   RETURN jsonb_build_object('ok', true, 'paired_was', v_pair);
 END;
 $$;
@@ -2019,9 +2101,16 @@ $$;
 -- preview, as the door gives it (the rows saved first, their write-through
 -- worked out after, then all of it undone), with its 'digest'. p_digest
 -- (verification round 3): the digest of the preview the confirm showed; the
--- preview made again under the client's lock must have it, or nothing is
+-- save itself, made under the client's lock, must have it, or nothing is
 -- saved ("changed while the confirm was open"). The page always sends it;
--- NULL (no check) is left for the tests' direct calls.
+-- NULL (no check) is left for the tests' direct calls. The door runs once
+-- for the save (verification round 4): its result is digested as the
+-- preview's was (the door gives the same changes, refusals, notes and later
+-- months dry or for real; the links listed only when written), and a
+-- different digest rolls the whole save back. Before, the preview was made
+-- a second time under the lock first, which ran the door three more times:
+-- 1,000 rows took 1.9 s (2.5 s with the change log), near the 3 s anon
+-- calls run under.
 DROP FUNCTION IF EXISTS public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean);
 CREATE OR REPLACE FUNCTION public.twob_import2b_prior_save(
   p_actor_id uuid, p_client_id uuid, p_period text, p_changes jsonb,
@@ -2090,37 +2179,45 @@ BEGIN
   IF p_dry_run THEN
     RETURN public.twob__prior_save_preview(p_actor_id, p_client_id, p_period, v_phase1, v_unlinks, p_whole_month);
   END IF;
-  -- What the confirm showed must be what is saved now: the preview made
-  -- again, under the lock, with the same digest (verification round 3).
-  IF p_digest IS NOT NULL THEN
-    v_out := public.twob__prior_save_preview(p_actor_id, p_client_id, p_period, v_phase1, v_unlinks, p_whole_month);
-    IF NOT COALESCE((v_out ->> 'ok')::boolean, false) OR p_digest IS DISTINCT FROM v_out ->> 'digest' THEN
-      RAISE EXCEPTION 'Nothing was saved: % of this client changed while the confirm was open (a save in another tab or by someone else). Look at it again and save once more.',
-        public.twob_month_name(p_period)
-        USING ERRCODE = 'TWB03';
-    END IF;
-    v_out := NULL;
-  END IF;
 
-  IF jsonb_array_length(v_phase1) > 0 THEN
-    r1 := public.twob_prior_books_apply(p_actor_id, p_client_id, p_period, v_phase1, false);
-    v_wrote := EXISTS (SELECT 1 FROM jsonb_array_elements(r1 -> 'changes') ch
-                        WHERE ch ->> 'table' <> 'books_register' AND ch -> 'this' ->> 'action' IN ('add', 'change', 'remove'));
-  END IF;
-  SELECT COALESCE(array_agg(DISTINCT (ch -> 'this' ->> 'id')::uuid), '{}') INTO v_touched
-    FROM jsonb_array_elements(COALESCE(r1 -> 'changes', '[]'::jsonb)) ch
-   WHERE ch ->> 'table' = 'books_register' AND ch ->> 'op' IN ('insert', 'update') AND ch -> 'this' ->> 'id' IS NOT NULL;
-  v_derived := public.twob__prior_derived(p_client_id, p_period, CASE WHEN p_whole_month THEN NULL ELSE v_touched END);
-  IF jsonb_array_length(v_derived -> 'door') > 0 THEN
-    r2 := public.twob_prior_books_apply(p_actor_id, p_client_id, p_period, v_derived -> 'door', false);
-    v_wrote := v_wrote OR EXISTS (SELECT 1 FROM jsonb_array_elements(r2 -> 'changes') ch
-                                   WHERE ch ->> 'table' <> 'books_register' AND ch -> 'this' ->> 'action' IN ('add', 'change', 'remove'));
-  END IF;
+  -- The door refusing what its preview let through (a row removed or
+  -- changed meanwhile) is the month having changed while the confirm was
+  -- open: said as such, with the door's reason.
+  BEGIN
+    IF jsonb_array_length(v_phase1) > 0 THEN
+      r1 := public.twob_prior_books_apply(p_actor_id, p_client_id, p_period, v_phase1, false);
+      v_wrote := EXISTS (SELECT 1 FROM jsonb_array_elements(r1 -> 'changes') ch
+                          WHERE ch ->> 'table' <> 'books_register' AND ch -> 'this' ->> 'action' IN ('add', 'change', 'remove'));
+    END IF;
+    SELECT COALESCE(array_agg(DISTINCT (ch -> 'this' ->> 'id')::uuid), '{}') INTO v_touched
+      FROM jsonb_array_elements(COALESCE(r1 -> 'changes', '[]'::jsonb)) ch
+     WHERE ch ->> 'table' = 'books_register' AND ch ->> 'op' IN ('insert', 'update') AND ch -> 'this' ->> 'id' IS NOT NULL;
+    v_derived := public.twob__prior_derived(p_client_id, p_period, CASE WHEN p_whole_month THEN NULL ELSE v_touched END);
+    IF jsonb_array_length(v_derived -> 'door') > 0 THEN
+      r2 := public.twob_prior_books_apply(p_actor_id, p_client_id, p_period, v_derived -> 'door', false);
+      v_wrote := v_wrote OR EXISTS (SELECT 1 FROM jsonb_array_elements(r2 -> 'changes') ch
+                                     WHERE ch ->> 'table' <> 'books_register' AND ch -> 'this' ->> 'action' IN ('add', 'change', 'remove'));
+    END IF;
+  EXCEPTION WHEN raise_exception THEN
+    IF p_digest IS NULL THEN
+      RAISE;
+    END IF;
+    RAISE EXCEPTION 'Nothing was saved: % of this client changed while the confirm was open (a save in another tab or by someone else): %. Look at it again and save once more.',
+      public.twob_month_name(p_period), rtrim(SQLERRM, '. ')
+      USING ERRCODE = 'TWB03';
+  END;
   v_out := public.twob__door_merge(r1, r2, false, p_period);
   v_links := public.twob__prior_links(p_client_id, p_period, v_unlinks || COALESCE(v_derived -> 'links', '[]'::jsonb),
                                      jsonb_array_length(v_out -> 'changes'), true, p_actor_id);
   v_wrote := v_wrote OR jsonb_array_length(v_links) > 0;
   v_out := v_out || jsonb_build_object('changes', (v_out -> 'changes') || v_links);
+  -- What the confirm showed must be what was saved: the save digested as
+  -- its preview was; a difference undoes all of it (verification rounds 3, 4).
+  IF p_digest IS NOT NULL AND p_digest IS DISTINCT FROM public.twob__prior_digest(v_out, v_derived -> 'door') THEN
+    RAISE EXCEPTION 'Nothing was saved: % of this client changed while the confirm was open (a save in another tab or by someone else). Look at it again and save once more.',
+      public.twob_month_name(p_period)
+      USING ERRCODE = 'TWB03';
+  END IF;
   IF v_wrote THEN
     PERFORM public.twob__autopost_changed(p_client_id, p_period, p_actor_id);
     v_num := public.twob__autopost_snapshot(p_client_id, p_period, p_actor_id);
@@ -2677,7 +2774,9 @@ GRANT EXECUTE ON FUNCTION
   public.twob_import2b_flush_version(uuid, uuid, text),
   public.twob_import2b_step(uuid, text),
   public.twob_import2b_unreclaim(uuid, uuid, text, uuid, text),
-  public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)
+  public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb),
+  public.twob__acting_user(),
+  public.twob__may_post(uuid)
 TO anon, authenticated, service_role;
 
 -- Internal: they write without checking who acts, or are triggers.
