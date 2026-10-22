@@ -2155,7 +2155,9 @@ decision of 22 Oct 2026 on the eighth verification: simplify, never guess).
   (`twob_doc_ident`: GSTIN or supplier, number and date). A document named
   by (1) or (2) goes to its own reclaim first, before an entry found as the
   same document. Then on the usual terms: while that document is Reclaim and
-  evidences no other reclaim, the reclaim comes back linked to it.
+  evidences no other reclaim, the reclaim comes back linked to it. (Round
+  10, below: (1) before (2); (3) only while no other reclaim of the version
+  takes that document, and only with the entry's amounts.)
 - **Otherwise it comes back in Awaiting reclaim, named, for a Strict and a
   Liberal client alike**, whenever the month holds any 2B document ("its 2B
   document cannot be found: this version does not name it, and no 2B
@@ -2182,10 +2184,11 @@ decision of 22 Oct 2026 on the eighth verification: simplify, never guess).
 - **Reclaim it again on Import 2B.** The Restore's toast names each entry
   that came back in Awaiting reclaim. Its document may still be Reclaim and
   evidence nothing (after Clear Data): it counts nowhere until the reclaim
-  is recorded again: take the document out of Reclaim (Save), then Link &
-  Reclaim the entry from Pending items. A version written from this release
-  names each reclaim's document, so its Restore brings every reclaim back
-  with its own document.
+  is recorded again: Link & Reclaim the entry from Pending items, which
+  offers such a document since round 10 (below; before, the document had to
+  be taken out of Reclaim and saved first). A version written from this
+  release names each reclaim's document, so its Restore brings every
+  reclaim back with its own document.
 - **Timing.** A 1,000 + 1,000 Restore of a version of before took 2.2 to
   2.7 s with the change log applied (an anon request has 3 s): the entries
   just added were linked to their books rows (2B documents) by an update
@@ -2197,6 +2200,70 @@ decision of 22 Oct 2026 on the eighth verification: simplify, never guess).
   to 0.8 s with the change log, its flush at commit included (`test_9o`
   times it, the median of three under 1.5 s), and the Change history shows
   one insert per restored entry.
+
+**Round 10: a Restore says which documents it leaves counted nowhere, and
+never tells two reclaims apart by order** (verification of 22 Oct 2026, on
+the lead's round-9 rule: when in doubt, Awaiting reclaim with a reason;
+never guess).
+
+- **Documents left Reclaim evidencing nothing are named, never changed.** A
+  Restore puts the month's own entries back as the version holds them; it
+  never changes a 2B document. So a document the month's entry was
+  reclaimed with since the version (the version holding the entry in
+  Awaiting reclaim, or not at all, or naming another document for it, now
+  out of Reclaim) stays Reclaim with no entry reclaimed against it: not in
+  5.1, nothing in 5.4, its ITC counted nowhere. Round 9 said nothing (the
+  Import 2B row showed a plain "Reclaim"). Now the Restore returns every
+  Reclaim original invoice or debit note of the month that evidences no
+  reclaim as it leaves the month (`docs_left`), each with the entry whose
+  reclaim it evidenced before the Restore ("LANDLORD RENT/2026/10 (stays
+  Reclaim and evidences no reclaim now, so its ITC counts nowhere; before
+  this Restore it evidenced the reclaim of LANDLORD R-OCT)"), and those Clear
+  Data left so ("is Reclaim and evidences no reclaim ..."); the toast lists
+  them with what to do.
+- **Reclaim it again, as the toast says.** Pending items' Link & Reclaim
+  now offers, beside the Matched and Mismatched originals, the month's
+  Reclaim originals that evidence no reclaim (`reclaimCandidateDocs`; one
+  with a change staged is left out until saved); the reclaim is recorded
+  with the treatment the page shows, Reclaim, and the document is left as it
+  is. Such a document's row says so: "Reclaim, but evidences no reclaim, so
+  its ITC counts nowhere: Link & Reclaim an entry with it (Pending items),
+  or take it out of Reclaim"; where a reclaim of the month names no document
+  (typed on 2B Reconciliation, or recorded before reclaims named theirs),
+  "... unless the one reclaim of this month recorded without its 2B
+  document is this one ..." (`reclaimNoEvidenceNote`,
+  `countUnlinkedReclaims`). A filed month's row says only what is so.
+- **Two reclaims of one identity are not told apart by order.** The books
+  may hold one invoice as two lines (VICTOR INV-9 of 50 and 180), each
+  reclaimed with its own document (INV-9 of 180, INV-9A of 50). After Clear
+  Data, a version of before names neither, and both lines are the same
+  document as INV-9 by (3): round 9 gave INV-9 to the first in the
+  version's order, the 50 line, so the 180 line came back Awaiting with a
+  reason that read like its own name, INV-9A stayed Reclaim counted nowhere,
+  and 5.4 was 50 against 230. Now rule (3) holds only while the entry's
+  amounts are the document's (each head within Link & Reclaim's Rs. 2: a
+  reclaim is never made with a document of other amounts; a check on that
+  one document, never a lookup), and only while no other reclaim of the
+  version takes that document by any rule. So the 180 line comes back with
+  INV-9, the 50 line comes back Awaiting ("... VICTOR INV-9, the one 2B
+  document of this month with its GSTIN or supplier, number and date, has
+  other amounts (more than Rs. 2 apart on a head), so the reclaim was not
+  made with it; reclaim it again on Import 2B"), INV-9A is named in
+  `docs_left`, and Link & Reclaim offers it. Two lines of equal amounts
+  (WHISKY W-5 twice, reclaimed with W-5 and W-5B) both come back Awaiting
+  ("cannot be told: ... 2 of its reclaims are the same document as WHISKY
+  W-5 ..."), both documents named.
+- **The version's own naming first, and the reason by its source.** Round 9
+  ranked (1), the document the version names, and (2), the one the month's
+  entry of that id names now, alike, by the version's order: a reclaim
+  typed in the version and reclaimed with the document since kept it, and
+  the reclaim the version names lost it with a false reason. Now (1) before
+  (2) before (3), and the one left out says where the other's document is
+  known from: "evidences the reclaim of LANDLORD R-A in this version" (the
+  version names it), or "... now" (the month's entry names it).
+- **Timing.** Unchanged in kind (one extra read of the month's Reclaim
+  documents after the insert): `test_9o`'s three 1,000-row Restores, with
+  the change log applied, stay well under 1.5 s.
 
 **The e-mail pop-up's reasons** (round 3, §11). A Not in Books document of
 the month not on the ledger is named with its own reason: no date or
@@ -2332,7 +2399,13 @@ amounts, so none moves to another entry's or another supplier's document
 and a Liberal client's is not counted twice; a named reclaim first; two
 documents of one identity not guessed; a Liberal client's typed reclaim in
 a month without 2B documents as typed; three 1,000-row Restores timed with
-their commit; each check recorded as in round 5) and
+their commit; each check recorded as in round 5),
+`test_9p_autopost_round10.sql` and `round10.test.mjs` (the tenth round: the
+documents a Restore leaves Reclaim evidencing nothing named, with the entry
+they evidenced, and reclaimed with again from Pending items through the
+page's own calls; two reclaims of one identity never told apart by order
+and held to their amounts; the version's naming before the month's entry's,
+worded by its source; each check recorded as in round 5) and
 `autopost.test.mjs` (twin
 clients: the write-through on one, the app's own `planImport2BPost` +
 `postImport2BToLedger` on the other, the ledgers compared after every save
@@ -2362,7 +2435,11 @@ Restore's lock order, the RESTORE version from the Restore's rows) and the
 round-8 rules (a pair of before out of Reclaim, the month's rows taken
 without waiting) and the round-9 rules (a reclaim back only with its
 document known exactly, never by its amounts, else Awaiting reclaim, named,
-Strict and Liberal alike; the relink in the insert, paired by grouping);
+Strict and Liberal alike; the relink in the insert, paired by grouping) and
+the round-10 rules (the version's naming first, a document found as the same
+one held to the entry's amounts and to one reclaim, the documents left
+evidencing nothing named and shown on the page, Link & Reclaim offering
+them);
 `node scripts/verify-twob-live.mjs` checks 2B Reconciliation's live updates
 (which changes concern the month, the banner instead of a reload under unsaved
 edits, Save sending only the changed rows, a reload clearing the pending

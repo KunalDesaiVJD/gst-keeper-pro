@@ -70,7 +70,15 @@
 # back in Awaiting reclaim, named, for a Strict and a Liberal client alike
 # while the month holds any 2B document), so no reclaim moves to another
 # entry's or another supplier's document and a Liberal client's is not
-# counted twice; a 1,000 + 1,000 Restore timed.
+# counted twice; a 1,000 + 1,000 Restore timed; test_9p and round10.test.mjs:
+# the tenth round's: Restore names each Reclaim document it leaves
+# evidencing no reclaim (docs_left, with the entry it evidenced before),
+# never changing it; two reclaims of the version that are one document are
+# never told apart by order, and one found as the same document is held to
+# its amounts (Rs. 2 a head); a document goes to the reclaim the version
+# names before the one the month's entry names now, worded by which; and
+# Pending items' Link & Reclaim offers a Reclaim document that evidences no
+# reclaim, its row saying its ITC counts nowhere.
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.
@@ -134,7 +142,7 @@ done
 for t in "$here"/test_*.sh; do
   if TWOB_TEST_DB="$db" bash "$t"; then :; else echo "FAIL $(basename "$t")"; status=1; fi
 done
-for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs "$here"/round4.test.mjs "$here"/round5.test.mjs "$here"/round6.test.mjs "$here"/round7.test.mjs "$here"/round8.test.mjs; do
+for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs "$here"/round4.test.mjs "$here"/round5.test.mjs "$here"/round6.test.mjs "$here"/round7.test.mjs "$here"/round8.test.mjs "$here"/round10.test.mjs; do
   if [ -f "$t" ]; then
     if TWOB_TEST_DB="$db" node "$t"; then :; else status=1; fi
   fi

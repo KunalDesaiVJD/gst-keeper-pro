@@ -835,7 +835,7 @@ await run('no post', async () => {
   check('round 6 H1: the reclaim call makes the document Reclaim before the entry names it (the entry held first, still awaiting)',
     /FOR NO KEY UPDATE;\s+IF NOT FOUND THEN\s+RETURN jsonb_build_object\('ok', false, 'gone', true, 'what', 'entry',[\s\S]{0,400}UPDATE public\.twob_import_docs SET itc_action = 'RECLAIM', updated_by = p_actor_id, updated_at = now\(\) WHERE id = p_doc_id;\s+UPDATE public\.bills_not_in_2b t\s+SET reclaim_month = public\.twob_period_label\(p_period\)/.test(sql));
   check('round 6 H1: Restore brings a reclaim back only while its document is in the month, Reclaim and evidencing no other; the rest come back Awaiting reclaim, named (reclaims_back), and the page says so',
-    /k\.via_rn = 1 AND k\.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k\.via_kept IS NULL/.test(sql)
+    /OR k\.via_rn > 1\s+OR k\.via_now IS DISTINCT FROM 'RECLAIM' OR k\.via_kept IS NOT NULL/.test(sql)
       && /CASE WHEN NOT kk\.reclaim_back THEN NULLIF\(btrim\(COALESCE\(kk\.x ->> 'reclaim_month', ''\)\), ''\) END,/.test(sql)
       && /'reclaims_back', v_reclaims_back/.test(sql)
       && prior.includes('reclaimsBack: (Array.isArray(d.reclaims_back)')
@@ -860,20 +860,43 @@ await run('no post', async () => {
     const at = sql.indexOf('CREATE OR REPLACE FUNCTION public.twob_restore_version_linked(');
     return at < 0 ? '' : sql.slice(at, sql.indexOf('\n$$;', at));
   })();
-  check('round 7 F1 / round 9: Restore brings a reclaim back reclaimed only with its 2B document known exactly (named by the version, else by the month\'s entry of that id, else the month\'s only original invoice or debit note that is the same document; named ones first), on the usual terms; never by its amounts; otherwise Awaiting reclaim, named, for a Strict and a Liberal client alike while the month holds any 2B document; only a Liberal client\'s in a month with no 2B document comes back as typed',
+  // Round 10 (22 Oct 2026): (1) before (2) before (3); a document found by
+  // (3) only while no other reclaim of the version takes it and its amounts
+  // are the entry's (a check on that one document, never a lookup); the
+  // Reclaim documents a Restore leaves evidencing nothing named (docs_left).
+  const restoreCode = restoreFn.replace(/--[^\n]*/g, '');
+  check('round 7 F1 / round 9 / round 10: Restore brings a reclaim back reclaimed only with its 2B document known exactly: (1) named by the version, before (2) named by the month\'s entry of that id, before (3) the month\'s only original invoice or debit note that is the same document and of the entry\'s amounts (each head within Rs. 2), and (3) only while no other reclaim of the version takes that document; on the usual terms; never looked for by its amounts; otherwise Awaiting reclaim, named, for a Strict and a Liberal client alike while the month holds any 2B document; only a Liberal client\'s in a month with no 2B document comes back as typed',
     restoreFn.length > 0
-      && /COALESCE\(public\.twob__try_uuid\(x\.x ->> 'reclaimed_via_doc_id'\),\s+public\.twob__try_uuid\(v_cur2b -> \(x\.x ->> 'id'\) ->> 'via'\)\) AS named,/.test(restoreFn)
-      && /md AS MATERIALIZED \(\s+SELECT public\.twob_doc_ident\(d\.supplier_gstin, d\.supplier_name, d\.supplier_invoice_number, d\.date\) AS ident,\s+\(array_agg\(d\.id\)\)\[1\] AS id, count\(\*\) AS n/.test(restoreFn)
+      && /public\.twob__try_uuid\(x\.x ->> 'reclaimed_via_doc_id'\) AS named_v,\s+public\.twob__try_uuid\(v_cur2b -> \(x\.x ->> 'id'\) ->> 'via'\) AS named_c/.test(restoreFn)
+      && /md AS MATERIALIZED \(\s+SELECT public\.twob_doc_ident\(d\.supplier_gstin, d\.supplier_name, d\.supplier_invoice_number, d\.date\) AS ident,\s+\(array_agg\(d\.id\)\)\[1\] AS id, count\(\*\) AS n,/.test(restoreFn)
       && /AND NOT COALESCE\(d\.is_amendment, false\) AND COALESCE\(d\.doc_type, 'INVOICE'\) IN \('INVOICE', 'DEBIT_NOTE'\)\s+AND EXISTS \(SELECT 1 FROM e1 WHERE e1\.ident IS NOT NULL\)\s+GROUP BY 1\),/.test(restoreFn)
-      && /COALESCE\(e1\.named, CASE WHEN md\.n = 1 THEN md\.id END\) AS via\s+FROM e1 LEFT JOIN md ON md\.ident = e1\.ident\),/.test(restoreFn)
-      && /row_number\(\) OVER \(PARTITION BY e\.via, e\.reclaimed ORDER BY e\.by_name DESC, e\.o\) AS via_rn,/.test(restoreFn)
-      && /first_value\(e\.x\) OVER \(PARTITION BY e\.via, e\.reclaimed ORDER BY e\.by_name DESC, e\.o\) AS via_first,/.test(restoreFn)
-      && /k\.via_rn = 1 AND k\.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k\.via_kept IS NULL/.test(restoreFn)
-      && /OR \(k\.via IS NULL AND \(v_has_2b OR NOT v_liberal\)\)\), false\) AS reclaim_back/.test(restoreFn)
+      && /CASE WHEN md\.n = 1\s+THEN \(SELECT bool_and\(abs\(COALESCE\(public\.twob__try_num\(e1\.x ->> h\), 0\) - COALESCE\(\(md\.doc ->> h\)::numeric, 0\)\) <= 2\)\s+FROM unnest\(ARRAY\['taxable_value', 'input_igst', 'input_cgst', 'input_sgst'\]\) h\) END AS ident_agrees,/.test(restoreFn)
+      && /FROM e1 LEFT JOIN md ON md\.ident = e1\.ident\),/.test(restoreFn)
+      && /CASE WHEN NOT e2\.reclaimed THEN NULL\s+WHEN e2\.named_v IS NOT NULL THEN e2\.named_v\s+WHEN e2\.named_c IS NOT NULL THEN e2\.named_c\s+WHEN e2\.ident_agrees THEN e2\.ident_id END AS via,\s+CASE WHEN e2\.named_v IS NOT NULL THEN 1 WHEN e2\.named_c IS NOT NULL THEN 2 ELSE 3 END AS via_by/.test(restoreFn)
+      && /row_number\(\) OVER \(PARTITION BY e\.via ORDER BY e\.via_by, e\.o\) AS via_rn,\s+count\(\*\) OVER \(PARTITION BY e\.via\) AS via_n,\s+first_value\(e\.x\) OVER \(PARTITION BY e\.via ORDER BY e\.via_by, e\.o\) AS via_first,\s+first_value\(e\.via_by\) OVER \(PARTITION BY e\.via ORDER BY e\.via_by, e\.o\) AS via_first_by,/.test(restoreFn)
+      && /\(k\.via IS NOT NULL AND \(\(k\.via_by = 3 AND k\.via_n > 1\) OR k\.via_rn > 1\s+OR k\.via_now IS DISTINCT FROM 'RECLAIM' OR k\.via_kept IS NOT NULL\)\)\s+OR \(k\.via IS NULL AND \(v_has_2b OR NOT v_liberal\)\)\), false\) AS reclaim_back/.test(restoreFn)
       && /v_has_2b := EXISTS \(SELECT 1 FROM public\.twob_import_docs d WHERE d\.client_id = p_client_id AND d\.period_month = p_period\);/.test(restoreFn)
       && /SELECT COALESCE\(c\.liberal_2b_reconciliation, false\) INTO v_liberal FROM public\.clients c WHERE c\.id = p_client_id;/.test(restoreFn)
-      && (restoreFn.match(/; reclaim it again on Import 2B'/g) || []).length === 3
-      && !/abs\(md\.|by_amounts|etv|found by its amounts\)/.test(restoreFn.replace(/--[^\n]*/g, '')));
+      && (restoreFn.match(/; reclaim it again on Import 2B'/g) || []).length === 6
+      && /CASE WHEN kk\.via_first_by = 1 THEN 'in this version' ELSE 'now' END\) END\)/.test(restoreFn)
+      // The amounts are a check on the one document of the entry's identity:
+      // read once, never ordered by, never a join on them.
+      && (restoreCode.match(/abs\(/g) || []).length === 1
+      && [...restoreCode.matchAll(/ORDER BY ([^\n]*)/g)].every((m) => !/taxable_value|input_|abs\(|\.doc/.test(m[1]))
+      && !/LATERAL|by_amounts|found by its amounts/.test(restoreCode));
+  check('round 10: Restore names each Reclaim invoice or debit note of the month it leaves evidencing no reclaim (docs_left), with the entry whose reclaim it evidenced before, and never changes a document; the page\'s toast shows them',
+    /COALESCE\(jsonb_object_agg\(t\.reclaimed_via_doc_id::text, jsonb_build_object\('supplier_name', t\.supplier_name,\s+'supplier_invoice_number', t\.supplier_invoice_number\)\) FILTER \(WHERE t\.reclaimed_via_doc_id IS NOT NULL\), '\{\}'::jsonb\)\s+INTO v_cur2b, v_held FROM public\.bills_not_in_2b t/.test(restoreFn)
+      && /INTO v_docs_left\s+FROM public\.twob_import_docs d\s+WHERE d\.client_id = p_client_id AND d\.period_month = p_period AND d\.itc_action = 'RECLAIM'\s+AND NOT COALESCE\(d\.is_amendment, false\) AND COALESCE\(d\.doc_type, 'INVOICE'\) IN \('INVOICE', 'DEBIT_NOTE'\)\s+AND NOT EXISTS \(SELECT 1 FROM public\.bills_not_in_2b z WHERE z\.reclaimed_via_doc_id = d\.id\);/.test(restoreFn)
+      && /'reclaims_back', v_reclaims_back, 'docs_left', v_docs_left,/.test(restoreFn)
+      && !/UPDATE public\.twob_import_docs/.test(restoreCode)
+      && prior.includes('docsLeft: (Array.isArray(d.docs_left) ? (d.docs_left as Raw[]) : [])')
+      && reco.includes('restored.docsLeft.length') && reco.includes('Left in Reclaim, evidencing no reclaim, so counted nowhere'));
+  check('round 10: Pending items\' Link & Reclaim offers the month\'s Reclaim documents that evidence no reclaim (the Restore\'s "reclaim it again on Import 2B"), and such a document\'s row says its ITC counts nowhere',
+    /const eligibleDocs = reclaimCandidateDocs\(twoBDocs, reclaimEvidence, pendingActions\);/.test(code)
+      && /\|\| \(d\.itc_action === 'RECLAIM' && !evidence\.has\(d\.id\) && !staged\[d\.id\]\)\)\);/.test(guardedLib)
+      && /\} else if \(d\.itc_action === 'RECLAIM' && action === 'RECLAIM' && ledgerShown && canEvidenceReclaim\(d\)\) \{[\s\S]{0,300}out\.push\(\{ text: reclaimNoEvidenceNote\(unlinkedReclaims, !readOnly\), warn: true \}\);/.test(code)
+      && /countUnlinkedReclaims\(clientId, month\),\s+\]\);/.test(code) && /setUnlinkedReclaims\(l\.unlinkedReclaims\);/.test(code)
+      && /\.eq\('client_id', clientId\)\.eq\('reclaim_month', label\)\.is\('reclaim_subtype', null\)\.is\('reclaimed_via_doc_id', null\);/.test(guardedLib));
   check('round 9: Restore links an entry to its books row / 2B document as it adds it (never an update of the entries just added, planned as a nested loop and recorded twice by the change log), the two sides paired by grouping and the rows already holding an entry read once, so a 1,000 + 1,000 Restore stays well inside an anon request\'s 3 s with the change log',
     /GROUP BY r\.k, r\.rn\),/.test(restoreFn) && /GROUP BY r\.kd, r\.rn\),/.test(restoreFn)
       && /AND b\.id NOT IN \(SELECT z\.source_book_id FROM public\.bills_not_in_2b z\s+WHERE z\.client_id = p_client_id AND z\.source_book_id IS NOT NULL\)\s+AND b\.id NOT IN \(SELECT kk\.src FROM kk WHERE kk\.src_ok AND kk\.src_rn = 1\)\),/.test(restoreFn)

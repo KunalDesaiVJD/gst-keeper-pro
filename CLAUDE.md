@@ -107,14 +107,18 @@ before, can only become Reclaim); an entry names its reclaiming document only
 while it holds the reclaim (`twob__reclaim_via_tidy`); Restore brings a
 version's reclaim back only on those terms, else the entry comes back
 Awaiting reclaim, named (`reclaims_back`); a reclaim comes back reclaimed
-only with its document known exactly, never by its amounts (round 9): the
-one the version names, else the one the month's entry of that id names,
-else the month's only original invoice or debit note that is the same
-document (`twob_doc_ident`), named ones first, and is linked to it;
-otherwise, whenever the month holds any 2B document, Strict and Liberal
-alike, it comes back Awaiting reclaim, named ("reclaim it again on Import
-2B"); only a Liberal client's in a month with no 2B document comes back as
-typed; Restore takes the month's Reclaim documents before the client's lock
+only with its document known exactly, never looked for by its amounts
+(round 9): the one the version names, before the one the month's entry of
+that id names, before the month's only original invoice or debit note that
+is the same document (`twob_doc_ident`) and of the entry's amounts (Rs. 2 a
+head, a check), this last only while no other reclaim of the version takes
+it (round 10), and is linked to it; otherwise, whenever the month holds any
+2B document, Strict and Liberal alike, it comes back Awaiting reclaim, named
+("reclaim it again on Import 2B"); only a Liberal client's in a month with no
+2B document comes back as typed; a Restore never changes a 2B document and
+names each Reclaim one it leaves evidencing no reclaim (`docs_left`, its ITC
+counted nowhere), which Pending items' Link & Reclaim offers and its row
+flags (`reclaimCandidateDocs`, `reclaimNoEvidenceNote`); Restore takes the month's Reclaim documents before the client's lock
 (the saves' order: documents, client, entries), then the month's books rows
 and documents without waiting (a delete of one running stops it with a plain
 message, never a deadlock), and returns the month as it left it, which the

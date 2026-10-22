@@ -30,6 +30,11 @@
 -- And: a named reclaim takes its document before an entry found as the
 -- same document (precedence); two documents of one identity tell nothing
 -- (not guessed); the timing of a 1,000 + 1,000 Restore.
+-- Round 10 (test_9p): a Restore also names the Reclaim documents it leaves
+-- evidencing no reclaim (docs_left): M1(a)'s two rents after Clear Data,
+-- M2's BETA B1 with BX-9's reclaim it evidenced, Q's two documents; and the
+-- entry found as the same document, losing to a named one, is told so
+-- ("cannot be told"); the timed Restores count them too.
 -- Each check is recorded (t9_results) and the file fails, naming every
 -- failed check, at the end: run against round 8's code, each check fails or
 -- passes on its own. Fictional.
@@ -90,14 +95,21 @@ LANGUAGE sql STABLE AS $$
   SELECT string_agg(d.supplier_invoice_number || '=' || d.itc_action, ',' ORDER BY d.date, d.supplier_invoice_number, d.doc_type)
     FROM public.twob_import_docs d WHERE d.client_id = p_client;
 $$;
--- The names and messages a Restore returned in reclaims_back.
+-- The names and messages a Restore returned in reclaims_back, and (round
+-- 10) in docs_left: the month's Reclaim documents it left evidencing no
+-- reclaim.
 CREATE FUNCTION public.t9_back(p_res jsonb) RETURNS text
 LANGUAGE sql IMMUTABLE AS $$
   SELECT COALESCE(string_agg((x ->> 'supplier_invoice_number') || ': ' || (x ->> 'message'), ' / ' ORDER BY o), '-')
     FROM jsonb_array_elements(COALESCE(p_res -> 'reclaims_back', '[]'::jsonb)) WITH ORDINALITY e(x, o);
 $$;
+CREATE FUNCTION public.t9_left(p_res jsonb) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT COALESCE(string_agg((x ->> 'supplier_invoice_number') || ': ' || (x ->> 'message'), ' / ' ORDER BY o), '-')
+    FROM jsonb_array_elements(COALESCE(p_res -> 'docs_left', '[]'::jsonb)) WITH ORDINALITY e(x, o);
+$$;
 GRANT EXECUTE ON FUNCTION public.t9_eq(anyelement, anyelement, text), public.t9_itc(uuid), public.t9_old_version(uuid),
-  public.t9_new_version(uuid), public.t9_entries(uuid), public.t9_docs(uuid), public.t9_back(jsonb) TO anon;
+  public.t9_new_version(uuid), public.t9_entries(uuid), public.t9_docs(uuid), public.t9_back(jsonb), public.t9_left(jsonb) TO anon;
 
 SELECT set_config('twob.write', 'system', false);
 INSERT INTO public.clients (id, name, gstin, liberal_2b_reconciliation) VALUES
@@ -163,11 +175,14 @@ SELECT public.t9_eq(public.t9_back(:'ma'::jsonb),
   'R-SEP: its 2B document cannot be found: this version does not name it, and no 2B document of this month has its GSTIN or supplier, number and date; reclaim it again on Import 2B'
   || ' / R-OCT: its 2B document cannot be found: this version does not name it, and no 2B document of this month has its GSTIN or supplier, number and date; reclaim it again on Import 2B',
   'M1(a): ... both back in Awaiting reclaim, each named, "reclaim it again on Import 2B" (round 8: R-OCT "evidences the reclaim of LANDLORD R-SEP", a false reason)');
+SELECT public.t9_eq(public.t9_left(:'ma'::jsonb),
+  'RENT/2026/09: is Reclaim and evidences no reclaim, so its ITC counts nowhere / RENT/2026/10: is Reclaim and evidences no reclaim, so its ITC counts nowhere',
+  'M1(a): ... and both rents, left Reclaim by Clear Data, named (round 10: the documents to reclaim them with again)');
 -- (b) The version as this release records it (each reclaim naming its
 -- document) restored: each back with its own rent.
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'A', '10/2026', :'va_new'::jsonb, '[]'::jsonb) AS mb \gset
-SELECT public.t9_eq(concat_ws('|', public.t9_entries(:'A'), public.t9_back(:'mb'::jsonb), public.t9_itc(:'A')),
-  'R-SEP:Oct 26:RENT/2026/09,R-OCT:Oct 26:RENT/2026/10|-|0.00|9000.00',
+SELECT public.t9_eq(concat_ws('|', public.t9_entries(:'A'), public.t9_back(:'mb'::jsonb), public.t9_left(:'mb'::jsonb), public.t9_itc(:'A')),
+  'R-SEP:Oct 26:RENT/2026/09,R-OCT:Oct 26:RENT/2026/10|-|-|0.00|9000.00',
   'M1(b): a version naming each reclaim''s document restored: each back with its own rent, nothing said, 5.4 9000');
 -- (c) The same two rents; a version of before; RENT/2026/09 taken out of
 -- Reclaim on Import 2B (R-SEP back in Awaiting reclaim); the version
@@ -189,8 +204,8 @@ SELECT public.t9_eq(concat_ws('|', public.t9_entries(:'C'), public.t9_docs(:'C')
   'M1(c): restored: R-OCT keeps RENT/2026/10, R-SEP stays in Awaiting reclaim (round 8: R-SEP took RENT/2026/10, R-OCT lost its reclaim)');
 SELECT public.t9_eq(concat_ws('|', :'c_before' = concat_ws('|', public.t9_entries(:'C'), public.t9_docs(:'C'), public.t9_itc(:'C')),
                               position('R-SEP: its 2B document cannot be found' in public.t9_back(:'mc'::jsonb)) = 1,
-                              position('R-OCT' in public.t9_back(:'mc'::jsonb)) = 0),
-  't|t|t', 'M1(c): ... the month as before the Restore, the out-of-Reclaim decision kept; only R-SEP named');
+                              position('R-OCT' in public.t9_back(:'mc'::jsonb)) = 0, public.t9_left(:'mc'::jsonb)),
+  't|t|t|-', 'M1(c): ... the month as before the Restore, the out-of-Reclaim decision kept; only R-SEP named, no document left');
 
 -- ---------------------------------------------------------------------------
 -- M2. Never another supplier's document.
@@ -212,6 +227,9 @@ SELECT public.t9_eq(concat_ws('|', public.t9_entries(:'B'), public.t9_itc(:'B'),
                               position('INV-77: its 2B document cannot be found' in public.t9_back(:'mbb'::jsonb)) = 1),
   'INV-77:-:-,BX-9:-:-|90.00|0.00|t',
   'M2: restored: INV-77 back in Awaiting reclaim, named, never on BETA B1; A1''s ITC once (round 8: INV-77 on B1, nothing said, 5.1 90 and 5.4 90)');
+SELECT public.t9_eq(public.t9_left(:'mbb'::jsonb),
+  'B1: stays Reclaim and evidences no reclaim now, so its ITC counts nowhere; before this Restore it evidenced the reclaim of BETA BX-9',
+  'M2: ... BX-9 back in Awaiting reclaim as the version holds it, and BETA B1, left Reclaim with its 90 counted nowhere, named with it (round 9: neither named)');
 SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a4","x-gst-source":"app"}', false);
 SELECT public.t9_eq(concat_ws('|',
   public.twob_import2b_unreclaim(public.t_poster(), :'B', '10/2026', '7e200000-0000-0000-0000-0000000003d2', 'MATCHED', NULL) ->> 'ok',
@@ -256,7 +274,7 @@ SELECT public.twob_restore_version_linked(public.t_superadmin(), :'P', '10/2026'
     {"id":"7e200000-0000-0000-0000-0000000006e2","date":"2026-09-23","supplier_name":"PAPA","supplier_invoice_number":"P1-BOOKS","supplier_gstin":"24PAPAA0000A1Z5","taxable_value":1000,"input_igst":0,"input_cgst":70,"input_sgst":70,"reversal_month":"Oct 26","reclaim_month":"Oct 26","reclaimed_via_doc_id":"7e200000-0000-0000-0000-0000000006d1","is_carried_forward":false}]'::jsonb,
   '[]'::jsonb) AS mp \gset
 SELECT public.t9_eq(concat_ws('|', public.t9_entries(:'P'), public.t9_back(:'mp'::jsonb), public.t9_itc(:'P')),
-  'P-1:-:-,P1-BOOKS:Oct 26:P-1|P-1: its 2B document evidences the reclaim of PAPA P1-BOOKS in this version (one document, one reclaim)|0.00|70.00',
+  'P-1:-:-,P1-BOOKS:Oct 26:P-1|P-1: its 2B document cannot be told: this version does not name it, and PAPA P-1, the one 2B document of this month with its GSTIN or supplier, number and date, evidences the reclaim of PAPA P1-BOOKS in this version; reclaim it again on Import 2B|0.00|70.00',
   'precedence: the reclaim naming PAPA P-1 takes it before the entry found as the same document; 5.4 70 once');
 -- Q-7 reclaimed in a version naming no document; the month holds an
 -- invoice and a debit note Q-7 of one date: nothing tells which, so back in
@@ -264,9 +282,10 @@ SELECT public.t9_eq(concat_ws('|', public.t9_entries(:'P'), public.t9_back(:'mp'
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'Q', '10/2026',
   '[{"id":"7e200000-0000-0000-0000-0000000007e1","date":"2026-09-24","supplier_name":"QUEBEC","supplier_invoice_number":"Q-7","supplier_gstin":"24QUEBE0000A1Z5","taxable_value":1000,"input_igst":0,"input_cgst":30,"input_sgst":30,"reversal_month":"Oct 26","reclaim_month":"Oct 26","is_carried_forward":false}]'::jsonb,
   '[]'::jsonb) AS mq \gset
-SELECT public.t9_eq(concat_ws('|', public.t9_entries(:'Q'), public.t9_back(:'mq'::jsonb)),
-  'Q-7:-:-|Q-7: its 2B document cannot be told: this version does not name it, and 2 2B documents of this month have its GSTIN or supplier, number and date; reclaim it again on Import 2B',
-  'two documents of one identity: not guessed, back in Awaiting reclaim, named');
+SELECT public.t9_eq(concat_ws('|', public.t9_entries(:'Q'), public.t9_back(:'mq'::jsonb), public.t9_left(:'mq'::jsonb)),
+  'Q-7:-:-|Q-7: its 2B document cannot be told: this version does not name it, and 2 2B documents of this month have its GSTIN or supplier, number and date; reclaim it again on Import 2B'
+  || '|Q-7: is Reclaim and evidences no reclaim, so its ITC counts nowhere / Q-7: is Reclaim and evidences no reclaim, so its ITC counts nowhere',
+  'two documents of one identity: not guessed, back in Awaiting reclaim, named; both documents named (round 10)');
 
 -- ---------------------------------------------------------------------------
 -- Timing: a 1,000 + 1,000 month restored.
@@ -361,17 +380,19 @@ BEGIN
     END LOOP;
     SELECT x INTO med FROM unnest(ms) x ORDER BY x OFFSET 1 LIMIT 1;
     SELECT count(*) INTO n_rc FROM public.bills_not_in_2b t WHERE t.client_id = c AND t.reclaimed_via_doc_id IS NOT NULL;
-    RAISE NOTICE 'timing: R% Restore of % (% + % entries, % linked, % reclaims with their document, % back in Awaiting reclaim): median % ms of %',
+    RAISE NOTICE 'timing: R% Restore of % (% + % entries, % linked, % reclaims with their document, % back in Awaiting reclaim, % Reclaim documents left evidencing none): median % ms of %',
       CASE w WHEN 'new' THEN 1 WHEN 'old' THEN 2 ELSE 3 END,
       CASE w WHEN 'new' THEN 'a 1,000 + 1,000 month as this release records it'
              WHEN 'old' THEN 'the same month as a version of before (other ids, no links)'
              ELSE '1,000 reclaims of a version of before against 1,000 documents' END,
-      r ->> 'bills_not_in_2b', r ->> 'bills_not_in_books', r ->> 'linked', n_rc, jsonb_array_length(r -> 'reclaims_back'), med, array_to_string(ms, ', ');
-    PERFORM public.t9_eq(concat_ws('|', r ->> 'bills_not_in_2b', r ->> 'bills_not_in_books', r ->> 'linked', n_rc, jsonb_array_length(r -> 'reclaims_back')),
-      CASE w WHEN 'new' THEN '1000|1000|2000|200|0' WHEN 'old' THEN '1000|1000|2000|0|200' ELSE '1000|0|0|250|750' END,
+      r ->> 'bills_not_in_2b', r ->> 'bills_not_in_books', r ->> 'linked', n_rc, jsonb_array_length(r -> 'reclaims_back'),
+      jsonb_array_length(r -> 'docs_left'), med, array_to_string(ms, ', ');
+    PERFORM public.t9_eq(concat_ws('|', r ->> 'bills_not_in_2b', r ->> 'bills_not_in_books', r ->> 'linked', n_rc, jsonb_array_length(r -> 'reclaims_back'),
+                                   jsonb_array_length(r -> 'docs_left')),
+      CASE w WHEN 'new' THEN '1000|1000|2000|200|0|0' WHEN 'old' THEN '1000|1000|2000|0|200|200' ELSE '1000|0|0|250|750|250' END,
       format('timing: R%s restored as expected (%s)', CASE w WHEN 'new' THEN 1 WHEN 'old' THEN 2 ELSE 3 END,
-             CASE w WHEN 'new' THEN 'every link and reclaim back' WHEN 'old' THEN 'every entry linked by its document; the 200 reclaims numbered otherwise back in Awaiting reclaim'
-                    ELSE 'the 250 the same Reclaim documents linked; the 250 of Matched ones and the 500 numbered otherwise back' END));
+             CASE w WHEN 'new' THEN 'every link and reclaim back' WHEN 'old' THEN 'every entry linked by its document; the 200 reclaims numbered otherwise back in Awaiting reclaim, their 200 documents named'
+                    ELSE 'the 250 the same Reclaim documents linked; the 250 of Matched ones and the 500 numbered otherwise back; the 250 other Reclaim documents named' END));
     PERFORM public.t9_eq(med < 1500, true, format('timing: R%s under 1.5 s, the median of three', CASE w WHEN 'new' THEN 1 WHEN 'old' THEN 2 ELSE 3 END));
   END LOOP;
 END $$;
@@ -398,4 +419,4 @@ BEGIN
 END $$;
 DROP TABLE public.t9_results;
 DROP FUNCTION public.t9_eq(anyelement, anyelement, text), public.t9_itc(uuid), public.t9_old_version(uuid), public.t9_new_version(uuid),
-  public.t9_entries(uuid), public.t9_docs(uuid), public.t9_back(jsonb);
+  public.t9_entries(uuid), public.t9_docs(uuid), public.t9_back(jsonb), public.t9_left(jsonb);

@@ -18,6 +18,8 @@
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { releaseReclaim } from '@/lib/twobPendingWrites';
+import { canEvidenceReclaim } from '@/lib/twobDocs';
+import { periodMonthLabel } from '@/lib/postImport2B';
 
 /** Filters on columns named at run time, typed loosely (the generated table types go too deep). */
 type LooseFilter = {
@@ -77,6 +79,57 @@ export const reclaimEvidenceName = (e: ReclaimEvidence): string => {
   const when = [e.reversal_month && `reversed ${e.reversal_month}`, e.reclaim_month && `reclaimed ${e.reclaim_month}`].filter(Boolean).join(', ');
   return when ? `${name} (${when})` : name;
 };
+
+// ---- Reclaim documents that evidence no reclaim (verification round 10) ----
+
+/**
+ * The 2B documents Pending items' Link & Reclaim offers an entry: the
+ * month's Matched and Mismatched original invoices and debit notes, and its
+ * Reclaim ones that evidence no reclaim (no entry names them: a Restore, or
+ * Clear Data, leaves a document so, its ITC counted nowhere; the Restore
+ * says "reclaim it again on Import 2B", and the document's own select,
+ * already showing Reclaim, cannot open the dialog). Reclaiming with one
+ * changes nothing on the document (twob_import2b_reclaim, sent Reclaim as
+ * the treatment the page shows). One with a change staged is left out until
+ * it is saved.
+ */
+export function reclaimCandidateDocs<D extends { id: string; itc_action: string | null; doc_type?: string | null; is_amendment?: boolean | null }>(
+  docs: readonly D[], evidence: ReadonlyMap<string, unknown>, staged: Readonly<Record<string, string>>,
+): D[] {
+  return docs.filter((d) => canEvidenceReclaim(d)
+    && (d.itc_action === 'MATCHED' || d.itc_action === 'MISMATCHED'
+      || (d.itc_action === 'RECLAIM' && !evidence.has(d.id) && !staged[d.id])));
+}
+
+/**
+ * How many of the client's entries are reclaimed in this month without
+ * naming a 2B document (a reclaim typed on 2B Reconciliation, or recorded
+ * before a reclaim named its document): a Reclaim document no entry names
+ * may be one of theirs. null when the read fails.
+ */
+export async function countUnlinkedReclaims(clientId: string, month: string): Promise<number | null> {
+  const label = periodMonthLabel(month);
+  if (!label) return null;
+  const { count, error } = await supabase.from('bills_not_in_2b').select('id', { count: 'exact', head: true })
+    .eq('client_id', clientId).eq('reclaim_month', label).is('reclaim_subtype', null).is('reclaimed_via_doc_id', null);
+  return error ? null : (count ?? 0);
+}
+
+/**
+ * The note on a Reclaim original invoice or debit note that evidences no
+ * reclaim: not in 5.1, and no entry reclaims it in 5.4, so its ITC counts
+ * nowhere, unless one of the month's reclaims that name no document
+ * (unlinked; null: not known) is this one. canAct: the page may change the
+ * month (an open month), so it says what to do.
+ */
+export function reclaimNoEvidenceNote(unlinked: number | null, canAct: boolean): string {
+  const what = canAct ? ': Link & Reclaim an entry with it (Pending items), or take it out of Reclaim' : '';
+  if (unlinked === 0) return `Reclaim, but evidences no reclaim, so its ITC counts nowhere${what}`;
+  const unless = unlinked == null ? 'a reclaim of this month recorded without its 2B document is this one'
+    : unlinked === 1 ? 'the one reclaim of this month recorded without its 2B document is this one'
+      : `one of the ${unlinked} reclaims of this month recorded without their 2B document is this one`;
+  return `Reclaim, but no entry names it as its reclaim's evidence: unless ${unless}, its ITC counts nowhere${what}`;
+}
 
 /** Said of documents not saved because their treatment changed since the page loaded them. */
 export const DOC_CHANGED_ELSEWHERE_MSG = 'changed elsewhere since the page showed them (another tab or another user), so they were not saved. The page shows the month as it is now.';

@@ -810,7 +810,12 @@ export interface VersionData { billsNotIn2B: ReturnType<typeof versionRows2B>; b
  * entries whose reclaim did not come back with them (verification round 6:
  * their 2B document is not Reclaim now, is gone, or evidences another
  * reclaim; round 9: or is not known for certain, never guessed from the
- * amounts), restored in Awaiting reclaim, each named with why. versionData:
+ * amounts), restored in Awaiting reclaim, each named with why. docsLeft
+ * (round 10): the month's Reclaim invoices and debit notes the Restore
+ * leaves evidencing no reclaim (their ITC counted nowhere until an entry is
+ * reclaimed with one again on Import 2B, or it is taken out of Reclaim),
+ * each named with the entry whose reclaim it evidenced before, if any; the
+ * Restore never changes a document. versionData:
  * the month's two lists as the Restore left them, which the page records as
  * the RESTORE version (verification round 7: it recorded the version
  * restored, its reclaims that came back in Awaiting reclaim and its entries
@@ -818,6 +823,7 @@ export interface VersionData { billsNotIn2B: ReturnType<typeof versionRows2B>; b
  */
 export interface RestoreResult {
   own2B: number; ownBooks: number; carriedKept: number; leftOut: string[]; linked: number; reclaimsBack: string[];
+  docsLeft: string[];
   versionData: VersionData | null;
 }
 
@@ -859,6 +865,8 @@ export async function restoreVersion(actorId: string, clientId: string, period: 
       .map((e) => [e.supplier_name, e.supplier_invoice_number].filter((x) => typeof x === 'string' && x.trim()).join(' ') || 'an entry'),
     reclaimsBack: (Array.isArray(d.reclaims_back) ? (d.reclaims_back as Raw[]) : [])
       .map((e) => `${[e.supplier_name, e.supplier_invoice_number].filter((x) => typeof x === 'string' && x.trim()).join(' ') || 'an entry'}${typeof e.message === 'string' && e.message ? ` (${e.message})` : ''}`),
+    docsLeft: (Array.isArray(d.docs_left) ? (d.docs_left as Raw[]) : [])
+      .map((e) => `${[e.supplier_name, e.supplier_invoice_number].filter((x) => typeof x === 'string' && x.trim()).join(' ') || 'a 2B document'}${typeof e.message === 'string' && e.message ? ` (${e.message})` : ''}`),
   };
 }
 

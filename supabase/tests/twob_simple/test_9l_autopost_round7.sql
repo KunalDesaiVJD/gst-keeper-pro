@@ -185,7 +185,9 @@ SELECT public.t7_eq(public.t7_itc(:'K', 'Oct 26'), '0.00|90.00', 'F1: ... 5.4 co
 SELECT public.t7_eq(position('already evidences the reclaim of KILO K-0' in COALESCE(:'f1c'::jsonb -> 'reclaims_back' -> 0 ->> 'message', '')) > 0, true,
   'F1: ... named, with the entry it evidences');
 -- (d) Two reclaims of one document in one version of before: the first
--- linked, the second back in Awaiting reclaim, named.
+-- linked, the second back in Awaiting reclaim, named (since round 10 with
+-- where the first's document is known from: the month's entry of B-1's id
+-- names it now; the second is only the same document, test_9p).
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'B', '10/2026',
   (:'vb'::jsonb) || '[{"id":"7e000000-0000-0000-0000-0000000002e3","date":"2026-09-21","supplier_name":"BRAVO","supplier_invoice_number":"B1","supplier_gstin":"24BRAVO0000A1Z5","taxable_value":1000,"input_igst":0,"input_cgst":90,"input_sgst":90,"reversal_month":"Oct 26","reclaim_month":"Oct 26","is_carried_forward":false}]'::jsonb,
   '[]'::jsonb) AS f1d \gset
@@ -193,7 +195,7 @@ SELECT public.t7_eq((SELECT string_agg(concat_ws(':', t.supplier_invoice_number,
                        FROM public.bills_not_in_2b t WHERE t.client_id = :'B'),
   'B-1:Oct 26:t,b/2:Oct 26:t,B1:-:f', 'F1: two reclaims of one document in a version of before: one linked, the other back in Awaiting reclaim');
 SELECT public.t7_eq(concat_ws('|', public.t7_itc(:'B', 'Oct 26'),
-                              position('evidences the reclaim of BRAVO B-1 in this version' in COALESCE(:'f1d'::jsonb -> 'reclaims_back' -> 0 ->> 'message', '')) > 0),
+                              position('evidences the reclaim of BRAVO B-1 now; reclaim it again on Import 2B' in COALESCE(:'f1d'::jsonb -> 'reclaims_back' -> 0 ->> 'message', '')) > 0),
   '0.00|130.00|t', 'F1: ... 5.4 counts B-1''s 90 once, and the other is named');
 -- (e) A reclaim typed on 2B Reconciliation for a Liberal client, no document
 -- of it in the month: comes back as typed. (A Strict client's comes back in

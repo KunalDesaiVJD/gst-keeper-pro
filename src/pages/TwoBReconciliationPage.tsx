@@ -1385,8 +1385,10 @@ const TwoBReconciliationPage: React.FC = () => {
         : ''}${restored.linked
         ? ` ${restored.linked} ${restored.linked === 1 ? 'entry is' : 'entries are'} linked again to the Import 2B ${restored.linked === 1 ? 'row' : 'rows'} that post ${restored.linked === 1 ? 'it' : 'them'}: a change there changes ${restored.linked === 1 ? 'it' : 'them'}, never adds a second one; Import 2B says when the ledger is not in step with it.`
         : ''}${restored.reclaimsBack.length
-        ? ` Restored in Awaiting reclaim, without the version's reclaim (a reclaim comes back only with its 2B document known for certain, in this month, Reclaim and evidencing no other reclaim; reclaim these again on Import 2B): ${restored.reclaimsBack.slice(0, 5).join('; ')}${restored.reclaimsBack.length > 5 ? `; and ${restored.reclaimsBack.length - 5} more` : ''}.`
-        : ''}`, { duration: restored.reclaimsBack.length ? 20000 : 10000 });
+        ? ` Restored in Awaiting reclaim, without the version's reclaim (a reclaim comes back only with its 2B document known for certain, in this month, Reclaim and evidencing no other reclaim; reclaim these again on Import 2B, Pending items, Link & Reclaim): ${restored.reclaimsBack.slice(0, 5).join('; ')}${restored.reclaimsBack.length > 5 ? `; and ${restored.reclaimsBack.length - 5} more` : ''}.`
+        : ''}${restored.docsLeft.length
+        ? ` Left in Reclaim, evidencing no reclaim, so counted nowhere (the Restore never changes a 2B document; on Import 2B, Link & Reclaim an entry with ${restored.docsLeft.length === 1 ? 'it' : 'each'} from Pending items, or take it out of Reclaim): ${restored.docsLeft.slice(0, 5).join('; ')}${restored.docsLeft.length > 5 ? `; and ${restored.docsLeft.length - 5} more` : ''}.`
+        : ''}`, { duration: restored.reclaimsBack.length || restored.docsLeft.length ? 20000 : 10000 });
       setShowVersionHistory(false);
     } catch (error: any) {
       console.error('Error restoring version:', error);
