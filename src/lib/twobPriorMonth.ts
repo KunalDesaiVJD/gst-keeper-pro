@@ -174,6 +174,12 @@ export interface TwobChangeResult {
   refusal: string | null;
   /** An added entry the month or a later month already holds: not added (the rest goes ahead). */
   note: string | null;
+  /**
+   * A 2B Reconciliation entry the save of a books row brought with it (Import
+   * 2B's write-through in a prior month, twob_import2b_prior_save), not a
+   * change the screen sent.
+   */
+  derived: boolean;
 }
 
 export interface TwobApplyResult {
@@ -189,6 +195,12 @@ export interface TwobApplyResult {
   notes: { index: number; entry: string | null; message: string; kind: 'held' | 'stop' }[];
   /** Copies reached per later month. */
   laterMonths: { period: string; count: number }[];
+  /**
+   * A preview's digest (twob_import2b_prior_save): sent back with the save,
+   * which saves nothing when the month's preview is no longer the one the
+   * confirm showed (verification round 3). null from the door itself.
+   */
+  digest: string | null;
 }
 
 const parseApply = (data: unknown): TwobApplyResult => {
@@ -213,6 +225,7 @@ const parseApply = (data: unknown): TwobApplyResult => {
         booksRow: typeof t.books_row === 'string' ? t.books_row : null,
         refusal: typeof c.refusal === 'string' ? c.refusal : null,
         note: typeof c.note === 'string' ? c.note : null,
+        derived: c.derived === true,
       };
     }),
     refusals: (Array.isArray(d.refusals) ? d.refusals : []).map((r) => {
@@ -230,6 +243,7 @@ const parseApply = (data: unknown): TwobApplyResult => {
       const x = m as Raw;
       return { period: String(x.period), count: Number(x.count) || 0 };
     }),
+    digest: typeof d.digest === 'string' ? d.digest : null,
   };
 };
 
@@ -249,6 +263,36 @@ export async function applyPriorBooks(
   return parseApply(data);
 }
 
+/**
+ * A prior month's Import 2B books rows saved with their Not in 2B
+ * write-through, through the door (twob_import2b_prior_save, a GST Manager or
+ * the superadmin; docs §15): changes are books register changes only, the
+ * 2B Reconciliation entries they post, change or take back (and those
+ * entries' later copies) are worked out in the database and come back as
+ * derived changes. wholeMonth: every books row of the month (a month out of
+ * step brought up to date). dryRun: the preview, with its digest. digest
+ * (the save): the preview's; nothing is saved, and this throws "changed
+ * while the confirm was open", when the month's preview differs now.
+ * expect: per books row saved, its columns as the page loaded it
+ * ({id: bookExpect(row)}); nothing is saved, and this throws "was changed
+ * elsewhere", when a row no longer holds them (verification round 5: the
+ * digest covers only the time between preview and save, not a page already
+ * stale before the preview).
+ * Applying is all or nothing: a refusal throws with the database's words.
+ */
+export async function applyPriorSave(
+  actorId: string, clientId: string, period: string, changes: TwobChange[], dryRun: boolean, wholeMonth = false,
+  digest: string | null = null, expect: Record<string, Record<string, unknown>> | null = null,
+): Promise<TwobApplyResult> {
+  const { data, error } = await supabase.rpc('twob_import2b_prior_save', {
+    p_actor_id: actorId, p_client_id: clientId, p_period: period,
+    p_changes: changes as unknown as Json, p_dry_run: dryRun, p_whole_month: wholeMonth, p_digest: digest,
+    p_expect: expect as unknown as Json,
+  });
+  if (error) throw new Error(error.message);
+  return parseApply(data);
+}
+
 /** The refusals as one sentence each ("PERFECT INDUSTRIES 19/26-27: Sep-26 has reclaimed this entry; undo that reclaim first."). */
 export const refusalLines = (r: TwobApplyResult): string[] =>
   r.refusals.map((x) => `${x.entry ? `${x.entry}: ` : ''}${x.message}.`);
@@ -261,22 +305,45 @@ export const noteLines = (r: TwobApplyResult, kind?: 'held' | 'stop'): string[] 
 export const previewChangesSomething = (r: TwobApplyResult): boolean =>
   r.changes.some((c) => !c.refusal && !!c.action && c.action !== 'none') || r.laterMonths.length > 0;
 
-/** "Jul-26: 2 removed, 1 changed. Also changes Aug-26 (2), Sep-26 (2)." */
+/** Whether the 2B Reconciliation ledger changes with the save (a derived entry added, changed or removed). */
+export const previewChangesLedger = (r: TwobApplyResult): boolean =>
+  r.changes.some((c) => c.derived && !c.refusal && !!c.action && c.action !== 'none');
+
+/**
+ * A preview: "Jul-26: 2 to remove, 1 to change. Also changes Aug-26 (2),
+ * Sep-26 (2)."; once applied (r.dryRun false): "Jul-26: 2 removed, 1
+ * changed. ...". A save of books rows with their write-through
+ * (twob_import2b_prior_save) names the 2B Reconciliation entries that follow
+ * apart: "Jul-26: 1 to change. The 2B Reconciliation ledger follows: Not in
+ * 2B 1 to change."; a catch-up, which changes no books row, names only them
+ * ("Jul-26: the Not in 2B list follows the books register: 1 to add."), never
+ * "nothing changes" beside a change. An entry already on the ledger that is
+ * linked to its books row, not added again, is named as linked.
+ */
 export function describePriorPreview(r: TwobApplyResult, period: string): string {
-  const count = (a: string) => r.changes.filter((c) => !c.refusal && c.action === a).length;
-  const parts = [
-    count('add') && `${count('add')} added`,
-    count('change') && `${count('change')} changed`,
-    count('remove') && `${count('remove')} removed`,
-  ].filter(Boolean);
-  const here = `${monthName(period)}: ${parts.length ? parts.join(', ') : 'nothing changes'}.`;
+  const done = !r.dryRun;
+  const count = (a: string, derived: boolean) => r.changes.filter((c) => !c.refusal && c.action === a && c.derived === derived).length;
+  const verb: Record<string, string> = done
+    ? { add: 'added', change: 'changed', remove: 'removed', link: 'already on the ledger, linked to its books row',
+        unlink: 'of the ledger\'s own, put back as it was and unlinked (not removed)' }
+    : { add: 'to add', change: 'to change', remove: 'to remove', link: 'already on the ledger, to be linked to its books row',
+        unlink: 'of the ledger\'s own, to be put back as it was and unlinked (not removed)' };
+  const words = (derived: boolean) => ['add', 'change', 'remove', 'link', 'unlink']
+    .map((a) => count(a, derived) && `${count(a, derived)} ${verb[a]}`).filter(Boolean);
+  const parts = words(false);
+  const follow = words(true);
+  const here = parts.length
+    ? `${monthName(period)}: ${parts.join(', ')}.` + (follow.length ? ` The 2B Reconciliation ledger follows: Not in 2B ${follow.join(', ')}.` : '')
+    : follow.length
+      ? `${monthName(period)}: the Not in 2B list of the 2B Reconciliation ledger follows the books register: ${follow.join(', ')}.`
+      : `${monthName(period)}: nothing changes.`;
   // An added entry reaches every later month up to the open month (docs §13): say which.
   const addMonths = [...new Set(r.changes.filter((c) => !c.refusal && c.action === 'add').flatMap((c) => c.later.map((l) => l.period)))]
     .sort((a, b) => periodKey(a) - periodKey(b));
   const later = (r.laterMonths.length
-    ? ` Also changes ${r.laterMonths.map((m) => `${monthName(m.period)} (${m.count})`).join(', ')}.`
-    : ' No other month changes.')
-    + (addMonths.length ? ` Each added entry is also added to ${addMonths.map(monthName).join(', ')}.` : '');
+    ? ` Also ${done ? 'changed' : 'changes'} ${r.laterMonths.map((m) => `${monthName(m.period)} (${m.count})`).join(', ')}.`
+    : ` No other month ${done ? 'changed' : 'changes'}.`)
+    + (addMonths.length ? ` Each added entry ${done ? 'was' : 'is'} also added to ${addMonths.map(monthName).join(', ')}.` : '');
   const stops = noteLines(r, 'stop');
   const stopped = stops.length
     ? ` Not changed: ${stops.slice(0, 5).join(' ')}${stops.length > 5 ? ` And ${stops.length - 5} more.` : ''}`
@@ -284,7 +351,7 @@ export function describePriorPreview(r: TwobApplyResult, period: string): string
   const booksGone = r.changes.filter((c) => !c.refusal && c.booksRow === 'remove').length;
   const booksChanged = r.changes.filter((c) => !c.refusal && c.booksRow === 'change').length;
   const books = [
-    booksGone && `${booksGone} Import 2B books ${booksGone === 1 ? 'row goes' : 'rows go'} too, so Post does not add ${booksGone === 1 ? 'it' : 'them'} back`,
+    booksGone && `${booksGone} Import 2B books ${booksGone === 1 ? 'row goes' : 'rows go'} too, so ${booksGone === 1 ? 'its' : 'their'} write-through does not add ${booksGone === 1 ? 'it' : 'them'} back`,
     booksChanged && `${booksChanged} Import 2B books ${booksChanged === 1 ? 'row changes' : 'rows change'} the same way`,
   ].filter(Boolean);
   const notes = noteLines(r, 'held');
@@ -295,6 +362,69 @@ export function describePriorPreview(r: TwobApplyResult, period: string): string
 }
 
 type ConfirmFn = (opts: { title: string; description?: string; confirmText?: string; destructive?: boolean }) => Promise<boolean>;
+
+/**
+ * A prior month's books rows saved with their 2B Reconciliation write-through
+ * (applyPriorSave): the preview first (refusals shown, nothing saved), then,
+ * when the ledger or a later month changes with it (or confirmAlways), the
+ * confirm naming what changes, then the save and its write-through together.
+ * A books cell whose row posts nothing is saved without a confirm.
+ */
+export async function previewAndApplyPriorSave(opts: {
+  actorId: string;
+  clientId: string;
+  period: string;
+  changes: TwobChange[];
+  wholeMonth?: boolean;
+  confirm: ConfirmFn;
+  title: string;
+  confirmText?: string;
+  destructive?: boolean;
+  confirmAlways?: boolean;
+  /** Words put before the preview in the confirm. */
+  lead?: string;
+  /** Per books row saved, its columns as the page loaded it (applyPriorSave). */
+  expect?: Record<string, Record<string, unknown>> | null;
+  notify: { error: (msg: string) => void; info?: (msg: string) => void };
+}): Promise<PriorApplyOutcome> {
+  const { actorId, clientId, period, changes, confirm, notify } = opts;
+  if (changes.length === 0 && !opts.wholeMonth) return { applied: false, result: null };
+  const expect = opts.expect ?? null;
+  let preview: TwobApplyResult;
+  try {
+    preview = await applyPriorSave(actorId, clientId, period, changes, true, !!opts.wholeMonth, null, expect);
+  } catch (err) {
+    notify.error((err as Error).message);
+    return { applied: false, result: null };
+  }
+  if (!preview.ok) {
+    notify.error(`Nothing was saved. ${refusalLines(preview).join(' ')}`);
+    return { applied: false, result: preview };
+  }
+  if (!previewChangesSomething(preview)) {
+    if (preview.notes.length) (notify.info || notify.error)(`Nothing to save. ${noteLines(preview).join(' ')}`);
+    return { applied: false, result: preview };
+  }
+  if ((opts.confirmAlways ?? true) || preview.laterMonths.length > 0 || previewChangesLedger(preview)) {
+    const ok = await confirm({
+      title: opts.title,
+      description: `${opts.lead ? `${opts.lead} ` : ''}${describePriorPreview(preview, period)}`,
+      confirmText: opts.confirmText || 'Save',
+      destructive: opts.destructive,
+    });
+    if (!ok) return { applied: false, result: preview };
+  }
+  try {
+    // Saved only as previewed: the database previews again under the lock
+    // and saves nothing when it differs (verification round 3).
+    const result = await applyPriorSave(actorId, clientId, period, changes, false, !!opts.wholeMonth, preview.digest, expect);
+    return { applied: true, result };
+  } catch (err) {
+    const m = (err as Error).message;
+    notify.error(m.startsWith('Nothing was saved') ? m : `Nothing was saved: ${m}`);
+    return { applied: false, result: null };
+  }
+}
 
 export interface PriorApplyOutcome {
   /** Applied (false: refused, cancelled or failed; a message was shown). */
@@ -592,35 +722,151 @@ export function describeRerun(r: RerunResult): { lines: string[]; nothingToDo: b
  * is_carried_forward: null when the version does not say (the database then
  * refuses the restore).
  */
-export type RestoreRow = Record<string, string | number | boolean | null>;
+export type RestoreRow = Record<string, string | number | boolean | null | Record<string, unknown>>;
+
+/** A 2B Reconciliation ledger row (bills_not_in_2b / bills_not_in_books) as the database returns it. */
+export interface LedgerRowLike {
+  id: string;
+  client_id: string;
+  date: string | null;
+  supplier_name: string | null;
+  supplier_invoice_number?: string | null;
+  supplier_gstin?: string | null;
+  taxable_value?: number | null;
+  input_igst?: number | null;
+  input_cgst?: number | null;
+  input_sgst?: number | null;
+  period_month: string;
+  reversal_month?: string | null;
+  reclaim_month?: string | null;
+  reclaim_subtype?: string | null;
+  reclaimed_via_doc_id?: string | null;
+  source_book_id?: string | null;
+  book_entry_month?: string | null;
+  bill_in_2b_month?: string | null;
+  source_doc_id?: string | null;
+  adopted_from?: Json | null;
+  is_locked?: boolean | null;
+  is_carried_forward?: boolean | null;
+  version?: number | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+const common = (b: LedgerRowLike) => ({
+  id: b.id,
+  clientId: b.client_id,
+  date: b.date,
+  supplierName: b.supplier_name,
+  supplierInvoiceNumber: b.supplier_invoice_number || '',
+  supplierGstin: b.supplier_gstin || '',
+  taxableValue: b.taxable_value || 0,
+  inputIgst: b.input_igst || 0,
+  inputCgst: b.input_cgst || 0,
+  inputSgst: b.input_sgst || 0,
+});
+const stamps = (b: LedgerRowLike) => ({
+  periodMonth: b.period_month,
+  isLocked: b.is_locked || false,
+  isCarriedForward: b.is_carried_forward || false,
+  updatedBy: b.updated_by || '',
+  updatedAt: b.updated_at || new Date().toISOString(),
+  version: b.version || 1,
+});
+
+/**
+ * A month's Not in 2B entries as a 2B Reconciliation version records them
+ * (a Save's, a Restore's): with what a Restore needs to put each back as it
+ * was (its reclaim's document, its Import 2B link; docs §15).
+ */
+export const versionRows2B = (rows: LedgerRowLike[]) => rows.map((b) => ({
+  ...common(b),
+  reversalMonth: b.reversal_month || '',
+  reclaimMonth: b.reclaim_month || '',
+  ...stamps(b),
+  reclaimSubtype: b.reclaim_subtype ?? null,
+  reclaimedViaDocId: b.reclaimed_via_doc_id ?? null,
+  sourceBookId: b.source_book_id ?? null,
+  adoptedFrom: b.adopted_from ?? null,
+}));
+
+/** A month's Not in Books entries as a 2B Reconciliation version records them. */
+export const versionRowsBooks = (rows: LedgerRowLike[]) => rows.map((b) => ({
+  ...common(b),
+  bookEntryMonth: b.book_entry_month || '',
+  billIn2BMonth: b.bill_in_2b_month || '',
+  ...stamps(b),
+  sourceDocId: b.source_doc_id ?? null,
+  adoptedFrom: b.adopted_from ?? null,
+}));
+
+/** A 2B Reconciliation version's rows, as twob_versions.version_data holds them. */
+export interface VersionData { billsNotIn2B: ReturnType<typeof versionRows2B>; billsNotInBooks: ReturnType<typeof versionRowsBooks> }
 
 /**
  * What a restore did: the month's own entries restored, its carried entries
  * kept as they stand, and the version's own entries left out because the
- * month now holds them as carried entries (named, "SUP X-9").
+ * month now holds them as carried entries (named, "SUP X-9"). reclaimsBack:
+ * entries whose reclaim did not come back with them (verification round 6:
+ * their 2B document is not Reclaim now, is gone, or evidences another
+ * reclaim; round 9: or is not known for certain, never guessed from the
+ * amounts), restored in Awaiting reclaim, each named with why. docsLeft
+ * (round 10): the month's Reclaim invoices and debit notes the Restore
+ * leaves evidencing no reclaim (their ITC counted nowhere until an entry is
+ * reclaimed with one again on Import 2B, or it is taken out of Reclaim),
+ * each named with the entry whose reclaim it evidenced before, if any; the
+ * Restore never changes a document. versionData:
+ * the month's two lists as the Restore left them, which the page records as
+ * the RESTORE version (verification round 7: it recorded the version
+ * restored, its reclaims that came back in Awaiting reclaim and its entries
+ * left out included); null when they could not be read.
  */
-export interface RestoreResult { own2B: number; ownBooks: number; carriedKept: number; leftOut: string[] }
+export interface RestoreResult {
+  own2B: number; ownBooks: number; carriedKept: number; leftOut: string[]; linked: number; reclaimsBack: string[];
+  docsLeft: string[];
+  versionData: VersionData | null;
+}
 
 /**
  * Replaces an open month's own entries on its two lists with a saved
- * version's, in one call (twob_restore_version, the superadmin). Its carried
+ * version's, in one call (twob_restore_version_linked, the superadmin: each
+ * entry Import 2B posted comes back linked to the row that posts it, so the
+ * next save there changes it instead of adding a second one). Its carried
  * entries stay as they stand (a filed month's correction reaches them, and no
  * version of this month records it; docs §13). The database refuses a filed
  * month and any month but the client's latest month holding entries; the
  * screen says so first (restoreBlockedReason).
  */
 export async function restoreVersion(actorId: string, clientId: string, period: string, bills2B: RestoreRow[], billsBooks: RestoreRow[]): Promise<RestoreResult> {
-  const { data, error } = await supabase.rpc('twob_restore_version', {
+  const { data, error } = await supabase.rpc('twob_restore_version_linked', {
     p_actor_id: actorId, p_client_id: clientId, p_period: period,
     p_bills_2b: bills2B as unknown as Json, p_bills_books: billsBooks as unknown as Json,
   });
   if (error) throw new Error(error.message);
   const d = (data || {}) as Raw;
+  // The month as the Restore left it (returned with it); read back when the
+  // database does not return it (a function of before round 7).
+  let rows2B = Array.isArray(d.rows_2b) ? d.rows_2b as LedgerRowLike[] : null;
+  let rowsBooks = Array.isArray(d.rows_books) ? d.rows_books as LedgerRowLike[] : null;
+  if (!rows2B || !rowsBooks) {
+    const [a, b] = await Promise.all([
+      supabase.from('bills_not_in_2b').select('*').eq('client_id', clientId).eq('period_month', period).order('date'),
+      supabase.from('bills_not_in_books').select('*').eq('client_id', clientId).eq('period_month', period).order('date'),
+    ]);
+    rows2B = a.error ? null : (a.data || []) as LedgerRowLike[];
+    rowsBooks = b.error ? null : (b.data || []) as LedgerRowLike[];
+  }
   return {
+    versionData: rows2B && rowsBooks ? { billsNotIn2B: versionRows2B(rows2B), billsNotInBooks: versionRowsBooks(rowsBooks) } : null,
     own2B: Number(d.bills_not_in_2b) || 0, ownBooks: Number(d.bills_not_in_books) || 0,
     carriedKept: (Number(d.carried_kept_2b) || 0) + (Number(d.carried_kept_books) || 0),
+    linked: Number(d.linked) || 0,
     leftOut: (Array.isArray(d.left_out) ? (d.left_out as Raw[]) : [])
       .map((e) => [e.supplier_name, e.supplier_invoice_number].filter((x) => typeof x === 'string' && x.trim()).join(' ') || 'an entry'),
+    reclaimsBack: (Array.isArray(d.reclaims_back) ? (d.reclaims_back as Raw[]) : [])
+      .map((e) => `${[e.supplier_name, e.supplier_invoice_number].filter((x) => typeof x === 'string' && x.trim()).join(' ') || 'an entry'}${typeof e.message === 'string' && e.message ? ` (${e.message})` : ''}`),
+    docsLeft: (Array.isArray(d.docs_left) ? (d.docs_left as Raw[]) : [])
+      .map((e) => `${[e.supplier_name, e.supplier_invoice_number].filter((x) => typeof x === 'string' && x.trim()).join(' ') || 'a 2B document'}${typeof e.message === 'string' && e.message ? ` (${e.message})` : ''}`),
   };
 }
 

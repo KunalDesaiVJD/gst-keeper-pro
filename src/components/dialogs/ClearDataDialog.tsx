@@ -14,7 +14,8 @@ import { AlertTriangle, Trash2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { fetchTwobMonthState, isPriorPeriod, monthName } from '@/lib/twobPriorMonth';
+import { monthName } from '@/lib/twobPriorMonth';
+import { clearYear } from '@/lib/import2bAutopost';
 import { clearReco } from '@/lib/recoSources';
 
 interface ClearDataDialogProps {
@@ -101,42 +102,30 @@ const ClearDataDialog: React.FC<ClearDataDialogProps> = ({
       const { months } = getFYDateRange(selectedFY);
       let totalDeleted = 0;
 
+      let reposted = 0;
       if (module === '2B Reconciliation') {
-        // A prior month (filed, or a later month filed; docs §13) is never
-        // cleared: its entries change only one by one, by a GST Manager or the
-        // superadmin. Clear Data clears the year's open months.
-        const { priorThrough } = await fetchTwobMonthState(clientId, months[months.length - 1]);
-        const open = months.filter((m) => !isPriorPeriod(m, priorThrough));
-        const kept = months.filter((m) => isPriorPeriod(m, priorThrough));
-        if (open.length) {
-          // A carried entry's own decision (a reclaim, Expense out, book
-          // entry) is undone first: the database refuses to delete a carried
-          // entry that holds one (docs §13); clearing the year is meant.
-          const { error: u1 } = await supabase.from('bills_not_in_2b')
-            .update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null })
-            .eq('client_id', clientId).in('period_month', open).eq('is_carried_forward', true)
-            .or('reclaim_month.not.is.null,reclaim_subtype.not.is.null');
-          if (u1) throw u1;
-          const { error: u2 } = await supabase.from('bills_not_in_books')
-            .update({ book_entry_month: null })
-            .eq('client_id', clientId).in('period_month', open).eq('is_carried_forward', true)
-            .not('book_entry_month', 'is', null);
-          if (u2) throw u2;
-          const { data: d1, error: e1 } = await supabase
-            .from('bills_not_in_2b')
-            .delete()
-            .eq('client_id', clientId)
-            .in('period_month', open)
-            .select('id');
-          if (e1) throw e1;
-          const { data: d2, error: e2 } = await supabase
-            .from('bills_not_in_books')
-            .delete()
-            .eq('client_id', clientId)
-            .in('period_month', open)
-            .select('id');
-          if (e2) throw e2;
-          totalDeleted = (d1?.length || 0) + (d2?.length || 0);
+        // One call a month (twob_clear_year), each month all or nothing: a
+        // large client's year in one call can run past the time limit anon
+        // calls run under. A prior month (filed, or a later month filed; docs
+        // §13) is never cleared, its entries change only one by one, by a GST
+        // Manager or the superadmin. An open month is cleared (a carried
+        // entry's own decision undone first: clearing the year is meant), and
+        // the entries Import 2B posts are written again at once, as every
+        // Import 2B save writes through (docs §15; the dialog says so).
+        if (!user?.id) throw new Error('Sign in again to clear data.');
+        const kept: string[] = [];
+        const cleared: string[] = [];
+        for (const m of months) {
+          try {
+            const res = await clearYear(user.id, clientId, [m]);
+            totalDeleted += res.deleted;
+            reposted += res.reposted;
+            kept.push(...res.kept);
+            cleared.push(...res.cleared);
+          } catch (err) {
+            const done = cleared.length ? ` ${cleared.map(monthName).join(', ')} ${cleared.length === 1 ? 'was' : 'were'} cleared before it.` : ' Nothing was cleared.';
+            throw new Error(`${monthName(m)} was not cleared (${(err as Error).message}).${done}`);
+          }
         }
         if (kept.length) {
           const keptLabel = kept.length === 1 ? monthName(kept[0]) : `${monthName(kept[0])} to ${monthName(kept[kept.length - 1])}`;
@@ -179,7 +168,9 @@ const ClearDataDialog: React.FC<ClearDataDialogProps> = ({
         records_deleted: totalDeleted,
       });
 
-      toast.success(`Cleared ${totalDeleted} records from ${module} for FY ${selectedFY}`);
+      toast.success(module === '2B Reconciliation' && reposted > 0
+        ? `Cleared ${totalDeleted} entries from ${module} for FY ${selectedFY}; ${reposted} of them ${reposted === 1 ? 'was' : 'were'} written again at once, because Import 2B still holds ${reposted === 1 ? 'it' : 'them'} (delete ${reposted === 1 ? 'it' : 'them'} on Import 2B to have ${reposted === 1 ? 'it' : 'them'} gone).`
+        : `Cleared ${totalDeleted} records from ${module} for FY ${selectedFY}`, { duration: reposted > 0 ? 15000 : 4000 });
       setConfirmText('');
       setSelectedFY('');
       onOpenChange(false);
@@ -225,6 +216,13 @@ const ClearDataDialog: React.FC<ClearDataDialogProps> = ({
               <p className="text-muted-foreground mt-1">
                 All {module} records for {clientName} from Apr {selectedFY.split('-')[0]} to Mar {parseInt(selectedFY.split('-')[0]) + 1} will be permanently deleted.
               </p>
+              {module === '2B Reconciliation' && (
+                <p className="text-muted-foreground mt-1">
+                  Except: filed months are kept, and the entries Import 2B posts (its Not in Books documents and Not in 2B books
+                  rows) come back at once, without their reclaims, Expense outs or book entries, because Import 2B still holds them.
+                  To have those gone too, delete them on Import 2B.
+                </p>
+              )}
             </div>
           )}
 

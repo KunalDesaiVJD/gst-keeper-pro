@@ -1,14 +1,16 @@
 // Import 2B → e-mail the client its bills not in books (15 Oct 2026).
 //
 // The list is every document the client's suppliers reported in GSTR-2B that
-// the client has not yet recorded in its books, as the ledger will hold it
-// after the next Post to Reconciliation:
+// the client has not yet recorded in its books, as the ledger holds it (every
+// Import 2B save writes through to it, docs §15):
 //  - the month's open Not in Books ledger rows (bills_not_in_books with no
 //    book_entry_month), which carry earlier months' items forward; a row this
 //    month's Import 2B posted follows its document as it is now (left out if
-//    it is no longer Not in Books, at its current figures if they changed);
-//  - this month's 2B documents marked Not in Books that were never posted
-//    (so a send never has to wait for Post to Reconciliation).
+//    it is no longer Not in Books, at its current figures if they changed: a
+//    month out of step, posted before saves wrote through);
+//  - this month's 2B documents marked Not in Books that are not on the
+//    ledger (no date or supplier in the 2B file, a filed month's documents,
+//    or a month out of step).
 // Amounts are what the ledger holds, with their sign (twobDocs.signedEffect):
 // a credit note parked Not in Books (17 Oct 2026) is negative, and an
 // amendment counts at its difference, so it may be negative too.
@@ -21,7 +23,7 @@
 import type { Borders, Fill, Font, Workbook, Worksheet } from 'exceljs';
 import { supabase } from '@/integrations/supabase/client';
 import { GST_FIRM, prettyPeriod, renderTemplate } from '@/lib/gstReminders';
-import { periodMonthLabel } from '@/lib/postImport2B';
+import { docNotPostedReason, periodMonthLabel } from '@/lib/postImport2B';
 import { docLabel, signedEffect } from '@/lib/twobDocs';
 import { formatINR } from '@/utils/builderRates';
 import { normalizeInvoiceNo } from '@/utils/matchTwob';
@@ -38,8 +40,16 @@ export interface BillNotInBooks {
   igst: number;
   cgst: number;
   sgst: number;
-  /** Not yet posted to Reconciliation (taken from this month's Import 2B). */
+  /** Not on the 2B Reconciliation ledger (taken from this month's Import 2B). */
   unposted: boolean;
+  /**
+   * Why an unposted row is not on the ledger (verification round 3): the 2B
+   * file gives no date or supplier ('no-date-supplier'), the month is filed
+   * ('filed': its Not in Books side follows the filed 2B), or the month is
+   * out of step ('out-of-step': saved before saves wrote through; Import 2B's
+   * "Bring the reconciliation up to date" puts it there).
+   */
+  unpostedWhy?: 'no-date-supplier' | 'filed' | 'out-of-step';
   /** Tied to a document of this month's Import 2B (a posted or unposted Import 2B row). */
   linked: boolean;
 }
@@ -123,8 +133,12 @@ function dropDuplicates(rows: BillNotInBooks[]): BillsList {
   return { rows: kept, duplicates };
 }
 
-/** The client's bills not in books for the month (open ledger rows plus unposted Not in Books documents). */
-export async function loadBillsNotInBooks(clientId: string, periodMonth: string): Promise<BillsList> {
+/**
+ * The client's bills not in books for the month (open ledger rows plus
+ * unposted Not in Books documents). filed: the month is filed (prior), so a
+ * document not on the ledger is there because the month follows the filed 2B.
+ */
+export async function loadBillsNotInBooks(clientId: string, periodMonth: string, opts: { filed?: boolean } = {}): Promise<BillsList> {
   type LedgerRow = {
     id: string; date: string | null; supplier_name: string | null; supplier_invoice_number: string | null; supplier_gstin: string | null;
     taxable_value: number | null; input_igst: number | null; input_cgst: number | null; input_sgst: number | null;
@@ -166,7 +180,7 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
   for (const l of ledger) {
     const d = l.source_doc_id ? docById.get(l.source_doc_id) : undefined;
     if (d) {
-      // Posted from this month's Import 2B: as the next Post will leave it.
+      // Posted from this month's Import 2B: as its document stands now.
       if (!isOpenDoc(d)) continue;
       const e = signedEffect(d);
       out.push({
@@ -213,6 +227,7 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
       docType: docLabel(d),
       taxable: r2(e.taxable), igst: r2(e.igst), cgst: r2(e.cgst), sgst: r2(e.sgst),
       unposted: true,
+      unpostedWhy: docNotPostedReason(d) ? 'no-date-supplier' : opts.filed ? 'filed' : 'out-of-step',
       linked: true,
     });
   }
@@ -221,6 +236,25 @@ export async function loadBillsNotInBooks(clientId: string, periodMonth: string)
     || a.supplierName.localeCompare(b.supplierName)
     || String(a.date || '').localeCompare(String(b.date || ''))
     || a.docNo.localeCompare(b.docNo)));
+}
+
+/**
+ * The pop-up's line about documents not on the 2B Reconciliation ledger, each
+ * with its own reason (verification round 3: before, one sentence named "no
+ * date or supplier in the 2B file, or a filed month" even for a month out of
+ * step); null when every document is on it.
+ */
+export function unpostedSentence(rows: BillNotInBooks[]): string | null {
+  const un = rows.filter((r) => r.unposted);
+  if (un.length === 0) return null;
+  const n = (why: BillNotInBooks['unpostedWhy']) => un.filter((r) => (r.unpostedWhy || 'out-of-step') === why).length;
+  const docs = (k: number) => `${k} ${k === 1 ? 'document' : 'documents'}`;
+  const parts = [
+    n('no-date-supplier') && `${docs(n('no-date-supplier'))} without a date or supplier in the 2B file (${n('no-date-supplier') === 1 ? 'it reaches' : 'they reach'} the ledger once given)`,
+    n('filed') && `${docs(n('filed'))} of a filed month, whose Not in Books list follows the filed 2B`,
+    n('out-of-step') && `${docs(n('out-of-step'))} of a month out of step (saved before saves wrote through): Import 2B's "Bring the reconciliation up to date" puts ${n('out-of-step') === 1 ? 'it' : 'them'} on the ledger`,
+  ].filter(Boolean);
+  return `Includes ${docs(un.length)} marked Not in Books this month but not on the 2B Reconciliation ledger: ${parts.join('; ')}.`;
 }
 
 export function summariseBills(rows: BillNotInBooks[]): BillsSummary {

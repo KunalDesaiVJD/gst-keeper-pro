@@ -70,10 +70,93 @@ BU agreement value confirmation: one e-mail per send to typed To/CC addresses, o
 ## Import 2B → 2B Reconciliation → Suspended Reco → GSTR-3B
 
 `twob_import_docs` / `books_register` (Import 2B tab) is the **only**
-data-entry surface for 2B classification, RCM aside. "Post to Reconciliation"
-(`src/lib/postImport2B.ts`) writes through to the live `bills_not_in_2b` /
+data-entry surface for 2B classification, RCM aside. There is no "Post to
+Reconciliation" (the firm, 21 Oct 2026): every Import 2B save writes through,
+in the database and in the same statement, to the live `bills_not_in_2b` /
 `bills_not_in_books` ledger that ITC Summary, Suspended Reco and
-month-to-month carry-forward already read from. `2B Reconciliation`
+month-to-month carry-forward already read from, by Post's rules
+(`planImport2BPost` in `src/lib/postImport2B.ts`, mirrored row for row by the
+triggers of `20261021170000_import2b_autopost.sql`; a save that would take
+back an entry holding a reclaim, Expense out or book entry is refused and
+says where to undo it, e.g. Pending items' Booked list). A save that changes
+the ledger needs Import 2B & post (`work_2b_import`, DB: the user
+`x-gst-actor` names, a pairing call's `p_actor_id`, a delete taking an entry
+off included; the page asks each save first with
+`docChangeTouchesLedger` / `bookSaveTouchesLedger`, and every other save stays
+open to all staff, a books row's pairing that changes nothing on the ledger
+included). A reclaim (`twob_import2b_reclaim`), a document out of
+Reclaim (`twob_import2b_unreclaim`, only while it evidences the reclaim the
+page shows on its row, `p_expect_entry` from `loadReclaimEvidence`; a pair
+named before the one-reclaim rule leaves with either, both released) and a
+books row's pairing (`twob_import2b_save_book`) are one call each, all or
+nothing. The money
+rules are database invariants, whatever screen, tab or app version writes:
+an entry newly names a 2B document only while it is Reclaim and no other
+entry names it (trigger `twob__reclaim_via_check`, the document locked while
+it checks; it holds on live, where the unique index
+`bills_not_in_2b_reclaimed_via_uq` cannot be made because a filed July
+document already evidences two reclaims, left as filed; the index is a second
+hold where the data allows), so the app of before's Reclaim (entry before
+document) is refused once this migration is applied, and the reclaim call
+also refuses, in the page's words, a document already evidencing one or no
+longer holding the treatment the page showed (`p_expect_action`); a document
+stays Reclaim, and undeleted, while an entry is reclaimed against it
+(`twob__reclaim_evidence_guard`: only `twob_import2b_unreclaim` and Delete 2B,
+which release it first, take it out; one named while not Reclaim, recorded
+before, can only become Reclaim); an entry names its reclaiming document only
+while it holds the reclaim (`twob__reclaim_via_tidy`); Restore brings a
+version's reclaim back only on those terms, else the entry comes back
+Awaiting reclaim, named (`reclaims_back`); a reclaim comes back reclaimed
+only with its document known exactly, never looked for by its amounts
+(round 9): the one the version names, before the one the month's entry of
+that id names, before the month's only original invoice or debit note that
+is the same document (`twob_doc_ident`), this last only while it is the
+version's only reclaim naming nothing that is that document, whatever the
+amounts (round 11), and no other reclaim of the version takes it (round 10),
+and is linked to it; otherwise, whenever the month holds any
+2B document, Strict and Liberal alike, it comes back Awaiting reclaim, named
+("reclaim it again on Import 2B"); only a Liberal client's in a month with no
+2B document comes back as typed; a Restore never changes a 2B document and
+names each Reclaim one it leaves evidencing no reclaim (`docs_left`, its ITC
+counted nowhere), which Pending items' Link & Reclaim offers and its row
+flags (`reclaimCandidateDocs`, `reclaimNoEvidenceNote`); Restore takes the month's Reclaim documents before the client's lock
+(the saves' order: documents, client, entries), then the month's books rows
+and documents without waiting (a delete of one running stops it with a plain
+message, never a deadlock), and returns the month as it left it, which the
+page records as the RESTORE version (the page hears its own Restore as its
+own, as a Save); a books row is saved only while it
+holds what the page loaded (changed columns only, guarded; `p_expect` on the
+pairing and filed-month calls; one page's saves of a row one at a time,
+`queueBookSave`; `src/lib/import2bGuardedSaves.ts`), and the treatment Save
+writes each document only while it holds the treatment loaded; a re-import
+skips and names a refused row, and keeps (and lists) a document gone from 2B
+while it has a Not in Books entry (`src/lib/twobReimport.ts`). An own unlinked entry of the same bill is
+linked instead of a twin only when it carries this month's reversal (in-2B)
+month, and goes back to what it held (`adopted_from`), never removed, when
+its row stops posting. A prior month's books row is saved with its entry
+through the door (`twob_import2b_prior_save`, same linking); a month out of
+step shows a line read in one statement (`twob_import2b_step`) and "Bring the
+reconciliation up to date" (`twob_import2b_catch_up`; a filed month's line
+shows its Not in 2B side only); the catch-up and a filed month's save write
+only what their confirm showed (the preview's digest sent back; a month
+changed meanwhile writes nothing; a filed month's save runs the door once and
+digests what it saved); Import 2B keys every read and save result
+to the (client, month) it was started for (`src/lib/viewReads.ts`, one count
+never restarted; Pending items' buttons write only in that month, and only
+while the entry still holds the decision the list showed); 2B Reconciliation
+never reloads over unsaved edits or pending deletes (a banner instead; a
+change heard during its Save is looked at again when it ends; Save sends only
+the changed rows, each update and delete guarded by every column the row held,
+its reclaim, Expense out, book entry and link with the figures, and keeps the
+edits when it stops before writing; `src/lib/twobLiveSync.ts`,
+`writeOpenMonthSave`); Delete 2B is one call, Clear Data one call a
+month (both stop at once, never deadlock, when a save of the month is
+running); versions are coalesced per minute, recorded as the saver's, and
+carry each entry's link, which Restore (`twob_restore_version_linked`) puts
+back; a decision carried into an open month from a filed month cannot be
+changed there (`twob__carried_decision_guard`) (§15 of the doc; tests
+`supabase/tests/twob_simple/` test_9a to 9n, `autopost.test.mjs`, `round3.test.mjs` to `round8.test.mjs`;
+`node scripts/verify-twob-live.mjs`). `2B Reconciliation`
 (`TwoBReconciliationPage.tsx`) is **read-only for Strict clients** (the
 default) — display, export, version history/restore, and destructive Clear
 Data only. A per-client `clients.liberal_2b_reconciliation` flag

@@ -8,8 +8,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Download, Loader2, Mail, Paperclip } from 'lucide-react';
 import { prettyPeriod } from '@/lib/gstReminders';
+import { fetchTwobMonthState } from '@/lib/twobPriorMonth';
 import {
-  billsWorkbookName, buildBillsWorkbook, creditWording, isEmailList, lastBillsMail, loadBillsNotInBooks, rupees, sendBillsNotInBooks, summariseBills,
+  billsWorkbookName, buildBillsWorkbook, creditWording, isEmailList, lastBillsMail, loadBillsNotInBooks, rupees, sendBillsNotInBooks, summariseBills, unpostedSentence,
   type BillNotInBooks, type LastSent,
 } from '@/lib/billsNotInBooksMail';
 
@@ -34,7 +35,9 @@ const when = (iso: string) => new Date(iso).toLocaleString('en-IN', { day: '2-di
 const EmailBillsNotInBooksDialog: React.FC<{
   clientId: string; clientName: string; clientGstin: string; periodMonth: string;
   blockedReason?: string | null; triggerClassName?: string;
-}> = ({ clientId, clientName, clientGstin, periodMonth, blockedReason, triggerClassName }) => {
+  /** The month is filed, as the page last read it (the pop-up reads it again when opened). */
+  monthFiled?: boolean;
+}> = ({ clientId, clientName, clientGstin, periodMonth, blockedReason, triggerClassName, monthFiled }) => {
   const { user, canSendClientEmails } = useAuth();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -58,8 +61,12 @@ const EmailBillsNotInBooksDialog: React.FC<{
     const opened = { clientId, clientName, clientGstin, periodMonth };
     setLoading(true);
     try {
+      // Filed or not, as the database reads it now: a document not on the
+      // ledger is named with its own reason (no date or supplier, a filed
+      // month, or a month out of step).
+      const filed = await fetchTwobMonthState(clientId, periodMonth).then((st) => st.isPrior, () => !!monthFiled);
       const [bills, clientRes, lastRes] = await Promise.all([
-        loadBillsNotInBooks(clientId, periodMonth),
+        loadBillsNotInBooks(clientId, periodMonth, { filed }),
         supabase.from('clients').select('email').eq('id', clientId).maybeSingle(),
         lastBillsMail(clientId, periodMonth),
       ]);
@@ -169,7 +176,7 @@ const EmailBillsNotInBooksDialog: React.FC<{
           )}
           {sum.unposted > 0 && (
             <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
-              Includes {sum.unposted} document{sum.unposted === 1 ? '' : 's'} marked Not in Books this month but not yet posted to Reconciliation.
+              {unpostedSentence(rows)}
             </p>
           )}
 

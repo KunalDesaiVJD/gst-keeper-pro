@@ -142,7 +142,7 @@ interface AuthContextType {
   canEditNoticeStatus: () => boolean;
   /** Delete a period's GSTR-1 data / GST Running Update rows. */
   canDeleteReturnData: () => boolean;
-  /** Import 2B: import, pull from portal, Post to Reconciliation. */
+  /** Import 2B: import or pull 2B; the Import 2B saves that change the 2B Reconciliation ledger (each such save writes through by itself, as Post did; the database refuses them without it); bring a month's ledger up to date. Saves that leave the ledger as it is are open to all staff. */
   canWork2BImport: () => boolean;
   /** Clear Data on 2B / ITC / RCM / Suspended Reco. */
   canClearData: () => boolean;

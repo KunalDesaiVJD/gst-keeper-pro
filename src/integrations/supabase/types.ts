@@ -1554,6 +1554,7 @@ export type Database = {
       }
       bills_not_in_2b: {
         Row: {
+          adopted_from: Json | null
           client_id: string
           date: string
           id: string
@@ -1577,6 +1578,7 @@ export type Database = {
           version: number | null
         }
         Insert: {
+          adopted_from?: Json | null
           client_id: string
           date: string
           id?: string
@@ -1600,6 +1602,7 @@ export type Database = {
           version?: number | null
         }
         Update: {
+          adopted_from?: Json | null
           client_id?: string
           date?: string
           id?: string
@@ -1648,6 +1651,7 @@ export type Database = {
       }
       bills_not_in_books: {
         Row: {
+          adopted_from: Json | null
           bill_in_2b_month: string | null
           book_entry_month: string | null
           client_id: string
@@ -1669,6 +1673,7 @@ export type Database = {
           version: number | null
         }
         Insert: {
+          adopted_from?: Json | null
           bill_in_2b_month?: string | null
           book_entry_month?: string | null
           client_id: string
@@ -1690,6 +1695,7 @@ export type Database = {
           version?: number | null
         }
         Update: {
+          adopted_from?: Json | null
           bill_in_2b_month?: string | null
           book_entry_month?: string | null
           client_id?: string
@@ -12368,9 +12374,49 @@ export type Database = {
         Args: { p_actor_id: string; p_client_id: string; p_period: string; p_bills_2b: Json; p_bills_books: Json }
         Returns: Json
       }
+      twob_restore_version_linked: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_bills_2b: Json; p_bills_books: Json }
+        Returns: Json
+      }
       twob_nib_2b_copies: {
         Args: { p_client_id: string; p_period: string }
         Returns: string[]
+      }
+      twob_import2b_catch_up: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_dry_run?: boolean; p_digest?: string | null }
+        Returns: Json
+      }
+      twob_import2b_reclaim: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_pending_id: string; p_doc_id: string; p_expect_action: string }
+        Returns: Json
+      }
+      twob_import2b_save_book: {
+        Args: { p_actor_id: string; p_book_id: string; p_values: Json; p_release_doc_id?: string | null; p_pair_doc_id?: string | null; p_expect?: Json | null }
+        Returns: Json
+      }
+      twob_import2b_prior_save: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_changes: Json; p_dry_run?: boolean; p_whole_month?: boolean; p_digest?: string | null; p_expect?: Json | null }
+        Returns: Json
+      }
+      twob_import2b_delete_2b: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string }
+        Returns: Json
+      }
+      twob_clear_year: {
+        Args: { p_actor_id: string; p_client_id: string; p_months: string[] }
+        Returns: Json
+      }
+      twob_import2b_flush_version: {
+        Args: { p_actor_id: string | null; p_client_id: string; p_period: string }
+        Returns: Json
+      }
+      twob_import2b_step: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: Json
+      }
+      twob_import2b_unreclaim: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_doc_id: string; p_action: string; p_expect_entry: string | null }
+        Returns: Json
       }
       staff_end_sessions: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_target_user_id: string }

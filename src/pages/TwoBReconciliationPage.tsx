@@ -36,11 +36,14 @@ import type { Json } from '@/integrations/supabase/types';
 import { cn } from '@/lib/utils';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { writePostVersion } from '@/lib/postImport2B';
-import { deleteOpenMonthRows, findChangedElsewhere, holdsDecision, updateOpenMonthRow } from '@/lib/twobPendingWrites';
+import { nextVersionNumber, writePostVersion } from '@/lib/postImport2B';
+import { checkRowsUnchanged, holdsDecision, OpenMonthSaveError, writeOpenMonthSave } from '@/lib/twobPendingWrites';
+import {
+  changeShown, changesShown, LEDGER_CHANGED_BANNER, LEDGER_RELOADED_MSG, ledgerChangeConcerns, liveChangeAction, rowsToSave, type LedgerChange,
+} from '@/lib/twobLiveSync';
 import {
   OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchNibFollows2B, fetchTwobMonthState, ledgerCellReadOnly, priorNibLockReason,
-  previewAndApplyPriorBooks, restoreBlockedReason, restoreVersion, type RestoreRow, type TwobChange, type TwobMonthState,
+  previewAndApplyPriorBooks, restoreBlockedReason, restoreVersion, versionRows2B, versionRowsBooks, type RestoreRow, type TwobChange, type TwobMonthState,
 } from '@/lib/twobPriorMonth';
 import {
   WS_PAGE, WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL,
@@ -94,6 +97,11 @@ interface BillRecord {
   bill_in_2b_month?: string | null;
   /** Not in Books: the 2B document it was posted from (follows the filed 2B in a prior month; docs §13). */
   source_doc_id?: string | null;
+  /** Not in 2B: the Import 2B books row that posted it, and the 2B document a reclaim names. */
+  source_book_id?: string | null;
+  reclaimed_via_doc_id?: string | null;
+  /** An own entry an Import 2B row was linked to instead of adding one: what it held before (docs §15). */
+  adopted_from?: Json | null;
   is_locked: boolean | null;
   is_carried_forward: boolean | null;
   version: number | null;
@@ -122,6 +130,29 @@ const TwoBReconciliationPage: React.FC = () => {
   const [localBillsBooks, setLocalBillsBooks] = useState<BillRecord[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  // Rows marked for deletion (removed on Save), kept with the edits: a reload
+  // or a discard clears both together.
+  const [deletedRows2B, setDeletedRows2B] = useState<string[]>([]);
+  const [deletedRowsBooks, setDeletedRowsBooks] = useState<string[]>([]);
+  // The ledger of this month changed elsewhere while the page held unsaved
+  // edits (a change heard live, or a Save refused): the banner says so, and
+  // the edits stay until saved or discarded (verification round 3).
+  const [ledgerChanged, setLedgerChanged] = useState(false);
+  // Every local edit counts here, so a reload heard live that lands after an
+  // edit began never overwrites it.
+  const editGenRef = useRef(0);
+  // A Save is running (set at once, before the state re-renders): a change
+  // heard meanwhile is kept, and looked at again when the Save ends against
+  // the month the Save reloaded (verification round 4: it was dropped).
+  const savingRef = useRef(false);
+  const heardDuringSaveRef = useRef<LedgerChange[]>([]);
+  // The rows the page shows as loaded, by id (set when a load lands): a
+  // change it already shows as it is (its own Save, heard after the Save's
+  // reload) is not news, whoever made it (round 4: before, every change
+  // stamped by this user was ignored for 5 s after a Save, from any tab).
+  const shownRowsRef = useRef<Map<string, BillRecord>>(new Map());
+  // The live handler's way in for the changes heard during a Save.
+  const liveKickRef = useRef<((changes: LedgerChange[]) => void) | null>(null);
   const [isLocked, setIsLocked] = useState(false);
   // Prior month (docs §13), as the database reads it (twob_month_state).
   const [monthState, setMonthState] = useState<TwobMonthState>(OPEN_MONTH);
@@ -320,76 +351,64 @@ const TwoBReconciliationPage: React.FC = () => {
     }
   }, [user, isStaffRole, selectedClientId, setSelectedClientId]);
 
-  // Fetch bills data
-  const fetchBillsData = useCallback(async () => {
+  // The selection as of the latest render: a load started for another
+  // (client, month), or overtaken by a newer load, is dropped.
+  const selectionRef = useRef({ client: selectedClientId, month: selectedMonth });
+  selectionRef.current = { client: selectedClientId, month: selectedMonth };
+  const loadSeq = useRef(0);
+
+  // Loads the month. A reload shows the month as it is and clears the edits
+  // and the pending deletes together (verification round 3: before, a reload
+  // left the pending deletes armed, so the next Save deleted a row the
+  // screen showed again). ifClean (a change heard live): applied only when
+  // the page holds no edits when the reads come back (an edit begun
+  // meanwhile stays, and the banner says the ledger changed).
+  const fetchBillsData = useCallback(async (opts: { ifClean?: boolean } = {}) => {
     if (!selectedClientId || !selectedMonth) return;
+    const client = selectedClientId;
+    const month = selectedMonth;
+    const seq = ++loadSeq.current;
+    const gen = editGenRef.current;
 
-    // Reset lock state first
-    let lockState = false;
-
-    // Fetch bills not in 2B
-    const { data: notIn2B, error: error2B } = await supabase
-      .from('bills_not_in_2b')
-      .select('*')
-      .eq('client_id', selectedClientId)
-      .eq('period_month', selectedMonth)
-      .order('date');
-    
-    if (error2B) {
-      console.error('Error fetching bills not in 2B:', error2B);
-    } else {
-      setBillsNotIn2B(notIn2B || []);
-      setLocalBills2B(notIn2B || []);
-      if (notIn2B && notIn2B.length > 0 && notIn2B[0].is_locked) {
-        lockState = true;
-      }
-    }
-
-    // Fetch bills not in books
-    const { data: notInBooks, error: errorBooks } = await supabase
-      .from('bills_not_in_books')
-      .select('*')
-      .eq('client_id', selectedClientId)
-      .eq('period_month', selectedMonth)
-      .order('date');
-    
-    if (errorBooks) {
-      console.error('Error fetching bills not in books:', errorBooks);
-    } else {
-      setBillsNotInBooks(notInBooks || []);
-      setLocalBillsBooks(notInBooks || []);
-      if (notInBooks && notInBooks.length > 0 && notInBooks[0].is_locked) {
-        lockState = true;
-      }
-    }
-
-    // Check filing status for lock (GSTR-3B Filed)
-    const { data: filingData } = await supabase
-      .from('filing_status')
-      .select('is_locked')
-      .eq('client_id', selectedClientId)
-      .eq('period_month', selectedMonth)
-      .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)'])
-      .eq('status', 'Filed')
-      .maybeSingle();
-    
-    if (filingData?.is_locked) {
-      lockState = true;
-    }
-
-    // Set the final lock state
-    setIsLocked(lockState);
+    const [res2B, resBooks, filingRes] = await Promise.all([
+      supabase.from('bills_not_in_2b').select('*').eq('client_id', client).eq('period_month', month).order('date'),
+      supabase.from('bills_not_in_books').select('*').eq('client_id', client).eq('period_month', month).order('date'),
+      // Filing status for the lock (GSTR-3B Filed)
+      supabase.from('filing_status').select('is_locked').eq('client_id', client).eq('period_month', month)
+        .in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']).eq('status', 'Filed').maybeSingle(),
+    ]);
     // A month state that cannot be read leaves the month read-only: the
     // database would refuse a prior month's writes anyway.
-    const state = await fetchTwobMonthState(selectedClientId, selectedMonth).catch((err: Error) => {
+    const state = await fetchTwobMonthState(client, month).catch((err: Error) => {
       toast.error(`${err.message}. The month is shown read-only; reload to try again.`);
       return { ...OPEN_MONTH, isPrior: true };
     });
+    const follows = state.isPrior ? await fetchNibFollows2B(client, month).catch(() => null) : new Set<string>();
+
+    const current = seq === loadSeq.current && selectionRef.current.client === client && selectionRef.current.month === month;
+    if (!current) return;
+    if (res2B.error || resBooks.error) {
+      toast.error(`Could not load the month: ${(res2B.error || resBooks.error)?.message}. Reload to try again.`);
+      return;
+    }
+    if (opts.ifClean && (editGenRef.current !== gen || dirtyRef.current)) {
+      setLedgerChanged(true);
+      return;
+    }
+    const notIn2B = (res2B.data || []) as BillRecord[];
+    const notInBooks = (resBooks.data || []) as BillRecord[];
+    shownRowsRef.current = new Map([...notIn2B, ...notInBooks].map((b) => [b.id, b]));
+    setBillsNotIn2B(notIn2B);
+    setLocalBills2B(notIn2B);
+    setBillsNotInBooks(notInBooks);
+    setLocalBillsBooks(notInBooks);
+    setIsLocked(!!notIn2B[0]?.is_locked || !!notInBooks[0]?.is_locked || !!filingRes.data?.is_locked);
     setMonthState(state);
-    setNibFollows2B(state.isPrior
-      ? await fetchNibFollows2B(selectedClientId, selectedMonth).catch(() => null)
-      : new Set());
+    setNibFollows2B(follows);
+    setDeletedRows2B([]);
+    setDeletedRowsBooks([]);
     setHasUnsavedChanges(false);
+    setLedgerChanged(false);
   }, [selectedClientId, selectedMonth]);
 
   // Fetch version history
@@ -484,47 +503,110 @@ const TwoBReconciliationPage: React.FC = () => {
       fetchBillsData();
       fetchVersions();
     } else {
+      shownRowsRef.current = new Map();
       setBillsNotIn2B([]);
       setBillsNotInBooks([]);
       setLocalBills2B([]);
       setLocalBillsBooks([]);
       setIsLocked(false);
       setMonthState(OPEN_MONTH);
+      setDeletedRows2B([]);
+      setDeletedRowsBooks([]);
       setHasUnsavedChanges(false);
+      setLedgerChanged(false);
       setVersions([]);
       setLastSavedInfo(null);
     }
   }, [selectedClientId, selectedMonth, fetchBillsData, fetchVersions]);
 
-  useEffect(() => {
-    if (!selectedClientId) return;
+  // Whether the page holds unsaved edits or pending deletes, as of the
+  // latest render (read by the live-change handler).
+  const dirty = hasUnsavedChanges || deletedRows2B.length > 0 || deletedRowsBooks.length > 0;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
 
+  // Changes to this month's ledger heard live (every Import 2B save writes it
+  // now; docs §15): a change the page already shows as it is is not news;
+  // never over unsaved edits or pending deletes (the banner instead); during
+  // a Save, kept and looked at again when it ends (round 4); otherwise one
+  // reload per burst (an import writes many rows) and one note. A change to
+  // another month or client is ignored. A delete carries only its row id,
+  // so deletes are heard unfiltered and kept when they name a row shown.
+  useEffect(() => {
+    if (!selectedClientId || !selectedMonth) return;
+    const clientId = selectedClientId;
+    const period = selectedMonth;
+    const view = { clientId, period };
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let pending: LedgerChange[] = [];
+    // Decided when it runs: an edit or a Save begun meanwhile counts.
+    const settle = () => {
+      timer = null;
+      const changes = pending;
+      pending = [];
+      const act = liveChangeAction({ saving: savingRef.current, dirty: dirtyRef.current });
+      if (act === 'wait') { heardDuringSaveRef.current.push(...changes); return; }
+      if (changesShown(changes, view, shownRowsRef.current)) return;
+      if (act === 'banner') { setLedgerChanged(true); return; }
+      toast.info(LEDGER_RELOADED_MSG, { id: 'twob-ledger-reloaded' });
+      // The version list too: every Import 2B save that changes the ledger
+      // takes a version (verification round 5).
+      void fetchBillsData({ ifClean: true }).then(() => fetchVersions());
+    };
+    const hear = (changes: LedgerChange[], wait: number) => {
+      pending.push(...changes);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(settle, wait);
+    };
+    const onChange = (change: LedgerChange) => {
+      if (!ledgerChangeConcerns(change, { clientId, period, ids: shownRowsRef.current })) return;
+      if (savingRef.current) { heardDuringSaveRef.current.push(change); return; }
+      // A change the page already shows is no news by itself, but it stays
+      // with a burst under way (verification round 8: a Restore's delete of
+      // an entry it adds back reads as shown only beside that insert, heard
+      // just after it).
+      if (changeShown(change, view, shownRowsRef.current)) { if (timer) pending.push(change); return; }
+      hear([change], 400);
+    };
+    liveKickRef.current = (changes) => hear(changes, 0);
     const channel = supabase
-      .channel('2b-reconciliation-changes')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'bills_not_in_2b',
-        filter: `client_id=eq.${selectedClientId}`
-      }, () => {
-        fetchBillsData();
-        toast.info('2B data updated by another user');
-      })
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'bills_not_in_books',
-        filter: `client_id=eq.${selectedClientId}`
-      }, () => {
-        fetchBillsData();
-        toast.info('2B data updated by another user');
-      })
+      .channel(`2b-reconciliation-${clientId}-${period}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bills_not_in_2b', filter: `client_id=eq.${clientId}` }, onChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bills_not_in_books', filter: `client_id=eq.${clientId}` }, onChange)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'bills_not_in_2b' }, onChange)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'bills_not_in_books' }, onChange)
       .subscribe();
 
     return () => {
+      if (timer) clearTimeout(timer);
+      liveKickRef.current = null;
+      heardDuringSaveRef.current = [];
       supabase.removeChannel(channel);
     };
-  }, [selectedClientId, fetchBillsData]);
+  }, [selectedClientId, selectedMonth, fetchBillsData, fetchVersions]);
+
+  // A Save ends: the changes heard while it ran are looked at again, against
+  // the month as the Save reloaded it (or as loaded, when nothing was
+  // written): what the page does not show yet reloads it, or, with edits
+  // kept, raises the banner.
+  const endSave = () => {
+    savingRef.current = false;
+    const heard = heardDuringSaveRef.current;
+    heardDuringSaveRef.current = [];
+    if (heard.length > 0) liveKickRef.current?.(heard);
+  };
+
+  // Reload (or discard): the month as it is now, the edits and the pending
+  // deletes cleared together; asked first while there is something to lose.
+  const reloadMonth = async () => {
+    if (dirtyRef.current && !(await confirm({
+      title: 'Discard your unsaved changes?',
+      description: 'The month is loaded again as it is now. Your unsaved edits, added rows and rows marked for deletion on this page are discarded.',
+      confirmText: 'Discard and reload',
+      destructive: true,
+    }))) return;
+    await fetchBillsData();
+  };
 
   // Filter bills based on selected months (with support for "Blank" filter)
   const filteredBills2B = useMemo(() => {
@@ -683,6 +765,12 @@ const TwoBReconciliationPage: React.FC = () => {
       toast.error(PRIOR_MONTH_DOCS_MSG + ' Import Excel adds to open months only.');
       return;
     }
+    // The import reloads the month: unsaved edits would be lost with it.
+    if (dirtyRef.current) {
+      toast.error('Save or discard your unsaved changes first: Import Excel reloads the month.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
     if (readOnly) {
       toast.error(isLocked ? 'Cannot import - sheet is locked' : 'Cannot import - this client is in Strict mode, use Import 2B instead');
       return;
@@ -780,6 +868,13 @@ const TwoBReconciliationPage: React.FC = () => {
     }
   };
 
+  // An edit on the page: unsaved until Save, and counted so a reload heard
+  // live never lands over it.
+  const markEdited = () => {
+    editGenRef.current += 1;
+    setHasUnsavedChanges(true);
+  };
+
   // Local editing handlers for Bills Not in 2B (update local state only)
   // With CGST/SGST auto-sync
   const handleUpdate2BField = (id: string, field: string, value: any) => {
@@ -797,7 +892,7 @@ const TwoBReconciliationPage: React.FC = () => {
       
       return { ...b, [field]: value };
     }));
-    setHasUnsavedChanges(true);
+    markEdited();
   };
 
   // Local editing handlers for Bills Not in Books (update local state only)
@@ -817,13 +912,10 @@ const TwoBReconciliationPage: React.FC = () => {
       
       return { ...b, [field]: value };
     }));
-    setHasUnsavedChanges(true);
+    markEdited();
   };
 
-  // Mark rows for deletion (local only)
-  const [deletedRows2B, setDeletedRows2B] = useState<string[]>([]);
-  const [deletedRowsBooks, setDeletedRowsBooks] = useState<string[]>([]);
-
+  // Mark rows for deletion (local only; the state is declared with the edits)
   const handleDeleteRow2B = (id: string) => {
     if (!canDeleteHere) return;
     setLocalBills2B(prev => prev.filter(b => b.id !== id));
@@ -831,7 +923,7 @@ const TwoBReconciliationPage: React.FC = () => {
     if (billsNotIn2B.find(b => b.id === id)) {
       setDeletedRows2B(prev => [...prev, id]);
     }
-    setHasUnsavedChanges(true);
+    markEdited();
   };
 
   const handleDeleteRowBooks = (id: string) => {
@@ -841,7 +933,7 @@ const TwoBReconciliationPage: React.FC = () => {
     if (billsNotInBooks.find(b => b.id === id)) {
       setDeletedRowsBooks(prev => [...prev, id]);
     }
-    setHasUnsavedChanges(true);
+    markEdited();
   };
 
   // Add new row handlers (local only with temp ID)
@@ -870,7 +962,7 @@ const TwoBReconciliationPage: React.FC = () => {
       updated_at: null,
       updated_by: null,
     }]);
-    setHasUnsavedChanges(true);
+    markEdited();
   };
 
   const handleAddRowBooks = () => {
@@ -897,7 +989,7 @@ const TwoBReconciliationPage: React.FC = () => {
       updated_at: null,
       updated_by: null,
     }]);
-    setHasUnsavedChanges(true);
+    markEdited();
   };
 
   // Validation for mandatory fields
@@ -931,6 +1023,44 @@ const TwoBReconciliationPage: React.FC = () => {
 
   const hasMandatoryFieldErrors = validationErrors.length > 0;
 
+  // Before any Save writes: the rows it updates or deletes, read again
+  // against the page's loaded copies (checkRowsUnchanged): every column they
+  // hold, their months, reclaim, Expense out, book entry, reclaiming document
+  // and link with the figures (verification round 4: the figures alone let a
+  // Save write a stale Expense out over a reclaim Import 2B recorded
+  // meanwhile). When any of them changed elsewhere (Import 2B's
+  // write-through, another tab, a filed month's correction), nothing is
+  // written and the user is asked to reload; the edits stay until reloaded or
+  // discarded (verification round 3). Returns the rows as read now (what the
+  // Save decides from), or null when it must not go on.
+  const checkNotChangedElsewhere = async (
+    plan2B: ReturnType<typeof rowsToSave<BillRecord>>, planBooks: ReturnType<typeof rowsToSave<BillRecord>>,
+  ): Promise<{ current2B: Map<string, BillRecord>; currentBooks: Map<string, BillRecord> } | null> => {
+    let stale: string[];
+    let current2B: Map<string, BillRecord>;
+    let currentBooks: Map<string, BillRecord>;
+    try {
+      const a = await checkRowsUnchanged('bills_not_in_2b', [...plan2B.deletes, ...plan2B.updates.map((u) => u.loaded)]);
+      const b = await checkRowsUnchanged('bills_not_in_books', [...planBooks.deletes, ...planBooks.updates.map((u) => u.loaded)]);
+      stale = [...a.stale, ...b.stale];
+      current2B = a.current;
+      currentBooks = b.current;
+    } catch (error) {
+      toast.error(`Nothing was saved: ${(error as Error).message} Your changes are still on the page.`);
+      return null;
+    }
+    if (stale.length === 0) return { current2B, currentBooks };
+    setLedgerChanged(true);
+    if (await confirm({
+      title: 'This month changed since you loaded it',
+      description: `${stale.slice(0, 3).join(' ')}${stale.length > 3 ? ` And ${stale.length - 3} more.` : ''} Nothing was saved. Reload to see the month as it is now; your unsaved changes on this page are then discarded. Keep them to copy them first.`,
+      confirmText: 'Reload',
+      cancelText: 'Keep my changes',
+      destructive: true,
+    })) await fetchBillsData();
+    return null;
+  };
+
   // A prior month's Save: the removals, added rows and changed date,
   // supplier, number, GSTIN and amounts, as one call through the one door,
   // previewed first ("Also changes Aug-26 (1)"); each reaches the later
@@ -938,32 +1068,30 @@ const TwoBReconciliationPage: React.FC = () => {
   const LEDGER_FIELDS = ['date', 'supplier_name', 'supplier_invoice_number', 'supplier_gstin', 'taxable_value', 'input_igst', 'input_cgst', 'input_sgst'] as const;
   const savePriorMonth = async () => {
     if (!selectedClientId || !selectedMonth || !user?.id) return;
-    const changesOf = (table: 'bills_not_in_2b' | 'bills_not_in_books', local: BillRecord[], saved: BillRecord[], deleted: string[]): TwobChange[] => {
-      const out: TwobChange[] = deleted.map((id) => ({ table, op: 'delete', id }));
-      for (const row of local) {
-        if (row.id.startsWith('temp-')) {
-          const values: Record<string, string | number | null> = {};
-          LEDGER_FIELDS.forEach((k) => { values[k] = row[k] ?? null; });
-          if (table === 'bills_not_in_2b') values.reversal_month = row.reversal_month || null;
-          else values.bill_in_2b_month = row.bill_in_2b_month || null;
-          out.push({ table, op: 'insert', values });
-          continue;
-        }
-        const was = saved.find((o) => o.id === row.id);
-        if (!was) continue;
+    const changesOf = (table: 'bills_not_in_2b' | 'bills_not_in_books', plan: ReturnType<typeof rowsToSave<BillRecord>>): TwobChange[] => {
+      const out: TwobChange[] = plan.deletes.map((r) => ({ table, op: 'delete', id: r.id }));
+      for (const row of plan.inserts) {
+        const values: Record<string, string | number | null> = {};
+        LEDGER_FIELDS.forEach((k) => { values[k] = row[k] ?? null; });
+        if (table === 'bills_not_in_2b') values.reversal_month = row.reversal_month || null;
+        else values.bill_in_2b_month = row.bill_in_2b_month || null;
+        out.push({ table, op: 'insert', values });
+      }
+      for (const { loaded: was, edited: row } of plan.updates) {
         const values: Record<string, string | number | null> = {};
         LEDGER_FIELDS.forEach((k) => { if ((row[k] ?? null) !== (was[k] ?? null)) values[k] = row[k] ?? null; });
         if (Object.keys(values).length) out.push({ table, op: 'update', id: row.id, values });
       }
       return out;
     };
-    const changes = [
-      ...changesOf('bills_not_in_2b', localBills2B, billsNotIn2B, deletedRows2B),
-      ...changesOf('bills_not_in_books', localBillsBooks, billsNotInBooks, deletedRowsBooks),
-    ];
+    const plan2B = rowsToSave(localBills2B, billsNotIn2B, deletedRows2B);
+    const planBooks = rowsToSave(localBillsBooks, billsNotInBooks, deletedRowsBooks);
+    const changes = [...changesOf('bills_not_in_2b', plan2B), ...changesOf('bills_not_in_books', planBooks)];
     if (changes.length === 0) { toast.info('Nothing to save.'); return; }
     setIsSaving(true);
+    savingRef.current = true;
     try {
+      if (!(await checkNotChangedElsewhere(plan2B, planBooks))) return;
       const outcome = await previewAndApplyPriorBooks({
         actorId: user.id, clientId: selectedClientId, period: selectedMonth, changes, confirm,
         title: 'Save changes to a filed month?', confirmText: 'Save',
@@ -972,18 +1100,22 @@ const TwoBReconciliationPage: React.FC = () => {
       });
       if (!outcome.applied) return;
       const version = await writePostVersion(selectedClientId, selectedMonth, user.id);
-      setDeletedRows2B([]);
-      setDeletedRowsBooks([]);
-      setHasUnsavedChanges(false);
       await fetchBillsData();
       await fetchVersions();
       toast.success(`Changes saved${version ? `. Version ${version} created` : ''}.`);
     } finally {
+      endSave();
       setIsSaving(false);
     }
   };
 
-  // Save all changes to database
+  // Save all changes to database: only the rows the user added, changed or
+  // deleted are sent (rowsToSave), each update and delete guarded by
+  // everything the row held when loaded (updateOpenMonthRow,
+  // deleteOpenMonthRows), after the check above. A Save that stops before
+  // writing anything keeps the edits on the page (verification round 4:
+  // before, any failure reloaded the month and the edits were lost though
+  // nothing had been written).
   const handleSaveAll = async () => {
     if (!selectedClientId || !canSaveHere) return;
     
@@ -1003,253 +1135,107 @@ const TwoBReconciliationPage: React.FC = () => {
       return;
     }
 
-    // A carried entry deleted here that holds a reclaim, Expense out or book
-    // entry takes it with it: say so first.
-    const goneDecided = [
-      ...billsNotIn2B.filter((b) => deletedRows2B.includes(b.id)),
-      ...billsNotInBooks.filter((b) => deletedRowsBooks.includes(b.id)),
-    ].filter((b) => b.is_carried_forward && holdsDecision(b));
-    if (goneDecided.length > 0 && !(await confirm({
-      title: 'Delete entries with a reclaim or book entry?',
-      description: `${goneDecided.length} carried ${goneDecided.length === 1 ? 'entry you delete holds' : 'entries you delete hold'} a reclaim, Expense out or book entry (${goneDecided.slice(0, 4).map((b) => [b.supplier_name, b.supplier_invoice_number].filter(Boolean).join(' ')).join(', ')}${goneDecided.length > 4 ? ` and ${goneDecided.length - 4} more` : ''}). Deleting ${goneDecided.length === 1 ? 'it removes' : 'them removes'} that too.`,
-      confirmText: 'Delete',
-      destructive: true,
-    }))) return;
+    const plan2B = rowsToSave(localBills2B, billsNotIn2B, deletedRows2B);
+    const planBooks = rowsToSave(localBillsBooks, billsNotInBooks, deletedRowsBooks);
 
     setIsSaving(true);
-    // A row changed or removed elsewhere since the page loaded (another tab,
-    // or a GST Manager's correction of a filed month that reached this
-    // month's copy) is never written over with the page's old figures: the
-    // Save then writes nothing and the page reloads (docs §13).
-    const reloadStale = async (lines: string[]) => {
-      toast.error(`${lines.slice(0, 3).join(' ')}${lines.length > 3 ? ` And ${lines.length - 3} more.` : ''}`, { duration: 15000 });
-      setDeletedRows2B([]);
-      setDeletedRowsBooks([]);
-      await fetchBillsData();
-    };
-    // The rows this Save deletes or updates, as the page loaded them.
-    const changedRows = (local: BillRecord[], loaded: BillRecord[], deleted: string[]): BillRecord[] => {
-      const byId = new Map(loaded.map((b) => [b.id, b]));
-      const edited = local.filter((b) => !b.id.startsWith('temp-'))
-        .map((b) => ({ was: byId.get(b.id), now: b }))
-        .filter((x) => !!x.was && JSON.stringify(x.was) !== JSON.stringify(x.now))
-        .map((x) => x.was as BillRecord);
-      return [...loaded.filter((b) => deleted.includes(b.id)), ...edited];
-    };
+    savingRef.current = true;
+    // Whether the writes went through (a failure before any of them, or in
+    // them before the first one was written, keeps the edits).
+    let wrote = false;
     try {
-      const stale = [
-        ...await findChangedElsewhere('bills_not_in_2b', changedRows(localBills2B, billsNotIn2B, deletedRows2B)),
-        ...await findChangedElsewhere('bills_not_in_books', changedRows(localBillsBooks, billsNotInBooks, deletedRowsBooks)),
-      ];
-      if (stale.length > 0) {
-        await reloadStale(stale);
-        setIsSaving(false);
-        return;
-      }
-    } catch (error) {
-      toast.error(`Nothing was saved: ${(error as Error).message}`);
-      setIsSaving(false);
-      return;
-    }
-    try {
-      // Get next version number
-      const currentVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
+      // A row changed or removed elsewhere since the page loaded is never
+      // written over with the page's old copy: the Save writes nothing and
+      // asks to reload (docs §13, §15).
+      const checked = await checkNotChangedElsewhere(plan2B, planBooks);
+      if (!checked) return;
+      // Decided from the rows as read now (the same as loaded, checked).
+      const del2B = plan2B.deletes.map((b) => checked.current2B.get(b.id) ?? b);
+      const delBooks = planBooks.deletes.map((b) => checked.currentBooks.get(b.id) ?? b);
 
-      // First, apply database changes (inserts/updates/deletes)
-      // Delete removed rows
+      // A carried entry deleted here that holds a reclaim, Expense out or book
+      // entry takes it with it: say so first.
+      const goneDecided = [...del2B, ...delBooks].filter((b) => b.is_carried_forward && holdsDecision(b));
+      if (goneDecided.length > 0 && !(await confirm({
+        title: 'Delete entries with a reclaim or book entry?',
+        description: `${goneDecided.length} carried ${goneDecided.length === 1 ? 'entry you delete holds' : 'entries you delete hold'} a reclaim, Expense out or book entry (${goneDecided.slice(0, 4).map((b) => [b.supplier_name, b.supplier_invoice_number].filter(Boolean).join(' ')).join(', ')}${goneDecided.length > 4 ? ` and ${goneDecided.length - 4} more` : ''}). Deleting ${goneDecided.length === 1 ? 'it removes' : 'them removes'} that too.`,
+        confirmText: 'Delete',
+        destructive: true,
+      }))) return;
+
+      // The writes (writeOpenMonthSave): the deletes (a carried entry's own
+      // reclaim, Expense out or book entry undone with it; the copies the
+      // carry made of a deleted own row in later open months with them), the
+      // added rows, then the changed ones (only the columns changed here);
+      // each delete and update only while the row still holds what it held.
       const fail = (what: string, e: { message: string } | null) => {
         if (e) throw new Error(`${what}: ${e.message}`);
       };
-      // Deleting an invoice here also removes the copies the carry-forward
-      // made of it in later months whose GSTR-3B is not filed — otherwise it
-      // would still sit in those months' pending list.
-      const removeLaterCopies = async (table: 'bills_not_in_2b' | 'bills_not_in_books', rows: BillRecord[]) => {
-        if (!rows.length) return 0;
-        const { data: filed } = await supabase.from('filing_status').select('period_month')
-          .eq('client_id', selectedClientId).in('return_type', ['GSTR-3B', 'GSTR-3B (Q)']).eq('status', 'Filed');
-        const filedSet = new Set(((filed || []) as { period_month: string }[]).map((f) => f.period_month));
-        const key = (p: string) => { const [m, y] = p.split('/'); return Number(y) * 100 + Number(m); };
-        const { data: copies, error } = await supabase.from(table).select('*')
-          .eq('client_id', selectedClientId).eq('is_carried_forward', true);
-        fail('Could not read later months', error);
-        const same = (a: BillRecord, b: BillRecord) => a.date === b.date && a.supplier_name === b.supplier_name
-          && (a.supplier_invoice_number || '') === (b.supplier_invoice_number || '')
-          && (a.supplier_gstin || '') === (b.supplier_gstin || '')
-          && Number(a.taxable_value || 0) === Number(b.taxable_value || 0)
-          && Number(a.input_igst || 0) === Number(b.input_igst || 0)
-          && Number(a.input_cgst || 0) === Number(b.input_cgst || 0)
-          && Number(a.input_sgst || 0) === Number(b.input_sgst || 0);
-        // A later copy holding its own month's decision (a reclaim, Expense
-        // out, book entry) stays: the database refuses to delete it (docs §13).
-        const decided = (c: BillRecord) => !!(c.reclaim_month || c.reclaim_subtype || c.book_entry_month);
-        const ids: string[] = [];
-        for (const r of rows) {
-          const perPeriod = new Map<string, string>();
-          for (const c of (copies || []) as BillRecord[]) {
-            if (key(c.period_month) <= key(r.period_month) || filedSet.has(c.period_month)) continue;
-            if (!perPeriod.has(c.period_month) && same(c, r) && !ids.includes(c.id)) perPeriod.set(c.period_month, c.id);
-          }
-          const kept = [...perPeriod.values()].filter((id) => decided(((copies || []) as BillRecord[]).find((c) => c.id === id) as BillRecord));
-          if (kept.length) toast.info(`${r.supplier_name} ${r.supplier_invoice_number || ''}: ${kept.length} later ${kept.length === 1 ? 'copy holds' : 'copies hold'} its own reclaim or book entry and ${kept.length === 1 ? 'stays' : 'stay'}; undo that there to remove ${kept.length === 1 ? 'it' : 'them'}.`, { duration: 10000 });
-          ids.push(...[...perPeriod.values()].filter((id) => !kept.includes(id)));
-        }
-        if (ids.length) {
-          const { error: dErr } = await supabase.from(table).delete().in('id', ids);
-          fail('Could not remove later copies', dErr);
-        }
-        return ids.length;
-      };
-      // A carried entry's reclaim, Expense out or book entry goes first, in
-      // the same Save (the database refuses to delete a carried entry that
-      // holds its own month's decision directly).
-      let laterCopies = 0;
-      if (deletedRows2B.length > 0) {
-        const gone = billsNotIn2B.filter((b) => deletedRows2B.includes(b.id));
-        const { error } = await deleteOpenMonthRows('bills_not_in_2b', gone);
-        if (error) throw new Error(`Could not delete: ${error}`);
-        laterCopies += await removeLaterCopies('bills_not_in_2b', gone.filter((b) => !b.is_carried_forward));
-      }
-      if (deletedRowsBooks.length > 0) {
-        const gone = billsNotInBooks.filter((b) => deletedRowsBooks.includes(b.id));
-        const { error } = await deleteOpenMonthRows('bills_not_in_books', gone);
-        if (error) throw new Error(`Could not delete: ${error}`);
-        laterCopies += await removeLaterCopies('bills_not_in_books', gone.filter((b) => !b.is_carried_forward));
-      }
-      if (laterCopies) toast.info(`Also removed ${laterCopies} carried-forward cop${laterCopies === 1 ? 'y' : 'ies'} in later months`);
+      const done = await writeOpenMonthSave({
+        clientId: selectedClientId, userId: user?.id,
+        deletes: { bills_not_in_2b: del2B, bills_not_in_books: delBooks },
+        inserts: { bills_not_in_2b: plan2B.inserts, bills_not_in_books: planBooks.inserts },
+        updates: { bills_not_in_2b: plan2B.updates, bills_not_in_books: planBooks.updates },
+      });
+      wrote = true;
+      done.kept.forEach((m) => toast.info(m, { duration: 10000 }));
+      if (done.laterCopies) toast.info(`Also removed ${done.laterCopies} carried-forward cop${done.laterCopies === 1 ? 'y' : 'ies'} in later months`);
 
-      // Process bills not in 2B
-      const savedBills2B: BillRecord[] = [];
-      for (const bill of localBills2B) {
-        if (bill.id.startsWith('temp-')) {
-          // Insert new record
-          const { id, ...billData } = bill;
-          const { data: inserted, error: insErr } = await supabase.from('bills_not_in_2b').insert([billData]).select().single();
-          fail('Could not add a row', insErr);
-          if (inserted) {
-            savedBills2B.push(inserted);
-          } else {
-            savedBills2B.push(bill);
-          }
-        } else {
-          // Update existing record: only the columns changed here, and only
-          // while the row still holds what the page loaded.
-          const original = billsNotIn2B.find(b => b.id === bill.id);
-          if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
-            const res = await updateOpenMonthRow('bills_not_in_2b', original, bill, user?.id);
-            if (!res.ok) throw Object.assign(new Error(res.message), { stale: res.gone });
-          }
-          savedBills2B.push(bill);
-        }
-      }
+      // The version records the month as the database now holds it (rows
+      // others changed meanwhile included), not the page's copy.
+      const [now2B, nowBooks] = await Promise.all([
+        supabase.from('bills_not_in_2b').select('*').eq('client_id', selectedClientId).eq('period_month', selectedMonth).order('date'),
+        supabase.from('bills_not_in_books').select('*').eq('client_id', selectedClientId).eq('period_month', selectedMonth).order('date'),
+      ]);
+      fail('Could not read the month back for its version', now2B.error || nowBooks.error);
+      const savedBills2B = (now2B.data || []) as BillRecord[];
+      const savedBillsBooks = (nowBooks.data || []) as BillRecord[];
 
-      // Process bills not in books
-      const savedBillsBooks: BillRecord[] = [];
-      for (const bill of localBillsBooks) {
-        if (bill.id.startsWith('temp-')) {
-          // Insert new record
-          const { id, ...billData } = bill;
-          const { data: inserted, error: insErr } = await supabase.from('bills_not_in_books').insert([billData]).select().single();
-          fail('Could not add a row', insErr);
-          if (inserted) {
-            savedBillsBooks.push(inserted);
-          } else {
-            savedBillsBooks.push(bill);
-          }
-        } else {
-          // Update existing record: only the columns changed here, and only
-          // while the row still holds what the page loaded.
-          const original = billsNotInBooks.find(b => b.id === bill.id);
-          if (original && JSON.stringify(original) !== JSON.stringify(bill)) {
-            const res = await updateOpenMonthRow('bills_not_in_books', original, bill, user?.id);
-            if (!res.ok) throw Object.assign(new Error(res.message), { stale: res.gone });
-          }
-          savedBillsBooks.push(bill);
-        }
-      }
+      // Transform CURRENT (saved) data to version format for storage (with
+      // what a Restore needs to put each entry back as it was; docs §15).
+      const versionBills2B = versionRows2B(savedBills2B);
+      const versionBillsBooks = versionRowsBooks(savedBillsBooks);
 
-      // Transform CURRENT (saved) data to version format for storage
-      const versionBills2B = savedBills2B.map(b => ({
-        id: b.id,
-        clientId: b.client_id,
-        date: b.date,
-        supplierName: b.supplier_name,
-        supplierInvoiceNumber: b.supplier_invoice_number || '',
-        supplierGstin: b.supplier_gstin || '',
-        taxableValue: b.taxable_value || 0,
-        inputIgst: b.input_igst || 0,
-        inputCgst: b.input_cgst || 0,
-        inputSgst: b.input_sgst || 0,
-        reversalMonth: b.reversal_month || '',
-        reclaimMonth: b.reclaim_month || '',
-        periodMonth: b.period_month,
-        isLocked: b.is_locked || false,
-        isCarriedForward: b.is_carried_forward || false,
-        updatedBy: b.updated_by || '',
-        updatedAt: b.updated_at || new Date().toISOString(),
-        version: b.version || 1,
-      }));
-      
-      const versionBillsBooks = savedBillsBooks.map(b => ({
-        id: b.id,
-        clientId: b.client_id,
-        date: b.date,
-        supplierName: b.supplier_name,
-        supplierInvoiceNumber: b.supplier_invoice_number || '',
-        supplierGstin: b.supplier_gstin || '',
-        taxableValue: b.taxable_value || 0,
-        inputIgst: b.input_igst || 0,
-        inputCgst: b.input_cgst || 0,
-        inputSgst: b.input_sgst || 0,
-        bookEntryMonth: b.book_entry_month || '',
-        billIn2BMonth: b.bill_in_2b_month || '',
-        periodMonth: b.period_month,
-        isLocked: b.is_locked || false,
-        isCarriedForward: b.is_carried_forward || false,
-        updatedBy: b.updated_by || '',
-        updatedAt: b.updated_at || new Date().toISOString(),
-        version: b.version || 1,
-      }));
-      
       // Save new version with CURRENT data (after this save operation)
       const versionData = {
         billsNotIn2B: versionBills2B,
         billsNotInBooks: versionBillsBooks,
       };
 
-      // The earlier versions stop being current only now, once every write
-      // above went through (a refused delete leaves them as they were).
-      await supabase
-        .from('twob_versions')
-        .update({ is_current: false })
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth);
-
-      const { error: versionError } = await supabase.from('twob_versions').insert([{
-        client_id: selectedClientId,
-        period_month: selectedMonth,
-        table_type: 'combined',
-        version_number: currentVersionNumber,
-        version_data: versionData,
-        updated_at: new Date().toISOString(),
-        updated_by: user?.id || null,
-        is_current: true,
-        action_type: 'SAVE',
-      }]);
-      
+      // The next version number, read from the database just before the
+      // version is written (verification round 5: the page's own list can be
+      // behind the versions Import 2B's saves take meanwhile, and the Save
+      // took a number already used). A version that cannot be written does
+      // not fail the save (it is logged).
       let savedVersionNumber: number | null = null;
-      if (versionError) {
-        console.error('Error saving version:', versionError);
-        // Don't fail the save, just log the error
-      } else {
-        savedVersionNumber = currentVersionNumber;
+      try {
+        const currentVersionNumber = await nextVersionNumber(selectedClientId, selectedMonth);
+        // The earlier versions stop being current only now, once every write
+        // above went through (a refused delete leaves them as they were).
+        await supabase
+          .from('twob_versions')
+          .update({ is_current: false })
+          .eq('client_id', selectedClientId)
+          .eq('period_month', selectedMonth);
+
+        const { error: versionError } = await supabase.from('twob_versions').insert([{
+          client_id: selectedClientId,
+          period_month: selectedMonth,
+          table_type: 'combined',
+          version_number: currentVersionNumber,
+          version_data: versionData,
+          updated_at: new Date().toISOString(),
+          updated_by: user?.id || null,
+          is_current: true,
+          action_type: 'SAVE',
+        }]);
+        if (versionError) console.error('Error saving version:', versionError);
+        else savedVersionNumber = currentVersionNumber;
+      } catch (versionErr) {
+        console.error('Error saving version:', versionErr);
       }
 
-      // Reset tracking
-      setDeletedRows2B([]);
-      setDeletedRowsBooks([]);
-      setHasUnsavedChanges(false);
-      
-      // Refresh data from server
+      // Refresh data from server (the edits and pending deletes with it)
       await fetchBillsData();
       await fetchVersions();
       
@@ -1260,14 +1246,21 @@ const TwoBReconciliationPage: React.FC = () => {
       }
     } catch (error: any) {
       console.error('Error saving:', error);
-      if (error?.stale) {
-        // Changed elsewhere between the check and this write: the rows
-        // written before it stay; the page shows the month as it is now.
-        await reloadStale([`${error.message} The rows saved before it stay saved.`]);
-      } else {
-        toast.error('Failed to save: ' + error.message);
+      if (error instanceof OpenMonthSaveError ? !error.wrote : !wrote) {
+        // Nothing reached the database: the edits and pending deletes stay
+        // on the page (a row changed elsewhere raises the banner, with Reload).
+        if (error?.stale) setLedgerChanged(true);
+        toast.error(`${error?.stale ? error.message : `Failed to save: ${error.message}`} Nothing was saved; your changes are still on the page. ${error?.stale ? 'Reload to see the month as it is now (your changes are then discarded).' : 'Correct what is named and save again, or reload.'}`, { duration: 15000 });
+        return;
       }
+      // A failure part-way: the rows written before it stay, so the page
+      // shows the month as it is now (what was not written is named).
+      toast.error(error?.stale
+        ? `${error.message} The rows saved before it stay saved; the rest of your changes were not saved. The page shows the month as it is now.`
+        : `Failed to save: ${error.message} Rows saved before it stay saved; the page shows the month as it is now.`, { duration: 15000 });
+      await fetchBillsData();
     } finally {
+      endSave();
       setIsSaving(false);
     }
   };
@@ -1302,11 +1295,13 @@ const TwoBReconciliationPage: React.FC = () => {
     // month holds entries (docs §13); the database checks both again.
     const blocked = restoreBlockedReason(monthState);
     if (blocked) { toast.error(blocked); return; }
-    
-    try {
-      // Get next version number for the RESTORE action
-      const newVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
 
+    // The Restore's own writes, heard live, are the page's own, as a Save's
+    // are (verification round 8: before, they read as someone else's change
+    // and the superadmin was told the ledger "was changed elsewhere"): kept
+    // while it runs and looked at again against the month as it reloads it.
+    savingRef.current = true;
+    try {
       // The month's two lists replaced by the version's in one call
       // (twob_restore_version): nothing is changed when it is refused, so the
       // month is never cleared or doubled halfway.
@@ -1316,7 +1311,15 @@ const TwoBReconciliationPage: React.FC = () => {
         const v = b[camel] || b[snake];
         return (v ?? b[camel] ?? b[snake] ?? null) as Cell;   // a 0 stays 0
       };
+      // The link to the Import 2B row that posted an entry (newer versions),
+      // and the entry's own id (older ones: the database takes back the link
+      // the month's entry of that id holds), so the next Import 2B save
+      // changes the entry instead of adding a second one (docs §15).
+      const objectOf = (v: unknown): Record<string, unknown> | null =>
+        v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
       const common = (b: Record<string, unknown>): RestoreRow => ({
+        id: pick(b, 'id', 'id'),
+        adopted_from: objectOf(b.adoptedFrom ?? b.adopted_from),
         date: pick(b, 'date', 'date'),
         supplier_name: pick(b, 'supplierName', 'supplier_name'),
         supplier_invoice_number: pick(b, 'supplierInvoiceNumber', 'supplier_invoice_number'),
@@ -1334,46 +1337,64 @@ const TwoBReconciliationPage: React.FC = () => {
         ...common(b),
         reversal_month: pick(b, 'reversalMonth', 'reversal_month') || null,
         reclaim_month: pick(b, 'reclaimMonth', 'reclaim_month') || null,
+        reclaim_subtype: pick(b, 'reclaimSubtype', 'reclaim_subtype') || null,
+        reclaimed_via_doc_id: pick(b, 'reclaimedViaDocId', 'reclaimed_via_doc_id') || null,
+        source_book_id: pick(b, 'sourceBookId', 'source_book_id') || null,
       }));
       const rowsBooks: RestoreRow[] = ((version.billsNotInBooks || []) as unknown as Record<string, unknown>[]).map((b) => ({
         ...common(b),
         book_entry_month: pick(b, 'bookEntryMonth', 'book_entry_month') || null,
         bill_in_2b_month: pick(b, 'billIn2BMonth', 'bill_in_2b_month') || null,
+        source_doc_id: pick(b, 'sourceDocId', 'source_doc_id') || null,
       }));
       const restored = await restoreVersion(user.id, selectedClientId, selectedMonth, rows2B, rowsBooks);
+      // The next version number for the RESTORE action, read from the
+      // database (the page's own list can be behind; verification round 5).
+      const newVersionNumber = await nextVersionNumber(selectedClientId, selectedMonth);
 
-      // Mark all existing versions as not current, then record the RESTORE.
-      await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
-      const versionData = {
-        billsNotIn2B: version.billsNotIn2B || [],
-        billsNotInBooks: version.billsNotInBooks || [],
-      };
-      
-      await supabase.from('twob_versions').insert([{
-        client_id: selectedClientId,
-        period_month: selectedMonth,
-        table_type: 'combined',
-        version_number: newVersionNumber,
-        version_data: JSON.parse(JSON.stringify(versionData)) as Json,
-        updated_at: new Date().toISOString(),
-        updated_by: user?.id || null,
-        is_current: true,
-        action_type: 'RESTORE',
-        restored_from_version_id: version.id,
-      }]);
-      
+      // Mark all existing versions as not current, then record the RESTORE:
+      // the month as the Restore left it (verification round 7: the version
+      // restored was recorded, so its reclaims that came back in Awaiting
+      // reclaim, and its entries left out, read as restored in the history).
+      const versionData = restored.versionData;
+      if (!versionData) {
+        console.error('Restore: the month could not be read back for its RESTORE version');
+      } else {
+        await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
+        await supabase.from('twob_versions').insert([{
+          client_id: selectedClientId,
+          period_month: selectedMonth,
+          table_type: 'combined',
+          version_number: newVersionNumber,
+          version_data: JSON.parse(JSON.stringify(versionData)) as Json,
+          updated_at: new Date().toISOString(),
+          updated_by: user?.id || null,
+          is_current: true,
+          action_type: 'RESTORE',
+          restored_from_version_id: version.id,
+        }]);
+      }
+
       await fetchBillsData();
       await fetchVersions();
       setHasUnsavedChanges(false);
-      toast.success(`Restored the month's own entries to version ${version.versionNumber}. New version ${newVersionNumber} created.${restored.carriedKept
+      toast.success(`Restored the month's own entries to version ${version.versionNumber}.${versionData ? ` New version ${newVersionNumber} created.` : ''}${restored.carriedKept
         ? ` Its ${restored.carriedKept} carried ${restored.carriedKept === 1 ? 'entry stays' : 'entries stay'} as ${restored.carriedKept === 1 ? 'it stands' : 'they stand'}: they follow the filed months, so a restore does not change them.`
         : ''}${restored.leftOut.length
         ? ` Left out, because this month now holds ${restored.leftOut.length === 1 ? 'it as a carried entry' : 'them as carried entries'}: ${restored.leftOut.slice(0, 5).join(', ')}${restored.leftOut.length > 5 ? ` and ${restored.leftOut.length - 5} more` : ''}.`
-        : ''}`, { duration: 10000 });
+        : ''}${restored.linked
+        ? ` ${restored.linked} ${restored.linked === 1 ? 'entry is' : 'entries are'} linked again to the Import 2B ${restored.linked === 1 ? 'row' : 'rows'} that post ${restored.linked === 1 ? 'it' : 'them'}: a change there changes ${restored.linked === 1 ? 'it' : 'them'}, never adds a second one; Import 2B says when the ledger is not in step with it.`
+        : ''}${restored.reclaimsBack.length
+        ? ` Restored in Awaiting reclaim, without the version's reclaim (a reclaim comes back only with its 2B document known for certain, in this month, Reclaim and evidencing no other reclaim; reclaim these again on Import 2B, Pending items, Link & Reclaim): ${restored.reclaimsBack.slice(0, 5).join('; ')}${restored.reclaimsBack.length > 5 ? `; and ${restored.reclaimsBack.length - 5} more` : ''}.`
+        : ''}${restored.docsLeft.length
+        ? ` Left in Reclaim, evidencing no reclaim, so counted nowhere (the Restore never changes a 2B document; on Import 2B, Link & Reclaim an entry with ${restored.docsLeft.length === 1 ? 'it' : 'each'} from Pending items, or take it out of Reclaim): ${restored.docsLeft.slice(0, 5).join('; ')}${restored.docsLeft.length > 5 ? `; and ${restored.docsLeft.length - 5} more` : ''}.`
+        : ''}`, { duration: restored.reclaimsBack.length || restored.docsLeft.length ? 20000 : 10000 });
       setShowVersionHistory(false);
     } catch (error: any) {
       console.error('Error restoring version:', error);
       toast.error('Nothing was restored: ' + error.message);
+    } finally {
+      endSave();
     }
   };
 
@@ -1542,12 +1563,24 @@ const TwoBReconciliationPage: React.FC = () => {
         icon={<FileSpreadsheet />}
         actions={
           <>
+            {selectedClientId && canSaveHere && dirty && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void reloadMonth()}
+                disabled={isSaving}
+                title="Discard your unsaved changes here and load the month as it is now"
+                className={WS_BTN}
+              >
+                Discard
+              </Button>
+            )}
             {selectedClientId && canSaveHere && (
               <Button
                 size="sm"
                 onClick={handleSaveAll}
-                disabled={isSaving || !hasUnsavedChanges || hasMandatoryFieldErrors}
-                variant={hasUnsavedChanges ? "default" : "outline"}
+                disabled={isSaving || !dirty || hasMandatoryFieldErrors}
+                variant={dirty ? "default" : "outline"}
                 title={hasMandatoryFieldErrors ? 'Fix mandatory field errors before saving' : ''}
                 className={WS_BTN}
               >
@@ -1688,6 +1721,17 @@ const TwoBReconciliationPage: React.FC = () => {
             />
           </div>
 
+          {/* The ledger changed elsewhere while this page holds unsaved
+              edits: they stay until saved or discarded (verification round 3). */}
+          {ledgerChanged && (
+            <Note tone="warn">
+              <span>{LEDGER_CHANGED_BANNER}</span>
+              <Button size="sm" variant="outline" className={cn(WS_BTN, 'ml-2 align-middle')} onClick={() => void reloadMonth()} disabled={isSaving}>
+                Reload
+              </Button>
+            </Note>
+          )}
+
           {/* Negative value error message */}
           {negativeValueError && (
             <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-xs text-foreground">
@@ -1714,7 +1758,7 @@ const TwoBReconciliationPage: React.FC = () => {
                   ? PRIOR_MONTH_MSG
                   : isLiberalClient
                     ? 'This month is filed. You can change its books entries here: the date, supplier, number, GSTIN and amounts, add entries and delete them. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved. The reversal, reclaim, book entry and in-2B months stay as filed, and so do Not in Books entries from 2B documents. A carried Not in Books entry changes in the month that holds it as its own entry, which reaches this copy.'
-                    : 'This month is filed. You can delete its entries here; add or correct them through Import 2B\'s books register and Post. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved.'}
+                    : 'This month is filed. You can delete its entries here; add or correct them through Import 2B\'s books register, whose saves reach this list by themselves. Each change also reaches the later months that hold the entry, and you see what it changes before it is saved.'}
               </span>
             </Note>
           )}
