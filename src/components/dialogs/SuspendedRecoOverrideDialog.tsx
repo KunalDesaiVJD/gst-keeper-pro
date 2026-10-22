@@ -5,9 +5,10 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 
-// Only the superadmin overrides (canManualOverride), so a reason is optional;
-// without one the override is still stamped (who, when) and marked Overridden.
-const DEFAULT_JUSTIFICATION = 'Overridden by the superadmin.';
+// The superadmin and GST Managers override (canManualOverride, 21 Oct 2026).
+// A reason of at least 5 characters is required; the database refuses an
+// override without one, and keeps who, when and why (reco_opening_log).
+const MIN_REASON = 5;
 
 interface Props {
   open: boolean;
@@ -36,13 +37,13 @@ const SuspendedRecoOverrideDialog: React.FC<Props> = ({
     }
   }, [open, initialCgst, initialSgst, initialIgst]);
 
-  const canSave = !saving;
+  const canSave = !saving && justification.trim().length >= MIN_REASON;
 
   const handleSave = async () => {
     if (!canSave) return;
     setSaving(true);
     try {
-      await onSave({ cgst, sgst, igst, justification: justification.trim() || DEFAULT_JUSTIFICATION });
+      await onSave({ cgst, sgst, igst, justification: justification.trim() });
       onOpenChange(false);
     } finally {
       setSaving(false);
@@ -55,7 +56,7 @@ const SuspendedRecoOverrideDialog: React.FC<Props> = ({
         <DialogHeader>
           <DialogTitle>Manual Override</DialogTitle>
           <DialogDescription>
-            Override the opening balance values. Only the superadmin can do this; a reason is optional and is kept with the override.
+            Override the opening balance values. Only the superadmin or a GST Manager can do this. Give the reason; it is kept with the override.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -92,12 +93,12 @@ const SuspendedRecoOverrideDialog: React.FC<Props> = ({
             </div>
           </div>
           <div className="space-y-1">
-            <Label htmlFor="ov-just" className="text-xs">Reason for override (optional)</Label>
+            <Label htmlFor="ov-just" className="text-xs">Reason for override (required)</Label>
             <Textarea
               id="ov-just"
               value={justification}
               onChange={(e) => setJustification(e.target.value)}
-              placeholder="Why the opening balance differs from the source (optional)"
+              placeholder="Why the opening balance differs from the portal"
               rows={3}
             />
           </div>

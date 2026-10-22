@@ -183,6 +183,12 @@ export interface FilingStatusRow {
   arn: string | null;
   targetDate: number | null;
   updatedAt: string | null;
+  /** 'portal' (pulled by the extension), 'manual' (attached by hand), or null (recorded before 21 Oct 2026). */
+  source?: string | null;
+  /** A manual row's superadmin allowance; none for a return attached by hand on its manual route (GSTR-1 (IFF), GSTR-3B (Q)). */
+  allowanceId?: string | null;
+  /** A portal row whose filing date was typed by hand, no pull having read the portal's. */
+  dateNote?: string | null;
 }
 
 /** Electronic credit reversal and re-claimed statement (gst_credit_reversal_reclaim_entries). */

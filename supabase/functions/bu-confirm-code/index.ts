@@ -13,6 +13,12 @@
 // sendMail, saveToSentItems false): a staff member who can open the firm's
 // mailbox must not be able to read a client's code there.
 //
+// The e-mail is marked with the code's reference (codeRef in message.ts, 4
+// letters from the code id, as builder_bu_confirm_code_ref and the page work
+// it out, migration 20261021160000), so a reader who gets codes asked for by
+// two pages types the one their page shows. The database refuses to mint a
+// code over the daily ceilings (it then sends nothing).
+//
 // Input: { code_id } only. What is sent, and to whom, comes from the
 // database. A code_id already claimed, or older than 15 minutes, sends
 // nothing. Answers { ok, status: 'sent' | 'failed' | 'none' } and never the

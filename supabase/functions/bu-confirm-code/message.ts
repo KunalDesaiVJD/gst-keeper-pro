@@ -31,11 +31,33 @@ export function checkedAddress(to: unknown): string {
   return a;
 }
 
-export function codeEmail(row: ClaimedCode): { subject: string; html: string } {
+/**
+ * A code's reference: 4 letters from its id (no digits, and no I or O, so it
+ * is never read or typed as the code). The same as the database's
+ * builder_bu_confirm_code_ref and the page's codeRef
+ * (src/lib/builderConfirmRules.ts): the page shows it next to the Code box
+ * and the messages name "the e-mail marked <ref>", so a reader who gets codes
+ * asked for by two pages (a shared mailbox, or another holder of the link)
+ * types the one their page asked for (migration 20261021160000).
+ */
+export function codeRef(codeId: string): string {
+  const map = '0123456789abcdef';
+  const to = 'ABCDEFGHJKLMNPQR';
+  return String(codeId ?? '').toLowerCase().replace(/-/g, '').slice(0, 4)
+    .split('').map((c) => to[map.indexOf(c)] ?? '').join('');
+}
+
+/** "10:42 am" in India time, when the e-mail goes. */
+export const istTime = (at: Date): string =>
+  at.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+
+export function codeEmail(row: ClaimedCode, now: Date = new Date()): { subject: string; html: string } {
   const code = checkedCode(row.code);
+  const ref = codeRef(row.code_id);
   const message = [
     `You asked to answer our request to confirm the agreement values for ${esc(row.project_name)}. Your code is:`,
     `<span style="display:inline-block;font-size:24px;font-weight:700;letter-spacing:6px;color:#0f2b46;">${code}</span>`,
+    `This e-mail is marked <strong>${esc(ref)}</strong> (sent at ${esc(istTime(now))} IST). The confirmation page shows the same mark next to the Code box: if more than one code came, type the one from the e-mail with that mark.`,
     'Type it on the confirmation page. It works for 30 minutes, and only for this e-mail address.',
     'If you did not ask for it, you can ignore this e-mail. Nobody can answer for you without this code.',
   ].join('\n\n');
@@ -52,5 +74,7 @@ export function codeEmail(row: ClaimedCode): { subject: string; html: string } {
   // there): the firm's Microsoft 365 message trace lists every subject the
   // sender sent, so its admins could read a client's code there. The page
   // keeps the code step across a closed tab instead (AgreementConfirmPage).
-  return { subject: `Your confirmation code · ${row.project_name}`, html };
+  // The reference is no secret, and in the subject it tells the e-mails
+  // apart in the inbox list.
+  return { subject: `Your confirmation code (${ref}) · ${row.project_name}`, html };
 }

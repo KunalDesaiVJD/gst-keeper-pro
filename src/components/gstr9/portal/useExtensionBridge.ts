@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PullBridge } from './Gstr9Section';
+import { currentActorId } from '@/lib/changeLogHeaders';
 
 /**
  * The browser-extension bridge, as the other portal pages use it: ping the
@@ -43,7 +44,7 @@ export function useExtensionBridge(clientId: string): PullBridge {
   const start = useCallback<PullBridge['start']>(
     (payload, onStarted) => {
       pending.current = onStarted;
-      window.postMessage({ __gstkPullSection: { clientId, ...payload } }, '*');
+      window.postMessage({ __gstkPullSection: { clientId, ...payload, actorId: currentActorId() } }, '*');
     },
     [clientId],
   );

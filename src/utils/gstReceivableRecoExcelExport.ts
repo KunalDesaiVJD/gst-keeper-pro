@@ -12,13 +12,14 @@ interface GstReceivableExportData {
   portalClosingCgst: number; portalClosingSgst: number; portalClosingIgst: number;
   booksClosingCgst: number; booksClosingSgst: number; booksClosingIgst: number;
   diffCgst: number; diffSgst: number; diffIgst: number;
+  /** Where the opening (and ITC utilised, DRC-03) came from: pulled, manual (allowed by X: reason), overridden. */
+  openingSource?: string;
 }
 
 const sumT = (cgst: number, sgst: number, igst: number) => cgst + sgst + igst;
 
-export const exportGstReceivableRecoToExcel = (d: GstReceivableExportData) => {
-  const workbook = XLSX.utils.book_new();
-
+/** The sheet's rows (exported for the checks in scripts/verify-reco-gate.mjs). */
+export const gstReceivableRecoSheetRows = (d: GstReceivableExportData): (string | number)[][] => {
   const availedLabel = d.prevMonthLabel
     ? `ADD: NET ITC AVAILABLE (4C) — ${d.prevMonthLabel} ITC Summary`
     : 'ADD: NET ITC AVAILABLE (4C)';
@@ -26,12 +27,13 @@ export const exportGstReceivableRecoToExcel = (d: GstReceivableExportData) => {
     ? `LESS: ITC UTILIZED — ${d.prevMonthLabel} GSTR-3B output tax, Table 3.1(a) + 3.1(b) (capped at Available ITC)`
     : 'LESS: ITC UTILIZED (min of GSTR-3B output and Available ITC)';
 
-  const rows: (string | number)[][] = [
+  return [
     ['GST Receivable Reconciliation'],
     [`Client: ${d.clientName}`, '', `GSTIN: ${d.clientGstin}`, '', `Month: ${d.month}`],
     [],
     ['PARTICULARS', 'IGST', 'CGST', 'SGST', 'TOTAL'],
     ['OPENING BALANCE AS PER PORTAL', d.openingIgst, d.openingCgst, d.openingSgst, sumT(d.openingCgst, d.openingSgst, d.openingIgst)],
+    ...(d.openingSource ? [[`Opening source: ${d.openingSource}`]] : []),
     [availedLabel, d.availedIgst, d.availedCgst, d.availedSgst, sumT(d.availedCgst, d.availedSgst, d.availedIgst)],
     [utilizedLabel, d.utilizedIgst, d.utilizedCgst, d.utilizedSgst, sumT(d.utilizedCgst, d.utilizedSgst, d.utilizedIgst)],
     ['LESS: DRC-03 / OTHER LEDGER DEBITS', d.drcIgst, d.drcCgst, d.drcSgst, sumT(d.drcCgst, d.drcSgst, d.drcIgst)],
@@ -42,6 +44,11 @@ export const exportGstReceivableRecoToExcel = (d: GstReceivableExportData) => {
     [],
     ['DIFFERENCE', d.diffIgst, d.diffCgst, d.diffSgst, sumT(d.diffCgst, d.diffSgst, d.diffIgst)],
   ];
+};
+
+export const exportGstReceivableRecoToExcel = (d: GstReceivableExportData) => {
+  const workbook = XLSX.utils.book_new();
+  const rows = gstReceivableRecoSheetRows(d);
 
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   sheet['!cols'] = [{ wch: 60 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];

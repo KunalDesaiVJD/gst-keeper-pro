@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # BU agreement value confirmation, one request to several people
-# (20261021140000_bu_confirm_cc.sql): replays the confirmation migrations on a
+# (20261021140000_bu_confirm_cc.sql, 20261021160000_bu_confirm_followup.sql):
+# replays the confirmation migrations on a
 # throwaway local database, each twice (they must be safe to re-run), and runs
 # the SQL tests in this folder, then the two-session cases (race.sh) on a copy
 # of the database. Every test calls the functions as the public key (anon), as
@@ -23,7 +24,8 @@ for f in 20260811160000_builder_bu_agreement_confirm.sql \
          20260814120000_builder_agreement_confirm_dastavej_label.sql \
          20261015100000_builder_bu_agreement_override.sql \
          20261019100000_bills_not_in_books_email.sql \
-         20261021140000_bu_confirm_cc.sql; do
+         20261021140000_bu_confirm_cc.sql \
+         20261021160000_bu_confirm_followup.sql; do
   for pass in 1 2; do
     psql_q -f "$mig/$f" >/dev/null || { echo "FAILED applying $f (pass $pass)"; exit 1; }
   done

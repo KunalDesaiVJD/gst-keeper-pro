@@ -28,10 +28,14 @@ export const filingStatusDisplayLabel = (status: FilingStatusType | string): str
 // Statuses nobody may set by hand. 'Pushed' is evidence that this app pushed
 // the return's data to the GST portal and the portal accepted it — it means
 // something only because a system event put it there, so the dropdown offers
-// it disabled and the `mark_filing_pushed` RPC is the only way in. A database
-// trigger rejects every other write that moves a row into it; the UI rules
-// here are the courtesy layer, not the enforcement.
-export const SYSTEM_ONLY_FILING_STATUSES: readonly FilingStatusType[] = ['Pushed'];
+// it disabled and the `mark_filing_pushed` RPC is the only way in. 'Filed'
+// (21 Oct 2026) is evidence that the portal holds the filed return: it comes
+// from the extension's portal pull (filing_record_pull), or an attach by hand
+// (filing_attach_manual: under the superadmin's allowance for GSTR-1 /
+// GSTR-3B, or the manual route the other returns keep). Database triggers reject every
+// other write that moves a row into either; the UI rules here are the
+// courtesy layer, not the enforcement.
+export const SYSTEM_ONLY_FILING_STATUSES: readonly FilingStatusType[] = ['Pushed', 'Filed'];
 
 export const isSystemOnlyFilingStatus = (status: FilingStatusType | string): boolean =>
   SYSTEM_ONLY_FILING_STATUSES.includes(status as FilingStatusType);
@@ -199,6 +203,8 @@ export interface FilingStatusRecord {
   month: string; // MM/YYYY
   isLocked: boolean;
   arn?: string | null;
+  /** Where the filed return came from: "Portal", "manual (allowed by X: reason)", "By hand before 21 Oct 2026". */
+  source?: string;
 }
 
 // Dashboard Metrics

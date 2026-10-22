@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { fetchFiledFigures } from './itcAutoLink';
 
 // Mirrors the "DIFFERENCE" figure on the Suspended Reco page
 // (src/pages/SuspendedRecoPage.tsx) — same source tables, same formula, same
@@ -42,18 +43,80 @@ const normalizeZero = (num: number): number => {
 // as the Suspended Reco page's opening-balance flow change.
 const NEW_FLOW_FROM = 202606;
 
+// Every read of the push gate fails closed (docs §13): a read that errors
+// throws with the table named, and runPushRecoCheck blocks Push with it,
+// never working from zeros that look like a real difference (or tally).
+function readOrThrow<T>(res: { data: T; error: { message: string } | null }, what: string): T {
+  if (res.error) throw new Error(`Could not read ${what}: ${res.error.message}`);
+  return res.data;
+}
+
+/**
+ * The reads of the Suspended Reco page (SuspendedRecoPage fetchData), each
+ * failing closed with the read named: the page then shows the reason and
+ * refuses Save, Upload, Not Applicable and Override, never saving zeros over
+ * an uploaded opening or a Current Total without 4B(2)(i) and 5.4 (docs §13).
+ */
+export interface SuspendedRecoInputs {
+  /** The month's suspended_reco row (opening and its source), or null. */
+  suspended: Record<string, unknown> | null;
+  reversalBills: { input_igst: number | null; input_cgst: number | null; input_sgst: number | null; reversal_month: string | null }[];
+  reclaimBills: { input_igst: number | null; input_cgst: number | null; input_sgst: number | null; reclaim_month: string | null; reclaim_subtype: string | null }[];
+  itcData: { data: unknown } | null;
+  booksData: { input_cgst: number | null; input_sgst: number | null; input_igst: number | null; reversal_month: string | null; reclaim_month: string | null }[];
+}
+
+export async function readSuspendedRecoInputs(clientId: string, periodMonth: string): Promise<SuspendedRecoInputs> {
+  const suspended = readOrThrow(await supabase
+    .from('suspended_reco')
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth)
+    .maybeSingle(), `the Suspended Reco (suspended_reco) of ${periodMonth}`);
+  const reversalBills = readOrThrow(await supabase
+    .from('bills_not_in_2b')
+    .select('input_igst, input_cgst, input_sgst, reversal_month')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth)
+    .not('reversal_month', 'is', null), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
+  const reclaimBills = readOrThrow(await supabase
+    .from('bills_not_in_2b')
+    .select('input_igst, input_cgst, input_sgst, reclaim_month, reclaim_subtype')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth)
+    .not('reclaim_month', 'is', null), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
+  const itcData = readOrThrow(await supabase
+    .from('itc_summaries')
+    .select('data')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth)
+    .maybeSingle(), `the ITC Summary (itc_summaries) of ${periodMonth}`);
+  const booksData = readOrThrow(await supabase
+    .from('bills_not_in_2b')
+    .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
+  return {
+    suspended: (suspended as Record<string, unknown> | null) ?? null,
+    reversalBills: (reversalBills || []) as SuspendedRecoInputs['reversalBills'],
+    reclaimBills: (reclaimBills || []) as SuspendedRecoInputs['reclaimBills'],
+    itcData: (itcData as { data: unknown } | null) ?? null,
+    booksData: (booksData || []) as SuspendedRecoInputs['booksData'],
+  };
+}
+
 export async function computeSuspendedRecoDiff(clientId: string, periodMonth: string): Promise<RecoDiffResult> {
   const [mm, yyyy] = periodMonth.split('/').map(Number);
   const monthSortKey = mm && yyyy ? yyyy * 100 + mm : 0;
   const useNewFlow = monthSortKey >= NEW_FLOW_FROM;
   const applyTolerance = (value: number): number => (useNewFlow ? (Math.abs(value) <= 10 ? 0 : value) : value);
 
-  const { data: suspendedData } = await supabase
+  const suspendedData = readOrThrow(await supabase
     .from('suspended_reco')
     .select('opening_cgst, opening_sgst, opening_igst')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
-    .maybeSingle();
+    .maybeSingle(), `the Suspended Reco (suspended_reco) of ${periodMonth}`);
   const openingCgst = Number((suspendedData as any)?.opening_cgst) || 0;
   const openingSgst = Number((suspendedData as any)?.opening_sgst) || 0;
   const openingIgst = Number((suspendedData as any)?.opening_igst) || 0;
@@ -61,26 +124,27 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
   const patterns = getMonthPatterns(periodMonth);
 
   // 4B(2)(i): reversal bills where reversal_month matches current month
-  const { data: reversalBills } = await supabase
+  const reversalBills = readOrThrow(await supabase
     .from('bills_not_in_2b')
     .select('input_igst, input_cgst, input_sgst, reversal_month')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
-    .not('reversal_month', 'is', null);
+    .not('reversal_month', 'is', null), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
   const matchingReversals = (reversalBills || []).filter((b) => monthMatchesFn(b.reversal_month, patterns));
   const row4B2i = matchingReversals.reduce((acc, b) => ({
     cgst: acc.cgst + (Number(b.input_cgst) || 0),
     sgst: acc.sgst + (Number(b.input_sgst) || 0),
     igst: acc.igst + (Number(b.input_igst) || 0),
   }), { cgst: 0, sgst: 0, igst: 0 });
+  let row4B2iUsed = row4B2i;
 
   // 5.4 / 4(D) 1.2: reclaim bills where reclaim_month matches current month
-  const { data: reclaimBills } = await supabase
+  const reclaimBills = readOrThrow(await supabase
     .from('bills_not_in_2b')
     .select('input_igst, input_cgst, input_sgst, reclaim_month, reclaim_subtype')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
-    .not('reclaim_month', 'is', null);
+    .not('reclaim_month', 'is', null), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
   const matchingReclaims = (reclaimBills || []).filter((b) => monthMatchesFn(b.reclaim_month, patterns));
   const normalReclaims = matchingReclaims.filter((b) => (b as any).reclaim_subtype !== 'EXPENSE_OUT');
   const expenseOutReclaims = matchingReclaims.filter((b) => (b as any).reclaim_subtype === 'EXPENSE_OUT');
@@ -89,18 +153,21 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
     sgst: acc.sgst + (Number(b.input_sgst) || 0),
     igst: acc.igst + (Number(b.input_igst) || 0),
   }), { cgst: 0, sgst: 0, igst: 0 });
-  const row54 = sumHeads(normalReclaims);
-  const row4D12FromBills = sumHeads(expenseOutReclaims);
+  let row54 = sumHeads(normalReclaims);
+  let row4D12FromBills = sumHeads(expenseOutReclaims);
 
   let row4B2ii = { cgst: 0, sgst: 0, igst: 0 };
   let row55 = { cgst: 0, sgst: 0, igst: 0 };
   let row4D12FromItc = { cgst: 0, sgst: 0, igst: 0 };
-  const { data: itcData } = await supabase
+  const itcData = readOrThrow(await supabase
     .from('itc_summaries')
     .select('data')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
-    .maybeSingle();
+    .maybeSingle(), `the ITC Summary (itc_summaries) of ${periodMonth}`);
+  // A prior month changed after filing: the current total from the figures
+  // recorded then; only the books side follows the books (docs §13).
+  const filedFigures = await fetchFiledFigures(clientId, periodMonth);
   if (itcData?.data) {
     const itc = itcData.data as any;
     const section4A = itc.section4A || [];
@@ -117,21 +184,26 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
       igst: Number(found4D12?.igst) || 0,
     };
   }
+  if (filedFigures) {
+    row4B2iUsed = filedFigures.reversal;
+    row54 = filedFigures.reclaim;
+    row4D12FromBills = filedFigures.expenseOut;
+  }
   const row4D12 = {
     cgst: Math.max(row4D12FromBills.cgst, row4D12FromItc.cgst),
     sgst: Math.max(row4D12FromBills.sgst, row4D12FromItc.sgst),
     igst: Math.max(row4D12FromBills.igst, row4D12FromItc.igst),
   };
 
-  const portalCgst = row4B2i.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst;
-  const portalSgst = row4B2i.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst;
-  const portalIgst = row4B2i.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst;
+  const portalCgst = row4B2iUsed.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst;
+  const portalSgst = row4B2iUsed.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst;
+  const portalIgst = row4B2iUsed.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst;
 
-  const { data: booksData } = await supabase
+  const booksData = readOrThrow(await supabase
     .from('bills_not_in_2b')
     .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
     .eq('client_id', clientId)
-    .eq('period_month', periodMonth);
+    .eq('period_month', periodMonth), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
   let booksCgst = 0, booksSgst = 0, booksIgst = 0;
   if (booksData && booksData.length > 0) {
     const filtered = booksData.filter((row) => {
@@ -163,4 +235,50 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
     // identical to SuspendedRecoPage.tsx's diffTotal formula.
     total: normalizeZero(diffCgst + diffSgst + diffIgst),
   };
+}
+
+export interface FilingSuspendedCheck {
+  /** False when the month has neither a Suspended Reco row nor Not in 2B rows (nothing to check). */
+  checked: boolean;
+  /** Opening + current total as saved on Suspended Reco, less the live books side. */
+  difference: number;
+  /** Over ₹20: marking GSTR-3B Filed is refused. */
+  blocks: boolean;
+}
+
+// Filing Status's check before a GSTR-3B is marked Filed (FilingStatusPage,
+// handleStatusChange): the opening and current total as saved on Suspended
+// Reco, less the books side (Not in 2B rows with a reversal month and no
+// reclaim month), within ₹20. Kept here so the page and the gates test
+// (supabase/tests/twob_simple/gates.test.mjs) run the same code.
+export async function filingSuspendedCheck(clientId: string, periodMonth: string): Promise<FilingSuspendedCheck> {
+  const { data: suspendedData } = await supabase
+    .from('suspended_reco')
+    .select('opening_cgst, opening_sgst, opening_igst, portal_cgst, portal_sgst, portal_igst')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth)
+    .maybeSingle();
+  // RULE: Include rows where Reclaim is blank AND Reversal is NOT blank
+  const { data: booksData } = await supabase
+    .from('bills_not_in_2b')
+    .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
+    .eq('client_id', clientId)
+    .eq('period_month', periodMonth);
+  if (!suspendedData && !(booksData && booksData.length > 0)) return { checked: false, difference: 0, blocks: false };
+  const s = suspendedData as Record<string, unknown> | null;
+  const n = (v: unknown) => Number(v) || 0;
+  // Opening Balance + Current Total - Books
+  const portalTotal = n(s?.opening_cgst) + n(s?.opening_sgst) + n(s?.opening_igst) + n(s?.portal_cgst) + n(s?.portal_sgst) + n(s?.portal_igst);
+  const booksTotal = (booksData || [])
+    .filter((row) => {
+      const reversalBlank = row.reversal_month === null || row.reversal_month === '';
+      const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';
+      return reclaimBlank && !reversalBlank;
+    })
+    .reduce((acc, row) => acc + n(row.input_cgst) + n(row.input_sgst) + n(row.input_igst), 0);
+  // Round to 2 decimal places to handle floating-point precision issues; normalize -0 to 0.
+  let difference = Math.round((portalTotal - booksTotal) * 100) / 100;
+  if (difference === 0 || Object.is(difference, -0)) difference = 0;
+  // Allow differences up to 20 for rounding errors
+  return { checked: true, difference, blocks: Math.abs(difference) > 20 };
 }

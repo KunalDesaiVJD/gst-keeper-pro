@@ -24,6 +24,7 @@ import {
   ScrollText,
   Scale,
   FileUp,
+  History,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
@@ -35,6 +36,8 @@ interface NavItem {
   path: string;
   icon: React.ReactNode;
   roles?: ('superadmin' | 'gst_manager' | 'employee' | 'client')[];
+  /** Shown only when this check passes (a permission key, on top of the role). */
+  can?: 'viewChangeHistory';
 }
 
 interface SidebarProps {
@@ -170,6 +173,15 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     icon: <FolderDown className="h-5 w-5" />,
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
+  // Who changed what on the GST working pages (gst_change_log). Superadmin,
+  // GST Manager, and employees whose position has the Change history key.
+  {
+    label: 'Change History',
+    path: '/change-history',
+    icon: <History className="h-5 w-5" />,
+    roles: ['superadmin', 'gst_manager', 'employee'],
+    can: 'viewChangeHistory',
+  },
   // Notices & Litigation is one entry, the last in the list: the module's own
   // tab bar (NoticesTopNav) moves between its pages, and this entry is marked
   // on every one of them (NOTICES_PATHS).
@@ -248,9 +260,10 @@ const getRoleLabel = (role: string) => {
  * mobile drawer.
  */
 export const useSidebarNavItems = (): NavItem[] => {
-  const { user, isStaffRole } = useAuth();
+  const { user, isStaffRole, canViewChangeHistory } = useAuth();
   const items = isStaffRole() ? STAFF_NAV_ITEMS : CLIENT_NAV_ITEMS;
   return items.filter(item => {
+    if (item.can === 'viewChangeHistory' && !canViewChangeHistory()) return false;
     if (!item.roles) return true;
     return user && item.roles.includes(user.role);
   });

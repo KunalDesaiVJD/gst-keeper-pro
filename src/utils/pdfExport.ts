@@ -22,10 +22,11 @@ export const exportFilingStatusToPDF = (
   // Show ARN column for GSTR-1 and GSTR-3B (including IFF/Quarterly variants)
   const showArn = /^(GSTR-1|GSTR-3B)/.test(returnType);
 
-  // Table
+  // Table. Source says where each filed return came from (the portal pull,
+  // a manual upload the superadmin allowed, or by hand before 21 Oct 2026).
   const head = showArn
-    ? [['Sr.', 'Client Name', 'Accountant', 'Frequency', 'Status', 'Target', 'Filed Date', 'ARN', 'Remarks']]
-    : [['Sr.', 'Client Name', 'Accountant', 'Frequency', 'Status', 'Target', 'Filed Date', 'Remarks']];
+    ? [['Sr.', 'Client Name', 'Accountant', 'Frequency', 'Status', 'Target', 'Filed Date', 'ARN', 'Source', 'Remarks']]
+    : [['Sr.', 'Client Name', 'Accountant', 'Frequency', 'Status', 'Target', 'Filed Date', 'Source', 'Remarks']];
 
   const tableData = records.map((record, idx) => {
     const base = [
@@ -38,24 +39,27 @@ export const exportFilingStatusToPDF = (
       record.filedDate ? new Date(record.filedDate).toLocaleDateString('en-IN') : '-',
     ];
     if (showArn) base.push(record.arn || '-');
+    base.push(record.source || '-');
     base.push(record.remarks || '-');
     return base;
   });
 
   const columnStyles: Record<number, any> = {
     0: { cellWidth: 10 },
-    1: { cellWidth: 50 },
-    2: { cellWidth: 25 },
-    3: { cellWidth: 22 },
-    4: { cellWidth: 28 },
-    5: { cellWidth: 14 },
-    6: { cellWidth: 22 },
+    1: { cellWidth: 46 },
+    2: { cellWidth: 24 },
+    3: { cellWidth: 20 },
+    4: { cellWidth: 26 },
+    5: { cellWidth: 13 },
+    6: { cellWidth: 20 },
   };
   if (showArn) {
-    columnStyles[7] = { cellWidth: 32 };
-    columnStyles[8] = { cellWidth: 'auto' };
+    columnStyles[7] = { cellWidth: 31 };
+    columnStyles[8] = { cellWidth: 40 };
+    columnStyles[9] = { cellWidth: 'auto' };
   } else {
-    columnStyles[7] = { cellWidth: 'auto' };
+    columnStyles[7] = { cellWidth: 40 };
+    columnStyles[8] = { cellWidth: 'auto' };
   }
 
   autoTable(doc, {

@@ -26,8 +26,21 @@
 //  - round 4: BU Events and the pop-up say when a unit's e-mail failed or is
 //    still queued (not "Asked"), flag every such request on the event, and a
 //    failed send speaks of the request's own units; the public page keeps its
-//    code step per link in localStorage, so a closed tab or a reload does not
-//    lose the code already e-mailed or the proof.
+//    code step per link, so a closed tab or a reload does not lose the code
+//    already e-mailed or the proof;
+//  - follow-up (20261021160000): the pop-up reads the event's requests again
+//    when it opens (badges, the failed-To hint and the To it fills come from
+//    them; a unit asked in a request the page had not loaded says so); a
+//    per-unit e-mail of before 21 Oct 2026 that failed is not "Asked" and its
+//    link is not said to answer; a failed send speaks of each unit's earlier
+//    link; the proof is kept only in sessionStorage (not for a new tab); a
+//    reload after the mailer did not report back does not say the code was
+//    e-mailed; each code's e-mail is named by its reference (codeRef).
+//  - verification of 20261021160000: its live-apply steps deploy the Edge
+//    Function bu-confirm-code before the file is applied (the function needs
+//    nothing from it; the other way round, the messages named a mark the old
+//    e-mail lacked), and the page says a code from another e-mail, typed
+//    there, stops working where it was asked for (the database spends it).
 // The database side is tested in supabase/tests/bu_confirm/run.sh.
 //
 //   node scripts/verify-bu-confirm.mjs
@@ -48,6 +61,10 @@ const check = (ok, label, info = '') => {
   if (!ok) failed++;
 };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// A section whose rules are missing (an older tree, GSTK_ROOT) fails as a whole, not the script.
+const guard = (label, fn) => {
+  try { fn(); } catch (e) { check(false, `${label}: ${e.message}`); }
+};
 
 const out = await build({
   entryPoints: [path.join(root, 'src/lib/builderConfirmRules.ts')],
@@ -169,13 +186,14 @@ check(/Sending asks again and clears this dispute\. It stays in the unit's histo
 check(/fetchFirmAddresses\(userId/.test(dialog) && /isFirmAddress\(a\) \|\| dbFirm\.includes\(a\)/.test(dialog),
   'the pop-up asks the database which addresses are the firm\'s own (a staff member\'s personal one)');
 check(/master === 'empty' \?/.test(dialog) && !/fromMaster/.test(dialog), '"no e-mail on record" only when the master is empty');
-check(/failedMailWords\(res\.earlierLink, sentNos\)/.test(dialog), 'the failed toast speaks of an earlier link only when there is one, and of its units');
+check(/failedMailWords\(res\.earlierLink, sentNos, earlierNos\)/.test(dialog), 'the failed toast speaks of an earlier link only when there is one, and of its units');
 const events = src('src/pages/BuilderBuEventsPage.tsx');
 check(/onSent=\{\(\) => void load\(true\)\}/.test(events) && /if \(!quiet\) setIsLoading\(true\);/.test(events),
   'BU Events refreshes quietly after a send, so the pop-up (and what staff typed, and a dispute it shows) stays');
-check(/failedMailWords\(lastReq\.earlierLink, lastReq\.unitIds\.map\(unitNoOf\)\)/.test(events), 'the Last request line speaks of an earlier link only when there is one');
+check(/failedMailWords\(lastReq\.earlierLink, lastReq\.unitIds\.map\(unitNoOf\), lastReq\.earlierUnits\?\.map\(unitNoOf\)\)/.test(events),
+  'the Last request line speaks of an earlier link only when there is one, per unit');
 check(/Earlier disputed/.test(events) && /fetchClearedDisputes\(ids\)/.test(events), 'BU Events shows a dispute asked about again');
-check(/fetchAgreementConfirmationStatus\(eventId\)/.test(dialog) && /void reloadUnits\(\);\s*\n\s*if \(lastRequest\)/.test(dialog),
+check(/fetchAgreementConfirmationStatus\(eventId\)/.test(dialog) && /const reqs = await reloadUnits\(\);/.test(dialog),
   'the pop-up reads the statuses again each time it opens');
 check(/freshCandidates\(candidates, fresh\)/.test(dialog), 'and lists the units from them');
 check(/else if \(!res\.requestId\) \{[\s\S]{0,400}?onSent\(\);\s*void reloadUnits\(\);\s*return;/.test(dialog), 'a refused send refreshes BU Events and the list');
@@ -234,38 +252,159 @@ check(/const ask = unitAsk\(r\.unit_id, cf, evRequests\);/.test(eventsSrc) && /E
   && /queued, not sent yet/.test(eventsSrc), 'BU Events: "Asked" only once the unit\'s e-mail is out, else failed or queued');
 check(/requestsNotOut\(evRequests, cfRows\)/.test(eventsSrc) && /Waiting on it: /.test(eventsSrc), 'BU Events flags every request not out that units wait on');
 const dialogSrc = src('src/components/builder/SendAgreementConfirmDialog.tsx');
-check(/unitAsk\(c\.unitId, c, requests\)/.test(dialogSrc) && /' · e-mail failed' : ' · not sent yet'/.test(dialogSrc),
+check(/unitAsk\(c\.unitId, c, requestsNow\)/.test(dialogSrc) && /' · e-mail failed' : ' · not sent yet'/.test(dialogSrc),
   'the pop-up badges such units "Pending · e-mail failed" or "not sent yet"');
 check(/The last e-mail to these addresses failed/.test(dialogSrc), 'and says when the To it fills in from the last request failed');
 check(/requests=\{sendFor \? requests\[sendFor\.id\] \|\| \[\] : \[\]\}/.test(eventsSrc), 'BU Events gives the pop-up the event\'s requests');
 check(/legacy_emails/.test(src('src/lib/builderAgreementConfirmData.ts')) && /mailSentAt: r\.outbox_id/.test(src('src/lib/builderAgreementConfirmData.ts')),
   'the page reads when each e-mail went and which units an old per-unit e-mail asked');
 
-// ── Round 4 (medium, p4): the code step survives a closed tab ───────────────
-const now = Date.UTC(2026, 9, 21, 8, 0, 0);
-const step = { name: 'Rajesh Shah', email: 'owner@client.test', codeSentTo: 'owner@client.test', codeId: 'c-1', codeAt: now - 5 * 60e3,
-  proof: null, proofEmail: null, proofUntil: null };
-let back = R.readCodeStep(JSON.stringify(step), now);
-check(back?.codeId === 'c-1' && back.codeSentTo === 'owner@client.test' && back.name === 'Rajesh Shah', 'a code asked 5 minutes ago is restored', JSON.stringify(back));
-back = R.readCodeStep(JSON.stringify(step), now + 30 * 60e3);
-check(back?.codeId === null && back.email === 'owner@client.test', 'past its 30 minutes the code is dropped, the address kept', JSON.stringify(back));
-back = R.readCodeStep(JSON.stringify({ ...step, proof: 'p', proofEmail: 'owner@client.test', proofUntil: now + 60 * 60e3 }), now);
-check(back?.proof === 'p' && back.proofEmail === 'owner@client.test', 'a proof still good survives a reload');
-check(R.readCodeStep(JSON.stringify({ ...step, proof: 'p', proofEmail: 'owner@client.test', proofUntil: now - 1 }), now)?.proof === null,
-  'an expired proof is dropped');
-check(R.readCodeStep(JSON.stringify({ ...step, proof: 'p', proofEmail: 'x@y.z', proofUntil: now + 10 * 3600e3 }), now)?.proof === null,
-  'a proof claiming to last longer than 2 hours is not trusted');
-check(R.readCodeStep('{not json', now) === null && R.readCodeStep(null, now) === null && R.readCodeStep('"x"', now) === null,
-  'nothing usable stored: nothing restored');
-check(R.codeStepKey('abc') === 'bu-confirm:abc', 'one entry per link');
 const pageSrc = src('src/pages/AgreementConfirmPage.tsx');
-check(/try \{\s*return window\.localStorage\.getItem\(key\);\s*\} catch/.test(pageSrc)
-  && /try \{\s*if \(value === null\) window\.localStorage\.removeItem\(key\);\s*else window\.localStorage\.setItem\(key, value\);\s*\} catch/.test(pageSrc),
-  'every storage access is wrapped');
-check(/readCodeStep\(storeGet\(codeStepKey\(token\)\), Date\.now\(\)\)/.test(pageSrc) && /storeSet\(codeStepKey\(token\)/.test(pageSrc)
-  && /restoredFor !== token\) return;/.test(pageSrc), 'the page restores the step on load and saves it after, never over it');
-check(/until: Date\.now\(\) \+ PROOF_LIFE_MS/.test(pageSrc) && /setCodeAt\(Date\.now\(\)\)/.test(pageSrc), 'with the code\'s time and the proof\'s end');
-check(/We e-mailed a code to \$\{step\.codeSentTo\} at/.test(pageSrc), 'a restored code says where and when it went');
+// ── Round 4 (medium, p4): the code step survives a closed tab ───────────────
+guard('the code step', () => {
+  const now = Date.UTC(2026, 9, 21, 8, 0, 0);
+  const step = { name: 'Rajesh Shah', email: 'owner@client.test', codeSentTo: 'owner@client.test', codeId: '3fa90000-0000-4000-8000-000000000000',
+    codeAt: now - 5 * 60e3, codeStatus: 'sent', proof: null, proofEmail: null, proofUntil: null };
+  const stored = (st) => R.codeStepForStorage(st);
+  let back = R.readCodeStep(stored(step).local, stored(step).session, now);
+  check(back?.codeId === step.codeId && back.codeSentTo === 'owner@client.test' && back.name === 'Rajesh Shah' && back.codeStatus === 'sent',
+    'a code asked 5 minutes ago is restored', JSON.stringify(back));
+  back = R.readCodeStep(stored(step).local, null, now + 30 * 60e3);
+  check(back?.codeId === null && back.codeStatus === null && back.email === 'owner@client.test', 'past its 30 minutes the code is dropped, the address kept', JSON.stringify(back));
+  const proved = { ...step, proof: 'p', proofEmail: 'owner@client.test', proofUntil: now + 60 * 60e3 };
+  back = R.readCodeStep(stored(proved).local, stored(proved).session, now);
+  check(back?.proof === 'p' && back.proofEmail === 'owner@client.test', 'a proof still good survives a reload of the tab (sessionStorage)');
+  check(R.readCodeStep(stored(proved).local, null, now)?.proof === null,
+    'a new tab (no sessionStorage) gets no proof: someone else at the same browser must ask for a code (follow-up, low)');
+  check(R.readCodeStep(JSON.stringify(proved), null, now)?.proof === null,
+    'a proof left in localStorage by the earlier page is not trusted');
+  {
+    const other = R.readCodeStep(stored(proved).local, null, now);
+    check(other?.codeId === null && other.codeSentTo === null && other.name === 'Rajesh Shah' && other.email === 'owner@client.test',
+      'once a code has given a proof, another tab is not offered that code (re-checking it would cancel this tab\'s proof); name and address are kept',
+      JSON.stringify(other));
+  }
+  check(!('proof' in JSON.parse(stored(proved).local)) && !/"p"/.test(stored(proved).local) && JSON.parse(stored(proved).session).proof === 'p',
+    'the proof is written to sessionStorage only');
+  check(stored({ ...step, name: '', email: '', codeId: null, codeSentTo: null, codeAt: null }).local === null && stored(step).session === null,
+    'nothing to keep: nothing written');
+  check(R.readCodeStep(stored(proved).local, stored({ ...proved, proofUntil: now - 1 }).session, now)?.proof === null, 'an expired proof is dropped');
+  check(R.readCodeStep(null, JSON.stringify({ proof: 'p', proofEmail: 'x@y.z', proofUntil: now + 10 * 3600e3 }), now) === null,
+    'a proof claiming to last longer than 2 hours is not trusted');
+  check(R.readCodeStep('{not json', null, now) === null && R.readCodeStep(null, null, now) === null && R.readCodeStep('"x"', '[1]', now) === null,
+    'nothing usable stored: nothing restored');
+  check(R.codeStepKey('abc') === 'bu-confirm:abc', 'one entry per link');
+  // The mailer did not report back: a reload says so, not "We e-mailed a code" (follow-up, low).
+  const clock = () => '02:15 pm';
+  let msg = R.restoredCodeMessage({ ...step, codeStatus: 'unknown' }, clock);
+  check(msg?.tone === 'warn' && /^We could not confirm the code asked for at 02:15 pm was sent to owner@client\.test\./.test(msg.text)
+    && /e-mail marked DRLK/.test(msg.text) && !/We e-mailed/.test(msg.text), 'a code the mailer did not report on is restored as "could not confirm"', msg?.text);
+  msg = R.restoredCodeMessage(step, clock);
+  check(msg?.tone === 'ok' && msg.text === 'We e-mailed a code to owner@client.test at 02:15 pm, in the e-mail marked DRLK. Type it below, or ask for a new one.',
+    'a code the mailer sent is restored as e-mailed, with its mark', msg?.text);
+  check(R.restoredCodeMessage(proved, clock) === null && R.restoredCodeMessage(null, clock) === null, 'nothing to say once proved, or with nothing kept');
+  check(R.readCodeStep(R.codeStepForStorage({ ...step, codeStatus: 'unknown' }).local, null, now)?.codeStatus === 'unknown',
+    'the send status is kept with the code');
+  check(/try \{\s*return storage\(kind\)\.getItem\(key\);\s*\} catch/.test(pageSrc)
+    && /try \{\s*if \(value === null\) storage\(kind\)\.removeItem\(key\);\s*else storage\(kind\)\.setItem\(key, value\);\s*\} catch/.test(pageSrc)
+    && /kind === 'local' \? window\.localStorage : window\.sessionStorage/.test(pageSrc),
+    'every storage access is wrapped');
+  check(/readCodeStep\(storeGet\('local', key\), storeGet\('session', key\), Date\.now\(\)\)/.test(pageSrc)
+    && /storeSet\('local', key, kept\.local\);\s*storeSet\('session', key, kept\.session\);/.test(pageSrc)
+    && /restoredFor !== token\) return;/.test(pageSrc), 'the page restores the step on load and saves it after, the proof in sessionStorage only');
+  check(!/window\.localStorage\.setItem/.test(pageSrc) && /codeStepForStorage\(\{/.test(pageSrc), 'nothing else writes localStorage');
+  check(/until: Date\.now\(\) \+ PROOF_LIFE_MS/.test(pageSrc) && /setCodeAt\(Date\.now\(\)\)/.test(pageSrc), 'with the code\'s time and the proof\'s end');
+  check(/setCodeMessage\(restoredCodeMessage\(step, clockTime\)\)/.test(pageSrc) && /setCodeStatus\(res\.status === 'sent' \? 'sent' : 'unknown'\)/.test(pageSrc),
+    'a restored code says where and when it went, and whether it was sure it went');
+  check(/const startAgain = \(\) => \{/.test(pageSrc) && (pageSrc.match(/onClick=\{startAgain\}/g) || []).length >= 2,
+    '"Not you? Start again" forgets the step');
+});
+
+// ── Follow-up (finding of 21 Oct 2026, low): the code's reference ───────────
+guard("the code's reference", () => {
+  check(R.codeRef('3fa90000-0000-4000-8000-000000000000') === 'DRLK', 'codeRef: the same letters as the database and the e-mail (DRLK)');
+  check(R.codeRef('0123ABCD-ef01-4000-8000-000000000000') === 'ABCD' && /^[A-HJ-NP-R]{4}$/.test(R.codeRef('ffffeeee-0000-4000-8000-000000000000')),
+    'four letters, never a digit, an I or an O');
+  const followMig = src('supabase/migrations/20261021160000_bu_confirm_followup.sql');
+  check(/translate\(left\(replace\(lower\(p_id::text\), '-', ''\), 4\), '0123456789abcdef', 'ABCDEFGHJKLMNPQR'\)/.test(followMig)
+    && /const map = '0123456789abcdef';\s*const to = 'ABCDEFGHJKLMNPQR';/.test(src('supabase/functions/bu-confirm-code/message.ts')),
+    'the database and the e-mail map the id the same way');
+  check(/Type the code from our e-mail marked <strong[^>]*>\{codeRef\(codeId\)\}<\/strong>/.test(pageSrc), 'the page shows the mark next to the Code box');
+  check(!/latest e-mail/.test(followMig.slice(followMig.indexOf('FUNCTION public.builder_bu_confirm_code_verify'))), 'no message says "the latest e-mail"');
+});
+
+// ── Follow-up (medium): per-unit e-mails of before 21 Oct 2026 that failed ──
+guard('per-unit e-mails that failed', () => {
+  const legacyFailed = { mail: 'failed', error: '550 5.1.1 recipient rejected', at: '2026-10-18T06:00:00Z' };
+  a = R.unitAsk('u1', { status: 'PENDING', requestId: null, legacyLink: false, legacy: legacyFailed }, []);
+  check(a?.state === 'failed' && a.error === '550 5.1.1 recipient rejected' && a.earlier === null,
+    'an old per-unit row whose e-mail failed: "E-mail of … failed", not "Asked"', JSON.stringify(a));
+  a = R.unitAsk('u1', { status: 'PENDING', requestId: null, legacyLink: true, legacy: { mail: 'out', error: null, at: '2026-10-18T06:00:05Z' } }, []);
+  check(a?.state === 'asked' && a.at === '2026-10-18T06:00:05Z', 'one whose e-mail went: asked, dated when it went', JSON.stringify(a));
+  a = R.unitAsk('u1', { status: 'PENDING', requestId: null, legacyLink: false, legacy: { mail: 'waiting', error: null, at: null } }, []);
+  check(a?.state === 'waiting', 'one whose e-mail waits: queued');
+  const failedReq = [{ id: 'R9', unitIds: ['u1'], to: ['owner@client.test'], sentAt: '2026-10-21T08:00:00Z', createdAt: '2026-10-21T08:00:00Z',
+    mailStatus: 'failed', mailError: '550', mailSentAt: null, earlierLink: false }];
+  a = R.unitAsk('u1', { status: 'PENDING', requestId: 'R9', legacyLink: false, legacy: legacyFailed }, failedReq);
+  check(a?.state === 'failed' && a.earlier === null,
+    'a failed request over a per-unit e-mail that failed: no link reached the client (not "the per-unit link still takes answers")', JSON.stringify(a));
+  a = R.unitAsk('u1', { status: 'PENDING', requestId: 'R9', legacyLink: true, legacy: legacyFailed }, failedReq);
+  check(a?.earlier === null, 'even if a caller says legacyLink, a failed per-unit e-mail is not an earlier link');
+  check(R.freshCandidates([{ unitId: 'u1', unitNo: 'A-101', status: 'PENDING' }], [{ unitId: 'u1', status: 'PENDING', legacy: legacyFailed }])[0].legacy === legacyFailed,
+    'the pop-up keeps the per-unit e-mail\'s status');
+  check(/legacy_outbox_id/.test(data) && /from\('email_outbox'\)\.select\('id, status, error, sent_at'\)\.in\('id', legacyIds\)/.test(data)
+    && /legacyLink: !!legacy && legacy\.mail === 'out'/.test(data), 'BU Events reads the status of each per-unit e-mail, a link only when it went');
+  check(!/Asked \{shortDate\(cf\.sentAt\)\}/.test(eventsSrc) && /if \(!ask\) return null;/.test(eventsSrc), 'no "Asked <date>" from the row alone');
+  check(/legacy: c\?\.legacy \?\? null/.test(eventsSrc), 'BU Events gives the pop-up each unit\'s per-unit e-mail status');
+});
+
+// ── Follow-up (low): a failed send speaks of each unit's earlier link ───────
+guard('failed words per unit', () => {
+  check(R.failedMailWords(true, ['A-101', 'A-102', 'A-103'], ['A-101'])
+    === 'The earlier link still takes answers for A-101 until an e-mail goes out. No link to A-102, A-103 has reached the client.',
+    'A-101 had a link, A-102 and A-103 never did: said per unit', R.failedMailWords(true, ['A-101', 'A-102', 'A-103'], ['A-101']));
+  check(R.failedMailWords(true, ['A-101', 'A-102'], ['A-101', 'A-102']) === 'The earlier link still takes answers for A-101, A-102 until an e-mail goes out.',
+    'every unit had one: no "no link" sentence');
+  check(R.failedMailWords(false, ['A-103'], []) === 'No earlier link to A-103 has reached the client.', 'none had one');
+  check(R.failedMailWords(true, ['A-101'], null) === 'The earlier link still takes answers until an e-mail goes out.', 'a request sent before the change: as before');
+  check(/earlier_units/.test(data) && /earlierUnits: Array\.isArray\(res\.earlier_units\)/.test(data) && /earlierUnits: Array\.isArray\(r\.earlier_units\)/.test(data),
+    'the send and the requests carry earlier_units');
+  check(/failedMailWords\(rq\.earlierLink, nos, earlierNos\)/.test(eventsSrc), 'every request line on the event speaks per unit too');
+});
+
+// ── Follow-up (medium): the pop-up reads the requests again ─────────────────
+guard('the pop-up reads the requests again', () => {
+  check(/fetchConfirmRequests\(\[eventId\]\)/.test(dialogSrc) && /setFreshRequests\(reqs\)/.test(dialogSrc), 'the pop-up reads the event\'s requests when it opens');
+  check(/const last = \(reqs && \(reqs\.length \|\| !requests\.length\) \? reqs\[0\] : lastRequest\) \?\? null;/.test(dialogSrc)
+    && /setFilledFrom\(last\)/.test(dialogSrc) && !/if \(lastRequest\) \{/.test(dialogSrc),
+    'To is filled from the last request as it is now (the page\'s only when they cannot be read)');
+  check(/filledNow && mailOutcome\(filledNow\.mailStatus\) === 'failed'/.test(dialogSrc), 'the failed-To hint reads that request\'s status now');
+  const known = ['R1'];
+  const freshReqs = [{ id: 'R2', to: ['priya@client.test'], cc: ['accounts@client.test'] }, { id: 'R1', to: ['owner@client.test'], cc: [] }];
+  check(R.unseenRequest('R2', freshReqs, known)?.id === 'R2' && R.unseenRequest('R1', freshReqs, known) === null
+    && R.unseenRequest('R2', null, known) === null && R.unseenRequest(null, freshReqs, known) === null,
+    'a unit on a request the page had not loaded is found');
+  check(R.unseenRequestWords(freshReqs[0]) === 'Asked since this page loaded, in another request to priya@client.test, CC accounts@client.test.',
+    'and worded with its To and CC');
+  check(/unseenRequest\(c\.requestId, freshRequests, knownIds\)/.test(dialogSrc) && /\{unseenRequestWords\(unseen\)\}/.test(dialogSrc),
+    'the pop-up shows it under the unit');
+  check(/sent since this page loaded/.test(dialogSrc), 'and says when the To it filled in is from such a request');
+});
+
+// ── Verification of 20261021160000 (low): the live-apply order ──────────────
+guard('live-apply order', () => {
+  const fu = src('supabase/migrations/20261021160000_bu_confirm_followup.sql');
+  const head = fu.slice(0, fu.indexOf('\nBEGIN;'));
+  const steps = head.slice(head.indexOf('Live-apply steps'));
+  const step = (n) => ((steps.match(new RegExp(`^--\\s+${n}\\.\\s+([^\\n]*)`, 'm')) || [])[1] || '');
+  check(/^Deploy the Edge Function bu-confirm-code/.test(step(1)) && /^Apply this file to gcquafqxbykxkbexcdpy/.test(step(2))
+    && /^Deploy the app only once 20261021150000 is applied/.test(step(3)),
+    'the Edge Function goes first, then the file, then the app, once the merged release\'s last file is in (no message names a mark the e-mail lacks)',
+    `1: ${step(1)} | 2: ${step(2)} | 3: ${step(3)}`);
+  const pgx = src('src/pages/AgreementConfirmPage.tsx');
+  check(/A code from an e-mail with another mark was asked\s+for elsewhere: it does not work here, and typed here it stops working there too\./.test(pgx),
+    'the page says another e-mail\'s code, typed there, stops working where it was asked for');
+});
 
 // ── The public page ─────────────────────────────────────────────────────────
 const pu = (id, state, v = 100) => ({ unit_id: id, state, agreement_value: v });

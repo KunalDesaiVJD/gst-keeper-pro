@@ -199,8 +199,12 @@ directly on the button pressed."
   any CC addresses. "Name <address>" pastes from Outlook are read. Sending
   works when the client master has no e-mail.
 - The pop-up lists the outstanding units (pending, disputed or never sent)
-  with their agreement values, read again each time it opens. Staff may untick
-  any. Confirmed and accepted units are never asked again: a unit confirmed or
+  with their agreement values, read again each time it opens, together with
+  the event's requests: whether each e-mail went, the To it fills in ("as on
+  the last request" is the last request now, not as BU Events loaded it), and
+  a unit asked meanwhile in a colleague's request the page had not loaded
+  ("Asked since this page loaded, in another request to <To>, CC <CC>").
+  Staff may untick any. Confirmed and accepted units are never asked again: a unit confirmed or
   accepted while the pop-up is open is left out of the e-mail, and the send
   says so.
 - The send carries the status and answer time of each ticked unit as the
@@ -236,29 +240,79 @@ directly on the button pressed."
   kept in the firm's Sent Items, so staff cannot read a client's code. The
   page that asked for a code gets its id, and the code is typed back with it:
   only that page can try it, so another reader typing wrong codes "as" the
-  owner touches only their own codes. Limits, per link and counted per caller
-  (the IP the request came from) so that one reader cannot use up another's:
-  a code works for 30 minutes and 5 tries; 5 codes an hour and 10 a day to one
-  address, 20 an hour whatever the address, 10 wrong tries a day to one
-  address. Behind them, over all callers, at most 30 codes e-mailed a day to
-  one address and 60 an hour on a link, so nobody can flood a mailbox. These
-  caps count only codes that were e-mailed, and they never refuse a caller's
-  first 2 codes of the day to an address: other callers cannot lock a reader
-  out, however many codes they ask for (round 4: six callers asking 5 codes
-  each, never e-mailed, locked the owner out for a day). A reader who used up
-  their own limits waits an hour or a day, or writes to the firm, which may
-  accept the value ("Accept without confirmation"). Only hashes are stored, in
-  `builder_bu_confirm_codes` (private: RLS on, no policies, like
-  `client_password_resets`).
-- The page keeps the code step per link in the reader's browser (localStorage:
-  name, address, the code's id and when it was asked, the proof and when it
-  ends) and restores it on load. A phone mail app that closes the link's tab
-  to show the inbox, or a reload, no longer loses the code already e-mailed or
-  the proof. A code is dropped after its 30 minutes, a proof after its 2
+  owner touches only their own codes. Each code's e-mail is marked with a
+  reference of 4 letters taken from the code's id (in its subject and body;
+  no digits, so it is never typed as the code), and the page shows the same
+  mark next to the Code box ("Type the code from our e-mail marked DRLK").
+  The messages name that e-mail, never "the latest e-mail": when two pages
+  ask codes for one address (a shared mailbox, or another holder of the
+  link), the newest code in the mailbox may be the other page's. Digits that
+  are the code of another of our e-mails to that address on that link are
+  said to be that and are not counted as a wrong try, so typing the other
+  page's code never locks a reader out (finding of 21 Oct 2026: five such
+  tries ended the owner's code, two rounds locked the owner out for the
+  day). That other code is spent in the same statement
+  (`typed_elsewhere_at`): it never gives a proof afterwards, to anyone, and
+  its page says "That code was typed on another page, so it no longer works"
+  and asks for a new one. Without that, the answer was a free check of a
+  guess against every live code on the link, and a hit was then typed
+  against its own code id for a proof: one caller holding 5 codes tested 50
+  a day instead of 10, and 11 callers holding 40 codes stood about a 0.44%
+  daily chance of answering as the owner (verification of `20261021160000`,
+  medium). The price: two people sharing a mailbox who each type the other's
+  code first both ask again. A code works for 30 minutes and 5 tries.
+  Limits (`20261021160000`; finding of 21 Oct 2026: they were counted per
+  link, so every link ever sent took 10 codes a day to an address, links with
+  nothing left to answer too, and rotating addresses in one IPv6 /64 made a
+  new caller each time: 50 codes reached one mailbox from one caller over five
+  links, 104 over one link from one /64):
+  - A caller is one IPv4 address, or one IPv6 /64 (a single host gets a whole
+    /64). Per caller and address, on one link: 5 codes an hour (the refusal
+    names the e-mail to type by its mark) and 10 a day. A proof holds on one
+    link only, so a reader with several live links needs a code on each:
+    counted over every link (a first version of `20261021160000`), the sixth
+    link of a reader with six was refused, told to type a code "this page
+    asked for" when it had asked for none (verification, low). Over every
+    link, 20 a day per caller and address, a limit of its own that says
+    "over all our links"; 20 an hour per caller whatever the address or link;
+    10 wrong tries a day to one address on a link.
+  - Over all callers and every link, at most 30 codes e-mailed a day to one
+    address; past 30 only a caller's first 2 codes of the day to that address
+    go, and never more than 40 in all. On one link, 60 e-mailed an hour; past
+    60 only a caller's first 2, never more than 80. "E-mailed" is a code the
+    mailer claimed and did not report failed: codes asked for and never sent
+    cost nothing (round 4: six callers asking 5 codes each, never e-mailed,
+    locked the owner out for a day), and the mailer checks the ceilings again
+    when it claims a code, so codes asked for in parallel cannot pass them
+    together.
+  - No code is e-mailed on a link where nothing is waiting for an answer
+    (every unit confirmed, disputed, accepted, replaced by a newer e-mail that
+    went out, or not sent).
+  So a mailbox gets at most 40 codes a day, whoever asks and however many
+  links it holds. The price of that ceiling: callers on 8 or more networks
+  (3 taking 10 codes each, then 5 taking 2) who have 40 codes actually
+  e-mailed to an address (each one in that mailbox, so the reader sees why)
+  leave its reader without a code for the day. That reader, like one who used up their own limits, waits an hour or a
+  day, or writes to the firm, which may accept the value ("Accept without
+  confirmation"). Only hashes are stored, in `builder_bu_confirm_codes`
+  (private: RLS on, no policies, like `client_password_resets`).
+- The page keeps the code step per link in the reader's browser and restores
+  it on load: in localStorage the name, the address, the code's id, when it
+  was asked and whether the mailer said it was sent; the proof (and when it
+  ends) only in sessionStorage, for the tab that checked the code. A phone
+  mail app that closes the link's tab to show the inbox no longer loses the
+  code already e-mailed, and a reload of the tab keeps the proof; but someone
+  else using the same browser who opens the link in a new tab must ask for a
+  code and read that mailbox before answering as the address (finding of 21
+  Oct 2026: the proof in localStorage let anyone at a shared office PC answer
+  as the checked address for 2 hours, with no code). "Not you? Start again"
+  forgets the step. A code the mailer did not report on is restored as "We
+  could not confirm the code was sent", not "We e-mailed a code" (same
+  finding). A code is dropped after its 30 minutes, a proof after its 2
   hours; a browser that blocks storage simply starts afresh. The code is not
-  put in the e-mail's subject: the firm's Microsoft 365 message trace lists
-  the subjects of what it sends, so its admins could read a client's code
-  there.
+  put in the e-mail's subject (its reference is): the firm's Microsoft 365
+  message trace lists the subjects of what it sends, so its admins could read
+  a client's code there.
 - Name and e-mail are kept, with the time, on each unit answered
   (`responded_by_name`, `responded_by_email`, `responded_at`). The BU Events
   page shows "Confirmed by <name> (<email>) on <date>" per unit and on the
@@ -311,14 +365,24 @@ directly on the button pressed."
 - A re-send while an earlier request's e-mail still waits in the outbox
   cancels that e-mail when the new request asks everything it asked (or the
   rest is answered), so the client never gets a link that opens "replaced".
-  When the new e-mail fails, staff are told whether an earlier link still
-  takes answers, or that no earlier link to the request's units has reached
-  the client (`builder_bu_confirm_requests.earlier_link`; said of those units,
-  since an earlier e-mail about other units may have been answered).
+  When the new e-mail fails, staff are told, unit by unit, whether an earlier
+  link still takes answers: "The earlier link still takes answers for A-101
+  until an e-mail goes out. No link to A-102, A-103 has reached the client."
+  The send records which of its units had one
+  (`builder_bu_confirm_requests.earlier_units`, `20261021160000`; finding of
+  21 Oct 2026: the sentence was said of every unit when only some had a link).
+  A request sent before that has only `earlier_link` (some unit had one) and
+  keeps the old sentence.
 - A unit is shown as asked only once its e-mail is out. BU Events shows
   "Asked <date>" when the unit's request went out (dated when it went), and
   otherwise "E-mail of <date> failed: <why>" or "queued, not sent yet", with
-  whether an earlier link to the unit still takes answers. Every request whose
+  whether an earlier link to the unit still takes answers. The same holds for
+  a per-unit e-mail of before 21 Oct 2026: its outbox status
+  (`legacy_outbox_id`; a row that is gone counts as out, as the database
+  counts it) decides whether the unit was asked and whether that link is an
+  earlier link that still answers (finding of 21 Oct 2026: such a unit showed
+  "Asked" and "the per-unit link still takes answers" when that e-mail had
+  failed). Every request whose
   e-mail failed or waits and that units still wait on gets its own line on
   the event, not only the last one. The pop-up badges such units "Pending ·
   e-mail failed" or "Pending · not sent yet", and says when the To it fills
@@ -342,7 +406,9 @@ directly on the button pressed."
 
 *Migration `20261021140000_bu_confirm_cc.sql` (send, lookup, code and answer
 functions; template `builder_bu_agreement_confirm_request`, editable under
-Reminders, Templates, Builder); Edge Function `bu-confirm-code`; tests
+Reminders, Templates, Builder) and `20261021160000_bu_confirm_followup.sql`
+(the code limits per link, over every link and over all callers, the code's
+reference, a code typed on another page spent, `earlier_units`); Edge Function `bu-confirm-code`; tests
 `supabase/tests/bu_confirm/run.sh`, `deno test --allow-read
 supabase/functions/bu-confirm-code/test/` and
 `node scripts/verify-bu-confirm.mjs`; `src/lib/builderConfirmRules.ts`,

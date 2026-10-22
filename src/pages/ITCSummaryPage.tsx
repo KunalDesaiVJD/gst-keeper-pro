@@ -13,12 +13,14 @@ import { cn } from '@/lib/utils';
 import { isQuarterEndMonth } from '@/types';
 import { Lock, AlertCircle, Save, FileText, History, Trash2, Receipt, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
 import { TableEmptyState } from '@/components/ui/table-empty-state';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchFiledFigures } from '@/lib/itcAutoLink';
 import type { Json } from '@/integrations/supabase/types';
 import { exportITCSummaryToPDF } from '@/utils/itcPdfExport';
 import { with4D1Total } from '@/lib/itc4D';
@@ -197,6 +199,10 @@ const ITCSummaryPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [itcSummaryId, setItcSummaryId] = useState<string | null>(null);
   const [reversalFromReco, setReversalFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  // The month's recorded filed figures could not be read (docs §13): its rows
+  // 4B(2)(i), 5.4 and 4D(1.2) are not shown from today's lists instead, and
+  // Save stays off until a reload reads them (fail closed).
+  const [filedFiguresError, setFiledFiguresError] = useState<string | null>(null);
   const [reclaimFromReco, setReclaimFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [expenseOutFromReco, setExpenseOutFromReco] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [eligibleFromImport2B, setEligibleFromImport2B] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
@@ -384,6 +390,30 @@ const ITCSummaryPage: React.FC = () => {
       setReversalFromReco({ igst: 0, cgst: 0, sgst: 0 });
       setReclaimFromReco({ igst: 0, cgst: 0, sgst: 0 });
       setExpenseOutFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      return;
+    }
+
+    // A prior month changed after filing shows its 2B Reconciliation rows
+    // (4B(2)(i), 5.4, 4D(1.2)) as recorded just before the change, not from
+    // today's lists: a GST Manager's correction of a filed month's books
+    // entries (docs §13) moves only its Suspended Reco books side.
+    let filed: Awaited<ReturnType<typeof fetchFiledFigures>> = null;
+    try {
+      filed = await fetchFiledFigures(selectedClient, selectedMonth);
+      setFiledFiguresError(null);
+    } catch (err) {
+      const msg = (err as Error).message;
+      setFiledFiguresError(msg);
+      toast.error(`${msg}. Rows 4B(2)(i), 5.4 and 4D(1.2) show 0; reload the page before saving.`);
+      setReversalFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      setReclaimFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      setExpenseOutFromReco({ igst: 0, cgst: 0, sgst: 0 });
+      return;
+    }
+    if (filed) {
+      setReversalFromReco(filed.reversal);
+      setReclaimFromReco(filed.reclaim);
+      setExpenseOutFromReco(filed.expenseOut);
       return;
     }
 
@@ -905,6 +935,10 @@ const ITCSummaryPage: React.FC = () => {
     if (!selectedClient || !selectedMonth) return;
     if (import2BReadFailed) {
       toast.error('Rows 5.1 and 5.3 could not be read from Import 2B, so they show 0. Reload the page before saving.');
+      return;
+    }
+    if (filedFiguresError) {
+      toast.error(`Rows 4B(2)(i), 5.4 and 4D(1.2) could not be read (${filedFiguresError}), so they show 0. Nothing was saved; reload the page before saving.`);
       return;
     }
 
@@ -1571,6 +1605,7 @@ const ITCSummaryPage: React.FC = () => {
                   Versions
                 </Button>
               )}
+              <ChangeHistoryButton page="itc" clientId={selectedClient} month={selectedMonth} />
             </div>
           </div>
         </CardContent>

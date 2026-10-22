@@ -2,6 +2,85 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-21 — Who did it, for the change log (v0.17.0)
+
+- Every request to the database (`/rest/v1`, tables and RPCs) now says it comes from the extension (`x-gst-source: extension`) and carries a request id (`x-gst-request`). While a job the app started is running, it also names the app user who started it (`x-gst-actor`, the job's `actorId`, the same id the app sends). A scheduled sync names no one. The database's change log (`gst_change_log`, migration `20261021150000_gst_change_log.sql`) records these with every row the extension writes, so a pull shows as "Extension, for Gita" in Change history.
+- Every job the app starts keeps the user's `actorId` from the app's message: the ledger pull (`startLedgerPull`), the return pull (`startReturnPull`), the 2B and 2A pulls, the filing page (`startFilingOpen`), the section and all-clients pulls, as the GSTR-1 upload, the e-invoice pull and the GSTR-3B push already did. An office-agent job (`startAgentJob`) keeps the person who queued it. `appbridge.js` passes the messages on unchanged.
+- The scheduled Chrome runner (`runner.js`, the live runner) keeps the person who queued a job too (`portal_jobs.requested_by`, from `portal_job_claim`), so a pull queued from the app names them; a scheduled job names no one. Test `test/18-runner-actor.test.mjs`.
+- Uploads to Storage (return PDFs) are unchanged: another API, not logged there.
+- Nothing else changes. An older extension still works; its writes are logged with no person unless they write a saved-by field themselves.
+- **One release, 0.17.0, carries 0.16.0 and 0.15.0 below** (the reco pull and GSTR-3B push gate, the filed-return pull for Filing Status), none of which was released on its own: the three were merged on 21 Oct 2026. GST Keeper requires 0.16.0 or later (`MIN_EXTENSION_VERSION`) and recommends 0.17.0. Migrations `20261021110000`, `20261021120000` and `20261021150000` must be live first.
+- Test `test/17-actor-headers.test.mjs`.
+
+## 2026-10-21 — Reco pulls through the database, GSTR-3B push gate (v0.16.0)
+
+The firm's decisions of 21 Oct 2026: from the Jun-2026 period Suspended Reco and GST Receivable Reco come only from the portal pull, for every client (Nil returns too), and a GSTR-3B is pushed only when both are pulled and show no difference. Migration `20261021120000_reco_pull_push_gate.sql` must be live first.
+
+- **The pull saves through `reco_record_pull`.** The credit ledger (opening, ITC utilised, DRC-03) and the reversal ledger (opening) go through one database function, which stamps the time, who asked and this version. It clears the CSV stamps, closes an open manual allowance for the month, and keeps an override made against the same portal figure (one made against another figure is cleared). A direct write to `suspended_reco` / `gst_receivable_reco` (the old `upsertReco`, removed) is refused by the database from 06/2026.
+- **This client's page only.** Before either ledger is read or saved, the page header's GSTIN must be the job's client's, as the push already checks (`headerShowsOther`). Another client's GSTIN there (someone logged another client in, in this Chrome) stops the job with nothing saved: "…so nothing was saved for this client. … pull again." A header with no GSTIN shown cannot be checked and the pull goes on, as before.
+- **Who pulled.** The reco pages send the signed-in user's id with `__gstkPullLedgers` (`actorId`); it rides on the job and is saved as `opening_portal_pulled_by`. The database refuses a pull without a staff member, so the popup's full sync (no app user) reads the two ledgers but does not save them, and says so on the banner.
+- **A month with no reversal balance.** When the reversal statement loads for the month, shows no balance row, and the page says there are no records, the pull saves 0 and marks it "no balance on the portal" (`p_no_rows`). A Nil client then passes by pulling, with no manual allowance. Without such words on the page nothing is saved, as before. The portal's exact wording for an empty month is not confirmed live: check one Nil client (the diagnostic box shows what was read).
+- **ITC utilised.** With ledger rows read and no "other than reverse charge" set-off debit among them, ITC utilised is saved as 0 (the portal's figure). It stays empty only when no ledger row was read. GST Keeper no longer replaces a pulled empty figure with its GSTR-1 estimate.
+- A save the database refuses shows in red on the banner ("read, but NOT saved: …") and the job moves on.
+- **The GSTR-3B push asks the gate first.** `startGstr3bPush` calls `gstr3b_push_gate` for the client and period before it opens the portal, whatever the page decided. A "no", an error or no answer stops it there with the reasons ("GSTR-3B push stopped: …"), and nothing is recorded. The check that let it start is saved with the Push History row (`gate`), when the database has that column.
+- The app needs v0.16.0: it asks for it before a reco Pull or a GSTR-3B push, and `MIN_EXTENSION_VERSION` is 0.16.0.
+- **0.16.0 also carries 0.15.0 below** (the filed-return pull for Filing Status). Neither was released on its own: both go out inside 0.17.0 (above). Migrations `20261021110000` and `20261021120000` must both be live first.
+- Older copies of the extension push without asking the gate. The database now records the check itself on every Push History row, and such a push, when the check does not pass, is recorded but does not mark the return Pushed (migration 20261021120000).
+- Test `test/16-reco-pull-gate.test.mjs` covers the gate before a push, the pull's save (with its user, or not at all), the empty month, the ITC utilised rule and the header check before a pull saves.
+
+## 2026-10-21 — Filed returns pulled for Filing Status, checked (v0.15.0)
+
+The firm's decision: Filing Status is pulled from the portal only (GST Keeper migration
+`20261021110000`, `docs/FILING_STATUS_PULL_ONLY.md`). Released inside 0.17.0 (above); GST Keeper requires 0.16.0 or later.
+
+- **The stored PDF is the filed return and shows its ARN** (`filedpdf.js`, a new content script).
+  The portal's PDFs keep their words behind Identity-H fonts; the checker reads them through each
+  font's ToUnicode map and refuses the GSTR-3B "System generated summary" (26 of 191 pulled
+  GSTR-3B PDFs before), a GSTR-1A or the GSTR-1 + GSTR-1A consolidated summary for a GSTR-1, a
+  return of another kind, and a PDF that does not print the ARN. Every PDF the click produces is
+  checked, so a summary that comes first is passed over. Nothing certain: no PDF is stored and
+  the reason is recorded with the ARN. The red "SYSTEM GENERATED" button is never clicked.
+- **Exact return type.** The Return Type option and the e-Filed Returns row must be exactly the
+  return asked for (0.14.0 took any type starting with "GSTR1": SBL-UK 09/2026 got its GSTR-1A
+  ARN on the GSTR-1 row), and the row must be the year and month asked for. A GSTR-1A seen is
+  saved as its own `gst_filed_returns` record (`GSTR1A`) and logged, never on the GSTR-1 row.
+- **ARN and filing date from the portal**: the form details (`api/formdetails`), else the row's
+  date (slashes or dashes, with or without a time), else the PDF's "Date of ARN". Never the day
+  of the pull (13 rows had it), and the two ARNs must agree.
+- **One door, and the answer is shown.** `markFiled` and `upsertFilingStatus` are gone; a pull is
+  recorded through `filing_record_pull`, which answers filed / refreshed / conflict / refused: the
+  same ARN refreshes, a different ARN changes nothing and goes to the superadmin. The banner shows
+  the answer, and the job's end says what each return came to.
+- **One return, a client's returns, or every return in view**: `startReturnPull` takes
+  `items` (one login per client), `actorId` (who asked) and `requestId`. A client without a saved
+  login is reported at once. Each outcome goes to the page (`gstk_return_pull_progress` →
+  `__gstkReturnPullProgress`) and the whole pull at the end (`gstk_return_pull_result` →
+  `__gstkReturnPullDone`, returns not reached included, also when the tab is closed); outcomes
+  that wrote nothing are logged through `filing_pull_report`.
+- **Returns not reached are logged in GST Keeper too** (review round 1): a client whose login was
+  refused or whose session kept dropping, and every return left when the portal tab is closed,
+  are reported `failed` ("Not pulled. ...") with the request id, so Filing Status shows why after
+  a reload. A download that navigated instead of saving keeps the ARN and date already read.
+- **A new file for every pull** (review round 1): a checked PDF is stored as
+  `<client>/<MM-YYYY>/<type>-<ARN>-<pull time>.pdf` and uploaded without overwrite
+  (`uploadPdf(path, dataUrl, { upsert: false })`; every other upload keeps overwriting), so no
+  older copy can put another file under a checked one's name, and a refresh of the same ARN gives
+  a new address the log keeps next to the old one.
+- **One pull at a time, and none dropped silently** (review round 2): a second `startReturnPull`
+  while one runs is refused with words the page shows; a pull that ends early (idle 10 minutes,
+  3 hours, its tab gone, Stop in the popup, or another start taking the job slot) reports every
+  return it did not reach through `filing_pull_report` (`failed`, `not_reached`, "Not pulled:
+  <why>.") and to the page (`gstk_return_pull_result.ended`). The background watchdog now ends an
+  idle filed-return pull even when no portal page loads (`endReturnPull`, `endedReturnPull`).
+- **The page follows the pull, not a clock** (review round 3): Filing Status asks every 30 s
+  whether the pull it started is still running (`__gstkReturnPullAsk { requestId }` → background
+  `returnPullStatus` → `__gstkReturnPullAlive { requestId, live, running, done, total }`), and
+  keeps waiting while the answer is yes, however many clients a bulk pull has. A pull past the
+  idle or 3-hour limit is ended and reported before the answer, so "running" is never said of a
+  pull that is over. The page gave up 15 minutes after the start before.
+- Tests: `test/16-filed-return-pull.test.mjs`, fixtures `test/fixtures/*.pdf` (fictional, made by
+  `test/_pdffixture.mjs` the way the portal's pdfmake makes them).
+
 ## 2026-10-15 — GSTR-2A credit and debit notes (v0.14.0)
 
 - The GSTR-2A pull also reads the credit and debit notes (CDN), after the B2B invoices, so the 2A vs 2B report can match the 2B's CDNR documents. Before, they were all "Not compared" (521 of 3,169 documents in one real client's year).

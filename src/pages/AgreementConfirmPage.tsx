@@ -12,7 +12,8 @@ import { cn } from '@/lib/utils';
 import { formatINR } from '@/utils/builderRates';
 import { askConfirmCode, emailOk, verifyConfirmCode } from '@/lib/builderAgreementConfirmData';
 import {
-  codeStepKey, confirmAllTargets, pageSummary, PROOF_LIFE_MS, readCodeStep, type CodeStep, type PageUnitState,
+  codeRef, codeStepForStorage, codeStepKey, confirmAllTargets, pageSummary, PROOF_LIFE_MS, readCodeStep,
+  restoredCodeMessage, type CodeStep, type PageUnitState,
 } from '@/lib/builderConfirmRules';
 import { GST_FIRM } from '@/lib/gstReminders';
 import logo from '@/assets/logo.png';
@@ -33,10 +34,17 @@ import logo from '@/assets/logo.png';
 // (the page says an answer stands and how to object), a disputed one waits
 // for the firm. A unit whose dispute box is open is left out of "Confirm all".
 // Long addresses, notes and links wrap rather than widen the page on a phone.
-// The code step (name, address, the code's id, the proof) is kept per link in
-// this browser's localStorage and restored on load, so a phone mail app that
-// closes the tab to show the inbox, or a reload, does not lose the code
-// already e-mailed or the proof (round 4). Every access is wrapped: a private
+// The code step is kept per link and restored on load (round 4): the name,
+// the address, the code's id and time and whether the mailer said it was sent
+// in localStorage, so a phone mail app that closes the tab to show the inbox
+// does not lose the code already e-mailed; the proof only in sessionStorage,
+// for this tab (a reload keeps it), so someone else using the same browser
+// cannot answer as the checked address in a new tab without a code (finding
+// of 21 Oct 2026). "Not you?" clears the step. Each code's e-mail is marked
+// with a reference (codeRef) shown next to the Code box, so a reader who gets
+// two codes (a shared mailbox, another holder of the link) types the one this
+// page asked for; the other page's code, typed here, stops working there too
+// (the database spends it, 20261021160000). Every access is wrapped: a private
 // window, blocked storage or a preview just starts afresh.
 
 type UnitState = PageUnitState;
@@ -76,17 +84,19 @@ const RESULT_WORDS: Record<string, string> = {
 
 const CONTACT = `If you have not received it, please write to us at ${GST_FIRM.email}.`;
 
-const storeGet = (key: string): string | null => {
+type Kept = 'local' | 'session';
+const storage = (kind: Kept): Storage => (kind === 'local' ? window.localStorage : window.sessionStorage);
+const storeGet = (kind: Kept, key: string): string | null => {
   try {
-    return window.localStorage.getItem(key);
+    return storage(kind).getItem(key);
   } catch {
     return null;
   }
 };
-const storeSet = (key: string, value: string | null) => {
+const storeSet = (kind: Kept, key: string, value: string | null) => {
   try {
-    if (value === null) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, value);
+    if (value === null) storage(kind).removeItem(key);
+    else storage(kind).setItem(key, value);
   } catch {
     // Storage blocked or full: the step lives in the page only.
   }
@@ -106,6 +116,8 @@ const AgreementConfirmPage: React.FC = () => {
   const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
   const [codeId, setCodeId] = useState<string | null>(null);
   const [codeAt, setCodeAt] = useState<number | null>(null);
+  // What the mailer said about the latest code: sent, or did not report back.
+  const [codeStatus, setCodeStatus] = useState<CodeStep['codeStatus']>(null);
   const [code, setCode] = useState('');
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeMessage, setCodeMessage] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null);
@@ -128,33 +140,43 @@ const AgreementConfirmPage: React.FC = () => {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Restore the code step kept for this link, once per token.
+  // Restore the code step kept for this link, once per token: the proof only
+  // from this tab's sessionStorage.
   useEffect(() => {
     if (!token) return;
-    const step = readCodeStep(storeGet(codeStepKey(token)), Date.now());
+    const key = codeStepKey(token);
+    const step = readCodeStep(storeGet('local', key), storeGet('session', key), Date.now());
     setName(step?.name ?? '');
     setEmail(step?.email ?? '');
     setCodeSentTo(step?.codeSentTo ?? null);
     setCodeId(step?.codeId ?? null);
     setCodeAt(step?.codeAt ?? null);
+    setCodeStatus(step?.codeStatus ?? null);
     setProof(step?.proof && step.proofEmail && step.proofUntil
       ? { proof: step.proof, email: step.proofEmail, until: step.proofUntil } : null);
-    setCodeMessage(step?.codeSentTo && step.codeAt && !step.proof
-      ? { tone: 'ok', text: `We e-mailed a code to ${step.codeSentTo} at ${clockTime(step.codeAt)}. Type it below, or ask for a new one.` }
-      : null);
+    // "E-mailed", or, when the mailer did not report back, that it may not have gone.
+    setCodeMessage(restoredCodeMessage(step, clockTime));
     setRestoredFor(token);
   }, [token]);
 
-  // Keep it as it changes.
+  // Keep it as it changes: the proof in sessionStorage, the rest in localStorage.
   useEffect(() => {
     if (!token || restoredFor !== token) return;
-    const step: CodeStep = {
-      name, email, codeSentTo, codeId, codeAt,
+    const kept = codeStepForStorage({
+      name, email, codeSentTo, codeId, codeAt, codeStatus,
       proof: proof?.proof ?? null, proofEmail: proof?.email ?? null, proofUntil: proof?.until ?? null,
-    };
-    const empty = !name && !email && !codeId && !proof;
-    storeSet(codeStepKey(token), empty ? null : JSON.stringify(step));
-  }, [token, restoredFor, name, email, codeSentTo, codeId, codeAt, proof]);
+    });
+    const key = codeStepKey(token);
+    storeSet('local', key, kept.local);
+    storeSet('session', key, kept.session);
+  }, [token, restoredFor, name, email, codeSentTo, codeId, codeAt, codeStatus, proof]);
+
+  // "Not you?": forget the name, the address, the code and the proof kept for this link.
+  const startAgain = () => {
+    setName(''); setEmail(''); setCode('');
+    setCodeSentTo(null); setCodeId(null); setCodeAt(null); setCodeStatus(null);
+    setProof(null); setCodeMessage(null);
+  };
 
   const typedEmail = email.trim().toLowerCase();
   // The proof holds only for the address it was given for.
@@ -182,11 +204,13 @@ const AgreementConfirmPage: React.FC = () => {
       setCodeSentTo(person.e);
       setCodeId(res.codeId);
       setCodeAt(Date.now());
+      // Kept, so a reload says the same (finding of 21 Oct 2026).
+      setCodeStatus(res.status === 'sent' ? 'sent' : 'unknown');
       setCode('');
       // 'unknown': the mailer did not report back, so the code may not have gone.
       setCodeMessage(res.status === 'sent'
-        ? { tone: 'ok', text: `We have e-mailed a 6-digit code to ${person.e}. It works for 30 minutes. If it is not there in a minute or two, look in the spam folder, or ask for a new one.` }
-        : { tone: 'warn', text: `We could not confirm the code was sent to ${person.e}. If it is not there in a minute, ask for a new one, or write to us at ${GST_FIRM.email}.` });
+        ? { tone: 'ok', text: `We have e-mailed a 6-digit code to ${person.e}, in an e-mail marked ${res.ref}. It works for 30 minutes. If it is not there in a minute or two, look in the spam folder, or ask for a new one.` }
+        : { tone: 'warn', text: `We could not confirm the code was sent to ${person.e}. If no e-mail marked ${res.ref} comes in a minute, ask for a new one, or write to us at ${GST_FIRM.email}.` });
     } catch (e) {
       setCodeMessage({ tone: 'bad', text: (e as Error).message });
     } finally {
@@ -242,7 +266,7 @@ const AgreementConfirmPage: React.FC = () => {
     } catch (e) {
       const msg = (e as Error).message;
       // An old proof (over 2 hours): check the address again.
-      if (/with the code we send/.test(msg)) { setProof(null); setCodeSentTo(null); setCodeId(null); setCodeAt(null); }
+      if (/with the code we send/.test(msg)) { setProof(null); setCodeSentTo(null); setCodeId(null); setCodeAt(null); setCodeStatus(null); }
       toast.error(`Could not save your answer: ${msg}`);
       setNotice(msg);
     } finally {
@@ -339,9 +363,12 @@ const AgreementConfirmPage: React.FC = () => {
             <Input id="cf-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
           </div>
           {proved ? (
-            <p className="flex min-w-0 items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400 sm:col-span-2">
+            <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400 sm:col-span-2">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
               <span className="min-w-0 [overflow-wrap:anywhere]">{proved.email} is checked. You can answer below.</span>
+              <button type="button" className="text-muted-foreground underline hover:text-foreground" onClick={startAgain}>
+                Not you? Start again
+              </button>
             </p>
           ) : (
             <div className="min-w-0 space-y-2 sm:col-span-2">
@@ -372,6 +399,14 @@ const AgreementConfirmPage: React.FC = () => {
                   </>
                 )}
               </div>
+              {codeSentTo && codeSentTo === typedEmail && codeId && (
+                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  Type the code from our e-mail marked <strong className="tracking-wider text-foreground">{codeRef(codeId)}</strong>
+                  {codeAt ? `, asked for at ${clockTime(codeAt)}` : ''}. A code from an e-mail with another mark was asked
+                  for elsewhere: it does not work here, and typed here it stops working there too.{' '}
+                  <button type="button" className="underline hover:text-foreground" onClick={startAgain}>Not you? Start again</button>
+                </p>
+              )}
               {codeMessage && (
                 <p className={cn('text-xs [overflow-wrap:anywhere]', codeMessage.tone === 'bad' ? 'text-destructive'
                   : codeMessage.tone === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground')}>

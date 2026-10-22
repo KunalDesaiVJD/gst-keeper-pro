@@ -26,8 +26,8 @@
     getClients: () => call('getClients'),
     getClient: (id) => call('getClient', id),
     einvoiceExcelLatest: (clientId, period) => call('einvoiceExcelLatest', clientId, period),
-    upsertFilingStatus: (rows) => call('upsertFilingStatus', rows),
-    upsertReco: (table, clientId, period, patchObj) => call('upsertReco', table, clientId, period, patchObj),
+    // 0.16.0: a reco pull goes through reco_record_pull (see background.js).
+    recordRecoPull: (info) => call('recordRecoPull', info),
     replaceTwob: (clientId, period, rows) => call('replaceTwob', clientId, period, rows),
     replaceCreditLedgerTxns: (clientId, period, rows) => call('replaceCreditLedgerTxns', clientId, period, rows),
     replaceLiabilityLedgerEntries: (clientId, period, rows) => call('replaceLiabilityLedgerEntries', clientId, period, rows),
@@ -52,8 +52,12 @@
     replaceRcmLiabilityItcEntries: (clientId, financialYear, rows) => call('replaceRcmLiabilityItcEntries', clientId, financialYear, rows),
     fetchCrossOriginAsBase64: (url) => call('fetchCrossOriginAsBase64', url),
     getDnrDebug: () => call('getDnrDebug'),
-    uploadPdf: (path, dataUrl) => call('uploadPdf', path, dataUrl),
-    markFiled: (row) => call('markFiled', row),
+    uploadPdf: (path, dataUrl, opts) => call('uploadPdf', path, dataUrl, opts),
+    // 0.15.0: a pulled return goes through filing_record_pull only.
+    recordFiledPull: (p) => call('recordFiledPull', p),
+    reportFiledPull: (p) => call('reportFiledPull', p),
+    // 0.15.0 (round 2): end a filed-return pull, reporting the returns it did not reach.
+    endReturnPull: (requestId, why) => call('endReturnPull', requestId, why),
     // 0.8.4: one e-invoice pull — upserts einvoice_docs (from the portal's
     // GSTR-1 JSON, when given) and einvoice_pulls. See background.js.
     saveEinvoicePull: (info) => call('saveEinvoicePull', info),
@@ -119,7 +123,7 @@
     if (!cfg) throw new Error('config.js is not loaded on this page');
     const r = await fetch(cfg.SUPABASE_URL + '/rest/v1/rpc/' + fn, {
       method: 'POST',
-      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'x-gst-source': 'extension' },
       body: JSON.stringify(body || {}),
     });
     if (!r.ok) throw new Error('RPC ' + fn + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
@@ -132,7 +136,7 @@
     const cfg = globalThis.GSTK_CONFIG;
     if (!cfg) throw new Error('config.js is not loaded on this page');
     const r = await fetch(cfg.SUPABASE_URL + '/rest/v1/' + path, {
-      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY },
+      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY, 'x-gst-source': 'extension' },
     });
     if (!r.ok) throw new Error('GET ' + path.split('?')[0] + ' -> ' + r.status + ' ' + (await r.text()).slice(0, 120));
     return r.json();

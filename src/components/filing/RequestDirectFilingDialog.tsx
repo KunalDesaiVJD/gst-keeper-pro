@@ -21,7 +21,7 @@ export interface DirectFilingTarget {
   periodMonth: string;
   /** The approval row currently speaking for this return, if any. */
   current: DirectFilingApproval | null;
-  /** Opened from the status dropdown's "Filed" choice — offers to carry on. */
+  /** Opened from Pull — offers to carry on with the pull once approved. */
   fromFiled?: boolean;
 }
 
@@ -74,8 +74,8 @@ const RequestDirectFilingDialog: React.FC<{
         approveNow,
       });
       if (r.ok) {
-        if (approveNow) toast.success(`Recorded and approved — ${target.returnType} ${target.periodMonth} can now be marked Filed.`);
-        else toast.success('Request sent to the superadmin. You can mark it Filed once it is approved.');
+        if (approveNow) toast.success(`Recorded and approved — ${target.returnType} ${target.periodMonth} can now be pulled from the portal.`);
+        else toast.success('Request sent to the superadmin. The return can be pulled from the portal once it is approved.');
         onDone(r.approval, approveNow);
       } else if (r.alreadyPending) {
         toast.info('A request for this return is already waiting for the superadmin.');
@@ -92,7 +92,7 @@ const RequestDirectFilingDialog: React.FC<{
     <Dialog open onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle className="text-base">Direct-filing approval needed</DialogTitle>
+          <DialogTitle className="text-base">Request approval: direct filing</DialogTitle>
           <DialogDescription className="text-xs">
             {target.clientName} · {target.returnType} · {target.periodMonth}
           </DialogDescription>
@@ -165,7 +165,7 @@ const RequestDirectFilingDialog: React.FC<{
           {isSuperadmin && (
             <Button size="sm" className={WS_BTN} disabled={(!pending && !reasonOk) || !!busy} onClick={() => submit(true)}>
               {busy === 'approve' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {target.fromFiled ? 'Approve now & mark Filed' : 'Approve now'}
+              {target.fromFiled ? 'Approve now & pull' : 'Approve now'}
             </Button>
           )}
         </DialogFooter>

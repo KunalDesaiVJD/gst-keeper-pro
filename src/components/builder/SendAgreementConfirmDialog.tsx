@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -12,13 +12,13 @@ import { toast } from 'sonner';
 import { Loader2, Send } from 'lucide-react';
 import { formatINR } from '@/utils/builderRates';
 import {
-  fetchAgreementConfirmationStatus, fetchClientEmails, fetchFirmAddresses, isFirmAddress, parseEmailList,
-  requestAgreementConfirmations,
+  fetchAgreementConfirmationStatus, fetchClientEmails, fetchConfirmRequests, fetchFirmAddresses, isFirmAddress,
+  parseEmailList, requestAgreementConfirmations,
   type AgreementConfirmRequest, type AgreementConfirmStatus, type AgreementConfirmUnit, type AnsweredMeanwhile,
 } from '@/lib/builderAgreementConfirmData';
 import {
   askedMeanwhile, failedMailWords, freshCandidates, mailOutcome, masterState, meanwhileHeading, meanwhileWords, seenFor,
-  unitAsk,
+  unitAsk, unseenRequest, unseenRequestWords, type LegacyMail,
 } from '@/lib/builderConfirmRules';
 
 /**
@@ -30,7 +30,13 @@ import {
  * time the pop-up opens and sent with the send: a unit answered since is
  * never asked over its answer (a dispute stops the send and is shown here),
  * and a colleague's request about a unit sent meanwhile is shown, with its To
- * and CC, rather than replaced unseen.
+ * and CC, rather than replaced unseen. The event's requests are read again
+ * with them (finding of 21 Oct 2026: the pop-up used them as the page loaded
+ * them, so it said an e-mail had not gone when it had, filled To from a
+ * request that was no longer the last, and showed a colleague's request sent
+ * since as a plain "Pending"): the badges, the failed-To hint and the To it
+ * fills in come from the requests as they are now, and a unit asked in a
+ * request the page had not loaded says so, with that request's To and CC.
  */
 export interface ConfirmCandidate extends AgreementConfirmUnit {
   status: AgreementConfirmStatus['status'];
@@ -40,8 +46,10 @@ export interface ConfirmCandidate extends AgreementConfirmUnit {
   respondedAt?: string | null;
   /** The request the unit is on (null: none, or a per-unit e-mail). */
   requestId?: string | null;
-  /** A per-unit e-mail of before 21 Oct 2026 asked about it. */
+  /** A per-unit e-mail of before 21 Oct 2026 asked about it and went out. */
   legacyLink?: boolean;
+  /** That per-unit e-mail and whether it went out (null: none on record). */
+  legacy?: LegacyMail | null;
 }
 
 const STATUS_LABEL: Partial<Record<AgreementConfirmStatus['status'], string>> = {
@@ -59,8 +67,9 @@ const SendAgreementConfirmDialog: React.FC<{
   projectName: string;
   event: { id: string; buDate: string; dastavej: boolean } | null;
   candidates: ConfirmCandidate[];
+  /** The event's last request as the page loaded it (used only when the pop-up cannot read them again). */
   lastRequest: AgreementConfirmRequest | null;
-  /** The event's requests, newest first: whether each unit's e-mail went out. */
+  /** The event's requests as the page loaded them, newest first (the pop-up reads them again on opening). */
   requests: AgreementConfirmRequest[];
   onSent: () => void;
 }> = ({ open, onOpenChange, clientId, projectName, event, candidates, lastRequest, requests, onSent }) => {
@@ -72,6 +81,15 @@ const SendAgreementConfirmDialog: React.FC<{
   const [masterInvalid, setMasterInvalid] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [fresh, setFresh] = useState<AgreementConfirmStatus[] | null>(null);
+  // The event's requests read again with the statuses, and the ids the page
+  // had loaded when the pop-up opened (a unit on any other was asked since).
+  const [freshRequests, setFreshRequests] = useState<AgreementConfirmRequest[] | null>(null);
+  const [knownIds, setKnownIds] = useState<string[]>([]);
+  // The request To and CC were filled from (null: the client master, or typed).
+  const [filledFrom, setFilledFrom] = useState<AgreementConfirmRequest | null>(null);
+  // Typed into while the boxes were still loading: not filled over.
+  const toTyped = useRef(false);
+  const ccTyped = useRef(false);
   const [loadingTo, setLoadingTo] = useState(false);
   const [loadingUnits, setLoadingUnits] = useState(false);
   const [sending, setSending] = useState(false);
@@ -83,55 +101,84 @@ const SendAgreementConfirmDialog: React.FC<{
   const [changedNotice, setChangedNotice] = useState<AnsweredMeanwhile[]>([]);
 
   const eventId = event?.id;
-  // The units' statuses now, not as the page loaded them: a reader may have
-  // answered since.
-  const reloadUnits = useCallback(async () => {
-    if (!eventId) return;
+  // The units' statuses and the event's requests now, not as the page loaded
+  // them: a reader may have answered since, a request's e-mail may have gone
+  // or failed, a colleague may have sent another. Returns the requests (null
+  // when they could not be read).
+  const reloadUnits = useCallback(async (): Promise<AgreementConfirmRequest[] | null> => {
+    if (!eventId) return null;
     setLoadingUnits(true);
     try {
-      setFresh(await fetchAgreementConfirmationStatus(eventId));
+      const [rows, reqs] = await Promise.all([
+        fetchAgreementConfirmationStatus(eventId),
+        fetchConfirmRequests([eventId]),
+      ]);
+      setFresh(rows);
+      setFreshRequests(reqs);
+      return reqs;
     } catch {
       setFresh(null);
+      setFreshRequests(null);
+      return null;
     } finally {
       setLoadingUnits(false);
     }
   }, [eventId]);
 
-  // Fill the boxes each time the pop-up opens: the last request's people when
-  // there was one, else the client master's e-mail.
+  // Fill the boxes each time the pop-up opens: the people on the last request
+  // as it is now (read again), else the client master's e-mail.
   useEffect(() => {
     if (!open || !eventId) return;
     let live = true;
     setSelected(new Set(candidates.map((c) => c.unitId)));
     setFresh(null);
+    setFreshRequests(null);
+    setKnownIds(requests.map((r) => r.id));
+    setFilledFrom(null);
     setToEdited(false);
+    toTyped.current = false;
+    ccTyped.current = false;
     setMasterInvalid([]);
     setChangedNotice([]);
     setDbFirm([]);
-    void reloadUnits();
-    if (lastRequest) {
-      setTo(lastRequest.to.join(', '));
-      setCc(lastRequest.cc.join(', '));
-      setMaster(null);
-      return;
-    }
     setTo('');
     setCc('');
+    setMaster(null);
     setLoadingTo(true);
-    fetchClientEmails(clientId)
-      .then((list) => {
+    void (async () => {
+      const reqs = await reloadUnits();
+      if (!live) return;
+      // fetchConfirmRequests gives [] when it cannot read them: then the
+      // page's list, which can only be older, never shorter.
+      const last = (reqs && (reqs.length || !requests.length) ? reqs[0] : lastRequest) ?? null;
+      try {
+        if (last) {
+          if (!toTyped.current) setTo(last.to.join(', '));
+          if (!ccTyped.current) setCc(last.cc.join(', '));
+          setFilledFrom(last);
+          return;
+        }
+        const list = await fetchClientEmails(clientId);
         if (!live) return;
-        setTo(list.valid.join(', '));
+        if (!toTyped.current) setTo(list.valid.join(', '));
         setMaster(masterState(list));
         setMasterInvalid(list.invalid);
-      })
-      .catch(() => { if (live) setMaster(null); })
-      .finally(() => { if (live) setLoadingTo(false); });
+      } catch {
+        if (live) setMaster(null);
+      } finally {
+        if (live) setLoadingTo(false);
+      }
+    })();
     return () => { live = false; };
     // Only when the pop-up opens for an event: later edits are the user's.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, eventId]);
 
+  // The requests as they are now (the page's list until they are read, or
+  // when they could not be).
+  const requestsNow = freshRequests && (freshRequests.length || !requests.length) ? freshRequests : requests;
+  // The request To was filled from, with its e-mail's status now.
+  const filledNow = filledFrom ? requestsNow.find((r) => r.id === filledFrom.id) ?? filledFrom : null;
   const shown = useMemo(() => freshCandidates(candidates, fresh), [candidates, fresh]);
   const droppedSinceLoad = candidates.length - shown.length;
   const toList = useMemo(() => parseEmailList(to), [to]);
@@ -234,8 +281,11 @@ const SendAgreementConfirmDialog: React.FC<{
         toast.warning('The send did not report back. Check the e-mail on the Reminders page before sending again.');
       } else {
         const sentNos = ticked.filter((c) => !res.skipped.some((k) => k.unitId === c.unitId)).map((c) => c.unitNo);
+        // Which of them an earlier link reached, as the send recorded it (finding of 21 Oct 2026).
+        const noOf = new Map(ticked.map((c) => [c.unitId, c.unitNo]));
+        const earlierNos = res.earlierUnits ? res.earlierUnits.map((id) => noOf.get(id) || '').filter(Boolean) : null;
         toast.error(`The request is recorded but the e-mail failed: ${(res.reason || res.status).trim().replace(/[.\s]+$/, '')}. `
-          + `${failedMailWords(res.earlierLink, sentNos)} Fix the address and send again.`);
+          + `${failedMailWords(res.earlierLink, sentNos, earlierNos)} Fix the address and send again.`);
       }
       onOpenChange(false);
       onSent();
@@ -252,7 +302,9 @@ const SendAgreementConfirmDialog: React.FC<{
     return next;
   });
 
-  const toSource = toEdited ? '' : lastRequest ? ', as on the last request' : master === 'ok' ? ', from the client master' : '';
+  const toSource = toEdited ? ''
+    : filledNow ? `, as on the last request${knownIds.includes(filledNow.id) ? '' : ' (sent since this page loaded)'}`
+      : master === 'ok' ? ', from the client master' : '';
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!sending) onOpenChange(v); }}>
@@ -270,7 +322,7 @@ const SendAgreementConfirmDialog: React.FC<{
           <div className="space-y-1">
             <Label htmlFor="bu-cf-to">To</Label>
             <Input
-              id="bu-cf-to" value={to} onChange={(e) => { setTo(e.target.value); setToEdited(true); }}
+              id="bu-cf-to" value={to} onChange={(e) => { setTo(e.target.value); setToEdited(true); toTyped.current = true; }}
               placeholder={loadingTo ? 'Loading…' : 'owner@client.com, accounts@client.com'}
               aria-invalid={toList.invalid.length > 0}
             />
@@ -284,10 +336,10 @@ const SendAgreementConfirmDialog: React.FC<{
                 Separate addresses with commas or semicolons. "Name &lt;address&gt;" is fine.
               </p>
             )}
-            {!toEdited && lastRequest && mailOutcome(lastRequest.mailStatus) === 'failed' && (
+            {!toEdited && filledNow && mailOutcome(filledNow.mailStatus) === 'failed' && (
               <p className="text-[11px] text-destructive [overflow-wrap:anywhere]">
                 The last e-mail to these addresses failed
-                {lastRequest.mailError ? `: ${lastRequest.mailError.trim().replace(/[.\s]+$/, '')}` : ''}. Check them before sending.
+                {filledNow.mailError ? `: ${filledNow.mailError.trim().replace(/[.\s]+$/, '')}` : ''}. Check them before sending.
               </p>
             )}
             {!toEdited && masterInvalid.length > 0 && (
@@ -299,7 +351,7 @@ const SendAgreementConfirmDialog: React.FC<{
           <div className="space-y-1">
             <Label htmlFor="bu-cf-cc">CC (optional)</Label>
             <Input
-              id="bu-cf-cc" value={cc} onChange={(e) => setCc(e.target.value)}
+              id="bu-cf-cc" value={cc} onChange={(e) => { setCc(e.target.value); ccTyped.current = true; }}
               placeholder="director@client.com, accounts@client.com"
               aria-invalid={ccList.invalid.length > 0}
             />
@@ -357,9 +409,11 @@ const SendAgreementConfirmDialog: React.FC<{
           </div>
           <ul className="max-h-64 divide-y overflow-y-auto text-xs">
             {shown.map((c) => {
-              // Pending, but did its e-mail go out? (round 4)
-              const ask = unitAsk(c.unitId, c, requests);
+              // Pending, but did its e-mail go out? (round 4; read again on opening)
+              const ask = unitAsk(c.unitId, c, requestsNow);
               const notOut = ask && ask.state !== 'asked' ? ask : null;
+              // Asked in a request the page had not loaded: a colleague's, sent since.
+              const unseen = c.status === 'PENDING' ? unseenRequest(c.requestId, freshRequests, knownIds) : null;
               return (
                 <li key={c.unitId}>
                   <label className="flex cursor-pointer items-start gap-2 px-3 py-1.5">
@@ -389,6 +443,12 @@ const SendAgreementConfirmDialog: React.FC<{
                             : notOut.earlier?.kind === 'legacy'
                               ? ' The per-unit link e-mailed before still takes answers.'
                               : notOut.state === 'failed' ? ' The client was never asked about it.' : ''}
+                        </span>
+                      )}
+                      {unseen && (
+                        <span className="mt-0.5 block text-[11px] text-amber-700 [overflow-wrap:anywhere] dark:text-amber-400">
+                          {unseenRequestWords(unseen)} Tick it only to ask again here: once this e-mail is out, that link
+                          stops taking answers for it.
                         </span>
                       )}
                       {c.status === 'DISPUTED' && c.disputeNotes && (

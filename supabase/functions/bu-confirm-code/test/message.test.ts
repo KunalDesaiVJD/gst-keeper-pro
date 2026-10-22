@@ -1,6 +1,6 @@
 // deno test --allow-read supabase/functions/bu-confirm-code/test/
 import { assert, assertEquals, assertStringIncludes, assertThrows } from 'jsr:@std/assert@1';
-import { checkedAddress, checkedCode, codeEmail, esc } from '../message.ts';
+import { checkedAddress, checkedCode, codeEmail, codeRef, esc } from '../message.ts';
 
 const row = {
   code_id: '00000000-0000-0000-0000-000000000001',
@@ -17,8 +17,26 @@ Deno.test('the code is in the e-mail, with how long it works', () => {
   assertStringIncludes(html, '>042917</span>');
   assertStringIncludes(html, 'works for 30 minutes');
   assertStringIncludes(html, 'Nobody can answer for you without this code');
-  assertEquals(subject, 'Your confirmation code · Shree <Heights> & Co');
+  assertEquals(subject, 'Your confirmation code (AAAA) · Shree <Heights> & Co');
   assert(!subject.includes('042917'), 'the subject does not carry the code (the firm\'s message trace lists subjects)');
+});
+
+// Finding of 21 Oct 2026 (low): another holder of the link asked a code for
+// the same address right after the owner's page did; the owner typed that
+// one, the newest in the mailbox, because the page said "the latest e-mail".
+// The e-mail now carries the code's reference, as the page and the database
+// name it (supabase/tests/bu_confirm/test_78_code_reference.sql: the same id
+// gives DRLK there).
+Deno.test('the e-mail carries the code\'s reference, as the page and the database work it out', () => {
+  assertEquals(codeRef('3fa90000-0000-4000-8000-000000000000'), 'DRLK');
+  assertEquals(codeRef('0123ABCD-ef01-4000-8000-000000000000'), 'ABCD');
+  assert(/^[A-HJ-NP-R]{4}$/.test(codeRef(crypto.randomUUID())), 'four letters, no digit, I or O');
+  const at = new Date('2026-10-21T05:12:00Z');
+  const { html, subject } = codeEmail({ ...row, code_id: '3fa90000-0000-4000-8000-000000000000' }, at);
+  assertStringIncludes(subject, '(DRLK)');
+  assertStringIncludes(html, 'This e-mail is marked <strong>DRLK</strong> (sent at 10:42 am IST)');
+  assertStringIncludes(html, 'type the one from the e-mail with that mark');
+  assert(!/latest/.test(html), 'never "the latest e-mail"');
 });
 
 Deno.test('values from the database are escaped', () => {

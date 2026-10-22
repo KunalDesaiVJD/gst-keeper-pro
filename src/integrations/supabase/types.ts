@@ -2470,6 +2470,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           earlier_link: boolean
+          earlier_units: string[] | null
           id: string
           outbox_id: string | null
           sent_at: string | null
@@ -2485,6 +2486,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           earlier_link?: boolean
+          earlier_units?: string[] | null
           id?: string
           outbox_id?: string | null
           sent_at?: string | null
@@ -2500,6 +2502,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           earlier_link?: boolean
+          earlier_units?: string[] | null
           id?: string
           outbox_id?: string | null
           sent_at?: string | null
@@ -5871,6 +5874,114 @@ export type Database = {
           },
         ]
       }
+      gst_change_log: {
+        Row: {
+          actor_basis: string
+          actor_id: string | null
+          actor_name: string | null
+          actor_source: string
+          at: string
+          changed: Json
+          client_id: string | null
+          financial_year: string | null
+          fy: string | null
+          id: number
+          op: string
+          period_month: string | null
+          request_id: string | null
+          row_id: string | null
+          row_label: string | null
+          table_name: string
+          txid: number
+        }
+        Insert: {
+          actor_basis: string
+          actor_id?: string | null
+          actor_name?: string | null
+          actor_source: string
+          at?: string
+          changed: Json
+          client_id?: string | null
+          financial_year?: string | null
+          fy?: string | null
+          id?: number
+          op: string
+          period_month?: string | null
+          request_id?: string | null
+          row_id?: string | null
+          row_label?: string | null
+          table_name: string
+          txid?: number
+        }
+        Update: {
+          actor_basis?: string
+          actor_id?: string | null
+          actor_name?: string | null
+          actor_source?: string
+          at?: string
+          changed?: Json
+          client_id?: string | null
+          financial_year?: string | null
+          fy?: string | null
+          id?: number
+          op?: string
+          period_month?: string | null
+          request_id?: string | null
+          row_id?: string | null
+          row_label?: string | null
+          table_name?: string
+          txid?: number
+        }
+        Relationships: []
+      }
+      gst_change_log_tables: {
+        Row: {
+          actor_columns: string[]
+          attached_at: string
+          client_expr: string
+          fy_expr: string
+          label_expr: string
+          key_columns: string[]
+          mode: string
+          month_expr: string
+          only_columns: string[] | null
+          private_columns: string[]
+          skip_columns: string[]
+          summary_columns: string[]
+          table_name: string
+        }
+        Insert: {
+          actor_columns: string[]
+          attached_at?: string
+          client_expr: string
+          fy_expr: string
+          label_expr: string
+          key_columns: string[]
+          mode: string
+          month_expr: string
+          only_columns?: string[] | null
+          private_columns?: string[]
+          skip_columns: string[]
+          summary_columns: string[]
+          table_name: string
+        }
+        Update: {
+          actor_columns?: string[]
+          attached_at?: string
+          client_expr?: string
+          fy_expr?: string
+          label_expr?: string
+          key_columns?: string[]
+          mode?: string
+          month_expr?: string
+          only_columns?: string[] | null
+          private_columns?: string[]
+          skip_columns?: string[]
+          summary_columns?: string[]
+          table_name?: string
+        }
+        Relationships: []
+      }
       gst_challans: {
         Row: {
           cess_amount: number | null
@@ -6575,6 +6686,9 @@ export type Database = {
           drc_igst: number | null
           drc_sgst: number | null
           id: string
+          opening_allowance_id: string | null
+          opening_override_base: Json | null
+          opening_portal_empty: boolean
           opening_cgst: number | null
           opening_csv_period_month: string | null
           opening_csv_uploaded_at: string | null
@@ -6603,6 +6717,9 @@ export type Database = {
           drc_igst?: number | null
           drc_sgst?: number | null
           id?: string
+          opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -6631,6 +6748,9 @@ export type Database = {
           drc_igst?: number | null
           drc_sgst?: number | null
           id?: string
+          opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -7347,6 +7467,7 @@ export type Database = {
           actor_id: string | null
           client_id: string
           filled_count: number | null
+          gate: Json | null
           id: string
           period_month: string
           payload: Json | null
@@ -7360,6 +7481,7 @@ export type Database = {
           actor_id?: string | null
           client_id: string
           filled_count?: number | null
+          gate?: Json | null
           id?: string
           period_month: string
           payload: Json | null
@@ -7373,6 +7495,7 @@ export type Database = {
           actor_id?: string | null
           client_id?: string
           filled_count?: number | null
+          gate?: Json | null
           id?: string
           period_month?: string
           payload?: Json | null
@@ -7846,6 +7969,56 @@ export type Database = {
           id?: number
         }
         Relationships: []
+      }
+      manual_source_allowances: {
+        Row: {
+          allowed_at: string
+          allowed_by: string
+          client_id: string
+          id: string
+          period_month: string
+          reason: string
+          revoked_at: string | null
+          revoked_by: string | null
+          scope: string
+          used_at: string | null
+          used_by: string | null
+        }
+        Insert: {
+          allowed_at?: string
+          allowed_by: string
+          client_id: string
+          id?: string
+          period_month: string
+          reason: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          scope: string
+          used_at?: string | null
+          used_by?: string | null
+        }
+        Update: {
+          allowed_at?: string
+          allowed_by?: string
+          client_id?: string
+          id?: string
+          period_month?: string
+          reason?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          scope?: string
+          used_at?: string | null
+          used_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manual_source_allowances_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       matter_deadlines: {
         Row: {
@@ -9423,6 +9596,54 @@ export type Database = {
         }
         Relationships: []
       }
+      reco_opening_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          after: Json | null
+          allowance_id: string | null
+          before: Json | null
+          client_id: string
+          ext_version: string | null
+          id: string
+          logged_at: string
+          period_month: string
+          reason: string | null
+          reco: string
+          source: string | null
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          after?: Json | null
+          allowance_id?: string | null
+          before?: Json | null
+          client_id: string
+          ext_version?: string | null
+          id?: string
+          logged_at?: string
+          period_month: string
+          reason?: string | null
+          reco: string
+          source?: string | null
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          after?: Json | null
+          allowance_id?: string | null
+          before?: Json | null
+          client_id?: string
+          ext_version?: string | null
+          id?: string
+          logged_at?: string
+          period_month?: string
+          reason?: string | null
+          reco?: string
+          source?: string | null
+        }
+        Relationships: []
+      }
       reconciliation_reasons: {
         Row: {
           client_id: string
@@ -9857,6 +10078,9 @@ export type Database = {
         Row: {
           client_id: string
           id: string
+          opening_allowance_id: string | null
+          opening_override_base: Json | null
+          opening_portal_empty: boolean
           opening_cgst: number | null
           opening_csv_period_month: string | null
           opening_csv_uploaded_at: string | null
@@ -9879,6 +10103,9 @@ export type Database = {
         Insert: {
           client_id: string
           id?: string
+          opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -9901,6 +10128,9 @@ export type Database = {
         Update: {
           client_id?: string
           id?: string
+          opening_allowance_id?: string | null
+          opening_override_base?: Json | null
+          opening_portal_empty?: boolean
           opening_cgst?: number | null
           opening_csv_period_month?: string | null
           opening_csv_uploaded_at?: string | null
@@ -10143,6 +10373,147 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "twob_versions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      twob_carry_log: {
+        Row: {
+          carried_at: string | null
+          carried_how: string | null
+          carried_rows: number
+          client_id: string
+          last_at: string
+          last_outcome: string
+          list: string
+          next_period: string
+          period_month: string
+        }
+        Insert: {
+          carried_at?: string | null
+          carried_how?: string | null
+          carried_rows?: number
+          client_id: string
+          last_at?: string
+          last_outcome: string
+          list: string
+          next_period: string
+          period_month: string
+        }
+        Update: {
+          carried_at?: string | null
+          carried_how?: string | null
+          carried_rows?: number
+          client_id?: string
+          last_at?: string
+          last_outcome?: string
+          list?: string
+          next_period?: string
+          period_month?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "twob_carry_log_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      twob_ever_filed: {
+        Row: {
+          client_id: string
+          cover_key: number | null
+          first_filed_at: string
+          period_month: string
+          reopen_reason: string | null
+          reopened_at: string | null
+          reopened_by: string | null
+          return_type: string
+        }
+        Insert: {
+          client_id: string
+          cover_key?: never
+          first_filed_at?: string
+          period_month: string
+          reopen_reason?: string | null
+          reopened_at?: string | null
+          reopened_by?: string | null
+          return_type: string
+        }
+        Update: {
+          client_id?: string
+          cover_key?: never
+          first_filed_at?: string
+          period_month?: string
+          reopen_reason?: string | null
+          reopened_at?: string | null
+          reopened_by?: string | null
+          return_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "twob_ever_filed_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      twob_filed_figures: {
+        Row: {
+          client_id: string
+          expense_out_cgst: number
+          expense_out_igst: number
+          expense_out_sgst: number
+          frozen_at: string
+          frozen_by: string | null
+          period_month: string
+          reclaim_cgst: number
+          reclaim_igst: number
+          reclaim_sgst: number
+          reversal_cgst: number
+          reversal_igst: number
+          reversal_sgst: number
+        }
+        Insert: {
+          client_id: string
+          expense_out_cgst?: number
+          expense_out_igst?: number
+          expense_out_sgst?: number
+          frozen_at?: string
+          frozen_by?: string | null
+          period_month: string
+          reclaim_cgst?: number
+          reclaim_igst?: number
+          reclaim_sgst?: number
+          reversal_cgst?: number
+          reversal_igst?: number
+          reversal_sgst?: number
+        }
+        Update: {
+          client_id?: string
+          expense_out_cgst?: number
+          expense_out_igst?: number
+          expense_out_sgst?: number
+          frozen_at?: string
+          frozen_by?: string | null
+          period_month?: string
+          reclaim_cgst?: number
+          reclaim_igst?: number
+          reclaim_sgst?: number
+          reversal_cgst?: number
+          reversal_igst?: number
+          reversal_sgst?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "twob_filed_figures_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
@@ -10668,6 +11039,30 @@ export type Database = {
       }
     }
     Views: {
+      gst_change_history: {
+        Row: {
+          actor_basis: string | null
+          actor_id: string | null
+          actor_name: string | null
+          actor_source: string | null
+          at: string | null
+          changed: Json | null
+          client_id: string | null
+          financial_year: string | null
+          fy: string | null
+          key: string | null
+          log: string | null
+          log_id: number | null
+          op: string | null
+          period_month: string | null
+          request_id: string | null
+          row_id: string | null
+          row_label: string | null
+          seq: number | null
+          table_name: string | null
+        }
+        Relationships: []
+      }
       ai_learning_responses: {
         Row: {
           case_id: string | null
@@ -11251,6 +11646,10 @@ export type Database = {
       }
     }
     Functions: {
+      gst_change_log_whoami: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       notice_case_items: {
         Args: { p_client_id: string; p_case_key: string }
         Returns: Json
@@ -11945,6 +12344,34 @@ export type Database = {
         Args: { p_actor_id: string; p_position_id: string | null; p_user_id: string }
         Returns: undefined
       }
+      twob_month_state: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: Json
+      }
+      twob_month_is_prior: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: boolean
+      }
+      twob_prior_books_apply: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_changes: Json; p_dry_run?: boolean }
+        Returns: Json
+      }
+      twob_reopen_filed: {
+        Args: { p_actor_id: string; p_client_id: string; p_return_type: string; p_period: string; p_reason: string }
+        Returns: Json
+      }
+      twob_carry_rerun: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_dry_run?: boolean }
+        Returns: Json
+      }
+      twob_restore_version: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_bills_2b: Json; p_bills_books: Json }
+        Returns: Json
+      }
+      twob_nib_2b_copies: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: string[]
+      }
       staff_end_sessions: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_target_user_id: string }
         Returns: string
@@ -11952,6 +12379,54 @@ export type Database = {
       staff_level_of: {
         Args: { p_user_id: string }
         Returns: string | null
+      }
+      gstr3b_push_gate: {
+        Args: { p_client_id: string; p_period: string }
+        Returns: Json
+      }
+      manual_source_allow: {
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_reason: string; p_scope: string }
+        Returns: Database["public"]["Tables"]["manual_source_allowances"]["Row"]
+      }
+      manual_source_revoke: {
+        Args: { p_actor_id: string; p_id: string }
+        Returns: Database["public"]["Tables"]["manual_source_allowances"]["Row"]
+      }
+      reco_manual_opening: {
+        Args: {
+          p_actor_id: string
+          p_client_id: string
+          p_csv_period?: string | null
+          p_drc?: Json | null
+          p_opening: Json
+          p_period: string
+          p_reco: string
+          p_source: string
+          p_utilised?: Json | null
+        }
+        Returns: Json
+      }
+      reco_clear: {
+        Args: { p_actor_id: string; p_client_id: string; p_periods: string[]; p_reco: string }
+        Returns: number
+      }
+      reco_override_opening: {
+        Args: { p_actor_id: string; p_client_id: string; p_opening: Json; p_period: string; p_reason: string; p_reco: string }
+        Returns: Json
+      }
+      reco_record_pull: {
+        Args: {
+          p_actor_id: string
+          p_client_id: string
+          p_drc?: Json | null
+          p_ext_version?: string | null
+          p_no_rows?: boolean
+          p_opening: Json | null
+          p_period: string
+          p_reco: string
+          p_utilised?: Json | null
+        }
+        Returns: Json
       }
       staff_remove: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_target_user_id: string }

@@ -27,7 +27,7 @@ const isPreviewable = (_report: ReportDefinition) => true;
 interface ClientLite { id: string; name: string; gstin: string; }
 
 const ReportsPage: React.FC = () => {
-  const { isStaffRole } = useAuth();
+  const { isStaffRole, user } = useAuth();
   const { selectedMonth } = useMonth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const [clients, setClients] = useState<ClientLite[]>([]);
@@ -135,6 +135,7 @@ const ReportsPage: React.FC = () => {
           period_month: job.periods[0],
           period_months: job.periods,
           ...(job.want ? { want: job.want } : {}),
+          actorId: user?.id ?? null,
         },
       }, '*');
     } else {
@@ -148,6 +149,7 @@ const ReportsPage: React.FC = () => {
           mode: report.pull.mode,
           period_month: report.pull.needsMonth ? selectedPeriods[0] : undefined,
           period_months: report.pull.needsMonth ? selectedPeriods : undefined,
+          actorId: user?.id ?? null,
         },
       }, '*');
     }
@@ -173,7 +175,7 @@ const ReportsPage: React.FC = () => {
       }, 10000);
       pollRef.current = { key: report.key, timer };
     }
-  }, [selectedClientId, selectedPeriods, extReady, extVersion, previewOpen, previewReport, stopPreviewPoll]);
+  }, [selectedClientId, selectedPeriods, extReady, extVersion, previewOpen, previewReport, stopPreviewPoll, user]);
 
   const monthOptions = useMemo(() => {
     const months: { value: string; label: string }[] = [];

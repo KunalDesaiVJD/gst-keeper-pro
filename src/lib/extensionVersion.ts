@@ -3,7 +3,15 @@
 // missing after an empty or partly failed pull, checks the portal session's GSTIN
 // before saving, and keeps portal passwords out of chrome.storage. Older copies
 // are refused here; the database also turns their hard deletes into soft deletes.
-export const MIN_EXTENSION_VERSION = '0.4.0';
+// 0.16.0 (21 Oct 2026) is the minimum. It carries 0.15.0's filed-return pull
+// (Filing Status is pulled only: older copies could store the GSTR-3B "System
+// generated summary" or a GSTR-1A as the filed return, and the database now
+// refuses their direct Filed writes, 20261021110000) and its own reco Pull,
+// which saves through reco_record_pull (stamped with who asked; the database
+// refuses an older copy's direct write), with the GSTR-3B push asking
+// gstr3b_push_gate before it opens the portal (20261021120000): an older copy
+// could push a GSTR-3B the gate would stop.
+export const MIN_EXTENSION_VERSION = '0.16.0';
 // Phase 1: 0.5.0 writes through the database's single ingest door (sync_ingest),
 // fills the run ledger, skips documents already stored and has the CAPTCHA
 // watchdog. Phase 3: 0.6.0 also reads applications on the portal, the
@@ -29,12 +37,22 @@ export const MIN_EXTENSION_VERSION = '0.4.0';
 // the documents already there as e-invoices (the page's einvoice.keep) instead
 // of re-sending them, never writes an IRN field, and the e-invoice pull checks
 // the file's GSTIN and period and drops e-invoices the portal no longer holds.
-// 0.4.x to 0.8.6 are still allowed (their writes are safe), only nudged to update.
+// 0.4.x to 0.8.6 were allowed until 0.16.0 (their writes were safe), only nudged to update.
 // 0.13.0 pulls GSTR-2A and GSTR-2B together for the 2A vs 2B report (mode
 // gstr2a2b_pull) and no longer stops a GSTR-2B pull after its first month.
 // 0.14.0 also reads the GSTR-2A credit and debit notes, so the report can
 // compare the 2B's notes (not confirmed live; a failed read is recorded).
-export const RECOMMENDED_EXTENSION_VERSION = '0.14.0';
+// 0.15.0 pulls filed returns for Filing Status through filing_record_pull:
+// the exact return type (never a GSTR-1A for a GSTR-1), the portal's ARN and
+// filing date (never the pull's day), and the PDF only when it is the filed
+// return showing that ARN; one return, a client's, or every return in view.
+// 0.16.0 pulls Suspended Reco and GST Receivable Reco through the database's
+// pull door with who asked, and asks the GSTR-3B push gate before a push.
+// 0.17.0 names, on every database request, that it is the extension and the
+// app user who started the job, for the change log (20261021150000). It is
+// the release that carries 0.15.0 and 0.16.0; 0.16.0 stays the minimum (an
+// older copy's writes are still logged, with no person).
+export const RECOMMENDED_EXTENSION_VERSION = '0.17.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -51,7 +69,8 @@ export function isExtensionOutdated(version: string | null | undefined): boolean
 
 export function outdatedExtensionMessage(version: string | null | undefined): string {
   return `The browser extension${version ? ` (v${version})` : ''} is out of date. Load v${MIN_EXTENSION_VERSION} or later `
-    + '(chrome://extensions → Reload, from the updated extension folder) before syncing: older copies can remove saved notices when the portal returns an error.';
+    + '(chrome://extensions → Reload, from the updated extension folder) before syncing or pushing: older copies can store the wrong return PDF, '
+    + 'do not save filed returns or reco pulls the way the database accepts, and do not check the recos before a GSTR-3B push.';
 }
 
 export function isExtensionUpdateRecommended(version: string | null | undefined): boolean {
@@ -92,6 +111,9 @@ const GAINS: [string, string][] = [
   ['0.12.0', "drives an unfiled GSTR-9 the way the portal's own pages work: PREPARE-ONLINE, No on the Nil question, NEXT, then the system-computed summary"],
   ['0.13.0', 'pulls GSTR-2A and GSTR-2B together for the 2A vs 2B report, and a GSTR-2B pull over several months no longer stops after the first'],
   ['0.14.0', "reads the GSTR-2A credit and debit notes, so the 2A vs 2B report compares the 2B's notes too"],
+  ['0.15.0', "pulls filed returns for Filing Status with the portal's ARN and filing date, and keeps a PDF only when it is the filed return (never the System generated summary or a GSTR-1A)"],
+  ['0.16.0', 'pulls Suspended Reco and GST Receivable Reco the way the database accepts, records who pulled, and checks Suspended Reco and GST Receivable Reco before a GSTR-3B push'],
+  ['0.17.0', 'names the person who started each pull or push in the change log (Change history)'],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

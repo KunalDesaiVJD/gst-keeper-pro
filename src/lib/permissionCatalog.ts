@@ -40,6 +40,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'delete_return_data', group: 'returns', label: 'Delete return data', description: "Delete a period's GSTR-1 data and rows of the GST Running Update" },
   { key: 'unlock_sheets', group: 'returns', label: 'Unlock sheets', description: 'Unlock locked filing records, RCM and annual return workings' },
   { key: 'view_version_history', group: 'returns', label: 'Version history', description: 'Open saved versions of 2B, ITC, RCM and the GST Running Update' },
+  { key: 'view_change_history', group: 'returns', label: 'Change history', description: 'See who changed what on the GST working pages, and when (Change history, History buttons)' },
 
   // 2B, ITC, RCM & update sheet
   { key: 'work_2b_import', group: 'reco', label: 'Import 2B & post', description: 'Import 2B / books, pull 2B from the portal and Post to Reconciliation' },

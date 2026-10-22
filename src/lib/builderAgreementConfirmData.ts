@@ -1,7 +1,9 @@
 import { supabase } from '@/integrations/supabase/client';
 import { GST_FIRM, renderTemplate } from '@/lib/gstReminders';
 import { formatINR } from '@/utils/builderRates';
-import { isClearedStatus, parseEmailList, splitAnswered, type ConfirmStatus } from '@/lib/builderConfirmRules';
+import {
+  codeRef, isClearedStatus, mailOutcome, parseEmailList, splitAnswered, type ConfirmStatus, type LegacyMail,
+} from '@/lib/builderConfirmRules';
 
 // Client confirmation of the agreement value behind a BU differential, by a
 // tokenized e-mail link (no login). Since 21 Oct 2026 one e-mail goes per
@@ -81,6 +83,8 @@ export interface SendConfirmResult {
   changed: AnsweredMeanwhile[];
   /** An earlier link to these units had reached the client when this was sent. */
   earlierLink?: boolean;
+  /** Which units it had reached (null: a database before 20261021160000, which says only earlierLink). */
+  earlierUnits?: string[] | null;
   /** Earlier e-mails still waiting in the outbox that this one replaced. */
   cancelledEarlier?: number;
 }
@@ -100,6 +104,7 @@ type SendRpcResult = {
   link?: string;
   units?: number;
   earlier_link?: boolean;
+  earlier_units?: string[] | null;
   cancelled_earlier?: number;
   already_answered?: AnsweredRow[];
 };
@@ -222,6 +227,7 @@ export async function requestAgreementConfirmations(params: {
   const base = {
     sent, requestId: res.request_id, link: res.link, skipped, changed: [] as AnsweredMeanwhile[],
     earlierLink: res.earlier_link === true, cancelledEarlier: Number(res.cancelled_earlier) || 0,
+    earlierUnits: Array.isArray(res.earlier_units) ? res.earlier_units : null,
   };
   if (!res.outbox_id) return { ok: false, status: 'unknown', ...base, reason: 'The e-mail was not queued.' };
 
@@ -250,8 +256,11 @@ export interface AgreementConfirmStatus {
   /** The latest request that asked about the unit (null: a per-unit e-mail sent before 21 Oct 2026). */
   requestId?: string | null;
   sentAt?: string | null;
-  /** A per-unit e-mail of before 21 Oct 2026 asked about it (legacy_emails, recorded once). */
+  /** A per-unit e-mail of before 21 Oct 2026 asked about it (legacy_emails, recorded once) and went
+   *  out, as the database counts it (its outbox row sent, or gone): its link may still answer. */
   legacyLink?: boolean;
+  /** That per-unit e-mail and whether it went out (null: none on record). */
+  legacy?: LegacyMail | null;
 }
 
 /** A unit no longer holds up posting or filing. */
@@ -280,13 +289,15 @@ type ConfirmRow = {
   bu_event_id: string; unit_id: string; status: string; dispute_notes: string | null;
   override_reason: string | null; responded_by_name?: string | null; responded_by_email?: string | null;
   responded_at?: string | null; request_id?: string | null; sent_at?: string | null;
-  legacy_emails?: string[] | null;
+  legacy_emails?: string[] | null; legacy_outbox_id?: string | null;
 };
 const CONFIRM_COLUMNS = 'bu_event_id, unit_id, status, dispute_notes, override_reason, responded_at, sent_at, '
-  + 'responded_by_name, responded_by_email, request_id, legacy_emails';
+  + 'responded_by_name, responded_by_email, request_id, legacy_emails, legacy_outbox_id';
 // Before 20261021140000 is applied the newer columns do not exist: read the
 // older ones rather than show every unit as never sent.
 const CONFIRM_COLUMNS_OLD = 'bu_event_id, unit_id, status, dispute_notes, override_reason, responded_at, sent_at';
+/** A row a per-unit e-mail of before 21 Oct 2026 made (its addresses recorded once, legacy_emails). */
+const hasLegacy = (r: ConfirmRow): boolean => Array.isArray(r.legacy_emails) && r.legacy_emails.length > 0;
 
 /** Confirmation rows per BU event. A unit with no row, or a NOT_SENT row, has had no request yet. */
 export async function fetchAgreementConfirmations(eventIds: string[]): Promise<Record<string, AgreementConfirmStatus[]>> {
@@ -296,7 +307,22 @@ export async function fetchAgreementConfirmations(eventIds: string[]): Promise<R
   const first = await table().select(CONFIRM_COLUMNS).in('bu_event_id', eventIds);
   const res = first.error ? await table().select(CONFIRM_COLUMNS_OLD).in('bu_event_id', eventIds) : first;
   if (res.error) throw res.error;
-  ((res.data || []) as unknown as ConfirmRow[]).forEach((r) => {
+  const rows = (res.data || []) as unknown as ConfirmRow[];
+  // What became of each per-unit e-mail of before 21 Oct 2026 (finding of 21
+  // Oct 2026: such a unit was shown "Asked" and its link said to take answers
+  // when that e-mail had failed). A missing outbox row counts as out, as the
+  // database's earlier_link counts it.
+  const legacyIds = rows.filter((r) => hasLegacy(r) && r.legacy_outbox_id).map((r) => r.legacy_outbox_id as string);
+  const legacyMail = new Map<string, { status: string; error: string | null; sentAt: string | null }>();
+  if (legacyIds.length) {
+    const { data: ob } = await supabase.from('email_outbox').select('id, status, error, sent_at').in('id', legacyIds);
+    (ob || []).forEach((o) => legacyMail.set(o.id, { status: o.status, error: o.error, sentAt: o.sent_at }));
+  }
+  rows.forEach((r) => {
+    const m = r.legacy_outbox_id ? legacyMail.get(r.legacy_outbox_id) : undefined;
+    const legacy: LegacyMail | null = hasLegacy(r)
+      ? { mail: mailOutcome(m?.status ?? null), error: m?.error ?? null, at: m?.sentAt || r.sent_at || null }
+      : null;
     (out[r.bu_event_id] ||= []).push({
       unitId: r.unit_id,
       status: r.status as AgreementConfirmStatus['status'],
@@ -307,7 +333,8 @@ export async function fetchAgreementConfirmations(eventIds: string[]): Promise<R
       respondedAt: r.responded_at ?? null,
       requestId: r.request_id ?? null,
       sentAt: r.sent_at ?? null,
-      legacyLink: Array.isArray(r.legacy_emails) && r.legacy_emails.length > 0,
+      legacyLink: !!legacy && legacy.mail === 'out',
+      legacy,
     });
   });
   return out;
@@ -334,16 +361,29 @@ export interface AgreementConfirmRequest {
   mailSentAt: string | null;
   /** When it was sent, an earlier link to some of its units had reached the client. */
   earlierLink: boolean;
+  /** Which of its units that link reached (null: sent before 20261021160000). */
+  earlierUnits: string[] | null;
 }
+
+type RequestRow = {
+  id: string; bu_event_id: string; to_emails: string[] | null; cc_emails: string[] | null; unit_ids: string[] | null;
+  sent_at: string | null; created_at: string; created_by: string | null; outbox_id: string | null;
+  earlier_link: boolean | null; earlier_units?: string[] | null;
+};
+const REQUEST_COLUMNS = 'id, bu_event_id, to_emails, cc_emails, unit_ids, sent_at, created_at, created_by, outbox_id, earlier_link, seq';
 
 /** The requests sent for these BU events, newest first. Empty before 20261021140000 is applied. */
 export async function fetchConfirmRequests(eventIds: string[]): Promise<AgreementConfirmRequest[]> {
   if (!eventIds.length) return [];
-  const { data, error } = await supabase
+  const query = (cols: string) => supabase
     .from('builder_bu_confirm_requests')
-    .select('id, bu_event_id, to_emails, cc_emails, unit_ids, sent_at, created_at, created_by, outbox_id, earlier_link, seq')
+    .select(cols)
     .in('bu_event_id', eventIds)
     .order('seq', { ascending: false });
+  // earlier_units comes with 20261021160000: before it, read the rest.
+  const first = await query(`${REQUEST_COLUMNS}, earlier_units`);
+  const { data: raw, error } = first.error ? await query(REQUEST_COLUMNS) : first;
+  const data = raw as unknown as RequestRow[] | null;
   if (error || !data) return [];
   const outboxIds = data.map((r) => r.outbox_id).filter((x): x is string => !!x);
   const mail = new Map<string, { status: string; error: string | null; sentAt: string | null }>();
@@ -364,6 +404,7 @@ export async function fetchConfirmRequests(eventIds: string[]): Promise<Agreemen
     mailError: r.outbox_id ? mail.get(r.outbox_id)?.error ?? null : null,
     mailSentAt: r.outbox_id ? mail.get(r.outbox_id)?.sentAt ?? null : null,
     earlierLink: r.earlier_link === true,
+    earlierUnits: Array.isArray(r.earlier_units) ? r.earlier_units : null,
   }));
 }
 
@@ -415,20 +456,22 @@ export async function fetchFirmAddresses(actorId: string | null, addresses: stri
 // ── The public page ─────────────────────────────────────────────────────────
 
 /** Ask for a code to the reader's address and have it e-mailed. Throws the
- *  database's refusal (not on the e-mail, the firm's own, too many codes).
- *  codeId goes back with the typed code: only this page has it. status
- *  'unknown': the mailer did not report back (not deployed, failed to start),
- *  so the code may not have gone. */
+ *  database's refusal (not on the e-mail, the firm's own, too many codes,
+ *  nothing left to answer). codeId goes back with the typed code: only this
+ *  page has it; ref is the mark on its e-mail (codeRef). status 'unknown':
+ *  the mailer did not report back (not deployed, failed to start), so the
+ *  code may not have gone. */
 export async function askConfirmCode(token: string, email: string):
-  Promise<{ status: 'sent' | 'failed' | 'unknown'; codeId: string }> {
+  Promise<{ status: 'sent' | 'failed' | 'unknown'; codeId: string; ref: string }> {
   const { data, error } = await supabase.rpc('builder_bu_confirm_code_request', { _token: token, _email: email });
   if (error) throw error;
   const codeId = (data as { code_id?: string } | null)?.code_id;
   if (!codeId) throw new Error('The code could not be asked for. Please try again.');
+  const ref = codeRef(codeId);
   const { data: fn, error: fnErr } = await supabase.functions.invoke('bu-confirm-code', { body: { code_id: codeId } });
-  if (fnErr) return { status: 'unknown', codeId };
+  if (fnErr) return { status: 'unknown', codeId, ref };
   const status = (fn as { status?: string } | null)?.status;
-  return { status: status === 'sent' ? 'sent' : status === 'failed' ? 'failed' : 'unknown', codeId };
+  return { status: status === 'sent' ? 'sent' : status === 'failed' ? 'failed' : 'unknown', codeId, ref };
 }
 
 /** Check the code (with the id askConfirmCode gave): a proof to send with each answer, or why not. */

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GST Keeper Portal Sync",
-  "version": "0.14.0",
+  "version": "0.17.0",
   "description": "Pulls GST portal data into GST Keeper from your own browser, so the portal treats it as a normal user (no server, no firewall block).",
   "permissions": [
     "storage",
@@ -42,6 +42,7 @@
       "js": [
         "vendor/jspdf.umd.min.js",
         "db.js",
+        "filedpdf.js",
         "content.js"
       ],
       "run_at": "document_idle"

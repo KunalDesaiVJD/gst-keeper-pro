@@ -98,8 +98,27 @@ BEGIN
   RETURN v ->> 'proof';
 END $$;
 
+-- A proof the reader got earlier, while a unit on the link was still open:
+-- since 20261021160000 a link with nothing waiting takes no code request, so
+-- a test that answers on such a link (to see REPLACED or ALREADY_...) stands
+-- for a reader who checked their address before. Written as the owner (the
+-- codes are private); the address is still checked by the respond call.
+CREATE FUNCTION public.t_proof_earlier(p_token text, p_email text) RETURNS text
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
+DECLARE l record; v_proof text := encode(extensions.gen_random_bytes(32), 'hex');
+BEGIN
+  SELECT * INTO l FROM public.builder_bu_confirm_link(p_token);
+  INSERT INTO public.builder_bu_confirm_codes (request_id, confirmation_id, email, created_at, claimed_at, sent_at,
+                                               proof_hash, verified_at)
+  VALUES (l.o_req, l.o_cf, lower(btrim(p_email)), now() - interval '20 minutes', now() - interval '20 minutes',
+          now() - interval '20 minutes', encode(extensions.digest(v_proof, 'sha256'), 'hex'), now() - interval '10 minutes');
+  RETURN v_proof;
+END $$;
+GRANT EXECUTE ON FUNCTION public.t_proof_earlier(text, text) TO anon;
+
 -- Answer as the page does: the reader proves their address once (the proof
--- is kept for later answers on the same link), then answers.
+-- is kept for later answers on the same link), then answers. On a link with
+-- nothing left to answer, the reader proved it earlier (t_proof_earlier).
 CREATE TABLE public.t_proofs (token text, email text, proof text, PRIMARY KEY (token, email));
 GRANT ALL ON public.t_proofs TO anon;
 CREATE FUNCTION public.t_respond(p_token text, p_answers jsonb, p_name text, p_email text) RETURNS jsonb
@@ -108,7 +127,12 @@ DECLARE v_proof text;
 BEGIN
   SELECT proof INTO v_proof FROM public.t_proofs WHERE token = p_token AND email = lower(btrim(p_email));
   IF v_proof IS NULL THEN
-    v_proof := public.t_proof(p_token, p_email);
+    BEGIN
+      v_proof := public.t_proof(p_token, p_email);
+    EXCEPTION WHEN check_violation THEN
+      IF position('Nothing on this link is waiting' IN SQLERRM) = 0 THEN RAISE; END IF;
+      v_proof := public.t_proof_earlier(p_token, p_email);
+    END;
     INSERT INTO public.t_proofs VALUES (p_token, lower(btrim(p_email)), v_proof);
   END IF;
   RETURN public.builder_bu_confirm_respond(p_token, p_answers, p_name, p_email, v_proof);
