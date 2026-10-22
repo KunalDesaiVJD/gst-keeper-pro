@@ -861,27 +861,29 @@ await run('no post', async () => {
     return at < 0 ? '' : sql.slice(at, sql.indexOf('\n$$;', at));
   })();
   // Round 10 (22 Oct 2026): (1) before (2) before (3); a document found by
-  // (3) only while no other reclaim of the version takes it and its amounts
-  // are the entry's (a check on that one document, never a lookup); the
-  // Reclaim documents a Restore leaves evidencing nothing named (docs_left).
+  // (3) only while no other reclaim of the version takes it; the Reclaim
+  // documents a Restore leaves evidencing nothing named (docs_left). Round
+  // 11: (3) only while the entry is the version's only reclaim naming
+  // nothing that is that document; amounts are never the test.
   const restoreCode = restoreFn.replace(/--[^\n]*/g, '');
-  check('round 7 F1 / round 9 / round 10: Restore brings a reclaim back reclaimed only with its 2B document known exactly: (1) named by the version, before (2) named by the month\'s entry of that id, before (3) the month\'s only original invoice or debit note that is the same document and of the entry\'s amounts (each head within Rs. 2), and (3) only while no other reclaim of the version takes that document; on the usual terms; never looked for by its amounts; otherwise Awaiting reclaim, named, for a Strict and a Liberal client alike while the month holds any 2B document; only a Liberal client\'s in a month with no 2B document comes back as typed',
+  check('round 7 F1 / round 9 / round 10: Restore brings a reclaim back reclaimed only with its 2B document known exactly: (1) named by the version, before (2) named by the month\'s entry of that id, before (3) the month\'s only original invoice or debit note that is the same document, and (3) only while the entry is the version\'s only reclaim naming nothing that is that document (whatever the amounts) and no other reclaim of the version takes that document; on the usual terms; never looked for by its amounts; otherwise Awaiting reclaim, named, for a Strict and a Liberal client alike while the month holds any 2B document; only a Liberal client\'s in a month with no 2B document comes back as typed',
     restoreFn.length > 0
       && /public\.twob__try_uuid\(x\.x ->> 'reclaimed_via_doc_id'\) AS named_v,\s+public\.twob__try_uuid\(v_cur2b -> \(x\.x ->> 'id'\) ->> 'via'\) AS named_c/.test(restoreFn)
       && /md AS MATERIALIZED \(\s+SELECT public\.twob_doc_ident\(d\.supplier_gstin, d\.supplier_name, d\.supplier_invoice_number, d\.date\) AS ident,\s+\(array_agg\(d\.id\)\)\[1\] AS id, count\(\*\) AS n,/.test(restoreFn)
       && /AND NOT COALESCE\(d\.is_amendment, false\) AND COALESCE\(d\.doc_type, 'INVOICE'\) IN \('INVOICE', 'DEBIT_NOTE'\)\s+AND EXISTS \(SELECT 1 FROM e1 WHERE e1\.ident IS NOT NULL\)\s+GROUP BY 1\),/.test(restoreFn)
-      && /CASE WHEN md\.n = 1\s+THEN \(SELECT bool_and\(abs\(COALESCE\(public\.twob__try_num\(e1\.x ->> h\), 0\) - COALESCE\(\(md\.doc ->> h\)::numeric, 0\)\) <= 2\)\s+FROM unnest\(ARRAY\['taxable_value', 'input_igst', 'input_cgst', 'input_sgst'\]\) h\) END AS ident_agrees,/.test(restoreFn)
+      && /count\(e1\.ident\) OVER \(PARTITION BY e1\.ident\) AS ident_rc,/.test(restoreFn)
+      && !/ident_agrees|bool_and\(abs\(/.test(restoreFn)
       && /FROM e1 LEFT JOIN md ON md\.ident = e1\.ident\),/.test(restoreFn)
-      && /CASE WHEN NOT e2\.reclaimed THEN NULL\s+WHEN e2\.named_v IS NOT NULL THEN e2\.named_v\s+WHEN e2\.named_c IS NOT NULL THEN e2\.named_c\s+WHEN e2\.ident_agrees THEN e2\.ident_id END AS via,\s+CASE WHEN e2\.named_v IS NOT NULL THEN 1 WHEN e2\.named_c IS NOT NULL THEN 2 ELSE 3 END AS via_by/.test(restoreFn)
+      && /CASE WHEN NOT e2\.reclaimed THEN NULL\s+WHEN e2\.named_v IS NOT NULL THEN e2\.named_v\s+WHEN e2\.named_c IS NOT NULL THEN e2\.named_c\s+WHEN e2\.ident_n = 1 AND e2\.ident_rc = 1 THEN e2\.ident_id END AS via,\s+CASE WHEN e2\.named_v IS NOT NULL THEN 1 WHEN e2\.named_c IS NOT NULL THEN 2 ELSE 3 END AS via_by/.test(restoreFn)
       && /row_number\(\) OVER \(PARTITION BY e\.via ORDER BY e\.via_by, e\.o\) AS via_rn,\s+count\(\*\) OVER \(PARTITION BY e\.via\) AS via_n,\s+first_value\(e\.x\) OVER \(PARTITION BY e\.via ORDER BY e\.via_by, e\.o\) AS via_first,\s+first_value\(e\.via_by\) OVER \(PARTITION BY e\.via ORDER BY e\.via_by, e\.o\) AS via_first_by,/.test(restoreFn)
       && /\(k\.via IS NOT NULL AND \(\(k\.via_by = 3 AND k\.via_n > 1\) OR k\.via_rn > 1\s+OR k\.via_now IS DISTINCT FROM 'RECLAIM' OR k\.via_kept IS NOT NULL\)\)\s+OR \(k\.via IS NULL AND \(v_has_2b OR NOT v_liberal\)\)\), false\) AS reclaim_back/.test(restoreFn)
       && /v_has_2b := EXISTS \(SELECT 1 FROM public\.twob_import_docs d WHERE d\.client_id = p_client_id AND d\.period_month = p_period\);/.test(restoreFn)
       && /SELECT COALESCE\(c\.liberal_2b_reconciliation, false\) INTO v_liberal FROM public\.clients c WHERE c\.id = p_client_id;/.test(restoreFn)
       && (restoreFn.match(/; reclaim it again on Import 2B'/g) || []).length === 6
       && /CASE WHEN kk\.via_first_by = 1 THEN 'in this version' ELSE 'now' END\) END\)/.test(restoreFn)
-      // The amounts are a check on the one document of the entry's identity:
-      // read once, never ordered by, never a join on them.
-      && (restoreCode.match(/abs\(/g) || []).length === 1
+      // Amounts are never the test (round 11): never compared, never ordered
+      // by, never a join on them.
+      && (restoreCode.match(/abs\(/g) || []).length === 0
       && [...restoreCode.matchAll(/ORDER BY ([^\n]*)/g)].every((m) => !/taxable_value|input_|abs\(|\.doc/.test(m[1]))
       && !/LATERAL|by_amounts|found by its amounts/.test(restoreCode));
   check('round 10: Restore names each Reclaim invoice or debit note of the month it leaves evidencing no reclaim (docs_left), with the entry whose reclaim it evidenced before, and never changes a document; the page\'s toast shows them',

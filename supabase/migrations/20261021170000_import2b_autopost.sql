@@ -424,6 +424,10 @@
 --       SELECT position('''docs_left''' in pg_get_functiondef('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)'::regprocedure)) > 0,
 --              position('ORDER BY e.via_by, e.o' in pg_get_functiondef('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)'::regprocedure)) > 0,
 --              position('k.via_by = 3 AND k.via_n > 1' in pg_get_functiondef('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)'::regprocedure)) > 0;
+--       -- round 11: two reclaims of one identity are never told apart by
+--       -- amounts either (no amount test left in Restore): t, f
+--       SELECT position('ident_rc = 1' in pg_get_functiondef('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)'::regprocedure)) > 0,
+--              position('ident_agrees' in pg_get_functiondef('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)'::regprocedure)) > 0;
 --       -- round 10 (read only, for the lead): the open months' Reclaim
 --       -- invoices and debit notes that evidence no reclaim (their ITC counts
 --       -- nowhere; Import 2B now says so on the row and offers each in Link &
@@ -3164,12 +3168,12 @@ BEGIN
   -- the one the month's entry of that id names now, else (3) the month's
   -- only original invoice or debit note (the only documents that evidence a
   -- reclaim) that is the same document (GSTIN or supplier, number and date,
-  -- twob_doc_ident) and whose amounts are the entry's, each head within the
-  -- Link & Reclaim dialog's Rs. 2 (round 10: a check, never a lookup; a
-  -- reclaim is made only with a document of its amounts, so one of other
-  -- amounts was not its document: two lines of one invoice in the books,
-  -- each reclaimed with its own document, both took the one numbered as
-  -- they were). A document goes to the reclaim that knows it best, (1)
+  -- twob_doc_ident), and only while it is the version's only reclaim that
+  -- names nothing and is that document (round 11: two such reclaims are
+  -- never told apart, by order or by amounts, whatever their amounts; round
+  -- 10 told them apart by amounts within Rs. 2, but an entry's amounts can
+  -- move after its reclaim, a books correction, and then a reclaim moved
+  -- onto the other line's document). A document goes to the reclaim that knows it best, (1)
   -- before (2) before (3), then in the version's order (via_rn below; round
   -- 10: (1) and (2) ranked alike before, so a document the month's entry
   -- names now took a version's own one by the version's order); one found
@@ -3197,9 +3201,7 @@ BEGIN
      GROUP BY 1),
   e2 AS (
     SELECT e1.*, md.n AS ident_n, md.doc AS ident_doc,
-           CASE WHEN md.n = 1
-                THEN (SELECT bool_and(abs(COALESCE(public.twob__try_num(e1.x ->> h), 0) - COALESCE((md.doc ->> h)::numeric, 0)) <= 2)
-                        FROM unnest(ARRAY['taxable_value', 'input_igst', 'input_cgst', 'input_sgst']) h) END AS ident_agrees,
+           count(e1.ident) OVER (PARTITION BY e1.ident) AS ident_rc,
            md.id AS ident_id
       FROM e1 LEFT JOIN md ON md.ident = e1.ident),
   e AS (
@@ -3207,7 +3209,7 @@ BEGIN
            CASE WHEN NOT e2.reclaimed THEN NULL
                 WHEN e2.named_v IS NOT NULL THEN e2.named_v
                 WHEN e2.named_c IS NOT NULL THEN e2.named_c
-                WHEN e2.ident_agrees THEN e2.ident_id END AS via,
+                WHEN e2.ident_n = 1 AND e2.ident_rc = 1 THEN e2.ident_id END AS via,
            CASE WHEN e2.named_v IS NOT NULL THEN 1 WHEN e2.named_c IS NOT NULL THEN 2 ELSE 3 END AS via_by
       FROM e2),
   k AS (
@@ -3332,8 +3334,8 @@ BEGIN
                   WHEN kk.via IS NULL AND kk.ident_n > 1
                     THEN format('its 2B document cannot be told: this version does not name it, and %s 2B documents of this month have its GSTIN or supplier, number and date; reclaim it again on Import 2B', kk.ident_n)
                   WHEN kk.via IS NULL AND kk.ident_n = 1
-                    THEN format('its 2B document cannot be found: this version does not name it, and %s, the one 2B document of this month with its GSTIN or supplier, number and date, has other amounts (more than Rs. 2 apart on a head), so the reclaim was not made with it; reclaim it again on Import 2B',
-                                COALESCE(public.twob__entry_name(kk.ident_doc), 'the document'))
+                    THEN format('its 2B document cannot be told: this version does not name it, and %s of its reclaims are the same document as %s, the one 2B document of this month with their GSTIN or supplier, number and date; reclaim it again on Import 2B',
+                                kk.ident_rc, COALESCE(public.twob__entry_name(kk.ident_doc), 'the document'))
                   WHEN kk.via IS NULL
                     THEN 'its 2B document cannot be found: this version does not name it, and no 2B document of this month has its GSTIN or supplier, number and date; reclaim it again on Import 2B'
                   -- Found by (3) while another reclaim of the version takes

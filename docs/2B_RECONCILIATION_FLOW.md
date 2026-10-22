@@ -2240,19 +2240,25 @@ never guess).
   document as INV-9 by (3): round 9 gave INV-9 to the first in the
   version's order, the 50 line, so the 180 line came back Awaiting with a
   reason that read like its own name, INV-9A stayed Reclaim counted nowhere,
-  and 5.4 was 50 against 230. Now rule (3) holds only while the entry's
-  amounts are the document's (each head within Link & Reclaim's Rs. 2: a
-  reclaim is never made with a document of other amounts; a check on that
-  one document, never a lookup), and only while no other reclaim of the
-  version takes that document by any rule. So the 180 line comes back with
-  INV-9, the 50 line comes back Awaiting ("... VICTOR INV-9, the one 2B
-  document of this month with its GSTIN or supplier, number and date, has
-  other amounts (more than Rs. 2 apart on a head), so the reclaim was not
-  made with it; reclaim it again on Import 2B"), INV-9A is named in
-  `docs_left`, and Link & Reclaim offers it. Two lines of equal amounts
-  (WHISKY W-5 twice, reclaimed with W-5 and W-5B) both come back Awaiting
-  ("cannot be told: ... 2 of its reclaims are the same document as WHISKY
-  W-5 ..."), both documents named.
+  and 5.4 was 50 against 230. Now rule (3) holds only while the entry is
+  the version's only reclaim naming nothing that is that document, and no
+  other reclaim of the version takes that document by any rule. Amounts are
+  never the test (round 11): round 10 kept rule (3) only for an entry of the
+  document's amounts (Rs. 2 a head), on the premise that a reclaim is never
+  made with a document of other amounts, but an entry's amounts move after
+  its reclaim when its books row is corrected (the write-through keeps the
+  reclaim), so a corrected line lost its own document and the other line's
+  reclaim moved onto it, with a reason saying the reclaim was not made with
+  it. So both INV-9 lines come back Awaiting ("cannot be told: ... 2 of its
+  reclaims are the same document as VICTOR INV-9 ..."), INV-9 and INV-9A
+  are named in `docs_left`, and Link & Reclaim offers both. Two lines of
+  equal amounts (WHISKY W-5 twice, reclaimed with W-5 and W-5B) come back
+  the same way. A single reclaim of its identity comes back with its
+  document even when its books row was corrected after the reclaim (DELTA
+  DL/77 reclaimed at 90, corrected to 95). A line whose corrected amounts
+  are more than Rs. 2 from every document cannot be linked again through
+  the dialog; correct the books row back, or take the document out of
+  Reclaim (it is named in `docs_left`).
 - **The version's own naming first, and the reason by its source.** Round 9
   ranked (1), the document the version names, and (2), the one the month's
   entry of that id names now, alike, by the version's order: a reclaim
@@ -2403,9 +2409,12 @@ their commit; each check recorded as in round 5),
 `test_9p_autopost_round10.sql` and `round10.test.mjs` (the tenth round: the
 documents a Restore leaves Reclaim evidencing nothing named, with the entry
 they evidenced, and reclaimed with again from Pending items through the
-page's own calls; two reclaims of one identity never told apart by order
-and held to their amounts; the version's naming before the month's entry's,
-worded by its source; each check recorded as in round 5) and
+page's own calls; two reclaims of one identity never told apart by order;
+the version's naming before the month's entry's, worded by its source;
+each check recorded as in round 5), `test_9q_autopost_round11.sql` (the
+eleventh round: two reclaims of one identity never told apart by amounts
+either, a books row corrected after its reclaim; a single reclaim of its
+identity back with its document whatever its amounts) and
 `autopost.test.mjs` (twin
 clients: the write-through on one, the app's own `planImport2BPost` +
 `postImport2BToLedger` on the other, the ledgers compared after every save

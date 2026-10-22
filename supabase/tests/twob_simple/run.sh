@@ -74,8 +74,8 @@
 # the tenth round's: Restore names each Reclaim document it leaves
 # evidencing no reclaim (docs_left, with the entry it evidenced before),
 # never changing it; two reclaims of the version that are one document are
-# never told apart by order, and one found as the same document is held to
-# its amounts (Rs. 2 a head); a document goes to the reclaim the version
+# never told apart by order (test_9q, the eleventh round: nor by amounts, so
+# a books row corrected after its reclaim moves no reclaim); a document goes to the reclaim the version
 # names before the one the month's entry names now, worded by which; and
 # Pending items' Link & Reclaim offers a Reclaim document that evidences no
 # reclaim, its row saying its ITC counts nowhere.

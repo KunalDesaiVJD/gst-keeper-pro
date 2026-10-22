@@ -12,10 +12,10 @@
 --   T  Two reclaims of the version that are the same document (rule (3))
 --      are never told apart by the version's order: a reclaim found by (3)
 --      is that document's only while no other reclaim of the version takes
---      it, and only while its amounts are the document's (each head within
---      Link & Reclaim's Rs. 2: a reclaim is never made with a document of
---      other amounts). Round 9 gave the first the month's one document of
---      that identity, whatever its amounts, and the other's reclaim moved.
+--      it, and (round 11) only while it is the version's only reclaim
+--      that names nothing and is that document, whatever the amounts.
+--      Round 9 gave the first the month's one document of that identity,
+--      and the other's reclaim moved; round 10 told them apart by amounts.
 --   R  A document goes to the reclaim that knows it best: (1) the version
 --      names it, before (2) the month's entry of that id names it now,
 --      before (3); and the one left out says where the other's document is
@@ -203,18 +203,23 @@ SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-00
 SELECT public.t10_eq(public.twob_clear_year(public.t_superadmin(), :'V', ARRAY['10/2026']) ->> 'deleted', '2', 'T(a): Clear Data of the month');
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'V', '10/2026', :'vv'::jsonb, '[]'::jsonb) AS tv \gset
 SELECT public.t10_eq(concat_ws('|', public.t10_entries(:'V'), public.t10_docs(:'V'), public.t10_itc(:'V')),
-  'INV-9:50:-:-,INV-9:180:Oct 26:INV-9|INV-9=RECLAIM,INV-9A=RECLAIM|0.00|180.00',
-  'T(a): restored: the 180 line back with INV-9 (the same document, its amounts), the 50 line in Awaiting reclaim, never on INV-9 (round 9: the 50 line on INV-9 of 180, the 180 line awaiting, 5.4 50)');
+  'INV-9:50:-:-,INV-9:180:-:-|INV-9=RECLAIM,INV-9A=RECLAIM|0.00|0.00',
+  'T(a): restored: both lines in Awaiting reclaim, the 50 line never on INV-9 (round 9: the 50 line on INV-9 of 180, the 180 line awaiting, 5.4 50; round 11: both are INV-9 and nothing names either''s document, so neither is linked, whatever their amounts)');
 SELECT public.t10_eq(public.t10_said(:'tv'::jsonb, 'reclaims_back'),
-  'INV-9: its 2B document cannot be found: this version does not name it, and VICTOR INV-9, the one 2B document of this month with its GSTIN or supplier, number and date, has other amounts (more than Rs. 2 apart on a head), so the reclaim was not made with it; reclaim it again on Import 2B',
-  'T(a): ... the 50 line named, with why');
-SELECT public.t10_eq(public.t10_said(:'tv'::jsonb, 'docs_left'), 'INV-9A: is Reclaim and evidences no reclaim, so its ITC counts nowhere',
-  'T(a): ... INV-9A named, left Reclaim evidencing nothing (round 9: not named)');
--- ... and the 50 line reclaimed with INV-9A again from Pending items.
+  'INV-9: its 2B document cannot be told: this version does not name it, and 2 of its reclaims are the same document as VICTOR INV-9, the one 2B document of this month with their GSTIN or supplier, number and date; reclaim it again on Import 2B'
+  || ' / INV-9: its 2B document cannot be told: this version does not name it, and 2 of its reclaims are the same document as VICTOR INV-9, the one 2B document of this month with their GSTIN or supplier, number and date; reclaim it again on Import 2B',
+  'T(a): ... both lines named, "cannot be told"');
+SELECT public.t10_eq(public.t10_said(:'tv'::jsonb, 'docs_left'),
+  'INV-9: is Reclaim and evidences no reclaim, so its ITC counts nowhere / INV-9A: is Reclaim and evidences no reclaim, so its ITC counts nowhere',
+  'T(a): ... INV-9 and INV-9A named, left Reclaim evidencing nothing (round 9: not named)');
+-- ... and each line reclaimed with its document again from Pending items.
 SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a4","x-gst-source":"app"}', false);
-SELECT public.t10_eq(public.twob_import2b_reclaim(public.t_poster(), :'V', '10/2026',
+SELECT public.t10_eq(concat_ws('|',
+  public.twob_import2b_reclaim(public.t_poster(), :'V', '10/2026',
     (SELECT t.id FROM public.bills_not_in_2b t WHERE t.client_id = :'V' AND t.input_cgst = 50), '7ea00000-0000-0000-0000-0000000004d2', 'RECLAIM') ->> 'ok',
-  'true', 'T(a): ... the 50 line reclaimed with INV-9A again from Pending items');
+  public.twob_import2b_reclaim(public.t_poster(), :'V', '10/2026',
+    (SELECT t.id FROM public.bills_not_in_2b t WHERE t.client_id = :'V' AND t.input_cgst = 180), '7ea00000-0000-0000-0000-0000000004d1', 'RECLAIM') ->> 'ok'),
+  'true|true', 'T(a): ... the 50 line reclaimed with INV-9A, the 180 line with INV-9, again from Pending items');
 SELECT public.t10_eq(public.t10_itc(:'V'), '0.00|230.00', 'T(a): ... 5.4 230, as before Clear Data');
 -- (b) WHISKY W-5 in the books as two lines of 180, reclaimed with W-5 and
 -- W-5B (both 180). A version of before; Clear Data; the version restored:

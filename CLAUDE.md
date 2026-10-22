@@ -110,9 +110,10 @@ Awaiting reclaim, named (`reclaims_back`); a reclaim comes back reclaimed
 only with its document known exactly, never looked for by its amounts
 (round 9): the one the version names, before the one the month's entry of
 that id names, before the month's only original invoice or debit note that
-is the same document (`twob_doc_ident`) and of the entry's amounts (Rs. 2 a
-head, a check), this last only while no other reclaim of the version takes
-it (round 10), and is linked to it; otherwise, whenever the month holds any
+is the same document (`twob_doc_ident`), this last only while it is the
+version's only reclaim naming nothing that is that document, whatever the
+amounts (round 11), and no other reclaim of the version takes it (round 10),
+and is linked to it; otherwise, whenever the month holds any
 2B document, Strict and Liberal alike, it comes back Awaiting reclaim, named
 ("reclaim it again on Import 2B"); only a Liberal client's in a month with no
 2B document comes back as typed; a Restore never changes a 2B document and
