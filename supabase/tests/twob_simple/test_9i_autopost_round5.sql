@@ -180,7 +180,7 @@ SELECT public.t5_raises($q$DELETE FROM public.twob_import_docs WHERE id = '5e000
   'Not deleted: ALPHA A-1 is the evidence of the reclaim of ALPHA A-1', 'I2: deleting it (a re-import''s stale delete) is refused');
 SELECT public.t5_eq((SELECT reclaimed_via_doc_id::text FROM public.bills_not_in_2b WHERE id = '5e000000-0000-0000-0000-0000000000e1'),
   '5e000000-0000-0000-0000-0000000000d1', 'I2: ... the reclaim keeps its document');
-SELECT public.t5_eq(public.twob_import2b_unreclaim(public.t_poster(), :'R', '10/2026', '5e000000-0000-0000-0000-0000000000d1', 'MATCHED') ->> 'ok',
+SELECT public.t5_eq(public.twob_import2b_unreclaim(public.t_poster(), :'R', '10/2026', '5e000000-0000-0000-0000-0000000000d1', 'MATCHED', '5e000000-0000-0000-0000-0000000000e1') ->> 'ok',
   'true', 'I2: out of Reclaim through Import 2B''s Save (twob_import2b_unreclaim) goes through');
 SELECT public.t5_eq((SELECT concat_ws('|', d.itc_action, COALESCE(t.reclaim_month, '-'), COALESCE(t.reclaimed_via_doc_id::text, '-'))
                        FROM public.twob_import_docs d JOIN public.bills_not_in_2b t ON t.id = '5e000000-0000-0000-0000-0000000000e1'
@@ -188,7 +188,7 @@ SELECT public.t5_eq((SELECT concat_ws('|', d.itc_action, COALESCE(t.reclaim_mont
   'MATCHED|-|-', 'I2: ... the entry back in Awaiting reclaim, the document Matched, together');
 -- Another user then makes A-1 Ineligible; a tab still showing it Reclaim takes it out of Reclaim.
 UPDATE public.twob_import_docs SET itc_action = 'INELIGIBLE' WHERE id = '5e000000-0000-0000-0000-0000000000d1';
-SELECT public.twob_import2b_unreclaim(public.t_poster(), :'R', '10/2026', '5e000000-0000-0000-0000-0000000000d1', 'MATCHED') AS i2u \gset
+SELECT public.twob_import2b_unreclaim(public.t_poster(), :'R', '10/2026', '5e000000-0000-0000-0000-0000000000d1', 'MATCHED', '5e000000-0000-0000-0000-0000000000e1') AS i2u \gset
 SELECT public.t5_eq(concat_ws('|', :'i2u'::jsonb ->> 'ok', position('it is Ineligible now, not Reclaim' in COALESCE(:'i2u'::jsonb ->> 'message', '')) > 0,
                               (SELECT itc_action FROM public.twob_import_docs WHERE id = '5e000000-0000-0000-0000-0000000000d1')),
   'false|t|INELIGIBLE', 'I2: out of Reclaim for a document no longer Reclaim is refused; the Ineligible stays');

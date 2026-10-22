@@ -43,7 +43,7 @@ import {
 } from '@/lib/twobLiveSync';
 import {
   OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchNibFollows2B, fetchTwobMonthState, ledgerCellReadOnly, priorNibLockReason,
-  previewAndApplyPriorBooks, restoreBlockedReason, restoreVersion, type RestoreRow, type TwobChange, type TwobMonthState,
+  previewAndApplyPriorBooks, restoreBlockedReason, restoreVersion, versionRows2B, versionRowsBooks, type RestoreRow, type TwobChange, type TwobMonthState,
 } from '@/lib/twobPriorMonth';
 import {
   WS_PAGE, WS_BTN, WS_TABLE, WS_TH, WS_TD, WS_TD_NUM, WS_TR, WS_TR_TOTAL, WS_FILTER_LABEL, WS_CONTROL,
@@ -1187,56 +1187,11 @@ const TwoBReconciliationPage: React.FC = () => {
       const savedBills2B = (now2B.data || []) as BillRecord[];
       const savedBillsBooks = (nowBooks.data || []) as BillRecord[];
 
-      // Transform CURRENT (saved) data to version format for storage
-      const versionBills2B = savedBills2B.map(b => ({
-        id: b.id,
-        clientId: b.client_id,
-        date: b.date,
-        supplierName: b.supplier_name,
-        supplierInvoiceNumber: b.supplier_invoice_number || '',
-        supplierGstin: b.supplier_gstin || '',
-        taxableValue: b.taxable_value || 0,
-        inputIgst: b.input_igst || 0,
-        inputCgst: b.input_cgst || 0,
-        inputSgst: b.input_sgst || 0,
-        reversalMonth: b.reversal_month || '',
-        reclaimMonth: b.reclaim_month || '',
-        periodMonth: b.period_month,
-        isLocked: b.is_locked || false,
-        isCarriedForward: b.is_carried_forward || false,
-        updatedBy: b.updated_by || '',
-        updatedAt: b.updated_at || new Date().toISOString(),
-        version: b.version || 1,
-        // What a Restore needs to put the entry back as it was (docs §15).
-        reclaimSubtype: b.reclaim_subtype ?? null,
-        reclaimedViaDocId: b.reclaimed_via_doc_id ?? null,
-        sourceBookId: b.source_book_id ?? null,
-        adoptedFrom: b.adopted_from ?? null,
-      }));
-      
-      const versionBillsBooks = savedBillsBooks.map(b => ({
-        id: b.id,
-        clientId: b.client_id,
-        date: b.date,
-        supplierName: b.supplier_name,
-        supplierInvoiceNumber: b.supplier_invoice_number || '',
-        supplierGstin: b.supplier_gstin || '',
-        taxableValue: b.taxable_value || 0,
-        inputIgst: b.input_igst || 0,
-        inputCgst: b.input_cgst || 0,
-        inputSgst: b.input_sgst || 0,
-        bookEntryMonth: b.book_entry_month || '',
-        billIn2BMonth: b.bill_in_2b_month || '',
-        periodMonth: b.period_month,
-        isLocked: b.is_locked || false,
-        isCarriedForward: b.is_carried_forward || false,
-        updatedBy: b.updated_by || '',
-        updatedAt: b.updated_at || new Date().toISOString(),
-        version: b.version || 1,
-        sourceDocId: b.source_doc_id ?? null,
-        adoptedFrom: b.adopted_from ?? null,
-      }));
-      
+      // Transform CURRENT (saved) data to version format for storage (with
+      // what a Restore needs to put each entry back as it was; docs §15).
+      const versionBills2B = versionRows2B(savedBills2B);
+      const versionBillsBooks = versionRowsBooks(savedBillsBooks);
+
       // Save new version with CURRENT data (after this save operation)
       const versionData = {
         billsNotIn2B: versionBills2B,
@@ -1388,30 +1343,33 @@ const TwoBReconciliationPage: React.FC = () => {
       // database (the page's own list can be behind; verification round 5).
       const newVersionNumber = await nextVersionNumber(selectedClientId, selectedMonth);
 
-      // Mark all existing versions as not current, then record the RESTORE.
-      await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
-      const versionData = {
-        billsNotIn2B: version.billsNotIn2B || [],
-        billsNotInBooks: version.billsNotInBooks || [],
-      };
-      
-      await supabase.from('twob_versions').insert([{
-        client_id: selectedClientId,
-        period_month: selectedMonth,
-        table_type: 'combined',
-        version_number: newVersionNumber,
-        version_data: JSON.parse(JSON.stringify(versionData)) as Json,
-        updated_at: new Date().toISOString(),
-        updated_by: user?.id || null,
-        is_current: true,
-        action_type: 'RESTORE',
-        restored_from_version_id: version.id,
-      }]);
-      
+      // Mark all existing versions as not current, then record the RESTORE:
+      // the month as the Restore left it (verification round 7: the version
+      // restored was recorded, so its reclaims that came back in Awaiting
+      // reclaim, and its entries left out, read as restored in the history).
+      const versionData = restored.versionData;
+      if (!versionData) {
+        console.error('Restore: the month could not be read back for its RESTORE version');
+      } else {
+        await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);
+        await supabase.from('twob_versions').insert([{
+          client_id: selectedClientId,
+          period_month: selectedMonth,
+          table_type: 'combined',
+          version_number: newVersionNumber,
+          version_data: JSON.parse(JSON.stringify(versionData)) as Json,
+          updated_at: new Date().toISOString(),
+          updated_by: user?.id || null,
+          is_current: true,
+          action_type: 'RESTORE',
+          restored_from_version_id: version.id,
+        }]);
+      }
+
       await fetchBillsData();
       await fetchVersions();
       setHasUnsavedChanges(false);
-      toast.success(`Restored the month's own entries to version ${version.versionNumber}. New version ${newVersionNumber} created.${restored.carriedKept
+      toast.success(`Restored the month's own entries to version ${version.versionNumber}.${versionData ? ` New version ${newVersionNumber} created.` : ''}${restored.carriedKept
         ? ` Its ${restored.carriedKept} carried ${restored.carriedKept === 1 ? 'entry stays' : 'entries stay'} as ${restored.carriedKept === 1 ? 'it stands' : 'they stand'}: they follow the filed months, so a restore does not change them.`
         : ''}${restored.leftOut.length
         ? ` Left out, because this month now holds ${restored.leftOut.length === 1 ? 'it as a carried entry' : 'them as carried entries'}: ${restored.leftOut.slice(0, 5).join(', ')}${restored.leftOut.length > 5 ? ` and ${restored.leftOut.length - 5} more` : ''}.`

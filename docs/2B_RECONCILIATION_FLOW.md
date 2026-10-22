@@ -1571,7 +1571,7 @@ before the statement ends; a save that writes more than one row is one call:
 | Books register: delete | its entry is taken back, unless filed (locked) or holding a reclaim, Expense out or book entry (then it stays, unlinked, as the delete always left it; the page says so first); an own entry it was linked to instead of adding one goes back to what it held and stays, unlinked |
 | 2B documents: Save of treatments (one, bulk), Enter counted | the document's Not in Books entry is added, changed or taken back |
 | Reclaim (from a document or from Pending items) | one call, `twob_import2b_reclaim`: the entry reclaimed and the document Reclaim (its Not in Books entry taken back), or neither |
-| A document taken out of Reclaim (Save of a staged treatment) | one call, `twob_import2b_unreclaim` (since 22 Oct 2026): the entry back in Awaiting reclaim and the document's new treatment saved with its write-through, or neither (before, two calls: a failure between them left the reclaim undone and the document counted nowhere) |
+| A document taken out of Reclaim (Save of a staged treatment) | one call, `twob_import2b_unreclaim` (since 22 Oct 2026): the entry back in Awaiting reclaim and the document's new treatment saved with its write-through, or neither (before, two calls: a failure between them left the reclaim undone and the document counted nowhere); only while the document is Reclaim and evidences the reclaim the page shows on its row, or none when it shows none (round 7), else nothing is written and the document is named as changed elsewhere |
 | Import / re-import / portal pull (each of its writes) | new Not in Books documents post; changed figures follow; a document the merge deletes takes back its entry; a row whose figures or treatment the write-through refuses keeps them and is named, and the rest of the file is imported |
 | Delete 2B | one call, `twob_import2b_delete_2b` (permission Delete 2B rows): the reclaims the documents made are released, their Not in Books entries deleted (an own entry a document was linked to goes back to what it held and stays), then the documents; a filed (locked) entry and its document are kept and counted |
 | Clear Data (2B Reconciliation) | `twob_clear_year`, one call a month: the open month cleared, then Import 2B's entries written again at once (Import 2B still holds the rows; the dialog says so before CLEAR is typed); filed months kept |
@@ -1987,9 +1987,10 @@ changes are small.
   entry was reclaimed, after the document had been taken out of Reclaim,
   brought the reclaim back against a Matched document: its ITC counted in
   5.1 and again in 5.4, and Pending items no longer listed the entry, so
-  only another Restore undid it. A reclaim the version made without a
-  document (typed on 2B Reconciliation for a Liberal client, or a version of
-  before 21 Oct whose entry is gone) comes back as the version holds it.
+  only another Restore undid it. A reclaim the version holds without naming
+  a document is held to the same terms against the month's original invoice
+  or debit note of the same document since round 7 (below); only one with no
+  such document in the month comes back as the version holds it.
 - **One page's saves of one books row run one at a time** (`queueBookSave`,
   `src/lib/import2bGuardedSaves.ts`). Two cells left in quick succession
   (Tab past the SGST that CGST fills, or typing in a second cell before the
@@ -2000,6 +2001,70 @@ changes are small.
   row reloaded and the second edit lost. A row really changed elsewhere is
   still refused, once, and the saves queued behind that refusal are dropped
   with it.
+
+**Round 7: Restore of a version of before, out of Reclaim as shown, one
+lock order** (verification of 22 Oct 2026). The lead kept round 6's
+stricter reclaim check (the app of before's two-request Reclaim is refused
+from the apply; the app is deployed right after it).
+
+- **A version's reclaim that names no 2B document is held to its
+  document.** Every version written before this release (Post's, a 2B
+  Reconciliation Save's, their RESTORE copies) and every version the app of
+  before writes during the change-over holds a reclaim without naming its
+  document, and when the month's entry of the same id is gone (a Clear
+  Data, an earlier Restore) or names none, round 6 brought the reclaim back
+  with no document: if the document had been taken out of Reclaim since, its
+  ITC counted in 5.1 and again in 5.4, nothing was said, and the document,
+  evidencing nothing, could move freely after. Now Restore finds the month's
+  original invoice or debit note of the same document (`twob_doc_ident`:
+  GSTIN, or the supplier when there is none, the number as normalised, and
+  the date; a Reclaim one evidencing nothing first). While that document is
+  Reclaim and evidences no other reclaim (an entry the month keeps, or the
+  version's first one), the reclaim comes back linked to it
+  (`reclaimed_via_doc_id`), so `twob__reclaim_evidence_guard` holds the
+  document Reclaim from then on; otherwise the entry comes back in Awaiting
+  reclaim and the Restore names it with why, as in round 6. Only a reclaim
+  with no such document in the month (typed on 2B Reconciliation for a
+  Liberal client) comes back as the version holds it. A document whose
+  number or date the books wrote otherwise than the 2B (other than in case,
+  spaces, punctuation or leading zeros) is not found, so such a reclaim
+  comes back as typed.
+- **Out of Reclaim only for the reclaim the page shows.** Import 2B reads,
+  with its ledger side, the reclaim each 2B document evidences
+  (`loadReclaimEvidence`), shows it on a Reclaim document's row ("Evidence
+  of the reclaim of SUPPLIER X-1 (reversed Sep 26, reclaimed Oct 26)"; once
+  a new treatment is staged, "Save puts the reclaim of ... back in Awaiting
+  reclaim"), and its Save out of Reclaim sends it
+  (`twob_import2b_unreclaim(..., p_expect_entry)`: that entry, or null when
+  the row shows none). The call reads the entries naming the document with
+  them held, after the client's lock, and writes nothing unless they are
+  exactly that one ("The reclaim this 2B document evidences was changed
+  elsewhere since the page showed it ...: it is now the evidence of the
+  reclaim of ..."); the page names the document as changed elsewhere and
+  shows the month as it is now. Before, a tab not reloaded, after another
+  user had taken the document out of Reclaim and reclaimed another entry
+  with it, released that new reclaim without a word.
+- **One lock order for Restore and the saves.** Every writer of a reclaim
+  takes the document's row, then the client's lock, then the entries;
+  Restore took the client's lock first and a document only as an entry
+  named it (round 6's check), so a Restore and an out of Reclaim (or a
+  pairing) of the same document at the same moment deadlocked and one of
+  them was rolled back. Restore now takes the month's Reclaim documents
+  (the only ones an entry may name) FOR SHARE, in id order, before the
+  client's lock, waiting for a save of one that is running; one made
+  Reclaim between the two locks is taken without waiting once the client's
+  lock is held, and a save of it running at that moment stops the Restore
+  with a plain message ("Nothing was restored: a 2B document of Oct-26 is
+  being saved on Import 2B right now. Try again in a moment.").
+- **The RESTORE version records the month as the Restore left it.**
+  `twob_restore_version_linked` returns the month's two lists after it
+  (`rows_2b`, `rows_books`), and 2B Reconciliation records them as the
+  RESTORE version (`restoreVersion`'s `versionData`, in the shape a Save
+  records: `versionRows2B` / `versionRowsBooks`, `src/lib/twobPriorMonth.ts`).
+  Before, the page recorded the version restored, so an entry the Restore
+  brought back in Awaiting reclaim (or left out) read as reclaimed in the
+  history and its export, and a Restore of that version brought the reclaim
+  back again.
 
 **The e-mail pop-up's reasons** (round 3, §11). A Not in Books document of
 the month not on the ledger is named with its own reason: no date or
@@ -2043,7 +2108,7 @@ row; an entry keeps its id when no row holds it. The next save of the row
 then changes the entry instead of adding one; the restored figures show as
 "not in step" on Import 2B until then. The toast says how many were linked.
 An Expense out comes back as an Expense out, and a reclaim with its 2B
-document while it is still in the month.
+document only on the terms of rounds 6 and 7 (above).
 
 **Speed** (local PostgreSQL, `test_9c_autopost_timing.sql`, 1,000 rows,
 written as the app sends them): an import of 1,000 Not in Books documents
@@ -2114,7 +2179,15 @@ rest named; an entry naming only a Reclaim document no other names, held
 without the unique index beside a filed pair recorded before, against the
 app of before's own writes and two sessions at once; two saves of one books
 row from one page both kept through the page's queue; each check recorded
-as in round 5) and `autopost.test.mjs` (twin
+as in round 5), `test_9l_autopost_round7.sql`,
+`test_9m_restore_lock_order.sh` and `round7.test.mjs` (the seventh round: a
+version of before's reclaim restored against its document, linked or back
+in Awaiting reclaim and named, typed only with no such document; out of
+Reclaim refused for a reclaim other than the one the page shows, through the
+page's own calls; a Restore and an out of Reclaim of one document at the
+same moment, both orders, without a deadlock; the RESTORE version as the
+Restore left the month; each check recorded as in round 5) and
+`autopost.test.mjs` (twin
 clients: the write-through on one, the app's own `planImport2BPost` +
 `postImport2BToLedger` on the other, the ledgers compared after every save
 kind, the pairing and reclaim calls included; the database's plan and its
@@ -2137,7 +2210,9 @@ document, the treatment Save and books saves guarded by what was loaded,
 changed columns only, a landed save shown as saved, the Settings words) and
 the round-6 rules (the naming trigger held without the index, the reclaim
 call's order, Restore's reclaims back and the page's words, a books row's
-saves one at a time);
+saves one at a time) and the round-7 rules (Restore's document found for a
+reclaim naming none, out of Reclaim sent and checked with the reclaim shown,
+Restore's lock order, the RESTORE version from the Restore's rows);
 `node scripts/verify-twob-live.mjs` checks 2B Reconciliation's live updates
 (which changes concern the month, the banner instead of a reload under unsaved
 edits, Save sending only the changed rows, a reload clearing the pending

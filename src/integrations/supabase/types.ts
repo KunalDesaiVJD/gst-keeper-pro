@@ -12415,7 +12415,7 @@ export type Database = {
         Returns: Json
       }
       twob_import2b_unreclaim: {
-        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_doc_id: string; p_action: string }
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_doc_id: string; p_action: string; p_expect_entry: string | null }
         Returns: Json
       }
       staff_end_sessions: {

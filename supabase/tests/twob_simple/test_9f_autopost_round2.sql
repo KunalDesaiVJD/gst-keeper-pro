@@ -301,22 +301,22 @@ SELECT set_config('twob.write', '', false);
 SET ROLE anon;
 SELECT public.twob_import2b_reclaim(public.t_poster(), :'U', '09/2026', 'af000000-0000-0000-0000-0000000007e1', 'af000000-0000-0000-0000-0000000007d1', 'MATCHED');
 -- A failure in the second half (the treatment refused) leaves both as they were.
-SELECT public.t_raises(format($q$SELECT public.twob_import2b_unreclaim(public.t_poster(), '%s', '09/2026', 'af000000-0000-0000-0000-0000000007d1', 'BOGUS')$q$, :'U'),
+SELECT public.t_raises(format($q$SELECT public.twob_import2b_unreclaim(public.t_poster(), '%s', '09/2026', 'af000000-0000-0000-0000-0000000007d1', 'BOGUS', 'af000000-0000-0000-0000-0000000007e1')$q$, :'U'),
   'twob_import_docs_itc_action_check', 'F7: a treatment the document cannot take is refused');
 SELECT public.t_eq((SELECT concat_ws('|', reclaim_month, reclaimed_via_doc_id IS NOT NULL, (SELECT itc_action FROM public.twob_import_docs WHERE id = 'af000000-0000-0000-0000-0000000007d1'))
                       FROM public.bills_not_in_2b WHERE id = 'af000000-0000-0000-0000-0000000007e1'),
   'Sep 26|t|RECLAIM', 'F7: ... and nothing of the call is kept: the reclaim stands, the document stays Reclaim (counted in 5.4, not nowhere)');
 SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a3","x-gst-source":"app"}', false);
-SELECT public.t_raises(format($q$SELECT public.twob_import2b_unreclaim(public.t_employee(), '%s', '09/2026', 'af000000-0000-0000-0000-0000000007d1', 'NOT_IN_BOOKS')$q$, :'U'),
+SELECT public.t_raises(format($q$SELECT public.twob_import2b_unreclaim(public.t_employee(), '%s', '09/2026', 'af000000-0000-0000-0000-0000000007d1', 'NOT_IN_BOOKS', 'af000000-0000-0000-0000-0000000007e1')$q$, :'U'),
   'Needs the Import 2B & post permission', 'F7: an employee without Import 2B & post is refused');
 SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a4","x-gst-source":"app"}', false);
-SELECT public.t_eq(public.twob_import2b_unreclaim(public.t_poster(), :'U', '09/2026', 'af000000-0000-0000-0000-0000000007d1', 'NOT_IN_BOOKS'),
+SELECT public.t_eq(public.twob_import2b_unreclaim(public.t_poster(), :'U', '09/2026', 'af000000-0000-0000-0000-0000000007d1', 'NOT_IN_BOOKS', 'af000000-0000-0000-0000-0000000007e1'),
   '{"ok": true, "was": "RECLAIM", "released": 1}'::jsonb, 'F7: out of Reclaim to Not in Books, in one call');
 SELECT public.t_eq((SELECT concat_ws('|', COALESCE(reclaim_month, '-'), reclaimed_via_doc_id IS NULL, (SELECT itc_action FROM public.twob_import_docs WHERE id = 'af000000-0000-0000-0000-0000000007d1'),
                                      (SELECT count(*) FROM public.bills_not_in_books WHERE source_doc_id = 'af000000-0000-0000-0000-0000000007d1'))
                       FROM public.bills_not_in_2b WHERE id = 'af000000-0000-0000-0000-0000000007e1'),
   '-|t|NOT_IN_BOOKS|1', 'F7: ... the entry back in Awaiting reclaim, the document Not in Books with its entry posted');
-SELECT public.t_eq(public.twob_import2b_unreclaim(public.t_poster(), :'U', '09/2026', 'af000000-0000-0000-0000-0000000007ff', 'MATCHED') ->> 'gone', 'true',
+SELECT public.t_eq(public.twob_import2b_unreclaim(public.t_poster(), :'U', '09/2026', 'af000000-0000-0000-0000-0000000007ff', 'MATCHED', NULL) ->> 'gone', 'true',
   'F7: a document no longer in the month: said, nothing written');
 RESET ROLE;
 

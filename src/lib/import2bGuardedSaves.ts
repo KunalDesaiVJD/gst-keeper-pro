@@ -5,9 +5,10 @@
 //  - a 2B document's treatment is written only while it still holds the
 //    treatment the page loaded; a document leaving Reclaim goes through
 //    twob_import2b_unreclaim (its reclaim released with it), which refuses
-//    one no longer Reclaim; the database also refuses a document leaving
-//    Reclaim while an entry is reclaimed against it, whoever writes
-//    (twob__reclaim_evidence_guard);
+//    one no longer Reclaim, or evidencing another reclaim than the one the
+//    page showed (verification round 7: loadReclaimEvidence); the database
+//    also refuses a document leaving Reclaim while an entry is reclaimed
+//    against it, whoever writes (twob__reclaim_evidence_guard);
 //  - a books register row sends only the columns the user changed, and only
 //    while the row holds every column as the page loaded it (the
 //    twob_import2b_save_book and twob_import2b_prior_save calls check the
@@ -15,6 +16,7 @@
 // What is not written is named as changed elsewhere; the page then shows
 // the row (or the month) as it is now.
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import { releaseReclaim } from '@/lib/twobPendingWrites';
 
 /** Filters on columns named at run time, typed loosely (the generated table types go too deep). */
@@ -34,8 +36,47 @@ const chunk = <T,>(a: T[], n = 200): T[][] => {
 
 // ---- 2B documents' treatments ------------------------------------------------
 
-/** One document's staged treatment: from (as the page loaded it) to (the pick). */
-export interface DocTreatmentChange { id: string; from: string; to: string }
+/**
+ * One document's staged treatment: from (as the page loaded it) to (the
+ * pick). expectEntry, for a document leaving Reclaim: the entry whose
+ * reclaim the page shows it evidencing (loadReclaimEvidence), or null when
+ * it shows none.
+ */
+export interface DocTreatmentChange { id: string; from: string; to: string; expectEntry?: string | null }
+
+/** A reclaim recorded with a 2B document (the entry naming it), as the page shows it. */
+export interface ReclaimEvidence {
+  id: string;
+  reclaimed_via_doc_id: string;
+  supplier_name: string | null;
+  supplier_invoice_number: string | null;
+  reversal_month: string | null;
+  reclaim_month: string | null;
+  period_month: string;
+}
+
+/**
+ * The reclaim each of the client's 2B documents evidences, by document id
+ * (the entry naming it; the first by id where a pair was recorded before
+ * the one-reclaim rule). Read with the month's ledger side, and sent back
+ * when a document leaves Reclaim (verification round 7). Throws when the
+ * read fails.
+ */
+export async function loadReclaimEvidence(clientId: string): Promise<Map<string, ReclaimEvidence>> {
+  const rows = await fetchAllRows<ReclaimEvidence>('bills_not_in_2b',
+    'id, reclaimed_via_doc_id, supplier_name, supplier_invoice_number, reversal_month, reclaim_month, period_month', (q) => q
+      .eq('client_id', clientId).not('reclaimed_via_doc_id', 'is', null).order('id'));
+  const out = new Map<string, ReclaimEvidence>();
+  for (const r of rows) if (!out.has(r.reclaimed_via_doc_id)) out.set(r.reclaimed_via_doc_id, r);
+  return out;
+}
+
+/** "SUPPLIER X-1 (reversed Sep 26, reclaimed Oct 26)": a reclaim as the page names it. */
+export const reclaimEvidenceName = (e: ReclaimEvidence): string => {
+  const name = [e.supplier_name, e.supplier_invoice_number].map((x) => String(x ?? '').trim()).filter(Boolean).join(' ') || 'an entry';
+  const when = [e.reversal_month && `reversed ${e.reversal_month}`, e.reclaim_month && `reclaimed ${e.reclaim_month}`].filter(Boolean).join(', ');
+  return when ? `${name} (${when})` : name;
+};
 
 /** Said of documents not saved because their treatment changed since the page loaded them. */
 export const DOC_CHANGED_ELSEWHERE_MSG = 'changed elsewhere since the page showed them (another tab or another user), so they were not saved. The page shows the month as it is now.';
@@ -45,9 +86,11 @@ export const DOC_CHANGED_ELSEWHERE_MSG = 'changed elsewhere since the page showe
  * the document still holds the treatment the page loaded (`from`): grouped
  * by (from, to), one conditional write per group and chunk; out of Reclaim
  * one call per document (twob_import2b_unreclaim: the entry it evidences back
- * in Awaiting reclaim with it). saved: written; changed: not written, the
- * document no longer holding `from` (or gone); error: a write failed (the
- * rest not tried), with what was saved before it.
+ * in Awaiting reclaim with it), only while the reclaim it evidences is the
+ * one the page showed (`expectEntry`). saved: written; changed: not written,
+ * the document no longer holding `from`, or evidencing another reclaim (or
+ * gone); error: a write failed (the rest not tried), with what was saved
+ * before it.
  */
 export async function saveDocTreatments(o: {
   actorId: string; clientId: string; period: string; changes: DocTreatmentChange[];
@@ -76,7 +119,9 @@ export async function saveDocTreatments(o: {
       }
     }
     for (const c of o.changes.filter((x) => x.from === 'RECLAIM' && x.to !== 'RECLAIM')) {
-      const res = await releaseReclaim({ actorId: o.actorId, clientId: o.clientId, period: o.period, docId: c.id, action: c.to });
+      const res = await releaseReclaim({
+        actorId: o.actorId, clientId: o.clientId, period: o.period, docId: c.id, action: c.to, expectEntry: c.expectEntry ?? null,
+      });
       if (res.ok) saved.push(c.id);
       else if (res.gone) changed.push(c.id);
       else return { saved, changed, error: res.message };

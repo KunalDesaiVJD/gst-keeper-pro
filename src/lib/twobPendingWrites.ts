@@ -135,16 +135,21 @@ export async function recordReclaim(o: {
  * A 2B document of the open month taken out of Reclaim (Import 2B's Save of a
  * staged treatment), in one call (twob_import2b_unreclaim): the pending
  * entry it evidences goes back to Awaiting reclaim and the document takes
- * its new treatment, with the document's write-through, or none of it. gone:
- * the document is no longer in the month, or no longer Reclaim (changed
- * elsewhere since the page showed it; verification round 5), nothing
- * written. was: its treatment before (Reclaim).
+ * its new treatment, with the document's write-through, or none of it.
+ * expectEntry: the entry whose reclaim the page shows the document
+ * evidencing, or null when it shows none (verification round 7: the call
+ * writes nothing when another reclaim is recorded with the document now).
+ * gone: the document is no longer in the month, no longer Reclaim (changed
+ * elsewhere since the page showed it; verification round 5), or the reclaim
+ * it evidences is not the one the page showed; nothing written. was: its
+ * treatment before (Reclaim).
  */
 export async function releaseReclaim(o: {
-  actorId: string; clientId: string; period: string; docId: string; action: string;
+  actorId: string; clientId: string; period: string; docId: string; action: string; expectEntry: string | null;
 }): Promise<PendingWriteResult & { was?: string | null; released?: number }> {
   const { data, error } = await supabase.rpc('twob_import2b_unreclaim', {
     p_actor_id: o.actorId, p_client_id: o.clientId, p_period: o.period, p_doc_id: o.docId, p_action: o.action,
+    p_expect_entry: o.expectEntry,
   });
   if (error) return { ok: false, gone: false, message: error.message };
   const d = (data || {}) as Record<string, unknown>;

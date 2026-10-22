@@ -86,7 +86,7 @@ check "1: ... the second waited, then was refused saying which entry the documen
 q >"$outA" 2>&1 <<SQL &
 $as_user
 BEGIN;
-SELECT public.twob_import2b_unreclaim('00000000-0000-0000-0000-0000000000a4', '$C', '10/2026', '$D2', 'MATCHED');
+SELECT public.twob_import2b_unreclaim('00000000-0000-0000-0000-0000000000a4', '$C', '10/2026', '$D2', 'MATCHED', NULL);
 SELECT pg_sleep(1.5);
 COMMIT;
 SQL
@@ -118,7 +118,7 @@ pidA=$!
 sleep 0.5
 q >"$outB" 2>&1 <<SQL || true
 $as_user
-SELECT public.twob_import2b_unreclaim('00000000-0000-0000-0000-0000000000a4', '$C', '10/2026', '$D2', 'MATCHED') ->> 'released';
+SELECT public.twob_import2b_unreclaim('00000000-0000-0000-0000-0000000000a4', '$C', '10/2026', '$D2', 'MATCHED', '$E4') ->> 'released';
 SQL
 wait $pidA
 check "3: the way out of Reclaim waits for the naming, then releases it with the document" \

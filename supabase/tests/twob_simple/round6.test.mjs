@@ -252,7 +252,7 @@ await run('H1', async () => {
   // The month's own entries as a version holds them (the books rows' reversals with them).
   const version = JSON.parse(psql(`SELECT jsonb_agg(to_jsonb(t) - 'adopted_from') FROM public.bills_not_in_2b t WHERE t.client_id = '${C}'`));
   psql(`SET ROLE anon; SELECT set_config('request.headers', '{"x-gst-actor":"${POSTER}","x-gst-source":"app"}', false);
-    SELECT public.twob_import2b_unreclaim('${POSTER}', '${C}', '10/2026', '${id(11)}', 'MATCHED');`);
+    SELECT public.twob_import2b_unreclaim('${POSTER}', '${C}', '10/2026', '${id(11)}', 'MATCHED', '${id(1)}');`);
   const res = await as(SUPER, () => A.restoreVersion(SUPER, C, '10/2026', version, []));
   check('H1: Restore of a version taken while A-1 was reclaimed, its document Matched since: named in what did not come back',
     Array.isArray(res.reclaimsBack) && res.reclaimsBack.length === 1 && res.reclaimsBack[0] === 'ALPHA A-1 (its 2B document is Matched now, not Reclaim)',

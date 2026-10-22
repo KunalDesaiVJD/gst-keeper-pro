@@ -209,8 +209,9 @@ await run('I2', async () => {
     stale.error === null && stale.saved.join() === id(12) && stale.changed.join() === id(11), JSON.stringify(stale));
   check('I2: ... D10-9 stays Reclaim with its reclaim (5.1 does not count it again); D10-8 Ineligible',
     docAction(11) === 'RECLAIM' && decision(1) === `Oct 26|-|${id(11)}` && docAction(12) === 'INELIGIBLE', `${docAction(11)} ${decision(1)}`);
+  // (With the reclaim the reloaded page shows D10-9 evidencing, B9-1, as the page sends it since round 7.)
   const fresh = await as(POSTER, () => A.saveDocTreatments({ actorId: POSTER, clientId: C, period: '10/2026', changes: [
-    { id: id(11), from: 'RECLAIM', to: 'MATCHED' }] }));
+    { id: id(11), from: 'RECLAIM', to: 'MATCHED', expectEntry: id(1) }] }));
   check('I2: reloaded, out of Reclaim saves through the one call, the entry back in Awaiting reclaim',
     fresh.error === null && fresh.saved.join() === id(11) && docAction(11) === 'MATCHED' && decision(1) === '-|-|-', JSON.stringify(fresh));
   // Someone makes D10-9 Ineligible; a tab still showing it Reclaim takes it out of Reclaim.

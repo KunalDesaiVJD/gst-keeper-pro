@@ -50,7 +50,13 @@
 # entry names only a Reclaim document no other names whoever writes, held
 # without the unique index as live stands (beside a filed month's pair
 # recorded before, against the app of before's own writes, and two sessions
-# at once), and two saves of one books row from one page both kept.
+# at once), and two saves of one books row from one page both kept; test_9l,
+# test_9m and round7.test.mjs: the seventh round's: a version of before's
+# reclaim (no document named) restored against the month's document of it,
+# linked or back in Awaiting reclaim and named; out of Reclaim only for the
+# reclaim the page shows; Restore and an out of Reclaim of one document at
+# the same moment without a deadlock; the RESTORE version as the Restore
+# left the month.
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.
@@ -114,7 +120,7 @@ done
 for t in "$here"/test_*.sh; do
   if TWOB_TEST_DB="$db" bash "$t"; then :; else echo "FAIL $(basename "$t")"; status=1; fi
 done
-for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs "$here"/round4.test.mjs "$here"/round5.test.mjs "$here"/round6.test.mjs; do
+for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs "$here"/round4.test.mjs "$here"/round5.test.mjs "$here"/round6.test.mjs "$here"/round7.test.mjs; do
   if [ -f "$t" ]; then
     if TWOB_TEST_DB="$db" node "$t"; then :; else status=1; fi
   fi

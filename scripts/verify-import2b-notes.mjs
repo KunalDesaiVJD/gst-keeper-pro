@@ -697,7 +697,9 @@ await run('no post', async () => {
     pend.includes("supabase.rpc('twob_import2b_unreclaim'")
       // Round 5: the page's Save goes through saveDocTreatments, which takes a
       // document out of Reclaim with releaseReclaim (the one call).
-      && /const res = await saveDocTreatments\(\{/.test(code) && guardedLib.includes('const res = await releaseReclaim({ actorId: o.actorId, clientId: o.clientId, period: o.period, docId: c.id, action: c.to });')
+      // Round 7: with the reclaim the page shows the document evidencing.
+      && /const res = await saveDocTreatments\(\{/.test(code)
+      && /const res = await releaseReclaim\(\{\s+actorId: o\.actorId, clientId: o\.clientId, period: o\.period, docId: c\.id, action: c\.to, expectEntry: c\.expectEntry \?\? null,\s+\}\);/.test(guardedLib)
       && !/from\('bills_not_in_2b'\)[\s\S]{0,40}\.update\(\{ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null/.test(code)
       && /CREATE OR REPLACE FUNCTION public\.twob_import2b_unreclaim\(/.test(sql));
   check('round 2: the out-of-step line is read from the database in one statement, and an older read never replaces a newer one',
@@ -792,7 +794,7 @@ await run('no post', async () => {
       && /CREATE UNIQUE INDEX IF NOT EXISTS bills_not_in_2b_reclaimed_via_uq\s+ON public\.bills_not_in_2b \(reclaimed_via_doc_id\) WHERE reclaimed_via_doc_id IS NOT NULL;/.test(sql)
       && /RAISE WARNING 'These 2B documents are each the evidence of more than one reclaim, recorded before this file/.test(sql));
   check('round 5 I2: the treatment Save writes each document only while it holds the treatment loaded; the database keeps a document Reclaim (and undeleted) while an entry is reclaimed against it',
-    /changes: known\.map\(\(\[id, to\]\) => \(\{ id, from: savedAction\(id\) as string, to \}\)\),/.test(code)
+    /changes: known\.map\(\(\[id, to\]\) => \(\{ id, from: savedAction\(id\) as string, to, expectEntry: shownEvidence\.get\(id\)\?\.id \?\? null \}\)\),/.test(code)
       && !/\.update\(\{ itc_action: action, updated_by: user\?\.id, updated_at: nowIso \}\)\s*\.in\('id', part\)/.test(code)
       && /\.in\('id', part\)\.eq\('client_id', o\.clientId\)\.eq\('period_month', o\.period\)\.eq\('itc_action', from\)/.test(guardedLib)
       && /CREATE TRIGGER trg_twob_zz_reclaim_evidence BEFORE UPDATE OF itc_action ON public\.twob_import_docs\s+FOR EACH ROW WHEN \(NEW\.itc_action IS DISTINCT FROM OLD\.itc_action AND NEW\.itc_action IS DISTINCT FROM 'RECLAIM'\)/.test(sql)
@@ -848,6 +850,32 @@ await run('no post', async () => {
       && /const setBookDocType = async[\s\S]{0,200}await saveBookRow\(id, true, \{ doc_type: docType \}\);/.test(code)
       && guardedLib.includes('export class RowQueue') && guardedLib.includes('export function rebaseBookEdit')
       && guardedLib.includes('return st.queue.current.run(o.id, async () => {'));
+  // Round 7 (22 Oct 2026): Restore of a version that names no document for
+  // its reclaim, out of Reclaim against the reclaim the page showed, one lock
+  // order for Restore and the saves, and the RESTORE version as written.
+  check('round 7 F1: Restore holds a reclaim whose version names no document to the month\'s original invoice or debit note of the same document (linked when Reclaim and evidencing nothing; otherwise Awaiting reclaim, named); only one with no such document comes back as typed',
+    /md AS MATERIALIZED \(\s+SELECT d\.id, d\.itc_action,\s+public\.twob_doc_ident\(d\.supplier_gstin, d\.supplier_name, d\.supplier_invoice_number, d\.date\) AS ident,/.test(sql)
+      && /AND NOT COALESCE\(d\.is_amendment, false\) AND COALESCE\(d\.doc_type, 'INVOICE'\) IN \('INVOICE', 'DEBIT_NOTE'\)\s+AND EXISTS \(SELECT 1 FROM e1 WHERE e1\.ident IS NOT NULL\)\),/.test(sql)
+      && /COALESCE\(e1\.named, CASE WHEN e1\.ident IS NOT NULL THEN \(\s+SELECT md\.id FROM md WHERE md\.ident = e1\.ident\s+ORDER BY \(md\.itc_action = 'RECLAIM' AND NOT md\.used\) DESC, md\.id LIMIT 1\) END\) AS via/.test(sql)
+      && /k\.via_rn = 1 AND k\.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k\.via_kept IS NULL/.test(sql));
+  check('round 7 F2: out of Reclaim only while the reclaim the document evidences is the one the page shows (loaded with the ledger side, sent with the Save, checked with the entries held)',
+    /CREATE OR REPLACE FUNCTION public\.twob_import2b_unreclaim\(\s+p_actor_id uuid, p_client_id uuid, p_period text, p_doc_id uuid, p_action text, p_expect_entry uuid\)/.test(sql)
+      && sql.includes('DROP FUNCTION IF EXISTS public.twob_import2b_unreclaim(uuid, uuid, text, uuid, text);')
+      && /WHERE t\.reclaimed_via_doc_id = p_doc_id ORDER BY t\.id FOR NO KEY UPDATE\) z;\s+IF v_now IS DISTINCT FROM \(CASE WHEN p_expect_entry IS NULL THEN '\{\}'::uuid\[\] ELSE ARRAY\[p_expect_entry\] END\) THEN/.test(sql)
+      && pend.includes('p_expect_entry: o.expectEntry,') && /expectEntry: string \| null;/.test(pend)
+      && /\/\/ The reclaim each 2B document evidences \(the entry naming it\)\.\s+loadReclaimEvidence\(clientId\),/.test(tab)
+      && /setReclaimEvidence\(l\.reclaimEvidence\);/.test(code)
+      && /const shownEvidence = ledgerShown \? reclaimEvidence : new Map<string, ReclaimEvidence>\(\);/.test(code)
+      && /\.eq\('client_id', clientId\)\.not\('reclaimed_via_doc_id', 'is', null\)\.order\('id'\)\);/.test(guardedLib));
+  check('round 7 F3: Restore takes the month\'s Reclaim documents before the client\'s lock (the order every writer of a reclaim takes them in), one made Reclaim meanwhile without waiting',
+    /AND d\.itc_action = 'RECLAIM'\s+ORDER BY d\.id FOR SHARE;\s+PERFORM pg_advisory_xact_lock\(hashtextextended\('twob:' \|\| p_client_id::text, 0\)\);\s+BEGIN\s+PERFORM 1 FROM public\.twob_import_docs d\s+WHERE d\.client_id = p_client_id AND d\.period_month = p_period AND d\.itc_action = 'RECLAIM'\s+ORDER BY d\.id FOR SHARE NOWAIT;\s+EXCEPTION WHEN lock_not_available THEN/.test(sql)
+      && /FOR NO KEY UPDATE;\s+IF NOT FOUND THEN\s+RETURN jsonb_build_object\('ok', false, 'gone', true,\s+'message', 'This 2B document is no longer in this month[^']*'\);\s+END IF;\s+PERFORM pg_advisory_xact_lock\(hashtextextended\('twob:' \|\| p_client_id::text, 0\)\);/.test(sql));
+  check('round 7 F4: the RESTORE version records the month as the Restore left it (returned by it), not the version restored; a Save records the same shape',
+    /'rows_2b', \(SELECT COALESCE\(jsonb_agg\(to_jsonb\(t\) ORDER BY t\.date, t\.id\), '\[\]'::jsonb\) FROM public\.bills_not_in_2b t/.test(sql)
+      && prior.includes('versionData: rows2B && rowsBooks ? { billsNotIn2B: versionRows2B(rows2B), billsNotInBooks: versionRowsBooks(rowsBooks) } : null,')
+      && /const versionData = restored\.versionData;/.test(reco) && !/billsNotIn2B: version\.billsNotIn2B \|\| \[\],/.test(reco)
+      && /const versionBills2B = versionRows2B\(savedBills2B\);/.test(reco) && /const versionBillsBooks = versionRowsBooks\(savedBillsBooks\);/.test(reco)
+      && /reclaimedViaDocId: b\.reclaimed_via_doc_id \?\? null,/.test(prior));
   check('round 2: "this row never reaches the ledger" is said for a debit note only once its save went through',
     /const saved = await saveBookRow\(id, true, \{ doc_type: docType \}\);\s*if \(saved && docType === 'DEBIT_NOTE'\) toast\.info\(BOOK_DEBIT_NOTE_MSG/.test(code));
   check('round 2: a book entry or Expense out carried in from a filed month has no Undo on Import 2B, and the database refuses the change',

@@ -221,15 +221,15 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
   const pending = psql(`SELECT id FROM public.bills_not_in_2b WHERE client_id = '${C}' AND period_month = '09/2026' AND supplier_invoice_number = 'T-1'`);
   const rec = await A.recordReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', pendingId: pending, docId: DOC, expectAction: 'MATCHED' });
   check('Round 2 F7: reclaimed', rec.ok, JSON.stringify(rec));
-  const bad = await A.releaseReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', docId: DOC, action: 'BOGUS' });
+  const bad = await A.releaseReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', docId: DOC, action: 'BOGUS', expectEntry: pending });
   check('Round 2 F7: a treatment refused: nothing of the call kept (the reclaim stands, the document stays Reclaim)', !bad.ok && !bad.gone
     && psql(`SELECT reclaim_month || ' ' || (SELECT itc_action FROM public.twob_import_docs WHERE id = '${DOC}') FROM public.bills_not_in_2b WHERE id = '${pending}'`) === 'Sep 26 RECLAIM',
     JSON.stringify(bad));
-  const ok = await A.releaseReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', docId: DOC, action: 'MATCHED' });
+  const ok = await A.releaseReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', docId: DOC, action: 'MATCHED', expectEntry: pending });
   check('Round 2 F7: out of Reclaim: the entry back in Awaiting reclaim and the document Matched, together', ok.ok && ok.was === 'RECLAIM' && ok.released === 1
     && psql(`SELECT COALESCE(reclaim_month, '-') || ' ' || (SELECT itc_action FROM public.twob_import_docs WHERE id = '${DOC}') FROM public.bills_not_in_2b WHERE id = '${pending}'`) === '- MATCHED',
     JSON.stringify(ok));
-  const gone = await A.releaseReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', docId: 'a8000000-0000-0000-0000-0000000007ff', action: 'MATCHED' });
+  const gone = await A.releaseReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', docId: 'a8000000-0000-0000-0000-0000000007ff', action: 'MATCHED', expectEntry: null });
   check('Round 2 F7: a document no longer there: said, nothing written', !gone.ok && gone.gone && gone.message === A.DOC_GONE_MSG, JSON.stringify(gone));
 }
 

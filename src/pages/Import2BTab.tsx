@@ -52,8 +52,8 @@ import {
   recordReclaim, UNDO_EXPENSE_OUT_PATCH, updatePendingEntry,
 } from '@/lib/twobPendingWrites';
 import {
-  bookChangedMsg, bookChanges, bookExpect, bookLanded, bookShownAgain, isBookChangedError, queueBookSave, RowQueue, saveBookGuarded,
-  saveDocTreatments, DOC_CHANGED_ELSEWHERE_MSG, type BookSaveState, type BookValues,
+  bookChangedMsg, bookChanges, bookExpect, bookLanded, bookShownAgain, isBookChangedError, loadReclaimEvidence, queueBookSave, reclaimEvidenceName,
+  RowQueue, saveBookGuarded, saveDocTreatments, DOC_CHANGED_ELSEWHERE_MSG, type BookSaveState, type BookValues, type ReclaimEvidence,
 } from '@/lib/import2bGuardedSaves';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import {
@@ -403,15 +403,17 @@ const ACTION_TONE: Record<string, 'ok' | 'warn' | 'error' | 'neutral'> = {
 // writes it through): Zone 4's pending items with their types, the month's
 // last version, the entries the books rows and 2B documents posted (so a row
 // left off the plan for a missing date or supplier can say it is still on the
-// ledger as last saved), and what the ledger lacks to follow Import 2B
-// (twob_import2b_step, read in one statement: a save landing meanwhile is in
-// it wholly or not at all). Throws when a read fails, the step aside. flush: after
+// ledger as last saved), the reclaim each 2B document evidences (sent back
+// when a document leaves Reclaim; verification round 7), and what the
+// ledger lacks to follow Import 2B (twob_import2b_step, read in one
+// statement: a save landing meanwhile is in it wholly or not at all). Throws
+// when a read fails, the step aside. flush: after
 // this page's own save, the versions its write-through marked are brought up
 // to date (twob_import2b_flush_version, recorded as the saver's; never on a
 // plain load).
 async function loadLedgerSide(actorId: string | null, clientId: string, month: string, flush: boolean) {
   if (flush) await flushVersion(actorId, clientId, month);
-  const [pending2BRes, pendingBooksRes, expensedOutRes, lastVersionRes, stepRes, bookedRes, linkedRes, linkedDocRes] = await Promise.all([
+  const [pending2BRes, pendingBooksRes, expensedOutRes, lastVersionRes, stepRes, bookedRes, linkedRes, linkedDocRes, reclaimEvidence] = await Promise.all([
     // Zone 4 — still-open ledger items for this period (reclaim not yet
     // assigned / not yet booked), whichever period first posted them. Awaiting
     // reclaim: no reclaim month and no Expense out, the condition its Expense
@@ -443,6 +445,8 @@ async function loadLedgerSide(actorId: string | null, clientId: string, month: s
     // And the entries the month's 2B documents posted.
     fetchAllRows<LinkedDocEntry>('bills_not_in_books', 'id, source_doc_id, date, supplier_name, input_igst, input_cgst, input_sgst', (q) => q
       .eq('client_id', clientId).eq('period_month', month).not('source_doc_id', 'is', null).order('id')),
+    // The reclaim each 2B document evidences (the entry naming it).
+    loadReclaimEvidence(clientId),
   ]);
   if (pending2BRes.error) throw pending2BRes.error;
   if (pendingBooksRes.error) throw pendingBooksRes.error;
@@ -478,6 +482,7 @@ async function loadLedgerSide(actorId: string | null, clientId: string, month: s
     booked,
     linked: new Map(linkedRes.map((l) => [l.source_book_id, l])),
     linkedDocs: new Map(linkedDocRes.map((l) => [l.source_doc_id, l])),
+    reclaimEvidence,
     lastVersion: lastRow ? { at: lastRow.updated_at as string, version: lastRow.version_number } : null,
     step: stepRes.step,
     stepError: stepRes.error,
@@ -559,6 +564,9 @@ const Import2BTab: React.FC = () => {
   const [bookedItems, setBookedItems] = useState<PendingBillBooks[]>([]);
   const [linkedEntries, setLinkedEntries] = useState<Map<string, LinkedEntry>>(new Map());
   const [linkedDocEntries, setLinkedDocEntries] = useState<Map<string, LinkedDocEntry>>(new Map());
+  // The reclaim each 2B document evidences, by document id (the entry naming
+  // it): shown on a Reclaim document, and sent back when it leaves Reclaim.
+  const [reclaimEvidence, setReclaimEvidence] = useState<Map<string, ReclaimEvidence>>(new Map());
   // The month's last 2B Reconciliation version (the write-through's snapshot,
   // or a 2B Reconciliation save).
   const [lastVersion, setLastVersion] = useState<{ at: string; version: number | null } | null>(null);
@@ -679,6 +687,7 @@ const Import2BTab: React.FC = () => {
     setBookedItems(l.booked);
     setLinkedEntries(l.linked);
     setLinkedDocEntries(l.linkedDocs);
+    setReclaimEvidence(l.reclaimEvidence);
     setLastVersion(l.lastVersion);
     setOutOfStep(l.step);
     setStepError(l.stepError);
@@ -697,7 +706,7 @@ const Import2BTab: React.FC = () => {
     if (!selectedClient || !selectedMonth) {
       setTwoBDocs([]); setBooks([]); setRcmHidden(0); setLastImportedAt(null); setImporterName(null); setMonthState(OPEN_MONTH);
       setPendingBills2B([]); setPendingBillsBooks([]); setExpensedOutItems([]); setBookedItems([]); setLinkedEntries(new Map()); setLinkedDocEntries(new Map());
-      setLastVersion(null); setEarlierById({});
+      setReclaimEvidence(new Map()); setLastVersion(null); setEarlierById({});
       setOutOfStep(null); setStepError(null); setLedgerView('');
       return;
     }
@@ -2076,11 +2085,14 @@ const Import2BTab: React.FC = () => {
         // a document leaving Reclaim also releases the pending item it
         // evidences, one call each (twob_import2b_unreclaim), the item back in
         // Awaiting reclaim and the document's new treatment saved with its
-        // write-through, or neither.
+        // write-through, or neither; only while the reclaim it evidences is
+        // the one this page shows (verification round 7: a stale tab's Save
+        // undid a reclaim another user had recorded with it since).
         const known = entries.filter(([id]) => !!savedAction(id));
+        const shownEvidence = ledgerShown ? reclaimEvidence : new Map<string, ReclaimEvidence>();
         const res = await saveDocTreatments({
           actorId: user.id, clientId: selectedClient, period: selectedMonth,
-          changes: known.map(([id, to]) => ({ id, from: savedAction(id) as string, to })),
+          changes: known.map(([id, to]) => ({ id, from: savedAction(id) as string, to, expectEntry: shownEvidence.get(id)?.id ?? null })),
         });
         savedIds = res.saved;
         const changed = [...res.changed, ...entries.filter(([id]) => !savedAction(id)).map(([id]) => id)];
@@ -2878,6 +2890,14 @@ const Import2BTab: React.FC = () => {
         });
       } else if (why) out.push({ text: `Not on the 2B Reconciliation ledger: ${why.toLowerCase()} (the 2B file gives none)`, warn: true });
       else if (docChangesNothing(d)) out.push({ text: 'Changes no figure: nothing to put on the 2B Reconciliation ledger' });
+    }
+    // The reclaim a Reclaim document evidences: what Save out of Reclaim puts
+    // back in Awaiting reclaim (and only that one; verification round 7).
+    const evidence = d.itc_action === 'RECLAIM' && ledgerShown ? reclaimEvidence.get(d.id) : undefined;
+    if (evidence) {
+      out.push({ text: action === 'RECLAIM'
+        ? `Evidence of the reclaim of ${reclaimEvidenceName(evidence)}`
+        : `Save puts the reclaim of ${reclaimEvidenceName(evidence)} back in Awaiting reclaim` });
     }
     return out;
   };

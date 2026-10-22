@@ -724,15 +724,101 @@ export function describeRerun(r: RerunResult): { lines: string[]; nothingToDo: b
  */
 export type RestoreRow = Record<string, string | number | boolean | null | Record<string, unknown>>;
 
+/** A 2B Reconciliation ledger row (bills_not_in_2b / bills_not_in_books) as the database returns it. */
+export interface LedgerRowLike {
+  id: string;
+  client_id: string;
+  date: string | null;
+  supplier_name: string | null;
+  supplier_invoice_number?: string | null;
+  supplier_gstin?: string | null;
+  taxable_value?: number | null;
+  input_igst?: number | null;
+  input_cgst?: number | null;
+  input_sgst?: number | null;
+  period_month: string;
+  reversal_month?: string | null;
+  reclaim_month?: string | null;
+  reclaim_subtype?: string | null;
+  reclaimed_via_doc_id?: string | null;
+  source_book_id?: string | null;
+  book_entry_month?: string | null;
+  bill_in_2b_month?: string | null;
+  source_doc_id?: string | null;
+  adopted_from?: Json | null;
+  is_locked?: boolean | null;
+  is_carried_forward?: boolean | null;
+  version?: number | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+const common = (b: LedgerRowLike) => ({
+  id: b.id,
+  clientId: b.client_id,
+  date: b.date,
+  supplierName: b.supplier_name,
+  supplierInvoiceNumber: b.supplier_invoice_number || '',
+  supplierGstin: b.supplier_gstin || '',
+  taxableValue: b.taxable_value || 0,
+  inputIgst: b.input_igst || 0,
+  inputCgst: b.input_cgst || 0,
+  inputSgst: b.input_sgst || 0,
+});
+const stamps = (b: LedgerRowLike) => ({
+  periodMonth: b.period_month,
+  isLocked: b.is_locked || false,
+  isCarriedForward: b.is_carried_forward || false,
+  updatedBy: b.updated_by || '',
+  updatedAt: b.updated_at || new Date().toISOString(),
+  version: b.version || 1,
+});
+
+/**
+ * A month's Not in 2B entries as a 2B Reconciliation version records them
+ * (a Save's, a Restore's): with what a Restore needs to put each back as it
+ * was (its reclaim's document, its Import 2B link; docs §15).
+ */
+export const versionRows2B = (rows: LedgerRowLike[]) => rows.map((b) => ({
+  ...common(b),
+  reversalMonth: b.reversal_month || '',
+  reclaimMonth: b.reclaim_month || '',
+  ...stamps(b),
+  reclaimSubtype: b.reclaim_subtype ?? null,
+  reclaimedViaDocId: b.reclaimed_via_doc_id ?? null,
+  sourceBookId: b.source_book_id ?? null,
+  adoptedFrom: b.adopted_from ?? null,
+}));
+
+/** A month's Not in Books entries as a 2B Reconciliation version records them. */
+export const versionRowsBooks = (rows: LedgerRowLike[]) => rows.map((b) => ({
+  ...common(b),
+  bookEntryMonth: b.book_entry_month || '',
+  billIn2BMonth: b.bill_in_2b_month || '',
+  ...stamps(b),
+  sourceDocId: b.source_doc_id ?? null,
+  adoptedFrom: b.adopted_from ?? null,
+}));
+
+/** A 2B Reconciliation version's rows, as twob_versions.version_data holds them. */
+export interface VersionData { billsNotIn2B: ReturnType<typeof versionRows2B>; billsNotInBooks: ReturnType<typeof versionRowsBooks> }
+
 /**
  * What a restore did: the month's own entries restored, its carried entries
  * kept as they stand, and the version's own entries left out because the
  * month now holds them as carried entries (named, "SUP X-9"). reclaimsBack:
  * entries whose reclaim did not come back with them (verification round 6:
  * their 2B document is not Reclaim now, is gone, or evidences another
- * reclaim), restored in Awaiting reclaim, each named with why.
+ * reclaim), restored in Awaiting reclaim, each named with why. versionData:
+ * the month's two lists as the Restore left them, which the page records as
+ * the RESTORE version (verification round 7: it recorded the version
+ * restored, its reclaims that came back in Awaiting reclaim and its entries
+ * left out included); null when they could not be read.
  */
-export interface RestoreResult { own2B: number; ownBooks: number; carriedKept: number; leftOut: string[]; linked: number; reclaimsBack: string[] }
+export interface RestoreResult {
+  own2B: number; ownBooks: number; carriedKept: number; leftOut: string[]; linked: number; reclaimsBack: string[];
+  versionData: VersionData | null;
+}
 
 /**
  * Replaces an open month's own entries on its two lists with a saved
@@ -751,7 +837,20 @@ export async function restoreVersion(actorId: string, clientId: string, period: 
   });
   if (error) throw new Error(error.message);
   const d = (data || {}) as Raw;
+  // The month as the Restore left it (returned with it); read back when the
+  // database does not return it (a function of before round 7).
+  let rows2B = Array.isArray(d.rows_2b) ? d.rows_2b as LedgerRowLike[] : null;
+  let rowsBooks = Array.isArray(d.rows_books) ? d.rows_books as LedgerRowLike[] : null;
+  if (!rows2B || !rowsBooks) {
+    const [a, b] = await Promise.all([
+      supabase.from('bills_not_in_2b').select('*').eq('client_id', clientId).eq('period_month', period).order('date'),
+      supabase.from('bills_not_in_books').select('*').eq('client_id', clientId).eq('period_month', period).order('date'),
+    ]);
+    rows2B = a.error ? null : (a.data || []) as LedgerRowLike[];
+    rowsBooks = b.error ? null : (b.data || []) as LedgerRowLike[];
+  }
   return {
+    versionData: rows2B && rowsBooks ? { billsNotIn2B: versionRows2B(rows2B), billsNotInBooks: versionRowsBooks(rowsBooks) } : null,
     own2B: Number(d.bills_not_in_2b) || 0, ownBooks: Number(d.bills_not_in_books) || 0,
     carriedKept: (Number(d.carried_kept_2b) || 0) + (Number(d.carried_kept_books) || 0),
     linked: Number(d.linked) || 0,

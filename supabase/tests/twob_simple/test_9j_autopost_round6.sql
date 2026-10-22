@@ -114,8 +114,8 @@ SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-00
 SELECT public.t6_eq(public.twob_import2b_reclaim(public.t_poster(), :'R1', '10/2026', '6e000000-0000-0000-0000-0000000001e1',
   '6e000000-0000-0000-0000-0000000001d1', 'MATCHED') ->> 'ok', 'true', 'H1: the poster reclaims A-1 with its document (Pending items)');
 SELECT jsonb_agg(to_jsonb(t) - 'adopted_from') AS v1 FROM public.bills_not_in_2b t WHERE t.client_id = :'R1' AND t.period_month = '10/2026' \gset
-SELECT public.t6_eq(public.twob_import2b_unreclaim(public.t_poster(), :'R1', '10/2026', '6e000000-0000-0000-0000-0000000001d1', 'MATCHED') ->> 'ok',
-  'true', 'H1: ... then takes the document out of Reclaim (Matched), the entry back in Awaiting reclaim');
+SELECT public.t6_eq(public.twob_import2b_unreclaim(public.t_poster(), :'R1', '10/2026', '6e000000-0000-0000-0000-0000000001d1', 'MATCHED',
+  '6e000000-0000-0000-0000-0000000001e1') ->> 'ok', 'true', 'H1: ... then takes the document out of Reclaim (Matched), the entry back in Awaiting reclaim');
 SELECT set_config('request.headers', '{"x-gst-actor":"00000000-0000-0000-0000-0000000000a1","x-gst-source":"app"}', false);
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'R1', '10/2026', :'v1'::jsonb, '[]'::jsonb) AS h1a \gset
 SELECT public.t6_eq((SELECT concat_ws('|', d.itc_action, COALESCE(t.reclaim_month, '-'), COALESCE(t.reclaimed_via_doc_id::text, '-'))
