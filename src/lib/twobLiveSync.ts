@@ -86,6 +86,29 @@ export function changeShown(change: LedgerChange, view: { clientId: string; peri
 }
 
 /**
+ * Whether the page already shows a burst of changes (changeShown for each),
+ * reading a row's change together with its delete in the same burst: an
+ * entry changed and then deleted (2B Reconciliation's own Save undoes a
+ * carried entry's decision, then deletes it) is shown when its delete is,
+ * the page no longer holding it (verification round 5: the update alone,
+ * of a row the reloaded page no longer holds, read as someone else's change
+ * and reloaded the page a second time, with a toast).
+ */
+export function changesShown(changes: readonly LedgerChange[], view: { clientId: string; period: string },
+  rows: ReadonlyMap<string, object>): boolean {
+  const deleted = new Set<string>();
+  for (const c of changes) {
+    const id = str(c.old?.id) ?? str(c.new?.id);
+    if (c.eventType === 'DELETE' && id !== null) deleted.add(id);
+  }
+  return changes.every((c) => {
+    if (changeShown(c, view, rows)) return true;
+    const id = str(c.new?.id) ?? str(c.old?.id);
+    return c.eventType !== 'DELETE' && id !== null && deleted.has(id) && !rows.has(id);
+  });
+}
+
+/**
  * Whether a change concerns the month shown. A row of another client or
  * month does not; nor does a delete that names only a row id the page never
  * loaded (with the default replica identity a delete carries only the id).

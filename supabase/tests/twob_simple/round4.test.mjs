@@ -175,7 +175,8 @@ INSERT INTO public.bills_not_in_books (id, client_id, period_month, date, suppli
 const row = (table, n) => JSON.parse(psql(`SELECT row_to_json(t) FROM public.${table} t WHERE id = '${id(n)}'`));
 const decision = (n) => psql(`SELECT concat_ws('|', COALESCE(reclaim_month, '-'), COALESCE(reclaim_subtype, '-'), COALESCE(reclaimed_via_doc_id::text, '-')) FROM public.bills_not_in_2b WHERE id = '${id(n)}'`);
 const docAction = (n) => psql(`SELECT itc_action FROM public.twob_import_docs WHERE id = '${id(n)}'`);
-const reclaim = (pending, doc) => as(POSTER, () => A.recordReclaim({ actorId: POSTER, clientId: C, period: '10/2026', pendingId: id(pending), docId: id(doc) }));
+const reclaim = (pending, doc) => as(POSTER, () => A.recordReclaim({ actorId: POSTER, clientId: C, period: '10/2026', pendingId: id(pending), docId: id(doc),
+  expectAction: psql(`SELECT itc_action FROM public.twob_import_docs WHERE id = '${id(doc)}'`) }));
 
 // ── H1 (a): Expense out staged on 2B Reconciliation, a reclaim recorded on
 // Import 2B meanwhile, then the Save. ──────────────────────────────────────

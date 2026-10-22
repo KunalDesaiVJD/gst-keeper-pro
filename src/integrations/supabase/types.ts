@@ -12383,19 +12383,19 @@ export type Database = {
         Returns: string[]
       }
       twob_import2b_catch_up: {
-        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_dry_run?: boolean }
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_dry_run?: boolean; p_digest?: string | null }
         Returns: Json
       }
       twob_import2b_reclaim: {
-        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_pending_id: string; p_doc_id: string }
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_pending_id: string; p_doc_id: string; p_expect_action: string }
         Returns: Json
       }
       twob_import2b_save_book: {
-        Args: { p_actor_id: string; p_book_id: string; p_values: Json; p_release_doc_id?: string | null; p_pair_doc_id?: string | null }
+        Args: { p_actor_id: string; p_book_id: string; p_values: Json; p_release_doc_id?: string | null; p_pair_doc_id?: string | null; p_expect?: Json | null }
         Returns: Json
       }
       twob_import2b_prior_save: {
-        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_changes: Json; p_dry_run?: boolean; p_whole_month?: boolean }
+        Args: { p_actor_id: string; p_client_id: string; p_period: string; p_changes: Json; p_dry_run?: boolean; p_whole_month?: boolean; p_digest?: string | null; p_expect?: Json | null }
         Returns: Json
       }
       twob_import2b_delete_2b: {

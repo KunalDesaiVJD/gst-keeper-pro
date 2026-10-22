@@ -86,7 +86,19 @@ off included; the page asks each save first with
 open to all staff, a books row's pairing that changes nothing on the ledger
 included). A reclaim (`twob_import2b_reclaim`), a document out of
 Reclaim (`twob_import2b_unreclaim`) and a books row's pairing
-(`twob_import2b_save_book`) are one call each, all or nothing; a re-import
+(`twob_import2b_save_book`) are one call each, all or nothing. The money
+rules are database invariants, whatever screen, tab or app version writes:
+one reclaim per 2B document (unique index `bills_not_in_2b_reclaimed_via_uq`,
+created only when live has no document named twice, and the reclaim call
+refusing a document already evidencing one or no longer holding the
+treatment the page showed, `p_expect_action`); a document stays Reclaim, and
+undeleted, while an entry is reclaimed against it (`twob__reclaim_evidence_guard`:
+only `twob_import2b_unreclaim` and Delete 2B, which release it first, take it
+out); an entry names its reclaiming document only while it holds the reclaim
+(`twob__reclaim_via_tidy`); a books row is saved only while it holds what
+the page loaded (changed columns only, guarded; `p_expect` on the pairing and
+filed-month calls; `src/lib/import2bGuardedSaves.ts`), and the treatment Save
+writes each document only while it holds the treatment loaded; a re-import
 skips and names a refused row, and keeps (and lists) a document gone from 2B
 while it has a Not in Books entry (`src/lib/twobReimport.ts`). An own unlinked entry of the same bill is
 linked instead of a twin only when it carries this month's reversal (in-2B)
@@ -113,7 +125,7 @@ running); versions are coalesced per minute, recorded as the saver's, and
 carry each entry's link, which Restore (`twob_restore_version_linked`) puts
 back; a decision carried into an open month from a filed month cannot be
 changed there (`twob__carried_decision_guard`) (§15 of the doc; tests
-`supabase/tests/twob_simple/` test_9a to 9h, `autopost.test.mjs`, `round3.test.mjs`, `round4.test.mjs`;
+`supabase/tests/twob_simple/` test_9a to 9i, `autopost.test.mjs`, `round3.test.mjs`, `round4.test.mjs`, `round5.test.mjs`;
 `node scripts/verify-twob-live.mjs`). `2B Reconciliation`
 (`TwoBReconciliationPage.tsx`) is **read-only for Strict clients** (the
 default) — display, export, version history/restore, and destructive Clear

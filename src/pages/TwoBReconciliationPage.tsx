@@ -36,10 +36,10 @@ import type { Json } from '@/integrations/supabase/types';
 import { cn } from '@/lib/utils';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { writePostVersion } from '@/lib/postImport2B';
+import { nextVersionNumber, writePostVersion } from '@/lib/postImport2B';
 import { checkRowsUnchanged, holdsDecision, OpenMonthSaveError, writeOpenMonthSave } from '@/lib/twobPendingWrites';
 import {
-  changeShown, LEDGER_CHANGED_BANNER, LEDGER_RELOADED_MSG, ledgerChangeConcerns, liveChangeAction, rowsToSave, type LedgerChange,
+  changeShown, changesShown, LEDGER_CHANGED_BANNER, LEDGER_RELOADED_MSG, ledgerChangeConcerns, liveChangeAction, rowsToSave, type LedgerChange,
 } from '@/lib/twobLiveSync';
 import {
   OPEN_MONTH, PRIOR_MONTH_MSG, PRIOR_MONTH_DOCS_MSG, canChangePriorBooks, fetchNibFollows2B, fetchTwobMonthState, ledgerCellReadOnly, priorNibLockReason,
@@ -546,10 +546,12 @@ const TwoBReconciliationPage: React.FC = () => {
       pending = [];
       const act = liveChangeAction({ saving: savingRef.current, dirty: dirtyRef.current });
       if (act === 'wait') { heardDuringSaveRef.current.push(...changes); return; }
-      if (changes.every((c) => changeShown(c, view, shownRowsRef.current))) return;
+      if (changesShown(changes, view, shownRowsRef.current)) return;
       if (act === 'banner') { setLedgerChanged(true); return; }
       toast.info(LEDGER_RELOADED_MSG, { id: 'twob-ledger-reloaded' });
-      void fetchBillsData({ ifClean: true });
+      // The version list too: every Import 2B save that changes the ledger
+      // takes a version (verification round 5).
+      void fetchBillsData({ ifClean: true }).then(() => fetchVersions());
     };
     const hear = (changes: LedgerChange[], wait: number) => {
       pending.push(...changes);
@@ -577,7 +579,7 @@ const TwoBReconciliationPage: React.FC = () => {
       heardDuringSaveRef.current = [];
       supabase.removeChannel(channel);
     };
-  }, [selectedClientId, selectedMonth, fetchBillsData]);
+  }, [selectedClientId, selectedMonth, fetchBillsData, fetchVersions]);
 
   // A Save ends: the changes heard while it ran are looked at again, against
   // the month as the Save reloaded it (or as loaded, when nothing was
@@ -1157,9 +1159,6 @@ const TwoBReconciliationPage: React.FC = () => {
         destructive: true,
       }))) return;
 
-      // Get next version number
-      const currentVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
-
       // The writes (writeOpenMonthSave): the deletes (a carried entry's own
       // reclaim, Expense out or book entry undone with it; the copies the
       // carry made of a deleted own row in later open months with them), the
@@ -1244,32 +1243,37 @@ const TwoBReconciliationPage: React.FC = () => {
         billsNotInBooks: versionBillsBooks,
       };
 
-      // The earlier versions stop being current only now, once every write
-      // above went through (a refused delete leaves them as they were).
-      await supabase
-        .from('twob_versions')
-        .update({ is_current: false })
-        .eq('client_id', selectedClientId)
-        .eq('period_month', selectedMonth);
-
-      const { error: versionError } = await supabase.from('twob_versions').insert([{
-        client_id: selectedClientId,
-        period_month: selectedMonth,
-        table_type: 'combined',
-        version_number: currentVersionNumber,
-        version_data: versionData,
-        updated_at: new Date().toISOString(),
-        updated_by: user?.id || null,
-        is_current: true,
-        action_type: 'SAVE',
-      }]);
-      
+      // The next version number, read from the database just before the
+      // version is written (verification round 5: the page's own list can be
+      // behind the versions Import 2B's saves take meanwhile, and the Save
+      // took a number already used). A version that cannot be written does
+      // not fail the save (it is logged).
       let savedVersionNumber: number | null = null;
-      if (versionError) {
-        console.error('Error saving version:', versionError);
-        // Don't fail the save, just log the error
-      } else {
-        savedVersionNumber = currentVersionNumber;
+      try {
+        const currentVersionNumber = await nextVersionNumber(selectedClientId, selectedMonth);
+        // The earlier versions stop being current only now, once every write
+        // above went through (a refused delete leaves them as they were).
+        await supabase
+          .from('twob_versions')
+          .update({ is_current: false })
+          .eq('client_id', selectedClientId)
+          .eq('period_month', selectedMonth);
+
+        const { error: versionError } = await supabase.from('twob_versions').insert([{
+          client_id: selectedClientId,
+          period_month: selectedMonth,
+          table_type: 'combined',
+          version_number: currentVersionNumber,
+          version_data: versionData,
+          updated_at: new Date().toISOString(),
+          updated_by: user?.id || null,
+          is_current: true,
+          action_type: 'SAVE',
+        }]);
+        if (versionError) console.error('Error saving version:', versionError);
+        else savedVersionNumber = currentVersionNumber;
+      } catch (versionErr) {
+        console.error('Error saving version:', versionErr);
       }
 
       // Refresh data from server (the edits and pending deletes with it)
@@ -1334,9 +1338,6 @@ const TwoBReconciliationPage: React.FC = () => {
     if (blocked) { toast.error(blocked); return; }
     
     try {
-      // Get next version number for the RESTORE action
-      const newVersionNumber = versions.length > 0 ? Math.max(...versions.map(v => v.versionNumber)) + 1 : 1;
-
       // The month's two lists replaced by the version's in one call
       // (twob_restore_version): nothing is changed when it is refused, so the
       // month is never cleared or doubled halfway.
@@ -1383,6 +1384,9 @@ const TwoBReconciliationPage: React.FC = () => {
         source_doc_id: pick(b, 'sourceDocId', 'source_doc_id') || null,
       }));
       const restored = await restoreVersion(user.id, selectedClientId, selectedMonth, rows2B, rowsBooks);
+      // The next version number for the RESTORE action, read from the
+      // database (the page's own list can be behind; verification round 5).
+      const newVersionNumber = await nextVersionNumber(selectedClientId, selectedMonth);
 
       // Mark all existing versions as not current, then record the RESTORE.
       await supabase.from('twob_versions').update({ is_current: false }).eq('client_id', selectedClientId).eq('period_month', selectedMonth);

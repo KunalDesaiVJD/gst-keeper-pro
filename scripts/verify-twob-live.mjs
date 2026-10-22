@@ -23,6 +23,15 @@
 //  - Save decides its delete confirm from the rows read back, guards every
 //    column (not only the figures) and, stopped before its first write,
 //    keeps the edits instead of reloading them away.
+// Verification round 5:
+//  - the page's own Save of a carried entry with its own decision (the
+//    decision undone, then the row deleted) is not news: a row's change read
+//    with its delete in the same burst (changesShown; before, the update
+//    alone read as someone else's change: a toast and a second reload);
+//  - a reload heard live also reloads the version list, and a Save or
+//    Restore numbers its version from the database at that moment
+//    (nextVersionNumber; before, from the page's own list, which Import 2B's
+//    snapshots had overtaken: two "Version 1").
 // The pure parts are run; the page's wiring is read from its source.
 //
 //   node scripts/verify-twob-live.mjs
@@ -107,6 +116,22 @@ if (typeof L.changeShown === 'function') {
       && shown({ eventType: 'UPDATE', new: { ...shownRow, period_month: '11/2026' }, old: { id: 'r1' } }) === false);
 } else check('round 4: changeShown exists', false, 'missing');
 
+// ── Round 5: a row's change read with its delete in the same burst ──────────
+if (typeof L.changesShown === 'function') {
+  const v = { clientId: 'c1', period: '10/2026' };
+  const kept = { id: 'r1', client_id: 'c1', period_month: '10/2026', supplier_name: 'S', reclaim_month: null, reclaim_subtype: null };
+  const rows = new Map([['r1', kept]]);
+  const decidedCopy = { id: 'r5', client_id: 'c1', period_month: '10/2026', supplier_name: 'B9-5', reclaim_month: null, reclaim_subtype: null, is_carried_forward: true };
+  check('round 5: the page\'s own Save of a carried entry with its decision (decision undone, then the row deleted) is shown already: no toast, no second reload',
+    L.changesShown([{ eventType: 'UPDATE', new: decidedCopy, old: { id: 'r5' } }, { eventType: 'DELETE', new: {}, old: { id: 'r5' } }], v, rows) === true);
+  check('… heard in either order', L.changesShown([{ eventType: 'DELETE', new: {}, old: { id: 'r5' } }, { eventType: 'UPDATE', new: decidedCopy, old: { id: 'r5' } }], v, rows) === true);
+  check('… but that update alone, of a row the page does not hold, is still news',
+    L.changesShown([{ eventType: 'UPDATE', new: decidedCopy, old: { id: 'r5' } }], v, rows) === false);
+  check('… and a change to a row the page holds stays news beside an unrelated delete',
+    L.changesShown([{ eventType: 'UPDATE', new: { ...kept, reclaim_month: 'Oct 26' }, old: { id: 'r1' } }, { eventType: 'DELETE', new: {}, old: { id: 'r5' } }], v, rows) === false);
+  check('… and a row the page holds, deleted elsewhere, is news', L.changesShown([{ eventType: 'DELETE', new: {}, old: { id: 'r1' } }], v, rows) === false);
+} else check('round 5: changesShown exists', false, 'missing');
+
 // ── The page's wiring ───────────────────────────────────────────────────────
 const page = fs.readFileSync(path.join(root, 'src/pages/TwoBReconciliationPage.tsx'), 'utf8');
 const code = page.replace(/^\s*\/\/.*$/gm, '');
@@ -131,7 +156,7 @@ check('round 4: a change heard while the page saves is kept, and looked at again
   'the wait path drops the change, or a Save does not replay what it heard');
 check('round 4: no quiet window by user: a change is ignored only when the page already shows it (changeShown)',
   !code.includes('quietUntilRef') && /if \(changeShown\(change, view, shownRowsRef\.current\)\) return;/.test(code)
-    && /if \(changes\.every\(\(c\) => changeShown\(c, view, shownRowsRef\.current\)\)\) return;/.test(code)
+    && /if \(changesShown\(changes, view, shownRowsRef\.current\)\) return;/.test(code)
     && /shownRowsRef\.current = new Map\(\[\.\.\.notIn2B, \.\.\.notInBooks\]\.map\(\(b\) => \[b\.id, b\]\)\);/.test(fetchBody));
 check('… hears deletes (which carry only a row id) and every change of the client',
   /event: 'DELETE', schema: 'public', table: 'bills_not_in_2b' \}/.test(code) && /event: 'DELETE', schema: 'public', table: 'bills_not_in_books' \}/.test(code));
@@ -157,6 +182,13 @@ check('round 4: a Save stopped before its first write keeps the edits and pendin
   /if \(error instanceof OpenMonthSaveError \? !error\.wrote : !wrote\) \{[\s\S]{0,200}if \(error\?\.stale\) setLedgerChanged\(true\);[\s\S]{0,700}return;\s*\}[\s\S]{0,600}await fetchBillsData\(\);/.test(code));
 check('… a filed month\'s Save is checked the same way before its preview',
   /const savePriorMonth = async[\s\S]{0,2500}checkNotChangedElsewhere\(plan2B, planBooks\)[\s\S]{0,300}previewAndApplyPriorBooks/.test(code));
+check('round 5: a reload heard live reloads the version list too',
+  /void fetchBillsData\(\{ ifClean: true \}\)\.then\(\(\) => fetchVersions\(\)\);/.test(code));
+check('round 5: a Save and a Restore number their version from the database at that moment, never from the page\'s list',
+  !/versions\.length > 0 \? Math\.max\(\.\.\.versions\.map/.test(code)
+    && (code.match(/= await nextVersionNumber\(selectedClientId, selectedMonth\);/g) || []).length === 2
+    && code.indexOf('const done = await writeOpenMonthSave(') < code.indexOf('const currentVersionNumber = await nextVersionNumber(')
+    && code.indexOf('const restored = await restoreVersion(') < code.indexOf('const newVersionNumber = await nextVersionNumber('));
 check('a Save marks itself at once, so a change heard during it waits',
   /savingRef\.current = true;/.test(code) && /savingRef\.current = false;/.test(code));
 check('Import Excel (which reloads the month) is refused while edits are unsaved',

@@ -187,21 +187,26 @@ export function catchUpSkippedLines(r: Pick<CatchUpResult, 'skipped'>): string[]
  * A books row of the open month saved with its pairing in one call
  * (twob_import2b_save_book): the 2B document it leaves released, the one it
  * pairs with paired, and the row saved, with their write-throughs, or none of
- * it (a refusal names the entry and what to undo). Throws with the
- * database's words. pairedWas: the paired document's treatment before (its
- * amendments follow it).
+ * it (a refusal names the entry and what to undo). expect: the row's columns
+ * as the page loaded it (bookExpect); the database saves nothing, and this
+ * throws "was changed elsewhere", when the row no longer holds them
+ * (verification round 5). Throws with the database's words. pairedWas: the
+ * paired document's treatment before (its amendments follow it); row: the
+ * row as saved.
  */
 export async function saveBookWithPairing(o: {
   actorId: string; bookId: string; values: Record<string, string | number | null>;
-  releaseDocId?: string | null; pairDocId?: string | null;
-}): Promise<{ pairedWas: string | null }> {
+  releaseDocId?: string | null; pairDocId?: string | null; expect?: Record<string, string | number | null> | null;
+}): Promise<{ pairedWas: string | null; row: Record<string, unknown> | null }> {
   const { data, error } = await supabase.rpc('twob_import2b_save_book', {
     p_actor_id: o.actorId, p_book_id: o.bookId, p_values: o.values as unknown as Json,
     p_release_doc_id: o.releaseDocId ?? null, p_pair_doc_id: o.pairDocId ?? null,
+    p_expect: (o.expect ?? null) as unknown as Json,
   });
   if (error) throw new Error(error.message);
   const d = (data || {}) as Raw;
-  return { pairedWas: typeof d.paired_was === 'string' ? d.paired_was : null };
+  const row = d.row && typeof d.row === 'object' ? d.row as Record<string, unknown> : null;
+  return { pairedWas: typeof d.paired_was === 'string' ? d.paired_was : null, row };
 }
 
 /** The refusals as sentences ("SUPPLIER INV-1: Oct-26 has booked this entry; undo that book entry first."). */

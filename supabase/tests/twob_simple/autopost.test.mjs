@@ -257,7 +257,7 @@ await both('5b pairing in one call', (t, client) => (t === 'a'
 await both('5c reclaim in one call', (t, client) => {
   const entry = psql(`SELECT id FROM public.bills_not_in_2b WHERE source_book_id = '${id(t, 204)}'`);
   return t === 'a'
-    ? `SELECT public.twob_import2b_reclaim(public.t_manager(), '${client}', '${M}', '${entry}', '${id(t, 114)}');`
+    ? `SELECT public.twob_import2b_reclaim(public.t_manager(), '${client}', '${M}', '${entry}', '${id(t, 114)}', (SELECT itc_action FROM public.twob_import_docs WHERE id = '${id(t, 114)}'));`
     : `UPDATE public.bills_not_in_2b SET reclaim_month = 'Sep 26', reclaimed_via_doc_id = '${id(t, 114)}' WHERE id = '${entry}';
        UPDATE public.twob_import_docs SET itc_action = 'RECLAIM' WHERE id = '${id(t, 114)}';`;
 });
@@ -276,12 +276,14 @@ check('5c reclaim in one call: the entry was there to reclaim', psql(`SELECT cou
   compare('6 books delete');
 }
 // 7. Delete 2B (A: the one call; B: Import 2B's delete as it was, then Post).
+// O/1 reclaimed with another document of the month than 5c's (one reclaim
+// per document since verification round 5).
 {
   psql(`SELECT set_config('twob.write', 'system', false);
     UPDATE public.bills_not_in_books SET is_locked = true WHERE source_doc_id IN ('${id('a', 102)}', '${id('b', 102)}');
     INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, input_igst, reversal_month, reclaim_month, reclaimed_via_doc_id) VALUES
-      ('${A}', '${M}', '2026-08-30', 'OLD', 'O/1', 252, 'Aug 26', 'Sep 26', '${id('a', 114)}'),
-      ('${B}', '${M}', '2026-08-30', 'OLD', 'O/1', 252, 'Aug 26', 'Sep 26', '${id('b', 114)}');`);
+      ('${A}', '${M}', '2026-08-30', 'OLD', 'O/1', 252, 'Aug 26', 'Sep 26', '${id('a', 113)}'),
+      ('${B}', '${M}', '2026-08-30', 'OLD', 'O/1', 252, 'Aug 26', 'Sep 26', '${id('b', 113)}');`);
   const ra = run(`SELECT public.twob_import2b_delete_2b(public.t_manager(), '${A}', '${M}');`);
   globalThis.__legacy = true;
   const ids = psql(`SELECT string_agg(quote_literal(id), ',') FROM public.twob_import_docs WHERE client_id = '${B}' AND period_month = '${M}'`);

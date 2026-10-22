@@ -40,11 +40,28 @@ const loose = (q: unknown): LooseFilter => q as LooseFilter;
  */
 export type PendingExpect = Record<string, string | null>;
 
-/** Expense out (from Awaiting reclaim): the entry holds no reclaim, Expense out or reclaiming document. */
-export const EXPECT_AWAITING_RECLAIM: PendingExpect = { reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null };
-/** Undo of an Expense out shown under Expensed out with `label`: still that Expense out, no reclaiming document. */
+/**
+ * Expense out (from Awaiting reclaim): the entry is still in that list, as
+ * the list reads it (no reclaim month, no Expense out). Its reclaiming
+ * document, if it still names one (a reclaim cleared on 2B Reconciliation by
+ * an app of before), does not stop it: the write lets that go
+ * (EXPENSE_OUT_PATCH). Verification round 5: round 4 also asked for no
+ * reclaiming document, which the list does not, so such an entry was
+ * refused on every try as "changed elsewhere".
+ */
+export const EXPECT_AWAITING_RECLAIM: PendingExpect = { reclaim_month: null, reclaim_subtype: null };
+/** Undo of an Expense out shown under Expensed out with `label`: still in that list, that Expense out. */
 export const expectExpensedOut = (label: string | null | undefined): PendingExpect =>
-  ({ reclaim_month: label ?? null, reclaim_subtype: 'EXPENSE_OUT', reclaimed_via_doc_id: null });
+  ({ reclaim_month: label ?? null, reclaim_subtype: 'EXPENSE_OUT' });
+/**
+ * What Expense out writes (label: the month shown): the reclaiming document
+ * goes with it in the same write (an Expense out is no reclaim; the
+ * database lets it go too, twob__reclaim_via_tidy).
+ */
+export const expenseOutPatch = (label: string): Record<string, string | null> =>
+  ({ reclaim_month: label, reclaim_subtype: 'EXPENSE_OUT', reclaimed_via_doc_id: null });
+/** What Undo of an Expense out writes: back to Awaiting reclaim, naming no document. */
+export const UNDO_EXPENSE_OUT_PATCH: Record<string, string | null> = { reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null };
 /** A book entry recorded (from Awaiting book entry): the entry holds none. */
 export const EXPECT_AWAITING_BOOK_ENTRY: PendingExpect = { book_entry_month: null };
 /** Undo of a book entry shown under Booked with `label`: still that book entry. */
@@ -92,20 +109,26 @@ export const DOC_GONE_MSG = 'This 2B document is no longer in this month. Nothin
  * and the document becomes Reclaim in one transaction, or neither. The
  * document's write-through can refuse the whole of it (its Not in Books entry
  * holds a book entry, or the user lacks Import 2B & post), and then nothing
- * is written and the message says what to undo. gone: the entry or the
- * document is no longer there (or the entry no longer awaits a reclaim).
- * was: the document's treatment before (its amendments follow it).
+ * is written and the message says what to undo. expectAction: the
+ * document's treatment as the page shows it (verification round 5). gone:
+ * nothing written, the message says why: the entry or the document is no
+ * longer there, the entry no longer awaits a reclaim, the document no
+ * longer holds the treatment shown (changed or reclaimed with elsewhere), or
+ * it already evidences a reclaim (one reclaim per document). was: the
+ * document's treatment before (its amendments follow it).
  */
 export async function recordReclaim(o: {
-  actorId: string; clientId: string; period: string; pendingId: string; docId: string;
+  actorId: string; clientId: string; period: string; pendingId: string; docId: string; expectAction: string;
 }): Promise<PendingWriteResult & { was?: string | null }> {
   const { data, error } = await supabase.rpc('twob_import2b_reclaim', {
     p_actor_id: o.actorId, p_client_id: o.clientId, p_period: o.period, p_pending_id: o.pendingId, p_doc_id: o.docId,
+    p_expect_action: o.expectAction,
   });
   if (error) return { ok: false, gone: false, message: error.message };
   const d = (data || {}) as Record<string, unknown>;
   if (d.ok === true) return { ok: true, gone: false, message: '', was: typeof d.was === 'string' ? d.was : null };
-  return { ok: false, gone: true, message: d.what === 'document' ? DOC_GONE_MSG : ENTRY_GONE_MSG };
+  if (d.what === 'entry') return { ok: false, gone: true, message: ENTRY_GONE_MSG };
+  return { ok: false, gone: true, message: typeof d.message === 'string' && d.message ? d.message : DOC_GONE_MSG };
 }
 
 /**
@@ -113,8 +136,9 @@ export async function recordReclaim(o: {
  * staged treatment), in one call (twob_import2b_unreclaim): the pending
  * entry it evidences goes back to Awaiting reclaim and the document takes
  * its new treatment, with the document's write-through, or none of it. gone:
- * the document is no longer in the month (nothing written). was: its
- * treatment before (Reclaim, unless changed elsewhere meanwhile).
+ * the document is no longer in the month, or no longer Reclaim (changed
+ * elsewhere since the page showed it; verification round 5), nothing
+ * written. was: its treatment before (Reclaim).
  */
 export async function releaseReclaim(o: {
   actorId: string; clientId: string; period: string; docId: string; action: string;
@@ -125,7 +149,7 @@ export async function releaseReclaim(o: {
   if (error) return { ok: false, gone: false, message: error.message };
   const d = (data || {}) as Record<string, unknown>;
   if (d.ok === true) return { ok: true, gone: false, message: '', was: typeof d.was === 'string' ? d.was : null, released: Number(d.released) || 0 };
-  return { ok: false, gone: true, message: DOC_GONE_MSG };
+  return { ok: false, gone: true, message: typeof d.message === 'string' && d.message ? d.message : DOC_GONE_MSG };
 }
 
 /** The ledger columns of an entry the open-month delete reads. */

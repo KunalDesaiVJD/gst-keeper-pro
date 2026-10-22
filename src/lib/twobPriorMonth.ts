@@ -273,15 +273,21 @@ export async function applyPriorBooks(
  * step brought up to date). dryRun: the preview, with its digest. digest
  * (the save): the preview's; nothing is saved, and this throws "changed
  * while the confirm was open", when the month's preview differs now.
+ * expect: per books row saved, its columns as the page loaded it
+ * ({id: bookExpect(row)}); nothing is saved, and this throws "was changed
+ * elsewhere", when a row no longer holds them (verification round 5: the
+ * digest covers only the time between preview and save, not a page already
+ * stale before the preview).
  * Applying is all or nothing: a refusal throws with the database's words.
  */
 export async function applyPriorSave(
   actorId: string, clientId: string, period: string, changes: TwobChange[], dryRun: boolean, wholeMonth = false,
-  digest: string | null = null,
+  digest: string | null = null, expect: Record<string, Record<string, unknown>> | null = null,
 ): Promise<TwobApplyResult> {
   const { data, error } = await supabase.rpc('twob_import2b_prior_save', {
     p_actor_id: actorId, p_client_id: clientId, p_period: period,
     p_changes: changes as unknown as Json, p_dry_run: dryRun, p_whole_month: wholeMonth, p_digest: digest,
+    p_expect: expect as unknown as Json,
   });
   if (error) throw new Error(error.message);
   return parseApply(data);
@@ -377,13 +383,16 @@ export async function previewAndApplyPriorSave(opts: {
   confirmAlways?: boolean;
   /** Words put before the preview in the confirm. */
   lead?: string;
+  /** Per books row saved, its columns as the page loaded it (applyPriorSave). */
+  expect?: Record<string, Record<string, unknown>> | null;
   notify: { error: (msg: string) => void; info?: (msg: string) => void };
 }): Promise<PriorApplyOutcome> {
   const { actorId, clientId, period, changes, confirm, notify } = opts;
   if (changes.length === 0 && !opts.wholeMonth) return { applied: false, result: null };
+  const expect = opts.expect ?? null;
   let preview: TwobApplyResult;
   try {
-    preview = await applyPriorSave(actorId, clientId, period, changes, true, !!opts.wholeMonth);
+    preview = await applyPriorSave(actorId, clientId, period, changes, true, !!opts.wholeMonth, null, expect);
   } catch (err) {
     notify.error((err as Error).message);
     return { applied: false, result: null };
@@ -408,7 +417,7 @@ export async function previewAndApplyPriorSave(opts: {
   try {
     // Saved only as previewed: the database previews again under the lock
     // and saves nothing when it differs (verification round 3).
-    const result = await applyPriorSave(actorId, clientId, period, changes, false, !!opts.wholeMonth, preview.digest);
+    const result = await applyPriorSave(actorId, clientId, period, changes, false, !!opts.wholeMonth, preview.digest, expect);
     return { applied: true, result };
   } catch (err) {
     const m = (err as Error).message;

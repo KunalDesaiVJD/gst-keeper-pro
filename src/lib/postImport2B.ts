@@ -351,6 +351,21 @@ export function skipReasonsOf(plan: PostPlan): Map<string, string> {
   return out;
 }
 
+/**
+ * The month's next 2B Reconciliation version number, read from the database
+ * at the time of the save (verification round 5: a page's own list can be
+ * behind the versions Import 2B's write-through takes meanwhile). Throws when
+ * the versions cannot be read.
+ */
+export async function nextVersionNumber(clientId: string, periodMonth: string): Promise<number> {
+  const { data, error } = await supabase.from('twob_versions').select('version_number')
+    .eq('client_id', clientId).eq('period_month', periodMonth)
+    .order('version_number', { ascending: false }).limit(1);
+  if (error) throw new Error(`Could not read the month's versions: ${error.message}`);
+  const top = (data || [])[0]?.version_number;
+  return (typeof top === 'number' && top > 0 ? top : 0) + 1;
+}
+
 /** "3 to add, 1 to change, 2 to remove" for one list of a plan; '' when nothing. */
 export function planCountsText(ins: number, upd: number, ret: number): string {
   return [ins && `${ins} to add`, upd && `${upd} to change`, ret && `${ret} to remove`].filter(Boolean).join(', ');
@@ -496,11 +511,7 @@ export async function writePostVersion(clientId: string, periodMonth: string, us
   const nowIso = new Date().toISOString();
   let versionNumber: number | null = null;
   try {
-    const { data: existingVersions } = await supabase
-      .from('twob_versions').select('version_number')
-      .eq('client_id', clientId).eq('period_month', periodMonth);
-    const nextVersion = existingVersions && existingVersions.length > 0
-      ? Math.max(...existingVersions.map((v) => v.version_number || 1)) + 1 : 1;
+    const nextVersion = await nextVersionNumber(clientId, periodMonth);
 
     await supabase.from('twob_versions').update({ is_current: false })
       .eq('client_id', clientId).eq('period_month', periodMonth);

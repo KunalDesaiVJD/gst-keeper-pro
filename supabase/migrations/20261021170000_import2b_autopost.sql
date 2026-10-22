@@ -126,6 +126,31 @@
 --     20261021100000's twob_restore_version is left as it is (an app of
 --     before calls it), so applying either file again never undoes the
 --     other.
+--  7. The money rules, held by the database whichever screen, tab or app
+--     version writes (verification round 5):
+--      - one reclaim per 2B document: twob_import2b_reclaim takes the
+--        treatment the page showed (p_expect_action) and writes nothing when
+--        the document holds another one now or already evidences a reclaim
+--        (before, a stale tab reclaimed a second entry with one document and
+--        5.4 counted its ITC twice); a unique index on
+--        bills_not_in_2b(reclaimed_via_doc_id) holds it for every other
+--        writer, created only when no document is named twice (section 1;
+--        otherwise a warning names them); Restore keeps one reclaim per
+--        document;
+--      - a document stays Reclaim, and is not deleted, while an entry is
+--        reclaimed against it (twob__reclaim_evidence_guard): only
+--        twob_import2b_unreclaim and Delete 2B, which put the entry back in
+--        Awaiting reclaim first in the same transaction, take it out (before,
+--        a stale tab's Save made it Mismatched: its ITC in 5.1 and again in
+--        5.4; a re-import's delete left the reclaim with no document);
+--        twob_import2b_unreclaim refuses a document no longer Reclaim;
+--      - an entry names its reclaiming document only while it holds the
+--        reclaim (twob__reclaim_via_tidy): a reclaim cleared or made an
+--        Expense out lets the document go in the same write;
+--      - a books row is saved only while it holds what the page loaded:
+--        twob_import2b_save_book and twob_import2b_prior_save (preview and
+--        save) take p_expect and raise "was changed elsewhere" (TWB04),
+--        nothing saved, when the row no longer holds it.
 --
 -- RLS: unchanged on the four tables (open: the app has no auth session).
 -- twob_autopost_state: select open, written only by these functions.
@@ -141,7 +166,12 @@
 -- the app's scoped and gated calls), test_9h_autopost_round4.sql and
 -- round4.test.mjs (the fourth round's: the employee's pairing, a delete off
 -- the ledger needing Import 2B & post, the prior-month save's one door run;
--- the app's guarded Saves and Pending items decisions) and autopost.test.mjs
+-- the app's guarded Saves and Pending items decisions), test_9i_autopost_round5.sql
+-- and round5.test.mjs (the fifth round's: one reclaim per document, a
+-- document Reclaim while reclaimed against, a reclaim cleared letting its
+-- document go, a stale books save refused in an open and a filed month,
+-- Pending items over data of before, version numbers; each check recorded,
+-- so run on the code of before each fails or passes on its own) and autopost.test.mjs
 -- (the write-through against planImport2BPost + postImport2BToLedger on
 -- twin clients, after every save kind; own entries adopted then taken back).
 --
@@ -166,10 +196,20 @@
 -- step 3 lists who lacks it; run it first), or deploy the app straight
 -- after applying (step 5), whose page asks
 -- each save first and says which saves need the permission.
+-- The round-5 rules (item 7) hold the app of before too: a stale tab's Save
+-- of a reclaimed document, or a bulk change over one, is refused ("... is
+-- the evidence of the reclaim of ..., so it stays Reclaim") where it used to
+-- count the document twice; its own way out of Reclaim (the entry released
+-- first, then the document) and its Delete 2B (the reclaims released, then
+-- the documents) still go through, and its re-import already keeps a
+-- reclaim's document. It calls none of the functions whose signature this
+-- round changed (they are new in this release).
 -- Already applied in an earlier form? Applying this file again is safe
 -- (re-runnable) and brings it to this form: the earlier signatures of
 -- twob__autopost_apply, twob_import2b_catch_up and twob_import2b_prior_save
--- are dropped first (round 3 added p_digest), so no call is ambiguous.
+-- are dropped first (round 3 added p_digest; round 5 p_expect, and
+-- p_expect_action to twob_import2b_reclaim, p_expect to
+-- twob_import2b_save_book), so no call is ambiguous.
 --  1. Dry checks (SELECT only):
 --       -- needs 20261021100000 (true, true):
 --       SELECT to_regprocedure('public.twob_prior_books_apply(uuid, uuid, text, jsonb, boolean)') IS NOT NULL,
@@ -179,6 +219,41 @@
 --                GROUP BY 1 HAVING count(*) > 1) x),
 --              (SELECT count(*) FROM (SELECT source_doc_id FROM public.bills_not_in_books WHERE source_doc_id IS NOT NULL
 --                GROUP BY 1 HAVING count(*) > 1) x);
+--       -- One reclaim per 2B document (round 5): the 2B documents named as the
+--       -- evidence of more than one reclaim. The unique index
+--       -- bills_not_in_2b_reclaimed_via_uq is created only when this lists
+--       -- none; otherwise the file is applied without it and warns (the
+--       -- reclaim call still refuses a second reclaim with one document).
+--       SELECT c.name, d.period_month, d.supplier_name, d.supplier_invoice_number, t.reclaimed_via_doc_id,
+--              count(*) AS entries, string_agg(concat_ws(' ', t.supplier_invoice_number, t.reclaim_month), ', ') AS reclaims
+--         FROM public.bills_not_in_2b t
+--         LEFT JOIN public.twob_import_docs d ON d.id = t.reclaimed_via_doc_id
+--         LEFT JOIN public.clients c ON c.id = d.client_id
+--        WHERE t.reclaimed_via_doc_id IS NOT NULL
+--        GROUP BY 1, 2, 3, 4, 5 HAVING count(*) > 1;
+--       -- Read on 22 Oct 2026 (anon key, read only): 49 entries name a
+--       -- reclaiming document; ONE document is named by two:
+--       --   GROWQ PRIVATE LIMITED, 07/2026, REDEL SOURCING PRIVATE LIMITED
+--       --   invoice 25 (afbe5e1d-ceb7-4de7-af40-a34f1ed5f0c6, Reclaim,
+--       --   1,350 CGST + 1,350 SGST) is the evidence of the Jul 26 reclaims of
+--       --   both REDEL 5 (reversed May 26) and REDEL 25 (reversed Jun 26),
+--       --   two carried entries of Jul-26: July's 5.4 counts 2,700 + 2,700
+--       --   on one document's 1,350 + 1,350.
+--       -- So, as live stands, the index is NOT created (the file warns and
+--       -- goes on). For the lead: Jul-26 is filed (its 5.4 as filed); which
+--       -- of the two the document evidences (invoice 25, by its number), and
+--       -- whether REDEL 5 has its own document, is the firm's to decide;
+--       -- once one entry no longer names it, apply this file again to add
+--       -- the index. Nothing here changes either entry.
+--       -- Also read then (not refused by this file, for the lead): one
+--       -- reclaim whose document is no longer Reclaim, the state round 5's
+--       -- trigger now prevents: ELENZA CALLISTA BUILDCON-NO ITC, 07/2026,
+--       -- Shashikant Singh A-2 reclaimed Jul 26 against its own document,
+--       -- now Ineligible. And 3 Reclaim documents that no entry names.
+--       SELECT c.name, t.period_month, t.supplier_invoice_number, t.reclaim_month, d.itc_action
+--         FROM public.bills_not_in_2b t JOIN public.twob_import_docs d ON d.id = t.reclaimed_via_doc_id
+--         JOIN public.clients c ON c.id = t.client_id
+--        WHERE d.itc_action <> 'RECLAIM';
 --  2. Apply this file (one transaction; lock_timeout 5 s: at a quiet time;
 --     if it stops on the lock timeout, nothing changed: run it again).
 --  3. Checks after applying:
@@ -186,13 +261,13 @@
 --       SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_twob_zz_carried_decision';         -- 2
 --       SELECT count(*) FROM pg_indexes WHERE indexname IN ('bills_not_in_2b_source_book_uq',
 --              'bills_not_in_books_source_doc_uq');                                           -- 2
---       SELECT to_regprocedure('public.twob_import2b_reclaim(uuid, uuid, text, uuid, uuid)') IS NOT NULL,
---              to_regprocedure('public.twob_import2b_save_book(uuid, uuid, jsonb, uuid, uuid)') IS NOT NULL,
+--       SELECT to_regprocedure('public.twob_import2b_reclaim(uuid, uuid, text, uuid, uuid, text)') IS NOT NULL,
+--              to_regprocedure('public.twob_import2b_save_book(uuid, uuid, jsonb, uuid, uuid, jsonb)') IS NOT NULL,
 --              EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
 --                       AND table_name = 'twob_autopost_state' AND column_name = 'changed_by');  -- t, t, t
 --       -- the confirm's digest (round 3): t, t, t, f, f
 --       SELECT to_regprocedure('public.twob_import2b_catch_up(uuid, uuid, text, boolean, text)') IS NOT NULL,
---              to_regprocedure('public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean, text)') IS NOT NULL,
+--              to_regprocedure('public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean, text, jsonb)') IS NOT NULL,
 --              to_regprocedure('public.twob__prior_save_preview(uuid, uuid, text, jsonb, jsonb, boolean)') IS NOT NULL,
 --              to_regprocedure('public.twob_import2b_catch_up(uuid, uuid, text, boolean)') IS NOT NULL,
 --              to_regprocedure('public.twob__autopost_apply(uuid, text, uuid[], uuid[], uuid, boolean, boolean)') IS NOT NULL;
@@ -205,6 +280,14 @@
 --       -- and the check a delete runs as its caller: t, t
 --       SELECT to_regprocedure('public.twob__acting_user()') IS NOT NULL,
 --              to_regprocedure('public.twob__may_post(uuid)') IS NOT NULL;
+--       -- round 5: the reclaim's rules and the guarded books saves: 3, t, f, f
+--       -- (the index t only once the dry check above lists no document):
+--       SELECT (SELECT count(*) FROM pg_trigger WHERE tgname IN ('trg_twob_zz_reclaim_via', 'trg_twob_zz_reclaim_evidence',
+--                'trg_twob_zz_reclaim_evidence_gone')),
+--              to_regprocedure('public.twob__expect_differs(jsonb, jsonb)') IS NOT NULL,
+--              to_regprocedure('public.twob_import2b_reclaim(uuid, uuid, text, uuid, uuid)') IS NOT NULL,
+--              to_regprocedure('public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean, text)') IS NOT NULL;
+--       SELECT count(*) FROM pg_indexes WHERE indexname = 'bills_not_in_2b_reclaimed_via_uq';  -- 1, or 0 with the warning
 --       -- No entry is linked as an own entry yet (the column is new): 0
 --       SELECT (SELECT count(*) FROM public.bills_not_in_2b WHERE adopted_from IS NOT NULL)
 --            + (SELECT count(*) FROM public.bills_not_in_books WHERE adopted_from IS NOT NULL);
@@ -251,7 +334,9 @@
 --     twob_import2b_prior_save; Delete 2B and Clear Data through their calls).
 --  Rollback (only if the app is rolled back too): drop the eight triggers
 --  trg_twob_zz_autopost_* on books_register and twob_import_docs; the old
---  app's Post works again. The unique indexes, the adopted_from columns and
+--  app's Post works again. The round-5 triggers (trg_twob_zz_reclaim_via,
+--  trg_twob_zz_reclaim_evidence, trg_twob_zz_reclaim_evidence_gone) and the
+--  unique index hold for the old app as well and can stay. The unique indexes, the adopted_from columns and
 --  the two trg_twob_zz_carried_decision triggers can stay (the old app's
 --  Restore calls twob_restore_version, untouched).
 
@@ -297,6 +382,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS bills_not_in_books_source_doc_uq
 -- The unique indexes serve every lookup the plain ones of 20260814090000 did.
 DROP INDEX IF EXISTS public.idx_bills_not_in_2b_source_book_id;
 DROP INDEX IF EXISTS public.idx_bills_not_in_books_source_doc_id;
+
+-- One reclaim per 2B document (verification round 5): a document is the
+-- evidence of at most one entry's reclaim (ITC Summary 5.4 counts each
+-- reclaim, so a second one on the same document counts its ITC twice).
+-- Created only when no document is named by two entries now; otherwise the
+-- file goes on without it, says which, and twob_import2b_reclaim still
+-- refuses a second reclaim with one document (applying the file again once
+-- they are put right creates it). It serves every lookup the plain index of
+-- 20260814130000 did, which then goes.
+DO $$
+DECLARE
+  v text;
+BEGIN
+  SELECT string_agg(format('%s %s, document %s (%s): %s entries (%s)', x.client, public.twob_month_name(x.period_month),
+                           x.doc_no, x.doc_id, x.n, x.entries), '; ' ORDER BY x.client, x.doc_no) INTO v
+    FROM (SELECT t.reclaimed_via_doc_id AS doc_id, count(*) AS n,
+                 string_agg(concat_ws(' ', NULLIF(btrim(COALESCE(t.supplier_invoice_number, '')), ''), t.reclaim_month), ', ' ORDER BY t.id) AS entries,
+                 min(c.name) AS client, min(d.period_month) AS period_month, min(d.supplier_invoice_number) AS doc_no
+            FROM public.bills_not_in_2b t
+            LEFT JOIN public.twob_import_docs d ON d.id = t.reclaimed_via_doc_id
+            LEFT JOIN public.clients c ON c.id = d.client_id
+           WHERE t.reclaimed_via_doc_id IS NOT NULL
+           GROUP BY t.reclaimed_via_doc_id HAVING count(*) > 1) x;
+  IF v IS NULL THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS bills_not_in_2b_reclaimed_via_uq
+      ON public.bills_not_in_2b (reclaimed_via_doc_id) WHERE reclaimed_via_doc_id IS NOT NULL;
+    DROP INDEX IF EXISTS public.idx_bills_not_in_2b_reclaimed_via_doc_id;
+  ELSE
+    RAISE WARNING 'One reclaim per 2B document is not enforced by an index yet: these 2B documents are each the evidence of more than one reclaim, so ITC Summary 5.4 counts their ITC more than once: %. Keep one reclaim per document, then apply this file again to add the index (bills_not_in_2b_reclaimed_via_uq). Until then a second reclaim with one document is still refused (twob_import2b_reclaim); everything else in this file is applied.', v;
+  END IF;
+END $$;
 
 -- An entry of the month's own (typed on 2B Reconciliation, imported there,
 -- or put back by a Restore of an old version) that a books row or 2B
@@ -426,6 +542,33 @@ AS $$
     'supplier_invoice_number', p_row -> 'supplier_invoice_number', 'supplier_gstin', p_row -> 'supplier_gstin',
     'taxable_value', p_row -> 'taxable_value', 'input_igst', p_row -> 'input_igst',
     'input_cgst', p_row -> 'input_cgst', 'input_sgst', p_row -> 'input_sgst');
+$$;
+
+-- A 2B document's treatment as Import 2B names it ('MATCHED' -> 'Matched').
+CREATE OR REPLACE FUNCTION public.twob__treatment_label(p text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT CASE p WHEN 'MATCHED' THEN 'Matched' WHEN 'MISMATCHED' THEN 'Mismatched' WHEN 'NOT_IN_BOOKS' THEN 'Not in Books'
+                WHEN 'INELIGIBLE' THEN 'Ineligible' WHEN 'ITC_OF_OTHERS' THEN 'ITC of Others' WHEN 'RECLAIM' THEN 'Reclaim'
+                WHEN 'HELD' THEN 'Held' ELSE COALESCE(p, 'none') END;
+$$;
+
+-- The first column (by name) of p_expect whose value the row p_row no longer
+-- holds, or NULL (verification round 5: a save guarded by the row as the
+-- page loaded it). Amounts compare as numbers; the rest as text, an absent
+-- or null value only with null.
+CREATE OR REPLACE FUNCTION public.twob__expect_differs(p_row jsonb, p_expect jsonb)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT e.key FROM jsonb_each(COALESCE(p_expect, '{}'::jsonb)) e
+   WHERE CASE WHEN e.key IN ('taxable_value', 'input_igst', 'input_cgst', 'input_sgst')
+              THEN public.twob__try_num(p_row ->> e.key) IS DISTINCT FROM public.twob__try_num(e.value #>> '{}')
+              ELSE (p_row ->> e.key) IS DISTINCT FROM (e.value #>> '{}') END
+   ORDER BY e.key LIMIT 1;
 $$;
 
 -- The user the request names (x-gst-actor, as the change log reads it), or NULL.
@@ -1683,6 +1826,75 @@ DROP TRIGGER IF EXISTS trg_twob_zz_carried_decision ON public.bills_not_in_books
 CREATE TRIGGER trg_twob_zz_carried_decision BEFORE UPDATE OF book_entry_month ON public.bills_not_in_books
   FOR EACH ROW EXECUTE FUNCTION public.twob__carried_decision_guard();
 
+-- A reclaim and its 2B document (verification round 5), held by the
+-- database whichever screen, tab or app version writes:
+--  - an entry names the document that evidences its reclaim
+--    (reclaimed_via_doc_id) only while it holds that reclaim: a reclaim month
+--    and no Expense out. A write that clears the reclaim month or makes it an
+--    Expense out (2B Reconciliation's Reclaim cell, Pending items, an app of
+--    before) lets the document go with it, so the document never stays
+--    "evidence" of an entry that is no longer reclaimed (twob__reclaim_via_tidy);
+--  - a document stays Reclaim while an entry is reclaimed against it, and is
+--    not deleted while one is: only twob_import2b_unreclaim (Import 2B's Save
+--    out of Reclaim) and Delete 2B, which put that entry back in Awaiting
+--    reclaim first in the same transaction, take it out (before, a stale
+--    Import 2B tab's Save made a reclaimed document Mismatched, so its ITC
+--    counted in 5.1 and again through the reclaim in 5.4; a re-import's
+--    delete left the reclaim counted with no document;
+--    twob__reclaim_evidence_guard);
+--  - one reclaim per document: the unique index of section 1, and
+--    twob_import2b_reclaim's own check.
+-- A client being deleted takes its documents and entries with it.
+CREATE OR REPLACE FUNCTION public.twob__reclaim_via_tidy()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.reclaimed_via_doc_id := NULL;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_twob_zz_reclaim_via ON public.bills_not_in_2b;
+CREATE TRIGGER trg_twob_zz_reclaim_via BEFORE INSERT OR UPDATE OF reclaim_month, reclaim_subtype, reclaimed_via_doc_id ON public.bills_not_in_2b
+  FOR EACH ROW WHEN (NEW.reclaimed_via_doc_id IS NOT NULL
+                     AND (NEW.reclaim_subtype IS NOT NULL OR NULLIF(btrim(COALESCE(NEW.reclaim_month, '')), '') IS NULL))
+  EXECUTE FUNCTION public.twob__reclaim_via_tidy();
+
+CREATE OR REPLACE FUNCTION public.twob__reclaim_evidence_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_entry jsonb;
+  v_doc text;
+  v_what text;
+BEGIN
+  SELECT to_jsonb(t) INTO v_entry FROM public.bills_not_in_2b t WHERE t.reclaimed_via_doc_id = OLD.id ORDER BY t.id LIMIT 1;
+  IF v_entry IS NULL
+     OR (TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM public.clients c WHERE c.id = OLD.client_id)) THEN
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+  END IF;
+  v_doc := COALESCE(public.twob__entry_name(to_jsonb(OLD)), 'this 2B document');
+  v_what := format('the reclaim of %s (%s, %s)', COALESCE(public.twob__entry_name(v_entry), 'an entry'),
+    COALESCE(NULLIF(btrim(COALESCE(v_entry ->> 'reclaim_month', '')), ''), 'reclaimed'), public.twob_month_name(v_entry ->> 'period_month'));
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'Not deleted: % is the evidence of %. Take it out of Reclaim on Import 2B first (Save puts that entry back in Awaiting reclaim), or use Delete 2B. Nothing was deleted.',
+      v_doc, v_what USING ERRCODE = 'check_violation';
+  END IF;
+  RAISE EXCEPTION 'Not saved: % is the evidence of %, so it stays Reclaim. To change it, take it out of Reclaim on Import 2B as the page shows it now (reload it if it does not show Reclaim): Save then puts that entry back in Awaiting reclaim with it. Nothing was saved.',
+    v_doc, v_what USING ERRCODE = 'check_violation';
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_twob_zz_reclaim_evidence ON public.twob_import_docs;
+CREATE TRIGGER trg_twob_zz_reclaim_evidence BEFORE UPDATE OF itc_action ON public.twob_import_docs
+  FOR EACH ROW WHEN (OLD.itc_action = 'RECLAIM' AND NEW.itc_action IS DISTINCT FROM 'RECLAIM')
+  EXECUTE FUNCTION public.twob__reclaim_evidence_guard();
+DROP TRIGGER IF EXISTS trg_twob_zz_reclaim_evidence_gone ON public.twob_import_docs;
+CREATE TRIGGER trg_twob_zz_reclaim_evidence_gone BEFORE DELETE ON public.twob_import_docs
+  FOR EACH ROW EXECUTE FUNCTION public.twob__reclaim_evidence_guard();
+
 -- ---------------------------------------------------------------------------
 -- 7. What the screens call
 -- ---------------------------------------------------------------------------
@@ -1738,11 +1950,16 @@ $$;
 -- whole of it, and says what to undo). Locks as a save takes them: the
 -- document's row, then the client's lock, then the entry. Any staff level
 -- (the document's write-through asks for Import 2B & post when it changes
--- the ledger). Returns {ok, was}; {ok: false, gone: true, what, message} when the
--- document or the entry is no longer there or no longer awaiting a reclaim
--- (nothing written).
+-- the ledger). p_expect_action: the document's treatment as the page showed
+-- it (verification round 5). Returns {ok, was}; {ok: false, gone: true,
+-- what, message} when nothing is written: the document or the entry is no
+-- longer there, the entry no longer awaits a reclaim, the document no
+-- longer holds the treatment the page showed (another user changed it, or
+-- reclaimed with it), or the document already evidences a reclaim (one
+-- reclaim per document: a second one counted its ITC twice in 5.4).
+DROP FUNCTION IF EXISTS public.twob_import2b_reclaim(uuid, uuid, text, uuid, uuid);
 CREATE OR REPLACE FUNCTION public.twob_import2b_reclaim(
-  p_actor_id uuid, p_client_id uuid, p_period text, p_pending_id uuid, p_doc_id uuid)
+  p_actor_id uuid, p_client_id uuid, p_period text, p_pending_id uuid, p_doc_id uuid, p_expect_action text)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1750,10 +1967,14 @@ SET search_path = public
 AS $$
 DECLARE
   v_doc record;
+  v_other jsonb;
   n integer;
 BEGIN
   IF p_client_id IS NULL OR public.twob_period_key(p_period) IS NULL OR p_pending_id IS NULL OR p_doc_id IS NULL THEN
     RAISE EXCEPTION 'Choose the entry and the 2B document.';
+  END IF;
+  IF NULLIF(btrim(COALESCE(p_expect_action, '')), '') IS NULL THEN
+    RAISE EXCEPTION 'Say which treatment the page showed for the 2B document (p_expect_action). Nothing was saved.';
   END IF;
   IF p_actor_id IS NULL OR COALESCE(public.staff_level_of(p_actor_id), '') NOT IN ('superadmin', 'gst_manager', 'employee') THEN
     RAISE EXCEPTION 'Only staff record a reclaim.';
@@ -1772,6 +1993,21 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('twob:' || p_client_id::text, 0));
   IF public.twob_month_is_prior(p_client_id, p_period) THEN
     RAISE EXCEPTION 'This month is filed. Its 2B documents and the reversal, reclaim and book entry months cannot change.';
+  END IF;
+  -- The document as the page showed it, and the evidence of no other reclaim
+  -- (read under the client's lock, which every writer of a reclaim takes).
+  IF v_doc.itc_action IS DISTINCT FROM p_expect_action THEN
+    RETURN jsonb_build_object('ok', false, 'gone', true, 'what', 'document', 'now', v_doc.itc_action,
+      'message', format('This 2B document was changed elsewhere since the page showed it: it is %s now, not %s. Nothing was saved; the page shows the month as it is now.',
+                        public.twob__treatment_label(v_doc.itc_action), public.twob__treatment_label(p_expect_action)));
+  END IF;
+  SELECT to_jsonb(t) INTO v_other FROM public.bills_not_in_2b t
+   WHERE t.reclaimed_via_doc_id = p_doc_id AND t.id <> p_pending_id ORDER BY t.id LIMIT 1;
+  IF v_other IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', false, 'gone', true, 'what', 'document',
+      'message', format('This 2B document is already the evidence of the reclaim of %s (%s, %s); one document evidences one reclaim. Nothing was saved; the page shows the month as it is now.',
+                        COALESCE(public.twob__entry_name(v_other), 'another entry'),
+                        COALESCE(NULLIF(btrim(COALESCE(v_other ->> 'reclaim_month', '')), ''), 'reclaimed'), public.twob_month_name(v_other ->> 'period_month')));
   END IF;
   UPDATE public.bills_not_in_2b t
      SET reclaim_month = public.twob_period_label(p_period), reclaim_subtype = NULL, reclaimed_via_doc_id = p_doc_id,
@@ -1805,11 +2041,18 @@ $$;
 -- document that has an entry, a Not in 2B row with a date and supplier),
 -- and nothing of the call is kept; a pairing that changes nothing on the
 -- ledger (a Mismatched books row against a Matched document) saves for an
--- employee without it, as the direct writes of before did. Returns {ok,
--- paired_was} (the paired document's treatment before, for its amendments
--- to follow).
+-- employee without it, as the direct writes of before did. p_expect
+-- (verification round 5): the row's columns as the page loaded it (the keys
+-- p_values may hold); when the row no longer holds one of them (another tab
+-- or user saved it meanwhile) nothing is saved and this raises "was changed
+-- elsewhere" (TWB04), so a stale page never writes its old copy back. The
+-- page always sends it; NULL (no check) is left for the tests' direct calls.
+-- Returns {ok, paired_was, row} (the paired document's treatment before, for
+-- its amendments to follow; the row as saved).
+DROP FUNCTION IF EXISTS public.twob_import2b_save_book(uuid, uuid, jsonb, uuid, uuid);
 CREATE OR REPLACE FUNCTION public.twob_import2b_save_book(
-  p_actor_id uuid, p_book_id uuid, p_values jsonb, p_release_doc_id uuid DEFAULT NULL, p_pair_doc_id uuid DEFAULT NULL)
+  p_actor_id uuid, p_book_id uuid, p_values jsonb, p_release_doc_id uuid DEFAULT NULL, p_pair_doc_id uuid DEFAULT NULL,
+  p_expect jsonb DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1820,6 +2063,7 @@ DECLARE
   r public.books_register;
   v_pair text;
   v_bad text;
+  v_row jsonb;
 BEGIN
   IF p_actor_id IS NULL OR COALESCE(public.staff_level_of(p_actor_id), '') NOT IN ('superadmin', 'gst_manager', 'employee') THEN
     RAISE EXCEPTION 'Only staff save the books register.';
@@ -1830,15 +2074,25 @@ BEGIN
   IF jsonb_typeof(p_values) <> 'object' THEN
     RAISE EXCEPTION 'No values were sent.';
   END IF;
-  SELECT k INTO v_bad FROM jsonb_object_keys(p_values) k
+  IF p_expect IS NOT NULL AND jsonb_typeof(p_expect) <> 'object' THEN
+    RAISE EXCEPTION 'The row as the page loaded it was not sent.';
+  END IF;
+  SELECT k INTO v_bad FROM (SELECT jsonb_object_keys(p_values) UNION ALL SELECT jsonb_object_keys(COALESCE(p_expect, '{}'::jsonb))) x(k)
    WHERE k NOT IN ('date', 'supplier_name', 'supplier_invoice_number', 'supplier_gstin', 'taxable_value', 'input_igst',
                    'input_cgst', 'input_sgst', 'doc_type', 'book_treatment', 'matched_2b_id') LIMIT 1;
   IF v_bad IS NOT NULL THEN
     RAISE EXCEPTION 'A books row saves its date, supplier, number, GSTIN, amounts, type and treatment here (%).', v_bad;
   END IF;
-  SELECT b.id, b.client_id, b.period_month INTO v_book FROM public.books_register b WHERE b.id = p_book_id FOR NO KEY UPDATE;
+  SELECT b.id, b.client_id, b.period_month, to_jsonb(b) AS j INTO v_book FROM public.books_register b WHERE b.id = p_book_id FOR NO KEY UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'This books row is no longer here. Reload the page.';
+  END IF;
+  -- The row as the page loaded it (verification round 5), checked with the
+  -- row locked, before anything is written.
+  IF public.twob__expect_differs(v_book.j, p_expect) IS NOT NULL THEN
+    RAISE EXCEPTION 'Nothing was saved: books row % was changed elsewhere since this page loaded it (another tab or another user; its %). The row is shown again as it is now.',
+      COALESCE(public.twob__entry_name(v_book.j), '(no number)'), replace(public.twob__expect_differs(v_book.j, p_expect), '_', ' ')
+      USING ERRCODE = 'TWB04';
   END IF;
   -- The documents, in id order, from this client's month only.
   PERFORM 1 FROM public.twob_import_docs d
@@ -1878,9 +2132,10 @@ BEGIN
     book_treatment = CASE WHEN p_values ? 'book_treatment' THEN r.book_treatment ELSE b.book_treatment END,
     matched_2b_id = CASE WHEN p_values ? 'matched_2b_id' THEN r.matched_2b_id ELSE b.matched_2b_id END,
     updated_by = p_actor_id, updated_at = now()
-   WHERE b.id = p_book_id;
+   WHERE b.id = p_book_id
+  RETURNING to_jsonb(b) INTO v_row;
   PERFORM set_config('twob.actor', '', true);
-  RETURN jsonb_build_object('ok', true, 'paired_was', v_pair);
+  RETURN jsonb_build_object('ok', true, 'paired_was', v_pair, 'row', v_row);
 END;
 $$;
 
@@ -2110,11 +2365,19 @@ $$;
 -- different digest rolls the whole save back. Before, the preview was made
 -- a second time under the lock first, which ran the door three more times:
 -- 1,000 rows took 1.9 s (2.5 s with the change log), near the 3 s anon
--- calls run under.
+-- calls run under. p_expect (verification round 5): per books row the page
+-- saves ({id: its columns as the page loaded it}); when a row no longer
+-- holds them (another tab or user saved it meanwhile, before the preview
+-- too) nothing is saved, and this raises "was changed elsewhere" (TWB04),
+-- in the preview and in the save: the digest covers only the time between
+-- the two, not a page already stale before the preview. The page always
+-- sends it; NULL (no check) is left for the tests' direct calls.
 DROP FUNCTION IF EXISTS public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean);
+DROP FUNCTION IF EXISTS public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean, text);
 CREATE OR REPLACE FUNCTION public.twob_import2b_prior_save(
   p_actor_id uuid, p_client_id uuid, p_period text, p_changes jsonb,
-  p_dry_run boolean DEFAULT true, p_whole_month boolean DEFAULT false, p_digest text DEFAULT NULL)
+  p_dry_run boolean DEFAULT true, p_whole_month boolean DEFAULT false, p_digest text DEFAULT NULL,
+  p_expect jsonb DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -2132,6 +2395,8 @@ DECLARE
   v_unlinks jsonb := '[]'::jsonb;
   v_wrote boolean := false;
   v_num integer;
+  e record;
+  v_b jsonb;
 BEGIN
   IF p_client_id IS NULL OR public.twob_period_key(p_period) IS NULL THEN
     RAISE EXCEPTION 'Choose a client and a month.';
@@ -2150,7 +2415,27 @@ BEGIN
   IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_changes) x WHERE x ->> 'table' IS DISTINCT FROM 'books_register') THEN
     RAISE EXCEPTION 'Only Import 2B books rows are saved here; the 2B Reconciliation entries follow them.';
   END IF;
+  IF p_expect IS NOT NULL AND (jsonb_typeof(p_expect) <> 'object'
+       OR EXISTS (SELECT 1 FROM jsonb_each(p_expect) x WHERE jsonb_typeof(x.value) <> 'object')) THEN
+    RAISE EXCEPTION 'The rows as the page loaded them were not sent.';
+  END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('twob:' || p_client_id::text, 0));
+
+  -- Each books row as the page loaded it (verification round 5): read under
+  -- the client's lock, which every writer of a filed month takes (the door).
+  FOR e IN SELECT x.key, x.value FROM jsonb_each(COALESCE(p_expect, '{}'::jsonb)) x ORDER BY x.key LOOP
+    SELECT to_jsonb(b) INTO v_b FROM public.books_register b
+     WHERE b.id = public.twob__try_uuid(e.key) AND b.client_id = p_client_id AND b.period_month = p_period;
+    IF v_b IS NULL THEN
+      RAISE EXCEPTION 'Nothing was saved: a books row this page shows is no longer in % (deleted elsewhere since this page loaded it). The month is shown again as it is now.',
+        public.twob_month_name(p_period) USING ERRCODE = 'TWB04';
+    END IF;
+    IF public.twob__expect_differs(v_b, e.value) IS NOT NULL THEN
+      RAISE EXCEPTION 'Nothing was saved: books row % was changed elsewhere since this page loaded it (another tab or another user; its %). The row is shown again as it is now.',
+        COALESCE(public.twob__entry_name(v_b), '(no number)'), replace(public.twob__expect_differs(v_b, e.value), '_', ' ')
+        USING ERRCODE = 'TWB04';
+    END IF;
+  END LOOP;
 
   -- The books rows; a removed one takes the Not in 2B entry it posted, and
   -- that entry's later copies, with it (named before the row, as Import 2B
@@ -2409,7 +2694,9 @@ $$;
 -- still in this client's month, once per row; failing both, by the document
 -- itself (below). Its adopted_from goes with it,
 -- the 2B document a reclaim names (reclaimed_via_doc_id) while it is still
--- in the month, and an entry keeps its id when no row holds it. Everything
+-- in the month (once: the first reclaim of the version naming it, and only
+-- when no entry the month keeps names it; verification round 5, one reclaim
+-- per document), and an entry keeps its id when no row holds it. Everything
 -- else as before: the month's carried entries are never touched, the
 -- version's carried rows are left out, and so is a version's own entry the
 -- month now holds as a carried entry (named in left_out).
@@ -2547,13 +2834,16 @@ BEGIN
                 THEN CASE jsonb_typeof(x.x -> 'adopted_from') WHEN 'object' THEN x.x -> 'adopted_from' END
                 ELSE CASE jsonb_typeof(v_cur2b -> (x.x ->> 'id') -> 'af') WHEN 'object' THEN v_cur2b -> (x.x ->> 'id') -> 'af' END END AS af,
            COALESCE(public.twob__try_uuid(x.x ->> 'reclaimed_via_doc_id'),
-                    public.twob__try_uuid(v_cur2b -> (x.x ->> 'id') ->> 'via')) AS via
+                    public.twob__try_uuid(v_cur2b -> (x.x ->> 'id') ->> 'via')) AS via,
+           NULLIF(btrim(COALESCE(x.x ->> 'reclaim_month', '')), '') IS NOT NULL
+             AND NULLIF(btrim(COALESCE(x.x ->> 'reclaim_subtype', '')), '') IS NULL AS reclaimed
       FROM jsonb_array_elements(p_bills_2b) WITH ORDINALITY x(x, o)
      WHERE lower(x.x ->> 'is_carried_forward') IN ('false', 'f', '0') AND NOT (x.o = ANY (v_skip_2b))),
   k AS (
     SELECT e.*,
            row_number() OVER (PARTITION BY e.vid ORDER BY e.o) AS vid_rn,
            row_number() OVER (PARTITION BY e.src ORDER BY e.o) AS src_rn,
+           row_number() OVER (PARTITION BY e.via, e.reclaimed ORDER BY e.o) AS via_rn,
            EXISTS (SELECT 1 FROM public.books_register b WHERE b.id = e.src AND b.client_id = p_client_id AND b.period_month = p_period)
              AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.source_book_id = e.src) AS src_ok
       FROM e),
@@ -2570,8 +2860,9 @@ BEGIN
            COALESCE(public.twob__try_num(k.x ->> 'input_cgst'), 0), COALESCE(public.twob__try_num(k.x ->> 'input_sgst'), 0),
            NULLIF(btrim(COALESCE(k.x ->> 'reversal_month', '')), ''), NULLIF(btrim(COALESCE(k.x ->> 'reclaim_month', '')), ''),
            NULLIF(btrim(COALESCE(k.x ->> 'reclaim_subtype', '')), ''),
-           CASE WHEN NULLIF(btrim(COALESCE(k.x ->> 'reclaim_month', '')), '') IS NOT NULL
+           CASE WHEN k.reclaimed AND k.via_rn = 1
                  AND EXISTS (SELECT 1 FROM public.twob_import_docs d WHERE d.id = k.via AND d.client_id = p_client_id AND d.period_month = p_period)
+                 AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.reclaimed_via_doc_id = k.via)
                 THEN k.via END,
            false,
            CASE WHEN k.src_ok AND k.src_rn = 1 THEN k.src END,
@@ -2720,7 +3011,12 @@ $$;
 -- document counted nowhere). Locks as a save takes them: the document's row,
 -- then the client's lock, then the entries. Import 2B & post. Returns {ok,
 -- was, released}; {ok: false, gone: true, message} when the document is no
--- longer in the month (nothing written).
+-- longer in the month, or no longer Reclaim (verification round 5: changed
+-- elsewhere since the page showed it Reclaim; before, a stale tab's Save
+-- wrote its treatment over the one another user had given it) (nothing
+-- written). The only way out of Reclaim while an entry is reclaimed against
+-- the document (twob__reclaim_evidence_guard): its entries are released
+-- first, in the same transaction.
 CREATE OR REPLACE FUNCTION public.twob_import2b_unreclaim(
   p_actor_id uuid, p_client_id uuid, p_period text, p_doc_id uuid, p_action text)
 RETURNS jsonb
@@ -2752,6 +3048,11 @@ BEGIN
   IF public.twob_month_is_prior(p_client_id, p_period) THEN
     RAISE EXCEPTION 'This month is filed. Its 2B documents and the reversal, reclaim and book entry months cannot change.';
   END IF;
+  IF v_was IS DISTINCT FROM 'RECLAIM' THEN
+    RETURN jsonb_build_object('ok', false, 'gone', true, 'now', v_was,
+      'message', format('This 2B document was changed elsewhere since the page showed it: it is %s now, not Reclaim. Nothing was saved; the page shows the month as it is now.',
+                        public.twob__treatment_label(v_was)));
+  END IF;
   UPDATE public.bills_not_in_2b t
      SET reclaim_month = NULL, reclaim_subtype = NULL, reclaimed_via_doc_id = NULL, updated_by = p_actor_id, updated_at = now()
    WHERE t.reclaimed_via_doc_id = p_doc_id;
@@ -2766,9 +3067,9 @@ $$;
 -- ---------------------------------------------------------------------------
 GRANT EXECUTE ON FUNCTION
   public.twob_import2b_catch_up(uuid, uuid, text, boolean, text),
-  public.twob_import2b_reclaim(uuid, uuid, text, uuid, uuid),
-  public.twob_import2b_save_book(uuid, uuid, jsonb, uuid, uuid),
-  public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean, text),
+  public.twob_import2b_reclaim(uuid, uuid, text, uuid, uuid, text),
+  public.twob_import2b_save_book(uuid, uuid, jsonb, uuid, uuid, jsonb),
+  public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean, text, jsonb),
   public.twob_import2b_delete_2b(uuid, uuid, text),
   public.twob_clear_year(uuid, uuid, text[]),
   public.twob_import2b_flush_version(uuid, uuid, text),
@@ -2805,7 +3106,9 @@ REVOKE ALL ON FUNCTION
   public.twob__autopost_docs_added(),
   public.twob__autopost_docs_changed(),
   public.twob__autopost_gone(),
-  public.twob__autopost_gone_done()
+  public.twob__autopost_gone_done(),
+  public.twob__reclaim_via_tidy(),
+  public.twob__reclaim_evidence_guard()
 FROM PUBLIC, anon, authenticated;
 
 COMMIT;

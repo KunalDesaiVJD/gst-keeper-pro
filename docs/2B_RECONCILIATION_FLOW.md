@@ -1866,13 +1866,83 @@ Sep-26, then Oct-26 again) carried the same number as the later visit's and
 landed over it, showing an entry expensed out meanwhile as awaiting reclaim,
 with working buttons. And a Pending items decision is written only while
 the entry still holds the decision the list showed (Expense out: no
-reclaim, Expense out or reclaiming document; its Undo: that Expense out and
-no reclaiming document; a book entry: none; its Undo: that book entry);
-otherwise nothing is written and the page reloads ("This entry was changed
-elsewhere since the page showed it ..."). Before, Expense out from a list
-read before another tab's reclaim wrote over the reclaim (the document
-stayed Reclaim, its ITC counted nowhere), and an Undo would have cleared
-such a reclaim and left its document named.
+reclaim month and no Expense out; its Undo: that Expense out with the month
+shown; a book entry: none; its Undo: that book entry; as each list reads
+it, round 5 below); otherwise nothing is written and the page reloads
+("This entry was changed elsewhere since the page showed it ..."). Before,
+Expense out from a list read before another tab's reclaim wrote over the
+reclaim (the document stayed Reclaim, its ITC counted nowhere), and an Undo
+would have cleared such a reclaim and left its document named.
+
+**Round 5: the money rules are the database's** (verification of 22 Oct
+2026). They hold whichever screen, tab or app version writes; the app's own
+changes are small.
+
+- **One reclaim per 2B document.** A reclaim (`twob_import2b_reclaim`)
+  sends the treatment the page shows (`p_expect_action`); nothing is
+  written when the document holds another one now (another user changed it,
+  or reclaimed with it: "This 2B document was changed elsewhere since the
+  page showed it: it is Reclaim now, not Matched") or is already the
+  evidence of a reclaim ("... already the evidence of the reclaim of ...;
+  one document evidences one reclaim"). Before, a tab not reloaded reclaimed
+  a second entry with a document another user had just reclaimed with, and
+  5.4 counted its ITC twice. A unique index on
+  `bills_not_in_2b(reclaimed_via_doc_id)` holds it for any other writer; the
+  migration creates it only when no document is named by two entries, and
+  otherwise goes on without it and says which (its header lists the one live
+  document so named on 22 Oct 2026). A Restore of a version holding two
+  reclaims on one document keeps the first.
+- **A document stays Reclaim while an entry is reclaimed against it**, and
+  is not deleted (`twob__reclaim_evidence_guard`): a change of its treatment
+  or a delete is refused ("... is the evidence of the reclaim of ..., so it
+  stays Reclaim"; "Not deleted: ..."), except through Import 2B's Save out
+  of Reclaim (`twob_import2b_unreclaim`) and Delete 2B, which put the entry
+  back in Awaiting reclaim first, in the same transaction. Before, a stale
+  tab's Save made such a document Mismatched (its ITC in 5.1 and again
+  through the reclaim in 5.4), and a re-import's delete of it left the
+  reclaim counted with no document. Out of Reclaim refuses a document no
+  longer Reclaim. The treatment Save writes each document only while it
+  holds the treatment the page loaded (`saveDocTreatments`,
+  `src/lib/import2bGuardedSaves.ts`); a document not written is named
+  ("changed elsewhere since the page showed them ... so they were not
+  saved") and the page shows the month as it is now. A client being deleted
+  takes its documents and reclaims with it.
+- **An entry names its reclaiming document only while it holds the
+  reclaim** (`twob__reclaim_via_tidy`): a reclaim cleared, or made an
+  Expense out (2B Reconciliation's Reclaim cell, Pending items, an app of
+  before), lets its document go in the same write. Pending items' Expense
+  out and its Undo are written while the entry is in the list as the list
+  reads it (Awaiting reclaim: no reclaim month and no Expense out; Expensed
+  out: that Expense out with the month shown) and clear the document in the
+  same write; round 4 also asked for no reclaiming document, which the list
+  does not, so an entry whose reclaim was cleared on 2B Reconciliation was
+  refused on every try as "changed elsewhere".
+- **A books row is saved only while it holds what the page loaded.** A
+  cell, the Type or the Treatment sends only the columns changed
+  (`bookChanges`), guarded by every column as loaded: the open month's write
+  (`saveBookGuarded`), the pairing call (`twob_import2b_save_book`,
+  `p_expect`) and a filed month's preview and save
+  (`twob_import2b_prior_save`, `p_expect`; its digest covers only the time
+  between the two, not a page already stale before the preview). A row
+  changed elsewhere meanwhile is not saved: "Nothing was saved: books row
+  ... was changed elsewhere since this page loaded it ... The row is shown
+  again as it is now." Before, a stale tab's correction of one cell wrote its
+  whole old row back: another user's Not Eligible became Not in 2B again
+  (its reversal back on the ledger and in 4B(2)(i)), and a GST Manager's
+  correction of a filed month was undone in that month and every later one.
+  A save that lands shows the row as saved, unless the user typed in it
+  meanwhile; a load begun before it shows it as saved too (before,
+  switching month away and back during a save showed the old figures beside
+  a Pending items entry with the new ones, and the next blur of an untouched
+  cell wrote the old figures back).
+- **Lows.** 2B Reconciliation's own Save of a carried entry holding its own
+  decision (the decision undone, then the row deleted) is no longer read as
+  someone else's change: a row's change is read with its delete in the same
+  burst (`changesShown`). A Save or Restore numbers its version from the
+  database at that moment (`nextVersionNumber`), and a reload heard live
+  reloads the version list (before, a second "Version 1" beside Import 2B's
+  snapshot). The Import 2B & post description in Settings says which saves
+  need it and that the others are open to all staff.
 
 **The e-mail pop-up's reasons** (round 3, §11). A Not in Books document of
 the month not on the ledger is named with its own reason: no date or
@@ -1970,7 +2040,17 @@ never write over a decision recorded elsewhere meanwhile, a Save stopped
 before its first write saying so; an employee's pairing that changes nothing
 on the ledger saved through the page's own call, one that would refused; a
 delete taking an entry off the ledger needing the permission; a filed
-month's save running the door once, at 1,000 rows) and `autopost.test.mjs` (twin
+month's save running the door once, at 1,000 rows),
+`test_9i_autopost_round5.sql` and `round5.test.mjs` (the fifth round: a
+second reclaim on one document refused, by the call and by the index; a
+reclaim or an out of Reclaim on a document whose treatment changed refused;
+a document Reclaim while reclaimed against, its Save, bulk change and
+delete refused, Delete 2B and a client's delete going through; a reclaim
+cleared or expensed out letting its document go; Restore keeping one
+reclaim per document; a stale books save refused in an open and a filed
+month, through the page's own calls; Pending items over an entry still
+naming a document; the next version number from the database; each check
+recorded, so run on the code of before each fails or passes on its own) and `autopost.test.mjs` (twin
 clients: the write-through on one, the app's own `planImport2BPost` +
 `postImport2BToLedger` on the other, the ledgers compared after every save
 kind, the pairing and reclaim calls included; the database's plan and its
@@ -1987,14 +2067,18 @@ line's and the e-mail pop-up's words, the digests sent back) and the round-4
 rules (a read of an earlier visit to a month never the latest, each Pending
 items decision written only while the entry holds what the list showed, the
 pairing call asking no permission itself and a delete off the ledger
-needing it, a filed month's save running the door once);
+needing it, a filed month's save running the door once) and the round-5
+rules (the reclaim's expected treatment and the database's one reclaim per
+document, the treatment Save and books saves guarded by what was loaded,
+changed columns only, a landed save shown as saved, the Settings words);
 `node scripts/verify-twob-live.mjs` checks 2B Reconciliation's live updates
 (which changes concern the month, the banner instead of a reload under unsaved
 edits, Save sending only the changed rows, a reload clearing the pending
 deletes with the edits; round 4: which changes the page already shows, a
 change heard during a Save looked at again when it ends, every column
 guarded, the delete confirm from the rows read back, the edits kept when
-nothing was written).
+nothing was written; round 5: a row's change read with its delete, the
+version list reloaded live and version numbers from the database).
 
 **Open questions for the firm.**
 

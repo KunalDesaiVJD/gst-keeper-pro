@@ -47,7 +47,7 @@ VALUES ('ad000000-0000-0000-0000-0000000000d1', :'C', '09/2026', '2026-08-20', '
 SELECT public.t_eq((SELECT count(*)::integer FROM public.bills_not_in_books WHERE source_doc_id = 'ad000000-0000-0000-0000-0000000000d1'), 1,
   'R1: the import posts the document''s Not in Books entry');
 UPDATE public.bills_not_in_books SET book_entry_month = 'Sep 26' WHERE source_doc_id = 'ad000000-0000-0000-0000-0000000000d1';
-SELECT public.t_raises(format($q$SELECT public.twob_import2b_reclaim(public.t_poster(), '%s', '09/2026', 'ad000000-0000-0000-0000-0000000000a1', 'ad000000-0000-0000-0000-0000000000d1')$q$, :'C'),
+SELECT public.t_raises(format($q$SELECT public.twob_import2b_reclaim(public.t_poster(), '%s', '09/2026', 'ad000000-0000-0000-0000-0000000000a1', 'ad000000-0000-0000-0000-0000000000d1', 'NOT_IN_BOOKS')$q$, :'C'),
   'LATE SUP L/77: Sep-26 has booked this entry; undo that book entry first. Undo it on Import 2B, then save again: a book entry under Pending items, Booked (Undo book entry).',
   'R1: the reclaim is refused by its document''s write-through, naming the book entry and where to undo it');
 SELECT public.t_eq((SELECT concat_ws('|', COALESCE(reclaim_month, '-'), COALESCE(reclaimed_via_doc_id::text, '-'))
@@ -59,18 +59,18 @@ SELECT public.t_eq((SELECT concat_ws('|', input_igst, book_entry_month) FROM pub
   '180.00|Sep 26', 'R1: ... and its booked entry is as it was (claimed once, in 5.2)');
 -- Undo book entry (Pending items, Booked), then the reclaim goes through.
 UPDATE public.bills_not_in_books SET book_entry_month = NULL WHERE source_doc_id = 'ad000000-0000-0000-0000-0000000000d1';
-SELECT public.t_eq(public.twob_import2b_reclaim(public.t_poster(), :'C', '09/2026', 'ad000000-0000-0000-0000-0000000000a1', 'ad000000-0000-0000-0000-0000000000d1'),
+SELECT public.t_eq(public.twob_import2b_reclaim(public.t_poster(), :'C', '09/2026', 'ad000000-0000-0000-0000-0000000000a1', 'ad000000-0000-0000-0000-0000000000d1', 'NOT_IN_BOOKS'),
   '{"ok": true, "was": "NOT_IN_BOOKS"}'::jsonb, 'R1: undone, the reclaim is recorded (and says the document was Not in Books)');
 SELECT public.t_eq((SELECT concat_ws('|', reclaim_month, reclaimed_via_doc_id = 'ad000000-0000-0000-0000-0000000000d1',
                                      (SELECT itc_action FROM public.twob_import_docs WHERE id = 'ad000000-0000-0000-0000-0000000000d1'),
                                      (SELECT count(*) FROM public.bills_not_in_books WHERE source_doc_id = 'ad000000-0000-0000-0000-0000000000d1'))
                       FROM public.bills_not_in_2b WHERE id = 'ad000000-0000-0000-0000-0000000000a1'),
   'Sep 26|t|RECLAIM|0', 'R1: ... the entry reclaimed in Sep 26 by the document, the document Reclaim, its Not in Books entry taken back: claimed once, in 5.4');
-SELECT public.t_eq(public.twob_import2b_reclaim(public.t_poster(), :'C', '09/2026', 'ad000000-0000-0000-0000-0000000000a1', 'ad000000-0000-0000-0000-0000000000d1') ->> 'what',
+SELECT public.t_eq(public.twob_import2b_reclaim(public.t_poster(), :'C', '09/2026', 'ad000000-0000-0000-0000-0000000000a1', 'ad000000-0000-0000-0000-0000000000d1', 'RECLAIM') ->> 'what',
   'entry', 'R1: the same reclaim again: the entry no longer awaits one, nothing written');
-SELECT public.t_eq(public.twob_import2b_reclaim(public.t_poster(), :'C', '09/2026', 'ad000000-0000-0000-0000-0000000000a1', 'ad000000-0000-0000-0000-0000000000ff') ->> 'what',
+SELECT public.t_eq(public.twob_import2b_reclaim(public.t_poster(), :'C', '09/2026', 'ad000000-0000-0000-0000-0000000000a1', 'ad000000-0000-0000-0000-0000000000ff', 'MATCHED') ->> 'what',
   'document', 'R1: a document no longer in the month: said, nothing written');
-SELECT public.t_raises(format($q$SELECT public.twob_import2b_reclaim(NULL, '%s', '09/2026', 'ad000000-0000-0000-0000-0000000000a1', 'ad000000-0000-0000-0000-0000000000d1')$q$, :'C'),
+SELECT public.t_raises(format($q$SELECT public.twob_import2b_reclaim(NULL, '%s', '09/2026', 'ad000000-0000-0000-0000-0000000000a1', 'ad000000-0000-0000-0000-0000000000d1', 'RECLAIM')$q$, :'C'),
   'Only staff record a reclaim', 'R1: no user named: refused');
 
 -- ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ SELECT public.t_eq((SELECT concat_ws('|', book_treatment, COALESCE(matched_2b_id
 UPDATE public.bills_not_in_2b SET reclaim_month = NULL, reclaim_subtype = NULL WHERE source_book_id = 'ad000000-0000-0000-0000-0000000000b1';
 SELECT public.t_eq(public.twob_import2b_save_book(public.t_poster(), 'ad000000-0000-0000-0000-0000000000b1',
     '{"input_igst":181,"book_treatment":"MISMATCHED","matched_2b_id":"ad000000-0000-0000-0000-0000000000d2"}'::jsonb,
-    NULL, 'ad000000-0000-0000-0000-0000000000d2'), '{"ok": true, "paired_was": "MATCHED"}'::jsonb, 'R2: undone, the pairing goes through');
+    NULL, 'ad000000-0000-0000-0000-0000000000d2') - 'row', '{"ok": true, "paired_was": "MATCHED"}'::jsonb, 'R2: undone, the pairing goes through');
 SELECT public.t_eq((SELECT concat_ws('|', d.itc_action, d.matched_book_id = b.id, b.book_treatment, b.matched_2b_id = d.id, b.input_igst,
                                      (SELECT count(*) FROM public.bills_not_in_2b t WHERE t.source_book_id = b.id))
                       FROM public.twob_import_docs d, public.books_register b

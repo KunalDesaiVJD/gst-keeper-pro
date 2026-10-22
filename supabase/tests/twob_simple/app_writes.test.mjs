@@ -151,7 +151,7 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
   const t1 = psql(`SELECT id FROM public.bills_not_in_2b WHERE client_id = '${C}' AND period_month = '07/2026' AND supplier_invoice_number = 'T-1'`);
   const removed = globalThis.__asApp(`SELECT public.twob_prior_books_apply(public.t_manager(), '${C}', '07/2026', '[{"table":"bills_not_in_2b","op":"delete","id":"${t1}"}]'::jsonb, false) ->> 'ok'`);
   check('Q8: the GST Manager removes T-1 in filed July (and September\'s copy with it)', removed.out === 'true', removed.err);
-  const res = await A.recordReclaim({ actorId: '00000000-0000-0000-0000-0000000000a3', clientId: C, period: '09/2026', pendingId: pending, docId: DOC });
+  const res = await A.recordReclaim({ actorId: '00000000-0000-0000-0000-0000000000a3', clientId: C, period: '09/2026', pendingId: pending, docId: DOC, expectAction: 'MATCHED' });
   check('Q8: the stale page\'s reclaim is not recorded, and says the entry is gone', !res.ok && res.gone && res.message === A.ENTRY_GONE_MSG, JSON.stringify(res));
   check('Q8: the 2B document stays Matched, so its ITC stays in 5.1',
     psql(`SELECT itc_action FROM public.twob_import_docs WHERE id = '${DOC}'`) === 'MATCHED');
@@ -169,7 +169,7 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
         INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, itc_action)
         VALUES ('${DOC2}', '${C2}', '09/2026', '2026-07-15', 'TAMNNA SUPPLIER', 'T-1', '24TSUPP0000A1Z5', 11111.11, 0, 1000, 1000, 'MATCHED');`);
   const pending2 = psql(`SELECT id FROM public.bills_not_in_2b WHERE client_id = '${C2}' AND period_month = '09/2026' AND supplier_invoice_number = 'T-1'`);
-  const ok = await A.recordReclaim({ actorId: '00000000-0000-0000-0000-0000000000a3', clientId: C2, period: '09/2026', pendingId: pending2, docId: DOC2 });
+  const ok = await A.recordReclaim({ actorId: '00000000-0000-0000-0000-0000000000a3', clientId: C2, period: '09/2026', pendingId: pending2, docId: DOC2, expectAction: 'MATCHED' });
   check('Q8: a reclaim of a copy that is there is recorded', ok.ok, JSON.stringify(ok));
   check('Q8: ... the entry reclaimed and the document Reclaim',
     psql(`SELECT reclaim_month || ' ' || (SELECT itc_action FROM public.twob_import_docs WHERE id = '${DOC2}') FROM public.bills_not_in_2b WHERE id = '${pending2}'`) === 'Sep 26 RECLAIM');
@@ -219,7 +219,7 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
         INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, itc_action)
         VALUES ('${DOC}', '${C}', '09/2026', '2026-07-15', 'TAMNNA SUPPLIER', 'T-1', '24TSUPP0000A1Z5', 11111.11, 0, 1000, 1000, 'MATCHED');`);
   const pending = psql(`SELECT id FROM public.bills_not_in_2b WHERE client_id = '${C}' AND period_month = '09/2026' AND supplier_invoice_number = 'T-1'`);
-  const rec = await A.recordReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', pendingId: pending, docId: DOC });
+  const rec = await A.recordReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', pendingId: pending, docId: DOC, expectAction: 'MATCHED' });
   check('Round 2 F7: reclaimed', rec.ok, JSON.stringify(rec));
   const bad = await A.releaseReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', docId: DOC, action: 'BOGUS' });
   check('Round 2 F7: a treatment refused: nothing of the call kept (the reclaim stands, the document stays Reclaim)', !bad.ok && !bad.gone

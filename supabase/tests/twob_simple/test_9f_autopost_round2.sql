@@ -299,7 +299,7 @@ INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier
   ('af000000-0000-0000-0000-0000000007d1', :'U', '09/2026', '2026-08-20', 'GAMMA', 'G-301', '24GAMMA0000A1Z5', 1000, 180, 'INVOICE', 'MATCHED');
 SELECT set_config('twob.write', '', false);
 SET ROLE anon;
-SELECT public.twob_import2b_reclaim(public.t_poster(), :'U', '09/2026', 'af000000-0000-0000-0000-0000000007e1', 'af000000-0000-0000-0000-0000000007d1');
+SELECT public.twob_import2b_reclaim(public.t_poster(), :'U', '09/2026', 'af000000-0000-0000-0000-0000000007e1', 'af000000-0000-0000-0000-0000000007d1', 'MATCHED');
 -- A failure in the second half (the treatment refused) leaves both as they were.
 SELECT public.t_raises(format($q$SELECT public.twob_import2b_unreclaim(public.t_poster(), '%s', '09/2026', 'af000000-0000-0000-0000-0000000007d1', 'BOGUS')$q$, :'U'),
   'twob_import_docs_itc_action_check', 'F7: a treatment the document cannot take is refused');

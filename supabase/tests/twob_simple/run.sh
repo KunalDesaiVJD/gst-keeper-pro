@@ -38,7 +38,13 @@
 # employee's pairing that changes nothing on the ledger saved through the
 # page's own call, a delete taking an entry off the ledger needing the
 # permission, and a filed month's save running the door once (timed at
-# 1,000 rows).
+# 1,000 rows); test_9i and round5.test.mjs: the fifth round's money rules
+# held by the database: one reclaim per 2B document, a document Reclaim (and
+# undeleted) while an entry is reclaimed against it, a reclaim cleared
+# letting its document go, books saves guarded by the row as loaded in an
+# open and a filed month, Pending items over data of before, version numbers
+# read at Save time (each check recorded: run on the code of before, each
+# fails or passes on its own).
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.
@@ -96,13 +102,13 @@ shopt -s nullglob
 for t in "$here"/test_*.sql; do
   if PGOPTIONS="--client-min-messages=notice" psql -X -q -v ON_ERROR_STOP=1 -d "$db" -f "$t" >/dev/null 2>"$errf"; then
     echo "ok   $(basename "$t")"
-    grep -ho 'timing: .*' "$errf" | sed 's/^/     /' || true
+    grep -ho '\(timing\|checks\): .*' "$errf" | sed 's/^/     /' || true
   else echo "FAIL $(basename "$t")"; cat "$errf"; status=1; fi
 done
 for t in "$here"/test_*.sh; do
   if TWOB_TEST_DB="$db" bash "$t"; then :; else echo "FAIL $(basename "$t")"; status=1; fi
 done
-for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs "$here"/round4.test.mjs; do
+for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs "$here"/round4.test.mjs "$here"/round5.test.mjs; do
   if [ -f "$t" ]; then
     if TWOB_TEST_DB="$db" node "$t"; then :; else status=1; fi
   fi
