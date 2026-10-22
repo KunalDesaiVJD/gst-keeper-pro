@@ -853,22 +853,29 @@ await run('no post', async () => {
   // Round 7 (22 Oct 2026): Restore of a version that names no document for
   // its reclaim, out of Reclaim against the reclaim the page showed, one lock
   // order for Restore and the saves, and the RESTORE version as written.
-  check('round 7 F1: Restore holds a reclaim whose version names no document to the month\'s original invoice or debit note of the same document (linked when Reclaim and evidencing nothing; otherwise Awaiting reclaim, named); only one with no such document comes back as typed',
-    /md AS MATERIALIZED \(\s+SELECT d\.id, d\.itc_action,\s+public\.twob_doc_ident\(d\.supplier_gstin, d\.supplier_name, d\.supplier_invoice_number, d\.date\) AS ident,/.test(sql)
-      && /AND NOT COALESCE\(d\.is_amendment, false\) AND COALESCE\(d\.doc_type, 'INVOICE'\) IN \('INVOICE', 'DEBIT_NOTE'\)\s+AND EXISTS \(SELECT 1 FROM e1 WHERE e1\.ident IS NOT NULL\)\),/.test(sql)
-      && /COALESCE\(e1\.named, CASE WHEN e1\.ident IS NOT NULL THEN \(\s+SELECT md\.id FROM md WHERE md\.ident = e1\.ident\s+ORDER BY \(md\.itc_action = 'RECLAIM' AND NOT md\.used\) DESC, md\.id LIMIT 1\) END\) AS via/.test(sql)
-      && /k\.via_rn = 1 AND k\.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k\.via_kept IS NULL/.test(sql));
+  check('round 7 F1 / round 8 H: Restore holds a reclaim whose version names no document to the month\'s original invoice or debit note it is (the same document, else, but for a Liberal client, by its amounts within the Link & Reclaim dialog\'s Rs. 2): linked when Reclaim and evidencing nothing, otherwise Awaiting reclaim, named; a Strict client\'s with no document found comes back in Awaiting reclaim, named; only a Liberal client\'s comes back as typed',
+    /md AS MATERIALIZED \(\s+SELECT d\.id, d\.itc_action, concat_ws\(' ', NULLIF\(btrim\(COALESCE\(d\.supplier_name, ''\)\), ''\), d\.supplier_invoice_number\) AS label,/.test(sql)
+      && /public\.twob_doc_ident\(d\.supplier_gstin, d\.supplier_name, d\.supplier_invoice_number, d\.date\) AS ident,\s+d\.itc_action = 'RECLAIM' AND NOT EXISTS \(SELECT 1 FROM public\.bills_not_in_2b z WHERE z\.reclaimed_via_doc_id = d\.id\) AS free/.test(sql)
+      && /AND NOT COALESCE\(d\.is_amendment, false\) AND COALESCE\(d\.doc_type, 'INVOICE'\) IN \('INVOICE', 'DEBIT_NOTE'\)\s+AND EXISTS \(SELECT 1 FROM e1 WHERE e1\.lookup\)\),/.test(sql)
+      && /SELECT e1\.\*, COALESCE\(e1\.named, fi\.id, fa\.id\) AS via, fa\.label AS by_amounts/.test(sql)
+      && /SELECT md\.id FROM md WHERE e1\.lookup AND md\.ident = e1\.ident\s+ORDER BY md\.free DESC, md\.id LIMIT 1\) fi ON true/.test(sql)
+      && /WHERE e1\.lookup AND fi\.id IS NULL AND NOT v_liberal\s+AND abs\(md\.tv - e1\.etv\) <= 2 AND abs\(md\.ig - e1\.eig\) <= 2 AND abs\(md\.cg - e1\.ecg\) <= 2 AND abs\(md\.sg - e1\.esg\) <= 2\s+ORDER BY md\.free DESC, \(md\.gstin <> '' AND md\.gstin = e1\.egstin\) DESC,/.test(sql)
+      && /OR \(k\.via IS NULL AND NOT v_liberal\)\), false\) AS reclaim_back,/.test(sql)
+      && /k\.via_rn = 1 AND k\.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k\.via_kept IS NULL/.test(sql)
+      && /SELECT COALESCE\(c\.liberal_2b_reconciliation, false\) INTO v_liberal FROM public\.clients c WHERE c\.id = p_client_id;/.test(sql)
+      && sql.includes("CASE WHEN kk.via IS NULL THEN 'its 2B document cannot be found in this month"));
   check('round 7 F2: out of Reclaim only while the reclaim the document evidences is the one the page shows (loaded with the ledger side, sent with the Save, checked with the entries held)',
     /CREATE OR REPLACE FUNCTION public\.twob_import2b_unreclaim\(\s+p_actor_id uuid, p_client_id uuid, p_period text, p_doc_id uuid, p_action text, p_expect_entry uuid\)/.test(sql)
       && sql.includes('DROP FUNCTION IF EXISTS public.twob_import2b_unreclaim(uuid, uuid, text, uuid, text);')
-      && /WHERE t\.reclaimed_via_doc_id = p_doc_id ORDER BY t\.id FOR NO KEY UPDATE\) z;\s+IF v_now IS DISTINCT FROM \(CASE WHEN p_expect_entry IS NULL THEN '\{\}'::uuid\[\] ELSE ARRAY\[p_expect_entry\] END\) THEN/.test(sql)
+      // Round 8: a document two entries name (recorded before the rule) leaves Reclaim with either.
+      && /WHERE t\.reclaimed_via_doc_id = p_doc_id ORDER BY t\.id FOR NO KEY UPDATE\) z;\s+IF \(CASE WHEN p_expect_entry IS NULL THEN cardinality\(v_now\) > 0 ELSE NOT \(p_expect_entry = ANY \(v_now\)\) END\) THEN/.test(sql)
       && pend.includes('p_expect_entry: o.expectEntry,') && /expectEntry: string \| null;/.test(pend)
       && /\/\/ The reclaim each 2B document evidences \(the entry naming it\)\.\s+loadReclaimEvidence\(clientId\),/.test(tab)
       && /setReclaimEvidence\(l\.reclaimEvidence\);/.test(code)
       && /const shownEvidence = ledgerShown \? reclaimEvidence : new Map<string, ReclaimEvidence>\(\);/.test(code)
       && /\.eq\('client_id', clientId\)\.not\('reclaimed_via_doc_id', 'is', null\)\.order\('id'\)\);/.test(guardedLib));
-  check('round 7 F3: Restore takes the month\'s Reclaim documents before the client\'s lock (the order every writer of a reclaim takes them in), one made Reclaim meanwhile without waiting',
-    /AND d\.itc_action = 'RECLAIM'\s+ORDER BY d\.id FOR SHARE;\s+PERFORM pg_advisory_xact_lock\(hashtextextended\('twob:' \|\| p_client_id::text, 0\)\);\s+BEGIN\s+PERFORM 1 FROM public\.twob_import_docs d\s+WHERE d\.client_id = p_client_id AND d\.period_month = p_period AND d\.itc_action = 'RECLAIM'\s+ORDER BY d\.id FOR SHARE NOWAIT;\s+EXCEPTION WHEN lock_not_available THEN/.test(sql)
+  check('round 7 F3 / round 8: Restore takes the month\'s Reclaim documents before the client\'s lock (the order every writer of a reclaim takes them in), one made Reclaim meanwhile without waiting, and the month\'s books rows and documents (which its entries name) without waiting once it holds the lock (a delete of one running then stops it with a plain message, never a deadlock)',
+    /AND d\.itc_action = 'RECLAIM'\s+ORDER BY d\.id FOR SHARE;\s+PERFORM pg_advisory_xact_lock\(hashtextextended\('twob:' \|\| p_client_id::text, 0\)\);\s+BEGIN\s+PERFORM 1 FROM public\.twob_import_docs d\s+WHERE d\.client_id = p_client_id AND d\.period_month = p_period AND d\.itc_action = 'RECLAIM'\s+ORDER BY d\.id FOR SHARE NOWAIT;\s+PERFORM 1 FROM public\.twob_import_docs d\s+WHERE d\.client_id = p_client_id AND d\.period_month = p_period\s+ORDER BY d\.id FOR KEY SHARE NOWAIT;\s+PERFORM 1 FROM public\.books_register b\s+WHERE b\.client_id = p_client_id AND b\.period_month = p_period\s+ORDER BY b\.id FOR KEY SHARE NOWAIT;\s+EXCEPTION WHEN lock_not_available THEN/.test(sql)
       && /FOR NO KEY UPDATE;\s+IF NOT FOUND THEN\s+RETURN jsonb_build_object\('ok', false, 'gone', true,\s+'message', 'This 2B document is no longer in this month[^']*'\);\s+END IF;\s+PERFORM pg_advisory_xact_lock\(hashtextextended\('twob:' \|\| p_client_id::text, 0\)\);/.test(sql));
   check('round 7 F4: the RESTORE version records the month as the Restore left it (returned by it), not the version restored; a Save records the same shape',
     /'rows_2b', \(SELECT COALESCE\(jsonb_agg\(to_jsonb\(t\) ORDER BY t\.date, t\.id\), '\[\]'::jsonb\) FROM public\.bills_not_in_2b t/.test(sql)

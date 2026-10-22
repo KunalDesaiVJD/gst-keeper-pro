@@ -86,7 +86,8 @@ off included; the page asks each save first with
 open to all staff, a books row's pairing that changes nothing on the ledger
 included). A reclaim (`twob_import2b_reclaim`), a document out of
 Reclaim (`twob_import2b_unreclaim`, only while it evidences the reclaim the
-page shows on its row, `p_expect_entry` from `loadReclaimEvidence`) and a
+page shows on its row, `p_expect_entry` from `loadReclaimEvidence`; a pair
+named before the one-reclaim rule leaves with either, both released) and a
 books row's pairing (`twob_import2b_save_book`) are one call each, all or
 nothing. The money
 rules are database invariants, whatever screen, tab or app version writes:
@@ -107,11 +108,17 @@ while it holds the reclaim (`twob__reclaim_via_tidy`); Restore brings a
 version's reclaim back only on those terms, else the entry comes back
 Awaiting reclaim, named (`reclaims_back`), a reclaim the version holds
 without naming its document (every version of before) held to the month's
-original invoice or debit note of the same document (`twob_doc_ident`) and
-linked to it, only one with no such document coming back as typed; Restore
-takes the month's Reclaim documents before the client's lock (the saves'
-order: documents, client, entries) and returns the month as it left it,
-which the page records as the RESTORE version; a books row is saved only while it
+original invoice or debit note it is (the same document by `twob_doc_ident`,
+else, but for a Liberal client, by its amounts within the Link & Reclaim
+dialog's Rs. 2: a books entry without GSTIN or numbered otherwise) and
+linked to it; a Strict client's with no document found (Delete 2B since)
+comes back Awaiting reclaim, named; only a Liberal client's comes back as
+typed; Restore takes the month's Reclaim documents before the client's lock
+(the saves' order: documents, client, entries), then the month's books rows
+and documents without waiting (a delete of one running stops it with a plain
+message, never a deadlock), and returns the month as it left it, which the
+page records as the RESTORE version (the page hears its own Restore as its
+own, as a Save); a books row is saved only while it
 holds what the page loaded (changed columns only, guarded; `p_expect` on the
 pairing and filed-month calls; one page's saves of a row one at a time,
 `queueBookSave`; `src/lib/import2bGuardedSaves.ts`), and the treatment Save
@@ -142,7 +149,7 @@ running); versions are coalesced per minute, recorded as the saver's, and
 carry each entry's link, which Restore (`twob_restore_version_linked`) puts
 back; a decision carried into an open month from a filed month cannot be
 changed there (`twob__carried_decision_guard`) (§15 of the doc; tests
-`supabase/tests/twob_simple/` test_9a to 9m, `autopost.test.mjs`, `round3.test.mjs` to `round7.test.mjs`;
+`supabase/tests/twob_simple/` test_9a to 9n, `autopost.test.mjs`, `round3.test.mjs` to `round8.test.mjs`;
 `node scripts/verify-twob-live.mjs`). `2B Reconciliation`
 (`TwoBReconciliationPage.tsx`) is **read-only for Strict clients** (the
 default) — display, export, version history/restore, and destructive Clear

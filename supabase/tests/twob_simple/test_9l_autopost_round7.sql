@@ -90,10 +90,10 @@ GRANT EXECUTE ON FUNCTION public.t7_eq(anyelement, anyelement, text), public.t7_
   public.t7_unreclaim(uuid, uuid, uuid, text, uuid), public.t7_old_version(uuid) TO anon;
 
 SELECT set_config('twob.write', 'system', false);
-INSERT INTO public.clients (id, name, gstin) VALUES
-  (:'A', 'R7 OLD VERSION MATCHED', '24RSEVA0000A1Z5'), (:'B', 'R7 OLD VERSION RELINK', '24RSEVB0000A1Z5'),
-  (:'K', 'R7 OLD VERSION KEPT', '24RSEVK0000A1Z5'), (:'L', 'R7 LIBERAL TYPED', '24RSEVL0000A1Z5'),
-  (:'F', 'R7 STALE OUT OF RECLAIM', '24RSEVF0000A1Z5');
+INSERT INTO public.clients (id, name, gstin, liberal_2b_reconciliation) VALUES
+  (:'A', 'R7 OLD VERSION MATCHED', '24RSEVA0000A1Z5', false), (:'B', 'R7 OLD VERSION RELINK', '24RSEVB0000A1Z5', false),
+  (:'K', 'R7 OLD VERSION KEPT', '24RSEVK0000A1Z5', false), (:'L', 'R7 LIBERAL TYPED', '24RSEVL0000A1Z5', true),
+  (:'F', 'R7 STALE OUT OF RECLAIM', '24RSEVF0000A1Z5', false);
 INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
   taxable_value, input_igst, input_cgst, input_sgst, doc_type, itc_action) VALUES
   -- A: A-1 Matched, its pending entry A-1 (the verifier's case).
@@ -195,8 +195,9 @@ SELECT public.t7_eq((SELECT string_agg(concat_ws(':', t.supplier_invoice_number,
 SELECT public.t7_eq(concat_ws('|', public.t7_itc(:'B', 'Oct 26'),
                               position('evidences the reclaim of BRAVO B-1 in this version' in COALESCE(:'f1d'::jsonb -> 'reclaims_back' -> 0 ->> 'message', '')) > 0),
   '0.00|130.00|t', 'F1: ... 5.4 counts B-1''s 90 once, and the other is named');
--- (e) A reclaim typed on 2B Reconciliation (Liberal), no document of it in
--- the month: comes back as typed.
+-- (e) A reclaim typed on 2B Reconciliation for a Liberal client, no document
+-- of it in the month: comes back as typed. (A Strict client's comes back in
+-- Awaiting reclaim, named, since round 8: test_9n.)
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'L', '10/2026',
   '[{"id":"7e000000-0000-0000-0000-0000000004e1","date":"2026-09-24","supplier_name":"LIMA","supplier_invoice_number":"L-1","supplier_gstin":"24LIMAA0000A1Z5","taxable_value":1000,"input_igst":0,"input_cgst":60,"input_sgst":60,"reversal_month":"Sep 26","reclaim_month":"Oct 26","is_carried_forward":false}]'::jsonb,
   '[]'::jsonb) AS f1e \gset

@@ -561,7 +561,11 @@ const TwoBReconciliationPage: React.FC = () => {
     const onChange = (change: LedgerChange) => {
       if (!ledgerChangeConcerns(change, { clientId, period, ids: shownRowsRef.current })) return;
       if (savingRef.current) { heardDuringSaveRef.current.push(change); return; }
-      if (changeShown(change, view, shownRowsRef.current)) return;
+      // A change the page already shows is no news by itself, but it stays
+      // with a burst under way (verification round 8: a Restore's delete of
+      // an entry it adds back reads as shown only beside that insert, heard
+      // just after it).
+      if (changeShown(change, view, shownRowsRef.current)) { if (timer) pending.push(change); return; }
       hear([change], 400);
     };
     liveKickRef.current = (changes) => hear(changes, 0);
@@ -1291,7 +1295,12 @@ const TwoBReconciliationPage: React.FC = () => {
     // month holds entries (docs §13); the database checks both again.
     const blocked = restoreBlockedReason(monthState);
     if (blocked) { toast.error(blocked); return; }
-    
+
+    // The Restore's own writes, heard live, are the page's own, as a Save's
+    // are (verification round 8: before, they read as someone else's change
+    // and the superadmin was told the ledger "was changed elsewhere"): kept
+    // while it runs and looked at again against the month as it reloads it.
+    savingRef.current = true;
     try {
       // The month's two lists replaced by the version's in one call
       // (twob_restore_version): nothing is changed when it is refused, so the
@@ -1376,12 +1385,14 @@ const TwoBReconciliationPage: React.FC = () => {
         : ''}${restored.linked
         ? ` ${restored.linked} ${restored.linked === 1 ? 'entry is' : 'entries are'} linked again to the Import 2B ${restored.linked === 1 ? 'row' : 'rows'} that post ${restored.linked === 1 ? 'it' : 'them'}: a change there changes ${restored.linked === 1 ? 'it' : 'them'}, never adds a second one; Import 2B says when the ledger is not in step with it.`
         : ''}${restored.reclaimsBack.length
-        ? ` Restored in Awaiting reclaim, without the version's reclaim (one 2B document evidences one reclaim, and only while it is Reclaim): ${restored.reclaimsBack.slice(0, 5).join('; ')}${restored.reclaimsBack.length > 5 ? `; and ${restored.reclaimsBack.length - 5} more` : ''}.`
+        ? ` Restored in Awaiting reclaim, without the version's reclaim (a reclaim needs its 2B document in this month, Reclaim and evidencing no other reclaim): ${restored.reclaimsBack.slice(0, 5).join('; ')}${restored.reclaimsBack.length > 5 ? `; and ${restored.reclaimsBack.length - 5} more` : ''}.`
         : ''}`, { duration: restored.reclaimsBack.length ? 20000 : 10000 });
       setShowVersionHistory(false);
     } catch (error: any) {
       console.error('Error restoring version:', error);
       toast.error('Nothing was restored: ' + error.message);
+    } finally {
+      endSave();
     }
   };
 

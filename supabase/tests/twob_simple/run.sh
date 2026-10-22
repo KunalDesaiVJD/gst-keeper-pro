@@ -56,7 +56,14 @@
 # linked or back in Awaiting reclaim and named; out of Reclaim only for the
 # reclaim the page shows; Restore and an out of Reclaim of one document at
 # the same moment without a deadlock; the RESTORE version as the Restore
-# left the month.
+# left the month; test_9n, test_9m (cases 3 and 4) and round8.test.mjs: the
+# eighth round's: a Strict client's reclaim restored from a version that
+# names no document, found by its amounts when it is not the same document
+# (no GSTIN on the books entry, numbered otherwise, Delete 2B and imported
+# again) and held to its terms, or back in Awaiting reclaim, named; a pair
+# recorded before the one-reclaim rule out of Reclaim; a books row or 2B
+# document deleted while a Restore runs, without a deadlock; the page
+# hearing its own Restore as its own.
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.
@@ -120,7 +127,7 @@ done
 for t in "$here"/test_*.sh; do
   if TWOB_TEST_DB="$db" bash "$t"; then :; else echo "FAIL $(basename "$t")"; status=1; fi
 done
-for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs "$here"/round4.test.mjs "$here"/round5.test.mjs "$here"/round6.test.mjs "$here"/round7.test.mjs; do
+for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs "$here"/round4.test.mjs "$here"/round5.test.mjs "$here"/round6.test.mjs "$here"/round7.test.mjs "$here"/round8.test.mjs; do
   if [ -f "$t" ]; then
     if TWOB_TEST_DB="$db" node "$t"; then :; else status=1; fi
   fi

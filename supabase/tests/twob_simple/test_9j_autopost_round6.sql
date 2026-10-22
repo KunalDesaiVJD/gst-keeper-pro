@@ -63,10 +63,10 @@ $$;
 GRANT EXECUTE ON FUNCTION public.t6_eq(anyelement, anyelement, text), public.t6_raises(text, text, text), public.t6_itc(uuid, text) TO anon;
 
 SELECT set_config('twob.write', 'system', false);
-INSERT INTO public.clients (id, name, gstin) VALUES
-  (:'R1', 'R6 RESTORE BACK', '24RSIXA0000A1Z5'), (:'R2', 'R6 RESTORE KEPT', '24RSIXB0000A1Z5'),
-  (:'R3', 'R6 RESTORE GONE', '24RSIXC0000A1Z5'), (:'R4', 'R6 DIRECT WRITES', '24RSIXD0000A1Z5'),
-  (:'G', 'R6 GROWQ LIKE', '24RSIXG0000A1Z5'), (:'O', 'R6 OLD APP TABS', '24RSIXO0000A1Z5');
+INSERT INTO public.clients (id, name, gstin, liberal_2b_reconciliation) VALUES
+  (:'R1', 'R6 RESTORE BACK', '24RSIXA0000A1Z5', false), (:'R2', 'R6 RESTORE KEPT', '24RSIXB0000A1Z5', false),
+  (:'R3', 'R6 RESTORE GONE', '24RSIXC0000A1Z5', true), (:'R4', 'R6 DIRECT WRITES', '24RSIXD0000A1Z5', false),
+  (:'G', 'R6 GROWQ LIKE', '24RSIXG0000A1Z5', false), (:'O', 'R6 OLD APP TABS', '24RSIXO0000A1Z5', false);
 -- R1: an own entry A-1 and its document A-1 (Matched), Oct-26 open.
 INSERT INTO public.bills_not_in_2b (id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
   taxable_value, input_igst, input_cgst, input_sgst, reversal_month, is_carried_forward) VALUES
@@ -138,8 +138,9 @@ SELECT public.t6_eq(public.t6_itc(:'R2', 'Oct 26'), '0.00|90.00', 'H1: ... 5.4 c
 SELECT public.t6_eq(position('already evidences the reclaim of KILO K-0' in COALESCE(:'h1b'::jsonb -> 'reclaims_back' -> 0 ->> 'message', '')) > 0, true,
   'H1: ... named, with the entry it evidences');
 -- (c) A version's reclaim whose document is no longer in the month, and one
--- typed on 2B Reconciliation without a document (Liberal), which comes back
--- as the version holds it.
+-- typed on 2B Reconciliation without a document (R3 is Liberal), which comes
+-- back as the version holds it. (A Strict client's reclaim with no document
+-- comes back in Awaiting reclaim, named, since round 8: test_9n.)
 SELECT public.twob_restore_version_linked(public.t_superadmin(), :'R3', '10/2026',
   '[{"id":"6e000000-0000-0000-0000-0000000003e1","date":"2026-10-01","supplier_name":"ROMEO","supplier_invoice_number":"RO-1","supplier_gstin":"24ROMEO0000A1Z5","taxable_value":1000,"input_igst":0,"input_cgst":90,"input_sgst":90,"reversal_month":"Oct 26","reclaim_month":"Oct 26","reclaimed_via_doc_id":"6e000000-0000-0000-0000-0000000003d9","is_carried_forward":false},
     {"id":"6e000000-0000-0000-0000-0000000003e2","date":"2026-10-02","supplier_name":"SIERRA","supplier_invoice_number":"SI-1","supplier_gstin":"24SIERR0000A1Z5","taxable_value":1000,"input_igst":0,"input_cgst":50,"input_sgst":50,"reversal_month":"Sep 26","reclaim_month":"Oct 26","is_carried_forward":false}]'::jsonb,

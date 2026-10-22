@@ -76,7 +76,12 @@
 --     Reconciliation's Restore takes them in the saves' order (verification
 --     round 7): the month's Reclaim documents, then the client's lock, then
 --     the entries (before, it took the client's lock first and a document as
---     an entry named it, and deadlocked with an out of Reclaim of it).
+--     an entry named it, and deadlocked with an out of Reclaim of it); with
+--     the client's lock held, it takes the month's books rows and documents
+--     (which its entries name) without waiting, as the client-lock-first
+--     functions do (round 8: a books row or document deleted on Import 2B
+--     held its row and waited for the client's lock while Restore's key
+--     check waited for the row, a deadlock).
 --  3. A prior month (twob_month_is_prior): the guard of 20261021100000 still
 --     refuses every direct write, and the triggers post nothing. A GST
 --     Manager or the superadmin saves a books row through
@@ -156,11 +161,16 @@
 --        back in Awaiting reclaim, named (reclaims_back). A reclaim a
 --        version holds without naming its document (every version written
 --        before this release, the app of before's too) is held to the same
---        terms against the month's original invoice or debit note of the
---        same document (twob_doc_ident) and linked to it (round 7: before,
---        it came back with no document, counted in 5.4 beside the
---        document's count in 5.1); only one with no such document in the
---        month (typed for a Liberal client) comes back as typed;
+--        terms against the month's original invoice or debit note it is
+--        and linked to it (round 7: before, it came back with no document,
+--        counted in 5.4 beside the document's count in 5.1): the same
+--        document (twob_doc_ident), or else, but for a Liberal client, one
+--        of its amounts (round 8: Import 2B's Link & Reclaim pairs them by
+--        amounts alone, so a books entry without GSTIN or numbered otherwise
+--        was not found); a Strict client's with no document found (Delete
+--        2B since) comes back in Awaiting reclaim, named (round 8); only a
+--        Liberal client's with no such document (typed on 2B
+--        Reconciliation) comes back as typed;
 --      - a document stays Reclaim, and is not deleted, while an entry is
 --        reclaimed against it (twob__reclaim_evidence_guard): only
 --        twob_import2b_unreclaim and Delete 2B, which put the entry back in
@@ -170,7 +180,9 @@
 --        twob_import2b_unreclaim refuses a document no longer Reclaim, or
 --        evidencing another reclaim than the one the page showed on its row
 --        (p_expect_entry, round 7: before, a stale tab's Save released a
---        reclaim another user had recorded with the document since); a
+--        reclaim another user had recorded with the document since; a
+--        document two entries name, recorded before the rule, leaves with
+--        either shown, both released, round 8); a
 --        document a reclaim recorded before names while it is not Reclaim
 --        can only be made Reclaim (round 6);
 --      - an entry names its reclaiming document only while it holds the
@@ -210,7 +222,12 @@
 -- version of before's reclaim restored against its document; out of
 -- Reclaim only for the reclaim the page showed; Restore and an out of
 -- Reclaim of one document at the same moment; the RESTORE version as the
--- Restore left the month) and autopost.test.mjs
+-- Restore left the month), test_9n_autopost_round8.sql, test_9m (cases 3
+-- and 4) and round8.test.mjs (the eighth round's: a Strict client's reclaim
+-- restored from a version that names no document, found by its amounts or
+-- back in Awaiting reclaim; a pair of before out of Reclaim; a books row or
+-- document deleted while a Restore runs; the page hearing its own Restore)
+-- and autopost.test.mjs
 -- (the write-through against planImport2BPost + postImport2BToLedger on
 -- twin clients, after every save kind; own entries adopted then taken back).
 --
@@ -316,6 +333,21 @@
 --         FROM public.bills_not_in_2b t JOIN public.twob_import_docs d ON d.id = t.reclaimed_via_doc_id
 --         JOIN public.clients c ON c.id = t.client_id
 --        WHERE d.itc_action <> 'RECLAIM';
+--       -- Round 8 (for the lead, not refused): own entries reclaimed without
+--       -- naming a 2B document. A Restore of a version holding one, in an open
+--       -- month, brings a Strict client's back in Awaiting reclaim, named,
+--       -- unless its document is found (the same document, or by its amounts).
+--       -- Read on 22 Oct 2026 (anon key, read only): 36 such own entries, 34 of
+--       -- Strict clients, all in months of Feb to Dec 2025 (Restore works only
+--       -- on a client's latest month holding entries, and only while it is
+--       -- open: the query's last column); 4,864 with the carried copies, which
+--       -- Restore never touches.
+--       SELECT c.name, c.liberal_2b_reconciliation AS liberal, t.period_month, count(*) AS entries,
+--              public.twob_month_is_prior(t.client_id, t.period_month) AS filed
+--         FROM public.bills_not_in_2b t JOIN public.clients c ON c.id = t.client_id
+--        WHERE NULLIF(btrim(COALESCE(t.reclaim_month, '')), '') IS NOT NULL AND t.reclaim_subtype IS NULL
+--          AND t.reclaimed_via_doc_id IS NULL AND NOT COALESCE(t.is_carried_forward, false)
+--        GROUP BY 1, 2, 3, 5 ORDER BY 1, 3;
 --  2. Apply this file (one transaction; lock_timeout 5 s: at a quiet time;
 --     if it stops on the lock timeout, nothing changed: run it again).
 --  3. Checks after applying:
@@ -354,6 +386,12 @@
 --       -- signature gone), and Restore returns the month it left: f, t
 --       SELECT to_regprocedure('public.twob_import2b_unreclaim(uuid, uuid, text, uuid, text)') IS NOT NULL,
 --              position('rows_2b' in pg_get_functiondef('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)'::regprocedure)) > 0;
+--       -- round 8: Restore finds a document by its amounts and knows Liberal from
+--       -- Strict, and takes the month's rows without waiting; out of Reclaim
+--       -- takes a pair of before: t, t, t
+--       SELECT position('v_liberal' in pg_get_functiondef('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)'::regprocedure)) > 0,
+--              position('FOR KEY SHARE NOWAIT' in pg_get_functiondef('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)'::regprocedure)) > 0,
+--              position('= ANY (v_now)' in pg_get_functiondef('public.twob_import2b_unreclaim(uuid, uuid, text, uuid, text, uuid)'::regprocedure)) > 0;
 --       -- No entry is linked as an own entry yet (the column is new): 0
 --       SELECT (SELECT count(*) FROM public.bills_not_in_2b WHERE adopted_from IS NOT NULL)
 --            + (SELECT count(*) FROM public.bills_not_in_books WHERE adopted_from IS NOT NULL);
@@ -2852,14 +2890,26 @@ $$;
 -- reclaim the version holds without naming its document (every version
 -- written before this release, and the app of before's; its entry of that
 -- id gone or naming none) is held to the same terms against the month's
--- original invoice or debit note of the same document (twob_doc_ident:
--- GSTIN or supplier, number and date), and linked to it when it comes back
+-- original invoice or debit note it is, and linked to it when it comes back
 -- (verification round 7: before, it came back with no document, counted in
 -- 5.4 beside the document's count in 5.1, and nothing held the document
--- after). Only a reclaim with no such document in the month (typed on 2B
--- Reconciliation for a Liberal client) comes back as the version holds it.
+-- after): the same document (twob_doc_ident: GSTIN or supplier, number and
+-- date), or else, but for a Liberal client, one of its amounts (each head
+-- within the Link & Reclaim dialog's Rs. 2; a Reclaim one evidencing nothing
+-- first, then the entry's GSTIN, then the nearest), since Import 2B pairs
+-- an entry and a document by their amounts alone (round 8: a books entry
+-- without the supplier's GSTIN, or numbered as the books wrote it, was not
+-- found and came back as typed). A Strict client's reclaim for which no
+-- document is found (Delete 2B since, say) comes back in Awaiting reclaim,
+-- named (round 8): a Strict client reclaims only on Import 2B, against a
+-- document. Only a Liberal client's reclaim with no such document (typed on
+-- 2B Reconciliation) comes back as the version holds it.
 -- Locks: the month's Reclaim documents, then the client's lock, then the
--- entries, as every writer of a reclaim takes them (round 7). Returns, with
+-- entries, as every writer of a reclaim takes them (round 7); with the
+-- client's lock held, the month's books rows and documents, which the
+-- entries it writes name, without waiting (round 8: a delete of one held
+-- its row and waited for the client's lock while Restore's key check
+-- waited for the row). Returns, with
 -- the counts, the month's two lists as left (rows_2b, rows_books), which the
 -- page records as the RESTORE version (round 7). Everything
 -- else as before: the month's carried entries are never touched, the
@@ -2888,6 +2938,7 @@ DECLARE
   v_curbk jsonb;
   v_linked integer := 0;
   v_reclaims_back jsonb;
+  v_liberal boolean;
 BEGIN
   IF p_actor_id IS NULL OR COALESCE(public.staff_level_of(p_actor_id), '') <> 'superadmin' THEN
     RAISE EXCEPTION 'Only the superadmin can restore a version.';
@@ -2914,6 +2965,15 @@ BEGIN
   -- finished meanwhile) is taken without waiting once the client's lock is
   -- held; a save of it running at that moment stops the Restore with a plain
   -- message instead of a deadlock.
+  -- The month's books rows and 2B documents, which the entries it writes may
+  -- name (an Import 2B link, a reclaiming document: each name's key check
+  -- takes the row FOR KEY SHARE), are taken the same way once the client's
+  -- lock is held, without waiting (verification round 8): a delete of one
+  -- (Import 2B's books row delete, a re-import's documents no longer in the
+  -- file) holds its row, then waits for the client's lock in its
+  -- write-through (twob__autopost_gone), so the Restore's key check waiting
+  -- for that row deadlocked. Now a delete running at that moment stops the
+  -- Restore with the plain message, and one starting after waits for it.
   PERFORM 1 FROM public.twob_import_docs d
    WHERE d.client_id = p_client_id AND d.period_month = p_period AND d.itc_action = 'RECLAIM'
    ORDER BY d.id FOR SHARE;
@@ -2922,10 +2982,18 @@ BEGIN
     PERFORM 1 FROM public.twob_import_docs d
      WHERE d.client_id = p_client_id AND d.period_month = p_period AND d.itc_action = 'RECLAIM'
      ORDER BY d.id FOR SHARE NOWAIT;
+    PERFORM 1 FROM public.twob_import_docs d
+     WHERE d.client_id = p_client_id AND d.period_month = p_period
+     ORDER BY d.id FOR KEY SHARE NOWAIT;
+    PERFORM 1 FROM public.books_register b
+     WHERE b.client_id = p_client_id AND b.period_month = p_period
+     ORDER BY b.id FOR KEY SHARE NOWAIT;
   EXCEPTION WHEN lock_not_available THEN
-    RAISE EXCEPTION 'Nothing was restored: a 2B document of % is being saved on Import 2B right now. Try again in a moment.',
+    RAISE EXCEPTION 'Nothing was restored: a books row or 2B document of % is being saved on Import 2B right now. Try again in a moment.',
       public.twob_month_name(p_period) USING ERRCODE = 'lock_not_available';
   END;
+  SELECT COALESCE(c.liberal_2b_reconciliation, false) INTO v_liberal FROM public.clients c WHERE c.id = p_client_id;
+  v_liberal := COALESCE(v_liberal, false);
   SELECT public.twob_period_of_key(max(k)) INTO v_latest
     FROM (SELECT public.twob_period_key(t.period_month) AS k FROM public.bills_not_in_2b t WHERE t.client_id = p_client_id
           UNION ALL
@@ -3029,32 +3097,54 @@ BEGIN
      WHERE lower(x.x ->> 'is_carried_forward') IN ('false', 'f', '0') AND NOT (x.o = ANY (v_skip_2b))),
   -- A reclaim the version holds without naming its 2B document (every
   -- version written before this release, and the app of before's; its entry
-  -- of that id gone or naming none): the document it is (GSTIN or supplier,
-  -- number and date, twob_doc_ident), among the month's original invoices
-  -- and debit notes, a Reclaim one evidencing nothing first (verification
-  -- round 7: before, such a reclaim came back with no document, counted in
-  -- 5.4 beside the document's own count in 5.1, and nothing held the
-  -- document after). The documents are read only when the version holds one.
+  -- of that id gone or naming none): the document it is, among the month's
+  -- original invoices and debit notes (the only documents that evidence a
+  -- reclaim), a Reclaim one evidencing nothing first (verification round 7:
+  -- before, such a reclaim came back with no document, counted in 5.4 beside
+  -- the document's own count in 5.1, and nothing held the document after).
+  -- Found as the same document (GSTIN or supplier, number and date,
+  -- twob_doc_ident), or else, but for a Liberal client, by its amounts
+  -- (round 8): Import 2B's Link & Reclaim pairs an entry with a document by
+  -- its amounts alone (each head within the dialog's Rs. 2), so a books
+  -- entry without the supplier's GSTIN, or numbered as the books wrote it,
+  -- is reclaimed with a document it is not the same document as; the same
+  -- GSTIN, then the nearest amounts first. The documents are read only when
+  -- the version holds such a reclaim.
   e1 AS (
-    SELECT e0.*,
-           CASE WHEN e0.reclaimed AND e0.named IS NULL
+    SELECT e0.*, l.lookup,
+           CASE WHEN l.lookup
                 THEN public.twob_doc_ident(e0.x ->> 'supplier_gstin', e0.x ->> 'supplier_name', e0.x ->> 'supplier_invoice_number',
-                                           public.twob__try_date(e0.x ->> 'date')) END AS ident
-      FROM e0),
+                                           public.twob__try_date(e0.x ->> 'date')) END AS ident,
+           CASE WHEN l.lookup THEN COALESCE(public.twob__try_num(e0.x ->> 'taxable_value'), 0)::float8 END AS etv,
+           CASE WHEN l.lookup THEN COALESCE(public.twob__try_num(e0.x ->> 'input_igst'), 0)::float8 END AS eig,
+           CASE WHEN l.lookup THEN COALESCE(public.twob__try_num(e0.x ->> 'input_cgst'), 0)::float8 END AS ecg,
+           CASE WHEN l.lookup THEN COALESCE(public.twob__try_num(e0.x ->> 'input_sgst'), 0)::float8 END AS esg,
+           CASE WHEN l.lookup THEN regexp_replace(upper(COALESCE(e0.x ->> 'supplier_gstin', '')), '\s', '', 'g') END AS egstin
+      FROM e0 CROSS JOIN LATERAL (SELECT e0.reclaimed AND e0.named IS NULL AS lookup) l),
   md AS MATERIALIZED (
-    SELECT d.id, d.itc_action,
+    SELECT d.id, d.itc_action, concat_ws(' ', NULLIF(btrim(COALESCE(d.supplier_name, '')), ''), d.supplier_invoice_number) AS label,
+           regexp_replace(upper(COALESCE(d.supplier_gstin, '')), '\s', '', 'g') AS gstin,
+           COALESCE(d.taxable_value, 0)::float8 AS tv, COALESCE(d.input_igst, 0)::float8 AS ig,
+           COALESCE(d.input_cgst, 0)::float8 AS cg, COALESCE(d.input_sgst, 0)::float8 AS sg,
            public.twob_doc_ident(d.supplier_gstin, d.supplier_name, d.supplier_invoice_number, d.date) AS ident,
-           EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.reclaimed_via_doc_id = d.id) AS used
+           d.itc_action = 'RECLAIM' AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.reclaimed_via_doc_id = d.id) AS free
       FROM public.twob_import_docs d
      WHERE d.client_id = p_client_id AND d.period_month = p_period
        AND NOT COALESCE(d.is_amendment, false) AND COALESCE(d.doc_type, 'INVOICE') IN ('INVOICE', 'DEBIT_NOTE')
-       AND EXISTS (SELECT 1 FROM e1 WHERE e1.ident IS NOT NULL)),
+       AND EXISTS (SELECT 1 FROM e1 WHERE e1.lookup)),
   e AS (
-    SELECT e1.*,
-           COALESCE(e1.named, CASE WHEN e1.ident IS NOT NULL THEN (
-             SELECT md.id FROM md WHERE md.ident = e1.ident
-              ORDER BY (md.itc_action = 'RECLAIM' AND NOT md.used) DESC, md.id LIMIT 1) END) AS via
-      FROM e1),
+    SELECT e1.*, COALESCE(e1.named, fi.id, fa.id) AS via, fa.label AS by_amounts
+      FROM e1
+      LEFT JOIN LATERAL (
+        SELECT md.id FROM md WHERE e1.lookup AND md.ident = e1.ident
+         ORDER BY md.free DESC, md.id LIMIT 1) fi ON true
+      LEFT JOIN LATERAL (
+        SELECT md.id, md.label FROM md
+         WHERE e1.lookup AND fi.id IS NULL AND NOT v_liberal
+           AND abs(md.tv - e1.etv) <= 2 AND abs(md.ig - e1.eig) <= 2 AND abs(md.cg - e1.ecg) <= 2 AND abs(md.sg - e1.esg) <= 2
+         ORDER BY md.free DESC, (md.gstin <> '' AND md.gstin = e1.egstin) DESC,
+                  greatest(abs(md.tv - e1.etv), abs(md.ig - e1.eig), abs(md.cg - e1.ecg), abs(md.sg - e1.esg)), md.id
+         LIMIT 1) fa ON true),
   k AS (
     SELECT e.*,
            row_number() OVER (PARTITION BY e.vid ORDER BY e.o) AS vid_rn,
@@ -3075,11 +3165,20 @@ BEGIN
   -- otherwise the entry comes back in Awaiting reclaim, named with why
   -- (verification round 6: before, a reclaim against a document taken out of
   -- Reclaim since, or a version's second reclaim on one document, came back
-  -- counted in 5.4 beside the document's own count in 5.1).
+  -- counted in 5.4 beside the document's own count in 5.1). A reclaim for
+  -- which no document is found at all comes back in Awaiting reclaim too,
+  -- named, unless the client is Liberal (round 8): a Strict client reclaims
+  -- only on Import 2B, against a document, so the version's reclaim was made
+  -- with one this Restore cannot see (gone with Delete 2B and imported again
+  -- Matched, its amounts changed), and kept without it, it counted in 5.4
+  -- beside that document's own count in 5.1. A Liberal client's reclaim may
+  -- be typed on 2B Reconciliation, with no document, and comes back so.
   kk AS (
     SELECT k.*,
-           COALESCE(k.reclaimed AND k.via IS NOT NULL
-             AND NOT (k.via_rn = 1 AND k.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k.via_kept IS NULL), false) AS reclaim_back
+           COALESCE(k.reclaimed AND (
+             (k.via IS NOT NULL AND NOT (k.via_rn = 1 AND k.via_now IS NOT DISTINCT FROM 'RECLAIM' AND k.via_kept IS NULL))
+             OR (k.via IS NULL AND NOT v_liberal)), false) AS reclaim_back,
+           'its 2B document' || CASE WHEN k.by_amounts IS NOT NULL THEN format(' (%s, found by its amounts)', k.by_amounts) ELSE '' END AS doc_words
       FROM k),
   ins AS (
     INSERT INTO public.bills_not_in_2b (
@@ -3108,11 +3207,12 @@ BEGIN
              'supplier_name', kk.x ->> 'supplier_name', 'supplier_invoice_number', kk.x ->> 'supplier_invoice_number',
              'input_igst', public.twob__try_num(kk.x ->> 'input_igst'), 'input_cgst', public.twob__try_num(kk.x ->> 'input_cgst'),
              'input_sgst', public.twob__try_num(kk.x ->> 'input_sgst')),
-             CASE WHEN kk.via_now IS NULL THEN 'its 2B document is no longer in this month'
-                  WHEN kk.via_now IS DISTINCT FROM 'RECLAIM' THEN format('its 2B document is %s now, not Reclaim', public.twob__treatment_label(kk.via_now))
-                  WHEN kk.via_kept IS NOT NULL THEN format('its 2B document already evidences the reclaim of %s',
+             CASE WHEN kk.via IS NULL THEN 'its 2B document cannot be found in this month (this version does not name it, and no document matches its GSTIN or supplier, number and date, or its amounts); reclaim it again on Import 2B'
+                  WHEN kk.via_now IS NULL THEN 'its 2B document is no longer in this month'
+                  WHEN kk.via_now IS DISTINCT FROM 'RECLAIM' THEN format('%s is %s now, not Reclaim', kk.doc_words, public.twob__treatment_label(kk.via_now))
+                  WHEN kk.via_kept IS NOT NULL THEN format('%s already evidences the reclaim of %s', kk.doc_words,
                                                           COALESCE(public.twob__entry_name(kk.via_kept), 'another entry'))
-                  ELSE format('its 2B document evidences the reclaim of %s in this version (one document, one reclaim)',
+                  ELSE format('%s evidences the reclaim of %s in this version (one document, one reclaim)', kk.doc_words,
                               COALESCE(public.twob__entry_name(kk.via_first), 'another entry')) END)
              ORDER BY kk.o) FROM kk WHERE kk.reclaim_back), '[]'::jsonb)
     INTO n2b, v_linked, v_reclaims_back;
@@ -3274,7 +3374,9 @@ $$;
 -- month, no longer Reclaim (verification round 5: changed elsewhere since
 -- the page showed it Reclaim; before, a stale tab's Save wrote its
 -- treatment over the one another user had given it), or the reclaim it
--- evidences is not the one the page showed. The only way out of Reclaim
+-- evidences is not the one the page showed (a document two entries name,
+-- recorded before the one-reclaim rule, shows either on the page and
+-- leaves with both released: verification round 8). The only way out of Reclaim
 -- while an entry is reclaimed against the document
 -- (twob__reclaim_evidence_guard): its entries are released first, in the
 -- same transaction.
@@ -3319,10 +3421,16 @@ BEGIN
   END IF;
   -- The reclaim it evidences now, the entries held (no entry newly names
   -- the document meanwhile: that takes its row, held above), against the one
-  -- the page showed.
+  -- the page showed. A document two entries name, recorded before the
+  -- one-reclaim rule (GROWQ's July REDEL 25 on live), shows one of them on
+  -- the page: either is the reclaim it showed, and both are released with it
+  -- (verification round 8: before, every Save of it was refused as changed
+  -- elsewhere, so it could never leave Reclaim). No entry newly names a
+  -- document another names (twob__reclaim_via_check), so such a pair is
+  -- never one recorded since the page loaded.
   SELECT COALESCE(array_agg(z.id ORDER BY z.id), '{}'::uuid[]) INTO v_now
     FROM (SELECT t.id FROM public.bills_not_in_2b t WHERE t.reclaimed_via_doc_id = p_doc_id ORDER BY t.id FOR NO KEY UPDATE) z;
-  IF v_now IS DISTINCT FROM (CASE WHEN p_expect_entry IS NULL THEN '{}'::uuid[] ELSE ARRAY[p_expect_entry] END) THEN
+  IF (CASE WHEN p_expect_entry IS NULL THEN cardinality(v_now) > 0 ELSE NOT (p_expect_entry = ANY (v_now)) END) THEN
     SELECT to_jsonb(t) INTO v_entry FROM public.bills_not_in_2b t WHERE t.id = v_now[1];
     RETURN jsonb_build_object('ok', false, 'gone', true, 'what', 'reclaim', 'now', to_jsonb(v_now),
       'message', format('The reclaim this 2B document evidences was changed elsewhere since the page showed it (another tab or another user): it is now the evidence of %s. Nothing was saved; the page shows the month as it is now.',

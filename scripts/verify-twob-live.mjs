@@ -32,6 +32,15 @@
 //    Restore numbers its version from the database at that moment
 //    (nextVersionNumber; before, from the page's own list, which Import 2B's
 //    snapshots had overtaken: two "Version 1").
+// Verification round 8:
+//  - the page's own Restore is not news: it deletes the month's own entries
+//    and adds them back with their ids, then links some (an insert, then an
+//    update), so a row's earlier changes in a burst are shown when its last
+//    one is (changesShown), and a change the page already shows stays with
+//    a burst under way; and the page keeps what it hears while the Restore
+//    runs and looks at it again against the month it reloads, as a Save
+//    does (before, the superadmin was told after their own Restore that the
+//    ledger "was changed elsewhere").
 // The pure parts are run; the page's wiring is read from its source.
 //
 //   node scripts/verify-twob-live.mjs
@@ -130,6 +139,19 @@ if (typeof L.changesShown === 'function') {
   check('… and a change to a row the page holds stays news beside an unrelated delete',
     L.changesShown([{ eventType: 'UPDATE', new: { ...kept, reclaim_month: 'Oct 26' }, old: { id: 'r1' } }, { eventType: 'DELETE', new: {}, old: { id: 'r5' } }], v, rows) === false);
   check('… and a row the page holds, deleted elsewhere, is news', L.changesShown([{ eventType: 'DELETE', new: {}, old: { id: 'r1' } }], v, rows) === false);
+  // Round 8: the page's own Restore (the entries deleted, added back with
+  // their ids, one linked after it is added).
+  const linked = { ...kept, id: 'r3', source_book_id: 'b1' };
+  const rows8 = new Map([['r1', kept], ['r3', linked]]);
+  const restoreBurst = [{ eventType: 'DELETE', new: {}, old: { id: 'r1' } }, { eventType: 'DELETE', new: {}, old: { id: 'r9' } },
+    { eventType: 'INSERT', new: kept, old: {} }, { eventType: 'INSERT', new: { ...linked, source_book_id: null }, old: {} },
+    { eventType: 'UPDATE', new: linked, old: { id: 'r3' } }];
+  check('round 8: the page\'s own Restore heard after its reload (deleted, added back with their ids, one linked after) is shown already',
+    L.changesShown(restoreBurst, v, rows8) === true);
+  check('… but a row deleted and added back otherwise than the page shows it is news',
+    L.changesShown([{ eventType: 'DELETE', new: {}, old: { id: 'r1' } }, { eventType: 'INSERT', new: { ...kept, reclaim_month: 'Oct 26' }, old: {} }], v, rows8) === false);
+  check('… and a row the page holds, deleted (not added back), is still news beside a Restore\'s burst',
+    L.changesShown([...restoreBurst.slice(1), { eventType: 'DELETE', new: {}, old: { id: 'r1' } }], v, rows8) === false);
 } else check('round 5: changesShown exists', false, 'missing');
 
 // ── The page's wiring ───────────────────────────────────────────────────────
@@ -154,8 +176,13 @@ check('round 4: a change heard while the page saves is kept, and looked at again
     && /const endSave = \(\) => \{\s*savingRef\.current = false;\s*const heard = heardDuringSaveRef\.current;\s*heardDuringSaveRef\.current = \[\];\s*if \(heard\.length > 0\) liveKickRef\.current\?\.\(heard\);/.test(code)
     && (code.match(/\} finally \{\s*endSave\(\);\s*setIsSaving\(false\);/g) || []).length === 2,
   'the wait path drops the change, or a Save does not replay what it heard');
+check('round 8: a change the page already shows stays with a burst under way (a Restore\'s insert heard just after its delete of the same row), and starts none by itself',
+  /if \(changeShown\(change, view, shownRowsRef\.current\)\) \{ if \(timer\) pending\.push\(change\); return; \}\s*hear\(\[change\], 400\);/.test(code));
+check('round 8: the page\'s own Restore is heard as a Save is: what it hears while it runs is kept and looked at again against the month it reloads',
+  /const handleRestoreVersion = async[\s\S]{0,600}savingRef\.current = true;\s*try \{[\s\S]*?const restored = await restoreVersion\([\s\S]*?await fetchBillsData\(\);[\s\S]*?\} finally \{\s*endSave\(\);\s*\}\s*\};/.test(code),
+  'handleRestoreVersion does not hold savingRef while it runs, or does not end with endSave()');
 check('round 4: no quiet window by user: a change is ignored only when the page already shows it (changeShown)',
-  !code.includes('quietUntilRef') && /if \(changeShown\(change, view, shownRowsRef\.current\)\) return;/.test(code)
+  !code.includes('quietUntilRef') && /if \(changeShown\(change, view, shownRowsRef\.current\)\) \{ if \(timer\) pending\.push\(change\); return; \}/.test(code)
     && /if \(changesShown\(changes, view, shownRowsRef\.current\)\) return;/.test(code)
     && /shownRowsRef\.current = new Map\(\[\.\.\.notIn2B, \.\.\.notInBooks\]\.map\(\(b\) => \[b\.id, b\]\)\);/.test(fetchBody));
 check('… hears deletes (which carry only a row id) and every change of the client',
