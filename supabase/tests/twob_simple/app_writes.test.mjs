@@ -154,9 +154,9 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
   check('Q8: the stale page\'s reclaim is not recorded, and says the entry is gone', !res.ok && res.gone && res.message === A.ENTRY_GONE_MSG, JSON.stringify(res));
   check('Q8: the 2B document stays Matched, so its ITC stays in 5.1',
     psql(`SELECT itc_action FROM public.twob_import_docs WHERE id = '${DOC}'`) === 'MATCHED');
-  const exp = await A.updatePendingEntry('bills_not_in_2b', pending, { reclaim_month: 'Sep 26', reclaim_subtype: 'EXPENSE_OUT' }, undefined);
+  const exp = await A.updatePendingEntry('bills_not_in_2b', pending, { reclaim_month: 'Sep 26', reclaim_subtype: 'EXPENSE_OUT' }, undefined, { clientId: C, period: '09/2026' });
   check('Q8: an Expense out on the gone copy says so too', !exp.ok && exp.gone, JSON.stringify(exp));
-  const book = await A.updatePendingEntry('bills_not_in_books', pending, { book_entry_month: 'Sep 26' }, undefined);
+  const book = await A.updatePendingEntry('bills_not_in_books', pending, { book_entry_month: 'Sep 26' }, undefined, { clientId: C, period: '09/2026' });
   check('Q8: a book entry on a gone entry says so too', !book.ok && book.gone, JSON.stringify(book));
   // The same reclaim on a copy that is there is recorded, the document with it.
   const C2 = 'a8000000-0000-0000-0000-000000000002';
@@ -198,7 +198,7 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
     !A.decisionIsOwn('bills_not_in_books', row) && A.periodOfLabel(row.book_entry_month) === '08/2026'
       && A.labelKey('Sep 26') === 2026 * 12 + 8 && A.labelKey('september-2026') === 2026 * 12 + 8 && A.labelKey('26') === null
       && A.decisionIsOwn('bills_not_in_books', { ...row, book_entry_month: 'Sep 26' }), JSON.stringify(row));
-  const undo = await A.updatePendingEntry('bills_not_in_books', row.id, { book_entry_month: null }, '00000000-0000-0000-0000-0000000000a3');
+  const undo = await A.updatePendingEntry('bills_not_in_books', row.id, { book_entry_month: null }, '00000000-0000-0000-0000-0000000000a3', { clientId: C, period: '09/2026' });
   check('Round 2 F3: Undo book entry on it is refused, naming the filed month', !undo.ok && !undo.gone
     && undo.message.includes('Aug-26 (filed) booked this entry'), JSON.stringify(undo));
   const del = await A.deleteOpenMonthRows('bills_not_in_books', [row]);
@@ -576,7 +576,8 @@ const B = await import('data:text/javascript;base64,' + Buffer.from(memOut.outpu
     !!line && line.actionable && line.text.includes('Not in 2B list') && line.text.endsWith('1 to add.') && !line.text.includes('Not in Books'), JSON.stringify(line));
   const done = B.describeCatchUp({ dryRun: false, written: 2, bills2B: { add: 1, link: 0, change: 0, remove: 0 }, billsBooks: { add: 0, link: 1, change: 0, remove: 0 },
     skipped: [], refusals: [], undoHint: null, version: 3 }, true);
-  check('Autopost: after a catch-up the toast says what was done, past tense', done === 'Not in 2B: 1 added. Not in Books: 1 added (1 already on the ledger as an entry of their own, linked instead of added again).', done);
+  check('Autopost: after a catch-up the toast says what was done, past tense, a link named as one (round 3: not "added")',
+    done === 'Not in 2B: 1 added. Not in Books: 1 linked (the one linked: an entry already on the ledger as one of its own, linked to its 2B document instead of being added again).', done);
   const preview = B.describeCatchUp({ dryRun: true, written: 1, bills2B: { add: 1, link: 0, change: 0, remove: 0 }, billsBooks: { add: 0, link: 0, change: 0, remove: 0 },
     skipped: [], refusals: [], undoHint: null, version: null });
   check('Autopost: ... the preview says what it will do', preview === 'Not in 2B: 1 to add.', preview);

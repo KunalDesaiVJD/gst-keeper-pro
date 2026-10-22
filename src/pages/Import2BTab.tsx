@@ -30,10 +30,13 @@ import {
   fetchTwobMonthState, isPriorPeriod, monthName, previewAndApplyPriorSave, refusalLines, type TwobChange, type TwobMonthState,
 } from '@/lib/twobPriorMonth';
 import {
-  catchUpMonth, catchUpRefusalLines, deleteImported2BMonth, describeCatchUp, fetchStep, flushVersion, outOfStepLine,
-  priorStepLeftOut, saveBookWithPairing, type CatchUpResult, type StepResult,
+  bookSaveTouchesLedger, catchUpMonth, catchUpRefusalLines, catchUpSkippedLines, deleteImported2BMonth, describeCatchUp, docChangeTouchesLedger,
+  fetchStep, flushVersion, LEDGER_SAVES_NOTE, NEEDS_POST_SAVE_MSG, outOfStepLine, priorStepLeftOut, saveBookWithPairing,
+  type CatchUpResult, type StepResult,
 } from '@/lib/import2bAutopost';
+import { createViewReads, viewKey } from '@/lib/viewReads';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { KEPT_REASONS, staleDocsToKeep } from '@/lib/twobReimport';
 import {
   docTypeOf, isCreditNote, fullFigures, effectFigures, signedEffect, docLabel, docTone, DOC_TYPE_LABEL,
   TONE_LABEL, TONE_ROW, TONE_STRIPE, TONE_BADGE, TWOB_ACTION_LABEL, allowedActions, canEvidenceReclaim,
@@ -198,6 +201,8 @@ interface LinkedDocEntry {
 // evidences the return of); 'fromPending' starts from a pending reversed
 // item (picking which freshly imported document matches it).
 interface ReclaimDialogState {
+  /** The (client, month) the dialog was opened for (viewKey): it acts only on that one. */
+  view: string;
   mode: 'fromDoc' | 'fromPending';
   anchor: ReclaimInvoiceLite;
   anchorLabel: string;
@@ -243,8 +248,10 @@ const TONES: TwobTone[] = ['invoice', 'debit', 'credit', 'amendment'];
 const CREDIT_NOTE_SHEETS = ['B2B-CDNR', 'B2B-CDNRA'];
 
 const UNSAVED_MSG = 'Save or discard your row-action changes before importing.';
-/** Why an Import 2B save is off: it changes the 2B Reconciliation ledger, as Post did (docs §15). */
-const NEEDS_POST_MSG = 'Needs the Import 2B & post permission: a save here changes the 2B Reconciliation ledger. Ask a GST Manager to add it to your position.';
+/** A row (or dialog) of a (client, month) no longer selected acts on nothing (verification round 3). */
+const OTHER_VIEW_MSG = 'That row belongs to another client or month than the one now selected. Nothing was saved; the page shows the month selected.';
+/** Why an Import 2B control is off for this row: saving it would change the 2B Reconciliation ledger, as Post did (docs §15). */
+const NEEDS_POST_MSG = 'Needs the Import 2B & post permission: saving this would change the 2B Reconciliation ledger. Ask a GST Manager to add it to your position.';
 
 const num = (v: number | null | undefined) =>
   (v || v === 0) ? Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '';
@@ -519,6 +526,10 @@ const Import2BTab: React.FC = () => {
   // The month's last 2B Reconciliation version (the write-through's snapshot,
   // or a 2B Reconciliation save).
   const [lastVersion, setLastVersion] = useState<{ at: string; version: number | null } | null>(null);
+  // The (client, month) the ledger side above was read for (viewKey): Pending
+  // items, the line and the rows' ledger notes show only while it is the one
+  // selected, and their buttons act only on it.
+  const [ledgerView, setLedgerView] = useState('');
   // What the ledger lacks to follow this month's Import 2B (twob_import2b_step;
   // nothing when in step), and why it could not be read.
   const [outOfStep, setOutOfStep] = useState<StepResult | null>(null);
@@ -565,14 +576,19 @@ const Import2BTab: React.FC = () => {
   // and the superadmin hold every permission). Without it the month is
   // shown, and the Pending items decisions and deletes stay as before; the
   // database refuses a save that would change the ledger anyway.
-  const canPost = isPrior ? canPriorBooks : canWork2BImport();
+  // Without it (an employee whose position lacks it), the saves that change
+  // nothing on the ledger stay open, as before this change (verification
+  // round 3; the database lets exactly those through): each save is checked
+  // first (docChangeTouchesLedger, bookSaveTouchesLedger) and a row whose
+  // save would change the ledger is read-only, with the reason.
+  const mayPost = isPrior ? canPriorBooks : canWork2BImport();
   // While an import runs, every control that writes is off (and each write
   // checks again, importRunning): the merge must not undo a change made since
   // it read the month.
   const writeLocked = readOnly || isImporting;
-  const docsLocked = writeLocked || !canWork2BImport();
+  const docsLocked = writeLocked;
   const booksReadOnly = !isStaff || (isPrior && !canPriorBooks);
-  const booksWriteLocked = booksReadOnly || isImporting || !canPost;
+  const booksWriteLocked = booksReadOnly || isImporting;
   const confirm = useConfirm();
 
   const monthOptions = useMemo(() => {
@@ -606,11 +622,21 @@ const Import2BTab: React.FC = () => {
   const selectionRef = useRef({ client: selectedClient, month: selectedMonth });
   selectionRef.current = { client: selectedClient, month: selectedMonth };
   const loadSeq = useRef(0);
-  // A counter of ledger-side reads (a load's and a save's refresh): an older
-  // read never replaces a newer one's pending items, version or line.
-  const ledgerSeq = useRef(0);
+  /** Whether (client, month) is still the one selected: a result for another one is dropped. */
+  const isCurrentView = useCallback((client: string | null | undefined, month: string | null | undefined) =>
+    selectionRef.current.client === client && selectionRef.current.month === month, []);
+  const currentView = viewKey(selectedClient, selectedMonth);
+  // Ledger-side reads (a load's and a save's refresh), numbered per (client,
+  // month): an older read never replaces a newer one's pending items,
+  // version or line, and a read for a (client, month) no longer selected
+  // (a save of Oct-26 finishing after the switch to Sep-26) counts for
+  // nothing, so it never overtakes the selected month's load (verification
+  // round 3).
+  const ledgerReads = useMemo(() => createViewReads(() => viewKey(selectionRef.current.client, selectionRef.current.month)), []);
+  const ledgerShown = ledgerView === currentView;
 
-  const showLedgerSide = useCallback((l: LedgerSide) => {
+  const showLedgerSide = useCallback((l: LedgerSide, view: string) => {
+    setLedgerView(view);
     setPendingBills2B(l.pending2B);
     setPendingBillsBooks(l.pendingBooks);
     setExpensedOutItems(l.expensedOut);
@@ -636,11 +662,12 @@ const Import2BTab: React.FC = () => {
       setTwoBDocs([]); setBooks([]); setRcmHidden(0); setLastImportedAt(null); setImporterName(null); setMonthState(OPEN_MONTH);
       setPendingBills2B([]); setPendingBillsBooks([]); setExpensedOutItems([]); setBookedItems([]); setLinkedEntries(new Map()); setLinkedDocEntries(new Map());
       setLastVersion(null); setEarlierById({});
-      setOutOfStep(null); setStepError(null);
+      setOutOfStep(null); setStepError(null); setLedgerView('');
       return;
     }
     setIsLoading(true);
-    const lseq = ++ledgerSeq.current;
+    const lview = viewKey(selectedClient, selectedMonth);
+    const lseq = ledgerReads.begin(lview);
     try {
       const [docs, rcmRes, booksRes, state, ledgerSide] = await Promise.all([
         // Paged: a large client's month can pass PostgREST's 1000-row cap.
@@ -682,7 +709,7 @@ const Import2BTab: React.FC = () => {
       const latest = docs.reduce<TwoBDoc | null>((a, d) => (!a || (d.imported_at || '') > (a.imported_at || '') ? d : a), null);
       setLastImportedAt(latest?.imported_at ?? null);
       setMonthState(state);
-      if (lseq === ledgerSeq.current) showLedgerSide(ledgerSide);
+      if (ledgerReads.isLatest(lview, lseq)) showLedgerSide(ledgerSide, lview);
 
       const importedById = latest?.imported_by ?? null;
       if (importedById) {
@@ -696,25 +723,27 @@ const Import2BTab: React.FC = () => {
     } finally {
       if (!overtaken()) setIsLoading(false);
     }
-  }, [selectedClient, selectedMonth, user?.id, showLedgerSide]);
+  }, [selectedClient, selectedMonth, user?.id, showLedgerSide, ledgerReads]);
 
   // After a save that does not reload the page (a books cell, a treatment):
   // the ledger side read again, without the page's loading state, so the
   // pending items, the version and the out-of-step line follow the save. A
   // read overtaken by a newer one (quick saves, a load) is dropped.
+  // A refresh started for a (client, month) no longer selected does nothing
+  // (it is not even counted: it must not overtake the selected month's load).
   const refreshStep = async () => {
     if (!selectedClient || !selectedMonth) return;
     const client = selectedClient;
     const month = selectedMonth;
-    const lseq = ++ledgerSeq.current;
-    const current = () => lseq === ledgerSeq.current
-      && selectionRef.current.client === client && selectionRef.current.month === month;
+    const view = viewKey(client, month);
+    const lseq = ledgerReads.begin(view);
+    if (lseq === null) return;
     try {
       const l = await loadLedgerSide(user?.id ?? null, client, month, true);
-      if (!current()) return;
-      showLedgerSide(l);
+      if (!ledgerReads.isLatest(view, lseq)) return;
+      showLedgerSide(l, view);
     } catch (err) {
-      if (current()) setStepError(errMsg(err));
+      if (ledgerReads.isLatest(view, lseq)) setStepError(errMsg(err));
     }
   };
 
@@ -728,6 +757,9 @@ const Import2BTab: React.FC = () => {
       toast.warning('Unsaved row-action changes were discarded — save before switching client/month next time.');
     }
     setPendingActions({});
+    // A dialog opened for the month left acts on nothing in the new one.
+    setReclaimDialog(null);
+    setBaseDialog(null);
   }, [selectedClient, selectedMonth]);
 
   const twoBLites: TwoBLite[] = useMemo(() => twoBDocs.map(toTwoBLite), [twoBDocs]);
@@ -1322,50 +1354,32 @@ const Import2BTab: React.FC = () => {
       });
 
       // What the earlier import holds that this file does not: deleted unless
-      // something depends on it. A Reclaim, a Not in Books entry on the
-      // ledger that holds a book entry or is filed (locked), a reclaim's
-      // evidence, or an amendment counted against it: kept, and listed. A
-      // Not in Books entry with no decision does not keep it (every save
-      // writes through now, so a document parked Not in Books always has
-      // one): the document goes, and its entry with it (the database's
-      // write-through), as an unposted one always did. A posting stamp alone
-      // does not keep a row, and neither does a books pairing (a soft link:
-      // the re-match below turns that books row Not in 2B), so a document
-      // that has left 2B stops counting in rows 5.1 and 5.3.
-      // An amendment keeps a stale document only if it stays itself: one in
-      // another month, one of this month the merge still points at it (by the
-      // link it writes, not the stored one), or a stale one kept in turn.
+      // something depends on it (staleDocsToKeep, src/lib/twobReimport.ts):
+      // a Reclaim, a Not in Books entry on the ledger (any: a re-import cannot
+      // tell a document that has left 2B from one the file missed, so staff
+      // decide, as before saves wrote through; verification round 3), a
+      // reclaim's evidence, or an amendment counted against it: kept, and
+      // listed. A posting stamp or a books pairing alone does not keep it.
       const pairedIds = new Set(updates.map((u) => u.id));
       const stale = existing.filter((e) => !pairedIds.has(e.id));
-      const staleIds = new Set(stale.map((e) => e.id));
       const writtenLink = new Map(updates.map((u) => [u.id, u.amends_doc_id ?? null]));
-      const keep = new Set(stale.filter((e) => e.itc_action === 'RECLAIM').map((e) => e.id));
+      const ledgerEntryDocIds: string[] = [];
+      const reclaimEvidenceDocIds: string[] = [];
       const dependants: { id: string; amends_doc_id: string }[] = [];
       for (const part of chunk(stale.map((e) => e.id))) {
         const [nib, n2b, later] = await Promise.all([
-          supabase.from('bills_not_in_books').select('source_doc_id, book_entry_month, is_locked').in('source_doc_id', part),
+          supabase.from('bills_not_in_books').select('source_doc_id').in('source_doc_id', part),
           supabase.from('bills_not_in_2b').select('reclaimed_via_doc_id').in('reclaimed_via_doc_id', part),
           supabase.from('twob_import_docs').select('id, amends_doc_id').in('amends_doc_id', part),
         ]);
         if (nib.error) throw nib.error;
         if (n2b.error) throw n2b.error;
         if (later.error) throw later.error;
-        (nib.data || []).forEach((r) => {
-          if (r.source_doc_id && ((r.book_entry_month || '').trim() || r.is_locked)) keep.add(r.source_doc_id);
-        });
-        (n2b.data || []).forEach((r) => r.reclaimed_via_doc_id && keep.add(r.reclaimed_via_doc_id));
+        (nib.data || []).forEach((r) => { if (r.source_doc_id) ledgerEntryDocIds.push(r.source_doc_id); });
+        (n2b.data || []).forEach((r) => { if (r.reclaimed_via_doc_id) reclaimEvidenceDocIds.push(r.reclaimed_via_doc_id); });
         (later.data || []).forEach((r) => { if (r.amends_doc_id) dependants.push({ id: r.id, amends_doc_id: r.amends_doc_id }); });
       }
-      for (let grew = true; grew;) {
-        grew = false;
-        for (const r of dependants) {
-          if (keep.has(r.amends_doc_id)) continue;
-          if (writtenLink.has(r.id) && writtenLink.get(r.id) !== r.amends_doc_id) continue;
-          if (staleIds.has(r.id) && !keep.has(r.id)) continue;
-          keep.add(r.amends_doc_id);
-          grew = true;
-        }
-      }
+      const keep = staleDocsToKeep({ stale, ledgerEntryDocIds, reclaimEvidenceDocIds, dependants, writtenLink });
       const kept = stale.filter((e) => keep.has(e.id));
       const keptCounted = kept.filter((e) => isCountedAction(e.itc_action) && !e.reverse_charge);
       const toDelete = stale.filter((e) => !keep.has(e.id)).map((e) => e.id);
@@ -1463,7 +1477,7 @@ const Import2BTab: React.FC = () => {
       const list = listNos;
       if (kept.length > 0) {
         toast.warning(
-          `${plural(kept.length, 'document')} from the earlier import ${kept.length === 1 ? 'is' : 'are'} not in this file but ${kept.length === 1 ? 'was' : 'were'} kept, because something depends on ${kept.length === 1 ? 'it' : 'them'} (a reclaim, a Not in Books entry that is booked or filed, or a later amendment): `
+          `${plural(kept.length, 'document')} from the earlier import ${kept.length === 1 ? 'is' : 'are'} not in this file but ${kept.length === 1 ? 'was' : 'were'} kept, because something depends on ${kept.length === 1 ? 'it' : 'them'} (${KEPT_REASONS}): `
           + `${list(kept.map((e) => e.supplier_invoice_number || '(no number)'))}. Their treatment is unchanged`
           + (keptCounted.length ? `, so ${plural(keptCounted.length, 'Matched or Mismatched document')} still ${keptCounted.length === 1 ? 'counts' : 'count'} in ITC Summary` : '')
           + '; change it if they have left 2B.',
@@ -1815,9 +1829,12 @@ const Import2BTab: React.FC = () => {
     return [...list].sort((a, b) => score(a) - score(b) || (b.lite.date || '').localeCompare(a.lite.date || '')).map((c) => c.lite);
   };
 
+  // Without Import 2B & post, only a treatment that changes nothing on the
+  // ledger is taken (as the database lets through).
+  const docTouchesLedger = (doc: TwoBDoc, to: string) => docChangeTouchesLedger(doc, doc.itc_action, to, linkedDocEntries.has(doc.id));
   const handleDocActionChange = (doc: TwoBDoc, newAction: string) => {
     if (readOnly) return;
-    if (!canWork2BImport()) { toast.error(NEEDS_POST_MSG); return; }
+    if (!mayPost && newAction !== doc.itc_action && docTouchesLedger(doc, newAction)) { toast.error(NEEDS_POST_SAVE_MSG, { duration: 12000 }); return; }
     if (newAction === 'RECLAIM') {
       if (!canEvidenceReclaim(doc)) {
         toast.error(`${docLabel(doc)} cannot evidence a reclaim. Only an original invoice or debit note can.`);
@@ -1826,6 +1843,7 @@ const Import2BTab: React.FC = () => {
       // Reclaim always goes straight through the matching dialog — a
       // deliberate, evidence-confirmed action, not something to stage.
       setReclaimDialog({
+        view: currentView,
         mode: 'fromDoc',
         anchor: toReclaimLite(doc),
         anchorLabel: `This GSTR-2B ${docLabel(doc).toLowerCase()}`,
@@ -1841,8 +1859,10 @@ const Import2BTab: React.FC = () => {
   };
 
   const openReclaimFromPending = (row: PendingBill2B) => {
+    if (!ledgerShown) { toast.error(OTHER_VIEW_MSG, { duration: 12000 }); return; }
     const eligibleDocs = twoBDocs.filter((d) => (d.itc_action === 'MATCHED' || d.itc_action === 'MISMATCHED') && canEvidenceReclaim(d));
     setReclaimDialog({
+      view: currentView,
       mode: 'fromPending',
       anchor: toReclaimLite(row),
       anchorLabel: 'Pending reversed item',
@@ -1882,6 +1902,8 @@ const Import2BTab: React.FC = () => {
 
   const handleReclaimConfirm = async (candidateId: string) => {
     if (!reclaimDialog) return;
+    // Opened for another (client, month): nothing is written in this one.
+    if (reclaimDialog.view !== currentView) { setReclaimDialog(null); toast.error(OTHER_VIEW_MSG); return; }
     const docId = reclaimDialog.mode === 'fromDoc' ? reclaimDialog.docId! : candidateId;
     const pendingId = reclaimDialog.mode === 'fromPending' ? reclaimDialog.pendingId! : candidateId;
     await confirmReclaim(pendingId, docId);
@@ -1903,12 +1925,14 @@ const Import2BTab: React.FC = () => {
   // (allowedActions) and says how many it skipped and why.
   const applyBulk = () => {
     if (!bulkValue || selected.size === 0 || readOnly) return;
-    if (!canWork2BImport()) { toast.error(NEEDS_POST_MSG); return; }
     const label = TWOB_ACTION_LABEL[bulkValue] || bulkValue;
     const chosen = twoBDocs.filter((d) => selected.has(d.id));
-    const ok = chosen.filter((d) => allowedActions(d, d.itc_action).includes(bulkValue));
+    // Without Import 2B & post, rows whose change would reach the ledger are left as they are, and counted.
+    const needsPost = mayPost ? [] : chosen.filter((d) => d.itc_action !== bulkValue && docTouchesLedger(d, bulkValue));
+    const ok = chosen.filter((d) => allowedActions(d, d.itc_action).includes(bulkValue) && !needsPost.includes(d));
     const skipped = new Map<string, number>();
-    chosen.filter((d) => !ok.includes(d)).forEach((d) => skipped.set(docLabel(d), (skipped.get(docLabel(d)) || 0) + 1));
+    chosen.filter((d) => !ok.includes(d) && !needsPost.includes(d)).forEach((d) => skipped.set(docLabel(d), (skipped.get(docLabel(d)) || 0) + 1));
+    if (needsPost.length) toast.error(`Left ${plural(needsPost.length, 'row')} as ${needsPost.length === 1 ? 'it was' : 'they were'} (${listNos(needsPost.map((d) => d.supplier_invoice_number || '(no number)'))}): ${NEEDS_POST_SAVE_MSG.replace(/^Not saved: this change/, 'the change')}`, { duration: 15000 });
     setPendingActions((prev) => {
       const next = { ...prev };
       ok.forEach((d) => { if (d.itc_action === bulkValue) delete next[d.id]; else next[d.id] = bulkValue; });
@@ -1930,8 +1954,17 @@ const Import2BTab: React.FC = () => {
   const saveActions = async () => {
     const entries = Object.entries(pendingActions);
     if (entries.length === 0 || readOnly || !selectedClient || !selectedMonth) return;
-    if (!canWork2BImport()) { toast.error(NEEDS_POST_MSG); return; }
+    if (!mayPost) {
+      const touching = entries.map(([id, action]) => ({ d: twoBDocs.find((x) => x.id === id), action }))
+        .filter(({ d, action }) => !d || docTouchesLedger(d, action));
+      if (touching.length) {
+        toast.error(`${NEEDS_POST_SAVE_MSG} ${listNos(touching.map(({ d }) => d?.supplier_invoice_number || '(no number)'))}.`, { duration: 15000 });
+        return;
+      }
+    }
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
+    const saveClient = selectedClient;
+    const saveMonth = selectedMonth;
     const fullValue = entries
       .map(([id, action]) => ({ d: twoBDocs.find((x) => x.id === id), action }))
       .filter(({ d, action }) => !!d && d.is_amendment && !hasBase(d) && (isCountedAction(action) || action === 'NOT_IN_BOOKS'))
@@ -2015,16 +2048,20 @@ const Import2BTab: React.FC = () => {
         }
         await bringAmendmentsInLine();
         toast.success(`Saved ${entries.length} row(s).`);
-        setPendingActions({});
+        // The staged picks of this (client, month) only: another one selected
+        // meanwhile keeps its own (its load cleared these already).
+        if (isCurrentView(saveClient, saveMonth)) setPendingActions({});
         await fetchAll();
       } catch (err) {
         toast.error(`Save failed${savedIds.length ? ` after ${plural(savedIds.length, 'row')} saved` : ''}: ${errMsg(err)}`);
         if (savedIds.length) {
-          setPendingActions((prev) => {
-            const next = { ...prev };
-            savedIds.forEach((id) => delete next[id]);
-            return next;
-          });
+          if (isCurrentView(saveClient, saveMonth)) {
+            setPendingActions((prev) => {
+              const next = { ...prev };
+              savedIds.forEach((id) => delete next[id]);
+              return next;
+            });
+          }
           await bringAmendmentsInLine();
         }
         if (savedIds.length || wrote) await fetchAll();
@@ -2050,7 +2087,8 @@ const Import2BTab: React.FC = () => {
   };
   const saveBase = async (clear: boolean) => {
     if (!baseDialog || readOnly) return;
-    if (!canWork2BImport()) { toast.error(NEEDS_POST_MSG); return; }
+    // Counted figures change a Not in Books document's entry.
+    if (!mayPost && baseDialog.doc.itc_action === 'NOT_IN_BOOKS') { toast.error(NEEDS_POST_SAVE_MSG, { duration: 12000 }); return; }
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const { doc, values } = baseDialog;
     if (!clear && baseSignUnsure(doc)) { toast.error(BASE_SIGN_MSG, { duration: 15000 }); return; }
@@ -2090,28 +2128,37 @@ const Import2BTab: React.FC = () => {
     return outcome.applied ? outcome.result : null;
   };
 
+  // A new row has no date or supplier, so it posts nothing: any staff in an
+  // open month adds one (a GST Manager or the superadmin in a filed month).
+  // It joins the list only while its (client, month) is still selected.
   const addBookRow = async () => {
     if (booksReadOnly || !selectedClient || !selectedMonth) return;
-    if (!canPost) { toast.error(NEEDS_POST_MSG); return; }
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
+    const client = selectedClient;
+    const month = selectedMonth;
     if (isPrior) {
       const res = await applyPriorBooksHere([{ table: 'books_register', op: 'insert', values: { book_treatment: 'NOT_IN_2B', doc_type: 'INVOICE' } }], 'Add a books entry', false);
       const id = res?.changes[0]?.id;
       if (!id) return;
       const { data } = await supabase.from('books_register').select('*').eq('id', id).maybeSingle();
-      if (data) { rememberBook(data as BookRow); setBooks((prev) => [...prev, data as BookRow]); }
+      if (data && isCurrentView(client, month)) { rememberBook(data as BookRow); setBooks((prev) => [...prev, data as BookRow]); }
       return;
     }
     const { data, error } = await supabase.from('books_register').insert({
-      client_id: selectedClient, period_month: selectedMonth, book_treatment: 'NOT_IN_2B', doc_type: 'INVOICE', updated_by: user?.id,
+      client_id: client, period_month: month, book_treatment: 'NOT_IN_2B', doc_type: 'INVOICE', updated_by: user?.id,
     }).select('*').single();
     if (error) { toast.error('Add failed: ' + error.message); return; }
+    if (!isCurrentView(client, month)) return;
     rememberBook(data as BookRow);
     setBooks((prev) => [...prev, data as BookRow]);
   };
 
   const updateBookLocal = (id: string, patch: Partial<BookRow>) =>
     setBooks((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  // Without Import 2B & post (an employee whose position lacks it): a books
+  // row on the ledger, or one whose save would post (Not in 2B with a date
+  // and supplier), is read-only; the rest save as before.
+  const bookRowNeedsPost = (b: BookRow) => !mayPost && !isPrior && bookSaveTouchesLedger(b, linkedEntries.has(b.id));
 
   const sameBookRow = (a: BookRow, b: BookRow | undefined) => !!b
     && (a.date || null) === (b.date || null) && (a.supplier_name || '') === (b.supplier_name || '')
@@ -2121,8 +2168,10 @@ const Import2BTab: React.FC = () => {
     && docTypeOf(a) === docTypeOf(b) && a.book_treatment === b.book_treatment && (a.matched_2b_id || null) === (b.matched_2b_id || null);
   const rememberBook = (row: BookRow) => { savedBooksRef.current.set(row.id, row); };
   const restoreBook = async (id: string) => {
+    const client = selectedClient;
+    const month = selectedMonth;
     const { data } = await supabase.from('books_register').select('*').eq('id', id).maybeSingle();
-    if (data) { updateBookLocal(id, data as BookRow); rememberBook(data as BookRow); }
+    if (data && isCurrentView(client, month)) { updateBookLocal(id, data as BookRow); rememberBook(data as BookRow); }
   };
 
   // Saves a books row; with `classify`, first matches it against this month's
@@ -2131,7 +2180,8 @@ const Import2BTab: React.FC = () => {
   const saveBookRow = async (id: string, classify: boolean, patch: Partial<BookRow> = {}): Promise<boolean> => {
     const found = books.find((r) => r.id === id);
     if (!found || booksReadOnly) return false;
-    if (!canPost) { toast.error(NEEDS_POST_MSG); return false; }
+    const client = selectedClient;
+    const month = selectedMonth;
     const row = { ...found, ...patch };
     let next = { treatment: row.book_treatment, matched2bId: row.matched_2b_id };
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return false; }
@@ -2182,6 +2232,20 @@ const Import2BTab: React.FC = () => {
     }
     const pairingMoves = next.matched2bId !== row.matched_2b_id;
 
+    // Without Import 2B & post: a save that would change the ledger (the row
+    // posts, holds an entry, or pairs a Not in Books document with an entry)
+    // is not sent; the rest is saved as before (the database checks again).
+    if (!mayPost) {
+      const pairsNib = !!next.matched2bId && pairingMoves
+        && twoBDocs.some((d) => d.id === next.matched2bId && d.itc_action === 'NOT_IN_BOOKS' && linkedDocEntries.has(d.id));
+      if (sameBookRow(row, savedBooksRef.current.get(id)) && !pairingMoves && next.treatment === row.book_treatment) return true;
+      if (bookSaveTouchesLedger({ ...row, book_treatment: next.treatment }, linkedEntries.has(id), pairsNib)) {
+        toast.error(NEEDS_POST_SAVE_MSG, { duration: 15000 });
+        await restoreBook(id);
+        return false;
+      }
+    }
+
     // The row and its 2B Reconciliation entry are saved together (the
     // database writes it through in the same statement), and with a pairing
     // move the 2B documents too (one call), or none of it: a save that would
@@ -2207,6 +2271,9 @@ const Import2BTab: React.FC = () => {
       return false;
     }
     warnings.forEach((w) => toast.warning(w, { duration: 12000 }));
+    // Shown only while its (client, month) is still selected; the selected
+    // month's own load shows that month (verification round 3).
+    if (!isCurrentView(client, month)) return true;
     rememberBook({ ...row, book_treatment: next.treatment, matched_2b_id: next.matched2bId });
     if (next.treatment !== found.book_treatment || next.matched2bId !== found.matched_2b_id) {
       updateBookLocal(id, { book_treatment: next.treatment, matched_2b_id: next.matched2bId });
@@ -2222,7 +2289,6 @@ const Import2BTab: React.FC = () => {
   // refused one leaves the row an invoice, its entry on the ledger).
   const setBookDocType = async (id: string, docType: string) => {
     if (booksReadOnly) return;
-    if (!canPost) { toast.error(NEEDS_POST_MSG); return; }
     updateBookLocal(id, { doc_type: docType });
     const saved = await saveBookRow(id, true, { doc_type: docType });
     if (saved && docType === 'DEBIT_NOTE') toast.info(BOOK_DEBIT_NOTE_MSG, { duration: 12000 });
@@ -2230,9 +2296,15 @@ const Import2BTab: React.FC = () => {
 
   const setBookTreatment = async (id: string, treatment: string) => {
     if (booksReadOnly) return;
-    if (!canPost) { toast.error(NEEDS_POST_MSG); return; }
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
-    const was = books.find((r) => r.id === id)?.book_treatment;
+    const found = books.find((r) => r.id === id);
+    const was = found?.book_treatment;
+    if (!mayPost && found && bookSaveTouchesLedger({ ...found, book_treatment: treatment }, linkedEntries.has(id))) {
+      toast.error(NEEDS_POST_SAVE_MSG, { duration: 15000 });
+      return;
+    }
+    const client = selectedClient;
+    const month = selectedMonth;
     const rememberTreatment = () => {
       const m = savedBooksRef.current.get(id);
       if (m) rememberBook({ ...m, book_treatment: treatment });
@@ -2240,6 +2312,7 @@ const Import2BTab: React.FC = () => {
     if (isPrior) {
       updateBookLocal(id, { book_treatment: treatment });
       const saved = await applyPriorBooksHere([{ table: 'books_register', op: 'update', id, values: { book_treatment: treatment } }], 'Save the treatment and its 2B Reconciliation entry', false);
+      if (!isCurrentView(client, month)) return;
       if (!saved && was) updateBookLocal(id, { book_treatment: was });
       else if (saved) { rememberTreatment(); refreshStep(); }
       return;
@@ -2251,9 +2324,10 @@ const Import2BTab: React.FC = () => {
       .update({ book_treatment: treatment, updated_by: user?.id, updated_at: new Date().toISOString() }).eq('id', id);
     if (error) {
       toast.error('Save failed, nothing was saved: ' + error.message, { duration: 20000 });
-      if (was) updateBookLocal(id, { book_treatment: was });
+      if (was && isCurrentView(client, month)) updateBookLocal(id, { book_treatment: was });
       return;
     }
+    if (!isCurrentView(client, month)) return;
     rememberTreatment();
     refreshStep();
   };
@@ -2276,6 +2350,13 @@ const Import2BTab: React.FC = () => {
     // of adding one goes back to what it held and stays (docs §15).
     const putBack = (posted || []).filter((l) => l.adopted_from);
     const stays = (posted || []).filter((l) => !l.adopted_from && (l.is_locked || l.reclaim_month));
+    // Its entry leaving the ledger (or put back) is a ledger change.
+    if (!mayPost && (posted || []).some((l) => l.adopted_from || !(l.is_locked || l.reclaim_month))) {
+      toast.error(NEEDS_POST_SAVE_MSG.replace('this change', 'deleting this row'), { duration: 15000 });
+      return;
+    }
+    const client = selectedClient;
+    const month = selectedMonth;
     if (stays.length > 0 && !(await confirm({
       title: 'Its reversal stays on the ledger',
       description: `This row's Not in 2B reversal is ${stays.some((l) => l.is_locked) ? 'filed' : 'already reclaimed'}, so it stays on the 2B Reconciliation ledger, no longer linked to a books row. Delete the books row anyway?`,
@@ -2293,9 +2374,10 @@ const Import2BTab: React.FC = () => {
     }
     const { error } = await supabase.from('books_register').delete().eq('id', id);
     if (error) { toast.error('Delete failed: ' + error.message); return; }
-    setBooks((prev) => prev.filter((r) => r.id !== id));
     if (retract.length > 0) toast.success('Books row deleted, and its Not in 2B reversal removed from the ledger.');
     else if (putBack.length > 0) toast.success('Books row deleted. The 2B Reconciliation entry it was linked to (one of the ledger\'s own) is back as it was, no longer linked.');
+    if (!isCurrentView(client, month)) return;
+    setBooks((prev) => prev.filter((r) => r.id !== id));
     if (row?.matched_2b_id || retract.length > 0 || putBack.length > 0) fetchAll();
   };
 
@@ -2413,8 +2495,9 @@ const Import2BTab: React.FC = () => {
         await fetchAll();
         return;
       }
-      const skippedByReason = new Map<string, string[]>();
-      preview.skipped.forEach(({ number, reason }) => skippedByReason.set(reason, [...(skippedByReason.get(reason) || []), number || '(no number)']));
+      // The rows left out: those whose entry stays on the ledger as last
+      // saved (still counted) apart from those not on it.
+      const skippedLines = catchUpSkippedLines(preview);
       if (!(await confirm({
         title: 'Bring the reconciliation up to date?',
         description: (
@@ -2422,21 +2505,24 @@ const Import2BTab: React.FC = () => {
             This updates the 2B Reconciliation ledger of {selectedClientName} for {month} to follow its Import 2B:
             <br /><br />
             {describeCatchUp(preview)}
-            {[...skippedByReason].map(([reason, nos]) => (
-              <React.Fragment key={reason}><br />Not posted, {plural(nos.length, 'row')}: {reason} ({listNos(nos)}).</React.Fragment>
+            {skippedLines.map((line) => (
+              <React.Fragment key={line}><br />{line}</React.Fragment>
             ))}
           </>
         ),
         confirmText: 'Bring up to date',
       }))) return;
       // Under the month's lock, taken after the confirm; the database plans
-      // again under the client's lock, so it writes what the month needs now.
+      // again under the client's lock and writes only the plan the confirm
+      // showed (its digest): a month changed meanwhile writes nothing and
+      // says so (verification round 3).
       await withMonthLock(clientId, month, IMPORT_RUNNING_MSG, IMPORT_RUNNING_MSG, async () => {
         try {
-          const done = await catchUpMonth(actorId, clientId, month, false);
+          const done = await catchUpMonth(actorId, clientId, month, false, preview.digest);
           toast.success(`Brought up to date${done.version ? ` — v${done.version}` : ''}. ${describeCatchUp(done, true) || 'Nothing was left to change.'}`, { duration: 15000 });
         } catch (err) {
-          toast.error('Nothing was changed: ' + errMsg(err), { duration: 20000 });
+          const m = errMsg(err);
+          toast.error(m.startsWith('Nothing was changed') ? m : `Nothing was changed: ${m}`, { duration: 20000 });
         }
       });
       await fetchAll();
@@ -2449,15 +2535,28 @@ const Import2BTab: React.FC = () => {
   // Reclaim itself always goes through the matching dialog (see confirmReclaim
   // above) — this is only the "never coming back, write it off" escape hatch,
   // which doesn't need a matching invoice.
+  // Each acts on the entry of the (client, month) the Pending items were read
+  // for, only while it is the one selected, and the database writes it only
+  // while the entry is in that month (verification round 3: an Oct-26 entry
+  // shown under Sep-26 was expensed out with Sep's label). The page shows
+  // the result only while that month is still selected.
+  const pendingScope = (): { clientId: string; period: string } | null => {
+    if (!selectedClient || !selectedMonth || !ledgerShown) { toast.error(OTHER_VIEW_MSG, { duration: 12000 }); return null; }
+    return { clientId: selectedClient, period: selectedMonth };
+  };
   const setPendingExpenseOut = async (id: string) => {
     if (readOnly) { toast.error(PRIOR_MONTH_DOCS_MSG); return; }
+    const scope = pendingScope();
+    if (!scope) return;
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const row = pendingBills2B.find((r) => r.id === id);
-    const res = await updatePendingEntry('bills_not_in_2b', id, { reclaim_month: currentLabel, reclaim_subtype: 'EXPENSE_OUT' }, user?.id);
+    const label = periodMonthLabel(scope.period);
+    const res = await updatePendingEntry('bills_not_in_2b', id, { reclaim_month: label, reclaim_subtype: 'EXPENSE_OUT' }, user?.id, scope);
     if (!res.ok) { toast.error(res.gone ? res.message : 'Save failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
-    setPendingBills2B((prev) => prev.filter((r) => r.id !== id));
-    if (row) setExpensedOutItems((prev) => [{ ...row, reclaim_month: currentLabel, reclaim_subtype: 'EXPENSE_OUT' }, ...prev]);
     toast.success('Marked as expense out.');
+    if (!isCurrentView(scope.clientId, scope.period)) return;
+    setPendingBills2B((prev) => prev.filter((r) => r.id !== id));
+    if (row) setExpensedOutItems((prev) => [{ ...row, reclaim_month: label, reclaim_subtype: 'EXPENSE_OUT' }, ...prev]);
   };
 
   // A decision a carried entry brought into this open month from a filed
@@ -2482,29 +2581,34 @@ const Import2BTab: React.FC = () => {
   // Undo — bring a mistakenly expensed-out item back to "awaiting reclaim".
   const undoExpenseOut = async (id: string) => {
     if (readOnly) { toast.error(PRIOR_MONTH_DOCS_MSG); return; }
+    const scope = pendingScope();
+    if (!scope) return;
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const row = expensedOutItems.find((r) => r.id === id);
     const filed = row ? filedCarriedDecision(row, 'bills_not_in_2b') : null;
     if (filed) { toast.error(`${monthName(filed)} (filed) expensed out this entry. ${FILED_DECISION_TITLE}`, { duration: 12000 }); return; }
-    const res = await updatePendingEntry('bills_not_in_2b', id, { reclaim_month: null, reclaim_subtype: null }, user?.id);
+    const res = await updatePendingEntry('bills_not_in_2b', id, { reclaim_month: null, reclaim_subtype: null }, user?.id, scope);
     if (!res.ok) { toast.error(res.gone ? res.message : 'Undo failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
+    toast.success('Expense out undone — back in Awaiting reclaim.');
+    if (!isCurrentView(scope.clientId, scope.period)) return;
     setExpensedOutItems((prev) => prev.filter((r) => r.id !== id));
     if (row) setPendingBills2B((prev) => [{ ...row, reclaim_month: null, reclaim_subtype: null }, ...prev]);
-    toast.success('Expense out undone — back in Awaiting reclaim.');
   };
 
   const setPendingBookEntry = async (id: string, value: 'blank' | 'current') => {
     if (readOnly) { toast.error(PRIOR_MONTH_DOCS_MSG); return; }
+    const scope = pendingScope();
+    if (!scope) return;
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
-    const patch = value === 'blank' ? { book_entry_month: null } : { book_entry_month: currentLabel };
-    const res = await updatePendingEntry('bills_not_in_books', id, patch, user?.id);
+    const label = periodMonthLabel(scope.period);
+    const patch = value === 'blank' ? { book_entry_month: null } : { book_entry_month: label };
+    const res = await updatePendingEntry('bills_not_in_books', id, patch, user?.id, scope);
     if (!res.ok) { toast.error(res.gone ? res.message : 'Save failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
+    if (value !== 'blank') toast.success('Book entry recorded.');
+    if (!isCurrentView(scope.clientId, scope.period)) return;
     const row = pendingBillsBooks.find((r) => r.id === id);
     setPendingBillsBooks((prev) => prev.filter((r) => value === 'blank' ? true : r.id !== id));
-    if (value !== 'blank') {
-      if (row) setBookedItems((prev) => [{ ...row, book_entry_month: currentLabel }, ...prev]);
-      toast.success('Book entry recorded.');
-    }
+    if (value !== 'blank' && row) setBookedItems((prev) => [{ ...row, book_entry_month: label }, ...prev]);
   };
 
   // Undo a book entry (Booked this period): the entry is back in Awaiting
@@ -2512,15 +2616,18 @@ const Import2BTab: React.FC = () => {
   // entry is refused and says to undo it here first.
   const undoBookEntry = async (id: string) => {
     if (readOnly) { toast.error(PRIOR_MONTH_DOCS_MSG); return; }
+    const scope = pendingScope();
+    if (!scope) return;
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     const row = bookedItems.find((r) => r.id === id);
     const filed = row ? filedCarriedDecision(row, 'bills_not_in_books') : null;
     if (filed) { toast.error(`${monthName(filed)} (filed) booked this entry. ${FILED_DECISION_TITLE}`, { duration: 12000 }); return; }
-    const res = await updatePendingEntry('bills_not_in_books', id, { book_entry_month: null }, user?.id);
+    const res = await updatePendingEntry('bills_not_in_books', id, { book_entry_month: null }, user?.id, scope);
     if (!res.ok) { toast.error(res.gone ? res.message : 'Undo failed: ' + res.message, { duration: 12000 }); if (res.gone) await fetchAll(); return; }
+    toast.success('Book entry undone — back in Awaiting book entry.');
+    if (!isCurrentView(scope.clientId, scope.period)) return;
     setBookedItems((prev) => prev.filter((r) => r.id !== id));
     if (row) setPendingBillsBooks((prev) => [{ ...row, book_entry_month: null }, ...prev]);
-    toast.success('Book entry undone — back in Awaiting book entry.');
   };
 
   // The type of a pending ledger item, from the books row or 2B document that
@@ -2771,6 +2878,7 @@ const Import2BTab: React.FC = () => {
                 clientName={selectedClientName}
                 clientGstin={clients.find((c) => c.id === selectedClient)?.gstin || ''}
                 periodMonth={selectedMonth}
+                monthFiled={isPrior}
                 triggerClassName={WS_BTN}
                 blockedReason={isImporting ? 'Wait for the import to finish.'
                   : pendingCount > 0 ? 'Save your row-action changes first: the e-mail lists the saved Not in Books documents.' : null}
@@ -2827,13 +2935,13 @@ const Import2BTab: React.FC = () => {
       )}
       {!isPrior && isStaff && !canWork2BImport() && selectedClient && selectedMonth && (
         <Note>
-          <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> Every save on Import 2B changes the 2B Reconciliation ledger, so the 2B treatments and the books register need the Import 2B &amp; post permission (ask a GST Manager to add it to your position). Pending items stay open to you.</span>
+          <span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5 shrink-0" /> {LEDGER_SAVES_NOTE}</span>
         </Note>
       )}
 
       {/* Every save writes through to the 2B Reconciliation ledger (docs §15);
           a month saved before that, or changed on 2B Reconciliation since, says so. */}
-      {selectedClient && selectedMonth && !isLoading && stepLine && (
+      {selectedClient && selectedMonth && !isLoading && ledgerShown && stepLine && (
         <Note tone="warn">
           <span>{stepLine.text}</span>
           {stepLine.actionable && isStaff && (
@@ -2853,7 +2961,7 @@ const Import2BTab: React.FC = () => {
           )}
         </Note>
       )}
-      {selectedClient && selectedMonth && !isLoading && stepError && (
+      {selectedClient && selectedMonth && !isLoading && ledgerShown && stepError && (
         <Note tone="warn">Could not check whether the 2B Reconciliation ledger follows this month's Import 2B: {stepError}. Reload to try again.</Note>
       )}
 
@@ -2933,7 +3041,7 @@ const Import2BTab: React.FC = () => {
                 </CollapsibleTrigger>
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* Bulk apply bar */}
-                  {!readOnly && canWork2BImport() && selected.size > 0 && (
+                  {!readOnly && selected.size > 0 && (
                     <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1">
                       <span className="text-xs font-medium">{selected.size} selected</span>
                       <select className="h-7 rounded-md border border-input bg-background px-2 text-xs" value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}>
@@ -2953,7 +3061,7 @@ const Import2BTab: React.FC = () => {
                     </div>
                   )}
                   {/* Save staged row-action changes — nothing writes to the DB until this is clicked. */}
-                  {!readOnly && canWork2BImport() && pendingCount > 0 && (
+                  {!readOnly && pendingCount > 0 && (
                     <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-1">
                       <span className="text-xs font-medium text-foreground">{pendingCount} unsaved change{pendingCount === 1 ? '' : 's'}</span>
                       <Button
@@ -3082,6 +3190,11 @@ const Import2BTab: React.FC = () => {
                           const options = allowedActions(d, d.itc_action);
                           if (!options.includes(action)) options.unshift(action);
                           const notes = docNotes(d, action);
+                          // Without Import 2B & post: a document whose every other
+                          // treatment would change the ledger (Not in Books with an
+                          // entry, or Reclaim) is read-only, with the reason.
+                          const docNeedsPost = !mayPost && !readOnly && !isDirty
+                            && (d.itc_action === 'RECLAIM' || (d.itc_action === 'NOT_IN_BOOKS' && linkedDocEntries.has(d.id)));
                           return (
                           // A selected or unsaved row shows that state instead of its kind's tint
                           // (the stripe keeps the kind), in dark mode too.
@@ -3108,7 +3221,7 @@ const Import2BTab: React.FC = () => {
                               {notes.map((n) => (
                                 <div key={n.text} className={cn('text-[11px] leading-snug text-muted-foreground', n.warn && 'font-medium text-amber-700 dark:text-amber-300')}>{n.text}</div>
                               ))}
-                              {d.is_amendment && !d.amends_doc_id && !readOnly && canWork2BImport() && (
+                              {d.is_amendment && !d.amends_doc_id && !readOnly && (mayPost || d.itc_action !== 'NOT_IN_BOOKS') && (
                                 <button
                                   type="button"
                                   className="text-[11px] font-medium text-primary underline-offset-2 hover:underline disabled:opacity-60"
@@ -3133,8 +3246,8 @@ const Import2BTab: React.FC = () => {
                               <select
                                 className={rowSelectCls + (isDirty ? ' border-warning' : '')}
                                 value={action}
-                                disabled={docsLocked}
-                                title={isDirty ? 'Unsaved — click Save changes above to commit' : !readOnly && !canWork2BImport() ? NEEDS_POST_MSG : undefined}
+                                disabled={docsLocked || docNeedsPost}
+                                title={isDirty ? 'Unsaved — click Save changes above to commit' : docNeedsPost ? NEEDS_POST_MSG : undefined}
                                 onChange={(e) => handleDocActionChange(d, e.target.value)}
                               >
                                 {options.map((v) => <option key={v} value={v}>{TWOB_ACTION_LABEL[v] || v}</option>)}
@@ -3185,8 +3298,7 @@ const Import2BTab: React.FC = () => {
                   </div>
                 </CollapsibleTrigger>
                 {!booksReadOnly && (
-                  <Button variant="outline" size="sm" className={WS_BTN} onClick={addBookRow} disabled={isImporting || !canPost}
-                    title={canPost ? undefined : NEEDS_POST_MSG}><Plus className="h-3.5 w-3.5" />Add row</Button>
+                  <Button variant="outline" size="sm" className={WS_BTN} onClick={addBookRow} disabled={isImporting}><Plus className="h-3.5 w-3.5" />Add row</Button>
                 )}
               </div>
               <CollapsibleContent>
@@ -3225,55 +3337,58 @@ const Import2BTab: React.FC = () => {
                         // still counted (Post's rule: what it posted stays).
                         const notPosted = b.book_treatment === 'NOT_IN_2B' && !minus && !bookIsPurchaseReturn(b) ? bookNotPostedReason(b) : null;
                         const onLedger = notPosted ? linkedEntries.get(b.id) : undefined;
+                        // Read-only without Import 2B & post when its save would change the ledger.
+                        const rowNeedsPost = bookRowNeedsPost(b);
+                        const cellLocked = booksWriteLocked || rowNeedsPost;
                         return (
                         <tr key={b.id} className={cn(WS_TR, TONE_ROW[tone], minus && 'bg-destructive/10')}
                           title={minus ? 'Minus amount: amounts here are always plus. Enter a debit note (purchase return) at plus amounts with Type "Debit note (purchase return)".'
                             : bookIsPurchaseReturn(b) ? BOOK_DEBIT_NOTE_MSG : undefined}>
                           <td className={cn('border-b border-r p-0', minus ? 'border-l-4 border-l-destructive' : TONE_STRIPE[tone])}>
-                            <input type="date" className={cellInputCls} value={b.date || ''} disabled={booksWriteLocked}
+                            <input type="date" className={cellInputCls} value={b.date || ''} disabled={cellLocked} title={rowNeedsPost ? NEEDS_POST_MSG : undefined}
                               onChange={(e) => updateBookLocal(b.id, { date: e.target.value })} onBlur={() => saveBookRow(b.id, false)} />
                           </td>
                           <td className="border-b border-r p-0">
                             <select
                               className={cn(rowSelectCls, 'm-0.5 w-[calc(100%-4px)]')}
                               value={docTypeOf({ doc_type: b.doc_type }) === 'DEBIT_NOTE' ? 'DEBIT_NOTE' : 'INVOICE'}
-                              disabled={booksWriteLocked}
-                              title="An invoice pairs with the supplier's invoice in 2B; a debit note (purchase return) with the supplier's credit note, and has no effect until then"
+                              disabled={cellLocked}
+                              title={rowNeedsPost ? NEEDS_POST_MSG : "An invoice pairs with the supplier's invoice in 2B; a debit note (purchase return) with the supplier's credit note, and has no effect until then"}
                               onChange={(e) => setBookDocType(b.id, e.target.value)}
                             >
                               {BOOK_DOC_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={cellInputCls} value={b.supplier_name || ''} disabled={booksWriteLocked}
+                            <input className={cellInputCls} value={b.supplier_name || ''} disabled={cellLocked} title={rowNeedsPost ? NEEDS_POST_MSG : undefined}
                               onChange={(e) => updateBookLocal(b.id, { supplier_name: e.target.value })} onBlur={() => saveBookRow(b.id, false)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={cellInputCls} value={b.supplier_invoice_number || ''} disabled={booksWriteLocked}
+                            <input className={cellInputCls} value={b.supplier_invoice_number || ''} disabled={cellLocked} title={rowNeedsPost ? NEEDS_POST_MSG : undefined}
                               onChange={(e) => updateBookLocal(b.id, { supplier_invoice_number: e.target.value })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={`${cellInputCls} font-mono`} value={b.supplier_gstin || ''} disabled={booksWriteLocked}
+                            <input className={`${cellInputCls} font-mono`} value={b.supplier_gstin || ''} disabled={cellLocked} title={rowNeedsPost ? NEEDS_POST_MSG : undefined}
                               onChange={(e) => updateBookLocal(b.id, { supplier_gstin: e.target.value.toUpperCase() })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.taxable_value || ''} disabled={booksWriteLocked}
+                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.taxable_value || ''} disabled={cellLocked} title={rowNeedsPost ? NEEDS_POST_MSG : undefined}
                               onChange={(e) => updateBookLocal(b.id, { taxable_value: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, false)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_igst || ''} disabled={booksWriteLocked}
+                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_igst || ''} disabled={cellLocked} title={rowNeedsPost ? NEEDS_POST_MSG : undefined}
                               onChange={(e) => updateBookLocal(b.id, { input_igst: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_cgst || ''} disabled={booksWriteLocked}
+                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_cgst || ''} disabled={cellLocked} title={rowNeedsPost ? NEEDS_POST_MSG : undefined}
                               onChange={(e) => updateBookLocal(b.id, { input_cgst: toNum(e.target.value), input_sgst: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_sgst || ''} disabled={booksWriteLocked}
+                            <input className={`${cellInputCls} text-right tabular-nums`} value={b.input_sgst || ''} disabled={cellLocked} title={rowNeedsPost ? NEEDS_POST_MSG : undefined}
                               onChange={(e) => updateBookLocal(b.id, { input_sgst: toNum(e.target.value) })} onBlur={() => saveBookRow(b.id, true)} />
                           </td>
                           <td className="border-b border-r p-0">
-                            <select className={cn(rowSelectCls, 'm-0.5 w-[calc(100%-4px)]')} value={b.book_treatment} disabled={booksWriteLocked} onChange={(e) => setBookTreatment(b.id, e.target.value)}>
+                            <select className={cn(rowSelectCls, 'm-0.5 w-[calc(100%-4px)]')} value={b.book_treatment} disabled={cellLocked} title={rowNeedsPost ? NEEDS_POST_MSG : undefined} onChange={(e) => setBookTreatment(b.id, e.target.value)}>
                               {BOOK_TREATMENTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
                             {notPosted && !onLedger && (
@@ -3351,7 +3466,7 @@ const Import2BTab: React.FC = () => {
           </Card>
 
           {/* Zone 4 — pending items already on the ledger, awaiting a decision */}
-          {(pendingBills2B.length > 0 || pendingBillsBooks.length > 0 || expensedOutItems.length > 0 || bookedItems.length > 0) && (
+          {ledgerShown && (pendingBills2B.length > 0 || pendingBillsBooks.length > 0 || expensedOutItems.length > 0 || bookedItems.length > 0) && (
             <Card>
               <CardContent className="space-y-3 px-4 py-3">
                 <div>

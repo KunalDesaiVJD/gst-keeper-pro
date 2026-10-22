@@ -83,7 +83,16 @@
 --     out of step (posted before this change, or not posted at all) up to
 --     date with the same rules, previewed. Nothing is posted by this file.
 --     The page's "not in step" line is read in one statement
---     (twob_import2b_step, STABLE, any staff; round 2).
+--     (twob_import2b_step, STABLE, any staff; round 2). Both, and every
+--     prior-month save, write only what their confirm showed (round 3): the
+--     dry run returns a digest of the plan (twob__autopost_digest) or of the
+--     door's preview (twob__prior_digest, built without row ids by
+--     twob__prior_save_preview), the apply sends it back (p_digest), and the
+--     plan or preview made again under the client's lock must have it, or
+--     nothing is written ("changed while the confirm was open"; as Post
+--     re-planned under the lock and posted nothing when the plan differed).
+--     A row the catch-up leaves out says whether its entry stays on the
+--     ledger as last saved ('on_ledger').
 --  5. Delete 2B (twob_import2b_delete_2b) is one call, 2B Reconciliation's
 --     Clear Data (twob_clear_year) one call a month (a large client's year in
 --     one call ran past the 3 s anon calls run under): it clears the month
@@ -119,7 +128,9 @@
 -- Data, catch-up, prior month), test_9b_autopost_race.sh (two sessions),
 -- test_9c_autopost_timing.sql (1,000 rows), test_9d_autopost_round1.sql and
 -- test_9e_autopost_locks.sh (the first verification round's findings),
--- test_9f_autopost_round2.sql (the second round's) and autopost.test.mjs
+-- test_9f_autopost_round2.sql (the second round's), test_9g_autopost_round3.sql
+-- and round3.test.mjs (the third round's: the digests, the rows left out,
+-- the app's scoped and gated calls) and autopost.test.mjs
 -- (the write-through against planImport2BPost + postImport2BToLedger on
 -- twin clients, after every save kind; own entries adopted then taken back).
 --
@@ -133,7 +144,9 @@
 -- through here (it names no user in its requests, so the Import 2B & post
 -- check does not apply to it), and its Post then finds nothing left to do.
 -- Already applied in an earlier form? Applying this file again is safe
--- (re-runnable) and brings it to this form.
+-- (re-runnable) and brings it to this form: the earlier signatures of
+-- twob__autopost_apply, twob_import2b_catch_up and twob_import2b_prior_save
+-- are dropped first (round 3 added p_digest), so no call is ambiguous.
 --  1. Dry checks (SELECT only):
 --       -- needs 20261021100000 (true, true):
 --       SELECT to_regprocedure('public.twob_prior_books_apply(uuid, uuid, text, jsonb, boolean)') IS NOT NULL,
@@ -154,6 +167,12 @@
 --              to_regprocedure('public.twob_import2b_save_book(uuid, uuid, jsonb, uuid, uuid)') IS NOT NULL,
 --              EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
 --                       AND table_name = 'twob_autopost_state' AND column_name = 'changed_by');  -- t, t, t
+--       -- the confirm's digest (round 3): t, t, t, f, f
+--       SELECT to_regprocedure('public.twob_import2b_catch_up(uuid, uuid, text, boolean, text)') IS NOT NULL,
+--              to_regprocedure('public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean, text)') IS NOT NULL,
+--              to_regprocedure('public.twob__prior_save_preview(uuid, uuid, text, jsonb, jsonb, boolean)') IS NOT NULL,
+--              to_regprocedure('public.twob_import2b_catch_up(uuid, uuid, text, boolean)') IS NOT NULL,
+--              to_regprocedure('public.twob__autopost_apply(uuid, text, uuid[], uuid[], uuid, boolean, boolean)') IS NOT NULL;
 --       SELECT to_regprocedure('public.twob_import2b_step(uuid, text)') IS NOT NULL,
 --              to_regprocedure('public.twob_import2b_unreclaim(uuid, uuid, text, uuid, text)') IS NOT NULL,
 --              to_regprocedure('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)') IS NOT NULL,
@@ -908,6 +927,23 @@ AS $$
   END
   FROM jsonb_array_elements(COALESCE(p_refusals, '[]'::jsonb)) r;
 $$;
+
+-- The digest of a plan: every row (list, op, the ledger entry and the source
+-- row, the figures, the reason a row is left out), in a fixed order. Two
+-- plans of a month with the same digest add, link, change, take back and
+-- put back the same entries at the same figures.
+CREATE OR REPLACE FUNCTION public.twob__autopost_digest(p_plan public.twob_autopost_row[])
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT md5(COALESCE(string_agg(y.s, E'\n' ORDER BY y.s), ''))
+    FROM (SELECT format('%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s', x.list, x.op, x.ledger_id, x.source_id, x.date,
+                        x.supplier_name, x.supplier_invoice_number, x.supplier_gstin, x.taxable_value, x.input_igst,
+                        x.input_cgst, x.input_sgst, x.reason) AS s
+            FROM unnest(p_plan) x) y;
+$$;
+
 -- Applies the write-through for (client, month, books rows, 2B documents) to
 -- the ledger (twob__autopost_effective: Post's plan, an identical own entry
 -- linked instead of added, a linked own entry put back instead of removed),
@@ -919,9 +955,18 @@ $$;
 -- A change that would take back an entry holding a reclaim, an Expense out
 -- or a book entry is refused (raised; with p_dry_run listed), naming it and
 -- where to undo it (an entry put back as it was keeps its decision).
+-- With p_report the result also carries the plan's digest
+-- (twob__autopost_digest), and a skipped row says whether its entry stays on
+-- the ledger as last saved ('on_ledger'). p_digest (verification round 3):
+-- the digest of the plan a confirm showed; the plan made now under the lock
+-- must be the same, or nothing is written and the call raises "changed while
+-- the confirm was open" (as Post re-planned under the lock and posted
+-- nothing when the plan differed from the one confirmed). NULL: no check
+-- (the write-through of a save, which shows no confirm).
+DROP FUNCTION IF EXISTS public.twob__autopost_apply(uuid, text, uuid[], uuid[], uuid, boolean, boolean);
 CREATE OR REPLACE FUNCTION public.twob__autopost_apply(
   p_client_id uuid, p_period text, p_book_ids uuid[], p_doc_ids uuid[], p_actor_id uuid,
-  p_dry_run boolean DEFAULT false, p_report boolean DEFAULT true)
+  p_dry_run boolean DEFAULT false, p_report boolean DEFAULT true, p_digest text DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SET plan_cache_mode = force_generic_plan
@@ -929,6 +974,7 @@ AS $$
 DECLARE
   v_label text := public.twob_period_label(p_period);
   v_plan public.twob_autopost_row[];
+  v_digest text;
   v_refusals jsonb := '[]'::jsonb;
   v_skipped jsonb := '[]'::jsonb;
   v_linked2 uuid[] := '{}';
@@ -966,16 +1012,38 @@ BEGIN
          count(*) FILTER (WHERE x.list = 'bills_not_in_books' AND x.op = 'unlink')
     INTO c_skip, c2_ins, c2_lnk, c2_upd, c2_ret, c2_unl, cb_ins, cb_lnk, cb_upd, cb_ret, cb_unl
     FROM unnest(v_plan) x;
+  -- A row left out says whether what it posted before stays on the ledger
+  -- as last saved (a books row or 2B document without a date or supplier:
+  -- its entry is still counted), so the confirm lists those apart from rows
+  -- that are not on it (never posted, or a debit note or minus row whose
+  -- entry this plan takes back).
   IF p_report AND c_skip > 0 THEN
     SELECT COALESCE(jsonb_agg(jsonb_build_object('list', x.list, 'id', x.source_id, 'number', x.supplier_invoice_number,
-             'reason', x.reason)), '[]'::jsonb)
+             'reason', x.reason,
+             'on_ledger', NOT EXISTS (SELECT 1 FROM unnest(v_plan) r
+                                       WHERE r.list = x.list AND r.source_id = x.source_id AND r.op IN ('retract', 'unlink'))
+                          AND CASE WHEN x.list = 'bills_not_in_2b'
+                                   THEN EXISTS (SELECT 1 FROM public.bills_not_in_2b t WHERE t.source_book_id = x.source_id
+                                                  AND t.client_id = p_client_id AND t.period_month = p_period)
+                                   ELSE EXISTS (SELECT 1 FROM public.bills_not_in_books t WHERE t.source_doc_id = x.source_id
+                                                  AND t.client_id = p_client_id AND t.period_month = p_period) END)
+             ORDER BY x.list, x.supplier_invoice_number, x.source_id), '[]'::jsonb)
       INTO v_skipped FROM unnest(v_plan) x WHERE x.op = 'skip';
+  END IF;
+  -- The plan a confirm showed must be the plan now (verification round 3).
+  IF p_report OR p_digest IS NOT NULL THEN
+    v_digest := public.twob__autopost_digest(v_plan);
+  END IF;
+  IF p_digest IS NOT NULL AND NOT p_dry_run AND p_digest IS DISTINCT FROM v_digest THEN
+    RAISE EXCEPTION 'Nothing was changed: % of this client changed while the confirm was open (a save in another tab or by someone else, or a change on 2B Reconciliation). Click Bring the reconciliation up to date again to see what it would do now.',
+      public.twob_month_name(p_period)
+      USING ERRCODE = 'TWB03';
   END IF;
   IF c2_ins + c2_lnk + c2_upd + c2_ret + c2_unl + cb_ins + cb_lnk + cb_upd + cb_ret + cb_unl = 0 THEN
     RETURN jsonb_build_object('dry_run', p_dry_run, 'written', 0,
       'bills_not_in_2b', jsonb_build_object('add', 0, 'link', 0, 'change', 0, 'remove', 0, 'unlink', 0),
       'bills_not_in_books', jsonb_build_object('add', 0, 'link', 0, 'change', 0, 'remove', 0, 'unlink', 0),
-      'skipped', v_skipped, 'refusals', '[]'::jsonb);
+      'skipped', v_skipped, 'refusals', '[]'::jsonb, 'digest', v_digest);
   END IF;
 
   -- The entries to take back, locked and read again: a reclaim, Expense out
@@ -1021,7 +1089,7 @@ BEGIN
       'undo_hint', CASE WHEN jsonb_array_length(v_refusals) > 0 THEN public.twob__undo_hint(v_refusals) END,
       'bills_not_in_2b', jsonb_build_object('add', c2_ins, 'link', c2_lnk, 'change', c2_upd, 'remove', c2_ret, 'unlink', c2_unl),
       'bills_not_in_books', jsonb_build_object('add', cb_ins, 'link', cb_lnk, 'change', cb_upd, 'remove', cb_ret, 'unlink', cb_unl),
-      'skipped', v_skipped, 'refusals', v_refusals);
+      'skipped', v_skipped, 'refusals', v_refusals, 'digest', v_digest);
   END IF;
 
   -- Take back.
@@ -1144,7 +1212,7 @@ BEGIN
                                           'remove', n2_ret, 'unlink', n2_unl),
     'bills_not_in_books', jsonb_build_object('add', nb_ins, 'link', COALESCE(array_length(v_linkedb, 1), 0), 'change', nb_upd,
                                              'remove', nb_ret, 'unlink', nb_unl),
-    'skipped', v_skipped, 'refusals', '[]'::jsonb);
+    'skipped', v_skipped, 'refusals', '[]'::jsonb, 'digest', v_digest);
 END;
 $$;
 
@@ -1550,10 +1618,16 @@ CREATE TRIGGER trg_twob_zz_carried_decision BEFORE UPDATE OF book_entry_month ON
 -- An open month out of step (posted before this change, or never posted):
 -- brought up to date with the same rules, by staff who may post (Import 2B
 -- & post). p_dry_run: what it would do (the confirm shows it), writing
--- nothing. A month filed meanwhile is refused (its books side through
--- twob_import2b_prior_save).
+-- nothing, with the plan's 'digest'. p_digest: the digest the confirm
+-- showed; the plan made again under the client's lock must have it, or
+-- nothing is written ("changed while the confirm was open"; verification
+-- round 3: before, an entry corrected on 2B Reconciliation meanwhile was
+-- changed back without the confirm saying so). The page always sends it;
+-- NULL (no check) is left for the tests' direct calls. A month filed
+-- meanwhile is refused (its books side through twob_import2b_prior_save).
+DROP FUNCTION IF EXISTS public.twob_import2b_catch_up(uuid, uuid, text, boolean);
 CREATE OR REPLACE FUNCTION public.twob_import2b_catch_up(
-  p_actor_id uuid, p_client_id uuid, p_period text, p_dry_run boolean DEFAULT true)
+  p_actor_id uuid, p_client_id uuid, p_period text, p_dry_run boolean DEFAULT true, p_digest text DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1576,7 +1650,7 @@ BEGIN
   IF NOT p_dry_run THEN
     PERFORM public.twob__lock_month_rows(p_client_id, ARRAY[p_period], false);
   END IF;
-  v := public.twob__autopost_apply(p_client_id, p_period, NULL, NULL, p_actor_id, p_dry_run);
+  v := public.twob__autopost_apply(p_client_id, p_period, NULL, NULL, p_actor_id, p_dry_run, true, p_digest);
   IF NOT p_dry_run AND COALESCE((v ->> 'written')::integer, 0) > 0 THEN
     PERFORM public.twob__autopost_changed(p_client_id, p_period, p_actor_id);
     v_num := public.twob__autopost_snapshot(p_client_id, p_period, p_actor_id);
@@ -1861,6 +1935,80 @@ BEGIN
 END;
 $$;
 
+-- The digest of a prior month's preview (verification round 3): every
+-- change the door names (list, operation, entry, what happens to it here
+-- and in each later month, a refusal or note), the figures of the 2B
+-- Reconciliation entries the save brings with it, and the later months'
+-- counts, without row ids (an added row's id is new each time) and in a
+-- fixed order. Two previews with the same digest change the same entries
+-- in the same way at the same figures.
+CREATE OR REPLACE FUNCTION public.twob__prior_digest(p_out jsonb, p_door jsonb)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT md5(concat_ws(E'\n--\n',
+    (SELECT string_agg(y.s, E'\n' ORDER BY y.s) FROM (
+       SELECT format('%s|%s|%s|%s|%s|%s|%s|%s|%s', c ->> 'table', c ->> 'op', c ->> 'entry', c -> 'this' ->> 'action',
+                     c ->> 'refusal', c ->> 'note', c -> 'this' ->> 'books_row', c ->> 'derived',
+                     (SELECT string_agg(format('%s:%s', l ->> 'period', l ->> 'action'), ',' ORDER BY l ->> 'period', l ->> 'action')
+                        FROM jsonb_array_elements(COALESCE(c -> 'later', '[]'::jsonb)) l)) AS s
+         FROM jsonb_array_elements(COALESCE(p_out -> 'changes', '[]'::jsonb)) c) y),
+    (SELECT string_agg(y.s, E'\n' ORDER BY y.s) FROM (
+       SELECT ((d - 'id') || jsonb_build_object('values', COALESCE(d -> 'values', '{}'::jsonb) - 'source_book_id'))::text AS s
+         FROM jsonb_array_elements(COALESCE(p_door, '[]'::jsonb)) d) y),
+    (SELECT string_agg(y.s, E'\n' ORDER BY y.s) FROM (
+       SELECT r ->> 'message' AS s FROM jsonb_array_elements(COALESCE(p_out -> 'refusals', '[]'::jsonb)) r) y),
+    COALESCE((p_out -> 'later_months')::text, '')));
+$$;
+
+-- The preview of a prior month's save (twob_import2b_prior_save's dry run):
+-- the books rows saved through the door, their Not in 2B write-through
+-- worked out after, then all of it undone; with its digest. p_phase1: the
+-- books register changes with the entries a removed row takes with it;
+-- p_unlinks: own entries a removed row was linked to, put back.
+CREATE OR REPLACE FUNCTION public.twob__prior_save_preview(
+  p_actor_id uuid, p_client_id uuid, p_period text, p_phase1 jsonb, p_unlinks jsonb, p_whole_month boolean)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  r1 jsonb;
+  r2 jsonb;
+  v_out jsonb;
+  v_derived jsonb;
+  v_touched uuid[];
+BEGIN
+  IF jsonb_array_length(p_phase1) > 0 THEN
+    r1 := public.twob_prior_books_apply(p_actor_id, p_client_id, p_period, p_phase1, true);
+    IF NOT COALESCE((r1 ->> 'ok')::boolean, false) THEN
+      v_out := public.twob__door_merge(r1, NULL, true, p_period);
+      RETURN v_out || jsonb_build_object('digest', public.twob__prior_digest(v_out, NULL));
+    END IF;
+  END IF;
+  BEGIN
+    IF jsonb_array_length(p_phase1) > 0 THEN
+      v_out := public.twob_prior_books_apply(p_actor_id, p_client_id, p_period, p_phase1, false);
+    END IF;
+    SELECT COALESCE(array_agg(DISTINCT (ch -> 'this' ->> 'id')::uuid), '{}') INTO v_touched
+      FROM jsonb_array_elements(COALESCE(v_out -> 'changes', '[]'::jsonb)) ch
+     WHERE ch ->> 'table' = 'books_register' AND ch ->> 'op' IN ('insert', 'update') AND ch -> 'this' ->> 'id' IS NOT NULL;
+    v_derived := public.twob__prior_derived(p_client_id, p_period, CASE WHEN p_whole_month THEN NULL ELSE v_touched END);
+    IF jsonb_array_length(v_derived -> 'door') > 0 THEN
+      r2 := public.twob_prior_books_apply(p_actor_id, p_client_id, p_period, v_derived -> 'door', true);
+    END IF;
+    RAISE EXCEPTION USING ERRCODE = 'TWB02', MESSAGE = 'twob: preview only';
+  EXCEPTION WHEN SQLSTATE 'TWB02' THEN
+    NULL;
+  END;
+  v_out := public.twob__door_merge(r1, r2, true, p_period);
+  v_out := v_out || jsonb_build_object('changes', (v_out -> 'changes')
+    || public.twob__prior_links(p_client_id, p_period, COALESCE(p_unlinks, '[]'::jsonb) || COALESCE(v_derived -> 'links', '[]'::jsonb),
+                                jsonb_array_length(v_out -> 'changes'), false, p_actor_id));
+  RETURN v_out || jsonb_build_object('digest', public.twob__prior_digest(v_out, v_derived -> 'door'));
+END;
+$$;
+
 -- A prior month's books rows saved by a GST Manager or the superadmin, with
 -- their Not in 2B write-through, through the door (twob_prior_books_apply),
 -- which also reaches the later months' carried copies: p_changes are books
@@ -1869,10 +2017,15 @@ $$;
 -- month (bringing a month out of step up to date). One transaction: the
 -- rows, their entries and the later copies, or nothing. p_dry_run: the
 -- preview, as the door gives it (the rows saved first, their write-through
--- worked out after, then all of it undone).
+-- worked out after, then all of it undone), with its 'digest'. p_digest
+-- (verification round 3): the digest of the preview the confirm showed; the
+-- preview made again under the client's lock must have it, or nothing is
+-- saved ("changed while the confirm was open"). The page always sends it;
+-- NULL (no check) is left for the tests' direct calls.
+DROP FUNCTION IF EXISTS public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean);
 CREATE OR REPLACE FUNCTION public.twob_import2b_prior_save(
   p_actor_id uuid, p_client_id uuid, p_period text, p_changes jsonb,
-  p_dry_run boolean DEFAULT true, p_whole_month boolean DEFAULT false)
+  p_dry_run boolean DEFAULT true, p_whole_month boolean DEFAULT false, p_digest text DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1935,31 +2088,18 @@ BEGIN
   END LOOP;
 
   IF p_dry_run THEN
-    IF jsonb_array_length(v_phase1) > 0 THEN
-      r1 := public.twob_prior_books_apply(p_actor_id, p_client_id, p_period, v_phase1, true);
-      IF NOT COALESCE((r1 ->> 'ok')::boolean, false) THEN
-        RETURN public.twob__door_merge(r1, NULL, true, p_period);
-      END IF;
+    RETURN public.twob__prior_save_preview(p_actor_id, p_client_id, p_period, v_phase1, v_unlinks, p_whole_month);
+  END IF;
+  -- What the confirm showed must be what is saved now: the preview made
+  -- again, under the lock, with the same digest (verification round 3).
+  IF p_digest IS NOT NULL THEN
+    v_out := public.twob__prior_save_preview(p_actor_id, p_client_id, p_period, v_phase1, v_unlinks, p_whole_month);
+    IF NOT COALESCE((v_out ->> 'ok')::boolean, false) OR p_digest IS DISTINCT FROM v_out ->> 'digest' THEN
+      RAISE EXCEPTION 'Nothing was saved: % of this client changed while the confirm was open (a save in another tab or by someone else). Look at it again and save once more.',
+        public.twob_month_name(p_period)
+        USING ERRCODE = 'TWB03';
     END IF;
-    BEGIN
-      IF jsonb_array_length(v_phase1) > 0 THEN
-        v_out := public.twob_prior_books_apply(p_actor_id, p_client_id, p_period, v_phase1, false);
-      END IF;
-      SELECT COALESCE(array_agg(DISTINCT (ch -> 'this' ->> 'id')::uuid), '{}') INTO v_touched
-        FROM jsonb_array_elements(COALESCE(v_out -> 'changes', '[]'::jsonb)) ch
-       WHERE ch ->> 'table' = 'books_register' AND ch ->> 'op' IN ('insert', 'update') AND ch -> 'this' ->> 'id' IS NOT NULL;
-      v_derived := public.twob__prior_derived(p_client_id, p_period, CASE WHEN p_whole_month THEN NULL ELSE v_touched END);
-      IF jsonb_array_length(v_derived -> 'door') > 0 THEN
-        r2 := public.twob_prior_books_apply(p_actor_id, p_client_id, p_period, v_derived -> 'door', true);
-      END IF;
-      RAISE EXCEPTION USING ERRCODE = 'TWB02', MESSAGE = 'twob: preview only';
-    EXCEPTION WHEN SQLSTATE 'TWB02' THEN
-      NULL;
-    END;
-    v_out := public.twob__door_merge(r1, r2, true, p_period);
-    RETURN v_out || jsonb_build_object('changes', (v_out -> 'changes')
-      || public.twob__prior_links(p_client_id, p_period, v_unlinks || COALESCE(v_derived -> 'links', '[]'::jsonb),
-                                  jsonb_array_length(v_out -> 'changes'), false, p_actor_id));
+    v_out := NULL;
   END IF;
 
   IF jsonb_array_length(v_phase1) > 0 THEN
@@ -2107,7 +2247,7 @@ BEGIN
     DELETE FROM public.bills_not_in_books WHERE client_id = p_client_id AND period_month = ANY (v_open);
     GET DIAGNOSTICS n2 = ROW_COUNT;
     FOREACH m IN ARRAY v_open LOOP
-      v := public.twob__autopost_apply(p_client_id, m, NULL, NULL, p_actor_id, false);
+      v := public.twob__autopost_apply(p_client_id, m, NULL, NULL, p_actor_id, false, false);
       v_reposted := v_reposted + COALESCE((v ->> 'written')::integer, 0);
       IF COALESCE((v ->> 'written')::integer, 0) > 0
          OR EXISTS (SELECT 1 FROM public.twob_versions t WHERE t.client_id = p_client_id AND t.period_month = m) THEN
@@ -2528,10 +2668,10 @@ $$;
 -- 8. Who may call what
 -- ---------------------------------------------------------------------------
 GRANT EXECUTE ON FUNCTION
-  public.twob_import2b_catch_up(uuid, uuid, text, boolean),
+  public.twob_import2b_catch_up(uuid, uuid, text, boolean, text),
   public.twob_import2b_reclaim(uuid, uuid, text, uuid, uuid),
   public.twob_import2b_save_book(uuid, uuid, jsonb, uuid, uuid),
-  public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean),
+  public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean, text),
   public.twob_import2b_delete_2b(uuid, uuid, text),
   public.twob_clear_year(uuid, uuid, text[]),
   public.twob_import2b_flush_version(uuid, uuid, text),
@@ -2543,7 +2683,8 @@ TO anon, authenticated, service_role;
 -- Internal: they write without checking who acts, or are triggers.
 REVOKE ALL ON FUNCTION
   public.twob__autopost_plan(uuid, text, uuid[], uuid[]),
-  public.twob__autopost_apply(uuid, text, uuid[], uuid[], uuid, boolean, boolean),
+  public.twob__autopost_apply(uuid, text, uuid[], uuid[], uuid, boolean, boolean, text),
+  public.twob__autopost_digest(public.twob_autopost_row[]),
   public.twob__autopost_plan_books(uuid, text, uuid[]),
   public.twob__autopost_plan_docs(uuid, text, uuid[]),
   public.twob__autopost_effective(uuid, text, uuid[], uuid[]),
@@ -2554,6 +2695,8 @@ REVOKE ALL ON FUNCTION
   public.twob__autopost_changed(uuid, text, uuid),
   public.twob__prior_derived(uuid, text, uuid[]),
   public.twob__prior_links(uuid, text, jsonb, integer, boolean, uuid),
+  public.twob__prior_save_preview(uuid, uuid, text, jsonb, jsonb, boolean),
+  public.twob__prior_digest(jsonb, jsonb),
   public.twob__lock_month_rows(uuid, text[], boolean),
   public.twob__undo_hint(jsonb),
   public.twob__door_merge(jsonb, jsonb, boolean, text),

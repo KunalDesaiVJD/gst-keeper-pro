@@ -1653,28 +1653,48 @@ that no one reviews a Post dialog):
   Reconciliation's delete of such a carried row still go through (the row
   goes with its filed decision; the next carry copies it back).
 - Nothing stamps the month as posted (`posted_at` is left as it was).
-- A re-import no longer keeps a document that has left 2B only because the
-  write-through gave it a Not in Books entry: an entry with no decision does
-  not keep it (the document goes, and its entry with it); a book entry or a
-  filed (locked) entry still does, as a reclaim's evidence and an amendment
-  counted against it do.
+- A re-import keeps a document that has left 2B while it has a Not in Books
+  entry on the ledger, whatever that entry holds, and lists it ("kept,
+  because something depends on it ... change it if they have left 2B"), as
+  Import 2B did before saves wrote through (verification round 3,
+  `staleDocsToKeep` in `src/lib/twobReimport.ts`; rounds 1 and 2 had dropped
+  such a document with its entry when the entry held no decision, so the
+  ledger lost an entry with only "Removed 1 document no longer in 2B" said).
+  A reclaim's evidence and an amendment counted against it keep it too.
 
 **Who may.** A save that changes the ledger is the **Import 2B & post**
 permission's (`work_2b_import`; a GST Manager and the superadmin hold every
 permission), as Post was: the reading taken here of "updation itself would
 automatically change the next report" is that the person who may change the
-reports is still the one who may post. Without it, Import 2B is shown with
-its 2B treatments and books register read-only and a note saying why; the
-Pending items decisions (Link & Reclaim, Expense out, book entry and their
-undo) and the deletes (Delete 2B rows) stay as they were. The database
-refuses a save that would change the ledger when the user the request names
-(`x-gst-actor`) lacks it ("Not saved: this change would change the 2B
-Reconciliation ledger, which needs the Import 2B & post permission"), and
+reports is still the one who may post. Every other save stays open to every
+staff level, as before this change (verification round 3; rounds 1 and 2
+had locked the whole of Import 2B for an employee without the permission,
+with a note saying every save changes the ledger, which was not so). The
+page asks each save first what the database will decide
+(`docChangeTouchesLedger`, `bookSaveTouchesLedger` in
+`src/lib/import2bAutopost.ts`, checked against the database's own verdict
+on the same saves in `round3.test.mjs`): a 2B document put into Not in Books
+(when it posts: a date and supplier, and not an amendment that changes no
+figure) or taken out of it (when it has an entry), or out of Reclaim; its
+counted figures while Not in Books; a books row that is or becomes Not in
+2B with a date and supplier (not a debit note, no minus amount), or one
+already on the ledger; a books row deleted whose entry would leave the
+ledger. Those are refused up front ("Not saved: this change would change
+the 2B Reconciliation ledger, which needs the Import 2B & post
+permission"), and a row whose every save would change the ledger is shown
+read-only with the reason; the rest (a treatment between Matched,
+Mismatched, Ineligible, ITC of Others and Held; Mismatched and Not
+Eligible books rows; a Not in 2B row still without a date or supplier; a
+new blank row) saves as before. The note on the page says which saves
+change the ledger (`LEDGER_SAVES_NOTE`). The Pending items decisions (Link
+& Reclaim, Expense out, book entry and their undo) and the deletes (Delete
+2B rows) stay as they were. The database refuses a save that would change
+the ledger when the user the request names (`x-gst-actor`) lacks it, and
 nothing of the save is kept; a save that changes nothing on the ledger goes
 through for any staff, and a request naming no user (the app of before this
 release, a system writer) is not checked. If the firm prefers every staff
 save to post, drop the check in `twob__autopost_touch` and the page's
-`canPost` and rename the permission.
+`mayPost` and rename the permission.
 
 **Race-safe.** The client's lock (the one every writer of a client's 2B
 lists takes: the door, the carry, Re-run, filing) is held while the plan is
@@ -1700,9 +1720,17 @@ books register row through `twob_import2b_prior_save`: the row and its Not
 in 2B entry go through the door (`twob_prior_books_apply`), the later
 months' carried copies included, in one transaction, after a preview that
 shows the row, the ledger's change ("The 2B Reconciliation ledger follows:
-Not in 2B 1 to change") and the later months, and asks first. A cell left
-without a change saves nothing. The Not in Books side follows the filed 2B
-and is never posted in a prior month. Employees: read-only, as before.
+Not in 2B 1 to change") and the later months, and asks first. The save
+writes only what its preview showed (verification round 3): the dry run
+returns the preview's digest (`twob__prior_digest`: every change the door
+names, what happens to it here and in each later month, the figures of the
+entries the save brings with it, without row ids), the save sends it back,
+and the database previews again under the client's lock and saves nothing
+when the digest differs ("Nothing was saved: Jul-26 of this client changed
+while the confirm was open ... Look at it again and save once more"). A
+cell left without a change saves nothing. The Not in Books side follows the
+filed 2B and is never posted in a prior month. Employees: read-only, as
+before.
 
 **A month out of step.** A month saved before this change (and never
 posted, or changed after its last Post), or one whose entries were changed
@@ -1714,13 +1742,27 @@ link, change, take back or put back, counted as Post's plan counts it; one
 snapshot, so a save of another user landing meanwhile is in it wholly or not
 at all), and a read overtaken by a newer one (quick saves) never replaces
 it (round 2; before, four separate reads could show a difference that was
-not there). For staff who may
+not there). The line names each kind apart ("Not in 2B 1 to add, 1 to
+link, 2 to change, 1 to remove, 1 to put back"; round 3: before, a link
+read "to add" and a put-back "to remove", though a link adds nothing and a
+put-back removes nothing). For staff who may
 post (permission Import 2B & post), **Bring the reconciliation up to date**:
-a preview of what it adds, links, changes and takes back, with the rows it
-leaves out and why, then the same rules applied
-(`twob_import2b_catch_up`); afterwards the toast says what was done ("Not in
-2B: 1 added."). A refusal names where to undo. Nothing was posted by the
-migration. In a filed month only its Not in 2B side can be brought up to
+a preview of what it adds, links, changes, takes back and puts back, with
+the rows it leaves out and why, those whose entry stays on the ledger as
+last saved (a row without a date or supplier that posted before: still
+counted) listed apart from those not on it (round 3; before, both read
+"Not posted"), then the same rules applied (`twob_import2b_catch_up`);
+afterwards the toast says what was done ("Not in 2B: 1 added."). It
+writes only the plan its confirm showed (round 3): the preview returns the
+plan's digest (`twob__autopost_digest`: every row's list, operation,
+entry, source row, figures and reason), the apply sends it back, and the
+database plans again under the client's lock and writes nothing when it
+differs ("Nothing was changed: Sep-26 of this client changed while the
+confirm was open ... Click Bring the reconciliation up to date again"), as
+Post re-planned under the lock and posted nothing when the plan differed
+(before, an entry corrected on 2B Reconciliation while the confirm was open
+was changed back without the confirm saying so). A refusal names where to
+undo. Nothing was posted by the migration. In a filed month only its Not in 2B side can be brought up to
 date (GST Manager or superadmin, through the door, `twob_import2b_prior_save`
 with `p_whole_month`); the line shows only that side (its Not in Books side
 follows the filed 2B, which nothing on the page can change, so a line about
@@ -1728,6 +1770,47 @@ it could never go; the confirm names it). The map of 21 Oct 2026
 (origin/main f9890f7) found 15 client-months out of step, 13 of them filed
 (12 of those on the Not in Books side only); the migration header lists them
 with a read-only query that gives the same list live.
+
+**2B Reconciliation while Import 2B writes** (round 3). Every Import 2B save
+now writes the ledger at once, so 2B Reconciliation hears of a change to its
+month far more often than when only Post wrote it (`src/lib/twobLiveSync.ts`).
+A change to another month or client is ignored (the page used to reload on
+any row of the client). While the page holds unsaved edits or rows marked
+for deletion, nothing is reloaded: a banner says "Someone changed this
+month's ledger; reload to see it; your unsaved changes stay until you save
+or discard", with Reload. Save then sends only the rows the user added,
+changed or deleted, each guarded by the figures it loaded (the
+`findChangedElsewhere` rule, a filed month's Save too), and when any of
+them changed elsewhere it writes nothing and asks to reload ("This month
+changed since you loaded it ... Reload / Keep my changes"); the version it
+records is the month read back from the database. A reload or a Discard
+clears the edits and the pending deletes together (before, a reload left the
+pending deletes armed, so the next Save deleted a row the screen showed
+again, an entry Import 2B posted or a reversal among them). A clean page
+reloads once per burst of changes (an import writes many rows), with one
+note; a change heard while it saves waits for the save's own reload. Import
+Excel (which reloads the month) is refused while edits are unsaved.
+
+**Import 2B keeps to the month it shows** (round 3). Every read and save
+result is keyed to the (client, month) it was started for
+(`src/lib/viewReads.ts`): a result for another one is dropped, and a refresh
+started for a month no longer selected (a books save of Oct-26 finishing
+after the switch to Sep-26) is not even counted, so it never overtakes the
+selected month's load (before, it did, and Sep-26's page went on showing
+Oct-26's Pending items with working buttons; Expense out then stamped
+"Sep 26" on the Oct-26 entry, counted in no month's 4D(1.2)). Pending items
+and the line show only for the month they were read for; their buttons act
+only on it, and the database writes a pending decision only while the entry
+is in that client and month (`updatePendingEntry`, scoped). A row added,
+saved or deleted is shown only while its month is still selected; a reclaim
+dialog or counted-figures dialog left open closes when the month changes.
+
+**The e-mail pop-up's reasons** (round 3, §11). A Not in Books document of
+the month not on the ledger is named with its own reason: no date or
+supplier in the 2B file, a filed month (its Not in Books list follows the
+filed 2B), or a month out of step, which points to "Bring the
+reconciliation up to date" (`unpostedSentence`; before, one sentence named
+the first two even for a month out of step).
 
 **Version snapshots: coalesced per minute.** The write-through marks the
 month changed, with whose save it was (`twob_autopost_state.changed_by`); a
@@ -1804,7 +1887,12 @@ rounding; versions as the saver's; the catch-up's undo hint),
 same moment), `test_9f_autopost_round2.sql` (the second round: which own
 entry is linked, and how it is put back, in an open and a filed month; a
 filed decision on a carried copy; Restore linked; the line in one read-only
-statement; out of Reclaim in one call; timing) and `autopost.test.mjs` (twin
+statement; out of Reclaim in one call; timing), `test_9g_autopost_round3.sql`
+and `round3.test.mjs` (the third round: the catch-up and a filed month's save
+write only what their confirm showed; the rows left out on the ledger as last
+saved or not; a Pending items button acting only on its own month; the e-mail
+pop-up's reason per document; an employee asked up front exactly what the
+database lets through) and `autopost.test.mjs` (twin
 clients: the write-through on one, the app's own `planImport2BPost` +
 `postImport2BToLedger` on the other, the ledgers compared after every save
 kind, the pairing and reclaim calls included; the database's plan and its
@@ -1815,11 +1903,18 @@ filed month, the catch-up toast, the filed month's preview).
 code, that the page has no Post, that reclaims, pairings and a document out
 of Reclaim are one call each, that the line is the database's, and the
 round-2 words (a document's entry as last saved, the debit note's words only
-once saved, no Undo for a filed decision).
+once saved, no Undo for a filed decision), and the round-3 rules (the re-import
+keep rule, reads keyed to the month shown, each save asked up front, the
+line's and the e-mail pop-up's words, the digests sent back);
+`node scripts/verify-twob-live.mjs` checks 2B Reconciliation's live updates
+(which changes concern the month, the banner instead of a reload under unsaved
+edits, Save sending only the changed rows, a reload clearing the pending
+deletes with the edits).
 
 **Open questions for the firm.**
 
-- Who may: Import 2B & post (above), or every staff save?
+- Who may: Import 2B & post for the saves that change the ledger, every
+  staff level for the rest (above, round 3), or every staff save?
 - The refusal above: should a save instead take back the entry and its
   decision (as Post did), or keep the entry unlinked?
 - Clear Data now writes Import 2B's entries again at once (the dialog says

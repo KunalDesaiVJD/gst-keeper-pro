@@ -131,8 +131,10 @@ export * as F from './src/utils/fetchGstr3b';
 export * as H from './src/lib/itcHeads';
 export * as X from './src/utils/matchTwob';
 export * as Q from './src/utils/gstr2bReports';
+export * as K from './src/lib/twobReimport';
+export * as V from './src/lib/viewReads';
 `);
-const { T, P, W, B, I, G, R, A, F, H, X, Q } = M;
+const { T, P, W, B, I, G, R, A, F, H, X, Q, K, V } = M;
 
 const doc = (o) => ({
   is_amendment: false, original_doc_type: null, reverse_charge: false, bucket: 'available', itc_available: true,
@@ -651,14 +653,37 @@ await run('no post', async () => {
       && /CREATE OR REPLACE FUNCTION public\.twob_import2b_save_book\(/.test(sql));
   check('… a re-import re-matches every books row it can, naming the ones refused, and keeps going past a refused figure or treatment',
     /refused\.push\(/.test(code) && code.includes('re.refused.length') && code.includes('refusedRows.push(') && code.includes('isRefusal(error.message)'));
-  check('a save that changes the ledger needs Import 2B & post, in the page and in the database',
-    ['const saveBookRow', 'const setBookTreatment', 'const addBookRow', 'const saveActions', 'const saveBase', 'const handleDocActionChange', 'const applyBulk']
-      .every((fn) => new RegExp(`${fn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]{0,700}NEEDS_POST_MSG`).test(code))
+  // Round 3: each save is asked first whether it changes the ledger (as the
+  // database decides), and only those need Import 2B & post; the rest stay
+  // open to every staff level, as before saves wrote through.
+  check('a save that changes the ledger needs Import 2B & post, in the page (each save asked first) and in the database',
+    ['const saveBookRow', 'const setBookTreatment', 'const saveActions', 'const saveBase', 'const handleDocActionChange', 'const applyBulk', 'const deleteBookRow']
+      .every((fn) => new RegExp(`${fn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]{0,4000}NEEDS_POST_SAVE_MSG`).test(code))
+      && /!mayPost[\s\S]{0,200}bookSaveTouchesLedger\(/.test(code) && /docChangeTouchesLedger\(doc, doc\.itc_action, to, linkedDocEntries\.has\(doc\.id\)\)/.test(code)
       && /permission_key = 'work_2b_import'[\s\S]{0,400}needs the Import 2B & post permission/.test(sql));
+  check('round 3: an employee without it keeps the saves that change nothing on the ledger (no blanket lock), and the note says which saves change it',
+    code.includes('const docsLocked = writeLocked;') && code.includes('const booksWriteLocked = booksReadOnly || isImporting;')
+      && !/docsLocked = writeLocked \|\| !canWork2BImport\(\)/.test(code) && code.includes('{LEDGER_SAVES_NOTE}')
+      && !tab.includes('Every save on Import 2B changes the 2B Reconciliation ledger')
+      && W.docChangeTouchesLedger({ date: '2026-09-01', supplier_name: 'A' }, 'MATCHED', 'INELIGIBLE', false) === false
+      && W.docChangeTouchesLedger({ date: '2026-09-01', supplier_name: 'A' }, 'MATCHED', 'NOT_IN_BOOKS', false) === true
+      && W.bookSaveTouchesLedger({ book_treatment: 'MISMATCHED', date: '2026-09-01', supplier_name: 'A', taxable_value: 1 }, false) === false
+      && W.bookSaveTouchesLedger({ book_treatment: 'NOT_IN_2B', date: '2026-09-01', supplier_name: 'A', taxable_value: 1 }, false) === true);
   check('a booked entry can be undone on Import 2B (Pending items, Booked), as the refusal says',
     code.includes('const undoBookEntry') && tab.includes('Undo book entry') && sql.includes('a book entry under Pending items, Booked (Undo book entry)'));
-  check('a re-import keeps a document gone from 2B only for a book entry or a filed entry, not for an entry with no decision',
-    code.includes("select('source_doc_id, book_entry_month, is_locked')") && code.includes("((r.book_entry_month || '').trim() || r.is_locked)"));
+  // Round 3: as before saves wrote through, a document with any Not in
+  // Books entry on the ledger is kept and listed (staff decide whether it has
+  // left 2B), never deleted with its entry silently.
+  const staleNib = { id: 'gone-nib', itc_action: 'NOT_IN_BOOKS' };
+  const keep = K.staleDocsToKeep({ stale: [staleNib, { id: 'gone-matched', itc_action: 'MATCHED' }, { id: 'gone-reclaim', itc_action: 'RECLAIM' }],
+    ledgerEntryDocIds: ['gone-nib', 'elsewhere'], reclaimEvidenceDocIds: [], dependants: [], writtenLink: new Map() });
+  check('round 3: a re-import keeps a document gone from 2B while it has a Not in Books entry (any, decision or not) and lists it, as before',
+    keep.has('gone-nib') && keep.has('gone-reclaim') && !keep.has('gone-matched') && !keep.has('elsewhere')
+      && code.includes("select('source_doc_id').in('source_doc_id', part)") && code.includes('staleDocsToKeep({')
+      && !code.includes("((r.book_entry_month || '').trim() || r.is_locked)"), JSON.stringify([...keep]));
+  const chain = K.staleDocsToKeep({ stale: [{ id: 'old', itc_action: 'MATCHED' }], ledgerEntryDocIds: [], reclaimEvidenceDocIds: [],
+    dependants: [{ id: 'amend-elsewhere', amends_doc_id: 'old' }], writtenLink: new Map() });
+  check('… and still for an amendment counted against it', chain.has('old'), JSON.stringify([...chain]));
   check('a plain load takes no version (a page after its own save does, recorded as the saver\'s)',
     code.includes('fetchAll({ flush: false })') && code.includes('if (flush) await flushVersion(') && sql.includes('changed_by'));
   // Verification round 2 (22 Oct 2026).
@@ -671,8 +696,42 @@ await run('no post', async () => {
       && /CREATE OR REPLACE FUNCTION public\.twob_import2b_unreclaim\(/.test(sql));
   check('round 2: the out-of-step line is read from the database in one statement, and an older read never replaces a newer one',
     auto.includes("supabase.rpc('twob_import2b_step'") && /fetchStep\(clientId, month\)/.test(code) && !/planImport2BPost\(/.test(code)
-      && /const lseq = \+\+ledgerSeq\.current;[\s\S]{0,400}lseq === ledgerSeq\.current/.test(code)
+      && /const lseq = ledgerReads\.begin\(lview\);[\s\S]{0,2500}ledgerReads\.isLatest\(lview, lseq\)/.test(code)
       && /CREATE OR REPLACE FUNCTION public\.twob_import2b_step\([\s\S]{0,120}STABLE/.test(sql));
+  // Round 3: every read is keyed to the (client, month) it was started for.
+  // A save of Oct-26 finishing after the switch to Sep-26 (its refresh) must
+  // not overtake Sep's load: with one counter for every month it did, and
+  // Sep's page went on showing Oct's Pending items with working buttons.
+  let shown = 'c|10/2026';
+  const reads = V.createViewReads(() => shown);
+  const octRefresh = reads.begin('c|10/2026');
+  shown = 'c|09/2026';
+  const sepLoad = reads.begin('c|09/2026');
+  const lateOct = reads.begin('c|10/2026');
+  check('round 3: a refresh for a month no longer selected counts for nothing, so the selected month\'s load still shows',
+    octRefresh === 1 && lateOct === null && reads.isLatest('c|09/2026', sepLoad) && !reads.isLatest('c|10/2026', octRefresh),
+    JSON.stringify({ octRefresh, sepLoad, lateOct }));
+  const sepRefresh = reads.begin('c|09/2026');
+  check('… and within the month a newer read still wins', !reads.isLatest('c|09/2026', sepLoad) && reads.isLatest('c|09/2026', sepRefresh));
+  check('round 3: Import 2B keys its refresh, its Pending items and their buttons to the (client, month) shown',
+    /const refreshStep = async \(\) => \{[\s\S]{0,400}const lseq = ledgerReads\.begin\(view\);\s*if \(lseq === null\) return;/.test(code)
+      && !code.includes('++ledgerSeq') && code.includes('ledgerShown && (pendingBills2B.length > 0')
+      && (code.match(/updatePendingEntry\([^;]*, scope\)/g) || []).length === 4
+      && code.includes('if (!isCurrentView(scope.clientId, scope.period)) return;')
+      && code.includes('if (reclaimDialog.view !== currentView)')
+      && /if \(!isCurrentView\(client, month\)\) return;\s*rememberBook\(data as BookRow\);/.test(code),
+    'refreshStep / pending buttons / dialogs not keyed');
+  check('round 3: the e-mail pop-up gives each document not on the ledger its own reason (a month out of step points to the catch-up)',
+    fs.readFileSync(path.join(root, 'src/components/import2b/EmailBillsNotInBooksDialog.tsx'), 'utf8').includes('{unpostedSentence(rows)}')
+      && (B.unpostedSentence([{ unposted: true, unpostedWhy: 'out-of-step' }]) || '').includes('"Bring the reconciliation up to date"')
+      && !(B.unpostedSentence([{ unposted: true, unpostedWhy: 'out-of-step' }]) || '').includes('no date or supplier'));
+  check('round 3: the line names links and put-backs apart, never "to add" / "to remove" for them',
+    W.outOfStepLine({ prior: false, bills2B: { add: 0, link: 1, change: 0, remove: 0, unlink: 1, names: [] }, billsBooks: { add: 0, link: 0, change: 0, remove: 0, unlink: 0, names: [] } }, false)?.text
+      .endsWith('Not in 2B 1 to link, 1 to put back.'));
+  check('round 3: the catch-up and a filed month\'s save send back the digest their confirm showed',
+    /catchUpMonth\(actorId, clientId, month, false, preview\.digest\)/.test(code)
+      && fs.readFileSync(path.join(root, 'src/lib/twobPriorMonth.ts'), 'utf8').includes('applyPriorSave(actorId, clientId, period, changes, false, !!opts.wholeMonth, preview.digest)')
+      && /IF p_digest IS NOT NULL AND NOT p_dry_run AND p_digest IS DISTINCT FROM v_digest THEN/.test(sql));
   check('round 2: "this row never reaches the ledger" is said for a debit note only once its save went through',
     /const saved = await saveBookRow\(id, true, \{ doc_type: docType \}\);\s*if \(saved && docType === 'DEBIT_NOTE'\) toast\.info\(BOOK_DEBIT_NOTE_MSG/.test(code));
   check('round 2: a book entry or Expense out carried in from a filed month has no Undo on Import 2B, and the database refuses the change',

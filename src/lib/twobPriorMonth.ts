@@ -195,6 +195,12 @@ export interface TwobApplyResult {
   notes: { index: number; entry: string | null; message: string; kind: 'held' | 'stop' }[];
   /** Copies reached per later month. */
   laterMonths: { period: string; count: number }[];
+  /**
+   * A preview's digest (twob_import2b_prior_save): sent back with the save,
+   * which saves nothing when the month's preview is no longer the one the
+   * confirm showed (verification round 3). null from the door itself.
+   */
+  digest: string | null;
 }
 
 const parseApply = (data: unknown): TwobApplyResult => {
@@ -237,6 +243,7 @@ const parseApply = (data: unknown): TwobApplyResult => {
       const x = m as Raw;
       return { period: String(x.period), count: Number(x.count) || 0 };
     }),
+    digest: typeof d.digest === 'string' ? d.digest : null,
   };
 };
 
@@ -263,15 +270,18 @@ export async function applyPriorBooks(
  * 2B Reconciliation entries they post, change or take back (and those
  * entries' later copies) are worked out in the database and come back as
  * derived changes. wholeMonth: every books row of the month (a month out of
- * step brought up to date). dryRun: the preview. Applying is all or nothing:
- * a refusal throws with the database's words.
+ * step brought up to date). dryRun: the preview, with its digest. digest
+ * (the save): the preview's; nothing is saved, and this throws "changed
+ * while the confirm was open", when the month's preview differs now.
+ * Applying is all or nothing: a refusal throws with the database's words.
  */
 export async function applyPriorSave(
   actorId: string, clientId: string, period: string, changes: TwobChange[], dryRun: boolean, wholeMonth = false,
+  digest: string | null = null,
 ): Promise<TwobApplyResult> {
   const { data, error } = await supabase.rpc('twob_import2b_prior_save', {
     p_actor_id: actorId, p_client_id: clientId, p_period: period,
-    p_changes: changes as unknown as Json, p_dry_run: dryRun, p_whole_month: wholeMonth,
+    p_changes: changes as unknown as Json, p_dry_run: dryRun, p_whole_month: wholeMonth, p_digest: digest,
   });
   if (error) throw new Error(error.message);
   return parseApply(data);
@@ -396,10 +406,13 @@ export async function previewAndApplyPriorSave(opts: {
     if (!ok) return { applied: false, result: preview };
   }
   try {
-    const result = await applyPriorSave(actorId, clientId, period, changes, false, !!opts.wholeMonth);
+    // Saved only as previewed: the database previews again under the lock
+    // and saves nothing when it differs (verification round 3).
+    const result = await applyPriorSave(actorId, clientId, period, changes, false, !!opts.wholeMonth, preview.digest);
     return { applied: true, result };
   } catch (err) {
-    notify.error(`Nothing was saved: ${(err as Error).message}`);
+    const m = (err as Error).message;
+    notify.error(m.startsWith('Nothing was saved') ? m : `Nothing was saved: ${m}`);
     return { applied: false, result: null };
   }
 }

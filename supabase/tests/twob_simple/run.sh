@@ -25,7 +25,13 @@
 # and Delete 2B / Clear Data against a save running at the same moment;
 # test_9f: the second round's: which own entry is linked and how it is put
 # back, a filed decision on a carried copy, Restore linked, the line in one
-# read-only statement, out of Reclaim in one call, timing).
+# read-only statement, out of Reclaim in one call, timing; test_9g and
+# round3.test.mjs: the third round's: the catch-up and a filed month's save
+# write only what their confirm showed (the plan's digest), the rows left out
+# on the ledger as last saved or not, a Pending items button acting only on
+# its own month, the e-mail pop-up's reason per document, and an employee
+# without Import 2B & post asked up front exactly what the database lets
+# through).
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.
@@ -89,7 +95,7 @@ done
 for t in "$here"/test_*.sh; do
   if TWOB_TEST_DB="$db" bash "$t"; then :; else echo "FAIL $(basename "$t")"; status=1; fi
 done
-for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs; do
+for t in "$here"/gates.test.mjs "$here"/app_writes.test.mjs "$here"/autopost.test.mjs "$here"/round3.test.mjs; do
   if [ -f "$t" ]; then
     if TWOB_TEST_DB="$db" node "$t"; then :; else status=1; fi
   fi

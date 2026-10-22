@@ -18,13 +18,21 @@ const OK: PendingWriteResult = { ok: true, gone: false, message: '' };
 
 type LedgerTable = 'bills_not_in_2b' | 'bills_not_in_books';
 
-/** Updates one pending ledger entry; reports when the entry is gone (nothing written). */
+/**
+ * Updates one pending ledger entry of the (client, month) the page shows;
+ * reports when the entry is gone (nothing written). The entry is written
+ * only while it is in that month: a row the page showed from another month
+ * (a month switched while a read was in flight) reads as gone, and is never
+ * given this month's label (verification round 3: an Expense out stamped
+ * Sep-26 on an Oct-26 entry, counted in no month's 4D(1.2)).
+ */
 export async function updatePendingEntry(
   table: LedgerTable, id: string, patch: Record<string, string | null>, userId: string | undefined,
+  scope: { clientId: string; period: string },
 ): Promise<PendingWriteResult> {
   const { data, error } = await supabase.from(table)
     .update({ ...patch, updated_by: userId ?? null, updated_at: new Date().toISOString() })
-    .eq('id', id).select('id');
+    .eq('id', id).eq('client_id', scope.clientId).eq('period_month', scope.period).select('id');
   if (error) return { ok: false, gone: false, message: error.message };
   if (!data || data.length === 0) return { ok: false, gone: true, message: ENTRY_GONE_MSG };
   return OK;
