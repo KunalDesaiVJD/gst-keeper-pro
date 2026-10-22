@@ -117,7 +117,7 @@ const out = await build({
   stdin: {
     contents: `
 export { recordReclaim, updatePendingEntry, deleteOpenMonthRows, ENTRY_GONE_MSG, findChangedElsewhere, updateOpenMonthRow,
-  CHANGED_ELSEWHERE_MSG } from './src/lib/twobPendingWrites';
+  CHANGED_ELSEWHERE_MSG, releaseReclaim, decisionIsOwn, labelKey, periodOfLabel, DOC_GONE_MSG } from './src/lib/twobPendingWrites';
 export { describeFilingCarry, describeRerun, describePriorPreview, fetchCarryGaps, describeCarryGap, priorNibLockReason,
   PRIOR_NIB_FROM_2B_MSG, PRIOR_NIB_CARRIED_MSG, PRIOR_NIB_UNKNOWN_MSG, fetchNibFollows2B, restoreVersion, rerunCarry } from './src/lib/twobPriorMonth';
 `,
@@ -183,6 +183,50 @@ const A = await import('data:text/javascript;base64,' + Buffer.from(out.outputFi
   const res = await A.deleteOpenMonthRows('bills_not_in_2b', [row]);
   check('Q12: the Save undoes the reclaim and deletes the entry', res.error === null, res.error);
   check('Q12: ... the entry is gone', psql(`SELECT count(*) FROM public.bills_not_in_2b WHERE id = '${row.id}'`) === '0');
+}
+
+// ── Autopost round 2 (22 Oct 2026): the app's own calls. ──────────────────
+{
+  // F3/F4: a book entry carried into open Sep from filed Aug: Pending items'
+  // Undo (updatePendingEntry) is refused with the words; 2B Reconciliation's
+  // delete of the carried row goes through without first undoing a decision
+  // that is not Sep's own (deleteOpenMonthRows).
+  const C = 'a8000000-0000-0000-0000-0000000000f3';
+  psql(`SELECT public.t_make_sorath('${C}', 'R2 filed decision', true)`);
+  const row = JSON.parse(psql(`SELECT row_to_json(t) FROM public.bills_not_in_books t WHERE client_id = '${C}' AND period_month = '09/2026' AND supplier_invoice_number = 'N-1'`));
+  check('Round 2 F3: the carried copy holds a decision that is not Sep\'s own (the app reads it as the database does)',
+    !A.decisionIsOwn('bills_not_in_books', row) && A.periodOfLabel(row.book_entry_month) === '08/2026'
+      && A.labelKey('Sep 26') === 2026 * 12 + 8 && A.labelKey('september-2026') === 2026 * 12 + 8 && A.labelKey('26') === null
+      && A.decisionIsOwn('bills_not_in_books', { ...row, book_entry_month: 'Sep 26' }), JSON.stringify(row));
+  const undo = await A.updatePendingEntry('bills_not_in_books', row.id, { book_entry_month: null }, '00000000-0000-0000-0000-0000000000a3');
+  check('Round 2 F3: Undo book entry on it is refused, naming the filed month', !undo.ok && !undo.gone
+    && undo.message.includes('Aug-26 (filed) booked this entry'), JSON.stringify(undo));
+  const del = await A.deleteOpenMonthRows('bills_not_in_books', [row]);
+  check('Round 2 F3: 2B Reconciliation\'s delete of the carried row goes through (its filed decision is not undone first)',
+    del.error === null && psql(`SELECT count(*) FROM public.bills_not_in_books WHERE id = '${row.id}'`) === '0', del.error);
+  check('Round 2 F3: ... Aug still holds its book entry', psql(`SELECT book_entry_month FROM public.bills_not_in_books WHERE client_id = '${C}' AND period_month = '08/2026'`) === 'Aug 26');
+}
+{
+  // F7: a document out of Reclaim through the app's one call.
+  const C = 'a8000000-0000-0000-0000-0000000000f7';
+  const DOC = 'a8000000-0000-0000-0000-0000000007d1';
+  psql(`SELECT public.t_make_tamnna('${C}', 'R2 unreclaim');
+        SELECT set_config('twob.write', 'system', false);
+        INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, itc_action)
+        VALUES ('${DOC}', '${C}', '09/2026', '2026-07-15', 'TAMNNA SUPPLIER', 'T-1', '24TSUPP0000A1Z5', 11111.11, 0, 1000, 1000, 'MATCHED');`);
+  const pending = psql(`SELECT id FROM public.bills_not_in_2b WHERE client_id = '${C}' AND period_month = '09/2026' AND supplier_invoice_number = 'T-1'`);
+  const rec = await A.recordReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', pendingId: pending, docId: DOC });
+  check('Round 2 F7: reclaimed', rec.ok, JSON.stringify(rec));
+  const bad = await A.releaseReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', docId: DOC, action: 'BOGUS' });
+  check('Round 2 F7: a treatment refused: nothing of the call kept (the reclaim stands, the document stays Reclaim)', !bad.ok && !bad.gone
+    && psql(`SELECT reclaim_month || ' ' || (SELECT itc_action FROM public.twob_import_docs WHERE id = '${DOC}') FROM public.bills_not_in_2b WHERE id = '${pending}'`) === 'Sep 26 RECLAIM',
+    JSON.stringify(bad));
+  const ok = await A.releaseReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', docId: DOC, action: 'MATCHED' });
+  check('Round 2 F7: out of Reclaim: the entry back in Awaiting reclaim and the document Matched, together', ok.ok && ok.was === 'RECLAIM' && ok.released === 1
+    && psql(`SELECT COALESCE(reclaim_month, '-') || ' ' || (SELECT itc_action FROM public.twob_import_docs WHERE id = '${DOC}') FROM public.bills_not_in_2b WHERE id = '${pending}'`) === '- MATCHED',
+    JSON.stringify(ok));
+  const gone = await A.releaseReclaim({ actorId: '00000000-0000-0000-0000-0000000000a4', clientId: C, period: '09/2026', docId: 'a8000000-0000-0000-0000-0000000007ff', action: 'MATCHED' });
+  check('Round 2 F7: a document no longer there: said, nothing written', !gone.ok && gone.gone && gone.message === A.DOC_GONE_MSG, JSON.stringify(gone));
 }
 
 // ── Q13 (low): the words after filing, and Re-run's preview. ────────────
@@ -427,7 +471,7 @@ const memOut = await build({
     contents: `
 export { runPushRecoCheck, pushRecoBlocks } from './src/lib/pushRecoGate';
 export { planImport2BPost, planToPriorChanges, priorPlanLeftOut } from './src/lib/postImport2B';
-export { outOfStepLine, describeCatchUp } from './src/lib/import2bAutopost';
+export { outOfStepLine, describeCatchUp, stepFromPlan, priorStepLeftOut } from './src/lib/import2bAutopost';
 export { readSuspendedRecoInputs } from './src/lib/suspendedRecoCalc';
 `,
     resolveDir: root, loader: 'ts',
@@ -519,11 +563,15 @@ const B = await import('data:text/javascript;base64,' + Buffer.from(memOut.outpu
   // Books side out (nothing on the page can change it, so the line would
   // never go); an open month's line names both sides.
   const nibOnly = { ...plan, insertBills2B: [], updateBills2B: [], retractBills2B: [] };
-  check('Autopost: a filed month out of step on its Not in Books side only shows no line', B.outOfStepLine(nibOnly, true) === null,
-    JSON.stringify(B.outOfStepLine(nibOnly, true)));
-  check('Autopost: ... an open month shows it', (B.outOfStepLine(nibOnly, false)?.text || '').includes('Not in Books 1 to add'));
+  check('Autopost: a filed month out of step on its Not in Books side only shows no line', B.outOfStepLine(B.stepFromPlan(nibOnly, true), true) === null,
+    JSON.stringify(B.outOfStepLine(B.stepFromPlan(nibOnly, true), true)));
+  check('Autopost: ... an open month shows it', (B.outOfStepLine(B.stepFromPlan(nibOnly), false)?.text || '').includes('Not in Books 1 to add'));
+  // Round 2: the filed month's catch-up confirm names its Not in Books side
+  // from the database's step as Post's plan named it.
+  check('Autopost round 2: the step names the filed month\'s Not in Books side as the plan did',
+    B.priorStepLeftOut(B.stepFromPlan(plan, true)) === left, B.priorStepLeftOut(B.stepFromPlan(plan, true)));
   const n2b = { ...nibOnly, insertBills2B: [{ row: plan.insertBillsBooks[0].row }] };
-  const line = B.outOfStepLine(n2b, true);
+  const line = B.outOfStepLine(B.stepFromPlan(n2b, true), true);
   check('Autopost: a filed month out of step on its Not in 2B side: the line names that side only, with the action',
     !!line && line.actionable && line.text.includes('Not in 2B list') && line.text.endsWith('1 to add.') && !line.text.includes('Not in Books'), JSON.stringify(line));
   const done = B.describeCatchUp({ dryRun: false, written: 2, bills2B: { add: 1, link: 0, change: 0, remove: 0 }, billsBooks: { add: 0, link: 1, change: 0, remove: 0 },

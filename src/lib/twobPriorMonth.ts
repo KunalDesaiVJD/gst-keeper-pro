@@ -308,9 +308,11 @@ export function describePriorPreview(r: TwobApplyResult, period: string): string
   const done = !r.dryRun;
   const count = (a: string, derived: boolean) => r.changes.filter((c) => !c.refusal && c.action === a && c.derived === derived).length;
   const verb: Record<string, string> = done
-    ? { add: 'added', change: 'changed', remove: 'removed', link: 'already on the ledger, linked to its books row' }
-    : { add: 'to add', change: 'to change', remove: 'to remove', link: 'already on the ledger, to be linked to its books row' };
-  const words = (derived: boolean) => ['add', 'change', 'remove', 'link']
+    ? { add: 'added', change: 'changed', remove: 'removed', link: 'already on the ledger, linked to its books row',
+        unlink: 'of the ledger\'s own, put back as it was and unlinked (not removed)' }
+    : { add: 'to add', change: 'to change', remove: 'to remove', link: 'already on the ledger, to be linked to its books row',
+        unlink: 'of the ledger\'s own, to be put back as it was and unlinked (not removed)' };
+  const words = (derived: boolean) => ['add', 'change', 'remove', 'link', 'unlink']
     .map((a) => count(a, derived) && `${count(a, derived)} ${verb[a]}`).filter(Boolean);
   const parts = words(false);
   const follow = words(true);
@@ -698,25 +700,27 @@ export function describeRerun(r: RerunResult): { lines: string[]; nothingToDo: b
  * is_carried_forward: null when the version does not say (the database then
  * refuses the restore).
  */
-export type RestoreRow = Record<string, string | number | boolean | null>;
+export type RestoreRow = Record<string, string | number | boolean | null | Record<string, unknown>>;
 
 /**
  * What a restore did: the month's own entries restored, its carried entries
  * kept as they stand, and the version's own entries left out because the
  * month now holds them as carried entries (named, "SUP X-9").
  */
-export interface RestoreResult { own2B: number; ownBooks: number; carriedKept: number; leftOut: string[] }
+export interface RestoreResult { own2B: number; ownBooks: number; carriedKept: number; leftOut: string[]; linked: number }
 
 /**
  * Replaces an open month's own entries on its two lists with a saved
- * version's, in one call (twob_restore_version, the superadmin). Its carried
+ * version's, in one call (twob_restore_version_linked, the superadmin: each
+ * entry Import 2B posted comes back linked to the row that posts it, so the
+ * next save there changes it instead of adding a second one). Its carried
  * entries stay as they stand (a filed month's correction reaches them, and no
  * version of this month records it; docs §13). The database refuses a filed
  * month and any month but the client's latest month holding entries; the
  * screen says so first (restoreBlockedReason).
  */
 export async function restoreVersion(actorId: string, clientId: string, period: string, bills2B: RestoreRow[], billsBooks: RestoreRow[]): Promise<RestoreResult> {
-  const { data, error } = await supabase.rpc('twob_restore_version', {
+  const { data, error } = await supabase.rpc('twob_restore_version_linked', {
     p_actor_id: actorId, p_client_id: clientId, p_period: period,
     p_bills_2b: bills2B as unknown as Json, p_bills_books: billsBooks as unknown as Json,
   });
@@ -725,6 +729,7 @@ export async function restoreVersion(actorId: string, clientId: string, period: 
   return {
     own2B: Number(d.bills_not_in_2b) || 0, ownBooks: Number(d.bills_not_in_books) || 0,
     carriedKept: (Number(d.carried_kept_2b) || 0) + (Number(d.carried_kept_books) || 0),
+    linked: Number(d.linked) || 0,
     leftOut: (Array.isArray(d.left_out) ? (d.left_out as Raw[]) : [])
       .map((e) => [e.supplier_name, e.supplier_invoice_number].filter((x) => typeof x === 'string' && x.trim()).join(' ') || 'an entry'),
   };

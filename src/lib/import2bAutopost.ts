@@ -16,8 +16,11 @@
 //    a save is done (versions are coalesced per minute);
 //  - twob_import2b_save_book: a books row saved with its pairing (the 2B
 //    document it leaves and the one it pairs with), all of it or none;
-//  - twob_import2b_reclaim (src/lib/twobPendingWrites.ts): a reclaim, the
-//    entry and its 2B document together.
+//  - twob_import2b_reclaim and twob_import2b_unreclaim
+//    (src/lib/twobPendingWrites.ts): a reclaim, and a document taken out of
+//    Reclaim, the entry and its 2B document together;
+//  - twob_import2b_step: what the month's ledger lacks to follow Import 2B,
+//    read in one statement (the page's "not in step" line).
 // Every save that changes the ledger needs the Import 2B & post permission
 // (work_2b_import), as Post did; the database refuses it otherwise.
 // A prior month's books rows are saved with their write-through through the
@@ -29,7 +32,13 @@ import { planCountsText } from '@/lib/postImport2B';
 
 type Raw = Record<string, unknown>;
 
-export interface ListCounts { add: number; link: number; change: number; remove: number }
+/**
+ * Per list: entries added, linked (an identical own entry of the month taken
+ * as the entry instead of adding a twin), changed, taken back, and put back
+ * (an own entry linked that way, back to what it held and unlinked: never
+ * removed).
+ */
+export interface ListCounts { add: number; link: number; change: number; remove: number; unlink: number }
 export interface CatchUpResult {
   dryRun: boolean;
   written: number;
@@ -46,7 +55,10 @@ export interface CatchUpResult {
 
 const counts = (v: unknown): ListCounts => {
   const d = (v || {}) as Raw;
-  return { add: Number(d.add) || 0, link: Number(d.link) || 0, change: Number(d.change) || 0, remove: Number(d.remove) || 0 };
+  return {
+    add: Number(d.add) || 0, link: Number(d.link) || 0, change: Number(d.change) || 0,
+    remove: Number(d.remove) || 0, unlink: Number(d.unlink) || 0,
+  };
 };
 
 const parseCatchUp = (data: unknown): CatchUpResult => {
@@ -92,14 +104,18 @@ export function doneCountsText(ins: number, upd: number, ret: number): string {
  * linked to an entry already on the ledger).") or, once applied (done), what
  * was done ("Not in 2B: 1 added, 2 removed.").
  */
-export function describeCatchUp(r: CatchUpResult, done = false): string {
+export function describeCatchUp(r: { bills2B: ListCounts; billsBooks: ListCounts }, done = false): string {
   const part = (name: string, c: ListCounts) => {
-    const text = done ? doneCountsText(c.add + c.link, c.change, c.remove) : planCountsText(c.add + c.link, c.change, c.remove);
+    const unlink = c.unlink || 0;
+    const text = done ? doneCountsText(c.add + c.link, c.change, c.remove + unlink) : planCountsText(c.add + c.link, c.change, c.remove + unlink);
     if (!text) return null;
     const linked = c.link
       ? ` (${c.link} already on the ledger as ${c.link === 1 ? 'an entry' : 'entries'} of their own, ${done ? 'linked' : 'to be linked'} instead of added again)`
       : '';
-    return `${name}: ${text}${linked}.`;
+    const putBack = unlink
+      ? ` (${unlink} ${unlink === 1 ? 'is an entry' : 'are entries'} of the ledger's own, ${done ? 'put back' : 'to be put back'} as ${unlink === 1 ? 'it was' : 'they were'} and unlinked, not removed)`
+      : '';
+    return `${name}: ${text}${linked}${putBack}.`;
   };
   return [part('Not in 2B', r.bills2B), part('Not in Books', r.billsBooks)].filter(Boolean).join(' ');
 }
@@ -129,17 +145,59 @@ export async function saveBookWithPairing(o: {
 export const catchUpRefusalLines = (r: CatchUpResult) => r.refusals.map((x) => `${x.entry ? `${x.entry}: ` : ''}${x.message}.`);
 
 /**
+ * What the month's 2B Reconciliation ledger lacks to follow its Import 2B
+ * (twob_import2b_step: one statement, so a save landing meanwhile is wholly
+ * in it or not at all): per list the entries a save or "Bring the
+ * reconciliation up to date" would add, link, change, take back and put
+ * back, and up to four of their names. prior: the month is filed.
+ */
+export interface StepResult {
+  prior: boolean;
+  bills2B: ListCounts & { names: string[] };
+  billsBooks: ListCounts & { names: string[] };
+}
+
+const stepList = (v: unknown): ListCounts & { names: string[] } => {
+  const d = (v || {}) as Raw;
+  return { ...counts(d), names: Array.isArray(d.names) ? d.names.map(String) : [] };
+};
+
+/** Reads the month's step (twob_import2b_step). Throws with the database's words. */
+export async function fetchStep(clientId: string, period: string): Promise<StepResult | null> {
+  const { data, error } = await supabase.rpc('twob_import2b_step', { p_client_id: clientId, p_period: period });
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  const d = data as Raw;
+  return { prior: d.prior === true, bills2B: stepList(d.bills_not_in_2b), billsBooks: stepList(d.bills_not_in_books) };
+}
+
+/** Post's plan (planImport2BPost) as a step, for checks that build a plan by hand. */
+export function stepFromPlan(plan: PostPlan, prior = false): StepResult {
+  const names = (rows: { row: { supplier_name: string | null; supplier_invoice_number: string | null } }[]) =>
+    [...new Set(rows.map(({ row }) => [(row.supplier_name || '').trim(), row.supplier_invoice_number].filter(Boolean).join(' ')).filter(Boolean))].sort().slice(0, 4);
+  return {
+    prior,
+    bills2B: { add: plan.insertBills2B.length, link: 0, change: plan.updateBills2B.length, remove: plan.retractBills2B.length, unlink: 0,
+      names: names([...plan.insertBills2B, ...plan.updateBills2B]) },
+    billsBooks: { add: plan.insertBillsBooks.length, link: 0, change: plan.updateBillsBooks.length, remove: plan.retractBillsBooks.length, unlink: 0,
+      names: names([...plan.insertBillsBooks, ...plan.updateBillsBooks]) },
+  };
+}
+
+const listText = (c: ListCounts) => planCountsText(c.add + c.link, c.change, c.remove + (c.unlink || 0));
+
+/**
  * The plain line a month out of step shows on Import 2B (null: in step), from
- * Post's plan of the month. In a filed month only the Not in 2B side can be
+ * the month's step. In a filed month only the Not in 2B side can be
  * brought up to date (through the door, by a GST Manager or the superadmin);
  * its Not in Books side follows the filed 2B, which nothing on this page can
  * change, so it is left out of the line (a line no one can clear would stay
  * for good; the migration's header lists those months for the lead).
  */
-export function outOfStepLine(plan: PostPlan | null, isPrior: boolean): { text: string; actionable: boolean } | null {
-  if (!plan) return null;
-  const n2b = planCountsText(plan.insertBills2B.length, plan.updateBills2B.length, plan.retractBills2B.length);
-  const nib = planCountsText(plan.insertBillsBooks.length, plan.updateBillsBooks.length, plan.retractBillsBooks.length);
+export function outOfStepLine(step: StepResult | null, isPrior: boolean): { text: string; actionable: boolean } | null {
+  if (!step) return null;
+  const n2b = listText(step.bills2B);
+  const nib = listText(step.billsBooks);
   if (isPrior) {
     if (!n2b) return null;
     return {
@@ -153,6 +211,25 @@ export function outOfStepLine(plan: PostPlan | null, isPrior: boolean): { text: 
       + [n2b && `Not in 2B ${n2b}`, nib && `Not in Books ${nib}`].filter(Boolean).join('; ') + '.',
     actionable: true,
   };
+}
+
+/**
+ * A filed month's Not in Books side out of step, named for the confirm of
+ * "Bring the reconciliation up to date" there (it follows the filed 2B and
+ * does not change); null when in step.
+ */
+export function priorStepLeftOut(step: StepResult | null): string | null {
+  if (!step) return null;
+  const c = step.billsBooks;
+  const n = c.add + c.link + c.change + c.remove + (c.unlink || 0);
+  if (n === 0) return null;
+  const parts = [
+    c.add + c.link && `${c.add + c.link} not on it`,
+    c.change && `${c.change} at other figures`,
+    c.remove + (c.unlink || 0) && `${c.remove + (c.unlink || 0)} on it that the 2B documents no longer post`,
+  ].filter(Boolean).join(', ');
+  const names = c.names.slice(0, 4);
+  return `This filed month's Not in Books list differs from its 2B documents for ${n} ${n === 1 ? 'entry' : 'entries'} (${parts}${names.length ? `: ${names.join(', ')}${n > names.length ? ' and more' : ''}` : ''}). It follows the filed 2B, not the books, and does not change here.`;
 }
 
 /** Import 2B's Delete 2B in one call (twob_import2b_delete_2b). Throws with the database's words. */

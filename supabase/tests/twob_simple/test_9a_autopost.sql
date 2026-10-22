@@ -288,9 +288,9 @@ SELECT set_config('twob.write', '', false);
 SELECT public.t_raises(format($q$SELECT public.twob_import2b_catch_up(public.t_employee(), '%s', '09/2026', true)$q$, :'F'),
   'Needs the Import 2B & post permission', 'F: an employee without Import 2B & post is refused');
 SELECT public.t_eq(public.twob_import2b_catch_up(public.t_manager(), :'F', '09/2026', true) -> 'bills_not_in_2b',
-  '{"add": 1, "link": 0, "change": 0, "remove": 1}'::jsonb, 'F: the preview: Not in 2B 1 to add, 1 to take back');
+  '{"add": 1, "link": 0, "change": 0, "remove": 1, "unlink": 0}'::jsonb, 'F: the preview: Not in 2B 1 to add, 1 to take back');
 SELECT public.t_eq(public.twob_import2b_catch_up(public.t_manager(), :'F', '09/2026', true) -> 'bills_not_in_books',
-  '{"add": 1, "link": 0, "change": 0, "remove": 0}'::jsonb, 'F: ... Not in Books 1 to add');
+  '{"add": 1, "link": 0, "change": 0, "remove": 0, "unlink": 0}'::jsonb, 'F: ... Not in Books 1 to add');
 SELECT public.t_eq((SELECT count(*)::integer FROM l2 WHERE client_id = :'F'), 1, 'F: the preview writes nothing');
 SELECT public.t_eq((public.twob_import2b_catch_up(public.t_manager(), :'F', '09/2026', false) ->> 'written')::integer, 3, 'F: applied: three entries written');
 SELECT public.t_eq((SELECT string_agg(supplier_name, ',') FROM l2 WHERE client_id = :'F'), 'F ONE', 'F: the Not in 2B list follows Import 2B');

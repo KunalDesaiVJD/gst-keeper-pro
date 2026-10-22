@@ -236,7 +236,7 @@ await run('post', async () => {
   check('… with nothing skipped', plan.skippedDocs.length === 0, plan.skippedDocs.map((s) => `${s.row.supplier_invoice_number}: ${s.reason}`).join('; '));
   check('… and no row for a Matched document', !ins.has('cn3') && !ins.has('inv2'));
   // Saved before saves wrote through: the page says the month is out of step.
-  const line = W.outOfStepLine(plan, false);
+  const line = W.outOfStepLine(W.stepFromPlan(plan), false);
   check('a month whose ledger lacks them reads as out of step, naming the count, with the action offered',
     !!line && line.actionable && line.text.includes('Not in Books 6 to add'), JSON.stringify(line));
   await P.postImport2BToLedger(C, M9, 'user-1', plan);
@@ -250,7 +250,7 @@ await run('post', async () => {
     ledger.length > 0 && ledger.every((l) => l.book_entry_month === null && l.bill_in_2b_month === 'Sep 26'));
   const again = await P.planImport2BPost(C, M9);
   check('writing through again changes nothing (the figures written are the figures planned), and the out-of-step line goes',
-    P.isPostPlanEmpty(again) && W.outOfStepLine(again, false) === null, JSON.stringify({
+    P.isPostPlanEmpty(again) && W.outOfStepLine(W.stepFromPlan(again), false) === null, JSON.stringify({
     ins: again.insertBillsBooks.length, upd: again.updateBillsBooks.map(({ row }) => row.id), ret: again.retractBillsBooks.length }));
 
   // Back to Matched: the row it posted is retracted, and it counts in 5.3.
@@ -661,6 +661,25 @@ await run('no post', async () => {
     code.includes("select('source_doc_id, book_entry_month, is_locked')") && code.includes("((r.book_entry_month || '').trim() || r.is_locked)"));
   check('a plain load takes no version (a page after its own save does, recorded as the saver\'s)',
     code.includes('fetchAll({ flush: false })') && code.includes('if (flush) await flushVersion(') && sql.includes('changed_by'));
+  // Verification round 2 (22 Oct 2026).
+  check('round 2: a Not in Books document whose entry is still on the ledger at its earlier figures says so, not "not on the ledger"',
+    code.includes('linkedDocEntries.get(d.id)') && tab.includes('On the 2B Reconciliation ledger as last saved')
+      && /if \(why && onLedger\)[\s\S]{0,700}else if \(why\) out\.push\(\{ text: `Not on the 2B Reconciliation ledger/.test(code));
+  check('round 2: a document taken out of Reclaim is one call (the entry released and the treatment saved together, or neither)',
+    pend.includes("supabase.rpc('twob_import2b_unreclaim'") && /releaseReclaim\(/.test(code)
+      && !/from\('bills_not_in_2b'\)[\s\S]{0,40}\.update\(\{ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null/.test(code)
+      && /CREATE OR REPLACE FUNCTION public\.twob_import2b_unreclaim\(/.test(sql));
+  check('round 2: the out-of-step line is read from the database in one statement, and an older read never replaces a newer one',
+    auto.includes("supabase.rpc('twob_import2b_step'") && /fetchStep\(clientId, month\)/.test(code) && !/planImport2BPost\(/.test(code)
+      && /const lseq = \+\+ledgerSeq\.current;[\s\S]{0,400}lseq === ledgerSeq\.current/.test(code)
+      && /CREATE OR REPLACE FUNCTION public\.twob_import2b_step\([\s\S]{0,120}STABLE/.test(sql));
+  check('round 2: "this row never reaches the ledger" is said for a debit note only once its save went through',
+    /const saved = await saveBookRow\(id, true, \{ doc_type: docType \}\);\s*if \(saved && docType === 'DEBIT_NOTE'\) toast\.info\(BOOK_DEBIT_NOTE_MSG/.test(code));
+  check('round 2: a book entry or Expense out carried in from a filed month has no Undo on Import 2B, and the database refuses the change',
+    code.includes('const filedCarriedDecision') && /filedCarriedDecision\(r, 'bills_not_in_books'\) \?/.test(code)
+      && /filedCarriedDecision\(r, 'bills_not_in_2b'\) \?/.test(code)
+      && /CREATE TRIGGER trg_twob_zz_carried_decision BEFORE UPDATE OF book_entry_month ON public\.bills_not_in_books/.test(sql)
+      && /CREATE TRIGGER trg_twob_zz_carried_decision BEFORE UPDATE OF reclaim_month, reclaim_subtype ON public\.bills_not_in_2b/.test(sql));
 });
 
 // ── Report ──────────────────────────────────────────────────────────────────

@@ -55,10 +55,31 @@ export async function recordReclaim(o: {
   return { ok: false, gone: true, message: d.what === 'document' ? DOC_GONE_MSG : ENTRY_GONE_MSG };
 }
 
+/**
+ * A 2B document of the open month taken out of Reclaim (Import 2B's Save of a
+ * staged treatment), in one call (twob_import2b_unreclaim): the pending
+ * entry it evidences goes back to Awaiting reclaim and the document takes
+ * its new treatment, with the document's write-through, or none of it. gone:
+ * the document is no longer in the month (nothing written). was: its
+ * treatment before (Reclaim, unless changed elsewhere meanwhile).
+ */
+export async function releaseReclaim(o: {
+  actorId: string; clientId: string; period: string; docId: string; action: string;
+}): Promise<PendingWriteResult & { was?: string | null; released?: number }> {
+  const { data, error } = await supabase.rpc('twob_import2b_unreclaim', {
+    p_actor_id: o.actorId, p_client_id: o.clientId, p_period: o.period, p_doc_id: o.docId, p_action: o.action,
+  });
+  if (error) return { ok: false, gone: false, message: error.message };
+  const d = (data || {}) as Record<string, unknown>;
+  if (d.ok === true) return { ok: true, gone: false, message: '', was: typeof d.was === 'string' ? d.was : null, released: Number(d.released) || 0 };
+  return { ok: false, gone: true, message: DOC_GONE_MSG };
+}
+
 /** The ledger columns of an entry the open-month delete reads. */
 export interface DeletableRow {
   id: string;
   is_carried_forward: boolean | null;
+  period_month?: string | null;
   reclaim_month?: string | null;
   reclaim_subtype?: string | null;
   book_entry_month?: string | null;
@@ -67,16 +88,65 @@ export interface DeletableRow {
 /** Whether a row holds a reclaim, Expense out or book entry. */
 export const holdsDecision = (r: DeletableRow): boolean => !!((r.reclaim_month || '').trim() || r.reclaim_subtype || (r.book_entry_month || '').trim());
 
+const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/**
+ * A month label ("Sep 26", "sep-2026", "September 26") as a number that
+ * orders months (as periodKey orders "09/2026"); null when it does not read
+ * as one month. The database's twob_label_key.
+ */
+export function labelKey(label: string | null | undefined): number | null {
+  const m = /^([A-Za-z]{3})[A-Za-z]*[\s.,'/-]*([0-9]{4}|[0-9]{2})$/.exec((label || '').trim());
+  if (!m) return null;
+  const mon = MONTH_ABBR.indexOf(m[1].toLowerCase());
+  if (mon < 0) return null;
+  const year = m[2].length === 2 ? 2000 + Number(m[2]) : Number(m[2]);
+  return year * 12 + mon;
+}
+
+/** "08/2026" -> its month number (periodKey). */
+const periodNumber = (period: string | null | undefined): number | null => {
+  const m = /^(0[1-9]|1[0-2])\/([0-9]{4})$/.exec(period || '');
+  return m ? Number(m[2]) * 12 + Number(m[1]) - 1 : null;
+};
+
+/** "Aug 26" -> "08/2026" (the month a decision label names), or null. */
+export function periodOfLabel(label: string | null | undefined): string | null {
+  const k = labelKey(label);
+  return k === null ? null : `${String((k % 12) + 1).padStart(2, '0')}/${Math.floor(k / 12)}`;
+}
+
+/**
+ * Whether the decision a ledger row holds (a reclaim or Expense out, a book
+ * entry) was made in the row's own month or later, not carried in from an
+ * earlier month (the database's twob__decision_is_own): its label names that
+ * month or a later one; a reclaim or Expense out without a label counts as
+ * the row's own.
+ */
+export function decisionIsOwn(table: LedgerTable, r: DeletableRow): boolean {
+  const own = periodNumber(r.period_month);
+  if (table === 'bills_not_in_2b') {
+    if (!(r.reclaim_month || '').trim()) return !!r.reclaim_subtype;
+    const k = labelKey(r.reclaim_month);
+    return k !== null && own !== null && k >= own;
+  }
+  const k = labelKey(r.book_entry_month);
+  return k !== null && own !== null && k >= own;
+}
+
 /**
  * Deletes rows of an open month (2B Reconciliation's Save). A carried row
- * holding a decision has the decision undone first, in the same Save: the
- * database refuses to delete a carried row holding its own month's decision
- * directly (a page opened before §13 would lose it to the old carry), and a
- * deliberate delete here takes the decision with the row, as before.
+ * holding its own month's decision has the decision undone first, in the
+ * same Save: the database refuses to delete such a row directly (a page
+ * opened before §13 would lose it to the old carry), and a deliberate delete
+ * here takes the decision with the row, as before. A decision carried in
+ * from an earlier month is not undone (a filed month's stays as filed: the
+ * database refuses that), and the row goes with it as before. Rows without
+ * period_month are taken as holding their own month's decision.
  */
 export async function deleteOpenMonthRows(table: LedgerTable, rows: DeletableRow[]): Promise<{ error: string | null }> {
   if (rows.length === 0) return { error: null };
-  const decided = rows.filter((r) => r.is_carried_forward && holdsDecision(r)).map((r) => r.id);
+  const decided = rows.filter((r) => r.is_carried_forward && holdsDecision(r) && (!r.period_month || decisionIsOwn(table, r))).map((r) => r.id);
   if (decided.length > 0) {
     const { error } = table === 'bills_not_in_2b'
       ? await supabase.from('bills_not_in_2b').update({ reclaim_month: null, reclaim_subtype: null, reclaimed_via_doc_id: null }).in('id', decided)

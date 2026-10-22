@@ -22,7 +22,10 @@
 # 1,000-row saves under a second; test_9d/9e: the first verification round's
 # findings, a reclaim and a pairing in one call each, who may change the
 # ledger, a filed month's twin linked, rounding, versions as the saver's,
-# and Delete 2B / Clear Data against a save running at the same moment).
+# and Delete 2B / Clear Data against a save running at the same moment;
+# test_9f: the second round's: which own entry is linked and how it is put
+# back, a filed decision on a carried copy, Restore linked, the line in one
+# read-only statement, out of Reclaim in one call, timing).
 #
 # Needs a local PostgreSQL 15/16 and node (with the checkout's node_modules);
 # connection from the usual PG* variables, e.g.

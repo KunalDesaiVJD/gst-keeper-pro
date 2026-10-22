@@ -94,6 +94,11 @@ interface BillRecord {
   bill_in_2b_month?: string | null;
   /** Not in Books: the 2B document it was posted from (follows the filed 2B in a prior month; docs §13). */
   source_doc_id?: string | null;
+  /** Not in 2B: the Import 2B books row that posted it, and the 2B document a reclaim names. */
+  source_book_id?: string | null;
+  reclaimed_via_doc_id?: string | null;
+  /** An own entry an Import 2B row was linked to instead of adding one: what it held before (docs §15). */
+  adopted_from?: unknown;
   is_locked: boolean | null;
   is_carried_forward: boolean | null;
   version: number | null;
@@ -1187,6 +1192,11 @@ const TwoBReconciliationPage: React.FC = () => {
         updatedBy: b.updated_by || '',
         updatedAt: b.updated_at || new Date().toISOString(),
         version: b.version || 1,
+        // What a Restore needs to put the entry back as it was (docs §15).
+        reclaimSubtype: b.reclaim_subtype ?? null,
+        reclaimedViaDocId: b.reclaimed_via_doc_id ?? null,
+        sourceBookId: b.source_book_id ?? null,
+        adoptedFrom: b.adopted_from ?? null,
       }));
       
       const versionBillsBooks = savedBillsBooks.map(b => ({
@@ -1208,6 +1218,8 @@ const TwoBReconciliationPage: React.FC = () => {
         updatedBy: b.updated_by || '',
         updatedAt: b.updated_at || new Date().toISOString(),
         version: b.version || 1,
+        sourceDocId: b.source_doc_id ?? null,
+        adoptedFrom: b.adopted_from ?? null,
       }));
       
       // Save new version with CURRENT data (after this save operation)
@@ -1316,7 +1328,15 @@ const TwoBReconciliationPage: React.FC = () => {
         const v = b[camel] || b[snake];
         return (v ?? b[camel] ?? b[snake] ?? null) as Cell;   // a 0 stays 0
       };
+      // The link to the Import 2B row that posted an entry (newer versions),
+      // and the entry's own id (older ones: the database takes back the link
+      // the month's entry of that id holds), so the next Import 2B save
+      // changes the entry instead of adding a second one (docs §15).
+      const objectOf = (v: unknown): Record<string, unknown> | null =>
+        v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
       const common = (b: Record<string, unknown>): RestoreRow => ({
+        id: pick(b, 'id', 'id'),
+        adopted_from: objectOf(b.adoptedFrom ?? b.adopted_from),
         date: pick(b, 'date', 'date'),
         supplier_name: pick(b, 'supplierName', 'supplier_name'),
         supplier_invoice_number: pick(b, 'supplierInvoiceNumber', 'supplier_invoice_number'),
@@ -1334,11 +1354,15 @@ const TwoBReconciliationPage: React.FC = () => {
         ...common(b),
         reversal_month: pick(b, 'reversalMonth', 'reversal_month') || null,
         reclaim_month: pick(b, 'reclaimMonth', 'reclaim_month') || null,
+        reclaim_subtype: pick(b, 'reclaimSubtype', 'reclaim_subtype') || null,
+        reclaimed_via_doc_id: pick(b, 'reclaimedViaDocId', 'reclaimed_via_doc_id') || null,
+        source_book_id: pick(b, 'sourceBookId', 'source_book_id') || null,
       }));
       const rowsBooks: RestoreRow[] = ((version.billsNotInBooks || []) as unknown as Record<string, unknown>[]).map((b) => ({
         ...common(b),
         book_entry_month: pick(b, 'bookEntryMonth', 'book_entry_month') || null,
         bill_in_2b_month: pick(b, 'billIn2BMonth', 'bill_in_2b_month') || null,
+        source_doc_id: pick(b, 'sourceDocId', 'source_doc_id') || null,
       }));
       const restored = await restoreVersion(user.id, selectedClientId, selectedMonth, rows2B, rowsBooks);
 
@@ -1369,6 +1393,8 @@ const TwoBReconciliationPage: React.FC = () => {
         ? ` Its ${restored.carriedKept} carried ${restored.carriedKept === 1 ? 'entry stays' : 'entries stay'} as ${restored.carriedKept === 1 ? 'it stands' : 'they stand'}: they follow the filed months, so a restore does not change them.`
         : ''}${restored.leftOut.length
         ? ` Left out, because this month now holds ${restored.leftOut.length === 1 ? 'it as a carried entry' : 'them as carried entries'}: ${restored.leftOut.slice(0, 5).join(', ')}${restored.leftOut.length > 5 ? ` and ${restored.leftOut.length - 5} more` : ''}.`
+        : ''}${restored.linked
+        ? ` ${restored.linked} ${restored.linked === 1 ? 'entry is' : 'entries are'} linked again to the Import 2B ${restored.linked === 1 ? 'row' : 'rows'} that post ${restored.linked === 1 ? 'it' : 'them'}: a change there changes ${restored.linked === 1 ? 'it' : 'them'}, never adds a second one; Import 2B says when the ledger is not in step with it.`
         : ''}`, { duration: 10000 });
       setShowVersionHistory(false);
     } catch (error: any) {

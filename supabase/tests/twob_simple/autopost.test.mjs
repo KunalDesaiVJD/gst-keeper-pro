@@ -111,7 +111,7 @@ export const supabase = { from: (t) => new Q(t), rpc: async () => ({ data: null,
 const out = await build({
   stdin: {
     contents: `export { planImport2BPost, postImport2BToLedger, isPostPlanEmpty } from './src/lib/postImport2B';
-export { outOfStepLine } from './src/lib/import2bAutopost';`,
+export { outOfStepLine, stepFromPlan } from './src/lib/import2bAutopost';`,
     resolveDir: root, loader: 'ts',
   },
   bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
@@ -202,6 +202,13 @@ const ledgerOf = (client) => psql(`SELECT COALESCE(string_agg(r, E'\\n' ORDER BY
   UNION ALL
   SELECT concat_ws('|', 'NIB', ${LEDGER_COLS('source_doc_id')}, COALESCE(bill_in_2b_month, ''), COALESCE(book_entry_month, ''))
     FROM public.bills_not_in_books WHERE client_id = '${client}' AND period_month = '${M}') x`);
+// The database's line for a month (twob_import2b_step, as any staff reads it), in the page's shape.
+const stepOf = (client) => {
+  const r = run(`SELECT public.twob_import2b_step('${client}', '${M}')`);
+  if (r.err) return { err: r.err };
+  const d = JSON.parse(r.out);
+  return { prior: d.prior, bills2B: d.bills_not_in_2b, billsBooks: d.bills_not_in_books };
+};
 function compare(label) {
   const a = ledgerOf(A);
   const b = ledgerOf(B);
@@ -342,7 +349,16 @@ check('5c reclaim in one call: the entry was there to reclaim', psql(`SELECT cou
                       FROM public.twob__autopost_plan('${C}', '${M}', NULL, NULL) p`).split('\n').sort();
   check(`9 out of step: the database's plan names what planImport2BPost names (${ts.length} rows)`,
     JSON.stringify(ts) === JSON.stringify(sql) && ts.length > 10, `ts=${JSON.stringify(ts)} sql=${JSON.stringify(sql)}`);
-  check('9 out of step: the page says so', !!P.outOfStepLine(tsPlan, false));
+  check('9 out of step: the page says so', !!P.outOfStepLine(P.stepFromPlan(tsPlan), false));
+  // Round 2: the page reads the line from the database in one statement; it
+  // counts what planImport2BPost counts.
+  const st = stepOf(C);
+  const same = (c, ins, upd, ret) => c && c.add + c.link === ins && c.change === upd && c.remove + c.unlink === ret;
+  check('9 out of step: the database\'s line (twob_import2b_step) counts what planImport2BPost plans, list by list',
+    same(st.bills2B, tsPlan.insertBills2B.length, tsPlan.updateBills2B.length, tsPlan.retractBills2B.length)
+      && same(st.billsBooks, tsPlan.insertBillsBooks.length, tsPlan.updateBillsBooks.length, tsPlan.retractBillsBooks.length)
+      && P.outOfStepLine(st, false)?.text === P.outOfStepLine(P.stepFromPlan(tsPlan), false)?.text,
+    JSON.stringify({ st, line: P.outOfStepLine(st, false), ts: P.outOfStepLine(P.stepFromPlan(tsPlan), false) }));
   const preview = JSON.parse(run(`SELECT public.twob_import2b_catch_up(public.t_manager(), '${C}', '${M}', true)`).out);
   check('9 out of step: the catch-up preview counts what the plan holds',
     preview.bills_not_in_2b.add + preview.bills_not_in_2b.link === tsPlan.insertBills2B.length
@@ -360,8 +376,66 @@ check('5c reclaim in one call: the entry was there to reclaim', psql(`SELECT cou
   const d = ledgerOf(D);
   check('9 out of step: the ledger left as Post leaves it', c === d, `C=${c}\nD=${d}`);
   const after = await P.planImport2BPost(C, M);
-  check('9 out of step: then in step (planImport2BPost plans nothing, the line goes)', P.isPostPlanEmpty(after) && !P.outOfStepLine(after, false),
+  check('9 out of step: then in step (planImport2BPost plans nothing, the line goes)', P.isPostPlanEmpty(after) && !P.outOfStepLine(P.stepFromPlan(after), false),
     JSON.stringify({ i: after.insertBillsBooks.length, u: after.updateBillsBooks.length, r: after.retractBillsBooks.length }));
+  check('9 out of step: ... and the database\'s line (twob_import2b_step) goes too', !P.outOfStepLine(stepOf(C), false), JSON.stringify(stepOf(C)));
+}
+
+// 10. Verification round 2: the database's line counts what planImport2BPost
+// counts (one statement), and own entries of the month next to the rows a
+// save posts. Twins E (written through) and F (as before, then Post).
+{
+  const E = 'ee000000-0000-0000-0000-0000000000e1';
+  const F = 'fe000000-0000-0000-0000-0000000000f1';
+  psql(`SELECT set_config('twob.write', 'system', false);
+    INSERT INTO public.clients (id, name, gstin) VALUES ('${E}', 'PARITY E', '24PARIE0000A1Z5'), ('${F}', 'PARITY F', '24PARIF0000A1Z5');
+    INSERT INTO public.bills_not_in_2b (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_cgst, input_sgst, reversal_month)
+    SELECT c, '${M}', '2026-09-05', 'HAND SUPPLIER', n, '24HANDS0000A1Z5', 1000, 90, 90, r
+      FROM (VALUES ('${E}'::uuid), ('${F}'::uuid)) x(c), (VALUES ('H/1', NULL), ('H/2', 'Aug 26'), ('H/3', 'Sep 26')) y(n, r);
+    INSERT INTO public.bills_not_in_books (client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, bill_in_2b_month)
+    SELECT c, '${M}', '2026-09-05', 'DOC SUPPLIER', 'D/1', '24DOCSU0000A1Z5', 1000, 180, 'Sep 26' FROM (VALUES ('${E}'::uuid), ('${F}'::uuid)) x(c);
+    INSERT INTO public.twob_import_docs (id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin, taxable_value, input_igst, doc_type, itc_action)
+    VALUES ('${id('e', 301)}', '${E}', '${M}', '2026-09-05', 'DOC SUPPLIER', 'D/1', '24DOCSU0000A1Z5', 1000, 180, 'INVOICE', 'MATCHED'),
+           ('${id('f', 301)}', '${F}', '${M}', '2026-09-05', 'DOC SUPPLIER', 'D/1', '24DOCSU0000A1Z5', 1000, 180, 'INVOICE', 'MATCHED');`);
+  const pair = async (label, sqlFor) => {
+    const re = run(sqlFor('e', E));
+    globalThis.__legacy = true;
+    const rf = run(sqlFor('f', F), true);
+    globalThis.__legacy = false;
+    if (re.err || rf.err) { check(`${label}: the save runs on both twins`, false, re.err || rf.err); return null; }
+    const plan = await P.planImport2BPost(F, M);
+    await P.postImport2BToLedger(F, M, ACTOR, plan);
+    return { e: ledgerOf(E), f: ledgerOf(F) };
+  };
+  const rows = (ledger, no) => ledger.split('\n').filter((l) => l.includes(`|${no}|`));
+  const books = (t, client, n, o = {}) => insertSql('books_register', [{ ...bookRow(t, n, {}), client_id: client, date: '2026-09-05', supplier_name: 'HAND SUPPLIER',
+    supplier_invoice_number: `H/${n - 400}`, supplier_gstin: '24HANDS0000A1Z5', ...o }]);
+  // A blank-month and another month's own entry: a twin beside it, as Post's.
+  let r = await pair('10a blank or other month', (t, c) => books(t, c, 401) + books(t, c, 402));
+  check('10a an own entry with a blank or another reversal month: the write-through adds beside it, as Post did',
+    !!r && JSON.stringify(rows(r.e, 'H/1').concat(rows(r.e, 'H/2'))) === JSON.stringify(rows(r.f, 'H/1').concat(rows(r.f, 'H/2')))
+      && rows(r.e, 'H/1').length === 2 && rows(r.e, 'H/2').length === 2, r && `E=${r.e}\nF=${r.f}`);
+  // This month's own entry: linked instead of a twin (the one difference), until the row stops posting.
+  r = await pair('10b this month', (t, c) => books(t, c, 403));
+  check('10b an own entry with this month as its reversal month: linked instead of a twin (Post added one: 4B(2)(i) twice)',
+    !!r && rows(r.e, 'H/3').length === 1 && rows(r.f, 'H/3').length === 2 && rows(r.e, 'H/3')[0].startsWith('N2B|e000000'), r && `E=${r.e}\nF=${r.f}`);
+  r = await pair('10c changed', (t) => `UPDATE public.books_register SET input_cgst = 100, input_sgst = 100 WHERE id = '${id(t, 403)}';`);
+  check('10c ... it follows its row as Post\'s twin did', !!r && rows(r.e, 'H/3').some((l) => l.includes('|100.00|100.00|'))
+    && rows(r.f, 'H/3').some((l) => l.includes('|100.00|100.00|')), r && `E=${r.e}\nF=${r.f}`);
+  r = await pair('10d taken back', (t) => `UPDATE public.books_register SET book_treatment = 'MISMATCHED' WHERE id = '${id(t, 403)}';`);
+  check('10d adopt then retract: the ledger ends where Post left it (the own entry as it was, unlinked)', !!r && r.e === r.f && rows(r.e, 'H/3').length === 1,
+    r && `E=${r.e}\nF=${r.f}`);
+  // (F as before: Import 2B's delete took back the entries the rows posted, then Post.)
+  r = await pair('10e deleted', (t) => `UPDATE public.books_register SET book_treatment = 'NOT_IN_2B' WHERE id = '${id(t, 403)}';
+    ${t === 'f' ? `DELETE FROM public.bills_not_in_2b WHERE source_book_id IN ('${id(t, 401)}', '${id(t, 402)}', '${id(t, 403)}');` : ''}
+    DELETE FROM public.books_register WHERE id IN ('${id(t, 401)}', '${id(t, 402)}', '${id(t, 403)}');`);
+  check('10e adopt then delete the row: the ledger ends where Post left it', !!r && r.e === r.f, r && `E=${r.e}\nF=${r.f}`);
+  // Not in Books: a document parked Not in Books, then back to Matched.
+  r = await pair('10f Not in Books', (t) => `UPDATE public.twob_import_docs SET itc_action = 'NOT_IN_BOOKS' WHERE id = '${id(t, 301)}';`);
+  check('10f Not in Books: this month\'s own entry linked instead of a twin', !!r && rows(r.e, 'D/1').length === 1 && rows(r.f, 'D/1').length === 2,
+    r && `E=${r.e}\nF=${r.f}`);
+  r = await pair('10g back to Matched', (t) => `UPDATE public.twob_import_docs SET itc_action = 'MATCHED' WHERE id = '${id(t, 301)}';`);
+  check('10g ... back to Matched: the ledger ends where Post left it', !!r && r.e === r.f && rows(r.e, 'D/1').length === 1, r && `E=${r.e}\nF=${r.f}`);
 }
 
 let failed = 0;

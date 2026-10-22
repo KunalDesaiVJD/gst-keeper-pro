@@ -80,17 +80,23 @@ triggers of `20261021170000_import2b_autopost.sql`; a save that would take
 back an entry holding a reclaim, Expense out or book entry is refused and
 says where to undo it, e.g. Pending items' Booked list). A save that changes
 the ledger needs Import 2B & post (`work_2b_import`, page and DB, the user
-`x-gst-actor` names). A reclaim (`twob_import2b_reclaim`) and a books row's
-pairing (`twob_import2b_save_book`) are one call each, all or nothing; a
-re-import skips and names a refused row. A prior month's books row is saved
-with its entry through the door (`twob_import2b_prior_save`; an identical
-unlinked entry is linked, not added); a month out of step gets "Bring the
+`x-gst-actor` names). A reclaim (`twob_import2b_reclaim`), a document out of
+Reclaim (`twob_import2b_unreclaim`) and a books row's pairing
+(`twob_import2b_save_book`) are one call each, all or nothing; a re-import
+skips and names a refused row. An own unlinked entry of the same bill is
+linked instead of a twin only when it carries this month's reversal (in-2B)
+month, and goes back to what it held (`adopted_from`), never removed, when
+its row stops posting. A prior month's books row is saved with its entry
+through the door (`twob_import2b_prior_save`, same linking); a month out of
+step shows a line read in one statement (`twob_import2b_step`) and "Bring the
 reconciliation up to date" (`twob_import2b_catch_up`; a filed month's line
 shows its Not in 2B side only); Delete 2B is one call, Clear Data one call a
 month (both stop at once, never deadlock, when a save of the month is
-running); versions are coalesced per minute and recorded as the saver's
-(§15 of the doc; tests `supabase/tests/twob_simple/` test_9a to 9e,
-`autopost.test.mjs`). `2B Reconciliation`
+running); versions are coalesced per minute, recorded as the saver's, and
+carry each entry's link, which Restore (`twob_restore_version_linked`) puts
+back; a decision carried into an open month from a filed month cannot be
+changed there (`twob__carried_decision_guard`) (§15 of the doc; tests
+`supabase/tests/twob_simple/` test_9a to 9f, `autopost.test.mjs`). `2B Reconciliation`
 (`TwoBReconciliationPage.tsx`) is **read-only for Strict clients** (the
 default) — display, export, version history/restore, and destructive Clear
 Data only. A per-client `clients.liberal_2b_reconciliation` flag

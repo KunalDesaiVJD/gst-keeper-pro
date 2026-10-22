@@ -28,8 +28,17 @@
 --     a change that would take back an entry holding a reclaim, Expense out
 --     or book entry is refused, naming it (Post deleted the entry with its
 --     decision); and a row Post would add beside an identical own entry
---     the month already holds unlinked (put back by Restore, or typed on 2B
---     Reconciliation) links that entry instead of adding a twin. Deleting a
+--     the month already holds unlinked, not carried, with this month as its
+--     reversal (in-2B) month (typed on 2B Reconciliation, or put back by a
+--     Restore) links that entry instead of adding a twin (Post's twin
+--     reversed the bill twice). Since verification round 2: an own entry
+--     with a blank or another month's reversal month is never linked (a twin
+--     goes beside it, as Post's did: 4B(2)(i) counts only this month's), and
+--     a linked own entry keeps what it held (adopted_from) and, when its row
+--     stops posting (another treatment, deleted, Delete 2B, in a filed month
+--     through the door too), goes back to that and is unlinked, never
+--     removed: the ledger ends where Post's twin, added and taken back, left
+--     it (twob__autopost_effective / twob__autopost_adjust). Deleting a
 --     books row or a 2B document takes back the entry it posted unless that
 --     entry is filed (locked) or holds a decision, as Import 2B's delete did.
 --     Writes of this release's own functions (twob.write 'rpc' / 'system':
@@ -41,9 +50,15 @@
 --     a save that changes nothing on the ledger goes through for any staff.
 --     A refusal says where to undo the decision (twob__undo_hint): Import
 --     2B's Pending items list booked entries with Undo book entry since this
---     round. A reclaim (twob_import2b_reclaim) and a books row's pairing
+--     round. A reclaim (twob_import2b_reclaim), a document taken out of
+--     Reclaim (twob_import2b_unreclaim, round 2) and a books row's pairing
 --     (twob_import2b_save_book) are one call each: entry and document, or
 --     documents and row, together or not at all.
+--     A decision a carried entry brought into an open month from a filed
+--     month (a book entry, a reclaim, an Expense out) stays as filed: direct
+--     writes cannot change it there (twob__carried_decision_guard, round 2;
+--     Pending items shows it without Undo). Clear Data undoes only the
+--     month's own carried decisions (the guard lets the rest be removed).
 --  2. Race-safe and idempotent by source id: the client's lock (the one every
 --     writer of a client's 2B lists takes) is held while the plan is read and
 --     written, the ledger rows taken back are locked and read again first (a
@@ -67,6 +82,8 @@
 --     twob_import2b_prior_save(p_whole_month) bring a month whose ledger is
 --     out of step (posted before this change, or not posted at all) up to
 --     date with the same rules, previewed. Nothing is posted by this file.
+--     The page's "not in step" line is read in one statement
+--     (twob_import2b_step, STABLE, any staff; round 2).
 --  5. Delete 2B (twob_import2b_delete_2b) is one call, 2B Reconciliation's
 --     Clear Data (twob_clear_year) one call a month (a large client's year in
 --     one call ran past the 3 s anon calls run under): it clears the month
@@ -82,7 +99,16 @@
 --     that version in place; otherwise it adds the next version. A version is
 --     recorded as the saver's, never the flusher's. A month is marked once a
 --     transaction (again after a snapshot in it), and not written again
---     while already marked behind by the same person.
+--     while already marked behind by the same person. Each row of a
+--     snapshot carries its Import 2B link, adoptedFrom, reclaimSubtype and
+--     reclaimedViaDocId (round 2), and 2B Reconciliation's Restore calls
+--     twob_restore_version_linked, which puts every entry back linked (the
+--     version's link; for an older version the link its entry of the same
+--     id holds; else, for this month's entries, by the document itself), so
+--     the next save changes the entry instead of adding a second reversal.
+--     20261021100000's twob_restore_version is left as it is (an app of
+--     before calls it), so applying either file again never undoes the
+--     other.
 --
 -- RLS: unchanged on the four tables (open: the app has no auth session).
 -- twob_autopost_state: select open, written only by these functions.
@@ -92,15 +118,17 @@
 -- test_9a_autopost.sql (every save kind, refusals, versions, Delete 2B, Clear
 -- Data, catch-up, prior month), test_9b_autopost_race.sh (two sessions),
 -- test_9c_autopost_timing.sql (1,000 rows), test_9d_autopost_round1.sql and
--- test_9e_autopost_locks.sh (the first verification round's findings) and
--- autopost.test.mjs (the write-through against planImport2BPost +
--- postImport2BToLedger on twin clients, after every save kind).
+-- test_9e_autopost_locks.sh (the first verification round's findings),
+-- test_9f_autopost_round2.sql (the second round's) and autopost.test.mjs
+-- (the write-through against planImport2BPost + postImport2BToLedger on
+-- twin clients, after every save kind; own entries adopted then taken back).
 --
 -- LIVE APPLY (project gcquafqxbykxkbexcdpy only; never SUPABASE_PROJECT_REF):
 -- after the rest of the 21 Oct release (20261021160000, 100000, 110000,
 -- 120000, 150000) and BEFORE the app goes out: the app no longer has Post,
 -- so without this file its saves would not reach the ledger, and it calls
--- twob_import2b_reclaim / twob_import2b_save_book. The app of before (still
+-- twob_import2b_reclaim / twob_import2b_save_book / twob_import2b_unreclaim /
+-- twob_import2b_step / twob_restore_version_linked. The app of before (still
 -- with Post) keeps working against it in the meantime: its saves write
 -- through here (it names no user in its requests, so the Import 2B & post
 -- check does not apply to it), and its Post then finds nothing left to do.
@@ -119,12 +147,21 @@
 --     if it stops on the lock timeout, nothing changed: run it again).
 --  3. Checks after applying:
 --       SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_twob_zz_autopost%';            -- 8
+--       SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_twob_zz_carried_decision';         -- 2
 --       SELECT count(*) FROM pg_indexes WHERE indexname IN ('bills_not_in_2b_source_book_uq',
 --              'bills_not_in_books_source_doc_uq');                                           -- 2
 --       SELECT to_regprocedure('public.twob_import2b_reclaim(uuid, uuid, text, uuid, uuid)') IS NOT NULL,
 --              to_regprocedure('public.twob_import2b_save_book(uuid, uuid, jsonb, uuid, uuid)') IS NOT NULL,
 --              EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
 --                       AND table_name = 'twob_autopost_state' AND column_name = 'changed_by');  -- t, t, t
+--       SELECT to_regprocedure('public.twob_import2b_step(uuid, text)') IS NOT NULL,
+--              to_regprocedure('public.twob_import2b_unreclaim(uuid, uuid, text, uuid, text)') IS NOT NULL,
+--              to_regprocedure('public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)') IS NOT NULL,
+--              (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public'
+--                AND table_name IN ('bills_not_in_2b', 'bills_not_in_books') AND column_name = 'adopted_from');  -- t, t, t, 2
+--       -- No entry is linked as an own entry yet (the column is new): 0
+--       SELECT (SELECT count(*) FROM public.bills_not_in_2b WHERE adopted_from IS NOT NULL)
+--            + (SELECT count(*) FROM public.bills_not_in_books WHERE adopted_from IS NOT NULL);
 --       -- Who holds Import 2B & post (an employee without it sees Import 2B read-only,
 --       -- Pending items aside); give it to anyone who works Import 2B before the app goes out:
 --       SELECT p.first_name, r.role FROM public.user_roles r JOIN public.profiles p ON p.user_id = r.user_id
@@ -152,17 +189,22 @@
 --         FROM (SELECT DISTINCT client_id, period_month FROM public.books_register
 --               UNION SELECT DISTINCT client_id, period_month FROM public.twob_import_docs) m
 --         JOIN public.clients c ON c.id = m.client_id
---         CROSS JOIN LATERAL public.twob__autopost_plan(m.client_id, m.period_month, NULL, NULL) p
+--         CROSS JOIN LATERAL public.twob__autopost_effective(m.client_id, m.period_month, NULL, NULL) p
 --        WHERE p.op <> 'skip'
 --        GROUP BY m.client_id, c.name, m.period_month, p.list, p.op
 --        ORDER BY c.name, public.twob_period_key(m.period_month), p.list, p.op;
---     The page shows the same for the month it has open ("not in step") with
---     "Bring the reconciliation up to date" for staff who may post.
+--     (op: insert = to add, link = an own entry of the month to be linked
+--     instead, update, retract = to take back, unlink = an own entry to be put
+--     back; skip = left out, with its reason.) The page shows the same for
+--     the month it has open ("not in step", twob_import2b_step) with "Bring
+--     the reconciliation up to date" for staff who may post.
 --  5. Deploy the app (no Post button; prior-month books saves through
 --     twob_import2b_prior_save; Delete 2B and Clear Data through their calls).
 --  Rollback (only if the app is rolled back too): drop the eight triggers
 --  trg_twob_zz_autopost_* on books_register and twob_import_docs; the old
---  app's Post works again. The unique indexes can stay.
+--  app's Post works again. The unique indexes, the adopted_from columns and
+--  the two trg_twob_zz_carried_decision triggers can stay (the old app's
+--  Restore calls twob_restore_version, untouched).
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -206,6 +248,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS bills_not_in_books_source_doc_uq
 -- The unique indexes serve every lookup the plain ones of 20260814090000 did.
 DROP INDEX IF EXISTS public.idx_bills_not_in_2b_source_book_id;
 DROP INDEX IF EXISTS public.idx_bills_not_in_books_source_doc_id;
+
+-- An entry of the month's own (typed on 2B Reconciliation, imported there,
+-- or put back by a Restore of an old version) that a books row or 2B
+-- document was linked to instead of adding a twin: what it held before
+-- (verification round 2). When that row stops posting, the entry is put back
+-- to it and unlinked, never removed, so the ledger ends where Post left it.
+ALTER TABLE public.bills_not_in_2b ADD COLUMN IF NOT EXISTS adopted_from jsonb;
+ALTER TABLE public.bills_not_in_books ADD COLUMN IF NOT EXISTS adopted_from jsonb;
+COMMENT ON COLUMN public.bills_not_in_2b.adopted_from IS
+  'Set when Import 2B''s write-through linked a books row to this entry instead of adding a twin (the month''s own unlinked entry of '
+  'the same document, reversal month this month): its date, supplier, number, GSTIN and amounts before. Unlinked and put back to '
+  'these, never removed, when the row stops posting (20261021170000; docs/2B_RECONCILIATION_FLOW.md §15).';
+COMMENT ON COLUMN public.bills_not_in_books.adopted_from IS
+  'Set when Import 2B''s write-through linked a 2B document to this entry instead of adding a twin (the month''s own unlinked entry of '
+  'the same document, in-2B month this month): its date, supplier, number, GSTIN and amounts before. Unlinked and put back to '
+  'these, never removed, when the document stops posting (20261021170000; docs/2B_RECONCILIATION_FLOW.md §15).';
 
 -- ---------------------------------------------------------------------------
 -- 2. Helpers
@@ -295,6 +353,30 @@ AS $$
       OR abs(COALESCE(l_ig, 0) - COALESCE(s_ig, 0)) > 0.005000001
       OR abs(COALESCE(l_cg, 0) - COALESCE(s_cg, 0)) > 0.005000001
       OR abs(COALESCE(l_sg, 0) - COALESCE(s_sg, 0)) > 0.005000001;
+$$;
+
+-- A typed value as a uuid; NULL when blank or not one (a version's row ids).
+CREATE OR REPLACE FUNCTION public.twob__try_uuid(p text)
+RETURNS uuid
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+  SELECT CASE WHEN btrim(COALESCE(p, '')) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+              THEN btrim(p)::uuid END;
+$$;
+
+-- An entry's date, supplier, number, GSTIN and amounts (what adopted_from
+-- keeps, and the door's update of an entry takes).
+CREATE OR REPLACE FUNCTION public.twob__entry_figures(p_row jsonb)
+RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT jsonb_build_object('date', p_row -> 'date', 'supplier_name', p_row -> 'supplier_name',
+    'supplier_invoice_number', p_row -> 'supplier_invoice_number', 'supplier_gstin', p_row -> 'supplier_gstin',
+    'taxable_value', p_row -> 'taxable_value', 'input_igst', p_row -> 'input_igst',
+    'input_cgst', p_row -> 'input_cgst', 'input_sgst', p_row -> 'input_sgst');
 $$;
 
 -- The user the request names (x-gst-actor, as the change log reads it), or NULL.
@@ -520,6 +602,132 @@ BEGIN
 END;
 $$;
 
+-- What the write-through does: Post's plan (above), with two differences so
+-- nothing is doubled now that no one reviews a Post dialog, and nothing of
+-- the month's own is lost:
+--  'link': an entry to add that the month already holds as its own entry,
+--    unlinked, not carried, the same document (twob_doc_key: GSTIN or
+--    supplier, number, date and amounts) and with this month as its
+--    reversal month (Not in 2B) or in-2B month (Not in Books), as the entry
+--    Post would add carries, is linked instead of added again, one to one
+--    (ledger_id: that entry; the figures: what the add would write). An
+--    entry with a blank or another month is a different entry for every
+--    report (4B(2)(i) counts only this month's): the add goes beside it, as
+--    Post's did.
+--  'unlink': an entry to take back that was linked that way (adopted_from)
+--    is put back to what it held before (the figures) and unlinked, never
+--    removed: the ledger ends where Post's twin, added and then taken back,
+--    left it.
+-- Reads only. twob__autopost_adjust makes the two changes to a plan (the
+-- write-through calls it only when its plan adds or takes back an entry);
+-- twob__autopost_effective is the whole of it.
+CREATE OR REPLACE FUNCTION public.twob__autopost_adjust(p_client_id uuid, p_period text, p_plan public.twob_autopost_row[])
+RETURNS public.twob_autopost_row[]
+LANGUAGE plpgsql
+STABLE
+SET plan_cache_mode = force_generic_plan
+AS $$
+DECLARE
+  v_plan public.twob_autopost_row[] := p_plan;
+  v_key integer := public.twob_period_key(p_period);
+  n_ins2 integer;
+  n_insb integer;
+  n_ret integer;
+BEGIN
+  SELECT count(*) FILTER (WHERE x.list = 'bills_not_in_2b' AND x.op = 'insert'),
+         count(*) FILTER (WHERE x.list = 'bills_not_in_books' AND x.op = 'insert'),
+         count(*) FILTER (WHERE x.op = 'retract')
+    INTO n_ins2, n_insb, n_ret
+    FROM unnest(v_plan) x;
+  -- Taken back: an entry linked instead of added is put back and unlinked.
+  IF n_ret > 0 AND (
+       EXISTS (SELECT 1 FROM unnest(v_plan) x JOIN public.bills_not_in_2b t ON t.id = x.ledger_id
+                WHERE x.list = 'bills_not_in_2b' AND x.op = 'retract' AND t.adopted_from IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM unnest(v_plan) x JOIN public.bills_not_in_books t ON t.id = x.ledger_id
+                WHERE x.list = 'bills_not_in_books' AND x.op = 'retract' AND t.adopted_from IS NOT NULL)) THEN
+    v_plan := ARRAY(
+      SELECT CASE WHEN a.af IS NULL
+               THEN ROW(x.list, x.op, x.ledger_id, x.source_id, x.date, x.supplier_name, x.supplier_invoice_number, x.supplier_gstin,
+                        x.taxable_value, x.input_igst, x.input_cgst, x.input_sgst, x.reason)::public.twob_autopost_row
+               ELSE ROW(x.list, 'unlink', x.ledger_id, x.source_id, public.twob__try_date(a.af ->> 'date'), a.af ->> 'supplier_name',
+                        a.af ->> 'supplier_invoice_number', a.af ->> 'supplier_gstin',
+                        COALESCE(public.twob__try_num(a.af ->> 'taxable_value'), 0), COALESCE(public.twob__try_num(a.af ->> 'input_igst'), 0),
+                        COALESCE(public.twob__try_num(a.af ->> 'input_cgst'), 0), COALESCE(public.twob__try_num(a.af ->> 'input_sgst'), 0),
+                        NULL::text)::public.twob_autopost_row END
+        FROM unnest(v_plan) WITH ORDINALITY AS x(list, op, ledger_id, source_id, date, supplier_name, supplier_invoice_number,
+                                                 supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, reason, o)
+        LEFT JOIN LATERAL (
+          SELECT CASE WHEN x.list = 'bills_not_in_2b'
+                      THEN (SELECT t.adopted_from FROM public.bills_not_in_2b t WHERE t.id = x.ledger_id)
+                      ELSE (SELECT t.adopted_from FROM public.bills_not_in_books t WHERE t.id = x.ledger_id) END AS af
+           WHERE x.op = 'retract') a ON true
+       ORDER BY x.o);
+  END IF;
+
+  -- Added: an identical own entry of this month, unlinked, is linked instead.
+  IF (n_ins2 > 0 AND EXISTS (SELECT 1 FROM public.bills_not_in_2b t
+                              WHERE t.client_id = p_client_id AND t.period_month = p_period AND t.source_book_id IS NULL
+                                AND NOT COALESCE(t.is_carried_forward, false) AND public.twob_label_key(t.reversal_month) = v_key))
+     OR (n_insb > 0 AND EXISTS (SELECT 1 FROM public.bills_not_in_books t
+                                 WHERE t.client_id = p_client_id AND t.period_month = p_period AND t.source_doc_id IS NULL
+                                   AND NOT COALESCE(t.is_carried_forward, false) AND public.twob_label_key(t.bill_in_2b_month) = v_key)) THEN
+    v_plan := ARRAY(
+      WITH x AS (
+        SELECT * FROM unnest(v_plan) WITH ORDINALITY AS u(list, op, ledger_id, source_id, date, supplier_name, supplier_invoice_number,
+                                                          supplier_gstin, taxable_value, input_igst, input_cgst, input_sgst, reason, o)),
+      p AS (
+        SELECT x.list, x.source_id,
+               public.twob_doc_key(x.supplier_gstin, x.supplier_name, x.supplier_invoice_number, x.date,
+                                   x.taxable_value, x.input_igst, x.input_cgst, x.input_sgst) AS k
+          FROM x WHERE x.op = 'insert'),
+      pn AS (SELECT p.*, row_number() OVER (PARTITION BY p.list, p.k ORDER BY p.source_id) AS rn FROM p),
+      c AS (
+        SELECT 'bills_not_in_2b'::text AS list, t.id,
+               public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
+                                   t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst) AS k
+          FROM public.bills_not_in_2b t
+         WHERE n_ins2 > 0 AND t.client_id = p_client_id AND t.period_month = p_period AND t.source_book_id IS NULL
+           AND NOT COALESCE(t.is_carried_forward, false) AND public.twob_label_key(t.reversal_month) = v_key
+        UNION ALL
+        SELECT 'bills_not_in_books', t.id,
+               public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
+                                   t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst)
+          FROM public.bills_not_in_books t
+         WHERE n_insb > 0 AND t.client_id = p_client_id AND t.period_month = p_period AND t.source_doc_id IS NULL
+           AND NOT COALESCE(t.is_carried_forward, false) AND public.twob_label_key(t.bill_in_2b_month) = v_key),
+      cn AS (SELECT c.*, row_number() OVER (PARTITION BY c.list, c.k ORDER BY c.id) AS rn FROM c),
+      lk AS (SELECT pn.list, pn.source_id, cn.id FROM pn JOIN cn ON cn.list = pn.list AND cn.k = pn.k AND cn.rn = pn.rn)
+      SELECT ROW(x.list, CASE WHEN lk.id IS NULL THEN x.op ELSE 'link' END, COALESCE(lk.id, x.ledger_id), x.source_id, x.date,
+                 x.supplier_name, x.supplier_invoice_number, x.supplier_gstin, x.taxable_value, x.input_igst, x.input_cgst,
+                 x.input_sgst, x.reason)::public.twob_autopost_row
+        FROM x LEFT JOIN lk ON x.op = 'insert' AND lk.list = x.list AND lk.source_id = x.source_id
+       ORDER BY x.o);
+  END IF;
+  RETURN v_plan;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.twob__autopost_effective(p_client_id uuid, p_period text, p_book_ids uuid[], p_doc_ids uuid[])
+RETURNS SETOF public.twob_autopost_row
+LANGUAGE plpgsql
+STABLE
+SET plan_cache_mode = force_generic_plan
+AS $$
+DECLARE
+  v_plan public.twob_autopost_row[];
+BEGIN
+  IF p_book_ids IS NULL OR array_length(p_book_ids, 1) > 0 THEN
+    v_plan := ARRAY(SELECT p FROM public.twob__autopost_plan_books(p_client_id, p_period, p_book_ids) p);
+  ELSE
+    v_plan := '{}';
+  END IF;
+  IF p_doc_ids IS NULL OR array_length(p_doc_ids, 1) > 0 THEN
+    v_plan := v_plan || ARRAY(SELECT p FROM public.twob__autopost_plan_docs(p_client_id, p_period, p_doc_ids) p);
+  END IF;
+  RETURN QUERY SELECT * FROM unnest(public.twob__autopost_adjust(p_client_id, p_period, v_plan));
+END;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- 4. Version snapshots, coalesced per minute
 -- ---------------------------------------------------------------------------
@@ -545,7 +753,11 @@ GRANT SELECT ON public.twob_autopost_state TO anon, authenticated, service_role;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.twob_autopost_state FROM anon, authenticated;
 
 -- The month's two lists as they stand, in the shape Post wrote
--- (writePostVersion: View Versions and Restore read it unchanged). Within a
+-- (writePostVersion: View Versions and Restore read it unchanged), plus
+-- what Restore needs to put an entry back as it was (verification round 2):
+-- its Import 2B link (sourceBookId / sourceDocId, and adoptedFrom), its
+-- Expense out (reclaimSubtype) and the 2B document its reclaim names
+-- (reclaimedViaDocId). Within a
 -- minute of the month's current write-through version, that version is
 -- brought up to date in place; otherwise the next version is added. Recorded
 -- as the save of whoever last changed the month through the write-through
@@ -577,7 +789,9 @@ BEGIN
                'reversalMonth', COALESCE(b.reversal_month, ''), 'reclaimMonth', COALESCE(b.reclaim_month, ''),
                'periodMonth', b.period_month, 'isLocked', COALESCE(b.is_locked, false),
                'isCarriedForward', COALESCE(b.is_carried_forward, false), 'updatedBy', COALESCE(b.updated_by::text, ''),
-               'updatedAt', COALESCE(b.updated_at, v_now), 'version', COALESCE(b.version, 1)) ORDER BY b.date, b.id)
+               'updatedAt', COALESCE(b.updated_at, v_now), 'version', COALESCE(b.version, 1),
+               'reclaimSubtype', b.reclaim_subtype, 'reclaimedViaDocId', b.reclaimed_via_doc_id,
+               'sourceBookId', b.source_book_id, 'adoptedFrom', b.adopted_from) ORDER BY b.date, b.id)
         FROM public.bills_not_in_2b b WHERE b.client_id = p_client_id AND b.period_month = p_period), '[]'::jsonb),
     'billsNotInBooks', COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
@@ -588,7 +802,8 @@ BEGIN
                'bookEntryMonth', COALESCE(b.book_entry_month, ''), 'billIn2BMonth', COALESCE(b.bill_in_2b_month, ''),
                'periodMonth', b.period_month, 'isLocked', COALESCE(b.is_locked, false),
                'isCarriedForward', COALESCE(b.is_carried_forward, false), 'updatedBy', COALESCE(b.updated_by::text, ''),
-               'updatedAt', COALESCE(b.updated_at, v_now), 'version', COALESCE(b.version, 1)) ORDER BY b.date, b.id)
+               'updatedAt', COALESCE(b.updated_at, v_now), 'version', COALESCE(b.version, 1),
+               'sourceDocId', b.source_doc_id, 'adoptedFrom', b.adopted_from) ORDER BY b.date, b.id)
         FROM public.bills_not_in_books b WHERE b.client_id = p_client_id AND b.period_month = p_period), '[]'::jsonb))
     INTO v_data;
 
@@ -693,15 +908,17 @@ AS $$
   END
   FROM jsonb_array_elements(COALESCE(p_refusals, '[]'::jsonb)) r;
 $$;
--- Applies the plan for (client, month, books rows, 2B documents) to the
--- ledger, or with p_dry_run says what it would do. The caller holds the
--- client's lock and has checked the month is open. Returns per list how
--- many entries are added ('add'), linked ('link': an identical own entry the
--- month holds unlinked), changed and taken back, and 'written' (rows
--- written); with p_report also the rows not posted with their reason
--- ('skipped') and the refusals. A change that would take back an entry
--- holding a reclaim, an Expense out or a book entry is refused (raised; with
--- p_dry_run listed), naming it and where to undo it.
+-- Applies the write-through for (client, month, books rows, 2B documents) to
+-- the ledger (twob__autopost_effective: Post's plan, an identical own entry
+-- linked instead of added, a linked own entry put back instead of removed),
+-- or with p_dry_run says what it would do. The caller holds the client's
+-- lock and has checked the month is open. Returns per list how many entries
+-- are added ('add'), linked ('link'), changed, taken back ('remove') and put
+-- back as they were ('unlink'), and 'written' (rows written); with p_report
+-- also the rows not posted with their reason ('skipped') and the refusals.
+-- A change that would take back an entry holding a reclaim, an Expense out
+-- or a book entry is refused (raised; with p_dry_run listed), naming it and
+-- where to undo it (an entry put back as it was keeps its decision).
 CREATE OR REPLACE FUNCTION public.twob__autopost_apply(
   p_client_id uuid, p_period text, p_book_ids uuid[], p_doc_ids uuid[], p_actor_id uuid,
   p_dry_run boolean DEFAULT false, p_report boolean DEFAULT true)
@@ -714,18 +931,16 @@ DECLARE
   v_plan public.twob_autopost_row[];
   v_refusals jsonb := '[]'::jsonb;
   v_skipped jsonb := '[]'::jsonb;
-  v_adopt_src uuid[] := '{}';
-  v_adopt_led uuid[] := '{}';
-  v_adopt_list text[] := '{}';
-  v_adopted2 uuid[] := '{}';
-  v_adoptedb uuid[] := '{}';
-  c_skip integer; c2_ins integer; c2_upd integer; c2_ret integer;
-  cb_ins integer; cb_upd integer; cb_ret integer;
-  a2 integer := 0; ab integer := 0;
-  n2_ins integer := 0; n2_upd integer := 0; n2_ret integer := 0;
-  nb_ins integer := 0; nb_upd integer := 0; nb_ret integer := 0;
+  v_linked2 uuid[] := '{}';
+  v_linkedb uuid[] := '{}';
+  c_skip integer;
+  c2_ins integer; c2_lnk integer; c2_upd integer; c2_ret integer; c2_unl integer;
+  cb_ins integer; cb_lnk integer; cb_upd integer; cb_ret integer; cb_unl integer;
+  n2_ins integer := 0; n2_upd integer := 0; n2_ret integer := 0; n2_unl integer := 0;
+  nb_ins integer := 0; nb_upd integer := 0; nb_ret integer := 0; nb_unl integer := 0;
 BEGIN
-  -- The two halves of the plan called directly (one call less a save).
+  -- The two halves of the plan called directly (one call less a save), the
+  -- links and put-backs worked in only when it adds or takes back.
   IF p_book_ids IS NULL OR array_length(p_book_ids, 1) > 0 THEN
     v_plan := ARRAY(SELECT p FROM public.twob__autopost_plan_books(p_client_id, p_period, p_book_ids) p);
   ELSE
@@ -734,31 +949,38 @@ BEGIN
   IF p_doc_ids IS NULL OR array_length(p_doc_ids, 1) > 0 THEN
     v_plan := v_plan || ARRAY(SELECT p FROM public.twob__autopost_plan_docs(p_client_id, p_period, p_doc_ids) p);
   END IF;
+  IF EXISTS (SELECT 1 FROM unnest(v_plan) x WHERE x.op IN ('insert', 'retract')) THEN
+    v_plan := public.twob__autopost_adjust(p_client_id, p_period, v_plan);
+  END IF;
   -- What the plan holds, so a save of one row runs only the steps it needs.
   SELECT count(*) FILTER (WHERE x.op = 'skip'),
          count(*) FILTER (WHERE x.list = 'bills_not_in_2b' AND x.op = 'insert'),
+         count(*) FILTER (WHERE x.list = 'bills_not_in_2b' AND x.op = 'link'),
          count(*) FILTER (WHERE x.list = 'bills_not_in_2b' AND x.op = 'update'),
          count(*) FILTER (WHERE x.list = 'bills_not_in_2b' AND x.op = 'retract'),
+         count(*) FILTER (WHERE x.list = 'bills_not_in_2b' AND x.op = 'unlink'),
          count(*) FILTER (WHERE x.list = 'bills_not_in_books' AND x.op = 'insert'),
+         count(*) FILTER (WHERE x.list = 'bills_not_in_books' AND x.op = 'link'),
          count(*) FILTER (WHERE x.list = 'bills_not_in_books' AND x.op = 'update'),
-         count(*) FILTER (WHERE x.list = 'bills_not_in_books' AND x.op = 'retract')
-    INTO c_skip, c2_ins, c2_upd, c2_ret, cb_ins, cb_upd, cb_ret
+         count(*) FILTER (WHERE x.list = 'bills_not_in_books' AND x.op = 'retract'),
+         count(*) FILTER (WHERE x.list = 'bills_not_in_books' AND x.op = 'unlink')
+    INTO c_skip, c2_ins, c2_lnk, c2_upd, c2_ret, c2_unl, cb_ins, cb_lnk, cb_upd, cb_ret, cb_unl
     FROM unnest(v_plan) x;
   IF p_report AND c_skip > 0 THEN
     SELECT COALESCE(jsonb_agg(jsonb_build_object('list', x.list, 'id', x.source_id, 'number', x.supplier_invoice_number,
              'reason', x.reason)), '[]'::jsonb)
       INTO v_skipped FROM unnest(v_plan) x WHERE x.op = 'skip';
   END IF;
-  IF c2_ins + c2_upd + c2_ret + cb_ins + cb_upd + cb_ret = 0 THEN
+  IF c2_ins + c2_lnk + c2_upd + c2_ret + c2_unl + cb_ins + cb_lnk + cb_upd + cb_ret + cb_unl = 0 THEN
     RETURN jsonb_build_object('dry_run', p_dry_run, 'written', 0,
-      'bills_not_in_2b', jsonb_build_object('add', 0, 'link', 0, 'change', 0, 'remove', 0),
-      'bills_not_in_books', jsonb_build_object('add', 0, 'link', 0, 'change', 0, 'remove', 0),
+      'bills_not_in_2b', jsonb_build_object('add', 0, 'link', 0, 'change', 0, 'remove', 0, 'unlink', 0),
+      'bills_not_in_books', jsonb_build_object('add', 0, 'link', 0, 'change', 0, 'remove', 0, 'unlink', 0),
       'skipped', v_skipped, 'refusals', '[]'::jsonb);
   END IF;
 
   -- The entries to take back, locked and read again: a reclaim, Expense out
-  -- or book entry saved meanwhile is seen below. (An entry to change is
-  -- locked by its own update, which writes no decision.)
+  -- or book entry saved meanwhile is seen below. (An entry to change, link
+  -- or put back is locked by its own update, which writes no decision.)
   IF c2_ret > 0 THEN
     PERFORM 1 FROM public.bills_not_in_2b t
      WHERE t.id IN (SELECT x.ledger_id FROM unnest(v_plan) x WHERE x.list = 'bills_not_in_2b' AND x.op = 'retract')
@@ -793,48 +1015,12 @@ BEGIN
     END IF;
   END IF;
 
-  -- An entry to add that the month already holds as its own, unlinked (the
-  -- same document: GSTIN or supplier, number, date and amounts), is linked
-  -- instead of added again; one to one.
-  IF (c2_ins > 0 AND EXISTS (SELECT 1 FROM public.bills_not_in_2b t
-                              WHERE t.client_id = p_client_id AND t.period_month = p_period
-                                AND t.source_book_id IS NULL AND NOT COALESCE(t.is_carried_forward, false)))
-     OR (cb_ins > 0 AND EXISTS (SELECT 1 FROM public.bills_not_in_books t
-                                 WHERE t.client_id = p_client_id AND t.period_month = p_period
-                                   AND t.source_doc_id IS NULL AND NOT COALESCE(t.is_carried_forward, false))) THEN
-    WITH p AS (
-      SELECT x.list, x.source_id,
-             public.twob_doc_key(x.supplier_gstin, x.supplier_name, x.supplier_invoice_number, x.date,
-                                 x.taxable_value, x.input_igst, x.input_cgst, x.input_sgst) AS k
-        FROM unnest(v_plan) x WHERE x.op = 'insert'),
-    pn AS (SELECT p.*, row_number() OVER (PARTITION BY p.list, p.k ORDER BY p.source_id) AS rn FROM p),
-    c AS (
-      SELECT 'bills_not_in_2b' AS list, t.id,
-             public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
-                                 t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst) AS k
-        FROM public.bills_not_in_2b t
-       WHERE c2_ins > 0 AND t.client_id = p_client_id AND t.period_month = p_period AND t.source_book_id IS NULL
-         AND NOT COALESCE(t.is_carried_forward, false)
-      UNION ALL
-      SELECT 'bills_not_in_books', t.id,
-             public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
-                                 t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst)
-        FROM public.bills_not_in_books t
-       WHERE cb_ins > 0 AND t.client_id = p_client_id AND t.period_month = p_period AND t.source_doc_id IS NULL
-         AND NOT COALESCE(t.is_carried_forward, false)),
-    cn AS (SELECT c.*, row_number() OVER (PARTITION BY c.list, c.k ORDER BY c.id) AS rn FROM c)
-    SELECT COALESCE(array_agg(pn.source_id), '{}'), COALESCE(array_agg(cn.id), '{}'), COALESCE(array_agg(pn.list), '{}'),
-           count(*) FILTER (WHERE pn.list = 'bills_not_in_2b'), count(*) FILTER (WHERE pn.list = 'bills_not_in_books')
-      INTO v_adopt_src, v_adopt_led, v_adopt_list, a2, ab
-      FROM pn JOIN cn ON cn.list = pn.list AND cn.k = pn.k AND cn.rn = pn.rn;
-  END IF;
-
   IF p_dry_run THEN
     RETURN jsonb_build_object('dry_run', true,
-      'written', c2_ins + c2_upd + c2_ret + cb_ins + cb_upd + cb_ret,
+      'written', c2_ins + c2_lnk + c2_upd + c2_ret + c2_unl + cb_ins + cb_lnk + cb_upd + cb_ret + cb_unl,
       'undo_hint', CASE WHEN jsonb_array_length(v_refusals) > 0 THEN public.twob__undo_hint(v_refusals) END,
-      'bills_not_in_2b', jsonb_build_object('add', c2_ins - a2, 'link', a2, 'change', c2_upd, 'remove', c2_ret),
-      'bills_not_in_books', jsonb_build_object('add', cb_ins - ab, 'link', ab, 'change', cb_upd, 'remove', cb_ret),
+      'bills_not_in_2b', jsonb_build_object('add', c2_ins, 'link', c2_lnk, 'change', c2_upd, 'remove', c2_ret, 'unlink', c2_unl),
+      'bills_not_in_books', jsonb_build_object('add', cb_ins, 'link', cb_lnk, 'change', cb_upd, 'remove', cb_ret, 'unlink', cb_unl),
       'skipped', v_skipped, 'refusals', v_refusals);
   END IF;
 
@@ -848,6 +1034,29 @@ BEGIN
     DELETE FROM public.bills_not_in_books t
      WHERE t.id IN (SELECT x.ledger_id FROM unnest(v_plan) x WHERE x.list = 'bills_not_in_books' AND x.op = 'retract');
     GET DIAGNOSTICS nb_ret = ROW_COUNT;
+  END IF;
+
+  -- Put back as it was and unlinked: an own entry linked instead of added.
+  -- Its months and decisions stay.
+  IF c2_unl > 0 THEN
+    UPDATE public.bills_not_in_2b t
+       SET date = x.date, supplier_name = x.supplier_name, supplier_invoice_number = x.supplier_invoice_number,
+           supplier_gstin = x.supplier_gstin, taxable_value = x.taxable_value, input_igst = x.input_igst,
+           input_cgst = x.input_cgst, input_sgst = x.input_sgst, source_book_id = NULL, adopted_from = NULL,
+           updated_by = COALESCE(p_actor_id, t.updated_by), updated_at = now()
+      FROM unnest(v_plan) x
+     WHERE x.list = 'bills_not_in_2b' AND x.op = 'unlink' AND t.id = x.ledger_id;
+    GET DIAGNOSTICS n2_unl = ROW_COUNT;
+  END IF;
+  IF cb_unl > 0 THEN
+    UPDATE public.bills_not_in_books t
+       SET date = x.date, supplier_name = x.supplier_name, supplier_invoice_number = x.supplier_invoice_number,
+           supplier_gstin = x.supplier_gstin, taxable_value = x.taxable_value, input_igst = x.input_igst,
+           input_cgst = x.input_cgst, input_sgst = x.input_sgst, source_doc_id = NULL, adopted_from = NULL,
+           updated_by = COALESCE(p_actor_id, t.updated_by), updated_at = now()
+      FROM unnest(v_plan) x
+     WHERE x.list = 'bills_not_in_books' AND x.op = 'unlink' AND t.id = x.ledger_id;
+    GET DIAGNOSTICS nb_unl = ROW_COUNT;
   END IF;
 
   -- Change: the date, supplier, number, GSTIN and amounts only.
@@ -870,37 +1079,38 @@ BEGIN
     GET DIAGNOSTICS nb_upd = ROW_COUNT;
   END IF;
 
-  -- Link an identical own entry, with the figures an add would write; its
-  -- months and decisions stay.
-  IF a2 > 0 THEN
+  -- Link an identical own entry, with the figures an add would write; what
+  -- it held is kept (adopted_from), and its months and decisions stay.
+  IF c2_lnk > 0 THEN
     WITH u AS (
       UPDATE public.bills_not_in_2b t
-         SET source_book_id = a.src, date = x.date, supplier_name = x.supplier_name,
+         SET source_book_id = x.source_id, adopted_from = public.twob__entry_figures(to_jsonb(t)),
+             date = x.date, supplier_name = x.supplier_name,
              supplier_invoice_number = x.supplier_invoice_number, supplier_gstin = x.supplier_gstin,
              taxable_value = x.taxable_value, input_igst = x.input_igst, input_cgst = x.input_cgst, input_sgst = x.input_sgst,
              updated_by = COALESCE(p_actor_id, t.updated_by), updated_at = now()
-        FROM unnest(v_adopt_src, v_adopt_led, v_adopt_list) AS a(src, led, list)
-        JOIN unnest(v_plan) x ON x.list = 'bills_not_in_2b' AND x.op = 'insert' AND x.source_id = a.src
-       WHERE a.list = 'bills_not_in_2b' AND t.id = a.led AND t.source_book_id IS NULL
+        FROM unnest(v_plan) x
+       WHERE x.list = 'bills_not_in_2b' AND x.op = 'link' AND t.id = x.ledger_id AND t.source_book_id IS NULL
       RETURNING t.source_book_id)
-    SELECT COALESCE(array_agg(u.source_book_id), '{}') INTO v_adopted2 FROM u;
+    SELECT COALESCE(array_agg(u.source_book_id), '{}') INTO v_linked2 FROM u;
   END IF;
-  IF ab > 0 THEN
+  IF cb_lnk > 0 THEN
     WITH u AS (
       UPDATE public.bills_not_in_books t
-         SET source_doc_id = a.src, date = x.date, supplier_name = x.supplier_name,
+         SET source_doc_id = x.source_id, adopted_from = public.twob__entry_figures(to_jsonb(t)),
+             date = x.date, supplier_name = x.supplier_name,
              supplier_invoice_number = x.supplier_invoice_number, supplier_gstin = x.supplier_gstin,
              taxable_value = x.taxable_value, input_igst = x.input_igst, input_cgst = x.input_cgst, input_sgst = x.input_sgst,
              updated_by = COALESCE(p_actor_id, t.updated_by), updated_at = now()
-        FROM unnest(v_adopt_src, v_adopt_led, v_adopt_list) AS a(src, led, list)
-        JOIN unnest(v_plan) x ON x.list = 'bills_not_in_books' AND x.op = 'insert' AND x.source_id = a.src
-       WHERE a.list = 'bills_not_in_books' AND t.id = a.led AND t.source_doc_id IS NULL
+        FROM unnest(v_plan) x
+       WHERE x.list = 'bills_not_in_books' AND x.op = 'link' AND t.id = x.ledger_id AND t.source_doc_id IS NULL
       RETURNING t.source_doc_id)
-    SELECT COALESCE(array_agg(u.source_doc_id), '{}') INTO v_adoptedb FROM u;
+    SELECT COALESCE(array_agg(u.source_doc_id), '{}') INTO v_linkedb FROM u;
   END IF;
 
-  -- Add: this month as its reversal (in-2B) month, open, not carried.
-  IF c2_ins > 0 THEN
+  -- Add: this month as its reversal (in-2B) month, open, not carried (and a
+  -- link that found its entry gone meanwhile).
+  IF c2_ins + c2_lnk > 0 THEN
     INSERT INTO public.bills_not_in_2b (
       client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
       taxable_value, input_igst, input_cgst, input_sgst, reversal_month, reclaim_month,
@@ -909,11 +1119,11 @@ BEGIN
            x.taxable_value, x.input_igst, x.input_cgst, x.input_sgst, v_label, NULL,
            false, x.source_id, p_actor_id, now()
       FROM unnest(v_plan) x
-     WHERE x.list = 'bills_not_in_2b' AND x.op = 'insert' AND NOT (x.source_id = ANY (v_adopted2))
+     WHERE x.list = 'bills_not_in_2b' AND (x.op = 'insert' OR (x.op = 'link' AND NOT (x.source_id = ANY (v_linked2))))
      ORDER BY x.date, x.source_id;
     GET DIAGNOSTICS n2_ins = ROW_COUNT;
   END IF;
-  IF cb_ins > 0 THEN
+  IF cb_ins + cb_lnk > 0 THEN
     INSERT INTO public.bills_not_in_books (
       client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
       taxable_value, input_igst, input_cgst, input_sgst, bill_in_2b_month, book_entry_month,
@@ -922,16 +1132,18 @@ BEGIN
            x.taxable_value, x.input_igst, x.input_cgst, x.input_sgst, v_label, NULL,
            false, x.source_id, p_actor_id, now()
       FROM unnest(v_plan) x
-     WHERE x.list = 'bills_not_in_books' AND x.op = 'insert' AND NOT (x.source_id = ANY (v_adoptedb))
+     WHERE x.list = 'bills_not_in_books' AND (x.op = 'insert' OR (x.op = 'link' AND NOT (x.source_id = ANY (v_linkedb))))
      ORDER BY x.date, x.source_id;
     GET DIAGNOSTICS nb_ins = ROW_COUNT;
   END IF;
 
   RETURN jsonb_build_object('dry_run', false,
-    'written', n2_ins + n2_upd + n2_ret + nb_ins + nb_upd + nb_ret
-               + COALESCE(array_length(v_adopted2, 1), 0) + COALESCE(array_length(v_adoptedb, 1), 0),
-    'bills_not_in_2b', jsonb_build_object('add', n2_ins, 'link', COALESCE(array_length(v_adopted2, 1), 0), 'change', n2_upd, 'remove', n2_ret),
-    'bills_not_in_books', jsonb_build_object('add', nb_ins, 'link', COALESCE(array_length(v_adoptedb, 1), 0), 'change', nb_upd, 'remove', nb_ret),
+    'written', n2_ins + n2_upd + n2_ret + n2_unl + nb_ins + nb_upd + nb_ret + nb_unl
+               + COALESCE(array_length(v_linked2, 1), 0) + COALESCE(array_length(v_linkedb, 1), 0),
+    'bills_not_in_2b', jsonb_build_object('add', n2_ins, 'link', COALESCE(array_length(v_linked2, 1), 0), 'change', n2_upd,
+                                          'remove', n2_ret, 'unlink', n2_unl),
+    'bills_not_in_books', jsonb_build_object('add', nb_ins, 'link', COALESCE(array_length(v_linkedb, 1), 0), 'change', nb_upd,
+                                             'remove', nb_ret, 'unlink', nb_unl),
     'skipped', v_skipped, 'refusals', '[]'::jsonb);
 END;
 $$;
@@ -1151,7 +1363,9 @@ $$;
 -- it posted (before the key's ON DELETE SET NULL unlinks it), unless that
 -- entry is filed (locked) or holds a reclaim, Expense out or book entry:
 -- that one stays, unlinked, as Import 2B's delete always left it (the page
--- says so first). The month is marked for a snapshot at the end of the
+-- says so first). An own entry it was linked to instead of adding one
+-- (adopted_from) is put back as it was and unlinked, never removed (round
+-- 2). The month is marked for a snapshot at the end of the
 -- statement. Row level, so kept cheap: no SECURITY DEFINER, one index probe
 -- when nothing was posted.
 CREATE OR REPLACE FUNCTION public.twob__autopost_gone()
@@ -1160,6 +1374,7 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   n integer := 0;
+  v_rows integer := 0;
   v_key text;
   v_marks text;
 BEGIN
@@ -1178,18 +1393,38 @@ BEGIN
     RETURN OLD;
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('twob:' || OLD.client_id::text, 0));
+  -- An own entry it was linked to instead of adding one (adopted_from) is put
+  -- back as it was and unlinked, never removed.
   IF TG_TABLE_NAME = 'books_register' THEN
+    UPDATE public.bills_not_in_2b t
+       SET date = COALESCE(public.twob__try_date(t.adopted_from ->> 'date'), t.date), supplier_name = COALESCE(t.adopted_from ->> 'supplier_name', t.supplier_name),
+           supplier_invoice_number = t.adopted_from ->> 'supplier_invoice_number', supplier_gstin = t.adopted_from ->> 'supplier_gstin',
+           taxable_value = public.twob__try_num(t.adopted_from ->> 'taxable_value'), input_igst = public.twob__try_num(t.adopted_from ->> 'input_igst'),
+           input_cgst = public.twob__try_num(t.adopted_from ->> 'input_cgst'), input_sgst = public.twob__try_num(t.adopted_from ->> 'input_sgst'),
+           source_book_id = NULL, adopted_from = NULL, updated_at = now()
+     WHERE t.source_book_id = OLD.id AND t.adopted_from IS NOT NULL;
+    GET DIAGNOSTICS n = ROW_COUNT;
     DELETE FROM public.bills_not_in_2b t
      WHERE t.source_book_id = OLD.id AND t.client_id = OLD.client_id AND t.period_month = OLD.period_month
        AND NOT COALESCE(t.is_locked, false)
        AND NULLIF(btrim(COALESCE(t.reclaim_month, '')), '') IS NULL AND t.reclaim_subtype IS NULL;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
   ELSE
+    UPDATE public.bills_not_in_books t
+       SET date = COALESCE(public.twob__try_date(t.adopted_from ->> 'date'), t.date), supplier_name = COALESCE(t.adopted_from ->> 'supplier_name', t.supplier_name),
+           supplier_invoice_number = t.adopted_from ->> 'supplier_invoice_number', supplier_gstin = t.adopted_from ->> 'supplier_gstin',
+           taxable_value = public.twob__try_num(t.adopted_from ->> 'taxable_value'), input_igst = public.twob__try_num(t.adopted_from ->> 'input_igst'),
+           input_cgst = public.twob__try_num(t.adopted_from ->> 'input_cgst'), input_sgst = public.twob__try_num(t.adopted_from ->> 'input_sgst'),
+           source_doc_id = NULL, adopted_from = NULL, updated_at = now()
+     WHERE t.source_doc_id = OLD.id AND t.adopted_from IS NOT NULL;
+    GET DIAGNOSTICS n = ROW_COUNT;
     DELETE FROM public.bills_not_in_books t
      WHERE t.source_doc_id = OLD.id AND t.client_id = OLD.client_id AND t.period_month = OLD.period_month
        AND NOT COALESCE(t.is_locked, false)
        AND NULLIF(btrim(COALESCE(t.book_entry_month, '')), '') IS NULL;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
   END IF;
-  GET DIAGNOSTICS n = ROW_COUNT;
+  n := n + v_rows;
   IF n > 0 THEN
     v_key := OLD.client_id::text || '|' || OLD.period_month || ';';
     v_marks := COALESCE(current_setting('twob.autopost_marks', true), '');
@@ -1252,6 +1487,62 @@ CREATE TRIGGER trg_twob_zz_autopost_gone BEFORE DELETE ON public.twob_import_doc
 DROP TRIGGER IF EXISTS trg_twob_zz_autopost_gone_done ON public.twob_import_docs;
 CREATE TRIGGER trg_twob_zz_autopost_gone_done AFTER DELETE ON public.twob_import_docs
   FOR EACH STATEMENT EXECUTE FUNCTION public.twob__autopost_gone_done();
+
+-- A filed month's decision on an open month's carried copy (verification
+-- round 2): a carried entry whose reclaim, Expense out or book entry was
+-- made in a filed month keeps it as filed. The filed month still holds it
+-- (and its reports counted it), so the copy changing it alone would put the
+-- entry back in this month's pending lists, the e-mailed list and the next
+-- carry. Refused for direct writes (Import 2B's Pending items, 2B
+-- Reconciliation); a decision of this month or a later one, and one whose
+-- month is open again (reopened), change as before; this release's own
+-- functions (twob.write 'rpc' / 'system': the door, the carry, Re-run,
+-- Restore) are not checked. A carried entry holding it can still be
+-- removed (the guard of 20261021100000: the next carry copies it back).
+CREATE OR REPLACE FUNCTION public.twob__carried_decision_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_label text;
+  v_key integer;
+  v_verb text;
+BEGIN
+  IF NOT COALESCE(OLD.is_carried_forward, false) OR COALESCE(current_setting('twob.write', true), '') IN ('rpc', 'system') THEN
+    RETURN NEW;
+  END IF;
+  IF TG_TABLE_NAME = 'bills_not_in_2b' THEN
+    IF NULLIF(btrim(COALESCE(NEW.reclaim_month, '')), '') IS NOT DISTINCT FROM NULLIF(btrim(COALESCE(OLD.reclaim_month, '')), '')
+       AND NEW.reclaim_subtype IS NOT DISTINCT FROM OLD.reclaim_subtype THEN
+      RETURN NEW;
+    END IF;
+    v_label := NULLIF(btrim(COALESCE(OLD.reclaim_month, '')), '');
+    v_verb := CASE WHEN OLD.reclaim_subtype = 'EXPENSE_OUT' THEN 'expensed out' ELSE 'reclaimed' END;
+  ELSE
+    IF NULLIF(btrim(COALESCE(NEW.book_entry_month, '')), '') IS NOT DISTINCT FROM NULLIF(btrim(COALESCE(OLD.book_entry_month, '')), '') THEN
+      RETURN NEW;
+    END IF;
+    v_label := NULLIF(btrim(COALESCE(OLD.book_entry_month, '')), '');
+    v_verb := 'booked';
+  END IF;
+  v_key := public.twob_label_key(v_label);
+  IF v_key IS NULL OR v_key >= public.twob_period_key(OLD.period_month)
+     OR NOT public.twob_month_is_prior(OLD.client_id, public.twob_period_of_key(v_key)) THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION '%: % (filed) % this entry. A filed month''s decision stays as filed, and this month''s carried copy keeps it. Nothing was saved.',
+    COALESCE(public.twob__entry_name(to_jsonb(OLD)), 'This entry'), public.twob_month_name(public.twob_period_of_key(v_key)), v_verb
+    USING ERRCODE = 'check_violation';
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_twob_zz_carried_decision ON public.bills_not_in_2b;
+CREATE TRIGGER trg_twob_zz_carried_decision BEFORE UPDATE OF reclaim_month, reclaim_subtype ON public.bills_not_in_2b
+  FOR EACH ROW EXECUTE FUNCTION public.twob__carried_decision_guard();
+DROP TRIGGER IF EXISTS trg_twob_zz_carried_decision ON public.bills_not_in_books;
+CREATE TRIGGER trg_twob_zz_carried_decision BEFORE UPDATE OF book_entry_month ON public.bills_not_in_books
+  FOR EACH ROW EXECUTE FUNCTION public.twob__carried_decision_guard();
 
 -- ---------------------------------------------------------------------------
 -- 7. What the screens call
@@ -1468,67 +1759,69 @@ AS $$
 $$;
 
 -- The Not in 2B write-through of a prior month's books rows (NULL: every
--- books row of the month): 'door', the door's changes: an add (this month as
--- its reversal month, the books row linked), a change of the date, supplier,
--- number, GSTIN and amounts, a removal; each books row with an entry change
--- is named too (a change that changes nothing), so the door does not also
+-- books row of the month), as the open month's (twob__autopost_effective):
+-- 'door', the door's changes: an add (this month as its reversal month, the
+-- books row linked), a change of the date, supplier, number, GSTIN and
+-- amounts, a removal, and an own entry linked instead of added put back to
+-- its figures (only when they moved); each books row with an entry change is
+-- named too (a change that changes nothing), so the door does not also
 -- write the entry's figures back onto it. 'links': an entry to add that the
--- month already holds as its own entry, unlinked (the same document,
--- twob_doc_key: put back by a Restore, or typed on 2B Reconciliation), is
--- linked to its books row instead of added (the door would leave it out as
--- held, and the month would stay out of step for good: SORATH 07/2026),
--- one to one, as the open month's write-through links it. Not in Books
--- entries follow the filed 2B and are never part of it (§13).
+-- month already holds as its own entry, unlinked, the same document with
+-- this month as its reversal month (twob_doc_key: put back by a Restore, or
+-- typed on 2B Reconciliation), linked to its books row instead of added (the
+-- door would leave it out as held, and the month would stay out of step for
+-- good: SORATH 07/2026), one to one; and an entry linked that way whose row
+-- no longer posts, unlinked (never removed). A blank or other reversal month
+-- is a different entry and is never linked. Not in Books entries follow the
+-- filed 2B and are never part of it (§13).
 CREATE OR REPLACE FUNCTION public.twob__prior_derived(p_client_id uuid, p_period text, p_book_ids uuid[])
 RETURNS jsonb
 LANGUAGE sql
 STABLE
 AS $$
   WITH p AS (
-    SELECT * FROM public.twob__autopost_plan_books(p_client_id, p_period, p_book_ids) x WHERE x.op <> 'skip'),
-  ins AS (
-    SELECT p.source_id, public.twob_doc_key(p.supplier_gstin, p.supplier_name, p.supplier_invoice_number, p.date,
-                                            p.taxable_value, p.input_igst, p.input_cgst, p.input_sgst) AS k
-      FROM p WHERE p.op = 'insert'),
-  insn AS (SELECT ins.*, row_number() OVER (PARTITION BY ins.k ORDER BY ins.source_id) AS rn FROM ins),
-  own AS (
-    SELECT t.id, to_jsonb(t) AS j,
-           public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
-                               t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst) AS k
-      FROM public.bills_not_in_2b t
-     WHERE EXISTS (SELECT 1 FROM ins) AND t.client_id = p_client_id AND t.period_month = p_period
-       AND t.source_book_id IS NULL AND NOT COALESCE(t.is_carried_forward, false)),
-  ownn AS (SELECT own.*, row_number() OVER (PARTITION BY own.k ORDER BY own.id) AS rn FROM own WHERE own.k IN (SELECT k FROM ins)),
-  lk AS (SELECT insn.source_id, ownn.id AS ledger_id, ownn.j FROM insn JOIN ownn ON ownn.k = insn.k AND ownn.rn = insn.rn)
+    SELECT x.*, t.j AS cur
+      FROM public.twob__autopost_effective(p_client_id, p_period, p_book_ids, '{}'::uuid[]) x
+      LEFT JOIN LATERAL (SELECT to_jsonb(t) AS j FROM public.bills_not_in_2b t WHERE t.id = x.ledger_id) t ON true
+     WHERE x.op <> 'skip'),
+  d AS (
+    SELECT p.*, CASE p.op
+      WHEN 'insert' THEN jsonb_build_object('table', 'bills_not_in_2b', 'op', 'insert', 'values', jsonb_build_object(
+        'date', p.date, 'supplier_name', p.supplier_name, 'supplier_invoice_number', p.supplier_invoice_number,
+        'supplier_gstin', p.supplier_gstin, 'taxable_value', p.taxable_value, 'input_igst', p.input_igst,
+        'input_cgst', p.input_cgst, 'input_sgst', p.input_sgst, 'reversal_month', public.twob_period_label(p_period),
+        'source_book_id', p.source_id))
+      WHEN 'retract' THEN jsonb_build_object('table', 'bills_not_in_2b', 'op', 'delete', 'id', p.ledger_id)
+      WHEN 'link' THEN NULL
+      ELSE CASE WHEN p.op = 'update' OR public.twob__entry_figures(p.cur) IS DISTINCT FROM public.twob__entry_figures(jsonb_build_object(
+                  'date', p.date, 'supplier_name', p.supplier_name, 'supplier_invoice_number', p.supplier_invoice_number,
+                  'supplier_gstin', p.supplier_gstin, 'taxable_value', p.taxable_value, 'input_igst', p.input_igst,
+                  'input_cgst', p.input_cgst, 'input_sgst', p.input_sgst))
+        THEN jsonb_build_object('table', 'bills_not_in_2b', 'op', 'update', 'id', p.ledger_id, 'values', jsonb_build_object(
+          'date', p.date, 'supplier_name', p.supplier_name, 'supplier_invoice_number', p.supplier_invoice_number,
+          'supplier_gstin', p.supplier_gstin, 'taxable_value', p.taxable_value, 'input_igst', p.input_igst,
+          'input_cgst', p.input_cgst, 'input_sgst', p.input_sgst)) END END AS c
+      FROM p)
   SELECT jsonb_build_object(
     'door', COALESCE((
-      SELECT jsonb_agg(c ORDER BY o) FROM (
-        SELECT 1 AS o, CASE p.op
-          WHEN 'insert' THEN jsonb_build_object('table', 'bills_not_in_2b', 'op', 'insert', 'values', jsonb_build_object(
-            'date', p.date, 'supplier_name', p.supplier_name, 'supplier_invoice_number', p.supplier_invoice_number,
-            'supplier_gstin', p.supplier_gstin, 'taxable_value', p.taxable_value, 'input_igst', p.input_igst,
-            'input_cgst', p.input_cgst, 'input_sgst', p.input_sgst, 'reversal_month', public.twob_period_label(p_period),
-            'source_book_id', p.source_id))
-          WHEN 'update' THEN jsonb_build_object('table', 'bills_not_in_2b', 'op', 'update', 'id', p.ledger_id, 'values', jsonb_build_object(
-            'date', p.date, 'supplier_name', p.supplier_name, 'supplier_invoice_number', p.supplier_invoice_number,
-            'supplier_gstin', p.supplier_gstin, 'taxable_value', p.taxable_value, 'input_igst', p.input_igst,
-            'input_cgst', p.input_cgst, 'input_sgst', p.input_sgst))
-          ELSE jsonb_build_object('table', 'bills_not_in_2b', 'op', 'delete', 'id', p.ledger_id) END AS c
-          FROM p WHERE NOT (p.op = 'insert' AND p.source_id IN (SELECT lk.source_id FROM lk))
+      SELECT jsonb_agg(z.c ORDER BY z.o) FROM (
+        SELECT 1 AS o, d.c FROM d WHERE d.c IS NOT NULL
         UNION ALL
         SELECT 2, jsonb_build_object('table', 'books_register', 'op', 'update', 'id', s.source_id, 'values', '{}'::jsonb)
-          FROM (SELECT DISTINCT p.source_id FROM p
-                 WHERE NOT (p.op = 'insert' AND p.source_id IN (SELECT lk.source_id FROM lk))
-                   AND EXISTS (SELECT 1 FROM public.books_register b WHERE b.id = p.source_id)) s) z), '[]'::jsonb),
+          FROM (SELECT DISTINCT d.source_id FROM d
+                 WHERE d.c IS NOT NULL AND EXISTS (SELECT 1 FROM public.books_register b WHERE b.id = d.source_id)) s) z), '[]'::jsonb),
     'links', COALESCE((
-      SELECT jsonb_agg(jsonb_build_object('id', lk.ledger_id, 'source_book_id', lk.source_id,
-                                          'entry', public.twob__entry_name(lk.j)) ORDER BY lk.ledger_id)
-        FROM lk), '[]'::jsonb));
+      SELECT jsonb_agg(jsonb_build_object('id', d.ledger_id, 'source_book_id', CASE WHEN d.op = 'link' THEN d.source_id END,
+                                          'action', d.op, 'entry', public.twob__entry_name(d.cur)) ORDER BY d.ledger_id)
+        FROM d WHERE d.op IN ('link', 'unlink')), '[]'::jsonb));
 $$;
 
 -- The links of twob__prior_derived written (the door does not change a link,
--- and a link moves no figure: the entry is already the same document), and
--- the preview's changes for them, numbered after p_from.
+-- and a link moves no figure: the entry is already the same document; an
+-- unlink comes after the door put its figures back), and the preview's
+-- changes for them, numbered after p_from. action 'link': the entry takes
+-- the books row (what it held kept in adopted_from); 'unlink': the entry
+-- goes back to the month's own.
 CREATE OR REPLACE FUNCTION public.twob__prior_links(p_client_id uuid, p_period text, p_links jsonb, p_from integer, p_apply boolean, p_actor_id uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -1539,19 +1832,29 @@ DECLARE
   i integer := 0;
   v_out jsonb := '[]'::jsonb;
   n integer;
+  v_unlink boolean;
 BEGIN
   FOR l IN SELECT value FROM jsonb_array_elements(COALESCE(p_links, '[]'::jsonb)) LOOP
+    v_unlink := l ->> 'action' = 'unlink';
     IF p_apply THEN
       PERFORM set_config('twob.write', 'rpc', true);
-      UPDATE public.bills_not_in_2b t SET source_book_id = (l ->> 'source_book_id')::uuid, updated_by = COALESCE(p_actor_id, t.updated_by), updated_at = now()
-       WHERE t.id = (l ->> 'id')::uuid AND t.client_id = p_client_id AND t.period_month = p_period AND t.source_book_id IS NULL;
+      IF v_unlink THEN
+        UPDATE public.bills_not_in_2b t SET source_book_id = NULL, adopted_from = NULL,
+               updated_by = COALESCE(p_actor_id, t.updated_by), updated_at = now()
+         WHERE t.id = (l ->> 'id')::uuid AND t.client_id = p_client_id AND t.period_month = p_period AND t.adopted_from IS NOT NULL;
+      ELSE
+        UPDATE public.bills_not_in_2b t SET source_book_id = (l ->> 'source_book_id')::uuid, adopted_from = public.twob__entry_figures(to_jsonb(t)),
+               updated_by = COALESCE(p_actor_id, t.updated_by), updated_at = now()
+         WHERE t.id = (l ->> 'id')::uuid AND t.client_id = p_client_id AND t.period_month = p_period AND t.source_book_id IS NULL;
+      END IF;
       GET DIAGNOSTICS n = ROW_COUNT;
       PERFORM set_config('twob.write', COALESCE(v_prev, ''), true);
       CONTINUE WHEN n = 0;
     END IF;
     v_out := v_out || jsonb_build_array(jsonb_build_object(
       'index', p_from + i, 'table', 'bills_not_in_2b', 'op', 'update', 'entry', l ->> 'entry', 'id', l ->> 'id',
-      'this', jsonb_build_object('action', 'link', 'id', l ->> 'id'), 'later', '[]'::jsonb, 'derived', true));
+      'this', jsonb_build_object('action', CASE WHEN v_unlink THEN 'unlink' ELSE 'link' END, 'id', l ->> 'id'),
+      'later', '[]'::jsonb, 'derived', true));
     i := i + 1;
   END LOOP;
   RETURN v_out;
@@ -1584,6 +1887,7 @@ DECLARE
   c jsonb;
   v_out jsonb;
   v_links jsonb;
+  v_unlinks jsonb := '[]'::jsonb;
   v_wrote boolean := false;
   v_num integer;
 BEGIN
@@ -1608,13 +1912,24 @@ BEGIN
 
   -- The books rows; a removed one takes the Not in 2B entry it posted, and
   -- that entry's later copies, with it (named before the row, as Import 2B
-  -- always sent them).
+  -- always sent them). An own entry it was linked to instead of adding one
+  -- (adopted_from) is put back to its figures (when they moved) and
+  -- unlinked after the door, never removed.
   FOR c IN SELECT value FROM jsonb_array_elements(p_changes) LOOP
     IF c ->> 'op' = 'delete' AND NULLIF(c ->> 'id', '') IS NOT NULL THEN
       v_phase1 := v_phase1 || COALESCE((
-        SELECT jsonb_agg(jsonb_build_object('table', 'bills_not_in_2b', 'op', 'delete', 'id', t.id) ORDER BY t.id)
+        SELECT jsonb_agg(CASE WHEN t.adopted_from IS NULL
+                              THEN jsonb_build_object('table', 'bills_not_in_2b', 'op', 'delete', 'id', t.id)
+                              ELSE jsonb_build_object('table', 'bills_not_in_2b', 'op', 'update', 'id', t.id, 'values', t.adopted_from) END
+                         ORDER BY t.id)
           FROM public.bills_not_in_2b t
-         WHERE t.source_book_id = (c ->> 'id')::uuid AND t.client_id = p_client_id AND t.period_month = p_period), '[]'::jsonb);
+         WHERE t.source_book_id = (c ->> 'id')::uuid AND t.client_id = p_client_id AND t.period_month = p_period
+           AND (t.adopted_from IS NULL OR public.twob__entry_figures(to_jsonb(t)) IS DISTINCT FROM public.twob__entry_figures(t.adopted_from))), '[]'::jsonb);
+      v_unlinks := v_unlinks || COALESCE((
+        SELECT jsonb_agg(jsonb_build_object('id', t.id, 'action', 'unlink', 'entry', public.twob__entry_name(to_jsonb(t))) ORDER BY t.id)
+          FROM public.bills_not_in_2b t
+         WHERE t.source_book_id = (c ->> 'id')::uuid AND t.client_id = p_client_id AND t.period_month = p_period
+           AND t.adopted_from IS NOT NULL), '[]'::jsonb);
     END IF;
     v_phase1 := v_phase1 || jsonb_build_array(c);
   END LOOP;
@@ -1643,7 +1958,8 @@ BEGIN
     END;
     v_out := public.twob__door_merge(r1, r2, true, p_period);
     RETURN v_out || jsonb_build_object('changes', (v_out -> 'changes')
-      || public.twob__prior_links(p_client_id, p_period, v_derived -> 'links', jsonb_array_length(v_out -> 'changes'), false, p_actor_id));
+      || public.twob__prior_links(p_client_id, p_period, v_unlinks || COALESCE(v_derived -> 'links', '[]'::jsonb),
+                                  jsonb_array_length(v_out -> 'changes'), false, p_actor_id));
   END IF;
 
   IF jsonb_array_length(v_phase1) > 0 THEN
@@ -1661,7 +1977,8 @@ BEGIN
                                    WHERE ch ->> 'table' <> 'books_register' AND ch -> 'this' ->> 'action' IN ('add', 'change', 'remove'));
   END IF;
   v_out := public.twob__door_merge(r1, r2, false, p_period);
-  v_links := public.twob__prior_links(p_client_id, p_period, v_derived -> 'links', jsonb_array_length(v_out -> 'changes'), true, p_actor_id);
+  v_links := public.twob__prior_links(p_client_id, p_period, v_unlinks || COALESCE(v_derived -> 'links', '[]'::jsonb),
+                                     jsonb_array_length(v_out -> 'changes'), true, p_actor_id);
   v_wrote := v_wrote OR jsonb_array_length(v_links) > 0;
   v_out := v_out || jsonb_build_object('changes', (v_out -> 'changes') || v_links);
   IF v_wrote THEN
@@ -1674,7 +1991,8 @@ $$;
 
 -- Import 2B's Delete 2B, in one call: the reclaims the month's documents
 -- evidence go back to Awaiting reclaim, the Not in Books entries they posted
--- leave the ledger (a filed, locked one stays, and its document with it, so
+-- leave the ledger (an own entry a document was linked to instead goes back
+-- to what it held and stays; a filed, locked one stays, and its document with it, so
 -- a re-import merges into it), then the documents go. Open months only;
 -- staff who may delete 2B rows.
 CREATE OR REPLACE FUNCTION public.twob_import2b_delete_2b(p_actor_id uuid, p_client_id uuid, p_period text)
@@ -1688,6 +2006,7 @@ DECLARE
   n_rel integer := 0;
   n_nib integer := 0;
   n_docs integer := 0;
+  n_unl integer := 0;
   v_kept integer := 0;
 BEGIN
   IF p_client_id IS NULL OR public.twob_period_key(p_period) IS NULL THEN
@@ -1709,9 +2028,21 @@ BEGIN
      SET reclaim_month = NULL, reclaim_subtype = NULL, reclaimed_via_doc_id = NULL, updated_by = p_actor_id, updated_at = now()
    WHERE t.reclaimed_via_doc_id = ANY (v_ids);
   GET DIAGNOSTICS n_rel = ROW_COUNT;
+  -- An own entry a document was linked to instead of adding one goes back
+  -- to what it held, unlinked, and stays (round 2).
+  UPDATE public.bills_not_in_books t
+     SET date = COALESCE(public.twob__try_date(t.adopted_from ->> 'date'), t.date),
+         supplier_name = COALESCE(t.adopted_from ->> 'supplier_name', t.supplier_name),
+         supplier_invoice_number = t.adopted_from ->> 'supplier_invoice_number', supplier_gstin = t.adopted_from ->> 'supplier_gstin',
+         taxable_value = public.twob__try_num(t.adopted_from ->> 'taxable_value'), input_igst = public.twob__try_num(t.adopted_from ->> 'input_igst'),
+         input_cgst = public.twob__try_num(t.adopted_from ->> 'input_cgst'), input_sgst = public.twob__try_num(t.adopted_from ->> 'input_sgst'),
+         source_doc_id = NULL, adopted_from = NULL, updated_by = p_actor_id, updated_at = now()
+   WHERE t.source_doc_id = ANY (v_ids) AND t.adopted_from IS NOT NULL;
+  GET DIAGNOSTICS n_unl = ROW_COUNT;
   DELETE FROM public.bills_not_in_books t
    WHERE t.source_doc_id = ANY (v_ids) AND NOT COALESCE(t.is_locked, false) AND NOT COALESCE(t.is_carried_forward, false);
   GET DIAGNOSTICS n_nib = ROW_COUNT;
+  n_nib := n_nib + n_unl;
   DELETE FROM public.twob_import_docs d
    WHERE d.id = ANY (v_ids)
      AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_books t WHERE t.source_doc_id = d.id);
@@ -1761,12 +2092,16 @@ BEGIN
   IF COALESCE(array_length(v_open, 1), 0) > 0 THEN
     PERFORM public.twob__lock_month_rows(p_client_id, v_open, false);
     -- A carried entry's own decision is undone first: the guard refuses to
-    -- delete a carried entry holding one (clearing the year is meant).
-    UPDATE public.bills_not_in_2b SET reclaim_month = NULL, reclaim_subtype = NULL, reclaimed_via_doc_id = NULL
-     WHERE client_id = p_client_id AND period_month = ANY (v_open) AND is_carried_forward
-       AND (reclaim_month IS NOT NULL OR reclaim_subtype IS NOT NULL);
-    UPDATE public.bills_not_in_books SET book_entry_month = NULL
-     WHERE client_id = p_client_id AND period_month = ANY (v_open) AND is_carried_forward AND book_entry_month IS NOT NULL;
+    -- delete a carried entry holding one (clearing the year is meant). One
+    -- carried in from a filed month stays as filed until the row goes
+    -- (twob__carried_decision_guard; the guard lets such a row be removed).
+    UPDATE public.bills_not_in_2b t SET reclaim_month = NULL, reclaim_subtype = NULL, reclaimed_via_doc_id = NULL
+     WHERE t.client_id = p_client_id AND t.period_month = ANY (v_open) AND t.is_carried_forward
+       AND (t.reclaim_month IS NOT NULL OR t.reclaim_subtype IS NOT NULL)
+       AND public.twob__decision_is_own('bills_not_in_2b', to_jsonb(t));
+    UPDATE public.bills_not_in_books t SET book_entry_month = NULL
+     WHERE t.client_id = p_client_id AND t.period_month = ANY (v_open) AND t.is_carried_forward AND t.book_entry_month IS NOT NULL
+       AND public.twob__decision_is_own('bills_not_in_books', to_jsonb(t));
     DELETE FROM public.bills_not_in_2b WHERE client_id = p_client_id AND period_month = ANY (v_open);
     GET DIAGNOSTICS n1 = ROW_COUNT;
     DELETE FROM public.bills_not_in_books WHERE client_id = p_client_id AND period_month = ANY (v_open);
@@ -1822,6 +2157,373 @@ BEGIN
 END;
 $$;
 
+-- 2B Reconciliation's Restore, as 20261021100000's twob_restore_version (the
+-- superadmin, open months only), now putting each entry back as it was
+-- (verification round 2). Its own name, so applying either file again, in
+-- either order, never puts back the other's: this release's app calls this
+-- one; twob_restore_version stays for an app of before. An entry Import 2B
+-- posted takes back its link to
+-- the books row or 2B document that posted it, so the next save of that row
+-- changes it instead of adding a second one beside it (a second reversal in
+-- 4B(2)(i)). The link is the version's (source_book_id / source_doc_id, in
+-- versions written from this release), or, for a version written before
+-- (Post's or a 2B Reconciliation Save, which named only the entry's id), the
+-- link the month's entry of that id holds now; kept only while that row is
+-- still in this client's month, once per row; failing both, by the document
+-- itself (below). Its adopted_from goes with it,
+-- the 2B document a reclaim names (reclaimed_via_doc_id) while it is still
+-- in the month, and an entry keeps its id when no row holds it. Everything
+-- else as before: the month's carried entries are never touched, the
+-- version's carried rows are left out, and so is a version's own entry the
+-- month now holds as a carried entry (named in left_out).
+CREATE OR REPLACE FUNCTION public.twob_restore_version_linked(
+  p_actor_id uuid, p_client_id uuid, p_period text, p_bills_2b jsonb, p_bills_books jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_prev text := current_setting('twob.write', true);
+  v_key integer := public.twob_period_key(p_period);
+  v_latest text;
+  v_bad text;
+  n2b integer := 0;
+  nbk integer := 0;
+  c2b integer := 0;
+  cbk integer := 0;
+  v_skip_2b bigint[];
+  v_skip_books bigint[];
+  v_left jsonb;
+  v_cur2b jsonb;
+  v_curbk jsonb;
+  v_linked integer := 0;
+BEGIN
+  IF p_actor_id IS NULL OR COALESCE(public.staff_level_of(p_actor_id), '') <> 'superadmin' THEN
+    RAISE EXCEPTION 'Only the superadmin can restore a version.';
+  END IF;
+  IF p_client_id IS NULL OR v_key IS NULL THEN
+    RAISE EXCEPTION 'Choose a client and a month.';
+  END IF;
+  IF public.twob_month_is_prior(p_client_id, p_period) THEN
+    RAISE EXCEPTION 'This month is filed. Its 2B documents and the reversal, reclaim and book entry months cannot change. Restore works on open months only.';
+  END IF;
+  p_bills_2b := COALESCE(p_bills_2b, '[]'::jsonb);
+  p_bills_books := COALESCE(p_bills_books, '[]'::jsonb);
+  IF jsonb_typeof(p_bills_2b) <> 'array' OR jsonb_typeof(p_bills_books) <> 'array' THEN
+    RAISE EXCEPTION 'This version cannot be read. Nothing was restored.';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('twob:' || p_client_id::text, 0));
+  SELECT public.twob_period_of_key(max(k)) INTO v_latest
+    FROM (SELECT public.twob_period_key(t.period_month) AS k FROM public.bills_not_in_2b t WHERE t.client_id = p_client_id
+          UNION ALL
+          SELECT public.twob_period_key(t.period_month) FROM public.bills_not_in_books t WHERE t.client_id = p_client_id) x
+   WHERE x.k > v_key;
+  IF v_latest IS NOT NULL THEN
+    RAISE EXCEPTION 'Restore works only on the latest month that holds entries (%). Restoring % would not reach the entries % holds.',
+      public.twob_month_name(v_latest), public.twob_month_name(p_period), public.twob_month_name(v_latest);
+  END IF;
+  SELECT CASE WHEN public.twob__try_date(x ->> 'date') IS NULL THEN 'An entry of this version has no date or a date that is not one.'
+              WHEN NULLIF(btrim(COALESCE(x ->> 'supplier_name', '')), '') IS NULL THEN 'An entry of this version has no supplier name.'
+              ELSE format('%s is not an amount.', COALESCE(
+                CASE WHEN NULLIF(btrim(COALESCE(x ->> 'taxable_value', '')), '') IS NOT NULL AND public.twob__try_num(x ->> 'taxable_value') IS NULL THEN x ->> 'taxable_value' END,
+                CASE WHEN NULLIF(btrim(COALESCE(x ->> 'input_igst', '')), '') IS NOT NULL AND public.twob__try_num(x ->> 'input_igst') IS NULL THEN x ->> 'input_igst' END,
+                CASE WHEN NULLIF(btrim(COALESCE(x ->> 'input_cgst', '')), '') IS NOT NULL AND public.twob__try_num(x ->> 'input_cgst') IS NULL THEN x ->> 'input_cgst' END,
+                CASE WHEN NULLIF(btrim(COALESCE(x ->> 'input_sgst', '')), '') IS NOT NULL AND public.twob__try_num(x ->> 'input_sgst') IS NULL THEN x ->> 'input_sgst' END)) END
+    INTO v_bad
+    FROM (SELECT x FROM jsonb_array_elements(p_bills_2b) x UNION ALL SELECT x FROM jsonb_array_elements(p_bills_books) x) e(x)
+   WHERE jsonb_typeof(x) <> 'object'
+      OR public.twob__try_date(x ->> 'date') IS NULL
+      OR NULLIF(btrim(COALESCE(x ->> 'supplier_name', '')), '') IS NULL
+      OR EXISTS (SELECT 1 FROM unnest(ARRAY['taxable_value', 'input_igst', 'input_cgst', 'input_sgst']) a
+                  WHERE NULLIF(btrim(COALESCE(x ->> a, '')), '') IS NOT NULL AND public.twob__try_num(x ->> a) IS NULL)
+   LIMIT 1;
+  IF v_bad IS NOT NULL THEN
+    RAISE EXCEPTION '% Nothing was restored.', v_bad;
+  END IF;
+  IF EXISTS (SELECT 1 FROM (SELECT x FROM jsonb_array_elements(p_bills_2b) x UNION ALL SELECT x FROM jsonb_array_elements(p_bills_books) x) e(x)
+              WHERE lower(COALESCE(x ->> 'is_carried_forward', '')) NOT IN ('true', 't', '1', 'false', 'f', '0')) THEN
+    RAISE EXCEPTION 'This version does not say which of its entries were carried, so it cannot be restored. Nothing was restored.';
+  END IF;
+  PERFORM set_config('twob.write', 'system', true);
+  SELECT count(*) FILTER (WHERE x.l = 2), count(*) FILTER (WHERE x.l = 1) INTO c2b, cbk
+    FROM (SELECT 2 AS l FROM public.bills_not_in_2b t WHERE t.client_id = p_client_id AND t.period_month = p_period AND t.is_carried_forward
+          UNION ALL
+          SELECT 1 FROM public.bills_not_in_books t WHERE t.client_id = p_client_id AND t.period_month = p_period AND t.is_carried_forward) x;
+  -- The version's own entries the month now holds as carried entries (an
+  -- entry typed here, later moved to the filed month it belongs to, whose
+  -- correction carried it back in) are left out and named: restored, the
+  -- month would hold it twice. One to one: as many as the month's carried
+  -- rows of that document exceed the version's.
+  WITH v AS (
+    SELECT 2 AS l, e.o, e.x, lower(COALESCE(e.x ->> 'is_carried_forward', '')) IN ('true', 't', '1') AS carried,
+           public.twob_doc_key(e.x ->> 'supplier_gstin', e.x ->> 'supplier_name', e.x ->> 'supplier_invoice_number',
+             public.twob__try_date(e.x ->> 'date'), public.twob__try_num(e.x ->> 'taxable_value'), public.twob__try_num(e.x ->> 'input_igst'),
+             public.twob__try_num(e.x ->> 'input_cgst'), public.twob__try_num(e.x ->> 'input_sgst')) AS doc
+      FROM jsonb_array_elements(p_bills_2b) WITH ORDINALITY e(x, o)
+    UNION ALL
+    SELECT 1, e.o, e.x, lower(COALESCE(e.x ->> 'is_carried_forward', '')) IN ('true', 't', '1'),
+           public.twob_doc_key(e.x ->> 'supplier_gstin', e.x ->> 'supplier_name', e.x ->> 'supplier_invoice_number',
+             public.twob__try_date(e.x ->> 'date'), public.twob__try_num(e.x ->> 'taxable_value'), public.twob__try_num(e.x ->> 'input_igst'),
+             public.twob__try_num(e.x ->> 'input_cgst'), public.twob__try_num(e.x ->> 'input_sgst'))
+      FROM jsonb_array_elements(p_bills_books) WITH ORDINALITY e(x, o)),
+  cur AS (
+    SELECT 2 AS l, public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
+                                        t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst) AS doc, count(*) AS n
+      FROM public.bills_not_in_2b t WHERE t.client_id = p_client_id AND t.period_month = p_period AND t.is_carried_forward GROUP BY 2
+    UNION ALL
+    SELECT 1, public.twob_doc_key(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date,
+                                   t.taxable_value, t.input_igst, t.input_cgst, t.input_sgst), count(*)
+      FROM public.bills_not_in_books t WHERE t.client_id = p_client_id AND t.period_month = p_period AND t.is_carried_forward GROUP BY 2),
+  vc AS (SELECT v.l, v.doc, count(*) AS n FROM v WHERE v.carried GROUP BY 1, 2),
+  own AS (SELECT v.*, row_number() OVER (PARTITION BY v.l, v.doc ORDER BY v.o) AS rn FROM v WHERE NOT v.carried),
+  sk AS (
+    SELECT own.* FROM own
+      JOIN cur ON cur.l = own.l AND cur.doc = own.doc
+      LEFT JOIN vc ON vc.l = own.l AND vc.doc = own.doc
+     WHERE own.rn <= cur.n - COALESCE(vc.n, 0))
+  SELECT COALESCE(array_agg(sk.o) FILTER (WHERE sk.l = 2), '{}'), COALESCE(array_agg(sk.o) FILTER (WHERE sk.l = 1), '{}'),
+         COALESCE(jsonb_agg(public.twob__entry_json(jsonb_build_object('period_month', p_period, 'date', sk.x ->> 'date',
+             'supplier_name', sk.x ->> 'supplier_name', 'supplier_invoice_number', sk.x ->> 'supplier_invoice_number',
+             'input_igst', public.twob__try_num(sk.x ->> 'input_igst'), 'input_cgst', public.twob__try_num(sk.x ->> 'input_cgst'),
+             'input_sgst', public.twob__try_num(sk.x ->> 'input_sgst')),
+           format('%s holds it as a carried entry now, so the version''s own entry is left out', public.twob_month_name(p_period)))
+           ORDER BY sk.l DESC, sk.o), '[]'::jsonb)
+    INTO v_skip_2b, v_skip_books, v_left
+    FROM sk;
+  -- The month's own entries as they stand, by id, before they go: a version
+  -- that names no link takes back the link its entry of the same id holds.
+  SELECT COALESCE(jsonb_object_agg(t.id::text, jsonb_build_object('src', t.source_book_id, 'af', t.adopted_from,
+                                                                  'via', t.reclaimed_via_doc_id)), '{}'::jsonb)
+    INTO v_cur2b FROM public.bills_not_in_2b t
+   WHERE t.client_id = p_client_id AND t.period_month = p_period AND NOT COALESCE(t.is_carried_forward, false);
+  SELECT COALESCE(jsonb_object_agg(t.id::text, jsonb_build_object('src', t.source_doc_id, 'af', t.adopted_from)), '{}'::jsonb)
+    INTO v_curbk FROM public.bills_not_in_books t
+   WHERE t.client_id = p_client_id AND t.period_month = p_period AND NOT COALESCE(t.is_carried_forward, false);
+  DELETE FROM public.bills_not_in_2b WHERE client_id = p_client_id AND period_month = p_period AND NOT COALESCE(is_carried_forward, false);
+  DELETE FROM public.bills_not_in_books WHERE client_id = p_client_id AND period_month = p_period AND NOT COALESCE(is_carried_forward, false);
+  WITH e AS (
+    SELECT x.x, x.o, public.twob__try_uuid(x.x ->> 'id') AS vid,
+           COALESCE(public.twob__try_uuid(x.x ->> 'source_book_id'),
+                    public.twob__try_uuid(v_cur2b -> (x.x ->> 'id') ->> 'src')) AS src,
+           CASE WHEN public.twob__try_uuid(x.x ->> 'source_book_id') IS NOT NULL
+                THEN CASE jsonb_typeof(x.x -> 'adopted_from') WHEN 'object' THEN x.x -> 'adopted_from' END
+                ELSE CASE jsonb_typeof(v_cur2b -> (x.x ->> 'id') -> 'af') WHEN 'object' THEN v_cur2b -> (x.x ->> 'id') -> 'af' END END AS af,
+           COALESCE(public.twob__try_uuid(x.x ->> 'reclaimed_via_doc_id'),
+                    public.twob__try_uuid(v_cur2b -> (x.x ->> 'id') ->> 'via')) AS via
+      FROM jsonb_array_elements(p_bills_2b) WITH ORDINALITY x(x, o)
+     WHERE lower(x.x ->> 'is_carried_forward') IN ('false', 'f', '0') AND NOT (x.o = ANY (v_skip_2b))),
+  k AS (
+    SELECT e.*,
+           row_number() OVER (PARTITION BY e.vid ORDER BY e.o) AS vid_rn,
+           row_number() OVER (PARTITION BY e.src ORDER BY e.o) AS src_rn,
+           EXISTS (SELECT 1 FROM public.books_register b WHERE b.id = e.src AND b.client_id = p_client_id AND b.period_month = p_period)
+             AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.source_book_id = e.src) AS src_ok
+      FROM e),
+  ins AS (
+    INSERT INTO public.bills_not_in_2b (
+      id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
+      taxable_value, input_igst, input_cgst, input_sgst, reversal_month, reclaim_month, reclaim_subtype, reclaimed_via_doc_id,
+      is_carried_forward, source_book_id, adopted_from, updated_by, updated_at)
+    SELECT CASE WHEN k.vid IS NOT NULL AND k.vid_rn = 1 AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.id = k.vid)
+                THEN k.vid ELSE gen_random_uuid() END,
+           p_client_id, p_period, public.twob__try_date(k.x ->> 'date'), k.x ->> 'supplier_name',
+           NULLIF(k.x ->> 'supplier_invoice_number', ''), NULLIF(k.x ->> 'supplier_gstin', ''),
+           COALESCE(public.twob__try_num(k.x ->> 'taxable_value'), 0), COALESCE(public.twob__try_num(k.x ->> 'input_igst'), 0),
+           COALESCE(public.twob__try_num(k.x ->> 'input_cgst'), 0), COALESCE(public.twob__try_num(k.x ->> 'input_sgst'), 0),
+           NULLIF(btrim(COALESCE(k.x ->> 'reversal_month', '')), ''), NULLIF(btrim(COALESCE(k.x ->> 'reclaim_month', '')), ''),
+           NULLIF(btrim(COALESCE(k.x ->> 'reclaim_subtype', '')), ''),
+           CASE WHEN NULLIF(btrim(COALESCE(k.x ->> 'reclaim_month', '')), '') IS NOT NULL
+                 AND EXISTS (SELECT 1 FROM public.twob_import_docs d WHERE d.id = k.via AND d.client_id = p_client_id AND d.period_month = p_period)
+                THEN k.via END,
+           false,
+           CASE WHEN k.src_ok AND k.src_rn = 1 THEN k.src END,
+           CASE WHEN k.src_ok AND k.src_rn = 1 THEN k.af END,
+           p_actor_id, now()
+      FROM k
+     ORDER BY k.o
+    RETURNING source_book_id)
+  SELECT count(*), count(*) FILTER (WHERE ins.source_book_id IS NOT NULL) INTO n2b, v_linked FROM ins;
+  WITH e AS (
+    SELECT x.x, x.o, public.twob__try_uuid(x.x ->> 'id') AS vid,
+           COALESCE(public.twob__try_uuid(x.x ->> 'source_doc_id'),
+                    public.twob__try_uuid(v_curbk -> (x.x ->> 'id') ->> 'src')) AS src,
+           CASE WHEN public.twob__try_uuid(x.x ->> 'source_doc_id') IS NOT NULL
+                THEN CASE jsonb_typeof(x.x -> 'adopted_from') WHEN 'object' THEN x.x -> 'adopted_from' END
+                ELSE CASE jsonb_typeof(v_curbk -> (x.x ->> 'id') -> 'af') WHEN 'object' THEN v_curbk -> (x.x ->> 'id') -> 'af' END END AS af
+      FROM jsonb_array_elements(p_bills_books) WITH ORDINALITY x(x, o)
+     WHERE lower(x.x ->> 'is_carried_forward') IN ('false', 'f', '0') AND NOT (x.o = ANY (v_skip_books))),
+  k AS (
+    SELECT e.*,
+           row_number() OVER (PARTITION BY e.vid ORDER BY e.o) AS vid_rn,
+           row_number() OVER (PARTITION BY e.src ORDER BY e.o) AS src_rn,
+           EXISTS (SELECT 1 FROM public.twob_import_docs d WHERE d.id = e.src AND d.client_id = p_client_id AND d.period_month = p_period)
+             AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_books z WHERE z.source_doc_id = e.src) AS src_ok
+      FROM e),
+  ins AS (
+    INSERT INTO public.bills_not_in_books (
+      id, client_id, period_month, date, supplier_name, supplier_invoice_number, supplier_gstin,
+      taxable_value, input_igst, input_cgst, input_sgst, book_entry_month, bill_in_2b_month,
+      is_carried_forward, source_doc_id, adopted_from, updated_by, updated_at)
+    SELECT CASE WHEN k.vid IS NOT NULL AND k.vid_rn = 1 AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_books z WHERE z.id = k.vid)
+                THEN k.vid ELSE gen_random_uuid() END,
+           p_client_id, p_period, public.twob__try_date(k.x ->> 'date'), k.x ->> 'supplier_name',
+           NULLIF(k.x ->> 'supplier_invoice_number', ''), NULLIF(k.x ->> 'supplier_gstin', ''),
+           COALESCE(public.twob__try_num(k.x ->> 'taxable_value'), 0), COALESCE(public.twob__try_num(k.x ->> 'input_igst'), 0),
+           COALESCE(public.twob__try_num(k.x ->> 'input_cgst'), 0), COALESCE(public.twob__try_num(k.x ->> 'input_sgst'), 0),
+           NULLIF(btrim(COALESCE(k.x ->> 'book_entry_month', '')), ''), NULLIF(btrim(COALESCE(k.x ->> 'bill_in_2b_month', '')), ''),
+           false,
+           CASE WHEN k.src_ok AND k.src_rn = 1 THEN k.src END,
+           CASE WHEN k.src_ok AND k.src_rn = 1 THEN k.af END,
+           p_actor_id, now()
+      FROM k
+     ORDER BY k.o
+    RETURNING source_doc_id)
+  SELECT count(*), v_linked + count(*) FILTER (WHERE ins.source_doc_id IS NOT NULL) INTO nbk, v_linked FROM ins;
+  -- An entry still without a link (its version named none, and its entry of
+  -- that id has since been replaced: a Clear Data, an earlier Restore) whose
+  -- reversal (in-2B) month is this month, as an entry Post adds carries, is
+  -- linked by the document it is (GSTIN or supplier, number and date; its
+  -- amounts may differ: a version of before an edit) to a books row (2B
+  -- document) of this month that posts and holds no entry, one to one.
+  -- Linked as an own entry (adopted_from: as restored): the next save of
+  -- that row changes it instead of adding a second one, and if the row stops
+  -- posting it goes back to what was restored and stays.
+  WITH e AS (
+    SELECT t.id, row_number() OVER (PARTITION BY x.k ORDER BY t.id) AS rn, x.k
+      FROM public.bills_not_in_2b t
+      CROSS JOIN LATERAL (SELECT public.twob_doc_ident(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date) AS k) x
+     WHERE t.client_id = p_client_id AND t.period_month = p_period AND NOT COALESCE(t.is_carried_forward, false)
+       AND t.source_book_id IS NULL AND public.twob_label_key(t.reversal_month) = v_key),
+  b AS (
+    SELECT b.id, row_number() OVER (PARTITION BY x.k ORDER BY b.id) AS rn, x.k
+      FROM public.books_register b
+      CROSS JOIN LATERAL (SELECT public.twob_doc_ident(b.supplier_gstin, b.supplier_name, b.supplier_invoice_number, b.date) AS k) x
+     WHERE b.client_id = p_client_id AND b.period_month = p_period AND b.book_treatment = 'NOT_IN_2B'
+       AND COALESCE(b.doc_type, 'INVOICE') <> 'DEBIT_NOTE' AND b.date IS NOT NULL
+       AND COALESCE(b.taxable_value, 0) >= 0 AND COALESCE(b.input_igst, 0) >= 0
+       AND COALESCE(b.input_cgst, 0) >= 0 AND COALESCE(b.input_sgst, 0) >= 0
+       AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_2b z WHERE z.source_book_id = b.id)),
+  u AS (
+    UPDATE public.bills_not_in_2b t SET source_book_id = b.id, adopted_from = public.twob__entry_figures(to_jsonb(t))
+      FROM e JOIN b ON b.k = e.k AND b.rn = e.rn
+     WHERE t.id = e.id
+    RETURNING 1)
+  SELECT v_linked + count(*) INTO v_linked FROM u;
+  WITH e AS (
+    SELECT t.id, row_number() OVER (PARTITION BY x.k ORDER BY t.id) AS rn, x.k
+      FROM public.bills_not_in_books t
+      CROSS JOIN LATERAL (SELECT public.twob_doc_ident(t.supplier_gstin, t.supplier_name, t.supplier_invoice_number, t.date) AS k) x
+     WHERE t.client_id = p_client_id AND t.period_month = p_period AND NOT COALESCE(t.is_carried_forward, false)
+       AND t.source_doc_id IS NULL AND public.twob_label_key(t.bill_in_2b_month) = v_key),
+  d AS (
+    SELECT d.id, row_number() OVER (PARTITION BY x.k ORDER BY d.id) AS rn, x.k
+      FROM public.twob_import_docs d
+      CROSS JOIN LATERAL (SELECT public.twob_doc_ident(d.supplier_gstin, d.supplier_name, d.supplier_invoice_number, d.date) AS k) x
+     WHERE d.client_id = p_client_id AND d.period_month = p_period AND d.itc_action = 'NOT_IN_BOOKS' AND d.date IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM public.bills_not_in_books z WHERE z.source_doc_id = d.id)),
+  u AS (
+    UPDATE public.bills_not_in_books t SET source_doc_id = d.id, adopted_from = public.twob__entry_figures(to_jsonb(t))
+      FROM e JOIN d ON d.k = e.k AND d.rn = e.rn
+     WHERE t.id = e.id
+    RETURNING 1)
+  SELECT v_linked + count(*) INTO v_linked FROM u;
+  PERFORM set_config('twob.write', COALESCE(v_prev, ''), true);
+  RETURN jsonb_build_object('period', p_period, 'bills_not_in_2b', n2b, 'bills_not_in_books', nbk,
+                            'carried_kept_2b', c2b, 'carried_kept_books', cbk, 'left_out', v_left, 'linked', v_linked);
+END;
+$$;
+
+-- What the month's ledger lacks to follow its Import 2B, read in one
+-- statement (one snapshot: a save landing meanwhile is wholly in it or not
+-- at all), for the page's line ("not in step"): per list the entries to add,
+-- link, change, take back and put back (twob__autopost_effective, what a
+-- save or "Bring the reconciliation up to date" would write), and up to four
+-- of their names. prior: the month is filed (the page then shows only the
+-- Not in 2B side, which a GST Manager or the superadmin brings up to date
+-- through the door; its Not in Books side follows the filed 2B and is only
+-- named). Reads only; any staff (the line is shown to everyone).
+CREATE OR REPLACE FUNCTION public.twob_import2b_step(p_client_id uuid, p_period text)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_plan public.twob_autopost_row[];
+  v_out jsonb;
+BEGIN
+  IF p_client_id IS NULL OR public.twob_period_key(p_period) IS NULL THEN
+    RETURN NULL;
+  END IF;
+  v_plan := ARRAY(SELECT x FROM public.twob__autopost_effective(p_client_id, p_period, NULL, NULL) x WHERE x.op <> 'skip');
+  SELECT jsonb_build_object('prior', public.twob_month_is_prior(p_client_id, p_period))
+         || jsonb_object_agg(l.list, jsonb_build_object(
+              'add', (SELECT count(*) FROM unnest(v_plan) x WHERE x.list = l.list AND x.op = 'insert'),
+              'link', (SELECT count(*) FROM unnest(v_plan) x WHERE x.list = l.list AND x.op = 'link'),
+              'change', (SELECT count(*) FROM unnest(v_plan) x WHERE x.list = l.list AND x.op = 'update'),
+              'remove', (SELECT count(*) FROM unnest(v_plan) x WHERE x.list = l.list AND x.op = 'retract'),
+              'unlink', (SELECT count(*) FROM unnest(v_plan) x WHERE x.list = l.list AND x.op = 'unlink'),
+              'names', COALESCE((SELECT jsonb_agg(y.nm ORDER BY y.nm) FROM (
+                  SELECT DISTINCT NULLIF(btrim(concat_ws(' ', btrim(COALESCE(x.supplier_name, '')), x.supplier_invoice_number)), '') AS nm
+                    FROM unnest(v_plan) x WHERE x.list = l.list AND x.op IN ('insert', 'link', 'update')
+                   ORDER BY 1 LIMIT 4) y WHERE y.nm IS NOT NULL), '[]'::jsonb)))
+    INTO v_out
+    FROM (VALUES ('bills_not_in_2b'), ('bills_not_in_books')) l(list);
+  RETURN v_out;
+END;
+$$;
+
+-- A 2B document of the open month taken out of Reclaim (Import 2B's Save of
+-- a staged treatment), in one transaction (verification round 2): the
+-- pending entry it evidences goes back to Awaiting reclaim and the document
+-- takes its new treatment, with the document's write-through, or none of it
+-- (before, two calls: a failure between them left the reclaim undone and the
+-- document counted nowhere). Locks as a save takes them: the document's row,
+-- then the client's lock, then the entries. Import 2B & post. Returns {ok,
+-- was, released}; {ok: false, gone: true, message} when the document is no
+-- longer in the month (nothing written).
+CREATE OR REPLACE FUNCTION public.twob_import2b_unreclaim(
+  p_actor_id uuid, p_client_id uuid, p_period text, p_doc_id uuid, p_action text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_was text;
+  n integer;
+BEGIN
+  IF p_client_id IS NULL OR public.twob_period_key(p_period) IS NULL OR p_doc_id IS NULL THEN
+    RAISE EXCEPTION 'Choose the 2B document.';
+  END IF;
+  IF NULLIF(btrim(COALESCE(p_action, '')), '') IS NULL OR p_action = 'RECLAIM' THEN
+    RAISE EXCEPTION 'Choose the treatment the document takes instead of Reclaim.';
+  END IF;
+  IF NOT public.twob__staff_may(p_actor_id, 'work_2b_import') THEN
+    RAISE EXCEPTION 'Needs the Import 2B & post permission. Ask a GST Manager to add it to your position.';
+  END IF;
+  SELECT d.itc_action INTO v_was FROM public.twob_import_docs d
+   WHERE d.id = p_doc_id AND d.client_id = p_client_id AND d.period_month = p_period
+     FOR NO KEY UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'gone', true,
+      'message', 'This 2B document is no longer in this month. Nothing was saved; the page shows the month as it is now.');
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('twob:' || p_client_id::text, 0));
+  IF public.twob_month_is_prior(p_client_id, p_period) THEN
+    RAISE EXCEPTION 'This month is filed. Its 2B documents and the reversal, reclaim and book entry months cannot change.';
+  END IF;
+  UPDATE public.bills_not_in_2b t
+     SET reclaim_month = NULL, reclaim_subtype = NULL, reclaimed_via_doc_id = NULL, updated_by = p_actor_id, updated_at = now()
+   WHERE t.reclaimed_via_doc_id = p_doc_id;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  UPDATE public.twob_import_docs SET itc_action = p_action, updated_by = p_actor_id, updated_at = now() WHERE id = p_doc_id;
+  RETURN jsonb_build_object('ok', true, 'was', v_was, 'released', n);
+END;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- 8. Who may call what
 -- ---------------------------------------------------------------------------
@@ -1832,7 +2534,10 @@ GRANT EXECUTE ON FUNCTION
   public.twob_import2b_prior_save(uuid, uuid, text, jsonb, boolean, boolean),
   public.twob_import2b_delete_2b(uuid, uuid, text),
   public.twob_clear_year(uuid, uuid, text[]),
-  public.twob_import2b_flush_version(uuid, uuid, text)
+  public.twob_import2b_flush_version(uuid, uuid, text),
+  public.twob_import2b_step(uuid, text),
+  public.twob_import2b_unreclaim(uuid, uuid, text, uuid, text),
+  public.twob_restore_version_linked(uuid, uuid, text, jsonb, jsonb)
 TO anon, authenticated, service_role;
 
 -- Internal: they write without checking who acts, or are triggers.
@@ -1841,6 +2546,9 @@ REVOKE ALL ON FUNCTION
   public.twob__autopost_apply(uuid, text, uuid[], uuid[], uuid, boolean, boolean),
   public.twob__autopost_plan_books(uuid, text, uuid[]),
   public.twob__autopost_plan_docs(uuid, text, uuid[]),
+  public.twob__autopost_effective(uuid, text, uuid[], uuid[]),
+  public.twob__autopost_adjust(uuid, text, public.twob_autopost_row[]),
+  public.twob__carried_decision_guard(),
   public.twob__autopost_touch(uuid, text, uuid[], uuid[], uuid),
   public.twob__autopost_snapshot(uuid, text, uuid),
   public.twob__autopost_changed(uuid, text, uuid),
