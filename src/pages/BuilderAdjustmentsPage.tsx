@@ -47,8 +47,9 @@ import {
   type HistoricalReceipt, type HistoricalReconciliation, type ReclassCandidate,
 } from '@/lib/builderAdjustmentsData';
 import { cancelBooking, recordRefundPayment } from '@/lib/builderCancellationData';
-import { drc03WorkpaperPdf } from '@/utils/builderReportsPdf';
-import { drc03WorkpaperExcel } from '@/utils/builderReportsExcel';
+import { drc03Table } from '@/utils/builderReportTables';
+import { downloadReportXlsx } from '@/lib/reportExport/excel';
+import { downloadReportPdf } from '@/lib/reportExport/pdf';
 import type { Drc03Report } from '@/lib/builderReportData';
 
 interface ProjectRow {
@@ -488,8 +489,7 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
         clientGstin: (client as { gstin?: string } | null)?.gstin || '',
         projectName: project?.name,
       };
-      if (format === 'pdf') drc03WorkpaperPdf(ctx, report);
-      else drc03WorkpaperExcel(ctx, report);
+      await (format === 'pdf' ? downloadReportPdf : downloadReportXlsx)(drc03Table(ctx, report));
     } catch (e) {
       toast.error(`Could not export: ${(e as Error).message}`);
     }

@@ -25,16 +25,15 @@ import { prettyPeriodLabel } from '@/utils/builderLedger';
 import {
   REPORT_DESCRIPTION, REPORT_LABEL, fetchBuWorking, fetchBuilderClients,
   fetchPeriodReport, fetchPostedBuEvents, fetchProjectUnits, fetchProjects,
-  fetchUnitLedger,
+  fetchFsiWorking, fetchUnitLedger,
   type ReportContext, type ReportKind,
 } from '@/lib/builderReportData';
 import {
-  buWorkingPdf, memberStatementPdf, projectLiabilityPdf, returnWorkpaperPdf, unitLedgerPdf,
-} from '@/utils/builderReportsPdf';
-import {
-  buWorkingExcel, memberStatementExcel, projectLiabilityExcel, returnWorkpaperExcel,
-  unitLedgerExcel,
-} from '@/utils/builderReportsExcel';
+  buWorkingTable, fsiWorkingTable, memberStatementTable, projectLiabilityTable,
+  returnWorkpaperTable, unitLedgerTable,
+} from '@/utils/builderReportTables';
+import { downloadReportXlsx } from '@/lib/reportExport/excel';
+import { downloadReportPdf } from '@/lib/reportExport/pdf';
 
 type Client = { id: string; name: string; gstin: string | null };
 type Project = { id: string; name: string; rera_number: string | null };
@@ -42,7 +41,7 @@ type BuEvent = { id: string; bu_date: string; bu_ref_no: string | null; posting_
 type Unit = { id: string; unit_no: string; unit_type: string };
 
 const REPORTS: ReportKind[] = [
-  'RETURN_WORKPAPER', 'PROJECT_LIABILITY', 'BU_WORKING', 'UNIT_LEDGER', 'MEMBER_STATEMENT',
+  'RETURN_WORKPAPER', 'PROJECT_LIABILITY', 'BU_WORKING', 'FSI_WORKPAPER', 'UNIT_LEDGER', 'MEMBER_STATEMENT',
 ];
 
 /** What each report needs before it can be produced. */
@@ -50,6 +49,7 @@ const NEEDS: Record<ReportKind, { project?: boolean; period?: boolean; event?: b
   RETURN_WORKPAPER: { period: true },
   PROJECT_LIABILITY: { project: true, period: true },
   BU_WORKING: { project: true, event: true },
+  FSI_WORKPAPER: { project: true },
   UNIT_LEDGER: { project: true, unit: true },
   MEMBER_STATEMENT: { project: true, unit: true },
 };
@@ -146,6 +146,23 @@ const BuilderReportsPage: React.FC = () => {
           ]),
           truncated: Math.max(0, r.rows.length - 12),
         });
+      } else if (kind === 'FSI_WORKPAPER') {
+        const r = await fetchFsiWorking(projectId);
+        setPreview({
+          tiles: [
+            { label: 'BU events with a working', value: String(r.lines.length) },
+            { label: 'FSI allocated', value: formatINR(r.totals.allocatedValue) },
+            { label: 'Residential RCM', value: formatINR(r.totals.residentialRcm) },
+            { label: 'Commercial RCM', value: formatINR(r.totals.commercialRcm) },
+            { label: 'Total → 3.1(d)', value: formatINR(r.totals.totalRcm) },
+          ],
+          columns: ['BU date', 'Posts to', 'Status', 'Allocated', 'Residential RCM', 'Commercial RCM', 'Total RCM'],
+          rows: r.lines.slice(0, 12).map((l) => [
+            l.buDate, prettyPeriodLabel(l.periodMonth), l.status,
+            formatINR(l.allocatedValue), formatINR(l.residentialRcm), formatINR(l.commercialRcm), formatINR(l.totalRcm),
+          ]),
+          truncated: Math.max(0, r.lines.length - 12),
+        });
       } else if (kind === 'PROJECT_LIABILITY' || kind === 'RETURN_WORKPAPER') {
         const r = await fetchPeriodReport({
           clientId: selectedClientId,
@@ -201,22 +218,23 @@ const BuilderReportsPage: React.FC = () => {
     if (!ready || !ctx) return;
     setIsExporting(true);
     try {
+      let table;
       if (kind === 'BU_WORKING') {
         const r = await fetchBuWorking(eventId);
         if (!r) throw new Error('BU event not found');
-        (format === 'pdf' ? buWorkingPdf : buWorkingExcel)(ctx, r);
+        table = buWorkingTable(ctx, r);
+      } else if (kind === 'FSI_WORKPAPER') {
+        table = fsiWorkingTable(ctx, await fetchFsiWorking(projectId));
       } else if (kind === 'PROJECT_LIABILITY') {
-        const r = await fetchPeriodReport({ clientId: selectedClientId, periodMonth: selectedMonth, projectId });
-        (format === 'pdf' ? projectLiabilityPdf : projectLiabilityExcel)(ctx, r);
+        table = projectLiabilityTable(ctx, await fetchPeriodReport({ clientId: selectedClientId, periodMonth: selectedMonth, projectId }));
       } else if (kind === 'RETURN_WORKPAPER') {
-        const r = await fetchPeriodReport({ clientId: selectedClientId, periodMonth: selectedMonth });
-        (format === 'pdf' ? returnWorkpaperPdf : returnWorkpaperExcel)({ ...ctx, projectName: undefined }, r);
+        table = returnWorkpaperTable(ctx, await fetchPeriodReport({ clientId: selectedClientId, periodMonth: selectedMonth }));
       } else {
         const r = await fetchUnitLedger(unitId);
         if (!r) throw new Error('Unit not found');
-        if (kind === 'UNIT_LEDGER') (format === 'pdf' ? unitLedgerPdf : unitLedgerExcel)(ctx, r);
-        else (format === 'pdf' ? memberStatementPdf : memberStatementExcel)(ctx, r);
+        table = kind === 'UNIT_LEDGER' ? unitLedgerTable(ctx, r) : memberStatementTable(ctx, r);
       }
+      await (format === 'pdf' ? downloadReportPdf : downloadReportXlsx)(table);
       toast.success(`${REPORT_LABEL[kind]} exported`);
     } catch (e) {
       toast.error(`Export failed: ${(e as Error).message}`);

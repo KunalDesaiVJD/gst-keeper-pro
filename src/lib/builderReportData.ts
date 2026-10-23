@@ -14,7 +14,8 @@ export type ReportKind =
   | 'PROJECT_LIABILITY'
   | 'UNIT_LEDGER'
   | 'RETURN_WORKPAPER'
-  | 'MEMBER_STATEMENT';
+  | 'MEMBER_STATEMENT'
+  | 'FSI_WORKPAPER';
 
 export const REPORT_LABEL: Record<ReportKind, string> = {
   BU_WORKING: 'Unit-wise BU working',
@@ -22,6 +23,7 @@ export const REPORT_LABEL: Record<ReportKind, string> = {
   UNIT_LEDGER: 'Unit ledger',
   RETURN_WORKPAPER: 'Monthly return workpaper',
   MEMBER_STATEMENT: 'Member statement',
+  FSI_WORKPAPER: 'TDR / FSI working',
 };
 
 export const REPORT_DESCRIPTION: Record<ReportKind, string> = {
@@ -30,6 +32,7 @@ export const REPORT_DESCRIPTION: Record<ReportKind, string> = {
   UNIT_LEDGER: 'Every receipt, invoice and adjustment on a unit, with the running value taxed.',
   RETURN_WORKPAPER: 'What the client contributes to GSTR-1 and 3B for a period, with the documents behind it.',
   MEMBER_STATEMENT: 'A client-facing statement of one unit: what was agreed, paid, charged and remains.',
+  FSI_WORKPAPER: 'The reverse charge on development rights, BU event by BU event: allocation, both legs, the cap and the client-instruction trail.',
 };
 
 export interface ReportContext {
@@ -518,4 +521,114 @@ export async function fetchProjectUnits(projectId: string) {
   const { data } = await supabase.from('builder_units')
     .select('id, unit_no, unit_type').eq('project_id', projectId).order('unit_no');
   return (data || []) as { id: string; unit_no: string; unit_type: string }[];
+}
+
+// ─── 6. TDR / FSI reverse-charge working paper ──────────────────────────────
+
+export interface FsiWorkingLine {
+  buDate: string;
+  buRefNo: string | null;
+  periodMonth: string;
+  status: string;
+  treatment: string;
+  tdrFsiTotalValue: number;
+  eventCarpetSqm: number;
+  projectCarpetSqm: number;
+  allocatedValue: number;
+  residentialCarpetSqm: number;
+  commercialCarpetSqm: number;
+  unbookedResidentialCarpetSqm: number;
+  unbookedResidentialValue: number;
+  residentialPortion: number;
+  residentialRcmUncapped: number;
+  capAmount: number;
+  capApplied: boolean;
+  residentialRcm: number;
+  commercialPortion: number;
+  commercialRcm: number;
+  totalRcm: number;
+  cgst: number;
+  sgst: number;
+  /** Where the client-instruction trail stands, in words (held-back workings only). */
+  consent: string;
+}
+
+export interface FsiWorkingReport {
+  lines: FsiWorkingLine[];
+  totals: {
+    allocatedValue: number; residentialRcm: number; commercialRcm: number;
+    totalRcm: number; cgst: number; sgst: number;
+  };
+}
+
+/** Every saved TDR/FSI working of a project, one line per BU event, with the consent trail. */
+export async function fetchFsiWorking(projectId: string): Promise<FsiWorkingReport> {
+  type Row = Record<string, unknown>;
+  const { data: wk } = await supabase
+    .from('builder_fsi_workings').select('*').eq('project_id', projectId);
+  const workings = (wk || []) as Row[];
+
+  const eventIds = workings.map((w) => w.bu_event_id as string);
+  const { data: ev } = eventIds.length
+    ? await supabase.from('builder_bu_events').select('id, bu_date, bu_ref_no').in('id', eventIds)
+    : { data: [] as unknown[] };
+  const eventOf = new Map(((ev || []) as Row[]).map((e) => [e.id as string, e]));
+
+  const { data: cs } = workings.length
+    ? await supabase.from('builder_fsi_consents').select('*')
+      .in('fsi_working_id', workings.map((w) => w.id as string))
+    : { data: [] as unknown[] };
+  const consentOf = new Map(((cs || []) as Row[]).map((c) => [c.fsi_working_id as string, c]));
+
+  const n = (v: unknown): number => Number(v) || 0;
+  const lines: FsiWorkingLine[] = workings.map((w) => {
+    const e = eventOf.get(w.bu_event_id as string);
+    const c = consentOf.get(w.id as string);
+    let consent = '';
+    if (w.treatment === 'IGNORE' && n(w.total_rcm) > 0) {
+      consent = c?.approved_at ? 'Instruction approved'
+        : c?.confirmation_received_at ? 'Awaiting GST Manager approval'
+          : c?.email_sent_at ? 'Awaiting client reply' : 'Request not sent';
+    }
+    return {
+      buDate: (e?.bu_date as string) || '',
+      buRefNo: (e?.bu_ref_no as string) || null,
+      periodMonth: w.period_month as string,
+      status: w.status as string,
+      treatment: w.treatment as string,
+      tdrFsiTotalValue: n(w.tdr_fsi_total_value),
+      eventCarpetSqm: n(w.event_carpet_sqm),
+      projectCarpetSqm: n(w.project_carpet_sqm),
+      allocatedValue: n(w.allocated_value),
+      residentialCarpetSqm: n(w.residential_carpet_sqm),
+      commercialCarpetSqm: n(w.commercial_carpet_sqm),
+      unbookedResidentialCarpetSqm: n(w.unbooked_residential_carpet_sqm),
+      unbookedResidentialValue: n(w.unbooked_residential_value),
+      residentialPortion: n(w.residential_portion),
+      residentialRcmUncapped: n(w.residential_rcm_uncapped),
+      capAmount: n(w.cap_amount),
+      capApplied: !!w.cap_applied,
+      residentialRcm: n(w.residential_rcm),
+      commercialPortion: n(w.commercial_portion),
+      commercialRcm: n(w.commercial_rcm),
+      totalRcm: n(w.total_rcm),
+      cgst: n(w.cgst),
+      sgst: n(w.sgst),
+      consent,
+    };
+  }).sort((a, b) => a.buDate.localeCompare(b.buDate));
+
+  const sum = (f: (l: FsiWorkingLine) => number): number =>
+    Math.round((lines.reduce((s, l) => s + f(l), 0) + Number.EPSILON) * 100) / 100;
+  return {
+    lines,
+    totals: {
+      allocatedValue: sum((l) => l.allocatedValue),
+      residentialRcm: sum((l) => l.residentialRcm),
+      commercialRcm: sum((l) => l.commercialRcm),
+      totalRcm: sum((l) => l.totalRcm),
+      cgst: sum((l) => l.cgst),
+      sgst: sum((l) => l.sgst),
+    },
+  };
 }
