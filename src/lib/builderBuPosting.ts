@@ -272,8 +272,23 @@ export async function postBuEvent(params: Parameters<typeof postBuEventRows>[0])
     }
   }
 
+  // One post at a time per event: claim it in a single conditional UPDATE, so a
+  // second click or tab finds the claim and stops before writing anything.
+  const staleBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const { data: claimed, error: claimErr } = await supabase.from('builder_bu_events')
+    .update({ posting_started_at: new Date().toISOString() })
+    .eq('id', params.eventId).neq('status', 'POSTED')
+    .or(`posting_started_at.is.null,posting_started_at.lt.${staleBefore}`)
+    .select('id');
+  if (claimErr) throw claimErr;
+  if (!claimed?.length) {
+    throw new Error('This event is already being posted (or was just posted). Wait a minute, then reload.');
+  }
+
   try {
-    return await postBuEventRows({ ...params, postingDate: dateWithinPeriod(params.postingDate, params.postingPeriod) });
+    const res = await postBuEventRows({ ...params, postingDate: dateWithinPeriod(params.postingDate, params.postingPeriod) });
+    await supabase.from('builder_bu_events').update({ posting_started_at: null }).eq('id', params.eventId);
+    return res;
   } catch (e) {
     try {
       await unpostBuEvent(params.eventId);
@@ -446,7 +461,7 @@ export async function unpostBuEvent(eventId: string): Promise<void> {
   }
   steps.push(await supabase.from('builder_bu_event_units').update({ invoice_id: null }).eq('bu_event_id', eventId));
   steps.push(await supabase.from('builder_bu_events')
-    .update({ status: 'PREPARED', posted_at: null, posted_by: null }).eq('id', eventId));
+    .update({ status: 'PREPARED', posted_at: null, posted_by: null, posting_started_at: null }).eq('id', eventId));
   const failed = steps.find((r) => r.error);
   if (failed?.error) throw failed.error;
 }

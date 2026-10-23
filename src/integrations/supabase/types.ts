@@ -2685,6 +2685,7 @@ export type Database = {
           notes: string | null
           posted_at: string | null
           posted_by: string | null
+          posting_started_at: string | null
           posting_basis: string
           posting_period: string
           project_id: string
@@ -2703,6 +2704,7 @@ export type Database = {
           notes?: string | null
           posted_at?: string | null
           posted_by?: string | null
+          posting_started_at?: string | null
           posting_basis?: string
           posting_period: string
           project_id: string
@@ -2721,6 +2723,7 @@ export type Database = {
           notes?: string | null
           posted_at?: string | null
           posted_by?: string | null
+          posting_started_at?: string | null
           posting_basis?: string
           posting_period?: string
           project_id?: string
