@@ -27,7 +27,6 @@ const T15_ROWS: Array<{ k: T15Key; code: string; label: string; demand: boolean 
   { k: 'demandPaid', code: '15F', label: 'Total taxes paid in respect of E above', demand: true },
   { k: 'demandPending', code: '15G', label: 'Total demands pending out of E above', demand: true },
 ];
-const DEMAND_ROWS = new Set(T15_ROWS.filter((r) => r.demand).map((r) => r.k as string));
 
 const T15_DEFS: FixedRowDef<T15Val>[] = T15_ROWS.map((r) => ({
   id: r.k,
@@ -35,7 +34,7 @@ const T15_DEFS: FixedRowDef<T15Val>[] = T15_ROWS.map((r) => ({
   label: r.label,
   read: (g) => g.t15[r.k],
   write: (g, v) => ({ ...g, t15: { ...g.t15, [r.k]: v } }),
-  fKey: (c) => (r.demand || ['c', 's', 'i', 'x'].includes(c) ? `t15.${r.k}.${c}` : undefined),
+  fKey: (c) => `t15.${r.k}.${c}`,
 }));
 const T15_COLS = ['c', 's', 'i', 'x', 'interest', 'penalty', 'lateFee', 'others'];
 
@@ -61,14 +60,14 @@ export const Table15: React.FC = () => {
       moneyCol<T15Row>(
         k,
         header,
-        (r) => (DEMAND_ROWS.has(r.id) ? r.v[k] ?? 0 : null),
+        (r) => r.v[k] ?? 0,
         (r, v) => ({ ...r, v: { ...r.v, [k]: v ?? 0 } }),
-        { width: 96, editable: (r) => DEMAND_ROWS.has(r.id) },
+        { width: 96 },
       ),
     ),
   ];
   return (
-    <SectionCard title="15 · Particulars of demands and refunds" description="Typed here — not part of the firm's sheet. Interest, penalty, late fee and others apply to demands (15E–15G).">
+    <SectionCard title="15 · Particulars of demands and refunds" description="Typed here — not part of the firm's sheet. As on the form, every row (refunds and demands) has interest, penalty, late fee and others.">
       <SheetGrid<T15Row> rows={rows} columns={columns} getRowId={(r) => r.id} onRowsChange={onRowsChange} readOnly={readOnly} label="GSTR-9 Table 15" />
     </SectionCard>
   );

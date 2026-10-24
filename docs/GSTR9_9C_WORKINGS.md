@@ -385,7 +385,10 @@ screen where it applies.
    the negated row 28) shown next to it, because the residual is often an
    unexplained monthly difference rather than ITC actually availed in the
    next FY. Table 12 follows the sheet (computed MAX(7J − books, 0)) and can
-   be overridden. **8C = Table 13 − Table 12** as in the sheet.
+   be overridden. **8C = Table 13** (the firm, 24 Oct 2026), typed over when
+   Table 13 holds imports or RCM, which 8C leaves out; the sheet took Table
+   13 − Table 12, netting a reversal, which made 8D too large and could go
+   below nil.
 10. **Books side of GSTR 9-OUTPUT is split by category.** Each PL-OUTPUT
     Part A ledger carries a Table 4 tag (B2B by default, as the sheet puts
     everything in B2B), and negative rows are credit notes, so category
@@ -486,9 +489,16 @@ screen where it applies.
 30. **Set-offs through GSTR-3B** name only tables that carry tax: 3.1(a),
     3.1(b) and 3.1(d) for output, 4(B)(1) and 4(B)(2) for ITC. 4(D)
     reports ITC and reverses none.
-31. **8C below nil** (Table 12 above Table 13, since 8C = 13 − 12 as in the
-    sheet, position 9) is a difference line that needs a reason
-    (`g9.8C`): the portal takes no negative 8C.
+31. **8C below nil** (a negative Table 13 or typed 8C) is a difference line
+    that needs a reason (`g9.8C`): the portal takes no negative 8C.
+32. **Table 15 refund rows carry interest, penalty and late fee / others**,
+    as every row of the form does (the app had them on 15E–15G only).
+33. **Applicability follows the scheme in force during the year**
+    (`client_scheme_history`, Edit Client), not today's registration type:
+    a year under Regular (or QRMP) for any part files GSTR-9 for that part,
+    marked "part year" in the register and on the workspace chip
+    (`schemeSpans`); a year wholly under Composition / TDS / ISD is not
+    applicable. The firm, 24 Oct 2026.
 
 Carried over from the workbook as-is (firm positions, flagged in the UI):
 suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"

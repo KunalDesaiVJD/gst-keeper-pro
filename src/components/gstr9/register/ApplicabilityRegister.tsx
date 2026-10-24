@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
-import { applicability, croreText, panOf, thresholdsFor, type Applicability } from '@/lib/gstr9/applicability';
+import { applicability, croreText, panOf, thresholdsFor, type Applicability, type SchemeChange } from '@/lib/gstr9/applicability';
 import { useStaffList } from '@/hooks/useStaffList';
 import { loadRegister, saveTurnover, signoffStateOf, type RegisterClient, type TurnoverPatch } from '@/lib/gstr9/register';
 import {
@@ -118,6 +118,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
   const [clients, setClients] = useState<RegisterClient[]>([]);
   const [entries, setEntries] = useState<Map<string, Entry>>(new Map());
   const [working, setWorking] = useState<Map<string, SignoffState>>(new Map());
+  const [schemes, setSchemes] = useState<Map<string, SchemeChange[]>>(new Map());
   const [view, setViewState] = useState<View>(() => {
     try {
       const v = me.id ? localStorage.getItem(VIEW_KEY(me.id)) : null;
@@ -151,6 +152,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       if (mine !== seq.current) return;
       setClients(d.clients);
       setWorking(d.working);
+      setSchemes(d.schemes);
       setEntries(new Map([...d.turnover].map(([id, t]) => [id, {
         turnover: t.aggregate_turnover === null ? null : Number(t.aggregate_turnover),
         opt9: t.gstr9_opt_in,
@@ -181,6 +183,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
     const a = applicability({
       financialYear,
       registrationType: c.registration_type,
+      schemeHistory: schemes.get(c.id),
       registrationDate: c.registration_date,
       cancellationDate: c.cancellation_date || c.registration_cancellation_date,
       turnover: e.turnover,
@@ -194,7 +197,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       name: c.name,
       gstin: c.gstin,
       c,
-      type: typeLabel(c),
+      type: a.partYear ? `${typeLabel(c)} · part year` : typeLabel(c),
       pan,
       siblings: pan ? (byPan.get(pan) ?? []).filter((id) => id !== c.id) : [],
       a,
@@ -203,7 +206,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       inScope: a.file9 || a.gstr9 === 'unknown' || st.sheets > 0 || (st.stage !== 'not_started' && st.stage !== 'preparing'),
       inactive: !!c.inactive_at_hand,
     };
-  }), [clients, entries, working, byPan, financialYear]);
+  }), [clients, entries, working, schemes, byPan, financialYear]);
 
   const visible = useMemo(() => allRows.filter((r) => showInactive || !r.inactive || r.a.file9), [allRows, showInactive]);
   const counts = useMemo(() => {
@@ -427,6 +430,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       align: 'left',
       width: 136,
       value: (r) => r.type,
+      title: (r) => r.a.partYear ? `Part year: ${r.a.partYear}. GSTR-9 covers only that part of the year.` : undefined,
       render: (r) => (
         <span className="inline-flex items-center gap-1.5">
           <span>{r.type}</span>

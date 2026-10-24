@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Checks for the GSTR-9/9C audit fixes of 24 Oct 2026 (docs/GSTR9_9C_WORKINGS.md
-// §6 positions 8, 10, 21–31), on small hand-made workings. Needs no client data:
+// §6 positions 8, 10, 21–33), on small hand-made workings. Needs no client data:
 //
 //   node scripts/verify-gstr9-audit-fixes.mjs
 
@@ -17,6 +17,7 @@ const E = await load('src/lib/gstr9/engine.ts');
 const D = await load('src/lib/gstr9/defaults.ts');
 const PP = await load('src/lib/gstr9/portalParser.ts');
 const PY = await load('src/lib/gstr9/payables.ts');
+const AP = await load('src/lib/gstr9/applicability.ts');
 const ctx = { clientName: 'Test', gstin: '27AAAAA0000A1Z5', financialYear: '2024-25', noItcBuilder: false };
 
 let failed = 0;
@@ -184,10 +185,44 @@ const out = (w, key) => w.outward.rows.find((r) => r.key === key).books;
   eq('no 3.1(c) set-off', PY.GSTR3B_TABLES.output.includes('3.1(c)') ? 1 : 0, 0);
 }
 
+// 8C = Table 13 (not 13 − 12); typed 8C wins.
+{
+  const d = D.emptyDocs();
+  d.gstr9.t13 = { i: 300, c: 0, s: null, x: 0 };
+  d.gstr9.t12 = { i: 100, c: 0, s: null, x: 0 };
+  eq('8C = Table 13', E.computeWorkings(d, ctx).g9.t8.C.i, 300);
+  d.gstr9.t8C = { i: 250, c: 0, s: null, x: 0 };
+  eq('8C typed', E.computeWorkings(d, ctx).g9.t8.C.i, 250);
+}
+
+// Table 15 refund rows carry interest etc. into the form export.
+{
+  const d = D.emptyDocs();
+  d.gstr9.t15.refundClaimed = { i: 10, c: 0, s: 0, x: 0, interest: 5, penalty: 0, lateFee: 2, others: 1 };
+  const FT = await load('src/lib/gstr9/export/formTables.ts');
+  const t = FT.gstr9FormTables ? FT.gstr9FormTables(E.computeWorkings(d, ctx)) : null;
+  const row = t && t.find((x) => x.no === '15').rows.find((r) => r.code === 'A');
+  eq('15A interest exported', row ? row.cells[4] : NaN, 5);
+  eq('15A late fee + others exported', row ? row.cells[6] : NaN, 3);
+}
+
+// Applicability by the scheme in force during the year.
+{
+  const base = { financialYear: '2024-25', registrationType: 'Regular', turnover: 3e7, gstr9OptIn: false, gstr9cOptIn: false };
+  const toComp = [{ old_scheme: 'Regular', new_scheme: 'Composition', effective_from_date: '2025-04-01' }];
+  eq('Regular in the year, Composition today: files', AP.applicability({ ...base, registrationType: 'Composition', schemeHistory: toComp }).file9 ? 1 : 0, 1);
+  eq('FY 2025-26 under Composition: not applicable', AP.applicability({ ...base, financialYear: '2025-26', registrationType: 'Composition', schemeHistory: toComp }).gstr9 === 'not_applicable' ? 1 : 0, 1);
+  const toReg = [{ old_scheme: 'Composition', new_scheme: 'Regular', effective_from_date: '2024-10-01' }];
+  const a = AP.applicability({ ...base, schemeHistory: toReg });
+  eq('left composition mid-year: files', a.file9 ? 1 : 0, 1);
+  eq('part year noted', /from 01\/10\/2024/.test(a.partYear || '') ? 1 : 0, 1);
+  eq('no history: today\'s type', AP.applicability({ ...base, registrationType: 'Composition' }).gstr9 === 'not_applicable' ? 1 : 0, 1);
+}
+
 // 8C below nil needs a reason.
 {
   const d = D.emptyDocs();
-  d.gstr9.t12 = { i: 100, c: 0, s: null, x: 0 };
+  d.gstr9.t13 = { i: -100, c: 0, s: null, x: 0 };
   const w = E.computeWorkings(d, ctx);
   const line = w.diffs.find((x) => x.key === 'g9.8C');
   eq('8C negative line', line ? line.diff.i : NaN, -100);

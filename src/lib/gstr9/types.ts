@@ -392,6 +392,8 @@ export interface Gstr9ManualDoc {
     /** Further 7H lines staff add by hand. */
     otherExtra: OtherReversalRow[];
   };
+  /** 8C typed (the Table 13 ITC less imports and RCM, which 8C leaves out) — null = Table 13. */
+  t8C?: TaxIn | null;
   t8E: TaxIn;
   t8F: TaxIn;
   /** 8G IGST (and cess) paid on imports as per the bills of entry — null = 8H + 8H1 (nothing lapses). */
@@ -407,10 +409,11 @@ export interface Gstr9ManualDoc {
   t13: TaxIn;
   t14: Record<'igst' | 'cgst' | 'sgst' | 'cess' | 'interest', { payable: number; paid: number }>;
   t15: {
-    refundClaimed: Tax;
-    refundSanctioned: Tax;
-    refundRejected: Tax;
-    refundPending: Tax;
+    // The form's interest / penalty / late fee columns apply to refunds too; optional for docs saved before 24 Oct 2026.
+    refundClaimed: Tax & Partial<Record<'interest' | 'penalty' | 'lateFee' | 'others', number>>;
+    refundSanctioned: Tax & Partial<Record<'interest' | 'penalty' | 'lateFee' | 'others', number>>;
+    refundRejected: Tax & Partial<Record<'interest' | 'penalty' | 'lateFee' | 'others', number>>;
+    refundPending: Tax & Partial<Record<'interest' | 'penalty' | 'lateFee' | 'others', number>>;
     demandTotal: Tax & { interest: number; penalty: number; lateFee: number; others: number };
     demandPaid: Tax & { interest: number; penalty: number; lateFee: number; others: number };
     demandPending: Tax & { interest: number; penalty: number; lateFee: number; others: number };

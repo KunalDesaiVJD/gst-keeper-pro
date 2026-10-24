@@ -394,6 +394,8 @@ export interface Workings {
     t8Unsplit: Tax;
     /** 8G when not typed: 8H + 8H1. */
     t8GDefault: Tax;
+    /** 8C when not typed: Table 13. */
+    t8CDefault: Tax;
     t6: Record<
       | 'A' | 'A1' | 'A2'
       | 'B_ip' | 'B_cg' | 'B_is'
@@ -929,7 +931,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const t8 = {} as Workings['g9']['t8'];
   t8.A = P.gstr9.t8A;
   t8.B = addT(t6.B_ip, t6.B_cg, t6.B_is, t6.H); // POSITION: 6(B) + 6(H) per the form; the sheet sums 6(B) only
-  t8.C = subT(t13, t12); // G83 = G111 − G110
+  // POSITION: 8C is the ITC of this year's purchases availed next year, i.e. Table 13 (less imports and
+  // RCM, which 8C leaves out: type 8C for that). The sheet nets Table 12 (G83 = G111 − G110), a reversal.
+  const t8CDefault = t13;
+  t8.C = G.t8C === null || G.t8C === undefined ? t8CDefault : tin(G.t8C);
   t8.D = subT(t8.A, t8.B, t8.C);
   t8.E = tin(G.t8E);
   t8.F = tin(G.t8F);
@@ -1340,10 +1345,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       direction: 'Prev 13 − 6A1', aLabel: 'Previous FY GSTR-9 Table 13', bLabel: 'This FY 6A1', informational: true,
     });
   }
-  // 8C = 13 − 12 (the sheet) goes below nil when Table 12 exceeds Table 13; the portal takes no negative 8C.
+  // The portal takes no negative 8C (a negative Table 13, or a typed 8C below nil).
   const t8CNeg = minT0(t8.C);
   if (isNonZeroT(t8CNeg)) {
-    push('g9.8C', 'gstr9', 'Table 8C below nil (Table 12 exceeds Table 13): the portal takes no negative 8C', withT(0, t8CNeg), val(), {
+    push('g9.8C', 'gstr9', 'Table 8C below nil: the portal takes no negative 8C', withT(0, t8CNeg), val(), {
       direction: '8C below nil', aLabel: '8C (negative part)', bLabel: 'Nil',
     });
   }
@@ -1411,7 +1416,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     c14: { rows: c14, qTagged, qBalancing, check: c14Check, S: c14S, T: c14T },
     g9: {
       t4: g4 as Workings['g9']['t4'], t4Source: gstr9Present ? 'portal' : 'none',
-      t5: g5, t5Portal: { ...P.gstr9.table5 }, t5PortalTotals, t8Unsplit, t8GDefault,
+      t5: g5, t5Portal: { ...P.gstr9.table5 }, t5PortalTotals, t8Unsplit, t8GDefault, t8CDefault,
       t6, t6ASource, t7, t7H, t7I, t7EPortal: t7E4B1, t7EAsFiled: monthly4B1, t7J, t8, t9, t9Other,
       t10, t11, t12, t12Source: G.t12 === null || G.t12 === undefined ? 'computed' : 'override', t13, totalTurnover,
       t14: G.t14, t15: G.t15, t16: G.t16,

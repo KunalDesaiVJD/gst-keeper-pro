@@ -232,7 +232,12 @@ export const Table8: React.FC = () => {
       label:
         'ITC on inward supplies (other than imports and inward supplies liable to reverse charge but includes services received from SEZs) received during the financial year but availed in the next financial year up to the specified period',
       value: t8.C,
-      note: <RowSrc step="itc" src={<Src kind="computed" title="Table 13 − Table 12, as in the sheet" />} />,
+      note:
+        docs.gstr9.t8C == null ? (
+          <RowSrc step="itc" src={<Src kind="computed" title="Not typed: Table 13 (ITC of this year availed next year). Type 8C below to leave out imports and RCM." />} />
+        ) : (
+          typed
+        ),
     },
     { key: '8D', code: '8D', label: 'Difference [A − (B + C)]', value: t8.D, signed: true, total: true, diffKey: 'g9.8D', note: computed },
     { key: '8E', code: '8E', label: 'ITC available but not availed', value: t8.E, note: typed },
@@ -256,6 +261,15 @@ export const Table8: React.FC = () => {
   const dPositive = TAX_ORDER.some((h) => t8.D[h] > 0.005);
 
   const defs: FixedRowDef<TaxIn | null>[] = [
+    {
+      id: '8C',
+      code: '8C',
+      label: 'Availed next FY (excl. imports, RCM)',
+      title: 'ITC of this year availed in the next year, other than imports and reverse charge (SEZ services included). Leave blank to take Table 13.',
+      read: (d) => d.t8C ?? null,
+      write: (d, v) => ({ ...d, t8C: v }),
+      computed: g.t8CDefault,
+    },
     { id: '8E', code: '8E', label: 'Available, not availed', title: 'ITC available but not availed', read: (d) => d.t8E, write: (d, v) => ({ ...d, t8E: v ?? zIn() }) },
     { id: '8F', code: '8F', label: 'Available but ineligible', title: 'ITC available but ineligible', read: (d) => d.t8F, write: (d, v) => ({ ...d, t8F: v ?? zIn() }) },
     {
@@ -282,7 +296,7 @@ export const Table8: React.FC = () => {
   return (
     <SectionCard
       title="8 · Other ITC related information"
-      description="8A from the portal; 8E, 8F, 8G and 8H1 are typed here — 8E + 8F explain the 8D difference, 8J the IGST on imports not availed."
+      description="8A from the portal; 8C (when not Table 13), 8E, 8F, 8G and 8H1 are typed here — 8E + 8F explain the 8D difference, 8J the IGST on imports not availed."
       excelRef="GSTR-9 rows 80–92"
       actions={
         <>
@@ -293,7 +307,7 @@ export const Table8: React.FC = () => {
     >
       <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 8" className={FORM_MATRIX_SCROLL} />
       <Note tone="position">
-        8B = 6(B) + 6(H), as the form reads and the portal computes; the firm&apos;s sheet sums 6(B) only. 8C = Table 13 − Table 12, as in the sheet.
+        8B = 6(B) + 6(H), as the form reads and the portal computes; the firm&apos;s sheet sums 6(B) only. 8C is Table 13 unless typed (type it to leave out imports and RCM); the sheet took Table 13 − Table 12, which nets a reversal and can go below nil.
       </Note>
       <EntryHeading>Typed rows</EntryHeading>
       <TaxEntryGrid defs={defs} label="GSTR-9 Table 8 typed rows" />
