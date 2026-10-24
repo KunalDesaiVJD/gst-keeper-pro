@@ -954,13 +954,19 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const g4NTax = taxOf(g4.N);
   const headOf: Record<Table9Head, keyof Tax> = { igst: 'i', cgst: 'c', sgst: 's', cess: 'x' };
   const t9 = {} as Workings['g9']['t9'];
+  // POSITION: once the portal's Table 9 is in, its payable stands for every head, a nil head included;
+  // 4N fills in only while the portal's Table 9 is missing.
+  const t9Portal = gstr9Present && TABLE9_HEADS.some((h) => {
+    const r = T9[h];
+    return num(r.payable) || num(r.cash) || num(r.itcI) || num(r.itcC) || num(r.itcS) || num(r.itcX);
+  });
   TABLE9_HEADS.forEach((h) => {
     const row = T9[h];
     const override = G.t9Payable?.[h];
     let payable: number;
     let payableSource: Table9Calc['payableSource'];
     if (override !== null && override !== undefined) { payable = num(override); payableSource = 'override'; }
-    else if (gstr9Present && num(row.payable) !== 0) { payable = num(row.payable); payableSource = 'portal'; }
+    else if (t9Portal) { payable = num(row.payable); payableSource = 'portal'; }
     else { payable = g4NTax[headOf[h]]; payableSource = '4N'; }
     const paid = num(row.cash) + num(row.itcI) + num(row.itcC) + num(row.itcS) + num(row.itcX);
     t9[h] = { payable, payableSource, cash: num(row.cash), itcI: num(row.itcI), itcC: num(row.itcC), itcS: num(row.itcS), itcX: num(row.itcX), paid, diff: payable - paid };
@@ -1332,6 +1338,13 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   if (isNonZeroT(tin(A.a4.c13)) || isNonZeroT(t6A1)) {
     push('ann4.c13', 'annexures', 'Previous FY Table 13 vs this FY 6A1', withT(0, tin(A.a4.c13)), withT(0, t6A1), {
       direction: 'Prev 13 − 6A1', aLabel: 'Previous FY GSTR-9 Table 13', bLabel: 'This FY 6A1', informational: true,
+    });
+  }
+  // 8C = 13 − 12 (the sheet) goes below nil when Table 12 exceeds Table 13; the portal takes no negative 8C.
+  const t8CNeg = minT0(t8.C);
+  if (isNonZeroT(t8CNeg)) {
+    push('g9.8C', 'gstr9', 'Table 8C below nil (Table 12 exceeds Table 13): the portal takes no negative 8C', withT(0, t8CNeg), val(), {
+      direction: '8C below nil', aLabel: '8C (negative part)', bLabel: 'Nil',
     });
   }
   push('g9.8D', 'gstr9', 'Table 8D: ITC in GSTR-2B not availed [8A − (8B + 8C)]', withT(0, t8.A), withT(0, addT(t8.B, t8.C)), {

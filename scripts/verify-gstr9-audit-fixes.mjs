@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Checks for the GSTR-9/9C audit fixes of 24 Oct 2026 (docs/GSTR9_9C_WORKINGS.md
-// §6 positions 8, 10, 21–27), on small hand-made workings. Needs no client data:
+// §6 positions 8, 10, 21–31), on small hand-made workings. Needs no client data:
 //
 //   node scripts/verify-gstr9-audit-fixes.mjs
 
@@ -15,6 +15,8 @@ const load = async (rel) => {
 };
 const E = await load('src/lib/gstr9/engine.ts');
 const D = await load('src/lib/gstr9/defaults.ts');
+const PP = await load('src/lib/gstr9/portalParser.ts');
+const PY = await load('src/lib/gstr9/payables.ts');
 const ctx = { clientName: 'Test', gstin: '27AAAAA0000A1Z5', financialYear: '2024-25', noItcBuilder: false };
 
 let failed = 0;
@@ -150,6 +152,47 @@ const out = (w, key) => w.outward.rows.find((r) => r.key === key).books;
   const w = E.computeWorkings(d, ctx);
   eq('9K2 value', w.gstr9c.t9.rows.K2.t, 1000);
   eq('9E (18%) value', w.gstr9c.t9.rows.E.t, 500);
+}
+
+// Round 2. GSTR-3B 4(D): from July 2022 4D(1) is ITC reclaimed, not ineligible.
+{
+  const summary = { sup_details: {}, itc_elg: { itc_avl: [], itc_rev: [], itc_inelg: [
+    { ty: 'RUL', iamt: 0, camt: 70, samt: 70, csamt: 0 },
+    { ty: 'OTH', iamt: 0, camt: 30, samt: 30, csamt: 0 },
+  ] } };
+  eq('4D from 07/2022 = 4D(2) only', PP.parseGstr3bSummary(summary, '04/2024').itc4d.c, 30);
+  eq('4D before 07/2022 = all of 4D', PP.parseGstr3bSummary(summary, '04/2022').itc4d.c, 100);
+}
+
+// Table 9: once the portal's Table 9 is in, a nil head stays nil (not 4N).
+{
+  const d = D.emptyDocs();
+  d.sales.partA.push({ id: 'x', ledger: 'x', category: 'b2b', supplyType: 'inter', rate: 18, taxable: 1000, igst: 180, cgst: 0, sgst: null, cess: 0 });
+  d.portal.gstr9Meta = { source: 'gstr9_pull' };
+  d.portal.gstr9.table9.cgst = { payable: 50, cash: 50, itcI: 0, itcC: 0, itcS: 0, itcX: 0 };
+  const w = E.computeWorkings(d, ctx);
+  eq('9A payable from the portal (nil)', w.g9.t9.igst.payable, 0);
+  eq('9A source is the portal', w.g9.t9.igst.payableSource === 'portal' ? 1 : 0, 1);
+  const d2 = D.emptyDocs();
+  d2.portal.gstr9.table4.b2b = { t: 1000, i: 180, c: 0, s: 0, x: 0 };
+  eq('no portal Table 9: 4N', E.computeWorkings(d2, ctx).g9.t9.igst.payable, 180);
+}
+
+// Set-offs through GSTR-3B: only tables that carry tax.
+{
+  eq('no 4(D) set-off', PY.GSTR3B_TABLES.input.includes('4(D)') ? 1 : 0, 0);
+  eq('no 3.1(c) set-off', PY.GSTR3B_TABLES.output.includes('3.1(c)') ? 1 : 0, 0);
+}
+
+// 8C below nil needs a reason.
+{
+  const d = D.emptyDocs();
+  d.gstr9.t12 = { i: 100, c: 0, s: null, x: 0 };
+  const w = E.computeWorkings(d, ctx);
+  const line = w.diffs.find((x) => x.key === 'g9.8C');
+  eq('8C negative line', line ? line.diff.i : NaN, -100);
+  eq('8C line needs a reason', line && line.requiresReason ? 1 : 0, 1);
+  eq('no 8C line when nil', E.computeWorkings(D.emptyDocs(), ctx).diffs.some((x) => x.key === 'g9.8C') ? 1 : 0, 0);
 }
 
 if (failed) {

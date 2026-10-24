@@ -471,6 +471,24 @@ screen where it applies.
     which carries the whole difference). A month-wise filer is unchanged.
 27. **GSTR-9C 9K2** takes the Sales ledgers tagged 4G1 (an e-commerce
     operator's u/s 9(5) supplies), whatever their rate.
+28. **GSTR-3B 4(D) from July 2022 is 4D(2) only.** Notification 14/2022-CT
+    (Circular 170/02/2022) turned 4D(1) into "ITC reclaimed which was
+    reversed under 4(B)(2) in an earlier period", which is not ineligible.
+    The as-filed 3B's 4D (Notice format inward row 4) takes only 4D(2) for
+    periods from 07/2022 and all of 4D before (`gstr3bOld4D`). A month
+    applied before 24 Oct 2026 shows as not applied on the Portal step
+    until the as-filed 3B is applied again. The exact first period of the
+    new form on the portal is not confirmed live (July or August 2022).
+29. **Table 9 payable, nil heads.** Once the portal's Table 9 is in, its
+    payable stands for every head, a nil head included; 4N fills in only
+    while the portal's Table 9 is missing (the app before 24 Oct 2026 took
+    4N for any head the portal had at nil).
+30. **Set-offs through GSTR-3B** name only tables that carry tax: 3.1(a),
+    3.1(b) and 3.1(d) for output, 4(B)(1) and 4(B)(2) for ITC. 4(D)
+    reports ITC and reverses none.
+31. **8C below nil** (Table 12 above Table 13, since 8C = 13 − 12 as in the
+    sheet, position 9) is a difference line that needs a reason
+    (`g9.8C`): the portal takes no negative 8C.
 
 Carried over from the workbook as-is (firm positions, flagged in the UI):
 suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"

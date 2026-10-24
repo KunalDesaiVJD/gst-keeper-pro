@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { addT, addV } from '@/lib/gstr9/engine';
-import { applyPortalImport, diffPortalImport, periodsForFY } from '@/lib/gstr9/portalParser';
+import { applyPortalImport, diffPortalImport, parseGstr3bSummary, periodsForFY } from '@/lib/gstr9/portalParser';
 import type { ImportChange } from '@/lib/gstr9/portalParser';
 import {
   clearFormulas,
@@ -28,7 +28,7 @@ import {
 } from '@/lib/gstr9/portalImport';
 import { AsFiledReturn, loadAsFiledGstr3b } from '@/lib/gstr9/store';
 import { FY_MONTHS } from '@/lib/gstr9/types';
-import type { MonthKey, PortalMeta, PortalMonth } from '@/lib/gstr9/types';
+import type { MonthKey, PortalDoc, PortalMeta, PortalMonth } from '@/lib/gstr9/types';
 import type { GridFooterRow } from '../grid/SheetGrid';
 import { Note, SectionCard, SourceChip } from '../ui';
 import { StepTab, StepTabsList, TabSub } from '../reco/StepTabs';
@@ -131,7 +131,10 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
     const row = byPeriod.get(periods[idx]);
     const meta: PortalMeta | undefined = portal.monthMeta[m];
     const usable = has3bSummary(row) && !isNotFiled(row?.status);
-    const applied = usable && meta?.source === 'as_filed_3b' && !newerThanApplied(row?.updatedAt, meta);
+    // Applied = stamped, not re-pulled since, and the pulled figures (read as the parser reads them now) still match.
+    const applied =
+      usable && meta?.source === 'as_filed_3b' && !newerThanApplied(row?.updatedAt, meta) &&
+      !diffPortalImport(portal, { months: { [m]: parseGstr3bSummary(row!.summary, row!.period) } as PortalDoc['months'] }, () => '').some((c) => !c.manual);
     return { m, period: periods[idx], row, meta, usable, applied, typed: typedCount(portal, `months.${m}.`) };
   });
   const usableCount = monthRows.filter((r) => r.usable).length;
