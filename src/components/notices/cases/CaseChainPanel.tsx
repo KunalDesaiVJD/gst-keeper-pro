@@ -150,7 +150,9 @@ export const CaseChainPanel: React.FC<{
                           <div className="text-[11px] text-muted-foreground">
                             {m.case_id ? <span className="font-mono">{m.case_id}</span> : 'No portal case'}
                             {' · '}<Dates m={m} />
-                            {' · '}{plural(m.notices, 'notice')}{m.documents ? `, ${plural(m.documents, 'document')}` : ''}
+                            {' · '}{!m.notices && !m.documents && m.application
+                              ? <>filed on the portal{m.application.status ? ` (${m.application.status})` : ''}{m.application.filed_date ? ` on ${fmtDate(m.application.filed_date)}` : ''}, no notice yet</>
+                              : <>{plural(m.notices, 'notice')}{m.documents ? `, ${plural(m.documents, 'document')}` : ''}</>}
                             {m.order ? <> · holds {m.order.form && m.order.form !== 'Order' ? m.order.form : 'an order'}{m.order.ref ? <span className="font-mono"> {m.order.ref}</span> : null}{m.order.date ? ` of ${fmtDate(m.order.date)}` : ''}</> : null}
                           </div>
                           {m.parent_key && (
