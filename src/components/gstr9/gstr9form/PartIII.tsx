@@ -39,7 +39,7 @@ export const Table6: React.FC = () => {
     );
   const computed = <Src kind="computed" />;
   const unused = <Src kind="unused" title="Nil in this working — RCM ITC is reported as input services" />;
-  const rcmBooks = <RowSrc step="rcm" src={<Src kind="books" title="RCM step — Part B categories set to this table" />} />;
+  const rcmBooks = <RowSrc step="rcm" src={<Src kind="books" title="RCM step — Part B categories set to this table and column" />} />;
   const typed = <Src kind="typed" title="Typed below" />;
 
   const rows: MatrixRow[] = [
@@ -68,12 +68,12 @@ export const Table6: React.FC = () => {
       note: <RowSrc step="itc" src={<Src kind="computed" title="Balancing figure: 6A2 less every other row of 6B–6H (GSTR 9-INPUT D10)">Balancing</Src>} />,
     },
     { key: '6C', code: '6C', label: 'Inward supplies received from unregistered persons liable to reverse charge (other than B above) on which tax is paid & ITC availed', heading: true },
-    { key: '6C_ip', label: 'Inputs', indent: true, value: t6.C_ip, note: unused },
-    { key: '6C_cg', label: 'Capital goods', indent: true, value: t6.C_cg, note: unused },
+    { key: '6C_ip', label: 'Inputs', indent: true, value: t6.C_ip, note: rcmBooks },
+    { key: '6C_cg', label: 'Capital goods', indent: true, value: t6.C_cg, note: rcmBooks },
     { key: '6C_is', label: 'Input services', indent: true, value: t6.C_is, note: rcmBooks },
     { key: '6D', code: '6D', label: 'Inward supplies received from registered persons liable to reverse charge (other than B above) on which tax is paid and ITC availed', heading: true },
-    { key: '6D_ip', label: 'Inputs', indent: true, value: t6.D_ip, note: unused },
-    { key: '6D_cg', label: 'Capital goods', indent: true, value: t6.D_cg, note: unused },
+    { key: '6D_ip', label: 'Inputs', indent: true, value: t6.D_ip, note: rcmBooks },
+    { key: '6D_cg', label: 'Capital goods', indent: true, value: t6.D_cg, note: rcmBooks },
     { key: '6D_is', label: 'Input services', indent: true, value: t6.D_is, note: rcmBooks },
     { key: '6E', code: '6E', label: 'Import of goods (including supplies from SEZ)', heading: true },
     { key: '6E_ip', label: 'Inputs', indent: true, value: t6.E_ip, note: <RowSrc step="purchases" src={<Src kind="books" title="PL-INPUT purchase and expense ledgers tagged D · Imported goods (GSTR 9-INPUT row 11)" />} /> },
@@ -136,7 +136,7 @@ export const Table6: React.FC = () => {
         <span className="tabular-nums text-foreground">{headsText(workings.itc.inputServicesBooks)}</span>.
       </p>
       <Note tone="position">
-        6A1 defaults to the Last Year Effect (Duties &amp; Taxes), not a typed figure; RCM ITC goes to 6C input services unless an RCM category is set to 6D or 6F.
+        6A1 defaults to the Last Year Effect (Duties &amp; Taxes), not a typed figure; RCM ITC goes to 6C input services unless an RCM category is set to 6D or 6F, to inputs or capital goods, or to No ITC (then it is not in Table 6).
       </Note>
       <EntryHeading
         actions={
@@ -243,7 +243,7 @@ export const Table8: React.FC = () => {
       label: 'IGST paid on import of goods (including supplies from SEZ)',
       value: t8.G,
       cells: igstOnly,
-      note: <RowSrc step="purchases" src={<Src kind="books" title="= 8H + 8H1: IGST on imports availed this year (6E) and next year" />} />,
+      note: docs.gstr9.t8G == null ? <Src kind="computed" title="Not typed: 8H + 8H1 (IGST on imports availed this year and next year). Type the bills-of-entry figure below." /> : typed,
     },
     { key: '8H', code: '8H', label: 'IGST credit availed on import of goods (as per 6(E) above)', value: t8.H, cells: igstOnly, note: computed },
     { key: '8H1', code: '8H1', label: 'IGST credit availed on import of goods in next financial year', value: t8.H1, cells: igstOnly, note: typed },
@@ -259,6 +259,16 @@ export const Table8: React.FC = () => {
     { id: '8E', code: '8E', label: 'Available, not availed', title: 'ITC available but not availed', read: (d) => d.t8E, write: (d, v) => ({ ...d, t8E: v ?? zIn() }) },
     { id: '8F', code: '8F', label: 'Available but ineligible', title: 'ITC available but ineligible', read: (d) => d.t8F, write: (d, v) => ({ ...d, t8F: v ?? zIn() }) },
     {
+      id: '8G',
+      code: '8G',
+      label: 'IGST paid on imports (bills of entry)',
+      title: 'IGST and cess paid on import of goods (incl. from SEZ) as per the bills of entry / ICEGATE. Leave blank to take 8H + 8H1.',
+      read: (d) => d.t8G,
+      write: (d, v) => ({ ...d, t8G: v }),
+      computed: g.t8GDefault,
+      heads: ['i', 'x'],
+    },
+    {
       id: '8H1',
       code: '8H1',
       label: 'Import IGST availed next FY',
@@ -272,7 +282,7 @@ export const Table8: React.FC = () => {
   return (
     <SectionCard
       title="8 · Other ITC related information"
-      description="8A from the portal; 8E, 8F and 8H1 are typed here — 8E + 8F explain the 8D difference."
+      description="8A from the portal; 8E, 8F, 8G and 8H1 are typed here — 8E + 8F explain the 8D difference, 8J the IGST on imports not availed."
       excelRef="GSTR-9 rows 80–92"
       actions={
         <>

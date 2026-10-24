@@ -207,8 +207,15 @@ export interface DutiesInputDoc {
 // Step: RCM (Part B — books; Part A lives in PortalDoc.months[m].rcm)
 // ---------------------------------------------------------------------------
 
-/** Where a category's RCM ITC is reported in GSTR-9 Table 6. The Excel puts everything in 6C input services. */
-export type RcmItcTable = '6C' | '6D' | '6F';
+/**
+ * Where a category's RCM ITC is reported in GSTR-9 Table 6. The Excel puts everything in 6C input services.
+ * `none` = tax paid on reverse charge but no ITC (s.17(5), or used for exempt supplies): it stays in the
+ * liability (4G, Annexure-1, 9C Table 9) and out of every ITC figure.
+ */
+export type RcmItcTable = '6C' | '6D' | '6F' | 'none';
+
+/** What an RCM category's ITC is in 6C / 6D: inputs, capital goods or input services (the default). 6F is services. */
+export type RcmItcType = 'ip' | 'cg' | 'is';
 
 export interface RcmCell {
   taxable: number;
@@ -227,6 +234,8 @@ export interface RcmCategory {
   rate: number;
   supplyType: SupplyType;
   itcTable: RcmItcTable;
+  /** 6C / 6D column; undefined = input services, as the sheet. */
+  itcType?: RcmItcType;
   months: Record<MonthKey, RcmCell>;
 }
 
@@ -385,6 +394,8 @@ export interface Gstr9ManualDoc {
   };
   t8E: TaxIn;
   t8F: TaxIn;
+  /** 8G IGST (and cess) paid on imports as per the bills of entry — null = 8H + 8H1 (nothing lapses). */
+  t8G: TaxIn | null;
   t8H1: TaxIn;
   /** Table 9 tax payable override per head — null = portal payable (or 4N tax when no portal figure). */
   t9Payable: Record<Table9Head, number | null>;
@@ -623,6 +634,8 @@ export interface WorkspaceContext {
   financialYear: string;
   /** Builder on the NO_ITC scheme — zero ITC is expected, not a gap. */
   noItcBuilder: boolean;
+  /** QRMP client (registration type IFF): GSTR-3B is filed quarterly. */
+  quarterly?: boolean;
   /** Live set-offs from the payable register (payables.ts); none when omitted. */
   setOffs?: Array<{ side: 'output' | 'input'; method: 'drc03' | 'gstr3b'; tax: Tax }>;
 }

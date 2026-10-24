@@ -116,6 +116,7 @@ export const emptyDocs = (): AnnualReturnDocs => ({
     },
     t8E: zIn(),
     t8F: zIn(),
+    t8G: null,
     t8H1: zIn(),
     t9Payable: { igst: null, cgst: null, sgst: null, cess: null },
     t10: zVal(),

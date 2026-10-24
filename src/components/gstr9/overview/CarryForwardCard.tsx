@@ -82,7 +82,7 @@ export const CarryForwardCard: React.FC = () => {
           : {
               ...d,
               categories: p.rcm.categories.map((c) => ({
-                id: newId(), name: c.name, rate: c.rate, supplyType: c.supplyType, itcTable: c.itcTable, months: zeroMonths(),
+                id: newId(), name: c.name, rate: c.rate, supplyType: c.supplyType, itcTable: c.itcTable, ...(c.itcType ? { itcType: c.itcType } : {}), months: zeroMonths(),
               })),
             },
         { action: `Copied the ledger list from FY ${prev}` },

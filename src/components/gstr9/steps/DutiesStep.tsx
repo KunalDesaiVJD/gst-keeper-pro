@@ -2,7 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { FY_MONTHS } from '@/lib/gstr9/types';
+import { MONTH_LABEL } from '@/lib/gstr9/engine';
+import { FY_MONTHS, type MonthKey } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
 import InputTab from '../duties/InputTab';
 import DutiesOpenStrip from '../duties/OpenStrip';
@@ -10,6 +11,19 @@ import OutputTab from '../duties/OutputTab';
 import { hasCess, openCount, type DutiesView } from '../duties/helpers';
 import { useTabParam } from '../reco/helpers';
 import { OpenBadge, StepTab, StepTabsList, ViewSwitch } from '../reco/StepTabs';
+import { Note } from '../ui';
+
+/** "Jun, Sep" → "Apr–Jun, Jul–Sep": the quarters a quarterly GSTR-3B covers. */
+const quarterText = (ends: MonthKey[]): string =>
+  ends.map((e) => `${MONTH_LABEL[FY_MONTHS[FY_MONTHS.indexOf(e) - 2]]}–${MONTH_LABEL[e]}`).join(', ');
+
+const QuarterNote: React.FC<{ ends: MonthKey[] }> = ({ ends }) =>
+  ends.length ? (
+    <Note tone="position">
+      Quarterly GSTR-3B (QRMP) for {quarterText(ends)}: the three months of books are compared with the quarter’s 3B, and the
+      quarter’s last month carries the whole difference.
+    </Note>
+  ) : null;
 
 const TABS = ['output', 'input'] as const;
 
@@ -119,9 +133,11 @@ const DutiesStep: React.FC = () => {
         </StepTabsList>
 
         <TabsContent value="output" className="mt-0 space-y-3">
+          <QuarterNote ends={workings.quarterly.out} />
           <OutputTab cess={cess} view={outView} gridMaxHeight={GRID_MAX_HEIGHT.output} />
         </TabsContent>
         <TabsContent value="input" className="mt-0 space-y-3">
+          <QuarterNote ends={workings.quarterly.itc} />
           <InputTab cess={cess} view={view} gridMaxHeight={GRID_MAX_HEIGHT.input} />
         </TabsContent>
       </Tabs>

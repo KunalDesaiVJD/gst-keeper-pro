@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Checks for the GSTR-9/9C audit fixes of 24 Oct 2026 (docs/GSTR9_9C_WORKINGS.md
-// §6 positions 10, 21–23), on small hand-made workings. Needs no client data:
+// §6 positions 8, 10, 21–27), on small hand-made workings. Needs no client data:
 //
 //   node scripts/verify-gstr9-audit-fixes.mjs
 
@@ -86,6 +86,70 @@ const out = (w, key) => w.outward.rows.find((r) => r.key === key).books;
   const w = E.computeWorkings(d, ctx);
   const line = w.diffs.find((x) => x.key === 'g9.t5.5C1');
   eq('5C1 line difference', line ? line.diff.t : NaN, 50);
+}
+
+// 9C 9Q is the tax paid in GSTR-9 Table 9.
+{
+  const d = D.emptyDocs();
+  d.portal.gstr9Meta.source = 'upload';
+  d.portal.gstr9.table9.cgst = { payable: 1000, cash: 300, itcI: 0, itcC: 500, itcS: 0, itcX: 0 };
+  const w = E.computeWorkings(d, ctx);
+  eq('9Q CGST = paid', w.gstr9c.t9.Q.c, 800);
+}
+
+// RCM: No ITC stays in the liability, out of ITC; 6C/6D split by inputs / capital goods / services.
+{
+  const d = D.emptyDocs();
+  const months = (taxable) => Object.fromEntries(['apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'jan', 'feb', 'mar'].map((m, k) => [m, { taxable: k === 0 ? taxable : 0 }]));
+  d.rcm.categories.push(
+    { id: 'svc', name: 'Legal', rate: 18, supplyType: 'intra', itcTable: '6C', months: months(1000) },
+    { id: 'gds', name: 'Cashew', rate: 5, supplyType: 'intra', itcTable: '6C', itcType: 'ip', months: months(2000) },
+    { id: 'cg', name: 'Machine', rate: 18, supplyType: 'intra', itcTable: '6D', itcType: 'cg', months: months(500) },
+    { id: 'blk', name: 'Motor car rent', rate: 18, supplyType: 'intra', itcTable: 'none', months: months(100) },
+  );
+  const w = E.computeWorkings(d, ctx);
+  eq('6C inputs CGST', w.g9.t6.C_ip.c, 50);
+  eq('6C input services CGST', w.g9.t6.C_is.c, 90);
+  eq('6D capital goods CGST', w.g9.t6.D_cg.c, 45);
+  eq('RCM liability (Part B) CGST incl. no-ITC', w.rcm.partB.c, 194);
+  eq('RCM ITC in P&L net ITC CGST', w.purchases.rcmCredit.c, 185);
+  eq('RCM ITC in D&T CGST', w.dti.rcmBooks.c, 185);
+  eq('9C 14P CGST', w.c14.rows.P.c, 185);
+  eq('Annexure-1 D (tax paid) CGST', w.ann1.D.c, 194);
+}
+
+// QRMP: a quarter's 3B is compared with three months of books.
+{
+  const d = D.emptyDocs();
+  ['apr', 'may', 'jun'].forEach((m) => { d.duties_output.months[m].sales = { i: 0, c: 100, s: null, x: 0 }; });
+  d.portal.months.jun.outTax = { i: 0, c: 300, s: 300, x: 0 };
+  d.portal.monthMeta.jun = { source: 'as_filed_3b' };
+  const w = E.computeWorkings(d, { ...ctx, quarterly: true });
+  const line = w.diffs.find((x) => x.key === 'dto.jun');
+  eq('quarter line difference', line ? line.diff.c : NaN, 0);
+  eq('no "not fetched" line for Apr/May', w.diffs.some((x) => x.key === 'dto.no3b') ? 1 : 0, 0);
+  eq('Jun row difference', w.dto.months.jun.diff.c, 0);
+  const wm = E.computeWorkings(d, ctx);
+  eq('monthly client: Apr/May not fetched', wm.diffs.some((x) => x.key === 'dto.no3b') ? 1 : 0, 1);
+}
+
+// 8G typed from the bills of entry: what was paid and not availed lapses in 8J.
+{
+  const d = D.emptyDocs();
+  d.purchases.rows.push({ id: 'g', section: 'purchase', ledger: 'Import', supplyType: 'inter', rate: 18, taxable: 1000, igst: 180, cgst: 0, sgst: null, cess: 0, head: 'imported_goods' });
+  d.gstr9.t8G = { i: 200, c: 0, s: null, x: 0 };
+  const w = E.computeWorkings(d, ctx);
+  eq('8G typed', w.g9.t8.G.i, 200);
+  eq('8J not availed', w.g9.t8.J.i, 20);
+}
+
+// 9C 9K2 takes the 4G1 ledgers.
+{
+  const d = D.emptyDocs();
+  d.sales.partA.push(sale('eco', 'ecom', 1000, 90), sale('b', 'b2b', 500, 45));
+  const w = E.computeWorkings(d, ctx);
+  eq('9K2 value', w.gstr9c.t9.rows.K2.t, 1000);
+  eq('9E (18%) value', w.gstr9c.t9.rows.E.t, 500);
 }
 
 if (failed) {

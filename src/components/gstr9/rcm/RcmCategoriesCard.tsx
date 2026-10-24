@@ -4,13 +4,13 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { num, STANDARD_RATES, totalTax } from '@/lib/gstr9/engine';
 import { loadPreviousYear } from '@/lib/gstr9/store';
-import type { RcmCategory, RcmItcTable, SupplyType } from '@/lib/gstr9/types';
+import type { RcmCategory, RcmItcType, SupplyType } from '@/lib/gstr9/types';
 import { SheetGrid, type CellTone, type GridColumn } from '../grid/SheetGrid';
 import { displayCol } from '../grid/columns';
 import { fmtRate } from '../grid/money';
 import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { ITC_TABLE_OPTIONS, newRcmCategory, previousFY, SHEET_BLOCKS, SUPPLY_OPTIONS } from './rcmShared';
+import { ITC_TABLE_OPTIONS, ITC_TYPE_OPTIONS, itcTableOf, newRcmCategory, previousFY, SHEET_BLOCKS, SUPPLY_OPTIONS } from './rcmShared';
 
 const rateTone = (rate: number): CellTone => (num(rate) <= 0 || !STANDARD_RATES.includes(num(rate)) ? 'warn' : undefined);
 const rateTitle = (rate: number): string => {
@@ -32,7 +32,7 @@ const RcmCategoriesCard: React.FC = () => {
 
   const setCats = (rows: RcmCategory[]) => update('rcm', (d) => ({ ...d, categories: rows }));
 
-  const seed = (list: Array<Pick<RcmCategory, 'name' | 'rate' | 'supplyType' | 'itcTable'>>) =>
+  const seed = (list: Array<Pick<RcmCategory, 'name' | 'rate' | 'supplyType' | 'itcTable' | 'itcType'>>) =>
     update('rcm', (d) => (d.categories.length ? d : { ...d, categories: list.map((c) => newRcmCategory(c)) }));
 
   const copyPrevious = async () => {
@@ -49,7 +49,8 @@ const RcmCategoriesCard: React.FC = () => {
           name: c.name ?? '',
           rate: num(c.rate),
           supplyType: c.supplyType === 'inter' ? 'inter' : 'intra',
-          itcTable: c.itcTable === '6D' || c.itcTable === '6F' ? c.itcTable : '6C',
+          itcTable: itcTableOf(c.itcTable),
+          itcType: c.itcType,
         })),
       );
       toast.success(`Copied ${list.length} RCM expense${list.length === 1 ? '' : 's'} from FY ${prevFy}. Months are empty.`);
@@ -85,8 +86,28 @@ const RcmCategoriesCard: React.FC = () => {
       type: 'select',
       width: 210,
       options: ITC_TABLE_OPTIONS,
-      value: (r) => r.itcTable || '6C',
-      onEdit: (r, e) => ({ ...r, itcTable: (e.text || '6C') as RcmItcTable }),
+      value: (r) => itcTableOf(r.itcTable),
+      title: () => 'Where the ITC on this expense is reported in GSTR-9 Table 6. No ITC: the RCM is paid but no credit is taken (s.17(5), exempt use).',
+      onEdit: (r, e) => ({ ...r, itcTable: itcTableOf(e.text) }),
+    },
+    {
+      key: 'itcType',
+      header: 'ITC is',
+      type: 'select',
+      width: 140,
+      options: ITC_TYPE_OPTIONS,
+      value: (r) => r.itcType ?? 'is',
+      editable: (r) => itcTableOf(r.itcTable) === '6C' || itcTableOf(r.itcTable) === '6D',
+      tone: (r) => (itcTableOf(r.itcTable) === '6C' || itcTableOf(r.itcTable) === '6D' ? undefined : 'muted'),
+      title: (r) =>
+        itcTableOf(r.itcTable) === '6C' || itcTableOf(r.itcTable) === '6D'
+          ? 'The 6C / 6D column: inputs, capital goods or input services'
+          : 'Only 6C and 6D are split by inputs, capital goods and input services',
+      onEdit: (r, e) => {
+        const t = (e.text || 'is') as RcmItcType;
+        const { itcType: _drop, ...rest } = r;
+        return t === 'is' ? rest : { ...rest, itcType: t };
+      },
     },
     displayCol<RcmCategory>('taxable', 'Taxable (year)', (r) => workings.rcm.categories[r.id]?.total.t ?? 0, { width: 130 }),
     {
