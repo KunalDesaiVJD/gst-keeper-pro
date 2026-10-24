@@ -76,8 +76,8 @@ export const Table6: React.FC = () => {
     { key: '6D_cg', label: 'Capital goods', indent: true, value: t6.D_cg, note: unused },
     { key: '6D_is', label: 'Input services', indent: true, value: t6.D_is, note: rcmBooks },
     { key: '6E', code: '6E', label: 'Import of goods (including supplies from SEZ)', heading: true },
-    { key: '6E_ip', label: 'Inputs', indent: true, value: t6.E_ip, note: <RowSrc step="purchases" src={<Src kind="books" title="PL-INPUT ledgers tagged D · Imported goods (GSTR 9-INPUT row 11)" />} /> },
-    { key: '6E_cg', label: 'Capital goods', indent: true, value: t6.E_cg, note: <Src kind="unused" title="Nil in this working — imported capital goods are not split out" /> },
+    { key: '6E_ip', label: 'Inputs', indent: true, value: t6.E_ip, note: <RowSrc step="purchases" src={<Src kind="books" title="PL-INPUT purchase and expense ledgers tagged D · Imported goods (GSTR 9-INPUT row 11)" />} /> },
+    { key: '6E_cg', label: 'Capital goods', indent: true, value: t6.E_cg, note: <RowSrc step="purchases" src={<Src kind="books" title="PL-INPUT capital-goods ledgers tagged D · Imported goods" />} /> },
     { key: '6F', code: '6F', label: 'Import of services (excluding inward supplies from SEZs)', value: t6.F, note: rcmBooks },
     {
       key: '6G',
@@ -162,7 +162,7 @@ export const Table7: React.FC = () => {
   const t7 = g.t7;
   const typed = <Src kind="typed" title="Typed in ITC reco" />;
   const s17 =
-    docs.gstr9.t7.s17_5 == null ? <Src kind="as_filed_3b" title="Σ 4B(1) of the as-filed GSTR-3B" /> : typed;
+    docs.gstr9.t7.s17_5 == null ? <Src kind="as_filed_3b" title="Σ 4B(1) of the as-filed GSTR-3B, less 7A2, 7C and 7D" /> : typed;
 
   const rows: MatrixRow[] = [
     { key: '7A', code: '7A', label: 'As per Rule 37', value: t7.A, note: typed },
@@ -243,7 +243,7 @@ export const Table8: React.FC = () => {
       label: 'IGST paid on import of goods (including supplies from SEZ)',
       value: t8.G,
       cells: igstOnly,
-      note: <RowSrc step="purchases" src={<Src kind="books" title="= 6E inputs (imported goods ledgers)" />} />,
+      note: <RowSrc step="purchases" src={<Src kind="books" title="= 8H + 8H1: IGST on imports availed this year (6E) and next year" />} />,
     },
     { key: '8H', code: '8H', label: 'IGST credit availed on import of goods (as per 6(E) above)', value: t8.H, cells: igstOnly, note: computed },
     { key: '8H1', code: '8H1', label: 'IGST credit availed on import of goods in next financial year', value: t8.H1, cells: igstOnly, note: typed },

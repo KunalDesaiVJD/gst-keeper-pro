@@ -36,6 +36,8 @@ import {
 /** Column group over the tax heads of the GSTR-9 editors (form order, so a block copied from the form pastes straight in). */
 const FORM_GROUP = 'Tax — in GSTR-9 form order';
 
+/** 7E when not typed: the as-filed 3B 4B(1), which also holds Rules 38/42/43, less 7A2, 7C and 7D as typed. */
+const E4B1_TITLE = 'Sum of 4B(1) of the as-filed GSTR-3B, less what is typed in 7A2 (Rule 38), 7C (Rule 42) and 7D (Rule 43)';
 const fmtHeads = (t: Tax) => `IGST ${fmtMoney(t.i)} · CGST ${fmtMoney(t.c)} · SGST ${fmtMoney(t.s)}${nz(t.x) ? ` · Cess ${fmtMoney(t.x)}` : ''}`;
 
 const SmallBadge: React.FC<{ variant?: 'secondary' | 'info' | 'warning' | 'outline'; children: React.ReactNode; title?: string }> = ({ variant = 'secondary', children, title }) => (
@@ -112,9 +114,9 @@ const WorkingCard: React.FC = () => {
 
   const s175Src =
     docs.gstr9.t7.s17_5 == null ? (
-      <SmallBadge title="Sum of 4B(1) of the as-filed GSTR-3B">As-filed 3B 4B(1)</SmallBadge>
+      <SmallBadge title={E4B1_TITLE}>As-filed 3B 4B(1)</SmallBadge>
     ) : (
-      <SmallBadge variant="outline" title={`Typed. As-filed GSTR-3B 4B(1): ${fmtHeads(g9.t7EPortal)}`}>
+      <SmallBadge variant="outline" title={`Typed. As-filed GSTR-3B 4B(1) less 7A2, 7C, 7D: ${fmtHeads(g9.t7EPortal)}`}>
         Typed
       </SmallBadge>
     );
@@ -339,13 +341,13 @@ const Table7Card: React.FC = () => {
           {r.label || <span className="italic text-muted-foreground">Other reversal</span>}
           {r.kind === 'h1' && <SmallBadge>From Duties &amp; Taxes</SmallBadge>}
           {r.id === 's17_5' &&
-            (r.v == null ? <SmallBadge title="Sum of 4B(1) of the as-filed GSTR-3B">As-filed 3B 4B(1)</SmallBadge> : <SmallBadge variant="outline">Typed</SmallBadge>)}
+            (r.v == null ? <SmallBadge title={E4B1_TITLE}>As-filed 3B 4B(1)</SmallBadge> : <SmallBadge variant="outline">Typed</SmallBadge>)}
         </span>
       ),
       onEdit: (r, e) => ({ ...r, label: limitDesc(e.text) }),
     },
     ...overrideTaxCols<T7Row>({ editable: (r) => r.kind !== 'h1', locked: (r) => r.id === 's17_5' && !canEditSource, computedHint: (r) =>
-        r.kind === 'h1' ? 'Suspended ITC reversed, from Duties & Taxes (I + L) — change it there' : 'As-filed GSTR-3B 4B(1) — type to override', order: FORM_ORDER, names: FORM_HEAD_NAME, group: FORM_GROUP }),
+        r.kind === 'h1' ? 'Suspended ITC reversed, from Duties & Taxes (I + L) — change it there' : 'As-filed GSTR-3B 4B(1) less 7A2, 7C and 7D — type to override', order: FORM_ORDER, names: FORM_HEAD_NAME, group: FORM_GROUP }),
   ];
 
   const onRowsChange = (next: T7Row[]) =>
@@ -397,11 +399,11 @@ const Table7Card: React.FC = () => {
   return (
     <SectionCard
       title="Table 7 — ITC reversed and ineligible"
-      description={`Type the reversals rule by rule. 7E follows the as-filed GSTR-3B 4B(1)${canEditSource ? ' until you type over it' : ' (locked — only a superadmin can type over it)'}; 7H1 comes from the suspended-ITC columns of Duties & Taxes.`}
+      description={`Type the reversals rule by rule. 7E follows the as-filed GSTR-3B 4B(1), less what you type in 7A2, 7C and 7D (4B(1) holds those rules too),${canEditSource ? ' until you type over it' : ' (locked — only a superadmin can type over it)'}; 7H1 comes from the suspended-ITC columns of Duties & Taxes.`}
       excelRef="GSTR-9 rows 66–78 · GSTR 9-INPUT rows 20–23"
       actions={
         G.t7.s17_5 != null && canEditSource ? (
-          <Button size="sm" variant="outline" onClick={reset7E} title={`As-filed GSTR-3B 4B(1): ${fmtHeads(g9.t7EPortal)}`}>
+          <Button size="sm" variant="outline" onClick={reset7E} title={`As-filed GSTR-3B 4B(1) less 7A2, 7C, 7D: ${fmtHeads(g9.t7EPortal)}`}>
             <RotateCcw className="mr-1 h-3.5 w-3.5" /> 7E: use as-filed 3B 4B(1) ({fmtMoney(totalTax(g9.t7EPortal))})
           </Button>
         ) : undefined

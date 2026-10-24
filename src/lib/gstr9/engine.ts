@@ -117,6 +117,16 @@ export const rateMismatch = (rate: number | null, implied: number | null): boole
 /** A sales-return / debit-note row: negative value (sheet note PL-OUTPUT B35), or zero value with negative tax. */
 export const isReturnRow = (taxable: number, t: Tax): boolean => taxable < 0 || (taxable === 0 && t.i + t.c + t.s + t.x < 0);
 
+/**
+ * The Table 4 bucket a Part A row is reported in. A negative row is a credit
+ * note (4I), except in 4F: there it is an advance adjusted against an invoice,
+ * and 4F is reported net of it. A bucket a saved doc does not know is B2B.
+ */
+export const salesBucket = (category: unknown, isReturn: boolean): OutwardCategory | 'cr_nt' => {
+  const c: OutwardCategory = typeof category === 'string' && category in OUTWARD_CATEGORY_LABEL ? (category as OutwardCategory) : 'b2b';
+  return isReturn && c !== 'at' ? 'cr_nt' : c;
+};
+
 export const DEFAULT_HEAD: Record<InputSection, ExpenseHead> = {
   purchase: 'purchases',
   expense: 'other2',
@@ -390,8 +400,10 @@ export interface Workings {
     t7: Record<Table7Key, Tax>;
     t7H: Array<{ id: string; description: string; tax: Tax; computed: boolean }>;
     t7I: Tax;
-    /** 7E as the as-filed GSTR-3B 4B(1) gives it — what "use as-filed 3B" reverts to. */
+    /** 7E as the as-filed GSTR-3B gives it (4B(1) less 7A2, 7C, 7D) — what "use as-filed 3B" reverts to. */
     t7EPortal: Tax;
+    /** Σ 4B(1) of the as-filed GSTR-3B, before 7A2 / 7C / 7D are taken out. */
+    t7EAsFiled: Tax;
     t7J: Tax;
     t8: Record<'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'H1' | 'I' | 'J' | 'K', Tax>;
     t9: Record<Table9Head, Table9Calc>;
@@ -533,6 +545,9 @@ export const OUTWARD_CATEGORY_LABEL: Record<OutwardCategory, string> = {
   exp_wp: 'Export with tax (4C)',
   sez_wp: 'SEZ with tax (4D)',
   deemed: 'Deemed export (4E)',
+  at: 'Advances, tax paid (4F)',
+  ecom: 'E-commerce operator u/s 9(5) (4G1)',
+  dr_nt: 'Debit notes (4J)',
 };
 
 export const NON_TAX_NATURE_LABEL: Record<NonTaxNature, string> = {
@@ -596,18 +611,18 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   let partA = val();
   const byRate: Record<string, ValTax> = {};
   const outwardBooks: Record<OutwardCategory | 'cr_nt', ValTax> = {
-    b2b: val(), b2c: val(), exp_wp: val(), sez_wp: val(), deemed: val(), cr_nt: val(),
+    b2b: val(), b2c: val(), exp_wp: val(), sez_wp: val(), deemed: val(), at: val(), ecom: val(), dr_nt: val(), cr_nt: val(),
   };
   docs.sales.partA.forEach((r: SalesRow) => {
     const t = rowTax(r);
     const taxable = num(r.taxable);
     const implied = impliedRate(taxable, t);
-    const ret = isReturnRow(taxable, t);
+    const bucket = salesBucket(r.category, isReturnRow(taxable, t));
+    const ret = bucket === 'cr_nt';
     salesRows[r.id] = { id: r.id, tax: t, impliedRate: implied, rateMismatch: rateMismatch(r.rate, implied), isReturn: ret };
     const v = withT(taxable, t);
     partA = addV(partA, v);
-    if (ret) outwardBooks.cr_nt = addV(outwardBooks.cr_nt, negV(v));
-    else outwardBooks[r.category] = addV(outwardBooks[r.category], v);
+    outwardBooks[bucket] = addV(outwardBooks[bucket], ret ? negV(v) : v);
     // GSTR-9C Table 9 is rate-wise tax actually payable: net of returns, keyed by rate.
     const typedRate = r.rate !== null && r.rate !== undefined ? num(r.rate) : null;
     const rateKey = typedRate !== null && STANDARD_RATES.includes(typedRate) ? String(typedRate) : snapRate(typedRate ?? implied);
@@ -702,6 +717,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
 
   // ------------------------------------------------------------ Purchases (PL-INPUT)
   const purchaseRows: Record<string, PurchaseRowCalc> = {};
+  // Imported goods split by section: a capital-goods ledger is 6E capital goods, any other 6E inputs.
+  let importCapitalGoods = val();
   const sections: Record<InputSection, ValTax> = { purchase: val(), expense: val(), capital_goods: val() };
   const byHead: Record<ExpenseHead, ValTax> = Object.fromEntries(
     (Object.keys(EXPENSE_HEAD_LABEL) as ExpenseHead[]).map((h) => [h, val()]),
@@ -721,6 +738,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     const v = withT(taxable, t);
     sections[r.section] = addV(sections[r.section], v);
     byHead[head] = addV(byHead[head], v);
+    if (head === 'imported_goods' && r.section === 'capital_goods') importCapitalGoods = addV(importCapitalGoods, v);
   });
   const totalPl = addV(sections.purchase, sections.expense, sections.capital_goods); // row 71
   const otherAdj = tin(docs.purchases.suspendedOtherAdj); // row 75
@@ -763,9 +781,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     { key: 'exp', label: 'Exports with payment of tax', table: '4C', books: outwardBooks.exp_wp, portal: T4.exp, diff: val(), subtract: false },
     { key: 'sez', label: 'SEZ with payment of tax', table: '4D', books: outwardBooks.sez_wp, portal: T4.sez, diff: val(), subtract: false },
     { key: 'deemed', label: 'Deemed exports', table: '4E', books: outwardBooks.deemed, portal: T4.deemed, diff: val(), subtract: false },
-    { key: 'at', label: 'Advances (tax paid, invoice not issued)', table: '4F', books: X.at, portal: T4.at, diff: val(), subtract: false },
-    { key: 'ecom', label: 'E-commerce operator u/s 9(5)', table: '4G1', books: val(), portal: T4.ecom, diff: val(), subtract: false },
-    { key: 'dr_nt', label: 'Debit notes', table: '4J', books: X.dr_nt, portal: T4.dr_nt, diff: val(), subtract: false },
+    // 4F and 4J: the Sales ledgers tagged to them plus the books-side extras typed on the Outward reco step.
+    { key: 'at', label: 'Advances (tax paid, invoice not issued)', table: '4F', books: addV(outwardBooks.at, X.at), portal: T4.at, diff: val(), subtract: false },
+    { key: 'ecom', label: 'E-commerce operator u/s 9(5)', table: '4G1', books: outwardBooks.ecom, portal: T4.ecom, diff: val(), subtract: false },
+    { key: 'dr_nt', label: 'Debit notes', table: '4J', books: addV(outwardBooks.dr_nt, X.dr_nt), portal: T4.dr_nt, diff: val(), subtract: false },
     { key: 'amd', label: 'Net amendments (4K − 4L)', table: '4K−4L', books: subV(X.amd_pos, X.amd_neg), portal: subV(T4.amd_pos, T4.amd_neg), diff: val(), subtract: false },
     { key: 'cr_nt', label: 'Credit notes', table: '4I', books: outwardBooks.cr_nt, portal: T4.cr_nt, diff: val(), subtract: true },
   ];
@@ -829,7 +848,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     B_ip: taxOf(inputs), B_cg: taxOf(capitalGoods), B_is: inputServicesTax,
     C_ip: tax(), C_cg: tax(), C_is: taxOf(byItcTable['6C']),
     D_ip: tax(), D_cg: tax(), D_is: taxOf(byItcTable['6D']),
-    E_ip: taxOf(importGoods), E_cg: tax(),
+    E_ip: taxOf(subV(importGoods, importCapitalGoods)), E_cg: taxOf(importCapitalGoods),
     F: taxOf(byItcTable['6F']),
     G: isd,
     H: reclaims,
@@ -842,9 +861,13 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
 
   // ------------------------------------------------------------ Table 7
   const monthly4B1 = sumMonths(byMonth((m) => P.months[m].itc4b1));
+  // POSITION: 3B 4B(1) holds the Rule 38, 42 and 43 reversals as well as s.17(5). 7E defaults to
+  // 4B(1) less what is typed in 7A2, 7C and 7D (never below nil), so they are not counted twice;
+  // the sheet's 9-INPUT E21 takes all of 4B(1).
+  const t7E4B1 = maxT0(subT(monthly4B1, tin(G.t7.r38), tin(G.t7.r42), tin(G.t7.r43)));
   const t7: Record<Table7Key, Tax> = {
     A: tin(G.t7.r37), A1: tin(G.t7.r37A), A2: tin(G.t7.r38), B: tin(G.t7.r39), C: tin(G.t7.r42), D: tin(G.t7.r43),
-    E: G.t7.s17_5 === null || G.t7.s17_5 === undefined ? monthly4B1 : tin(G.t7.s17_5), // 9-INPUT E21 "AS PER 3B"
+    E: G.t7.s17_5 === null || G.t7.s17_5 === undefined ? t7E4B1 : tin(G.t7.s17_5),
     F: tin(G.t7.tran1), G: tin(G.t7.tran2),
   };
   const t7H: Workings['g9']['t7H'] = [
@@ -870,9 +893,12 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   t8.D = subT(t8.A, t8.B, t8.C);
   t8.E = tin(G.t8E);
   t8.F = tin(G.t8F);
-  t8.G = tax(t6.E_ip.i, 0, 0, t6.E_ip.x); // I87 = I53
-  t8.H = t8.G; // 8H = 8G
+  // 8H = 6E (inputs and capital goods). POSITION: 8G (IGST paid on imports) is not in the books, so it
+  // is taken as 8H + 8H1 (the sheet: 8G = 8H = 6E inputs), so IGST availed next year is not a negative lapse.
+  const t6E = addT(t6.E_ip, t6.E_cg);
+  t8.H = tax(t6E.i, 0, 0, t6E.x);
   t8.H1 = tin(G.t8H1);
+  t8.G = addT(t8.H, tax(t8.H1.i, 0, 0, t8.H1.x));
   t8.I = subT(t8.G, t8.H, t8.H1);
   t8.J = t8.I;
   t8.K = addT(t8.E, t8.F, t8.J);
@@ -1242,6 +1268,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       ['5A', 'Zero rated (export) without tax', g5.A.t, num(T5P.zero_rtd)],
       ['5B', 'SEZ without tax', g5.B.t, num(T5P.sez)],
       ['5C', 'Reverse charge (recipient pays)', g5.C.t, num(T5P.rchrg)],
+      ['5C1', 'E-commerce operator pays u/s 9(5)', g5.C1.t, num(T5P.ecom_14)],
       ['5D', 'Exempted', g5.D.t, num(T5P.exmt)],
       ['5E', 'Nil rated', g5.E.t, num(T5P.nil)],
       ['5F', 'Non-GST supply', g5.F.t, num(T5P.non_gst)],
@@ -1324,7 +1351,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     g9: {
       t4: g4 as Workings['g9']['t4'], t4Source: gstr9Present ? 'portal' : 'none',
       t5: g5, t5Portal: { ...P.gstr9.table5 }, t5PortalTotals, t8Unsplit,
-      t6, t6ASource, t7, t7H, t7I, t7EPortal: monthly4B1, t7J, t8, t9, t9Other,
+      t6, t6ASource, t7, t7H, t7I, t7EPortal: t7E4B1, t7EAsFiled: monthly4B1, t7J, t8, t9, t9Other,
       t10, t11, t12, t12Source: G.t12 === null || G.t12 === undefined ? 'computed' : 'override', t13, totalTurnover,
       t14: G.t14, t15: G.t15, t16: G.t16,
       t17: (G.t17 || []).map((r) => ({ ...r, tax: rowTax(r) })),

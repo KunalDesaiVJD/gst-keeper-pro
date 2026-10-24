@@ -387,6 +387,12 @@ screen where it applies.
     Part A ledger carries a Table 4 tag (B2B by default, as the sheet puts
     everything in B2B), and negative rows are credit notes, so category
     differences mean something. Totals are identical to the sheet's.
+    The buckets are every Table 4 row a sales ledger can belong to: 4A–4E,
+    4F (advances on which tax is paid), 4G1 (an e-commerce operator's own
+    u/s 9(5) supplies) and 4J (debit notes). In 4F a negative row is an
+    advance adjusted against an invoice and nets 4F; it is not a credit
+    note. The books-side extras on the Outward reco step (4F, 4J, 4K, 4L)
+    are added to what the ledgers carry.
 11. **Part B natures cover every Table 5 bucket** (5A, 5B, 5C, 5C1, 5D, 5E,
     5F, or "not reportable"); negative rows go to 5H. The sheet picks
     Part B rows by position.
@@ -433,6 +439,18 @@ screen where it applies.
     The rules are checked in the database against the user id the app
     sends; with no server session, they prevent mistakes, not a determined
     insider.
+21. **7E defaults to the as-filed GSTR-3B 4B(1) less 7A2, 7C and 7D**
+    as typed (per head, never below nil). 4B(1) holds the Rule 38, 42 and
+    43 reversals as well as s.17(5); the sheet's 9-INPUT E21 takes all of
+    4B(1), so typing a Rule 42 or 43 reversal counted it twice in 7I.
+22. **Imported capital goods go to 6E capital goods.** A capital-goods
+    ledger tagged D · Imported goods is 6E capital goods, any other ledger
+    so tagged 6E inputs (the sheet has no imported capital goods). 8H is
+    all of 6E.
+23. **8G = 8H + 8H1.** The working has no bill-of-entry figure, so IGST
+    paid on imports is taken as what was availed this year (6E) and next
+    year (8H1); 8I and 8J stay nil. The sheet's 8G = 8H = 6E inputs made
+    a typed 8H1 a negative lapse in 8K.
 
 Carried over from the workbook as-is (firm positions, flagged in the UI):
 suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"

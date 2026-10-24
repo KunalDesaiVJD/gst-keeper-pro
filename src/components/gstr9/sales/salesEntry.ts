@@ -128,10 +128,21 @@ export const SUPPLY_OPTIONS: Array<{ value: SupplyType; label: string }> = [
   { value: 'inter', label: 'Inter-state' },
 ];
 
-export const CATEGORY_OPTIONS = (Object.keys(OUTWARD_CATEGORY_LABEL) as OutwardCategory[]).map((k) => ({
-  value: k,
-  label: OUTWARD_CATEGORY_LABEL[k],
-}));
+/** Table codes and plain words accepted when typing or pasting a bucket (not listed). */
+const CATEGORY_ALIASES: Record<OutwardCategory, string[]> = {
+  b2b: ['4B', 'B2B'],
+  b2c: ['4A', 'B2C'],
+  exp_wp: ['4C', 'Export with tax', 'Export with payment of tax'],
+  sez_wp: ['4D', 'SEZ with tax', 'SEZ with payment of tax'],
+  deemed: ['4E', 'Deemed export', 'Deemed exports'],
+  at: ['4F', 'Advance', 'Advances', 'Advance received'],
+  ecom: ['4G1', 'E-commerce operator', 'ECO 9(5)'],
+  dr_nt: ['4J', 'Debit note', 'Debit notes'],
+};
+
+export const CATEGORY_OPTIONS: Array<{ value: OutwardCategory; label: string; aliases?: string[] }> = (
+  Object.keys(OUTWARD_CATEGORY_LABEL) as OutwardCategory[]
+).map((k) => ({ value: k, label: OUTWARD_CATEGORY_LABEL[k], aliases: CATEGORY_ALIASES[k] }));
 
 // ---------------------------------------------------------------------------
 // Part B — nature (the sheet's BIFURCATION column)
