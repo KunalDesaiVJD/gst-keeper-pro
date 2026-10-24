@@ -1,34 +1,47 @@
 // queue-gst-reminders — server-side reminder generator (single source of truth,
-// used by both the "Queue due reminders" button and the daily cron).
+// used by the daily cron and by the GST Reminders page).
 //
-// For every client with reminders enabled whose return for `period` is still
-// "Data Pending", enqueue the next ladder reminder (reminder_1 → reminder_2 →
-// reminder_final) if it's due. Two ways a step becomes "due":
-//   - Return type has a row in return_reminder_schedules (currently GSTR-1,
-//     GSTR-3B, GSTR-6, GSTR-7 — see that table): fixed, firm-wide calendar
-//     days, same for every client. A step fires once today's day-of-month
-//     (IST) has reached its scheduled day; a missed cron day still catches up
-//     on the next run (one step per run, never more).
-//   - No schedule row for that return type (ITC-04, CMP-08, GSTR-1A, …):
-//     falls back to the original per-client interval ladder — interval_days
-//     elapsed since the last reminder, capped at max_reminders.
+// For every client with reminders enabled whose return is still "Data
+// Pending", queue the reminder that is due. Two ways a reminder becomes due:
+//   - GSTR-1, GSTR-1 (IFF), GSTR-3B, GSTR-3B (Q), GSTR-6, GSTR-7: on the dates
+//     of the period's plan (reminder_period_plans), else of the standard
+//     schedule (return_reminder_schedules). The rules are in
+//     ../_shared/reminderPlan.ts: a reminder goes out on its date, at most one
+//     per client, return and period a day, only the latest step whose date has
+//     come (a missed earlier step is skipped, never sent late in a burst), and
+//     nothing after the due date. Each step carries a dedupe key, so two runs
+//     or two clicks never queue it twice.
+//   - Any other return type (ITC-04, CMP-08, GSTR-1A, ...): the per-client
+//     interval ladder (interval_days since the last reminder, capped at
+//     max_reminders), for real Data Pending rows of the current return period.
 //
 // "Data Pending" isn't only a literal filing_status row with that status —
 // the app itself treats NO ROW AT ALL as Data Pending too (Filing Status /
 // Dashboard both synthesize that default client-side; nothing gets persisted
 // until a staff member actually touches the record). A period nobody has
 // opened yet is exactly the client this feature exists to nag, so for the
-// four scheduled return types this also builds a synthetic pending entry for
-// any enabled, visible client whose selected_returns includes that return
-// (or its IFF/Q variant) and has no filing_status row for it at all this
-// period. Scoped to the scheduled types only — the interval-ladder types
-// (ITC-04, CMP-08, GSTR-1A) still require a real row, same as before.
+// planned return types this also builds a synthetic pending entry for any
+// enabled, visible client whose selected_returns includes that return and has
+// no filing_status row for it at all this period.
 //
 // Writes `pending` rows to email_outbox; the send-gst-email function delivers them.
 //
-// Body: { period?: "MM/YYYY", staffName?: string }. Default period = previous
-// calendar month (the current GST return period).
+// Body (all optional):
+//   {}                                   the daily run: last month's period and
+//                                        this month's (a plan may send inside
+//                                        the period month)
+//   { mode: 'due', period }              the same, for one period
+//   { mode: 'now', period, step,         send one reminder now, whatever the
+//     returnTypes?, clientIds? }         dates (still never twice in a day)
+//   dryRun: true                         list what would be queued, write nothing
+//   staffName                            {{staff_name}} in the e-mail
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import {
+  PLAN_RETURN_TYPES, STEP_TEMPLATE, type ReminderStep, type ResolvedPlan,
+  currentReturnPeriod, dueDateFor, formatDate, parsePeriod, resolvePlan, returnFiledForPeriod,
+  shiftPeriod, stepDueToday, todayIST, addDays,
+  type PeriodPlanRow, type StandardScheduleRow,
+} from '../_shared/reminderPlan.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -59,39 +72,20 @@ function renderTemplate(s: string, vars: Record<string, string>): string {
   return (s ?? '').replace(/\{\{(\w+)\}\}/g, (_m, k) => vars[k] ?? '');
 }
 
-function computeDates(periodMonth: string, targetDate?: number | null): { dueDate: string; dataByDate: string } {
-  const m = /^(\d{1,2})\/(\d{4})$/.exec(periodMonth || '');
-  if (!m || !targetDate) return { dueDate: '', dataByDate: '' };
-  let mo = Number(m[1]) + 1;
-  let yr = Number(m[2]);
-  if (mo > 12) { mo = 1; yr += 1; }
-  const due = new Date(yr, mo - 1, Math.min(28, Math.max(1, targetDate)));
-  const dataBy = new Date(due.getTime() - 3 * 86400000);
-  const fmt = (d: Date) => `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()].slice(0, 3)} ${d.getFullYear()}`;
-  return { dueDate: fmt(due), dataByDate: fmt(dataBy) };
+// Interval-ladder return types: due date = filing_status.target_date of the
+// month after the period, "send data by" three days earlier.
+function ladderDates(periodMonth: string, targetDate?: number | null): { dueDate: string; dataByDate: string } {
+  const p = parsePeriod(periodMonth);
+  if (!p || !targetDate) return { dueDate: '', dataByDate: '' };
+  const next = parsePeriod(shiftPeriod(periodMonth, 1))!;
+  const due = `${next.year}-${String(next.month).padStart(2, '0')}-${String(Math.min(28, Math.max(1, targetDate))).padStart(2, '0')}`;
+  return { dueDate: formatDate(due), dataByDate: formatDate(addDays(due, -3)) };
 }
 
-function prevMonthPeriod(): string {
-  const now = new Date();
-  const p = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  return `${String(p.getMonth() + 1).padStart(2, '0')}/${p.getFullYear()}`;
-}
-
-// 'GSTR-1 (IFF)' / 'GSTR-3B (Q)' are filing-frequency variants of their base
-// return and follow the base return's fixed reminder schedule.
-function baseReturnType(rt: string): string {
-  if (rt === 'GSTR-1 (IFF)') return 'GSTR-1';
-  if (rt === 'GSTR-3B (Q)') return 'GSTR-3B';
-  return rt;
-}
-
-// Cron runs in UTC; the firm's reminder days are calendar days IST (UTC+5:30).
-function todayDayIST(): number {
-  return new Date(Date.now() + 5.5 * 3600 * 1000).getUTCDate();
-}
+const isPlanned = (rt: string) => (PLAN_RETURN_TYPES as readonly string[]).includes(rt);
 
 // --- Synthetic "no filing_status row = Data Pending" support, scoped to the
-// four scheduled return types. Ports the client-visibility + scheme-aware
+// planned return types. Ports the client-visibility + scheme-aware
 // return resolution that src/lib/filingRecords.ts (generateFilingRecords /
 // isClientVisibleForMonth) uses to decide what shows on the Filing Status
 // page / Dashboard, so this function nags on exactly the same population.
@@ -194,56 +188,103 @@ function resolveScheduledReturnsForClient(
   return resolved;
 }
 
+type Mode = 'due' | 'now';
+interface Item {
+  client_id: string;
+  client_name: string;
+  to_email: string;
+  return_type: string;
+  period: string;
+  step: number | null;
+  template: string | null;
+  due_date: string;
+  result: 'queued' | 'would_queue' | 'skipped';
+  reason?: string;
+}
+
+const REASON_TEXT: Record<string, string> = {
+  not_yet: 'not due yet',
+  already_sent: 'already sent',
+  past_due: 'due date passed',
+  sent_today: 'a reminder already went today',
+  no_dates: 'no reminder dates',
+  no_email: 'no e-mail address',
+  no_template: 'template switched off',
+  no_plan: 'no schedule for this return',
+  not_this_period: 'not filed for this period',
+  capped: 'reached the cap',
+  interval: 'interval not reached',
+  duplicate: 'already queued',
+  error: 'could not be queued',
+};
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   const json = (o: unknown, s = 200) =>
     new Response(JSON.stringify(o), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
-  let period = prevMonthPeriod();
+  let mode: Mode = 'due';
+  let periods: string[] = [currentReturnPeriod(), shiftPeriod(currentReturnPeriod(), 1)];
   let staffName: string | null = null;
+  let dryRun = false;
+  let manualStep: ReminderStep = 1;
+  let onlyReturnTypes: Set<string> | null = null;
+  let onlyClients: Set<string> | null = null;
   try {
     const b = await req.json();
-    if (b?.period && /^\d{1,2}\/\d{4}$/.test(b.period)) period = b.period;
+    if (b?.mode === 'now') mode = 'now';
+    if (b?.period && parsePeriod(String(b.period))) periods = [String(b.period).padStart(7, '0')];
     if (b?.staffName) staffName = String(b.staffName);
-  } catch { /* no body → defaults */ }
+    if (b?.dryRun) dryRun = true;
+    if ([1, 2, 3].includes(Number(b?.step))) manualStep = Number(b.step) as ReminderStep;
+    if (Array.isArray(b?.returnTypes) && b.returnTypes.length) onlyReturnTypes = new Set(b.returnTypes.map(String));
+    if (Array.isArray(b?.clientIds) && b.clientIds.length) onlyClients = new Set(b.clientIds.map(String));
+  } catch { /* no body → the daily run */ }
+  if (mode === 'now' && periods.length !== 1) return json({ error: 'Choose one period to send now.' }, 400);
 
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
-  let queued = 0, skipped = 0;
+  const today = todayIST();
+  const items: Item[] = [];
+  const done = () => {
+    const queued = items.filter((i) => i.result === 'queued').length;
+    const wouldQueue = items.filter((i) => i.result === 'would_queue').length;
+    return json({ mode, dryRun, today, periods, queued, would_queue: wouldQueue, skipped: items.length - queued - wouldQueue, items });
+  };
 
   const { data: settings } = await sb
     .from('client_reminder_settings')
     .select('client_id, interval_days, escalate, max_reminders')
     .eq('enabled', true);
-  const enabled = new Map((settings ?? []).map((s) => [s.client_id, s]));
-  if (enabled.size === 0) return json({ queued, skipped, period, note: 'no clients enabled' });
+  const enabled = new Map((settings ?? []).filter((s) => !onlyClients || onlyClients.has(s.client_id)).map((s) => [s.client_id, s]));
+  if (enabled.size === 0) return done();
+  const clientIds = [...enabled.keys()];
 
-  // All filing_status rows (any status) for enabled clients this period — used
-  // both to pick real Data Pending rows and to know which (client, return_type)
-  // pairs already have a row at all, so synthetic entries aren't added on top.
-  const { data: allRows } = await sb
-    .from('filing_status')
-    .select('id, client_id, return_type, period_month, target_date, status')
-    .eq('period_month', period)
-    .in('client_id', [...enabled.keys()]);
+  const [{ data: clientRows }, { data: schemeHistoryRows }, { data: tpls }, { data: standardRows }, { data: planRows }, { data: allRows }, { data: sentRows }] = await Promise.all([
+    sb.from('clients')
+      .select('id, name, email, gstin, registration_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand')
+      .in('id', clientIds),
+    sb.from('client_scheme_history')
+      .select('client_id, old_scheme, new_scheme, effective_from_date')
+      .in('client_id', clientIds)
+      .order('effective_from_date', { ascending: true }),
+    sb.from('email_templates').select('key, subject, body, is_active').in('key', ['reminder_1', 'reminder_2', 'reminder_final']),
+    sb.from('return_reminder_schedules').select('return_type, due_day, due_day_y, reminder_1_day, reminder_2_day, reminder_final_day'),
+    sb.from('reminder_period_plans').select('*').in('period_month', periods),
+    sb.from('filing_status')
+      .select('id, client_id, return_type, period_month, target_date, status')
+      .in('period_month', periods)
+      .in('client_id', clientIds),
+    sb.from('email_outbox')
+      .select('client_id, return_type, period_month, reminder_step, created_at')
+      .eq('kind', 'reminder')
+      .in('period_month', periods)
+      .in('client_id', clientIds),
+  ]);
 
-  type PendingRow = { id: string | null; client_id: string; return_type: string; period_month: string; target_date: number | null };
-  const rowKey = (clientId: string, rt: string) => `${clientId}__${rt}`;
-  const existingByKey = new Map((allRows ?? []).map((r) => [rowKey(r.client_id, r.return_type), r]));
-
-  const pending: PendingRow[] = (allRows ?? [])
-    .filter((r) => r.status === 'Data Pending')
-    .map((r) => ({ id: r.id, client_id: r.client_id, return_type: r.return_type, period_month: r.period_month, target_date: r.target_date }));
-
-  const { data: clientRows } = await sb
-    .from('clients')
-    .select('id, registration_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand')
-    .in('id', [...enabled.keys()]);
-
-  const { data: schemeHistoryRows } = await sb
-    .from('client_scheme_history')
-    .select('client_id, old_scheme, new_scheme, effective_from_date')
-    .in('client_id', [...enabled.keys()])
-    .order('effective_from_date', { ascending: true });
+  const tplByKey = new Map((tpls ?? []).filter((t) => t.is_active !== false).map((t) => [t.key, t]));
+  const standard = (standardRows ?? []) as StandardScheduleRow[];
+  const plans = (planRows ?? []) as PeriodPlanRow[];
+  const clientById = new Map((clientRows ?? []).map((c) => [c.id as string, c as ClientRow & { name: string; email: string | null; gstin: string | null }]));
   const historyByClient = new Map<string, SchemeHistoryEntry[]>();
   for (const h of (schemeHistoryRows ?? []) as SchemeHistoryEntry[]) {
     const list = historyByClient.get(h.client_id) ?? [];
@@ -251,71 +292,95 @@ Deno.serve(async (req) => {
     historyByClient.set(h.client_id, list);
   }
 
-  for (const client of (clientRows ?? []) as ClientRow[]) {
-    if (!isClientVisibleForMonth(client, period)) continue;
-    const history = historyByClient.get(client.id) ?? [];
-    const resolvedTypes = resolveScheduledReturnsForClient(client, period, history);
-    for (const rt of resolvedTypes) {
-      if (existingByKey.has(rowKey(client.id, rt))) continue;
-      pending.push({ id: null, client_id: client.id, return_type: rt, period_month: period, target_date: null });
+  const key3 = (clientId: string, rt: string, period: string) => `${clientId}__${rt}__${period}`;
+  // What already went (any status: a cancelled reminder is not queued again).
+  const sentByKey = new Map<string, { steps: Set<number>; today: boolean; count: number; last: string }>();
+  for (const r of sentRows ?? []) {
+    const k = key3(r.client_id, r.return_type as string, r.period_month as string);
+    const e = sentByKey.get(k) ?? { steps: new Set<number>(), today: false, count: 0, last: '' };
+    if (r.reminder_step) e.steps.add(r.reminder_step);
+    if (todayIST(new Date(r.created_at as string).getTime()) === today) e.today = true;
+    e.count++;
+    if ((r.created_at as string) > e.last) e.last = r.created_at as string;
+    sentByKey.set(k, e);
+  }
+
+  type PendingRow = { id: string | null; client_id: string; return_type: string; period_month: string; target_date: number | null };
+  const existing = new Set((allRows ?? []).map((r) => key3(r.client_id, r.return_type as string, r.period_month as string)));
+  const pending: PendingRow[] = (allRows ?? [])
+    .filter((r) => r.status === 'Data Pending')
+    .map((r) => ({ id: r.id, client_id: r.client_id, return_type: r.return_type as string, period_month: r.period_month as string, target_date: r.target_date }));
+  for (const period of periods) {
+    for (const client of clientById.values()) {
+      if (!isClientVisibleForMonth(client, period)) continue;
+      for (const rt of resolveScheduledReturnsForClient(client, period, historyByClient.get(client.id) ?? [])) {
+        if (existing.has(key3(client.id, rt, period))) continue;
+        pending.push({ id: null, client_id: client.id, return_type: rt, period_month: period, target_date: null });
+      }
     }
   }
 
-  if (!pending.length) return json({ queued, skipped, period, note: 'nothing Data Pending' });
-
-  const { data: tpls } = await sb
-    .from('email_templates')
-    .select('key, subject, body, is_active')
-    .in('key', ['reminder_1', 'reminder_2', 'reminder_final']);
-  const tplByKey = new Map((tpls ?? []).filter((t) => t.is_active !== false).map((t) => [t.key, t]));
-
-  const { data: schedules } = await sb
-    .from('return_reminder_schedules')
-    .select('return_type, due_day, reminder_1_day, reminder_2_day, reminder_final_day');
-  const scheduleByReturnType = new Map((schedules ?? []).map((s) => [s.return_type as string, s]));
-
-  const now = Date.now();
-  const todayDay = todayDayIST();
+  const ladderPeriod = currentReturnPeriod();
   for (const row of pending) {
+    if (onlyReturnTypes && !onlyReturnTypes.has(row.return_type)) continue;
+    const client = clientById.get(row.client_id);
+    if (!client) continue;
     const cfg = enabled.get(row.client_id)!;
-    const schedule = scheduleByReturnType.get(baseReturnType(row.return_type));
-    const { data: prev } = await sb
-      .from('email_outbox')
-      .select('created_at')
-      .eq('client_id', row.client_id).eq('return_type', row.return_type)
-      .eq('period_month', row.period_month).eq('kind', 'reminder')
-      .order('created_at', { ascending: false });
-    const count = prev?.length ?? 0;
-    const step = count + 1;
-    let key: string;
-    let targetDateForEmail: number | null;
+    const sent = sentByKey.get(key3(row.client_id, row.return_type, row.period_month)) ?? { steps: new Set<number>(), today: false, count: 0, last: '' };
+    const base: Item = {
+      client_id: row.client_id, client_name: client.name, to_email: client.email ?? '',
+      return_type: row.return_type, period: row.period_month, step: null, template: null, due_date: '', result: 'skipped',
+    };
+    const skip = (reason: string) => { items.push({ ...base, reason: REASON_TEXT[reason] ?? reason }); };
 
-    if (schedule) {
-      // Fixed firm-wide calendar-day ladder — always exactly 3 steps, no
-      // per-client interval/cap/escalate; a step fires once its scheduled
-      // day-of-month has arrived (catches up on the next run if a day was
-      // missed, one step per run).
-      if (step > 3) { skipped++; continue; }
-      const stepDay = step === 1 ? schedule.reminder_1_day : step === 2 ? schedule.reminder_2_day : schedule.reminder_final_day;
-      if (todayDay < stepDay) { skipped++; continue; }
-      key = step === 1 ? 'reminder_1' : step === 2 ? 'reminder_2' : 'reminder_final';
-      targetDateForEmail = schedule.due_day;
-    } else {
-      // No fixed schedule for this return type — original per-client interval ladder.
-      if (cfg.max_reminders != null && count >= cfg.max_reminders) { skipped++; continue; }
-      if (count > 0) {
-        const days = (now - new Date(prev![0].created_at as string).getTime()) / 86400000;
-        if (days < cfg.interval_days) { skipped++; continue; }
+    let step: ReminderStep;
+    let dueDate = '';
+    let dataByDate = '';
+    let dedupeKey: string;
+    if (isPlanned(row.return_type)) {
+      if (!returnFiledForPeriod(row.return_type, row.period_month)) continue;
+      const plan: ResolvedPlan | null = resolvePlan(row.period_month, row.return_type, standard, plans);
+      if (!plan) { skip('no_plan'); continue; }
+      const due = dueDateFor(plan, client.gstin);
+      base.due_date = due;
+      dueDate = formatDate(due);
+      dataByDate = formatDate(plan.dataByDate > due ? due : plan.dataByDate);
+      if (mode === 'now') {
+        if (sent.today) { skip('sent_today'); continue; }
+        step = manualStep;
+        dedupeKey = `reminder:now:${today}:${row.client_id}:${row.return_type}:${row.period_month}`;
+      } else {
+        const d = stepDueToday(plan, today, due, sent.steps, sent.today);
+        if (!d.send) { skip(d.reason!); continue; }
+        step = d.step!;
+        dedupeKey = `reminder:plan:${row.client_id}:${row.return_type}:${row.period_month}:${step}`;
       }
-      key = !cfg.escalate ? 'reminder_1' : step <= 1 ? 'reminder_1' : step === 2 ? 'reminder_2' : 'reminder_final';
-      targetDateForEmail = row.target_date;
+    } else {
+      // Interval ladder: the current return period only, real Data Pending rows only.
+      if (row.period_month !== ladderPeriod && mode === 'due') continue;
+      if (!row.id) continue;
+      ({ dueDate, dataByDate } = ladderDates(row.period_month, row.target_date));
+      if (mode === 'now') {
+        if (sent.today) { skip('sent_today'); continue; }
+        step = manualStep;
+        dedupeKey = `reminder:now:${today}:${row.client_id}:${row.return_type}:${row.period_month}`;
+      } else {
+        if (cfg.max_reminders != null && sent.count >= cfg.max_reminders) { skip('capped'); continue; }
+        if (sent.count > 0 && (Date.now() - new Date(sent.last).getTime()) / 86400000 < cfg.interval_days) { skip('interval'); continue; }
+        const n = sent.count + 1;
+        step = (!cfg.escalate || n <= 1 ? 1 : n === 2 ? 2 : 3) as ReminderStep;
+        dedupeKey = `reminder:ladder:${row.client_id}:${row.return_type}:${row.period_month}:${n}`;
+      }
     }
 
+    const key = STEP_TEMPLATE[step];
+    base.step = step;
+    base.template = key;
     const tpl = tplByKey.get(key);
-    if (!tpl) { skipped++; continue; }
-    const { data: client } = await sb.from('clients').select('name, email, gstin').eq('id', row.client_id).maybeSingle();
-    if (!client?.email) { skipped++; continue; }
-    const { dueDate, dataByDate } = computeDates(row.period_month, targetDateForEmail);
+    if (!tpl) { skip('no_template'); continue; }
+    if (!client.email) { skip('no_email'); continue; }
+    if (dryRun) { items.push({ ...base, result: 'would_queue' }); continue; }
+
     const vars: Record<string, string> = {
       contact_person: client.name, client_name: client.name, gstin: client.gstin ?? '',
       return_type: row.return_type, period: prettyPeriod(row.period_month),
@@ -329,9 +394,14 @@ Deno.serve(async (req) => {
       subject: renderTemplate(tpl.subject, vars), body: renderTemplate(tpl.body, vars),
       render_vars: vars,
       status: 'pending', reminder_step: step, filing_status_id: row.id,
+      dedupe_key: dedupeKey,
     });
-    if (error) { skipped++; continue; }
-    queued++;
+    if (error) {
+      skip((error as { code?: string }).code === '23505' ? 'duplicate' : 'error');
+      continue;
+    }
+    sent.today = true;
+    items.push({ ...base, result: 'queued' });
   }
-  return json({ queued, skipped, period });
+  return done();
 });
