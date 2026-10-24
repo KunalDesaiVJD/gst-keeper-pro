@@ -141,6 +141,12 @@ export interface RecoViewData {
   failed: { period: string; reason: string }[];
   /** ₹ per head within which figures count as the same. */
   tolerance: number;
+  /**
+   * A whole-year comparison (2A or 2B against GSTR-8A): the FY, '2025-26'. Each
+   * row's period is then the month of its document's date, and the report is
+   * named by the year, not by a span of months.
+   */
+  fy?: string;
 }
 
 // ── Aggregates (viewModel.ts computes them from any subset of rows) ──────────

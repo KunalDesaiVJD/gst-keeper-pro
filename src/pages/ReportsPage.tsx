@@ -51,6 +51,7 @@ const ReportsPage: React.FC = () => {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewTable, setPreviewTable] = useState<ReportTable | null>(null);
   const [previewExportBusy, setPreviewExportBusy] = useState<'xlsx' | 'pdf' | null>(null);
+  const [uploadBusy, setUploadBusy] = useState(false);
   // Silent background refresh after Pull — see handlePullSection. Keyed to
   // the report it was started for, so switching to a different report's
   // preview (or closing the dialog) doesn't keep overwriting it with stale
@@ -267,6 +268,34 @@ const ReportsPage: React.FC = () => {
     }
   };
 
+  // A report that reads an uploaded file (the GSTR-8A family's Table 8A
+  // document details): save it for the client and the periods picked, then
+  // build the preview again from what is now stored.
+  const handleUpload = async (file: File) => {
+    const report = previewReport;
+    if (!report?.upload) return;
+    if (!selectedClientId) { toast.error('Pick a client first.'); return; }
+    setUploadBusy(true);
+    try {
+      const said = await report.upload.run({ clientId: selectedClientId, periods: selectedPeriods, file, uploadedBy: user?.firstName || user?.email || null });
+      toast.success(said);
+      setPreviewLoading(true);
+      setPreviewError(null);
+      try {
+        setPreviewTable(await buildForPeriods(report, selectedPeriods, selectedClientId));
+      } catch (err) {
+        setPreviewTable(null);
+        setPreviewError(err instanceof Error ? err.message : 'Unknown error');
+      } finally {
+        setPreviewLoading(false);
+      }
+    } catch (err) {
+      toast.error(`Upload failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+    } finally {
+      setUploadBusy(false);
+    }
+  };
+
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
   return (
@@ -303,6 +332,8 @@ const ReportsPage: React.FC = () => {
         table={previewTable}
         onExport={handleExportFromPreview}
         exportBusy={previewExportBusy}
+        onUpload={handleUpload}
+        uploadBusy={uploadBusy}
       />
     </div>
   );

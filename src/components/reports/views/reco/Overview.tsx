@@ -46,7 +46,7 @@ export const HeaderStrip: React.FC<{ data: RecoViewData }> = ({ data }) => {
     <div className="flex flex-wrap items-stretch divide-x rounded-md border border-l-4 border-l-primary bg-card">
       <Field label="Client" className="max-w-[420px]">{data.client.name || 'Client'}</Field>
       <Field label="GSTIN"><span className="font-mono">{data.client.gstin || 'not on record'}</span></Field>
-      <Field label="Period">{periodText(data.periods)}</Field>
+      <Field label="Period">{data.fy ? `FY ${data.fy}` : periodText(data.periods)}</Field>
       <Field label={`${L} pulled`}>{single ? dayLabel(single.leftPulledAt) : dayRange(data.statements.map((s) => s.leftPulledAt))}</Field>
       <Field label={`${R} generated`}>{single ? dayLabel(single.rightGeneratedOn) : dayRange(data.statements.map((s) => s.rightGeneratedOn))}</Field>
       <Field label="Tolerance">₹{data.tolerance.toFixed(2)} per head</Field>

@@ -340,7 +340,8 @@ check('findings', 'flags counted in the notes (ITC not available, reverse charge
 // Every reason code of the 2A vs 2B set came out at least once.
 const seen = new Set();
 for (const res of [main, noAug, ng, early, noJun, stale, failed, late37A, qRes]) for (const r of res.result.rows) { seen.add(r.reason); r.notes.forEach((n) => seen.add(n.code)); }
-const allCodes = Object.keys(R.REASONS);
+// The year-against-8A codes (reasons8A.ts) are covered by scripts/verify-gstr8a-reco.mjs.
+const allCodes = Object.keys(R.REASONS).filter((c) => !/8A|EIGHT_A|NOT_IN_ANY_2B|TWO_B_NOT_PULLED/.test(c));
 const missing = allCodes.filter((c) => !seen.has(c));
 check('coverage', `every reason and note code produced (${allCodes.length})`, missing.length === 0, 'missing: ' + missing.join(', '));
 
@@ -763,7 +764,7 @@ const groups = R.matchSources([
 ]);
 check('n-way', 'three sources: X-1 in all three, X-2 in 2A and 8A, X-3 in 8A only', groups.length === 3
   && groups.some((g) => g.docs['2A'] && g.docs['2B'] && g.docs['8A']) && groups.some((g) => g.docs['2A'] && !g.docs['2B'] && g.docs['8A']) && groups.some((g) => !g.docs['2A'] && g.docs['8A']));
-check('n-way', '8A rule sets declared (empty) for the next reports', Array.isArray(R.RULES_2A_8A) && Array.isArray(R.RULES_8A_2B));
+// The 8A rule sets (reasons8A.ts) are checked by scripts/verify-gstr8a-reco.mjs.
 
 // ── Pull plan ───────────────────────────────────────────────────────────────
 // 25 Sep: the July 2A (pulled 20 Sep) is fresh; on 15 Oct it is stale and asked again (see [findings]).

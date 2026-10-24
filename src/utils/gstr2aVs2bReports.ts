@@ -143,6 +143,7 @@ export const describeJob = (job: PullJob): string => {
   if (job.want) {
     return job.periods.map((p) => `${(job.want?.[p] ?? ['2A', '2B']).map((s) => `GSTR-${s}`).join(' and ')} of ${monthLabel(p)}`).join('; ');
   }
+  if (job.mode === 'gstr9_pull') return `GSTR-9 system figures of ${job.periods.map((p) => `the year ending ${monthLabel(p)}`).join(', ')}`;
   const kind = job.mode === 'gstr2a_pull' ? 'GSTR-2A' : job.mode === 'gstr2b_pull' ? 'GSTR-2B' : job.mode;
   return `${kind} of ${job.periods.map(monthLabel).join(', ')}`;
 };
