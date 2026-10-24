@@ -255,8 +255,9 @@ export function reconcileThreeWay(st: FyStatements): ThreeWayResult {
 function explainThree(st: FyStatements, rows: ThreeRow[]): string[] {
   const out: string[] = [];
   out.push(st.eightA.origin === 'portal'
-    ? `8A: the portal's Table 8A document details${st.eightA.stored?.fileName ? ` (${st.eightA.stored.fileName})` : ''}, uploaded ${dayLabel(st.eightA.meta.pulledAt)}${st.eightA.meta.generatedOn ? `, generated ${dayLabel(st.eightA.meta.generatedOn)}` : ''}.`
-    : `8A is not uploaded, so it is rebuilt from the year's ${st.eightA.basis} the way the portal builds it. Upload the portal's Table 8A document details (GSTR-9, Download Table 8A document details) to compare with the portal's own 8A.`);
+    ? `8A: the portal's Table 8A document details${st.eightA.stored?.fileName ? ` (${st.eightA.stored.fileName})` : ''}, ${st.eightA.stored?.via === 'pull' ? 'pulled from the portal' : 'uploaded'} ${dayLabel(st.eightA.meta.pulledAt)}${st.eightA.meta.generatedOn ? `, generated ${dayLabel(st.eightA.meta.generatedOn)}` : ''}.`
+    : `8A is not pulled or uploaded, so it is rebuilt from the year's ${st.eightA.basis} the way the portal builds it. Pull (extension 0.18.0 fetches the portal's Table 8A document details) or Upload 8A to compare with the portal's own 8A.`);
+  if (st.eightA.origin === 'rebuilt' && st.eightA.meta.status) out.push(`The portal's 8A: ${st.eightA.meta.status}`);
   for (const side of [st.twoA, st.twoB]) {
     if (side.missing.length) out.push(`${side.source} of ${monthsWords(side.missing, monthLabel)} not pulled: use Pull.`);
     if (side.earlierFy) out.push(`${plural(side.earlierFy, 'document')} of an earlier year in the year's ${side.source}s left out (they belong to that year).`);
@@ -295,7 +296,7 @@ export function judgement(res: ThreeWayResult, st: FyStatements, portal8A: { igs
   line('2a', 'ITC as per GSTR-2A', sum((r) => r.a, (r) => !!r.a), `Documents dated in FY ${st.fy}, 2A of ${monthLabel(st.window[0])} to ${monthLabel(st.windowEnd)}, reverse charge included.`);
   line('2b', 'ITC as per GSTR-2B (ITC available)', sum((r) => r.b, (r) => !!r.b && r.b.bucket !== 'rejected' && r.b.bucket !== 'reversal' && r.b.itcAvailable !== false && window.has(r.b.statementPeriod)),
     'Documents dated in the year with ITC available in a 2B of the window; imports, ISD and reverse charge included.');
-  line('8a', st.eightA.origin === 'portal' ? "ITC as per GSTR-8A (portal's Table 8A document details)" : `ITC as per GSTR-8A (rebuilt from the year's ${st.eightA.basis}, not uploaded)`,
+  line('8a', st.eightA.origin === 'portal' ? "ITC as per GSTR-8A (portal's Table 8A document details)" : `ITC as per GSTR-8A (rebuilt from the year's ${st.eightA.basis}, not pulled or uploaded)`,
     sum((r) => r.e, (r) => !!r.e), 'B2B invoices and notes only.');
   if (portal8A) {
     const t = { taxable: 0, igst: r2(portal8A.igst), cgst: r2(portal8A.cgst), sgst: r2(portal8A.sgst), cess: r2(portal8A.cess), tax: r2(portal8A.igst + portal8A.cgst + portal8A.sgst + portal8A.cess) };
@@ -367,7 +368,7 @@ export function threeWayReportTable(res: ThreeWayResult, st: FyStatements, info:
     { label: 'GSTIN', value: gstin },
     { label: 'Financial year', value: `FY ${st.fy}` },
     { label: 'Statements', value: `2A and 2B of ${monthLabel(st.window[0])} to ${monthLabel(st.windowEnd)}` },
-    { label: '8A', value: st.eightA.origin === 'portal' ? `portal file, uploaded ${dayLabel(st.eightA.meta.pulledAt)}` : `rebuilt from the year's ${st.eightA.basis} (not uploaded)` },
+    { label: '8A', value: st.eightA.origin === 'portal' ? `portal file, ${st.eightA.stored?.via === 'pull' ? 'pulled from the portal' : 'uploaded'} ${dayLabel(st.eightA.meta.pulledAt)}` : `rebuilt from the year's ${st.eightA.basis} (not pulled or uploaded)` },
   ];
   const kpis: ReportKpi[] = [
     { label: 'Documents', value: rows.length, note: `${rows.filter((r) => r.a).length} in 2A, ${rows.filter((r) => r.b).length} in 2B, ${rows.filter((r) => r.e).length} in 8A` },

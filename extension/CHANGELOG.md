@@ -2,6 +2,15 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-24 — GSTR-9 Table 8A document details (v0.18.0)
+
+- **A new pull, `gstr9_8a_pull`**, for the 8A reports' Pull (GSTR-2A vs GSTR-8A, GSTR-2B vs GSTR-8A, GSTR-8A vs GSTR-2A vs GSTR-2B). For the year ending the job's March (`03/YYYY`) it opens the GSTR-9 on the Annual Return page the way the GSTR-9 pull does (FY, SEARCH, PREPARE-ONLINE, or VIEW for a filed year; the NIL question answered No and NEXT pressed; nothing saved, computed or filed on the portal), presses "Download Table 8A document details" on the GSTR-9 dashboard and saves what the portal hands back, as it came, as `GSTR9_8A` for `03/YYYY` (summary `gstk-8a-pull-v1`, status `Pulled`): the file (an Excel or a ZIP) from the page's own Blob or from the browser's download, and any JSON with documents the page loads. GST Keeper reads the file with its Upload 8A reader.
+- When the portal answers in words: `REQUESTED: …` (it prepares the file for later; Pull again), `NO DATA: …` (saved as an empty 8A), else `PULL FAILED: …` naming what the page showed (the buttons, what was pressed, the portal's words). A failure writes the status only, so an 8A saved earlier still counts.
+- **Nothing else changes.** Every other job, the GSTR-9 pull (`gstr9_pull`) included, runs as in 0.17.0; the new job only reads the GSTR-9 pull's page helpers. The background keeps a downloaded 8A file only for this job, only from `gst.gov.in`, only an Excel, a ZIP or a JSON.
+- Not seen live on the portal when written: the first run's status says what the page did.
+- GST Keeper asks for 0.18.0 only for the 8A pull; the minimum stays 0.16.0 and the recommended version 0.17.0.
+- Test `test/19-gstr9-8a-pull.test.mjs`; `test/17-actor-headers.test.mjs` now expects 0.18.0.
+
 ## 2026-10-21 — Who did it, for the change log (v0.17.0)
 
 - Every request to the database (`/rest/v1`, tables and RPCs) now says it comes from the extension (`x-gst-source: extension`) and carries a request id (`x-gst-request`). While a job the app started is running, it also names the app user who started it (`x-gst-actor`, the job's `actorId`, the same id the app sends). A scheduled sync names no one. The database's change log (`gst_change_log`, migration `20261021150000_gst_change_log.sql`) records these with every row the extension writes, so a pull shows as "Extension, for Gita" in Change history.

@@ -20,6 +20,7 @@ const root = process.env.GSTK_ROOT || path.resolve(here, '..');
 const req = createRequire(path.join(root, 'package.json'));
 const { build } = req('esbuild');
 const XLSX = req('xlsx');
+const JSZip = req('jszip');
 
 const stub = {
   name: 'stub-supabase',
@@ -40,7 +41,8 @@ const out = await build({
       export { EIGHT_A_FORMAT } from './src/lib/itcReco/sources';
       export { REASONS } from './src/lib/itcReco/reasons';
       export { diffHeader } from './src/lib/itcReco/viewModel';
-      export { planFyPullJobs } from './src/utils/gstr8aReports';
+      export { planFyPullJobs, has8A, EIGHT_A_PULL_VERSION } from './src/utils/gstr8aReports';
+      export { read8APull, isPulled8A, EIGHT_A_PULL_FORMAT } from './src/lib/itcReco/eightAPull';
       export { describeJob } from './src/utils/gstr2aVs2bReports';
     `,
     resolveDir: root, loader: 'ts',
@@ -251,7 +253,7 @@ const rb = new Set(stR.eightA.docs.map((d) => d.number));
 check('rebuilt 8A', 'holds ITC-available B2B family of the window only', ['INV-1', 'INV-2', 'CN-1', 'INV-9', 'INV-11'].every((n) => rb.has(n)) && ['INV-3', 'INV-4', 'INV-5', 'INV-6', 'INV-12', '1234567', 'INV-10'].every((n) => !rb.has(n)), [...rb].join(','));
 const runR = R.reconcileFyPair('2B', stR, client, TODAY);
 check('rebuilt 8A', '2B vs rebuilt 8A: INV-2 matches (same source)', byNum(runR.result.rows).get('INV-2').status === 'matched');
-check('rebuilt 8A', 'the notes say it is rebuilt', runR.result.notes[0].startsWith('8A: not uploaded, so rebuilt'));
+check('rebuilt 8A', 'the notes say it is rebuilt', runR.result.notes[0].startsWith('8A: not pulled or uploaded, so rebuilt'));
 
 // ── A 2B not pulled ─────────────────────────────────────────────────────────
 const stM = R.assembleFy({ fy: FY, rows: rowsOf({ drop2B: ['02/2026'] }), today: TODAY });
@@ -353,6 +355,48 @@ check('pull plan', 'nothing missing: the GSTR-9 system figures', plan2.jobs[0]?.
 check('pull plan', 'describeJob names a GSTR-9 job', /GSTR-9 system figures/.test(R.describeJob(plan2.jobs[0])), R.describeJob(plan2.jobs[0]));
 const plan3 = R.planFyPullJobs({ fys: [FY], rows: rowsOf(), calcPulled: new Set([FY]), today: TODAY, extVersion: '0.12.0' });
 check('pull plan', 'everything pulled, old extension: 2A and 2B of the last six months again, one type per job', plan3.jobs.length === 2 && plan3.jobs[0].mode === 'gstr2a_pull' && plan3.jobs[0].periods.length === 6, JSON.stringify(plan3));
+
+// ── The 8A pulled by the extension (0.18.0, gstk-8a-pull-v1) ─────────────────
+const dataUrl = (mime, bytes) => `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const pulled = (files, extra = {}) => ({ _format: R.EIGHT_A_PULL_FORMAT, fp: '032026', gstin: CLIENT.gstin, fy: FY, pulledAt: '2026-12-02T05:00:00Z', files, json: [], read: 'test', ...extra });
+const pX = await R.read8APull(pulled([{ name: 'GSTR9_8A.xlsx', dataUrl: dataUrl(XLSX_MIME, new Uint8Array(buf)), via: 'page', at: '' }]), { gstin: CLIENT.gstin, fy: FY });
+check('8A pulled', 'the Excel the portal gave is read with the Upload reader', pX.stored && pX.stored.docs.length === 4 && pX.stored.via === 'pull' && pX.stored.fy === FY && pX.stored.uploadedAt === '2026-12-02T05:00:00Z', JSON.stringify(pX.problems));
+const zip = new JSZip();
+zip.file('8A_part1.xlsx', new Uint8Array(buf));
+zip.file('8A_part2.xlsx', new Uint8Array(buf));
+zip.file('readme.txt', 'x');
+const zbytes = await zip.generateAsync({ type: 'uint8array' });
+const pZ = await R.read8APull(pulled([{ name: '8A.zip', dataUrl: dataUrl('application/zip', zbytes), via: 'download', at: '' }]), { gstin: CLIENT.gstin, fy: FY });
+check('8A pulled', 'a ZIP of Excel parts: every part read, a document in two parts counted once', pZ.stored && pZ.stored.docs.length === 4 && /8A_part1\.xlsx, 8A_part2\.xlsx/.test(pZ.stored.fileName), JSON.stringify([pZ.stored?.docs.length, pZ.stored?.fileName, pZ.problems]));
+const pJ = await R.read8APull(pulled([], { json: [{ url: '/returns2/auth/api/gstr9/x', body: { status: 1, data: summary2B('05/2025', '14-06-2025', dd['05/2025']) } }] }), { gstin: CLIENT.gstin, fy: FY });
+check('8A pulled', 'a JSON with documents the page loaded is read too', pJ.stored && pJ.stored.docs.length === 1, JSON.stringify(pJ.problems));
+const pW = await R.read8APull(pulled([{ name: 'x.xlsx', dataUrl: dataUrl(XLSX_MIME, new Uint8Array(buf)), via: 'page', at: '' }]), { gstin: '24ZZZZZ9999Z1Z9', fy: FY });
+check('8A pulled', "another GSTIN's file is refused (the 8A is rebuilt)", pW.stored === null && /is for GSTIN/.test(pW.problems.join()), JSON.stringify(pW));
+const pE = await R.read8APull(pulled([], { empty: true }), { gstin: CLIENT.gstin, fy: FY });
+check('8A pulled', 'the portal saying there is none: an empty 8A', pE.stored && pE.stored.docs.length === 0);
+const pBad = await R.read8APull(pulled([{ name: 'bad.zip', dataUrl: dataUrl('application/zip', await (() => { const z = new JSZip(); z.file('a.txt', 'x'); return z.generateAsync({ type: 'uint8array' }); })()), via: 'page', at: '' }]), { gstin: CLIENT.gstin, fy: FY });
+check('8A pulled', 'a file with nothing readable: refused with the reason', pBad.stored === null && /holds no Excel or JSON/.test(pBad.problems.join()), JSON.stringify(pBad));
+const stP = R.assembleFy({ fy: FY, rows: [...rowsOf({ with8A: false }), { source: '8A', period: '03/2026', status: 'Pulled', summary: pX.stored, updatedAt: '2026-12-02T05:00:00Z' }], today: TODAY });
+check('8A pulled', 'read back as the portal 8A, said to be pulled', stP.eightA.origin === 'portal' && stP.eightA.docs.length === 4 && /pulled from the portal/.test(R.reconcileThreeWay(stP).notes[0]), R.reconcileThreeWay(stP).notes[0]);
+const stQ = R.assembleFy({ fy: FY, rows: [...rowsOf({ with8A: false }), { source: '8A', period: '03/2026', status: 'REQUESTED: the portal said: "request accepted"', summary: {}, updatedAt: '2026-12-02T05:00:00Z' }], today: TODAY });
+check('8A pulled', 'a pull the portal is still preparing: rebuilt, and the notes say so', stQ.eightA.origin === 'rebuilt' && R.reconcileThreeWay(stQ).notes.some((n) => /^The portal's 8A: REQUESTED/.test(n)), JSON.stringify(R.reconcileThreeWay(stQ).notes.slice(0, 3)));
+check('8A pulled', 'has8A: an upload, a pulled file or an empty pull; not a failed or requested one',
+  R.has8A({ source: '8A', summary: ok8A }) && R.has8A({ source: '8A', summary: pulled([{ name: 'x', dataUrl: 'data:x;base64,UEsDB', via: 'page', at: '' }]) }) && R.has8A({ source: '8A', summary: pulled([], { empty: true }) })
+  && !R.has8A({ source: '8A', summary: {} }) && !R.has8A(undefined));
+
+// ── Pull plan with the 8A pull ─────────────────────────────────────────────
+const p8a = R.planFyPullJobs({ fys: [FY], rows: rowsOf({ with8A: false }), calcPulled: new Set(), eightAHave: new Set(), today: TODAY, extVersion: '0.18.0' });
+check('pull plan 8A', 'everything else pulled, no 8A: the 8A first, then the GSTR-9 system figures', p8a.jobs.map((j) => j.mode).join() === 'gstr9_8a_pull,gstr9_pull' && p8a.jobs[0].periods.join() === '03/2026', JSON.stringify(p8a));
+check('pull plan 8A', 'describeJob names the 8A job', /Table 8A document details of the year ending Mar 2026/.test(R.describeJob(p8a.jobs[0])), R.describeJob(p8a.jobs[0]));
+const p8b = R.planFyPullJobs({ fys: [FY], rows: rowsOf({ with8A: false, drop2B: ['02/2026'] }), calcPulled: new Set(), eightAHave: new Set(), today: TODAY, extVersion: '0.18.0' });
+check('pull plan 8A', 'a 2B missing: that first, the 8A after', p8b.jobs.map((j) => j.mode).join() === 'gstr2a2b_pull,gstr9_8a_pull' && p8b.jobs[0].periods.join() === '02/2026', JSON.stringify(p8b));
+const p8c = R.planFyPullJobs({ fys: [FY], rows: rowsOf({ with8A: false }), calcPulled: new Set(), eightAHave: new Set(), today: TODAY, extVersion: '0.17.0' });
+check('pull plan 8A', 'extension 0.17.0: the plan as before, with a note to update or upload', JSON.stringify(p8c.jobs) === JSON.stringify(plan2.jobs) && /Extension 0\.18\.0 pulls the 8A/.test(p8c.note), JSON.stringify(p8c));
+const p8d = R.planFyPullJobs({ fys: [FY], rows: rowsOf(), calcPulled: new Set(), eightAHave: new Set([FY]), today: TODAY, extVersion: '0.18.0' });
+check('pull plan 8A', 'the 8A saved: the plan as before', JSON.stringify(p8d) === JSON.stringify(plan2), JSON.stringify(p8d));
+const p8e = R.planFyPullJobs({ fys: [FY], rows: rowsOf({ with8A: false }), calcPulled: new Set(), eightAHave: new Set(), today: '2026-03-20', extVersion: '0.18.0' });
+check('pull plan 8A', 'the year not ended: no 8A asked', !p8e.jobs.some((j) => j.mode === 'gstr9_8a_pull'), JSON.stringify(p8e));
 
 // ── Catalogue ───────────────────────────────────────────────────────────────
 const codes = ['RCM_NOT_IN_8A', 'REJECTED_NOT_IN_8A', 'ITC_NA_NOT_IN_8A', 'REVERSAL_NOT_IN_8A', 'AFTER_8A_WINDOW', 'NOT_IN_ANY_2B', 'TWO_B_NOT_PULLED', 'EIGHT_A_BEFORE', 'IN_2B_NOT_IN_8A', 'NOT_IN_8A_SECTION', 'ONLY_LEFT_8A_UNEXPLAINED', 'EIGHT_A_2A_NOT_PULLED', 'EIGHT_A_2B_NOT_PULLED', 'ONLY_8A_UNEXPLAINED', 'EIGHT_A_HOLDS_NO_ITC', 'MATCHED_8A'];

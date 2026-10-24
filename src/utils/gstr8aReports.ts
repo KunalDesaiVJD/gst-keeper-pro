@@ -6,8 +6,9 @@
 //   - GSTR-8A vs GSTR-2A vs GSTR-2B: every document in the three, side by side,
 //     with the final ITC judgment for the year.
 // Reads the portal-pulled 2A and 2B the extension saved in gst_filed_returns,
-// the 8A document details uploaded here (return_type GSTR9_8A) and the GSTR-9
-// system figures (GSTR9_CALC) when pulled. The only write is the 8A upload.
+// the 8A document details (return_type GSTR9_8A: uploaded here, or pulled by
+// extension 0.18.0 and read here, eightAPull.ts) and the GSTR-9 system figures
+// (GSTR9_CALC) when pulled. The only write is the 8A upload.
 // Positions: docs/GSTR8A_RECO_POSITIONS.md.
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
@@ -16,10 +17,11 @@ import { parseGstr9Calc } from '@/lib/gstr9/portalParser';
 import { fyOfPeriod, fyStartYear } from '@/lib/reply/periods';
 import { istToday } from '@/lib/itcReco/dates';
 import { check8AUpload, parse8AFile } from '@/lib/itcReco/eightA';
+import { isPulled8A, read8APull } from '@/lib/itcReco/eightAPull';
 import { assembleFy, eightAPeriod, fyLoadMonths, fyWindow, isDue, type FyStatements } from '@/lib/itcReco/fy8a';
 import { fyPairTable } from '@/lib/itcReco/fyView';
 import { reconcileFyPair } from '@/lib/itcReco/reasons8A';
-import { findRow, statementFromRow } from '@/lib/itcReco/sources';
+import { findRow, isStored8A, statementFromRow } from '@/lib/itcReco/sources';
 import { reconcileThreeWay, threeWayReportTable } from '@/lib/itcReco/threeWay';
 import type { SourceKey, StatementRow } from '@/lib/itcReco/types';
 import type { PullJob, PullPlan } from '@/lib/reportRegistry';
@@ -27,8 +29,10 @@ import type { ReportTable } from './allClientsReports';
 import { fetchClient } from './filedReturnReports';
 import { COMBINED_PULL_VERSION } from './gstr2aVs2bReports';
 
-/** gst_filed_returns.return_type of an uploaded 8A. */
+/** gst_filed_returns.return_type of the 8A document details (uploaded or pulled). */
 export const GSTR9_8A = 'GSTR9_8A';
+/** The extension that pulls the 8A document details itself (mode gstr9_8a_pull). */
+export const EIGHT_A_PULL_VERSION = '0.18.0';
 const SOURCE_OF: Record<string, SourceKey> = { GSTR2A: '2A', GSTR2B: '2B', [GSTR9_8A]: '8A' };
 
 interface YearRows { rows: StatementRow[]; calc: unknown | null }
@@ -76,10 +80,26 @@ const portal8AOf = (calc: unknown, fy: string): { igst: number; cgst: number; sg
   }
 };
 
+/**
+ * A pulled 8A (the portal's file as it came) → the stored 8A the reports read.
+ * One the file cannot give is read as a failed pull, so the 8A is rebuilt and
+ * the report says why.
+ */
+async function readPulled8A(rows: StatementRow[], gstin: string | null, fy: string): Promise<StatementRow[]> {
+  return Promise.all(rows.map(async (r) => {
+    if (r.source !== '8A' || !isPulled8A(r.summary)) return r;
+    const got = await read8APull(r.summary, { gstin, fy });
+    return got.stored
+      ? { ...r, summary: got.stored as unknown as StatementRow['summary'] }
+      : { ...r, status: `PULL FAILED: the pulled 8A could not be read (${got.problems.join('; ')})`, summary: {} };
+  }));
+}
+
 async function yearOf(clientId: string, month: string): Promise<{ st: FyStatements; client: { name: string; gstin: string | null }; calc: unknown | null; fy: string }> {
   const fy = fyOf(month);
   const [client, year] = await Promise.all([fetchClient(clientId), loadYear(clientId, fy)]);
-  const st = assembleFy({ fy, rows: year.rows, today: istToday() });
+  const rows = await readPulled8A(year.rows, client.gstin || null, fy);
+  const st = assembleFy({ fy, rows, today: istToday() });
   return { st, client: { name: client.name, gstin: client.gstin || null }, calc: year.calc, fy };
 }
 
@@ -109,6 +129,8 @@ export interface FyPlanInput {
   rows: StatementRow[];
   /** FYs whose GSTR-9 system figures are already pulled. */
   calcPulled: Set<string>;
+  /** FYs whose 8A document details are saved (uploaded, or pulled with a file or as empty); absent = none known. */
+  eightAHave?: Set<string>;
   today: string;
   extVersion: string | null;
 }
@@ -119,9 +141,31 @@ export interface FyPlanInput {
  * else is missing). Nothing missing: the GSTR-9 system figures (8A as the
  * portal computed it), once the year has ended and they are not pulled; else
  * the 2A and 2B of the window's last six due months again (2A changes whenever
- * a supplier files). The 8A document details are uploaded, not pulled.
+ * a supplier files). The 8A document details (extension 0.18.0, mode
+ * gstr9_8a_pull) once the year has ended and none is saved: after the missing
+ * 2A and 2B, else first; an older extension gets a note to update or upload.
  */
-export function planFyPullJobs({ fys, rows, calcPulled, today, extVersion }: FyPlanInput): PullPlan {
+export function planFyPullJobs(input: FyPlanInput): PullPlan {
+  const { fys, today, extVersion, eightAHave } = input;
+  const ended = (fy: string) => today >= `${fyStartYear(fy) + 1}-04-01`;
+  const need8A = eightAHave ? fys.filter((fy) => ended(fy) && !eightAHave.has(fy)) : [];
+  if (!need8A.length) return planFy2a2bJobs(input);
+  if (!extVersion || compareVersions(extVersion, EIGHT_A_PULL_VERSION) < 0) {
+    const base = planFy2a2bJobs(input);
+    const tip = `Extension ${EIGHT_A_PULL_VERSION} pulls the 8A document details by itself; until then the 8A is rebuilt from the 2B (or use Upload 8A).`;
+    return { ...base, note: base.note ? `${base.note} ${tip}` : tip };
+  }
+  const job8A: PullJob = { mode: 'gstr9_8a_pull', periods: need8A.map(eightAPeriod) };
+  const missing = planFy2a2bJobs({ ...input, missingOnly: true });
+  if (missing.jobs.length) return { jobs: [...missing.jobs, job8A], note: missing.note };
+  const calc = input.fys.filter((fy) => !input.calcPulled.has(fy) && ended(fy));
+  return {
+    jobs: [job8A, ...(calc.length ? [{ mode: 'gstr9_pull', periods: calc.map(eightAPeriod) }] : [])],
+    note: "Every 2A and 2B of the year is pulled; pulling the portal's Table 8A document details.",
+  };
+}
+
+function planFy2a2bJobs({ fys, rows, calcPulled, today, extVersion, missingOnly }: FyPlanInput & { missingOnly?: boolean }): PullPlan {
   const want = new Map<string, Set<'2A' | '2B'>>();
   const ask = (p: string, s: '2A' | '2B') => want.set(p, new Set([...(want.get(p) ?? []), s]));
   const recheck: string[] = [];
@@ -141,6 +185,7 @@ export function planFyPullJobs({ fys, rows, calcPulled, today, extVersion }: FyP
     return ay * 12 + am - (by * 12 + bm);
   };
   let note: string | undefined;
+  if (!want.size && missingOnly) return { jobs: [] };
   if (!want.size) {
     const g9 = fys.filter((fy) => !calcPulled.has(fy) && today >= `${fyStartYear(fy) + 1}-04-01`);
     if (g9.length) {
@@ -171,11 +216,20 @@ export function planFyPullJobs({ fys, rows, calcPulled, today, extVersion }: FyP
   return { jobs, note };
 }
 
+/** A saved 8A to read: an upload, or a pull that brought a file or JSON, or the portal's word that there is none. */
+export const has8A = (row: StatementRow | undefined): boolean => {
+  if (!row) return false;
+  if (isStored8A(row.summary)) return true;
+  if (isPulled8A(row.summary)) return row.summary.files.length > 0 || row.summary.json.length > 0 || !!row.summary.empty;
+  return false;
+};
+
 export const planGstr8aPull = async ({ clientId, periods, extVersion }: { clientId: string; periods: string[]; extVersion: string | null }): Promise<PullPlan> => {
   const fys = [...new Set(periods.filter((p) => /^\d{2}\/\d{4}$/.test(p)).map(fyOfPeriod))];
   const loaded = await Promise.all(fys.map((fy) => loadYear(clientId, fy)));
   const calcPulled = new Set(fys.filter((_, i) => !!loaded[i].calc));
-  return planFyPullJobs({ fys, rows: loaded.flatMap((y) => y.rows), calcPulled, today: istToday(), extVersion });
+  const eightAHave = new Set(fys.filter((fy, i) => has8A(loaded[i].rows.find((r) => r.source === '8A' && r.period === eightAPeriod(fy)))));
+  return planFyPullJobs({ fys, rows: loaded.flatMap((y) => y.rows), calcPulled, eightAHave, today: istToday(), extVersion });
 };
 
 // ── Upload: the portal's Table 8A document details ──────────────────────────

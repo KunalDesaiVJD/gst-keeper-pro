@@ -22,7 +22,7 @@ import { parsePortalDate, parseSupplierPeriod } from './dates';
 import type { Bucket, DocFamily, RecoDoc, SourceKey, Statement, StatementMeta, StatementRow, StatementState } from './types';
 
 type AnyObj = Record<string, unknown>;
-const isObj = (v: unknown): v is AnyObj => typeof v === 'object' && v !== null && !Array.isArray(v);
+export const isObj = (v: unknown): v is AnyObj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const arr = (v: unknown): AnyObj[] => (Array.isArray(v) ? v.filter(isObj) : []);
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : typeof v === 'number' ? String(v) : null);
 const flag = (v: unknown): boolean | null => {
@@ -296,6 +296,8 @@ export interface Stored8A {
   _format: typeof EIGHT_A_FORMAT;
   /** Where the documents came from: the portal's Excel or JSON. */
   origin: 'portal-excel' | 'portal-json';
+  /** How it reached GST Keeper: uploaded on the report (the default) or pulled by the extension (0.18.0, eightAPull.ts). */
+  via?: 'upload' | 'pull';
   /** '2025-26'. */
   fy: string;
   gstin: string | null;

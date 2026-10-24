@@ -31,6 +31,7 @@
   const MODES = {
     notices_bundle: 'Notices & orders, refunds and DRC-03', notices: 'Notices & orders', refunds: 'Refunds',
     drc03: 'DRC-03', taxpayerprofile: 'Taxpayer profile', challans: 'Challans', filing: 'Filing status',
+    gstr9_8a_pull: 'GSTR-9 Table 8A documents',
   };
 
   const cmpVer = (a, b) => {

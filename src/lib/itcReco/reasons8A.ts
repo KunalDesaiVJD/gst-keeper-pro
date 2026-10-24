@@ -27,7 +27,7 @@ const HEADS: ['igst' | 'cgst' | 'sgst' | 'cess', string][] = [['igst', 'IGST'], 
 /** "the portal's 8A (downloaded 14 Oct 2026)" or "the 8A rebuilt from the year's 2B". */
 export const eightAWords = (st: FyStatements): string =>
   st.eightA.origin === 'portal'
-    ? `the portal's 8A${st.eightA.meta.generatedOn ? ` (generated ${dayLabel(st.eightA.meta.generatedOn)})` : st.eightA.meta.pulledAt ? ` (uploaded ${dayLabel(st.eightA.meta.pulledAt)})` : ''}`
+    ? `the portal's 8A${st.eightA.meta.generatedOn ? ` (generated ${dayLabel(st.eightA.meta.generatedOn)})` : st.eightA.meta.pulledAt ? ` (${st.eightA.stored?.via === 'pull' ? 'pulled from the portal' : 'uploaded'} ${dayLabel(st.eightA.meta.pulledAt)})` : ''}`
     : `the 8A rebuilt from the year's ${st.eightA.basis}`;
 
 /** The 2B copy of a document that tells what the 2B did with it: ITC in the window, then later, then no ITC, then rejected. */
@@ -331,8 +331,9 @@ const explainFy = (L: '2A' | '2B') => (rows: RecoRow[], ctx: CtxFy): string[] =>
   const side = L === '2A' ? st.twoA : st.twoB;
   const out: string[] = [];
   out.push(st.eightA.origin === 'portal'
-    ? `8A: the portal's Table 8A document details${st.eightA.stored?.fileName ? ` (${st.eightA.stored.fileName})` : ''}, uploaded ${dayLabel(st.eightA.meta.pulledAt)}${st.eightA.stored?.uploadedBy ? ` by ${st.eightA.stored.uploadedBy}` : ''}${st.eightA.meta.generatedOn ? `, generated ${dayLabel(st.eightA.meta.generatedOn)}` : ''}.`
-    : `8A: not uploaded, so rebuilt from the year's ${st.eightA.basis} the way the portal builds it (B2B invoices and notes dated in FY ${st.fy}, ITC available, no reverse charge, in a ${st.eightA.basis} of ${monthLabel(st.window[0])} to ${monthLabel(st.windowEnd)}). Upload the portal's Table 8A document details (GSTR-9, Download Table 8A document details) to compare with the portal's own 8A.`);
+    ? `8A: the portal's Table 8A document details${st.eightA.stored?.fileName ? ` (${st.eightA.stored.fileName})` : ''}, ${st.eightA.stored?.via === 'pull' ? 'pulled from the portal' : 'uploaded'} ${dayLabel(st.eightA.meta.pulledAt)}${st.eightA.stored?.uploadedBy ? ` by ${st.eightA.stored.uploadedBy}` : ''}${st.eightA.meta.generatedOn ? `, generated ${dayLabel(st.eightA.meta.generatedOn)}` : ''}.`
+    : `8A: not pulled or uploaded, so rebuilt from the year's ${st.eightA.basis} the way the portal builds it (B2B invoices and notes dated in FY ${st.fy}, ITC available, no reverse charge, in a ${st.eightA.basis} of ${monthLabel(st.window[0])} to ${monthLabel(st.windowEnd)}). Pull (extension 0.18.0 fetches the portal's Table 8A document details) or Upload 8A to compare with the portal's own 8A.`);
+  if (st.eightA.origin === 'rebuilt' && st.eightA.meta.status) out.push(`The portal's 8A: ${st.eightA.meta.status}`);
   if (side.missing.length) out.push(`${L} of ${monthsWords(side.missing, monthLabel)} not pulled: documents there are not seen. Use Pull.`);
   if (side.notDue.length) out.push(`The year is still open: the ${L} of ${monthsWords(side.notDue, monthLabel)} ${side.notDue.length === 1 ? 'is' : 'are'} not out yet.`);
   if (side.earlierFy) out.push(`${plural(side.earlierFy, 'document')} of an earlier year found in the year's ${L}s ${side.earlierFy === 1 ? 'is' : 'are'} left out: ${side.earlierFy === 1 ? 'it belongs' : 'they belong'} to that year's 8A.`);
