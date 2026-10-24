@@ -5,7 +5,7 @@
 -- case's ID that both replies quote. A link by itself now needs:
 -- 1. a number that is one of the two cases' own: its case ID, the reference of
 --    a notice or order in it, or a folder item's reference outside applications
---    and replies (notice_case_idents.owns); a third case's number on both says
+--    and replies (notice_case_numbers.owns); a third case's number on both says
 --    nothing certain;
 -- 2. neither case of the kind other (LUT, voluntary payment, acceptance), which
 --    many papers name without belonging to them.
@@ -13,8 +13,9 @@
 -- Tamnna Infrastructure-Gujarat's appeal (APL-02, its application naming the
 -- DRC-07 ZD2403260211513) stays linked: that number is the order's own.
 
-DROP FUNCTION IF EXISTS public.notice_case_idents(uuid);
-CREATE OR REPLACE FUNCTION public.notice_case_idents(p_client_id uuid)
+-- A new name rather than a changed return type: notice_case_idents (20261024100000)
+-- stays, unused, so applying this drops nothing.
+CREATE OR REPLACE FUNCTION public.notice_case_numbers(p_client_id uuid)
 RETURNS TABLE (own_key text, ident text, item_kind text, item_id uuid, is_notice_ref boolean, owns boolean)
 LANGUAGE sql STABLE
 SECURITY DEFINER
@@ -58,8 +59,8 @@ AS $$
    WHERE length(btrim(coalesce(r.x, ''))) >= 6 AND r.own_key IS NOT NULL AND r.own_key <> 'REG'
    GROUP BY r.own_key, upper(btrim(r.x)), r.kind, r.id
 $$;
-REVOKE ALL ON FUNCTION public.notice_case_idents(uuid) FROM PUBLIC, anon, authenticated;
-COMMENT ON FUNCTION public.notice_case_idents(uuid) IS
+REVOKE ALL ON FUNCTION public.notice_case_numbers(uuid) FROM PUBLIC, anon, authenticated;
+COMMENT ON FUNCTION public.notice_case_numbers(uuid) IS
   'Every portal number a client''s notice cases carry (own key, number, the notice or folder item, whether it is a notice''s or order''s own reference). notice_case_links_refresh links cases that share one.';
 
 CREATE OR REPLACE FUNCTION public.notice_case_links_refresh(p_client_id uuid DEFAULT NULL)
@@ -89,7 +90,7 @@ BEGIN
   DELETE FROM public.notice_case_links WHERE source = 'auto' AND client_id = p_client_id;
   FOR r IN
     WITH i AS (
-      SELECT * FROM public.notice_case_idents(p_client_id)
+      SELECT * FROM public.notice_case_numbers(p_client_id)
     ), spread AS (
       -- A number on papers of more than three cases says nothing certain.
       SELECT i.ident FROM i GROUP BY i.ident HAVING count(DISTINCT i.own_key) BETWEEN 2 AND 3

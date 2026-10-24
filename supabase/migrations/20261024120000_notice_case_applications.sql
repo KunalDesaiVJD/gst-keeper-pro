@@ -9,7 +9,7 @@
 -- gst_portal_applications (sync_ingest_applications), which the linker never read.
 -- Its refId is the order it is against.
 --
--- 1. notice_case_idents: an application is its ARN's own and names its refId,
+-- 1. notice_case_numbers: an application is its ARN's own and names its refId,
 --    so notice_case_links_refresh links it under the case holding that order
 --    (an appeal, waiver or rectification by its case type).
 -- 2. notice_case_parts: an application is a case by its ARN (marker from the
@@ -21,7 +21,7 @@
 -- 5. A trigger on gst_portal_applications links the client's cases again.
 
 -- ── 1. Numbers ───────────────────────────────────────────────────────────
-CREATE OR REPLACE FUNCTION public.notice_case_idents(p_client_id uuid)
+CREATE OR REPLACE FUNCTION public.notice_case_numbers(p_client_id uuid)
 RETURNS TABLE (own_key text, ident text, item_kind text, item_id uuid, is_notice_ref boolean, owns boolean)
 LANGUAGE sql STABLE
 SECURITY DEFINER
@@ -72,8 +72,8 @@ AS $$
    WHERE length(btrim(coalesce(r.x, ''))) >= 6 AND r.own_key IS NOT NULL AND r.own_key <> 'REG'
    GROUP BY r.own_key, upper(btrim(r.x)), r.kind, r.id
 $$;
-REVOKE ALL ON FUNCTION public.notice_case_idents(uuid) FROM PUBLIC, anon, authenticated;
-COMMENT ON FUNCTION public.notice_case_idents(uuid) IS
+REVOKE ALL ON FUNCTION public.notice_case_numbers(uuid) FROM PUBLIC, anon, authenticated;
+COMMENT ON FUNCTION public.notice_case_numbers(uuid) IS
   'Every portal number a client''s notice cases carry (own key, number, the notice or folder item, whether it is a notice''s or order''s own reference). notice_case_links_refresh links cases that share one.';
 
 -- ── 2. What a case is ────────────────────────────────────────────────────
@@ -300,8 +300,7 @@ BEGIN
   RETURN NULL;
 END;
 $$;
-DROP TRIGGER IF EXISTS trg_gst_portal_applications_link ON public.gst_portal_applications;
-CREATE TRIGGER trg_gst_portal_applications_link
+CREATE OR REPLACE TRIGGER trg_gst_portal_applications_link
   AFTER INSERT OR UPDATE OF arn, raw_json, deleted_at, case_type_cd ON public.gst_portal_applications
   FOR EACH ROW EXECUTE FUNCTION public.gst_portal_applications_link();
 
