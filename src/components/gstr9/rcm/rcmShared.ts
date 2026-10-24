@@ -6,7 +6,7 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MONTH_LABEL, num } from '@/lib/gstr9/engine';
 import { newId } from '@/lib/gstr9/defaults';
-import { FY_MONTHS, MonthKey, RcmCategory, RcmCell, RcmItcTable, SupplyType } from '@/lib/gstr9/types';
+import { FY_MONTHS, MonthKey, RcmCategory, RcmCell, RcmItcTable, RcmItcType, SupplyType } from '@/lib/gstr9/types';
 import { fmtRate } from '../grid/money';
 import { useTabParam } from '../reco/helpers';
 
@@ -21,12 +21,13 @@ export const monthLabel = (m: MonthKey, financialYear: string): string => {
 export const emptyRcmMonths = (): Record<MonthKey, RcmCell> =>
   Object.fromEntries(FY_MONTHS.map((m) => [m, { taxable: 0 }])) as Record<MonthKey, RcmCell>;
 
-export const newRcmCategory = (init: Partial<Pick<RcmCategory, 'name' | 'rate' | 'supplyType' | 'itcTable'>> = {}): RcmCategory => ({
+export const newRcmCategory = (init: Partial<Pick<RcmCategory, 'name' | 'rate' | 'supplyType' | 'itcTable' | 'itcType'>> = {}): RcmCategory => ({
   id: newId(),
   name: init.name ?? '',
   rate: init.rate ?? 18,
   supplyType: init.supplyType ?? 'intra',
   itcTable: init.itcTable ?? '6C',
+  ...(init.itcType && init.itcType !== 'is' ? { itcType: init.itcType } : {}),
   months: emptyRcmMonths(),
 });
 
@@ -59,12 +60,25 @@ export const ITC_TABLE_OPTIONS: Array<{ value: RcmItcTable; label: string }> = [
   { value: '6C', label: '6C · Unregistered supplier' },
   { value: '6D', label: '6D · Registered supplier' },
   { value: '6F', label: '6F · Import of services' },
+  { value: 'none', label: 'No ITC (blocked / exempt use)' },
 ];
 
+/** A stored table, as one of the four (anything unknown is 6C, the sheet's default). */
+export const itcTableOf = (t: unknown): RcmItcTable => (t === '6D' || t === '6F' || t === 'none' ? t : '6C');
+
+export const ITC_TYPE_OPTIONS: Array<{ value: RcmItcType; label: string }> = [
+  { value: 'is', label: 'Input services' },
+  { value: 'ip', label: 'Inputs' },
+  { value: 'cg', label: 'Capital goods' },
+];
+
+export const ITC_TYPE_LABEL: Record<RcmItcType, string> = { is: 'input services', ip: 'inputs', cg: 'capital goods' };
+
 export const ITC_TABLE_LABEL: Record<RcmItcTable, string> = {
-  '6C': 'Inward supplies from unregistered persons liable to reverse charge — input services',
-  '6D': 'Inward supplies from registered persons liable to reverse charge — input services',
+  '6C': 'Inward supplies from unregistered persons liable to reverse charge',
+  '6D': 'Inward supplies from registered persons liable to reverse charge',
   '6F': 'Import of services (excluding inward supplies from SEZs)',
+  none: 'RCM paid with no ITC (blocked u/s 17(5) or used for exempt supplies) — liability only, not in Table 6',
 };
 
 /** The four expense blocks of the firm's RCM sheet (rows 48, 67, 86, 105) — a quick start. */

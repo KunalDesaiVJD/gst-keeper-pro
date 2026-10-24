@@ -39,7 +39,7 @@ const T9_LABEL: Record<Gstr9cT9RateKey | Gstr9cT9OtherKey | 'P' | 'Q' | 'R', str
   N: 'Penalty',
   O: 'Others',
   P: 'Total amount to be paid as per tables above',
-  Q: 'Total amount payable as declared in annual return (GSTR-9)',
+  Q: 'Total amount paid as declared in annual return (GSTR-9)',
   R: 'Un-reconciled payment of amount',
 };
 
@@ -50,7 +50,9 @@ const t9Chip = (k: Gstr9cT9RateKey, src: T9Source | undefined): { short: string;
   const rate = k === 'K1' ? 'any other rate, or with no rate set' : k === 'K2' ? '' : `${T9_LABEL[k].replace(' (RC)', '')}`;
   switch (src) {
     case 'sales':
-      return { short: 'Books', title: `Sales Part A ledgers at ${rate} (PL-OUTPUT, net of credit notes)` };
+      return k === 'K2'
+        ? { short: 'Books', title: 'Sales Part A ledgers tagged E-commerce operator u/s 9(5) (4G1), net of credit notes' }
+        : { short: 'Books', title: `Sales Part A ledgers at ${rate} (PL-OUTPUT, net of credit notes)` };
     case 'rcm':
       return { short: 'Books · RCM', title: `RCM Part B categories at ${rate} (tax on inward supplies under reverse charge)` };
     case 'sales+rcm':
@@ -81,7 +83,6 @@ const T11_LABEL: Record<Gstr9cT11Key, string> = {
 };
 const T11_TAX_ONLY: Gstr9cT11Key[] = ['H', 'I', 'J', 'K'];
 
-const PAYABLE_SOURCE: Record<string, string> = { portal: 'portal', '4N': '4N tax', override: 'typed on the GSTR-9 step' };
 
 /** Part III — Tables 9 and 10: rate-wise liability and amount payable. */
 export const Table9Card: React.FC = () => {
@@ -91,16 +92,7 @@ export const Table9Card: React.FC = () => {
   const W = workings.gstr9c;
   const def = W.defaults;
 
-  const qSourceTitle = useMemo(() => {
-    const g = workings.g9.t9;
-    const parts = [
-      `CGST: ${PAYABLE_SOURCE[g.cgst.payableSource]}`,
-      `SGST: ${PAYABLE_SOURCE[g.sgst.payableSource]}`,
-      `IGST: ${PAYABLE_SOURCE[g.igst.payableSource]}`,
-      `Cess: ${PAYABLE_SOURCE[g.cess.payableSource]}`,
-    ];
-    return `GSTR-9 Table 9 tax payable (${parts.join(', ')})`;
-  }, [workings.g9.t9]);
+  const qSourceTitle = 'GSTR-9 Table 9 tax paid, through cash and ITC, per head';
 
   const t9Lines = useMemo<FormLine[]>(() => {
     const lines: FormLine[] = GSTR9C_T9_RATE_KEYS.map((k) => {
@@ -143,7 +135,7 @@ export const Table9Card: React.FC = () => {
         def: figs(def.t9Q, false) ?? {},
         fKey: 't9Q',
         write: (d, v) => ({ ...d, t9Q: v ? toTax(v) : null }),
-        source: 'GSTR-9 Table 9',
+        source: 'GSTR-9 Table 9 paid',
         sourceTitle: qSourceTitle,
       },
       { id: 'R', code: '9R', label: T9_LABEL.R, hint: '(Q − P)', mode: 'computed', heads: TAX_HEADS, shown: figs(W.t9.R, false) ?? {}, emphasis: 'diff', diffKey: 'gstr9c.9R' },
@@ -172,7 +164,7 @@ export const Table9Card: React.FC = () => {
       <FormGrid label="GSTR-9C Table 9" lines={t9Lines} heads={FORM_HEADS} labelWidth={260} maxHeight={C9_GRID_MAX_H} pinLast />
       <Note tone="position">
         RC rows add every RCM Part B expense block, taxable value included — the sheet’s Part B taxable total adds only two of the four blocks. 9Q is the
-        GSTR-9 Table 9 tax payable as the portal pre-fills it, else the 4N tax (the sheet mixes the two: IGST from the portal, CGST/SGST from 4N).
+        tax paid (cash and ITC) in GSTR-9 Table 9, as the form reads; the sheet took the tax payable.
       </Note>
       <ReasonsBox field="t10Reasons" code="10" title="Reasons for un-reconciled payment of amount" diffKey="gstr9c.9R" />
     </SectionCard>

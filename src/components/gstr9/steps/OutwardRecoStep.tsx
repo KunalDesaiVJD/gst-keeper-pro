@@ -4,6 +4,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { OUTWARD_CATEGORY_LABEL, totalTax } from '@/lib/gstr9/engine';
+import { CATEGORY_OPTIONS } from '../sales/salesEntry';
 import type { Formulas, Gstr9ManualDoc, OutwardCategory, SalesRow, ValTax } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
 import { JustifyControl, Note, OpenDifferences, SectionCard, SourceChip } from '../ui';
@@ -199,8 +200,6 @@ const ComparisonCard: React.FC = () => {
 // Categorise sales ledgers (PL-OUTPUT Part A → Table 4 bucket)
 // ---------------------------------------------------------------------------
 
-const CATEGORY_OPTIONS = (Object.keys(OUTWARD_CATEGORY_LABEL) as OutwardCategory[]).map((k) => ({ value: k, label: OUTWARD_CATEGORY_LABEL[k] }));
-
 const CategoriseCard: React.FC = () => {
   const { docs, workings, update, readOnly } = useWorkspace();
   const goTo = useGoToStep();
@@ -229,8 +228,10 @@ const CategoriseCard: React.FC = () => {
       width: 200,
       options: CATEGORY_OPTIONS,
       value: (r) => r.category,
-      editable: (r) => !isReturn(r),
-      title: (r) => (isReturn(r) ? 'Negative ledger — reported as a credit note (4I) automatically' : 'Type or pick the Table 4 bucket'),
+      title: (r) =>
+        isReturn(r)
+          ? 'Negative ledger — reported as a credit note (4I) automatically. Pick Advances (4F) if it is an advance adjusted.'
+          : 'Type or pick the Table 4 bucket',
       render: (r) =>
         isReturn(r) ? (
           <span className="italic text-muted-foreground">Credit note (4I) · automatic</span>
@@ -250,7 +251,7 @@ const CategoriseCard: React.FC = () => {
       excelRef="PL-OUTPUT Part A → GSTR 9-OUTPUT column C"
     >
       <Note tone="position">
-        The sheet puts all of PL-OUTPUT Part A into B2B, so the B2C and SEZ rows of the comparison show differences that mean nothing. Here each ledger carries a bucket (B2B by default, as the sheet does) and negative ledgers are credit notes (4I). Tagging moves figures between rows — it never changes the total.
+        The sheet puts all of PL-OUTPUT Part A into B2B, so the B2C and SEZ rows of the comparison show differences that mean nothing. Here each ledger carries a bucket (B2B by default, as the sheet does) and negative ledgers are credit notes (4I), except in Advances (4F), where a negative ledger is an advance adjusted and nets 4F. Tagging moves figures between rows — it never changes the total.
       </Note>
       {rows.length > 0 && (
         <div className="flex flex-wrap gap-1.5 text-[11px]">
@@ -347,7 +348,7 @@ const ExtrasCard: React.FC = () => {
           )}
         </span>
       }
-      description="Rarely needed. Only when the books carry advances (4F), debit notes (4J) or amendments (4K/4L) that are not already in the sales ledgers."
+      description="Rarely needed. Only for advances (4F), debit notes (4J) or amendments (4K/4L) not already in a Sales ledger; a Sales ledger tagged 4F or 4J is added to these."
       excelRef="GSTR-9 4F, 4J–4L (books column)"
     >
       <SheetGrid<ExtraRow>

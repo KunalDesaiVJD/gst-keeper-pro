@@ -48,12 +48,17 @@ export type Formulas = Record<string, string>;
 // Step: Sales (PL-OUTPUT)
 // ---------------------------------------------------------------------------
 
-/** GSTR-9 Table 4 bucket a taxable ledger belongs to (books side of GSTR 9-OUTPUT). */
-export type OutwardCategory = 'b2b' | 'b2c' | 'exp_wp' | 'sez_wp' | 'deemed';
+/**
+ * GSTR-9 Table 4 bucket a taxable ledger belongs to (books side of GSTR 9-OUTPUT).
+ * `at` is 4F (advances on which tax is paid, invoice not issued): a negative
+ * `at` row is an advance adjusted and nets 4F, it is not a credit note.
+ * `ecom` is 4G1 (an e-commerce operator's own u/s 9(5) supplies), `dr_nt` 4J.
+ */
+export type OutwardCategory = 'b2b' | 'b2c' | 'exp_wp' | 'sez_wp' | 'deemed' | 'at' | 'ecom' | 'dr_nt';
 
 export type SupplyType = 'intra' | 'inter';
 
-/** PL-OUTPUT Part A — taxable income. Credit notes are separate rows with negative values (sheet note B35). */
+/** PL-OUTPUT Part A — taxable income. Credit notes are separate rows with negative values (sheet note B35), except in 4F (advances adjusted). */
 export interface SalesRow {
   id: string;
   ledger: string;
@@ -202,8 +207,15 @@ export interface DutiesInputDoc {
 // Step: RCM (Part B — books; Part A lives in PortalDoc.months[m].rcm)
 // ---------------------------------------------------------------------------
 
-/** Where a category's RCM ITC is reported in GSTR-9 Table 6. The Excel puts everything in 6C input services. */
-export type RcmItcTable = '6C' | '6D' | '6F';
+/**
+ * Where a category's RCM ITC is reported in GSTR-9 Table 6. The Excel puts everything in 6C input services.
+ * `none` = tax paid on reverse charge but no ITC (s.17(5), or used for exempt supplies): it stays in the
+ * liability (4G, Annexure-1, 9C Table 9) and out of every ITC figure.
+ */
+export type RcmItcTable = '6C' | '6D' | '6F' | 'none';
+
+/** What an RCM category's ITC is in 6C / 6D: inputs, capital goods or input services (the default). 6F is services. */
+export type RcmItcType = 'ip' | 'cg' | 'is';
 
 export interface RcmCell {
   taxable: number;
@@ -222,6 +234,8 @@ export interface RcmCategory {
   rate: number;
   supplyType: SupplyType;
   itcTable: RcmItcTable;
+  /** 6C / 6D column; undefined = input services, as the sheet. */
+  itcType?: RcmItcType;
   months: Record<MonthKey, RcmCell>;
 }
 
@@ -380,6 +394,8 @@ export interface Gstr9ManualDoc {
   };
   t8E: TaxIn;
   t8F: TaxIn;
+  /** 8G IGST (and cess) paid on imports as per the bills of entry — null = 8H + 8H1 (nothing lapses). */
+  t8G: TaxIn | null;
   t8H1: TaxIn;
   /** Table 9 tax payable override per head — null = portal payable (or 4N tax when no portal figure). */
   t9Payable: Record<Table9Head, number | null>;
@@ -410,7 +426,7 @@ export interface Gstr9ManualDoc {
   t19: Record<'cgst' | 'sgst', { payable: number; paid: number }>;
   /** 5I/5J/5K books-side debit notes & amendments to Table 5 (rare; default 0). */
   t5Extra: { dr_nt: number; amd_pos: number; amd_neg: number };
-  /** 4F advances / 4J–4L on the books side (rare; default 0) — the books column of GSTR 9-OUTPUT. */
+  /** 4F advances / 4J–4L on the books side not in a Sales ledger (rare; default 0) — added to the Part A buckets in GSTR 9-OUTPUT. */
   t4BooksExtra: { at: ValTax; dr_nt: ValTax; amd_pos: ValTax; amd_neg: ValTax };
   /** Expressions staff typed into this doc's fixed-row grids, keyed by field path (e.g. "t9.E.c"). */
   f?: Formulas;
@@ -618,6 +634,8 @@ export interface WorkspaceContext {
   financialYear: string;
   /** Builder on the NO_ITC scheme — zero ITC is expected, not a gap. */
   noItcBuilder: boolean;
+  /** QRMP client (registration type IFF): GSTR-3B is filed quarterly. */
+  quarterly?: boolean;
   /** Live set-offs from the payable register (payables.ts); none when omitted. */
   setOffs?: Array<{ side: 'output' | 'input'; method: 'drc03' | 'gstr3b'; tax: Tax }>;
 }

@@ -82,7 +82,12 @@ const PartAGrid: React.FC = () => {
       options: CATEGORY_OPTIONS,
       value: (r) => r.category,
       tone: (r) => (calc[r.id]?.isReturn ? 'muted' : undefined),
-      title: (r) => (calc[r.id]?.isReturn ? 'A return is reported in 4I (credit notes) whatever the bucket.' : 'GSTR-9 Table 4 row this ledger is reported in'),
+      title: (r) =>
+        calc[r.id]?.isReturn
+          ? 'A return is reported in 4I (credit notes) whatever the bucket. Choose Advances (4F) if this is an advance adjusted.'
+          : r.category === 'at' && r.taxable < 0
+            ? 'An advance adjusted against an invoice: it reduces 4F.'
+            : 'GSTR-9 Table 4 row this ledger is reported in',
       onEdit: (r, e) => (e.text ? { ...r, category: e.text as OutwardCategory } : r),
     };
     const implied: GridColumn<SalesRow> = {
@@ -117,11 +122,18 @@ const PartAGrid: React.FC = () => {
       type: 'display',
       width: 100,
       align: 'left',
-      value: (r) => (calc[r.id]?.isReturn ? 'Return' : 'Sales'),
-      title: (r) => (calc[r.id]?.isReturn ? 'Negative value: a sales return, reported as a credit note in GSTR-9 Table 4I' : undefined),
+      value: (r) => (calc[r.id]?.isReturn ? 'Return' : r.category === 'at' ? 'Advance' : 'Sales'),
+      title: (r) =>
+        calc[r.id]?.isReturn
+          ? 'Negative value: a sales return, reported as a credit note in GSTR-9 Table 4I'
+          : r.category === 'at'
+            ? 'Advance on which tax is paid (4F); a negative row is an advance adjusted and nets 4F'
+            : undefined,
       render: (r) =>
         calc[r.id]?.isReturn ? (
           <span className="rounded bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info">Return → 4I</span>
+        ) : r.category === 'at' ? (
+          <span className="rounded bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info">{r.taxable < 0 ? 'Adjusted → 4F' : 'Advance → 4F'}</span>
         ) : (
           <span className="text-[10px] text-muted-foreground">Sales</span>
         ),
@@ -166,7 +178,8 @@ const PartAGrid: React.FC = () => {
     >
       <Note tone="position">
         Each ledger carries its GSTR-9 Table 4 bucket (B2B by default, as the sheet puts everything in B2B), so the books side of
-        the outward reco is split by category. Totals are the same as the sheet’s.
+        the outward reco is split by category. Totals are the same as the sheet’s. Advances on which tax is paid go in 4F; an
+        advance adjusted against an invoice is a negative 4F row, which nets 4F rather than counting as a credit note.
       </Note>
       {mismatches > 0 && (
         <Note tone="warn">
@@ -199,7 +212,7 @@ const PartAGrid: React.FC = () => {
       />
       <p className="text-[11px] text-muted-foreground">
         Show each ledger’s sales return in a <span className="font-medium text-foreground">separate row with a negative value</span> — it is
-        reported as a credit note in GSTR-9 Table 4I.
+        reported as a credit note in GSTR-9 Table 4I (in the Advances (4F) bucket a negative row is an advance adjusted instead).
       </p>
     </SectionCard>
   );

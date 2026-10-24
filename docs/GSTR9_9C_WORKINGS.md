@@ -377,7 +377,10 @@ screen where it applies.
    books. The sheet types both rows.
 8. **Table 9 tax payable** is the portal's figure (what the portal
    pre-fills), else 4N tax, and can be overridden. The sheet mixes the two
-   (IGST from the portal, CGST/SGST from 4N).
+   (IGST from the portal, CGST/SGST from 4N). **GSTR-9C 9Q is the tax
+   paid** in GSTR-9 Table 9 (cash + ITC, per head), as the form reads
+   ("total amount paid as declared in annual return"); the sheet, and this
+   app before 24 Oct 2026, took the tax payable.
 9. **Table 13 is typed**, with the ITC reco's suggestion (MAX(books − 7J, 0),
    the negated row 28) shown next to it, because the residual is often an
    unexplained monthly difference rather than ITC actually availed in the
@@ -387,6 +390,12 @@ screen where it applies.
     Part A ledger carries a Table 4 tag (B2B by default, as the sheet puts
     everything in B2B), and negative rows are credit notes, so category
     differences mean something. Totals are identical to the sheet's.
+    The buckets are every Table 4 row a sales ledger can belong to: 4A–4E,
+    4F (advances on which tax is paid), 4G1 (an e-commerce operator's own
+    u/s 9(5) supplies) and 4J (debit notes). In 4F a negative row is an
+    advance adjusted against an invoice and nets 4F; it is not a credit
+    note. The books-side extras on the Outward reco step (4F, 4J, 4K, 4L)
+    are added to what the ledgers carry.
 11. **Part B natures cover every Table 5 bucket** (5A, 5B, 5C, 5C1, 5D, 5E,
     5F, or "not reportable"); negative rows go to 5H. The sheet picks
     Part B rows by position.
@@ -433,11 +442,41 @@ screen where it applies.
     The rules are checked in the database against the user id the app
     sends; with no server session, they prevent mistakes, not a determined
     insider.
+21. **7E defaults to the as-filed GSTR-3B 4B(1) less 7A2, 7C and 7D**
+    as typed (per head, never below nil). 4B(1) holds the Rule 38, 42 and
+    43 reversals as well as s.17(5); the sheet's 9-INPUT E21 takes all of
+    4B(1), so typing a Rule 42 or 43 reversal counted it twice in 7I.
+22. **Imported capital goods go to 6E capital goods.** A capital-goods
+    ledger tagged D · Imported goods is 6E capital goods, any other ledger
+    so tagged 6E inputs (the sheet has no imported capital goods). 8H is
+    all of 6E.
+23. **8G is typed from the bills of entry** (ICEGATE; IGST and cess).
+    Left blank it is 8H + 8H1, what was availed this year (6E) and next
+    year, so nothing lapses. The sheet's 8G = 8H = 6E inputs made a typed
+    8H1 a negative lapse in 8K. 8G is a typed figure, like 8H1, so it is
+    not in the source lock.
+24. **RCM with no ITC.** An RCM category set to "No ITC" (blocked u/s
+    17(5), or used for exempt supplies) stays in the liability (4G vs
+    books, Annexure-1 D, 9C Table 9 RC rows) and is left out of every ITC
+    figure: Table 6, PL-INPUT row 77 / net ITC, Duties & Taxes RCM (U23),
+    Annexure-2 A1, 9C 12A and 14P. The Duties & Taxes "AS PER 3B" RCM
+    figure is 3.1(d) less that books RCM, since it is not taken in 4A.
+25. **RCM in 6C / 6D by column.** Each 6C / 6D category says whether its
+    ITC is inputs, capital goods or input services (the default, as the
+    sheet). 6F is import of services.
+26. **Quarterly GSTR-3B (QRMP).** For a client registered as IFF (QRMP),
+    a quarter whose last month has a 3B on a side and whose first two
+    months have none is compared as a quarter: the three months of books
+    against that one 3B (`dto.<month>` / `dti.<month>` of the last month,
+    which carries the whole difference). A month-wise filer is unchanged.
+27. **GSTR-9C 9K2** takes the Sales ledgers tagged 4G1 (an e-commerce
+    operator's u/s 9(5) supplies), whatever their rate.
 
 Carried over from the workbook as-is (firm positions, flagged in the UI):
 suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"
 rather than 7A (Rule 37); all Part B RCM goes to 6C input services unless a
-category is set to 6D/6F; interest/FD income is Non-GST (5F).
+category is set to 6D/6F, inputs / capital goods, or No ITC (positions 24–25);
+interest/FD income is Non-GST (5F).
 
 ## 7. Portal fetch (browser extension)
 

@@ -29,6 +29,7 @@ import {
   RcmCategory,
   RcmCell,
   RcmItcTable,
+  RcmItcType,
   SalesRow,
   T4Key,
   TABLE9_HEADS,
@@ -116,6 +117,16 @@ export const rateMismatch = (rate: number | null, implied: number | null): boole
 
 /** A sales-return / debit-note row: negative value (sheet note PL-OUTPUT B35), or zero value with negative tax. */
 export const isReturnRow = (taxable: number, t: Tax): boolean => taxable < 0 || (taxable === 0 && t.i + t.c + t.s + t.x < 0);
+
+/**
+ * The Table 4 bucket a Part A row is reported in. A negative row is a credit
+ * note (4I), except in 4F: there it is an advance adjusted against an invoice,
+ * and 4F is reported net of it. A bucket a saved doc does not know is B2B.
+ */
+export const salesBucket = (category: unknown, isReturn: boolean): OutwardCategory | 'cr_nt' => {
+  const c: OutwardCategory = typeof category === 'string' && category in OUTWARD_CATEGORY_LABEL ? (category as OutwardCategory) : 'b2b';
+  return isReturn && c !== 'at' ? 'cr_nt' : c;
+};
 
 export const DEFAULT_HEAD: Record<InputSection, ExpenseHead> = {
   purchase: 'purchases',
@@ -325,6 +336,10 @@ export interface Workings {
     diffMonths: Record<MonthKey, ValTax>; // books − portal
     diff: ValTax;
     byItcTable: Record<RcmItcTable, ValTax>;
+    /** RCM Part B on which ITC is taken (every table but `none`). */
+    eligible: ValTax;
+    /** RCM Part B paid with no ITC (`none`). */
+    blocked: ValTax;
   };
 
   /** GSTR 9-OUTPUT — books (A) vs GSTR-9 auto-populated (B). */
@@ -377,6 +392,8 @@ export interface Workings {
     t5PortalTotals: { G: number; L: number; M: number };
     /** 8D not yet explained by 8E + 8F. */
     t8Unsplit: Tax;
+    /** 8G when not typed: 8H + 8H1. */
+    t8GDefault: Tax;
     t6: Record<
       | 'A' | 'A1' | 'A2'
       | 'B_ip' | 'B_cg' | 'B_is'
@@ -390,8 +407,10 @@ export interface Workings {
     t7: Record<Table7Key, Tax>;
     t7H: Array<{ id: string; description: string; tax: Tax; computed: boolean }>;
     t7I: Tax;
-    /** 7E as the as-filed GSTR-3B 4B(1) gives it — what "use as-filed 3B" reverts to. */
+    /** 7E as the as-filed GSTR-3B gives it (4B(1) less 7A2, 7C, 7D) — what "use as-filed 3B" reverts to. */
     t7EPortal: Tax;
+    /** Σ 4B(1) of the as-filed GSTR-3B, before 7A2 / 7C / 7D are taken out. */
+    t7EAsFiled: Tax;
     t7J: Tax;
     t8: Record<'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'H1' | 'I' | 'J' | 'K', Tax>;
     t9: Record<Table9Head, Table9Calc>;
@@ -487,6 +506,8 @@ export interface Workings {
 
   /** Which months have 3B figures in the working: any figure, output side, ITC side. */
   monthsPresent: Record<MonthKey, { any: boolean; out: boolean; itc: boolean }>;
+  /** Quarter-end months whose quarterly GSTR-3B (QRMP) is compared with three months of books, per side. */
+  quarterly: { out: MonthKey[]; itc: MonthKey[] };
   diffs: DiffLine[];
   openCount: number;
   stepOpen: Record<StepKey, number>;
@@ -533,6 +554,9 @@ export const OUTWARD_CATEGORY_LABEL: Record<OutwardCategory, string> = {
   exp_wp: 'Export with tax (4C)',
   sez_wp: 'SEZ with tax (4D)',
   deemed: 'Deemed export (4E)',
+  at: 'Advances, tax paid (4F)',
+  ecom: 'E-commerce operator u/s 9(5) (4G1)',
+  dr_nt: 'Debit notes (4J)',
 };
 
 export const NON_TAX_NATURE_LABEL: Record<NonTaxNature, string> = {
@@ -589,6 +613,14 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const outPresent = byMonth((m) => sidePresent(m, 'outTax'));
   const itcPresent = byMonth((m) => sidePresent(m, 'itcExclRcm'));
   const anyMonthPresent = FY_MONTHS.some((m) => monthsPresent[m]);
+  // QRMP: a quarterly GSTR-3B is filed for the quarter's last month only. For a quarterly client, a
+  // quarter whose last month has a 3B on a side and whose first two months have none is compared as
+  // a quarter: books of the three months against that one 3B (the last month carries the difference).
+  const quarterEnds = (present: Record<MonthKey, boolean>): MonthKey[] =>
+    !ctx.quarterly ? [] : QUARTERS.filter(([a, b, c]) => present[c] && !present[a] && !present[b]).map((q) => q[2]);
+  const qOut = quarterEnds(outPresent);
+  const qItc = quarterEnds(itcPresent);
+  const inQuarter = (ends: MonthKey[], m: MonthKey) => QUARTERS.some((q) => ends.includes(q[2]) && q.includes(m));
   const gstr9Present = gstr9PortalPresent(docs);
 
   // ------------------------------------------------------------ Sales (PL-OUTPUT)
@@ -596,21 +628,24 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   let partA = val();
   const byRate: Record<string, ValTax> = {};
   const outwardBooks: Record<OutwardCategory | 'cr_nt', ValTax> = {
-    b2b: val(), b2c: val(), exp_wp: val(), sez_wp: val(), deemed: val(), cr_nt: val(),
+    b2b: val(), b2c: val(), exp_wp: val(), sez_wp: val(), deemed: val(), at: val(), ecom: val(), dr_nt: val(), cr_nt: val(),
   };
   docs.sales.partA.forEach((r: SalesRow) => {
     const t = rowTax(r);
     const taxable = num(r.taxable);
     const implied = impliedRate(taxable, t);
-    const ret = isReturnRow(taxable, t);
+    const bucket = salesBucket(r.category, isReturnRow(taxable, t));
+    const ret = bucket === 'cr_nt';
     salesRows[r.id] = { id: r.id, tax: t, impliedRate: implied, rateMismatch: rateMismatch(r.rate, implied), isReturn: ret };
     const v = withT(taxable, t);
     partA = addV(partA, v);
-    if (ret) outwardBooks.cr_nt = addV(outwardBooks.cr_nt, negV(v));
-    else outwardBooks[r.category] = addV(outwardBooks[r.category], v);
-    // GSTR-9C Table 9 is rate-wise tax actually payable: net of returns, keyed by rate.
+    outwardBooks[bucket] = addV(outwardBooks[bucket], ret ? negV(v) : v);
+    // GSTR-9C Table 9 is rate-wise tax actually payable: net of returns, keyed by rate; an e-commerce
+    // operator's u/s 9(5) supplies (4G1) are their own row, 9K2, whatever the rate.
     const typedRate = r.rate !== null && r.rate !== undefined ? num(r.rate) : null;
-    const rateKey = typedRate !== null && STANDARD_RATES.includes(typedRate) ? String(typedRate) : snapRate(typedRate ?? implied);
+    const rateKey =
+      salesBucket(r.category, false) === 'ecom' ? ECOM_95_RATE_KEY
+        : typedRate !== null && STANDARD_RATES.includes(typedRate) ? String(typedRate) : snapRate(typedRate ?? implied);
     byRate[rateKey] = addV(byRate[rateKey] || val(), v);
   });
 
@@ -642,6 +677,11 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     const asPer3B = P.months[m].itcExclRcm;
     return { purchase, dn, sr, sr180, rc, rc180, suspNet: subT(addT(sr, sr180), rc, rc180), net, asPer3B, diff: subT(net, asPer3B) };
   });
+  qItc.forEach((e) => {
+    const q = QUARTERS.find((x) => x[2] === e)!;
+    q.slice(0, 2).forEach((m) => { dtiMonths[m].diff = tax(); });
+    dtiMonths[e].diff = subT(addT(...q.map((m) => dtiMonths[m].net)), dtiMonths[e].asPer3B);
+  });
   const lye = tin(DI.lastYearEffect);
   const dtiSum = (k: keyof DtiMonthCalc) => sumMonths(byMonth((m) => dtiMonths[m][k]));
   const dtiNetMonths = dtiSum('net');
@@ -664,13 +704,19 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
 
   // ------------------------------------------------------------ RCM
   const rcmCats: Workings['rcm']['categories'] = {};
-  const byItcTable: Record<RcmItcTable, ValTax> = { '6C': val(), '6D': val(), '6F': val() };
+  const byItcTable: Record<RcmItcTable, ValTax> = { '6C': val(), '6D': val(), '6F': val(), none: val() };
+  const rcmCols = { C: { ip: tax(), cg: tax(), is: tax() }, D: { ip: tax(), cg: tax(), is: tax() } } as Record<'C' | 'D', Record<RcmItcType, Tax>>;
   docs.rcm.categories.forEach((cat) => {
     const months = byMonth((m) => rcmCellTax(cat, cat.months?.[m]));
     const total = sumMonthsV(months);
     rcmCats[cat.id] = { months, total };
-    const tbl = cat.itcTable || '6C';
+    const tbl: RcmItcTable = cat.itcTable && cat.itcTable in byItcTable ? cat.itcTable : '6C';
     byItcTable[tbl] = addV(byItcTable[tbl], total);
+    if (tbl === '6C' || tbl === '6D') {
+      const col: RcmItcType = cat.itcType === 'ip' || cat.itcType === 'cg' ? cat.itcType : 'is';
+      const k = tbl === '6C' ? 'C' : 'D';
+      rcmCols[k][col] = addT(rcmCols[k][col], taxOf(total));
+    }
   });
   const partBMonths = byMonth((m) => addV(...Object.values(rcmCats).map((c) => c.months[m])));
   const rcmPartB = sumMonthsV(partBMonths); // RCM D41:G41 — POSITION: all blocks (the sheet's D28:D39 adds only two)
@@ -693,15 +739,21 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   }
   const rcmDiffMonths = byMonth((m) => subV(partBMonths[m], partAMonths[m]));
   const rcmDiff = subV(rcmPartB, rcmPartA);
+  // POSITION: RCM paid with no ITC (category "No ITC") is liability only — out of every ITC figure.
+  const rcmBlocked = byItcTable.none;
+  const rcmEligible = subV(rcmPartB, rcmBlocked);
 
-  const dtiRcmBooks = taxOf(rcmPartB); // U23 = RCM!E41
-  const dtiRcmPortal = taxOf(rcmPartA); // X23 = RCM!E22
+  const dtiRcmBooks = taxOf(rcmEligible); // U23 = RCM!E41 (ITC only)
+  // X23 = RCM!E22: 3.1(d) as paid, less the books' RCM with no ITC, which is not taken in 4A.
+  const dtiRcmPortal = subT(taxOf(rcmPartA), taxOf(rcmBlocked));
   const totalItcBooks = addT(dtiTotals.net, dtiRcmBooks); // U24
   const totalItcPortal = addT(dtiTotals.asPer3B, dtiRcmPortal); // X24
   const dtiNet = subT(totalItcBooks, lye); // U26 = U24 − U25
 
   // ------------------------------------------------------------ Purchases (PL-INPUT)
   const purchaseRows: Record<string, PurchaseRowCalc> = {};
+  // Imported goods split by section: a capital-goods ledger is 6E capital goods, any other 6E inputs.
+  let importCapitalGoods = val();
   const sections: Record<InputSection, ValTax> = { purchase: val(), expense: val(), capital_goods: val() };
   const byHead: Record<ExpenseHead, ValTax> = Object.fromEntries(
     (Object.keys(EXPENSE_HEAD_LABEL) as ExpenseHead[]).map((h) => [h, val()]),
@@ -721,11 +773,12 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     const v = withT(taxable, t);
     sections[r.section] = addV(sections[r.section], v);
     byHead[head] = addV(byHead[head], v);
+    if (head === 'imported_goods' && r.section === 'capital_goods') importCapitalGoods = addV(importCapitalGoods, v);
   });
   const totalPl = addV(sections.purchase, sections.expense, sections.capital_goods); // row 71
   const otherAdj = tin(docs.purchases.suspendedOtherAdj); // row 75
   // Row 79: value = D71 − D73 + D77 (D73 is 0: suspended ITC carries no value); tax = 71 − 73 + 77 − 75.
-  const netItc = withT(totalPl.t + rcmPartB.t, addT(subT(taxOf(totalPl), suspendedNet, otherAdj), taxOf(rcmPartB)));
+  const netItc = withT(totalPl.t + rcmEligible.t, addT(subT(taxOf(totalPl), suspendedNet, otherAdj), taxOf(rcmEligible)));
   const purchasesDiffVsDt = subT(taxOf(netItc), dtiNet); // row 81 = 79 − 80
 
   // ------------------------------------------------------------ Duties & Taxes — Output
@@ -736,6 +789,11 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     const net = subT(sales, cn); // I = C − F
     const asPer3B = P.months[m].outTax;
     return { sales, cn, net, asPer3B, diff: subT(net, asPer3B) }; // O = I − L
+  });
+  qOut.forEach((e) => {
+    const q = QUARTERS.find((x) => x[2] === e)!;
+    q.slice(0, 2).forEach((m) => { dtoMonths[m].diff = tax(); });
+    dtoMonths[e].diff = subT(addT(...q.map((m) => dtoMonths[m].net)), dtoMonths[e].asPer3B);
   });
   const dtoSum = (k: keyof DtoMonthCalc) => sumMonths(byMonth((m) => dtoMonths[m][k]));
   const dtoTotals: DtoMonthCalc = { sales: dtoSum('sales'), cn: dtoSum('cn'), net: dtoSum('net'), asPer3B: dtoSum('asPer3B'), diff: dtoSum('diff') };
@@ -763,9 +821,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     { key: 'exp', label: 'Exports with payment of tax', table: '4C', books: outwardBooks.exp_wp, portal: T4.exp, diff: val(), subtract: false },
     { key: 'sez', label: 'SEZ with payment of tax', table: '4D', books: outwardBooks.sez_wp, portal: T4.sez, diff: val(), subtract: false },
     { key: 'deemed', label: 'Deemed exports', table: '4E', books: outwardBooks.deemed, portal: T4.deemed, diff: val(), subtract: false },
-    { key: 'at', label: 'Advances (tax paid, invoice not issued)', table: '4F', books: X.at, portal: T4.at, diff: val(), subtract: false },
-    { key: 'ecom', label: 'E-commerce operator u/s 9(5)', table: '4G1', books: val(), portal: T4.ecom, diff: val(), subtract: false },
-    { key: 'dr_nt', label: 'Debit notes', table: '4J', books: X.dr_nt, portal: T4.dr_nt, diff: val(), subtract: false },
+    // 4F and 4J: the Sales ledgers tagged to them plus the books-side extras typed on the Outward reco step.
+    { key: 'at', label: 'Advances (tax paid, invoice not issued)', table: '4F', books: addV(outwardBooks.at, X.at), portal: T4.at, diff: val(), subtract: false },
+    { key: 'ecom', label: 'E-commerce operator u/s 9(5)', table: '4G1', books: outwardBooks.ecom, portal: T4.ecom, diff: val(), subtract: false },
+    { key: 'dr_nt', label: 'Debit notes', table: '4J', books: addV(outwardBooks.dr_nt, X.dr_nt), portal: T4.dr_nt, diff: val(), subtract: false },
     { key: 'amd', label: 'Net amendments (4K − 4L)', table: '4K−4L', books: subV(X.amd_pos, X.amd_neg), portal: subV(T4.amd_pos, T4.amd_neg), diff: val(), subtract: false },
     { key: 'cr_nt', label: 'Credit notes', table: '4I', books: outwardBooks.cr_nt, portal: T4.cr_nt, diff: val(), subtract: true },
   ];
@@ -813,7 +872,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const capitalGoods = byHead.capital_goods; // row 12 = 9C row O
   const importGoods = byHead.imported_goods; // row 11 = 9C row D
   const isd = G.t6G === null || G.t6G === undefined ? P.gstr9.t6G : tin(G.t6G);
-  const rcmItc = taxOf(rcmPartB);
+  const rcmItc = taxOf(rcmEligible);
   const inputServicesTaxable = (Object.keys(byHead) as ExpenseHead[])
     .filter((h) => h !== 'purchases' && h !== 'capital_goods' && h !== 'imported_goods')
     .reduce((s, h) => s + byHead[h].t, 0);
@@ -827,9 +886,9 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const t6: Workings['g9']['t6'] = {
     A: t6A, A1: t6A1, A2: t6A2,
     B_ip: taxOf(inputs), B_cg: taxOf(capitalGoods), B_is: inputServicesTax,
-    C_ip: tax(), C_cg: tax(), C_is: taxOf(byItcTable['6C']),
-    D_ip: tax(), D_cg: tax(), D_is: taxOf(byItcTable['6D']),
-    E_ip: taxOf(importGoods), E_cg: tax(),
+    C_ip: rcmCols.C.ip, C_cg: rcmCols.C.cg, C_is: rcmCols.C.is,
+    D_ip: rcmCols.D.ip, D_cg: rcmCols.D.cg, D_is: rcmCols.D.is,
+    E_ip: taxOf(subV(importGoods, importCapitalGoods)), E_cg: taxOf(importCapitalGoods),
     F: taxOf(byItcTable['6F']),
     G: isd,
     H: reclaims,
@@ -842,9 +901,13 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
 
   // ------------------------------------------------------------ Table 7
   const monthly4B1 = sumMonths(byMonth((m) => P.months[m].itc4b1));
+  // POSITION: 3B 4B(1) holds the Rule 38, 42 and 43 reversals as well as s.17(5). 7E defaults to
+  // 4B(1) less what is typed in 7A2, 7C and 7D (never below nil), so they are not counted twice;
+  // the sheet's 9-INPUT E21 takes all of 4B(1).
+  const t7E4B1 = maxT0(subT(monthly4B1, tin(G.t7.r38), tin(G.t7.r42), tin(G.t7.r43)));
   const t7: Record<Table7Key, Tax> = {
     A: tin(G.t7.r37), A1: tin(G.t7.r37A), A2: tin(G.t7.r38), B: tin(G.t7.r39), C: tin(G.t7.r42), D: tin(G.t7.r43),
-    E: G.t7.s17_5 === null || G.t7.s17_5 === undefined ? monthly4B1 : tin(G.t7.s17_5), // 9-INPUT E21 "AS PER 3B"
+    E: G.t7.s17_5 === null || G.t7.s17_5 === undefined ? t7E4B1 : tin(G.t7.s17_5),
     F: tin(G.t7.tran1), G: tin(G.t7.tran2),
   };
   const t7H: Workings['g9']['t7H'] = [
@@ -870,9 +933,13 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   t8.D = subT(t8.A, t8.B, t8.C);
   t8.E = tin(G.t8E);
   t8.F = tin(G.t8F);
-  t8.G = tax(t6.E_ip.i, 0, 0, t6.E_ip.x); // I87 = I53
-  t8.H = t8.G; // 8H = 8G
+  // 8H = 6E (inputs and capital goods). POSITION: 8G is typed from the bills of entry (ICEGATE); left
+  // blank it is 8H + 8H1, so nothing lapses (the sheet: 8G = 8H = 6E inputs, so a typed 8H1 was a negative lapse).
+  const t6E = addT(t6.E_ip, t6.E_cg);
+  t8.H = tax(t6E.i, 0, 0, t6E.x);
   t8.H1 = tin(G.t8H1);
+  const t8GDefault = addT(t8.H, tax(t8.H1.i, 0, 0, t8.H1.x));
+  t8.G = G.t8G === null || G.t8G === undefined ? t8GDefault : tax(tin(G.t8G).i, 0, 0, tin(G.t8G).x);
   t8.I = subT(t8.G, t8.H, t8.H1);
   t8.J = t8.I;
   t8.K = addT(t8.E, t8.F, t8.J);
@@ -915,7 +982,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   c14.A2 = subV(c14.A, c14.A1);
   (['freight', 'power_fuel', 'imported_goods', 'rent_insurance', 'goods_lost', 'royalty', 'employees_cost', 'conveyance', 'bank_charges', 'entertainment', 'stationery', 'repair_maintenance', 'other_misc', 'capital_goods'] as ExpenseHead[])
     .forEach((h) => { c14[EXPENSE_HEAD_ROW[h]] = byHead[h]; });
-  c14.P = rcmPartB; // D25 = PL-INPUT D77 = RCM Part B
+  c14.P = rcmEligible; // D25 = PL-INPUT D77 = RCM Part B (with ITC)
   const qTagged = byHead.other2;
   const beforeQ = addV(c14.A2, ...['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'].map((k) => c14[k]));
   c14.Q = subV(netItc, beforeQ); // D26 = PL-INPUT D79 − SUM(D10:D25)
@@ -1026,7 +1093,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   c7.E = c7.A - c7.B - c7.C - c7.D - c7.D1;
   c7.G = c7.F - c7.E;
 
-  const rateKeyFor: Record<string, Gstr9cT9RateKey> = { '5': 'A', '6': 'B1', '12': 'C', '18': 'E', '28': 'G', '40': 'H1', '3': 'I', '0.25': 'J', '0.1': 'K' };
+  const rateKeyFor: Record<string, Gstr9cT9RateKey> = { [ECOM_95_RATE_KEY]: 'K2', '5': 'A', '6': 'B1', '12': 'C', '18': 'E', '28': 'G', '40': 'H1', '3': 'I', '0.25': 'J', '0.1': 'K' };
   const rcKeyFor: Record<string, Gstr9cT9RateKey> = { '5': 'B', '12': 'D', '18': 'F', '28': 'H', '40': 'H2' };
   const derivedT9: Partial<Record<Gstr9cT9RateKey, RateWiseRow>> = {};
   const t9Source: Record<string, 'sales' | 'rcm' | 'sales+rcm' | 'none' | 'typed'> = {};
@@ -1056,7 +1123,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   });
   GSTR9C_T9_OTHER_KEYS.forEach((k) => { c9rows[k] = withT(0, C.t9Other[k] || tax()); });
   const c9P = addV(...Object.values(c9rows));
-  const c9QDefault = tax(t9.igst.payable, t9.cgst.payable, t9.sgst.payable, t9.cess.payable);
+  // POSITION: 9Q is the tax paid in GSTR-9 Table 9 (cash + ITC), as the form reads; the sheet took the payable.
+  const c9QDefault = tax(t9.igst.paid, t9.cgst.paid, t9.sgst.paid, t9.cess.paid);
   const c9Q = C.t9Q === null || C.t9Q === undefined ? c9QDefault : tin(C.t9Q);
   const c9R = subT(c9Q, taxOf(c9P));
 
@@ -1162,23 +1230,29 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       direction: 'Books − 3B', aLabel: 'Books (those months)', bLabel: 'Not fetched',
     });
   };
-  const dtoMissing = FY_MONTHS.filter((m) => !outPresent[m] && isNonZeroT(dtoMonths[m].net));
+  const dtoMissing = FY_MONTHS.filter((m) => !outPresent[m] && !inQuarter(qOut, m) && isNonZeroT(dtoMonths[m].net));
   missingLine('dto.no3b', 'duties', 'Output tax', dtoMissing, addT(...dtoMissing.map((m) => dtoMonths[m].net)));
   FY_MONTHS.forEach((m) => {
     if (!outPresent[m]) return;
-    push(`dto.${m}`, 'duties', `Output tax ${MONTH_LABEL[m]}: books vs GSTR-3B`, withT(0, dtoMonths[m].net), withT(0, dtoMonths[m].asPer3B), {
-      direction: 'Books − 3B', aLabel: 'Net sales tax (books)', bLabel: 'As per GSTR-3B',
+    const q = qOut.includes(m) ? QUARTERS.find((x) => x[2] === m)! : null;
+    const books = q ? addT(...q.map((k) => dtoMonths[k].net)) : dtoMonths[m].net;
+    const label = q ? `${MONTH_LABEL[q[0]]}–${MONTH_LABEL[m]} (quarterly GSTR-3B)` : MONTH_LABEL[m];
+    push(`dto.${m}`, 'duties', `Output tax ${label}: books vs GSTR-3B`, withT(0, books), withT(0, dtoMonths[m].asPer3B), {
+      direction: 'Books − 3B', aLabel: q ? 'Net sales tax (books, quarter)' : 'Net sales tax (books)', bLabel: 'As per GSTR-3B',
     });
   });
   push('dto.pl', 'duties', 'Output tax: P&L vs Duties & Taxes (annual)', withT(0, dtoAsPerPl), withT(0, dtoTotals.net), {
     direction: 'P&L − D&T', aLabel: 'As per P&L (Part A)', bLabel: 'Duties & Taxes net',
   });
-  const dtiMissing = FY_MONTHS.filter((m) => !itcPresent[m] && isNonZeroT(dtiMonths[m].net));
+  const dtiMissing = FY_MONTHS.filter((m) => !itcPresent[m] && !inQuarter(qItc, m) && isNonZeroT(dtiMonths[m].net));
   missingLine('dti.no3b', 'duties', 'Input tax', dtiMissing, addT(...dtiMissing.map((m) => dtiMonths[m].net)));
   FY_MONTHS.forEach((m) => {
     if (!itcPresent[m]) return;
-    push(`dti.${m}`, 'duties', `Input tax ${MONTH_LABEL[m]}: books vs GSTR-3B`, withT(0, dtiMonths[m].net), withT(0, dtiMonths[m].asPer3B), {
-      direction: 'Books − 3B', aLabel: 'Net purchase ITC (books)', bLabel: 'As per GSTR-3B (excl. RCM)',
+    const q = qItc.includes(m) ? QUARTERS.find((x) => x[2] === m)! : null;
+    const books = q ? addT(...q.map((k) => dtiMonths[k].net)) : dtiMonths[m].net;
+    const label = q ? `${MONTH_LABEL[q[0]]}–${MONTH_LABEL[m]} (quarterly GSTR-3B)` : MONTH_LABEL[m];
+    push(`dti.${m}`, 'duties', `Input tax ${label}: books vs GSTR-3B`, withT(0, books), withT(0, dtiMonths[m].asPer3B), {
+      direction: 'Books − 3B', aLabel: q ? 'Net purchase ITC (books, quarter)' : 'Net purchase ITC (books)', bLabel: 'As per GSTR-3B (excl. RCM)',
     });
   });
   if (isNonZeroT(lye)) {
@@ -1186,8 +1260,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       direction: 'Books − 3B', aLabel: 'Last year effect', bLabel: '—', informational: true,
     });
   }
-  push('dti.rcm', 'duties', 'RCM tax: books vs GSTR-3B', withT(0, dtiRcmBooks), withT(0, dtiRcmPortal), {
-    direction: 'Books − 3B', aLabel: 'RCM Part B (books)', bLabel: 'RCM Part A (portal)', informational: true,
+  push('dti.rcm', 'duties', 'RCM ITC: books vs GSTR-3B', withT(0, dtiRcmBooks), withT(0, dtiRcmPortal), {
+    direction: 'Books − 3B', aLabel: 'RCM Part B with ITC (books)', bLabel: '3.1(d) less RCM with no ITC', informational: true,
   });
   push('dti.pl', 'duties', 'ITC: P&L vs Duties & Taxes (annual)', withT(0, taxOf(netItc)), withT(0, dtiNet), {
     direction: 'P&L − D&T', aLabel: 'Net ITC as per P&L', bLabel: 'Duties & Taxes net', informational: true,
@@ -1242,6 +1316,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       ['5A', 'Zero rated (export) without tax', g5.A.t, num(T5P.zero_rtd)],
       ['5B', 'SEZ without tax', g5.B.t, num(T5P.sez)],
       ['5C', 'Reverse charge (recipient pays)', g5.C.t, num(T5P.rchrg)],
+      ['5C1', 'E-commerce operator pays u/s 9(5)', g5.C1.t, num(T5P.ecom_14)],
       ['5D', 'Exempted', g5.D.t, num(T5P.exmt)],
       ['5E', 'Nil rated', g5.E.t, num(T5P.nil)],
       ['5F', 'Non-GST supply', g5.F.t, num(T5P.non_gst)],
@@ -1298,7 +1373,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     },
     purchases: {
       rows: purchaseRows, sections, totalPl, suspended: suspendedNet, otherAdj,
-      rcmCredit: rcmPartB, netItc, dtNet: dtiNet, diffVsDt: purchasesDiffVsDt,
+      rcmCredit: rcmEligible, netItc, dtNet: dtiNet, diffVsDt: purchasesDiffVsDt,
     },
     dto: { months: dtoMonths, totals: dtoTotals, adjustments: dtoAdj, totalCrSide: addT(dtoTotals.sales, dtoAdj), asPerPl: dtoAsPerPl, plDiff: dtoPlDiff },
     dti: {
@@ -1311,20 +1386,20 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     },
     rcm: {
       categories: rcmCats, partBMonths, partB: rcmPartB, partAMonths, partA: rcmPartA, partASource,
-      diffMonths: rcmDiffMonths, diff: rcmDiff, byItcTable,
+      diffMonths: rcmDiffMonths, diff: rcmDiff, byItcTable, eligible: rcmEligible, blocked: rcmBlocked,
     },
     outward: { rows: outwardRows, booksTotal: outwardBooksTotal, portalTotal: outwardPortalTotal, diffTotal: outwardDiffTotal },
     itc: {
-      inputs, inputServices, inputServicesBooks, importGoods, capitalGoods, rcm: rcmPartB, reclaim: reclaims,
-      isd, t6N: t6.N, asPer3B: t6A2, total: withT(inputs.t + inputServices.t + importGoods.t + capitalGoods.t + rcmPartB.t, t6.O),
+      inputs, inputServices, inputServicesBooks, importGoods, capitalGoods, rcm: rcmEligible, reclaim: reclaims,
+      isd, t6N: t6.N, asPer3B: t6A2, total: withT(inputs.t + inputServices.t + importGoods.t + capitalGoods.t + rcmEligible.t, t6.O),
       reversal7H1: reversals, s17_5: t7.E, otherReversals: subT(t7I, reversals, t7.E), total7J: t7J,
       asPerBook, residual, t12Suggested, t13Suggested,
     },
     c14: { rows: c14, qTagged, qBalancing, check: c14Check, S: c14S, T: c14T },
     g9: {
       t4: g4 as Workings['g9']['t4'], t4Source: gstr9Present ? 'portal' : 'none',
-      t5: g5, t5Portal: { ...P.gstr9.table5 }, t5PortalTotals, t8Unsplit,
-      t6, t6ASource, t7, t7H, t7I, t7EPortal: monthly4B1, t7J, t8, t9, t9Other,
+      t5: g5, t5Portal: { ...P.gstr9.table5 }, t5PortalTotals, t8Unsplit, t8GDefault,
+      t6, t6ASource, t7, t7H, t7I, t7EPortal: t7E4B1, t7EAsFiled: monthly4B1, t7J, t8, t9, t9Other,
       t10, t11, t12, t12Source: G.t12 === null || G.t12 === undefined ? 'computed' : 'override', t13, totalTurnover,
       t14: G.t14, t15: G.t15, t16: G.t16,
       t17: (G.t17 || []).map((r) => ({ ...r, tax: rowTax(r) })),
@@ -1357,11 +1432,18 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     },
     notice: { outward: o, inward: inw, defaults: noticeDefaults },
     monthsPresent: byMonth((m) => ({ any: monthsPresent[m], out: outPresent[m], itc: itcPresent[m] })),
+    quarterly: { out: qOut, itc: qItc },
     diffs,
     openCount: stepOpen.review,
     stepOpen,
   };
 }
+
+/** The four quarters of the FY, months in order (QRMP). */
+const QUARTERS: MonthKey[][] = [['apr', 'may', 'jun'], ['jul', 'aug', 'sep'], ['oct', 'nov', 'dec'], ['jan', 'feb', 'mar']];
+
+/** The workings.sales.byRate key of Part A ledgers tagged 4G1 (GSTR-9C 9K2). */
+export const ECOM_95_RATE_KEY = 'ecom_9_5';
 
 /** GST rates in force (percent). */
 export const STANDARD_RATES = [0, 0.1, 0.25, 1, 1.5, 3, 5, 6, 12, 18, 28, 40];

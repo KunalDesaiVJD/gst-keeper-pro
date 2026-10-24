@@ -3,7 +3,7 @@ import { Badge } from '@/components/gstr9/badge';
 import type { RcmItcTable } from '@/lib/gstr9/types';
 import { MatrixTable, SectionCard, type MatrixRow } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { categoryName, ITC_TABLE_LABEL } from './rcmShared';
+import { categoryName, ITC_TABLE_LABEL, itcTableOf } from './rcmShared';
 
 const Src: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">{children}</Badge>
@@ -16,16 +16,16 @@ const RcmFlowsCard: React.FC = () => {
   const { docs, workings } = useWorkspace();
   const W = workings.rcm;
   const cats = docs.rcm.categories;
-  const namesIn = (t: RcmItcTable) => cats.filter((c) => (c.itcTable || '6C') === t).map(categoryName).join(', ');
+  const namesIn = (t: RcmItcTable) => cats.filter((c) => itcTableOf(c.itcTable) === t).map(categoryName).join(', ');
 
-  const tables: RcmItcTable[] = ['6C', '6D', '6F'];
+  const tables: RcmItcTable[] = ['6C', '6D', '6F', 'none'];
   const itcRows: MatrixRow[] = tables
-    // 6C always shows (the default); 6D / 6F only when an expense is set to them.
-    .filter((t) => t === '6C' || cats.some((c) => c.itcTable === t))
+    // 6C always shows (the default); 6D / 6F / No ITC only when an expense is set to them.
+    .filter((t) => t === '6C' || cats.some((c) => itcTableOf(c.itcTable) === t))
     .map((t) => ({
       key: t,
-      code: t,
-      label: `GSTR-9 — ${ITC_TABLE_LABEL[t]}`,
+      code: t === 'none' ? 'No ITC' : t,
+      label: t === 'none' ? ITC_TABLE_LABEL[t] : `GSTR-9 — ${ITC_TABLE_LABEL[t]}`,
       value: W.byItcTable[t],
       note: namesIn(t) ? <Src>{namesIn(t)}</Src> : <Src>Part B · books</Src>,
     }));

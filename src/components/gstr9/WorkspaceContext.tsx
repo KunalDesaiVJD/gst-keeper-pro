@@ -170,10 +170,11 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const periodRef = useRef<AnnualReturnPeriod | null>(null);
   const scope = useRef(`${client.id}|${financialYear}`);
   const noItcBuilder = client.regular_sub_type === 'Builder' && client.builder_itc_type === 'NO_ITC';
+  const quarterly = client.registration_type === 'IFF';
   const liveSetOffs = useMemo(() => setOffs.filter((o) => !o.deletedAt).map((o) => ({ side: o.side, method: o.method, tax: o.tax })), [setOffs]);
   const compute = useCallback(
-    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, setOffs: liveSetOffs }),
-    [client.name, client.gstin, financialYear, noItcBuilder, liveSetOffs],
+    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, quarterly, setOffs: liveSetOffs }),
+    [client.name, client.gstin, financialYear, noItcBuilder, quarterly, liveSetOffs],
   );
   const applyPeriod = useCallback((p: AnnualReturnPeriod | null) => {
     periodRef.current = p;

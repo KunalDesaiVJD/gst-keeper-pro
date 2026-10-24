@@ -588,7 +588,7 @@ function rcm(c: Ctx): WorkingPaper {
   docs.rcm.categories.forEach((cat) => {
     const calc = w.rcm.categories[cat.id];
     if (!calc) return;
-    p.h2(`${(cat.name || 'RCM EXPENSE').toUpperCase()} (${cat.rate}% · ${cat.supplyType === 'inter' ? 'INTER-STATE' : 'INTRA-STATE'} · GSTR-9 TABLE ${cat.itcTable || '6C'})`);
+    p.h2(`${(cat.name || 'RCM EXPENSE').toUpperCase()} (${cat.rate}% · ${cat.supplyType === 'inter' ? 'INTER-STATE' : 'INTRA-STATE'} · ${cat.itcTable === 'none' ? 'NO ITC' : `GSTR-9 TABLE ${cat.itcTable || '6C'}${cat.itcType === 'ip' ? ' INPUTS' : cat.itcType === 'cg' ? ' CAPITAL GOODS' : ''}`})`);
     const k = p.table(hdr(), { keyCols: 2 });
     // Taxable is typed; tax is computed from the rate unless typed (RCM F52 `=D52*2.5%`).
     months(k, (m) => calc.months[m], undefined, (m, h) => {
@@ -1056,7 +1056,7 @@ const T9_LABEL: Record<string, string> = {
   A: '5%', B: '5% (RC)', B1: '6%', C: '12%', D: '12% (RC)', E: '18%', F: '18% (RC)', G: '28%', H: '28% (RC)', H1: '40%', H2: '40% (RC)',
   I: '3%', J: '0.25%', K: '0.10%', K1: 'Others %', K2: 'Supplies on which e-commerce operator is required to pay tax u/s 9(5)',
   L: 'Interest', M: 'Late fee', N: 'Penalty', O: 'Others',
-  P: 'Total amount to be paid as per tables above', Q: 'Total amount payable as declared in annual return (GSTR-9)', R: 'Un-reconciled payment of amount',
+  P: 'Total amount to be paid as per tables above', Q: 'Total amount paid as declared in annual return (GSTR-9)', R: 'Un-reconciled payment of amount',
 };
 const T11_LABEL: Record<string, string> = {
   A: '5%', A1: '6%', B: '12%', C: '18%', D: '28%', D1: '40%', E: '3%', F: '0.25%', G: '0.10%', G1: 'Others %',
