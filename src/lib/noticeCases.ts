@@ -12,6 +12,11 @@ import { applyMasterToQuery, type Master } from '@/lib/masterFilters';
 import type { WorkspaceTab } from '@/lib/noticeStages';
 
 export type CaseRow = Database['public']['Views']['notice_cases']['Row'];
+/** A case on its own (notice_cases_flat, 20261024100000): the same row, with the chain it belongs to. */
+export type FlatCaseRow = Database['public']['Views']['notice_cases_flat']['Row'];
+/** Linked: one row per chain (an order and its appeal together). Apart: every portal case on its own. */
+export type CaseView = 'linked' | 'apart';
+export const isCaseView = (v: string | null | undefined): v is CaseView => v === 'linked' || v === 'apart';
 export type Track = 'litigation' | 'refund' | 'registration' | 'other';
 
 export interface TrackDef { key: Track; label: string; short: string; blurb: string }
@@ -58,8 +63,9 @@ export const waitingOf = (r: { waiting_on?: string | null; is_open?: boolean | n
   r.waiting_on === 'department' || r.waiting_on === 'closed' || r.waiting_on === 'us' ? r.waiting_on : r.is_open === false ? 'closed' : 'us';
 export interface CaseQuery { track: Track | 'all'; show: CaseShow; q: string; master: Master; meId: string | null }
 
-export async function loadCases(c: CaseQuery, page: number, pageSize: number): Promise<{ rows: CaseRow[]; total: number }> {
-  let q = supabase.from('notice_cases').select('*', { count: 'exact' });
+export async function loadCases(c: CaseQuery, page: number, pageSize: number, view: CaseView = 'linked'): Promise<{ rows: FlatCaseRow[]; total: number }> {
+  // Both views have the same columns (the apart one four more), so one query serves.
+  let q = supabase.from((view === 'apart' ? 'notice_cases_flat' : 'notice_cases') as 'notice_cases').select('*', { count: 'exact' });
   if (c.track !== 'all') q = q.eq('track', c.track);
   if (c.show === 'open') q = q.eq('is_open', true);
   if (c.show === 'new') q = q.gt('new_items', 0);
@@ -80,10 +86,11 @@ export async function loadCases(c: CaseQuery, page: number, pageSize: number): P
     .order('case_key')
     .range(from, from + pageSize - 1);
   if (error) {
+    if (view === 'apart' && /notice_cases_flat/.test(error.message)) throw new Error('Seeing cases apart needs migration 20261024100000_notice_case_chains.sql on the database.');
     if (/notice_cases/.test(error.message)) throw new Error('Cases need migration 20261011100000_notice_cases.sql on the database.');
     throw error;
   }
-  return { rows: (data ?? []) as CaseRow[], total: count ?? 0 };
+  return { rows: (data ?? []) as FlatCaseRow[], total: count ?? 0 };
 }
 
 export interface TrackCounts {
@@ -93,6 +100,8 @@ export interface TrackCounts {
   overdue_age: { d30: number; d90: number; d365: number; older: number };
   /** 20261013110000: whose move it is. */
   with_us: number; with_dept: number; closed: number;
+  /** 20261024100000, cases apart only: those linked into another case. */
+  linked?: number;
 }
 const ZERO: TrackCounts = {
   cases: 0, open: 0, new: 0, new_items: 0, overdue: 0, due7: 0, hearings: 0, unassigned: 0, exposure: 0,
@@ -100,8 +109,10 @@ const ZERO: TrackCounts = {
   with_us: 0, with_dept: 0, closed: 0,
 };
 
-export async function loadCaseCounts(filters: Record<string, string> | null): Promise<Record<Track, TrackCounts>> {
-  const { data, error } = await supabase.rpc('notice_cases_counts', { p_filters: filters });
+export async function loadCaseCounts(filters: Record<string, string> | null, view: CaseView = 'linked'): Promise<Record<Track, TrackCounts>> {
+  const { data, error } = view === 'apart'
+    ? await supabase.rpc('notice_cases_counts_flat', { p_filters: filters })
+    : await supabase.rpc('notice_cases_counts', { p_filters: filters });
   if (error) throw error;
   const d = (data ?? {}) as Partial<Record<Track, Partial<TrackCounts>>>;
   const out = {} as Record<Track, TrackCounts>;
@@ -109,15 +120,21 @@ export async function loadCaseCounts(filters: Record<string, string> | null): Pr
   return out;
 }
 
-export function useCaseCounts(filters: Record<string, string> | null) {
-  return useQuery({ queryKey: ['notice-case-counts', filters], queryFn: () => loadCaseCounts(filters), staleTime: 60_000 });
+export function useCaseCounts(filters: Record<string, string> | null, view: CaseView = 'linked') {
+  return useQuery({ queryKey: ['notice-case-counts', filters, view], queryFn: () => loadCaseCounts(filters, view), staleTime: 60_000 });
 }
 
 // ── One case ───────────────────────────────────────────────────────────────
 export async function loadCase(clientId: string, caseKey: string): Promise<CaseRow | null> {
   const { data, error } = await supabase.from('notice_cases').select('*').eq('client_id', clientId).eq('case_key', caseKey).maybeSingle();
   if (error) throw error;
-  return (data as CaseRow | null) ?? null;
+  if (data) return data as CaseRow;
+  // A case linked into another is shown as part of the chain it belongs to.
+  const root = await supabase.rpc('notice_case_root', { p_client_id: clientId, p_key: caseKey });
+  if (root.error || !root.data || root.data === caseKey) return null;
+  const r = await supabase.from('notice_cases').select('*').eq('client_id', clientId).eq('case_key', root.data).maybeSingle();
+  if (r.error) throw r.error;
+  return (r.data as CaseRow | null) ?? null;
 }
 
 export interface CaseItem {
@@ -130,6 +147,8 @@ export interface CaseItem {
   reference: string | null;
   section: string | null;
   is_new: boolean;
+  /** The portal case the item itself is in (20261024100000); differs from the page's case when cases are linked. */
+  own_key?: string | null;
   stage: string | null;
   stage_label: string | null;
   is_open: boolean | null;
@@ -266,6 +285,149 @@ export function useLinkSuggestions(noticeId: string | null | undefined) {
 export async function setCaseLink(clientId: string, childKey: string, parentKey: string | null, kind: string | null, by: string | null): Promise<void> {
   const { error } = await supabase.rpc('notice_case_link_set', { p_client_id: clientId, p_child_key: childKey, p_parent_key: parentKey, p_kind: kind, p_by: by });
   if (error) throw error;
+}
+
+// ── Chains: cases linked into one, seen linked or apart (20261024100000) ──
+export type LinkKind = 'appeal' | 'waiver' | 'rectification' | 'reapplication' | 'related';
+export const LINK_KINDS: { key: LinkKind; label: string; child: string; parent: string }[] = [
+  { key: 'appeal', label: 'Appeal', child: 'is an appeal against', parent: 'is appealed in' },
+  { key: 'waiver', label: 'Waiver (s.128A)', child: 'is a waiver application against', parent: 'has a waiver application in' },
+  { key: 'rectification', label: 'Rectification', child: 'is a rectification of', parent: 'is rectified in' },
+  { key: 'reapplication', label: 'Fresh application', child: 'is a fresh application after', parent: 'was applied for again in' },
+  { key: 'related', label: 'Related', child: 'is related to', parent: 'is related to' },
+];
+export const linkKindDef = (k: string | null | undefined) => LINK_KINDS.find((x) => x.key === k) ?? LINK_KINDS[LINK_KINDS.length - 1];
+
+export interface CaseOrder { form: string | null; ref: string | null; date: string | null }
+export interface CaseRefund { sanctioned: number | null; rejected: number | null }
+export interface ChainMember {
+  case_key: string; case_id: string | null;
+  parent_key: string | null; kind: LinkKind | null; source: 'auto' | 'manual' | null; reason: string | null; via_ref: string | null;
+  linked_by: string | null; linked_at: string | null;
+  /** What the case itself is: an appeal, a waiver, a rectification (null: an original case). */
+  marker: 'appeal' | 'waiver' | 'rectification' | null;
+  track: Track; title: string | null; form_code: string | null; forms: string[] | null; lead_notice_id: string | null;
+  stage: string | null; is_open: boolean; notices: number; documents: number;
+  first_date: string | null; last_date: string | null; financial_year: string | null; amount: number | null;
+  order: CaseOrder | null; refund: CaseRefund | null;
+}
+export interface CaseChain {
+  root_key: string;
+  members: ChainMember[];
+  unlinked: { child_key: string; parent_key: string; by: string | null; at: string }[];
+}
+
+export async function loadCaseChain(clientId: string, caseKey: string): Promise<CaseChain> {
+  const { data, error } = await supabase.rpc('notice_case_chain', { p_client_id: clientId, p_case_key: caseKey });
+  if (error) {
+    if (/notice_case_chain/.test(error.message)) throw new Error('Linked cases need migration 20261024100000_notice_case_chains.sql on the database.');
+    throw error;
+  }
+  const d = (data ?? {}) as Partial<CaseChain>;
+  return { root_key: d.root_key ?? caseKey, members: d.members ?? [], unlinked: d.unlinked ?? [] };
+}
+
+export function useCaseChain(clientId: string | null | undefined, caseKey: string | null | undefined) {
+  return useQuery({ queryKey: ['notice-case-chain', clientId, caseKey], queryFn: () => loadCaseChain(clientId as string, caseKey as string), enabled: !!clientId && !!caseKey, staleTime: 30_000 });
+}
+
+export interface LinkCandidate {
+  /** The case of this chain the suggestion is for, and the other case (another chain's root). */
+  member_key: string; other_key: string;
+  /** Which way it would be linked: the child belongs to the parent. */
+  child_key: string; parent_key: string;
+  kind: LinkKind; score: number; reasons: string[];
+  other: Pick<ChainMember, 'case_key' | 'case_id' | 'title' | 'form_code' | 'forms' | 'track' | 'marker' | 'is_open' | 'lead_notice_id'
+    | 'first_date' | 'last_date' | 'financial_year' | 'amount' | 'order' | 'refund'>;
+}
+
+/** The client's other cases that may belong with this chain, best first (min: lowest score; a low one lists them all). */
+export async function loadLinkCandidates(clientId: string, caseKey: string, min = 40): Promise<LinkCandidate[]> {
+  const { data, error } = await supabase.rpc('notice_case_link_candidates', { p_client_id: clientId, p_case_key: caseKey, p_min: min });
+  if (error) throw error;
+  return (Array.isArray(data) ? data : []) as unknown as LinkCandidate[];
+}
+
+export function useLinkCandidates(clientId: string | null | undefined, caseKey: string | null | undefined, min = 40, enabled = true) {
+  return useQuery({
+    queryKey: ['notice-case-candidates', clientId, caseKey, min],
+    queryFn: () => loadLinkCandidates(clientId as string, caseKey as string, min),
+    enabled: enabled && !!clientId && !!caseKey, staleTime: 60_000,
+  });
+}
+
+/** Hand a case back to the system: a person's link or unlink of it goes; it is linked again only when certain. */
+export async function resetCaseLink(clientId: string, childKey: string): Promise<void> {
+  const { error } = await supabase.rpc('notice_case_link_reset', { p_client_id: clientId, p_child_key: childKey });
+  if (error) throw error;
+}
+
+export interface ChainLink { client_id: string; child_key: string; parent_key: string; kind: string; source: string }
+
+/** The links of these clients, for the chains on a page of cases. */
+export async function loadChainLinks(clientIds: string[]): Promise<ChainLink[]> {
+  if (!clientIds.length) return [];
+  const { data, error } = await supabase.from('notice_case_links').select('client_id, child_key, parent_key, kind, source').in('client_id', clientIds);
+  if (error) throw error;
+  return (data ?? []) as ChainLink[];
+}
+
+/** The root of a case within its client's links (notice_case_root, in the browser). */
+export function rootOf(links: ChainLink[], clientId: string, key: string): string {
+  const up = new Map(links.filter((l) => l.client_id === clientId).map((l) => [l.child_key, l.parent_key]));
+  let k = key;
+  for (let i = 0; i < 12 && up.has(k); i += 1) {
+    const next = up.get(k) as string;
+    if (next === key) break;
+    k = next;
+  }
+  return k;
+}
+
+/** The cases linked under each chain on the page: (client:root) → links below it. */
+export function chainsOf(links: ChainLink[]): Map<string, ChainLink[]> {
+  const out = new Map<string, ChainLink[]>();
+  for (const l of links) {
+    const id = `${l.client_id}:${rootOf(links, l.client_id, l.child_key)}`;
+    out.set(id, [...(out.get(id) ?? []), l]);
+  }
+  return out;
+}
+
+/** What a case is, in a few words (an order's form and number, or its lead notice). */
+export function caseLabel(m: Pick<ChainMember, 'case_id' | 'case_key' | 'form_code' | 'title' | 'marker' | 'track'>): string {
+  const what = m.marker === 'appeal' ? 'Appeal' : m.marker === 'waiver' ? 'Waiver application' : m.marker === 'rectification' ? 'Rectification'
+    : m.track === 'refund' ? 'Refund' : m.track === 'registration' ? 'Registration' : 'Case';
+  return `${what}${m.form_code ? ` · ${m.form_code}` : m.title ? ` · ${m.title}` : ''}`;
+}
+
+/** A refund order's outcome, from the amounts the AI read in it. */
+export function refundOutcome(r: CaseRefund | null | undefined): string | null {
+  if (!r) return null;
+  const s = Number(r.sanctioned ?? 0);
+  const x = Number(r.rejected ?? 0);
+  if (x > 0 && s > 0) return 'partly rejected';
+  if (x > 0) return 'rejected';
+  if (s > 0) return 'sanctioned';
+  return null;
+}
+
+/** How a case is linked to its parent, in a sentence: "Appeal against the RFD-06 order ZF… of 12 Mar 2025 (partly rejected)". */
+export function describeLink(m: ChainMember, parent: ChainMember | undefined, fmt: (d: string) => string): string {
+  const def = linkKindDef(m.kind);
+  if (!parent) return `${def.label}`;
+  const o = parent.order;
+  const against = o?.form || o?.ref
+    ? `the ${o.form && o.form !== 'Order' ? `${o.form} ` : ''}order${o.ref ? ` ${o.ref}` : ''}${o.date ? ` of ${fmt(o.date)}` : ''}`
+    : `case ${parent.case_id ?? parent.case_key}`;
+  const out = parent.track === 'refund' ? refundOutcome(parent.refund) : null;
+  switch (m.kind) {
+    case 'appeal': return `Appeal against ${against}${out ? ` (refund ${out})` : ''}`;
+    case 'waiver': return `Waiver application against ${against}`;
+    case 'rectification': return `Rectification of ${against}`;
+    case 'reapplication': return `Fresh application after case ${parent.case_id ?? parent.case_key}${out ? ` (refund ${out})` : ''}`;
+    default: return `Related to case ${parent.case_id ?? parent.case_key}`;
+  }
 }
 
 // ── Closing, reopening, handled elsewhere (superadmin and GST manager) ────

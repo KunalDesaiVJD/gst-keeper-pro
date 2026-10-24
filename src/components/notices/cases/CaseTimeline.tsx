@@ -69,7 +69,11 @@ function FileChip({ href, label, primary }: { href: string; label: string; prima
   );
 }
 
-export const CaseTimeline: React.FC<{ items: CaseItem[] }> = ({ items }) => {
+export const CaseTimeline: React.FC<{
+  items: CaseItem[];
+  /** For a chain of linked cases: the short name of the case an item is in (null: say nothing). */
+  partOf?: (ownKey: string | null | undefined) => string | null;
+}> = ({ items, partOf }) => {
   if (!items.length) return <EmptyBox className="p-4">Nothing in this case yet.</EmptyBox>;
   return (
     <ol className="relative">
@@ -93,6 +97,7 @@ export const CaseTimeline: React.FC<{ items: CaseItem[] }> = ({ items }) => {
                 <span className={cn('rounded px-1.5 py-0.5 font-semibold', dept ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success')}>
                   {dept ? 'Department' : 'Us'} · {kindOf(it)}
                 </span>
+                {partOf?.(it.own_key) && <Badge variant="secondary" className="text-[10px]" title={it.own_key ?? undefined}>{partOf(it.own_key)}</Badge>}
                 {it.is_new && <Badge variant="info" className="text-[10px]">New</Badge>}
                 {it.kind === 'notice' && it.is_open && <StageBadge stage={it.stage} />}
                 {it.ai?.outcome && !/^(other|none|unknown|n\/?a|pending)$/i.test(it.ai.outcome.trim()) && <Badge variant="secondary" className="text-[10px]">Outcome: {it.ai.outcome}</Badge>}

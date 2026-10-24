@@ -11,7 +11,8 @@ import { OwnerChip } from '@/components/notices/OwnerChip';
 import { NextStepLine } from '@/components/notices/cases/NextStepLine';
 import { WaitingChip } from '@/components/notices/cases/WaitingChip';
 import { adviceOf, useAdviceMap } from '@/lib/noticeAdvice';
-import { caseHref, type CaseRow, type Track } from '@/lib/noticeCases';
+import { GitBranch } from 'lucide-react';
+import { caseHref, linkKindDef, type CaseRow, type CaseView, type ChainLink, type FlatCaseRow, type Track } from '@/lib/noticeCases';
 import { fmtDate, fmtFy, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 
@@ -40,7 +41,39 @@ function Latest({ r }: { r: CaseRow }) {
   );
 }
 
-export const CasesTable: React.FC<{ rows: CaseRow[]; track: Track | 'all'; compact?: boolean }> = ({ rows, track, compact }) => {
+type Row = CaseRow & Partial<Pick<FlatCaseRow, 'root_key' | 'parent_key' | 'link_kind' | 'link_source'>>;
+
+/** "1 appeal, 1 related" for the links under a chain. */
+function kindsText(links: ChainLink[]): string {
+  const n = new Map<string, number>();
+  for (const l of links) n.set(l.kind, (n.get(l.kind) ?? 0) + 1);
+  return [...n.entries()].map(([k, c]) => `${c} ${linkKindDef(k).label.toLowerCase()}`).join(', ');
+}
+
+/** How the row's case is linked: under a chain (linked), or to the chain it belongs to (apart). */
+function ChainChip({ r, view, chains }: { r: Row; view: CaseView; chains?: Map<string, ChainLink[]> }) {
+  const clientId = r.client_id as string;
+  if (view === 'apart' && r.parent_key && r.root_key) {
+    return (
+      <Link to={caseHref(clientId, r.root_key)} title={`Part of the chain of case ${r.root_key}: open it linked`}
+        className="mt-0.5 inline-flex max-w-full items-center gap-1 rounded border border-info/40 bg-info/5 px-1.5 py-0.5 text-[11px] text-foreground/80 hover:bg-info/10">
+        <GitBranch className="h-3 w-3 shrink-0 text-info" aria-hidden />
+        <span className="truncate">{linkKindDef(r.link_kind).label} · linked to <span className="font-mono">{r.parent_key}</span></span>
+      </Link>
+    );
+  }
+  const below = chains?.get(`${clientId}:${r.case_key}`) ?? [];
+  if (!below.length) return null;
+  return (
+    <span title={below.map((l) => `${l.child_key} (${linkKindDef(l.kind).label.toLowerCase()}, linked ${l.source === 'auto' ? 'by itself' : 'by a person'})`).join('\n')}
+      className="mt-0.5 inline-flex max-w-full items-center gap-1 rounded border border-info/40 bg-info/5 px-1.5 py-0.5 text-[11px] text-foreground/80">
+      <GitBranch className="h-3 w-3 shrink-0 text-info" aria-hidden />
+      <span className="truncate">{view === 'linked' ? `${below.length + 1} linked cases: ${kindsText(below)}` : `Has ${kindsText(below)} linked`}</span>
+    </span>
+  );
+}
+
+export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?: boolean; view?: CaseView; chains?: Map<string, ChainLink[]> }> = ({ rows, track, compact, view = 'linked', chains }) => {
   const lit = track === 'litigation' || track === 'all';
   const advice = useAdviceMap(rows);
   return (
@@ -60,7 +93,10 @@ export const CasesTable: React.FC<{ rows: CaseRow[]; track: Track | 'all'; compa
         </thead>
         <tbody>
           {rows.map((r) => {
-            const href = caseHref(r.client_id as string, r.case_key as string);
+            // Apart, a case in a chain opens the chain showing that case alone.
+            const inChain = !!r.parent_key || !!chains?.get(`${r.client_id}:${r.case_key}`)?.length;
+            const href = caseHref(r.client_id as string, r.case_key as string)
+              + (view === 'apart' && inChain ? `?part=${encodeURIComponent(r.case_key as string)}` : '');
             return (
               <tr key={`${r.client_id}:${r.case_key}`} className={cn(WS_TR, r.new_items ? 'bg-info/5' : '')}>
                 <td className={cn(WS_TD, 'max-w-[14rem] border-l-[3px]', r.is_overdue ? 'border-l-destructive' : r.is_due_in_7 ? 'border-l-warning' : r.new_items ? 'border-l-info' : 'border-l-transparent')}>
@@ -76,6 +112,7 @@ export const CasesTable: React.FC<{ rows: CaseRow[]; track: Track | 'all'; compa
                     {lit && r.financial_years ? ` · FY ${r.financial_years.split(', ').map(fmtFy).join(', ')}` : ''}
                     {' · '}{plural(r.notices ?? 0, 'notice')}{r.documents ? `, ${plural(r.documents, 'document')}` : ''}
                   </div>
+                  <ChainChip r={r} view={view} chains={chains} />
                   {track !== 'other' && <NextStepLine r={r} advice={adviceOf(advice.data, r.client_id as string, r.case_key as string)} className="mt-0.5 max-w-[22rem]" />}
                 </td>
                 <td className={WS_TD}><WaitingChip r={r} /></td>
