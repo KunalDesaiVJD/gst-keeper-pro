@@ -138,7 +138,8 @@ export async function loadCase(clientId: string, caseKey: string): Promise<CaseR
 }
 
 export interface CaseItem {
-  kind: 'notice' | 'document';
+  /** application: filed on the portal, with no case folder or notice of its own yet (20261024120000). */
+  kind: 'notice' | 'document' | 'application';
   id: string;
   from: 'department' | 'taxpayer';
   date: string | null;
@@ -310,6 +311,8 @@ export interface ChainMember {
   stage: string | null; is_open: boolean; notices: number; documents: number;
   first_date: string | null; last_date: string | null; financial_year: string | null; amount: number | null;
   order: CaseOrder | null; refund: CaseRefund | null;
+  /** The application filed on the portal under this ARN (20261024120000); an appeal only submitted has nothing else yet. */
+  application?: { form: string | null; status: string | null; filed_date: string | null; against: string | null } | null;
 }
 export interface CaseChain {
   root_key: string;

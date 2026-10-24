@@ -108,6 +108,30 @@ SELECT notice_case_links_refresh('11400000-0000-0000-0000-000000000003');
 SELECT t_eq((SELECT count(*) FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000003'), 0::bigint,
             'a refund is not linked into its LUT, nor two refunds through a third case''s number');
 
+-- 7. An appeal only submitted (20261024120000): no folder or notice yet, only the
+--    application, whose refId is the refund order of another case.
+INSERT INTO clients (id, name, gstin, gst_user_id, gst_password, inactive_at_hand) VALUES
+ ('11400000-0000-0000-0000-000000000004', 'Surgical Works', '24SURGI0000E1Z5', 'surgw', 'p4', false);
+INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, case_id) VALUES
+ ('11400000-0000-0000-0000-0000000000d1', '11400000-0000-0000-0000-000000000004', 'notices', 's1', 'Refunds',
+  'Refund Sanction/Rejection Order (RFD-06)', ist_today() - 300, 'ZD240925036738Y', 'AA240725124515C');
+INSERT INTO gst_portal_applications (id, client_id, case_type_cd, portal_key, arn, case_id, form_number, status, filed_date, raw_json) VALUES
+ ('11400000-0000-0000-0000-0000000000d2', '11400000-0000-0000-0000-000000000004', 'APPEL', 'ap1', 'AD241225010791I', '14356779',
+  'GST APL-01', 'Appeal Submitted', ist_today() - 100, '{"appItem": {"refId": "ZD240925036738Y"}}');
+SELECT t_eq((SELECT parent_key || '/' || kind || '/' || source FROM notice_case_links
+              WHERE client_id = '11400000-0000-0000-0000-000000000004' AND child_key = 'AD241225010791I'),
+            'AA240725124515C/appeal/auto', 'an appeal only submitted is linked under the order it is against, at once');
+SELECT t_eq((SELECT label || '/' || from_party || '/' || own_key FROM notice_case_correspondence
+              WHERE client_id = '11400000-0000-0000-0000-000000000004' AND case_key = 'AA240725124515C' AND kind = 'application'),
+            'APL-01 · Appeal Submitted/taxpayer/AD241225010791I', 'and is listed in that case''s correspondence');
+SELECT t_eq((SELECT m ->> 'marker' || '/' || (m ->> 'is_open') || '/' || (m -> 'application' ->> 'against')
+               FROM jsonb_array_elements(notice_case_chain('11400000-0000-0000-0000-000000000004', 'AA240725124515C') -> 'members') m
+              WHERE m ->> 'case_key' = 'AD241225010791I'),
+            'appeal/true/ZD240925036738Y', 'the chain shows the appeal, open, against the refund order');
+UPDATE gst_portal_applications SET deleted_at = now() WHERE id = '11400000-0000-0000-0000-0000000000d2';
+SELECT t_eq((SELECT count(*) FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000004'), 0::bigint,
+            'an application gone from the portal is unlinked');
+
 -- 5. The two views stay in step: the apart view is the linked one plus the chain.
 SELECT t_eq((SELECT string_agg(column_name::text, ',' ORDER BY ordinal_position) FROM information_schema.columns
               WHERE table_schema = 'public' AND table_name = 'notice_cases'),
