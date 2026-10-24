@@ -191,7 +191,10 @@ GSTR-3B Table 3.1 / 3.2 from GSTR-1: which row a document goes to (SEZ SEWP/SEWO
 The report `gstr2a-vs-gstr2b-reco` (`src/utils/gstr2aVs2bReports.ts`) matches the portal-pulled 2A and 2B
 (`gst_filed_returns`) document by document and gives each difference a reason and an action. The engine
 `src/lib/itcReco/` is generic over document sources, so GSTR-9 Table 8A (2A vs 8A, 8A vs 2B, all three)
-plugs in as another source with its own rule set (`RULES_2A_8A`, `RULES_8A_2B`, empty for now). Pull uses
+plugs in as another source: the reports `gstr2a-vs-gstr8a-reco`, `gstr2b-vs-gstr8a-reco` and
+`gstr8a-vs-gstr2a-vs-gstr2b-reco` (per FY; the 8A uploaded from the portal's Table 8A document details as
+`GSTR9_8A`, else rebuilt from the year's 2B; the three-way one judges each document and the FY's final ITC,
+`src/lib/itcReco/threeWay.ts`). **Read `docs/GSTR8A_RECO_POSITIONS.md` first**; run `node scripts/verify-gstr8a-reco.mjs`. Pull uses
 extension 0.13.0's `gstr2a2b_pull` (one login, per-month `want`); older extensions pull one return type per
 click; 0.14.0's 2A pull also reads the credit and debit notes (`summary.cdn`, not confirmed live; a failed read
 leaves them "Not compared" with `_meta.cdnProblem`). **Read `docs/GSTR2A_2B_RECO_POSITIONS.md` before changing a reason rule**; run

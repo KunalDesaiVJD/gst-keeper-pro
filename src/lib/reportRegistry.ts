@@ -89,7 +89,10 @@ export interface ReportRunArgs {
  *  - exceptions-list: pre-filtered "only the flagged clients" reports
  *  - working-paper: a step-by-step legal computation read top to bottom
  *  - reason-reconciliation: two sources matched document by document, every
- *    difference with its reason, under a summary by reason (2A vs 2B; later 8A)
+ *    difference with its reason, under a summary by reason (2A vs 2B, and a
+ *    year's 2A or 2B vs GSTR-8A)
+ *  - itc-three-way: a year's GSTR-8A, 2A and 2B side by side, every document
+ *    with its reason and the final ITC judgment, under the year's final ITC
  */
 export type ReportViewKind =
   | 'ledger-register'
@@ -103,7 +106,8 @@ export type ReportViewKind =
   | 'annual-trend'
   | 'exceptions-list'
   | 'working-paper'
-  | 'reason-reconciliation';
+  | 'reason-reconciliation'
+  | 'itc-three-way';
 
 /**
  * One extension job a report's Pull starts: a `mode`, the periods it walks and,
@@ -163,5 +167,20 @@ export interface ReportDefinition {
     mode: string;
     needsMonth?: boolean;
     plan?: (args: { clientId: string; periods: string[]; extVersion: string | null }) => Promise<PullPlan>;
+  };
+  /**
+   * A file the report reads that the portal gives only as a download (the
+   * GSTR-8A reports: GSTR-9's Table 8A document details). The preview offers
+   * an upload button; `run` saves the file for the client and the periods
+   * picked and says what it saved, and the preview is built again.
+   */
+  upload?: {
+    /** The button's words, e.g. "Upload 8A". */
+    label: string;
+    /** The file input's accept list. */
+    accept: string;
+    /** One line under the button: what file to pick and where it comes from. */
+    hint: string;
+    run: (args: { clientId: string; periods: string[]; file: File; uploadedBy: string | null }) => Promise<string>;
   };
 }

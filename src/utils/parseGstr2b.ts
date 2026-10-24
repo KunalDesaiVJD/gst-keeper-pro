@@ -376,14 +376,17 @@ interface ColMap {
 // Original band only ever give the original number / date / note type.
 // Tax labels inside the "Amount declared by taxpayer for ITC reduction" group
 // go to declared*, all others to the tax fields.
-function resolveColumns(cols: HeaderCol[]): ColMap {
+// `loose` (a workbook whose amendment sheets carry no band, read by
+// parseItcWorkbook for GSTR-9 Table 8A): a column labelled "Original …" gives
+// the original document instead.
+function resolveColumns(cols: HeaderCol[], loose = false): ColMap {
   const map: ColMap = {};
   const set = (k: keyof ColMap, c: number) => { if (map[k] === undefined) map[k] = c; };
 
   cols.forEach(({ label, group, band }, c) => {
     if (!label) return;
 
-    if (band === 'original') {
+    if (band === 'original' || (loose && band === null && label.includes('original'))) {
       if (label.includes('number')) set('origNo', c);
       else if (label.includes('date')) set('origDate', c);
       else if (label.includes('type')) set('origNoteType', c);
@@ -447,6 +450,7 @@ function parseDocSheet(
   spec: Gstr2bSheetSpec,
   warnings: string[],
   incomplete: Gstr2bIncompleteSheet[],
+  loose = false,
 ): Gstr2bB2bRecord[] {
   const { rows, firstRow } = readRows(ws);
   const hdr = findHeader(rows);
@@ -459,10 +463,10 @@ function parseDocSheet(
     if (rows.some((row) => !rowIsBlank(row))) return skipSheet('could not locate the header row');
     return [];
   }
-  if (spec.amendment && hdr.band == null) {
+  if (spec.amendment && hdr.band == null && !loose) {
     return skipSheet('could not find the "Original Details / Revised Details" header band');
   }
-  const cols = resolveColumns(headerCols(rows, hdr));
+  const cols = resolveColumns(headerCols(rows, hdr), loose);
 
   const missing: string[] = [];
   if (cols.gstin === undefined) missing.push('GSTIN');
@@ -502,8 +506,10 @@ function parseDocSheet(
       docType = t;
     }
 
+    // A loose read (8A) takes a note printed with minus amounts as the note itself.
+    const amount = (k: keyof ColMap): number => (loose ? Math.abs(toNum(cell(row, k))) : toNum(cell(row, k)));
     const negative = AMOUNT_FIELDS.find(({ key }) => toNum(cell(row, key)) < 0);
-    if (negative) {
+    if (negative && !loose) {
       warnings.push(`${where}: negative ${negative.label} (${toNum(cell(row, negative.key))}); amounts in GSTR-2B are always positive, row skipped.`);
       skippedRows += 1;
       continue;
@@ -530,18 +536,18 @@ function parseDocSheet(
       invoiceNumber: invNo,
       invoiceType: cleanStr(cell(row, 'invType')),
       invoiceDate: toIsoDate(cell(row, 'invDate')),
-      invoiceValue: toNum(cell(row, 'invValue')),
+      invoiceValue: amount('invValue'),
       placeOfSupply: cleanStr(cell(row, 'pos')),
       docType,
       isAmendment: spec.amendment,
       originalNumber: spec.amendment ? cleanStr(cell(row, 'origNo')) : null,
       originalDate: spec.amendment ? toIsoDate(cell(row, 'origDate')) : null,
       originalDocType,
-      taxableValue: toNum(cell(row, 'taxable')),
-      inputIgst: toNum(cell(row, 'igst')),
-      inputCgst: toNum(cell(row, 'cgst')),
-      inputSgst: toNum(cell(row, 'sgst')),
-      cess: toNum(cell(row, 'cess')),
+      taxableValue: amount('taxable'),
+      inputIgst: amount('igst'),
+      inputCgst: amount('cgst'),
+      inputSgst: amount('sgst'),
+      cess: amount('cess'),
       imsReduceRequired: ims === true ? 'YES' : ims === false ? 'NO' : null,
       declaredIgst: toNumOrNull(cell(row, 'declIgst')),
       declaredCgst: toNumOrNull(cell(row, 'declCgst')),
@@ -640,8 +646,32 @@ const perDocType = <T,>(make: () => T): Record<Gstr2bDocType, T> =>
  * can be unit-tested in Node. Reads the B2B family (invoices, debit/credit
  * notes and their amendments in every bucket); see the header comment.
  */
-export function parseGstr2bBuffer(data: ArrayBuffer | Uint8Array): Gstr2bParseResult {
-  const wb = XLSX.read(data, { type: 'array', cellDates: true });
+export interface ItcWorkbookOptions {
+  /** The document sheets to read, by the portal's sheet name (matched ignoring case and whitespace). */
+  sheets: readonly Gstr2bSheetSpec[];
+  /** Summary / instruction sheets: never read, never warned about. */
+  summarySheets?: readonly string[];
+  /** Amendment sheets without the Original / Revised band: "Original …" columns give the original document. */
+  looseAmendments?: boolean;
+  /** Words for a sheet with data that is not read, after "has N rows " (default Import 2B's). */
+  unreadWords?: string;
+}
+
+export interface ItcWorkbookRead {
+  header: Gstr2bHeader;
+  records: Gstr2bB2bRecord[];
+  deferredSheetsWithData: string[];
+  sheetsRead: string[];
+  incompleteSheets: Gstr2bIncompleteSheet[];
+  warnings: string[];
+}
+
+/**
+ * Reads the document sheets of a portal ITC workbook (GSTR-2B, or GSTR-9
+ * Table 8A's document details, which use the same header labels) with the
+ * header-driven reader above. Pure, like parseGstr2bBuffer.
+ */
+export function parseItcWorkbook(wb: XLSX.WorkBook, opts: ItcWorkbookOptions): ItcWorkbookRead {
   const warnings: string[] = [];
   const header = parseHeader(wb);
 
@@ -653,25 +683,32 @@ export function parseGstr2bBuffer(data: ArrayBuffer | Uint8Array): Gstr2bParseRe
   const handled = new Set<string>();
   const sheetsRead: string[] = [];
   const incompleteSheets: Gstr2bIncompleteSheet[] = [];
-  for (const spec of GSTR2B_SHEETS) {
+  for (const spec of opts.sheets) {
     const fileName = byKey.get(sheetKey(spec.name));
-    if (!fileName) continue;
+    if (!fileName || handled.has(fileName)) continue;
     handled.add(fileName);
     sheetsRead.push(spec.name);
-    records.push(...parseDocSheet(wb.Sheets[fileName], fileName, spec, warnings, incompleteSheets));
+    records.push(...parseDocSheet(wb.Sheets[fileName], fileName, spec, warnings, incompleteSheets, !!opts.looseAmendments));
   }
 
   // Every other sheet with data rows: not read, but never dropped silently.
-  const summary = new Set(SUMMARY_SHEETS.map(sheetKey));
+  const summary = new Set((opts.summarySheets ?? SUMMARY_SHEETS).map(sheetKey));
   const deferredSheetsWithData: string[] = [];
+  const unread = opts.unreadWords ?? 'Import 2B does not read (e-commerce / ISD / imports); handle them by hand';
   for (const name of wb.SheetNames) {
     if (handled.has(name) || summary.has(sheetKey(name))) continue;
     const n = countDataRows(wb.Sheets[name]);
     if (n > 0) {
       deferredSheetsWithData.push(name);
-      warnings.push(`Sheet "${name}" has ${n} row${n === 1 ? '' : 's'} Import 2B does not read (e-commerce / ISD / imports); handle them by hand.`);
+      warnings.push(`Sheet "${name}" has ${n} row${n === 1 ? '' : 's'} ${unread}.`);
     }
   }
+  return { header, records, deferredSheetsWithData, sheetsRead, incompleteSheets, warnings };
+}
+
+export function parseGstr2bBuffer(data: ArrayBuffer | Uint8Array): Gstr2bParseResult {
+  const wb = XLSX.read(data, { type: 'array', cellDates: true });
+  const { header, records, deferredSheetsWithData, sheetsRead, incompleteSheets, warnings } = parseItcWorkbook(wb, { sheets: GSTR2B_SHEETS });
 
   const byDocType = perDocType(() => 0);
   const amendmentsByDocType = perDocType(() => 0);

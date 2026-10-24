@@ -4,7 +4,7 @@
 // a new source plugs in with an adapter and a rule set, without touching the
 // matcher or the report plumbing. Positions: docs/GSTR2A_2B_RECO_POSITIONS.md.
 
-/** A document source. 8A (GSTR-9 Table 8A) is declared for the next reports; no adapter yet. */
+/** A document source. 8A is GSTR-9 Table 8A, the year's ITC statement (fy8a.ts, eightA.ts). */
 export type SourceKey = '2A' | '2B' | '8A';
 
 /** Document family: part of a document's identity (an invoice never matches a credit note). */
@@ -157,6 +157,11 @@ export type ReasonCode =
   | 'AMENDED' | 'IMS_REJECTED' | 'DATE_DIFFERS' | 'CHANGED_AFTER_2B' | 'VALUE_DIFFERENCE'
   // Matched
   | 'MATCHED'
+  // A year's 2A or 2B against its 8A (reasons8A.ts): not in 8A, only in 8A, both
+  | 'RCM_NOT_IN_8A' | 'REJECTED_NOT_IN_8A' | 'ITC_NA_NOT_IN_8A' | 'REVERSAL_NOT_IN_8A' | 'AFTER_8A_WINDOW'
+  | 'NOT_IN_ANY_2B' | 'TWO_B_NOT_PULLED' | 'EIGHT_A_BEFORE' | 'IN_2B_NOT_IN_8A' | 'NOT_IN_8A_SECTION'
+  | 'ONLY_LEFT_8A_UNEXPLAINED' | 'EIGHT_A_2A_NOT_PULLED' | 'EIGHT_A_2B_NOT_PULLED' | 'ONLY_8A_UNEXPLAINED'
+  | 'EIGHT_A_HOLDS_NO_ITC' | 'MATCHED_8A'
   // Notes (flags on any row; they never change the status)
   | 'RCM' | 'ITC_NA_POS' | 'ITC_NA_TIME' | 'ITC_NA_OTHER' | 'RULE_37A' | 'SUPPLIER_3B_PENDING' | 'SUPPLIER_CANCELLED' | 'EARLIER_YEAR_DOC';
 

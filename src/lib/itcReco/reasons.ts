@@ -45,6 +45,23 @@ export const REASONS: Record<ReasonCode, ReasonInfo> = {
   SUPPLIER_3B_PENDING: { label: "Supplier's GSTR-3B not filed yet, as of the 2A pull", action: 'Nothing yet: ITC is reversed (Rule 37A) only if the supplier has not filed it by 30 September after the year.' },
   SUPPLIER_CANCELLED: { label: 'Supplier registration cancelled', action: 'Check the document: a cancelled supplier cannot charge tax after the cancellation date.' },
   EARLIER_YEAR_DOC: { label: 'Document dated in an earlier financial year', action: 'Check the s.16(4) time limit before claiming.' },
+  // A year's 2A or 2B against its GSTR-9 Table 8A (reasons8A.ts; docs/GSTR8A_RECO_POSITIONS.md)
+  RCM_NOT_IN_8A: { label: 'Reverse charge: never in 8A', action: 'No 8A ITC: claim it in GSTR-3B 4(A)(3) once the tax is paid in 3.1(d); it is Table 6C / 6D of GSTR-9.' },
+  REJECTED_NOT_IN_8A: { label: 'Rejected in IMS: not in 8A', action: 'No ITC for the year as the 2B stands. If rejected by mistake, ask the supplier to report it again (GSTR-1A or amendment) before 30 November after the year, then accept it.' },
+  ITC_NA_NOT_IN_8A: { label: '2B says ITC not available: not in 8A', action: 'No ITC for this document as the 2B stands (place of supply or time limit); ask the supplier to correct a wrong place of supply.' },
+  REVERSAL_NOT_IN_8A: { label: 'ITC reversal entry (Rule 37A): not in 8A', action: 'Reverse this ITC (Table 4(B)(2) of GSTR-3B, Table 7 of GSTR-9); reclaim it once the supplier files its GSTR-3B.' },
+  AFTER_8A_WINDOW: { label: 'In a 2B after October of the next year: not in 8A', action: 'Time-barred u/s 16(4): no ITC for the year. Reverse it if it was claimed.' },
+  NOT_IN_ANY_2B: { label: "Not in any of the year's 2Bs: no ITC", action: 'No ITC (s.16(2)(aa)): check IMS for it (pending or rejected) and ask the supplier; it must reach a 2B by October after the year.' },
+  TWO_B_NOT_PULLED: { label: 'Not in the 2Bs pulled; some 2Bs of the year are not pulled', action: 'Pull the 2Bs named, then build the report again.' },
+  EIGHT_A_BEFORE: { label: '8A downloaded before this was reported', action: 'Download the Table 8A document details again and upload it.' },
+  IN_2B_NOT_IN_8A: { label: 'In a 2B of the year with ITC, but not in the 8A', action: "Check the portal's 8A for this document; download the 8A again if it is older than that 2B." },
+  NOT_IN_8A_SECTION: { label: 'A section 8A never holds: not compared', action: 'Not part of 8A: imports go to Table 6E and ISD credits to Table 6G of GSTR-9; claim them as the 2B shows them.' },
+  ONLY_LEFT_8A_UNEXPLAINED: { label: 'Not in 8A: no reason found', action: "Check the portal's 8A for this document and ask the supplier." },
+  EIGHT_A_2A_NOT_PULLED: { label: 'In 8A; the 2A of its month is not pulled', action: 'Pull the 2A of that month to compare it.' },
+  EIGHT_A_2B_NOT_PULLED: { label: 'In 8A; the 2B that holds it is not pulled', action: 'Pull the 2Bs named to compare it.' },
+  ONLY_8A_UNEXPLAINED: { label: 'Only in 8A: no reason found', action: 'Check the document in the 2A / 2B of its month on the portal, and pull them again.' },
+  EIGHT_A_HOLDS_NO_ITC: { label: '8A holds it, but the 2B gives no ITC', action: 'Take the 2B as it stands (no ITC); check the 8A again.' },
+  MATCHED_8A: { label: 'Same in both', action: 'Nothing to do.' },
 };
 
 /** Status names, for a pair of sources. */
@@ -683,16 +700,7 @@ export const PAIR_2A_2B: PairConfig<Ctx2A2B> = {
   explain: explain2A2B,
 };
 
-// ── 8A pairs (GSTR-9 Table 8A): declared for the next reports ───────────────
-// They need a docsFrom8A adapter (a document-level 8A pull, new return type)
-// and their own catalogue entries. Expected reasons, in order:
-//  - in a 2B of April to October of the next year (counted in 8A, not in this FY's 2A months);
-//  - dated in an earlier FY (in a 2B, not in this FY's 8A);
-//  - amended to ineligible (dropped from the online 8A);
-//  - reverse charge, imports, ISD (never in 8A);
-//  - ITC not available (not in 8A).
-export const RULES_2A_8A: ReasonRule<unknown>[] = [];
-export const RULES_8A_2B: ReasonRule<unknown>[] = [];
+// The 8A pairs (2A vs 8A, 2B vs 8A) and the three-way report: reasons8A.ts, threeWay.ts.
 
 // ── Building the 2A vs 2B run from stored rows ──────────────────────────────
 

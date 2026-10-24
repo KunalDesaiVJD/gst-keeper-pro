@@ -287,20 +287,12 @@ extension's ledger chain.
   as of the pull dates in the subtitle. The notes say when the 2A is older than
   the 2B's generation or than 15 days.
 
-## 10. Next: GSTR-9 Table 8A
+## 10. GSTR-9 Table 8A
 
-- The engine is generic over sources. 8A plugs in as a third adapter
-  (`docsFrom8A`) once document-level 8A is pulled under its own return type
-  (today the app holds only the 8A total, `GSTR9_CALC.table8`).
-- If the firm wants it before 8A is live: an "8A as rebuilt from 2B" source
-  (the year's documents in the 2Bs of April to October of the next year),
-  labelled as such, never as 8A.
-- `RULES_2A_8A` and `RULES_8A_2B` are declared (empty) in `reasons.ts` with
-  the expected reasons. `matchSources` already takes any number of sources, so
-  the three-way report adds a `reconcileMany` on top; the view reads columns by
-  name and works as long as 'Status' and 'Reason' are kept.
-- An FY-wide report needs `periodScope: 'fy'` on the report definition so the
-  merge builds once per year instead of once per month.
+Built (24 Oct 2026): GSTR-2A vs GSTR-8A, GSTR-2B vs GSTR-8A and the three-way
+report with the year's final ITC. The 8A is the portal's uploaded "Table 8A
+document details" (`GSTR9_8A`, `docsFrom8A`) or, until uploaded, rebuilt from
+the year's 2B and labelled so. Read `docs/GSTR8A_RECO_POSITIONS.md`.
 
 ## 11. Open questions for the firm
 
@@ -308,7 +300,7 @@ extension's ledger chain.
    monthly filer", or treat them as next month by default?
 2. Should the "Not compared" rows stay in the document list, or appear only in
    the summary?
-3. Before 8A is live, is an "8A as rebuilt from 2B" source wanted?
+3. (Answered by building it: an 8A rebuilt from 2B is used until the portal's 8A is uploaded.)
 4. Should the extension also pull 2A credit notes and amendments? Those
    sections need a live check first.
 

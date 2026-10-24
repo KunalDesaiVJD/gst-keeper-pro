@@ -13,7 +13,7 @@
 import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { FileSpreadsheet, FileText, Loader2, AlertCircle } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, AlertCircle, Upload } from 'lucide-react';
 import { WS_BTN } from '@/components/workspace/theme';
 import type { ReportTable } from '@/utils/allClientsReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
@@ -29,6 +29,7 @@ import { AnnualTrendView } from './views/AnnualTrendView';
 import { ExceptionsListView } from './views/ExceptionsListView';
 import { WorkingPaperView } from './views/WorkingPaperView';
 import { ReasonReconciliationView } from './views/ReasonReconciliationView';
+import { ItcThreeWayView } from './views/ItcThreeWayView';
 
 export interface ReportPreviewDialogProps {
   open: boolean;
@@ -39,7 +40,31 @@ export interface ReportPreviewDialogProps {
   table: ReportTable | null;
   onExport: (format: 'xlsx' | 'pdf') => void;
   exportBusy: 'xlsx' | 'pdf' | null;
+  /** A report that reads an uploaded file (report.upload): save the file picked; the page builds the preview again. */
+  onUpload?: (file: File) => void;
+  uploadBusy?: boolean;
 }
+
+/** The upload button of a report that reads a file the portal gives only as a download (report.upload). */
+const UploadButton: React.FC<{ report: ReportDefinition; onUpload: (file: File) => void; busy: boolean }> = ({ report, onUpload, busy }) => {
+  const input = React.useRef<HTMLInputElement>(null);
+  if (!report.upload) return null;
+  return (
+    <>
+      <input
+        ref={input}
+        type="file"
+        accept={report.upload.accept}
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onUpload(f); }}
+      />
+      <Button variant="outline" size="sm" className={WS_BTN} onClick={() => input.current?.click()} disabled={busy} title={report.upload.hint}>
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+        {report.upload.label}
+      </Button>
+    </>
+  );
+};
 
 const renderView = (report: ReportDefinition, table: ReportTable): React.ReactNode => {
   switch (report.viewKind) {
@@ -67,11 +92,13 @@ const renderView = (report: ReportDefinition, table: ReportTable): React.ReactNo
       return <WorkingPaperView table={table} report={report} />;
     case 'reason-reconciliation':
       return <ReasonReconciliationView table={table} report={report} />;
+    case 'itc-three-way':
+      return <ItcThreeWayView table={table} report={report} />;
   }
 };
 
 export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
-  open, onOpenChange, report, loading, error, table, onExport, exportBusy,
+  open, onOpenChange, report, loading, error, table, onExport, exportBusy, onUpload, uploadBusy = false,
 }) => {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -98,13 +125,23 @@ export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center px-8">
             <AlertCircle className="h-5 w-5 text-destructive" />
             <p className="text-sm text-muted-foreground max-w-md">{error}</p>
+            {report?.upload && onUpload && (
+              <div className="mt-2 flex flex-col items-center gap-1">
+                <UploadButton report={report} onUpload={onUpload} busy={uploadBusy} />
+                <p className="max-w-md text-[11px] text-muted-foreground">{report.upload.hint}</p>
+              </div>
+            )}
           </div>
         )}
 
         {!loading && !error && table && report && (
           <>
             <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
+              {report.upload && onUpload && (
+                <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={report.upload.hint}>{report.upload.hint}</span>
+              )}
               <div className="flex-1" />
+              {onUpload && <UploadButton report={report} onUpload={onUpload} busy={uploadBusy} />}
               <Button variant="outline" size="sm" className={WS_BTN} onClick={() => onExport('xlsx')} disabled={exportBusy !== null}>
                 {exportBusy === 'xlsx' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
                 Excel
