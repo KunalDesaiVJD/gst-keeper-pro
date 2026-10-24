@@ -128,8 +128,23 @@ SELECT t_eq((SELECT m ->> 'marker' || '/' || (m ->> 'is_open') || '/' || (m -> '
                FROM jsonb_array_elements(notice_case_chain('11400000-0000-0000-0000-000000000004', 'AA240725124515C') -> 'members') m
               WHERE m ->> 'case_key' = 'AD241225010791I'),
             'appeal/true/ZD240925036738Y', 'the chain shows the appeal, open, against the refund order');
+-- A s.128A waiver whose case is of the kind other (its order, as on live) still
+-- links under the order it is against.
+INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, case_id) VALUES
+ ('11400000-0000-0000-0000-0000000000d3', '11400000-0000-0000-0000-000000000004', 'notices', 's2', 'Demand',
+  'Order DRC-07', ist_today() - 400, 'ZD241223056296J', 'AD240923018008A'),
+ ('11400000-0000-0000-0000-0000000000d4', '11400000-0000-0000-0000-000000000004', 'notices', 's3', 'LUT',
+  'Order for waiver issued', ist_today() - 150, 'ZD2504250000001', 'AD2403250367264');
+INSERT INTO gst_case_folder_items (client_id, case_id, portal_key, reference_number, folder_section, raw_json) VALUES
+ ('11400000-0000-0000-0000-000000000004', 'AD2403250367264', 'w1', 'AD2403250367264', 'APLCN', '{"formNo": "SPL-02", "orddtl": {"ordnum": "ZD241223056296J"}}');
+SELECT notice_case_links_refresh('11400000-0000-0000-0000-000000000004');
+SELECT t_eq((SELECT p.track || '/' || p.marker FROM notice_case_parts('11400000-0000-0000-0000-000000000004') p WHERE p.own_key = 'AD2403250367264'),
+            'other/waiver', 'the waiver case is of the kind other');
+SELECT t_eq((SELECT parent_key || '/' || kind FROM notice_case_links
+              WHERE client_id = '11400000-0000-0000-0000-000000000004' AND child_key = 'AD2403250367264'),
+            'AD240923018008A/waiver', 'and is still linked under the order it is against');
 UPDATE gst_portal_applications SET deleted_at = now() WHERE id = '11400000-0000-0000-0000-0000000000d2';
-SELECT t_eq((SELECT count(*) FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000004'), 0::bigint,
+SELECT t_eq((SELECT count(*) FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000004' AND child_key = 'AD241225010791I'), 0::bigint,
             'an application gone from the portal is unlinked');
 
 -- 5. The two views stay in step: the apart view is the linked one plus the chain.
