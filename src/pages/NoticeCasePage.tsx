@@ -4,8 +4,8 @@
 // correspondence in one place, newest first, with what is new since someone
 // last opened it. Opening the page marks the case as seen. The work itself
 // (issues, evidence, the draft) stays on the notice's own page.
-import React, { useEffect, useRef } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, FolderOpen, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -20,11 +20,12 @@ import { CaseTimeline } from '@/components/notices/cases/CaseTimeline';
 import { KindFacts } from '@/components/notices/cases/KindFacts';
 import { NextStepCard } from '@/components/notices/cases/NextStepCard';
 import { CaseAdminActions } from '@/components/notices/cases/CaseAdminActions';
+import { CaseChainPanel } from '@/components/notices/cases/CaseChainPanel';
 import { WaitingChip } from '@/components/notices/cases/WaitingChip';
 import { OfficerContact } from '@/components/notices/OfficerContact';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  loadCase, loadCaseItems, markCaseSeen, trackDef, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
+  caseLabel, loadCase, loadCaseItems, markCaseSeen, trackDef, useCaseChain, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
 } from '@/lib/noticeCases';
 import { fmtDate, fmtFy, fmtInr, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
@@ -71,7 +72,22 @@ const NoticeCasePage: React.FC = () => {
   const c = useQuery({ queryKey: ['notice-case', clientId, caseKey], queryFn: () => loadCase(clientId, caseKey), enabled: !!clientId && !!caseKey });
   const items = useQuery({ queryKey: ['notice-case-items', clientId, caseKey], queryFn: () => loadCaseItems(clientId, caseKey), enabled: !!clientId && !!caseKey });
   const ov = useCaseOverview(clientId, caseKey);
+  const chain = useCaseChain(clientId, c.data?.case_key ?? null);
   const marked = useRef(false);
+  // A chain of linked cases is seen whole, or one case alone (?part=<its case>).
+  const [sp, setSp] = useSearchParams();
+  const members = useMemo(() => chain.data?.members ?? [], [chain.data]);
+  const part = members.length > 1 && members.some((m) => m.case_key === sp.get('part')) ? sp.get('part') : null;
+  const setPart = (k: string | null) => {
+    const n = new URLSearchParams(sp);
+    if (k) n.set('part', k); else n.delete('part');
+    setSp(n, { replace: true });
+  };
+  const partOf = useMemo(() => {
+    if (members.length < 2) return undefined;
+    const names = new Map(members.map((m) => [m.case_key, caseLabel(m).split(' · ')[0] + (m.case_id ? ` ${m.case_id}` : '')]));
+    return (k: string | null | undefined) => (k ? names.get(k) ?? null : null);
+  }, [members]);
 
   // Opening the case is seeing what came in: mark it once the items are on screen.
   useEffect(() => {
@@ -101,6 +117,8 @@ const NoticeCasePage: React.FC = () => {
   const def = trackDef(track);
   const forms = r.forms ?? [];
   const newCount = (items.data ?? []).filter((i) => i.is_new).length;
+  const shownItems = part ? (items.data ?? []).filter((i) => i.own_key === part) : items.data ?? [];
+  const partMember = part ? members.find((m) => m.case_key === part) : undefined;
 
   return (
     <div className={WS_PAGE}>
@@ -164,10 +182,27 @@ const NoticeCasePage: React.FC = () => {
           notice={{ form_label: r.form_label, issue_date: r.last_issue_date, reference_number: r.reference_number, financial_year: r.financial_year }} />
       )}
 
-      <SectionCard title="Correspondence" description={items.data ? `${items.data.length} items, newest first${newCount ? ` · ${newCount} new` : ''}` : undefined}>
+      <CaseChainPanel clientId={clientId} caseKey={r.case_key as string} part={part} onPart={setPart} />
+
+      <SectionCard title="Correspondence"
+        description={items.data ? `${shownItems.length} items, newest first${part ? ` · ${partMember ? caseLabel(partMember) : 'one case'} only` : members.length > 1 ? ` · all ${members.length} linked cases` : ''}${newCount ? ` · ${newCount} new` : ''}` : undefined}
+        actions={members.length > 1 && (
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Whose correspondence">
+            <button type="button" onClick={() => setPart(null)} aria-pressed={!part}
+              className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-medium', !part ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted')}>
+              Linked: all cases
+            </button>
+            {members.map((m) => (
+              <button key={m.case_key} type="button" onClick={() => setPart(m.case_key)} aria-pressed={part === m.case_key} title={m.case_id ?? m.case_key}
+                className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-medium', part === m.case_key ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted')}>
+                {caseLabel(m).split(' · ')[0]}{m.case_id ? ` ${m.case_id.slice(-6)}` : ''}
+              </button>
+            ))}
+          </div>
+        )}>
         {items.error ? <Note tone="warn">Couldn't load the correspondence: {items.error instanceof Error ? items.error.message : String(items.error)}</Note>
           : items.isLoading ? <Skeleton className="h-64 w-full" />
-          : <CaseTimeline items={items.data ?? []} />}
+          : <CaseTimeline items={shownItems} partOf={part ? undefined : partOf} />}
       </SectionCard>
     </div>
   );

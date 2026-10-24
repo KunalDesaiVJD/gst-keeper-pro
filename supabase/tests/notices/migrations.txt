@@ -73,3 +73,4 @@
 20261014100000_notice_officers.sql
 20261014110000_sync_scope_notice_exclude.sql
 20261014120000_not_important_and_paper_dates.sql
+20261024100000_notice_case_chains.sql

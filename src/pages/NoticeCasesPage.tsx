@@ -16,7 +16,9 @@ import { KindCards } from '@/components/notices/cases/HomeParts';
 import { CasesTable } from '@/components/notices/cases/CasesTable';
 import { useAuth } from '@/contexts/AuthContext';
 import { masterForRpc, useMaster } from '@/lib/masterFilters';
-import { CASE_SHOWS, isTrack, loadCases, trackDef, useCaseCounts, type CaseShow, type Track } from '@/lib/noticeCases';
+import {
+  CASE_SHOWS, chainsOf, isCaseView, isTrack, loadCases, loadChainLinks, trackDef, useCaseCounts, type CaseShow, type CaseView, type Track,
+} from '@/lib/noticeCases';
 
 const PAGE = 50;
 
@@ -31,11 +33,17 @@ const NoticeCasesPage: React.FC = () => {
     && !(track === 'other' && !['all', 'new'].includes(showParam ?? ''))
     ? showParam as CaseShow : track === 'other' ? 'all' : 'open';
   const page = Math.max(1, Number(sp.get('p')) || 1);
+  // Linked: an order and its appeal are one row. Apart: every portal case its own row.
+  const viewParam = sp.get('view');
+  const view: CaseView = isCaseView(viewParam) ? viewParam : 'linked';
   const [q, setQ] = useState(sp.get('q') ?? '');
   const meId = user?.id ?? null;
   const query = useMemo(() => ({ track, show, q: sp.get('q') ?? '', master: m, meId }), [track, show, sp, m, meId]);
-  const list = useQuery({ queryKey: ['notice-cases', query, page], queryFn: () => loadCases(query, page, PAGE) });
-  const counts = useCaseCounts(masterForRpc(m, meId));
+  const list = useQuery({ queryKey: ['notice-cases', query, page, view], queryFn: () => loadCases(query, page, PAGE, view) });
+  const counts = useCaseCounts(masterForRpc(m, meId), view);
+  const clientIds = useMemo(() => [...new Set((list.data?.rows ?? []).map((r) => r.client_id as string))].sort(), [list.data]);
+  const links = useQuery({ queryKey: ['notice-chain-links', clientIds], queryFn: () => loadChainLinks(clientIds), enabled: clientIds.length > 0, staleTime: 60_000 });
+  const chains = useMemo(() => (links.data ? chainsOf(links.data) : undefined), [links.data]);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
@@ -75,6 +83,14 @@ const NoticeCasesPage: React.FC = () => {
             </button>
           ))}
         </div>
+        <div className="inline-flex rounded-md border bg-card p-0.5" role="group" aria-label="Linked or apart">
+          {([['linked', 'Linked', 'An order and its appeal (or a refund and its appeal) show as one case'], ['apart', 'Apart', 'Every portal case on its own row, each saying what it is linked to']] as const).map(([k, label, hint]) => (
+            <button key={k} type="button" title={hint} aria-pressed={view === k} onClick={() => set({ view: k === 'linked' ? null : k })}
+              className={cn('rounded px-2.5 py-0.5 text-xs font-medium transition-colors', view === k ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="relative w-full sm:w-64">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <Input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') set({ q }); }} onBlur={() => q !== (sp.get('q') ?? '') && set({ q })}
@@ -85,7 +101,7 @@ const NoticeCasesPage: React.FC = () => {
       {list.error ? <LoadError what="the cases" error={list.error} onRetry={() => list.refetch()} />
         : list.isLoading ? <Skeleton className="h-96 w-full" />
         : !rows.length ? <EmptyBox className="p-6">{show === 'new' ? 'Nothing new has come in on these cases.' : 'No case matches.'}</EmptyBox>
-        : <CasesTable rows={rows} track={track} />}
+        : <CasesTable rows={rows} track={track} view={view} chains={chains} />}
       <Pager page={page} pageSize={PAGE} total={list.data?.total ?? 0} onPage={(p) => set({ p: String(p) })} />
     </NoticesShell>
   );

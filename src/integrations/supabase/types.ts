@@ -1003,6 +1003,12 @@ export type Database = {
         Update: { status?: string; advice?: Json | null; requested_by?: string | null }
         Relationships: []
       }
+      notice_case_links: {
+        Row: { client_id: string; child_key: string; parent_key: string; kind: string; via_ref: string | null; item_id: string | null; source: string; created_by_name: string | null; created_at: string; reason: string | null; score: number | null }
+        Insert: { client_id: string; child_key: string; parent_key: string; kind: string; via_ref?: string | null; item_id?: string | null; source?: string; created_by_name?: string | null; created_at?: string; reason?: string | null; score?: number | null }
+        Update: { client_id?: string; child_key?: string; parent_key?: string; kind?: string; via_ref?: string | null; item_id?: string | null; source?: string; created_by_name?: string | null; created_at?: string; reason?: string | null; score?: number | null }
+        Relationships: []
+      }
       notice_case_seen: {
         Row: { client_id: string; case_key: string; seen_at: string; seen_by_name: string | null }
         Insert: { client_id: string; case_key: string; seen_at?: string; seen_by_name?: string | null }
@@ -11329,6 +11335,62 @@ export type Database = {
         }
         Relationships: []
       }
+      notice_cases_flat: {
+        Row: {
+          client_id: string | null
+          client_name: string | null
+          client_gstin: string | null
+          case_key: string | null
+          case_id: string | null
+          track: string | null
+          title: string | null
+          lead_notice_id: string | null
+          id: string | null
+          form_code: string | null
+          form_label: string | null
+          category: string | null
+          reference_number: string | null
+          stage: string | null
+          stage_label: string | null
+          stage_ord: number | null
+          assign_to: string | null
+          assign_to_user_id: string | null
+          effective_priority: string | null
+          financial_year: string | null
+          financial_years: string | null
+          forms: string[] | null
+          notices: number | null
+          open_notices: number | null
+          is_open: boolean | null
+          is_overdue: boolean | null
+          is_due_in_7: boolean | null
+          is_unassigned: boolean | null
+          next_due: string | null
+          next_hearing: string | null
+          first_issue_date: string | null
+          last_issue_date: string | null
+          exposure: number | null
+          amount_of_demand: number | null
+          on_dashboard: boolean | null
+          documents: number | null
+          new_items: number | null
+          new_at: string | null
+          last_arrived_at: string | null
+          seen_at: string | null
+          latest_label: string | null
+          latest_kind: string | null
+          latest_from: string | null
+          latest_date: string | null
+          last_activity_date: string | null
+          today_ist: string | null
+          waiting_on: string | null
+          root_key: string | null
+          parent_key: string | null
+          link_kind: string | null
+          link_source: string | null
+        }
+        Relationships: []
+      }
       notice_case_correspondence: {
         Row: {
           client_id: string | null
@@ -11670,6 +11732,26 @@ export type Database = {
       notice_cases_counts: {
         Args: { p_filters?: Json | null }
         Returns: Json
+      }
+      notice_cases_counts_flat: {
+        Args: { p_filters?: Json | null }
+        Returns: Json
+      }
+      notice_case_chain: {
+        Args: { p_client_id: string; p_case_key: string }
+        Returns: Json
+      }
+      notice_case_link_candidates: {
+        Args: { p_client_id: string; p_case_key: string; p_min?: number }
+        Returns: Json
+      }
+      notice_case_link_reset: {
+        Args: { p_client_id: string; p_child_key: string }
+        Returns: boolean
+      }
+      notice_case_root: {
+        Args: { p_client_id: string; p_key: string }
+        Returns: string
       }
       notice_case_mark_seen: {
         Args: { p_client_id: string; p_case_key: string; p_by_name?: string | null }
