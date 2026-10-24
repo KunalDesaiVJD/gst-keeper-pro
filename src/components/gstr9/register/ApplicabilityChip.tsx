@@ -28,11 +28,12 @@ export const ApplicabilityChip: React.FC = () => {
   else {
     const g9 = result.gstr9 === 'required' ? 'GSTR-9' : 'GSTR-9 (client’s wish)';
     const g9c = result.gstr9c === 'required' ? ' + 9C' : result.file9c ? ' + 9C (client’s wish)' : ' · no 9C';
-    text = g9 + g9c;
+    text = g9 + g9c + (result.partYear ? ' · part year' : '');
     tone = result.gstr9 === 'required' ? 'default' : 'info';
   }
   const title = [
     result.notApplicable,
+    result.partYear ? `Part year: ${result.partYear}; GSTR-9 covers only that part.` : '',
     t !== null ? `Aggregate turnover FY ${financialYear}: ${crore(t)}.` : `No aggregate turnover typed for FY ${financialYear}.`,
     `GSTR-9 above ${croreText(th.gstr9)}, GSTR-9C above ${croreText(th.gstr9c)}; below, only if the client wishes.`,
     isStaff ? 'Change it on All clients.' : '',

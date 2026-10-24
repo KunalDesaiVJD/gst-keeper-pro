@@ -520,7 +520,7 @@ const NextYearCard: React.FC = () => {
       }
     >
       <Note tone="position">
-        Table 13 is typed, with the ITC reco’s suggestion (books − 7J, where positive) shown beside it, because that residual is often an unexplained monthly difference rather than ITC actually availed next year. Table 12 follows the sheet — computed MAX(7J − books, 0) — and can be overridden. 8C = Table 13 − Table 12, as in the sheet.
+        Table 13 is typed, with the ITC reco’s suggestion (books − 7J, where positive) shown beside it, because that residual is often an unexplained monthly difference rather than ITC actually availed next year. Table 12 follows the sheet — computed MAX(7J − books, 0) — and can be overridden. 8C is Table 13 unless typed on the GSTR-9 step (to leave out imports and RCM); the sheet took Table 13 − Table 12.
       </Note>
       <SheetGrid<NextYearRow>
         label="GSTR-9 Tables 12 and 13"
@@ -535,7 +535,7 @@ const NextYearCard: React.FC = () => {
             key: '8C',
             label: '8C',
             tone: 'total',
-            cells: { label: 'ITC availed next year, net (13 − 12)', i: workings.g9.t8.C.i, c: workings.g9.t8.C.c, s: workings.g9.t8.C.s, x: workings.g9.t8.C.x },
+            cells: { label: docs.gstr9.t8C == null ? 'ITC availed next year (Table 13)' : 'ITC availed next year (typed on GSTR-9)', i: workings.g9.t8.C.i, c: workings.g9.t8.C.c, s: workings.g9.t8.C.s, x: workings.g9.t8.C.x },
           },
         ]}
       />

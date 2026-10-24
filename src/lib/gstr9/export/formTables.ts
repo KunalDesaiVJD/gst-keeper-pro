@@ -242,8 +242,10 @@ export function gstr9FormTables(w: Workings): FormTable[] {
   });
 
   const T15 = g.t15;
-  const refund = (t: Tax): FormCell[] => [...tc(t), null, null, null];
-  const demand = (d: typeof T15.demandTotal): FormCell[] => [...tc(d), d.interest, d.penalty, (d.lateFee || 0) + (d.others || 0)];
+  const ext15 = (d: Tax & { interest?: number; penalty?: number; lateFee?: number; others?: number }): FormCell[] =>
+    [...tc(d), d.interest || 0, d.penalty || 0, (d.lateFee || 0) + (d.others || 0)];
+  const refund = ext15;
+  const demand = ext15;
   tables.push({
     part: 'Pt. VI   Other information',
     no: '15',

@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { applicability, type Applicability } from '@/lib/gstr9/applicability';
-import { loadTurnoverEntry, type TurnoverEntry } from '@/lib/gstr9/register';
+import { loadSchemeHistory, loadTurnoverEntry, type TurnoverEntry } from '@/lib/gstr9/register';
 
 /** The client fields applicability reads (registration type and dates). */
 export interface ApplicabilityClient {
@@ -26,12 +26,19 @@ export function useApplicability(client: ApplicabilityClient | null, financialYe
     enabled: !!client,
     staleTime: 60_000,
   });
+  const h = useQuery({
+    queryKey: [KEY, 'schemes', client?.id],
+    queryFn: () => loadSchemeHistory(client!.id),
+    enabled: !!client,
+    staleTime: 60_000,
+  });
   const entry = q.data ?? null;
-  // Only once the row is read: a failed read must not pass for "no turnover typed".
-  const result = client && q.isSuccess
+  // Only once the rows are read: a failed read must not pass for "no turnover typed" or "no scheme change".
+  const result = client && q.isSuccess && h.isSuccess
     ? applicability({
       financialYear,
       registrationType: client.registration_type ?? null,
+      schemeHistory: h.data,
       registrationDate: client.registration_date,
       cancellationDate: client.cancellation_date || client.registration_cancellation_date,
       turnover: entry?.aggregate_turnover ?? null,
@@ -39,7 +46,7 @@ export function useApplicability(client: ApplicabilityClient | null, financialYe
       gstr9cOptIn: !!entry?.gstr9c_opt_in,
     })
     : null;
-  return { entry, result, loading: q.isLoading };
+  return { entry, result, loading: q.isLoading || h.isLoading };
 }
 
 /** Drop the cached rows after the register saves, so an open workspace shows the new decision. */

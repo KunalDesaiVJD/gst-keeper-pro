@@ -3,6 +3,7 @@
 // (client_annual_turnover), and its working's allotment and sign-off.
 
 import { supabase } from '@/integrations/supabase/client';
+import type { SchemeChange } from './applicability';
 import { toSignoffState, type SignoffChanges, type SignoffPeriod, type SignoffState } from './signoffFlow';
 import { PERIOD_COLUMNS, type SignoffRow } from './store';
 
@@ -32,6 +33,17 @@ export interface RegisterData {
   turnover: Map<string, TurnoverEntry>;
   /** Allotment and sign-off of every client's working (clients without a period row are absent — not started). */
   working: Map<string, SignoffState>;
+  /** Dated scheme changes per client (client_scheme_history); clients without any are absent. */
+  schemes: Map<string, SchemeChange[]>;
+}
+
+const SCHEME_COLUMNS = 'client_id, old_scheme, new_scheme, effective_from_date';
+
+/** One client's dated scheme changes (Composition ↔ Regular …), for the year's applicability. */
+export async function loadSchemeHistory(clientId: string): Promise<SchemeChange[]> {
+  const { data, error } = await supabase.from('client_scheme_history').select(SCHEME_COLUMNS).eq('client_id', clientId);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as SchemeChange[];
 }
 
 const CLIENT_COLUMNS =
@@ -57,7 +69,7 @@ const changesOf = (c: Omit<ChangesRow, 'client_id'> | null | undefined): Signoff
   c ? { sincePrepared: c.since_prepared ?? 0, sinceVerified: c.since_verified ?? 0, lastAt: c.last_change_at, lastBy: c.last_change_by } : null;
 
 export async function loadRegister(financialYear: string): Promise<RegisterData> {
-  const [clients, turnover, activity, periods, changes] = await Promise.all([
+  const [clients, turnover, activity, periods, changes, schemeRows] = await Promise.all([
     allRows<RegisterClient>((a, b) => supabase.from('clients').select(CLIENT_COLUMNS).order('name').range(a, b)),
     allRows<TurnoverEntry & { client_id: string }>((a, b) =>
       supabase
@@ -84,7 +96,12 @@ export async function loadRegister(financialYear: string): Promise<RegisterData>
         .eq('financial_year', financialYear)
         .range(a, b),
     ),
+    allRows<SchemeChange & { client_id: string }>((a, b) =>
+      supabase.from('client_scheme_history').select(SCHEME_COLUMNS).order('client_id').order('id').range(a, b),
+    ),
   ]);
+  const schemes = new Map<string, SchemeChange[]>();
+  schemeRows.forEach(({ client_id, ...h }) => schemes.set(client_id, [...(schemes.get(client_id) ?? []), h]));
 
   const act = new Map(activity.filter((r) => r.client_id).map((r) => [r.client_id as string, r]));
   const chg = new Map(changes.filter((r) => r.client_id).map((r) => [r.client_id as string, r]));
@@ -100,6 +117,7 @@ export async function loadRegister(financialYear: string): Promise<RegisterData>
     clients,
     turnover: new Map(turnover.map(({ client_id, ...t }) => [client_id, t])),
     working,
+    schemes,
   };
 }
 

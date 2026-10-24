@@ -433,7 +433,7 @@ eq('7J IGST', g.t7J.i, G9, 'I78');
 eq('8A CGST', g.t8.A.c, G9, 'G81');
 dev('8B CGST', g.t8.B.c, X(G9, 'G82') + X(G9, 'G57'), `${G9}!G82`, '8B = 6(B) + 6(H) per the form (sheet: 6(B) only)');
 dev('8B IGST', g.t8.B.i, X(G9, 'I82') + X(G9, 'I57'), `${G9}!I82`, '8B = 6(B) + 6(H) per the form (sheet: 6(B) only)');
-eq('8C CGST', g.t8.C.c, G9, 'G83');
+dev('8C CGST', g.t8.C.c, X(G9, 'G111'), `${G9}!G83`, '8C = Table 13 (sheet: 13 − 12)');
 dev('8D CGST', g.t8.D.c, X(G9, 'G84') - X(G9, 'G57'), `${G9}!G84`, 'follows 8B');
 dev('8D IGST', g.t8.D.i, X(G9, 'I84') - X(G9, 'I57'), `${G9}!I84`, 'follows 8B');
 eq('9 IGST paid', g.t9.igst.paid, G9, 'J97');
