@@ -114,6 +114,7 @@ const GAINS: [string, string][] = [
   ['0.15.0', "pulls filed returns for Filing Status with the portal's ARN and filing date, and keeps a PDF only when it is the filed return (never the System generated summary or a GSTR-1A)"],
   ['0.16.0', 'pulls Suspended Reco and GST Receivable Reco the way the database accepts, records who pulled, and checks Suspended Reco and GST Receivable Reco before a GSTR-3B push'],
   ['0.17.0', 'names the person who started each pull or push in the change log (Change history)'],
+  ['0.18.0', "pulls GSTR-9 Table 8A document details for the 8A reports"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

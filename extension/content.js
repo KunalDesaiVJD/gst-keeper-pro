@@ -318,7 +318,7 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr1_nil', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4', 'einvoice_dash', 'einvoice_excel', 'einvoice_pull'];
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'applications' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'applications' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr9_8a_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       // 0.8.6: a GSTR-1 upload, NIL, Refresh errors or GSTR-3B push ends with a
@@ -364,6 +364,9 @@
       } else if (job.step === 'gstr9_pull') {
         // updated_at too: the Annual Return page polls for a row newer than its click.
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_CALC', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-9', updated_at: new Date().toISOString() }); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'gstr9_8a_pull') {
+        // 0.18.0: the status only, so an 8A saved earlier still counts.
+        try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_8A', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Table 8A', updated_at: new Date().toISOString() }); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr1_pull') {
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-1' }); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr2a_pull') {
@@ -426,6 +429,7 @@
     else if (job.step === 'challans') await handleChallans(job, cur, progress);
     else if (job.step === 'gstr3b_pull') await handleGstr3bPull(job, cur, progress);
     else if (job.step === 'gstr9_pull') await handleGstr9Pull(job, cur, progress);
+    else if (job.step === 'gstr9_8a_pull') await handleGstr9EightAPull(job, cur, progress);
     else if (job.step === 'gstr1_pull') await handleGstr1Pull(job, cur, progress);
     else if (job.step === 'gstr2a_pull') await handleGstr2aPull(job, cur, progress);
     else if (job.step === 'creditledgertxn') await handleCreditLedgerTxnOnly(job, cur, progress);
@@ -521,7 +525,7 @@
       await setJob(job);
       banner('Period done — moving to ' + job.period + '…', '#2563eb');
       // GSTR-9 years go to the Annual Return page, not the current FY's return filing.
-      location.href = job.mode === 'gstr9_pull' ? 'https://return.gst.gov.in/returns2/auth/annualreturn' : 'https://return.gst.gov.in/returns/auth/dashboard';
+      location.href = job.mode === 'gstr9_pull' || job.mode === 'gstr9_8a_pull' ? 'https://return.gst.gov.in/returns2/auth/annualreturn' : 'https://return.gst.gov.in/returns/auth/dashboard';
       return;
     }
     // 0.15.0: returns of this client the pull did not reach (a refused
@@ -923,6 +927,11 @@
       } else if (job.mode === 'gstr9_pull') {
         banner('Logged in — opening the Annual Return page for GSTR-9…' + progress);
         job.step = 'gstr9_pull';
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns2/auth/annualreturn';
+      } else if (job.mode === 'gstr9_8a_pull') {
+        banner('Logged in — opening the Annual Return page for GSTR-9 Table 8A…' + progress);
+        job.step = 'gstr9_8a_pull';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns2/auth/annualreturn';
       } else if (job.mode === 'gstr1_pull') {
@@ -5654,6 +5663,222 @@
       'page loaded       : ' + (seen.urls.join(', ') || '(nothing)'),
     ]);
     banner('GSTR-9 FY ' + fyLabel + ' → saved ✓' + (filed && g9Detail7(filed.table7) ? ' (with Table 7 rows of the filed return)' : filed ? ' (filed return: table totals only)' : '') + '. Review it in GST Keeper.' + progress, '#16a34a');
+    await sleep(800);
+    await advance(job);
+  }
+
+  // ── 0.18.0: GSTR-9 Table 8A document details (mode gstr9_8a_pull) ──────────
+  // A job of its own, beside the GSTR-9 pull above, which it leaves as it is
+  // (it only reads that pull's page helpers). For the year ending job.period
+  // (03/YYYY) it opens the GSTR-9 on the Annual Return page the same way (FY →
+  // SEARCH → PREPARE-ONLINE, or VIEW for a filed year; the NIL question
+  // answered No + NEXT, the firm's 14 Oct decision; nothing is saved, computed
+  // or filed), presses "Download Table 8A document details" on the GSTR-9
+  // dashboard and keeps what the portal hands back, as it came:
+  //   - the file (an Excel, or a ZIP of them) from the page's own Blob
+  //     (inject.js) or from the browser's download (background.js);
+  //   - any GSTR-9 JSON the page loads after the press (inject.js);
+  //   - the portal's words when it answers instead of giving a file
+  //     ("request accepted … download later", "no records").
+  // Saved as GSTR9_8A for 03/YYYY (summary format gstk-8a-pull-v1). GST
+  // Keeper reads the file with the reader of its Upload 8A (src/lib/itcReco/
+  // eightA.ts). Not seen live when written: what the page showed and did is
+  // written on the row's status, so a miss says why.
+  function G8A_RESULT_KEY() { return 'gstk_g8a_result'; }
+  function g8aButton() {
+    return visibleButtons().find((b) => btnText(b).length < 80 && /\b8\s*A\b/.test(btnText(b)) && /DOWNLOAD|DOCUMENT|DETAIL/.test(btnText(b))) || null;
+  }
+  // A file the press may produce: an Excel or ZIP ("PK", base64 "UEsDB"), or JSON.
+  function g8aIsFile(d) {
+    if (typeof d !== 'string') return false;
+    if (/^data:[^,]*;base64,UEsDB/.test(d)) return true;
+    const m = d.match(/^data:[^,]*;base64,([A-Za-z0-9+/]{4,16})/);
+    try { return !!m && /^\s*[{[]/.test(atob(m[1].slice(0, m[1].length - (m[1].length % 4)))); } catch (e) { return false; }
+  }
+  // A captured JSON that holds documents (b2b / cdnr lists with invoices or notes).
+  function g8aHasDocs(body) {
+    let found = false;
+    const walk = (o, depth) => {
+      if (found || !o || typeof o !== 'object' || depth > 6) return;
+      for (const [k, v] of Object.entries(o)) {
+        if (/^(b2b|b2ba|cdnr|cdnra|cdn|cdna)$/i.test(k) && Array.isArray(v) && v.length) { found = true; return; }
+        if (v && typeof v === 'object') walk(v, depth + 1);
+      }
+    };
+    walk(body, 0);
+    return found;
+  }
+  function g8aPortalWords() {
+    return $$('.alert, .modal-body, [role=alert], .swal2-html-container, .swal2-content, .err, .error, .text-danger, .text-success')
+      .filter((n) => n.offsetParent !== null).map((n) => oneLine(n.textContent))
+      .find((t) => /8\s*A|request|record|download|generat|no data|not available|try (again|after)/i.test(t) && t.length < 400) || '';
+  }
+  async function handleGstr9EightAPull(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = G9_PAGE(); return; }
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    const fail8a = async (status) => {
+      // Only the status: an 8A saved earlier (pulled or uploaded) still counts.
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_8A', { status, updated_at: new Date().toISOString() }); } catch (e2) { /* diagnostic only */ }
+    };
+    if (mm !== 3 || !yyyy) {
+      banner('Bad Table 8A period "' + job.period + '" (expected 03/YYYY).', '#dc2626');
+      await sleep(1500);
+      await advance(job);
+      return;
+    }
+    const retPeriod = '03' + yyyy;
+    const fyLabel = (yyyy - 1) + '-' + String(yyyy).slice(-2);
+    const gstin = cur.creds && cur.creds.gstin;
+    if (!/returns2\/auth\/(annualreturn|gstr9)/.test(location.pathname) && !(job.g8 && job.g8.period === job.period && job.g8.opened)) {
+      location.href = G9_PAGE();
+      return;
+    }
+    if (!job.g8 || job.g8.period !== job.period) {
+      job.g8 = { period: job.period, since: Date.now() };
+      await setJob(job);
+    }
+    const g8 = job.g8;
+    await sleep(2500); // let the page's own scripts set the session up
+
+    let isFiled = false;
+    try {
+      const fr = await fetch('https://return.gst.gov.in/returns/auth/api/formdetails?rtn_prd=' + retPeriod + '&rtn_typ=GSTR9', { credentials: 'include' });
+      if (fr.ok) { const fj = await fr.json(); isFiled = !!(fj && fj.status === 1 && fj.data && fj.data.status === 'FIL'); }
+    } catch (e) { /* read as not filed: PREPARE-ONLINE, then VIEW is tried */ }
+
+    // Files the press produces on this page (the page's own Blob).
+    const files = [];
+    const seenFiles = new Set();
+    const keepFile = (dataUrl, name, via) => {
+      if (!g8aIsFile(dataUrl) || seenFiles.has(dataUrl.length + ':' + dataUrl.slice(-64))) return;
+      seenFiles.add(dataUrl.length + ':' + dataUrl.slice(-64));
+      files.push({ name: name || null, dataUrl, via, at: new Date().toISOString() });
+    };
+    const onBlob = (e) => { const d = e.data && e.data.__gstkPdf; if (d && g8.pressedAt) keepFile(d, null, 'page'); };
+    window.addEventListener('message', onBlob);
+
+    if (!g8.opened) {
+      banner('Table 8A, FY ' + fyLabel + ': opening the GSTR-9 on the Annual Return page…' + progress);
+      const sel = await selectWhereOption(fyLabel, { timeout: 15000 })
+        || await selectWhereOption((yyyy - 1) + '-' + yyyy, { timeout: 3000 });
+      if (sel) {
+        await sleep(500);
+        const search = visibleButtons().find((b) => /^SEARCH$/.test(btnText(b)));
+        if (search) search.click();
+        await sleep(3500);
+      }
+      const btns = g9TileButtons();
+      const pick = isFiled
+        ? (btns.find((b) => /^VIEW( GSTR[\s-]*9)?$/.test(btnText(b))) || btns.find((b) => /VIEW/.test(btnText(b)) && !/9C|9A/.test(btnText(b))))
+        : btns.find((b) => /PREPARE[\s-]*ONLINE/.test(btnText(b)));
+      g8.opened = true;
+      g8.openedAt = Date.now();
+      g8.clicked = pick ? btnText(pick) : null;
+      g8.buttons = btns.map(btnText).filter(Boolean).slice(0, 14).join(' | ');
+      await setJob(job);
+      if (pick) pick.click();
+    }
+
+    // Wait for the dashboard, press the 8A button, then wait for what it gives.
+    const until = (g8.openedAt || Date.now()) + G9_UI_MS() + 150000;
+    let nilTries = g8.nilTries || 0;
+    let fromStore = null;
+    while (Date.now() < until) {
+      await sleep(1500);
+      if (!g8.pressedAt) {
+        if (g9QuestionsPage() && nilTries < 20) {
+          const r = g9AnswerNilNo();
+          nilTries += 1;
+          g8.nilTries = nilTries;
+          g8.nilState = r || g8.nilState;
+          await setJob(job);
+          banner('Table 8A, FY ' + fyLabel + (r === 'answered' ? ': answered "No" to the Nil question and pressed NEXT…' : ': chose "No"; waiting for NEXT…') + progress);
+          continue;
+        }
+        const btn = g8aButton();
+        if (!btn) continue;
+        g8.pressedAt = Date.now();
+        g8.pressed = btnText(btn);
+        g8.page = location.pathname;
+        await setJob(job);
+        banner('Table 8A, FY ' + fyLabel + ': pressing "' + oneLine(btn.textContent || btn.value || '') + '"…' + progress);
+        btn.click();
+        continue;
+      }
+      // A confirm the portal may ask; the links of a prepared file ("File 1", "Click here to download").
+      const dialogBtn = $$('.modal button, [role=dialog] button, .modal-footer button, .swal2-confirm')
+        .find((b) => b.offsetParent !== null && /^(yes|ok|proceed|confirm|download)$/i.test(oneLine(b.textContent))
+          && !!b.closest('.modal, [role=dialog], .swal2-popup, .modal-dialog'));
+      if (dialogBtn && !(g8.dialogs >= 3)) { g8.dialogs = (g8.dialogs || 0) + 1; await setJob(job); try { dialogBtn.click(); } catch (e) { /* ignore */ } }
+      g8.links = g8.links || [];
+      const link = $$('a').find((a) => a.offsetParent !== null && /file\s*\d+|click here to download|download\s*(excel|file|zip)/i.test(oneLine(a.textContent))
+        && !g8.links.includes(oneLine(a.textContent)));
+      if (link && g8.links.length < 10) { g8.links.push(oneLine(link.textContent)); await setJob(job); try { link.click(); } catch (e) { /* ignore */ } }
+      const said = g8aPortalWords();
+      if (said) g8.said = said;
+      try {
+        const o = await chrome.storage.local.get(G8A_RESULT_KEY());
+        const r = o && o[G8A_RESULT_KEY()];
+        if (r && r.at >= g8.pressedAt && r.clientId === cur.clientId && r.period === job.period) fromStore = r;
+      } catch (e) { /* the page's Blob is the other road */ }
+      if (fromStore) keepFile(fromStore.fileB64, fromStore.fileName, 'download');
+      const json = g9Captured(g8.pressedAt).filter((it) => g8aHasDocs(it.body));
+      const quiet = files.length && Date.now() - Date.parse(files[files.length - 1].at) > 8000 && (!g8.links.length || g8.links.length >= 10 || !link);
+      if (quiet || (json.length && Date.now() - g8.pressedAt > 8000)) break;
+      if (!files.length && !json.length && /request|accepted|generat|no (record|data|document)|not available/i.test(g8.said || '') && Date.now() - g8.pressedAt > 15000) break;
+    }
+    window.removeEventListener('message', onBlob);
+    const json = g8.pressedAt ? g9Captured(g8.pressedAt).filter((it) => g8aHasDocs(it.body)).map((it) => ({ url: it.url.replace(/^https:\/\/[^/]+/, ''), body: it.body })) : [];
+    const how = 'opened with ' + (g8.clicked || 'nothing (buttons seen: ' + (g8.buttons || 'none') + ')')
+      + (isFiled ? '' : ' · NIL question: ' + (g8.nilState === 'answered' ? 'No + NEXT pressed' : g8.nilState === 'pending' ? 'NEXT stayed disabled' : 'not reached'))
+      + ' · 8A button: ' + (g8.pressed ? '"' + g8.pressed + '" pressed on ' + g8.page : 'not found on ' + location.pathname + ' (buttons: ' + visibleButtons().map(btnText).filter(Boolean).slice(0, 14).join(' | ') + ')')
+      + (g8.links && g8.links.length ? ' · links pressed: ' + g8.links.join(', ') : '')
+      + (g8.said ? ' · the portal said: "' + String(g8.said).slice(0, 200) + '"' : '')
+      + ' · got: ' + files.length + ' file(s), ' + json.length + ' JSON';
+    delete job.g8;
+    await setJob(job);
+    try { await chrome.storage.local.remove(G8A_RESULT_KEY()); } catch (e) { /* ignore */ }
+
+    if (!files.length && !json.length) {
+      const words = String(g8.said || '');
+      const status = /no (record|data|document)/i.test(words) ? 'NO DATA: ' + how
+        : /request|accepted|generat|try (again|after)/i.test(words) ? 'REQUESTED: ' + how
+          : 'PULL FAILED: ' + how;
+      banner('Table 8A, FY ' + fyLabel + ': no file came from the portal. ' + how + progress, /^NO DATA|^REQUESTED/.test(status) ? '#f59e0b' : '#dc2626');
+      if (/^NO DATA/.test(status)) {
+        // The portal says the year has no 8A documents: an empty 8A, saved as such.
+        try {
+          await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_8A', {
+            status, updated_at: new Date().toISOString(),
+            summary: { _format: 'gstk-8a-pull-v1', fp: retPeriod, gstin: gstin || null, fy: fyLabel, pulledAt: new Date().toISOString(), files: [], json: [], empty: true, read: how },
+          });
+        } catch (e) { await fail8a(status); }
+      } else await fail8a(status);
+      await sleep(2500);
+      await advance(job);
+      return;
+    }
+    const kb = Math.max(1, Math.round(files.reduce((n, f) => n + f.dataUrl.length, 0) * 3 / 4 / 1024));
+    try {
+      await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR9_8A', {
+        status: 'Pulled', updated_at: new Date().toISOString(),
+        summary: { _format: 'gstk-8a-pull-v1', fp: retPeriod, gstin: gstin || null, fy: fyLabel, pulledAt: new Date().toISOString(), files, json, read: how },
+      });
+    } catch (e) {
+      banner('Table 8A: read from the portal but could not be saved (' + ((e && e.message) || 'unknown error') + ').' + progress, '#dc2626');
+      await fail8a('PULL FAILED: read (' + kb + ' KB) but not saved: ' + ((e && e.message) || 'unknown error'));
+      await sleep(2000);
+      await advance(job);
+      return;
+    }
+    debugPanel([
+      'STEP: GSTR-9 Table 8A  (' + location.pathname + ')',
+      'ret_period        : ' + retPeriod + (isFiled ? ' · filed' : ' · not filed'),
+      'files             : ' + (files.map((f) => (f.name || 'file') + ' via ' + f.via).join(', ') || '(none)') + ' · ' + kb + ' KB',
+      'JSON with docs    : ' + (json.map((j) => j.url.split('?')[0]).join(', ') || '(none)'),
+      'how               : ' + how,
+    ]);
+    banner('Table 8A, FY ' + fyLabel + ' → saved ✓ (' + kb + ' KB). GST Keeper reads it in the 8A reports.' + progress, '#16a34a');
     await sleep(800);
     await advance(job);
   }
