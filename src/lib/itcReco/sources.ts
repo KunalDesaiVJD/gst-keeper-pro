@@ -254,6 +254,114 @@ export function docsFrom2A(summary: unknown, period: string): Statement | null {
   };
 }
 
+// ── GSTR-9 Table 8A ─────────────────────────────────────────────────────────
+// The year's 8A document details, as the Reports Hub saves an upload of the
+// portal's file (eightA.ts) in gst_filed_returns (return_type GSTR9_8A, period
+// '03/YYYY' of the FY): one flat list, every amount positive as on the portal.
+
+/** The format tag of a stored 8A (gst_filed_returns.summary._format). */
+export const EIGHT_A_FORMAT = 'gstk-8a-docs-v1';
+
+/** One document of a stored 8A. */
+export interface Stored8ADoc {
+  /** 'B2B' | 'B2BA' | 'CDNR' | 'CDNRA' (or another section the file held). */
+  section: string;
+  ctin: string;
+  name: string | null;
+  number: string;
+  /** ISO. */
+  date: string | null;
+  /** 'INV' | 'DN' | 'CN'. */
+  family: DocFamily;
+  value: number;
+  pos: string | null;
+  reverseCharge: boolean;
+  taxable: number;
+  igst: number;
+  cgst: number;
+  sgst: number;
+  cess: number;
+  originalNumber: string | null;
+  originalDate: string | null;
+  /** 'MM/YYYY' the supplier reported it for. */
+  supplierPeriod: string | null;
+  /** ISO. */
+  supplierFiledOn: string | null;
+  itcAvailable: boolean | null;
+  itcReason: string | null;
+  irn: string | null;
+}
+
+export interface Stored8A {
+  _format: typeof EIGHT_A_FORMAT;
+  /** Where the documents came from: the portal's Excel or JSON. */
+  origin: 'portal-excel' | 'portal-json';
+  /** '2025-26'. */
+  fy: string;
+  gstin: string | null;
+  /** The file's date of generation (ISO), when it says. */
+  generatedOn: string | null;
+  fileName: string | null;
+  /** ISO timestamp. */
+  uploadedAt: string;
+  uploadedBy: string | null;
+  sheetsRead: string[];
+  /** Sheets with rows that were not read, and the parser's warnings. */
+  unread: string[];
+  warnings: string[];
+  docs: Stored8ADoc[];
+}
+
+/** The sections GSTR-9 Table 8A holds: B2B invoices, debit and credit notes and their amendments. */
+export const EIGHT_A_SECTIONS = ['B2B', 'B2BA', 'CDNR', 'CDNRA'];
+
+export const isStored8A = (v: unknown): v is Stored8A => isObj(v) && v._format === EIGHT_A_FORMAT && Array.isArray(v.docs);
+
+/** A stored 8A → documents; null when the summary is not one. */
+export function docsFrom8A(summary: unknown, period: string): Statement | null {
+  if (!isStored8A(summary)) return null;
+  const docs = summary.docs.map((x, i): RecoDoc => ({
+    ref: `8A|${period}|${x.section}|${x.ctin}|${x.number}|${i + 1}`,
+    source: '8A',
+    statementPeriod: period,
+    section: x.section,
+    isAmendment: /A$/.test(x.section),
+    original: x.originalNumber || x.originalDate ? { number: x.originalNumber, date: x.originalDate } : null,
+    ctin: gstin(x.ctin),
+    supplierName: x.name,
+    family: x.family,
+    number: String(x.number ?? '').trim(),
+    date: x.date,
+    docValue: x.value,
+    pos: x.pos,
+    reverseCharge: !!x.reverseCharge,
+    taxable: x.taxable,
+    igst: x.igst,
+    cgst: x.cgst,
+    sgst: x.sgst,
+    cess: x.cess,
+    supplierPeriod: x.supplierPeriod,
+    supplierFiledOn: x.supplierFiledOn,
+    supplierFiled: x.supplierFiledOn ? true : null,
+    supplier3bFiled: null,
+    supplierCancelledFrom: null,
+    itcAvailable: x.itcAvailable,
+    itcReason: x.itcReason,
+    imsStatus: null,
+    bucket: null,
+    irn: x.irn,
+  }));
+  return {
+    docs,
+    meta: {
+      ...emptyMeta('8A', period),
+      state: 'ready',
+      generatedOn: summary.generatedOn,
+      sectionsRead: [...new Set([...EIGHT_A_SECTIONS, ...docs.map((d) => d.section)])],
+    },
+  };
+}
+
 const NOT_GENERATED = /^(NF$|NOT (GENERATED|FOUND|FILED))/i;
 const FAILED = /^PULL FAILED/i;
 
@@ -272,7 +380,7 @@ export const istDateOf = (ts: string | null | undefined): string | null => {
  */
 export function statementFromRow(row: StatementRow | undefined, source: SourceKey, period: string): Statement {
   if (!row) return { meta: emptyMeta(source, period), docs: [] };
-  const adapter = source === '2A' ? docsFrom2A : source === '2B' ? docsFrom2B : null;
+  const adapter = source === '2A' ? docsFrom2A : source === '2B' ? docsFrom2B : docsFrom8A;
   const parsed = adapter ? adapter(row.summary, period) : null;
   const status = row.status ?? null;
   const pulledAt = istDateOf(row.updatedAt);

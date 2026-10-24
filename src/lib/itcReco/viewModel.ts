@@ -200,6 +200,8 @@ export function mergeViewData(parts: RecoViewData[], failed: { period: string; r
     statements: sorted.flatMap((p) => p.statements),
     failed: failedAll.sort((a, b) => byPeriodKey(a.period, b.period)),
     tolerance: first?.tolerance ?? PAIR_2A_2B.tolerance,
+    // Several years merged are no longer one year.
+    ...(first?.fy && sorted.every((p) => p.fy === first.fy) ? { fy: first.fy } : {}),
   };
 }
 
@@ -375,7 +377,7 @@ export function recoReportTable(data: RecoViewData, opts: RecoTableOptions = {})
   const gstin = data.client.gstin || 'not on record';
   const months = data.periods.length;
   const single = months === 1 ? data.statements.find((s) => s.period === data.periods[0]) ?? null : null;
-  const period = periodLabel(data.periods);
+  const period = data.fy ? `FY ${data.fy}` : periodLabel(data.periods);
   const DIFF = diffHeader(L, R);
   const rows = [...data.rows].sort(docOrder);
 
@@ -469,7 +471,7 @@ export function recoReportTable(data: RecoViewData, opts: RecoTableOptions = {})
   ]);
   sRows.push(['', 'TOTAL', rows.length, sumCol(sRows, 3), sumCol(sRows, 4), sumCol(sRows, 5), sumCol(sRows, 6), sumCol(sRows, 7), '']);
   // Several months (or a month that failed beside one that did not): each note says its month.
-  const many = months + data.failed.length > 1;
+  const many = !data.fy && months + data.failed.length > 1;
   const tagged = [
     ...data.notes,
     ...data.failed.map((f) => ({ period: f.period, text: `Not built: ${f.reason}` })),
@@ -575,7 +577,9 @@ export function recoReportTable(data: RecoViewData, opts: RecoTableOptions = {})
   });
 
   const allMonths = [...new Set([...data.periods, ...data.failed.map((f) => f.period)])].sort(byPeriodKey);
-  const fileName = `GSTR${L}_vs_GSTR${R}_Reco_${fileSafe(name)}_${(allMonths[0] ?? 'none').replace('/', '-')}${allMonths.length > 1 ? `_${allMonths.length}months` : ''}`;
+  const fileName = data.fy
+    ? `GSTR${L}_vs_GSTR${R}_Reco_${fileSafe(name)}_FY_${data.fy}`
+    : `GSTR${L}_vs_GSTR${R}_Reco_${fileSafe(name)}_${(allMonths[0] ?? 'none').replace('/', '-')}${allMonths.length > 1 ? `_${allMonths.length}months` : ''}`;
 
   return {
     title,

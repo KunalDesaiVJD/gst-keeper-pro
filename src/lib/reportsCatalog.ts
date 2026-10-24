@@ -10,7 +10,7 @@ import {
   HandCoins, FileWarning, Wallet2, CreditCard, BookOpen, Landmark, PiggyBank, CalendarRange,
   SplitSquareHorizontal, UserSquare2, FileBadge, ReceiptText,
   Calculator, AlarmClock, ShieldAlert, PieChart, Undo2,
-  FileCheck2, FileStack, GitCompareArrows,
+  FileCheck2, FileStack, GitCompareArrows, GitMerge, Scale3d,
 } from 'lucide-react';
 import {
   buildSuspendedClosingAllClients,
@@ -47,6 +47,7 @@ import {
   buildGstr2aPyInCyReport,
 } from '@/utils/gstr2aReports';
 import { buildGstr2aVs2bRecoReport, planGstr2a2bPull } from '@/utils/gstr2aVs2bReports';
+import { buildGstr2aVs8aReport, buildGstr2bVs8aReport, buildGstr8aThreeWayReport, planGstr8aPull, uploadGstr8a } from '@/utils/gstr8aReports';
 import {
   buildPanOutputLiabilityReport,
   buildPanLiabilityVsItcClaimedReport,
@@ -106,6 +107,14 @@ import {
   buildFiledGstr2bReport,
 } from '@/utils/filedReturnReports';
 import type { ReportDefinition } from '@/lib/reportRegistry';
+
+/** The GSTR-8A reports read the portal's Table 8A document details, which the portal gives only as a download. */
+const GSTR8A_UPLOAD: NonNullable<ReportDefinition['upload']> = {
+  label: 'Upload 8A',
+  accept: '.xlsx,.xls,.json',
+  hint: "GST portal → Annual Return → GSTR-9 → Download Table 8A document details. Saved for the client and the year of the month picked; until then 8A is rebuilt from the year's 2B.",
+  run: (a) => uploadGstr8a(a),
+};
 
 export const REPORTS_CATALOG: ReportDefinition[] = [
   {
@@ -618,6 +627,50 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     viewKind: 'reason-reconciliation',
     pull: { mode: 'gstr2a2b_pull', needsMonth: true, plan: (a) => planGstr2a2bPull(a) },
     build: ({ clientId, month }) => buildGstr2aVs2bRecoReport(clientId!, month),
+  },
+  // GSTR-8A: GSTR-9 Table 8A, the year's ITC statement auto-drafted from the
+  // suppliers' GSTR-1 / IFF. One client and one financial year (any month of it).
+  {
+    key: 'gstr2a-vs-gstr8a-reco',
+    title: 'GSTR-2A vs GSTR-8A Reconciliation',
+    description: "Matches the year's portal GSTR-2A (every document dated in the FY, from the 2A of April to October of the next year) with GSTR-8A (GSTR-9 Table 8A) document by document, and gives every difference its reason: reverse charge, rejected in IMS, ITC not available, reached a 2B too late, in no 2B at all, supplier did not file, and more. Uses the portal's 8A file when uploaded, else 8A rebuilt from the year's 2B.",
+    icon: GitCompareArrows,
+    category: 'gstr2a2b',
+    status: 'extends-login',
+    needs: 'client+month',
+    periodScope: 'fy',
+    viewKind: 'reason-reconciliation',
+    pull: { mode: 'gstr2a2b_pull', needsMonth: true, plan: (a) => planGstr8aPull(a) },
+    upload: GSTR8A_UPLOAD,
+    build: ({ clientId, month }) => buildGstr2aVs8aReport(clientId!, month),
+  },
+  {
+    key: 'gstr2b-vs-gstr8a-reco',
+    title: 'GSTR-2B vs GSTR-8A Reconciliation',
+    description: "Matches the year's portal GSTR-2B (every document dated in the FY, from the 2B of April to October of the next year, and the two 2Bs after it) with GSTR-8A (GSTR-9 Table 8A) document by document: what 8A leaves out (reverse charge, rejected in IMS, ITC not available, Rule 37A reversals, a 2B after the time limit, imports and ISD) and what differs, each with its reason.",
+    icon: Scale3d,
+    category: 'gstr2a2b',
+    status: 'extends-login',
+    needs: 'client+month',
+    periodScope: 'fy',
+    viewKind: 'reason-reconciliation',
+    pull: { mode: 'gstr2a2b_pull', needsMonth: true, plan: (a) => planGstr8aPull(a) },
+    upload: GSTR8A_UPLOAD,
+    build: ({ clientId, month }) => buildGstr2bVs8aReport(clientId!, month),
+  },
+  {
+    key: 'gstr8a-vs-gstr2a-vs-gstr2b-reco',
+    title: 'GSTR-8A vs GSTR-2A vs GSTR-2B: Final ITC',
+    description: "Every document of the year in GSTR-8A, GSTR-2A or GSTR-2B, side by side, with the reason the three differ and a judgment of the ITC the year can take for it (eligible, reverse under Rule 37A, reverse charge on payment, to confirm, or not available and why), summed into the final available ITC of the financial year, head by head, against 8A.",
+    icon: GitMerge,
+    category: 'gstr2a2b',
+    status: 'extends-login',
+    needs: 'client+month',
+    periodScope: 'fy',
+    viewKind: 'itc-three-way',
+    pull: { mode: 'gstr2a2b_pull', needsMonth: true, plan: (a) => planGstr8aPull(a) },
+    upload: GSTR8A_UPLOAD,
+    build: ({ clientId, month }) => buildGstr8aThreeWayReport(clientId!, month),
   },
   {
     key: 'pan-multiple-company-2a2b',
