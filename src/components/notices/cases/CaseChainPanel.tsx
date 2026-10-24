@@ -106,6 +106,9 @@ export const CaseChainPanel: React.FC<{
     link(child, parent, pickKind).then(() => { setPicking(false); setPick(''); setFlip(false); });
   };
 
+  // Until the migration is on the database the panel stays out of the way.
+  if (chain.error && /20261024100000/.test(errText(chain.error))) return null;
+
   const description = linked
     ? `${plural(members.length, 'case')} in one chain`
     : 'This case is not linked to any other';
