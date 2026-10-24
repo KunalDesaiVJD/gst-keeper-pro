@@ -16,10 +16,13 @@ export type SetOffMethod = 'drc03' | 'gstr3b';
 export const SIDE_LABEL: Record<PayableSide, string> = { output: 'Output tax', input: 'Input tax credit' };
 export const METHOD_LABEL: Record<SetOffMethod, string> = { drc03: 'DRC-03', gstr3b: 'GSTR-3B' };
 
-/** Where a GSTR-3B effect is given, per side. */
+/**
+ * Where a GSTR-3B effect is given, per side: only rows that carry tax. 3.1(c) and 3.1(e) hold
+ * values without tax, and 4(D) only reports ITC, it does not reverse any; a reversal goes in 4(B).
+ */
 export const GSTR3B_TABLES: Record<PayableSide, string[]> = {
-  output: ['3.1(a)', '3.1(b)', '3.1(c)', '3.1(d)', '3.1(e)'],
-  input: ['4(B)(1)', '4(B)(2)', '4(D)'],
+  output: ['3.1(a)', '3.1(b)', '3.1(d)'],
+  input: ['4(B)(1)', '4(B)(2)'],
 };
 
 export interface SetOff {

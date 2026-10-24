@@ -81,7 +81,7 @@ export const MONTH_FIELDS: Array<{ key: keyof PortalMonth; label: string; short:
   { key: 'itc4a5', label: '4A(5) all other ITC', short: '4A(5)', explain: 'All other ITC → Notice format "ITC used as per 4A(5)"' },
   { key: 'itc4b1', label: '4B(1) reversal (Rules 38/42/43, s.17(5))', short: '4B(1)', explain: 'Reversed as per rules / s.17(5) → GSTR-9 7E unless typed there' },
   { key: 'itc4b2', label: '4B(2) other reversal', short: '4B(2)', explain: 'Other reversal → Notice format "Reversed in 4(B)(2)"' },
-  { key: 'itc4d', label: '4D ineligible ITC', short: '4D', explain: 'Ineligible ITC → Notice format "Ineligible ITC as per 4(D)"' },
+  { key: 'itc4d', label: '4D ineligible ITC', short: '4D', explain: 'Ineligible ITC: 4D(2) from July 2022 (4D(1) is then ITC reclaimed, not ineligible), all of 4D before → Notice format "Ineligible ITC as per 4(D)"' },
 ];
 
 /** "Apr 2024" for a month of the FY. */
@@ -285,7 +285,7 @@ export function gstr3bIncoming(rows: AsFiledReturn[], financialYear: string): Gs
   FY_MONTHS.forEach((m) => {
     const r = byMonth.get(m);
     if (!r) return;
-    months[m] = parseGstr3bSummary(r.summary);
+    months[m] = parseGstr3bSummary(r.summary, r.period);
     metas[m] = {
       source: 'as_filed_3b',
       arn: r.arn,

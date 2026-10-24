@@ -181,7 +181,19 @@ export const gstr9Fp = (financialYear: string): string => `03${Number(financialY
 // As-filed GSTR-3B (one month)
 // ---------------------------------------------------------------------------
 
-export function parseGstr3bSummary(raw: unknown): PortalMonth {
+/**
+ * GSTR-3B's Table 4(D) changed with Notification 14/2022-CT (Circular 170/02/2022, July 2022):
+ * 4D(1) (ty RUL) was "as per s.17(5)" and became "ITC reclaimed which was reversed under 4(B)(2)
+ * in an earlier tax period"; 4D(2) (ty OTH) became "ineligible u/s 16(4) and PoS rules".
+ * Reclaimed ITC is not ineligible, so from July 2022 only 4D(2) counts as ineligible.
+ */
+export const gstr3bOld4D = (period: string | null | undefined): boolean => {
+  const m = /^(\d{2})\/(\d{4})$/.exec((period ?? '').trim());
+  if (!m) return false;
+  return Number(m[2]) * 100 + Number(m[1]) < 202207;
+};
+
+export function parseGstr3bSummary(raw: unknown, period?: string | null): PortalMonth {
   const d = unwrap(raw, ['sup_details', 'itc_elg']);
   const m = emptyPortalMonth();
   if (!d) return m;
@@ -203,7 +215,8 @@ export function parseGstr3bSummary(raw: unknown): PortalMonth {
   m.itc4a5 = oth;
   m.itc4b1 = rul;
   m.itc4b2 = othRev;
-  m.itc4d = addTax(...inelg.map(ptax));
+  // POSITION: 4D(1) is reclaimed ITC from July 2022, not ineligible (gstr3bOld4D).
+  m.itc4d = gstr3bOld4D(period) ? addTax(...inelg.map(ptax)) : byTy(inelg, 'OTH');
   m.itc4aTotal = addTax(...avl.map(ptax));
   // D&T-INPUT "AS PER 3B" excludes RCM (4A(2) IMPS, 4A(3) ISRC): 4A(1) + 4A(4) + 4A(5) − 4B(1) − 4B(2).
   m.itcExclRcm = subTax(addTax(impg, isd, oth), rul, othRev);
