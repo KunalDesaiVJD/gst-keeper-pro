@@ -89,6 +89,25 @@ SELECT t_eq((SELECT stage FROM gst_notices WHERE id = '11400000-0000-0000-0000-0
 SELECT notice_case_link_set('11400000-0000-0000-0000-000000000002', 'AD2401010000RAP', NULL, NULL, 'Partner');
 SELECT t_eq((SELECT stage FROM gst_notices WHERE id = '11400000-0000-0000-0000-0000000000b1'), 'order', 'unlinked, the order is an order again');
 
+-- 6. Not certain, not linked (20261024110000): a refund naming its LUT, and two
+--    refunds whose replies both quote a third case's number.
+INSERT INTO clients (id, name, gstin, gst_user_id, gst_password, inactive_at_hand) VALUES
+ ('11400000-0000-0000-0000-000000000003', 'Export Works', '24EXPRT0000E1Z5', 'exprtw', 'p3', false);
+INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, case_id) VALUES
+ ('11400000-0000-0000-0000-0000000000c1', '11400000-0000-0000-0000-000000000003', 'notices', 'e1', 'LUT',
+  'LUT approved', ist_today() - 200, 'ZD2403260168695', 'AD240326001378C'),
+ ('11400000-0000-0000-0000-0000000000c2', '11400000-0000-0000-0000-000000000003', 'notices', 'e2', 'Refunds',
+  'Refund Sanction/Rejection Order (RFD-06)', ist_today() - 50, 'ZD2408260582420', 'AA2407261761073'),
+ ('11400000-0000-0000-0000-0000000000c3', '11400000-0000-0000-0000-000000000003', 'notices', 'e3', 'Refunds',
+  'Refund Sanction/Rejection Order (RFD-06)', ist_today() - 40, 'ZD2408260582421', 'AA2407261761074');
+INSERT INTO gst_case_folder_items (client_id, case_id, portal_key, reference_number, folder_section, raw_json) VALUES
+ ('11400000-0000-0000-0000-000000000003', 'AA2407261761073', 'e1a', 'AA2407261761073', 'APLCN', '{"formNo": "GST RFD-01", "lutArn": "AD240326001378C"}'),
+ ('11400000-0000-0000-0000-000000000003', 'AA2407261761073', 'e1r', NULL, 'REPLY', '{"note": "see AD240226002368E"}'),
+ ('11400000-0000-0000-0000-000000000003', 'AA2407261761074', 'e2r', NULL, 'REPLY', '{"note": "see AD240226002368E"}');
+SELECT notice_case_links_refresh('11400000-0000-0000-0000-000000000003');
+SELECT t_eq((SELECT count(*) FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000003'), 0::bigint,
+            'a refund is not linked into its LUT, nor two refunds through a third case''s number');
+
 -- 5. The two views stay in step: the apart view is the linked one plus the chain.
 SELECT t_eq((SELECT string_agg(column_name::text, ',' ORDER BY ordinal_position) FROM information_schema.columns
               WHERE table_schema = 'public' AND table_name = 'notice_cases'),

@@ -406,7 +406,9 @@ export function refundOutcome(r: CaseRefund | null | undefined): string | null {
   if (!r) return null;
   const s = Number(r.sanctioned ?? 0);
   const x = Number(r.rejected ?? 0);
-  if (x > 0 && s > 0) return 'partly rejected';
+  // The AI sometimes reads the amount claimed as the amount rejected (live, 24 October
+  // 2026: "rejected" equal to or above "sanctioned" on most refunds): say nothing then.
+  if (x > 0 && s > 0) return x < s ? 'partly rejected' : null;
   if (x > 0) return 'rejected';
   if (s > 0) return 'sanctioned';
   return null;
