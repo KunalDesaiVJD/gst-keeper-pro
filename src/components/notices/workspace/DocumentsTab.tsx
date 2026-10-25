@@ -1,12 +1,13 @@
 // The notice's documents (audit R-11, R-25, U-41-*; roadmap Phase 4 "Client
 // document requests"): what the client was asked for — from the issue codes'
 // lists or typed, the issue each serves, age, reminders and what the client
-// uploaded in the client portal — the notice and its case folder, and files
-// uploaded here.
+// uploaded in the client portal — the case file stage by stage with readable
+// names (CaseDocumentsView, src/lib/caseDocuments.ts), and files uploaded here.
+// Evidence is listed apart, on the Evidence tab or, for a kind of case without
+// one, here.
 import React, { useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, FileText, FolderOpen, ListChecks, Loader2, Mail, Paperclip, Upload, X } from 'lucide-react';
+import { ExternalLink, ListChecks, Loader2, Mail, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
@@ -21,12 +22,8 @@ import {
 } from '@/lib/noticeWorkspace';
 import { daysBetween, istToday } from '@/lib/noticeFacts';
 import { fmtAgo, fmtDate, fmtDateTime, plural } from '@/lib/noticeFormat';
-
-const SECTION: Record<string, string> = {
-  INTIM: 'Intimations', NOTCE: 'Notices', REPLY: 'Replies', ORDRS: 'Orders', CLSR: 'Closure', CLOSR: 'Closure', CLOSURE: 'Closure',
-  APLCN: 'Applications', NOTAC: 'Notice / acknowledgement', AUDIT: 'Audit history',
-};
-const ORDER = ['APLCN', 'NOTAC', 'INTIM', 'NOTCE', 'REPLY', 'ORDRS', 'CLSR', 'CLOSR', 'CLOSURE'];
+import { useCaseDocuments } from '@/lib/caseDocuments';
+import { CaseFileCard, DocRow, EvidenceDocumentsCard } from '@/components/notices/workspace/CaseDocumentsView';
 
 /** A portal date (DD/MM/YYYY, DD-MM-YYYY or ISO) as YYYY-MM-DD. */
 export function portalDateToIso(v: unknown): string | null {
@@ -57,19 +54,15 @@ export function portalReplyFrom(folder: FolderItem[]): { date: string | null; re
   return { date: latest.d, ref: (typeof j.arn === 'string' && j.arn) || latest.r.reference_number || null };
 }
 
-const attachmentsOf = (it: FolderItem): { label: string; url: string }[] =>
-  (Array.isArray(it.attachments) ? it.attachments : [])
-    .map((a) => asObj(a))
-    .filter((a) => typeof a.url === 'string')
-    .map((a) => ({ label: String(a.label ?? 'Attachment'), url: String(a.url) }));
-
 const KINDS = [
-  { key: 'evidence', label: 'Evidence / working' },
-  { key: 'client', label: 'From the client' },
+  { key: 'working', label: 'Working / note' },
   { key: 'reply', label: 'Reply filed' },
   { key: 'acknowledgement', label: 'Acknowledgement' },
   { key: 'order', label: 'Order' },
   { key: 'other', label: 'Other' },
+  // Older uploads, before evidence had its own list.
+  { key: 'evidence', label: 'Evidence / working' },
+  { key: 'client', label: 'From the client' },
 ];
 
 /** The IST calendar date of a timestamp. */
@@ -149,10 +142,16 @@ const RequestRow: React.FC<{
   );
 };
 
-export const DocumentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged: () => void; onAskClient: () => void }> = ({ ws, canEdit, onChanged, onAskClient }) => {
+export const DocumentsTab: React.FC<{
+  ws: Workspace; canEdit: boolean; onChanged: () => void; onAskClient: () => void;
+  /** Opens the Evidence tab; absent for a kind of case without one, when the evidence is listed here. */
+  onOpenEvidence?: () => void;
+}> = ({ ws, canEdit, onChanged, onAskClient, onOpenEvidence }) => {
   const { user } = useAuth();
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const [kind, setKind] = useState('evidence');
+  const [kind, setKind] = useState('working');
+  const { model, refreshLabels } = useCaseDocuments(ws);
+  const others = model?.uploads.filter((d) => !d.isEvidence) ?? [];
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [gen, setGen] = useState<(GenerateResult & { why?: string }) | null>(null);
@@ -160,13 +159,6 @@ export const DocumentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged
   const mail = useQuery(clientEmailSettingsQuery);
   const n = ws.notice;
   const waiting = catalogueFor(ws.issues, types.data ?? [], ws.requests.map((r) => r.item)).length;
-
-  const sections = new Map<string, FolderItem[]>();
-  ws.folder.forEach((it) => {
-    const code = (it.folder_section || 'OTHER').toUpperCase();
-    sections.set(code, [...(sections.get(code) ?? []), it]);
-  });
-  const sectionKeys = [...sections.keys()].sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99));
 
   const upload = async (files: FileList | null) => {
     if (!files?.length || !user) return;
@@ -274,48 +266,19 @@ export const DocumentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged
         {reminderLine && <p className="text-xs text-muted-foreground">{reminderLine}</p>}
       </SectionCard>
 
-      <SectionCard title="Notice and case folder" description={n.case_id ? `Case ${n.case_id} · as on the portal` : 'This notice has no case folder on the portal'}
-        actions={n.case_id && (
-          <Link to={`/notices-case-folder/${n.client_id}/${encodeURIComponent(n.case_id)}`} className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-            <FolderOpen className="h-3.5 w-3.5" /> Open case folder
-          </Link>
-        )}>
-        <ul className="divide-y">
-          <li className="flex items-center gap-2 py-1.5 text-sm">
-            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="min-w-0 flex-1">
-              <span className="font-medium">The notice</span>
-              <span className="block text-xs text-muted-foreground">{n.reference_number || 'no reference'}{n.issue_date ? ` · issued ${fmtDate(n.issue_date)}` : ''}</span>
-            </span>
-            {n.pdf_url
-              ? <a href={n.pdf_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">Open PDF <ExternalLink className="h-3 w-3" /></a>
-              : <span className="text-xs text-muted-foreground">PDF not captured yet — the next sync fetches it</span>}
-          </li>
-          {sectionKeys.flatMap((code) => (sections.get(code) ?? []).map((it) => {
-            const att = attachmentsOf(it);
-            const d = folderItemDate(it);
-            return (
-              <li key={it.id} className="flex flex-wrap items-center gap-2 py-1.5 text-sm">
-                <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="font-medium">{SECTION[code] ?? code}</span>
-                  <span className="block text-xs text-muted-foreground">{it.reference_number || '—'}{d ? ` · ${fmtDate(d)}` : ''}</span>
-                </span>
-                {att.length ? att.map((a) => (
-                  <a key={a.url} href={a.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">{a.label} <ExternalLink className="h-3 w-3" /></a>
-                )) : <span className="text-xs text-muted-foreground">no file</span>}
-              </li>
-            );
-          }))}
-        </ul>
-      </SectionCard>
+      <CaseFileCard ws={ws} model={model} canEdit={canEdit} onSaved={refreshLabels} onOpenEvidence={onOpenEvidence} />
 
-      <SectionCard title="Uploaded here" description={ws.documents.length ? `${ws.documents.length} file${ws.documents.length === 1 ? '' : 's'}` : 'Workings, the client\'s documents, the reply and its acknowledgement'}
+      {!onOpenEvidence && (
+        <EvidenceDocumentsCard ws={ws} model={model} canEdit={canEdit} onSaved={refreshLabels} onUploaded={() => { refreshLabels(); onChanged(); }} />
+      )}
+
+      <SectionCard title="Uploaded here" description={others.length ? plural(others.length, 'file') : 'Workings, the reply and its acknowledgement, orders received by hand'}
+        info={`Files staff upload on this page. Evidence is uploaded with its type ${onOpenEvidence ? 'on the Evidence tab' : 'in Evidence above'}; a file the client sends with a request is evidence too.`}
         actions={canEdit && (
           <div className="flex items-center gap-2">
             <Select value={kind} onValueChange={setKind}>
               <SelectTrigger className="h-8 w-44 text-xs" aria-label="Kind of document"><SelectValue /></SelectTrigger>
-              <SelectContent>{KINDS.map((k) => <SelectItem key={k.key} value={k.key} className="text-xs">{k.label}</SelectItem>)}</SelectContent>
+              <SelectContent>{KINDS.slice(0, 5).map((k) => <SelectItem key={k.key} value={k.key} className="text-xs">{k.label}</SelectItem>)}</SelectContent>
             </Select>
             <Input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => upload(e.target.files)} aria-label="Choose files to upload" />
             <Button size="sm" className="h-8 gap-1 text-xs" disabled={uploading} onClick={() => fileRef.current?.click()}>
@@ -323,24 +286,12 @@ export const DocumentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged
             </Button>
           </div>
         )}>
-        {ws.documents.length > 0 && (
+        {others.length > 0 && (
           <ul className="divide-y">
-            {ws.documents.map((d) => {
-              const url = documentUrl(d.storage_path);
-              return (
-                <li key={d.id} className="flex items-center gap-2 py-1.5 text-sm">
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{d.title}</span>
-                    <span className="block text-xs text-muted-foreground">
-                      {KINDS.find((k) => k.key === d.kind)?.label ?? d.kind} · {d.uploaded_by_name ? `${d.uploaded_by_name} · ` : ''}{fmtDateTime(d.created_at)}
-                      {d.matter_id && !d.notice_id ? ' · on the matter' : ''}
-                    </span>
-                  </span>
-                  {url && <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">Open <ExternalLink className="h-3 w-3" /></a>}
-                </li>
-              );
-            })}
+            {others.map((d) => (
+              <DocRow key={d.key} ws={ws} doc={d} canEdit={canEdit} onSaved={refreshLabels}
+                meta={<>{KINDS.find((k) => k.key === d.uploadKind)?.label ?? d.uploadKind} · {d.uploadedBy ? `${d.uploadedBy} · ` : ''}{fmtDateTime(d.uploadedAt)}</>} />
+            ))}
           </ul>
         )}
       </SectionCard>
