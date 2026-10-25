@@ -10,10 +10,12 @@ import { StageBadge } from '@/components/notices/StageBadge';
 import { OwnerChip } from '@/components/notices/OwnerChip';
 import { NextStepLine } from '@/components/notices/cases/NextStepLine';
 import { WaitingChip } from '@/components/notices/cases/WaitingChip';
+import { DisputeYearCell } from '@/components/notices/DisputeYearCell';
 import { adviceOf, useAdviceMap } from '@/lib/noticeAdvice';
+import { caseYearKey, useCaseDisputeYears } from '@/lib/noticeDisputeYears';
 import { GitBranch } from 'lucide-react';
 import { caseHref, linkKindDef, type CaseRow, type CaseView, type ChainLink, type FlatCaseRow, type Track } from '@/lib/noticeCases';
-import { fmtDate, fmtFy, fmtInrShort, plural } from '@/lib/noticeFormat';
+import { fmtDate, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 import { refundIndexKey, useRefundIndex } from '@/components/notices/reports/ledgerData';
 import { RefundWhenChip } from '@/components/notices/reports/RefundBits';
@@ -80,6 +82,7 @@ export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?:
   const advice = useAdviceMap(rows);
   // A refund's year and period come from the refund itself (its RFD-01), not the case.
   const refunds = useRefundIndex(undefined, rows.some((r) => r.track === 'refund'));
+  const years = useCaseDisputeYears(rows, view);
   return (
     <div className={WS_TABLE_WRAP}>
       <table className={WS_TABLE}>
@@ -87,6 +90,7 @@ export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?:
           <tr>
             <th scope="col" className={WS_TH}>Client</th>
             <th scope="col" className={WS_TH}>Case</th>
+            <th scope="col" className={WS_TH}>Dispute year</th>
             <th scope="col" className={WS_TH}>Status</th>
             {lit && <th scope="col" className={WS_TH}>Stage</th>}
             {track !== 'other' && <th scope="col" className={WS_TH}>Next due</th>}
@@ -114,12 +118,12 @@ export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?:
                   {r.track === 'refund' && <RefundWhenChip r={refunds.get(refundIndexKey(r.client_id, r.case_id))} className="mt-0.5" />}
                   <div className="truncate text-[11px] text-muted-foreground">
                     {r.case_id ? <span className="font-mono">{r.case_id}</span> : r.case_key === 'REG' ? 'All registration correspondence' : <span className="font-mono">{r.reference_number}</span>}
-                    {lit && r.financial_years ? ` · FY ${r.financial_years.split(', ').map(fmtFy).join(', ')}` : ''}
                     {' · '}{plural(r.notices ?? 0, 'notice')}{r.documents ? `, ${plural(r.documents, 'document')}` : ''}
                   </div>
                   <ChainChip r={r} view={view} chains={chains} />
                   {track !== 'other' && <NextStepLine r={r} advice={adviceOf(advice.data, r.client_id as string, r.case_key as string)} className="mt-0.5 max-w-[22rem]" />}
                 </td>
+                <td className={WS_TD}><DisputeYearCell d={years.data?.get(caseYearKey(r.client_id as string, r.case_key as string))} loading={years.isLoading} /></td>
                 <td className={WS_TD}><WaitingChip r={r} /></td>
                 {lit && <td className={WS_TD}>{r.is_open ? <StageBadge stage={r.stage} /> : <span className="text-xs text-muted-foreground">—</span>}</td>}
                 {track !== 'other' && (

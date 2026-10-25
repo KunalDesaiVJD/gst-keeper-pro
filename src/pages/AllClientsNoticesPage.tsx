@@ -30,6 +30,7 @@ import {
 import { stageLabel } from '@/lib/noticeStages';
 import { closeReasonText, fmtDate, fmtFy, noticeTitle } from '@/lib/noticeFormat';
 import { responseNeedDef } from '@/lib/noticeTypes';
+import { disputeYearText, loadNoticeDisputeYears } from '@/lib/noticeDisputeYears';
 
 const AllClientsNoticesPage: React.FC = () => {
   const { isStaffRole, user, canEditNoticeStatus, canExportData } = useAuth();
@@ -79,13 +80,15 @@ const AllClientsNoticesPage: React.FC = () => {
     setExporting(true);
     try {
       const rows = await fetchNoticeRows(params, meId);
+      const years = await loadNoticeDisputeYears(rows.map((r) => r.id as string)).catch(() => new Map());
       const data = rows.map((r) => ({
-        Client: r.client_name, GSTIN: r.client_gstin, Notice: noticeTitle(r), Form: r.form_code ?? '', Reference: r.reference_number ?? '',
+        Client: r.client_name, GSTIN: r.client_gstin, Notice: noticeTitle(r, { fy: false }), Form: r.form_code ?? '', Reference: r.reference_number ?? '',
+        'Dispute year': disputeYearText(years.get(r.id as string)),
         Case: r.case_id ?? '', Issued: fmtDate(r.issue_date), 'Due': fmtDate(r.effective_due), 'Due basis': r.due_basis ?? '',
         'Days to due': r.is_open && !r.is_replied ? r.days_to_due ?? '' : '', 'Reply need': responseNeedDef(r.response_need).label,
         Stage: stageLabel(r.stage), Owner: r.assign_to ?? '',
         Priority: r.effective_priority ?? '', 'Demand (₹)': r.amount_of_demand ?? '', 'Exposure (₹)': r.exposure_amount ?? '',
-        'Replied on': fmtDate(r.reply_date), 'Order on': fmtDate(r.order_date), Category: r.category ?? '', FY: fmtFy(r.financial_year),
+        'Replied on': fmtDate(r.reply_date), 'Order on': fmtDate(r.order_date), Category: r.category ?? '', 'FY on the notice': fmtFy(r.financial_year),
         'Close reason': closeReasonText(r.close_reason), Description: r.description ?? '',
       }));
       const ws = XLSX.utils.json_to_sheet(data);
