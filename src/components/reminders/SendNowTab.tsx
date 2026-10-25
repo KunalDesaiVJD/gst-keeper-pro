@@ -11,9 +11,10 @@ import { prettyPeriod } from '@/lib/gstReminders';
 import { toast } from 'sonner';
 import { Eye, Loader2, Send, CalendarCheck } from 'lucide-react';
 import {
-  PLAN_RETURN_TYPES, STEP_LABEL, currentReturnPeriod, formatDate, queueReminders, shiftPeriod,
-  type QueueItem, type QueueResult,
+  PLAN_RETURN_TYPES, STEP_LABEL, STEP_TEMPLATE, currentReturnPeriod, formatDate, loadReminderTemplates, queueReminders, shiftPeriod,
+  type QueueItem, type QueueResult, type ReminderEmail,
 } from '@/lib/reminderPlans';
+import ReminderEmailComposer from './ReminderEmailComposer';
 
 const NO_SEND = 'Needs the Send client e-mails permission — ask a GST Manager to add it to your position';
 const OTHER_RETURNS = ['ITC-04', 'CMP-08', 'GSTR-1A'];
@@ -31,6 +32,16 @@ const SendNowTab: React.FC<{ onQueued: () => void }> = ({ onQueued }) => {
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<'find' | 'send' | 'today' | 'run' | null>(null);
   const [todayPreview, setTodayPreview] = useState<QueueResult | null>(null);
+  // This send's own wording, instead of the template (not saved anywhere).
+  const [own, setOwn] = useState<ReminderEmail | null>(null);
+  const ownOk = !own || (!!own.subject.trim() && !!own.body.trim());
+
+  const writeOwn = async () => {
+    try {
+      const t = (await loadReminderTemplates())[step];
+      setOwn({ subject: t?.subject ?? '', body: t?.body ?? '' });
+    } catch (e) { toast.error(`Could not load the template: ${(e as Error).message}`); }
+  };
 
   const ready = preview?.items.filter((i) => i.result === 'would_queue') ?? [];
   const skipped = preview?.items.filter((i) => i.result === 'skipped') ?? [];
@@ -39,7 +50,7 @@ const SendNowTab: React.FC<{ onQueued: () => void }> = ({ onQueued }) => {
     if (!types.size) { toast.error('Choose at least one return.'); return; }
     setBusy('find');
     try {
-      const r = await queueReminders({ mode: 'now', period, step, returnTypes: [...types], dryRun: true });
+      const r = await queueReminders({ mode: 'now', period, step, returnTypes: [...types], dryRun: true, customEmail: own });
       setPreview(r);
       setChosen(new Set(r.items.filter((i) => i.result === 'would_queue').map(itemKey)));
     } catch (e) { toast.error(`Could not list the clients: ${(e as Error).message}`); }
@@ -50,7 +61,8 @@ const SendNowTab: React.FC<{ onQueued: () => void }> = ({ onQueued }) => {
     if (!canSend) { toast.error(NO_SEND); return; }
     const picked = ready.filter((i) => chosen.has(itemKey(i)));
     if (!picked.length) return;
-    if (!window.confirm(`Queue the ${STEP_LABEL[step].toLowerCase()} for ${picked.length} client${picked.length === 1 ? '' : 's'} (${prettyPeriod(period)})? It goes out within 15 minutes.`)) return;
+    if (!ownOk) { toast.error('Write a subject and a message, or use the template.'); return; }
+    if (!window.confirm(`Queue ${own ? 'your own e-mail' : `the ${STEP_LABEL[step].toLowerCase()}`} for ${picked.length} client${picked.length === 1 ? '' : 's'} (${prettyPeriod(period)})? It goes out within 15 minutes.`)) return;
     setBusy('send');
     let queued = 0;
     let notQueued = 0;
@@ -59,12 +71,13 @@ const SendNowTab: React.FC<{ onQueued: () => void }> = ({ onQueued }) => {
       const byType = new Map<string, string[]>();
       for (const i of picked) byType.set(i.return_type, [...(byType.get(i.return_type) ?? []), i.client_id]);
       for (const [rt, clientIds] of byType) {
-        const r = await queueReminders({ mode: 'now', period, step, returnTypes: [rt], clientIds, staffName: user?.firstName ?? null });
+        const r = await queueReminders({ mode: 'now', period, step, returnTypes: [rt], clientIds, staffName: user?.firstName ?? null, customEmail: own });
         queued += r.queued;
         notQueued += r.items.filter((i) => i.result === 'skipped').length;
       }
       toast.success(`Queued ${queued} reminder${queued === 1 ? '' : 's'}${notQueued ? ` · ${notQueued} not queued (already reminded today)` : ''}.`);
       setPreview(null);
+      setOwn(null);
       onQueued();
     } catch (e) { toast.error(`Queue failed: ${(e as Error).message}`); }
     setBusy(null);
@@ -142,6 +155,22 @@ const SendNowTab: React.FC<{ onQueued: () => void }> = ({ onQueued }) => {
               ))}
             </div>
           </div>
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Wording</span>
+              <Button size="sm" variant={!own ? 'default' : 'outline'} className={WS_BTN} onClick={() => setOwn(null)}>The template</Button>
+              <Button size="sm" variant={own ? 'default' : 'outline'} className={WS_BTN} onClick={() => { if (!own) void writeOwn(); }}>Write my own for this send</Button>
+              {own && <span className="text-[11px] text-muted-foreground">Used for this send only; the template is not changed.</span>}
+            </div>
+            {own && (
+              <ReminderEmailComposer
+                value={own}
+                onChange={setOwn}
+                templateKey={STEP_TEMPLATE[step]}
+                sample={{ return_type: [...types][0] ?? 'GSTR-1', period: prettyPeriod(period), due_date: '(its due date)', data_by_date: '(send data by)' }}
+              />
+            )}
+          </div>
           <div>
             <Button size="sm" variant="outline" className={WS_BTN} onClick={() => void find()} disabled={busy !== null}>
               {busy === 'find' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} Show who gets it
@@ -183,7 +212,10 @@ const SendNowTab: React.FC<{ onQueued: () => void }> = ({ onQueued }) => {
                             <div className="font-medium">{i.client_name}</div>
                             <div className="text-xs text-muted-foreground">{i.to_email}</div>
                           </td>
-                          <td className={cn(WS_TD, 'whitespace-nowrap')}>{i.return_type}</td>
+                          <td className={cn(WS_TD, 'whitespace-nowrap')}>
+                            {i.return_type}
+                            {i.custom === 'period' && <div className="text-[11px] text-muted-foreground">this month's own e-mail</div>}
+                          </td>
                           <td className={cn(WS_TD, 'whitespace-nowrap tabular-nums')}>{formatDate(i.due_date) || '—'}</td>
                         </tr>
                       ))}
@@ -197,7 +229,7 @@ const SendNowTab: React.FC<{ onQueued: () => void }> = ({ onQueued }) => {
                 </p>
               )}
               {ready.length > 0 && (
-                <Button size="sm" className={WS_BTN} onClick={() => void send()} disabled={busy !== null || !chosen.size || !canSend} title={canSend ? undefined : NO_SEND}>
+                <Button size="sm" className={WS_BTN} onClick={() => void send()} disabled={busy !== null || !chosen.size || !canSend || !ownOk} title={canSend ? undefined : NO_SEND}>
                   {busy === 'send' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                   Queue for {chosen.size} client{chosen.size === 1 ? '' : 's'}
                 </Button>
