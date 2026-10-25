@@ -10,6 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { istToday, type Drc03Fact, type RefundFact } from '@/lib/noticeFacts';
 import { fmtFy } from '@/lib/noticeFormat';
+import { loadChainLinks, type ChainLink } from '@/lib/noticeCases';
 import {
   drc03State, folderSignals, refundState,
   type Drc03State, type FolderItemLite, type FolderSignals, type LinkedCase, type RefundState,
@@ -41,7 +42,45 @@ async function folderItems(arns: string[]): Promise<FolderItemLite[]> {
 interface CaseLink extends LinkedCase { client_id: string | null; case_id: string | null; stage_changed_at: string | null; stage_changed_by: string | null; pdf_url: string | null }
 
 // ── Refunds ─────────────────────────────────────────────────────────────────
-export interface RefundDoc { label: string; url: string }
+export interface RefundDoc { label: string; url: string; tab: string | null }
+
+/** An amount the AI read in one of the refund's documents, and which one. */
+export interface ReadAmount { value: number; from: string }
+
+/**
+ * What the AI read in the refund's own documents (ai_documents of the ARN): the
+ * portal leaves sanctioned_amount empty, so the amounts come from the orders
+ * (RFD-04 / RFD-06 / RFD-05), never from a notice, whose "rejected" is only the
+ * amount proposed for rejection. A figure above the claim is a misreading and
+ * is dropped, as is a "rejected" that is the whole claim beside a sanction.
+ */
+export interface RefundRead {
+  claimed: ReadAmount | null;
+  provisional: ReadAmount | null;
+  sanctioned: ReadAmount | null;
+  rejected: ReadAmount | null;
+  paid: ReadAmount | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  documents: number;
+}
+
+/** A case linked to the refund (notice_case_links, migration 20261024100000; PR #197). */
+export interface RefundLink {
+  key: string;
+  /** appeal, waiver, rectification, reapplication, related. */
+  kind: string;
+  /** "child": the other case is filed against this refund (an appeal); "parent": this refund is filed after it. */
+  dir: 'child' | 'parent';
+  source: string;
+  title: string | null;
+  isOpen: boolean | null;
+  stage: string | null;
+  /** The other case is itself a refund in this ledger. */
+  refund: { status: string | null; filed: string | null } | null;
+  /** The other case has a page of its own (notice_cases). */
+  hasPage: boolean;
+}
 
 export interface RefundRow {
   key: string;
@@ -51,14 +90,81 @@ export interface RefundRow {
   caseLink: CaseLink | null;
   hasFolder: boolean;
   docs: RefundDoc[];
+  /** What the case folder says, with its dates (undefined: not fetched). */
+  signals?: FolderSignals;
+  read: RefundRead | null;
+  links: RefundLink[];
+  /** The refund's case has a page (/notices-case): only when a notice carries it. */
+  hasCasePage: boolean;
+  /** Claimed and sanctioned as used everywhere: the portal's figure, else what was read. */
+  claimed: number | null;
+  sanctioned: number | null;
+  /** Rejected: read from the order, else claimed less sanctioned once a sanction is known. */
+  rejected: number | null;
 }
 
 function refundDocs(f: RefundFact, c: CaseLink | null): RefundDoc[] {
   const list = Array.isArray(f.documents) ? (f.documents as { label?: string; url?: string; tab?: string }[]) : [];
   const docs = list.filter((d) => typeof d?.url === 'string' && /^https?:\/\//.test(d.url))
-    .map((d, i) => ({ label: d.label || d.tab || `Document ${i + 1}`, url: d.url as string }));
-  if (!docs.length && c?.pdf_url) docs.push({ label: 'Case PDF', url: c.pdf_url });
+    .map((d, i) => ({ label: d.label || d.tab || `Document ${i + 1}`, url: d.url as string, tab: d.tab ?? null }));
+  if (!docs.length && c?.pdf_url) docs.push({ label: 'Case PDF', url: c.pdf_url, tab: null });
   return docs;
+}
+
+interface AiRefundDoc {
+  client_id: string; case_id: string | null; doc_kind: string | null; outcome: string | null; title: string | null; label: string | null;
+  claimed: string | null; provisional: string | null; sanctioned: string | null; rejected: string | null; net: string | null; paid: string | null;
+  period_from: string | null; period_to: string | null;
+}
+
+async function aiRefundDocs(arns: string[]): Promise<AiRefundDoc[]> {
+  const out: AiRefundDoc[] = [];
+  for (const part of chunks(arns)) {
+    const query: Q = supabase.from('ai_documents' as never).select('client_id, case_id, doc_kind, outcome, title, label, '
+      + 'claimed:overview->>refund_claimed, provisional:overview->>refund_provisional, sanctioned:overview->>refund_sanctioned, '
+      + 'rejected:overview->>refund_rejected, net:overview->>refund_net_payable, paid:overview->>refund_paid, '
+      + 'period_from:overview->>period_from, period_to:overview->>period_to');
+    const { data, error } = await query.in('case_id', part).eq('status', 'done');
+    if (error) throw error;
+    out.push(...((data ?? []) as AiRefundDoc[]));
+  }
+  return out;
+}
+
+const amountOf = (v: string | null): number | null => (v && /^\d+(\.\d+)?$/.test(v.trim()) && Number(v) > 0 ? Number(v) : null);
+const isoDate = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+
+/** The largest reading of one figure among these documents, with the document it came from. */
+function largest(docs: AiRefundDoc[], pick: (d: AiRefundDoc) => string | null, cap: number | null): ReadAmount | null {
+  let best: ReadAmount | null = null;
+  for (const d of docs) {
+    const v = amountOf(pick(d));
+    // Above the claim (with a rupee or two of rounding) is a misreading.
+    if (v === null || (cap !== null && v > cap + 10)) continue;
+    if (!best || v > best.value) best = { value: v, from: d.title || d.label || 'a refund order' };
+  }
+  return best;
+}
+
+export function readRefund(docs: AiRefundDoc[], portalClaimed: number | null): RefundRead | null {
+  if (!docs.length) return null;
+  const claimed = portalClaimed === null ? largest(docs.filter((d) => d.doc_kind !== 'notice'), (d) => d.claimed, null) : null;
+  const cap = portalClaimed ?? claimed?.value ?? null;
+  const orders = docs.filter((d) => d.doc_kind === 'order');
+  const sanctioned = largest(orders, (d) => d.sanctioned, cap);
+  let rejected = largest(orders, (d) => d.rejected, cap);
+  // Live, 24 October 2026: the AI often reads the amount claimed as the amount rejected.
+  if (rejected && sanctioned && cap !== null && rejected.value + sanctioned.value > cap + 10) rejected = null;
+  const paid = largest(orders, (d) => d.paid ?? d.net, cap);
+  const provisional = largest(orders, (d) => d.provisional, cap);
+  // The period most of the documents name.
+  const periods = new Map<string, number>();
+  docs.forEach((d) => {
+    const a = isoDate(d.period_from);
+    if (a) { const k = `${a}|${isoDate(d.period_to) ?? ''}`; periods.set(k, (periods.get(k) ?? 0) + 1); }
+  });
+  const period = [...periods.entries()].sort((a, b) => b[1] - a[1])[0]?.[0].split('|') ?? [];
+  return { claimed, provisional, sanctioned, rejected, paid, periodFrom: period[0] ?? null, periodTo: period[1] || null, documents: docs.length };
 }
 
 export async function loadRefundLedger(clientId?: string): Promise<RefundRow[]> {
@@ -68,7 +174,25 @@ export async function loadRefundLedger(clientId?: string): Promise<RefundRow[]> 
     fetchAllRows<CaseLink>('notice_facts', 'id, client_id, case_id, is_open, close_reason, stage, stage_changed_at, stage_changed_by, pdf_url',
       (q: Q) => byClient(clientId)(q).eq('is_refund_case', true).order('id')),
   ]);
-  const items = await folderItems(uniq(facts.map((f) => f.arn)));
+  const arns = uniq(facts.map((f) => f.arn));
+  const clientIds = uniq(facts.map((f) => f.client_id));
+  const [items, ai, links] = await Promise.all([
+    folderItems(arns),
+    aiRefundDocs(arns),
+    // Linked cases need 20261024100000; without it the page still loads, unlinked.
+    loadChainLinks(clientIds).catch(() => [] as ChainLink[]),
+  ]);
+  const mine = links.filter((l) => facts.some((f) => f.client_id === l.client_id && f.arn && (f.arn === l.child_key || f.arn === l.parent_key)));
+  // The linked cases, and the refunds' own (whether each has a case page).
+  const otherKeys = uniq([...mine.flatMap((l) => [l.child_key, l.parent_key]), ...arns]);
+  const others = otherKeys.length
+    ? await selectIn<{ client_id: string; case_key: string; title: string | null; is_open: boolean | null; stage: string | null }>(
+      'notice_cases_flat', 'client_id, case_key, title, is_open, stage', 'case_key', otherKeys)
+    : [];
+  const caseByKey = new Map(others.map((c) => [`${c.client_id}|${c.case_key}`, c]));
+  const factByArn = new Map(facts.filter((f) => f.arn).map((f) => [`${f.client_id}|${f.arn}`, f]));
+  const aiByArn = new Map<string, AiRefundDoc[]>();
+  ai.forEach((d) => { const k = `${d.client_id}|${d.case_id}`; aiByArn.set(k, [...(aiByArn.get(k) ?? []), d]); });
   const folder = new Map<string, FolderItemLite[]>();
   items.forEach((it) => { const k = `${it.client_id}|${it.case_id}`; folder.set(k, [...(folder.get(k) ?? []), it]); });
   const caseById = new Map(cases.map((c) => [c.id, c]));
@@ -77,13 +201,34 @@ export async function loadRefundLedger(clientId?: string): Promise<RefundRow[]> 
     const k = `${f.client_id}|${f.arn}`;
     const signals: FolderSignals | undefined = f.arn && folder.has(k) ? folderSignals(folder.get(k) as FolderItemLite[]) : undefined;
     const caseLink = (f.origin === 'case' && f.notice_id ? caseById.get(f.notice_id) : caseByArn.get(k)) ?? null;
+    const portalClaimed = f.claimed_amount === null ? null : Number(f.claimed_amount);
+    const read = f.arn ? readRefund(aiByArn.get(k) ?? [], portalClaimed) : null;
+    const claimed = portalClaimed ?? read?.claimed?.value ?? null;
+    const sanctioned = f.sanctioned_amount !== null ? Number(f.sanctioned_amount) : read?.sanctioned?.value ?? null;
+    const rejected = read?.rejected?.value
+      ?? (claimed !== null && sanctioned !== null && sanctioned > 0 && claimed - sanctioned > 10 ? claimed - sanctioned : null);
+    const refundLinks: RefundLink[] = !f.arn ? [] : mine.filter((l) => l.client_id === f.client_id && (l.parent_key === f.arn || l.child_key === f.arn))
+      .map((l) => {
+        const dir = l.parent_key === f.arn ? 'child' as const : 'parent' as const;
+        const key = dir === 'child' ? l.child_key : l.parent_key;
+        const c = caseByKey.get(`${f.client_id}|${key}`);
+        const other = factByArn.get(`${f.client_id}|${key}`);
+        return {
+          key, kind: l.kind, dir, source: l.source, title: c?.title ?? null, isOpen: c?.is_open ?? null, stage: c?.stage ?? null,
+          refund: other ? { status: other.status, filed: other.filed_date } : null, hasPage: !!c,
+        };
+      });
     return {
       key: `${f.origin}-${f.id ?? i}`,
       fact: f,
-      state: refundState(f, signals, caseLink ?? undefined, today),
+      // The sanction read from the order counts, so a part rejected gets its appeal clock.
+      state: refundState({ ...f, claimed_amount: claimed, sanctioned_amount: sanctioned }, signals, caseLink ?? undefined, today),
       caseLink,
       hasFolder: !!signals && signals.items > 0,
       docs: refundDocs(f, caseLink),
+      signals, read, links: refundLinks,
+      hasCasePage: !!f.arn && caseByKey.has(k),
+      claimed, sanctioned, rejected,
     };
   });
 }
@@ -172,7 +317,7 @@ export function periodText(r: Pick<Drc03Row, 'periodFrom' | 'periodTo'>): string
   return a && b ? (a === b ? a : `${a} – ${b}`) : a ?? b ?? null;
 }
 
-async function selectIn<T>(table: 'notice_facts' | 'litigation_matters' | 'notice_payments' | 'matter_payments' | 'gst_drc03_filings',
+async function selectIn<T>(table: 'notice_facts' | 'notice_cases_flat' | 'litigation_matters' | 'notice_payments' | 'matter_payments' | 'gst_drc03_filings',
   cols: string, column: string, values: string[], extra: (q: Q) => Q = (q) => q): Promise<T[]> {
   const out: T[] = [];
   for (const part of chunks(values)) {

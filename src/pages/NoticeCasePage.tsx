@@ -154,6 +154,11 @@ const NoticeCasePage: React.FC = () => {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <CaseAdminActions clientId={clientId} caseKey={r.case_key as string} open={!!r.is_open} />
+          {track === 'refund' && r.case_id && (
+            <Button size="sm" variant="outline" className={WS_BTN} asChild>
+              <Link to={`/refunds-all?client=${clientId}&refund=${encodeURIComponent(r.case_id)}`}>On the Refunds page</Link>
+            </Button>
+          )}
           {r.case_id && (
             <Button size="sm" variant="outline" className={WS_BTN} asChild>
               <Link to={`/notices-case-folder/${clientId}/${encodeURIComponent(r.case_id)}`}><FolderOpen className="h-3.5 w-3.5" aria-hidden /> Portal case folder</Link>

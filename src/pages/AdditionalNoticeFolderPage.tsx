@@ -328,6 +328,14 @@ const AdditionalNoticeFolderPage: React.FC = () => {
         </div>
       </header>
 
+      {refund?.arn && (
+        <Link to={`/refunds-all?client=${clientId}&refund=${encodeURIComponent(refund.arn)}`}
+          className="flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm hover:bg-primary/10">
+          <span><span className="font-semibold">This is a refund.</span> Its steps, amounts read from the orders, linked appeals and documents are on the Refunds page.</span>
+          <span className="shrink-0 font-medium text-primary">Open the refund →</span>
+        </Link>
+      )}
+
       {(refund || appeal || pinned.length > 0 || demand > 0) && (
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {refund && <KpiTile label="Claimed" value={fmtInrShort(refund.claimed_amount)} hint={refund.filed_date ? `filed ${fmtDate(refund.filed_date)}` : refund.refund_type ?? undefined} />}

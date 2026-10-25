@@ -3,9 +3,9 @@
 // what came in since anyone last opened the case. Every figure comes from the
 // view notice_cases (migration 20261011100000).
 import React, { useMemo, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Search } from 'lucide-react';
+import { ArrowRight, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -97,6 +97,11 @@ const NoticeCasesPage: React.FC = () => {
             placeholder="Client, GSTIN, case or reference" aria-label="Search cases" className="h-8 pl-7 text-xs" />
         </div>
         <span className="text-xs text-muted-foreground">{def.blurb}</span>
+        {track === 'refund' && (
+          <Link to="/refunds-all" className="ml-auto inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10">
+            Every refund with its amounts, steps and appeals: the Refunds page <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+          </Link>
+        )}
       </div>
       {list.error ? <LoadError what="the cases" error={list.error} onRetry={() => list.refetch()} />
         : list.isLoading ? <Skeleton className="h-96 w-full" />
