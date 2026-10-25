@@ -109,6 +109,9 @@ const ReportsPage: React.FC = () => {
   const handlePullSection = useCallback(async (report: ReportDefinition) => {
     if (!report.pull) return;
     if (!selectedClientId) { toast.error('Select a client first'); return; }
+    // How long the open preview is re-checked: ~6 minutes, or 70 for the Table 8A
+    // pull, which waits for the portal to prepare its file (extension 0.18.1 on).
+    let pollAttempts = 36;
     if (report.pull.needsMonth && selectedPeriods.length === 0) { toast.error('Select a period first'); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
     if (report.pull.plan) {
@@ -129,6 +132,7 @@ const ReportsPage: React.FC = () => {
       if (plan.note) toast.info(plan.note);
       toast.info(`Pulling ${describeJob(job)} in one portal tab: type the CAPTCHA once at login.`);
       if (rest.length) toast.info(`After this finishes, click Pull again to fetch ${rest.map(describeJob).join('; ')}.`);
+      if (job.mode === 'gstr9_8a_pull') pollAttempts = 420;
       window.postMessage({
         __gstkPullSection: {
           clientId: selectedClientId,
@@ -165,7 +169,7 @@ const ReportsPage: React.FC = () => {
       let attempts = 0;
       const timer = setInterval(async () => {
         attempts += 1;
-        if (attempts > 36) { stopPreviewPoll(); return; }
+        if (attempts > pollAttempts) { stopPreviewPoll(); return; }
         try {
           const table = await buildForPeriods(report, selectedPeriods, selectedClientId);
           setPreviewTable(table);

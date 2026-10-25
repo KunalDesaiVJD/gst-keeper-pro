@@ -344,6 +344,33 @@ try { R.check8AUpload(parsed, { gstin: CLIENT.gstin, fy: '2024-25' }, { at: '', 
 check('8A upload', 'another year is refused', /is for FY 2025-26, not FY 2024-25/.test(wrong), wrong);
 const stU = R.assembleFy({ fy: FY, rows: [...rowsOf({ with8A: false }), { source: '8A', period: '03/2026', status: 'Uploaded', summary: ok8A, updatedAt: '2026-12-01T05:00:00Z' }], today: TODAY });
 check('8A upload', 'an uploaded file is read back as the portal 8A', stU.eightA.origin === 'portal' && stU.eightA.docs.length === 4);
+// The portal's file as seen live (25 Oct 2026): its template's dimension stays
+// "A1:V6" however many rows it fills, a title band above the headers, and an
+// "Actual ITC amount considered for 8A Summary computation" band after the tax.
+{
+  const live = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(live, XLSX.utils.aoa_to_sheet([
+    ['Goods and Services Tax  - GSTR-8A'], [], [], ['Financial Year', '2025-26'], ['GSTIN', CLIENT.gstin], ['Legal Name', CLIENT.name], ['Trade Name (if any)', 'X'], ['Date of generation', '25/10/2026 09:39:13'],
+  ]), 'Read me');
+  const L1 = ['GSTIN of supplier', 'Trade/Legal name', 'Invoice Details', '', '', '', 'Place of supply', 'Supply Attract Reverse Charge', 'Taxable value (₹)', 'Tax amount', '', '', '', 'GSTR-1/IFF/GSTR-1A/GSTR-5 Period', 'GSTR-1/IFF/GSTR-1A/GSTR-5 Filing Date', 'GSTR-2B Period', 'ITC Availability', 'Actual ITC amount considered for 8A Summary computation', '', '', '', 'Reason'];
+  const L2 = ['', '', 'Invoice number', 'Invoice type', 'Invoice Date', 'Invoice Value(₹)', '', '', '', 'Integrated tax(₹)', 'Central tax(₹)', 'State/UT tax(₹)', 'Cess(₹)', '', '', '', '', 'Integrated tax(₹)', 'Central tax(₹)', 'State/UT tax(₹)', 'Cess(₹)', ''];
+  XLSX.utils.book_append_sheet(live, XLSX.utils.aoa_to_sheet([
+    ['                                          Goods and Services Tax  - GSTR-8A'], [], [], ['Taxable inward supplies received from registered persons'], L1, L2,
+    [A, 'ALPHA', 'INV-1', 'R', '10/05/2025', 11800, 'Gujarat', 'N', 10000, 0, 900, 900, 0, 'MAY-25', '10/06/2025', 'MAY-25', 'Yes', 0, 900, 900, 0, null],
+    [B, 'BETA', 'INV-9', 'R', '12/12/2025', 4720, 'Maharashtra', 'N', 4000, 720, 0, 0, 0, 'DEC-25', '10/01/2026', 'DEC-25', 'No', 0, 0, 0, 0, "POS lies in supplier's State"],
+  ]), 'B2B');
+  const zip = await JSZip.loadAsync(XLSX.write(live, { type: 'array', bookType: 'xlsx' }));
+  const sheetPath = 'xl/worksheets/sheet2.xml';
+  const xml = await zip.file(sheetPath).async('string');
+  const cut = xml.includes('<dimension') ? xml.replace(/<dimension ref="[^"]*"\s*\/>/, '<dimension ref="A1:V6"/>') : xml.replace('<sheetData', '<dimension ref="A1:V6"/><sheetData');
+  zip.file(sheetPath, cut);
+  const pl = R.parse8AFile(await zip.generateAsync({ type: 'uint8array' }), 'R9_8A_live.xlsx').stored;
+  check('8A file', 'the portal file: rows past its stale dimension (A1:V6) are read', pl.docs.length === 2, `${pl.docs.length} docs; dimension patched: ${cut !== xml}`);
+  const l1 = pl.docs.find((d) => d.number === 'INV-1');
+  const l9 = pl.docs.find((d) => d.number === 'INV-9');
+  check('8A file', 'the portal file: tax from "Tax amount", not the "Actual ITC considered" band', l1 && near(l1.cgst, 900) && l9 && near(l9.igst, 720), JSON.stringify([l1, l9]));
+  check('8A file', 'the portal file: ITC availability and its reason, period, header', l9 && l9.itcAvailable === false && /POS/.test(l9.itcReason || '') && l1.supplierPeriod === '05/2025' && pl.gstin === CLIENT.gstin && pl.fy === FY, JSON.stringify([l9, pl.gstin, pl.fy]));
+}
 check('8A file', 'a JSON in the 2B layout is read too', R.parse8AFile(new TextEncoder().encode(JSON.stringify(summary2B('05/2025', '14-06-2025', dd['05/2025']))), 'x.json').stored.docs.length === 1);
 
 // ── Pull plan ───────────────────────────────────────────────────────────────
