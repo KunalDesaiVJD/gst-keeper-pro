@@ -647,19 +647,80 @@ export const drc03RegisterTable = (ctx: ReportContext, lines: Drc03RegisterLine[
   };
 };
 
+// ─── Combined papers ────────────────────────────────────────────────────────
+//
+// The Reports page offers few papers; schedules that read the same data ride
+// along as sheets of one file rather than as papers of their own. A schedule
+// folded in keeps its rows, tones and totals; its stat band and notes become
+// the sheet's notes, so nothing it said is lost.
+
+const NOTES_SHEET = 'Notes';
+
+const kpiLine = (k: ReportKpi): string => (
+  `${k.label}: ${typeof k.value === 'number' ? k.value.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : k.value}`
+  + (k.note ? ` (${k.note})` : ''));
+
+/** One schedule as sheets of another paper: its table first, then its own extra sheets. */
+const asSheets = (t: ReportTable, name: string): ReportSheet[] => {
+  const notes = (t.extraSheets || []).filter((x) => x.name === NOTES_SHEET).flatMap((x) => x.rows.map((r) => String(r[0])));
+  const others = (t.extraSheets || []).filter((x) => x.name !== NOTES_SHEET);
+  const main: ReportSheet = {
+    name,
+    title: t.title,
+    headers: t.headers,
+    rows: t.rows,
+    columnWidths: t.columnWidths,
+    columnGroups: t.columnGroups,
+    rowTones: t.rowTones,
+    rowKinds: t.rowKinds,
+    toneColumn: t.toneColumn,
+    pdfColumns: t.pdfColumns,
+    freezeColumns: t.freezeColumns,
+    notes: [...(t.kpis || []).map(kpiLine), ...notes],
+  };
+  return [main, ...others];
+};
+
+/** A paper with more schedules added after its own sheets, the notes kept last. */
+const withSheets = (t: ReportTable, add: ReportSheet[]): ReportTable => {
+  const own = t.extraSheets || [];
+  return {
+    ...t,
+    extraSheets: [
+      ...own.filter((x) => x.name !== NOTES_SHEET),
+      ...add,
+      ...own.filter((x) => x.name === NOTES_SHEET),
+    ],
+  };
+};
+
+/** Units: the unit register with the re-rating & DRC-03 register as its sheet. */
+export const unitsTable = (ctx: ReportContext, units: UnitPosition[], drc03: Drc03RegisterLine[]): ReportTable => {
+  const reg = unitRegisterTable(ctx, units);
+  if (!drc03.length) return reg;
+  const d = drc03RegisterTable(ctx, drc03);
+  return withSheets(reg, asSheets(d, 'Re-rating & DRC-03'));
+};
+
+/** Completion: the BU working, with the project's TDR / FSI working and this event's Rule 42 / 43 reversal. */
+export const completionTable = (
+  ctx: ReportContext, bu: BuWorkingReport, fsi: FsiWorkingReport, itc: ItcReversalReport | null,
+): ReportTable => {
+  const base = buWorkingTable(ctx, bu);
+  const add: ReportSheet[] = [];
+  if (fsi.lines.length) add.push(...asSheets(fsiWorkingTable(ctx, fsi), 'TDR-FSI working'));
+  if (itc) add.push(...asSheets(itcReversalTable(ctx, itc), 'Rule 42-43'));
+  return withSheets(base, add);
+};
+
 // ─── Big-4 frame, applied to every builder working paper ────────────────────
 
 /** Working-paper references, so a file of papers cross-refers like an audit file. */
 export const WP_REF: Record<ReportKind, string> = {
-  RETURN_WORKPAPER: 'B-1',
-  PROJECT_LIABILITY: 'B-2',
-  UNIT_REGISTER: 'B-3',
-  ADVANCE_ROLLFORWARD: 'B-4',
-  UNIT_LEDGER: 'B-5',
-  BU_WORKING: 'B-6',
-  FSI_WORKPAPER: 'B-7',
-  ITC_REVERSAL: 'B-8',
-  DRC03_REGISTER: 'B-9',
+  MONTHLY_RETURN: 'B-1',
+  UNITS: 'B-2',
+  ADVANCES: 'B-3',
+  COMPLETION: 'B-4',
   MEMBER_STATEMENT: 'C-1',
 };
 

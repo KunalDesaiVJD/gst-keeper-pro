@@ -9,42 +9,36 @@ import { summarisePeriod, type PeriodSummary, type PostingRow } from '@/utils/bu
 // Nothing is recalculated for the report, so a working paper can never disagree
 // with the return it supports.
 
+/**
+ * The builder papers, as the Reports page offers them. Each one folds in the
+ * schedules that read the same data, as sheets of the one file:
+ *   MONTHLY_RETURN  the return workpaper, or one project's liability when a project is chosen
+ *   UNITS           the unit register with the re-rating & DRC-03 register, or one unit's ledger
+ *   ADVANCES        the 11A / 11B roll-forward for a financial year
+ *   COMPLETION      a BU event: the unit-wise working, the TDR / FSI reverse charge and the Rule 42 / 43 reversal
+ *   MEMBER_STATEMENT  the client-facing statement of one unit
+ */
 export type ReportKind =
-  | 'BU_WORKING'
-  | 'PROJECT_LIABILITY'
-  | 'UNIT_LEDGER'
-  | 'RETURN_WORKPAPER'
-  | 'MEMBER_STATEMENT'
-  | 'FSI_WORKPAPER'
-  | 'UNIT_REGISTER'
-  | 'ADVANCE_ROLLFORWARD'
-  | 'ITC_REVERSAL'
-  | 'DRC03_REGISTER';
+  | 'MONTHLY_RETURN'
+  | 'UNITS'
+  | 'ADVANCES'
+  | 'COMPLETION'
+  | 'MEMBER_STATEMENT';
 
 export const REPORT_LABEL: Record<ReportKind, string> = {
-  BU_WORKING: 'Unit-wise BU working',
-  PROJECT_LIABILITY: 'Project monthly liability',
-  UNIT_LEDGER: 'Unit ledger',
-  RETURN_WORKPAPER: 'Monthly return workpaper',
+  MONTHLY_RETURN: 'Monthly return',
+  UNITS: 'Units',
+  ADVANCES: 'Advances 11A / 11B',
+  COMPLETION: 'Completion (BU)',
   MEMBER_STATEMENT: 'Member statement',
-  FSI_WORKPAPER: 'TDR / FSI working',
-  UNIT_REGISTER: 'Unit register (lead schedule)',
-  ADVANCE_ROLLFORWARD: 'Advances roll-forward (11A / 11B)',
-  ITC_REVERSAL: 'ITC reversal (Rule 42 / 43)',
-  DRC03_REGISTER: 'Re-rating & DRC-03 register',
 };
 
 export const REPORT_DESCRIPTION: Record<ReportKind, string> = {
-  BU_WORKING: "Every unit in a BU event: its cut-off, whether it was booked at that date, and the differential.",
-  PROJECT_LIABILITY: 'One project, one period — the outward legs and the FSI reverse charge behind them.',
-  UNIT_LEDGER: 'Every receipt, invoice and adjustment on a unit, with the running value taxed.',
-  RETURN_WORKPAPER: 'What the client contributes to GSTR-1 and 3B for a period, with the documents behind it.',
+  MONTHLY_RETURN: 'What the period carries to GSTR-1 and 3B, with the documents, tables 7 / 11A / 11B and the FSI reverse charge behind it. Choose a project to see that project\'s liability alone.',
+  UNITS: 'Every unit of a project on one schedule, footed to the project, with the units re-rated after crossing ₹45 lakh and their DRC-03. Choose a unit for its ledger.',
+  ADVANCES: 'Month by month for a financial year: advances brought forward, received (11A), reversed, adjusted (11B) and carried forward, with the tax on each.',
+  COMPLETION: 'One BU event: each unit\'s cut-off and differential, the TDR / FSI reverse charge of the project, and the Rule 42 / 43 ITC reversal at completion.',
   MEMBER_STATEMENT: 'A client-facing statement of one unit: what was agreed, paid, charged and remains.',
-  FSI_WORKPAPER: 'The reverse charge on development rights, BU event by BU event: allocation, both legs, the cap and the client-instruction trail.',
-  UNIT_REGISTER: 'Every unit of a project on one schedule: classification, booking, agreement value, value taxed, open advance, received and balance to tax, footed to the project.',
-  ADVANCE_ROLLFORWARD: 'Month by month for a financial year: open advances brought forward, received (11A), reversed, adjusted (11B) and carried forward, with the tax on each movement.',
-  ITC_REVERSAL: 'The final Rule 42 / 43 determination at completion: the carpet key, each year\'s common credit, what was already reversed and the net to 4(B)(1) or 4(A)(5).',
-  DRC03_REGISTER: 'Every unit re-rated after crossing ₹45 lakh: rate change, value re-taxed, differential tax, interest u/s 50 and the DRC-03 filing status.',
 };
 
 export interface ReportContext {
