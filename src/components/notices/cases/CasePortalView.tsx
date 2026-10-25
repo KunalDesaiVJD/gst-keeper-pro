@@ -1,27 +1,22 @@
-// Notices & Litigation · Case folder (/notices-case-folder/:clientId/:caseId;
-// roadmap Phase 2). Fixes audit U-60-1..5, U-61-1..3, U-62-1..3, U-63-1..3 and
-// the cross-cutting house-style, date, status, empty-box and linking findings
-// for this screen: named for the client and the kind of case (read from the
-// items' forms, not the folder code), the portal's status apart from our stage,
-// what needs a person as chips, the money, every item once in date order with
-// its documents, the notice workspace / matter / portal one click away, and the
-// portal's own grouping folded underneath.
+// A portal case folder as the portal holds it, shown on the case page under
+// "Portal view" (the UX audit of 25 October 2026 folded the separate case
+// folder page into the case page): the portal's status apart from our stage,
+// what needs a person as chips, outstanding recovery pinned first, every item
+// once in date order with its documents and every field the portal returned,
+// the portal's own grouping folded underneath, and the two portal actions
+// (log the reply the portal shows, open the case on the portal).
 import React, { useMemo, useState } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, FileText, RefreshCw, Reply, Scale } from 'lucide-react';
+import { ExternalLink, FileText, RefreshCw, Reply } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Note, KpiTile } from '@/components/gstr9/ui';
-import { SectionCard } from '@/components/notices/ui/Panel';
 import { Badge } from '@/components/gstr9/badge';
 import { WS_BTN } from '@/components/workspace/theme';
-import { NoticesShell } from '@/components/notices/NoticesShell';
-import { StageBadge } from '@/components/notices/StageBadge';
-import { OwnerChip } from '@/components/notices/OwnerChip';
 import { LogReplyDialog } from '@/components/notices/actions/LogReplyDialog';
 import type { NoticeRef } from '@/components/notices/actions/NoticeContext';
 import { DEADLINE_LABELS } from '@/components/notices/workspace/DeadlinesTab';
@@ -95,18 +90,6 @@ function toRef(f: NoticeFact): NoticeRef {
 
 const PORTAL_TONE = (s: string): 'destructive' | 'warning' | 'info' | 'secondary' | 'success' =>
   /overdue|outstanding/i.test(s) ? 'destructive' : /awaited|hearing/i.test(s) ? 'warning' : /closed|paid/i.test(s) ? 'secondary' : 'info';
-
-function DueChip({ f }: { f: NoticeFact }) {
-  if (!f.is_open) return <Badge variant="secondary" className="text-[11px]">Notice closed</Badge>;
-  if (f.reply_date) return <Badge variant="success" className="text-[11px]">Reply logged {fmtDate(f.reply_date)}</Badge>;
-  if (!f.effective_due) return <Badge variant="secondary" className="text-[11px]">No due date</Badge>;
-  const d = f.days_to_due ?? 0;
-  return (
-    <Badge variant={d < 0 ? 'destructive' : d <= 7 ? 'warning' : 'secondary'} className="text-[11px]">
-      {d < 0 ? `Reply overdue ${-d} d` : d === 0 ? 'Reply due today' : `Reply due in ${d} d`} · {fmtDate(f.effective_due)}
-    </Badge>
-  );
-}
 
 const factText = (label: string, value: string) => (label === 'FY' ? `FY ${fmtFy(value) || value}` : `${label.toLowerCase()} ${value}`);
 
@@ -196,9 +179,8 @@ const PortalSections: React.FC<{ summary: CaseSummary }> = ({ summary }) => {
   );
 };
 
-const AdditionalNoticeFolderPage: React.FC = () => {
-  const { isStaffRole, canEditNoticeStatus } = useAuth();
-  const { clientId = '', caseId = '' } = useParams<{ clientId: string; caseId: string }>();
+export const CasePortalView: React.FC<{ clientId: string; caseId: string }> = ({ clientId, caseId }) => {
+  const { canEditNoticeStatus } = useAuth();
   const qc = useQueryClient();
   const bridge = useExtensionBridge();
   const [replyOpen, setReplyOpen] = useState(false);
@@ -214,182 +196,97 @@ const AdditionalNoticeFolderPage: React.FC = () => {
     noticeTitles: new Map([...noticeByRef].map(([ref, n]) => [ref, noticeTitle(n, { fy: false })])),
   }) : null), [data, notice, noticeByRef, today]);
 
-  if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
-  if (!clientId || !caseId) return <Navigate to="/notices-company-list" replace />;
-
   const reload = () => {
     qc.invalidateQueries({ queryKey: ['case-folder', clientId, caseId] });
+    qc.invalidateQueries({ queryKey: ['notice-case-items'] });
     qc.invalidateQueries({ queryKey: ['notices-command-centre'] });
   };
   const canEdit = canEditNoticeStatus();
-  const clientName = data?.client?.name ?? 'Client';
 
-  const breadcrumb = (
-    <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-      <Link to="/notices-company-list" className="hover:underline">Clients</Link> ›
-      <Link to={`/notices-company/${clientId}`} className="hover:underline">{clientName}</Link> ›
-      <span className="text-foreground">Case <span className="font-mono">{caseId}</span></span>
-    </nav>
-  );
-
-  if (q.isLoading) {
-    return (
-      <NoticesShell section="Case folder">
-        <div className="space-y-2" aria-busy="true"><Skeleton className="h-4 w-72" /><Skeleton className="h-7 w-[30rem] max-w-full" /><Skeleton className="h-5 w-96 max-w-full" /><Skeleton className="h-64 w-full" /></div>
-      </NoticesShell>
-    );
-  }
+  if (q.isLoading) return <Skeleton className="h-64 w-full" />;
   if (q.error || !data || !summary) {
     return (
-      <NoticesShell section="Case folder">
-        {breadcrumb}
-        <Note tone="warn">Couldn't load the case folder: {q.error instanceof Error ? q.error.message : String(q.error)}</Note>
+      <div className="space-y-2">
+        <Note tone="warn">Couldn't load the portal case folder: {q.error instanceof Error ? q.error.message : String(q.error)}</Note>
         <Button size="sm" variant="outline" className={WS_BTN} onClick={() => q.refetch()}><RefreshCw className="h-3.5 w-3.5" aria-hidden /> Retry</Button>
-      </NoticesShell>
+      </div>
     );
   }
-  if (!data.items.length && !data.notices.length) {
+  if (!data.items.length) {
     return (
-      <NoticesShell section="Case folder">
-        {breadcrumb}
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Nothing is on record for case <span className="font-mono">{caseId}</span>{data.client ? ` of ${data.client.name}` : ''}. The next portal sync of this client
-          fetches its folder. <Link to={`/notices-company/${clientId}`} className="text-primary underline underline-offset-2">Open the client</Link>
-        </div>
-      </NoticesShell>
+      <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+        The portal case folder of <span className="font-mono">{caseId}</span> has not been fetched yet. The next portal sync of this client fetches it.
+      </p>
     );
   }
 
   const s = summary;
-  const fy = fmtFy(notice?.financial_year ?? s.fy);
-  const demand = Number(notice?.amount_of_demand) || 0;
   const latestReply = [...s.events].reverse().find((e) => e.code === 'REPLY') ?? null;
   const portalReply = latestReply ? { date: latestReply.date, ref: (typeof latestReply.raw.arn === 'string' && latestReply.raw.arn) || latestReply.ref } : null;
   // Only a reply filed on or after this notice answers it (a Part B reply to the earlier DRC-01A does not).
   const answersNotice = !!latestReply && !!notice && (latestReply.answers?.ref === notice.reference_number
     || (!!latestReply.date && !!notice.issue_date && latestReply.date >= notice.issue_date));
   const canLogReply = canEdit && !!notice && !!notice.is_open && !notice.reply_date && answersNotice;
-  // The due date is said once: as the hearing, or as the portal's unanswered notice, else as our due chip.
-  const showDue = !!notice && (!notice.is_open || !!notice.reply_date || (!!notice.effective_due
-    && notice.effective_due !== s.pendingDue && notice.effective_due !== s.nextHearing?.date));
   const openPortal = async () => {
     if (!bridge.ready) { toast.error('Install or enable the GST Keeper extension to open the portal from here.'); return; }
     const r = await bridge.openOnPortal(clientId, notice?.reference_number ?? null);
     if (!r.ok) toast.error(r.error || 'Could not open the portal.');
   };
   const refund = data.refund;
-  const notSanctioned = refund?.claimed_amount != null && refund.sanctioned_amount != null ? Number(refund.claimed_amount) - Number(refund.sanctioned_amount) : null;
   const appeal = s.kind === 'appeal' ? s.events.find((e) => e.code === 'APLCN') : null;
   const disputed = appeal?.facts.find((f) => f.label === 'Disputed tax')?.value;
   const preDeposit = appeal?.facts.find((f) => f.label === 'Pre-deposit paid')?.value;
   const empty = expectedSections(s.kind).filter((code) => !s.events.some((e) => e.code === code));
   const pinned = s.events.filter((e) => e.outstanding);
-  const otherNotices = data.notices.filter((n) => n.id !== notice?.id);
 
   return (
-    <NoticesShell section="Case folder">
-      {breadcrumb}
-      <header className="space-y-1.5">
-        <h2 className="break-words font-heading text-lg font-bold leading-tight sm:text-xl">
-          {clientName} · {s.label}{fy ? ` · FY ${fy}` : ''}
-        </h2>
-        <p className="break-words text-xs text-muted-foreground">
-          Case <span className="font-mono">{caseId}</span>{data.client ? <> · <span className="font-mono">{data.client.gstin}</span></> : null}
-          {s.opened ? ` · opened ${fmtDate(s.opened)}` : ''}
-          {s.last?.date ? ` · last activity ${fmtDate(s.last.date)} (${s.last.form ?? s.last.title})` : ''}
-          {demand > 0 ? ` · demand ${fmtInr(demand)}` : ''}
-          {' · '}{plural(s.events.length, 'item')} on the portal
-        </p>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {refund?.arn && <RefundWhenChip r={refunds.get(refundIndexKey(clientId, refund.arn))} />}
-          {notice && (
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">Our stage <StageBadge stage={notice.stage} since={notice.stage_changed_at} by={notice.stage_changed_by} /></span>
-          )}
-          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">Portal <Badge variant={PORTAL_TONE(s.portalStatus)} className="text-[11px]">{s.portalStatus}</Badge></span>
-          {notice && showDue && <DueChip f={notice} />}
-          {notice && <OwnerChip name={notice.assign_to} showName />}
-          {s.alerts.map((a) => <Badge key={a.text} variant={a.tone} className="text-[11px]">{a.text}</Badge>)}
-          {data.deadlines.filter((d) => d.deadline_type !== 'reply_due').map((d) => (
-            <Badge key={d.id} variant={daysBetween(today, d.deadline_date) <= 7 ? 'warning' : 'secondary'} className="text-[11px]">
-              {DEADLINE_LABELS[d.deadline_type] ?? d.deadline_type}: {fmtDate(d.deadline_date)} ({dueWords(daysBetween(today, d.deadline_date)).replace('due ', '')})
-            </Badge>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2 pt-0.5">
-          {notice ? (
-            <Button size="sm" className={WS_BTN} asChild><Link to={`/notices/${notice.id}`}><FileText className="h-3.5 w-3.5" aria-hidden /> Open the notice</Link></Button>
-          ) : (
-            <span className="text-xs text-muted-foreground">No notice of this case is on record yet; the next sync adds it.</span>
-          )}
-          {data.matter && (
-            <Button size="sm" variant="outline" className={WS_BTN} asChild><Link to={`/litigation/${data.matter.id}`}><Scale className="h-3.5 w-3.5" aria-hidden /> Matter {data.matter.matter_no}</Link></Button>
-          )}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {refund?.arn && <RefundWhenChip r={refunds.get(refundIndexKey(clientId, refund.arn))} />}
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">Portal status <Badge variant={PORTAL_TONE(s.portalStatus)} className="text-[11px]">{s.portalStatus}</Badge></span>
+        {s.alerts.map((a) => <Badge key={a.text} variant={a.tone} className="text-[11px]">{a.text}</Badge>)}
+        {data.deadlines.filter((d) => d.deadline_type !== 'reply_due').map((d) => (
+          <Badge key={d.id} variant={daysBetween(today, d.deadline_date) <= 7 ? 'warning' : 'secondary'} className="text-[11px]">
+            {DEADLINE_LABELS[d.deadline_type] ?? d.deadline_type}: {fmtDate(d.deadline_date)} ({dueWords(daysBetween(today, d.deadline_date)).replace('due ', '')})
+          </Badge>
+        ))}
+        <span className="ml-auto flex flex-wrap items-center gap-2">
           {canLogReply && (
             <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setReplyOpen(true)}><Reply className="h-3.5 w-3.5" aria-hidden /> Log the portal reply</Button>
           )}
           {notice && (
             <Button size="sm" variant="outline" className={WS_BTN} onClick={openPortal}><ExternalLink className="h-3.5 w-3.5" aria-hidden /> Open on the portal</Button>
           )}
-        </div>
-      </header>
+        </span>
+      </div>
 
       {refund?.arn && (
-        <Link to={`/refunds/${clientId}/${encodeURIComponent(refund.arn)}`}
-          className="flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm hover:bg-primary/10">
-          <span><span className="font-semibold">This is a refund.</span> Its steps, amounts, linked appeals and documents are on its refund page.</span>
-          <span className="shrink-0 font-medium text-primary">Open the refund →</span>
-        </Link>
+        <p className="text-xs text-muted-foreground">
+          This folder is a refund's: its steps and amounts are on the <Link to={`/refunds/${clientId}/${encodeURIComponent(refund.arn)}`} className="font-medium text-primary underline underline-offset-2">refund page</Link>.
+        </p>
       )}
 
-      {(refund || appeal || pinned.length > 0 || demand > 0) && (
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-          {refund && <KpiTile label="Claimed" value={fmtInrShort(refund.claimed_amount)} hint={refund.filed_date ? `filed ${fmtDate(refund.filed_date)}` : refund.refund_type ?? undefined} />}
-          {refund && <KpiTile label="Sanctioned" value={refund.sanctioned_amount != null ? fmtInrShort(refund.sanctioned_amount) : '—'} hint={refund.status ?? undefined} tone={refund.sanctioned_amount != null ? 'ok' : 'neutral'} />}
-          {refund && notSanctioned !== null && (
-            <KpiTile label="Not sanctioned" value={fmtInrShort(notSanctioned)} tone={notSanctioned > 0 ? 'error' : 'ok'}
-              hint={notSanctioned > 0 ? 'appealable (APL-01, s.107)' : 'claimed in full'} />
-          )}
+      {(disputed || preDeposit || pinned.length > 0) && (
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
           {disputed && <KpiTile label="Disputed tax" value={disputed} hint="in the APL-01" />}
           {preDeposit && <KpiTile label="Pre-deposit paid" value={preDeposit} hint="credited against the demand" />}
           {pinned.length > 0 && <KpiTile label="Outstanding demand" value={fmtInrShort(s.outstanding)} tone="error" hint={plural(pinned.length, 'recovery item')} />}
-          {demand > 0 && <KpiTile label="Demand in the notice" value={fmtInrShort(demand)} hint={notice?.matter_id ? 'followed in the matter' : 'tax, interest and penalty'} />}
         </div>
-      )}
-      {refund && notSanctioned !== null && notSanctioned > 0 && (
-        <Note tone="warn">
-          {fmtInr(notSanctioned)} of the claim was not sanctioned. A partial rejection can be appealed (APL-01) within the limit under s.107;
-          {notice ? <> log the order on the <Link to={`/notices/${notice.id}?tab=deadlines`} className="underline underline-offset-2">notice</Link> to start its appeal clock.</> : ' log the order on the notice to start its appeal clock.'}
-        </Note>
       )}
 
       {pinned.length > 0 && (
-        <SectionCard title="Outstanding demand" description="Recovery the portal shows against this case · pinned first" className="border-destructive/50">
+        <div className="rounded-lg border border-destructive/50 p-3">
+          <h3 className="mb-1 text-sm font-semibold">Outstanding demand <span className="font-normal text-muted-foreground">· recovery the portal shows against this case</span></h3>
           <ul>{pinned.map((e) => <EventItem key={e.id} e={e} events={s.events} noticeId={e.ref ? noticeByRef.get(e.ref)?.id : null} />)}</ul>
-        </SectionCard>
+        </div>
       )}
 
-      <SectionCard title="Case history" description="Every item on the portal, oldest first, with its documents">
-        <ol aria-label="Case history" className="pt-1">
-          {s.events.map((e) => <EventItem key={e.id} e={e} events={s.events} compact={e.outstanding}
-            noticeId={e.ref && noticeByRef.get(e.ref)?.id !== notice?.id ? noticeByRef.get(e.ref)?.id : null} />)}
-        </ol>
-        {empty.length > 0 && (
-          <p className="text-xs text-muted-foreground">Nothing on the portal yet under {empty.map(sectionLabel).join(', ').toLowerCase()}.</p>
-        )}
-      </SectionCard>
-
-      {otherNotices.length > 0 && (
-        <SectionCard title="Other notices in this case" description="Each opens its workspace">
-          <ul className="divide-y">
-            {otherNotices.map((n) => (
-              <li key={n.id} className="flex flex-wrap items-center gap-2 py-1.5 text-sm">
-                <Link to={noticeCaseHref({ id: n.id as string })} className="min-w-0 flex-1 break-words font-medium hover:underline">{noticeTitle(n)}</Link>
-                <span className="text-xs text-muted-foreground">{n.reference_number ?? ''}{n.issue_date ? ` · ${fmtDate(n.issue_date)}` : ''}</span>
-                <StageBadge stage={n.stage} />
-              </li>
-            ))}
-          </ul>
-        </SectionCard>
+      <ol aria-label="The portal case folder" className="pt-1">
+        {s.events.map((e) => <EventItem key={e.id} e={e} events={s.events} compact={e.outstanding}
+          noticeId={e.ref && noticeByRef.get(e.ref)?.id !== notice?.id ? noticeByRef.get(e.ref)?.id : null} />)}
+      </ol>
+      {empty.length > 0 && (
+        <p className="text-xs text-muted-foreground">Nothing on the portal yet under {empty.map(sectionLabel).join(', ').toLowerCase()}.</p>
       )}
 
       {s.events.length > 0 && <PortalSections summary={s} />}
@@ -397,8 +294,8 @@ const AdditionalNoticeFolderPage: React.FC = () => {
       {notice && canLogReply && (
         <LogReplyDialog notice={toRef(notice)} open={replyOpen} onOpenChange={setReplyOpen} onDone={reload} portalReply={portalReply} />
       )}
-    </NoticesShell>
+    </div>
   );
 };
 
-export default AdditionalNoticeFolderPage;
+export default CasePortalView;
