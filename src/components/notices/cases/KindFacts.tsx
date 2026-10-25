@@ -15,10 +15,13 @@ import { cn } from '@/lib/utils';
 
 interface Fact { label: string; value: string | null | undefined; sub?: string | null; mono?: boolean }
 
-function FactGrid({ facts }: { facts: Fact[] }) {
+/** The facts in a grid; in a page's side rail (rail), one column and only the facts we hold. */
+function FactGrid({ facts, rail }: { facts: Fact[]; rail?: boolean }) {
+  const shown = rail ? facts.filter((f) => !!f.value) : facts;
+  if (rail && !shown.length) return <p className="text-xs text-muted-foreground">Nothing read yet.</p>;
   return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-4">
-      {facts.map((f) => (
+    <dl className={rail ? 'grid grid-cols-1 gap-y-2.5' : 'grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-4'}>
+      {shown.map((f) => (
         <div key={f.label} className="min-w-0 space-y-0.5">
           <dt className="text-[11px] font-medium text-muted-foreground">{f.label}</dt>
           <dd className={cn('break-words text-sm font-semibold', f.mono && 'break-all font-mono text-[13px]', !f.value && 'font-normal text-muted-foreground')}>{f.value || '—'}</dd>
@@ -62,7 +65,9 @@ export const KindFacts: React.FC<{
   forms: string[];
   /** The notice on screen, when the card sits on a notice's page. */
   notice?: { form_label?: string | null; issue_date?: string | null; reference_number?: string | null; financial_year?: string | null; description?: string | null };
-}> = ({ track, overview, loading, forms, notice }) => {
+  /** In a page's side rail: one column, empty facts left out. */
+  rail?: boolean;
+}> = ({ track, overview, loading, forms, notice, rail }) => {
   const reading = overview?.reading;
   const allForms = [...new Set([...forms, ...(overview?.forms ?? [])])];
   const busy = (reading?.queued ?? 0) > 0;
@@ -93,7 +98,7 @@ export const KindFacts: React.FC<{
     return (
       <SectionCard title="The refund" description={status}>
         <KindSteps track="refund" forms={allForms} hasApplication={!!r.arn} />
-        <FactGrid facts={facts} />
+        <FactGrid facts={facts} rail={rail} />
       </SectionCard>
     );
   }
@@ -110,7 +115,7 @@ export const KindFacts: React.FC<{
     return (
       <SectionCard title="The registration matter" description={status}>
         <KindSteps track="registration" forms={allForms} />
-        <FactGrid facts={facts} />
+        <FactGrid facts={facts} rail={rail} />
       </SectionCard>
     );
   }
@@ -124,7 +129,7 @@ export const KindFacts: React.FC<{
   ];
   return (
     <SectionCard title="For the record" description={loading ? 'Loading…' : 'Nothing to do: kept so the client\'s history is complete.'}>
-      <FactGrid facts={facts} />
+      <FactGrid facts={facts} rail={rail} />
     </SectionCard>
   );
 };

@@ -73,7 +73,13 @@ export const NoticeReadCard: React.FC<{
   caseOverview?: CaseOverview;
   /** Only the reading (summary, status): a refund, registration or record-only notice shows its own facts elsewhere. */
   readingOnly?: boolean;
-}> = ({ ws, reading, loading, error, canEdit, onChanged, caseOverview, readingOnly }) => {
+  /**
+   * In the notice page's side rail (the UX audit of 25 October 2026): one
+   * column, and only the facts the header does not already say; the reply
+   * due date shows here only while it waits for a person's check.
+   */
+  rail?: boolean;
+}> = ({ ws, reading, loading, error, canEdit, onChanged, caseOverview, readingOnly, rail }) => {
   const { user } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
   const n = ws.notice;
@@ -168,6 +174,7 @@ export const NoticeReadCard: React.FC<{
 
   return (
     <SectionCard title={readingOnly ? 'The notice' : 'What the notice says'} description={readingOnly ? undefined : description}
+      info={rail && !readingOnly ? 'The reply due date and the hearing are in the header; a fact no reader found is left out.' : undefined}
       actions={!readingOnly && canEdit && valuesToVerify > 1 && (
         <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={busy === 'all'}
           onClick={() => act('all', 'Every value read from the PDF', toVerify, 'confirm')}>
@@ -185,8 +192,9 @@ export const NoticeReadCard: React.FC<{
         </div>
       )}
 
-      {!readingOnly && <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-4">
-        {facts.map((x) => {
+      {!readingOnly && <dl className={rail ? 'grid grid-cols-1 gap-y-2.5' : 'grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-4'}>
+        {facts.filter((x) => !rail || (x.key === 'due' ? verifying(x.fields).length > 0
+          : x.value !== '—' || verifying(x.fields).length > 0 || (canEdit && x.key === 'period'))).map((x) => {
           const pending = verifying(x.fields);
           const empty = x.value === '—';
           return (
@@ -229,7 +237,7 @@ export const NoticeReadCard: React.FC<{
                 onClear={() => act('demand', 'The demand by head', ['demand'], 'clear')} />
             )}
           </div>
-          <DemandTable demand={n.demand} caption="Demand by head and component" className="max-w-3xl" />
+          <div className="overflow-x-auto"><DemandTable demand={n.demand} caption="Demand by head and component" className="max-w-3xl" /></div>
         </div>
       )}
 

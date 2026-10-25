@@ -34,11 +34,10 @@ import CompanyListPage from "@/pages/CompanyListPage";
 import CompanyProfilePage from "@/pages/CompanyProfilePage";
 import NoticeSummaryReportPage from "@/pages/NoticeSummaryReportPage";
 import GstinWiseNoticeCountPage from "@/pages/GstinWiseNoticeCountPage";
-import AdditionalNoticeFolderPage from "@/pages/AdditionalNoticeFolderPage";
+import CaseFolderRedirect from "@/pages/CaseFolderRedirect";
+import { ClientCountRedirect, HearingsRedirect, QueueRedirect } from "@/pages/NoticesRedirects";
 import AllClientsNoticesPage from "@/pages/AllClientsNoticesPage";
 import NoticeWorkspacePage from "@/pages/NoticeWorkspacePage";
-import NoticeQueuePage from "@/pages/NoticeQueuePage";
-import NoticesHearingsPage from "@/pages/NoticesHearingsPage";
 import NoticesCalendarPage from "@/pages/NoticesCalendarPage";
 import NoticesAutopilotPage from "@/pages/NoticesAutopilotPage";
 import NoticesReplyFactoryPage from "@/pages/NoticesReplyFactoryPage";
@@ -124,15 +123,16 @@ const App = () => (
                   <Route path="/builder-reports" element={<BuilderReportsPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/notices-dashboard" element={<NoticesDashboardPage />} />
-                  <Route path="/notices-company-list" element={<CompanyListPage />} />
+                  <Route path="/notices-company-list" element={<GstinWiseNoticeCountPage />} />
+                  <Route path="/notices-portal-sync" element={<CompanyListPage />} />
                   <Route path="/notices-company/:clientId" element={<CompanyProfilePage />} />
                   <Route path="/notices-report" element={<NoticeSummaryReportPage />} />
-                  <Route path="/notices-gstin-wise-count" element={<GstinWiseNoticeCountPage />} />
-                  <Route path="/notices-case-folder/:clientId/:caseId" element={<AdditionalNoticeFolderPage />} />
+                  <Route path="/notices-gstin-wise-count" element={<ClientCountRedirect />} />
+                  <Route path="/notices-case-folder/:clientId/:caseId" element={<CaseFolderRedirect />} />
                   <Route path="/notices-all" element={<AllClientsNoticesPage />} />
                   <Route path="/notices/:id" element={<NoticeWorkspacePage />} />
-                  <Route path="/notices-queue" element={<NoticeQueuePage />} />
-                  <Route path="/notices-hearings" element={<NoticesHearingsPage />} />
+                  <Route path="/notices-queue" element={<QueueRedirect />} />
+                  <Route path="/notices-hearings" element={<HearingsRedirect />} />
                   <Route path="/notices-calendar" element={<NoticesCalendarPage />} />
                   <Route path="/notices-autopilot" element={<NoticesAutopilotPage />} />
                   <Route path="/notices-reply-factory" element={<NoticesReplyFactoryPage />} />

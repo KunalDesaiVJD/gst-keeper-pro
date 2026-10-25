@@ -59,7 +59,7 @@ const SyncLine: React.FC<{ c: HealthCounts; run: SyncRun | undefined; polling: b
     <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground" aria-live="polite">
       {running && <span className="font-medium text-foreground">Sync running{run?.clients_total ? `: ${run.clients_done} of ${plural(run.clients_total, 'client')}` : ''}</span>}
       {c.failed > 0 && (
-        <Link to="/notices-company-list?status=failed" className="font-medium text-destructive-strong underline-offset-2 hover:underline">{plural(c.failed, 'client')} failing →</Link>
+        <Link to="/notices-portal-sync?status=failed" className="font-medium text-destructive-strong underline-offset-2 hover:underline">{plural(c.failed, 'client')} failing →</Link>
       )}
     </p>
   );
@@ -174,7 +174,7 @@ const CompanyListPage: React.FC = () => {
   const total = list.length;
   const pageRows = list.slice((page - 1) * PAGE, page * PAGE);
   const loginFails = c.reasons.login_failed ?? 0;
-  const tileHref = (s: StatusFilter) => (s === 'all' ? '/notices-company-list' : `/notices-company-list?status=${s}`);
+  const tileHref = (s: StatusFilter) => (s === 'all' ? '/notices-portal-sync' : `/notices-portal-sync?status=${s}`);
   const reasonHint = Object.entries(c.reasons).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([r, n]) => `${n} ${reasonDef(r).short}`).join(' · ');
 
   const chips: { key: string; label: string; clear: Record<string, null> }[] = [];
@@ -185,7 +185,7 @@ const CompanyListPage: React.FC = () => {
 
   return (
     <NoticesShell
-      section="Clients"
+      section="Portal sync"
       status={health.data ? <SyncLine c={c} run={runs.data?.[0]} polling={pollMs !== false} /> : <Skeleton className="h-4 w-96 max-w-full" />}
       actions={<>
         {canSync && retryIds.length > 0 && (

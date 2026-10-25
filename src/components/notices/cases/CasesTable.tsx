@@ -1,7 +1,9 @@
 // One row per case (the central issue), with the columns its kind needs: a
 // notice or demand shows its stage, due date, hearing and exposure; a refund
 // its status and latest order; registration the latest step; the rest just
-// what came in. New correspondence is flagged on the row.
+// what came in. New correspondence is flagged on the row. Whose move it is and
+// the stage read as one column, "Where it stands" (the UX audit of 25 October
+// 2026); a list of every kind names each row's kind under the client.
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TD_NUM, WS_TH, WS_TR } from '@/components/workspace/theme';
@@ -14,7 +16,7 @@ import { DisputeYearCell } from '@/components/notices/DisputeYearCell';
 import { adviceOf, useAdviceMap } from '@/lib/noticeAdvice';
 import { caseYearKey, useCaseDisputeYears } from '@/lib/noticeDisputeYears';
 import { GitBranch } from 'lucide-react';
-import { caseHref, linkKindDef, type CaseRow, type CaseView, type ChainLink, type FlatCaseRow, type Track } from '@/lib/noticeCases';
+import { caseHref, linkKindDef, trackDef, type CaseRow, type CaseView, type ChainLink, type FlatCaseRow, type Track } from '@/lib/noticeCases';
 import { fmtDate, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 import { refundIndexKey, useRefundIndex } from '@/components/notices/reports/ledgerData';
@@ -77,7 +79,7 @@ function ChainChip({ r, view, chains }: { r: Row; view: CaseView; chains?: Map<s
   );
 }
 
-export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?: boolean; view?: CaseView; chains?: Map<string, ChainLink[]> }> = ({ rows, track, compact, view = 'linked', chains }) => {
+export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?: boolean; view?: CaseView; chains?: Map<string, ChainLink[]>; showKind?: boolean }> = ({ rows, track, compact, view = 'linked', chains, showKind }) => {
   const lit = track === 'litigation' || track === 'all';
   const advice = useAdviceMap(rows);
   // A refund's year and period come from the refund itself (its RFD-01), not the case.
@@ -91,8 +93,7 @@ export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?:
             <th scope="col" className={WS_TH}>Client</th>
             <th scope="col" className={WS_TH}>Case</th>
             <th scope="col" className={WS_TH}>Dispute year</th>
-            <th scope="col" className={WS_TH}>Status</th>
-            {lit && <th scope="col" className={WS_TH}>Stage</th>}
+            <th scope="col" className={WS_TH}>Where it stands</th>
             {track !== 'other' && <th scope="col" className={WS_TH}>Next due</th>}
             {lit && <th scope="col" className={cn(WS_TH, 'text-right')}>Exposure</th>}
             <th scope="col" className={WS_TH}>Latest correspondence</th>
@@ -110,6 +111,7 @@ export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?:
                 <td className={cn(WS_TD, 'max-w-[14rem] border-l-[3px]', r.is_overdue ? 'border-l-destructive' : r.is_due_in_7 ? 'border-l-warning' : r.new_items ? 'border-l-info' : 'border-l-transparent')}>
                   <div className="truncate text-sm font-medium">{r.client_name}</div>
                   <div className="font-mono text-[11px] text-muted-foreground">{r.client_gstin}</div>
+                  {showKind && <div className="text-[11px] text-muted-foreground">{trackDef(r.track).short}</div>}
                 </td>
                 <td className={cn(WS_TD, 'max-w-[22rem]')}>
                   <Link to={href} className="block truncate text-sm font-medium text-primary hover:underline">
@@ -124,8 +126,12 @@ export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?:
                   {track !== 'other' && <NextStepLine r={r} advice={adviceOf(advice.data, r.client_id as string, r.case_key as string)} className="mt-0.5 max-w-[22rem]" />}
                 </td>
                 <td className={WS_TD}><DisputeYearCell d={years.data?.get(caseYearKey(r.client_id as string, r.case_key as string))} loading={years.isLoading} /></td>
-                <td className={WS_TD}><WaitingChip r={r} /></td>
-                {lit && <td className={WS_TD}>{r.is_open ? <StageBadge stage={r.stage} /> : <span className="text-xs text-muted-foreground">—</span>}</td>}
+                <td className={WS_TD}>
+                  <div className="flex flex-col items-start gap-1">
+                    <WaitingChip r={r} />
+                    {r.is_open && r.track === 'litigation' && r.stage ? <StageBadge stage={r.stage} /> : null}
+                  </div>
+                </td>
                 {track !== 'other' && (
                   <td className={WS_TD}>
                     <DueCell r={r} />

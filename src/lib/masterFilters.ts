@@ -21,10 +21,10 @@ export function readMaster(sp: URLSearchParams): Master {
 
 export const masterCount = (m: Master) => MASTER_KEYS.filter((k) => !!m[k]).length;
 
-/** The pages that apply the master filters (the others, such as Clients, read the same names differently). */
+/** The pages that apply the master filters (the others, such as Portal sync, read the same names differently). */
 export const MASTER_PAGES = [
   '/notices-dashboard', '/notices-cases', '/notices-queue', '/notices-all', '/litigation', '/notices-hearings', '/notices-calendar',
-  '/notices-report', '/notices-gstin-wise-count', '/litigation-mis',
+  '/notices-report', '/notices-gstin-wise-count', '/notices-company-list', '/litigation-mis',
 ];
 
 /** A module link that keeps the master filters (its own query string wins on a clash); other pages get none. */

@@ -87,22 +87,6 @@ export function useNoticesNavCounts(userId: string | null) {
   return q.data?.nav ?? null;
 }
 
-/** The top of Today's plan: the dashboard's notice types only, like its counts. */
-/** The dashboard's plan: 'newest' (the default, by issue date) or 'urgent' (deadline × exposure × readiness). */
-export type PlanOrder = 'newest' | 'urgent';
-
-export async function loadPlanTop(tab: QueueTab, userId: string | null, limit = 8, order: PlanOrder = 'newest', master: Master = {}): Promise<NoticePlanRow[]> {
-  let q = supabase.from('notice_plan').select('*').eq('on_dashboard', true);
-  q = applyQueueTab(q, tab, userId);
-  q = applyMasterToQuery(q, master, userId);
-  q = order === 'urgent'
-    ? q.order('plan_score', { ascending: false })
-    : q.order('issue_date', { ascending: false, nullsFirst: false }).order('first_seen_at', { ascending: false, nullsFirst: false });
-  const { data, error } = await q.order('id').limit(limit);
-  if (error) throw error;
-  return (data ?? []) as NoticePlanRow[];
-}
-
 export interface HearingItem {
   kind: 'notice' | 'matter';
   ref_id: string;
@@ -159,6 +143,22 @@ export async function loadCalendar(from: string, to: string, opts: { dashboardOn
   if (!hidden.length) return items;
   const off = new Set(hidden.map((r) => r.id));
   return items.filter((it) => !it.notice_id || !off.has(it.notice_id));
+}
+
+/** A date the law attaches to an open case (time to appeal, pre-deposit, pay to close), 20261025160000. */
+export interface CaseDateItem {
+  day: string; kind: string; title: string | null; detail: string | null; law: string | null; tone: string | null;
+  client_id: string; client_name: string | null; case_key: string; item_id: string | null;
+}
+
+/** Every open case's key dates in the range; none on a database without the function. */
+export async function loadCaseDates(from: string, to: string): Promise<CaseDateItem[]> {
+  const { data, error } = await supabase.rpc('notice_case_key_dates_range', { p_from: from, p_to: to });
+  if (error) {
+    if (/notice_case_key_dates_range/.test(error.message)) return [];
+    throw error;
+  }
+  return (data ?? []) as CaseDateItem[];
 }
 
 export const CALENDAR_KIND_LABEL: Record<CalendarItem['kind'], string> = {

@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Note } from '@/components/gstr9/ui';
 import { WS_BTN, WS_PAGE } from '@/components/workspace/theme';
+import { NoticesShell } from '@/components/notices/NoticesShell';
 import { SectionCard } from '@/components/notices/ui/Panel';
 import { StageBadge } from '@/components/notices/StageBadge';
 import { sectionLabel, toEvent, type CaseEvent, type FolderItem } from '@/components/notices/clients/caseFolder';
@@ -119,15 +120,13 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
   };
 
   return (
-    <div className={WS_PAGE}>
-      <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground md:pr-12">
-        <Link to="/notices-dashboard" className="hover:underline">Notices & Litigation</Link> ›
-        <Link to="/refunds-all" className="hover:underline">Refunds</Link> ›
-        <Link to={`/refunds-all?client=${clientId}`} className="hover:underline">{r.fact.client_name}</Link>
-        <span className="font-mono">{r.fact.client_gstin}</span>
-      </nav>
+    <NoticesShell section="Refund" record crumbs={[
+      { label: 'Refunds', to: '/refunds-all' },
+      { label: r.fact.client_name ?? 'Client', to: `/refunds-all?client=${clientId}` },
+      { label: arn, mono: true },
+    ]}>
 
-      <header className="flex flex-wrap items-start justify-between gap-3 md:pr-12">
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-1">
           <h1 className="font-heading text-lg font-bold leading-tight sm:text-xl">{typeLong(code)}{period ? ` · ${period}` : ''}</h1>
           <p className="text-xs text-muted-foreground">
@@ -250,7 +249,7 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
           ) : <p className="text-xs text-muted-foreground">The application's documents by portal tab. The papers above carry their own.</p>}
         </SectionCard>
       )}
-    </div>
+    </NoticesShell>
   );
 };
 

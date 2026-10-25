@@ -138,7 +138,7 @@ export const LinkReviewPanel: React.FC<{
   const list = items ?? [];
   return (
     <SectionCard
-      title={<span className="inline-flex items-center gap-1.5"><ShieldQuestion className="h-4 w-4 text-primary" aria-hidden /> Needs a person</span>}
+      title={<span className="inline-flex items-center gap-1.5"><ShieldQuestion className="h-4 w-4 text-primary" aria-hidden /> Links to check</span>}
       description={list.length ? `${list.length} to decide before these cases are linked` : 'Nothing waits: every link was certain'}
       info={`The system links two cases by itself only when it is at least ${MIN_LINK_CONFIDENCE}% sure: an appeal, waiver or rectification naming the other case's order is 98%, a refund filed again naming the earlier one is 90% or more. Anything less waits here, with how sure the system was and why. Also listed: an appeal, waiver or rectification linked to no order, and two cases that look like the same case. Your decision always stands; the system never undoes it.`}
     >

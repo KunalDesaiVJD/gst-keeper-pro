@@ -1,45 +1,55 @@
 // Notices & Litigation · Cases (the firm's request of 9 October 2026): one row
-// per issue instead of one per notice, a tab per kind of portal service, and
-// what came in since anyone last opened the case. Every figure comes from the
-// view notice_cases (migration 20261011100000).
+// per issue instead of one per notice, and what came in since anyone last
+// opened the case. Every figure comes from the view notice_cases (migration
+// 20261011100000). One control row (the UX audit of 25 October 2026): the kind
+// (All is notices and demands, refunds and registration; Other, the papers kept
+// for the record, sits last), which cases, linked or apart, and search; links
+// the system was unsure of show as a banner only while there are any.
 import React, { useMemo, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, Search, ShieldQuestion } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { Pager } from '@/components/notices/Pager';
 import { EmptyBox, LoadError } from '@/components/notices/autopilot/parts';
-import { KindCards } from '@/components/notices/cases/HomeParts';
 import { CasesTable } from '@/components/notices/cases/CasesTable';
 import { LinkReviewPanel } from '@/components/notices/cases/LinkReviewPanel';
+import { sumCounts } from '@/components/notices/cases/HomeWork';
 import { useAuth } from '@/contexts/AuthContext';
 import { masterForRpc, useMaster } from '@/lib/masterFilters';
 import {
-  CASE_SHOWS, chainsOf, isCaseView, isTrack, loadCases, loadChainLinks, trackDef, useCaseCounts, useReviewQueue, type CaseShow, type CaseView, type Track,
+  CASE_SHOWS, TRACKS, chainsOf, isCaseView, isTrack, loadCases, loadChainLinks, useCaseCounts, useReviewQueue, type CaseShow, type CaseView, type Track,
 } from '@/lib/noticeCases';
 
 const PAGE = 50;
+type Kind = Track | 'work';
+
+const SEG = 'inline-flex rounded-md border bg-card p-0.5';
+const segBtn = (on: boolean) => cn('inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors',
+  on ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground');
 
 const NoticeCasesPage: React.FC = () => {
   const { isStaffRole, user } = useAuth();
   const [sp, setSp] = useSearchParams();
   const { m } = useMaster();
   const kindParam = sp.get('kind');
-  const track: Track = isTrack(kindParam) ? kindParam : 'litigation';
+  const kind: Kind = isTrack(kindParam) ? kindParam : 'work';
+  const other = kind === 'other';
   const showParam = sp.get('show');
   const show: CaseShow = (CASE_SHOWS as readonly string[]).includes(showParam ?? '') && showParam !== 'open'
-    && !(track === 'other' && !['all', 'new'].includes(showParam ?? ''))
-    ? showParam as CaseShow : track === 'other' ? 'all' : 'open';
+    && !(other && !['all', 'new'].includes(showParam ?? ''))
+    ? showParam as CaseShow : other ? 'all' : 'open';
   const page = Math.max(1, Number(sp.get('p')) || 1);
   // Linked: an order and its appeal are one row. Apart: every portal case its own row.
   const viewParam = sp.get('view');
   const view: CaseView = isCaseView(viewParam) ? viewParam : 'linked';
   const [q, setQ] = useState(sp.get('q') ?? '');
   const meId = user?.id ?? null;
-  const query = useMemo(() => ({ track, show, q: sp.get('q') ?? '', master: m, meId }), [track, show, sp, m, meId]);
+  const query = useMemo(() => ({ track: kind, show, q: sp.get('q') ?? '', master: m, meId }), [kind, show, sp, m, meId]);
   const list = useQuery({ queryKey: ['notice-cases', query, page, view], queryFn: () => loadCases(query, page, PAGE, view) });
   const counts = useCaseCounts(masterForRpc(m, meId), view);
   const clientIds = useMemo(() => [...new Set((list.data?.rows ?? []).map((r) => r.client_id as string))].sort(), [list.data]);
@@ -59,71 +69,81 @@ const NoticeCasesPage: React.FC = () => {
     if (!('p' in patch)) n.delete('p');
     setSp(n, { replace: true });
   };
-  const def = trackDef(track);
-  const c = counts.data?.[track];
-  const segs: { key: CaseShow; label: string; n?: number; tone?: string }[] = track === 'other'
-    ? [{ key: 'all', label: 'All', n: c?.cases }, { key: 'new', label: 'New correspondence', n: c?.new }]
+  const c = kind === 'work' ? sumCounts(counts.data) : counts.data?.[kind];
+  const kinds: { key: Kind; label: string; n?: number }[] = [
+    { key: 'work', label: 'All', n: sumCounts(counts.data)?.open },
+    ...TRACKS.map((t) => ({ key: t.key as Kind, label: t.short, n: t.key === 'other' ? counts.data?.other?.cases : counts.data?.[t.key]?.open })),
+  ];
+  const shows: { key: CaseShow; label: string; n?: number }[] = other
+    ? [{ key: 'all', label: 'All on record', n: c?.cases }, { key: 'new', label: 'New correspondence', n: c?.new }]
     : [
         { key: 'open', label: 'Open', n: c?.open },
-        { key: 'with_us', label: 'With us', n: c?.with_us, tone: c?.with_us ? 'text-warning' : '' },
-        { key: 'with_dept', label: 'With the department', n: c?.with_dept, tone: c?.with_dept ? 'text-info' : '' },
-        { key: 'overdue', label: 'Overdue', n: c?.overdue, tone: c?.overdue ? 'text-destructive-strong' : '' },
+        { key: 'with_us', label: 'With us', n: c?.with_us },
+        { key: 'with_dept', label: 'With the department', n: c?.with_dept },
+        { key: 'overdue', label: 'Overdue', n: c?.overdue },
         { key: 'due7', label: 'Due this week', n: c?.due7 },
-        { key: 'new', label: 'New', n: c?.new },
+        { key: 'new', label: 'New correspondence', n: c?.new },
         { key: 'closed', label: 'Closed', n: c?.closed },
         { key: 'all', label: 'All', n: c?.cases },
       ];
   const rows = list.data?.rows ?? [];
+  const n = (v?: number) => (v === undefined ? '' : ` (${v.toLocaleString('en-IN')})`);
 
   return (
     <NoticesShell section="Cases" master>
-      <KindCards value={track} counts={counts.data} onChange={(t) => set({ kind: t === 'litigation' ? null : t, show: null })} />
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Which cases">
-          {segs.map((sg) => (
-            <button key={sg.key} type="button" onClick={() => set({ show: sg.key === (track === 'other' ? 'all' : 'open') ? null : sg.key })} aria-pressed={show === sg.key}
-              className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                show === sg.key ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted hover:text-foreground')}>
-              {sg.label}
-              {sg.n !== undefined && <span className={cn('rounded-full px-1.5 text-[10px] tabular-nums', show === sg.key ? 'bg-primary-foreground/20' : cn('bg-muted', sg.tone))}>{sg.n}</span>}
+        <div className={SEG} role="group" aria-label="Kind of case">
+          {kinds.map((k) => (
+            <button key={k.key} type="button" aria-pressed={kind === k.key} onClick={() => set({ kind: k.key === 'work' ? null : k.key, show: null })}
+              title={k.key === 'other' ? 'LUT, voluntary payments and approvals: for the record, no action' : k.key === 'work' ? 'Notices and demands, refunds and registration' : undefined}
+              className={cn(segBtn(kind === k.key), k.key === 'other' && kind !== k.key && 'opacity-70')}>
+              {k.label}
+              {k.n !== undefined && <span className={cn('rounded-full px-1.5 text-[10px] tabular-nums', kind === k.key ? 'bg-primary-foreground/20' : 'bg-muted')}>{k.n}</span>}
             </button>
           ))}
         </div>
-        <div className="inline-flex rounded-md border bg-card p-0.5" role="group" aria-label="Linked or apart">
+        <Select value={show} onValueChange={(v) => set({ show: v === (other ? 'all' : 'open') ? null : v })}>
+          <SelectTrigger className="h-8 w-auto min-w-[11rem] text-xs" aria-label="Which cases"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {shows.map((s) => <SelectItem key={s.key} value={s.key} className="text-xs">{s.label}{n(s.n)}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <div className={SEG} role="group" aria-label="Linked or apart">
           {([['linked', 'Linked', 'An order and its appeal (or a refund and its appeal) show as one case'], ['apart', 'Apart', 'Every portal case on its own row, each saying what it is linked to']] as const).map(([k, label, hint]) => (
-            <button key={k} type="button" title={hint} aria-pressed={view === k} onClick={() => set({ view: k === 'linked' ? null : k })}
-              className={cn('rounded px-2.5 py-0.5 text-xs font-medium transition-colors', view === k ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
+            <button key={k} type="button" title={hint} aria-pressed={view === k} onClick={() => set({ view: k === 'linked' ? null : k })} className={segBtn(view === k)}>
               {label}
             </button>
           ))}
         </div>
-        <div className="relative w-full sm:w-64">
+        <div className="relative w-full sm:ml-auto sm:w-64">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <Input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') set({ q }); }} onBlur={() => q !== (sp.get('q') ?? '') && set({ q })}
             placeholder="Client, GSTIN, case or reference" aria-label="Search cases" className="h-8 pl-7 text-xs" />
         </div>
-        <button type="button" onClick={() => set({ review: reviewOpen ? null : '1', p: sp.get('p') })} aria-pressed={reviewOpen}
-          title="Links the system was not at least 90% sure of, and cases that look missed or doubled, wait here for a person"
-          className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-            reviewOpen ? 'border-primary bg-primary text-primary-foreground'
-              : reviewN ? 'border-warning bg-warning/10 text-warning hover:bg-warning/20' : 'bg-card text-muted-foreground hover:bg-muted hover:text-foreground')}>
-          <ShieldQuestion className="h-3.5 w-3.5" aria-hidden /> Needs a person
-          <span className={cn('rounded-full px-1.5 text-[10px] tabular-nums', reviewOpen ? 'bg-primary-foreground/20' : 'bg-muted')}>{review.isLoading ? '…' : reviewN}</span>
-        </button>
-        <span className="text-xs text-muted-foreground">{def.blurb}</span>
-        {track === 'refund' && (
-          <Link to="/refunds-all" className="ml-auto inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10">
-            Every refund with its amounts, steps and appeals: the Refunds page <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-          </Link>
-        )}
       </div>
+      {(reviewN > 0 || reviewOpen) && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs">
+          <ShieldQuestion className="h-4 w-4 shrink-0 text-warning" aria-hidden />
+          <span className="flex-1">
+            <span className="font-semibold">{reviewN} {reviewN === 1 ? 'link' : 'links'} to check:</span>{' '}
+            cases the system was not at least 90% sure belong together, appeals linked to no order, and cases that look doubled.
+          </span>
+          <button type="button" onClick={() => set({ review: reviewOpen ? null : '1', p: sp.get('p') })} aria-expanded={reviewOpen}
+            className="font-medium text-primary hover:underline">{reviewOpen ? 'Hide' : 'Check them'}</button>
+        </div>
+      )}
       {reviewOpen && (
         <LinkReviewPanel items={review.data} loading={review.isLoading} error={review.error} onRetry={() => review.refetch()} showClient={!m.client} />
+      )}
+      {kind === 'refund' && (
+        <Link to="/refunds-all" className="inline-flex items-center gap-1 self-start text-xs font-medium text-primary hover:underline">
+          Every refund with its amounts, steps and appeals is on the Refunds tab <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+        </Link>
       )}
       {list.error ? <LoadError what="the cases" error={list.error} onRetry={() => list.refetch()} />
         : list.isLoading ? <Skeleton className="h-96 w-full" />
         : !rows.length ? <EmptyBox className="p-6">{show === 'new' ? 'Nothing new has come in on these cases.' : 'No case matches.'}</EmptyBox>
-        : <CasesTable rows={rows} track={track} view={view} chains={chains} />}
+        : <CasesTable rows={rows} track={kind === 'work' ? 'all' : kind} view={view} chains={chains} showKind={kind === 'work'} />}
       <Pager page={page} pageSize={PAGE} total={list.data?.total ?? 0} onPage={(p) => set({ p: String(p) })} />
     </NoticesShell>
   );

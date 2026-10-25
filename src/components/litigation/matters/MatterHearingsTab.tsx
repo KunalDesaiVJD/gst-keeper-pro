@@ -41,7 +41,7 @@ const CancelDialog: React.FC<{ h: MatterHearing | null; onClose: () => void; onD
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Cancel the hearing of {fmtDateTime(h.scheduled_at)}?</DialogTitle>
-          <DialogDescription>It comes off the Hearings page and the calendar; the matter's log keeps it with your reason.</DialogDescription>
+          <DialogDescription>It comes off the Calendar and the calendar; the matter's log keeps it with your reason.</DialogDescription>
         </DialogHeader>
         <div className="space-y-1">
           <Label htmlFor="hc-why" className="text-xs">Why <span className="text-destructive">*</span></Label>
@@ -121,7 +121,7 @@ export const MatterHearingsTab: React.FC<{
       <h3 className="text-sm font-semibold">Held <span className="font-normal text-muted-foreground">· {held.length}</span></h3>
       {held.length ? <ul className="space-y-2">{held.map((h) => <Card key={h.id} h={h} past />)}</ul>
         : <p className="text-sm text-muted-foreground">None yet.</p>}
-      <p className="text-xs text-muted-foreground">Upcoming hearings also show on the <Link to="/notices-hearings" className="text-primary underline underline-offset-2">Hearings page</Link>.</p>
+      <p className="text-xs text-muted-foreground">Upcoming hearings also show on the <Link to="/notices-calendar?view=agenda" className="text-primary underline underline-offset-2">Calendar</Link>.</p>
       <CancelDialog h={cancelling} onClose={() => setCancelling(null)} onDone={onChanged} />
     </div>
   );

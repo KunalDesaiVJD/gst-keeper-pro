@@ -33,7 +33,7 @@ const TABS = [
   { key: 'chrome', label: 'Scheduled Chrome', mode: 'chrome' },
   { key: 'wall', label: 'CAPTCHA wall', mode: 'office_agent' },
   { key: 'queue', label: 'Queue' },
-  { key: 'attention', label: 'Needs a person' },
+  { key: 'attention', label: 'Runs to retry' },
   { key: 'fetch', label: 'Fetch a report' },
   { key: 'emails', label: 'Portal e-mails' },
   { key: 'acceptance', label: 'Acceptance' },

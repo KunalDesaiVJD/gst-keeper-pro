@@ -261,7 +261,7 @@ export const CaptchaWall: React.FC<{ status: AutopilotStatus | undefined; canMan
       if (res !== 'ok') notOk(res, c);
       else if (action === 'answer') setSaid(`Sent for ${c.client_name}. ${plural(Math.max(live.length - 1, 0), 'CAPTCHA')} left on the wall.`);
       else if (action === 'refresh') toast.info(`Asking the portal for a new CAPTCHA for ${c.client_name}…`);
-      else toast.success(`${c.client_name} skipped for today. It shows under Needs a person.`);
+      else toast.success(`${c.client_name} skipped for today. It shows under Runs to retry.`);
     } catch (e) {
       unhide(c);
       toast.error(`Couldn't send it for ${c.client_name}: ${e instanceof Error ? e.message : String(e)}`);
@@ -273,7 +273,7 @@ export const CaptchaWall: React.FC<{ status: AutopilotStatus | undefined; canMan
   const skip = (c: WallCaptcha) => async (ms: number) => {
     const ok = await confirm({
       title: `Skip ${c.client_name} for today?`,
-      description: 'The agent leaves this client until the next run. It shows under Needs a person as "Skipped on the CAPTCHA wall", with Run again.',
+      description: 'The agent leaves this client until the next run. It shows under Runs to retry as "Skipped on the CAPTCHA wall", with Run again.',
       confirmText: 'Skip for today',
     });
     if (!ok) return;
