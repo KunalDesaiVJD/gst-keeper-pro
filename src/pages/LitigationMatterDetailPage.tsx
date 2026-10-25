@@ -21,6 +21,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { KpiTile, Note } from '@/components/gstr9/ui';
 import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
 import { WS_BTN, WS_PAGE } from '@/components/workspace/theme';
+import { NoticesShell } from '@/components/notices/NoticesShell';
 import { useAuth } from '@/contexts/AuthContext';
 import { useStaffList } from '@/hooks/useStaffList';
 import { AssignPopover } from '@/components/notices/AssignPopover';
@@ -100,16 +101,13 @@ const LitigationMatterDetailPage: React.FC = () => {
   if (q.error || !ws) {
     const notFound = q.error instanceof MatterNotFound;
     return (
-      <div className={WS_PAGE}>
-        <nav aria-label="Breadcrumb" className="text-xs text-muted-foreground md:pr-12">
-          <Link to="/notices-dashboard" className="hover:underline">Notices & Litigation</Link> › <Link to="/litigation" className="hover:underline">Matters</Link>
-        </nav>
+      <NoticesShell section="Matter" record crumbs={[{ label: 'Matters', to: '/litigation' }, { label: 'Matter' }]}>
         <Note tone="warn">{notFound ? (q.error as Error).message : <>Couldn't load the matter: {q.error instanceof Error ? q.error.message : String(q.error)}</>}</Note>
         <div className="flex gap-2">
           {!notFound && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => q.refetch()}><RefreshCw className="h-3.5 w-3.5" aria-hidden /> Retry</Button>}
           <Button size="sm" variant="outline" className={WS_BTN} asChild><Link to="/litigation">All matters</Link></Button>
         </div>
-      </div>
+      </NoticesShell>
     );
   }
 
@@ -179,15 +177,12 @@ const LitigationMatterDetailPage: React.FC = () => {
   const meta = [lifecycleLabel(m.lifecycle), m.section_of_law, (m.financial_years ?? []).length ? `FY ${(m.financial_years ?? []).map(fmtFy).join(', ')}` : '', forumLabel(m), m.officer].filter(Boolean);
 
   return (
-    <div className={WS_PAGE}>
-      <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground md:pr-12">
-        <Link to="/notices-dashboard" className="hover:underline">Notices & Litigation</Link> ›
-        <Link to="/litigation" className="hover:underline">Matters</Link> ›
-        <Link to={mattersHref({ client: m.client_id, status: 'all' })} className="hover:underline">{ws.client?.name ?? 'Client'}</Link> ›
-        <span className="whitespace-nowrap font-mono text-foreground">{m.matter_no}</span>
-      </nav>
-
-      <header className="flex flex-wrap items-start justify-between gap-3 md:pr-12">
+    <NoticesShell section="Matter" record crumbs={[
+      { label: 'Matters', to: '/litigation' },
+      { label: ws.client?.name ?? 'Client', to: mattersHref({ client: m.client_id, status: 'all' }) },
+      { label: m.matter_no, mono: true },
+    ]}>
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-1">
           <h1 className="break-words font-heading text-lg font-bold leading-tight sm:text-xl">{m.title || lifecycleLabel(m.lifecycle)}</h1>
           <p className="text-xs text-muted-foreground">
@@ -317,7 +312,7 @@ const LitigationMatterDetailPage: React.FC = () => {
       <EditMatterDialog open={dialog === 'edit'} onOpenChange={(o) => setDialog(o ? 'edit' : null)} ws={ws} onDone={reload} />
       <EditDemandDialog open={dialog === 'demand'} onOpenChange={(o) => setDialog(o ? 'demand' : null)} ws={ws} onDone={reload} />
       <LinkNoticesDialog open={dialog === 'link'} onOpenChange={(o) => setDialog(o ? 'link' : null)} ws={ws} onDone={reload} />
-    </div>
+    </NoticesShell>
   );
 };
 
