@@ -8,7 +8,8 @@ import { periodText } from '@/components/notices/reports/refundModel';
 import { cn } from '@/lib/utils';
 
 /** The appeal's facts and files, as the portal records them. */
-export const AppealFacts: React.FC<{ a: PortalAppeal; className?: string }> = ({ a, className }) => {
+/** files: the appeal's files downloaded from its case folder (extension 0.18.5); the rest are named as on the portal. */
+export const AppealFacts: React.FC<{ a: PortalAppeal; files?: { label: string; url: string }[]; className?: string }> = ({ a, files = [], className }) => {
   const per = a.period.from ? periodText(a.period.from, a.period.to) : null;
   const facts: [string, React.ReactNode][] = [
     ['Filed', `${fmtDate(a.filedOn)}${a.signedBy ? ` by ${a.signedBy}` : ''}`],
@@ -30,9 +31,23 @@ export const AppealFacts: React.FC<{ a: PortalAppeal; className?: string }> = ({
         ))}
       </dl>
       {a.issues.length > 0 && <p><span className="text-muted-foreground">Ground: </span>{a.issues.join('; ')}</p>}
-      {a.docs.length > 0 && (
+      {files.length > 0 && (
         <div>
-          <div className="text-muted-foreground">Filed with it ({plural(a.docs.length, 'file')}, on the portal; not downloaded into the app yet)</div>
+          <div className="text-muted-foreground">Files of the appeal ({plural(files.length, 'file')})</div>
+          <ul className="mt-1 flex flex-wrap gap-1.5">
+            {files.map((f) => (
+              <li key={f.url}>
+                <a href={f.url} target="_blank" rel="noreferrer" className="inline-flex max-w-[16rem] items-center gap-1 rounded border bg-card px-1.5 py-0.5 text-[11px] hover:border-primary/50 hover:bg-primary/5">
+                  <FileText className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{f.label}</span><span className="sr-only"> (opens in a new tab)</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {files.length === 0 && a.docs.length > 0 && (
+        <div>
+          <div className="text-muted-foreground">Filed with it ({plural(a.docs.length, 'file')}, on the portal; the next sync with extension 0.18.5 or later downloads them)</div>
           <ul className="mt-1 flex flex-wrap gap-1.5">
             {a.docs.map((d) => (
               <li key={d.id} className="inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground">

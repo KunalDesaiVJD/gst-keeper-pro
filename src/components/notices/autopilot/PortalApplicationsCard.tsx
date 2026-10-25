@@ -36,7 +36,7 @@ export const PortalApplicationsCard: React.FC<{ clientId: string }> = ({ clientI
         : rows.length === 0 ? <p className="text-xs text-muted-foreground">None read yet — the next sync reads them.</p>
         : (
           <ul className="divide-y">
-            {rows.map(({ row: a, appeal, target }) => (
+            {rows.map(({ row: a, appeal, target, files }) => (
               <li key={a.id} className="space-y-0.5 py-1.5 text-xs">
                 <div className="flex items-start justify-between gap-2">
                   <span className="min-w-0 font-medium">
@@ -48,8 +48,10 @@ export const PortalApplicationsCard: React.FC<{ clientId: string }> = ({ clientI
                   ARN <span className="font-mono">{a.arn ?? '—'}</span> · filed {fmtDate(a.filed_date)}
                   {appeal && appealLine(appeal) ? <> · {appealLine(appeal)}</> : null}
                 </div>
-                {appeal && appeal.docs.length > 0 && (
-                  <div className="text-[11px] text-muted-foreground">{plural(appeal.docs.length, 'file')} filed with it, on the portal; not downloaded into the app yet</div>
+                {files.length > 0 ? (
+                  <div className="text-[11px] text-muted-foreground">{plural(files.length, 'file')} of the appeal in the app</div>
+                ) : appeal && appeal.docs.length > 0 && (
+                  <div className="text-[11px] text-muted-foreground">{plural(appeal.docs.length, 'file')} filed with it, on the portal; downloaded at the next sync (extension 0.18.5)</div>
                 )}
                 {target ? (
                   <Link to={target.href} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">

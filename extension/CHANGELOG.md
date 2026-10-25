@@ -2,6 +2,20 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-25 — An appeal with no notice gets its files (v0.18.5)
+
+- An appeal filed on the portal (GST APL-01) that the appellate authority has not yet taken up has no notice and no task, so the notices step never opened its case folder and its APL-01, grounds and annexures were never downloaded (M J Surgical's appeal AD241225010791I against refund order ZD2409250165765). The applications step now opens the case folder of each appeal it lists (`case/folder` with `caseTypeCd: APPEL`, then `case/folder/items`) and downloads its files the same way as the notices step (`getEncrypDocIds`, `downloadhb`, `notices/<client>/case-folder/<arn>/<docid>.pdf`), ingested as `case_folder` items scoped to the appeal's ARN.
+- Only what is due: an appeal with no stored folder items, whose status changed, or not checked for 7 days (the open-case recheck); a file already stored is not downloaded again. The last check per appeal is kept in `gstk_appeal_checked_<client>`.
+- Runs only where the applications step runs (the notices bundle). Nothing else changes; carries 0.18.4 unchanged.
+- `test/17-actor-headers.test.mjs` now expects 0.18.5.
+
+## 2026-10-25 — An appeal's own files (v0.18.4)
+
+- The case folder's appeal application (section APLCN, the APL-01) lists its files as `docappeal`, `docannexure` and `docothers[]` with the name spelt `docname`, not `docName`. The document finder took only `docName`, so the APL-01 form, its grounds and its exhibits were saved in the folder item's JSON but never downloaded. It now takes `docname` too, labelled with the portal's name for the file (`EXHIBIT A · Binder1.pdf`).
+- Nothing else changes: the same download (`getEncrypDocIds`, `downloadhb`), the same storage path (`notices/<client>/case-folder/<arn>/<docid>.pdf`), the same freshness rules. An appeal already synced gets its files on the next sync that reads its case (open cases weekly, every case on the 30-day full pass), since the item has none stored yet.
+- Carries 0.18.1 to 0.18.3 (the Table 8A pull) unchanged.
+- Test `test/20-appeal-docnames.test.mjs`; `test/17-actor-headers.test.mjs` now expects 0.18.4.
+
 ## 2026-10-25 — Table 8A: read the downloaded file back (v0.18.3)
 
 - Seen live on 25 Oct 2026 (TAMNNA INFRASTRUCTURE, FY 2025-26): the press hands the portal's ZIP (`<GSTIN>_R9_8A_1.zip`) straight to the browser, which saved it to Downloads, but the extension never got it, so the job pressed again and again. Now `background.js` records the press's download (`gstk_g8a_seen`: where it came from, its name, whether fetching it again worked) and, once Chrome has saved it, reads it back from the disk through an offscreen page (`offscreen.html` / `offscreen.js`, `XMLHttpRequest` on the `file://` address; needs "Allow access to file URLs"). Only that one download, only while the 8A job runs.

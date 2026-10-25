@@ -5066,9 +5066,109 @@
       'applications      : ' + rows.length + (saved && saved.status === 'ok' ? ' (' + saved.new + ' new, ' + saved.changed + ' changed)' : ''),
       ...(failed.length ? ['failed            : ' + failed.join(' | ')] : []),
     ]);
-    banner('Applications → ' + rows.length + ' read. Now the taxpayer profile…' + progress, '#16a34a');
+    // 0.18.5: an appeal the appellate authority has not taken up has no
+    // notice, so the notices step never opens its case folder and its own
+    // files (the APL-01, the grounds, the annexures) were never downloaded.
+    // Open each appeal's folder here: new appeals, appeals whose status moved,
+    // and every appeal once a week. Best-effort: a failure costs only the files.
+    let appealFolders = 0, appealFiles = 0;
+    try {
+      const r2 = await appealFolderPass(cur, rows, job);
+      appealFolders = r2.folders; appealFiles = r2.files;
+    } catch (e) { /* the applications are saved; the files wait for the next run */ }
+    if (appealFolders) {
+      debugPanel(['STEP: Appeal case folders', 'folders read      : ' + appealFolders, 'files downloaded  : ' + appealFiles]);
+    }
+    banner('Applications → ' + rows.length + ' read' + (appealFolders ? ', ' + appealFolders + ' appeal folder(s) read' : '') + '. Now the taxpayer profile…' + progress, '#16a34a');
     await sleep(800);
     await proceedToTaxpayerProfile(job);
+  }
+
+  // One appeal's case folder, its items and the files not stored yet, saved
+  // under the appeal's ARN like any case folder (gst_case_folder_items), the
+  // same download and storage path the notices step uses.
+  async function appealFolderPass(cur, rows, job) {
+    const appeals = rows.filter((r) => r.case_type_cd === 'APPEL' && r.arn && r.case_id);
+    if (!appeals.length) return { folders: 0, files: 0 };
+    let known = null;
+    try { known = await GSTKdb.knownDocs(cur.clientId); } catch (e) { known = null; }
+    const itemDocs = (known && known.itemDocs) || {};
+    const haveItems = (arn) => Object.keys(itemDocs).some((k) => k.indexOf(arn + '|') === 0);
+    const checkedKey = 'gstk_appeal_checked_' + cur.clientId;
+    const checked = ((await store.get(checkedKey))[checkedKey]) || {};
+    let folders = 0, files = 0;
+    for (const app of appeals) {
+      const last = checked[app.arn];
+      const due = !haveItems(app.arn) || !last || last.status !== (app.status || '') || Date.now() - (last.at || 0) > OPEN_CASE_RECHECK_MS;
+      if (!due) continue;
+      let list = [];
+      try {
+        const fr = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ caseId: app.case_id, gstid: cur.creds.gstin || '', caseTypeCd: 'APPEL' }),
+        }), 20000, 'case/folder');
+        list = fr.ok ? await fr.json() : [];
+      } catch (e) { list = []; }
+      if (!Array.isArray(list) || !list.length) continue;
+      folders++;
+      const items = [];
+      let failures = 0;
+      for (const folder of list) {
+        try {
+          const fir = await withTimeout(fetch('https://services.gst.gov.in/litserv/auth/api/case/folder/items', {
+            method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ caseFolderId: folder.caseFolderId }),
+          }), 15000, 'case/folder/items');
+          if (!fir.ok) { failures++; continue; }
+          const fItems = await fir.json();
+          if (!Array.isArray(fItems)) { failures++; continue; }
+          for (const fi of fItems) {
+            let fParsed = null;
+            try { fParsed = fi.itemJson ? JSON.parse(fi.itemJson) : null; } catch (e) { /* keep the raw string */ }
+            const fiRef = fi.refId || (fParsed && fParsed.crn) || null;
+            const itemKey = (folder.caseFolderTypeCd || '_') + ':' + (fiRef || simpleHash(JSON.stringify(fParsed || fi.itemJson || '')));
+            const stored = itemDocs[app.arn + '|' + itemKey] || [];
+            const rawDocs = [];
+            findDocDescriptors(fParsed, new Set(), rawDocs);
+            const seenIds = new Set();
+            const attachments = [];
+            for (const doc of rawDocs) {
+              if (seenIds.has(doc.id)) continue;
+              seenIds.add(doc.id);
+              const already = stored.find((x) => x && typeof x.url === 'string' && x.url.indexOf('/' + doc.id + '.pdf') !== -1);
+              if (already) { attachments.push(already); continue; }
+              try {
+                const docArn = (fParsed && fParsed.crn) || (fParsed && fParsed.arn) || app.arn;
+                const eh = await withTimeout(fetchEncrypDocEh(doc.id, docArn), 15000, 'getEncrypDocIds');
+                if (!eh) continue;
+                const pdfR = await withTimeout(fetch('https://services.gst.gov.in/downloadhb/download/new?docId=' + encodeURIComponent(doc.id) + '&arn=' + encodeURIComponent(docArn) + '&eh=' + encodeURIComponent(eh), { credentials: 'include' }), 20000, 'downloadhb');
+                if (!pdfR.ok) continue;
+                const buf = await withTimeout(pdfR.arrayBuffer(), 15000, 'pdf arrayBuffer');
+                if (!buf || buf.byteLength <= 200) continue;
+                const dataUrl = 'data:application/pdf;base64,' + arrayBufferToBase64(buf);
+                const path = 'notices/' + cur.clientId + '/case-folder/' + app.arn + '/' + doc.id + '.pdf';
+                const urlOut = await withTimeout(GSTKdb.uploadPdf(path, dataUrl), 20000, 'uploadPdf');
+                attachments.push({ label: doc.docName || doc.docttl || (doc.id + '.pdf'), url: urlOut });
+                files++;
+              } catch (e) { /* best-effort per file */ }
+            }
+            items.push({
+              portal_key: itemKey,
+              folder_section: folder.caseFolderTypeCd || null,
+              reference_number: fiRef,
+              attachments,
+              raw_json: fParsed !== null ? fParsed : (fi.itemJson || null),
+            });
+          }
+        } catch (e) { failures++; }
+      }
+      if (items.length) {
+        try { await GSTKdb.ingest(cur.clientId, job.runId, 'case_folder', items, { complete: failures === 0 }, app.arn); } catch (e) { continue; }
+      }
+      if (!failures) checked[app.arn] = { at: Date.now(), status: app.status || '' };
+    }
+    try { await store.set({ [checkedKey]: checked }); } catch (e) { /* only costs an earlier recheck */ }
+    return { folders, files };
   }
 
   async function proceedToTaxpayerProfile(job) {
@@ -6917,12 +7017,22 @@
   // descriptor ({id, docName}, with or without a dcupdtls wrapper) anywhere
   // in the parsed JSON. Shared by handleNotices' Additional Notice Folder
   // capture and handleRefundDocs' case/folder document harvest.
+  //
+  // 0.18.4: an appeal's own application (APLCN, the APL-01) spells it
+  // `docname` (docappeal, docannexure, docothers[] with a `name` such as
+  // "EXHIBIT A"), so its form, grounds and exhibits were never downloaded.
+  // Such a descriptor is passed on as a copy carrying `docName`, so every
+  // caller's label (doc.docName || doc.docttl) reads it unchanged.
   function findDocDescriptors(node, seen, out) {
     if (!node || typeof node !== 'object' || seen.has(node)) return;
     seen.add(node);
     if (Array.isArray(node)) { node.forEach((n) => findDocDescriptors(n, seen, out)); return; }
     const candidate = (node.dcupdtls && typeof node.dcupdtls === 'object') ? node.dcupdtls : node;
     if (candidate.id && candidate.docName) out.push(candidate);
+    else if (candidate.id && typeof candidate.docname === 'string' && candidate.docname.trim()) {
+      const named = typeof candidate.name === 'string' && candidate.name.trim() && candidate.name.trim() !== candidate.docname.trim();
+      out.push(Object.assign({}, candidate, { docName: named ? candidate.name.trim() + ' · ' + candidate.docname.trim() : candidate.docname.trim() }));
+    }
     Object.keys(node).forEach((k) => { if (k !== 'dcupdtls') findDocDescriptors(node[k], seen, out); });
   }
 

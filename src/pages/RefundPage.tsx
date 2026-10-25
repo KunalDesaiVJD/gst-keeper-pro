@@ -175,10 +175,10 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
           : tone === 'part' && r.links.some((l) => l.kind === 'appeal') && <div className="mt-0.5 text-xs">An appeal against it is linked below.</div>}
       </section>
 
-      {appeals.map(({ row, appeal }) => appeal && (
+      {appeals.map(({ row, appeal, files }) => appeal && (
         <div key={row.id} id={`appeal-${row.arn}`} className="scroll-mt-4"><SectionCard title={<span className="inline-flex items-center gap-1.5"><GitBranch className="h-4 w-4" aria-hidden /> Appeal {row.arn}</span>}
-          description="From the portal's record of the appeal; it has no notice or case folder in the app until the appellate authority takes it up">
-          <AppealFacts a={appeal} />
+          description="From the portal's record of the appeal and its case folder">
+          <AppealFacts a={appeal} files={files} />
         </SectionCard></div>
       ))}
 
