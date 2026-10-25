@@ -102,7 +102,7 @@ const SyncStrip: React.FC<{
       )}
       {n?.last_success_at && <span>· {n.rows_seen ?? 0} on the portal, {n.rows_new ?? 0} new{n.last_ext_version ? ` · extension v${n.last_ext_version}` : ''}</span>}
       <span aria-hidden>·</span>
-      <Link to={`/notices-company-list?tab=log&client=${h.client.id}`} className="text-primary underline-offset-2 hover:underline">Sync log</Link>
+      <Link to={`/notices-portal-sync?tab=log&client=${h.client.id}`} className="text-primary underline-offset-2 hover:underline">Sync log</Link>
       {h.state === 'failed' && reasonDef(h.failReason).action === 'password' && login('Update password')}
       {h.state === 'off' && h.off === 'no_user_id' && login('Add portal user ID')}
       {canSync && h.eligible && !h.fresh && reasonDef(h.failReason).action !== 'password' && (
@@ -144,7 +144,7 @@ const ClientTiles: React.FC<{ d: ClientProfileData; clientId: string; today: str
         hint={next ? `next ${fmtDay(next)}` : 'nothing due this week'} />
       <FilterTile to={noticesListHref({ filter: 'exposure', client: clientId })} label="Exposure under dispute" accent="muted"
         value={fmtInrShort(exposure.reduce((s, n) => s + Number(n.exposure_amount ?? 0), 0))} hint={plural(exposure.length, 'notice')} />
-      <FilterTile to={hearing?.to ?? '/notices-hearings'} label="Next hearing" accent="info" value={hearing ? fmtDay(hearing.date) : 'None'}
+      <FilterTile to={hearing?.to ?? '/notices-calendar?view=agenda'} label="Next hearing" accent="info" value={hearing ? fmtDay(hearing.date) : 'None'}
         hint={hearing ? `${daysBetween(today, hearing.date) === 0 ? 'today' : `in ${daysBetween(today, hearing.date)} d`} · ${hearing.title}` : 'none fixed'} />
       <FilterTile to={`/litigation?client=${clientId}`} label="Open matters" accent="warning" value={d.matters.length}
         hint={d.matters.length ? `${fmtInrShort(outstanding)} outstanding` : 'no litigation'} />

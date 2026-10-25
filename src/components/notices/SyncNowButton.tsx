@@ -137,7 +137,7 @@ export const SyncNowButton: React.FC<{ onStarted?: () => void }> = ({ onStarted 
         )}
         <p className="text-[11px] text-muted-foreground">
           Urgent clients go first. About {plural(count, 'CAPTCHA')} to type.
-          To pick clients by hand use <Link to="/notices-company-list" className="text-primary underline underline-offset-2">Clients</Link>.
+          To pick clients by hand use <Link to="/notices-portal-sync" className="text-primary underline underline-offset-2">Portal sync</Link>.
         </p>
         {agentOn && (
           <div className="space-y-1.5 rounded-md border bg-muted/30 p-2">

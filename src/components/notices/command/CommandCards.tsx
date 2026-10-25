@@ -101,9 +101,9 @@ export const AutopilotLine: React.FC<{ cc: CommandCentre; onOpenTypes?: () => vo
       total > 0 && {
         key: 'failing',
         text: `${plural(total, 'client')} not synced (${reasons.map(([r, n]) => `${n} ${SHORT_REASON[r] ?? reasonLabel(r).toLowerCase()}`).join(' · ')})`,
-        to: '/notices-company-list?status=failed',
+        to: '/notices-portal-sync?status=failed',
       },
-      run && run.status === 'failed' && { key: 'run', text: `Last sync run failed ${fmtAgo(run.started_at)}`, to: '/notices-company-list?tab=log' },
+      run && run.status === 'failed' && { key: 'run', text: `Last sync run failed ${fmtAgo(run.started_at)}`, to: '/notices-portal-sync?tab=log' },
     ]} />
   );
 };
@@ -196,7 +196,7 @@ export const ClientsAttention: React.FC<{ cc: CommandCentre }> = ({ cc }) => {
   const mh = useMasterHref();
   return (
     <Panel title="Clients needing attention" info="Most overdue first · open · overdue · exposure"
-      actions={<Link to={mh('/notices-gstin-wise-count')} className="text-xs font-medium text-primary hover:underline">All clients →</Link>}>
+      actions={<Link to={mh('/notices-company-list')} className="text-xs font-medium text-primary hover:underline">All clients →</Link>}>
       {cc.clients.length === 0 ? <p className="text-xs text-muted-foreground">No client has an open notice.</p> : (
         <ul className="divide-y">
           {cc.clients.map((c) => (

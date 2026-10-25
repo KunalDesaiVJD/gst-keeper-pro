@@ -69,7 +69,7 @@ const ClientLine: React.FC<{ c: FailureClient; children?: React.ReactNode }> = (
       {c.message && <p className="break-words text-xs text-foreground/80">“{c.message}”</p>}
       <p className="text-[11px] text-muted-foreground">
         Failed {fmtAgo(c.at)} · last good pull {c.last_ok ? fmtAgo(c.last_ok) : 'never'} ·{' '}
-        <Link to={`/notices-company-list?tab=log&client=${c.client_id}`} className={INLINE_LINK}>sync log</Link>
+        <Link to={`/notices-portal-sync?tab=log&client=${c.client_id}`} className={INLINE_LINK}>sync log</Link>
       </p>
     </div>
     <div className="flex shrink-0 flex-wrap items-center gap-1.5">{children}</div>

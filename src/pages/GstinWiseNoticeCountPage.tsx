@@ -194,7 +194,7 @@ const GstinWiseNoticeCountPage: React.FC = () => {
   );
 
   return (
-    <NoticesShell section="GSTIN-wise count" master
+    <NoticesShell section="Clients" master
       actions={canExportData() && (
         <Button size="sm" variant="outline" className={WS_BTN} onClick={exportXlsx} disabled={loading || !visible.length}>
           <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden /> Export to Excel

@@ -212,7 +212,7 @@ const RowMenu: React.FC<{ h: ClientHealth; handlers: RowHandlers }> = ({ h, hand
       {handlers.canSync && h.client.gst_user_id && (
         <DropdownMenuItem onSelect={() => handlers.onFetchProfile([h.client.id])}><DownloadCloud className="mr-2 h-4 w-4" aria-hidden /> Fetch portal profile</DropdownMenuItem>
       )}
-      <DropdownMenuItem asChild><Link to={`/notices-company-list?tab=log&client=${h.client.id}`}>Sync log for this client</Link></DropdownMenuItem>
+      <DropdownMenuItem asChild><Link to={`/notices-portal-sync?tab=log&client=${h.client.id}`}>Sync log for this client</Link></DropdownMenuItem>
       <DropdownMenuItem asChild><Link to={`/notices-company/${h.client.id}`}>Client profile</Link></DropdownMenuItem>
       {handlers.canEditClients && <DropdownMenuItem onSelect={() => handlers.onSetting([h])}><Settings2 className="mr-2 h-4 w-4" aria-hidden /> Sync setting…</DropdownMenuItem>}
       {handlers.canEditClients && <DropdownMenuItem asChild><Link to={`/edit-client/${h.client.id}`}>Edit client</Link></DropdownMenuItem>}

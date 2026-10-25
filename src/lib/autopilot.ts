@@ -309,7 +309,7 @@ export const REPORT_MODES: ReportMode[] = [
   { mode: 'rcmliab_pull', label: 'RCM liability / ITC statement', group: 'Ledgers and statements', period: 'fy',
     note: 'The portal gives the whole financial year at once.' },
   { mode: 'taxpayerprofile', label: 'Taxpayer profile and registration status', group: 'Registration and payments', period: 'none',
-    lands: { to: '/notices-company-list', label: "each client's profile" } },
+    lands: { to: '/notices-company-list', label: "each client's page" } },
   { mode: 'challans', label: 'Challans', group: 'Registration and payments', period: 'none' },
 ];
 
