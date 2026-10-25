@@ -9,6 +9,7 @@ import { MonthProvider } from "@/contexts/MonthContext";
 import { ClientProvider } from "@/contexts/ClientContext";
 import MainLayout from "@/components/layout/MainLayout";
 import { PageLoading } from "@/components/layout/PageLoading";
+import { installDocLinkRewriter } from "@/lib/docLinks";
 import { StaffGuard } from "@/components/guards/StaffGuard";
 import LoginPage from "@/pages/LoginPage";
 const AgreementConfirmPage = lazy(() => import("@/pages/AgreementConfirmPage"));
@@ -73,6 +74,10 @@ const LitigationMatterDetailPage = lazy(() => import("@/pages/LitigationMatterDe
 const LitigationMISPage = lazy(() => import("@/pages/LitigationMISPage"));
 const ChangeHistoryPage = lazy(() => import("@/pages/ChangeHistoryPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const DocumentOpenPage = lazy(() => import("@/pages/DocumentOpenPage"));
+
+// Every stored file is linked as /d/<id>, never by its storage address.
+installDocLinkRewriter();
 
 const queryClient = new QueryClient();
 
@@ -90,6 +95,7 @@ const App = () => (
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/agreement-confirm/:token" element={<AgreementConfirmPage />} />
                 <Route path="/reset-password" element={<ResetPasswordPage />} />
+                <Route path="/d/:id" element={<DocumentOpenPage />} />
                 <Route path="/" element={<Navigate to="/login" replace />} />
                 
                 {/* Protected Routes */}

@@ -4,7 +4,15 @@
 // send-gst-email calls it at send time. Keep in sync with the mirror copy at
 // src/lib/emailTemplate.ts (used only for the editor preview).
 
+import { DOC_LINK_ORIGIN, docLinkPath } from './docLink.ts';
+
 type EmailVars = Record<string, string | null | undefined>;
+
+// A stored file is linked by its short link, never by its storage address.
+const docLink = (url: string): string => {
+  const p = docLinkPath(url, (globalThis as { Deno?: { env: { get(k: string): string | undefined } } }).Deno?.env.get('SUPABASE_URL') ?? '');
+  return p ? `${DOC_LINK_ORIGIN}${p}` : url;
+};
 
 interface ShellMeta {
   accent: string;
@@ -114,7 +122,7 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
   const cta = (internal || resetLink) && g('cta_url')
     ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px;"><tr>
 <td style="background:#0f2b46;border-radius:6px;"><a href="${g('cta_url')}" style="display:inline-block;padding:10px 18px;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;">${g('cta_label') || 'Open in GST Keeper'}</a></td>
-${g('pdf_url') ? `<td style="padding-left:16px;"><a href="${g('pdf_url')}" style="color:#0f2b46;font-size:13px;">Notice PDF</a></td>` : ''}
+${g('pdf_url') ? `<td style="padding-left:16px;"><a href="${docLink(g('pdf_url'))}" style="color:#0f2b46;font-size:13px;">Notice PDF</a></td>` : ''}
 </tr></table>`
     : '';
 

@@ -8,6 +8,7 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertTriangle, Lock, User } from 'lucide-react';
 import { toast } from 'sonner';
+import { AFTER_LOGIN_KEY } from '@/lib/docLinks';
 import logo from '@/assets/logo.png';
 import ChangePasswordDialog from '@/components/auth/ChangePasswordDialog';
 import ForgotPasswordDialog from '@/components/auth/ForgotPasswordDialog';
@@ -41,7 +42,7 @@ const LoginPage: React.FC = () => {
           setPendingUserName(userId);
           setShowFirstLoginDialog(true);
         } else {
-          navigate('/dashboard');
+          navigate(afterLogin());
         }
       }
     } finally {
@@ -53,8 +54,15 @@ const LoginPage: React.FC = () => {
     const success = await completeFirstLogin(newPassword);
     if (success) {
       setShowFirstLoginDialog(false);
-      navigate('/dashboard');
+      navigate(afterLogin());
     }
+  };
+
+  // Back to the document link that sent the person here, else the dashboard.
+  const afterLogin = () => {
+    let next: string | null = null;
+    try { next = sessionStorage.getItem(AFTER_LOGIN_KEY); sessionStorage.removeItem(AFTER_LOGIN_KEY); } catch { next = null; }
+    return next && /^\/d\/[A-Za-z0-9_-]{12}(\?[^#]*)?$/.test(next) ? next : '/dashboard';
   };
 
   // Check if the user ID looks like a staff ID (not a PAN)

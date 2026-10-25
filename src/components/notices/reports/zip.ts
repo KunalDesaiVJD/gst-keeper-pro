@@ -1,4 +1,6 @@
-// One .zip instead of a browser tab per PDF (audit U-75-5).
+// One .zip instead of a browser tab per PDF (audit U-75-5). Stored files are
+// read through doc-open (src/lib/docLinks.ts), never by their storage address.
+import { fetchStoredFile } from '@/lib/docLinks';
 
 /** Saves the files behind these links as one .zip; returns how many made it. */
 export async function downloadZip(files: { url: string; name: string }[], zipName: string): Promise<{ ok: number; failed: number }> {
@@ -9,7 +11,7 @@ export async function downloadZip(files: { url: string; name: string }[], zipNam
   let failed = 0;
   const one = async (f: { url: string; name: string }) => {
     try {
-      const res = await fetch(f.url);
+      const res = await fetchStoredFile(f.url);
       if (!res.ok) throw new Error(String(res.status));
       const blob = await res.blob();
       const base = f.name.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/\.pdf$/i, '') || 'document';

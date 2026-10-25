@@ -30,6 +30,7 @@ import {
   TableKitPager, TableKitTable, TableKitToolbar, isSentinelCell, isUrlCell, useTableKit,
   type ModelColumn, type ModelRow,
 } from './tableKit';
+import { openDoc } from '@/lib/docLinks';
 
 interface EvidenceEventListViewProps {
   table: ReportTable;
@@ -238,7 +239,7 @@ export const EvidenceEventListView: React.FC<EvidenceEventListViewProps> = ({ ta
     }
     setDownloadNotice(`Opening ${urls.length} PDF${urls.length === 1 ? '' : 's'}…`);
     urls.forEach((url, i) => {
-      setTimeout(() => window.open(url, '_blank', 'noopener,noreferrer'), i * 150);
+      setTimeout(() => openDoc(url), i * 150);
     });
     setTimeout(() => setDownloadNotice(null), urls.length * 150 + 1500);
   };
