@@ -5708,11 +5708,25 @@
     walk(body, 0);
     return found;
   }
-  function g8aPortalWords() {
-    return $$('.alert, .modal-body, [role=alert], .swal2-html-container, .swal2-content, .err, .error, .text-danger, .text-success')
+  // The portal's words about the 8A; `before` holds what the page already said
+  // before the press (the standing "please re-download the Table 8A" note), left out.
+  function g8aPortalTexts() {
+    return $$('.alert, .modal-body, [role=alert], .swal2-html-container, .swal2-content, .err, .error, .text-danger, .text-success, .toast, .growl')
       .filter((n) => n.offsetParent !== null).map((n) => oneLine(n.textContent))
-      .find((t) => /8\s*A|request|record|download|generat|no data|not available|try (again|after)/i.test(t) && t.length < 400) || '';
+      .filter((t) => /8\s*A|request|record|download|generat|no data|not available|try (again|after)|progress|minutes/i.test(t) && t.length < 400);
   }
+  function g8aPortalWords(before) {
+    const old = new Set(before || []);
+    return g8aPortalTexts().find((t) => !old.has(t)) || '';
+  }
+  // 0.18.1: the portal prepares a large 8A in the background ("request accepted,
+  // download after some time"). The job then stays on this client and year:
+  // it waits on the page (a link or the file may still come), opens the GSTR-9
+  // again and presses the button again, every few minutes, until the file
+  // comes or an hour has passed; only then does it move on.
+  function G8A_RETRY_MS() { return 4 * 60 * 1000; }
+  function G8A_MAX_MS() { return 60 * 60 * 1000; }
+  function G8A_IDLE_MS() { return 45000; }
   async function handleGstr9EightAPull(job, cur, progress) {
     if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = G9_PAGE(); return; }
     const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
@@ -5800,6 +5814,7 @@
         g8.pressedAt = Date.now();
         g8.pressed = btnText(btn);
         g8.page = location.pathname;
+        g8.before = g8aPortalTexts();
         await setJob(job);
         banner('Table 8A, FY ' + fyLabel + ': pressing "' + oneLine(btn.textContent || btn.value || '') + '"…' + progress);
         btn.click();
@@ -5814,7 +5829,7 @@
       const link = $$('a').find((a) => a.offsetParent !== null && /file\s*\d+|click here to download|download\s*(excel|file|zip)/i.test(oneLine(a.textContent))
         && !g8.links.includes(oneLine(a.textContent)));
       if (link && g8.links.length < 10) { g8.links.push(oneLine(link.textContent)); await setJob(job); try { link.click(); } catch (e) { /* ignore */ } }
-      const said = g8aPortalWords();
+      const said = g8aPortalWords(g8.before);
       if (said) g8.said = said;
       try {
         const o = await chrome.storage.local.get(G8A_RESULT_KEY());
@@ -5825,7 +5840,46 @@
       const json = g9Captured(g8.pressedAt).filter((it) => g8aHasDocs(it.body));
       const quiet = files.length && Date.now() - Date.parse(files[files.length - 1].at) > 8000 && (!g8.links.length || g8.links.length >= 10 || !link);
       if (quiet || (json.length && Date.now() - g8.pressedAt > 8000)) break;
-      if (!files.length && !json.length && /request|accepted|generat|no (record|data|document)|not available/i.test(g8.said || '') && Date.now() - g8.pressedAt > 15000) break;
+      if (!files.length && !json.length && /request|accepted|generat|no (record|data|document)|not available|progress/i.test(g8.said || '') && Date.now() - g8.pressedAt > 15000) break;
+      // Nothing at all since the press (no file, no link, no words): the portal is preparing it.
+      if (!files.length && !json.length && !g8.links.length && Date.now() - g8.pressedAt > G8A_IDLE_MS()) break;
+    }
+    // 0.18.1: no file yet, and the portal did not say there is none: wait, then ask again.
+    if (g8.pressedAt && !files.length && !g9Captured(g8.pressedAt).some((it) => g8aHasDocs(it.body)) && !/no (record|data|document)/i.test(String(g8.said || ''))) {
+      g8.firstAskedAt = g8.firstAskedAt || g8.pressedAt;
+      g8.asks = (g8.asks || 0) + 1;
+      await setJob(job);
+      if (Date.now() - g8.firstAskedAt < G8A_MAX_MS()) {
+        const next = Date.now() + G8A_RETRY_MS();
+        let beat = 0;
+        while (Date.now() < next && !files.length) {
+          const left = Math.max(0, Math.round((next - Date.now()) / 1000));
+          const waited = Math.round((Date.now() - g8.firstAskedAt) / 60000);
+          banner('Table 8A, FY ' + fyLabel + ': the portal is preparing the file' + (g8.said ? ' ("' + String(g8.said).slice(0, 90) + '")' : '')
+            + '. Asked ' + g8.asks + ' time' + (g8.asks === 1 ? '' : 's') + ', ' + waited + ' min so far; asking again in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0')
+            + '. This client stays open until the file comes (up to an hour).' + progress, '#f59e0b');
+          // A link or the file may come while waiting.
+          const link2 = $$('a').find((a) => a.offsetParent !== null && /file\s*\d+|click here to download|download\s*(excel|file|zip)/i.test(oneLine(a.textContent))
+            && !(g8.links || []).includes(oneLine(a.textContent)));
+          if (link2 && (g8.links || []).length < 10) { g8.links = [...(g8.links || []), oneLine(link2.textContent)]; try { link2.click(); } catch (e) { /* ignore */ } }
+          try {
+            const o = await chrome.storage.local.get(G8A_RESULT_KEY());
+            const r = o && o[G8A_RESULT_KEY()];
+            if (r && r.at >= g8.pressedAt && r.clientId === cur.clientId && r.period === job.period) keepFile(r.fileB64, r.fileName, 'download');
+          } catch (e) { /* the page's Blob is the other road */ }
+          if (++beat % 12 === 0) await setJob(job); // keeps the job alive for the watchdog (10 minutes idle)
+          await sleep(5000);
+        }
+        if (files.length) await sleep(8000); // the other parts of a file, if any
+        else {
+          window.removeEventListener('message', onBlob);
+          job.g8 = { period: job.period, since: Date.now(), firstAskedAt: g8.firstAskedAt, asks: g8.asks, said: g8.said || null };
+          await setJob(job);
+          banner('Table 8A, FY ' + fyLabel + ': opening the GSTR-9 again to download the prepared file…' + progress, '#f59e0b');
+          location.href = G9_PAGE();
+          return;
+        }
+      }
     }
     window.removeEventListener('message', onBlob);
     const json = g8.pressedAt ? g9Captured(g8.pressedAt).filter((it) => g8aHasDocs(it.body)).map((it) => ({ url: it.url.replace(/^https:\/\/[^/]+/, ''), body: it.body })) : [];
@@ -5834,6 +5888,7 @@
       + ' · 8A button: ' + (g8.pressed ? '"' + g8.pressed + '" pressed on ' + g8.page : 'not found on ' + location.pathname + ' (buttons: ' + visibleButtons().map(btnText).filter(Boolean).slice(0, 14).join(' | ') + ')')
       + (g8.links && g8.links.length ? ' · links pressed: ' + g8.links.join(', ') : '')
       + (g8.said ? ' · the portal said: "' + String(g8.said).slice(0, 200) + '"' : '')
+      + (g8.asks ? ' · asked ' + g8.asks + ' time(s) over ' + Math.round((Date.now() - g8.firstAskedAt) / 60000) + ' min' : '')
       + ' · got: ' + files.length + ' file(s), ' + json.length + ' JSON';
     delete job.g8;
     await setJob(job);
@@ -5842,7 +5897,7 @@
     if (!files.length && !json.length) {
       const words = String(g8.said || '');
       const status = /no (record|data|document)/i.test(words) ? 'NO DATA: ' + how
-        : /request|accepted|generat|try (again|after)/i.test(words) ? 'REQUESTED: ' + how
+        : g8.asks || /request|accepted|generat|try (again|after)/i.test(words) ? 'REQUESTED: ' + how
           : 'PULL FAILED: ' + how;
       banner('Table 8A, FY ' + fyLabel + ': no file came from the portal. ' + how + progress, /^NO DATA|^REQUESTED/.test(status) ? '#f59e0b' : '#dc2626');
       if (/^NO DATA/.test(status)) {

@@ -2,6 +2,14 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-25 — Table 8A: wait for the portal's file (v0.18.1)
+
+- Seen live on 25 Oct 2026 (TAMNNA INFRASTRUCTURE, FY 2025-26): the portal takes "Download Table 8A document details" as a generation request and prepares the file later, and 0.18.0 stopped there. Now the job stays on that client and year until the file comes: it waits on the page (a download link or the file may still come), and every 4 minutes opens the GSTR-9 again and presses the button again, for up to an hour. The banner says how long it has waited and when it asks next. Only then does it move on (to the next year or client), recording `REQUESTED: … asked N time(s) over M min` if the file never came.
+- A press that brings nothing at all for 45 seconds (no file, no link, no words) is treated the same way: the portal is preparing it.
+- The page's standing note ("please re-download the Table 8A document …") is no longer taken for the portal's answer: only words that appear after the press count.
+- The job keeps itself alive for the watchdog while it waits. Nothing else changes; every other job runs as in 0.17.0.
+- Test `test/19-gstr9-8a-pull.test.mjs` (request accepted, asked again, the file on the second ask, an hour with no file).
+
 ## 2026-10-24 — GSTR-9 Table 8A document details (v0.18.0)
 
 - **A new pull, `gstr9_8a_pull`**, for the 8A reports' Pull (GSTR-2A vs GSTR-8A, GSTR-2B vs GSTR-8A, GSTR-8A vs GSTR-2A vs GSTR-2B). For the year ending the job's March (`03/YYYY`) it opens the GSTR-9 on the Annual Return page the way the GSTR-9 pull does (FY, SEARCH, PREPARE-ONLINE, or VIEW for a filed year; the NIL question answered No and NEXT pressed; nothing saved, computed or filed on the portal), presses "Download Table 8A document details" on the GSTR-9 dashboard and saves what the portal hands back, as it came, as `GSTR9_8A` for `03/YYYY` (summary `gstk-8a-pull-v1`, status `Pulled`): the file (an Excel or a ZIP) from the page's own Blob or from the browser's download, and any JSON with documents the page loads. GST Keeper reads the file with its Upload 8A reader.

@@ -50,9 +50,12 @@ available, not reverse charge. Imports (Table 6E) and ISD (6G) are never in it.
    the page loads), as `GSTR9_8A`, summary `format 'gstk-8a-pull-v1'`, status
    `Pulled`. The app reads it on every build with the Upload reader
    (`src/lib/itcReco/eightAPull.ts`; a ZIP's parts put together, a document
-   in two parts once; a file of another GSTIN refused). When the portal
-   answers in words instead, the status says so: `REQUESTED: …` (prepared
-   later, Pull again), `NO DATA: …` (saved as an empty 8A), `PULL FAILED: …`
+   in two parts once; a file of another GSTIN refused). The portal
+   prepares the file in the background (seen live 25 Oct 2026): from 0.18.1
+   the job stays on that client and year, waits, and opens the GSTR-9 and
+   presses the button again every 4 minutes until the file comes, for up to
+   an hour. When the portal answers in words instead, the status says so:
+   `REQUESTED: …` (still not ready after an hour, Pull again), `NO DATA: …` (saved as an empty 8A), `PULL FAILED: …`
    (with what the page showed); a failed pull writes the status only, so an
    8A saved earlier still counts. A pull replaces an upload of the same year,
    and an upload replaces a pull.

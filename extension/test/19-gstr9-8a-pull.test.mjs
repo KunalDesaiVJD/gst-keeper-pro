@@ -81,13 +81,20 @@ function makeDocument(opts) {
   const el = (extra) => ({ style: {}, appendChild() {}, remove() {}, addEventListener() {}, dispatchEvent() {}, focus() {}, blur() {}, click() {},
     querySelector: () => null, querySelectorAll: () => [], getAttribute: () => null, closest: () => null, offsetParent: {}, value: '', disabled: false, ...extra,
     set textContent(v) { this._t = v; }, get textContent() { return this._t || ''; } });
-  const buttons = (opts.buttons || []).map((b) => { const e = el({ click: b.click || (() => {}) }); e.textContent = b.text; return e; });
-  const words = opts.words ? (() => { const e = el(); e.textContent = opts.words; return e; })() : null;
+  // opts.words: what the portal says once the 8A button is pressed; opts.standing: what the page says all along.
+  let said = null;
+  const say = (t) => { const e = el(); e.textContent = t; return e; };
+  const standing = opts.standing ? say(opts.standing) : null;
+  const buttons = (opts.buttons || []).map((b) => {
+    const e = el({ click: () => { if (opts.words && /8A/.test(b.text)) said = say(opts.words); if (b.click) b.click(); } });
+    e.textContent = b.text;
+    return e;
+  });
   return {
     getElementById: (id) => byId[id] || null,
     createElement: () => el(),
     querySelector: () => null,
-    querySelectorAll: (s) => (/button/.test(s) && !/modal|dialog|swal/.test(s) ? buttons : /alert/.test(s) && words ? [words] : []),
+    querySelectorAll: (s) => (/button/.test(s) && !/modal|dialog|swal/.test(s) ? buttons : /alert/.test(s) ? [standing, said].filter(Boolean) : []),
     documentElement: { appendChild: (e) => { if (e && e.id) byId[e.id] = e; } },
     body: { appendChild() {}, innerText: '' },
     addEventListener() {},
@@ -95,7 +102,7 @@ function makeDocument(opts) {
   };
 }
 // A clock that runs fast, so the dashboard's 15-second wait for a tile is a moment.
-const fastDate = () => { let t = Date.now(); return class extends Date { static now() { t += 2500; return t; } }; };
+const fastDate = (step = 2500) => { let t = Date.now(); return class extends Date { static now() { t += step; return t; } }; };
 let lastHref = null;
 async function runPage(href, opts = {}) {
   const document = makeDocument(opts);
@@ -166,27 +173,52 @@ ok(saved && /8A button: "DOWNLOAD TABLE 8A DOCUMENT DETAILS" pressed/.test(saved
 ok(!storage.gstk_active_job, 'one year: the job ends after it');
 ok(!upserts.some((a) => a[2] !== 'GSTR9_8A'), 'nothing else is written (no GSTR9_CALC, no GSTR-9 figures)', upserts.map((a) => a[2]));
 
-// 3. A PDF Blob (another download on the page) is not taken for the 8A.
+// 3. A PDF Blob (another download on the page) is not taken for the 8A: the job waits and asks again.
 reset();
 storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'], g8: opened() });
 await runPage(G9DASH, {
-  fetch: portal, Date: fastDate(), onSandbox: (s) => { page = s; },
+  fetch: portal, Date: fastDate(30000), onSandbox: (s) => { page = s; },
   buttons: [{ text: BUTTON, click: () => page.postMessage({ __gstkPdf: 'data:application/pdf;base64,JVBERi0xLjQK' }) }],
 });
-for (let i = 0; i < 400 && storage.gstk_active_job; i++) await new Promise((r) => setTimeout(r, 250));
-const pdfOnly = upserts.find((a) => a[2] === 'GSTR9_8A');
-ok(pdfOnly && /^PULL FAILED: /.test(pdfOnly[3].status) && !('summary' in pdfOnly[3]), 'a PDF is no 8A: PULL FAILED, status only (an earlier 8A still counts)', pdfOnly && pdfOnly[3].status);
+for (let i = 0; i < 400 && !lastHref; i++) await new Promise((r) => setTimeout(r, 250));
+ok(!upserts.some((a) => a[2] === 'GSTR9_8A') && lastHref === 'https://return.gst.gov.in/returns2/auth/annualreturn' && storage.gstk_active_job.g8.asks === 1 && !storage.gstk_active_job.g8.opened,
+  'a PDF is no 8A: nothing saved, the GSTR-9 is opened again to ask again', { upserts: upserts.map((a) => a[3].status), lastHref, g8: storage.gstk_active_job && storage.gstk_active_job.g8 });
 
-// 4. The portal answers in words ("request accepted"): REQUESTED, status only.
+// 4. The portal answers "request accepted": the job stays on this client and asks again.
 reset();
 storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'], g8: opened() });
 await runPage(G9DASH, {
-  fetch: portal, Date: fastDate(), words: 'Your request for download of Table 8A document details has been accepted. Please try after 20 minutes.',
+  fetch: portal, Date: fastDate(30000), words: 'Your request for download of Table 8A document details has been accepted. Please try after 20 minutes.',
+  standing: 'Table 8A has been updated to include invoices of the current financial year. Please re-download the Table 8A document to access the updated records.',
   buttons: [{ text: BUTTON }],
 });
+for (let i = 0; i < 400 && !lastHref; i++) await new Promise((r) => setTimeout(r, 250));
+const g8w = storage.gstk_active_job && storage.gstk_active_job.g8;
+ok(!upserts.some((a) => a[2] === 'GSTR9_8A') && lastHref === 'https://return.gst.gov.in/returns2/auth/annualreturn' && g8w && g8w.asks === 1 && /Your request/.test(g8w.said) && storage.gstk_active_job.period === '03/2026',
+  'request accepted: nothing saved yet, same client and year, the GSTR-9 opened again to ask again', { lastHref, g8w });
+
+// 4b. Asked again: the prepared file comes as a download while waiting, and is saved.
+upserts.length = 0;
+const first = g8w.firstAskedAt;
+storage.gstk_active_job = { ...storage.gstk_active_job, g8: { ...g8w, opened: true, openedAt: Date.now() } };
+await runPage(G9DASH, {
+  fetch: portal, Date: fastDate(30000), words: 'Your request for download of Table 8A document details has been accepted. Please try after 20 minutes.',
+  buttons: [{ text: BUTTON, click: () => setTimeout(() => { storage.gstk_g8a_result = { clientId: 'c1', period: '03/2026', fileB64: XLSX_URL, fileName: '8A.xlsx', at: Date.now() + 10 * 60000 }; }, 1500) }],
+});
+for (let i = 0; i < 400 && storage.gstk_active_job; i++) await new Promise((r) => setTimeout(r, 250));
+const got = upserts.find((a) => a[2] === 'GSTR9_8A');
+ok(got && got[3].status === 'Pulled' && got[3].summary.files.length === 1 && got[3].summary.files[0].via === 'download' && /asked 1 time\(s\)/.test(got[3].summary.read) && first,
+  'the second ask: the file comes, saved as Pulled, the asks recorded', got && got[3].summary.read);
+ok(!storage.gstk_active_job, 'then the job ends (one year)');
+
+// 4c. An hour of asking with no file: REQUESTED, status only, and the job moves on.
+reset();
+storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'],
+  g8: { ...opened(), firstAskedAt: Date.now() - 61 * 60000, asks: 15, said: 'Your request has been accepted' } });
+await runPage(G9DASH, { fetch: portal, Date: fastDate(30000), words: 'Your request has been accepted', buttons: [{ text: BUTTON }] });
 for (let i = 0; i < 400 && storage.gstk_active_job; i++) await new Promise((r) => setTimeout(r, 250));
 const req = upserts.find((a) => a[2] === 'GSTR9_8A');
-ok(req && /^REQUESTED: .*the portal said: "Your request/.test(req[3].status) && !('summary' in req[3]), 'a request accepted for later: REQUESTED with the portal\'s words, status only', req && req[3].status);
+ok(req && /^REQUESTED: .*asked 16 time\(s\)/.test(req[3].status) && !('summary' in req[3]) && !storage.gstk_active_job, 'after an hour: REQUESTED with the asks, status only, the job moves on', req && req[3].status);
 
 // 5. "No records": NO DATA, saved as an empty 8A.
 reset();
