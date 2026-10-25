@@ -1,4 +1,4 @@
--- Every event of a case on its timeline (20261025130000): an appeal's APL-01 is
+-- Every event of a case on its timeline (20261025140000): an appeal's APL-01 is
 -- never taken for the order it names, items carry what the portal record says,
 -- and the dates the law attaches to the papers are listed.
 BEGIN;

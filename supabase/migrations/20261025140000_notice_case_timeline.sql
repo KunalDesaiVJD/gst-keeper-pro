@@ -188,7 +188,7 @@ WITH n AS (
          coalesce((SELECT public.notice_doc_date_ok(d.doc_date) FROM public.ai_documents d
                     WHERE d.folder_item_id = fi.id AND d.status = 'done' ORDER BY d.updated_at DESC LIMIT 1),
                   public.notice_folder_item_date(fi.raw_json)), fi.first_seen_at,
-         -- 20261025130000: an appeal's own application is its APL-01.
+         -- 20261025140000: an appeal's own application is its APL-01.
          CASE WHEN upper(coalesce(fi.folder_section, '')) = 'APLCN' AND public.notice_is_appeal_form(fi.raw_json)
               THEN 'APL-01 · Appeal filed' || coalesce(' against ' || nullif(btrim(coalesce(fi.raw_json #>> '{orddtl,ordnum}', fi.raw_json #>> '{orddtl,dmdid}')), ''), '')
               ELSE public.notice_folder_label(fi.folder_section, fi.raw_json) END,
@@ -197,7 +197,7 @@ WITH n AS (
    WHERE fi.deleted_at IS NULL
      AND EXISTS (SELECT 1 FROM n WHERE n.client_id = fi.client_id AND n.case_key = public.notice_case_root(fi.client_id, fi.case_id))
      -- The folder's copy of a notice already listed is that notice, not another item.
-     -- 20261025130000: only a copy in the notice's own portal case (or a case-less
+     -- 20261025140000: only a copy in the notice's own portal case (or a case-less
      -- notice's), and never an application or a reply, whose reference is the
      -- order or notice it answers: once an appeal was linked under its order, its
      -- APL-01 (reference: the order's number) was taken for the order and hidden.
@@ -243,12 +243,12 @@ AS $$
         'kind', c.kind, 'id', c.item_id, 'from', c.from_party, 'date', c.item_date, 'arrived_at', c.first_seen_at,
         'label', c.label, 'reference', c.reference, 'section', c.folder_section, 'is_new', c.is_new,
         'own_key', c.own_key,
-        -- 20261025130000: what the portal's own record of the item says (an appeal's order, amounts, pre-deposit,
+        -- 20261025140000: what the portal's own record of the item says (an appeal's order, amounts, pre-deposit,
         -- documents; a hearing's date and place; a due date).
         'facts', public.notice_case_item_facts(c.client_id, c.kind, c.item_id, c.own_key, c.reference),
         'stage', f.stage, 'stage_label', f.stage_label, 'is_open', f.is_open, 'pdf_url', g.pdf_url,
         -- A notice carries the files of its copy in the case folder (same reference).
-        -- 20261025130000: its own case's copy only, never the appeal or reply that quotes it.
+        -- 20261025140000: its own case's copy only, never the appeal or reply that quotes it.
         'attachments', (SELECT coalesce(jsonb_agg(a), '[]'::jsonb)
                           FROM public.gst_case_folder_items fi
                           CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(fi.attachments) = 'array' THEN fi.attachments ELSE '[]'::jsonb END) a

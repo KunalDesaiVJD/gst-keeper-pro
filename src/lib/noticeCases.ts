@@ -168,7 +168,7 @@ export interface CaseItem {
   attachments: { label?: string; url?: string }[] | null;
   ai: { title: string | null; summary: string | null; doc_kind: string | null; outcome: string | null; doc_date: string | null; status: string; reason_class: string | null; usage?: unknown; model?: string | null } | null;
   notice_read: { status: string; outcome: string | null; summary: string | null; usage?: unknown; model?: string | null } | null;
-  /** What the portal's own record of the item says (20261025130000). */
+  /** What the portal's own record of the item says (20261025140000). */
   facts?: CaseItemFacts | null;
 }
 
@@ -183,7 +183,7 @@ export interface CaseItemFacts {
   portal_docs?: { id: string; name?: string; file?: string }[];
 }
 
-/** A date the law attaches to the case's papers (notice_case_key_dates, 20261025130000). */
+/** A date the law attaches to the case's papers (notice_case_key_dates, 20261025140000). */
 export type KeyDateKind = 'hearing' | 'adjournment' | 'reply_due' | 'pay_to_close' | 'appeal_window' | 'appeal_filed' | 'predeposit' | 'payment_due';
 export interface KeyDate {
   date: string; kind: KeyDateKind; title: string; detail?: string | null;
@@ -194,7 +194,7 @@ export interface KeyDate {
 export async function loadKeyDates(clientId: string, caseKey: string): Promise<KeyDate[]> {
   const { data, error } = await supabase.rpc('notice_case_key_dates', { p_client_id: clientId, p_case_key: caseKey });
   if (error) {
-    // Before 20261025130000 the timeline has no key dates; it still shows the papers.
+    // Before 20261025140000 the timeline has no key dates; it still shows the papers.
     if (/notice_case_key_dates/.test(error.message)) return [];
     throw error;
   }
