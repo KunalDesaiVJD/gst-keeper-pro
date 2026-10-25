@@ -353,10 +353,11 @@ await section('catalog', async (g) => {
   }
   check(g, 'every period report marked as its builder reads', wrong.length === 0, wrong.join('; '));
   const expected = ['sus-one', 'cred-one', 'gstr3b-annual-summary', 'credit-reversal-reclaim-statement', 'rcm-liability-itc-ledger',
+    'gstr2a-vs-gstr8a-reco', 'gstr2b-vs-gstr8a-reco', 'gstr8a-vs-gstr2a-vs-gstr2b-reco',
     'credit-ledger-transaction-detail', 'liability-ledger', 'cash-ledger', 'credit-and-liability-statement'];
-  check(g, `the nine whole-year reports: ${expected.join(', ')}`, same([...fy].sort(), [...expected].sort()), JSON.stringify(fy));
+  check(g, `the twelve whole-year reports: ${expected.join(', ')}`, same([...fy].sort(), [...expected].sort()), JSON.stringify(fy));
   const pulls = M.REPORTS_CATALOG.filter((r) => r.periodScope === 'fy' && r.pull);
-  check(g, 'their Pull still asks for the months picked (needsMonth unchanged)', pulls.length === 7 && pulls.every((r) => r.pull.needsMonth === true), JSON.stringify(pulls.map((r) => [r.key, r.pull.needsMonth])));
+  check(g, 'their Pull still asks for the months picked (needsMonth unchanged)', pulls.length === 10 && pulls.every((r) => r.pull.needsMonth === true), JSON.stringify(pulls.map((r) => [r.key, r.pull.needsMonth])));
 });
 
 // ── Report ──────────────────────────────────────────────────────────────────

@@ -214,6 +214,8 @@ kinds from the values, TOTAL / period / section rows) plus its optional hints (`
 `headerLabels`, `rowTones`, `extraSheets`). Checks: `scripts/verify-report-exports.mjs`, `verify-report-pdf.mjs`,
 `verify-doc-table-model.mjs` (the table kit's filters, `views/tableKit/tableModel.ts`, shared by every view through `useTableKit`).
 
+**Every report's Pull fetches all it reads** (`src/lib/reportPullPlans.ts`, 25 Oct 2026): both returns of a comparison, every month of the FY for a year report or ledger (a failed month again), every GSTIN of the PAN for a PAN report, once a year for a year statement, and for an all-clients report the clients missing the month's GSTR-3B in one extension all-clients run (`pull.allClients`); only what is missing, else the months picked again; only modes extension 0.17.0+ already runs. Run `node scripts/verify-report-pull-plans.mjs` after changing a report's Pull.
+
 ## GSTR-1 e-invoices (IRN)
 
 **Read `docs/GSTR1_EINVOICE_POSITIONS.md` before changing any e-invoice code** (`src/lib/einvoice/einvoice.ts`, `excel.ts`, the GSTR-1 page's e-invoice parts, the extension's GSTR-1 upload or e-invoice pull): the elected mechanism is "keep, don't re-send" (e-invoices already on the portal with the same figures are left out of the upload; the app never writes irn / irngendate / srctyp), matching is by exact document identity only, and e-invoice clients are found by evidence, PAN-wide.
