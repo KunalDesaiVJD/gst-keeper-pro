@@ -2683,6 +2683,8 @@ export type Database = {
       builder_bu_events: {
         Row: {
           bu_date: string
+          bu_permission_date: string | null
+          first_occupation_date: string | null
           bu_ref_no: string | null
           created_at: string
           created_by: string | null
@@ -2702,6 +2704,8 @@ export type Database = {
         }
         Insert: {
           bu_date: string
+          bu_permission_date?: string | null
+          first_occupation_date?: string | null
           bu_ref_no?: string | null
           created_at?: string
           created_by?: string | null
@@ -2721,6 +2725,8 @@ export type Database = {
         }
         Update: {
           bu_date?: string
+          bu_permission_date?: string | null
+          first_occupation_date?: string | null
           bu_ref_no?: string | null
           created_at?: string
           created_by?: string | null

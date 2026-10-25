@@ -58,6 +58,9 @@ interface UnitRow {
 interface ChargeRow { unit_id: string; charge_head: string; amount: number; include_override: boolean | null }
 interface EventRow {
   id: string; project_id: string; bu_date: string; bu_ref_no: string | null;
+  /** The date printed on the permission, when first occupation came earlier (20261025100000). */
+  bu_permission_date?: string | null;
+  first_occupation_date?: string | null;
   scope: 'FULL' | 'UNITS'; discovered_on: string | null; posting_basis: PostingBasis;
   posting_period: string; status: 'DRAFT' | 'PREPARED' | 'POSTED';
   posted_at: string | null; notes: string | null;
@@ -90,6 +93,8 @@ const currentPeriod = () => {
 
 const emptyEvent = {
   bu_date: today(),
+  /** Optional: first occupation of the project, when it came before the permission. */
+  first_occupation_date: '',
   bu_ref_no: '',
   scope: 'FULL' as 'FULL' | 'UNITS',
   discovered_on: today(),
@@ -97,6 +102,15 @@ const emptyEvent = {
   posting_period: currentPeriod(),
   notes: '',
 };
+
+/**
+ * The completion date the scheme turns on: the earlier of the completion
+ * certificate (BU) and the project's first occupation. Schedule II para 5(b)
+ * and Notification 06/2019-CT(R) both say "whichever is earlier", so an
+ * occupation before the permission moves every unit's cut-off back to it.
+ */
+const completionDate = (buDate: string, firstOccupation?: string | null): string =>
+  (firstOccupation && firstOccupation < buDate ? firstOccupation : buDate);
 
 const BuilderBuEventsPage: React.FC = () => {
   const projectId = useBuilderProjectId();
@@ -248,8 +262,9 @@ const BuilderBuEventsPage: React.FC = () => {
     setIsPreparing(true);
     try {
       setPreview(await prepareBuEvent({
-        buDate: form.bu_date,
-        postingPeriod: form.posting_basis === 'BU_MONTH' ? periodOfDate(form.bu_date) : form.posting_period,
+        buDate: completionDate(form.bu_date, form.first_occupation_date),
+        postingPeriod: form.posting_basis === 'BU_MONTH'
+          ? periodOfDate(completionDate(form.bu_date, form.first_occupation_date)) : form.posting_period,
         postingBasis: form.posting_basis,
         units: unitsInScope,
         classification,
@@ -259,15 +274,17 @@ const BuilderBuEventsPage: React.FC = () => {
     } finally {
       setIsPreparing(false);
     }
-  }, [unitsInScope, form.bu_date, form.posting_basis, form.posting_period, classification]);
+  }, [unitsInScope, form.bu_date, form.first_occupation_date, form.posting_basis, form.posting_period, classification]);
 
   useEffect(() => {
     if (!dialog) return;
     void runPreview();
   }, [dialog, runPreview]);
 
+  const formCompletion = completionDate(form.bu_date, form.first_occupation_date);
+  const occupationFirst = formCompletion !== form.bu_date;
   const effectivePeriod = form.posting_basis === 'BU_MONTH'
-    ? periodOfDate(form.bu_date) : form.posting_period;
+    ? periodOfDate(formCompletion) : form.posting_period;
 
   const handleCreate = async () => {
     if (!projectId || !preview) return;
@@ -276,7 +293,14 @@ const BuilderBuEventsPage: React.FC = () => {
     try {
       const { data, error } = await supabase.from('builder_bu_events').insert({
         project_id: projectId,
-        bu_date: form.bu_date,
+        // bu_date stays the date every cut-off, FSI and ITC working reads; when
+        // occupation came first it is that date, and the permission's own date
+        // is kept beside it.
+        bu_date: formCompletion,
+        ...(form.first_occupation_date ? {
+          first_occupation_date: form.first_occupation_date,
+          bu_permission_date: form.bu_date,
+        } : {}),
         bu_ref_no: form.bu_ref_no.trim() || null,
         scope: form.scope,
         discovered_on: form.discovered_on || null,
@@ -533,7 +557,7 @@ const BuilderBuEventsPage: React.FC = () => {
       />
 
       <Note>
-        A unit's cut-off is the <strong>earlier</strong> of the BU date and its dastavej date. Units
+        A unit's cut-off is the <strong>earlier</strong> of the completion date (BU, or first occupation if that came first) and its dastavej date. Units
         booked before it are taxed on their entire balance; units unbooked at cut-off fall under
         Schedule III and are omitted from GSTR-1 and 3B altogether, feeding the TDR/FSI working instead.
         {availableUnits.length < units.length && (
@@ -596,7 +620,12 @@ const BuilderBuEventsPage: React.FC = () => {
               key={ev.id}
               title={(
                 <span className="flex flex-wrap items-center gap-1.5">
-                  {rows.length === 1 && rows[0].cut_off_source === 'DASTAVEJ' ? 'Dastavej' : 'BU'} dated {ev.bu_date}
+                  {rows.length === 1 && rows[0].cut_off_source === 'DASTAVEJ'
+                    ? 'Dastavej'
+                    : ev.bu_permission_date && ev.bu_permission_date !== ev.bu_date ? 'First occupation' : 'BU'} dated {ev.bu_date}
+                  {ev.bu_permission_date && ev.bu_permission_date !== ev.bu_date && (
+                    <span className="font-normal text-muted-foreground">· BU permission {ev.bu_permission_date}</span>
+                  )}
                   {ev.bu_ref_no && <span className="font-normal text-muted-foreground">· {ev.bu_ref_no}</span>}
                   <Badge variant={ev.status === 'POSTED' ? 'success' : 'warning'} className="text-[10px] font-medium">
                     {ev.status}
@@ -916,6 +945,13 @@ const BuilderBuEventsPage: React.FC = () => {
               />
             </div>
             <div>
+              <Label htmlFor="e-occ">First occupation date (only if before the BU)</Label>
+              <Input
+                id="e-occ" type="date" value={form.first_occupation_date}
+                onChange={(e) => setForm({ ...form, first_occupation_date: e.target.value })}
+              />
+            </div>
+            <div>
               <Label htmlFor="e-ref">BU permission no.</Label>
               <Input
                 id="e-ref" value={form.bu_ref_no}
@@ -974,9 +1010,17 @@ const BuilderBuEventsPage: React.FC = () => {
             </div>
           </div>
 
+          {occupationFirst && (
+            <Note tone="position">
+              The project was occupied on {formCompletion}, before the BU permission of {form.bu_date}. Completion
+              is the <strong>earlier</strong> of the two (Schedule II para 5(b); Notification 06/2019-CT(R)), so every
+              unit's cut-off, the TDR/FSI time of supply and the ITC reversal year run from {formCompletion}.
+            </Note>
+          )}
+
           {form.posting_basis === 'BU_MONTH' && (
             <Note tone="warn">
-              Posting into {prettyPeriodLabel(periodOfDate(form.bu_date))}. If that return is already
+              Posting into {prettyPeriodLabel(periodOfDate(formCompletion))}. If that return is already
               filed it cannot be revised — the liability would have to be declared in a later return
               instead, which is what the interest basis does.
             </Note>

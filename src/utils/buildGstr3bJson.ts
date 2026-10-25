@@ -56,6 +56,10 @@ export interface Gstr3bInput {
   builderItcType?: string | null;
   commercialArea?: number | null;
   residentialArea?: number | null;
+  // Reverse charge inside `rcm` whose credit is blocked, so it is liability in
+  // 3.1(d) but never ITC in 4A(3): the builder TDR/FSI reverse charge, whose
+  // credit the 1%/5% scheme blocks (docs/BUILDER_GST_POSITIONS.md §12).
+  rcmItcBlocked?: RcmTotals | null;
 }
 
 export interface TaxHead { igst: number; cgst: number; sgst: number }
@@ -522,7 +526,13 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   // Manual 3.1(d) adjustments are output-liability-only (like every other
   // outward-table adjustment here) — they don't create matching 4A(3) ITC;
   // log a separate 4A(5) adjustment for that if it's actually eligible.
-  const isrc: ItcRow = { srNo: '(3)', igst: r2(input.rcm.igst), cgst: r2(input.rcm.cgst), sgst: r2(input.rcm.sgst) };
+  const blocked = input.rcmItcBlocked;
+  const isrc: ItcRow = {
+    srNo: '(3)',
+    igst: r2(input.rcm.igst - (blocked?.igst || 0)),
+    cgst: r2(input.rcm.cgst - (blocked?.cgst || 0)),
+    sgst: r2(input.rcm.sgst - (blocked?.sgst || 0)),
+  };
   const isd = row(A, '(4)');    // 4A(4) ISD
   // 4A(5) "all other ITC" = 5.1 + 5.2 − 5.3 + 5.4 + 5.5, plus any manual
   // 4A(5) adjustment.

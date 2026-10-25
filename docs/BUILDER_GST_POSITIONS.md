@@ -113,6 +113,15 @@ The **BU permission is the completion certificate**. A unit's cut-off is the
 **registered sale deed**, not the banakhat. *(Confirmed explicitly; the banakhat
 reading would fire each unit's full liability at booking instead.)*
 
+**First occupation (25/10/2026).** Schedule II para 5(b) and Notification
+06/2019-CT(R) read "completion certificate ... or first occupation, whichever is
+earlier". The BU event takes an optional **first occupation date**; when it is
+before the permission, it is the completion date: `builder_bu_events.bu_date`
+carries it (so every cut-off, the TDR/FSI time of supply and the ITC reversal
+year run from it) and the permission's own date is kept in
+`bu_permission_date` (migration `20261025100000`). A unit's cut-off is then the
+earlier of that completion date and its dastavej date.
+
 **The firm's practice.** For every unit booked before its cut-off, the entire
 balance consideration becomes taxable in the BU month, received or not.
 Anchored in **s.31(5)(c) r/w s.13(2)(a)**: where payment is linked to the
@@ -738,6 +747,15 @@ legs, so a phased BU crystallises the liability piece by piece.
 
 The credit is blocked under the 1%/5% scheme, so this is paid in cash through
 **3B Table 3.1(d)** and never reaches GSTR-1.
+
+**Never ITC in 4A(3) (25/10/2026).** The GSTR-3B draft folded the FSI legs into
+the same reverse-charge total that fills 4A(3), so the blocked tax came back as
+credit for every Claim-ITC and Partial-ITC builder (a No-ITC builder showed it
+and reversed it), while the GST Receivable reco's own 4A(3) (from `rcm_data`
+only) left it out. `fetchGstr3b` now passes the FSI legs as `rcmItcBlocked`:
+liability in 3.1(d), nothing in 4A(3). Where a commercial leg's credit is
+genuinely eligible (a REP other than an RREP, commercial at 12% with ITC), it
+is taken through a 4A(5) adjustment on purpose, never by default.
 
 **The consent gate.** A client instructing the firm not to discharge this
 liability must have that instruction on record before the period files: request

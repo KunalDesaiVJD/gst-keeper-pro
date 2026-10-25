@@ -138,11 +138,22 @@ export async function fetchGstr3b(
   // Fold the builder FSI legs in. Always intra-state — the place of supply for
   // development rights follows the land under s.12(3)(a) IGST Act — so they add
   // to CGST and SGST and never to IGST.
+  // They are liability only: the credit is blocked under the 1%/5% scheme, so
+  // they never reach 4A(3). Feeding them through `rcm` alone used to claim the
+  // FSI tax back as ITC for every Claim-ITC / Partial-ITC builder (and show a
+  // credit a No-ITC builder then had to reverse), while the GST Receivable
+  // reco's own 4A(3) (rcm_data only) left it out. Where a commercial leg's
+  // credit is genuinely eligible (a REP other than an RREP), it is taken
+  // through a 4A(5) adjustment on purpose, not by default.
   type FsiLeg = { taxable_value: number | null; cgst: number | null; sgst: number | null };
+  const fsiBlocked: RcmTotals = { taxable: 0, igst: 0, cgst: 0, sgst: 0 };
   (((fsiRes.data as unknown) as FsiLeg[]) || []).forEach((r) => {
     rcm.taxable += Number(r.taxable_value) || 0;
     rcm.cgst += Number(r.cgst) || 0;
     rcm.sgst += Number(r.sgst) || 0;
+    fsiBlocked.taxable += Number(r.taxable_value) || 0;
+    fsiBlocked.cgst += Number(r.cgst) || 0;
+    fsiBlocked.sgst += Number(r.sgst) || 0;
   });
 
   const adjustments: Gstr3bAdjustment[] = ((adjRes.data as any[]) || []).map((a) => ({
@@ -162,6 +173,7 @@ export async function fetchGstr3b(
     builderItcType: clientRow?.builder_itc_type ?? null,
     commercialArea: clientRow?.commercial_area ?? null,
     residentialArea: clientRow?.residential_area ?? null,
+    rcmItcBlocked: fsiBlocked,
   });
   const flags = [...built.flags];
   if (held === null) flags.push('Could not check Import 2B for held amendments: open Import 2B to see whether any are held.');
