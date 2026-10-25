@@ -235,7 +235,7 @@ const NoticeCasePage: React.FC = () => {
           : <CaseTimeline items={shownItems} keyDates={shownDates} partOf={part ? undefined : partOf} order={order} focusId={focusId} />}
       </SectionCard>
 
-      <CaseChainPanel clientId={clientId} caseKey={r.case_key as string} part={part} onPart={setPart} />
+      <CaseChainPanel clientId={clientId} caseKey={r.case_key as string} part={part} onPart={setPart} track={track} />
 
     </div>
   );

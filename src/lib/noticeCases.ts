@@ -383,7 +383,9 @@ export interface LinkCandidate {
   child_key: string; parent_key: string;
   kind: LinkKind; score: number; reasons: string[];
   other: Pick<ChainMember, 'case_key' | 'case_id' | 'title' | 'form_code' | 'forms' | 'track' | 'marker' | 'is_open' | 'lead_notice_id'
-    | 'first_date' | 'last_date' | 'financial_year' | 'amount' | 'order' | 'refund'>;
+    | 'first_date' | 'last_date' | 'financial_year' | 'amount' | 'order' | 'refund'>
+    /** A refund application's type and period (YYYY-MM), 20261025150000. */
+    & { refund_type?: string | null; period_from?: string | null; period_to?: string | null };
 }
 
 /** The client's other cases that may belong with this chain, best first (min: lowest score; a low one lists them all). */

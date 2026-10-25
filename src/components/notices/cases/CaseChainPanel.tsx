@@ -6,6 +6,10 @@
 // "show this case only", unlink and "let the system decide" for staff who can
 // edit notices; then the cases that may belong here, scored, and a picker to
 // link any other case of the client. Migration 20261024100000.
+// A refund case (the firm, 25 October 2026: "how case to be linked here?")
+// says in words what a refund is linked to, an appeal against its order or the
+// same refund filed again (same type and period, 20261025150000), shows each
+// refund's year and period, and offers nothing else.
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -25,6 +29,9 @@ import {
 } from '@/lib/noticeCases';
 import { fmtDate, fmtFy, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
+import { refundIndexKey, useRefundIndex, type RefundRow } from '@/components/notices/reports/ledgerData';
+import { RefundWhenChip } from '@/components/notices/reports/RefundBits';
+import { periodText, typeShort } from '@/components/notices/reports/refundModel';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -57,7 +64,11 @@ export const CaseChainPanel: React.FC<{
   /** The case shown alone on the page (null: the whole chain). */
   part: string | null;
   onPart: (key: string | null) => void;
-}> = ({ clientId, caseKey, part, onPart }) => {
+  /** The case's kind: a refund case explains its links in refund terms. */
+  track?: string | null;
+}> = ({ clientId, caseKey, part, onPart, track }) => {
+  const isRefund = track === 'refund';
+  const refunds = useRefundIndex(clientId, isRefund);
   const { user, canEditNoticeStatus } = useAuth();
   const canEdit = canEditNoticeStatus();
   const qc = useQueryClient();
@@ -111,7 +122,8 @@ export const CaseChainPanel: React.FC<{
 
   const description = linked
     ? `${plural(members.length, 'case')} in one chain`
-    : 'This case is not linked to any other';
+    : isRefund ? 'No appeal and no re-filed application is linked to this refund' : 'This case is not linked to any other';
+  const suggestions = sug.data ?? [];
 
   return (
     <SectionCard
@@ -123,6 +135,13 @@ export const CaseChainPanel: React.FC<{
           <Link2 className="h-3.5 w-3.5" aria-hidden /> Link a case
         </Button>
       )}>
+      {isRefund && (
+        <p className="text-xs text-muted-foreground">
+          A refund is linked to two things only: an <span className="font-medium text-foreground">appeal</span> (APL-01) against its order
+          (RFD-06), and the <span className="font-medium text-foreground">same refund filed again</span> after a deficiency memo, a rejection
+          or a withdrawal (the same type of refund for the same period). Refunds of other quarters or types are separate refunds; they are on the Refunds page.
+        </p>
+      )}
       {chain.error ? <Note tone="warn">Couldn't load the linked cases: {errText(chain.error)}</Note>
         : chain.isLoading ? <Skeleton className="h-16 w-full" />
         : (
@@ -145,6 +164,7 @@ export const CaseChainPanel: React.FC<{
                             {m.kind && <Badge variant="info" className="text-[10px]">{linkKindDef(m.kind).label}</Badge>}
                             <Badge variant={m.is_open ? 'warning' : 'secondary'} className="text-[10px]">{m.is_open ? 'Open' : 'Closed'}</Badge>
                             {out && <Badge variant={out === 'sanctioned' ? 'success' : 'destructive'} className="text-[10px]">Refund {out}</Badge>}
+                            {m.track === 'refund' && <RefundWhenChip r={refunds.get(refundIndexKey(clientId, m.case_id))} />}
                           </div>
                           {parent && <div className="text-xs font-medium text-foreground/85">{describeLink(m, parent, fmtDate)}</div>}
                           <div className="text-[11px] text-muted-foreground">
@@ -209,11 +229,19 @@ export const CaseChainPanel: React.FC<{
               </div>
             ))}
 
-            {(sug.data ?? []).length > 0 && (
+            {suggestions.length > 0 && (
               <div className="rounded-lg border border-info/40 bg-info/5 px-3 py-2">
-                <p className="flex items-center gap-1.5 text-sm font-medium"><Sparkles className="h-4 w-4 text-info" aria-hidden /> May belong with this case</p>
+                <p className="flex items-center gap-1.5 text-sm font-medium">
+                  <Sparkles className="h-4 w-4 text-info" aria-hidden />
+                  {!isRefund ? 'May belong with this case'
+                    : suggestions.every((c) => c.kind === 'reapplication') ? 'May be this refund filed again'
+                    : suggestions.every((c) => c.kind === 'appeal') ? 'May be an appeal against this refund' : 'May belong with this refund'}
+                </p>
                 <ul className="mt-1 divide-y">
-                  {(sug.data ?? []).slice(0, 4).map((c) => <Suggestion key={c.other_key} c={c} canEdit={canEdit} busy={busy} onLink={link} />)}
+                  {suggestions.slice(0, 4).map((c) => (
+                    <Suggestion key={c.other_key} c={c} canEdit={canEdit} busy={busy} onLink={link}
+                      refund={refunds.get(refundIndexKey(clientId, c.other.case_id))} />
+                  ))}
                 </ul>
               </div>
             )}
@@ -234,7 +262,9 @@ export const CaseChainPanel: React.FC<{
                       <SelectContent>
                         {(all.data ?? []).map((c) => (
                           <SelectItem key={c.other_key} value={c.other_key} className="text-xs">
-                            {caseLabel(c.other)} · {c.other.case_id ?? 'no portal case'}{c.other.first_date ? ` · ${fmtDate(c.other.first_date)}` : ''}
+                            {caseLabel(c.other)} · {c.other.case_id ?? 'no portal case'}
+                            {c.other.refund_type ? ` · ${typeShort(c.other.refund_type)}` : ''}
+                            {c.other.period_from ? ` · ${periodText(c.other.period_from, c.other.period_to ?? null)}` : c.other.first_date ? ` · ${fmtDate(c.other.first_date)}` : ''}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -263,7 +293,9 @@ export const CaseChainPanel: React.FC<{
   );
 };
 
-const Suggestion: React.FC<{ c: LinkCandidate; canEdit: boolean; busy: boolean; onLink: (child: string, parent: string, kind: LinkKind) => void }> = ({ c, canEdit, busy, onLink }) => {
+const Suggestion: React.FC<{
+  c: LinkCandidate; canEdit: boolean; busy: boolean; onLink: (child: string, parent: string, kind: LinkKind) => void; refund?: RefundRow;
+}> = ({ c, canEdit, busy, onLink, refund }) => {
   const o = c.other;
   const out = o.track === 'refund' ? refundOutcome(o.refund) : null;
   const def = linkKindDef(c.kind);
@@ -278,13 +310,18 @@ const Suggestion: React.FC<{ c: LinkCandidate; canEdit: boolean; busy: boolean; 
           {o.case_id && <span className="font-mono text-[11px] text-muted-foreground">{o.case_id}</span>}
           <Badge variant="secondary" className="text-[10px]" title="How sure: 100 is certain">{c.score}</Badge>
           {out && <Badge variant={out === 'sanctioned' ? 'success' : 'destructive'} className="text-[10px]">Refund {out}</Badge>}
+          <RefundWhenChip r={refund} />
+          {o.refund_type && <span className="text-[11px] text-muted-foreground">{typeShort(o.refund_type)}</span>}
         </div>
         <div className="text-[11px] text-foreground/80">
           {otherIsChild ? `It ${def.child} this case` : `This case ${def.child} it`}
           {o.order ? ` (${o.order.form && o.order.form !== 'Order' ? o.order.form : 'order'}${o.order.ref ? ` ${o.order.ref}` : ''}${o.order.date ? ` of ${fmtDate(o.order.date)}` : ''})` : ''}
           {o.amount ? ` · ${fmtInrShort(o.amount)}` : ''}
         </div>
-        <div className="text-[11px] text-muted-foreground">{c.reasons.join(' · ')}</div>
+        <div className="text-[11px] text-muted-foreground">
+          {/* A re-filed refund is matched on its type and period; the days from the earlier one's last paper say nothing. */}
+          {(c.kind === 'reapplication' ? c.reasons.filter((r) => !r.startsWith('filed ')) : c.reasons).join(' · ')}
+        </div>
       </div>
       {canEdit && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => onLink(c.child_key, c.parent_key, c.kind)}>Link</Button>}
     </li>
