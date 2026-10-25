@@ -89,7 +89,7 @@ export const CaseChainPanel: React.FC<{
 
   const refresh = () => {
     for (const k of ['notice-case', 'notice-case-chain', 'notice-case-candidates', 'notice-case-items', 'notice-case-overview',
-      'notice-cases', 'notice-case-counts', 'notice-chain-links', 'notice-link-suggestions', 'notices-command-centre']) {
+      'notice-cases', 'notice-case-counts', 'notice-chain-links', 'notice-link-suggestions', 'notices-command-centre', 'notice-case-review']) {
       qc.invalidateQueries({ queryKey: [k] });
     }
   };

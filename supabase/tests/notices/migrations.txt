@@ -80,3 +80,4 @@
 20261025140000_notice_case_timeline.sql
 20261025170000_notice_predeposit_paid.sql
 20261025190000_notice_predeposit_audit.sql
+20261025200000_notice_views_speed.sql

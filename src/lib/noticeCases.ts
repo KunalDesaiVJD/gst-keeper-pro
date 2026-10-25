@@ -480,7 +480,9 @@ export async function loadReviewQueue(clientId: string | null): Promise<ReviewIt
 }
 
 export function useReviewQueue(clientId: string | null, enabled = true) {
-  return useQuery({ queryKey: ['notice-case-review', clientId], queryFn: () => loadReviewQueue(clientId), enabled, staleTime: 60_000 });
+  return useQuery({ queryKey: ['notice-case-review', clientId], queryFn: () => loadReviewQueue(clientId), enabled,
+    // It walks every client's cases (~700 ms); a decision invalidates it, so five minutes is fresh enough for the banner.
+    staleTime: 5 * 60_000 });
 }
 
 export type ReviewDecision = 'link' | 'not_linked' | 'dismissed';
