@@ -1,24 +1,21 @@
 // One notice, read by the Claude API: the PDF (base64 document block) and the
 // fixed instructions, answered as JSON in the reader's schema (structured
-// outputs). Streamed, with adaptive thinking at the effort set in the app, and
+// outputs). Streamed, with adaptive thinking, always Sonnet at medium effort
+// (./aiModel.ts: whatever model or effort a request names), and
 // the API's own fallback on a policy decline (fallbacks "default"). Nothing
 // about the client is sent. Errors come back classified: retry later, failed,
 // or failed and pause the reader (the key was refused).
 
 import Anthropic, { APIError } from '@anthropic-ai/sdk';
+import { AI_EFFORT, AI_MODEL } from './aiModel.js';
 import { SYSTEM_PROMPT, userText, type IssueCode } from './prompt.js';
 import { coerceReading, OUTPUT_SCHEMA, type ReadingOut } from './schema.js';
 
 type BetaMessage = Anthropic.Beta.Messages.BetaMessage;
 type StreamParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
-export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export const API_BASE_URL = 'https://api.anthropic.com';
 export const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
-// Models whose fallbacks: "default" is documented; any other model the app is
-// set to is asked without a fallback rather than refused with a 400.
-const FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-fable-5-1']);
 // Thinking counts towards max_tokens; a reading cut off there is asked once
 // more with the model's whole output budget.
 export const TOKEN_BUDGETS = [64_000, 128_000] as const;
@@ -62,12 +59,11 @@ export interface ReadRequest {
 }
 
 export function buildParams(req: ReadRequest, maxTokens: number): StreamParams {
-  const effort = (EFFORTS as readonly string[]).includes(req.effort) ? (req.effort as Effort) : 'high';
-  const params: StreamParams = {
-    model: req.model,
+  return {
+    model: AI_MODEL,
     max_tokens: maxTokens,
     thinking: { type: 'adaptive' },
-    output_config: { effort, format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
+    output_config: { effort: AI_EFFORT, format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
     system: SYSTEM_PROMPT,
     messages: [{
       role: 'user',
@@ -76,12 +72,10 @@ export function buildParams(req: ReadRequest, maxTokens: number): StreamParams {
         { type: 'text', text: userText(req.issueCodes) },
       ],
     }],
+    // Sonnet takes the API's own fallback on a policy decline.
+    betas: [FALLBACK_BETA],
+    fallbacks: 'default',
   };
-  if (FALLBACK_MODELS.has(req.model)) {
-    params.betas = [FALLBACK_BETA];
-    params.fallbacks = 'default';
-  }
-  return params;
 }
 
 // Tokens billed for one response. With a fallback, usage.iterations has one
@@ -146,12 +140,13 @@ export function classifyError(e: unknown, stopped: boolean): ErrorClass {
   return { status: 'retry', reason: 'api_error', error: `The reading failed: ${brief(e)}` };
 }
 
-export async function readNotice(client: Anthropic, req: ReadRequest): Promise<ClaudeOutcome> {
+export async function readNotice(client: Anthropic, asked: ReadRequest): Promise<ClaudeOutcome> {
+  const req: ReadRequest = { ...asked, model: AI_MODEL, effort: AI_EFFORT };
   if (req.pdfBase64.length + REQUEST_HEADROOM > MAX_REQUEST_BYTES) {
     return { ok: false, status: 'failed', reason: 'too_large', error: 'The PDF is too large to send to the Claude API (32 MB a request).', usage: null };
   }
   const started = Date.now();
-  const usage: CallUsage = { input_tokens: 0, output_tokens: 0, duration_ms: 0, request_id: null, status: 'ok', model: req.model, calls: 0 };
+  const usage: CallUsage = { input_tokens: 0, output_tokens: 0, duration_ms: 0, request_id: null, status: 'ok', model: AI_MODEL, calls: 0 };
   const ids: string[] = [];
   const count = (u: Partial<BetaMessage['usage']> | undefined | null, requestId: string | null | undefined, model?: string) => {
     const b = billedTokens(u);

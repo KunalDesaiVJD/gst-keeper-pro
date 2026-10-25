@@ -2,8 +2,9 @@
 // Function or the office agent), which clients, what is read (new and older
 // notices, attachments and replies), how carefully, the day's caps for reading
 // and for the assistant, whether new replies teach the assistant by themselves,
-// the model and the prices the cost estimates use. A GST manager changes them;
-// everyone else reads them. Explanations sit behind (i).
+// and the prices the cost estimates use. A GST manager changes them; everyone
+// else reads them. The model and effort are not settings: every call is Sonnet
+// at medium effort (src/lib/aiModel.ts), shown here only. Explanations sit behind (i).
 import React, { useEffect, useId, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, Loader2 } from 'lucide-react';
@@ -16,11 +17,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { WS_BTN, WS_CONTROL } from '@/components/workspace/theme';
 import { InfoTip, Panel } from '@/components/notices/ui/Panel';
 import { fmtInr } from '@/lib/noticeFormat';
-import { AI_EFFORTS, AI_MODELS, saveAiSettings, type Actor, type AiSettings } from '@/lib/replyFactory';
+import { AI_MODEL_INFO, saveAiSettings, type Actor, type AiSettings } from '@/lib/replyFactory';
 import { cn } from '@/lib/utils';
 
 const KEYS = [
-  'runner', 'consent_scope', 'auto_read_new', 'read_backfill', 'read_documents', 'model', 'doc_model', 'effort', 'doc_effort', 'assist_effort',
+  'runner', 'consent_scope', 'auto_read_new', 'read_backfill', 'read_documents',
   'daily_cap_usd', 'assist_daily_cap_usd', 'max_pages', 'doc_max_pages', 'edge_seconds', 'learning_auto_include',
   'price_in_per_mtok', 'price_out_per_mtok', 'usd_inr',
 ] as const;
@@ -56,7 +57,7 @@ export const AiSettingsCard: React.FC<{ settings: AiSettings; canEdit: boolean; 
   const invalid = !(draft.daily_cap_usd >= 0) || !(draft.assist_daily_cap_usd >= 0) || !(draft.max_pages >= 1 && draft.max_pages <= 600)
     || !(draft.doc_max_pages >= 1 && draft.doc_max_pages <= 100) || !(draft.edge_seconds >= 60 && draft.edge_seconds <= 400)
     || !(draft.price_in_per_mtok >= 0) || !(draft.price_out_per_mtok >= 0) || !(draft.usd_inr > 0);
-  const model = AI_MODELS.find((m) => m.id === draft.model);
+  const model = AI_MODEL_INFO;
   const rate = Number(draft.usd_inr) || 84;
 
   const save = async () => {
@@ -75,12 +76,7 @@ export const AiSettingsCard: React.FC<{ settings: AiSettings; canEdit: boolean; 
   const sw = (k: 'auto_read_new' | 'read_backfill' | 'read_documents' | 'learning_auto_include') => (
     <Switch id={id(k)} checked={!!draft[k]} disabled={!canEdit} onCheckedChange={(v) => set(k, v)} />
   );
-  const effort = (k: 'effort' | 'doc_effort' | 'assist_effort') => (
-    <Select value={draft[k]} onValueChange={(v) => set(k, v)} disabled={!canEdit}>
-      <SelectTrigger id={id(k)} className={cn(WS_CONTROL, 'w-28')}><SelectValue /></SelectTrigger>
-      <SelectContent>{AI_EFFORTS.map((e) => <SelectItem key={e.id} value={e.id} className="text-xs">{e.label}</SelectItem>)}</SelectContent>
-    </Select>
-  );
+  const fixed = (k: string, text: string) => <span id={id(k)} className="text-xs text-muted-foreground">{text}</span>;
   const num = (k: 'daily_cap_usd' | 'assist_daily_cap_usd' | 'max_pages' | 'doc_max_pages' | 'edge_seconds' | 'price_in_per_mtok' | 'price_out_per_mtok' | 'usd_inr', step = 1) => (
     <Input id={id(k)} type="number" step={step} value={draft[k]} disabled={!canEdit} onChange={(e) => set(k, Number(e.target.value))} className={cn(WS_CONTROL, 'w-24 text-right')} />
   );
@@ -114,19 +110,7 @@ export const AiSettingsCard: React.FC<{ settings: AiSettings; canEdit: boolean; 
             <Row id={id('daily_cap_usd')} label="Cap per day (USD)" info={`Reading stops for the day (India time) at this estimated spend: about ${fmtInr(draft.daily_cap_usd * rate)}.`}>{num('daily_cap_usd', 0.5)}</Row>
           </Group>
           <Group title="Care and assistant">
-            <Row id={id('effort')} label="Notices: effort" info="How carefully a notice is read; higher is more thorough and costs more.">{effort('effort')}</Row>
-            <Row id={id('doc_model')} label="Documents: model" info="The model that reads attachments, replies and orders. Haiku (the firm's choice) uses the fewest tokens; notices and the assistant keep the model under Model and prices.">
-              <Select value={draft.doc_model} onValueChange={(v) => set('doc_model', v)} disabled={!canEdit}>
-                <SelectTrigger id={id('doc_model')} className={cn(WS_CONTROL, 'w-28')}><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="claude-haiku-4-5" className="text-xs">Haiku</SelectItem>
-                  <SelectItem value="claude-sonnet-5-5" className="text-xs">Sonnet</SelectItem>
-                  <SelectItem value="claude-opus-5-5" className="text-xs">Opus</SelectItem>
-                </SelectContent>
-              </Select>
-            </Row>
-            <Row id={id('doc_effort')} label="Documents: effort" info="Attachments and replies are many; Low keeps the cost down.">{effort('doc_effort')}</Row>
-            <Row id={id('assist_effort')} label="Assistant: effort">{effort('assist_effort')}</Row>
+            <Row id={id('model')} label="Model and effort" info="Every AI call (notices, documents, the assistant, advice and appeal drafts) uses Sonnet at medium effort. The firm fixed this; it is not a setting.">{fixed('model', model.label)}</Row>
             <Row id={id('assist_daily_cap_usd')} label="Assistant cap (USD)" info="The assistant's own spend per day, apart from reading.">{num('assist_daily_cap_usd', 0.5)}</Row>
             <Row id={id('learning_auto_include')} label="Replies teach by themselves" info="Off: an admin picks which replies the assistant learns from (Learning tab). On: every new reply does.">{sw('learning_auto_include')}</Row>
             <Row id={id('edge_seconds')} label="Seconds per run" info="How long one run of the Edge Function may take: 150 on Supabase's free plan, up to 400 on a paid plan.">{num('edge_seconds', 10)}</Row>
@@ -139,20 +123,12 @@ export const AiSettingsCard: React.FC<{ settings: AiSettings; canEdit: boolean; 
           <CollapsibleContent>
             <div className="grid gap-x-6 md:grid-cols-2">
               <Group title="Model">
-                <Row id={id('model')} label="Model">
-                  <Select value={draft.model} onValueChange={(v) => set('model', v)} disabled={!canEdit}>
-                    <SelectTrigger id={id('model')} className={cn(WS_CONTROL, 'w-44')}><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {AI_MODELS.map((m) => <SelectItem key={m.id} value={m.id} className="text-xs">{m.id}</SelectItem>)}
-                      {!AI_MODELS.some((m) => m.id === draft.model) && <SelectItem value={draft.model} className="text-xs">{draft.model}</SelectItem>}
-                    </SelectContent>
-                  </Select>
-                </Row>
+                <Row id={id('model_id')} label="Model">{fixed('model_id', model.id)}</Row>
                 <Row id={id('max_pages')} label="Pages per notice">{num('max_pages')}</Row>
                 <Row id={id('doc_max_pages')} label="Pages per document">{num('doc_max_pages')}</Row>
               </Group>
               <Group title="Prices">
-                <Row id={id('price_in_per_mtok')} label="Input, USD / M tokens" info={model ? `List price for ${model.id}: $${model.priceIn} in, $${model.priceOut} out.` : undefined}>{num('price_in_per_mtok', 0.01)}</Row>
+                <Row id={id('price_in_per_mtok')} label="Input, USD / M tokens" info={`List price for ${model.id}: $${model.priceIn} in, $${model.priceOut} out.`}>{num('price_in_per_mtok', 0.01)}</Row>
                 <Row id={id('price_out_per_mtok')} label="Output, USD / M tokens">{num('price_out_per_mtok', 0.01)}</Row>
                 <Row id={id('usd_inr')} label="₹ per US dollar">{num('usd_inr', 0.01)}</Row>
               </Group>

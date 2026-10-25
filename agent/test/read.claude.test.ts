@@ -5,6 +5,7 @@
 // fallback mid-answer, a stream cut off, the agent stopping).
 import { after, before, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { AI_EFFORT, AI_MODEL } from '../src/read/aiModel.js';
 import { billedTokens, buildParams, FALLBACK_BETA, makeClaudeClient, readNotice, scrub, type ReadRequest } from '../src/read/claude.js';
 import { SYSTEM_PROMPT } from '../src/read/prompt.js';
 import { OUTPUT_SCHEMA } from '../src/read/schema.js';
@@ -26,7 +27,7 @@ before(async () => { await fake.start(); });
 after(async () => { await fake.stop(); });
 beforeEach(() => { fake.seen = []; script = []; });
 
-test('the request: Opus 5.5 default, adaptive thinking, effort, JSON schema, fallbacks "default", PDF first, no client data', async () => {
+test('the request: always Sonnet at medium effort (asked Opus at high), adaptive thinking, JSON schema, fallbacks "default", PDF first, no client data', async () => {
   script = [readingReply(READING, { input_tokens: 12000, cache_creation_input_tokens: 300, cache_read_input_tokens: 200, output_tokens: 2500 })];
   const out = await readNotice(client(), req());
   assert.equal(out.ok, true);
@@ -36,11 +37,11 @@ test('the request: Opus 5.5 default, adaptive thinking, effort, JSON schema, fal
   assert.equal(headers['x-api-key'], KEY);
   assert.equal(headers.authorization, undefined, 'only the key from agent/.env');
   assert.match(String(headers['anthropic-beta']), new RegExp(FALLBACK_BETA));
-  assert.equal(body.model, 'claude-opus-5-5');
+  assert.equal(body.model, AI_MODEL);
   assert.equal(body.max_tokens, 64000);
   assert.equal(body.stream, true);
   assert.deepEqual(body.thinking, { type: 'adaptive' });
-  assert.equal(body.output_config.effort, 'high');
+  assert.equal(body.output_config.effort, AI_EFFORT);
   assert.deepEqual(body.output_config.format, { type: 'json_schema', schema: OUTPUT_SCHEMA });
   assert.equal(body.fallbacks, 'default');
   assert.equal(body.system, SYSTEM_PROMPT);
@@ -58,13 +59,13 @@ test('the request: Opus 5.5 default, adaptive thinking, effort, JSON schema, fal
   assert.deepEqual([out.usage.status, out.usage.request_id, out.usage.calls, out.model], ['ok', 'req_fake_1', 1, 'claude-opus-5-5']);
 });
 
-test('fallbacks only for models documented to take "default"; effort from the settings', () => {
-  const p = buildParams(req({ model: 'claude-opus-4-8', effort: 'max' }), 64000);
-  assert.equal(p.fallbacks, undefined);
-  assert.equal(p.betas, undefined);
-  assert.equal(p.output_config?.effort, 'max');
-  assert.equal(buildParams(req({ effort: 'bogus' }), 64000).output_config?.effort, 'high');
-  assert.equal(buildParams(req({ model: 'claude-sonnet-5-5' }), 64000).fallbacks, 'default');
+test('whatever model or effort the settings name, the request is Sonnet at medium effort with the fallback', () => {
+  assert.deepEqual([AI_MODEL, AI_EFFORT], ['claude-sonnet-5-5', 'medium']);
+  for (const over of [{ model: 'claude-opus-4-8', effort: 'max' }, { effort: 'bogus' }, { model: 'claude-haiku-4-5', effort: 'low' }]) {
+    const p = buildParams(req(over), 64000);
+    assert.deepEqual([p.model, p.output_config?.effort, p.fallbacks], [AI_MODEL, AI_EFFORT, 'default'], JSON.stringify(over));
+    assert.deepEqual(p.betas, [FALLBACK_BETA]);
+  }
 });
 
 test('a refusal: failed, reason refused, its tokens still counted', async () => {

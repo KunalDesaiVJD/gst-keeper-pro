@@ -7,6 +7,8 @@
 //   - fails on ANY error in a protected path (the notices & litigation module),
 //   - fails if any other file has more errors than recorded in scripts/tsc-baseline.json
 //     (a ratchet: existing errors elsewhere are tolerated, new ones are not).
+// It also runs scripts/verify-ai-model.mjs: every AI call is Claude Sonnet at
+// medium effort, and code that asks for anything else fails here.
 // Usage:  npm run typecheck            check
 //         npm run typecheck -- --update-baseline   record current counts (only after fixing errors)
 import { spawnSync } from 'node:child_process';
@@ -26,6 +28,11 @@ const PROTECTED = [
   /^src\/hooks\/(useExtensionBridge|useStaffList)\.ts$/,
   /^src\/utils\/(notice\w*|litigationPdfExport)\.ts$/,
 ];
+
+const ai = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'verify-ai-model.mjs')], { cwd: ROOT, encoding: 'utf8' });
+process.stdout.write(ai.stdout ?? '');
+process.stderr.write(ai.stderr ?? '');
+if (ai.status !== 0) { console.error('typecheck: FAILED — an AI call is not pinned to Sonnet at medium effort.'); process.exit(1); }
 
 const tsc = spawnSync('npx', ['tsc', '--noEmit', '-p', 'tsconfig.app.json', '--pretty', 'false'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 const out = `${tsc.stdout ?? ''}${tsc.stderr ?? ''}`;

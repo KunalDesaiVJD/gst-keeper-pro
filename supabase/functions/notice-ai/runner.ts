@@ -4,6 +4,7 @@
 // left, and give the lease back. Every job is finished in the database, which
 // applies or keeps what was read; nothing is kept here.
 
+import { AI_EFFORT, AI_MODEL } from '../_shared/aiModel.ts';
 import { scrub, type CallRequest, type CallUsage, type Caller } from './claude.ts';
 import { buildDocResult, DOC_OUTPUT_SCHEMA, DOC_SYSTEM_PROMPT, docUserText, type DocumentClaim } from './documents.ts';
 import { DocumentError, documentUrlAllowed, downloadPdf, readPdfText, toBase64, type PdfText } from './pdf.ts';
@@ -112,8 +113,8 @@ export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: Abor
     };
   }
   const out = await deps.claude!({
-    model: claim.model,
-    effort: claim.effort,
+    model: AI_MODEL,
+    effort: AI_EFFORT,
     system: SYSTEM_PROMPT,
     content: [
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: toBase64(doc.bytes) } },
@@ -125,7 +126,7 @@ export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: Abor
     pdfText: { pages: text.pages, textLayer: text.textLayer },
   });
   const meta = { ...base, pages: text.pageCount, text_layer: text.textLayer };
-  if (!out.ok) return { status: out.status, reason: out.reason, error: out.error, usage: out.usage, result: { ...meta, model: out.usage?.model ?? claim.model }, pause: out.pause };
+  if (!out.ok) return { status: out.status, reason: out.reason, error: out.error, usage: out.usage, result: { ...meta, model: out.usage?.model ?? AI_MODEL }, pause: out.pause };
   const result = buildResult(coerceReading(out.json), {
     pages: text.pages, pageCount: text.pageCount ?? 0, textLayer: text.textLayer, sha256: doc.sha256,
   }, claim, out.model);
@@ -179,8 +180,8 @@ export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: 
     info = { pages: text.pages, pageCount: text.pageCount, textLayer: text.textLayer, sha256: doc.sha256 };
   }
   const out = await deps.claude!({
-    model: claim.model,
-    effort: claim.effort,
+    model: AI_MODEL,
+    effort: AI_EFFORT,
     system: DOC_SYSTEM_PROMPT,
     content,
     schema: DOC_OUTPUT_SCHEMA,
@@ -191,7 +192,7 @@ export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: 
   if (!out.ok) {
     return {
       status: out.status, reason: out.reason, error: out.error, usage: out.usage, pause: out.pause,
-      result: { document_sha256: info.sha256, pages: info.pageCount, model: out.usage?.model ?? claim.model },
+      result: { document_sha256: info.sha256, pages: info.pageCount, model: out.usage?.model ?? AI_MODEL },
     };
   }
   const result = buildDocResult(out.json, info, claim, out.model);
