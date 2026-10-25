@@ -45,6 +45,7 @@ import NoticesReplyFactoryPage from "@/pages/NoticesReplyFactoryPage";
 import NoticesSettingsPage from "@/pages/NoticesSettingsPage";
 import NoticeCasesPage from "@/pages/NoticeCasesPage";
 import NoticeCasePage from "@/pages/NoticeCasePage";
+import NoticeOpenPage from "@/pages/NoticeOpenPage";
 import ClientDocumentsPage from "@/pages/ClientDocumentsPage";
 import AllClientsRefundsPage from "@/pages/AllClientsRefundsPage";
 import RefundPage from "@/pages/RefundPage";
@@ -138,6 +139,7 @@ const App = () => (
                   <Route path="/notices-settings" element={<NoticesSettingsPage />} />
                   <Route path="/notices-cases" element={<NoticeCasesPage />} />
                   <Route path="/notices-case/:clientId/:caseKey" element={<NoticeCasePage />} />
+                  <Route path="/notices-open/:id" element={<NoticeOpenPage />} />
                   <Route path="/litigation" element={<LitigationMattersPage />} />
                   <Route path="/litigation/:id" element={<LitigationMatterDetailPage />} />
                   <Route path="/litigation-mis" element={<LitigationMISPage />} />

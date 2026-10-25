@@ -26,6 +26,7 @@ import { downloadIcs } from '@/lib/noticeIcs';
 import { useMaster } from '@/lib/masterFilters';
 import { inScope, useMasterScope } from '@/lib/masterScope';
 import { cn } from '@/lib/utils';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -145,7 +146,7 @@ const NoticesCalendarPage: React.FC = () => {
                   <Badge variant={KIND_TONE[it.kind]} className="mt-0.5 shrink-0 text-[10px]">{CALENDAR_KIND_LABEL[it.kind]}</Badge>
                   <div className="min-w-0 flex-1">
                     <Link to={it.detail?.startsWith('matter:') ? `/litigation/${it.detail.slice(7)}?tab=hearings`
-                      : `/notices/${it.notice_id}${it.kind === 'hearing' ? '?tab=hearings' : it.kind === 'reply' ? '' : '?tab=deadlines'}`} className="font-medium hover:underline">
+                      : noticeCaseHref({ id: it.notice_id as string })} className="font-medium hover:underline">
                       {it.client_name}{it.form_code ? ` · ${it.form_code}` : ''}
                     </Link>
                     <div className="truncate text-xs text-muted-foreground">{it.title}{it.reference ? ` · ${it.reference}` : ''}{it.kind === 'reply' && it.detail === 'computed' ? ' · computed date' : ''}</div>

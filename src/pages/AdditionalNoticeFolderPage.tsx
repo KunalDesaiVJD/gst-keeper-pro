@@ -34,6 +34,7 @@ import { daysBetween, istToday, type NoticeFact } from '@/lib/noticeFacts';
 import { dueWords, fmtDate, fmtFy, fmtInr, fmtInrShort, noticeTitle, plural } from '@/lib/noticeFormat';
 import type { Database } from '@/integrations/supabase/types';
 import { cn } from '@/lib/utils';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 type Deadline = Database['public']['Tables']['matter_deadlines']['Row'];
 type Refund = Pick<Database['public']['Tables']['gst_refund_applications']['Row'], 'arn' | 'refund_type' | 'filed_date' | 'claimed_amount' | 'sanctioned_amount' | 'status'>;
@@ -378,7 +379,7 @@ const AdditionalNoticeFolderPage: React.FC = () => {
           <ul className="divide-y">
             {otherNotices.map((n) => (
               <li key={n.id} className="flex flex-wrap items-center gap-2 py-1.5 text-sm">
-                <Link to={`/notices/${n.id}`} className="min-w-0 flex-1 break-words font-medium hover:underline">{noticeTitle(n)}</Link>
+                <Link to={noticeCaseHref({ id: n.id as string })} className="min-w-0 flex-1 break-words font-medium hover:underline">{noticeTitle(n)}</Link>
                 <span className="text-xs text-muted-foreground">{n.reference_number ?? ''}{n.issue_date ? ` · ${fmtDate(n.issue_date)}` : ''}</span>
                 <StageBadge stage={n.stage} />
               </li>

@@ -15,6 +15,7 @@ import { fmtDate, fmtFy, fmtInr, sentenceCase } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 import { SortHead } from './ReportBits';
 import { periodText, type Drc03Row, type Heads, type NoticeRef } from './ledgerData';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 export type Drc03Sort = 'filed' | 'client' | 'total';
 
@@ -70,7 +71,7 @@ export const Drc03Table: React.FC<Drc03TableProps> = ({ rows, showClient, sort, 
     }
     if (r.caseNotice) {
       return (
-        <Link to={`/notices/${r.caseNotice.id}`} className="font-mono font-medium text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary">
+        <Link to={noticeCaseHref({ id: r.caseNotice.id as string })} className="font-mono font-medium text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary">
           <span className="sr-only">Open the case </span>{a}
         </Link>
       );
@@ -125,7 +126,7 @@ export const Drc03Table: React.FC<Drc03TableProps> = ({ rows, showClient, sort, 
       <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
         <span>
           <span className="text-muted-foreground">Likely </span>
-          <Link to={`/notices/${n.id}`} className="text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary">{noticeShort(n)}</Link>
+          <Link to={noticeCaseHref({ id: n.id as string })} className="text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary">{noticeShort(n)}</Link>
           {n.reference_number ? <span className="block font-mono text-[11px] text-muted-foreground">{n.reference_number}</span> : null}
         </span>
         {onLink && (

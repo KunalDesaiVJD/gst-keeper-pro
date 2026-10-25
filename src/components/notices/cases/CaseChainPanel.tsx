@@ -20,7 +20,7 @@ import { WS_BTN } from '@/components/workspace/theme';
 import { SectionCard } from '@/components/notices/ui/Panel';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  LINK_KINDS, caseLabel, describeLink, linkKindDef, refundOutcome, resetCaseLink, setCaseLink, useCaseChain, useLinkCandidates,
+  LINK_KINDS, caseLabel, describeLink, linkKindDef, noticeCaseHref, refundOutcome, resetCaseLink, setCaseLink, useCaseChain, useLinkCandidates,
   type ChainMember, type LinkCandidate, type LinkKind,
 } from '@/lib/noticeCases';
 import { fmtDate, fmtFy, fmtInrShort, plural } from '@/lib/noticeFormat';
@@ -171,7 +171,7 @@ export const CaseChainPanel: React.FC<{
                           </Button>
                           {m.lead_notice_id && (
                             <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" asChild>
-                              <Link to={`/notices/${m.lead_notice_id}`}>Notice <ArrowRight className="h-3 w-3" aria-hidden /></Link>
+                              <Link to={`/notices/${m.lead_notice_id}`} title="Open this case's latest notice to work on it">Work on it <ArrowRight className="h-3 w-3" aria-hidden /></Link>
                             </Button>
                           )}
                           {canEdit && m.parent_key && (
@@ -273,7 +273,7 @@ const Suggestion: React.FC<{ c: LinkCandidate; canEdit: boolean; busy: boolean; 
       <div className="min-w-0 flex-1 text-xs">
         <div className="flex flex-wrap items-center gap-1.5">
           {o.lead_notice_id
-            ? <Link to={`/notices/${o.lead_notice_id}`} className="font-medium text-primary hover:underline">{caseLabel(o)}</Link>
+            ? <Link to={noticeCaseHref({ id: o.lead_notice_id })} className="font-medium text-primary hover:underline">{caseLabel(o)}</Link>
             : <span className="font-medium">{caseLabel(o)}</span>}
           {o.case_id && <span className="font-mono text-[11px] text-muted-foreground">{o.case_id}</span>}
           <Badge variant="secondary" className="text-[10px]" title="How sure: 100 is certain">{c.score}</Badge>

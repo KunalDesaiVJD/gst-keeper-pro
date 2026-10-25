@@ -11853,6 +11853,10 @@ export type Database = {
         Args: { p_client_id: string; p_key: string }
         Returns: string
       }
+      notice_case_key_dates: {
+        Args: { p_client_id: string; p_case_key: string }
+        Returns: Json
+      }
       notice_case_review_queue: {
         Args: { p_client_id?: string | null }
         Returns: Json

@@ -20,6 +20,7 @@ import { downloadIcs } from '@/lib/noticeIcs';
 import { useMaster } from '@/lib/masterFilters';
 import { inScope, useMasterScope } from '@/lib/masterScope';
 import { cn } from '@/lib/utils';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 const NoticesHearingsPage: React.FC = () => {
   const { isStaffRole, user } = useAuth();
@@ -62,7 +63,7 @@ const NoticesHearingsPage: React.FC = () => {
                       </td>
                       <td className={WS_TD}><Link to={`/notices-company/${h.client_id}`} className="font-medium hover:underline">{h.client_name}</Link></td>
                       <td className={WS_TD}>
-                        <Link to={h.notice_id ? `/notices/${h.notice_id}?tab=hearings` : `/litigation/${h.matter_id}`} className="font-medium hover:underline">{h.title ?? 'Hearing'}</Link>
+                        <Link to={h.notice_id ? noticeCaseHref({ id: h.notice_id }) : `/litigation/${h.matter_id}`} className="font-medium hover:underline">{h.title ?? 'Hearing'}</Link>
                         <div className="text-xs text-muted-foreground"><Badge variant="secondary" className="mr-1 text-[10px]">{h.kind === 'notice' ? 'Notice' : 'Matter'}</Badge><span className="font-mono">{h.reference}</span></div>
                       </td>
                       <td className={WS_TD}><StageBadge stage={h.stage} /></td>

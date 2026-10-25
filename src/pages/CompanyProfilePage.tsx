@@ -36,6 +36,7 @@ import { LIST_FILTERS, SORTS, defaultSort, filterDef, noticesListHref, type List
 import { daysBetween, istToday, type NoticeFact } from '@/lib/noticeFacts';
 import { fmtAgo, fmtDay, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 /** ['a', 'b', 'c'] → 'a, b or c'. */
 const orList = (w: string[]) => (w.length < 2 ? w.join('') : `${w.slice(0, -1).join(', ')} or ${w[w.length - 1]}`);
@@ -129,7 +130,7 @@ const ClientTiles: React.FC<{ d: ClientProfileData; clientId: string; today: str
     return s.nextHearing ? { date: s.nextHearing.date, title: s.nextHearing.event.title, to: `/notices-case-folder/${clientId}/${encodeURIComponent(caseId)}` } : null;
   }).filter((x): x is { date: string; title: string; to: string } => !!x);
   const hearing = [
-    ...d.hearings.map((h) => ({ date: h.hearing_on, title: h.title ?? 'Hearing', to: h.notice_id ? `/notices/${h.notice_id}?tab=hearings` : `/litigation/${h.matter_id}` })),
+    ...d.hearings.map((h) => ({ date: h.hearing_on, title: h.title ?? 'Hearing', to: h.notice_id ? noticeCaseHref({ id: h.notice_id }) : `/litigation/${h.matter_id}` })),
     ...folderHearings,
   ].sort((a, b) => a.date.localeCompare(b.date))[0];
   return (
