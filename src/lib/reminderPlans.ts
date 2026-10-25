@@ -2,7 +2,7 @@
 // live in supabase/functions/_shared/reminderPlan.ts (shared with the daily
 // job queue-gst-reminders, so the page shows exactly what the job will do).
 import { supabase } from '@/integrations/supabase/client';
-import type { PeriodPlanRow, StandardScheduleRow } from '../../supabase/functions/_shared/reminderPlan.ts';
+import { STEP_TEMPLATE, type PeriodPlanRow, type StandardScheduleRow } from '../../supabase/functions/_shared/reminderPlan.ts';
 
 export * from '../../supabase/functions/_shared/reminderPlan.ts';
 
@@ -54,6 +54,56 @@ export async function clearPeriodPlan(period: string, returnType: string): Promi
   if (error) throw new Error(error.message);
 }
 
+/** A reminder e-mail's subject and wording ({{variables}} as in the templates). */
+export interface ReminderEmail { subject: string; body: string }
+export interface PeriodEmailRow extends ReminderEmail {
+  period_month: string;
+  return_type: string;
+  step: 1 | 2 | 3;
+  updated_at?: string;
+  updated_by_name?: string | null;
+}
+
+/** The reminder templates (reminder_1, reminder_2, reminder_final) by step. */
+export async function loadReminderTemplates(): Promise<Record<1 | 2 | 3, (ReminderEmail & { is_active: boolean }) | null>> {
+  const { data, error } = await supabase.from('email_templates').select('key, subject, body, is_active').in('key', Object.values(STEP_TEMPLATE));
+  if (error) throw new Error(error.message);
+  const by = new Map((data ?? []).map((t) => [t.key as string, t]));
+  const one = (s: 1 | 2 | 3) => {
+    const t = by.get(STEP_TEMPLATE[s]);
+    return t ? { subject: t.subject ?? '', body: t.body ?? '', is_active: t.is_active !== false } : null;
+  };
+  return { 1: one(1), 2: one(2), 3: one(3) };
+}
+
+/** E-mails written for one period in place of the template. */
+export async function loadPeriodEmails(periods: string[]): Promise<PeriodEmailRow[]> {
+  const { data, error } = await supabase.from('reminder_period_emails' as never).select('*').in('period_month', periods);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as PeriodEmailRow[];
+}
+
+export async function savePeriodEmail(row: PeriodEmailRow, user: { id: string | null; name: string | null }): Promise<void> {
+  const { error } = await supabase
+    .from('reminder_period_emails' as never)
+    .upsert({
+      period_month: row.period_month, return_type: row.return_type, step: row.step,
+      subject: row.subject, body: row.body, updated_by: user.id, updated_by_name: user.name,
+    } as never, { onConflict: 'period_month,return_type,step' });
+  if (error) throw new Error(error.message);
+}
+
+/** Back to the template for this period, return and step. */
+export async function clearPeriodEmail(period: string, returnType: string, step: 1 | 2 | 3): Promise<void> {
+  const { error } = await supabase
+    .from('reminder_period_emails' as never)
+    .delete()
+    .eq('period_month', period)
+    .eq('return_type', returnType)
+    .eq('step', step);
+  if (error) throw new Error(error.message);
+}
+
 export async function loadRemindersFor(periods: string[]): Promise<ReminderSent[]> {
   const out: ReminderSent[] = [];
   for (let from = 0; ; from += 1000) {
@@ -78,6 +128,7 @@ export interface QueueItem {
   period: string;
   step: number | null;
   template: string | null;
+  custom?: 'period' | 'once';
   due_date: string;
   result: 'queued' | 'would_queue' | 'skipped';
   reason?: string;
@@ -102,6 +153,8 @@ export async function queueReminders(body: {
   clientIds?: string[];
   dryRun?: boolean;
   staffName?: string | null;
+  /** Send now only: this send's own subject and wording instead of the template. */
+  customEmail?: ReminderEmail | null;
 }): Promise<QueueResult> {
   const { data, error } = await supabase.functions.invoke('queue-gst-reminders', { body });
   if (error) throw new Error(error.message);
