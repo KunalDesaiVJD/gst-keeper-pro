@@ -20,6 +20,9 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
     `returns2/auth/api/gstr9/details/calc`, saved raw as `GSTR9_CALC`. Read-only
     (GET); not yet confirmed against a live return — if it fails, upload the JSON
     saved from the portal instead.
+  - **GSTR-9 Table 8A document details** (`gstr9_8a_pull`, v0.18.0) — presses
+    "Download Table 8A document details" on the year's GSTR-9 dashboard and saves
+    the portal's file as it came as `GSTR9_8A`; GST Keeper's 8A reports read it.
 - *(GSTR-2B pull is the next addition — it needs file-download handling.)*
 
 ## Install it once per browser (free, ~1 minute)

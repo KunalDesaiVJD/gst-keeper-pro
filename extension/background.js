@@ -1886,6 +1886,30 @@ chrome.downloads.onCreated.addListener(async (item) => {
       } });
       return;
     }
+    // 0.18.0: the Table 8A document details (an Excel or a ZIP) the GSTR-9
+    // 8A pull downloads; content.js keeps it with the page's own Blob, if any.
+    if (job.mode === 'gstr9_8a_pull') {
+      if (job.step !== 'gstr9_8a_pull') return;
+      const url8 = item.finalUrl || item.url || '';
+      let host8 = '';
+      try { host8 = new URL(url8).hostname; } catch (e) { return; }
+      if (!/^https?:/i.test(url8) || !/(^|\.)gst\.gov\.in$/i.test(host8)) return; // blob:/data: are read in the page
+      const r8 = await fetch(url8, { credentials: 'include' });
+      if (!r8.ok) return;
+      const b8 = await r8.arrayBuffer();
+      if (!b8 || b8.byteLength < 100) return;
+      const h8 = new Uint8Array(b8, 0, 2);
+      const json8 = h8[0] === 0x7b || h8[0] === 0x5b; // "{" or "["
+      if (!(h8[0] === 0x50 && h8[1] === 0x4b) && !json8) return; // "PK": an .xlsx or a ZIP
+      const c8 = job.clients[job.idx || 0];
+      if (!c8) return;
+      const mime8 = json8 ? 'application/json' : (r8.headers.get('content-type') || 'application/octet-stream');
+      await chrome.storage.local.set({ gstk_g8a_result: {
+        clientId: c8.clientId, period: job.period, fileB64: 'data:' + mime8 + ';base64,' + abToBase64(b8),
+        fileName: (item.filename || '').split(/[\\/]/).pop() || null, at: Date.now(),
+      } });
+      return;
+    }
     if (job.mode !== 'twob' && job.mode !== 'twoa') return;
     const is2a = job.mode === 'twoa';
     const fileUrl = item.finalUrl || item.url || '';

@@ -39,16 +39,34 @@ available, not reverse charge. Imports (Table 6E) and ISD (6G) are never in it.
    `return_type 'GSTR9_8A'`, period `03/<FY end year>`, summary
    `format 'gstk-8a-docs-v1'`, status `Uploaded`. A new upload replaces the
    earlier one. **No migration**: the table and its open RLS already exist.
-2. **Rebuilt** while nothing is uploaded: from the year's 2B (FY 2023-24 on)
+2. **Pulled** (extension 0.18.0, mode `gstr9_8a_pull`, the report's Pull,
+   Meet's decision of 24 Oct 2026 to automate it): a job of its own beside the
+   GSTR-9 pull, which it leaves unchanged. It opens the year's GSTR-9 on the
+   Annual Return page the way the GSTR-9 pull does (FY, SEARCH,
+   PREPARE-ONLINE or VIEW, the NIL question answered No + NEXT), presses
+   "Download Table 8A document details" on the GSTR-9 dashboard and saves
+   what the portal hands back, as it came (the file from the page's Blob or
+   the browser's download, an Excel or a ZIP of them; any JSON with documents
+   the page loads), as `GSTR9_8A`, summary `format 'gstk-8a-pull-v1'`, status
+   `Pulled`. The app reads it on every build with the Upload reader
+   (`src/lib/itcReco/eightAPull.ts`; a ZIP's parts put together, a document
+   in two parts once; a file of another GSTIN refused). When the portal
+   answers in words instead, the status says so: `REQUESTED: …` (prepared
+   later, Pull again), `NO DATA: …` (saved as an empty 8A), `PULL FAILED: …`
+   (with what the page showed); a failed pull writes the status only, so an
+   8A saved earlier still counts. A pull replaces an upload of the same year,
+   and an upload replaces a pull.
+3. **Rebuilt** while nothing is uploaded or pulled: from the year's 2B (FY 2023-24 on)
    or 2A (earlier): B2B, B2BA, CDNR, CDNRA, ITC available, not reverse charge,
    documents dated in the FY, in the statements of the window (§3). Always
    labelled "the 8A rebuilt from the year's 2B", never as the portal's 8A.
-3. The GSTR-9 system total of 8A (`GSTR9_CALC`, pulled by `gstr9_pull`) is
+4. The GSTR-9 system total of 8A (`GSTR9_CALC`, pulled by `gstr9_pull`) is
    shown next to the document 8A when it is there, as a check.
 
-**Unverified:** the portal's 8A Excel layout has not been confirmed live; the
-reader matches columns by their headers and reports what it could not read.
-An extension pull of 8A document details is a follow-up.
+**Unverified:** the portal's 8A Excel layout and the way the dashboard's
+button hands the file over (straight away, a ZIP, or prepared later) have not
+been confirmed live; the reader matches columns by their headers and reports
+what it could not read, and the pull records what the page showed.
 
 ## 3. The year and its window
 
@@ -100,7 +118,11 @@ the client's books.
 Pull fetches the 2A and 2B of the window months not yet pulled
 (`gstr2a2b_pull`, extension 0.13.0 or later; one type per job before). With
 nothing missing it pulls GSTR-9's system figures (`gstr9_pull`); with those
-too it re-pulls the last six months.
+too it re-pulls the last six months. With extension 0.18.0, a year that has
+ended and has no 8A saved gets the 8A pull (`gstr9_8a_pull`): after the
+missing 2A and 2B months when there are any (the next click), else first,
+then GSTR-9's system figures. An older extension keeps the plan above, with a
+note to update or upload.
 
 ## 7. Open questions for the firm
 
@@ -109,4 +131,4 @@ too it re-pulls the last six months.
 2. Should a document in 8A but in no pulled 2B be counted?
 3. Is the October cut-off right for every year (the s.16(4) date has moved
    in the past)?
-4. Should the extension pull Table 8A document details itself?
+4. (Answered 24 Oct 2026: yes, extension 0.18.0 pulls it.)
