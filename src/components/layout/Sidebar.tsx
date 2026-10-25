@@ -235,7 +235,7 @@ const GROUPED_PATHS = new Set(NAV_GROUPS.flatMap((g) => g.paths));
 
 // Every page of the Notices & Litigation module (and its nested routes, such as
 // /notices/:id and /litigation/:id): its one entry is marked on all of them (U-130-3).
-const NOTICES_PATHS = ['/notices-dashboard', '/notices-queue', '/notices-all', '/notices', '/notices-hearings', '/notices-calendar',
+const NOTICES_PATHS = ['/notices-dashboard', '/notices-queue', '/notices-all', '/notices', '/notices-hearings', '/notices-calendar', '/notices-cases', '/notices-case', '/notices-open', '/notices-portal-sync', '/notices-settings', '/refunds',
   '/notices-company-list', '/notices-company', '/notices-case-folder', '/notices-autopilot', '/notices-reply-factory', '/notices-report',
   '/notices-gstin-wise-count', '/refunds-all', '/drc03-all', '/litigation', '/litigation-mis'];
 const onPath = (pathname: string, p: string) => pathname === p || pathname.startsWith(`${p}/`);
