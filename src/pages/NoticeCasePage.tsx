@@ -221,7 +221,8 @@ const NoticeCasePage: React.FC = () => {
               <Link to={`/refunds/${clientId}/${encodeURIComponent(r.case_id)}`}>Refund page</Link>
             </Button>
           )}
-          {r.lead_notice_id && (
+          {/* The Appeal view is the work itself; Work on it opens the order's notice page. */}
+          {r.lead_notice_id && side === 'case' && (
             <Button size="sm" className={WS_BTN} asChild>
               <Link to={`/notices/${r.lead_notice_id}`}>{r.is_open ? 'Work on it' : 'Open the latest notice'} <ArrowRight className="h-3.5 w-3.5" aria-hidden /></Link>
             </Button>
@@ -229,7 +230,7 @@ const NoticeCasePage: React.FC = () => {
         </div>
       </header>
 
-      {side === 'appeal' && <AppealWorkspace clientId={clientId} caseKey={r.case_key as string} appeals={appeals} clientName={r.client_name} />}
+      {side === 'appeal' && <AppealWorkspace clientId={clientId} caseKey={r.case_key as string} appeals={appeals} all={appealsAll.data} clientName={r.client_name} />}
 
       {side === 'case' && <NextStepCard clientId={clientId} caseKey={r.case_key as string} track={track} form={r.form_code ?? null}
         overdue={!!r.is_overdue} open={!!r.is_open} />}

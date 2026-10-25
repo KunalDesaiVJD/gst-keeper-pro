@@ -6,7 +6,11 @@
 // improved by the notice assistant from the case's evidence, the order as read,
 // the firm's replies and its earlier appeals and replies on other cases
 // (src/lib/noticeAppeals.ts), edited here, saved in versions and marked final.
-// Nothing is filed by the app; a partner reviews every word.
+// Nothing is filed by the app; a partner reviews every word. Only what can
+// still be drafted is offered (supabase/functions/_shared/appealStage.ts): once
+// the appeal is filed its statement of facts and grounds stand as filed with
+// the APL 01 and only the written submission is drafted; a withdrawn or
+// decided appeal, or an order past the time to appeal, keeps its drafts to read.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,7 +26,7 @@ import { WS_BTN } from '@/components/workspace/theme';
 import { SectionCard } from '@/components/notices/ui/Panel';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  APPEAL_DOCS, appealDocLabel, appealDraftsKey, appealRunsKey, caseAppealsKey, downloadAppealDocx, loadAppealDrafts, runNotes,
+  APPEAL_DOCS, appealDocLabel, appealDocState, appealPhase, type AppealPhase, appealDraftsKey, appealRunsKey, caseAppealsKey, downloadAppealDocx, loadAppealDrafts, runNotes,
   saveAppealDraft, startAppealDraft, useAppealRuns, type AppealDocType, type AppealDraft, type CaseAppeal,
 } from '@/lib/noticeAppeals';
 import { fmtDate, fmtDateTime, fmtInr } from '@/lib/noticeFormat';
@@ -30,9 +34,19 @@ import { cn } from '@/lib/utils';
 
 const appealTitle = (a: CaseAppeal) => `${a.second_appeal ? 'Second appeal' : 'Appeal'} against ${a.order_form ? `${a.order_form} ` : ''}${a.order_ref ?? a.appeal_key}`;
 
-export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appeals: CaseAppeal[]; clientName?: string | null }> = ({ clientId, caseKey, appeals, clientName }) => {
+const PHASE_LINE: Record<AppealPhase, string> = {
+  preparing: 'Not filed yet',
+  late: 'Not filed yet; the three months are over, the month of condonation is still open',
+  time_over: 'Not filed; the time to appeal is over',
+  filed: 'Filed',
+  withdrawn: 'Withdrawn',
+  decided: 'Decided',
+};
+
+export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appeals: CaseAppeal[]; all?: CaseAppeal[]; clientName?: string | null }> = ({ clientId, caseKey, appeals, all, clientName }) => {
   const [picked, setPicked] = useState<string | null>(null);
   const appeal = appeals.find((a) => a.appeal_key === picked) ?? appeals[0];
+  const phase = appeal ? appealPhase(appeal, all ?? appeals) : 'preparing';
   if (!appeal) return <Note tone="info">No appeal is on record for this case, and no order of it can still be appealed.</Note>;
   return (
     <div className="space-y-3">
@@ -47,14 +61,14 @@ export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appe
           ))}
         </div>
       )}
-      <AppealFacts appeal={appeal} />
-      <AppealDocuments key={appeal.appeal_key} clientId={clientId} caseKey={caseKey} appeal={appeal} clientName={clientName} />
+      <AppealFacts appeal={appeal} phase={phase} />
+      <AppealDocuments key={appeal.appeal_key} clientId={clientId} caseKey={caseKey} appeal={appeal} phase={phase} clientName={clientName} />
     </div>
   );
 };
 
 /** The appeal as the portal records it, in one strip. */
-const AppealFacts: React.FC<{ appeal: CaseAppeal }> = ({ appeal: a }) => {
+const AppealFacts: React.FC<{ appeal: CaseAppeal; phase: AppealPhase }> = ({ appeal: a, phase }) => {
   const facts: [string, React.ReactNode][] = [
     ['Order', <>{a.order_form ? `${a.order_form} · ` : ''}<span className="font-mono text-[13px]">{a.order_ref ?? a.appeal_key}</span></>],
     ['Order dated', a.order_date ? fmtDate(a.order_date) : null],
@@ -67,10 +81,12 @@ const AppealFacts: React.FC<{ appeal: CaseAppeal }> = ({ appeal: a }) => {
   ];
   return (
     <SectionCard title={appealTitle(a)}
-      description={a.status === 'filed' ? (a.portal_status ?? 'Filed') : 'Not filed yet'}
+      description={a.status === 'filed' ? (a.portal_status ?? PHASE_LINE[phase]) : PHASE_LINE[phase]}
       info="What the portal records for the appeal and the order it is against. The documents below are drafted against this order, and stay with it once the appeal is filed."
       actions={<>
-        <Badge variant={a.status === 'filed' ? 'info' : 'warning'} className="text-[11px]">{a.status === 'filed' ? 'Appeal filed' : 'To file'}</Badge>
+        <Badge variant={phase === 'filed' ? 'info' : phase === 'preparing' || phase === 'late' ? 'warning' : 'secondary'} className="text-[11px]">
+          {phase === 'filed' ? 'Appeal filed' : phase === 'withdrawn' ? 'Appeal withdrawn' : phase === 'decided' ? 'Appeal decided' : phase === 'time_over' ? 'Time over' : 'To file'}
+        </Badge>
         {a.order_notice_id && (
           <Button size="sm" variant="outline" className={WS_BTN} asChild><Link to={`/notices/${a.order_notice_id}`}>Open the order</Link></Button>
         )}
@@ -89,11 +105,11 @@ const AppealFacts: React.FC<{ appeal: CaseAppeal }> = ({ appeal: a }) => {
 };
 
 /** The three documents: a tab each, the editor, the assistant. */
-const AppealDocuments: React.FC<{ clientId: string; caseKey: string; appeal: CaseAppeal; clientName?: string | null }> = ({ clientId, caseKey, appeal, clientName }) => {
+const AppealDocuments: React.FC<{ clientId: string; caseKey: string; appeal: CaseAppeal; phase: AppealPhase; clientName?: string | null }> = ({ clientId, caseKey, appeal, phase, clientName }) => {
   const { user } = useAuth();
   const actor = user?.firstName ?? null;
   const qc = useQueryClient();
-  const [doc, setDoc] = useState<AppealDocType>('facts');
+  const [pickedDoc, setDoc] = useState<AppealDocType | null>(null);
   const drafts = useQuery({ queryKey: appealDraftsKey(clientId, appeal.appeal_key), queryFn: () => loadAppealDrafts(clientId, appeal.appeal_key) });
   const runs = useAppealRuns(clientId, appeal.appeal_key);
   const byDoc = useMemo(() => {
@@ -104,6 +120,14 @@ const AppealDocuments: React.FC<{ clientId: string; caseKey: string; appeal: Cas
     }
     return m;
   }, [drafts.data]);
+  // What can still be drafted at this stage; a document that cannot is shown only to read its drafts.
+  const shownDocs = APPEAL_DOCS.map((d) => ({ ...d, state: appealDocState(d.key, phase) }))
+    .filter((d) => d.state.open || (byDoc.get(d.key)?.length ?? 0) > 0 || !!appeal.drafts?.[d.key]);
+  const doc: AppealDocType = shownDocs.find((d) => d.key === pickedDoc)?.key
+    ?? shownDocs.find((d) => d.state.open)?.key ?? shownDocs[0]?.key ?? 'submission';
+  const filedLine = phase === 'filed'
+    ? `The statement of facts and the grounds of appeal were filed with the APL 01${appeal.filed_on ? ` on ${fmtDate(appeal.filed_on)}` : ''} and stand as filed; they are in the case's documents. What is left to draft is the written submission for the hearing, which argues the grounds as filed.`
+    : !shownDocs.some((d) => d.state.open) ? appealDocState('facts', phase).why : null;
 
   // A run that ends brings its version: load the drafts again.
   const running = (runs.data ?? []).filter((r) => r.status === 'running').map((r) => r.id).join(',');
@@ -114,28 +138,29 @@ const AppealDocuments: React.FC<{ clientId: string; caseKey: string; appeal: Cas
 
   return (
     <SectionCard title="Appeal documents"
-      info="Draft each document with the AI, then read, edit and save it. The AI reads the order appealed, every document of the case as read (with the names and evidence types given on the Documents tab), the firm's replies and positions in the case, the appeal's other documents, and the firm's earlier appeals and replies on other cases (another client's only when that client is chosen under Reply Factory, Learning). Draft the statement of facts first: the grounds and the written submission build on it. A version marked final is used for later appeals."
+      info="Draft each document with the AI, then read, edit and save it. Only the documents that can still be drafted at the appeal's stage are offered: once the appeal is filed, the statement of facts and grounds stand as filed and only the written submission is drafted. The AI reads the order appealed, every document of the case as read (with the names and evidence types given on the Documents tab), the firm's replies and positions in the case, the appeal's other documents, and the firm's earlier appeals and replies on other cases (another client's only when that client is chosen under Reply Factory, Learning). Draft the statement of facts first: the grounds and the written submission build on it. A version marked final is used for later appeals."
       actions={
         <div className="inline-flex rounded-md border bg-card p-0.5" role="tablist" aria-label="Document">
-          {APPEAL_DOCS.map((d) => {
+          {shownDocs.map((d) => {
             const head = appeal.drafts?.[d.key] ?? (byDoc.get(d.key)?.[0] ? { status: byDoc.get(d.key)?.[0]?.status } : undefined);
             return (
               <button key={d.key} type="button" role="tab" aria-selected={doc === d.key} onClick={() => setDoc(d.key)} title={d.hint}
                 className={cn('inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium',
                   doc === d.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                {d.label}
+                {d.label}{!d.state.open && <span className="sr-only"> (to read only)</span>}
                 {head?.status === 'final' ? <Check className="h-3 w-3" aria-label="final" /> : head ? <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-label="drafted" /> : null}
               </button>
             );
           })}
         </div>
       }>
+      {filedLine && <Note tone="info">{filedLine}</Note>}
       {drafts.error ? <Note tone="warn">Couldn't load the drafts: {drafts.error instanceof Error ? drafts.error.message : String(drafts.error)}</Note>
         : drafts.isLoading ? <Skeleton className="h-96 w-full" />
         // All three stay mounted, so switching documents never loses an edit not saved.
-        : APPEAL_DOCS.map((d) => (
+        : shownDocs.map((d) => (
           <div key={d.key} role="tabpanel" hidden={doc !== d.key}>
-            <DocEditor clientId={clientId} caseKey={caseKey} appeal={appeal} doc={d.key} versions={byDoc.get(d.key) ?? []}
+            <DocEditor clientId={clientId} caseKey={caseKey} appeal={appeal} doc={d.key} versions={byDoc.get(d.key) ?? []} closedWhy={d.state.why}
               runs={(runs.data ?? []).filter((r) => r.doc_type === d.key)} actor={actor} clientName={clientName}
               onSaved={() => {
                 qc.invalidateQueries({ queryKey: appealDraftsKey(clientId, appeal.appeal_key) });
@@ -151,8 +176,11 @@ const AppealDocuments: React.FC<{ clientId: string; caseKey: string; appeal: Cas
 const DocEditor: React.FC<{
   clientId: string; caseKey: string; appeal: CaseAppeal; doc: AppealDocType; versions: AppealDraft[];
   runs: ReturnType<typeof useAppealRuns>['data']; actor: string | null; clientName?: string | null;
+  /** Set when the document is no longer drafted at this stage: its versions are shown to read. */
+  closedWhy?: string | null;
   onSaved: () => void; onStarted: () => void;
-}> = ({ clientId, caseKey, appeal, doc, versions, runs, actor, clientName, onSaved, onStarted }) => {
+}> = ({ clientId, caseKey, appeal, doc, versions, runs, actor, clientName, closedWhy, onSaved, onStarted }) => {
+  const readOnly = !!closedWhy;
   const latest = versions[0];
   const [shown, setShown] = useState<number | null>(null); // a version picked to read, else the latest
   const base = (shown ? versions.find((v) => v.version === shown) : latest) ?? null;
@@ -209,9 +237,11 @@ const DocEditor: React.FC<{
   const fileName = `${label} ${clientName ?? ''} ${appeal.order_ref ?? appeal.appeal_key}`.replace(/\s+/g, ' ');
 
   return (
-    <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1fr)_17rem]">
+    <div className={cn('grid grid-cols-1 items-start gap-3', !readOnly && 'xl:grid-cols-[minmax(0,1fr)_17rem]')}>
       <div className="min-w-0 space-y-2">
+        {readOnly && <Note tone="info">{closedWhy} The drafts kept here are to read, copy or download.</Note>}
         <div className="flex flex-wrap items-center gap-2">
+          {!readOnly && <>
           <Button size="sm" className={WS_BTN} disabled={!!busy || !!running} onClick={() => ask('draft')}>
             {busy === 'draft' ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="h-3.5 w-3.5" aria-hidden />}
             {latest ? 'Draft again with AI' : 'Draft with AI'}
@@ -230,6 +260,7 @@ const DocEditor: React.FC<{
               {busy === 'final' ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Check className="h-3.5 w-3.5" aria-hidden />} Mark final
             </Button>
           )}
+          </>}
           <Button size="sm" variant="ghost" className={WS_BTN} disabled={!text.trim()}
             onClick={() => navigator.clipboard.writeText(text).then(() => toast.success('Copied.'), () => toast.error('Could not copy.'))}>
             <Copy className="h-3.5 w-3.5" aria-hidden /> Copy
@@ -252,11 +283,11 @@ const DocEditor: React.FC<{
           )}
         </div>
 
-        {running && (
+        {running && !readOnly && (
           <Note tone="info"><span className="inline-flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
             The AI is {running.mode === 'improve' ? 'improving' : 'drafting'} the {label.toLowerCase()} (asked by {running.requested_by_name ?? 'staff'} at {fmtDateTime(running.created_at)}). The new version opens here when it is done.</span></Note>
         )}
-        {!running && lastRun?.status === 'failed' && lastRun.created_at > (latest?.created_at ?? '') && (
+        {!readOnly && !running && lastRun?.status === 'failed' && lastRun.created_at > (latest?.created_at ?? '') && (
           <Note tone="warn">The AI could not finish the last request: {lastRun.error ?? 'no answer'}.</Note>
         )}
         {newer && (
@@ -268,7 +299,7 @@ const DocEditor: React.FC<{
         )}
         {shown && !newer && <p className="text-xs text-muted-foreground">Reading version {shown}. Save to make it the current version again.</p>}
 
-        {!latest && !text ? (
+        {!latest && !text && !readOnly ? (
           <div className="flex min-h-[18rem] flex-col items-center justify-center gap-2 rounded-md border border-dashed p-6 text-center">
             <FileText className="h-6 w-6 text-muted-foreground" aria-hidden />
             <p className="text-sm font-medium">No {label.toLowerCase()} yet</p>
@@ -276,16 +307,16 @@ const DocEditor: React.FC<{
             <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setText(' ')}>Type it myself</Button>
           </div>
         ) : (
-          <Textarea value={text} onChange={(e) => setText(e.target.value)} aria-label={label}
+          <Textarea value={text} onChange={(e) => setText(e.target.value)} aria-label={label} readOnly={readOnly}
             className="min-h-[28rem] font-serif text-[14px] leading-relaxed" spellCheck />
         )}
         <p className="text-[11px] text-muted-foreground">
           {latest ? <>Version {latest.version}{latest.status === 'final' ? ' (final)' : ''}, {latest.source === 'ai' ? `drafted by the AI for ${latest.author_name ?? 'staff'}` : `saved by ${latest.author_name ?? 'staff'}`}, {fmtDateTime(latest.created_at)}. </> : null}
-          Hyphens and dashes are taken out on saving, the firm's rule for what is filed.
+          {!readOnly && 'Hyphens and dashes are taken out on saving, the firm\'s rule for what is filed.'}
         </p>
       </div>
 
-      <aside className="min-w-0 space-y-3" aria-label="For the AI">
+      {!readOnly && <aside className="min-w-0 space-y-3" aria-label="For the AI">
         <div className="space-y-1">
           <label htmlFor={`guide-${doc}`} className="text-[11px] font-medium text-muted-foreground">Guidance for the AI (optional)</label>
           <Textarea id={`guide-${doc}`} value={guide} onChange={(e) => setGuide(e.target.value)} rows={4} className="text-xs"
@@ -313,7 +344,7 @@ const DocEditor: React.FC<{
             </ul>
           </div>
         )}
-      </aside>
+      </aside>}
     </div>
   );
 };

@@ -10,6 +10,7 @@
 // or dash. A partner reviews every word before anything is filed.
 
 import { scrub, type CallUsage, type Caller } from '../notice-ai/claude.ts';
+import { appealDocState, appealPhase, type AppealStageInput } from '../_shared/appealStage.ts';
 
 /** What a run needs: the database's functions and a way to reach Claude (notice-ai's Deps fits). */
 export interface AppealDeps {
@@ -127,6 +128,9 @@ export function appealUserText(ctx: J): { text: string; labels: Map<string, stri
     o.period_from && o.period_to && `period ${o.period_from} to ${o.period_to}`, rs(o.amount_of_demand) && `demand ${rs(o.amount_of_demand)}`,
     o.issued_by && `issued by ${one(o.issued_by, 200)}`,
   ].filter(Boolean).join(', ') || 'details not recorded'}.${o.description ? ` Portal description: ${one(o.description, 400)}.` : ''}`);
+  if (doc === 'submission' && a.status === 'filed') {
+    out.push('The appeal is filed: its statement of facts and grounds of appeal stand as filed with the APL 01 (in the appeal\'s own papers below, where given). Argue those grounds, in their order; do not add a new ground, and where the papers suggest one, say so in cautions (an additional ground needs the appellate authority\'s leave).');
+  }
   if (o.reading) out.push(`The order as read: ${one(o.reading, 2000)}`);
   for (const d of arr(o.documents)) {
     out.push(`The order's document "${one(d.title, 200)}"${d.date ? ` (${d.date})` : ''}: ${one(d.summary, 1500)}`);
@@ -237,6 +241,11 @@ export async function beginAppeal(deps: AppealDeps, input: AppealInput): Promise
   const doc = (['facts', 'grounds', 'submission'].includes(input.doc_type ?? '') ? input.doc_type : '') as AppealDocType;
   if (!doc) return { error: 'bad_request' };
   const mode = input.mode === 'improve' ? 'improve' : 'draft';
+  // Only what can still be drafted at the appeal's stage (_shared/appealStage.ts): a filed appeal's facts and grounds stand as filed.
+  const appeals = arr(await deps.db.rpc<J>('notice_case_appeals', { p_client_id: input.client_id, p_case_key: input.case_key })) as AppealStageInput[];
+  const key = input.appeal_key.trim().toUpperCase();
+  const appeal = appeals.find((x) => String(x?.appeal_key ?? '').toUpperCase() === key);
+  if (appeal && !appealDocState(doc, appealPhase(appeal, appeals)).open) return { error: 'doc_closed' };
   const begin = await deps.db.rpc<J>('notice_appeal_ai_begin', {
     p_client_id: input.client_id, p_case_key: input.case_key, p_appeal_key: input.appeal_key, p_doc_type: doc, p_mode: mode,
     p_text: input.text || null, p_instructions: input.instructions || null, p_actor: input.actor || null,

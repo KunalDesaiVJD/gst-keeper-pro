@@ -16,7 +16,7 @@ import { apiCaller, makeClaudeClient, scrub, type Caller } from '../notice-ai/cl
 import { cliCaller, cliWithApiForScans } from '../notice-ai/cli.ts';
 import { beginAppeal, type AppealDeps } from './appeal.ts';
 
-export const VERSION = 'notice-appeal-ai 1.0.0';
+export const VERSION = 'notice-appeal-ai 1.1.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',

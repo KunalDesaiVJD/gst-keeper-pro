@@ -61,3 +61,35 @@ Deno.test('appeal: begin, draft in the background, finish; a refusal and a bad r
   assertEquals((await beginAppeal(deps, { client_id: 'x', case_key: 'AD1', appeal_key: 'ZD1', doc_type: 'facts' })).error, 'bad_request');
   assertEquals((await beginAppeal(deps, { client_id: '00000000-0000-0000-0000-0000000000c1', case_key: 'AD1', appeal_key: 'ZD1', doc_type: 'memo' })).error, 'bad_request');
 });
+
+Deno.test('appeal: only what can still be drafted at the appeal\'s stage', async () => {
+  const { appealDocState, appealPhase } = await import('../../_shared/appealStage.ts');
+  const filed = { appeal_key: 'ZD1', status: 'filed', portal_status: 'Reply Submitted', filed_on: '2024-01-09' };
+  assertEquals(appealPhase(filed), 'filed');
+  assertEquals(appealDocState('facts', 'filed').open, false);
+  assertEquals(appealDocState('grounds', 'filed').open, false);
+  assertEquals(appealDocState('submission', 'filed').open, true);
+  assertEquals(appealPhase({ ...filed, portal_status: 'Appeal Withdrawn' }), 'withdrawn');
+  assertEquals(appealPhase(filed, [filed, { appeal_key: 'ZA9', status: 'to_file', order_form: 'APL-04', order_date: '2025-03-01' }]), 'decided');
+  assertEquals(appealDocState('submission', 'decided').open, false);
+  const toFile = { appeal_key: 'ZD2', status: 'to_file', last_day: '2026-10-01' };
+  assertEquals(appealPhase(toFile, [], '2026-09-30'), 'preparing');
+  assertEquals(appealPhase(toFile, [], '2026-10-20'), 'late');
+  assertEquals(appealDocState('facts', 'late').open, true);
+  assertEquals(appealPhase(toFile, [], '2026-11-02'), 'time_over');
+
+  // The function refuses a filed appeal's grounds before it begins a run, and drafts its submission.
+  const db = new FakeDb({
+    notice_case_appeals: () => [filed],
+    notice_appeal_ai_begin: () => ({ run_id: 'ar2', settings: {}, context: { ...appealContext, doc_type: 'submission' } }),
+    notice_appeal_ai_finish: (a) => ({ id: a.p_run_id, status: a.p_status }),
+  });
+  const deps: AppealDeps = { db, claude: null };
+  const id = '00000000-0000-0000-0000-0000000000c1';
+  assertEquals((await beginAppeal(deps, { client_id: id, case_key: 'AD1', appeal_key: 'zd1', doc_type: 'grounds' })).error, 'doc_closed');
+  assertEquals(db.called('notice_appeal_ai_begin').length, 0);
+  const ok = await beginAppeal(deps, { client_id: id, case_key: 'AD1', appeal_key: 'ZD1', doc_type: 'submission' });
+  assertEquals(ok.run_id, 'ar2');
+  await ok.done;
+  assertStringIncludes(appealUserText({ ...appealContext, doc_type: 'submission' }).text, 'Argue those grounds');
+});
