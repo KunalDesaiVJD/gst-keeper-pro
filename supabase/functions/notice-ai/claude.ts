@@ -1,7 +1,8 @@
 // One request to the Claude API, the way every part of notice-ai asks: the
 // fixed instructions (system), the content (a PDF document block and/or text),
 // answered as JSON in the caller's schema (structured outputs). Streamed (a
-// reading can be long), adaptive thinking at the effort set in the app, and the
+// reading can be long), adaptive thinking, always Sonnet at medium effort
+// (../_shared/aiModel.ts: whatever model or effort a request names), and the
 // API's own fallback on a policy decline (fallbacks "default"). A reading cut off
 // at max_tokens is asked once more with the model's whole output budget. Errors
 // come back classified: retry later, failed, or failed and pause (the key was
@@ -9,18 +10,14 @@
 // ANTHROPIC_API_KEY secret.
 
 import Anthropic, { APIError } from '@anthropic-ai/sdk';
+import { AI_EFFORT, AI_MODEL } from '../_shared/aiModel.ts';
 
 type BetaMessage = Anthropic.Beta.Messages.BetaMessage;
 type Params = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
 type ContentBlock = Anthropic.Beta.Messages.BetaContentBlockParam;
-export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export const API_BASE_URL = 'https://api.anthropic.com';
 export const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
-// Models whose fallbacks: "default" is documented; any other model the app is
-// set to is asked without a fallback rather than refused with a 400.
-const FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-fable-5-1']);
 // Thinking counts towards max_tokens.
 export const TOKEN_BUDGETS = [64_000, 128_000] as const;
 // The API takes requests of at most 32 MB; a PDF travels base64-encoded.
@@ -90,33 +87,23 @@ export function apiCaller(client: Anthropic): Caller {
   return c;
 }
 
-// Haiku 4.5 takes no effort level and no adaptive thinking, and answers at most
-// 64K tokens: it is asked without them.
-export const isHaiku = (model: string) => /haiku/i.test(model);
+/** The request as it is sent: always the one model at the one effort, whatever it named. */
+export function pinned<T extends { model: string; effort: string }>(req: T): T {
+  return { ...req, model: AI_MODEL, effort: AI_EFFORT };
+}
 
 export function buildParams(req: CallRequest, maxTokens: number): Params {
-  const effort = (EFFORTS as readonly string[]).includes(req.effort) ? (req.effort as Effort) : 'high';
-  const params: Params = isHaiku(req.model)
-    ? {
-      model: req.model,
-      max_tokens: Math.min(maxTokens, 64_000),
-      output_config: { format: { type: 'json_schema', schema: req.schema } },
-      system: req.system,
-      messages: [{ role: 'user', content: req.content }],
-    }
-    : {
-      model: req.model,
-      max_tokens: maxTokens,
-      thinking: { type: 'adaptive' },
-      output_config: { effort, format: { type: 'json_schema', schema: req.schema } },
-      system: req.system,
-      messages: [{ role: 'user', content: req.content }],
-    };
-  if (FALLBACK_MODELS.has(req.model)) {
-    params.betas = [FALLBACK_BETA];
-    params.fallbacks = 'default';
-  }
-  return params;
+  return {
+    model: AI_MODEL,
+    max_tokens: maxTokens,
+    thinking: { type: 'adaptive' },
+    output_config: { effort: AI_EFFORT, format: { type: 'json_schema', schema: req.schema } },
+    system: req.system,
+    messages: [{ role: 'user', content: req.content }],
+    // Sonnet takes the API's own fallback on a policy decline.
+    betas: [FALLBACK_BETA],
+    fallbacks: 'default',
+  };
 }
 
 // Tokens billed for one response. With a fallback, usage.iterations has one
@@ -194,13 +181,14 @@ export function requestBytes(content: ContentBlock[]): number {
   return n;
 }
 
-export async function callClaude(client: Anthropic, req: CallRequest): Promise<CallOutcome> {
+export async function callClaude(client: Anthropic, asked: CallRequest): Promise<CallOutcome> {
+  const req = pinned(asked);
   const what = req.what ?? 'the document';
   if (requestBytes(req.content) + REQUEST_HEADROOM > MAX_REQUEST_BYTES) {
     return { ok: false, status: 'failed', reason: 'too_large', error: `${what[0].toUpperCase()}${what.slice(1)} is too large to send to the Claude API (32 MB a request).`, usage: null };
   }
   const started = Date.now();
-  const usage: CallUsage = { input_tokens: 0, output_tokens: 0, duration_ms: 0, request_id: null, status: 'ok', model: req.model, calls: 0 };
+  const usage: CallUsage = { input_tokens: 0, output_tokens: 0, duration_ms: 0, request_id: null, status: 'ok', model: AI_MODEL, calls: 0 };
   const ids: string[] = [];
   const count = (u: Partial<BetaMessage['usage']> | undefined | null, requestId: string | null | undefined, model?: string) => {
     const b = billedTokens(u);
@@ -213,7 +201,7 @@ export async function callClaude(client: Anthropic, req: CallRequest): Promise<C
     usage.duration_ms = Date.now() - started;
   };
 
-  const budgets = isHaiku(req.model) ? [64_000] : req.budgets ?? TOKEN_BUDGETS;
+  const budgets = req.budgets ?? TOKEN_BUDGETS;
   for (const budget of budgets) {
     let stream: ReturnType<typeof client.beta.messages.stream> | null = null;
     let msg: BetaMessage;

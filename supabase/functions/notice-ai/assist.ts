@@ -7,6 +7,7 @@
 // (learned examples, E1, E2, …). The answer is kept by ai_assist_finish, which
 // also takes every hyphen and dash out of reply text, as for every reply.
 
+import { AI_EFFORT, AI_MODEL } from '../_shared/aiModel.ts';
 import { scrub, type CallUsage } from './claude.ts';
 import type { Deps } from './runner.ts';
 
@@ -180,8 +181,8 @@ export async function runAssist(deps: Deps, input: AssistInput): Promise<Record<
   }
   const { text, labels } = assistUserText(begin.context ?? {});
   const out = await deps.claude({
-    model: begin.settings?.model ?? 'claude-opus-5-5',
-    effort: begin.settings?.effort ?? 'high',
+    model: AI_MODEL,
+    effort: AI_EFFORT,
     system: ASSIST_SYSTEM_PROMPT,
     content: [{ type: 'text', text }],
     schema: ASSIST_OUTPUT_SCHEMA,

@@ -7,6 +7,7 @@
 // and checks (20261008160000; contract §B, §C). One place for the words, so
 // every screen says the same thing. Read docs/REPLY_FACTORY_POSITIONS.md
 // before changing a rule here.
+import { AI_EFFORT, AI_MODEL } from '@/lib/aiModel';
 import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, type QueryClient } from '@tanstack/react-query';
@@ -304,23 +305,12 @@ export const AUDIT_STATUS: Record<string, { label: string; tone: Tone }> = {
 };
 
 /**
- * The models the reader may use, with Anthropic's list prices per million
- * tokens (input / output, USD) as published in September 2026 — only for the
- * "use the list price" helper; the prices saved in the settings are what the
- * estimates use.
+ * The one model every AI call uses (Sonnet at medium effort, src/lib/aiModel.ts;
+ * no setting chooses another), with Anthropic's list prices per million tokens
+ * (input / output, USD) as published in September 2026, only for the list-price
+ * hint; the prices saved in the settings are what the estimates use.
  */
-export const AI_MODELS: { id: string; note: string; priceIn: number; priceOut: number }[] = [
-  { id: 'claude-opus-5-5', note: 'default, recommended', priceIn: 4, priceOut: 20 },
-  { id: 'claude-sonnet-5-5', note: 'faster, lower cost', priceIn: 2, priceOut: 10 },
-  { id: 'claude-haiku-4-5', note: 'lowest cost; takes no effort level', priceIn: 1, priceOut: 5 },
-];
-export const AI_EFFORTS: { id: string; label: string }[] = [
-  { id: 'low', label: 'Low' },
-  { id: 'medium', label: 'Medium' },
-  { id: 'high', label: 'High' },
-  { id: 'xhigh', label: 'Extra high (xhigh)' },
-  { id: 'max', label: 'Max' },
-];
+export const AI_MODEL_INFO = { id: AI_MODEL, effort: AI_EFFORT, label: 'Sonnet, medium effort', priceIn: 2, priceOut: 10 } as const;
 
 /** Fields a reader fills on a notice (gst_notices.read_fields keys). */
 export const READ_FIELD_LABELS: Record<string, string> = {

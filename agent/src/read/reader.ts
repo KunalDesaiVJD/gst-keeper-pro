@@ -11,6 +11,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type { AgentConfig } from '../config.js';
 import { sleep, type Db } from '../db.js';
 import { log } from '../log.js';
+import { AI_EFFORT, AI_MODEL } from './aiModel.js';
 import { makeClaudeClient, readNotice, scrub, type CallUsage } from './claude.js';
 import { DocumentError, documentUrlAllowed, downloadPdf, readPdfText } from './pdf.js';
 import { buildResult, type ReadResult, type ReaderClaim } from './result.js';
@@ -217,13 +218,13 @@ export class NoticeReader {
     if (signal.aborted) return { status: 'retry', reason: 'agent_stopped', error: 'The agent stopped before the notice was sent.', result: meta };
     const out = await readNotice(this.client!, {
       pdfBase64: Buffer.from(doc.bytes).toString('base64'),
-      model: claim.model,
-      effort: claim.effort,
+      model: AI_MODEL,
+      effort: AI_EFFORT,
       issueCodes: claim.issue_codes ?? [],
       signal,
     });
     if (!out.ok) {
-      return { status: out.status, reason: out.reason, error: out.error, usage: out.usage, result: { ...meta, model: out.usage?.model ?? claim.model }, pause: out.pause };
+      return { status: out.status, reason: out.reason, error: out.error, usage: out.usage, result: { ...meta, model: out.usage?.model ?? AI_MODEL }, pause: out.pause };
     }
     const result = buildResult(out.reading, { pages: text.pages, pageCount: text.pageCount, textLayer: text.textLayer, sha256: doc.sha256 }, claim, out.model);
     return { status: 'done', result, usage: out.usage };

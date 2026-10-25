@@ -2,7 +2,8 @@
 // line on the firm's Claude subscription, the same gateway the firm's other
 // Supabase project calls (its _shared/aiProvider.ts callClaudeCli). One POST
 // with a bearer secret:
-//   {system, parts: [{kind: "text", text}], model: "haiku"|"sonnet"|"opus", effort, timeoutMs}
+//   {system, parts: [{kind: "text", text}], model: "sonnet", effort: "medium", timeoutMs}
+// (always Sonnet at medium effort, ../_shared/aiModel.ts, whatever a request names)
 // answered {text, truncated?, model?} or {error}. No tokens are billed per call,
 // so the usage carries none. Secrets: CLAUDE_CLI_GATEWAY_URL and
 // CLAUDE_CLI_GATEWAY_SECRET (the values the other project already has).
@@ -12,14 +13,8 @@
 // layer) is read by the Claude API when ANTHROPIC_API_KEY is also set, else it
 // is left with the reason needs_vision.
 
+import { AI_CLI_MODEL, AI_EFFORT } from '../_shared/aiModel.ts';
 import { scrub, type CallOutcome, type CallRequest, type CallUsage, type Caller } from './claude.ts';
-
-export function cliModel(model: string): 'haiku' | 'sonnet' | 'opus' {
-  const m = model.toLowerCase();
-  if (m.includes('haiku')) return 'haiku';
-  if (m.includes('sonnet')) return 'sonnet';
-  return 'opus';
-}
 
 /** The JSON object in a text answer: fences and any words around it are dropped. */
 export function jsonFromText(text: string): unknown {
@@ -58,7 +53,7 @@ export function cliCaller(opts: { url: string; secret: string; fetch?: typeof fe
   const f = opts.fetch ?? fetch;
   const c: Caller = async (req: CallRequest): Promise<CallOutcome> => {
     const what = req.what ?? 'the document';
-    const model = cliModel(req.model);
+    const model = AI_CLI_MODEL;
     const usage: CallUsage = { input_tokens: 0, output_tokens: 0, duration_ms: 0, request_id: null, status: 'ok', model: `claude-cli:${model}`, calls: 1 };
     const parts = cliParts(req);
     if (!parts) {
@@ -73,7 +68,7 @@ export function cliCaller(opts: { url: string; secret: string; fetch?: typeof fe
         method: 'POST',
         signal: req.signal,
         headers: { Authorization: `Bearer ${opts.secret}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ system: cliSystem(req), parts, model, effort: req.effort || 'low', timeoutMs }),
+        body: JSON.stringify({ system: cliSystem(req), parts, model, effort: AI_EFFORT, timeoutMs }),
       });
     } catch (e) {
       usage.duration_ms = Date.now() - started;

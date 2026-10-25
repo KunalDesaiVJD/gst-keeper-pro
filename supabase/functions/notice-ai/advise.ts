@@ -6,6 +6,7 @@
 // case and on the home work list. Guidance for staff: nothing is filed, paid or
 // closed by it.
 
+import { AI_EFFORT, AI_MODEL } from '../_shared/aiModel.ts';
 import { scrub } from './claude.ts';
 import type { Deps } from './runner.ts';
 
@@ -133,8 +134,8 @@ async function adviseBegun(deps: Deps, begin: J, signal?: AbortSignal): Promise<
     });
   if (!deps.claude) return { ...(await finish('failed', null, null, null, 'No Claude backend is set for the Edge Functions.', 'no_key')), error: 'no_key' };
   const out = await deps.claude({
-    model: begin.settings?.model ?? 'claude-opus-5-5',
-    effort: begin.settings?.effort ?? 'high',
+    model: AI_MODEL,
+    effort: AI_EFFORT,
     system: ADVICE_SYSTEM_PROMPT,
     content: [{ type: 'text', text: adviceUserText(begin.context ?? {}) }],
     schema: ADVICE_OUTPUT_SCHEMA,

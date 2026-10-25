@@ -1,11 +1,12 @@
 // notice-ai without the real API or database:
 //   deno test --allow-read --allow-env supabase/functions/notice-ai/test/
 import { assert, assertEquals, assertStringIncludes } from '@std/assert';
+import { AI_EFFORT, AI_MODEL } from '../../_shared/aiModel.ts';
 import { buildParams, callClaude, FALLBACK_BETA } from '../claude.ts';
 import { buildDocResult, type DocumentClaim } from '../documents.ts';
 import { assistUserText, mapAssistOutput, runAssist } from '../assist.ts';
 import { readDocumentJob, runTick, type Deps } from '../runner.ts';
-import { cliModel, cliWithApiForScans, jsonFromText } from '../cli.ts';
+import { cliWithApiForScans, jsonFromText } from '../cli.ts';
 import { documentUrlAllowed } from '../pdf.ts';
 import {
   buildPdf, FakeDb, FakeNet, GATEWAY, ISSUE_CODES, jsonReply, replyPages, replyReading, storageUrl, SUPA, type J,
@@ -25,18 +26,19 @@ const docClaim = (over: Partial<DocumentClaim> = {}): DocumentClaim => ({
   ...over,
 });
 
-Deno.test('the request: structured output, adaptive thinking, effort, the server fallback', () => {
+Deno.test('the request: always Sonnet at medium effort, structured output, adaptive thinking, the server fallback', () => {
   const p = buildParams({ model: 'claude-opus-5-5', effort: 'low', system: 'S', content: [{ type: 'text', text: 'x' }], schema: { type: 'object' } }, 64000);
+  assertEquals(p.model, AI_MODEL);
   assertEquals(p.thinking, { type: 'adaptive' });
-  assertEquals((p.output_config as J).effort, 'low');
+  assertEquals((p.output_config as J).effort, AI_EFFORT);
   assertEquals((p.output_config as J).format.type, 'json_schema');
   assertEquals(p.betas, [FALLBACK_BETA]);
   assertEquals((p as J).fallbacks, 'default');
-  const q = buildParams({ model: 'claude-other', effort: 'nonsense', system: 'S', content: [], schema: {} }, 64000);
-  assertEquals(q.betas, undefined);
-  assertEquals((q.output_config as J).effort, 'high');
-  const h = buildParams({ model: 'claude-haiku-4-5', effort: 'high', system: 'S', content: [], schema: {} }, 128000);
-  assertEquals([h.thinking, (h.output_config as J).effort, h.max_tokens], [undefined, undefined, 64000], 'Haiku: no effort, no thinking, 64K');
+  for (const [model, effort] of [['claude-other', 'nonsense'], ['claude-haiku-4-5', 'high'], ['claude-opus-5-5', 'max']]) {
+    const q = buildParams({ model, effort, system: 'S', content: [], schema: {} }, 128000);
+    assertEquals([q.model, (q.output_config as J).effort, q.thinking, q.max_tokens], [AI_MODEL, AI_EFFORT, { type: 'adaptive' }, 128000], `${model} at ${effort} is sent as Sonnet, medium`);
+  }
+  assertEquals([AI_MODEL, AI_EFFORT], ['claude-sonnet-5-5', 'medium']);
 });
 
 Deno.test('a call: the JSON, its usage, and a cut-off answer asked again with the whole budget', async () => {
@@ -50,6 +52,7 @@ Deno.test('a call: the JSON, its usage, and a cut-off answer asked again with th
     assertEquals(out.usage.calls, 2);
   }
   assertEquals(net.claude.map((s) => s.body.max_tokens), [64000, 128000]);
+  assertEquals(net.claude.map((s) => [s.body.model, s.body.output_config.effort]), [[AI_MODEL, AI_EFFORT], [AI_MODEL, AI_EFFORT]], 'asked for Opus at high, sent Sonnet at medium');
 });
 
 Deno.test('a call: a refusal fails, a refused key pauses', async () => {
@@ -116,7 +119,7 @@ Deno.test('reading a reply PDF: downloaded, hashed, read with the case\'s paragr
   assertEquals(r.pairs[0].verified, true);
   assertEquals(db.called('ai_document_hash')[0].args.p_sha256.length, 64);
   const req = net.claude[0].body;
-  assertEquals(req.output_config.effort, 'low');
+  assertEquals([req.model, req.output_config.effort], [AI_MODEL, AI_EFFORT]);
   assertEquals(req.messages[0].content[0].type, 'document');
   const text = req.messages[0].content[1].text as string;
   assertStringIncludes(text, 'P1 [ASMT-10 · ZD-ASMT-1 · para 2 · Excess ITC over GSTR 2A]: Para 2. On scrutiny');
@@ -271,7 +274,7 @@ Deno.test('the assistant: begin, ask the API, finish; no key says so', async () 
   assertEquals(fin.p_usage.input_tokens, 20000);
   assertEquals(db.called('ai_assist_begin')[0].args.p_actor, 'Staff');
   const req = net.claude[0].body;
-  assertEquals(req.output_config.effort, 'high');
+  assertEquals([req.model, req.output_config.effort], [AI_MODEL, AI_EFFORT]);
   assertEquals(req.max_tokens, 32000);
   assertStringIncludes(req.system, 'never carry their names, GSTINs');
   assertStringIncludes(req.system, 'No hyphen or dash');
@@ -288,7 +291,7 @@ Deno.test('the assistant: begin, ask the API, finish; no key says so', async () 
 Deno.test('CLI: a reply PDF goes as its text, the JSON comes back, no tokens billed, tokens counted', async () => {
   const pdf = await buildPdf(replyPages);
   const net = new FakeNet({ 'reply.pdf': pdf }, () => jsonReply(replyReading));
-  net.gateway = () => ({ body: { text: '```json\n' + JSON.stringify(replyReading) + '\n```', model: 'opus' } });
+  net.gateway = () => ({ body: { text: '```json\n' + JSON.stringify(replyReading) + '\n```', model: 'sonnet' } });
   const db = new FakeDb({ ai_document_hash: () => ({ duplicate: false }) });
   const deps: Deps = { db, claude: net.cliClient(), supabaseUrl: SUPA, agentId: 'edge:t', version: 't', fetchImpl: net.fetch };
   const f = await readDocumentJob(deps, docClaim({ attempt: 2 }), new AbortController().signal);
@@ -296,7 +299,7 @@ Deno.test('CLI: a reply PDF goes as its text, the JSON comes back, no tokens bil
   assertEquals(net.claude.length, 0, 'the Claude API is not called');
   const req = net.cli[0];
   assertEquals(req.auth, 'Bearer gw-secret');
-  assertEquals([req.body.model, req.body.effort], ['opus', 'low']);
+  assertEquals([req.body.model, req.body.effort], ['sonnet', 'medium'], 'the claim said Opus at low');
   assertStringIncludes(req.body.system, 'It must match this JSON Schema');
   assertEquals(req.body.parts.every((p: J) => p.kind === 'text'), true, 'text only');
   assertStringIncludes(req.body.parts[0].text, '--- Page 1 ---');
@@ -307,7 +310,7 @@ Deno.test('CLI: a reply PDF goes as its text, the JSON comes back, no tokens bil
   // No tokens billed, but counted (an estimate, as the gateway sends none) so staff see what a read takes.
   assertEquals([f.usage?.input_tokens, f.usage?.output_tokens], [0, 0]);
   assert((f.usage?.tokens_in ?? 0) > 0 && (f.usage?.tokens_out ?? 0) > 0);
-  assertEquals([f.usage?.estimated, f.usage?.model], [true, 'claude-cli:opus']);
+  assertEquals([f.usage?.estimated, f.usage?.model], [true, 'claude-cli:sonnet']);
 });
 
 Deno.test('CLI: a scan goes to the API when there is a key, else waits for one; a refused secret pauses', async () => {
@@ -343,12 +346,11 @@ Deno.test('CLI: the assistant drafts through the gateway', async () => {
   });
   const r = await runAssist({ db, claude: net.cliClient(), supabaseUrl: SUPA, agentId: 'e', version: 't' }, { notice_id: '00000000-0000-0000-0000-0000000000a2' });
   assertEquals(r.status, 'done');
-  assertEquals(net.cli[0].body.model, 'sonnet');
+  assertEquals([net.cli[0].body.model, net.cli[0].body.effort], ['sonnet', 'medium'], 'the settings said high');
   assertEquals(net.claude.length, 0);
 });
 
-Deno.test('CLI helpers: model names and JSON out of words', () => {
-  assertEquals([cliModel('claude-opus-5-5'), cliModel('claude-sonnet-5-5'), cliModel('claude-haiku-4-5')], ['opus', 'sonnet', 'haiku']);
+Deno.test('CLI helpers: JSON out of words', () => {
   assertEquals(jsonFromText('Here it is:\n{"a": [1, {"b": 2}]}\nDone.'), { a: [1, { b: 2 }] });
   assertEquals(GATEWAY.startsWith('https://'), true);
 });

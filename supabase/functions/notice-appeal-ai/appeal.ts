@@ -9,6 +9,7 @@
 // notice_appeal_ai_finish as a new version of the document, without a hyphen
 // or dash. A partner reviews every word before anything is filed.
 
+import { AI_EFFORT, AI_MODEL } from '../_shared/aiModel.ts';
 import { scrub, type CallUsage, type Caller } from '../notice-ai/claude.ts';
 
 /** What a run needs: the database's functions and a way to reach Claude (notice-ai's Deps fits). */
@@ -253,8 +254,8 @@ export async function beginAppeal(deps: AppealDeps, input: AppealInput): Promise
     try {
       const { text, labels } = appealUserText(begin.context ?? {});
       const out = await deps.claude({
-        model: begin.settings?.model ?? 'claude-opus-5-5',
-        effort: begin.settings?.effort ?? 'high',
+        model: AI_MODEL,
+        effort: AI_EFFORT,
         system: APPEAL_SYSTEM_PROMPT,
         content: [{ type: 'text', text }],
         schema: APPEAL_OUTPUT_SCHEMA,
