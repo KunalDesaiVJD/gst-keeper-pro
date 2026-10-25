@@ -392,7 +392,7 @@ const NoticeWorkspacePage: React.FC = () => {
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={openPortal} disabled={!bridge.ready}><ExternalLink className="mr-2 h-4 w-4" /> Open on the portal{!bridge.ready ? ' (needs the extension)' : ''}</DropdownMenuItem>
               {n.pdf_url && <DropdownMenuItem asChild><a href={n.pdf_url} target="_blank" rel="noreferrer"><FileText className="mr-2 h-4 w-4" /> Notice PDF</a></DropdownMenuItem>}
-              {n.case_id && <DropdownMenuItem asChild><Link to={`/notices-case-folder/${n.client_id}/${encodeURIComponent(n.case_id)}`}><FileText className="mr-2 h-4 w-4" /> Case folder</Link></DropdownMenuItem>}
+              {n.case_id && <DropdownMenuItem asChild><Link to={`${caseHref(n.client_id as string, n.case_id)}?view=portal`}><FileText className="mr-2 h-4 w-4" /> Portal case folder</Link></DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
           {primary}

@@ -26,7 +26,7 @@ import { PortalLoginPopover } from '@/components/notices/clients/PortalLoginPopo
 import { ClientProfileCard } from '@/components/notices/clients/ClientProfileCard';
 import { ReturnStrip } from '@/components/notices/clients/ReturnStrip';
 import { PortalApplicationsCard } from '@/components/notices/autopilot/PortalApplicationsCard';
-import { ClientCases } from '@/components/notices/clients/ClientCases';
+import { CasesTable } from '@/components/notices/cases/CasesTable';
 import { Drc03List } from '@/components/notices/clients/ClientLedgers';
 import { ClientRefunds } from '@/components/notices/clients/ClientRefunds';
 import { useClientSync } from '@/components/notices/clients/useClientSync';
@@ -37,7 +37,7 @@ import { LIST_FILTERS, SORTS, defaultSort, filterDef, noticesListHref, type List
 import { daysBetween, istToday, type NoticeFact } from '@/lib/noticeFacts';
 import { fmtAgo, fmtDay, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
-import { noticeCaseHref } from '@/lib/noticeCases';
+import { caseHref, loadCases, noticeCaseHref } from '@/lib/noticeCases';
 
 /** ['a', 'b', 'c'] → 'a, b or c'. */
 const orList = (w: string[]) => (w.length < 2 ? w.join('') : `${w.slice(0, -1).join(', ')} or ${w[w.length - 1]}`);
@@ -115,6 +115,24 @@ const SyncStrip: React.FC<{
 };
 
 /** The command centre's tiles for this client; each opens the list it counts (U-56-1, U-56-5, U-57-1). */
+/** The client's cases first (the UX audit of 25 October 2026): open ones, every kind the firm acts on. */
+const ClientOpenCases: React.FC<{ clientId: string }> = ({ clientId }) => {
+  const q = useQuery({
+    queryKey: ['notice-cases', 'client', clientId],
+    queryFn: () => loadCases({ track: 'work', show: 'open', q: '', master: { client: clientId }, meId: null }, 1, 50),
+  });
+  const rows = q.data?.rows ?? [];
+  return (
+    <SectionCard title={`Open cases${q.data ? ` · ${q.data.total}` : ''}`} description="Notices and demands, refunds and registration; each opens its case"
+      actions={<Link to={`/notices-cases?client=${clientId}&show=all`} className="text-xs font-medium text-primary hover:underline">Every case →</Link>}>
+      {q.isLoading ? <Skeleton className="h-32 w-full" />
+        : q.error ? <Note tone="warn">Couldn't load the cases.</Note>
+        : rows.length === 0 ? <p className="text-sm text-muted-foreground">No open case.</p>
+        : <CasesTable rows={rows} track="all" compact showKind />}
+    </SectionCard>
+  );
+};
+
 const ClientTiles: React.FC<{ d: ClientProfileData; clientId: string; today: string }> = ({ d, clientId, today }) => {
   const f = d.notices;
   const open = f.filter((n) => n.is_open);
@@ -128,7 +146,7 @@ const ClientTiles: React.FC<{ d: ClientProfileData; clientId: string; today: str
   // Hearings fixed on notices or matters, and those only the portal's case folders show.
   const folderHearings = [...new Set(d.folders.map((x) => x.case_id))].map((caseId) => {
     const s = summarizeCase(d.folders.filter((x) => x.case_id === caseId), { today });
-    return s.nextHearing ? { date: s.nextHearing.date, title: s.nextHearing.event.title, to: `/notices-case-folder/${clientId}/${encodeURIComponent(caseId)}` } : null;
+    return s.nextHearing ? { date: s.nextHearing.date, title: s.nextHearing.event.title, to: caseHref(clientId, caseId) } : null;
   }).filter((x): x is { date: string; title: string; to: string } => !!x);
   const hearing = [
     ...d.hearings.map((h) => ({ date: h.hearing_on, title: h.title ?? 'Hearing', to: h.notice_id ? noticeCaseHref({ id: h.notice_id }) : `/litigation/${h.matter_id}` })),
@@ -175,7 +193,6 @@ const CompanyProfilePage: React.FC = () => {
   }, [d, show, cat, sort, dir]);
   const caseIds = useMemo(() => new Set((d?.folders ?? []).map((f) => f.case_id)), [d]);
   // A refund's portal case is shown under Refunds, not again among the case folders.
-  const refundArns = useMemo(() => new Set((d?.refunds ?? []).map((r) => r.arn).filter((a): a is string => !!a)), [d]);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
   if (!clientId) return <Navigate to="/notices-company-list" replace />;
@@ -240,23 +257,12 @@ const CompanyProfilePage: React.FC = () => {
 
   return (
     <NoticesShell
-      section="Clients"
+      section="Clients" record crumbs={[{ label: 'Clients', to: '/notices-company-list' }, { label: c.name }]}
       status={<SyncStrip h={h} run={d.failRun} canSync={canSync} canEditClients={canAddEditClients()} busy={sync.busy}
         onSync={syncNow} onSaved={(retry) => { reload(); if (retry) syncNow(); }} />}
-      actions={<>
-        {canAddEditClients() && (
-          <Button size="sm" variant="outline" className={WS_BTN} asChild><Link to={`/edit-client/${c.id}`}><Pencil className="h-3.5 w-3.5" aria-hidden /> Edit client</Link></Button>
-        )}
-        {canSync && c.gst_user_id && (
-          <Button size="sm" variant="outline" className={WS_BTN} onClick={fetchProfile} disabled={sync.busy}><DownloadCloud className="h-3.5 w-3.5" aria-hidden /> Fetch profile</Button>
-        )}
-        {canSync && c.gst_user_id && !c.notices_sync_excluded && (
-          <Button size="sm" className={WS_BTN} onClick={syncNow} disabled={sync.busy}><RefreshCw className="h-3.5 w-3.5" aria-hidden /> Sync this client</Button>
-        )}
-      </>}
     >
-      <div className="space-y-1">
-        <nav aria-label="Breadcrumb" className="text-xs text-muted-foreground"><Link to="/notices-company-list" className="hover:underline">Clients</Link> › {c.name}</nav>
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+      <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 className="min-w-0 break-words font-heading text-lg font-bold leading-tight sm:text-xl">{c.name}</h2>
           <span className="font-mono text-xs text-muted-foreground">{c.gstin}</span>
@@ -270,11 +276,24 @@ const CompanyProfilePage: React.FC = () => {
           )}
         </div>
       </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {canAddEditClients() && (
+          <Button size="sm" variant="outline" className={WS_BTN} asChild><Link to={`/edit-client/${c.id}`}><Pencil className="h-3.5 w-3.5" aria-hidden /> Edit client</Link></Button>
+        )}
+        {canSync && c.gst_user_id && (
+          <Button size="sm" variant="outline" className={WS_BTN} onClick={fetchProfile} disabled={sync.busy}><DownloadCloud className="h-3.5 w-3.5" aria-hidden /> Fetch profile</Button>
+        )}
+        {canSync && c.gst_user_id && !c.notices_sync_excluded && (
+          <Button size="sm" className={WS_BTN} onClick={syncNow} disabled={sync.busy}><RefreshCw className="h-3.5 w-3.5" aria-hidden /> Sync this client</Button>
+        )}
+      </div>
+      </div>
 
       <ClientTiles d={d} clientId={clientId} today={today} />
 
       <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="min-w-0 space-y-3">
+          <ClientOpenCases clientId={clientId} />
           <SectionCard title={`${filterDef(show).title} · ${total}`}
             description="Each opens its workspace; the stage and owner change in place"
             actions={<Link to={listHref} className="text-xs font-medium text-primary hover:underline">Open in All notices →</Link>}>
@@ -299,7 +318,6 @@ const CompanyProfilePage: React.FC = () => {
             )}
           </SectionCard>
 
-          {hasCases && <ClientCases clientId={clientId} folders={d.folders} notices={d.notices} today={today} exclude={refundArns} />}
           {d.refunds.length > 0 || d.drc03.length > 0 ? (
             <div className={cn('grid grid-cols-1 items-stretch gap-3', d.refunds.length > 0 && d.drc03.length > 0 && '2xl:grid-cols-2')}>
               {d.refunds.length > 0 && <div id="client-refunds" className="scroll-mt-4"><ClientRefunds clientId={clientId} /></div>}
