@@ -1,6 +1,7 @@
 // Every permission key an employee can hold, grouped as User Control shows
-// them. Employees get keys only through their role (staff_positions →
-// user_permissions, migration 20261014120000_staff_positions.sql);
+// them. Employees get keys through their role plus any extras given to them
+// one by one (staff_positions + staff_user_extra_permissions → user_permissions,
+// migrations 20261014120000 and 20261025100000);
 // superadmin and gst_manager hold every key by role.
 //
 // Adding a key: add it here, to UserPermissions / DEFAULT_PERMISSIONS and a
@@ -78,7 +79,7 @@ export const PERMISSION_LABEL: Record<string, string> = Object.fromEntries(PERMI
 
 export const permissionsInGroup = (g: PermissionGroupKey) => PERMISSIONS.filter((p) => p.group === g);
 
-/** Controls held by role only — never given through a role. */
+/** Controls held by level only — never given to an employee, by role or as an extra. */
 export const ROLE_ONLY_CONTROLS = [
   'roles and who holds them',
   'promoting staff to GST Manager',
