@@ -10,7 +10,11 @@
 // "notice_id", "mode": "draft" | "ask" | "improve", "issue_id"?, "question"?,
 // "text"?, "actor"?} (the assistant, answered when done), {"action": "advise",
 // "client_id", "case_key", "actor"?} (what to do now on a case, answered when
-// done), {"action": "advise_next"} (pg_cron notice-ai-advise: the next cases
+// done), {"action": "appeal", "client_id", "case_key", "appeal_key", "doc_type":
+// "facts" | "grounds" | "submission", "mode": "draft" | "improve", "text"?,
+// "instructions"?, "actor"?} (the Appeal workspace: answered at once with the
+// run's id, drafted in the background; the page watches notice_appeal_ai_runs),
+// {"action": "advise_next"} (pg_cron notice-ai-advise: the next cases
 // that need it, in the background), {"action": "status"}.
 // How it reaches Claude: the Claude CLI gateway when CLAUDE_CLI_GATEWAY_URL and
 // CLAUDE_CLI_GATEWAY_SECRET are set (the firm's choice, on its Claude
@@ -23,9 +27,10 @@ import { apiCaller, makeClaudeClient, scrub, type Caller } from './claude.ts';
 import { cliCaller, cliWithApiForScans } from './cli.ts';
 import { runAssist } from './assist.ts';
 import { runAdvise, runAdviseNext } from './advise.ts';
+import { beginAppeal } from './appeal.ts';
 import { runTick, type Db, type Deps } from './runner.ts';
 
-export const VERSION = 'notice-ai 1.4.0';
+export const VERSION = 'notice-ai 1.5.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -107,6 +112,20 @@ Deno.serve(async (req) => {
         actor: typeof body.actor === 'string' ? body.actor : null,
       });
       return json(r, r.error === 'bad_request' ? 400 : 200);
+    }
+    if (action === 'appeal') {
+      const str = (k: string) => (typeof body[k] === 'string' ? body[k] as string : undefined);
+      const r = await beginAppeal(deps(), {
+        client_id: str('client_id'), case_key: str('case_key'), appeal_key: str('appeal_key'), doc_type: str('doc_type'),
+        mode: str('mode'), text: str('text') ?? null, instructions: str('instructions') ?? null, actor: str('actor') ?? null,
+      });
+      if (r.error || !r.done) return json({ error: r.error ?? 'failed' }, r.error === 'bad_request' ? 400 : 200);
+      const done = r.done.catch((e) => ({ error: scrub(String((e as Error)?.message ?? e)) }));
+      if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime?.waitUntil) {
+        EdgeRuntime.waitUntil(done.then((x) => console.log(JSON.stringify({ appeal: { run: r.run_id, status: (x as Record<string, unknown>).status ?? (x as Record<string, unknown>).error } }))));
+        return json({ started: true, run_id: r.run_id }, 202);
+      }
+      return json(await done);
     }
     if (action === 'advise_next') {
       const run = runAdviseNext(deps()).catch((e) => ({ error: scrub(String((e as Error)?.message ?? e)) }));

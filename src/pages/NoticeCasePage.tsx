@@ -30,6 +30,7 @@ import { CaseAdminActions } from '@/components/notices/cases/CaseAdminActions';
 import { CaseChainPanel } from '@/components/notices/cases/CaseChainPanel';
 import { WaitingChip } from '@/components/notices/cases/WaitingChip';
 import { OfficerContact } from '@/components/notices/OfficerContact';
+import { AppealWorkspace } from '@/components/notices/cases/AppealWorkspace';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   caseLabel, loadCase, loadCaseItems, loadKeyDates, markCaseSeen, trackDef, useCaseChain, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
@@ -38,6 +39,7 @@ import { fmtDate, fmtFy, fmtInr, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 import { refundIndexKey, useRefundIndex } from '@/components/notices/reports/ledgerData';
 import { RefundWhenChip } from '@/components/notices/reports/RefundBits';
+import { appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
 
 const LIT_FIELDS: { key: OverviewKey; label: string; fmt?: (v: string) => string; mono?: boolean }[] = [
   { key: 'section_of_law', label: 'Section' },
@@ -115,6 +117,15 @@ const NoticeCasePage: React.FC = () => {
   const setView = (v: 'papers' | 'portal') => {
     const n = new URLSearchParams(sp);
     if (v === 'portal') n.set('view', v); else n.delete('view');
+    setSp(n, { replace: true });
+  };
+  // 20261025170000: a case under appeal has two views, the case and its appeal (?side=appeal).
+  const appealsAll = useCaseAppeals(clientId, c.data?.case_key ?? null);
+  const appeals = useMemo(() => appealsShown(appealsAll.data), [appealsAll.data]);
+  const side: 'case' | 'appeal' = sp.get('side') === 'appeal' && appeals.length > 0 ? 'appeal' : 'case';
+  const setSide = (v: 'case' | 'appeal') => {
+    const n = new URLSearchParams(sp);
+    if (v === 'appeal') n.set('side', v); else n.delete('side');
     setSp(n, { replace: true });
   };
   // The notice the case was opened from (a list's row), marked on the timeline.
@@ -200,6 +211,10 @@ const NoticeCasePage: React.FC = () => {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {appeals.length > 0 && (
+            <Toggle label="The case or its appeal" value={side} onChange={setSide}
+              options={[['case', 'Case'], ['appeal', appeals.some((a) => a.status === 'filed') ? 'Appeal' : 'Prepare appeal']]} />
+          )}
           <CaseAdminActions clientId={clientId} caseKey={r.case_key as string} open={!!r.is_open} />
           {track === 'refund' && r.case_id && (
             <Button size="sm" variant="outline" className={WS_BTN} asChild>
@@ -214,10 +229,12 @@ const NoticeCasePage: React.FC = () => {
         </div>
       </header>
 
-      <NextStepCard clientId={clientId} caseKey={r.case_key as string} track={track} form={r.form_code ?? null}
-        overdue={!!r.is_overdue} open={!!r.is_open} />
+      {side === 'appeal' && <AppealWorkspace clientId={clientId} caseKey={r.case_key as string} appeals={appeals} clientName={r.client_name} />}
 
-      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      {side === 'case' && <NextStepCard clientId={clientId} caseKey={r.case_key as string} track={track} form={r.form_code ?? null}
+        overdue={!!r.is_overdue} open={!!r.is_open} />}
+
+      <div className={cn('grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]', side === 'appeal' && 'hidden')}>
         <div className="min-w-0 space-y-3">
           {/* A chain changes how the timeline reads (the order, then its appeal), so it comes first. */}
           {linked && chainPanel}

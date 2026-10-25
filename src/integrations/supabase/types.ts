@@ -4857,6 +4857,123 @@ export type Database = {
           },
         ]
       }
+      notice_appeal_drafts: {
+          Row: {
+            id: string
+            client_id: string
+            case_key: string
+            appeal_key: string
+            doc_type: string
+            version: number
+            body: string
+            status: string
+            source: string
+            run_id: string | null
+            author_name: string | null
+            search: unknown | null
+            created_at: string
+          }
+          Insert: {
+            id?: string
+            client_id: string
+            case_key: string
+            appeal_key: string
+            doc_type: string
+            version: number
+            body: string
+            status?: string
+            source?: string
+            run_id?: string | null
+            author_name?: string | null
+            search?: unknown | null
+            created_at?: string
+          }
+          Update: {
+            id?: string
+            client_id?: string
+            case_key?: string
+            appeal_key?: string
+            doc_type?: string
+            version?: number
+            body?: string
+            status?: string
+            source?: string
+            run_id?: string | null
+            author_name?: string | null
+            search?: unknown | null
+            created_at?: string
+          }
+          Relationships: []
+        }
+      notice_appeal_ai_runs: {
+          Row: {
+            id: string
+            client_id: string
+            case_key: string
+            appeal_key: string
+            doc_type: string
+            mode: string
+            instructions: string | null
+            input_text: string | null
+            status: string
+            output: Json | null
+            precedents: Json | null
+            draft_id: string | null
+            model: string | null
+            usage: Json | null
+            cost_usd: number | null
+            error: string | null
+            reason_class: string | null
+            requested_by_name: string | null
+            created_at: string
+            finished_at: string | null
+          }
+          Insert: {
+            id?: string
+            client_id: string
+            case_key: string
+            appeal_key: string
+            doc_type: string
+            mode: string
+            instructions?: string | null
+            input_text?: string | null
+            status?: string
+            output?: Json | null
+            precedents?: Json | null
+            draft_id?: string | null
+            model?: string | null
+            usage?: Json | null
+            cost_usd?: number | null
+            error?: string | null
+            reason_class?: string | null
+            requested_by_name?: string | null
+            created_at?: string
+            finished_at?: string | null
+          }
+          Update: {
+            id?: string
+            client_id?: string
+            case_key?: string
+            appeal_key?: string
+            doc_type?: string
+            mode?: string
+            instructions?: string | null
+            input_text?: string | null
+            status?: string
+            output?: Json | null
+            precedents?: Json | null
+            draft_id?: string | null
+            model?: string | null
+            usage?: Json | null
+            cost_usd?: number | null
+            error?: string | null
+            reason_class?: string | null
+            requested_by_name?: string | null
+            created_at?: string
+            finished_at?: string | null
+          }
+          Relationships: []
+        }
       case_document_labels: {
           Row: {
             id: string
@@ -11947,6 +12064,14 @@ export type Database = {
       notice_case_advice_request: {
         Args: { p_client_id: string; p_case_key: string; p_actor?: string | null }
         Returns: boolean
+      }
+      notice_case_appeals: {
+        Args: { p_client_id: string; p_case_key: string }
+        Returns: Json
+      }
+      notice_appeal_draft_save: {
+        Args: { p_client_id: string; p_case_key: string; p_appeal_key: string; p_doc_type: string; p_body: string; p_status: string; p_expect_version: number; p_actor?: string | null }
+        Returns: Json
       }
       notice_case_link_set: {
         Args: { p_client_id: string; p_child_key: string; p_parent_key: string | null; p_kind: string | null; p_by?: string | null }
