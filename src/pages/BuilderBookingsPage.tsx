@@ -4,7 +4,8 @@ import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorks
 import { useMonth } from '@/contexts/MonthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { BuilderSectionHeader } from '@/components/builder/BuilderSectionHeader';
+import { BuilderGettingStarted } from '@/components/builder/BuilderGettingStarted';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/gstr9/badge';
@@ -393,6 +394,10 @@ const BuilderBookingsPage: React.FC = () => {
       toast.error(`Could not load: ${(e as Error).message}`);
     } finally {
       setIsLoading(false);
+      // Every save on this page ends in a reload: the workspace's project
+      // snapshot refreshes off it. Not 'builder:data-changed', which this page
+      // itself listens for.
+      window.dispatchEvent(new CustomEvent('builder:ledger-loaded'));
     }
   }, [projectId, navigate]);
 
@@ -1410,17 +1415,17 @@ const BuilderBookingsPage: React.FC = () => {
 
   return (
     <div className={WS_PAGE}>
-      <PageHeader
+      <BuilderSectionHeader
         compact
         embedded
-        title={`${project.name} — Bookings & Receipts`}
+        title={embedded ? 'Bookings & Receipts' : `${project.name} — Bookings & Receipts`}
         subtitle="Advances bear tax on receipt (Table 11A); milestone invoices absorb them (Table 11B)"
         icon={<Receipt />}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex rounded-md border border-primary/20 bg-primary/[0.08] p-0.5" role="group" aria-label="View">
               <Button
-                variant={viewMode === 'upto' ? 'default' : 'ghost'} size="sm" className="h-9 gap-1.5 px-4 text-sm"
+                variant={viewMode === 'upto' ? 'default' : 'ghost'} size="sm" className="h-8 gap-1.5 px-3 text-xs"
                 aria-pressed={viewMode === 'upto'}
                 onClick={() => setViewMode('upto')}
                 title="Cumulative position as of the end of the selected period"
@@ -1428,7 +1433,7 @@ const BuilderBookingsPage: React.FC = () => {
                 <History className="h-3.5 w-3.5" /> Up to {prettyPeriodLabel(selectedMonth)}
               </Button>
               <Button
-                variant={viewMode === 'month' ? 'default' : 'ghost'} size="sm" className="h-9 gap-1.5 px-4 text-sm"
+                variant={viewMode === 'month' ? 'default' : 'ghost'} size="sm" className="h-8 gap-1.5 px-3 text-xs"
                 aria-pressed={viewMode === 'month'}
                 onClick={() => setViewMode('month')}
                 title="Every receipt and invoice dated in this period, across all units — tally against your bank statement or Tally"
@@ -1733,20 +1738,10 @@ const BuilderBookingsPage: React.FC = () => {
               </div>
             )
           ) : units.length === 0 ? (
-            <div className="py-8 text-center text-muted-foreground">
-              <p className="flex items-center justify-center gap-2 text-sm"><Users className="h-4 w-4 opacity-60" /> No units in this project yet.</p>
-              {canEdit && (
-                <>
-                  <p className="mx-auto mt-1 max-w-md text-xs">
-                    Import the unit list to begin. Afterwards this is reached from Client setup —
-                    it is an onboarding job, not a monthly one.
-                  </p>
-                  <Button size="sm" className={cn(WS_BTN, 'mt-3')} onClick={() => setSurface({ type: 'masters' })}>
-                    <Layers className="h-3.5 w-3.5" /> Units &amp; masters
-                  </Button>
-                </>
-              )}
-            </div>
+            <BuilderGettingStarted
+              canEdit={canEdit}
+              onImportUnits={() => setSurface({ type: 'masters' })}
+            />
           ) : (
             <div className={WS_TABLE_WRAP}>
               <table className={WS_TABLE}>

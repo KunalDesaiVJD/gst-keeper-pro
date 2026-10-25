@@ -844,4 +844,5 @@ flagged while trying to tax it here.
 | Cut-off, differential, s.50 interest, credit-note deadline | `src/utils/builderBuEvent.ts` |
 | Re-rating, conversions, bounce offsets, restatement, delay interest | `src/utils/builderAdjustments.ts` |
 | TDR/FSI legs, the cap, the consent gate, carpet split | `src/utils/builderFsi.ts` |
+| Working papers (W/P refs, sign-off, unit register, advances roll-forward, ITC reversal, DRC-03 register) | `src/utils/builderReportTables.ts`, `src/lib/builderReportData.ts` |
 | Schema | `supabase/migrations/*_builder_phase*.sql` |

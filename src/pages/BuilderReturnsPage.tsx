@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { useMonth } from '@/contexts/MonthContext';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { BuilderSectionHeader } from '@/components/builder/BuilderSectionHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
@@ -401,7 +401,7 @@ const BuilderReturnsPage: React.FC = () => {
 
   return (
     <div className={WS_PAGE}>
-      <PageHeader
+      <BuilderSectionHeader
         compact
         embedded={embedded}
         title="Builder Returns Workpaper"

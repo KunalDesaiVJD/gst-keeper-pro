@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { BuilderSectionHeader } from '@/components/builder/BuilderSectionHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/gstr9/badge';
@@ -534,10 +534,10 @@ const BuilderBuEventsPage: React.FC = () => {
 
   return (
     <div className={WS_PAGE}>
-      <PageHeader
+      <BuilderSectionHeader
         compact
         embedded={embedded}
-        title={`${project.name} — BU Events`}
+        title={embedded ? 'BU Events' : `${project.name} — BU Events`}
         subtitle="The whole balance on every unit booked before its cut-off becomes taxable in the BU month"
         icon={<CalendarCheck />}
         actions={
@@ -577,7 +577,17 @@ const BuilderBuEventsPage: React.FC = () => {
         <Card>
           <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
             <CalendarCheck className="mx-auto mb-2 h-6 w-6 opacity-40" />
-            No BU events yet for this project.
+            <p className="font-medium text-foreground">No BU events yet for this project.</p>
+            <p className="mx-auto mt-1 max-w-lg text-xs">
+              When the BU permission arrives (or the project is occupied first), record it here. Every unit booked
+              before its cut-off is then taxed on its whole balance, after the client confirms each agreement value.
+              A unit's own dastavej closes it on its own, from the Ledger.
+            </p>
+            {canPost && availableUnits.length > 0 && (
+              <Button size="sm" className={cn(WS_BTN, 'mt-3')} onClick={() => { setForm(emptyEvent); setSelectedUnits(new Set()); setDialog(true); }}>
+                <Plus className="h-3.5 w-3.5" /> New BU event
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (

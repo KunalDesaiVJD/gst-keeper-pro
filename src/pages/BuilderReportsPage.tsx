@@ -104,7 +104,14 @@ const fyOptions = (): string[] => {
 };
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const cellText = (v: string | number): string => (isNum(v) ? formatINR(v) : String(v ?? ''));
+const PLAIN = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
+/** Rates, areas, days and counts are not money: no forced paise. */
+const NOT_MONEY = /%|rate|carpet|sq m|days|units|documents|count|booked|key/i;
+const cellText = (v: string | number, header = ''): string => (
+  isNum(v) ? (NOT_MONEY.test(header) ? PLAIN.format(v) : formatINR(v)) : String(v ?? ''));
+/** A stat-band figure: money unless it is a whole count or its label says otherwise. */
+const kpiText = (label: string, v: string | number): string => (
+  isNum(v) ? (NOT_MONEY.test(label) || (Number.isInteger(v) && Math.abs(v) < 10000) ? PLAIN.format(v) : formatINR(v)) : v);
 
 const BuilderReportsPage: React.FC = () => {
   const { canViewBuilderReports, user } = useAuth();
@@ -460,7 +467,7 @@ const BuilderReportsPage: React.FC = () => {
                     <KpiTile
                       key={k.label}
                       label={k.label}
-                      value={isNum(k.value) ? formatINR(k.value) : k.value}
+                      value={kpiText(k.label, k.value)}
                       hint={k.note}
                       tone={k.tone === 'bad' ? 'error' : k.tone === 'warn' ? 'warn' : k.tone === 'good' ? 'ok' : 'neutral'}
                     />
@@ -495,7 +502,7 @@ const BuilderReportsPage: React.FC = () => {
                         <TableRow key={ri} className={cn(B_TR, isTotalRow(row, ri) && WS_TR_TOTAL)}>
                           {row.map((cell, ci) => (
                             <TableCell key={ci} className={cn(numericCols[ci] ? B_TD_NUM : B_TD, 'whitespace-nowrap')}>
-                              {cellText(cell)}
+                              {cellText(cell, table.headers[ci])}
                             </TableCell>
                           ))}
                         </TableRow>
