@@ -141,7 +141,7 @@ const NoticeCasePage: React.FC = () => {
 
   const r = c.data;
   const crumbsFor = (track: Track, title?: React.ReactNode) => [
-    { label: trackDef(track).label === 'Notices & demands' ? 'Cases' : `Cases · ${trackDef(track).label}`, to: `/notices-cases${track === 'litigation' ? '' : `?kind=${track}`}` },
+    { label: `Cases · ${trackDef(track).label}`, to: `/notices-cases?kind=${track}` },
     ...(r ? [{ label: r.client_name ?? 'Client', to: `/notices-company/${clientId}` }] : []),
     { label: title ?? 'Case' },
   ];

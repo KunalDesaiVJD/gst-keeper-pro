@@ -22,7 +22,7 @@ export const CasesPanel: React.FC<{ track: Track; master: Master; show?: CaseSho
     queryFn: () => loadCases({ track, show, q: '', master, meId }, 1, limit),
     staleTime: 60_000,
   });
-  const all = hrefWithMaster(`/notices-cases?${new URLSearchParams({ ...(track === 'litigation' ? {} : { kind: track }), ...(show === 'open' ? {} : { show }) })}`, master);
+  const all = hrefWithMaster(`/notices-cases?${new URLSearchParams({ kind: track, ...(show === 'open' ? {} : { show }) })}`, master);
   const total = q.data?.total ?? 0;
   return (
     <Panel title={title ?? `${trackDef(track).label} needing attention`}

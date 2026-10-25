@@ -318,7 +318,7 @@ const NoticeWorkspacePage: React.FC = () => {
 
   // Cases › client › the notice's case › the notice (the UX audit of 25 October 2026: a notice is reached through its case).
   const crumbs = [
-    { label: track === 'litigation' ? 'Cases' : `Cases · ${trackDef(track).label}`, to: `/notices-cases${track === 'litigation' ? '' : `?kind=${track}`}` },
+    { label: `Cases · ${trackDef(track).label}`, to: `/notices-cases?kind=${track}` },
     { label: ws.client?.name ?? f.client_name ?? 'Client', to: `/notices-company/${n.client_id}` },
     ...(caseKey && caseRow.data ? [{ label: n.case_id ? <>Case <span className="font-mono">{n.case_id}</span></> : 'Case', to: `${caseHref(n.client_id, caseRow.data.case_key as string)}?notice=${n.id}` }] : []),
     { label: f.form_code || sentenceCase(n.notice_type) || 'Notice' },
