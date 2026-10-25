@@ -6917,12 +6917,22 @@
   // descriptor ({id, docName}, with or without a dcupdtls wrapper) anywhere
   // in the parsed JSON. Shared by handleNotices' Additional Notice Folder
   // capture and handleRefundDocs' case/folder document harvest.
+  //
+  // 0.18.4: an appeal's own application (APLCN, the APL-01) spells it
+  // `docname` (docappeal, docannexure, docothers[] with a `name` such as
+  // "EXHIBIT A"), so its form, grounds and exhibits were never downloaded.
+  // Such a descriptor is passed on as a copy carrying `docName`, so every
+  // caller's label (doc.docName || doc.docttl) reads it unchanged.
   function findDocDescriptors(node, seen, out) {
     if (!node || typeof node !== 'object' || seen.has(node)) return;
     seen.add(node);
     if (Array.isArray(node)) { node.forEach((n) => findDocDescriptors(n, seen, out)); return; }
     const candidate = (node.dcupdtls && typeof node.dcupdtls === 'object') ? node.dcupdtls : node;
     if (candidate.id && candidate.docName) out.push(candidate);
+    else if (candidate.id && typeof candidate.docname === 'string' && candidate.docname.trim()) {
+      const named = typeof candidate.name === 'string' && candidate.name.trim() && candidate.name.trim() !== candidate.docname.trim();
+      out.push(Object.assign({}, candidate, { docName: named ? candidate.name.trim() + ' · ' + candidate.docname.trim() : candidate.docname.trim() }));
+    }
     Object.keys(node).forEach((k) => { if (k !== 'dcupdtls') findDocDescriptors(node[k], seen, out); });
   }
 
