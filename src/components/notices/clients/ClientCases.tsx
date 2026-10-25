@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import type { NoticeFact } from '@/lib/noticeFacts';
 import { fmtDate, noticeTitle, plural } from '@/lib/noticeFormat';
 import { summarizeCase, type FolderItem } from './caseFolder';
+import { caseHref } from '@/lib/noticeCases';
 
 const TONE = (s: string): 'destructive' | 'warning' | 'info' | 'secondary' =>
   /overdue|outstanding/i.test(s) ? 'destructive' : /awaited|hearing/i.test(s) ? 'warning' : /closed|paid/i.test(s) ? 'secondary' : 'info';
@@ -39,7 +40,7 @@ export const ClientCases: React.FC<{ clientId: string; folders: FolderItem[]; no
             {shown.map(({ caseId, s, last }) => (
               <li key={caseId} className="flex flex-wrap items-start gap-x-3 gap-y-1 py-2">
                 <div className="min-w-0 flex-1">
-                  <Link to={`/notices-case-folder/${clientId}/${encodeURIComponent(caseId)}`} className="break-words text-sm font-medium hover:underline">{s.label}</Link>
+                  <Link to={caseHref(clientId, caseId)} title="Open the case and its timeline" className="break-words text-sm font-medium hover:underline">{s.label}</Link>
                   <div className="break-words text-xs text-muted-foreground">
                     Case <span className="font-mono">{caseId}</span>{last ? ` · last activity ${fmtDate(last)}` : ''} · {plural(s.events.length, 'item')}
                   </div>

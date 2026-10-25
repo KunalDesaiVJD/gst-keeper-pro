@@ -8,7 +8,7 @@
 // form; and the bar closes them in one go with a reason.
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowDown, ArrowUp, CheckSquare, ChevronDown, FileText, Flag, Loader2, Lock, UserPlus, X } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUp, CheckSquare, ChevronDown, FileText, Flag, Loader2, Lock, UserPlus, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -31,6 +31,7 @@ import { StageBadge } from './StageBadge';
 import { AssignPopover } from './AssignPopover';
 import { OwnerChip } from './OwnerChip';
 import { ResponseNeedChip } from './types/ResponseNeedChip';
+import { noticeCaseHref } from '@/lib/noticeCases';
 import { cn } from '@/lib/utils';
 
 export function DueCell({ r }: { r: NoticeFact }) {
@@ -200,7 +201,7 @@ export const NoticeTable: React.FC<{
             <div className="flex items-start gap-2">
               {canEdit && <Checkbox checked={selected.has(r.id as string)} onCheckedChange={(v) => toggle(r.id as string, !!v)} aria-label={`Select ${r.client_name} ${r.reference_number ?? ''}`} className="mt-0.5" />}
               <div className="min-w-0 flex-1">
-                <Link to={`/notices/${r.id}`} className="block text-sm font-semibold hover:underline">{noticeTitle(r)}</Link>
+                <Link to={noticeCaseHref({ id: r.id as string, client_id: r.client_id, case_id: r.case_id, category: r.category })} className="block text-sm font-semibold hover:underline" title="Open its case and timeline">{noticeTitle(r)}</Link>
                 {showClient && <div className="truncate text-xs text-muted-foreground">{r.client_name} · <span className="font-mono">{r.client_gstin}</span></div>}
                 <div className="truncate font-mono text-[11px] text-muted-foreground">{r.reference_number || r.case_id}</div>
               </div>
@@ -211,6 +212,7 @@ export const NoticeTable: React.FC<{
               <ResponseNeedChip need={r.response_need} compact />
               {Number(r.amount_of_demand) > 0 && <span className="text-xs tabular-nums">{fmtInrShort(r.amount_of_demand)}</span>}
               <OwnerChip name={r.assign_to} showName className="ml-auto" />
+              <Link to={`/notices/${r.id}`} className="inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline">Work on it <ArrowRight className="h-3 w-3" aria-hidden /></Link>
             </div>
           </li>
         ))}
@@ -232,7 +234,7 @@ export const NoticeTable: React.FC<{
               <SortHead label="Stage" k="stage" sort={sort} dir={dir} onSort={onSort} />
               <SortHead label="Demand" k="demand" sort={sort} dir={dir} onSort={onSort} className="text-right" />
               <th scope="col" className={WS_TH}>Owner</th>
-              <th scope="col" className={cn(WS_TH, 'w-10')}><span className="sr-only">PDF</span></th>
+              <th scope="col" className={cn(WS_TH, 'w-24')}><span className="sr-only">PDF and work on it</span></th>
             </tr>
           </thead>
           <tbody>
@@ -252,7 +254,7 @@ export const NoticeTable: React.FC<{
                     </td>
                   )}
                   <td className={cn(WS_TD, 'min-w-[18rem]')}>
-                    <Link to={`/notices/${id}`} className="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{noticeTitle(r)}</Link>
+                    <Link to={noticeCaseHref({ id: r.id as string, client_id: r.client_id, case_id: r.case_id, category: r.category })} title="Open its case and timeline" className="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{noticeTitle(r)}</Link>
                     <ResponseNeedChip need={r.response_need} className="ml-1.5 align-middle" />
                     <div className="line-clamp-1 text-xs text-muted-foreground" title={r.description ?? ''}>
                       {(r.reference_number || r.case_id) && <span className="font-mono">{r.reference_number || r.case_id}</span>}
@@ -275,12 +277,17 @@ export const NoticeTable: React.FC<{
                       </AssignPopover>
                     ) : <OwnerChip name={r.assign_to} showName />}
                   </td>
-                  <td className={WS_TD}>
-                    {r.pdf_url ? (
-                      <a href={r.pdf_url} target="_blank" rel="noreferrer" className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-muted" aria-label={`Open the notice PDF for ${r.reference_number ?? r.client_name}`}>
-                        <FileText className="h-4 w-4 text-muted-foreground" aria-hidden />
-                      </a>
-                    ) : <span className="sr-only">no PDF captured</span>}
+                  <td className={cn(WS_TD, 'whitespace-nowrap')}>
+                    <div className="flex items-center gap-1">
+                      {r.pdf_url ? (
+                        <a href={r.pdf_url} target="_blank" rel="noreferrer" className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-muted" aria-label={`Open the notice PDF for ${r.reference_number ?? r.client_name}`}>
+                          <FileText className="h-4 w-4 text-muted-foreground" aria-hidden />
+                        </a>
+                      ) : <span className="inline-block w-7"><span className="sr-only">no PDF captured</span></span>}
+                      <Link to={`/notices/${id}`} className="inline-flex items-center gap-0.5 rounded px-1 text-xs font-medium text-primary hover:underline" title="Open the notice's workspace">
+                        Work on it <ArrowRight className="h-3 w-3" aria-hidden />
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               );

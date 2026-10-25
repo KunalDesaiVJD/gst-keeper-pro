@@ -8,6 +8,7 @@ import { searchNotices, type SearchResult } from '@/lib/noticeCommandCentre';
 import { stageLabel } from '@/lib/noticeStages';
 import { fmtDate, sentenceCase } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 const OPEN_EVENT = 'gstk:open-notice-search';
 
@@ -79,7 +80,7 @@ export const SearchPalette: React.FC = () => {
         {res.notices.length > 0 && (
           <CommandGroup heading="Notices">
             {res.notices.map((n) => (
-              <CommandItem key={n.id} value={`notice-${n.id}`} onSelect={() => go(`/notices/${n.id}`)} className="items-start">
+              <CommandItem key={n.id} value={`notice-${n.id}`} onSelect={() => go(noticeCaseHref({ id: n.id as string }))} className="items-start">
                 <FileText className="mr-2 mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">

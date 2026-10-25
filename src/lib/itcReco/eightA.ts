@@ -108,6 +108,29 @@ const fromJson = (raw: unknown, fileName: string | null): Parsed8A => {
   };
 };
 
+/**
+ * The portal's 8A workbook (seen live 25 Oct 2026) keeps its template's
+ * dimension (B2B "A1:V6") however many rows it fills, and SheetJS reads only
+ * that range: every document would be dropped. The range is set from the cells
+ * the sheet really holds.
+ */
+function fitRange(ws: XLSX.WorkSheet | undefined): void {
+  if (!ws) return;
+  let r1 = -1, c1 = -1;
+  let r0 = Infinity, c0 = Infinity;
+  for (const k of Object.keys(ws)) {
+    if (k.startsWith('!')) continue;
+    const { r, c } = XLSX.utils.decode_cell(k);
+    if (r < r0) r0 = r; if (c < c0) c0 = c;
+    if (r > r1) r1 = r; if (c > c1) c1 = c;
+  }
+  if (r1 < 0) return;
+  const cur = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
+  const s = { r: Math.min(r0, cur ? cur.s.r : r0), c: Math.min(c0, cur ? cur.s.c : c0) };
+  const e = { r: Math.max(r1, cur ? cur.e.r : r1), c: Math.max(c1, cur ? cur.e.c : c1) };
+  ws['!ref'] = XLSX.utils.encode_range({ s, e });
+}
+
 /** The 8A file (Excel or JSON) → what is stored. Throws when it holds no document sheet at all. */
 export function parse8AFile(data: ArrayBuffer | Uint8Array, fileName: string | null = null): Parsed8A {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -115,6 +138,7 @@ export function parse8AFile(data: ArrayBuffer | Uint8Array, fileName: string | n
   if (head.startsWith('{') || head.startsWith('[')) return fromJson(JSON.parse(new TextDecoder().decode(bytes)), fileName);
 
   const wb = XLSX.read(bytes, { type: 'array', cellDates: true });
+  wb.SheetNames.forEach((n) => fitRange(wb.Sheets[n]));
   const read = parseItcWorkbook(wb, {
     sheets: GSTR8A_SHEETS,
     summarySheets: SUMMARY_SHEETS_8A,

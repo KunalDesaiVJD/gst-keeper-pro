@@ -5,8 +5,10 @@ import type {
   ReportKpi, ReportMetaField, ReportSheet, ReportTable, RowTone,
 } from '@/utils/allClientsReports';
 import type {
-  BuWorkingReport, Drc03Report, FsiWorkingReport, PeriodReport, ReportContext, UnitLedgerReport,
+  AdvanceRollforward, BuWorkingReport, Drc03RegisterLine, Drc03Report, FsiWorkingReport, ItcReversalReport,
+  PeriodReport, ReportContext, ReportKind, UnitLedgerReport, UnitPosition,
 } from '@/lib/builderReportData';
+import { HEADS, HEAD_LABEL, fyLabel, total as taxTotal, type Tax } from '@/utils/builderItcReversal';
 
 // Builder working papers as ReportTables, so every download goes through the
 // firm's Big4 layout (src/lib/reportExport: letterhead, identification strip,
@@ -394,4 +396,301 @@ export const fsiWorkingTable = (ctx: ReportContext, r: FsiWorkingReport): Report
       + 'instruction is on record and a GST Manager has approved it.',
     ]),
   };
+};
+
+// ─── 8. Unit register (lead schedule) ───────────────────────────────────────
+
+const RATE_SHORT: Record<string, string> = {
+  AFFORDABLE: 'Affordable', OTHER_RESIDENTIAL: 'Other residential',
+  COMMERCIAL_RREP: 'Commercial (RREP)', COMMERCIAL_REP: 'Commercial (REP)',
+};
+
+const unitStatusOf = (u: UnitPosition): string => (
+  u.closedPreOnboarding ? 'Closed before onboarding'
+    : u.closedAtBu ? (u.bookingDate ? 'Closed at BU / dastavej' : 'Sch. III — unbooked at cut-off')
+      : u.status === 'Cancelled' ? 'Cancelled'
+        : u.bookingDate ? 'Booked' : 'Unbooked');
+
+export const unitRegisterTable = (ctx: ReportContext, units: UnitPosition[]): ReportTable => {
+  const { meta, subtitle } = identity({ ...ctx, periodMonth: undefined });
+  const headers = [
+    'Block', 'Unit', 'Type', 'Carpet (sq m)', 'Class', 'Rate %', 'Status', 'Booked on', 'Member',
+    'Agreement value', 'Value taxed', 'Open advance', 'Balance to tax', 'Received (bank)', 'TDS 194-IA', '₹45L headroom', 'Flag',
+  ];
+  const rows: Cell[][] = units.map((u) => {
+    const flags = [
+      u.balanceToTax < -1 ? 'Taxed above agreement' : '',
+      u.impliedByReceipts ? 'Master below money received' : '',
+      u.unitType === 'Residential' && u.isAffordable && u.valueHeadroom < 100000 ? 'Within ₹1L of ₹45L' : '',
+    ].filter(Boolean).join('; ');
+    return [
+      u.groupLabel || '', u.unitNo, u.unitType, u.carpetAreaSqM, RATE_SHORT[u.rateCode] || u.rateCode, u.ratePct,
+      unitStatusOf(u), u.bookingDate || '', u.primaryMember || '',
+      u.agreementValue, u.valueTaxed, u.openAdvance || '', u.balanceToTax, u.totalReceived, u.tds || '',
+      u.unitType === 'Residential' ? u.valueHeadroom : '', flags,
+    ];
+  });
+  const sum = (f: (u: UnitPosition) => number) => units.reduce((a, u) => a + f(u), 0);
+  rows.push([
+    'Total', `${units.length} units`, '', sum((u) => u.carpetAreaSqM), '', '', '', '', '',
+    sum((u) => u.agreementValue), sum((u) => u.valueTaxed), sum((u) => u.openAdvance), sum((u) => u.balanceToTax),
+    sum((u) => u.totalReceived), sum((u) => u.tds), '', '',
+  ]);
+  const tones = units.map((u): RowTone => (
+    u.balanceToTax < -1 ? 'bad'
+      : u.closedAtBu || u.closedPreOnboarding ? 'muted'
+        : u.bookingDate ? 'good' : 'info'));
+  const booked = units.filter((u) => !!u.bookingDate && u.status !== 'Cancelled').length;
+  const byClass = new Map<string, { n: number; carpet: number; agreement: number; taxed: number }>();
+  units.forEach((u) => {
+    const k = `${RATE_SHORT[u.rateCode] || u.rateCode} — ${u.ratePct}%`;
+    const c = byClass.get(k) || { n: 0, carpet: 0, agreement: 0, taxed: 0 };
+    byClass.set(k, { n: c.n + 1, carpet: c.carpet + u.carpetAreaSqM, agreement: c.agreement + u.agreementValue, taxed: c.taxed + u.valueTaxed });
+  });
+  return {
+    title: 'Unit register — lead schedule',
+    subtitle,
+    meta,
+    kpis: [
+      { label: 'Units', value: units.length },
+      { label: 'Booked', value: booked, note: `${units.length - booked} unbooked or closed` },
+      { label: 'Agreement value', value: sum((u) => u.agreementValue) },
+      { label: 'Value taxed', value: sum((u) => u.valueTaxed) },
+      { label: 'Balance to tax', value: sum((u) => u.balanceToTax), note: 'falls due at BU' },
+    ],
+    headers,
+    rows: units.length ? rows : [],
+    rowTones: [...tones, null],
+    toneColumn: 6,
+    freezeColumns: 2,
+    pdfColumns: [0, 1, 2, 4, 5, 6, 9, 10, 11, 12, 13, 16],
+    sheetName: 'Unit register',
+    columnWidths: [14, 12, 12, 11, 18, 8, 24, 12, 24, 16, 16, 14, 16, 16, 12, 14, 30],
+    fileNameBase: stem('Unit_Register', ctx.projectName),
+    extraSheets: [
+      {
+        name: 'By class',
+        title: 'Summary by rate class',
+        headers: ['Class', 'Units', 'Carpet (sq m)', 'Agreement value', 'Value taxed'],
+        rows: [
+          ...[...byClass.entries()].map(([k, v]): Cell[] => [k, v.n, v.carpet, v.agreement, v.taxed]),
+          ['Total', units.length, sum((u) => u.carpetAreaSqM), sum((u) => u.agreementValue), sum((u) => u.valueTaxed)],
+        ],
+        columnWidths: [34, 10, 14, 18, 18],
+      },
+      ...notesSheet([
+        'Value taxed is the consideration offered to tax to date (opening balance, advances and invoices, net of '
+        + 'advances absorbed): what a BU event deducts. Balance to tax is agreement value less value taxed.',
+        'Open advance is value taxed that no invoice has absorbed yet, the opening balance included (positions §6).',
+        'Received is money banked (consideration plus GST less TDS) and does not drive the tax.',
+        'A unit taxed above its agreement value is flagged: the master or a receipt needs correcting.',
+      ]),
+    ],
+  };
+};
+
+// ─── 9. Advances roll-forward ───────────────────────────────────────────────
+
+export const advanceRollforwardTable = (ctx: ReportContext, r: AdvanceRollforward): ReportTable => {
+  const { meta, subtitle } = identity({ ...ctx, periodMonth: undefined }, [{ label: 'Financial year', value: `FY ${r.fy}` }]);
+  const rows: Cell[][] = r.months.map((m) => [
+    prettyPeriodLabel(m.periodMonth), m.opening, m.received || '', m.reversed || '', m.adjusted || '', m.closing,
+    m.receivedTax || '', m.reversedTax || '', m.adjustedTax || '',
+  ]);
+  rows.push(['Total', r.broughtForwardOpening, r.totals.received, r.totals.reversed, r.totals.adjusted, r.closing,
+    r.totals.receivedTax, r.totals.reversedTax, r.totals.adjustedTax]);
+  const proof = Math.round((r.broughtForwardOpening + r.totals.received - r.totals.reversed - r.totals.adjusted - r.closing) * 100) / 100;
+  return {
+    title: 'Advances roll-forward — GSTR-1 Tables 11A / 11B',
+    subtitle,
+    meta,
+    kpis: [
+      { label: 'Brought forward', value: r.broughtForwardOpening },
+      { label: 'Received (11A)', value: r.totals.received },
+      { label: 'Adjusted (11B)', value: r.totals.adjusted },
+      { label: 'Carried forward', value: r.closing, tone: r.closing < -1 ? 'bad' : undefined, note: r.closing < -1 ? 'negative: check' : undefined },
+    ],
+    headers: ['Month', 'Opening', 'Received (11A)', 'Reversed (bounce / cancellation)', 'Adjusted (11B)', 'Closing',
+      'Tax on 11A', 'Tax reversed', 'Tax on 11B'],
+    columnGroups: [
+      { label: '', span: 1 },
+      { label: 'Consideration (before the 1/3rd land deduction)', span: 5 },
+      { label: 'CGST + SGST', span: 3 },
+    ],
+    rows,
+    sheetName: 'Roll-forward',
+    freezeColumns: 1,
+    columnWidths: [18, 16, 16, 20, 16, 16, 14, 14, 14],
+    fileNameBase: stem('Advances_Rollforward', ctx.projectName || ctx.clientName, r.fy),
+    extraSheets: notesSheet([
+      'Brought forward = value taxed carried in at onboarding plus every advance posted before the year, less every '
+      + 'reversal and adjustment before it. Read from the same postings the returns are built from.',
+      `Proof: brought forward + received − reversed − adjusted − carried forward = ${proof.toFixed(2)} (should be 0.00).`,
+      'Carried forward should equal the sum of the units\' open advance in the unit register at the year end.',
+      'A negative balance means an adjustment drew on an advance this year never saw: an opening balance missing or a '
+      + 'receipt dated after its invoice.',
+    ]),
+  };
+};
+
+// ─── 10. ITC reversal ───────────────────────────────────────────────────────
+
+const taxCells = (t: Tax): Cell[] => HEADS.map((h) => t[h] || '');
+
+export const itcReversalTable = (ctx: ReportContext, r: ItcReversalReport): ReportTable => {
+  const { meta, subtitle } = identity({ ...ctx, periodMonth: undefined }, [
+    { label: 'Completion date', value: r.completionDate },
+    { label: 'Years', value: `${fyLabel(r.startFy)} to ${fyLabel(r.buFy)}` },
+    { label: 'Posts to', value: prettyPeriodLabel(r.postingPeriod) },
+    { label: 'Status', value: r.frozen ? r.status : `${r.status} — computed live` },
+  ]);
+  const res = r.result;
+  const hl = HEADS.map((h) => HEAD_LABEL[h]);
+  const rows: Cell[][] = [];
+  const kinds: (import('@/utils/allClientsReports').RowKind | null)[] = [];
+  res.years.forEach((y) => {
+    const label = `${fyLabel(y.financialYear)}${y.isBuYear ? ' (BU year)' : ''}`;
+    const line = (what: string, t: Tax, kind: 'data' | 'subtotal' = 'data') => {
+      rows.push([label, what, ...taxCells(t), taxTotal(t)]); kinds.push(kind);
+    };
+    line('Common credit — Rule 42 base', y.baseR42);
+    line('Attributable to exempt (× Te/Tt)', y.attributableR42);
+    line('Already reversed — 7C', y.reversedR42);
+    line('Net Rule 42', y.netR42, 'subtotal');
+    line('Capital goods — Rule 43 base', y.baseR43);
+    line('Attributable to exempt (× Te/Tt)', y.attributableR43);
+    line('Already reversed — 7D', y.reversedR43);
+    line('Net Rule 43', y.netR43, 'subtotal');
+    if (taxTotal(y.interest)) line(`Interest u/s 50 (${y.interestDays} days)`, y.interest);
+  });
+  rows.push(['Total', 'Net reversal', ...taxCells(res.totalNet), taxTotal(res.totalNet)]); kinds.push('total');
+  if (taxTotal(res.totalInterest)) { rows.push(['Total', 'Interest u/s 50 (pay by DRC-03 / 5.1)', ...taxCells(res.totalInterest), taxTotal(res.totalInterest)]); kinds.push('total'); }
+  return {
+    title: 'ITC reversal at completion — Rules 42 and 43',
+    subtitle,
+    meta,
+    kpis: [
+      { label: 'Exempt carpet / total', value: `${r.exemptCarpet} / ${r.totalCarpet} sq m` },
+      { label: 'Key Te/Tt', value: `${(res.ratio * 100).toFixed(4)}%` },
+      { label: 'Net reversal', value: taxTotal(res.totalNet), tone: res.problems.length ? 'warn' : undefined },
+      { label: 'Interest u/s 50', value: taxTotal(res.totalInterest) },
+    ],
+    headers: ['Year', 'Line', ...hl, 'Total'],
+    rows,
+    rowKinds: kinds,
+    sheetName: 'Rule 42-43',
+    freezeColumns: 2,
+    columnWidths: [20, 38, 14, 14, 14, 12, 15],
+    fileNameBase: stem('ITC_Reversal', ctx.projectName, r.completionDate),
+    extraSheets: [
+      {
+        name: 'GSTR-3B lines',
+        title: 'What the approval writes to GSTR-3B',
+        headers: ['Table', 'Label', ...hl, 'Total', 'Reason'],
+        rows: res.lines.map((l): Cell[] => [l.tableRef, l.label, ...taxCells(l.amount), taxTotal(l.amount), l.reason]),
+        columnWidths: [10, 34, 13, 13, 13, 11, 14, 40],
+      },
+      ...notesSheet([
+        'Te is the carpet of units unbooked at the cut-off (plus, for a Partial-ITC client, booked residential carpet); '
+        + 'Tt is the carpet of every unit in the BU event (positions §7A).',
+        'Past years are as filed in GSTR-9: Table 6 for credit availed, 7C / 7D for what was already reversed; the base '
+        + 'is 7J + 7C + 7D. The BU year is entered by hand.',
+        ...(r.basisNote ? [`Basis: ${r.basisNote}`] : []),
+        ...res.problems.map((p) => `Problem: ${p}`),
+        ...res.warnings.map((w) => `Warning: ${w}`),
+      ]),
+    ],
+  };
+};
+
+// ─── 11. Re-rating & DRC-03 register ────────────────────────────────────────
+
+export const drc03RegisterTable = (ctx: ReportContext, lines: Drc03RegisterLine[]): ReportTable => {
+  const { meta, subtitle } = identity({ ...ctx, periodMonth: undefined });
+  const live = lines.filter((l) => l.status !== 'REVERSED');
+  const rows: Cell[][] = lines.map((l) => [
+    l.unitNo, l.triggeredOn, `${l.fromRatePct}% → ${l.toRatePct}%`, l.grossBefore, l.grossAfter,
+    prettyPeriodLabel(l.postingPeriod), l.dischargeMode === 'DRC03' ? 'DRC-03' : 'GSTR-1 Table 10',
+    l.status === 'REVERSED' ? 'Voided' : l.drc03Status === 'FILED' ? 'Filed' : 'To file',
+    l.valueRetaxed, l.differentialTax, l.interest, l.differentialTax + l.interest,
+    l.drc03Arn || '', l.drc03FiledDate || '',
+  ]);
+  const sum = (f: (l: Drc03RegisterLine) => number) => live.reduce((a, l) => a + f(l), 0);
+  rows.push(['Total', '', '', '', '', '', '', `${live.length} live`, sum((l) => l.valueRetaxed),
+    sum((l) => l.differentialTax), sum((l) => l.interest), sum((l) => l.differentialTax + l.interest), '', '']);
+  const pending = live.filter((l) => l.dischargeMode === 'DRC03' && l.drc03Status !== 'FILED');
+  return {
+    title: 'Re-rating & DRC-03 register',
+    subtitle,
+    meta,
+    kpis: [
+      { label: 'Units re-rated', value: live.length },
+      { label: 'Differential tax', value: sum((l) => l.differentialTax) },
+      { label: 'Interest u/s 50', value: sum((l) => l.interest) },
+      { label: 'DRC-03 still to file', value: pending.length, tone: pending.length ? 'warn' : 'good' },
+    ],
+    headers: ['Unit', 'Crossed on', 'Rate change', 'Gross before', 'Gross after', 'Posting period', 'Discharged by',
+      'Status', 'Value re-taxed', 'Differential tax', 'Interest', 'Payable', 'DRC-03 ARN', 'Filed on'],
+    rows: lines.length ? rows : [],
+    rowTones: [...lines.map((l): RowTone => (l.status === 'REVERSED' ? 'muted' : l.drc03Status === 'FILED' ? 'good' : 'warn')), null],
+    toneColumn: 7,
+    freezeColumns: 1,
+    sheetName: 'DRC-03 register',
+    columnWidths: [12, 12, 14, 15, 15, 16, 16, 10, 15, 15, 13, 14, 22, 12],
+    fileNameBase: stem('DRC03_Register', ctx.projectName),
+    extraSheets: notesSheet([
+      'A residential unit whose gross amount charged crosses ₹45,00,000 was never affordable: the higher rate is due on '
+      + 'everything already offered to tax in filed periods, paid by DRC-03 with interest u/s 50 from each period\'s due '
+      + 'date (positions §8). Unfiled periods simply follow the live rate.',
+      'Voided lines were crossings entered in error and are left out of the totals.',
+    ]),
+  };
+};
+
+// ─── Big-4 frame, applied to every builder working paper ────────────────────
+
+/** Working-paper references, so a file of papers cross-refers like an audit file. */
+export const WP_REF: Record<ReportKind, string> = {
+  RETURN_WORKPAPER: 'B-1',
+  PROJECT_LIABILITY: 'B-2',
+  UNIT_REGISTER: 'B-3',
+  ADVANCE_ROLLFORWARD: 'B-4',
+  UNIT_LEDGER: 'B-5',
+  BU_WORKING: 'B-6',
+  FSI_WORKPAPER: 'B-7',
+  ITC_REVERSAL: 'B-8',
+  DRC03_REGISTER: 'B-9',
+  MEMBER_STATEMENT: 'C-1',
+};
+
+/**
+ * Adds what makes a schedule an audit working paper: its W/P reference and
+ * preparer in the identification strip, and a sign-off sheet (prepared,
+ * reviewed, approved) with the tick-mark legend. A client-facing statement
+ * gets the reference only.
+ */
+export const withWorkingPaperFrame = (table: ReportTable, kind: ReportKind, ctx: ReportContext): ReportTable => {
+  const ref = WP_REF[kind];
+  const meta = [
+    { label: 'W/P ref', value: ref },
+    ...(table.meta || []),
+    ...(kind !== 'MEMBER_STATEMENT' && ctx.preparedBy ? [{ label: 'Prepared by', value: ctx.preparedBy }] : []),
+  ];
+  if (kind === 'MEMBER_STATEMENT') return { ...table, meta };
+  const signOff: ReportSheet = {
+    name: 'Sign-off',
+    title: `Sign-off — W/P ${ref}`,
+    headers: ['Role', 'Name', 'Date', 'Signature / initials'],
+    rows: [
+      ['Prepared by', ctx.preparedBy || '', '', ''],
+      ['Reviewed by (GST Manager)', '', '', ''],
+      ['Approved by (Partner)', '', '', ''],
+    ],
+    columnWidths: [28, 30, 14, 30],
+    notes: [
+      'Tick marks: ✓ agreed to the return as filed · ⊕ footed · ↔ cross-referred to another W/P · ⚑ needs follow-up.',
+      'Figures are read back from what the engines computed and stored; nothing is recalculated for the paper.',
+    ],
+  };
+  return { ...table, meta, extraSheets: [...(table.extraSheets || []), signOff] };
 };

@@ -34,6 +34,7 @@ import { daysBetween, istToday, type NoticeFact } from '@/lib/noticeFacts';
 import { dueWords, fmtDate, fmtFy, fmtInr, fmtInrShort, noticeTitle, plural } from '@/lib/noticeFormat';
 import type { Database } from '@/integrations/supabase/types';
 import { cn } from '@/lib/utils';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 type Deadline = Database['public']['Tables']['matter_deadlines']['Row'];
 type Refund = Pick<Database['public']['Tables']['gst_refund_applications']['Row'], 'arn' | 'refund_type' | 'filed_date' | 'claimed_amount' | 'sanctioned_amount' | 'status'>;
@@ -328,6 +329,14 @@ const AdditionalNoticeFolderPage: React.FC = () => {
         </div>
       </header>
 
+      {refund?.arn && (
+        <Link to={`/refunds/${clientId}/${encodeURIComponent(refund.arn)}`}
+          className="flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm hover:bg-primary/10">
+          <span><span className="font-semibold">This is a refund.</span> Its steps, amounts, linked appeals and documents are on its refund page.</span>
+          <span className="shrink-0 font-medium text-primary">Open the refund →</span>
+        </Link>
+      )}
+
       {(refund || appeal || pinned.length > 0 || demand > 0) && (
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {refund && <KpiTile label="Claimed" value={fmtInrShort(refund.claimed_amount)} hint={refund.filed_date ? `filed ${fmtDate(refund.filed_date)}` : refund.refund_type ?? undefined} />}
@@ -370,7 +379,7 @@ const AdditionalNoticeFolderPage: React.FC = () => {
           <ul className="divide-y">
             {otherNotices.map((n) => (
               <li key={n.id} className="flex flex-wrap items-center gap-2 py-1.5 text-sm">
-                <Link to={`/notices/${n.id}`} className="min-w-0 flex-1 break-words font-medium hover:underline">{noticeTitle(n)}</Link>
+                <Link to={noticeCaseHref({ id: n.id as string })} className="min-w-0 flex-1 break-words font-medium hover:underline">{noticeTitle(n)}</Link>
                 <span className="text-xs text-muted-foreground">{n.reference_number ?? ''}{n.issue_date ? ` · ${fmtDate(n.issue_date)}` : ''}</span>
                 <StageBadge stage={n.stage} />
               </li>

@@ -17,6 +17,7 @@ import { loadHiddenForms } from '@/lib/noticeTypes';
 import { stageLabel } from '@/lib/noticeStages';
 import { fmtAgo, fmtDate, fmtInrShort, sentenceCase } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 interface BellItem {
   key: string;
@@ -108,7 +109,7 @@ async function loadBell(userId: string): Promise<BellItem[]> {
       return {
         key: `n-${e.id}`, target: `n-${e.notice_id}`, at: e.created_at,
         context: [clientName.get(e.client_id) ?? 'A client', what].filter(Boolean).join(' · '),
-        title: d.title, detail: d.detail, href: `/notices/${e.notice_id}`,
+        title: d.title, detail: d.detail, href: noticeCaseHref({ id: e.notice_id as string }),
         mine: n?.assign_to_user_id === userId, more: 0,
       };
     }),

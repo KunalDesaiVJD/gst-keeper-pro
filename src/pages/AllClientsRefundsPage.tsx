@@ -1,16 +1,17 @@
-// Notices & Litigation · Refunds (audit U-75-1..5, U-76-1..3; cross-cutting
-// ui-b). Every refund application plus the portal's refund cases no
-// application covers (public.refund_facts, one row per ARN), read through one
-// status map (components/notices/reports/ledgerStatus): needs action in red
-// with its reply-by or appeal-by date, in process in blue with the officer's
-// clock, sanctioned or paid green, rejected or withdrawn grey; sanction,
-// payment and re-credit are closed. The tiles are filters; the client, filter,
-// search and sort live in the URL (?client=<id>, ?status=open|action|process|
-// paid|rejected|closed) and every active filter shows as a chip. Rows sort by
-// the next date. Amounts not captured read "—" and stay out of the totals,
-// which sit in the card header. One .zip for the PDFs.
+// Notices & Litigation · Refunds (/refunds-all): the one page for refunds (the
+// firm's choice of 25 October 2026, after "four views of one refund" and a
+// list that "looked very poor"). Four numbers first (claimed, sanctioned,
+// rejected, still open) and what needs the firm; then, for one client, the
+// quarter grid (a row per financial year, a column per quarter, a lane per
+// type of refund: what was claimed for each quarter, what came back, and any
+// quarter not filed) or, for all clients, one line per client; then the
+// register by financial year with a total per year. Every refund opens its own
+// page (/refunds/:clientId/:arn). Statuses come from the portal through one
+// status map (components/notices/reports/ledgerStatus); amounts the portal
+// leaves blank from the AI's reading of the refund's own orders. The client,
+// filters and search live in the URL (?client, ?status, ?portal, ?type, ?q).
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
@@ -20,33 +21,38 @@ import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Note, SectionCard } from '@/components/gstr9/ui';
+import { Note } from '@/components/gstr9/ui';
+import { SectionCard } from '@/components/notices/ui/Panel';
 import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { FilterPill } from '@/components/notices/FilterPill';
 import { useExtensionBridge } from '@/hooks/useExtensionBridge';
-import { FilterChips, FilterTile, type Chip } from '@/components/notices/reports/ReportBits';
-import { RefundTable, type RefundSort } from '@/components/notices/reports/RefundTable';
+import { FilterChips, type Chip } from '@/components/notices/reports/ReportBits';
+import { RefundGrid } from '@/components/notices/reports/RefundGrid';
+import { RefundRegister } from '@/components/notices/reports/RefundRegister';
+import { NeedsAction, RefundClients, RefundNumbers } from '@/components/notices/reports/RefundSummary';
+import {
+  TONE_CELL, TONE_LABEL, fyLabel, placeOf, refundHref, refundPeriod, toneOf, typeCode, typeLong, typeShort, type Tone,
+} from '@/components/notices/reports/refundModel';
 import { useRefundLedger, type RefundRow } from '@/components/notices/reports/ledgerData';
-import { REFUND_GROUPS, matchesRefundShow, parseRefundShow, refundShowLabel, REFUND_SHOW, type RefundShow } from '@/components/notices/reports/ledgerStatus';
+import { matchesRefundShow, parseRefundShow, refundShowLabel, REFUND_SHOW } from '@/components/notices/reports/ledgerStatus';
 import { downloadZip } from '@/components/notices/reports/zip';
 import { istToday } from '@/lib/noticeFacts';
-import { fmtDate, fmtInr, fmtInrShort, plural } from '@/lib/noticeFormat';
+import { fmtDate, plural } from '@/lib/noticeFormat';
 import { stageLabel } from '@/lib/noticeStages';
+import { cn } from '@/lib/utils';
 
-const SORTS: RefundSort[] = ['due', 'filed', 'client', 'claimed', 'sanctioned'];
-const ASCENDING: RefundSort[] = ['due', 'client'];
-const ACCENT = { action: 'destructive', process: 'info', paid: 'success', rejected: 'muted', unknown: 'muted' } as const;
+const LEGEND: Tone[] = ['full', 'part', 'rejected', 'action', 'open', 'withdrawn'];
 
 const AllClientsRefundsPage: React.FC = () => {
   const { isStaffRole, canExportData, canEditNoticeStatus } = useAuth();
+  const navigate = useNavigate();
   const [sp, setSp] = useSearchParams();
   const today = istToday();
   const clientId = sp.get('client') || undefined;
   const show = parseRefundShow(sp.get('status'));
   const portal = sp.get('portal') || '';
-  const sort = (SORTS.includes(sp.get('sort') as RefundSort) ? sp.get('sort') : 'due') as RefundSort;
-  const dir: 'asc' | 'desc' = sp.get('dir') === 'asc' || sp.get('dir') === 'desc' ? (sp.get('dir') as 'asc' | 'desc') : ASCENDING.includes(sort) ? 'asc' : 'desc';
+  const type = (sp.get('type') || '').toUpperCase();
   const qParam = sp.get('q') ?? '';
   const [q, setQ] = useState(qParam);
   const [zipping, setZipping] = useState(false);
@@ -72,64 +78,31 @@ const AllClientsRefundsPage: React.FC = () => {
     queryFn: async () => (await supabase.from('clients').select('name, gstin').eq('id', clientId as string).maybeSingle()).data,
   });
 
-  // Everything but the status filter: what the tiles count (so a tile opens a list of its own size).
+  // Everything but the status filter: the numbers, the grid and the client lines.
   const base = useMemo(() => {
     const term = qParam.trim().toLowerCase();
     return (ledger.data ?? []).filter((r) => {
       if (portal && (r.fact.status ?? '') !== portal) return false;
+      if (type && typeCode(r) !== type) return false;
       if (!term) return true;
-      return [r.fact.arn, r.fact.client_name, r.fact.client_gstin, r.fact.refund_type, r.fact.status, r.state.label]
+      return [r.fact.arn, r.fact.client_name, r.fact.client_gstin, r.fact.refund_type, typeShort(typeCode(r)), r.fact.status, r.state.label, refundPeriod(r)]
         .some((v) => (v ?? '').toLowerCase().includes(term));
     });
-  }, [ledger.data, qParam, portal]);
-  const rows = useMemo(() => {
-    const list = base.filter((r) => matchesRefundShow(r.state, show));
-    const sign = dir === 'asc' ? 1 : -1;
-    const val = (r: RefundRow): string | number | null => {
-      switch (sort) {
-        case 'due': return r.state.due;
-        case 'filed': return r.fact.filed_date;
-        case 'client': return (r.fact.client_name ?? '').toLowerCase();
-        case 'claimed': return r.fact.claimed_amount === null ? null : Number(r.fact.claimed_amount);
-        case 'sanctioned': return r.fact.sanctioned_amount === null ? null : Number(r.fact.sanctioned_amount);
-        default: return null;
-      }
-    };
-    // Open before closed, then the chosen order (missing values last), then newest filed.
-    return list.sort((a, b) => {
-      if (sort === 'due' && a.state.open !== b.state.open) return a.state.open ? -1 : 1;
-      const va = val(a);
-      const vb = val(b);
-      if (va !== vb) {
-        if (va === null) return 1;
-        if (vb === null) return -1;
-        return sign * (va < vb ? -1 : 1);
-      }
-      return (b.fact.filed_date ?? '').localeCompare(a.fact.filed_date ?? '');
-    });
-  }, [base, show, sort, dir]);
-  const totals = useMemo(() => rows.reduce((t, r) => ({
-    claimed: t.claimed + (Number(r.fact.claimed_amount) || 0),
-    sanctioned: t.sanctioned + (Number(r.fact.sanctioned_amount) || 0),
-    noClaim: t.noClaim + (r.fact.claimed_amount === null ? 1 : 0),
-  }), { claimed: 0, sanctioned: 0, noClaim: 0 }), [rows]);
+  }, [ledger.data, qParam, portal, type]);
+  const rows = useMemo(() => base.filter((r) => matchesRefundShow(r.state, show)), [base, show]);
   const statuses = useMemo(() => [...new Set((ledger.data ?? []).map((r) => r.fact.status).filter((s): s is string => !!s && !!s.trim()))].sort(), [ledger.data]);
+  const types = useMemo(() => [...new Set((ledger.data ?? []).map(typeCode).filter(Boolean))].sort(), [ledger.data]);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
 
   const clientName = clientId ? client.data?.name ?? ledger.data?.[0]?.fact.client_name ?? null : null;
-  const tileHref = (key: RefundShow) => {
-    const next = new URLSearchParams(sp);
-    if (show === key) next.delete('status'); else next.set('status', key);
-    const s = next.toString();
-    return `/refunds-all${s ? `?${s}` : ''}`;
-  };
+  const open = (r: RefundRow) => { if (r.fact.client_id && r.fact.arn) navigate(refundHref(r.fact.client_id, r.fact.arn)); };
   const chips: Chip[] = [];
   if (clientId) chips.push({ key: 'client', label: `Client: ${clientName ?? 'one client'}`, onRemove: () => set({ client: undefined }) });
   if (show !== 'all') chips.push({ key: 'status', label: `Show: ${refundShowLabel(show)}`, onRemove: () => set({ status: undefined }) });
   if (portal) chips.push({ key: 'portal', label: `Portal status: ${portal}`, onRemove: () => set({ portal: undefined }) });
+  if (type) chips.push({ key: 'type', label: `Type: ${typeShort(type)}`, onRemove: () => set({ type: undefined }) });
   if (qParam) chips.push({ key: 'q', label: `Search: ${qParam}`, onRemove: () => { setQ(''); set({ q: undefined }); } });
-  const onSort = (k: RefundSort) => set(k === sort ? { sort: k, dir: dir === 'asc' ? 'desc' : 'asc' } : { sort: k === 'due' ? undefined : k, dir: undefined });
   const docs = rows.flatMap((r) => r.docs.map((d) => ({ url: d.url, name: `${r.fact.client_name ?? 'Client'} ${r.fact.arn ?? ''} ${d.label}` })));
   const canFetch = bridge.ready && canEditNoticeStatus();
   // Clients whose refunds have no case folder, or whose case has no application record, yet.
@@ -140,7 +113,7 @@ const AllClientsRefundsPage: React.FC = () => {
 
   const fetchFor = async (mode: 'refund_docs' | 'refunds', clientIds: string[]) => {
     const res = await bridge.startPull(mode, clientIds);
-    if (res.ok) toast.success(`Fetching ${mode === 'refunds' ? 'refund applications' : 'refund folders and documents'} for ${plural(res.count ?? clientIds.length, 'client')}. Type each CAPTCHA in the portal tab; this list updates after the run.`);
+    if (res.ok) toast.success(`Fetching ${mode === 'refunds' ? 'refund applications' : 'refund folders and documents'} for ${plural(res.count ?? clientIds.length, 'client')}. Type each CAPTCHA in the portal tab; this page updates after the run.`);
     else toast.error(res.error || 'The fetch did not start.');
   };
   const zip = async () => {
@@ -153,13 +126,18 @@ const AllClientsRefundsPage: React.FC = () => {
     } finally { setZipping(false); toast.dismiss(t); }
   };
   const exportXlsx = () => {
-    const data = rows.map((r) => ({
-      Client: r.fact.client_name, GSTIN: r.fact.client_gstin, ARN: r.fact.arn ?? '', 'Refund type': r.fact.refund_type ?? '',
-      Filed: fmtDate(r.fact.filed_date), 'Portal status': r.state.label, Group: REFUND_GROUPS.find((g) => g.key === r.state.group)?.label ?? '',
-      'Next step': r.state.next ?? '', 'By': fmtDate(r.state.due), Basis: r.state.basis ?? '',
-      'Our stage': r.caseLink ? stageLabel(r.caseLink.stage) : '', 'Claimed (₹)': r.fact.claimed_amount ?? '', 'Sanctioned (₹)': r.fact.sanctioned_amount ?? '',
-      'Not sanctioned (₹)': r.state.rejectedAmount ?? '', Documents: r.docs.length, Source: r.fact.origin === 'case' ? 'portal case only' : 'application',
-    }));
+    const data = rows.map((r) => {
+      const p = placeOf(r);
+      return {
+        Client: r.fact.client_name, GSTIN: r.fact.client_gstin, 'Financial year': p ? fyLabel(p.fy) : '', Quarter: p ? `Q${p.q}` : '',
+        Period: refundPeriod(r) ?? '', 'Refund type': r.fact.refund_type ?? '', Reason: typeLong(typeCode(r)), ARN: r.fact.arn ?? '',
+        Filed: fmtDate(r.fact.filed_date), 'Claimed (₹)': r.claimed ?? '', 'Sanctioned (₹)': r.sanctioned ?? '', 'Rejected (₹)': r.rejected ?? '',
+        'Paid (₹)': r.read?.paid?.value ?? '', Standing: TONE_LABEL[toneOf(r)], 'Portal status': r.fact.status ?? '',
+        'Next step': r.state.next ?? '', By: fmtDate(r.state.due), Basis: r.state.basis ?? '', 'Our stage': r.caseLink ? stageLabel(r.caseLink.stage) : '',
+        'Amounts from': r.fact.sanctioned_amount !== null ? 'portal' : r.read?.sanctioned ? `AI, ${r.read.sanctioned.from}` : '',
+        Linked: r.links.map((l) => `${l.kind} ${l.key}`).join('; '), Documents: r.docs.length,
+      };
+    });
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Refunds');
@@ -182,8 +160,8 @@ const AllClientsRefundsPage: React.FC = () => {
       )}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-base font-semibold" aria-live="polite">
-          {show === 'all' ? 'Refund applications' : refundShowLabel(show)}{clientName ? ` · ${clientName}` : ''}
-          <span className="text-muted-foreground"> · {ledger.data ? rows.length.toLocaleString('en-IN') : '…'}</span>
+          Refunds{clientName ? ` · ${clientName}` : ' · all clients'}
+          <span className="text-muted-foreground"> · {ledger.data ? plural(base.length, 'application') : '…'}</span>
         </h2>
         {clientId && (
           <span className="text-xs text-muted-foreground">
@@ -194,73 +172,78 @@ const AllClientsRefundsPage: React.FC = () => {
         )}
       </div>
 
-      {ledger.data && (
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-          {REFUND_GROUPS.filter((g) => g.key !== 'unknown' || base.some((r) => r.state.group === 'unknown')).map((g) => {
-            const list = base.filter((r) => r.state.group === g.key);
-            const amount = list.reduce((s, r) => s + (Number(g.key === 'paid' ? r.fact.sanctioned_amount : r.fact.claimed_amount) || 0), 0);
-            const active = show === g.key || (show === 'open' && (g.key === 'action' || g.key === 'process')) || (show === 'closed' && !['action', 'process'].includes(g.key));
-            return (
-              <FilterTile key={g.key} to={tileHref(g.key)} label={g.label} accent={ACCENT[g.key]} active={active}
-                alarm={g.key === 'action' && list.length > 0} value={list.length.toLocaleString('en-IN')}
-                hint={amount ? `${fmtInrShort(amount)} ${g.key === 'paid' ? 'sanctioned' : 'claimed'} · ${g.hint}` : g.hint} />
-            );
-          })}
-        </div>
-      )}
-
       <div className="space-y-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
           <div className="relative w-full sm:w-64">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ARN, client, GSTIN, type…" aria-label="Search refunds" className="h-8 pl-7 text-xs" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ARN, client, GSTIN, type, period…" aria-label="Search refunds" className="h-8 pl-7 text-xs" />
           </div>
+          <FilterPill label="Type" allLabel="All" value={type || 'all'} onChange={(v) => set({ type: v === 'all' ? undefined : v })} options={[]}
+            extraOptions={types.map((t) => ({ value: t, label: typeShort(t) }))} />
           <FilterPill label="Show" allLabel="All" value={show} onChange={(v) => set({ status: v === 'all' ? undefined : v })} options={[]}
             extraOptions={REFUND_SHOW.map((o) => ({ value: o.key, label: o.label }))} />
           <FilterPill label="Portal status" allLabel="Any" value={portal || 'all'} onChange={(v) => set({ portal: v === 'all' ? undefined : v })} options={statuses} />
         </div>
-        <FilterChips chips={chips} onClear={() => { setQ(''); set({ client: undefined, status: undefined, portal: undefined, q: undefined }); }} />
+        <FilterChips chips={chips} onClear={() => { setQ(''); set({ client: undefined, status: undefined, portal: undefined, type: undefined, q: undefined }); }} />
       </div>
 
       {ledger.error ? (
         <Note tone="warn">Couldn't load the refunds: {ledger.error instanceof Error ? ledger.error.message : String(ledger.error)}{' '}
           <Button variant="link" className="h-auto p-0 text-xs" onClick={() => ledger.refetch()}>Retry</Button></Note>
       ) : !ledger.data ? (
-        <div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
-      ) : rows.length === 0 ? (
+        <div className="space-y-2"><Skeleton className="h-24 w-full" />{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
+      ) : base.length === 0 ? (
         <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           {ledger.data.length === 0 ? `No refund application on record${clientName ? ` for ${clientName}` : ''} yet. They arrive with the portal sync.` : 'No refund matches these filters.'}
         </div>
       ) : (
-        <SectionCard title={plural(rows.length, 'refund')}
-          description={<>Claimed {fmtInr(totals.claimed)} · sanctioned {fmtInr(totals.sanctioned)}{totals.noClaim ? ` · ${totals.noClaim} without a claimed amount (left out)` : ''} · open first, by the next date</>}
-          actions={canFetch && (noFolder.length > 0 || noApplication.length > 0) ? (
-            <>
-              {noApplication.length > 0 && (
-                <Button size="sm" variant="outline" className={WS_BTN} disabled={bridge.busy} onClick={() => fetchFor('refunds', noApplication)}>
-                  <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Fetch applications · {plural(noApplication.length, 'client')}
-                </Button>
-              )}
-              {noFolder.length > 0 && (
-                <Button size="sm" variant="outline" className={WS_BTN} disabled={bridge.busy} onClick={() => fetchFor('refund_docs', noFolder)}>
-                  <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Fetch case folders · {plural(noFolder.length, 'client')}
-                </Button>
-              )}
-            </>
-          ) : undefined}>
-          {lacking > 0 && !canFetch && (
-            <Note tone="info">
-              {plural(lacking, 'refund')} {lacking === 1 ? 'has' : 'have'} no case folder or application captured yet. They fill in when the client's refunds
-              are next fetched; with the browser extension connected, this card offers to fetch them.
-            </Note>
+        <>
+          <RefundNumbers rows={base} />
+          <NeedsAction rows={base} today={today} showClient={!clientId} onOpen={open} />
+
+          {clientId ? (
+            <SectionCard title="Quarter by quarter"
+              description="each financial year, each quarter, each type of refund · click a refund to open it"
+              info="A refund sits in the quarter its period starts in: the period on the application, else the one the AI read in its papers, else (marked) the month it was filed. A quarter missing between a type's first and latest refund reads 'not filed'.">
+              <RefundGrid rows={base} onOpen={open} />
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground" aria-label="Colours">
+                {LEGEND.map((t) => <span key={t} className="inline-flex items-center gap-1.5"><span className={cn('h-3 w-3 rounded-sm border', TONE_CELL[t])} aria-hidden />{TONE_LABEL[t]}</span>)}
+                <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-dashed border-warning/60" aria-hidden />Not filed</span>
+              </div>
+            </SectionCard>
+          ) : (
+            <SectionCard title="Clients" description="the same four numbers per client · click a client for its quarter grid">
+              <RefundClients rows={base} onClient={(id) => set({ client: id })} />
+            </SectionCard>
           )}
-          <RefundTable rows={rows} today={today} showClient={!clientId} sort={sort} dir={dir} onSort={onSort} totals={totals} />
-          <p className="text-xs text-muted-foreground">
-            Sanctioned, paid (RFD-05) and re-credited (PMT-03) refunds are closed. A rejection, in full or in part, stays under
-            Needs action until the appeal window (3 months from the order, s.107) has run or the refund's case is closed.
-            Statuses come from the portal; dates from the refund's case folder when it has been fetched.
-          </p>
-        </SectionCard>
+
+          <SectionCard title="Register"
+            description={show === 'all' ? `${plural(rows.length, 'refund')} by financial year, latest first` : `${refundShowLabel(show)} · ${plural(rows.length, 'refund')}`}
+            info="Sanctioned, paid (RFD-05) and re-credited (PMT-03) refunds are closed. A rejection, in full or in part, needs action until the appeal window (3 months from the order, s.107) has run or the refund's case is closed. Statuses come from the portal; dates from the refund's case folder; amounts the portal leaves blank from the AI's reading of the refund's own orders."
+            actions={canFetch && (noFolder.length > 0 || noApplication.length > 0) ? (
+              <>
+                {noApplication.length > 0 && (
+                  <Button size="sm" variant="outline" className={WS_BTN} disabled={bridge.busy} onClick={() => fetchFor('refunds', noApplication)}>
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Fetch applications · {plural(noApplication.length, 'client')}
+                  </Button>
+                )}
+                {noFolder.length > 0 && (
+                  <Button size="sm" variant="outline" className={WS_BTN} disabled={bridge.busy} onClick={() => fetchFor('refund_docs', noFolder)}>
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Fetch case folders · {plural(noFolder.length, 'client')}
+                  </Button>
+                )}
+              </>
+            ) : undefined}>
+            {lacking > 0 && !canFetch && (
+              <Note tone="info">
+                {plural(lacking, 'refund')} {lacking === 1 ? 'has' : 'have'} no case folder or application captured yet. They fill in when the client's refunds
+                are next fetched; with the browser extension connected, this card offers to fetch them.
+              </Note>
+            )}
+            {rows.length ? <RefundRegister rows={rows} today={today} showClient={!clientId} onOpen={open} />
+              : <p className="py-4 text-center text-sm text-muted-foreground">No refund is {refundShowLabel(show).toLowerCase()}.</p>}
+          </SectionCard>
+        </>
       )}
     </NoticesShell>
   );

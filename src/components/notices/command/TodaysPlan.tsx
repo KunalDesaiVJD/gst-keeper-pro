@@ -31,6 +31,7 @@ import { ResponseNeedChip } from '../types/ResponseNeedChip';
 import { LogReplyDialog } from '../actions/LogReplyDialog';
 import type { NoticeRef } from '../actions/NoticeContext';
 import { cn } from '@/lib/utils';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 const TABS: { key: QueueTab; label: string }[] = [
   { key: 'mine', label: 'Mine' },
@@ -143,7 +144,7 @@ export const PlanRows: React.FC<{ rows: NoticePlanRow[]; onChanged: () => void }
         <li key={r.id} className={cn('rounded-lg border bg-card p-3', (r.days_to_plan_due ?? 1) < 0 && 'border-destructive/50')}>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <Link to={`/notices/${r.id}`} className="block truncate text-sm font-semibold hover:underline">{noticeTitle(r)}</Link>
+              <Link to={noticeCaseHref({ id: r.id as string })} className="block truncate text-sm font-semibold hover:underline">{noticeTitle(r)}</Link>
               <div className="truncate text-xs text-muted-foreground">{r.client_name} · <span className="font-mono">{r.client_gstin}</span></div>
             </div>
             <div className="shrink-0 text-right text-xs">{dueCell(r)}</div>
@@ -179,7 +180,7 @@ export const PlanRows: React.FC<{ rows: NoticePlanRow[]; onChanged: () => void }
               </td>
               <td className={cn(WS_TD, 'min-w-[14rem] max-w-[26rem]')}>
                 <div className="flex min-w-0 items-center gap-1.5">
-                  <Link to={`/notices/${r.id}`} title={noticeTitle(r)} className="min-w-0 truncate font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <Link to={noticeCaseHref({ id: r.id as string })} title={noticeTitle(r)} className="min-w-0 truncate font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     {noticeTitle(r)}{r.amount_of_demand ? ` · ${fmtInrShort(r.amount_of_demand)}` : ''}
                   </Link>
                   <ResponseNeedChip need={r.response_need} className="shrink-0" />

@@ -113,6 +113,15 @@ The **BU permission is the completion certificate**. A unit's cut-off is the
 **registered sale deed**, not the banakhat. *(Confirmed explicitly; the banakhat
 reading would fire each unit's full liability at booking instead.)*
 
+**First occupation (25/10/2026).** Schedule II para 5(b) and Notification
+06/2019-CT(R) read "completion certificate ... or first occupation, whichever is
+earlier". The BU event takes an optional **first occupation date**; when it is
+before the permission, it is the completion date: `builder_bu_events.bu_date`
+carries it (so every cut-off, the TDR/FSI time of supply and the ITC reversal
+year run from it) and the permission's own date is kept in
+`bu_permission_date` (migration `20261025100000`). A unit's cut-off is then the
+earlier of that completion date and its dastavej date.
+
 **The firm's practice.** For every unit booked before its cut-off, the entire
 balance consideration becomes taxable in the BU month, received or not.
 Anchored in **s.31(5)(c) r/w s.13(2)(a)**: where payment is linked to the
@@ -739,6 +748,35 @@ legs, so a phased BU crystallises the liability piece by piece.
 The credit is blocked under the 1%/5% scheme, so this is paid in cash through
 **3B Table 3.1(d)** and never reaches GSTR-1.
 
+**Never ITC in 4A(3) (25/10/2026).** The GSTR-3B draft folded the FSI legs into
+the same reverse-charge total that fills 4A(3), so the blocked tax came back as
+credit for every Claim-ITC and Partial-ITC builder (a No-ITC builder showed it
+and reversed it), while the GST Receivable reco's own 4A(3) (from `rcm_data`
+only) left it out. `fetchGstr3b` now passes the FSI legs as `rcmItcBlocked`:
+liability in 3.1(d), nothing in 4A(3), for the residential leg always.
+
+**The commercial leg's credit (25/10/2026, the firm's instruction).** In a REP
+other than an RREP the commercial apartments are taxed at 12% with credit, so
+the reverse charge on their share of the TDR/FSI is eligible input tax. For a
+Claim-ITC or Partial-ITC client the view `builder_rcm_postings` gives it as
+`itc_cgst` / `itc_sgst` (half each of `commercial_rcm`), with the project's
+RREP test (`project_is_rrep`, the app's `testRrep`: manual carpet areas, else
+units not cancelled, no area counting as an RREP); 0 for an RREP or a No-ITC
+client. GSTR-3B claims it in 4A(3). It is wholly commercial, so a Partial-ITC
+builder's carpet apportionment leaves it out of the base its residential share
+is taken from (`computePartialItcSplit`'s `exclusiveItc`, also on ITC Summary,
+whose row (3) carries it, and in the ITC & Cash paper). The GST Receivable reco
+adds it to M-1's net ITC, unapportioned, in the database
+(`gst_receivable_reco_difference`), `gstReceivableRecoCalc.ts` and the page,
+so the push gate still tallies (`20261025130000`, `src/lib/builderFsiCredit.ts`).
+Do not also key it as a 4A(5) adjustment: it would be claimed twice.
+
+**The 3.1(d) value (25/10/2026).** `taxable_value` was `total_rcm ÷ 18%`, which
+understated the supply whenever the 1%/5% cap cut the residential tax (portion
+₹1 crore, tax capped at ₹5 lakh, value shown ₹27.78 lakh). It is now the
+portions themselves, `residential_value + commercial_value`; a working with no
+portions recorded keeps the old figure. The tax is unchanged.
+
 **The consent gate.** A client instructing the firm not to discharge this
 liability must have that instruction on record before the period files: request
 out from gst@vjdesai.com, the client's written reply attached, and **GST
@@ -826,4 +864,5 @@ flagged while trying to tax it here.
 | Cut-off, differential, s.50 interest, credit-note deadline | `src/utils/builderBuEvent.ts` |
 | Re-rating, conversions, bounce offsets, restatement, delay interest | `src/utils/builderAdjustments.ts` |
 | TDR/FSI legs, the cap, the consent gate, carpet split | `src/utils/builderFsi.ts` |
+| Working papers (W/P refs, sign-off, unit register, advances roll-forward, ITC reversal, DRC-03 register) | `src/utils/builderReportTables.ts`, `src/lib/builderReportData.ts` |
 | Schema | `supabase/migrations/*_builder_phase*.sql` |

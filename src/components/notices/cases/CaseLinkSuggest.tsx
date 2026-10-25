@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { setCaseLink, useLinkSuggestions } from '@/lib/noticeCases';
 import { fmtDate, fmtInrShort } from '@/lib/noticeFormat';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 export const CaseLinkSuggest: React.FC<{ noticeId: string; clientId: string; caseId: string | null; canEdit: boolean; onLinked: () => void }> = ({ noticeId, clientId, caseId, canEdit, onLinked }) => {
   const { user } = useAuth();
@@ -32,7 +33,7 @@ export const CaseLinkSuggest: React.FC<{ noticeId: string; clientId: string; cas
         {list.map((o) => (
           <li key={o.notice_id} className="flex items-center gap-2 py-1.5">
             <div className="min-w-0 flex-1 text-xs">
-              <Link to={`/notices/${o.notice_id}`} className="font-medium text-primary hover:underline">{o.form_code} · {o.reference}</Link>
+              <Link to={noticeCaseHref({ id: o.notice_id as string })} className="font-medium text-primary hover:underline">{o.form_code} · {o.reference}</Link>
               <span className="text-muted-foreground">{o.issue_date ? ` · ${fmtDate(o.issue_date)}` : ''}{o.financial_year ? ` · FY ${o.financial_year}` : ''}{o.amount ? ` · ${fmtInrShort(o.amount)}` : ''}</span>
               <div className="truncate text-[11px] text-muted-foreground">{o.reasons.join(' · ')}</div>
             </div>

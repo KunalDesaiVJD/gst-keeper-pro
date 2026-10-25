@@ -3,6 +3,7 @@ import { previousPeriodMonthKey } from '@/utils/parseElectronicCreditLedgerCsv';
 import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
 import type { RecoDiffResult } from './suspendedRecoCalc';
 import { fetchFiledFigures } from './itcAutoLink';
+import { fetchFsiCredit } from './builderFsiCredit';
 
 // Mirrors the "DIFFERENCE" figure on the GST Receivable Reco page
 // (src/pages/GstReceivableRecoPage.tsx) — same source tables, same cross-head
@@ -230,8 +231,11 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
           { cgst: 0, sgst: 0, igst: 0 },
         );
     }
-    availedCgst = total4A.cgst - total4B.cgst;
-    availedSgst = total4A.sgst - total4B.sgst;
+    // The FSI reverse charge's commercial-leg credit, claimed in M-1's 4A(3)
+    // and never carpet-apportioned (builderFsiCredit.ts), as the database does.
+    const fsiCredit = prevMonth ? await fetchFsiCredit(clientId, prevMonth) : { igst: 0, cgst: 0, sgst: 0 };
+    availedCgst = total4A.cgst - total4B.cgst + fsiCredit.cgst;
+    availedSgst = total4A.sgst - total4B.sgst + fsiCredit.sgst;
     availedIgst = total4A.igst - total4B.igst;
   }
 

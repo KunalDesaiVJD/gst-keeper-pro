@@ -48,6 +48,17 @@ export function caseKeyOf(caseId: string | null | undefined, category: string | 
 
 export const caseHref = (clientId: string, caseKey: string) => `/notices-case/${clientId}/${encodeURIComponent(caseKey)}`;
 
+/**
+ * Where a notice opens from a list (the firm, 25 October 2026): its case, with
+ * the case's timeline, the notice marked on it. Only "Work on it" opens the
+ * notice's own workspace (/notices/:id). Pass the case when the row has it;
+ * with an id alone the page /notices-open/:id finds the case first.
+ */
+export function noticeCaseHref(n: { id: string; client_id?: string | null; case_id?: string | null; category?: string | null }): string {
+  if (!n.client_id) return `/notices-open/${n.id}`;
+  return `${caseHref(n.client_id, caseKeyOf(n.case_id, n.category, n.id))}?notice=${n.id}`;
+}
+
 // ── Lists and counts ───────────────────────────────────────────────────────
 export type CaseShow = 'open' | 'new' | 'all' | 'overdue' | 'due7' | 'with_us' | 'with_dept' | 'closed';
 export const CASE_SHOWS: readonly CaseShow[] = ['open', 'new', 'all', 'overdue', 'due7', 'with_us', 'with_dept', 'closed'];
@@ -138,7 +149,8 @@ export async function loadCase(clientId: string, caseKey: string): Promise<CaseR
 }
 
 export interface CaseItem {
-  kind: 'notice' | 'document';
+  /** application: filed on the portal, with no case folder or notice of its own yet (20261024120000). */
+  kind: 'notice' | 'document' | 'application';
   id: string;
   from: 'department' | 'taxpayer';
   date: string | null;
@@ -156,6 +168,37 @@ export interface CaseItem {
   attachments: { label?: string; url?: string }[] | null;
   ai: { title: string | null; summary: string | null; doc_kind: string | null; outcome: string | null; doc_date: string | null; status: string; reason_class: string | null; usage?: unknown; model?: string | null } | null;
   notice_read: { status: string; outcome: string | null; summary: string | null; usage?: unknown; model?: string | null } | null;
+  /** What the portal's own record of the item says (20261025140000). */
+  facts?: CaseItemFacts | null;
+}
+
+export interface CaseItemFacts {
+  hearing?: { date: string; time?: string; venue?: string };
+  due?: string; section_of_law?: string; fy?: string; type?: string;
+  /** An appeal's application (APL-01). */
+  form?: string; order_ref?: string; order_date?: string; order_comm_date?: string;
+  disputed_tax?: number; disputed_total?: number; predeposit?: number; predeposit_pct?: number;
+  filed_on?: string; second_appeal?: boolean; issues?: string[]; portal_status?: string;
+  /** Every document the record lists, downloaded or not. */
+  portal_docs?: { id: string; name?: string; file?: string }[];
+}
+
+/** A date the law attaches to the case's papers (notice_case_key_dates, 20261025140000). */
+export type KeyDateKind = 'hearing' | 'adjournment' | 'reply_due' | 'pay_to_close' | 'appeal_window' | 'appeal_filed' | 'predeposit' | 'payment_due';
+export interface KeyDate {
+  date: string; kind: KeyDateKind; title: string; detail?: string | null;
+  tone: 'ok' | 'warn' | 'danger' | 'info' | 'muted'; law?: string | null;
+  own_key?: string | null; item_id?: string | null; upcoming: boolean;
+}
+
+export async function loadKeyDates(clientId: string, caseKey: string): Promise<KeyDate[]> {
+  const { data, error } = await supabase.rpc('notice_case_key_dates', { p_client_id: clientId, p_case_key: caseKey });
+  if (error) {
+    // Before 20261025140000 the timeline has no key dates; it still shows the papers.
+    if (/notice_case_key_dates/.test(error.message)) return [];
+    throw error;
+  }
+  return (Array.isArray(data) ? data : []) as unknown as KeyDate[];
 }
 
 export async function loadCaseItems(clientId: string, caseKey: string): Promise<CaseItem[]> {
@@ -310,6 +353,8 @@ export interface ChainMember {
   stage: string | null; is_open: boolean; notices: number; documents: number;
   first_date: string | null; last_date: string | null; financial_year: string | null; amount: number | null;
   order: CaseOrder | null; refund: CaseRefund | null;
+  /** The application filed on the portal under this ARN (20261024120000); an appeal only submitted has nothing else yet. */
+  application?: { form: string | null; status: string | null; filed_date: string | null; against: string | null } | null;
 }
 export interface CaseChain {
   root_key: string;
@@ -394,6 +439,54 @@ export function chainsOf(links: ChainLink[]): Map<string, ChainLink[]> {
   return out;
 }
 
+// ── Linking checked by a person (20261025100000) ──────────────────────────
+/** The system links by itself only at or above this confidence; below it a person decides. */
+export const MIN_LINK_CONFIDENCE = 90;
+export type ReviewIssue = 'low_confidence' | 'unlinked' | 'duplicate';
+export interface ReviewCase {
+  case_key: string; case_id: string | null; marker: ChainMember['marker']; track: Track; title: string | null; form_code: string | null;
+  forms: string[] | null; lead_notice_id: string | null; is_open: boolean; first_date: string | null; last_date: string | null;
+  financial_year: string | null; amount: number | null; order: CaseOrder | null;
+}
+export interface ReviewItem {
+  issue: ReviewIssue;
+  client_id: string; client_name: string | null;
+  child_key: string; parent_key: string | null; kind: LinkKind | null;
+  /** How sure the system was, 0 to 99 (null: nothing to score). */
+  confidence: number | null;
+  reasons: string[];
+  via_ref?: string | null;
+  child: ReviewCase | null; parent: ReviewCase | null;
+}
+export const REVIEW_ISSUES: Record<ReviewIssue, { label: string; blurb: string }> = {
+  low_confidence: { label: 'Not sure enough to link', blurb: `The papers suggest these belong together, but the system is under ${MIN_LINK_CONFIDENCE}% sure, so it did not link them.` },
+  unlinked: { label: 'Linked to no order', blurb: 'An appeal, waiver or rectification that is not linked to the case it is against.' },
+  duplicate: { label: 'Looks like the same case twice', blurb: 'Two cases with the same order, or the same order form, year and amount.' },
+};
+
+export async function loadReviewQueue(clientId: string | null): Promise<ReviewItem[]> {
+  const { data, error } = await supabase.rpc('notice_case_review_queue', { p_client_id: clientId });
+  if (error) {
+    if (/notice_case_review_queue/.test(error.message)) throw new Error('The review list needs migration 20261025100000_notice_case_link_review.sql on the database.');
+    throw error;
+  }
+  return (Array.isArray(data) ? data : []) as unknown as ReviewItem[];
+}
+
+export function useReviewQueue(clientId: string | null, enabled = true) {
+  return useQuery({ queryKey: ['notice-case-review', clientId], queryFn: () => loadReviewQueue(clientId), enabled, staleTime: 60_000 });
+}
+
+export type ReviewDecision = 'link' | 'not_linked' | 'dismissed';
+export async function decideReview(item: Pick<ReviewItem, 'client_id' | 'issue' | 'child_key'>, parentKey: string | null,
+  decision: ReviewDecision, kind: LinkKind | null, by: string | null): Promise<void> {
+  const { error } = await supabase.rpc('notice_case_review_decide', {
+    p_client_id: item.client_id, p_issue: item.issue, p_child_key: item.child_key, p_parent_key: parentKey,
+    p_decision: decision, p_kind: kind, p_by: by,
+  });
+  if (error) throw error;
+}
+
 /** What a case is, in a few words (an order's form and number, or its lead notice). */
 export function caseLabel(m: Pick<ChainMember, 'case_id' | 'case_key' | 'form_code' | 'title' | 'marker' | 'track'>): string {
   const what = m.marker === 'appeal' ? 'Appeal' : m.marker === 'waiver' ? 'Waiver application' : m.marker === 'rectification' ? 'Rectification'
@@ -406,7 +499,9 @@ export function refundOutcome(r: CaseRefund | null | undefined): string | null {
   if (!r) return null;
   const s = Number(r.sanctioned ?? 0);
   const x = Number(r.rejected ?? 0);
-  if (x > 0 && s > 0) return 'partly rejected';
+  // The AI sometimes reads the amount claimed as the amount rejected (live, 24 October
+  // 2026: "rejected" equal to or above "sanctioned" on most refunds): say nothing then.
+  if (x > 0 && s > 0) return x < s ? 'partly rejected' : null;
   if (x > 0) return 'rejected';
   if (s > 0) return 'sanctioned';
   return null;

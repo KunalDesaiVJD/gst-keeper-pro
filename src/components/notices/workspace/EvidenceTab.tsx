@@ -4,7 +4,8 @@
 // DRC-01C: 3B v 2B; ASMT-10 / DRC-01A: the year at a glance) — each with its
 // annexure tables, every row's source, the data still missing and how to get
 // it. Built on open and saved as 'Auto' when there is no version yet or the
-// inputs changed; Rebuild saves it in the person's name.
+// inputs changed; Rebuild saves it in the person's name. Above them, the
+// evidence documents themselves, numbered and named by type (CaseDocumentsView).
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2, RefreshCw } from 'lucide-react';
@@ -24,8 +25,10 @@ import { EvidenceCard } from '@/components/notices/reply/evidence/EvidenceCard';
 import { PeriodEditor } from '@/components/notices/reply/evidence/PeriodEditor';
 import { useEvidence } from '@/components/notices/reply/evidence/useEvidence';
 import { STATUS_LOOK } from '@/components/notices/reply/evidence/look';
+import { EvidenceDocumentsCard } from '@/components/notices/workspace/CaseDocumentsView';
+import { useCaseDocuments } from '@/lib/caseDocuments';
 
-export const EvidenceTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged: () => void }> = ({ ws, canEdit, onChanged }) => {
+const EvidenceWorkings: React.FC<{ ws: Workspace; canEdit: boolean; onChanged: () => void }> = ({ ws, canEdit, onChanged }) => {
   const { user, canExportData } = useAuth();
   const n = ws.notice;
   const signature = useMemo(() => JSON.stringify([
@@ -147,6 +150,20 @@ export const EvidenceTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged:
           onPeriodSaved={afterPeriod}
         />
       ))}
+    </div>
+  );
+};
+
+/** The evidence documents (filed on the portal, uploaded here, from the client), then the workings from the portal figures. */
+export const EvidenceTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged: () => void }> = ({ ws, canEdit, onChanged }) => {
+  const { model, refreshLabels } = useCaseDocuments(ws);
+  return (
+    <div className="space-y-4">
+      <EvidenceDocumentsCard ws={ws} model={model} canEdit={canEdit} onSaved={refreshLabels} onUploaded={() => { refreshLabels(); onChanged(); }} />
+      <section className="space-y-2">
+        <h2 className="text-[15px] font-semibold leading-tight">Workings from the portal figures</h2>
+        <EvidenceWorkings ws={ws} canEdit={canEdit} onChanged={onChanged} />
+      </section>
     </div>
   );
 };

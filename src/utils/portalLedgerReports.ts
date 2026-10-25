@@ -60,7 +60,7 @@ export const buildCreditLedgerTransactionsReport = async (clientId: string, anyM
   if (error) throw error;
   const fetched = data || [];
   if (fetched.length === 0) {
-    throw new Error(`No credit-ledger transaction detail on record for ${client.name} in ${fyLabel}. Run a ledger "Pull from portal" for these months first — it now saves every transaction row, not just the opening balance.`);
+    throw new Error(`No credit-ledger transaction detail on record for ${client.name} in ${fyLabel}. Use "Pull" on this report: it fetches every month of the year not yet pulled.`);
   }
 
   // The scraped row text carries the portal's serial number, date and running
@@ -181,7 +181,7 @@ export const buildLiabilityLedgerReport = (clientId: string, anyMonthInFy: strin
   table: 'gst_liability_ledger_entries',
   title: 'Liability Ledger',
   file: 'Liability_Ledger',
-  empty: (name, fy) => `No Liability Ledger entries on record for ${name} in ${fy}. This report has no automated portal pull yet — enter records directly, or check back once the extension's Liability Ledger pull is verified against the real portal.`,
+  empty: (name, fy) => `No Liability Ledger entries on record for ${name} in ${fy}. Use "Pull" on this report: it fetches every month of the year not yet pulled.`,
   options: LIABILITY_ORDER,
 });
 
@@ -194,6 +194,6 @@ export const buildCashLedgerReport = (clientId: string, anyMonthInFy: string): P
   table: 'gst_cash_ledger_entries',
   title: 'Cash Ledger',
   file: 'Cash_Ledger',
-  empty: (name, fy) => `No Cash Ledger entries on record for ${name} in ${fy}. This report has no automated portal pull yet — enter records directly, or check back once the extension's Cash Ledger pull is verified against the real portal.`,
+  empty: (name, fy) => `No Cash Ledger entries on record for ${name} in ${fy}. Use "Pull" on this report: it fetches every month of the year not yet pulled.`,
   options: CASH_ORDER,
 });

@@ -33,6 +33,7 @@ import {
   computeNet4C, computePartialItcSplit, computeSection4ATotal5, computeTotal4A, computeTotal4B, takesNegativeHead,
 } from '@/utils/builderPartialItc';
 import { fetchImport2BCreditNotes, fetchImport2BEligibleTotal, fetchImport2BHeld, import2BHeldMessage } from '@/lib/postImport2B';
+import { fetchFsiCredit } from '@/lib/builderFsiCredit';
 
 // Auto-linked / auto-calculated rows: figures come from elsewhere, not typed.
 const LOCKED_ROW = 'bg-muted/30';
@@ -216,6 +217,9 @@ const ITCSummaryPage: React.FC = () => {
   const [heldInImport2B, setHeldInImport2B] = useState(0);
   const import2BRequest = useRef(0);
   const [rcmTotals, setRcmTotals] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  // Inside rcmTotals: the FSI reverse charge's commercial-leg credit, wholly
+  // commercial, so outside the Partial-ITC apportionment (builderFsiCredit.ts).
+  const [fsiCredit, setFsiCredit] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
   // Row 5.2's cell as typed, while it has focus (see renderEditableCell).
   const [cellDraft, setCellDraft] = useState<{ key: string; text: string } | null>(null);
@@ -589,6 +593,7 @@ const ITCSummaryPage: React.FC = () => {
   const fetchRCMTotals = useCallback(async () => {
     if (!selectedClient || !selectedMonth) {
       setRcmTotals({ igst: 0, cgst: 0, sgst: 0 });
+      setFsiCredit({ igst: 0, cgst: 0, sgst: 0 });
       return;
     }
 
@@ -598,29 +603,32 @@ const ITCSummaryPage: React.FC = () => {
     const monthName = monthNames[parseInt(monthNum) - 1];
     const rcmMonth = `${monthName}-${year.slice(-2)}`;
 
-    const { data: rcmData, error } = await supabase
-      .from('rcm_data')
-      .select('cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18')
-      .eq('client_id', selectedClient)
-      .eq('month', rcmMonth);
+    const [{ data: rcmData, error }, fsi] = await Promise.all([
+      supabase
+        .from('rcm_data')
+        .select('cgst_2_5, cgst_9, sgst_2_5, sgst_9, igst_5, igst_18')
+        .eq('client_id', selectedClient)
+        .eq('month', rcmMonth),
+      // Row (3) also carries the FSI reverse charge credit that is available
+      // (the commercial leg in a REP other than an RREP), as GSTR-3B 4A(3) does.
+      fetchFsiCredit(selectedClient, selectedMonth).catch((e) => {
+        console.error('Error fetching FSI reverse charge credit:', e);
+        return { igst: 0, cgst: 0, sgst: 0 };
+      }),
+    ]);
 
     if (error) {
       console.error('Error fetching RCM data:', error);
       return;
     }
 
-    if (rcmData && rcmData.length > 0) {
-      const totals = rcmData.reduce((acc, row) => ({
-        igst: acc.igst + (Number(row.igst_5) || 0) + (Number(row.igst_18) || 0),
-        cgst: acc.cgst + (Number(row.cgst_2_5) || 0) + (Number(row.cgst_9) || 0),
-        sgst: acc.sgst + (Number(row.sgst_2_5) || 0) + (Number(row.sgst_9) || 0),
-      }), { igst: 0, cgst: 0, sgst: 0 });
-
-      console.log('RCM totals for', rcmMonth, ':', totals);
-      setRcmTotals(totals);
-    } else {
-      setRcmTotals({ igst: 0, cgst: 0, sgst: 0 });
-    }
+    const totals = (rcmData || []).reduce((acc, row) => ({
+      igst: acc.igst + (Number(row.igst_5) || 0) + (Number(row.igst_18) || 0),
+      cgst: acc.cgst + (Number(row.cgst_2_5) || 0) + (Number(row.cgst_9) || 0),
+      sgst: acc.sgst + (Number(row.sgst_2_5) || 0) + (Number(row.sgst_9) || 0),
+    }), { igst: fsi.igst, cgst: fsi.cgst, sgst: fsi.sgst });
+    setFsiCredit(fsi);
+    setRcmTotals(totals);
   }, [selectedClient, selectedMonth]);
 
   // Fetch GST Update Sheet entries for reminder banner
@@ -804,8 +812,9 @@ const ITCSummaryPage: React.FC = () => {
       section4B: itcData.section4B,
       commercialArea,
       residentialArea,
+      exclusiveItc: isPartialITCClient ? fsiCredit : null,
     });
-  }, [isReversalClient, commercialArea, residentialArea, itcData.section4A, itcData.section4B]);
+  }, [isReversalClient, isPartialITCClient, commercialArea, residentialArea, itcData.section4A, itcData.section4B, fsiCredit]);
 
   // Pull the derived split whenever a partial-ITC client is selected.
   useEffect(() => {
@@ -1175,6 +1184,7 @@ const ITCSummaryPage: React.FC = () => {
               section4B: rows,
               commercialArea,
               residentialArea,
+              exclusiveItc: isPartialITCClient ? fsiCredit : null,
             })
           : null;
         for (const row of (rows || [])) {
