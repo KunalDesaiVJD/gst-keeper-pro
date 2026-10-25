@@ -32,6 +32,7 @@ import { downloadZip } from '@/components/notices/reports/zip';
 import { linkPayment } from '@/lib/noticeWorkspace';
 import { istToday } from '@/lib/noticeFacts';
 import { fmtDate, fmtFy, fmtInr, fmtInrShort, plural } from '@/lib/noticeFormat';
+import { docHrefAbsolute } from '@/lib/docLinks';
 
 const SORTS: Drc03Sort[] = ['filed', 'client', 'total'];
 const ACCENT = { pending: 'info', acknowledged: 'success', nodetails: 'warning' } as const;
@@ -166,7 +167,7 @@ const AllClientsDrc03Page: React.FC = () => {
       'Interest (₹)': r.heads?.interest ?? '', 'Late fee (₹)': r.heads?.lateFee ?? '', 'Penalty (₹)': r.heads?.penalty ?? '',
       'Total paid (₹)': r.total ?? '', 'Cash (₹)': r.cash ?? '', 'Credit (₹)': r.credit ?? '', Status: r.state.label,
       'Paid against': [...r.against.notices.map((n) => `${n.form_code ?? 'Notice'} ${n.reference_number ?? ''}`.trim()), ...r.against.matters.map((m) => m.matter_no)].join(', '),
-      Source: r.fact.origin === 'case' ? 'portal case only' : 'filing', PDF: r.fact.pdf_url ?? '',
+      Source: r.fact.origin === 'case' ? 'portal case only' : 'filing', PDF: r.fact.pdf_url ? docHrefAbsolute(r.fact.pdf_url) : '',
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();

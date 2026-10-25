@@ -25,6 +25,7 @@ import {
   cellText, fileBase, FIRM, kpiText, layoutOf, metaOf, PALETTE, preparedStamp, project, rgb, TONE,
   type ColumnSpec, type TableLayout,
 } from './layout';
+import { docHrefAbsolute } from '@/lib/docLinks';
 
 type RGB = [number, number, number];
 
@@ -98,7 +99,7 @@ const linkLabel = (col: ColumnSpec, url: string): string =>
 interface Shown { text: string; url?: string }
 
 function shown(v: string | number | undefined, col: ColumnSpec, link: boolean): Shown {
-  if (link && isUrl(v)) return { text: linkLabel(col, v), url: v.trim() };
+  if (link && isUrl(v)) return { text: linkLabel(col, v), url: docHrefAbsolute(v.trim()) };
   return { text: pdfText(cellText(v ?? '', col)) };
 }
 

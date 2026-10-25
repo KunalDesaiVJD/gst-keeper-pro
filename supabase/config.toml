@@ -6,3 +6,7 @@ project_id = "gcquafqxbykxkbexcdpy"
 # Humonex token stays in the HUMONEX_BEARER_TOKEN function secret.
 [functions.gst-push]
 verify_jwt = false
+# Short document links (/d/<id>): no Supabase JWT to verify (custom sign-in);
+# doc-open checks the signed-in person against the database itself.
+[functions.doc-open]
+verify_jwt = false

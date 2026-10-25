@@ -43,6 +43,7 @@ import {
   TableKitPager, TableKitTable, TableKitToolbar, isFilterActive, useTableKit,
   type KitCustomFilter, type KitExtraColumn, type ModelRow,
 } from './tableKit';
+import { openDoc } from '@/lib/docLinks';
 
 interface NoticeWorkflowListViewProps {
   table: ReportTable;
@@ -461,7 +462,7 @@ export const NoticeWorkflowListView: React.FC<NoticeWorkflowListViewProps> = ({ 
     }
     setDownloadNotice(`Opening ${urls.length} PDF${urls.length === 1 ? '' : 's'}…`);
     urls.forEach((url, i) => {
-      setTimeout(() => window.open(url, '_blank', 'noopener,noreferrer'), i * 150);
+      setTimeout(() => openDoc(url), i * 150);
     });
     setTimeout(() => setDownloadNotice(null), urls.length * 150 + 1500);
   };

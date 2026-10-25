@@ -17,6 +17,7 @@ import {
   FIRM, FMT, PALETTE, SENTINEL_RE, TONE, fileBase, kpiText, layoutOf, metaOf, parseDateCell, preparedStamp, sheetName,
   type ColumnSpec, type TableLayout,
 } from './layout';
+import { docHrefAbsolute } from '@/lib/docLinks';
 
 type ExcelJSModule = typeof import('exceljs');
 
@@ -493,7 +494,8 @@ function renderTable(ws: Worksheet, ctx: Ctx, l: TableLayout, start: number): Pl
         if (URL_RE.test(t) && t.length <= MAX_URL && links < MAX_LINKS) {
           flavour = 'link';
           links += 1;
-          cell.value = { text: 'Open', hyperlink: t, tooltip: t.slice(0, 250) };
+          const href = docHrefAbsolute(t);
+          cell.value = { text: 'Open', hyperlink: href, tooltip: href.slice(0, 250) };
         } else if (SENTINEL_RE.test(t)) {
           flavour = 'sentinel';
           cell.value = s;
