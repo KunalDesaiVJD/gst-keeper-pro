@@ -4845,6 +4845,59 @@ export type Database = {
           },
         ]
       }
+      case_document_labels: {
+          Row: {
+            id: string
+            client_id: string
+            case_id: string | null
+            doc_key: string
+            title: string | null
+            evidence_type: string | null
+            is_evidence: boolean | null
+            note: string | null
+            set_by: string | null
+            set_by_name: string | null
+            created_at: string
+            updated_at: string
+          }
+          Insert: {
+            id?: string
+            client_id: string
+            case_id?: string | null
+            doc_key: string
+            title?: string | null
+            evidence_type?: string | null
+            is_evidence?: boolean | null
+            note?: string | null
+            set_by?: string | null
+            set_by_name?: string | null
+            created_at?: string
+            updated_at?: string
+          }
+          Update: {
+            id?: string
+            client_id?: string
+            case_id?: string | null
+            doc_key?: string
+            title?: string | null
+            evidence_type?: string | null
+            is_evidence?: boolean | null
+            note?: string | null
+            set_by?: string | null
+            set_by_name?: string | null
+            created_at?: string
+            updated_at?: string
+          }
+          Relationships: [
+            {
+              foreignKeyName: "case_document_labels_client_id_fkey"
+              columns: ["client_id"]
+              isOneToOne: false
+              referencedRelation: "clients"
+              referencedColumns: ["id"]
+            },
+          ]
+      }
       chat_channel_members: {
         Row: {
           channel_id: string
