@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { BuilderSectionHeader } from '@/components/builder/BuilderSectionHeader';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/gstr9/badge';
@@ -943,10 +943,10 @@ const BuilderAdjustmentsPage: React.FC<Props> = ({ focusUnitId, focusAction }) =
 
   return (
     <div className={WS_PAGE}>
-      <PageHeader
+      <BuilderSectionHeader
         compact
         embedded
-        title={`${project.name} — Adjustments`}
+        title={embedded ? 'Adjustments' : `${project.name} — Adjustments`}
         subtitle="Re-rating, conversions, credit notes, bounce reversals and excess tax"
         icon={<Wrench />}
         actions={embedded ? undefined : (

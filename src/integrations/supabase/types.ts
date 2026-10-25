@@ -2689,6 +2689,8 @@ export type Database = {
       builder_bu_events: {
         Row: {
           bu_date: string
+          bu_permission_date: string | null
+          first_occupation_date: string | null
           bu_ref_no: string | null
           created_at: string
           created_by: string | null
@@ -2708,6 +2710,8 @@ export type Database = {
         }
         Insert: {
           bu_date: string
+          bu_permission_date?: string | null
+          first_occupation_date?: string | null
           bu_ref_no?: string | null
           created_at?: string
           created_by?: string | null
@@ -2727,6 +2731,8 @@ export type Database = {
         }
         Update: {
           bu_date?: string
+          bu_permission_date?: string | null
+          first_occupation_date?: string | null
           bu_ref_no?: string | null
           created_at?: string
           created_by?: string | null
@@ -11730,11 +11736,16 @@ export type Database = {
           cgst: number | null
           client_id: string | null
           commercial_rcm: number | null
+          commercial_value: number | null
           gstr3b_table: string | null
+          itc_cgst: number | null
+          itc_sgst: number | null
           period_month: string | null
           project_id: string | null
+          project_is_rrep: boolean | null
           project_name: string | null
           residential_rcm: number | null
+          residential_value: number | null
           sgst: number | null
           source_id: string | null
           source_type: string | null

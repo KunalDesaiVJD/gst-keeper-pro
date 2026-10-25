@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { fetchFsiCredit } from '@/lib/builderFsiCredit';
 import {
   computeNet4C, computePartialItcSplit, computeTotal4A, computeTotal4B,
   type ItcRowLike, type ItcTotals,
@@ -99,8 +100,10 @@ export async function fetchNetItcAvailable(params: {
 
   const commercialArea = isNoItc ? 0 : (c.commercial_area || 0);
   const residentialArea = isNoItc ? 1 : (c.residential_area || 0);
+  // A saved row (3) holds the FSI commercial-leg credit, which is not common credit.
+  const exclusiveItc = isNoItc ? null : await fetchFsiCredit(params.clientId, params.periodMonth);
   const partial = computePartialItcSplit({
-    section4A: data.section4A, section4B: data.section4B || [], commercialArea, residentialArea,
+    section4A: data.section4A, section4B: data.section4B || [], commercialArea, residentialArea, exclusiveItc,
   });
   if (!partial) return null;
 

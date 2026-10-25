@@ -15,7 +15,11 @@ export type ReportKind =
   | 'UNIT_LEDGER'
   | 'RETURN_WORKPAPER'
   | 'MEMBER_STATEMENT'
-  | 'FSI_WORKPAPER';
+  | 'FSI_WORKPAPER'
+  | 'UNIT_REGISTER'
+  | 'ADVANCE_ROLLFORWARD'
+  | 'ITC_REVERSAL'
+  | 'DRC03_REGISTER';
 
 export const REPORT_LABEL: Record<ReportKind, string> = {
   BU_WORKING: 'Unit-wise BU working',
@@ -24,6 +28,10 @@ export const REPORT_LABEL: Record<ReportKind, string> = {
   RETURN_WORKPAPER: 'Monthly return workpaper',
   MEMBER_STATEMENT: 'Member statement',
   FSI_WORKPAPER: 'TDR / FSI working',
+  UNIT_REGISTER: 'Unit register (lead schedule)',
+  ADVANCE_ROLLFORWARD: 'Advances roll-forward (11A / 11B)',
+  ITC_REVERSAL: 'ITC reversal (Rule 42 / 43)',
+  DRC03_REGISTER: 'Re-rating & DRC-03 register',
 };
 
 export const REPORT_DESCRIPTION: Record<ReportKind, string> = {
@@ -33,6 +41,10 @@ export const REPORT_DESCRIPTION: Record<ReportKind, string> = {
   RETURN_WORKPAPER: 'What the client contributes to GSTR-1 and 3B for a period, with the documents behind it.',
   MEMBER_STATEMENT: 'A client-facing statement of one unit: what was agreed, paid, charged and remains.',
   FSI_WORKPAPER: 'The reverse charge on development rights, BU event by BU event: allocation, both legs, the cap and the client-instruction trail.',
+  UNIT_REGISTER: 'Every unit of a project on one schedule: classification, booking, agreement value, value taxed, open advance, received and balance to tax, footed to the project.',
+  ADVANCE_ROLLFORWARD: 'Month by month for a financial year: open advances brought forward, received (11A), reversed, adjusted (11B) and carried forward, with the tax on each movement.',
+  ITC_REVERSAL: 'The final Rule 42 / 43 determination at completion: the carpet key, each year\'s common credit, what was already reversed and the net to 4(B)(1) or 4(A)(5).',
+  DRC03_REGISTER: 'Every unit re-rated after crossing ₹45 lakh: rate change, value re-taxed, differential tax, interest u/s 50 and the DRC-03 filing status.',
 };
 
 export interface ReportContext {
@@ -41,6 +53,10 @@ export interface ReportContext {
   projectName?: string;
   reraNumber?: string;
   periodMonth?: string;
+  /** Financial year, 'YYYY-YY', for the year-based papers. */
+  financialYear?: string;
+  /** Who produced the paper, for the sign-off block. */
+  preparedBy?: string;
 }
 
 // ─── 1. Unit-wise BU working ────────────────────────────────────────────────
@@ -631,4 +647,231 @@ export async function fetchFsiWorking(projectId: string): Promise<FsiWorkingRepo
       sgst: sum((l) => l.sgst),
     },
   };
+}
+
+// ─── 8. Unit register (lead schedule) ───────────────────────────────────────
+
+export type { UnitPosition } from '@/lib/builderClientBulkData';
+
+export async function fetchUnitRegister(clientId: string, projectId: string) {
+  const { fetchClientUnitPositions } = await import('@/lib/builderClientBulkData');
+  return fetchClientUnitPositions(clientId, projectId);
+}
+
+// ─── 9. Advances roll-forward (Table 11A / 11B) ─────────────────────────────
+
+export interface RollforwardMonth {
+  periodMonth: string;
+  opening: number;
+  received: number;
+  reversed: number;
+  adjusted: number;
+  closing: number;
+  receivedTax: number;
+  reversedTax: number;
+  adjustedTax: number;
+}
+
+export interface AdvanceRollforward {
+  fy: string;
+  broughtForwardOpening: number;
+  months: RollforwardMonth[];
+  totals: { received: number; reversed: number; adjusted: number; receivedTax: number; reversedTax: number; adjustedTax: number };
+  closing: number;
+}
+
+/** 'YYYY-YY' → the twelve 'MM/YYYY' periods of that financial year. */
+export const fyPeriods = (fy: string): string[] => {
+  const start = Number(fy.slice(0, 4));
+  return Array.from({ length: 12 }, (_, i) => {
+    const m = ((i + 3) % 12) + 1;
+    const y = m >= 4 ? start : start + 1;
+    return `${String(m).padStart(2, '0')}/${y}`;
+  });
+};
+
+const pkey = (mmYYYY: string) => { const m = /^(\d{2})\/(\d{4})$/.exec(mmYYYY || ''); return m ? `${m[2]}${m[1]}` : ''; };
+const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+/**
+ * The open-advance pool rolled forward month by month, read from the same
+ * postings feed the returns are built from. Values are consideration (before
+ * the 1/3rd land deduction), so the pool ties to the units' open advance.
+ *
+ * Brought forward = value taxed carried in at onboarding (opening balances)
+ * plus every advance posted before the year, less every reversal and
+ * adjustment before it.
+ */
+export async function fetchAdvanceRollforward(params: {
+  clientId: string; fy: string; projectId?: string;
+}): Promise<AdvanceRollforward> {
+  const periods = fyPeriods(params.fy);
+  const lastKey = pkey(periods[11]);
+  const firstKey = pkey(periods[0]);
+  let q = supabase.from('builder_period_postings')
+    .select('source_type, period_month, consideration, cgst, sgst, project_id')
+    .eq('client_id', params.clientId)
+    .in('source_type', ['ADVANCE_11A', 'BOUNCE_REVERSAL', 'CANCELLATION_OFFSET', 'ADVANCE_11B', 'OPENING_11B']);
+  if (params.projectId) q = q.eq('project_id', params.projectId);
+  const { data } = await q;
+  type Row = { source_type: string; period_month: string; consideration: number; cgst: number; sgst: number };
+  const rows = ((data || []) as unknown as Row[]).filter((r) => pkey(r.period_month) && pkey(r.period_month) <= lastKey);
+
+  // Opening balances carried in at onboarding are an open advance (positions §6).
+  let pq = supabase.from('builder_projects').select('id').eq('client_id', params.clientId);
+  if (params.projectId) pq = pq.eq('id', params.projectId);
+  const { data: projs } = await pq;
+  const projectIds = ((projs || []) as { id: string }[]).map((p) => p.id);
+  let carriedIn = 0;
+  if (projectIds.length) {
+    const { data: units } = await supabase.from('builder_units').select('id').in('project_id', projectIds);
+    const unitIds = ((units || []) as { id: string }[]).map((u) => u.id);
+    if (unitIds.length) {
+      const { data: ob } = await supabase.from('builder_opening_balances')
+        .select('cumulative_value_taxed').in('unit_id', unitIds);
+      carriedIn = ((ob || []) as { cumulative_value_taxed: number }[])
+        .reduce((s, o) => s + (Number(o.cumulative_value_taxed) || 0), 0);
+    }
+  }
+
+  const leg = (t: string) => (t === 'ADVANCE_11A' ? 'received' : t === 'ADVANCE_11B' || t === 'OPENING_11B' ? 'adjusted' : 'reversed');
+  const before = rows.filter((r) => pkey(r.period_month) < firstKey)
+    .reduce((s, r) => s + (Number(r.consideration) || 0), 0);
+  const broughtForwardOpening = r2(carriedIn + before);
+
+  let running = broughtForwardOpening;
+  const months: RollforwardMonth[] = periods.map((p) => {
+    const inMonth = rows.filter((r) => r.period_month === p);
+    const sum = (k: string, f: (r: Row) => number) => r2(inMonth.filter((r) => leg(r.source_type) === k).reduce((s, r) => s + f(r), 0));
+    const cons = (r: Row) => Number(r.consideration) || 0;
+    const tax = (r: Row) => (Number(r.cgst) || 0) + (Number(r.sgst) || 0);
+    // Reversals and adjustments are stored negative; shown as positive movements out.
+    const m: RollforwardMonth = {
+      periodMonth: p,
+      opening: r2(running),
+      received: sum('received', cons),
+      reversed: r2(-sum('reversed', cons)),
+      adjusted: r2(-sum('adjusted', cons)),
+      closing: 0,
+      receivedTax: sum('received', tax),
+      reversedTax: r2(-sum('reversed', tax)),
+      adjustedTax: r2(-sum('adjusted', tax)),
+    };
+    m.closing = r2(m.opening + m.received - m.reversed - m.adjusted);
+    running = m.closing;
+    return m;
+  });
+  const tot = (f: (m: RollforwardMonth) => number) => r2(months.reduce((s, m) => s + f(m), 0));
+  return {
+    fy: params.fy,
+    broughtForwardOpening,
+    months,
+    totals: {
+      received: tot((m) => m.received), reversed: tot((m) => m.reversed), adjusted: tot((m) => m.adjusted),
+      receivedTax: tot((m) => m.receivedTax), reversedTax: tot((m) => m.reversedTax), adjustedTax: tot((m) => m.adjustedTax),
+    },
+    closing: r2(running),
+  };
+}
+
+// ─── 10. ITC reversal at completion (Rule 42 / 43) ──────────────────────────
+
+export interface ItcReversalReport {
+  status: string;
+  /** True when the figures are the frozen result of a submitted working. */
+  frozen: boolean;
+  completionDate: string;
+  startFy: string;
+  buFy: string;
+  postingPeriod: string;
+  totalCarpet: number;
+  exemptCarpet: number;
+  basisNote: string | null;
+  result: import('@/utils/builderItcReversal').WorkingResult;
+}
+
+export async function fetchItcReversalReport(projectId: string, buEventId: string): Promise<ItcReversalReport | null> {
+  const [{ fetchWorking, toYearInput }, { computeItcReversal }] = await Promise.all([
+    import('@/lib/builderItcReversalData'),
+    import('@/utils/builderItcReversal'),
+  ]);
+  const { working, years } = await fetchWorking(projectId, buEventId);
+  if (!working) return null;
+  const frozen = !!working.result && working.status !== 'DRAFT';
+  const result = frozen && working.result ? working.result : computeItcReversal({
+    completionDate: working.completion_date,
+    totalCarpet: Number(working.total_carpet_sqm) || 0,
+    exemptCarpet: Number(working.exempt_carpet_sqm) || 0,
+    postingPeriod: working.posting_period,
+    includeInterest: working.include_interest,
+    years: years.map(toYearInput),
+    references: {},
+  });
+  return {
+    status: working.status,
+    frozen,
+    completionDate: working.completion_date,
+    startFy: working.start_fy,
+    buFy: working.bu_fy,
+    postingPeriod: working.posting_period,
+    totalCarpet: Number(working.total_carpet_sqm) || 0,
+    exemptCarpet: Number(working.exempt_carpet_sqm) || 0,
+    basisNote: working.basis_note,
+    result,
+  };
+}
+
+export async function fetchItcReversalEvents(projectId: string) {
+  const { data } = await supabase.from('builder_itc_reversal_workings')
+    .select('bu_event_id, completion_date, status').eq('project_id', projectId)
+    .order('completion_date', { ascending: false });
+  return ((data || []) as unknown as { bu_event_id: string | null; completion_date: string; status: string }[])
+    .filter((w) => !!w.bu_event_id) as { bu_event_id: string; completion_date: string; status: string }[];
+}
+
+// ─── 11. Re-rating & DRC-03 register ────────────────────────────────────────
+
+export interface Drc03RegisterLine {
+  unitNo: string;
+  triggeredOn: string;
+  fromRatePct: number;
+  toRatePct: number;
+  grossBefore: number;
+  grossAfter: number;
+  postingPeriod: string;
+  dischargeMode: string;
+  status: string;
+  valueRetaxed: number;
+  differentialTax: number;
+  interest: number;
+  drc03Status: string;
+  drc03Arn: string | null;
+  drc03FiledDate: string | null;
+}
+
+export async function fetchDrc03Register(projectId: string): Promise<Drc03RegisterLine[]> {
+  const { data: units } = await supabase.from('builder_units').select('id, unit_no').eq('project_id', projectId);
+  const unitRows = (units || []) as { id: string; unit_no: string }[];
+  if (!unitRows.length) return [];
+  const noOf = new Map(unitRows.map((u) => [u.id, u.unit_no]));
+  const { data } = await supabase.from('builder_reclassifications').select('*')
+    .in('unit_id', unitRows.map((u) => u.id)).order('triggered_on');
+  type R = Record<string, unknown>;
+  return ((data || []) as R[]).map((r) => ({
+    unitNo: noOf.get(r.unit_id as string) || '—',
+    triggeredOn: (r.triggered_on as string) || '',
+    fromRatePct: Number(r.from_rate_pct) || 0,
+    toRatePct: Number(r.to_rate_pct) || 0,
+    grossBefore: Number(r.gross_before) || 0,
+    grossAfter: Number(r.gross_after) || 0,
+    postingPeriod: (r.posting_period as string) || '',
+    dischargeMode: (r.discharge_mode as string) || '',
+    status: (r.status as string) || '',
+    valueRetaxed: Number(r.total_value_retaxed) || 0,
+    differentialTax: Number(r.total_differential_tax) || 0,
+    interest: Number(r.total_interest) || 0,
+    drc03Status: (r.drc03_status as string) || '',
+    drc03Arn: (r.drc03_arn as string) || null,
+    drc03FiledDate: (r.drc03_filed_date as string) || null,
+  }));
 }

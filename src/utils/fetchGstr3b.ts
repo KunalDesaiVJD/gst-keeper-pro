@@ -39,7 +39,7 @@ export async function fetchGstr3b(
     // Only PAY-treatment postings appear here; anything the client has elected
     // to ignore is excluded by the view itself.
     supabase.from('builder_rcm_postings')
-      .select('taxable_value, cgst, sgst')
+      .select('taxable_value, cgst, sgst, itc_cgst, itc_sgst')
       .eq('client_id', clientId).eq('period_month', periodMonth),
     // Has this client's GSTR-3B (monthly or quarterly) for this period
     // already been filed? Drives the RCM reverse-charge exclusion below —
@@ -138,11 +138,25 @@ export async function fetchGstr3b(
   // Fold the builder FSI legs in. Always intra-state — the place of supply for
   // development rights follows the land under s.12(3)(a) IGST Act — so they add
   // to CGST and SGST and never to IGST.
-  type FsiLeg = { taxable_value: number | null; cgst: number | null; sgst: number | null };
+  // The residential leg is liability only: its credit is blocked under the
+  // 1%/5% scheme, so it never reaches 4A(3). Feeding FSI through `rcm` alone
+  // used to claim it all back as ITC for every Claim-ITC / Partial-ITC builder.
+  // The commercial leg's credit is available in a REP other than an RREP, for
+  // a Claim-ITC or Partial-ITC client (itc_cgst / itc_sgst, worked out by the
+  // view, 20261025130000): it stays in 4A(3), wholly commercial and so outside
+  // the Partial-ITC carpet apportionment (docs/BUILDER_GST_POSITIONS.md §12).
+  type FsiLeg = { taxable_value: number | null; cgst: number | null; sgst: number | null; itc_cgst: number | null; itc_sgst: number | null };
+  const fsiBlocked: RcmTotals = { taxable: 0, igst: 0, cgst: 0, sgst: 0 };
+  const fsiCredit = { igst: 0, cgst: 0, sgst: 0 };
   (((fsiRes.data as unknown) as FsiLeg[]) || []).forEach((r) => {
     rcm.taxable += Number(r.taxable_value) || 0;
     rcm.cgst += Number(r.cgst) || 0;
     rcm.sgst += Number(r.sgst) || 0;
+    fsiCredit.cgst += Number(r.itc_cgst) || 0;
+    fsiCredit.sgst += Number(r.itc_sgst) || 0;
+    fsiBlocked.taxable += Number(r.taxable_value) || 0;
+    fsiBlocked.cgst += (Number(r.cgst) || 0) - (Number(r.itc_cgst) || 0);
+    fsiBlocked.sgst += (Number(r.sgst) || 0) - (Number(r.itc_sgst) || 0);
   });
 
   const adjustments: Gstr3bAdjustment[] = ((adjRes.data as any[]) || []).map((a) => ({
@@ -162,6 +176,8 @@ export async function fetchGstr3b(
     builderItcType: clientRow?.builder_itc_type ?? null,
     commercialArea: clientRow?.commercial_area ?? null,
     residentialArea: clientRow?.residential_area ?? null,
+    rcmItcBlocked: fsiBlocked,
+    rcmItcExclusive: fsiCredit,
   });
   const flags = [...built.flags];
   if (held === null) flags.push('Could not check Import 2B for held amendments: open Import 2B to see whether any are held.');

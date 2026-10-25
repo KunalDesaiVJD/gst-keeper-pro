@@ -57,6 +57,15 @@ project and unit masters, bookings and receipts, BU events and the unit-wise
 differential, a corrections layer, TDR/FSI reverse charge, and working papers.
 Engines are `src/utils/builder*.ts`, data access `src/lib/builder*.ts`, pages
 `src/pages/Builder*.tsx`, schema `supabase/migrations/*_builder_phase*.sql`.
+Step pages head with `BuilderSectionHeader` (not PageHeader's compact form); a
+project with no units shows `BuilderGettingStarted`. Builder Reports are an
+audit file (`WP_REF`, `withWorkingPaperFrame` in `src/utils/builderReportTables.ts`:
+W/P ref, preparer, sign-off sheet); the page previews the very ReportTable it exports.
+A BU event's `bu_date` is the completion date, the earlier of the permission and
+first occupation (`20261025100000`); FSI reverse charge is never 4A(3) ITC (`rcmItcBlocked`)
+except the commercial leg in a REP other than an RREP for Claim/Partial-ITC (`itc_cgst`/`itc_sgst`,
+`builderFsiCredit.ts`, outside the carpet apportionment, counted by the GST Receivable reco), and its
+3.1(d) value is the FSI portions, not tax ÷ 18% (`20261025130000`, §12 of the positions doc).
 
 **Read `docs/BUILDER_GST_POSITIONS.md` before changing anything here.** Several
 behaviours are the firm's elected *positions*, not obvious defaults — the flat
