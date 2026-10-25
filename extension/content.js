@@ -5725,6 +5725,23 @@
   // again and presses the button again, every minute, until the file
   // comes or an hour has passed; only then does it move on.
   function G8A_RETRY_MS() { return 60 * 1000; }
+  // 0.18.3: what the browser did with the press's download (background.js),
+  // and how long a seen download may take to be saved and read back (Chrome
+  // may ask where to save it) before the job stops waiting for it.
+  function G8A_SEEN_KEY() { return 'gstk_g8a_seen'; }
+  function G8A_DL_MS() { return 10 * 60 * 1000; }
+  async function g8aSeen(g8, clientId, period) {
+    try {
+      const o = await chrome.storage.local.get(G8A_SEEN_KEY());
+      const d = o && o[G8A_SEEN_KEY()];
+      return d && g8.pressedAt && d.at >= g8.pressedAt && d.clientId === clientId && d.period === period ? d : null;
+    } catch (e) { return null; }
+  }
+  // A seen download still on its way: not read yet, not failed, not too old.
+  function g8aDlPending(d) {
+    return !!d && !(d.disk && !/^not needed/.test(d.disk)) && Date.now() - d.at < G8A_DL_MS();
+  }
+  function g8aDlFailed(d) { return !!d && /^(not read|read, but|the download stopped|saved, but)/.test(String(d.disk || '')); }
   function G8A_MAX_MS() { return 60 * 60 * 1000; }
   function G8A_IDLE_MS() { return 45000; }
   async function handleGstr9EightAPull(job, cur, progress) {
@@ -5836,26 +5853,33 @@
         const r = o && o[G8A_RESULT_KEY()];
         if (r && r.at >= g8.pressedAt && r.clientId === cur.clientId && r.period === job.period) fromStore = r;
       } catch (e) { /* the page's Blob is the other road */ }
-      if (fromStore) keepFile(fromStore.fileB64, fromStore.fileName, 'download');
+      if (fromStore) keepFile(fromStore.fileB64, fromStore.fileName, fromStore.via || 'download');
+      const dl = await g8aSeen(g8, cur.clientId, job.period);
+      if (dl) { g8.dl = dl; if (!files.length && g8aDlPending(dl)) banner('Table 8A, FY ' + fyLabel + ': the portal gave the file' + (dl.name ? ' (' + dl.name + ')' : '') + '; waiting for Chrome to save it (if Chrome asks where to save, press Save)…' + progress, '#f59e0b'); }
+      if (dl && g8aDlFailed(dl)) break;
       const json = g9Captured(g8.pressedAt).filter((it) => g8aHasDocs(it.body));
       const quiet = files.length && Date.now() - Date.parse(files[files.length - 1].at) > 8000 && (!g8.links.length || g8.links.length >= 10 || !link);
       if (quiet || (json.length && Date.now() - g8.pressedAt > 8000)) break;
       if (!files.length && !json.length && /request|accepted|generat|no (record|data|document)|not available|progress/i.test(g8.said || '') && Date.now() - g8.pressedAt > 15000) break;
       // Nothing at all since the press (no file, no link, no words): the portal is preparing it.
-      if (!files.length && !json.length && !g8.links.length && Date.now() - g8.pressedAt > G8A_IDLE_MS()) break;
+      if (!files.length && !json.length && !g8.links.length && !g8.dl && Date.now() - g8.pressedAt > G8A_IDLE_MS()) break;
     }
     // 0.18.1: no file yet, and the portal did not say there is none: wait, then ask again.
-    if (g8.pressedAt && !files.length && !g9Captured(g8.pressedAt).some((it) => g8aHasDocs(it.body)) && !/no (record|data|document)/i.test(String(g8.said || ''))) {
+    if (g8.pressedAt && !files.length && !g9Captured(g8.pressedAt).some((it) => g8aHasDocs(it.body)) && !/no (record|data|document)/i.test(String(g8.said || '')) && !g8aDlFailed(g8.dl)) {
       g8.firstAskedAt = g8.firstAskedAt || g8.pressedAt;
       g8.asks = (g8.asks || 0) + 1;
       await setJob(job);
       if (Date.now() - g8.firstAskedAt < G8A_MAX_MS()) {
         const next = Date.now() + G8A_RETRY_MS();
         let beat = 0;
-        while (Date.now() < next && !files.length) {
+        while ((Date.now() < next || g8aDlPending(g8.dl)) && !files.length) {
+          const d2 = await g8aSeen(g8, cur.clientId, job.period);
+          if (d2) g8.dl = d2;
+          if (g8aDlFailed(g8.dl)) break;
           const left = Math.max(0, Math.round((next - Date.now()) / 1000));
           const waited = Math.round((Date.now() - g8.firstAskedAt) / 60000);
-          banner('Table 8A, FY ' + fyLabel + ': the portal is preparing the file' + (g8.said ? ' ("' + String(g8.said).slice(0, 90) + '")' : '')
+          if (g8aDlPending(g8.dl)) banner('Table 8A, FY ' + fyLabel + ': the portal gave the file' + (g8.dl.name ? ' (' + g8.dl.name + ')' : '') + '; waiting for Chrome to save it (if Chrome asks where to save, press Save)…' + progress, '#f59e0b');
+          else banner('Table 8A, FY ' + fyLabel + ': the portal is preparing the file' + (g8.said ? ' ("' + String(g8.said).slice(0, 90) + '")' : '')
             + '. Asked ' + g8.asks + ' time' + (g8.asks === 1 ? '' : 's') + ', ' + waited + ' min so far; asking again in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0')
             + '. This client stays open until the file comes (up to an hour).' + progress, '#f59e0b');
           // A link or the file may come while waiting.
@@ -5865,13 +5889,13 @@
           try {
             const o = await chrome.storage.local.get(G8A_RESULT_KEY());
             const r = o && o[G8A_RESULT_KEY()];
-            if (r && r.at >= g8.pressedAt && r.clientId === cur.clientId && r.period === job.period) keepFile(r.fileB64, r.fileName, 'download');
+            if (r && r.at >= g8.pressedAt && r.clientId === cur.clientId && r.period === job.period) keepFile(r.fileB64, r.fileName, r.via || 'download');
           } catch (e) { /* the page's Blob is the other road */ }
           if (++beat % 12 === 0) await setJob(job); // keeps the job alive for the watchdog (10 minutes idle)
           await sleep(5000);
         }
         if (files.length) await sleep(8000); // the other parts of a file, if any
-        else {
+        else if (!g8aDlFailed(g8.dl)) {
           window.removeEventListener('message', onBlob);
           job.g8 = { period: job.period, since: Date.now(), firstAskedAt: g8.firstAskedAt, asks: g8.asks, said: g8.said || null };
           await setJob(job);
@@ -5888,15 +5912,17 @@
       + ' · 8A button: ' + (g8.pressed ? '"' + g8.pressed + '" pressed on ' + g8.page : 'not found on ' + location.pathname + ' (buttons: ' + visibleButtons().map(btnText).filter(Boolean).slice(0, 14).join(' | ') + ')')
       + (g8.links && g8.links.length ? ' · links pressed: ' + g8.links.join(', ') : '')
       + (g8.said ? ' · the portal said: "' + String(g8.said).slice(0, 200) + '"' : '')
+      + (g8.dl ? ' · download: ' + (g8.dl.name || 'a file') + ' from ' + g8.dl.from + (g8.dl.fetch ? ', fetched again: ' + g8.dl.fetch : '') + (g8.dl.disk ? ', from the disk: ' + g8.dl.disk : g8aDlPending(g8.dl) ? '' : ', never saved by Chrome') : '')
       + (g8.asks ? ' · asked ' + g8.asks + ' time(s) over ' + Math.round((Date.now() - g8.firstAskedAt) / 60000) + ' min' : '')
       + ' · got: ' + files.length + ' file(s), ' + json.length + ' JSON';
     delete job.g8;
     await setJob(job);
-    try { await chrome.storage.local.remove(G8A_RESULT_KEY()); } catch (e) { /* ignore */ }
+    try { await chrome.storage.local.remove([G8A_RESULT_KEY(), G8A_SEEN_KEY()]); } catch (e) { /* ignore */ }
 
     if (!files.length && !json.length) {
       const words = String(g8.said || '');
       const status = /no (record|data|document)/i.test(words) ? 'NO DATA: ' + how
+        : g8aDlFailed(g8.dl) ? 'PULL FAILED: ' + how
         : g8.asks || /request|accepted|generat|try (again|after)/i.test(words) ? 'REQUESTED: ' + how
           : 'PULL FAILED: ' + how;
       banner('Table 8A, FY ' + fyLabel + ': no file came from the portal. ' + how + progress, /^NO DATA|^REQUESTED/.test(status) ? '#f59e0b' : '#dc2626');

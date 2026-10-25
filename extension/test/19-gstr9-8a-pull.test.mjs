@@ -37,6 +37,11 @@ async function dbFetch(url, init = {}) {
 const storage = {};
 let bgListener = null;
 let dlListener = null;
+let dlChanged = null;
+const dlItems = {};            // download id -> what chrome.downloads.search answers
+let fileAccess = true;         // "Allow access to file URLs"
+const disk = {};               // file:// address -> base64 the offscreen page reads
+const offscreenAsked = [];
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const local = {
   get: async (k) => {
@@ -52,12 +57,25 @@ const chromeFor = (tabId) => ({
   storage: { local, onChanged: { addListener() {}, removeListener() {} } },
   runtime: {
     getManifest: () => JSON.parse(read('manifest.json')),
-    sendMessage: (msg, cb) => { bgListener(msg, { tab: { id: tabId } }, (resp) => cb && cb(resp)); },
+    sendMessage: (msg, cb) => {
+      if (tabId == null && msg && msg.gstkReadFile) { // background -> the offscreen page (offscreen.js, below)
+        offscreenAsked.push(msg.gstkReadFile);
+        return new Promise((resolve) => offscreenListener(msg, {}, resolve));
+      }
+      bgListener(msg, { tab: { id: tabId } }, (resp) => cb && cb(resp));
+    },
     onMessage: { addListener: (fn) => { bgListener = fn; } },
+    getContexts: async () => [],
     lastError: null,
   },
   alarms: { create() {}, clear() {}, onAlarm: { addListener() {} } },
-  downloads: { onCreated: { addListener: (fn) => { if (tabId == null) dlListener = fn; } } },
+  downloads: {
+    onCreated: { addListener: (fn) => { if (tabId == null) dlListener = fn; } },
+    onChanged: { addListener: (fn) => { if (tabId == null) dlChanged = fn; } },
+    search: async (q) => (dlItems[q.id] ? [dlItems[q.id]] : []),
+  },
+  offscreen: { createDocument: async () => {} },
+  extension: { isAllowedFileSchemeAccess: async () => fileAccess },
   notifications: { create() {}, onClicked: { addListener() {} } },
   tabs: { create: async () => ({ id: 1 }), update: async () => ({ id: 1, windowId: 1 }), onRemoved: { addListener() {} } },
   windows: { update: async () => ({}) },
@@ -71,6 +89,23 @@ const bg = vm.createContext({
 bg.globalThis = bg;
 bg.importScripts = () => { bg.GSTK_CONFIG = { SUPABASE_URL: DB, SUPABASE_ANON_KEY: ANON }; };
 vm.runInContext(read('background.js'), bg, { filename: 'background.js' });
+// offscreen.js, the page that reads a saved file back, with a fake XMLHttpRequest over `disk`.
+let offscreenListener = null;
+const off = vm.createContext({
+  chrome: { runtime: { onMessage: { addListener: (fn) => { offscreenListener = fn; } } } },
+  btoa, Uint8Array, String,
+  XMLHttpRequest: class {
+    open(m, u) { this.u = u; }
+    send() {
+      setTimeout(() => {
+        if (!(this.u in disk)) { this.onerror(); return; }
+        this.response = Uint8Array.from(Buffer.from(disk[this.u], 'base64')).buffer;
+        this.onload();
+      }, 0);
+    }
+  },
+});
+vm.runInContext(read('offscreen.js'), off, { filename: 'offscreen.js' });
 const bgCall = (fn, ...args) => new Promise((resolve) => bgListener({ gstk: true, fn, args }, {}, resolve));
 
 // ── One page load of content.js on the portal tab (tab 1) ──────────────────
@@ -137,7 +172,10 @@ async function runPage(href, opts = {}) {
 
 let fail = 0;
 const ok = (cond, name, info) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond || info === undefined ? '' : '\n     ' + JSON.stringify(info))); if (!cond) fail++; };
-const reset = () => { calls.length = 0; upserts.length = 0; existingFiled = []; for (const k of Object.keys(storage)) delete storage[k]; };
+const reset = () => {
+  calls.length = 0; upserts.length = 0; existingFiled = []; offscreenAsked.length = 0; fileAccess = true;
+  for (const o of [storage, dlItems, disk]) for (const k of Object.keys(o)) delete o[k];
+};
 const now = Date.now();
 const client = { clientId: 'c1', creds: { user: 'u', name: 'FICTIONAL FABRICS', gstin: '24ABCDE1234F1Z5', selectedReturns: [] } };
 const job = (extra) => ({ idx: 0, startedAt: now, lastActivityAt: now, tabId: 1, clients: [client], periodIdx: 0, ...extra });
@@ -236,20 +274,106 @@ for (let i = 0; i < 400 && storage.gstk_active_job; i++) await new Promise((r) =
 const nb = upserts.find((a) => a[2] === 'GSTR9_8A');
 ok(nb && /^PULL FAILED: .*8A button: not found on \/returns2\/auth\/gstr9\/dashboard \(buttons: BACK \| DOWNLOAD GSTR-9 SYSTEM COMPUTED SUMMARY \(PDF\)/.test(nb[3].status), 'no 8A button: PULL FAILED with the buttons the page showed', nb && nb[3].status);
 
-// 7. The browser's download (an https file on the portal): background keeps it for the page.
+// 7. The browser's download (an https file on the portal): background fetches it again and keeps it for the page.
 reset();
 storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'] });
-await dlListener({ url: 'https://return.gst.gov.in/download/8A_24ABCDE1234F1Z5.zip', filename: 'C:\\Downloads\\8A_24ABCDE1234F1Z5.zip' });
+await dlListener({ id: 7, url: 'https://return.gst.gov.in/download/8A_24ABCDE1234F1Z5.zip', filename: 'C:\\Downloads\\8A_24ABCDE1234F1Z5.zip' });
 const r = storage.gstk_g8a_result;
-ok(r && r.clientId === 'c1' && r.period === '03/2026' && /^data:application\/zip;base64,UEsDB/.test(r.fileB64) && r.fileName === '8A_24ABCDE1234F1Z5.zip', 'a downloaded 8A ZIP is kept for the page', r && { ...r, fileB64: r.fileB64.slice(0, 40) });
+ok(r && r.clientId === 'c1' && r.period === '03/2026' && /^data:application\/zip;base64,UEsDB/.test(r.fileB64) && r.fileName === '8A_24ABCDE1234F1Z5.zip' && r.downloadId === 7, 'a downloaded 8A ZIP is kept for the page', r && { ...r, fileB64: r.fileB64.slice(0, 40) });
+ok(storage.gstk_g8a_seen && storage.gstk_g8a_seen.id === 7 && storage.gstk_g8a_seen.fetch === 'ok' && storage.gstk_g8a_seen.from === 'return.gst.gov.in/download/8A_24ABCDE1234F1Z5.zip', 'what the browser did is recorded', storage.gstk_g8a_seen);
+dlItems[7] = { id: 7, filename: 'C:\\Downloads\\8A_24ABCDE1234F1Z5.zip' };
+await dlChanged({ id: 7, state: { current: 'complete' } });
+ok(!offscreenAsked.length && /^not needed/.test(storage.gstk_g8a_seen.disk), 'fetched already: the disk is not read', storage.gstk_g8a_seen);
 reset();
 storage.gstk_active_job = job({ mode: 'gstr9_pull', step: 'gstr9_pull', period: '03/2026', periods: ['03/2026'] });
-await dlListener({ url: 'https://return.gst.gov.in/download/8A_24ABCDE1234F1Z5.zip', filename: '8A.zip' });
-ok(!storage.gstk_g8a_result, 'the GSTR-9 pull (gstr9_pull) is untouched: no 8A file kept for it');
+await dlListener({ id: 8, url: 'https://return.gst.gov.in/download/8A_24ABCDE1234F1Z5.zip', filename: '8A.zip' });
+ok(!storage.gstk_g8a_result && !storage.gstk_g8a_seen, 'the GSTR-9 pull (gstr9_pull) is untouched: no 8A file kept for it');
 reset();
 storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'] });
-await dlListener({ url: 'https://evil.example/8A.zip', filename: '8A.zip' });
-ok(!storage.gstk_g8a_result, 'a file from outside gst.gov.in is not taken');
+await dlListener({ id: 9, url: 'https://evil.example/8A.zip', filename: '8A.zip', referrer: 'https://evil.example/' });
+dlItems[9] = { id: 9, filename: 'C:\\Downloads\\8A.zip' };
+disk['file:///C:/Downloads/8A.zip'] = Buffer.from('PK\x03\x04 not the portal').toString('base64');
+await dlChanged({ id: 9, state: { current: 'complete' } });
+ok(!storage.gstk_g8a_result && !storage.gstk_g8a_seen && !offscreenAsked.length, 'a file from outside gst.gov.in is not taken, nor read from the disk');
+
+// 7b. Seen live (25 Oct 2026): the portal's file cannot be fetched again; once Chrome has saved it, it is read back from the disk.
+reset();
+storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'] });
+const ZIP = Buffer.from([0x50, 0x4b, 3, 4, ...new Array(300).fill(7)]).toString('base64');
+await dlListener({ id: 11, url: 'https://files.example-cdn.net/r9/24ABCDE1234F1Z5_R9_8A_1.zip?sig=x', referrer: 'https://return.gst.gov.in/returns2/auth/gstr9/dashboard', filename: '' });
+ok(storage.gstk_g8a_seen && storage.gstk_g8a_seen.id === 11 && storage.gstk_g8a_seen.fetch === null && !calls.some((c) => /example-cdn/.test(c.url)) && !storage.gstk_g8a_result,
+  'a file from elsewhere that the portal page started: recorded, not fetched again', storage.gstk_g8a_seen);
+dlItems[11] = { id: 11, filename: 'C:\\Users\\Kunal\\Downloads\\24ABCDE1234F1Z5_R9_8A_1 (2).zip' };
+disk['file:///C:/Users/Kunal/Downloads/24ABCDE1234F1Z5_R9_8A_1%20(2).zip'] = ZIP;
+await dlChanged({ id: 11, state: { current: 'in_progress' } });
+ok(!offscreenAsked.length, 'not read while Chrome is still saving it');
+await dlChanged({ id: 11, state: { current: 'complete' } });
+const rd = storage.gstk_g8a_result;
+ok(offscreenAsked[0] === 'file:///C:/Users/Kunal/Downloads/24ABCDE1234F1Z5_R9_8A_1%20(2).zip' && rd && rd.via === 'disk' && rd.downloadId === 11 && rd.fileB64 === 'data:application/zip;base64,' + ZIP
+  && rd.fileName === '24ABCDE1234F1Z5_R9_8A_1 (2).zip' && /^read 1 KB/.test(storage.gstk_g8a_seen.disk),
+  'saved: read back from the disk and kept for the page', { offscreenAsked, rd: rd && { ...rd, fileB64: rd.fileB64.slice(0, 40) }, seen: storage.gstk_g8a_seen });
+// A blob download (the page's own Blob): read from the disk too.
+reset();
+storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'] });
+await dlListener({ id: 12, url: 'blob:https://return.gst.gov.in/5b1c', filename: '' });
+dlItems[12] = { id: 12, filename: '/home/k/Downloads/8A.zip' };
+disk['file:///home/k/Downloads/8A.zip'] = ZIP;
+await dlChanged({ id: 12, state: { current: 'complete' } });
+ok(storage.gstk_g8a_seen.from === 'the page (blob)' && storage.gstk_g8a_result && storage.gstk_g8a_result.via === 'disk', 'a Blob download: read back from the disk', storage.gstk_g8a_seen);
+// File access off: says so, reads nothing.
+reset();
+fileAccess = false;
+storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'] });
+await dlListener({ id: 13, url: 'blob:https://return.gst.gov.in/5b1d', filename: '' });
+dlItems[13] = { id: 13, filename: 'C:\\D\\8A.zip' };
+await dlChanged({ id: 13, state: { current: 'complete' } });
+ok(!storage.gstk_g8a_result && !offscreenAsked.length && /Allow access to file URLs/.test(storage.gstk_g8a_seen.disk), 'file access off: not read, and the record says what to turn on', storage.gstk_g8a_seen);
+// Another download, not the 8A pull's: left alone.
+reset();
+storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'] });
+storage.gstk_g8a_seen = { id: 14, at: Date.now(), clientId: 'c1', period: '03/2026', from: 'x', name: null, fetch: null, disk: null };
+dlItems[15] = { id: 15, filename: 'C:\\D\\other.zip' };
+await dlChanged({ id: 15, state: { current: 'complete' } });
+ok(!offscreenAsked.length && !storage.gstk_g8a_result, 'another download finishing is left alone');
+
+// 8. On the page: the press downloads the file, Chrome asks where to save it; the job waits (no second press) and saves it once it is read back.
+reset();
+pressed = 0;
+storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'], g8: opened() });
+await runPage(G9DASH, {
+  fetch: portal, Date: fastDate(1000),
+  standing: 'Table 8A has been updated to include invoices of the current financial year. Please re-download the Table 8A document to access the updated records.',
+  buttons: [{ text: BUTTON, click: () => {
+    pressed++;
+    setTimeout(() => { storage.gstk_g8a_seen = { id: 21, at: Date.now() + 3600000, clientId: 'c1', period: '03/2026', from: 'files.example-cdn.net/r9', name: '24ABCDE1234F1Z5_R9_8A_1.zip', fetch: null, disk: null }; }, 300);
+    setTimeout(() => {
+      storage.gstk_g8a_seen = { ...storage.gstk_g8a_seen, disk: 'read 1 KB' };
+      storage.gstk_g8a_result = { clientId: 'c1', period: '03/2026', fileB64: 'data:application/zip;base64,' + ZIP, fileName: '24ABCDE1234F1Z5_R9_8A_1.zip', at: Date.now() + 10 * 60000, via: 'disk', downloadId: 21 };
+    }, 2500);
+  } }],
+});
+for (let i = 0; i < 400 && storage.gstk_active_job; i++) await new Promise((r) => setTimeout(r, 250));
+const sv = upserts.find((a) => a[2] === 'GSTR9_8A');
+ok(pressed === 1 && !lastHref && sv && sv[3].status === 'Pulled' && sv[3].summary.files.length === 1 && sv[3].summary.files[0].via === 'disk'
+  && /download: 24ABCDE1234F1Z5_R9_8A_1\.zip from files\.example-cdn\.net\/r9, from the disk: read 1 KB/.test(sv[3].summary.read),
+  'the file Chrome saved is read back and saved as Pulled, pressed once', { pressed, lastHref, read: sv && sv[3].summary.read, status: sv && sv[3].status });
+ok(!storage.gstk_active_job && !storage.gstk_g8a_seen, 'then the job ends and the record is cleared');
+
+// 9. The download could not be read back: PULL FAILED saying why, no second press (another press would only download it again).
+reset();
+pressed = 0;
+storage.gstk_active_job = job({ mode: 'gstr9_8a_pull', step: 'gstr9_8a_pull', period: '03/2026', periods: ['03/2026'], g8: opened() });
+await runPage(G9DASH, {
+  fetch: portal, Date: fastDate(30000),
+  buttons: [{ text: BUTTON, click: () => {
+    pressed++;
+    setTimeout(() => { storage.gstk_g8a_seen = { id: 22, at: Date.now() + 3600000, clientId: 'c1', period: '03/2026', from: 'the page (blob)', name: '8A.zip', fetch: null, disk: 'not read: turn on "Allow access to file URLs" for GST Keeper on chrome://extensions' }; }, 300);
+  } }],
+});
+for (let i = 0; i < 400 && storage.gstk_active_job; i++) await new Promise((r) => setTimeout(r, 250));
+const fl = upserts.find((a) => a[2] === 'GSTR9_8A');
+ok(pressed === 1 && !lastHref && fl && /^PULL FAILED: .*download: 8A\.zip from the page \(blob\), from the disk: not read: turn on "Allow access to file URLs"/.test(fl[3].status) && !('summary' in fl[3]),
+  'not read back: PULL FAILED with the reason, status only, pressed once', { pressed, lastHref, status: fl && fl[3].status });
 
 console.log(fail ? '\n' + fail + ' FAILED' : '\nall passed');
 process.exit(fail ? 1 : 0);

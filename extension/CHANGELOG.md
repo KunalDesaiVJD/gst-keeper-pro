@@ -2,6 +2,12 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-25 — Table 8A: read the downloaded file back (v0.18.3)
+
+- Seen live on 25 Oct 2026 (TAMNNA INFRASTRUCTURE, FY 2025-26): the press hands the portal's ZIP (`<GSTIN>_R9_8A_1.zip`) straight to the browser, which saved it to Downloads, but the extension never got it, so the job pressed again and again. Now `background.js` records the press's download (`gstk_g8a_seen`: where it came from, its name, whether fetching it again worked) and, once Chrome has saved it, reads it back from the disk through an offscreen page (`offscreen.html` / `offscreen.js`, `XMLHttpRequest` on the `file://` address; needs "Allow access to file URLs"). Only that one download, only while the 8A job runs.
+- While a download is on its way (Chrome may ask where to save it), the job waits for it, up to 10 minutes, instead of pressing again. A download that could not be read back ends the year as `PULL FAILED: … download: <name> from <where>, from the disk: <why>`, without pressing again.
+- New permissions: `offscreen`, and `file:///*` for reading the saved file back.
+
 ## 2026-10-25 — Table 8A: ask again every minute (v0.18.2)
 
 - The firm's word (25 Oct 2026): the wait between asks is 1 minute, not 4. The job opens the GSTR-9 again and presses "Download Table 8A document details" again every minute until the file comes, still for up to an hour. Nothing else changes.

@@ -1855,6 +1855,68 @@ function abToBase64(buf) {
   return btoa(binary);
 }
 
+// ---- 0.18.3: the Table 8A file read back from the disk --------------------
+// The 8A pull's download (recorded in G8A_SEEN_KEY by onCreated below) is read
+// back once the browser has saved it, through an offscreen page (fetch cannot
+// read file:// addresses; an extension page's XMLHttpRequest can, when
+// "Allow access to file URLs" is on). Only that one download, only while the
+// 8A job runs; every other download is left alone.
+const G8A_SEEN_KEY = 'gstk_g8a_seen';
+function g8aFileUrl(path) {
+  const p = String(path || '').replace(/\\/g, '/');
+  const abs = /^[A-Za-z]:\//.test(p) ? '/' + p : p; // C:/x -> /C:/x
+  return 'file://' + abs.split('/').map((seg, i) => (i === 1 && /^[A-Za-z]:$/.test(seg) ? seg : encodeURIComponent(seg))).join('/');
+}
+async function g8aReadDisk(path) {
+  if (!chrome.offscreen) throw new Error('this Chrome has no offscreen pages');
+  let open = false;
+  try { open = chrome.runtime.getContexts ? (await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] })).length > 0 : false; } catch (e) { open = false; }
+  if (!open) {
+    try { await chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['BLOBS'], justification: 'Read back the GSTR-9 Table 8A file the portal downloaded' }); }
+    catch (e) { if (!/single offscreen|already/i.test(String(e && e.message))) throw e; }
+  }
+  const resp = await chrome.runtime.sendMessage({ gstkReadFile: g8aFileUrl(path) });
+  if (!resp || !resp.ok) throw new Error((resp && resp.error) || 'the offscreen page did not answer');
+  return resp;
+}
+async function g8aOnDownloadDone(delta) {
+  try {
+    if (!delta || !delta.state || delta.state.current === 'in_progress') return;
+    const o = await chrome.storage.local.get([G8A_SEEN_KEY, 'gstk_g8a_result', 'gstk_active_job']);
+    const seen = o[G8A_SEEN_KEY];
+    const job = o.gstk_active_job;
+    if (!seen || seen.id !== delta.id || !job || job.mode !== 'gstr9_8a_pull') return;
+    const put = async (patch) => {
+      const now = (await chrome.storage.local.get(G8A_SEEN_KEY))[G8A_SEEN_KEY];
+      if (now && now.id === seen.id) await chrome.storage.local.set({ [G8A_SEEN_KEY]: { ...now, ...patch } });
+    };
+    if (delta.state.current === 'interrupted') { await put({ disk: 'the download stopped (' + ((delta.error && delta.error.current) || 'interrupted') + ')' }); return; }
+    if (delta.state.current !== 'complete') return;
+    const r = o.gstk_g8a_result;
+    if (r && r.downloadId === seen.id) { await put({ disk: 'not needed (fetched)' }); return; }
+    const [it] = await chrome.downloads.search({ id: seen.id });
+    if (!it || !it.filename) { await put({ disk: 'saved, but the browser did not say where' }); return; }
+    let allowed = true;
+    try { if (chrome.extension && chrome.extension.isAllowedFileSchemeAccess) allowed = await chrome.extension.isAllowedFileSchemeAccess(); } catch (e) { allowed = true; }
+    if (!allowed) { await put({ disk: 'not read: turn on "Allow access to file URLs" for GST Keeper on chrome://extensions' }); return; }
+    let got = null;
+    try { got = await g8aReadDisk(it.filename); }
+    catch (e) { await put({ disk: 'not read: ' + ((e && e.message) || e) }); return; }
+    const head = atob(String(got.b64 || '').slice(0, 8));
+    const isZip = head.charCodeAt(0) === 0x50 && head.charCodeAt(1) === 0x4b;
+    const isJson = /^\s*[{[]/.test(head);
+    if (!isZip && !isJson) { await put({ disk: 'read, but not a ZIP, Excel or JSON' }); return; }
+    const name = String(it.filename).split(/[\\/]/).pop();
+    const mime = isJson ? 'application/json' : /\.zip$/i.test(name) ? 'application/zip' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    await chrome.storage.local.set({ gstk_g8a_result: {
+      clientId: seen.clientId, period: seen.period, fileB64: 'data:' + mime + ';base64,' + got.b64,
+      fileName: name, at: Date.now(), via: 'disk', downloadId: seen.id,
+    } });
+    await put({ disk: 'read ' + Math.max(1, Math.round((got.size || 0) / 1024)) + ' KB' });
+  } catch (e) { /* diagnostic only; the page records what it saw */ }
+}
+if (chrome.downloads && chrome.downloads.onChanged) chrome.downloads.onChanged.addListener(g8aOnDownloadDone);
+
 if (chrome.downloads && chrome.downloads.onCreated) {
 chrome.downloads.onCreated.addListener(async (item) => {
   try {
@@ -1888,26 +1950,47 @@ chrome.downloads.onCreated.addListener(async (item) => {
     }
     // 0.18.0: the Table 8A document details (an Excel or a ZIP) the GSTR-9
     // 8A pull downloads; content.js keeps it with the page's own Blob, if any.
+    // 0.18.3: seen live, the portal hands the ZIP straight to the browser and
+    // fetching its address again brought nothing. So what the browser did is
+    // recorded (G8A_SEEN, read into the row's status), the address is fetched
+    // again only on gst.gov.in, and once the browser has saved the file it is
+    // read back from the disk (g8aOnDownloadDone below).
     if (job.mode === 'gstr9_8a_pull') {
       if (job.step !== 'gstr9_8a_pull') return;
-      const url8 = item.finalUrl || item.url || '';
-      let host8 = '';
-      try { host8 = new URL(url8).hostname; } catch (e) { return; }
-      if (!/^https?:/i.test(url8) || !/(^|\.)gst\.gov\.in$/i.test(host8)) return; // blob:/data: are read in the page
-      const r8 = await fetch(url8, { credentials: 'include' });
-      if (!r8.ok) return;
-      const b8 = await r8.arrayBuffer();
-      if (!b8 || b8.byteLength < 100) return;
-      const h8 = new Uint8Array(b8, 0, 2);
-      const json8 = h8[0] === 0x7b || h8[0] === 0x5b; // "{" or "["
-      if (!(h8[0] === 0x50 && h8[1] === 0x4b) && !json8) return; // "PK": an .xlsx or a ZIP
       const c8 = job.clients[job.idx || 0];
       if (!c8) return;
-      const mime8 = json8 ? 'application/json' : (r8.headers.get('content-type') || 'application/octet-stream');
-      await chrome.storage.local.set({ gstk_g8a_result: {
-        clientId: c8.clientId, period: job.period, fileB64: 'data:' + mime8 + ';base64,' + abToBase64(b8),
-        fileName: (item.filename || '').split(/[\\/]/).pop() || null, at: Date.now(),
-      } });
+      const url8 = item.finalUrl || item.url || '';
+      let u8 = null;
+      try { u8 = new URL(url8); } catch (e) { return; }
+      const portal8 = /^https?:$/.test(u8.protocol) && /(^|\.)gst\.gov\.in$/i.test(u8.hostname);
+      const fromPortal = portal8 || /^blob:https:\/\/[^/]*\.gst\.gov\.in\//i.test(url8) || /^https:\/\/[^/]*\.gst\.gov\.in\//i.test(item.referrer || '');
+      if (!fromPortal) return;
+      const seen = {
+        id: item.id, at: Date.now(), clientId: c8.clientId, period: job.period,
+        from: u8.protocol === 'blob:' ? 'the page (blob)' : u8.hostname + u8.pathname.slice(0, 120),
+        name: (item.filename || '').split(/[\\/]/).pop() || null, fetch: null, disk: null,
+      };
+      await chrome.storage.local.set({ [G8A_SEEN_KEY]: seen });
+      if (!portal8) return; // a Blob, or a file from elsewhere: read back from the disk once saved
+      try {
+        const r8 = await fetch(url8, { credentials: 'include' });
+        const b8 = r8.ok ? await r8.arrayBuffer() : null;
+        const h8 = b8 && b8.byteLength >= 100 ? new Uint8Array(b8, 0, 2) : null;
+        const json8 = !!h8 && (h8[0] === 0x7b || h8[0] === 0x5b); // "{" or "["
+        if (!r8.ok) seen.fetch = 'HTTP ' + r8.status;
+        else if (!h8) seen.fetch = 'empty (' + (b8 ? b8.byteLength : 0) + ' bytes)';
+        else if (!(h8[0] === 0x50 && h8[1] === 0x4b) && !json8) seen.fetch = 'not a ZIP, Excel or JSON (' + (r8.headers.get('content-type') || 'no type') + ')';
+        else {
+          seen.fetch = 'ok';
+          const mime8 = json8 ? 'application/json' : (r8.headers.get('content-type') || 'application/octet-stream');
+          await chrome.storage.local.set({ gstk_g8a_result: {
+            clientId: c8.clientId, period: job.period, fileB64: 'data:' + mime8 + ';base64,' + abToBase64(b8),
+            fileName: seen.name, at: Date.now(), via: 'download', downloadId: item.id,
+          } });
+        }
+      } catch (e) { seen.fetch = 'error: ' + ((e && e.message) || e); }
+      const cur8 = (await chrome.storage.local.get(G8A_SEEN_KEY))[G8A_SEEN_KEY];
+      if (cur8 && cur8.id === seen.id) await chrome.storage.local.set({ [G8A_SEEN_KEY]: { ...cur8, fetch: seen.fetch } });
       return;
     }
     if (job.mode !== 'twob' && job.mode !== 'twoa') return;

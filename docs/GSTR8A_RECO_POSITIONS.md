@@ -54,7 +54,11 @@ available, not reverse charge. Imports (Table 6E) and ISD (6G) are never in it.
    prepares the file in the background (seen live 25 Oct 2026): from 0.18.1
    the job stays on that client and year, waits, and opens the GSTR-9 and
    presses the button again every minute (0.18.2; every 4 minutes in 0.18.1) until the file comes, for up to
-   an hour. When the portal answers in words instead, the status says so:
+   an hour. Seen live the same day, the press hands the portal's ZIP
+   (`<GSTIN>_R9_8A_1.zip`) straight to the browser: from 0.18.3 the
+   extension records that download and, once Chrome has saved it, reads it
+   back from the disk (an offscreen page; "Allow access to file URLs" must be
+   on), waiting for it rather than pressing again. When the portal answers in words instead, the status says so:
    `REQUESTED: …` (still not ready after an hour, Pull again), `NO DATA: …` (saved as an empty 8A), `PULL FAILED: …`
    (with what the page showed); a failed pull writes the status only, so an
    8A saved earlier still counts. A pull replaces an upload of the same year,
