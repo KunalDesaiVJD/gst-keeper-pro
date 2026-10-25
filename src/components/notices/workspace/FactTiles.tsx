@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
  * of the client's documents are in. The demand's split by head shows under
  * the amount when a reader (or staff) recorded it.
  */
-export const FactTiles: React.FC<{ ws: Workspace; onAskClient?: () => void }> = ({ ws, onAskClient }) => {
+export const FactTiles: React.FC<{ ws: Workspace; onAskClient?: () => void; /** Two columns, for a page's side rail. */ rail?: boolean }> = ({ ws, onAskClient, rail }) => {
   const demand = Number(ws.notice.amount_of_demand ?? 0);
   const issuesAmount = ws.issues.reduce((s, i) => s + Number(i.amount || 0), 0);
   const amount = demand || issuesAmount;
@@ -25,19 +25,19 @@ export const FactTiles: React.FC<{ ws: Workspace; onAskClient?: () => void }> = 
 
   const Tile: React.FC<{ label: string; value: React.ReactNode; hint: React.ReactNode; accent: string }> = ({ label, value, hint, accent }) => (
     <div className={cn('min-w-0 rounded-lg border border-l-4 bg-card px-3 py-2', accent)}>
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="text-xl font-semibold leading-tight tabular-nums">{value}</div>
+      <div className={cn('font-medium text-muted-foreground', rail ? 'text-[11px] leading-tight' : 'text-xs')}>{label}</div>
+      <div className={cn('font-semibold leading-tight tabular-nums', rail ? 'text-base' : 'text-xl')}>{value}</div>
       <div className="truncate text-xs text-muted-foreground" title={typeof hint === 'string' ? hint : undefined}>{hint}</div>
     </div>
   );
 
   return (
-    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+    <div className={cn('grid grid-cols-2 gap-2', !rail && 'lg:grid-cols-4')}>
       <Tile label="Amount in notice" accent="border-l-destructive"
         value={amount ? fmtInr(amount) : '—'}
         hint={byHead || (demand ? (ws.issues.length ? `${plural(ws.issues.length, 'issue')} · ${fmtInr(issuesAmount)} listed` : 'demand as recorded') : ws.issues.length ? 'total of the issues listed' : 'no demand recorded')} />
       <Tile label="Explained by your own data" accent="border-l-success"
-        value={amount ? <>{fmtInr(explained)} <span className="text-sm font-medium text-muted-foreground">· {pct}%</span></> : '—'}
+        value={amount ? <>{fmtInr(explained)} <span className="text-xs font-medium text-muted-foreground">· {pct}%</span></> : '—'}
         hint={ws.issues.length ? `${ws.issues.filter((i) => i.status === 'explained').length} of ${ws.issues.length} issues explained` : 'add the issues to work it out'} />
       <Tile label="Genuine short-payment" accent="border-l-warning"
         value={toPay ? fmtInr(toPay) : '—'}
@@ -45,8 +45,8 @@ export const FactTiles: React.FC<{ ws: Workspace; onAskClient?: () => void }> = 
       <button type="button" onClick={pending.length || !onAskClient ? undefined : onAskClient}
         className={cn('rounded-lg border border-l-4 border-l-info bg-card px-3 py-2 text-left', !pending.length && onAskClient && 'hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring')}
         disabled={!!pending.length || !onAskClient}>
-        <div className="text-xs font-medium text-muted-foreground">Client documents</div>
-        <div className="text-xl font-semibold leading-tight tabular-nums">{asked.length ? `${received} of ${asked.length} in` : '—'}</div>
+        <div className={cn('font-medium text-muted-foreground', rail ? 'text-[11px] leading-tight' : 'text-xs')}>Client documents</div>
+        <div className={cn('font-semibold leading-tight tabular-nums', rail ? 'text-base' : 'text-xl')}>{asked.length ? `${received} of ${asked.length} in` : '—'}</div>
         <div className="truncate text-xs text-muted-foreground">
           {pending.length ? `${pending[0].item}${pending.length > 1 ? ` +${pending.length - 1} more` : ''} pending` : asked.length ? 'all in' : onAskClient ? 'none asked — ask the client' : 'none asked'}
         </div>
