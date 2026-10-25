@@ -114,7 +114,17 @@ export type ReportViewKind =
  * for a combined mode, what to fetch per period (e.g. { '07/2026': ['2A', '2B'],
  * '08/2026': ['2B'] } for gstr2a2b_pull, extension 0.13.0+).
  */
-export interface PullJob { mode: string; periods: string[]; want?: Record<string, string[]> }
+export interface PullJob {
+  mode: string;
+  periods: string[];
+  want?: Record<string, string[]>;
+  /** Another client than the one picked (a PAN report's other GSTINs). */
+  clientId?: string;
+  /** Several clients in one run, one period (an all-clients report); the extension's all-clients pull. */
+  clientIds?: string[];
+  /** Words for what the job fetches, when the planner has them. */
+  label?: string;
+}
 /** What a report's Pull fetches: jobs[0] starts now; the rest on the next click (the extension runs one job at a time). */
 export interface PullPlan { jobs: PullJob[]; note?: string }
 
@@ -167,6 +177,8 @@ export interface ReportDefinition {
     mode: string;
     needsMonth?: boolean;
     plan?: (args: { clientId: string; periods: string[]; extVersion: string | null }) => Promise<PullPlan>;
+    /** An all-clients report: Pull needs no client picked (its plan names the clients). */
+    allClients?: boolean;
   };
   /**
    * A file the report reads that the portal gives only as a download (the

@@ -140,6 +140,7 @@ export function planPullJobs({ periods, rows, today, extVersion }: PlanInput): P
 
 /** Words for what a job fetches: "GSTR-2B of Aug 2026", "GSTR-2A of Jun 2026, Jul 2026". */
 export const describeJob = (job: PullJob): string => {
+  if (job.label) return job.label;
   if (job.want) {
     return job.periods.map((p) => `${(job.want?.[p] ?? ['2A', '2B']).map((s) => `GSTR-${s}`).join(' and ')} of ${monthLabel(p)}`).join('; ');
   }

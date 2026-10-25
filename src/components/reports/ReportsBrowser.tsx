@@ -217,7 +217,7 @@ export const ReportsBrowser: React.FC<ReportsBrowserProps> = ({
     const statusMeta = REPORT_STATUS_META[report.status];
     const isPinned = pinned.has(report.key);
     const pulling = pullingKey === report.key;
-    const pullMissingClient = !selectedClientId;
+    const pullMissingClient = !selectedClientId && !report.pull?.allClients;
     const pullMissingMonth = !!report.pull?.needsMonth && selectedPeriods.length === 0;
     const pullDisabled = pullMissingClient || pullMissingMonth || !extReady || pulling;
     const pullHint = pullMissingClient && pullMissingMonth

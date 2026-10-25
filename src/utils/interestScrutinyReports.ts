@@ -133,12 +133,18 @@ const computeInterestForClient = async (client: ClientLite, month: string): Prom
   const filingRow = ((filingRes.data || [])[0] || null) as
     | { return_type: string; status: string; target_date: number | null; filed_date: string | null }
     | null;
-  if (!filingRow) return null;
+  // The GSTR-3B the report's Pull fetched carries the portal's own filing date:
+  // it stands in when Filing Status has no row for the month or does not show
+  // it Filed yet (Filing Status is filled only by its own pull), so a return the
+  // portal shows filed is not counted as still accruing interest.
+  const portalFiled = gstr3bRow.filed_date || null;
+  if (!filingRow && !portalFiled) return null;
+  const returnType = filingRow?.return_type ?? 'GSTR-3B';
 
   const s = gstr3bRow.summary as Gstr3bSummary;
-  const dueDay = filingRow.target_date ?? dueDayForReturn(filingRow.return_type, client.target_date_group1, client.target_date_group2);
+  const dueDay = filingRow?.target_date ?? dueDayForReturn(returnType, client.target_date_group1, client.target_date_group2);
   const dueDate = computeDueDate(month, dueDay);
-  const filedDate = filingRow.status === 'Filed' ? filingRow.filed_date : null;
+  const filedDate = filingRow?.status === 'Filed' && filingRow.filed_date ? filingRow.filed_date : portalFiled;
   const { daysLate, stillAccruing } = computeDaysLate(dueDate, filedDate);
   const totalLiability = totalLiabilityOf(s);
   const itcNet = itcNetOf(s);
@@ -147,7 +153,8 @@ const computeInterestForClient = async (client: ClientLite, month: string): Prom
   const isNil = totalLiability.igst + totalLiability.cgst + totalLiability.sgst === 0;
   const lateFee = computeLateFee(isNil, daysLate, turnover?.aggregate_turnover ?? null);
 
-  return { client, returnType: filingRow.return_type, status: filingRow.status || 'Data Pending', dueDate, filedDate, daysLate, stillAccruing, interest, isNil, lateFee };
+  const status = filingRow?.status === 'Filed' || !portalFiled ? (filingRow?.status || 'Data Pending') : 'Filed (portal)';
+  return { client, returnType, status, dueDate, filedDate, daysLate, stillAccruing, interest, isNil, lateFee };
 };
 
 // ─────────────────── REPORT 1: Interest and Late Fee Calculator ───────────
