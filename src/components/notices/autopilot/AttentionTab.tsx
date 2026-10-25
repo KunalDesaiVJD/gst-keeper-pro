@@ -1,4 +1,4 @@
-// "Needs a person" (roadmap Phase 3; audit U-51-1, S-22): every active client
+// "Runs to retry", called "Needs a person" until the UX audit of 25 October 2026 (roadmap Phase 3; audit U-51-1, S-22): every active client
 // the autopilot could not read, grouped by what fixes it, each with its one-
 // click fix — update the password, ask the client (password or OTP reset), run
 // again (with the office agent: open the CAPTCHA wall) — and the clients whose
