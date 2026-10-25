@@ -180,6 +180,8 @@ export interface CaseItemFacts {
   /** An appeal's application (APL-01). */
   form?: string; order_ref?: string; order_date?: string; order_comm_date?: string;
   disputed_tax?: number; disputed_total?: number; predeposit?: number; predeposit_pct?: number;
+  /** The pre-deposit's payment reference (PRN), 20261025170000. */
+  predeposit_prn?: string;
   filed_on?: string; second_appeal?: boolean; issues?: string[]; portal_status?: string;
   /** Every document the record lists, downloaded or not. */
   portal_docs?: { id: string; name?: string; file?: string }[];

@@ -96,7 +96,7 @@ function PortalFacts({ f, files }: { f: CaseItemFacts; files: { url?: string }[]
           {f.order_comm_date && f.order_comm_date !== f.order_date && <Fact label="Order communicated">{fmtDate(f.order_comm_date)}</Fact>}
           {f.disputed_tax !== undefined && <Fact label="Tax in dispute">{fmtInr(f.disputed_tax)}</Fact>}
           {f.disputed_total !== undefined && <Fact label="Total in dispute">{fmtInr(f.disputed_total)}</Fact>}
-          {f.predeposit !== undefined && <Fact label={`Pre-deposit${f.predeposit_pct ? ` (${f.predeposit_pct}%)` : ''}`}>{fmtInr(f.predeposit)}</Fact>}
+          {f.predeposit !== undefined && <Fact label={`Pre-deposit paid${f.predeposit_pct ? ` (${f.predeposit_pct}%)` : ''}`}>{fmtInr(f.predeposit)}{f.predeposit_prn && <span className="block font-mono text-[11px] text-muted-foreground">PRN {f.predeposit_prn}</span>}</Fact>}
           {f.filed_on && <Fact label="Filed on">{fmtDate(f.filed_on)}</Fact>}
           {f.portal_status && <Fact label="Status on the portal">{f.portal_status}</Fact>}
           {f.issues && f.issues.length > 0 && <div className="col-span-2 sm:col-span-4"><Fact label="Issues appealed">{f.issues.join('; ')}</Fact></div>}
