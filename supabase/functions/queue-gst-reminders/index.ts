@@ -33,8 +33,12 @@
 //   { mode: 'due', period }              the same, for one period
 //   { mode: 'now', period, step,         send one reminder now, whatever the
 //     returnTypes?, clientIds? }         dates (still never twice in a day)
+//   customEmail: { subject, body }       Send now only: this send's own wording
 //   dryRun: true                         list what would be queued, write nothing
 //   staffName                            {{staff_name}} in the e-mail
+//
+// The wording: Send now's customEmail, else the e-mail written for that
+// period, return and step (reminder_period_emails), else the step's template.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import {
   PLAN_RETURN_TYPES, STEP_TEMPLATE, type ReminderStep, type ResolvedPlan,
@@ -197,6 +201,8 @@ interface Item {
   period: string;
   step: number | null;
   template: string | null;
+  /** 'period' = the e-mail written for this period; 'once' = Send now's own wording. */
+  custom?: 'period' | 'once';
   due_date: string;
   result: 'queued' | 'would_queue' | 'skipped';
   reason?: string;
@@ -230,6 +236,7 @@ Deno.serve(async (req) => {
   let manualStep: ReminderStep = 1;
   let onlyReturnTypes: Set<string> | null = null;
   let onlyClients: Set<string> | null = null;
+  let onceEmail: { subject: string; body: string } | null = null;
   try {
     const b = await req.json();
     if (b?.mode === 'now') mode = 'now';
@@ -239,8 +246,13 @@ Deno.serve(async (req) => {
     if ([1, 2, 3].includes(Number(b?.step))) manualStep = Number(b.step) as ReminderStep;
     if (Array.isArray(b?.returnTypes) && b.returnTypes.length) onlyReturnTypes = new Set(b.returnTypes.map(String));
     if (Array.isArray(b?.clientIds) && b.clientIds.length) onlyClients = new Set(b.clientIds.map(String));
+    // Send now only: this one send's own subject and wording, instead of the template.
+    if (b?.customEmail && String(b.customEmail.subject ?? '').trim() && String(b.customEmail.body ?? '').trim()) {
+      onceEmail = { subject: String(b.customEmail.subject), body: String(b.customEmail.body) };
+    }
   } catch { /* no body → the daily run */ }
   if (mode === 'now' && periods.length !== 1) return json({ error: 'Choose one period to send now.' }, 400);
+  if (onceEmail && mode !== 'now') return json({ error: 'An e-mail of your own goes only with Send now.' }, 400);
 
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
   const today = todayIST();
@@ -259,7 +271,7 @@ Deno.serve(async (req) => {
   if (enabled.size === 0) return done();
   const clientIds = [...enabled.keys()];
 
-  const [{ data: clientRows }, { data: schemeHistoryRows }, { data: tpls }, { data: standardRows }, { data: planRows }, { data: allRows }, { data: sentRows }] = await Promise.all([
+  const [{ data: clientRows }, { data: schemeHistoryRows }, { data: tpls }, { data: standardRows }, { data: planRows }, { data: periodEmailRows }, { data: allRows }, { data: sentRows }] = await Promise.all([
     sb.from('clients')
       .select('id, name, email, gstin, registration_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand')
       .in('id', clientIds),
@@ -270,6 +282,7 @@ Deno.serve(async (req) => {
     sb.from('email_templates').select('key, subject, body, is_active').in('key', ['reminder_1', 'reminder_2', 'reminder_final']),
     sb.from('return_reminder_schedules').select('return_type, due_day, due_day_y, reminder_1_day, reminder_2_day, reminder_final_day'),
     sb.from('reminder_period_plans').select('*').in('period_month', periods),
+    sb.from('reminder_period_emails').select('period_month, return_type, step, subject, body').in('period_month', periods),
     sb.from('filing_status')
       .select('id, client_id, return_type, period_month, target_date, status')
       .in('period_month', periods)
@@ -282,6 +295,7 @@ Deno.serve(async (req) => {
   ]);
 
   const tplByKey = new Map((tpls ?? []).filter((t) => t.is_active !== false).map((t) => [t.key, t]));
+  const periodEmail = new Map((periodEmailRows ?? []).map((e) => [`${e.return_type}__${e.period_month}__${e.step}`, e as { subject: string; body: string }]));
   const standard = (standardRows ?? []) as StandardScheduleRow[];
   const plans = (planRows ?? []) as PeriodPlanRow[];
   const clientById = new Map((clientRows ?? []).map((c) => [c.id as string, c as ClientRow & { name: string; email: string | null; gstin: string | null }]));
@@ -377,7 +391,10 @@ Deno.serve(async (req) => {
     const key = STEP_TEMPLATE[step];
     base.step = step;
     base.template = key;
-    const tpl = tplByKey.get(key);
+    // Send now's own wording, else the e-mail written for this period, else the template.
+    const own = onceEmail ?? periodEmail.get(`${row.return_type}__${row.period_month}__${step}`) ?? null;
+    if (own) base.custom = onceEmail ? 'once' : 'period';
+    const tpl = own ?? tplByKey.get(key);
     if (!tpl) { skip('no_template'); continue; }
     if (!client.email) { skip('no_email'); continue; }
     if (dryRun) { items.push({ ...base, result: 'would_queue' }); continue; }

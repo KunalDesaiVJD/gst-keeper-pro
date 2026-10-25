@@ -1009,6 +1009,12 @@ export type Database = {
         Update: { client_id?: string; child_key?: string; parent_key?: string; kind?: string; via_ref?: string | null; item_id?: string | null; source?: string; created_by_name?: string | null; created_at?: string; reason?: string | null; score?: number | null }
         Relationships: []
       }
+      notice_case_link_reviews: {
+        Row: { client_id: string; issue: string; child_key: string; parent_key: string; kind: string | null; confidence: number | null; reasons: string[] | null; via_ref: string | null; status: string; proposed_at: string; decided_by_name: string | null; decided_at: string | null }
+        Insert: { client_id: string; issue: string; child_key: string; parent_key?: string; kind?: string | null; confidence?: number | null; reasons?: string[] | null; via_ref?: string | null; status?: string; proposed_at?: string; decided_by_name?: string | null; decided_at?: string | null }
+        Update: { client_id?: string; issue?: string; child_key?: string; parent_key?: string; kind?: string | null; confidence?: number | null; reasons?: string[] | null; via_ref?: string | null; status?: string; proposed_at?: string; decided_by_name?: string | null; decided_at?: string | null }
+        Relationships: []
+      }
       notice_case_seen: {
         Row: { client_id: string; case_key: string; seen_at: string; seen_by_name: string | null }
         Insert: { client_id: string; case_key: string; seen_at?: string; seen_by_name?: string | null }
@@ -4844,6 +4850,59 @@ export type Database = {
             referencedColumns: ["project_id"]
           },
         ]
+      }
+      case_document_labels: {
+          Row: {
+            id: string
+            client_id: string
+            case_id: string | null
+            doc_key: string
+            title: string | null
+            evidence_type: string | null
+            is_evidence: boolean | null
+            note: string | null
+            set_by: string | null
+            set_by_name: string | null
+            created_at: string
+            updated_at: string
+          }
+          Insert: {
+            id?: string
+            client_id: string
+            case_id?: string | null
+            doc_key: string
+            title?: string | null
+            evidence_type?: string | null
+            is_evidence?: boolean | null
+            note?: string | null
+            set_by?: string | null
+            set_by_name?: string | null
+            created_at?: string
+            updated_at?: string
+          }
+          Update: {
+            id?: string
+            client_id?: string
+            case_id?: string | null
+            doc_key?: string
+            title?: string | null
+            evidence_type?: string | null
+            is_evidence?: boolean | null
+            note?: string | null
+            set_by?: string | null
+            set_by_name?: string | null
+            created_at?: string
+            updated_at?: string
+          }
+          Relationships: [
+            {
+              foreignKeyName: "case_document_labels_client_id_fkey"
+              columns: ["client_id"]
+              isOneToOne: false
+              referencedRelation: "clients"
+              referencedColumns: ["id"]
+            },
+          ]
       }
       chat_channel_members: {
         Row: {
@@ -9954,6 +10013,36 @@ export type Database = {
         }
         Relationships: []
       }
+      staff_user_extra_permissions: {
+        Row: {
+          granted_at: string
+          granted_by: string | null
+          id: number
+          permission_key: string
+          revoked_at: string | null
+          revoked_by: string | null
+          user_id: string
+        }
+        Insert: {
+          granted_at?: string
+          granted_by?: string | null
+          id?: number
+          permission_key: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          user_id: string
+        }
+        Update: {
+          granted_at?: string
+          granted_by?: string | null
+          id?: number
+          permission_key?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       staff_position_permissions: {
         Row: {
           granted_at: string
@@ -11753,6 +11842,18 @@ export type Database = {
         Args: { p_client_id: string; p_key: string }
         Returns: string
       }
+      notice_case_review_queue: {
+        Args: { p_client_id?: string | null }
+        Returns: Json
+      }
+      notice_case_review_decide: {
+        Args: { p_client_id: string; p_issue: string; p_child_key: string; p_parent_key?: string | null; p_decision: string; p_kind?: string | null; p_by?: string | null }
+        Returns: boolean
+      }
+      notice_case_link_min_confidence: {
+        Args: Record<PropertyKey, never>
+        Returns: number
+      }
       notice_case_mark_seen: {
         Args: { p_client_id: string; p_case_key: string; p_by_name?: string | null }
         Returns: string
@@ -12430,6 +12531,10 @@ export type Database = {
       staff_add_level: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_level: string; p_target_user_id: string }
         Returns: boolean
+      }
+      staff_set_user_extras: {
+        Args: { p_actor_id: string; p_keys: string[]; p_user_id: string }
+        Returns: undefined
       }
       staff_assign_position: {
         Args: { p_actor_id: string; p_position_id: string | null; p_user_id: string }

@@ -11,13 +11,14 @@ import { WS_BTN, WS_TABLE_WRAP, WS_TABLE, WS_TH, WS_TD, WS_TR } from '@/componen
 import { cn } from '@/lib/utils';
 import { prettyPeriod } from '@/lib/gstReminders';
 import { toast } from 'sonner';
-import { ChevronLeft, ChevronRight, Loader2, Pencil, RotateCcw, CalendarRange, AlertTriangle, CheckCircle2, Clock, MoveLeft } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Pencil, RotateCcw, CalendarRange, AlertTriangle, CheckCircle2, Clock, MoveLeft, Mail } from 'lucide-react';
 import {
-  PLAN_RETURN_TYPES, STEPS, STEP_LABEL, type PeriodPlanRow, type ResolvedPlan, type StandardScheduleRow, type ReminderSent,
-  addDays, clearPeriodPlan, currentReturnPeriod, formatDate, loadPeriodPlans, loadRemindersFor, loadStandardSchedule,
+  PLAN_RETURN_TYPES, STEPS, STEP_LABEL, type PeriodEmailRow, type PeriodPlanRow, type ResolvedPlan, type StandardScheduleRow, type ReminderSent,
+  addDays, clearPeriodPlan, currentReturnPeriod, formatDate, loadPeriodEmails, loadPeriodPlans, loadRemindersFor, loadStandardSchedule,
   periodStart, planProblems, resolvePlan, returnFiledForPeriod, savePeriodPlan, shiftPeriod, todayIST,
 } from '@/lib/reminderPlans';
 import StandardScheduleCard from './StandardScheduleCard';
+import PeriodEmailDialog from './PeriodEmailDialog';
 
 const NO_EDIT = 'Needs the E-mail templates & reminder rules permission — ask a GST Manager to add it to your position';
 
@@ -49,13 +50,15 @@ const ReminderDatesTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<{ returnType: string; draft: Draft; plan: ResolvedPlan } | null>(null);
   const [shiftOpen, setShiftOpen] = useState(false);
+  const [emails, setEmails] = useState<PeriodEmailRow[]>([]);
+  const [emailFor, setEmailFor] = useState<{ returnType: string; plan: ResolvedPlan } | null>(null);
   const today = todayIST();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, p, r] = await Promise.all([loadStandardSchedule(), loadPeriodPlans([period]), loadRemindersFor([period])]);
-      setStandard(s); setPlans(p); setSent(r);
+      const [s, p, r, e] = await Promise.all([loadStandardSchedule(), loadPeriodPlans([period]), loadRemindersFor([period]), loadPeriodEmails([period])]);
+      setStandard(s); setPlans(p); setSent(r); setEmails(e);
     } catch (e) {
       toast.error(`Could not load the reminder dates: ${(e as Error).message}`);
     }
@@ -188,11 +191,20 @@ const ReminderDatesTab: React.FC = () => {
                               ? <Badge variant="info" title={plan.note ?? undefined}>Changed for {prettyPeriod(period).split(' ')[0]}</Badge>
                               : <Badge variant="secondary">Standard</Badge>}
                             {plan.note && <div className="mt-0.5 max-w-[12rem] truncate text-[11px] text-muted-foreground" title={plan.note}>{plan.note}</div>}
+                            {(() => {
+                              const own = emails.filter((e) => e.return_type === returnType).map((e) => e.step).sort();
+                              return own.length ? (
+                                <div className="mt-1"><Badge variant="warning" title="Wording written for this month, instead of the template">Own e-mail: {own.map((st) => STEP_LABEL[st as 1 | 2 | 3].replace(' reminder', '')).join(', ')}</Badge></div>
+                              ) : null;
+                            })()}
                           </td>
                           <td className={cn(WS_TD, 'whitespace-nowrap')}>
                             <div className="flex gap-1">
                               <Button size="sm" variant="outline" className={WS_BTN} disabled={!canEdit} title={canEdit ? `Change ${returnType} dates for ${prettyPeriod(period)}` : NO_EDIT} onClick={() => openEdit(returnType, plan)}>
                                 <Pencil className="h-3.5 w-3.5" /> Change
+                              </Button>
+                              <Button size="sm" variant="outline" className={WS_BTN} title={`The e-mail sent for ${returnType}, ${prettyPeriod(period)}: the template, or your own wording for this month`} onClick={() => setEmailFor({ returnType, plan })}>
+                                <Mail className="h-3.5 w-3.5" /> E-mail
                               </Button>
                               {plan.source === 'period' && (
                                 <Button size="sm" variant="ghost" className={WS_BTN} disabled={!canEdit} title="Use the standard dates again" onClick={() => void resetToStandard(returnType)}>
@@ -237,6 +249,19 @@ const ReminderDatesTab: React.FC = () => {
             setEditing(null);
             void load();
           }}
+        />
+      )}
+
+      {emailFor && (
+        <PeriodEmailDialog
+          period={period}
+          returnType={emailFor.returnType}
+          plan={emailFor.plan}
+          saved={emails.filter((e) => e.return_type === emailFor.returnType)}
+          canEdit={canEdit}
+          user={{ id: user?.id ?? null, name: user?.firstName ?? null }}
+          onClose={() => setEmailFor(null)}
+          onChanged={() => void load()}
         />
       )}
 

@@ -397,6 +397,54 @@ export function chainsOf(links: ChainLink[]): Map<string, ChainLink[]> {
   return out;
 }
 
+// ── Linking checked by a person (20261025100000) ──────────────────────────
+/** The system links by itself only at or above this confidence; below it a person decides. */
+export const MIN_LINK_CONFIDENCE = 90;
+export type ReviewIssue = 'low_confidence' | 'unlinked' | 'duplicate';
+export interface ReviewCase {
+  case_key: string; case_id: string | null; marker: ChainMember['marker']; track: Track; title: string | null; form_code: string | null;
+  forms: string[] | null; lead_notice_id: string | null; is_open: boolean; first_date: string | null; last_date: string | null;
+  financial_year: string | null; amount: number | null; order: CaseOrder | null;
+}
+export interface ReviewItem {
+  issue: ReviewIssue;
+  client_id: string; client_name: string | null;
+  child_key: string; parent_key: string | null; kind: LinkKind | null;
+  /** How sure the system was, 0 to 99 (null: nothing to score). */
+  confidence: number | null;
+  reasons: string[];
+  via_ref?: string | null;
+  child: ReviewCase | null; parent: ReviewCase | null;
+}
+export const REVIEW_ISSUES: Record<ReviewIssue, { label: string; blurb: string }> = {
+  low_confidence: { label: 'Not sure enough to link', blurb: `The papers suggest these belong together, but the system is under ${MIN_LINK_CONFIDENCE}% sure, so it did not link them.` },
+  unlinked: { label: 'Linked to no order', blurb: 'An appeal, waiver or rectification that is not linked to the case it is against.' },
+  duplicate: { label: 'Looks like the same case twice', blurb: 'Two cases with the same order, or the same order form, year and amount.' },
+};
+
+export async function loadReviewQueue(clientId: string | null): Promise<ReviewItem[]> {
+  const { data, error } = await supabase.rpc('notice_case_review_queue', { p_client_id: clientId });
+  if (error) {
+    if (/notice_case_review_queue/.test(error.message)) throw new Error('The review list needs migration 20261025100000_notice_case_link_review.sql on the database.');
+    throw error;
+  }
+  return (Array.isArray(data) ? data : []) as unknown as ReviewItem[];
+}
+
+export function useReviewQueue(clientId: string | null, enabled = true) {
+  return useQuery({ queryKey: ['notice-case-review', clientId], queryFn: () => loadReviewQueue(clientId), enabled, staleTime: 60_000 });
+}
+
+export type ReviewDecision = 'link' | 'not_linked' | 'dismissed';
+export async function decideReview(item: Pick<ReviewItem, 'client_id' | 'issue' | 'child_key'>, parentKey: string | null,
+  decision: ReviewDecision, kind: LinkKind | null, by: string | null): Promise<void> {
+  const { error } = await supabase.rpc('notice_case_review_decide', {
+    p_client_id: item.client_id, p_issue: item.issue, p_child_key: item.child_key, p_parent_key: parentKey,
+    p_decision: decision, p_kind: kind, p_by: by,
+  });
+  if (error) throw error;
+}
+
 /** What a case is, in a few words (an order's form and number, or its lead notice). */
 export function caseLabel(m: Pick<ChainMember, 'case_id' | 'case_key' | 'form_code' | 'title' | 'marker' | 'track'>): string {
   const what = m.marker === 'appeal' ? 'Appeal' : m.marker === 'waiver' ? 'Waiver application' : m.marker === 'rectification' ? 'Rectification'
