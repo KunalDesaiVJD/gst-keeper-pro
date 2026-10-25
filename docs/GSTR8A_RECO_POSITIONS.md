@@ -53,7 +53,7 @@ available, not reverse charge. Imports (Table 6E) and ISD (6G) are never in it.
    in two parts once; a file of another GSTIN refused). The portal
    prepares the file in the background (seen live 25 Oct 2026): from 0.18.1
    the job stays on that client and year, waits, and opens the GSTR-9 and
-   presses the button again every 4 minutes until the file comes, for up to
+   presses the button again every minute (0.18.2; every 4 minutes in 0.18.1) until the file comes, for up to
    an hour. When the portal answers in words instead, the status says so:
    `REQUESTED: …` (still not ready after an hour, Pull again), `NO DATA: …` (saved as an empty 8A), `PULL FAILED: …`
    (with what the page showed); a failed pull writes the status only, so an

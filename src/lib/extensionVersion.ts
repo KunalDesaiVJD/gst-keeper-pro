@@ -116,6 +116,7 @@ const GAINS: [string, string][] = [
   ['0.17.0', 'names the person who started each pull or push in the change log (Change history)'],
   ['0.18.0', "pulls GSTR-9 Table 8A document details for the 8A reports"],
   ['0.18.1', "waits for the portal to prepare the Table 8A file and downloads it, before moving on"],
+  ['0.18.2', "asks the portal for the Table 8A file again every minute while it is being prepared"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

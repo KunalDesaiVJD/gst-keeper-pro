@@ -2,6 +2,10 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-25 — Table 8A: ask again every minute (v0.18.2)
+
+- The firm's word (25 Oct 2026): the wait between asks is 1 minute, not 4. The job opens the GSTR-9 again and presses "Download Table 8A document details" again every minute until the file comes, still for up to an hour. Nothing else changes.
+
 ## 2026-10-25 — Table 8A: wait for the portal's file (v0.18.1)
 
 - Seen live on 25 Oct 2026 (TAMNNA INFRASTRUCTURE, FY 2025-26): the portal takes "Download Table 8A document details" as a generation request and prepares the file later, and 0.18.0 stopped there. Now the job stays on that client and year until the file comes: it waits on the page (a download link or the file may still come), and every 4 minutes opens the GSTR-9 again and presses the button again, for up to an hour. The banner says how long it has waited and when it asks next. Only then does it move on (to the next year or client), recording `REQUESTED: … asked N time(s) over M min` if the file never came.

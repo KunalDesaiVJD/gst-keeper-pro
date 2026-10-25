@@ -5722,9 +5722,9 @@
   // 0.18.1: the portal prepares a large 8A in the background ("request accepted,
   // download after some time"). The job then stays on this client and year:
   // it waits on the page (a link or the file may still come), opens the GSTR-9
-  // again and presses the button again, every few minutes, until the file
+  // again and presses the button again, every minute, until the file
   // comes or an hour has passed; only then does it move on.
-  function G8A_RETRY_MS() { return 4 * 60 * 1000; }
+  function G8A_RETRY_MS() { return 60 * 1000; }
   function G8A_MAX_MS() { return 60 * 60 * 1000; }
   function G8A_IDLE_MS() { return 45000; }
   async function handleGstr9EightAPull(job, cur, progress) {
