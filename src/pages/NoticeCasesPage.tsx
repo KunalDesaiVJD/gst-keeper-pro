@@ -3,9 +3,9 @@
 // what came in since anyone last opened the case. Every figure comes from the
 // view notice_cases (migration 20261011100000).
 import React, { useMemo, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Search, ShieldQuestion } from 'lucide-react';
+import { ArrowRight, Search, ShieldQuestion } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -111,6 +111,11 @@ const NoticeCasesPage: React.FC = () => {
           <span className={cn('rounded-full px-1.5 text-[10px] tabular-nums', reviewOpen ? 'bg-primary-foreground/20' : 'bg-muted')}>{review.isLoading ? '…' : reviewN}</span>
         </button>
         <span className="text-xs text-muted-foreground">{def.blurb}</span>
+        {track === 'refund' && (
+          <Link to="/refunds-all" className="ml-auto inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10">
+            Every refund with its amounts, steps and appeals: the Refunds page <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+          </Link>
+        )}
       </div>
       {reviewOpen && (
         <LinkReviewPanel items={review.data} loading={review.isLoading} error={review.error} onRetry={() => review.refetch()} showClient={!m.client} />

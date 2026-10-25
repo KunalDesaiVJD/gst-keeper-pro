@@ -47,6 +47,7 @@ import NoticeCasesPage from "@/pages/NoticeCasesPage";
 import NoticeCasePage from "@/pages/NoticeCasePage";
 import ClientDocumentsPage from "@/pages/ClientDocumentsPage";
 import AllClientsRefundsPage from "@/pages/AllClientsRefundsPage";
+import RefundPage from "@/pages/RefundPage";
 import AllClientsDrc03Page from "@/pages/AllClientsDrc03Page";
 import BuilderWorkspacePage from "@/pages/BuilderWorkspacePage";
 import BuilderSettingsPage from "@/pages/BuilderSettingsPage";
@@ -141,6 +142,7 @@ const App = () => (
                   <Route path="/litigation/:id" element={<LitigationMatterDetailPage />} />
                   <Route path="/litigation-mis" element={<LitigationMISPage />} />
                   <Route path="/refunds-all" element={<AllClientsRefundsPage />} />
+                  <Route path="/refunds/:clientId/:arn" element={<RefundPage />} />
                   <Route path="/drc03-all" element={<AllClientsDrc03Page />} />
                   <Route path="/manage-employees" element={<ManageEmployeesPage />} />
                   <Route path="/user-control" element={<UserControlPage />} />
