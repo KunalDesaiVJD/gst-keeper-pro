@@ -73,7 +73,11 @@ export const WAITING: Record<WaitingOn, { label: string; short: string; tone: 'w
 export const waitingOf = (r: { waiting_on?: string | null; is_open?: boolean | null }): WaitingOn =>
   r.waiting_on === 'department' || r.waiting_on === 'closed' || r.waiting_on === 'us' ? r.waiting_on : r.is_open === false ? 'closed' : 'us';
 /** track 'work': every kind the firm acts on (all but Other, which is kept for the record). */
-export interface CaseQuery { track: Track | 'all' | 'work'; show: CaseShow; q: string; master: Master; meId: string | null }
+export interface CaseQuery {
+  track: Track | 'all' | 'work'; show: CaseShow; q: string; master: Master; meId: string | null;
+  /** 'newest': by the latest notice's date, newest first (Home's My work); else new, overdue, due first. */
+  sort?: 'priority' | 'newest';
+}
 
 export async function loadCases(c: CaseQuery, page: number, pageSize: number, view: CaseView = 'linked'): Promise<{ rows: FlatCaseRow[]; total: number }> {
   // Both views have the same columns (the apart one four more), so one query serves.
@@ -91,11 +95,14 @@ export async function loadCases(c: CaseQuery, page: number, pageSize: number, vi
   const t = c.q.trim().replace(/[%,()]/g, ' ');
   if (t) q = q.or(`client_name.ilike.%${t}%,client_gstin.ilike.%${t}%,case_key.ilike.%${t}%,reference_number.ilike.%${t}%,title.ilike.%${t}%`);
   const from = (page - 1) * pageSize;
+  q = c.sort === 'newest'
+    ? q.order('last_issue_date', { ascending: false, nullsFirst: false })
+      .order('last_activity_date', { ascending: false, nullsFirst: false }).order('client_id')
+    : q.order('new_items', { ascending: false })
+      .order('is_overdue', { ascending: false })
+      .order('next_due', { ascending: true, nullsFirst: false })
+      .order('last_activity_date', { ascending: false, nullsFirst: false });
   const { data, error, count } = await q
-    .order('new_items', { ascending: false })
-    .order('is_overdue', { ascending: false })
-    .order('next_due', { ascending: true, nullsFirst: false })
-    .order('last_activity_date', { ascending: false, nullsFirst: false })
     .order('case_key')
     .range(from, from + pageSize - 1);
   if (error) {

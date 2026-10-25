@@ -3,7 +3,9 @@
 // per case over every kind the firm acts on, split by whose it is (Mine, Team,
 // Unassigned, and drafts waiting for a partner). It replaces the kind cards,
 // the six figures and the work list's own pills, which said the same numbers
-// three times, and the separate Work queue page.
+// three times, and the separate Work queue page. Since 25 October 2026 (Meet)
+// the list runs newest notice first, with the notice's form and its year in
+// their own columns.
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -16,6 +18,8 @@ import { StageBadge } from '@/components/notices/StageBadge';
 import { OwnerChip } from '@/components/notices/OwnerChip';
 import { NextStepLine } from '@/components/notices/cases/NextStepLine';
 import { adviceOf, useAdviceMap } from '@/lib/noticeAdvice';
+import { DisputeYearCell } from '@/components/notices/DisputeYearCell';
+import { caseYearKey, useCaseDisputeYears } from '@/lib/noticeDisputeYears';
 import { supabase } from '@/integrations/supabase/client';
 import { applyMasterToQuery, hrefWithMaster, type Master } from '@/lib/masterFilters';
 import { caseHref, loadCases, trackDef, type CaseRow, type CaseShow, type Track, type TrackCounts } from '@/lib/noticeCases';
@@ -135,7 +139,27 @@ const WHO: { key: Who; label: string; empty: string }[] = [
   { key: 'review', label: 'Review', empty: 'No draft is waiting for a partner.' },
 ];
 
-interface ReviewRow { id: string; client_id: string; client_name: string | null; case_id: string | null; category: string | null; form_code: string | null; form_label: string | null; notice_type: string | null; financial_year: string | null; assign_to: string | null; effective_due: string | null }
+interface ReviewRow { id: string; client_id: string; client_name: string | null; case_id: string | null; category: string | null; form_code: string | null; form_label: string | null; notice_type: string | null; financial_year: string | null; assign_to: string | null; effective_due: string | null; issue_date: string | null }
+
+/** The form a notice is on (DRC-07, ASMT-10), else its category. */
+function TypeCell({ form, fallback }: { form: string | null | undefined; fallback?: string | null }) {
+  if (form) return <span className="whitespace-nowrap text-xs font-semibold text-foreground/90">{form}</span>;
+  return <span className="truncate text-xs text-muted-foreground">{fallback || '—'}</span>;
+}
+
+const COL = {
+  type: 'w-24 shrink-0',
+  fy: 'hidden w-24 shrink-0 sm:block',
+  owner: 'hidden w-8 shrink-0 md:flex md:justify-center',
+  stage: 'hidden w-24 shrink-0 lg:block',
+  amount: 'hidden w-16 shrink-0 text-right sm:block',
+  date: 'hidden w-20 shrink-0 text-right md:block',
+  due: 'w-20 shrink-0 text-right',
+};
+
+function NoticeDate({ d }: { d: string | null | undefined }) {
+  return <span className="text-xs tabular-nums text-foreground/80">{d ? fmtDate(d) : '—'}</span>;
+}
 
 export const MyWork: React.FC<{
   who: Who; when: When; master: Master; meId: string | null; counts: { mine?: number; review?: number; team?: number; unassigned?: number };
@@ -143,8 +167,8 @@ export const MyWork: React.FC<{
 }> = ({ who, when, master, meId, counts, onPick, limit = 12 }) => {
   const m = masterFor(who, master);
   const cases = useQuery({
-    queryKey: ['notice-cases', { track: 'work', show: showOf(when), q: '', master: m, meId }, 1, limit],
-    queryFn: () => loadCases({ track: 'work', show: showOf(when), q: '', master: m, meId }, 1, limit),
+    queryKey: ['notice-cases', { track: 'work', show: showOf(when), q: '', master: m, meId, sort: 'newest' }, 1, limit],
+    queryFn: () => loadCases({ track: 'work', show: showOf(when), q: '', master: m, meId, sort: 'newest' }, 1, limit),
     enabled: who !== 'review',
     staleTime: 60_000,
   });
@@ -154,20 +178,21 @@ export const MyWork: React.FC<{
     staleTime: 60_000,
     queryFn: async () => {
       const { data, error } = await applyMasterToQuery(supabase.from('notice_plan')
-        .select('id, client_id, client_name, case_id, category, form_code, form_label, notice_type, financial_year, assign_to, effective_due')
-        .eq('in_plan', true).eq('next_action', 'review_draft'), master, meId).order('effective_due', { ascending: true, nullsFirst: false }).limit(limit);
+        .select('id, client_id, client_name, case_id, category, form_code, form_label, notice_type, financial_year, assign_to, effective_due, issue_date')
+        .eq('in_plan', true).eq('next_action', 'review_draft'), master, meId).order('issue_date', { ascending: false, nullsFirst: false }).order('id').limit(limit);
       if (error) throw error;
       return (data ?? []) as ReviewRow[];
     },
   });
   const advice = useAdviceMap(cases.data?.rows);
+  const years = useCaseDisputeYears(who === 'review' ? undefined : cases.data?.rows);
   const total = who === 'review' ? counts.review ?? 0 : cases.data?.total ?? 0;
   const allHref = hrefWithMaster(`/notices-cases?${new URLSearchParams({ ...(when === 'all' ? {} : { show: when }), ...(who === 'mine' ? { owner: 'me' } : who === 'unassigned' ? { owner: 'none' } : {}) })}`, master);
   const q = who === 'review' ? review : cases;
   const label = WHO.find((w) => w.key === who);
   return (
     <Panel title="My work" bodyClassName="px-0 pb-0"
-      info="One row per case over notices and demands, refunds and registration (Other, which needs no action, stays on Cases). The figures above filter this list."
+      info="One row per case over notices and demands, refunds and registration (Other, which needs no action, stays on Cases), newest notice first. The figures above filter this list."
       actions={who !== 'review' && total > limit && <Link to={allHref} className="text-xs font-medium text-primary hover:underline">All {total} on Cases →</Link>}>
       <div className="flex flex-wrap items-center gap-1 border-b px-3.5 pb-2">
         {WHO.map((w) => (
@@ -184,6 +209,19 @@ export const MyWork: React.FC<{
           </button>
         )}
       </div>
+      {!q.error && !q.isLoading && (
+        <div className="hidden items-center gap-3 border-b bg-muted/30 py-1.5 pl-4 pr-3.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground md:flex" aria-hidden>
+          <span className="min-w-0 flex-1">{who === 'review' ? 'Client and notice' : 'Client and case'}</span>
+          <span className={COL.type}>Type</span>
+          <span className={COL.fy}>FY</span>
+          <span className={COL.owner}>Owner</span>
+          {who !== 'review' && <span className={COL.stage}>Stage</span>}
+          {who !== 'review' && <span className={COL.amount}>Amount</span>}
+          <span className={COL.date}>Notice date</span>
+          <span className={COL.due}>Due</span>
+          {who === 'review' && <span className="w-4 shrink-0" />}
+        </div>
+      )}
       {q.error ? <div className="p-3"><LoadError what="the work" error={q.error} onRetry={() => q.refetch()} /></div>
         : q.isLoading ? <div className="p-3"><Skeleton className="h-72 w-full" /></div>
         : who === 'review' ? (
@@ -196,7 +234,10 @@ export const MyWork: React.FC<{
                       <div className="truncate text-sm font-semibold">{r.client_name}</div>
                       <div className="truncate text-xs text-muted-foreground">{noticeTitle(r)} · draft waiting for a partner</div>
                     </div>
-                    <span className="hidden shrink-0 md:block"><OwnerChip name={r.assign_to} /></span>
+                    <span className={COL.type}><TypeCell form={r.form_code} fallback={r.category} /></span>
+                    <span className={cn(COL.fy, 'text-sm font-semibold tabular-nums')}>{r.financial_year ? `FY ${r.financial_year}` : <span className="text-xs font-normal text-muted-foreground">—</span>}</span>
+                    <span className={COL.owner}><OwnerChip name={r.assign_to} /></span>
+                    <span className={COL.date}><NoticeDate d={r.issue_date} /></span>
                     <span className="w-20 shrink-0 text-right text-xs tabular-nums">{r.effective_due ? fmtDate(r.effective_due) : ''}</span>
                     <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   </Link>
@@ -220,16 +261,16 @@ export const MyWork: React.FC<{
                         {track !== 'litigation' && <Badge variant="secondary" className="shrink-0 text-[10px]">{trackDef(track).short}</Badge>}
                         {(r.new_items ?? 0) > 0 && <Badge variant="info" className="shrink-0 text-[10px]">{r.new_items} new</Badge>}
                       </div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {r.form_code ? <span className="font-medium text-foreground/80">{r.form_code}</span> : null}{r.form_code ? ' · ' : ''}{r.title}
-                        {r.financial_year ? ` · FY ${r.financial_year}` : ''}
-                      </div>
+                      <div className="truncate text-xs text-muted-foreground">{r.title}</div>
                       <NextStepLine r={r} advice={adviceOf(advice.data, r.client_id as string, r.case_key as string)} className="mt-0.5" />
                     </div>
-                    {who !== 'mine' && <span className="hidden shrink-0 md:block"><OwnerChip name={r.assign_to} /></span>}
-                    {track === 'litigation' && <span className="hidden shrink-0 lg:block"><StageBadge stage={r.stage} /></span>}
-                    <span className="hidden w-16 shrink-0 text-right text-xs tabular-nums text-foreground/80 sm:block">{Number(r.exposure) > 0 ? fmtInrShort(r.exposure) : ''}</span>
-                    <span className="w-20 shrink-0 text-right"><DueText r={r} /></span>
+                    <span className={COL.type}><TypeCell form={r.form_code} fallback={r.category} /></span>
+                    <span className={COL.fy}><DisputeYearCell d={years.data?.get(caseYearKey(r.client_id as string, r.case_key as string))} loading={years.isLoading} /></span>
+                    <span className={COL.owner}>{who !== 'mine' && <OwnerChip name={r.assign_to} />}</span>
+                    <span className={COL.stage}>{track === 'litigation' && <StageBadge stage={r.stage} />}</span>
+                    <span className={cn(COL.amount, 'text-xs tabular-nums text-foreground/80')}>{Number(r.exposure) > 0 ? fmtInrShort(r.exposure) : ''}</span>
+                    <span className={COL.date}><NoticeDate d={r.last_issue_date} /></span>
+                    <span className={COL.due}><DueText r={r} /></span>
                   </Link>
                 </li>
               );

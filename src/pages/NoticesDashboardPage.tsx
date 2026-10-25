@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { SyncNowButton } from '@/components/notices/SyncNowButton';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
-import { NewFromPortal, OverdueByAge, Upcoming } from '@/components/notices/cases/HomeParts';
+import { Upcoming } from '@/components/notices/cases/HomeParts';
 import { AttentionTiles, HomeFooter, MyWork, isWhen, isWho, sumCounts, useWhoCounts, type When, type Who } from '@/components/notices/cases/HomeWork';
 import { useCaseCounts } from '@/lib/noticeCases';
 import { AutopilotLine } from '@/components/notices/command/CommandCards';
@@ -80,14 +80,10 @@ const NoticesDashboardPage: React.FC = () => {
       )}
 
       <AttentionTiles c={total} mine={who$.data?.mine} who={who} when={when} onPick={pick} />
-      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1fr)_17rem]">
         <MyWork who={who} when={when} master={m} meId={meId} onPick={pick}
           counts={{ mine: who$.data?.mine, review: who$.data?.review, team: total?.open, unassigned: total?.unassigned }} />
-        <div className="space-y-3">
-          <Upcoming cc={data} master={m} />
-          <OverdueByAge c={total} track="work" master={m} />
-          <NewFromPortal track="work" days={7} title="Just in" />
-        </div>
+        <Upcoming cc={data} master={m} />
       </div>
       <HomeFooter counts={counts.data} master={m} />
     </NoticesShell>
