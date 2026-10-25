@@ -7,7 +7,7 @@ import { buildDocResult, type DocumentClaim } from '../documents.ts';
 import { assistUserText, mapAssistOutput, runAssist } from '../assist.ts';
 import { readDocumentJob, runTick, type Deps } from '../runner.ts';
 import { cliWithApiForScans, jsonFromText } from '../cli.ts';
-import { documentUrlAllowed } from '../pdf.ts';
+import { documentUrlAllowed, downloadPdf, storageReadUrl } from '../pdf.ts';
 import {
   buildPdf, FakeDb, FakeNet, GATEWAY, ISSUE_CODES, jsonReply, replyPages, replyReading, storageUrl, SUPA, type J,
 } from './fake.ts';
@@ -69,6 +69,25 @@ Deno.test('documents come only from the project\'s own storage', () => {
   assert(!documentUrlAllowed('https://evil.example/storage/v1/object/public/a.pdf', SUPA));
   assert(!documentUrlAllowed(`${SUPA}/rest/v1/clients`, SUPA));
   assert(!documentUrlAllowed(storageUrl('a.pdf').replace('https:', 'http:'), SUPA));
+});
+
+Deno.test('with the service role key a document is read keyed, so a private bucket still reads', async () => {
+  const seen: { url: string; auth: string | null }[] = [];
+  const fetchImpl = ((u: string, init?: RequestInit) => {
+    seen.push({ url: String(u), auth: new Headers(init?.headers).get('authorization') });
+    return Promise.resolve(new Response(new TextEncoder().encode('%PDF-1.4 x'), { status: 200 }));
+  }) as typeof fetch;
+  const allow = (u: string) => documentUrlAllowed(u, SUPA);
+  await downloadPdf(storageUrl('n/a b.pdf'), { allow, fetchImpl, storageKey: 'svc' });
+  assertEquals(seen[0].url, `${SUPA}/storage/v1/object/authenticated/return-pdfs/n/a%20b.pdf`);
+  assertEquals(seen[0].auth, 'Bearer svc');
+  await downloadPdf(storageUrl('n/a.pdf'), { allow, fetchImpl });
+  assertEquals(seen[1].url, storageUrl('n/a.pdf'), 'no key: the address as it is');
+  assertEquals(seen[1].auth, null);
+  assertEquals(storageReadUrl('https://evil.example/x', true), 'https://evil.example/x');
+  let refused = false;
+  try { await downloadPdf('https://evil.example/storage/v1/object/public/a.pdf', { allow, fetchImpl, storageKey: 'svc' }); } catch { refused = true; }
+  assert(refused && seen.length === 2, 'the key never goes to another host');
 });
 
 Deno.test('a document\'s overview: dates checked, amounts as digits, the year as 2019-20, nothing guessed', () => {

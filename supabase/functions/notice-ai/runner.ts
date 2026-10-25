@@ -20,6 +20,8 @@ export interface Deps {
   db: Db;
   claude: Caller | null;
   supabaseUrl: string;
+  /** The service role key, to read the documents from storage (private or not). */
+  storageKey?: string;
   agentId: string;
   version: string;
   fetchImpl?: typeof fetch;
@@ -94,7 +96,7 @@ export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: Abor
   let doc: { bytes: Uint8Array; sha256: string };
   try {
     doc = await downloadPdf(claim.document_url, {
-      allow: (u) => documentUrlAllowed(u, deps.supabaseUrl), fetchImpl: deps.fetchImpl, signal,
+      allow: (u) => documentUrlAllowed(u, deps.supabaseUrl), fetchImpl: deps.fetchImpl, signal, storageKey: deps.storageKey,
     });
   } catch (e) {
     return fromDocumentError(e, null, 'The notice PDF');
@@ -151,7 +153,7 @@ export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: 
     let doc: { bytes: Uint8Array; sha256: string };
     try {
       doc = await downloadPdf(claim.document_url, {
-        allow: (u) => documentUrlAllowed(u, deps.supabaseUrl), fetchImpl: deps.fetchImpl, signal,
+        allow: (u) => documentUrlAllowed(u, deps.supabaseUrl), fetchImpl: deps.fetchImpl, signal, storageKey: deps.storageKey,
       });
     } catch (e) {
       return fromDocumentError(e, null, 'The document');

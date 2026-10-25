@@ -49,11 +49,13 @@ code) may read and list `return-pdfs` through the storage API
    or an alert e-mail.
 2. **Bucket private** (`update storage.buckets set public = false where id =
    'return-pdfs'`; reversible). Only once this app is live, since a link not
-   yet short would stop. Before it, two readers that fetch the public address
-   without a key must read with a key: `notice-ai`'s `downloadPdf`
-   (`supabase/functions/notice-ai/pdf.ts`, service role on
-   `/storage/v1/object/authenticated/…`) and the office agent's
-   `agent/src/read/pdf.ts` (off by default). The extension is not affected: it
+   yet short would stop. The two readers that fetched the public address
+   without a key now read with one (`storageReadUrl`, the public address read
+   on `/storage/v1/object/authenticated/…`): `notice-ai`'s `downloadPdf`
+   (`supabase/functions/notice-ai/pdf.ts`, the service role; deployed) and the
+   office agent's `agent/src/read/pdf.ts` (the anon key, which reads while the
+   anon SELECT policy stands; off by default, and takes effect when the office
+   PC's agent is updated). The extension is not affected: it
    uploads with `POST /storage/v1/object/return-pdfs/<path>` (INSERT policy)
    and only *returns* the public address as a string, which the app still
    turns into a short link.

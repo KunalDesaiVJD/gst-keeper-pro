@@ -197,7 +197,9 @@ export class NoticeReader {
     if (!claim.document_url) return { status: 'failed', reason: 'no_document', error: 'The notice has no PDF to read.' };
     let doc: { bytes: Uint8Array; sha256: string };
     try {
-      doc = await downloadPdf(claim.document_url, { signal, allow: (u) => documentUrlAllowed(u, this.cfg.supabaseUrl) });
+      doc = await downloadPdf(claim.document_url, {
+        signal, allow: (u) => documentUrlAllowed(u, this.cfg.supabaseUrl), storageKey: this.cfg.anonKey,
+      });
     } catch (e) {
       return fromDocumentError(e, null);
     }
