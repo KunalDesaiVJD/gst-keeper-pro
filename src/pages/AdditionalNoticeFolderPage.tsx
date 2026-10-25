@@ -35,6 +35,8 @@ import { dueWords, fmtDate, fmtFy, fmtInr, fmtInrShort, noticeTitle, plural } fr
 import type { Database } from '@/integrations/supabase/types';
 import { cn } from '@/lib/utils';
 import { noticeCaseHref } from '@/lib/noticeCases';
+import { refundIndexKey, useRefundIndex } from '@/components/notices/reports/ledgerData';
+import { RefundWhenChip } from '@/components/notices/reports/RefundBits';
 
 type Deadline = Database['public']['Tables']['matter_deadlines']['Row'];
 type Refund = Pick<Database['public']['Tables']['gst_refund_applications']['Row'], 'arn' | 'refund_type' | 'filed_date' | 'claimed_amount' | 'sanctioned_amount' | 'status'>;
@@ -203,6 +205,7 @@ const AdditionalNoticeFolderPage: React.FC = () => {
   const q = useQuery({ queryKey: ['case-folder', clientId, caseId], enabled: !!clientId && !!caseId, queryFn: () => loadCase(clientId, caseId) });
   const today = istToday();
   const data = q.data;
+  const refunds = useRefundIndex(clientId, !!data?.refund?.arn);
   const notice = useMemo(() => (data ? caseNotice(data.notices) : null), [data]);
   const noticeByRef = useMemo(() => new Map((data?.notices ?? []).filter((n) => n.reference_number).map((n) => [n.reference_number as string, n])), [data]);
   const summary = useMemo(() => (data ? summarizeCase(data.items, {
@@ -298,6 +301,7 @@ const AdditionalNoticeFolderPage: React.FC = () => {
           {' · '}{plural(s.events.length, 'item')} on the portal
         </p>
         <div className="flex flex-wrap items-center gap-1.5">
+          {refund?.arn && <RefundWhenChip r={refunds.get(refundIndexKey(clientId, refund.arn))} />}
           {notice && (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">Our stage <StageBadge stage={notice.stage} since={notice.stage_changed_at} by={notice.stage_changed_by} /></span>
           )}

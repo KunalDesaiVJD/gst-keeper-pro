@@ -5,6 +5,7 @@
 // (dates, and whether there is a folder to open), the case on the notices
 // side (our stage) and, for a DRC-03, the notice or matter it was paid
 // against, or the one it most likely settles.
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllRows } from '@/lib/fetchAllRows';
@@ -243,8 +244,15 @@ export async function loadRefundLedger(clientId?: string): Promise<RefundRow[]> 
     return {
       key: `${f.origin}-${f.id ?? i}`,
       fact: f,
-      // The sanction read from the order counts, so a part rejected gets its appeal clock.
-      state: refundState({ ...f, claimed_amount: claimed, sanctioned_amount: sanctioned }, signals, caseLink ?? undefined, today),
+      // The sanction read from the order counts, so a part rejected gets its appeal clock;
+      // once an appeal against it is linked, the decision is made and it waits on the appeal.
+      state: (() => {
+        const st = refundState({ ...f, claimed_amount: claimed, sanctioned_amount: sanctioned }, signals, caseLink ?? undefined, today);
+        const appealed = refundLinks.some((l) => l.kind === 'appeal' && l.dir === 'child');
+        return appealed && st.group === 'action' && /appeal/i.test(st.next ?? '')
+          ? { ...st, group: 'process' as const, tone: 'info' as const, next: 'Appeal filed: await the appellate authority', due: null, basis: null }
+          : st;
+      })(),
       caseLink,
       hasFolder: !!signals && signals.items > 0,
       docs: refundDocs(f, caseLink),
@@ -439,8 +447,16 @@ export async function loadDrc03Ledger(clientId?: string): Promise<Drc03Row[]> {
 }
 
 // ── Queries (one cache for the ledgers and the Notice summary's ledger card) ─
-export const useRefundLedger = (clientId?: string) =>
-  useQuery({ queryKey: ['refund-ledger', clientId ?? 'all'], queryFn: () => loadRefundLedger(clientId), staleTime: 30_000 });
+export const useRefundLedger = (clientId?: string, enabled = true) =>
+  useQuery({ queryKey: ['refund-ledger', clientId ?? 'all'], queryFn: () => loadRefundLedger(clientId), staleTime: 30_000, enabled });
+
+/** The refunds by `${client_id}|${ARN}`, for pages that show a refund by its case (Cases, the case page, the case folder). */
+export function useRefundIndex(clientId?: string, enabled = true): Map<string, RefundRow> {
+  const q = useRefundLedger(clientId, enabled);
+  return useMemo(() => new Map((q.data ?? []).filter((r) => r.fact.arn && r.fact.client_id)
+    .map((r) => [`${r.fact.client_id}|${(r.fact.arn as string).toUpperCase()}`, r])), [q.data]);
+}
+export const refundIndexKey = (clientId: string | null | undefined, arn: string | null | undefined) => `${clientId ?? ''}|${(arn ?? '').toUpperCase()}`;
 
 export const useDrc03Ledger = (clientId?: string) =>
   useQuery({ queryKey: ['drc03-ledger', clientId ?? 'all'], queryFn: () => loadDrc03Ledger(clientId), staleTime: 30_000 });

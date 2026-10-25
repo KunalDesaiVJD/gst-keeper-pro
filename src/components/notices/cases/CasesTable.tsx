@@ -17,6 +17,8 @@ import { GitBranch } from 'lucide-react';
 import { caseHref, linkKindDef, type CaseRow, type CaseView, type ChainLink, type FlatCaseRow, type Track } from '@/lib/noticeCases';
 import { fmtDate, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
+import { refundIndexKey, useRefundIndex } from '@/components/notices/reports/ledgerData';
+import { RefundWhenChip } from '@/components/notices/reports/RefundBits';
 
 function DueCell({ r }: { r: CaseRow }) {
   if (!r.is_open) return <span className="text-xs text-muted-foreground">closed</span>;
@@ -78,6 +80,8 @@ function ChainChip({ r, view, chains }: { r: Row; view: CaseView; chains?: Map<s
 export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?: boolean; view?: CaseView; chains?: Map<string, ChainLink[]> }> = ({ rows, track, compact, view = 'linked', chains }) => {
   const lit = track === 'litigation' || track === 'all';
   const advice = useAdviceMap(rows);
+  // A refund's year and period come from the refund itself (its RFD-01), not the case.
+  const refunds = useRefundIndex(undefined, rows.some((r) => r.track === 'refund'));
   const years = useCaseDisputeYears(rows, view);
   return (
     <div className={WS_TABLE_WRAP}>
@@ -111,6 +115,7 @@ export const CasesTable: React.FC<{ rows: Row[]; track: Track | 'all'; compact?:
                   <Link to={href} className="block truncate text-sm font-medium text-primary hover:underline">
                     {r.form_code ? `${r.form_code} · ` : ''}{r.title}
                   </Link>
+                  {r.track === 'refund' && <RefundWhenChip r={refunds.get(refundIndexKey(r.client_id, r.case_id))} className="mt-0.5" />}
                   <div className="truncate text-[11px] text-muted-foreground">
                     {r.case_id ? <span className="font-mono">{r.case_id}</span> : r.case_key === 'REG' ? 'All registration correspondence' : <span className="font-mono">{r.reference_number}</span>}
                     {' · '}{plural(r.notices ?? 0, 'notice')}{r.documents ? `, ${plural(r.documents, 'document')}` : ''}

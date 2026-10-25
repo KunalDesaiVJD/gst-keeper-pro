@@ -2,10 +2,11 @@
 // with their dates, the bar that splits a claim into sanctioned / rejected /
 // awaiting, and the colour and word for where a refund stands.
 import React from 'react';
-import { Check, X } from 'lucide-react';
+import { CalendarDays, Check, X } from 'lucide-react';
 import { fmtDate, fmtInr, fmtInrShort } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
-import { MONEY_PARTS, TONE_CELL, TONE_LABEL, TONE_TEXT, type Money, type RefundStep, type Tone } from './refundModel';
+import type { RefundRow } from './ledgerData';
+import { MONEY_PARTS, TONE_CELL, TONE_LABEL, TONE_TEXT, refundWhen, type Money, type RefundStep, type Tone } from './refundModel';
 
 // ── Steps ───────────────────────────────────────────────────────────────────
 const stepTone = (s: RefundStep) => (!s.done ? 'pending' : s.bad ? 'bad' : 'done');
@@ -72,3 +73,18 @@ export const TonePill: React.FC<{ tone: Tone; className?: string }> = ({ tone, c
     {TONE_LABEL[tone]}
   </span>
 );
+
+// ── Year and period ──────────────────────────────────────────────────────────
+/** The refund's financial year and period as one chip ("FY 2024-25 · Apr–Jun 2024"), on every page that shows a refund. */
+export const RefundWhenChip: React.FC<{ r: RefundRow | null | undefined; className?: string }> = ({ r, className }) => {
+  const w = r ? refundWhen(r) : null;
+  if (!w) return null;
+  const note = w.byFiling ? 'The application\'s period is not captured; the year is that of the filing date.'
+    : w.fromAi ? 'Period read by the AI from the refund\'s papers.' : 'Period of the refund application (RFD-01) on the portal.';
+  return (
+    <span title={note} className={cn('inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[11px] font-semibold text-primary', className)}>
+      <CalendarDays className="h-3 w-3 shrink-0" aria-hidden />
+      {w.fy}<span className="font-normal text-foreground/80">· {w.period ?? (w.byFiling ? 'period not captured' : '—')}</span>
+    </span>
+  );
+};

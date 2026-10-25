@@ -2,16 +2,17 @@
 // S-22): the portal's My Applications — appeals (APL-01) first, then
 // rectification, objections to a provisional attachment, the s.128A waiver,
 // compounding and provisional assessment — as the last sync read them.
+// An appeal says what it is against and opens the refund or case it belongs
+// to (the firm, 25 October 2026).
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SectionCard } from '@/components/notices/ui/Panel';
-import { supabase } from '@/integrations/supabase/client';
-import { APPLICATION_TYPES, type PortalApplication } from '@/lib/autopilot';
-import { fmtDate, sentenceCase } from '@/lib/noticeFormat';
+import { APPLICATION_TYPES } from '@/lib/autopilot';
+import { fmtDate, plural, sentenceCase } from '@/lib/noticeFormat';
 import { ToneBadge } from './parts';
-
-type AppRow = Pick<PortalApplication, 'id' | 'case_type_cd' | 'arn' | 'form_number' | 'form_description' | 'status' | 'filed_date' | 'last_seen_at'>;
+import { appealLine, usePortalApps } from '@/lib/portalAppeal';
 
 const typeRank = (code: string) => { const i = APPLICATION_TYPES.findIndex((t) => t.code === code); return i < 0 ? 99 : i; };
 const typeLabel = (code: string) => APPLICATION_TYPES.find((t) => t.code === code)?.label ?? code;
@@ -25,19 +26,9 @@ function statusTone(status: string | null): 'success' | 'warning' | 'destructive
 }
 
 export const PortalApplicationsCard: React.FC<{ clientId: string }> = ({ clientId }) => {
-  const q = useQuery({
-    queryKey: ['portal-applications', clientId],
-    enabled: !!clientId,
-    queryFn: async (): Promise<AppRow[]> => {
-      const { data, error } = await supabase.from('gst_portal_applications')
-        .select('id, case_type_cd, arn, form_number, form_description, status, filed_date, last_seen_at')
-        .eq('client_id', clientId).is('deleted_at', null);
-      if (error) throw error;
-      return ((data ?? []) as AppRow[]).sort((a, b) => typeRank(a.case_type_cd) - typeRank(b.case_type_cd)
-        || (b.filed_date ?? '').localeCompare(a.filed_date ?? ''));
-    },
-  });
-  const rows = q.data ?? [];
+  const q = usePortalApps(clientId);
+  const rows = [...(q.data ?? [])].sort((a, b) => typeRank(a.row.case_type_cd) - typeRank(b.row.case_type_cd)
+    || (b.row.filed_date ?? '').localeCompare(a.row.filed_date ?? ''));
   return (
     <SectionCard title="Applications on the portal" description="Appeals, rectifications, objections and waivers filed on the portal">
       {q.isLoading ? <Skeleton className="h-16 w-full" />
@@ -45,7 +36,7 @@ export const PortalApplicationsCard: React.FC<{ clientId: string }> = ({ clientI
         : rows.length === 0 ? <p className="text-xs text-muted-foreground">None read yet — the next sync reads them.</p>
         : (
           <ul className="divide-y">
-            {rows.map((a) => (
+            {rows.map(({ row: a, appeal, target }) => (
               <li key={a.id} className="space-y-0.5 py-1.5 text-xs">
                 <div className="flex items-start justify-between gap-2">
                   <span className="min-w-0 font-medium">
@@ -54,8 +45,20 @@ export const PortalApplicationsCard: React.FC<{ clientId: string }> = ({ clientI
                   {a.status && <ToneBadge tone={statusTone(a.status)} className="shrink-0">{sentenceCase(a.status)}</ToneBadge>}
                 </div>
                 <div className="break-words text-muted-foreground">
-                  {typeLabel(a.case_type_cd)} · ARN <span className="font-mono">{a.arn ?? '—'}</span> · filed {fmtDate(a.filed_date)}
+                  ARN <span className="font-mono">{a.arn ?? '—'}</span> · filed {fmtDate(a.filed_date)}
+                  {appeal && appealLine(appeal) ? <> · {appealLine(appeal)}</> : null}
                 </div>
+                {appeal && appeal.docs.length > 0 && (
+                  <div className="text-[11px] text-muted-foreground">{plural(appeal.docs.length, 'file')} filed with it, on the portal; not downloaded into the app yet</div>
+                )}
+                {target ? (
+                  <Link to={target.href} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+                    {target.kind === 'refund' ? <>Open the refund <span className="font-mono">{target.key}</span></> : 'Open the case of the order'}
+                    <ArrowRight className="h-3 w-3" aria-hidden />
+                  </Link>
+                ) : appeal?.order.ref ? (
+                  <div className="text-[11px] text-muted-foreground">The order it is against is not on record in the app.</div>
+                ) : null}
               </li>
             ))}
           </ul>
