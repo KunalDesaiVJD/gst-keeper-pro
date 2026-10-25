@@ -135,14 +135,24 @@ the client's books.
 
 ## 6. Pull
 
-Pull fetches the 2A and 2B of the window months not yet pulled
-(`gstr2a2b_pull`, extension 0.13.0 or later; one type per job before). With
-nothing missing it pulls GSTR-9's system figures (`gstr9_pull`); with those
-too it re-pulls the last six months. With extension 0.18.0, a year that has
-ended and has no 8A saved gets the 8A pull (`gstr9_8a_pull`): after the
-missing 2A and 2B months when there are any (the next click), else first,
-then GSTR-9's system figures. An older extension keeps the plan above, with a
-note to update or upload.
+With extension 0.18.0 or later, for a year that has ended (the firm, 25 Oct
+2026: "fetch the 8A straight from GSTR-9"):
+
+1. No 8A saved: the 8A document details (`gstr9_8a_pull`) first, then the
+   window's 2A and 2B that are missing (`gstr2a2b_pull`), then GSTR-9's
+   system figures (`gstr9_pull`).
+2. The 8A saved: the missing 2A and 2B, then the system figures when they are
+   not pulled or were pulled before the 8A.
+3. Nothing missing: the 8A again (the portal updates it until the October
+   after the year). The last six months of 2A and 2B are not pulled again.
+
+The 2A and 2B stay in the plan because the reports compare them with the 8A;
+the window runs to the October after the year, so a Pull for FY 2025-26 may
+fetch 2A / 2B of April to October 2026. One job runs per click.
+
+An older extension, or a year not yet ended, keeps the earlier plan: the
+missing 2A and 2B (one type per job before 0.13.0), then the system figures,
+then the last six months again, with a note to update or upload.
 
 ## 7. Open questions for the firm
 
