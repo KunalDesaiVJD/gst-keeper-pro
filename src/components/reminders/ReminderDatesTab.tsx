@@ -69,18 +69,22 @@ const ReminderDatesTab: React.FC = () => {
     plan: resolvePlan(period, rt, standard, plans),
   })), [period, standard, plans]);
 
-  // How many reminders of each step have been queued / sent for this period.
+  // How many reminders of each step have been queued / sent for this period,
+  // on or after that step's date (an earlier one does not stand for it).
   const sentCount = useMemo(() => {
     const m = new Map<string, { queued: number; sent: number }>();
+    const planOf = new Map(rows.map((r) => [r.returnType as string, r.plan]));
     for (const r of sent) {
       if (!r.reminder_step || r.status === 'cancelled') continue;
+      const from = planOf.get(r.return_type)?.dates[r.reminder_step as 1 | 2 | 3];
+      if (from && todayIST(new Date(r.created_at).getTime()) < from) continue;
       const k = `${r.return_type}__${r.reminder_step}`;
       const e = m.get(k) ?? { queued: 0, sent: 0 };
       if (r.status === 'sent') e.sent++; else if (r.status === 'pending' || r.status === 'sending') e.queued++;
       m.set(k, e);
     }
     return m;
-  }, [sent]);
+  }, [sent, rows]);
 
   const thisMonth = shiftPeriod(currentReturnPeriod(), 1);
   const periodChips = [

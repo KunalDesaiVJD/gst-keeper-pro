@@ -294,12 +294,13 @@ Deno.serve(async (req) => {
 
   const key3 = (clientId: string, rt: string, period: string) => `${clientId}__${rt}__${period}`;
   // What already went (any status: a cancelled reminder is not queued again).
-  const sentByKey = new Map<string, { steps: Set<number>; today: boolean; count: number; last: string }>();
+  const sentByKey = new Map<string, { steps: Map<number, string>; today: boolean; count: number; last: string }>();
   for (const r of sentRows ?? []) {
     const k = key3(r.client_id, r.return_type as string, r.period_month as string);
-    const e = sentByKey.get(k) ?? { steps: new Set<number>(), today: false, count: 0, last: '' };
-    if (r.reminder_step) e.steps.add(r.reminder_step);
-    if (todayIST(new Date(r.created_at as string).getTime()) === today) e.today = true;
+    const e = sentByKey.get(k) ?? { steps: new Map<number, string>(), today: false, count: 0, last: '' };
+    const day = todayIST(new Date(r.created_at as string).getTime());
+    if (r.reminder_step && day > (e.steps.get(r.reminder_step) ?? '')) e.steps.set(r.reminder_step, day);
+    if (day === today) e.today = true;
     e.count++;
     if ((r.created_at as string) > e.last) e.last = r.created_at as string;
     sentByKey.set(k, e);
@@ -326,7 +327,7 @@ Deno.serve(async (req) => {
     const client = clientById.get(row.client_id);
     if (!client) continue;
     const cfg = enabled.get(row.client_id)!;
-    const sent = sentByKey.get(key3(row.client_id, row.return_type, row.period_month)) ?? { steps: new Set<number>(), today: false, count: 0, last: '' };
+    const sent = sentByKey.get(key3(row.client_id, row.return_type, row.period_month)) ?? { steps: new Map<number, string>(), today: false, count: 0, last: '' };
     const base: Item = {
       client_id: row.client_id, client_name: client.name, to_email: client.email ?? '',
       return_type: row.return_type, period: row.period_month, step: null, template: null, due_date: '', result: 'skipped',
@@ -353,7 +354,7 @@ Deno.serve(async (req) => {
         const d = stepDueToday(plan, today, due, sent.steps, sent.today);
         if (!d.send) { skip(d.reason!); continue; }
         step = d.step!;
-        dedupeKey = `reminder:plan:${row.client_id}:${row.return_type}:${row.period_month}:${step}`;
+        dedupeKey = `reminder:plan:${row.client_id}:${row.return_type}:${row.period_month}:${step}:${plan.dates[step]}`;
       }
     } else {
       // Interval ladder: the current return period only, real Data Pending rows only.

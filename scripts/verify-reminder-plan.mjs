@@ -22,7 +22,8 @@ const plans = [{
   period_month: '10/2026', return_type: 'GSTR-1', due_date: '2026-11-11', due_date_y: null, data_by_date: '2026-11-03',
   reminder_1_date: '2026-10-28', reminder_2_date: '2026-10-31', reminder_final_date: '2026-11-04', note: 'Diwali',
 }];
-const none = new Set();
+const none = new Map();
+const sent = (o) => new Map(Object.entries(o).map(([k, v]) => [Number(k), v]));
 
 t('standard dates fall in the month after the period', () => {
   const p = P.resolvePlan('10/2026', 'GSTR-3B', standard, plans);
@@ -64,21 +65,29 @@ t('only the latest step whose date has come; missed steps are skipped', () => {
   const p = P.resolvePlan('10/2026', 'GSTR-3B', standard, []);
   // job did not run on the 14th; on the 16th it sends the 2nd reminder, not both
   assert.deepEqual(P.stepDueToday(p, '2026-11-16', p.dueDate, none, false), { send: true, step: 2 });
-  assert.deepEqual(P.stepDueToday(p, '2026-11-16', p.dueDate, new Set([2]), false), { send: false, reason: 'already_sent' });
-  assert.deepEqual(P.stepDueToday(p, '2026-11-17', p.dueDate, new Set([2]), false), { send: true, step: 3 });
+  assert.deepEqual(P.stepDueToday(p, '2026-11-16', p.dueDate, sent({ 2: '2026-11-16' }), false), { send: false, reason: 'already_sent' });
+  assert.deepEqual(P.stepDueToday(p, '2026-11-17', p.dueDate, sent({ 2: '2026-11-16' }), false), { send: true, step: 3 });
 });
 
 t('never two in one day, never after the due date', () => {
   const p = P.resolvePlan('10/2026', 'GSTR-3B', standard, []);
   assert.deepEqual(P.stepDueToday(p, '2026-11-14', p.dueDate, none, true), { send: false, reason: 'sent_today' });
   assert.deepEqual(P.stepDueToday(p, '2026-11-21', p.dueDate, none, false), { send: false, reason: 'past_due' });
-  assert.deepEqual(P.stepDueToday(p, '2026-11-20', p.dueDate, new Set([1, 2]), false), { send: true, step: 3 });
+  assert.deepEqual(P.stepDueToday(p, '2026-11-20', p.dueDate, sent({ 1: '2026-11-14', 2: '2026-11-16' }), false), { send: true, step: 3 });
 });
 
 t('a skipped step (no date) is simply left out', () => {
   const p = P.resolvePlan('10/2026', 'GSTR-1', standard, [{ ...plans[0], reminder_2_date: null }]);
-  assert.deepEqual(P.stepDueToday(p, '2026-11-01', p.dueDate, new Set([1]), false), { send: false, reason: 'already_sent' });
-  assert.deepEqual(P.stepDueToday(p, '2026-11-04', p.dueDate, new Set([1]), false), { send: true, step: 3 });
+  assert.deepEqual(P.stepDueToday(p, '2026-11-01', p.dueDate, sent({ 1: '2026-10-28' }), false), { send: false, reason: 'already_sent' });
+  assert.deepEqual(P.stepDueToday(p, '2026-11-04', p.dueDate, sent({ 1: '2026-10-28' }), false), { send: true, step: 3 });
+});
+
+t('a reminder sent before a step\'s date does not stand for it', () => {
+  const p = P.resolvePlan('10/2026', 'GSTR-3B', standard, []);
+  const early = sent({ 1: '2026-10-24', 2: '2026-10-24' });
+  assert.deepEqual(P.stepDueToday(p, '2026-11-14', p.dueDate, early, false), { send: true, step: 1 });
+  assert.deepEqual(P.stepDueToday(p, '2026-11-16', p.dueDate, sent({ 1: '2026-11-14', 2: '2026-10-24' }), false), { send: true, step: 2 });
+  assert.deepEqual(P.stepDueToday(p, '2026-11-15', p.dueDate, sent({ 1: '2026-11-14', 2: '2026-10-24' }), false), { send: false, reason: 'already_sent' });
 });
 
 t('plan checks', () => {

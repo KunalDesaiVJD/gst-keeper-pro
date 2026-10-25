@@ -195,16 +195,20 @@ export type SkipReason = 'not_yet' | 'already_sent' | 'past_due' | 'sent_today' 
 export interface StepDecision { send: boolean; step?: ReminderStep; reason?: SkipReason }
 
 /**
- * Which reminder, if any, goes out today. `sentSteps` holds every step already
- * queued or sent for this client, return and period (whatever its status, so a
- * cancelled reminder is not queued again); `sentToday` is true when any
- * reminder for them was queued today.
+ * Which reminder, if any, goes out today. `sent` maps each step already queued
+ * or sent for this client, return and period (whatever its status, so a
+ * cancelled reminder is not queued again) to the latest IST day it was
+ * queued; `sentToday` is true when any reminder for them was queued today.
+ * A reminder queued before a step's date does not stand for that step: when a
+ * period's dates are set after early reminders went (October 2026: two went
+ * on 24 Oct, the dates were then set for 14, 16 and 17 Nov), each date still
+ * sends its own.
  */
 export function stepDueToday(
   plan: ResolvedPlan,
   today: string,
   dueDate: string,
-  sentSteps: Set<number>,
+  sent: Map<number, string>,
   sentToday: boolean,
 ): StepDecision {
   if (today > dueDate) return { send: false, reason: 'past_due' };
@@ -212,7 +216,8 @@ export function stepDueToday(
   if (!STEPS.some((s) => plan.dates[s])) return { send: false, reason: 'no_dates' };
   if (!reached.length) return { send: false, reason: 'not_yet' };
   const step = reached[reached.length - 1];
-  if ([...sentSteps].some((s) => s >= step)) return { send: false, reason: 'already_sent' };
+  const from = plan.dates[step]!;
+  if ([...sent].some(([s, day]) => s >= step && day >= from)) return { send: false, reason: 'already_sent' };
   if (sentToday) return { send: false, reason: 'sent_today' };
   return { send: true, step };
 }
