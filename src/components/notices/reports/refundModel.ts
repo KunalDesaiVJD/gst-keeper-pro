@@ -107,7 +107,7 @@ export function refundSteps(r: RefundRow): RefundStep[] {
   const f = r.signals;
   const st = `${r.fact.status ?? ''} ${r.state.label}`.toLowerCase();
   const ordered = !!f?.order || !!f?.paid || /sanction|reject|disburs|paid|re-?credit|rfd-?0?5|rfd-?06|pmt-?03/.test(st);
-  const paid = !!f?.paid || /disburs|paid|rfd-?0?5|re-?credit|pmt-?03/.test(st);
+  const paid = !!f?.paid || !!r.read?.paid || /disburs|paid|rfd-?0?5|re-?credit|pmt-?03/.test(st);
   const memo = !!f?.deficiency || /deficien|rfd-?03/.test(st);
   const scn = !!f?.scn || /rfd-?08|show cause/.test(st);
   const replied = !!f?.replied || /reply filed|rfd-?09/.test(st);
