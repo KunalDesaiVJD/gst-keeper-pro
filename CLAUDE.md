@@ -62,7 +62,10 @@ project with no units shows `BuilderGettingStarted`. Builder Reports are an
 audit file (`WP_REF`, `withWorkingPaperFrame` in `src/utils/builderReportTables.ts`:
 W/P ref, preparer, sign-off sheet); the page previews the very ReportTable it exports.
 A BU event's `bu_date` is the completion date, the earlier of the permission and
-first occupation (`20261025100000`); FSI reverse charge is never 4A(3) ITC (`rcmItcBlocked`).
+first occupation (`20261025100000`); FSI reverse charge is never 4A(3) ITC (`rcmItcBlocked`)
+except the commercial leg in a REP other than an RREP for Claim/Partial-ITC (`itc_cgst`/`itc_sgst`,
+`builderFsiCredit.ts`, outside the carpet apportionment, counted by the GST Receivable reco), and its
+3.1(d) value is the FSI portions, not tax ÷ 18% (`20261025130000`, §12 of the positions doc).
 
 **Read `docs/BUILDER_GST_POSITIONS.md` before changing anything here.** Several
 behaviours are the firm's elected *positions*, not obvious defaults — the flat

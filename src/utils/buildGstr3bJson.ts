@@ -60,6 +60,10 @@ export interface Gstr3bInput {
   // 3.1(d) but never ITC in 4A(3): the builder TDR/FSI reverse charge, whose
   // credit the 1%/5% scheme blocks (docs/BUILDER_GST_POSITIONS.md §12).
   rcmItcBlocked?: RcmTotals | null;
+  // Reverse charge credit in 4A(3) attributable wholly to commercial units:
+  // the FSI commercial leg in a REP other than an RREP. Claimed in full, so a
+  // Partial-ITC builder's carpet apportionment leaves it out of its base.
+  rcmItcExclusive?: TaxHead | null;
 }
 
 export interface TaxHead { igst: number; cgst: number; sgst: number }
@@ -594,7 +598,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
     return r;
   });
   const partialSplit = isPartialITC
-    ? computePartialItcSplit({ section4A: adjustedA, section4B: B.map((r) => ({ ...r, particular: r.particular || '' })), commercialArea, residentialArea })
+    ? computePartialItcSplit({ section4A: adjustedA, section4B: B.map((r) => ({ ...r, particular: r.particular || '' })), commercialArea, residentialArea, exclusiveItc: input.rcmItcExclusive })
     : null;
   if (isPartialITC && !partialSplit) {
     flags.push('Partial-ITC client but no carpet area set on the client record — Table 4(B) fell back to the default (non-apportioned) formula; set commercial/residential area to get the correct reversal.');

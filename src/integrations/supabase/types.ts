@@ -11647,11 +11647,16 @@ export type Database = {
           cgst: number | null
           client_id: string | null
           commercial_rcm: number | null
+          commercial_value: number | null
           gstr3b_table: string | null
+          itc_cgst: number | null
+          itc_sgst: number | null
           period_month: string | null
           project_id: string | null
+          project_is_rrep: boolean | null
           project_name: string | null
           residential_rcm: number | null
+          residential_value: number | null
           sgst: number | null
           source_id: string | null
           source_type: string | null

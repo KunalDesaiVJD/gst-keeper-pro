@@ -753,9 +753,29 @@ the same reverse-charge total that fills 4A(3), so the blocked tax came back as
 credit for every Claim-ITC and Partial-ITC builder (a No-ITC builder showed it
 and reversed it), while the GST Receivable reco's own 4A(3) (from `rcm_data`
 only) left it out. `fetchGstr3b` now passes the FSI legs as `rcmItcBlocked`:
-liability in 3.1(d), nothing in 4A(3). Where a commercial leg's credit is
-genuinely eligible (a REP other than an RREP, commercial at 12% with ITC), it
-is taken through a 4A(5) adjustment on purpose, never by default.
+liability in 3.1(d), nothing in 4A(3), for the residential leg always.
+
+**The commercial leg's credit (25/10/2026, the firm's instruction).** In a REP
+other than an RREP the commercial apartments are taxed at 12% with credit, so
+the reverse charge on their share of the TDR/FSI is eligible input tax. For a
+Claim-ITC or Partial-ITC client the view `builder_rcm_postings` gives it as
+`itc_cgst` / `itc_sgst` (half each of `commercial_rcm`), with the project's
+RREP test (`project_is_rrep`, the app's `testRrep`: manual carpet areas, else
+units not cancelled, no area counting as an RREP); 0 for an RREP or a No-ITC
+client. GSTR-3B claims it in 4A(3). It is wholly commercial, so a Partial-ITC
+builder's carpet apportionment leaves it out of the base its residential share
+is taken from (`computePartialItcSplit`'s `exclusiveItc`, also on ITC Summary,
+whose row (3) carries it, and in the ITC & Cash paper). The GST Receivable reco
+adds it to M-1's net ITC, unapportioned, in the database
+(`gst_receivable_reco_difference`), `gstReceivableRecoCalc.ts` and the page,
+so the push gate still tallies (`20261025130000`, `src/lib/builderFsiCredit.ts`).
+Do not also key it as a 4A(5) adjustment: it would be claimed twice.
+
+**The 3.1(d) value (25/10/2026).** `taxable_value` was `total_rcm ÷ 18%`, which
+understated the supply whenever the 1%/5% cap cut the residential tax (portion
+₹1 crore, tax capped at ₹5 lakh, value shown ₹27.78 lakh). It is now the
+portions themselves, `residential_value + commercial_value`; a working with no
+portions recorded keeps the old figure. The tax is unchanged.
 
 **The consent gate.** A client instructing the firm not to discharge this
 liability must have that instruction on record before the period files: request
