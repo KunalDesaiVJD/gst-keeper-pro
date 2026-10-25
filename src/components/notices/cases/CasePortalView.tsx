@@ -29,7 +29,6 @@ import { daysBetween, istToday, type NoticeFact } from '@/lib/noticeFacts';
 import { dueWords, fmtDate, fmtFy, fmtInr, fmtInrShort, noticeTitle, plural } from '@/lib/noticeFormat';
 import type { Database } from '@/integrations/supabase/types';
 import { cn } from '@/lib/utils';
-import { noticeCaseHref } from '@/lib/noticeCases';
 import { refundIndexKey, useRefundIndex } from '@/components/notices/reports/ledgerData';
 import { RefundWhenChip } from '@/components/notices/reports/RefundBits';
 

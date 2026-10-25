@@ -118,12 +118,6 @@ export function listSearch(p: Partial<NoticeListParams>, defaultFilter: ListFilt
 export const noticesListHref = (p: Partial<NoticeListParams>) => `/notices-all${listSearch(p)}`;
 /** A list opened from the command centre: only the notice types on the dashboard, as it counts them. */
 export const dashListHref = (p: Partial<NoticeListParams>) => noticesListHref({ ...p, dash: '1' });
-/** A link to the Work queue with these filters. */
-export const queueHref = (tab: QueueTab, p: Partial<NoticeListParams> = {}) => {
-  const s = listSearch(p);
-  return `/notices-queue${s ? `${s}&tab=${tab}` : `?tab=${tab}`}`;
-};
-
 /** Search text safe inside a PostgREST or() filter. */
 export function searchTerm(q: string | undefined): string {
   return (q || '').replace(/[,()"\\*%:]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -234,35 +228,4 @@ export function applyQueueTab(q: Q, tab: QueueTab, meId: string | null): Q {
   if (tab === 'unassigned') q = q.is('assign_to_user_id', null);
   if (tab === 'review') q = q.eq('next_action', 'review_draft');
   return q;
-}
-
-export const QUEUE_TABS: QueueTab[] = ['mine', 'team', 'unassigned', 'review'];
-
-/**
- * Each queue tab's count under the list's own filters (dash, reply need,
- * stage, owner, search…), so a tab's number is always the length of its list.
- */
-export async function fetchQueueCounts(p: NoticeListParams, meId: string | null): Promise<Record<QueueTab, number>> {
-  const counts = await Promise.all(QUEUE_TABS.map(async (tab) => {
-    let q = supabase.from('notice_plan').select('id', { count: 'exact', head: true });
-    q = applyQueueTab(q, tab, meId);
-    q = applyListFilters(q, { ...p, filter: 'all' }, meId);
-    const { count, error } = await q;
-    if (error) throw error;
-    return count ?? 0;
-  }));
-  return Object.fromEntries(QUEUE_TABS.map((t, i) => [t, counts[i]])) as Record<QueueTab, number>;
-}
-
-/** The Work queue (Today's plan in full): open notices with their next action, newest first unless ordered otherwise. */
-export async function fetchQueuePage(tab: QueueTab, p: NoticeListParams, meId: string | null, pageSize = PAGE_SIZE):
-  Promise<{ rows: NoticePlanRow[]; total: number }> {
-  let q = supabase.from('notice_plan').select('*', { count: 'exact' });
-  q = applyQueueTab(q, tab, meId);
-  q = applyListFilters(q, { ...p, filter: 'all' }, meId);
-  q = applySort(q, p, defaultSort());
-  const from = (p.page - 1) * pageSize;
-  const { data, error, count } = await q.range(from, from + pageSize - 1);
-  if (error) throw error;
-  return { rows: (data ?? []) as NoticePlanRow[], total: count ?? 0 };
 }

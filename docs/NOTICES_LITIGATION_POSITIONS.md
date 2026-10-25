@@ -719,3 +719,17 @@ Cases and All notices each have a **Dispute year** column (`DisputeYearCell`), r
 - **Nothing is written back.** `gst_notices.financial_year` stays as the portal or a person left it; the FY filter still reads it.
 - **Unknown stays unknown.** A notice with no year anywhere shows "Not stated"; no year is guessed from the issue date (DRC-01B / DRC-01C intimations, refunds of an excess cash balance and audit notices are the usual cases). Registration is not about a year and shows a dash.
 - The Excel export carries "Dispute year" (with where it came from) beside "FY on the notice".
+
+## 32. One layout for the module (the UX audit of 25 October 2026, "fix all")
+
+Engineering judgement on layout, not a tax position; nothing here changes a count, a flag or a clock.
+
+- **Tabs.** Home, Cases (its badge is the open cases of notices and demands, refunds and registration), Notices, Calendar, Refunds, Clients; More holds Reports (Notice summary, DRC-03 payments, Litigation MIS) and Setup (Portal sync, Autopilot, Reply Factory, Settings). Matters and the Litigation MIS stay out of the menu while no matter is on record.
+- **Record pages** (a case, a notice, a refund, a matter, a client) keep the tabs and search and carry one breadcrumb, tab › client › record (`NoticesShell record crumbs`).
+- **Home** counts once (the attention tiles), then My work (`?work=mine|team|unassigned|review`, `?when=overdue|due7`) beside what is coming. "Just in" is the last 7 days of notices and demands, refunds and registration: the Other papers (LUT, approvals, system generated) no longer make everything look new. The Work queue page is retired (`/notices-queue` → Home's My work), as is Hearings (`/notices-hearings` → the Calendar's agenda).
+- **Cases** opens on All (every kind but Other) with one control row; Status and Stage read as one column, "Where it stands"; the unsure links show as a "Links to check" banner only while any wait.
+- **Case page**: the next step, then the timeline (Papers, or the portal's own folder as **Portal view**, `?view=portal`) beside a facts rail. The separate case folder page is gone; `/notices-case-folder/:client/:case` redirects there, or to the refund page for a refund.
+- **Notice page**: Issues, Evidence and Draft are steps 1 to 3; Payments, Hearings and Deadlines show only when they hold something; the facts sit in a side rail.
+- **Calendar** also shows each open case's key dates (time to appeal, pre-deposit, pay to close, `notice_case_key_dates_range`, 20261025160000; a case's appeal date the matter's appeal clock already shows that day is left out), and has an Agenda view of the next 60 days.
+- **Clients** (`/notices-company-list`) is the portfolio list once called GSTIN-wise count (`/notices-gstin-wise-count` redirects); the sync table is **Portal sync** (`/notices-portal-sync`). A client's page leads with its open cases.
+- **Names**: Autopilot's "Needs a person" tab is "Runs to retry"; Cases' is "Links to check". Notice types are set only under Reply Factory → Notice types.

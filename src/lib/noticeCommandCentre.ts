@@ -87,22 +87,6 @@ export function useNoticesNavCounts(userId: string | null) {
   return q.data?.nav ?? null;
 }
 
-/** The top of Today's plan: the dashboard's notice types only, like its counts. */
-/** The dashboard's plan: 'newest' (the default, by issue date) or 'urgent' (deadline × exposure × readiness). */
-export type PlanOrder = 'newest' | 'urgent';
-
-export async function loadPlanTop(tab: QueueTab, userId: string | null, limit = 8, order: PlanOrder = 'newest', master: Master = {}): Promise<NoticePlanRow[]> {
-  let q = supabase.from('notice_plan').select('*').eq('on_dashboard', true);
-  q = applyQueueTab(q, tab, userId);
-  q = applyMasterToQuery(q, master, userId);
-  q = order === 'urgent'
-    ? q.order('plan_score', { ascending: false })
-    : q.order('issue_date', { ascending: false, nullsFirst: false }).order('first_seen_at', { ascending: false, nullsFirst: false });
-  const { data, error } = await q.order('id').limit(limit);
-  if (error) throw error;
-  return (data ?? []) as NoticePlanRow[];
-}
-
 export interface HearingItem {
   kind: 'notice' | 'matter';
   ref_id: string;
