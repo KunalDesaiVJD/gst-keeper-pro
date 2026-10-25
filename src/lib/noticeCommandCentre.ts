@@ -161,6 +161,22 @@ export async function loadCalendar(from: string, to: string, opts: { dashboardOn
   return items.filter((it) => !it.notice_id || !off.has(it.notice_id));
 }
 
+/** A date the law attaches to an open case (time to appeal, pre-deposit, pay to close), 20261025160000. */
+export interface CaseDateItem {
+  day: string; kind: string; title: string | null; detail: string | null; law: string | null; tone: string | null;
+  client_id: string; client_name: string | null; case_key: string; item_id: string | null;
+}
+
+/** Every open case's key dates in the range; none on a database without the function. */
+export async function loadCaseDates(from: string, to: string): Promise<CaseDateItem[]> {
+  const { data, error } = await supabase.rpc('notice_case_key_dates_range', { p_from: from, p_to: to });
+  if (error) {
+    if (/notice_case_key_dates_range/.test(error.message)) return [];
+    throw error;
+  }
+  return (data ?? []) as CaseDateItem[];
+}
+
 export const CALENDAR_KIND_LABEL: Record<CalendarItem['kind'], string> = {
   reply: 'Reply due',
   hearing: 'Hearing',
