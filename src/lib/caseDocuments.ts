@@ -67,6 +67,24 @@ const SECTION_CATEGORY: Record<string, DocCategory> = {
   DRC7A: 'order', APLCN: 'application', NOTAC: 'acknowledgement',
 };
 
+/** Who a document is from: the department (intimations, notices, orders, acknowledgements) or the assessee (replies, applications and what was filed with them). */
+export type DocSide = 'department' | 'assessee';
+export const SIDES: Record<DocSide, { label: string; hint: string }> = {
+  department: { label: 'Department documents', hint: 'What the officer and the portal issued: intimations, notices, orders, acknowledgements' },
+  assessee: { label: 'Assessee submissions', hint: 'What the taxpayer filed: replies, applications, appeals, with their annexures' },
+};
+
+/**
+ * A portal file's side: in a section where the taxpayer files (reply,
+ * application) it is the assessee's, unless the AI read it as an order or an
+ * acknowledgement the department issued; elsewhere it is the department's,
+ * unless the AI read it as a reply or an application.
+ */
+export function docSide(sectionCode: string, aiKind: string | null): DocSide {
+  if (TAXPAYER_SECTIONS.has(sectionCode)) return aiKind === 'order' || aiKind === 'acknowledgement' ? 'department' : 'assessee';
+  return aiKind === 'reply' || aiKind === 'application' ? 'assessee' : 'department';
+}
+
 /** Where the portal put a file inside its item: the portal's own form, or a supporting upload. */
 export type PortalSlot = 'form' | 'supporting' | null;
 
@@ -130,6 +148,7 @@ export interface CaseDoc {
   isEvidence: boolean;
   evidenceTypes: EvidenceType[];
   stage: StageKey;
+  side: DocSide;
   source: 'portal' | 'upload';
   slot: PortalSlot;
   /** The portal item it came with (folder files). */
@@ -151,6 +170,8 @@ export interface CaseDoc {
 export interface StageGroup {
   /** Unique within the case (a stage can come twice: a reply to the intimation, then to the notice). */
   id: string;
+  /** Its place in the case, 1 = first, kept when the stages are split by side. */
+  n: number;
   key: StageKey;
   label: string;
   hint: string;
@@ -206,7 +227,7 @@ function folderDoc(att: { label: string; url: string }, ev: CaseEvent, slot: Por
   return {
     key: att.url, url: att.url, original: att.label, name, nameFrom, description, summary: read?.summary ?? null,
     category, date: read?.doc_date ?? ev.date, isEvidence: evidence, evidenceTypes: types,
-    stage: STAGE_OF[code] ?? 'other', source: 'portal', slot, event: ev,
+    stage: STAGE_OF[code] ?? 'other', side: docSide(code, read?.doc_kind ?? null), source: 'portal', slot, event: ev,
     uploadedBy: null, uploadedAt: null, uploadKind: null, aiStatus: ai?.status ?? null, label: label ?? null, exhibit: 0,
     hash, sameAs: 0,
   };
@@ -225,7 +246,8 @@ function uploadDoc(d: Workspace['documents'][number], label: DocLabel | undefine
     nameFrom: label?.title ? 'person' : evidence ? 'type' : 'portal', description: null, summary: null,
     category: evidence ? 'evidence' : UPLOAD_CATEGORY[d.kind] ?? 'working',
     date: new Date(d.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }),
-    isEvidence: evidence, evidenceTypes: types, stage: 'uploads', source: 'upload', slot: null, event: null,
+    isEvidence: evidence, evidenceTypes: types, stage: 'uploads',
+    side: d.kind === 'order' || d.kind === 'acknowledgement' ? 'department' : 'assessee', source: 'upload', slot: null, event: null,
     uploadedBy: d.uploaded_by_name, uploadedAt: d.created_at, uploadKind: d.kind, aiStatus: null, label: label ?? null, exhibit: 0,
     hash: null, sameAs: 0,
   };
@@ -276,7 +298,7 @@ export function organiseCaseDocuments(ws: Pick<Workspace, 'notice' | 'folder' | 
         : x.key === 'reply' && (before === 'notice' || before === 'audit') ? 'Reply to the notice'
         : x.key === 'reply' && before === 'order' ? 'Reply after the order'
         : STAGES[x.key].label;
-      g = { id: `${x.key}-${stages.length + 1}`, key: x.key, label, hint: STAGES[x.key].hint, date: x.ev.date, events: [] };
+      g = { id: `${x.key}-${stages.length + 1}`, n: stages.length + 1, key: x.key, label, hint: STAGES[x.key].hint, date: x.ev.date, events: [] };
       stages.push(g);
     }
     g.events.push({ event: x.ev, docs: x.docs.filter((d) => !d.isEvidence), evidence: x.docs.filter((d) => d.isEvidence) });
@@ -291,7 +313,7 @@ export function organiseCaseDocuments(ws: Pick<Workspace, 'notice' | 'folder' | 
     key: n.pdf_url, url: n.pdf_url, original: decodeURIComponent(n.pdf_url.split('?')[0].split('/').pop() ?? 'notice.pdf'),
     name: noticeAi?.status === 'done' && noticeAi.title ? noticeAi.title : 'This notice', nameFrom: noticeAi?.title ? 'ai' : 'portal',
     description: null, summary: noticeAi?.summary ?? null, category: 'notice', date: n.issue_date, isEvidence: false,
-    evidenceTypes: [], stage: 'notice', source: 'portal', slot: 'form', event: null, uploadedBy: null, uploadedAt: null,
+    evidenceTypes: [], stage: 'notice', side: 'department', source: 'portal', slot: 'form', event: null, uploadedBy: null, uploadedAt: null,
     uploadKind: null, aiStatus: noticeAi?.status ?? null, label: null, exhibit: 0, hash: null, sameAs: 0,
   } : null;
 
@@ -305,6 +327,23 @@ export function organiseCaseDocuments(ws: Pick<Workspace, 'notice' | 'folder' | 
   });
   const documents = stages.flatMap((g) => g.events.flatMap((e) => e.docs));
   return { stages, documents: [...documents, ...uploads.filter((d) => !d.isEvidence)], evidence, uploads, noticePdf };
+}
+
+/**
+ * The stages holding one side's documents, each with only that side's files,
+ * numbered as in the whole case. An item with no file goes with the side of
+ * its section; its evidence stays with the assessee's copy of the item.
+ */
+export function stagesOfSide(stages: StageGroup[], side: DocSide): StageGroup[] {
+  return stages.flatMap((g) => {
+    const events = g.events.flatMap((e) => {
+      const docs = e.docs.filter((d) => d.side === side);
+      const evidence = side === 'assessee' ? e.evidence : [];
+      const empty = !e.docs.length && !e.evidence.length && docSide(e.event.code, null) === side;
+      return docs.length || evidence.length || empty ? [{ ...e, docs, evidence }] : [];
+    });
+    return events.length ? [{ ...g, events }] : [];
+  });
 }
 
 /** Where an evidence file came from, in words: "Filed with Reply to SCN on 14 Aug 2024". */
