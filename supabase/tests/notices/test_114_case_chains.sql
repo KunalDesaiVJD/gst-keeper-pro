@@ -147,6 +147,45 @@ UPDATE gst_portal_applications SET deleted_at = now() WHERE id = '11400000-0000-
 SELECT t_eq((SELECT count(*) FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000004' AND child_key = 'AD241225010791I'), 0::bigint,
             'an application gone from the portal is unlinked');
 
+-- 8. Not sure enough, a person decides (20261025100000).
+SELECT t_eq((SELECT confidence FROM notice_case_link_confidence('11400000-0000-0000-0000-000000000001', 'AD2401010000APL', 'AD2401010000ORG', 'appeal')),
+            98, 'an appeal naming the other case''s order: 98% sure');
+INSERT INTO clients (id, name, gstin, gst_user_id, gst_password, inactive_at_hand) VALUES
+ ('11400000-0000-0000-0000-000000000005', 'Review Works', '24REVIW0000E1Z5', 'reviw', 'p5', false);
+INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, case_id, financial_year, amount_of_demand) VALUES
+ ('11400000-0000-0000-0000-0000000000e1', '11400000-0000-0000-0000-000000000005', 'notices', 'r1', 'Scrutiny Of Returns',
+  'Intimation of discrepancies', ist_today() - 300, 'ZD2401010000R01', 'AD2401010000RA1', '2020-21', NULL),
+ ('11400000-0000-0000-0000-0000000000e2', '11400000-0000-0000-0000-000000000005', 'notices', 'r2', 'Determination Of Tax',
+  'Show cause notice', ist_today() - 200, 'ZD2401010000R02', 'AD2401010000RB1', '2021-22', NULL),
+ ('11400000-0000-0000-0000-0000000000e3', '11400000-0000-0000-0000-000000000005', 'notices', 'r3', 'Appeal',
+  'Hearing notice issued', ist_today() - 10, 'ZD2401010000R03', 'AD2401010000RAP', NULL, NULL),
+ ('11400000-0000-0000-0000-0000000000e4', '11400000-0000-0000-0000-000000000005', 'notices', 'r4', 'Determination Of Tax',
+  'Summary of the demand order (DRC-07)', ist_today() - 100, 'ZD2401010000R04', 'AD2401010000RD1', '2019-20', 250000),
+ ('11400000-0000-0000-0000-0000000000e5', '11400000-0000-0000-0000-000000000005', 'notices', 'r5', 'Determination Of Tax',
+  'Summary of the demand order (DRC-07)', ist_today() - 90, 'ZD2401010000R05', 'AD2401010000RD2', '2019-20', 250000);
+INSERT INTO gst_case_folder_items (client_id, case_id, portal_key, reference_number, folder_section, raw_json) VALUES
+ ('11400000-0000-0000-0000-000000000005', 'AD2401010000RB1', 'rb', 'ZD2401010000R09', 'NOTCE', '{"note": "see ZD2401010000R01"}');
+SELECT notice_case_links_refresh('11400000-0000-0000-0000-000000000005');
+SELECT t_eq((SELECT count(*) FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000005'), 0::bigint,
+            'a related link only through a notice number (75% sure) is not made by itself');
+SELECT t_eq((SELECT status || '/' || confidence FROM notice_case_link_reviews
+              WHERE client_id = '11400000-0000-0000-0000-000000000005' AND issue = 'low_confidence'),
+            'open/75', 'it waits for a person, with how sure the system was');
+SELECT t_eq((SELECT string_agg(x ->> 'issue' || ':' || (x ->> 'child_key'), ' ' ORDER BY x ->> 'issue', x ->> 'child_key')
+               FROM jsonb_array_elements(notice_case_review_queue('11400000-0000-0000-0000-000000000005')) x),
+            'duplicate:AD2401010000RD2 low_confidence:AD2401010000RB1 unlinked:AD2401010000RAP',
+            'the queue: the unsure link, the appeal linked to nothing, two cases that look like one');
+SELECT notice_case_review_decide('11400000-0000-0000-0000-000000000005', 'low_confidence', 'AD2401010000RB1', 'AD2401010000RA1', 'link', 'related', 'Partner');
+SELECT t_eq((SELECT parent_key || '/' || source FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000005' AND child_key = 'AD2401010000RB1'),
+            'AD2401010000RA1/manual', 'a person links it');
+SELECT notice_case_review_decide('11400000-0000-0000-0000-000000000005', 'unlinked', 'AD2401010000RAP', NULL, 'dismissed', NULL, 'Partner');
+SELECT notice_case_review_decide('11400000-0000-0000-0000-000000000005', 'duplicate', 'AD2401010000RD2', 'AD2401010000RD1', 'dismissed', NULL, 'Partner');
+SELECT notice_case_links_refresh('11400000-0000-0000-0000-000000000005');
+SELECT t_eq(jsonb_array_length(notice_case_review_queue('11400000-0000-0000-0000-000000000005')), 0,
+            'decided, nothing waits; the decisions stand through a refresh');
+SELECT t_eq((SELECT count(*) FROM notice_case_link_reviews WHERE client_id = '11400000-0000-0000-0000-000000000005' AND decided_by_name = 'Partner'), 3::bigint,
+            'every decision is kept with who made it');
+
 -- 5. The two views stay in step: the apart view is the linked one plus the chain.
 SELECT t_eq((SELECT string_agg(column_name::text, ',' ORDER BY ordinal_position) FROM information_schema.columns
               WHERE table_schema = 'public' AND table_name = 'notice_cases'),
