@@ -8,8 +8,8 @@
 --    and replies (notice_case_numbers.owns); a third case's number on both says
 --    nothing certain;
 -- 2. neither case of the kind other (LUT, voluntary payment, acceptance), which
---    many papers name without belonging to them, unless it is an appeal, waiver
---    or rectification (a s.128A waiver order is of the kind other).
+--    many papers name without belonging to them (an appeal, waiver or
+--    rectification is never of that kind: notice_case_parts, 20261024120000).
 -- Both stay open to a person (Link a case) and to the suggestions.
 -- Tamnna Infrastructure-Gujarat's appeal (APL-02, its application naming the
 -- DRC-07 ZD2403260211513) stays linked: that number is the order's own.
@@ -133,10 +133,8 @@ BEGIN
          -- order of it): a third case's number on both says nothing certain.
          AND pr.owned
          -- An LUT, a voluntary payment or an acceptance is named on many
-         -- papers (a refund names its LUT) without belonging to them. A
-         -- waiver, appeal or rectification is its own kind whatever its track
-         -- (a s.128A waiver's order is filed under other).
-         AND (pa.track <> 'other' OR pa.marker IS NOT NULL) AND (pb.track <> 'other' OR pb.marker IS NOT NULL)
+         -- papers (a refund names its LUT) without belonging to them.
+         AND pa.track <> 'other' AND pb.track <> 'other'
     )
     SELECT d.child_key, d.parent_key, d.kind,
            -- The number to name: the other case's own notice or order reference first.

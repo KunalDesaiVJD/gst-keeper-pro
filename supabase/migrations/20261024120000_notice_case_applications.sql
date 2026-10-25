@@ -13,7 +13,10 @@
 --    so notice_case_links_refresh links it under the case holding that order
 --    (an appeal, waiver or rectification by its case type).
 -- 2. notice_case_parts: an application is a case by its ARN (marker from the
---    case type, filed date, form, status as title, open until decided).
+--    case type, filed date, form, status as title, open until decided); an
+--    appeal, waiver or rectification is never of the kind other (the portal
+--    files a s.128A waiver order under other, and 20261024110000 links nothing
+--    into or out of other).
 -- 3. notice_case_chain: each member carries its application (form, status,
 --    filed date, the order it is against).
 -- 4. notice_case_correspondence: an application with no folder or notice of its
@@ -138,7 +141,14 @@ AS $$
            ORDER BY n.issue_date DESC NULLS LAST LIMIT 1),
          (SELECT max(n.amount_of_demand) FROM n WHERE n.own_key = k.own_key),
          coalesce((SELECT CASE WHEN bool_or(n.trk = 'litigation') THEN 'litigation' WHEN bool_or(n.trk = 'refund') THEN 'refund'
-                               WHEN bool_or(n.trk = 'registration') THEN 'registration' ELSE 'other' END
+                               WHEN bool_or(n.trk = 'registration') THEN 'registration'
+                               -- An appeal, waiver or rectification is litigation, though the portal
+                               -- files a s.128A waiver order under other (live, 24 October 2026).
+                               WHEN bool_or(n.form_code LIKE 'APL-%' OR n.form_code LIKE 'SPL-%' OR (n.form_code LIKE 'RECT-%' AND n.form_code <> 'RECT-ORDER'))
+                                 OR EXISTS (SELECT 1 FROM d WHERE d.own_key = k.own_key AND (d.form_no LIKE 'APL%' OR d.form_no LIKE 'SPL%' OR d.raw_json ->> 'apl' = 'APPEAL' OR d.raw_json ? 'aplnum'))
+                                 OR EXISTS (SELECT 1 FROM a WHERE a.own_key = k.own_key AND a.marker IS NOT NULL)
+                                 THEN 'litigation'
+                               ELSE 'other' END
                      FROM n WHERE n.own_key = k.own_key HAVING count(*) > 0),
                   CASE WHEN EXISTS (SELECT 1 FROM d WHERE d.own_key = k.own_key AND d.form_no LIKE 'RFD%') THEN 'refund' ELSE 'litigation' END),
          (SELECT count(*)::int FROM n WHERE n.own_key = k.own_key),

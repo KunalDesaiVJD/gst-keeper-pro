@@ -139,7 +139,7 @@ INSERT INTO gst_case_folder_items (client_id, case_id, portal_key, reference_num
  ('11400000-0000-0000-0000-000000000004', 'AD2403250367264', 'w1', 'AD2403250367264', 'APLCN', '{"formNo": "SPL-02", "orddtl": {"ordnum": "ZD241223056296J"}}');
 SELECT notice_case_links_refresh('11400000-0000-0000-0000-000000000004');
 SELECT t_eq((SELECT p.track || '/' || p.marker FROM notice_case_parts('11400000-0000-0000-0000-000000000004') p WHERE p.own_key = 'AD2403250367264'),
-            'other/waiver', 'the waiver case is of the kind other');
+            'litigation/waiver', 'the waiver case counts as litigation for linking');
 SELECT t_eq((SELECT parent_key || '/' || kind FROM notice_case_links
               WHERE client_id = '11400000-0000-0000-0000-000000000004' AND child_key = 'AD2403250367264'),
             'AD240923018008A/waiver', 'and is still linked under the order it is against');
