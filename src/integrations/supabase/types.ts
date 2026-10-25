@@ -9954,6 +9954,27 @@ export type Database = {
         }
         Relationships: []
       }
+      staff_user_extra_permissions: {
+        Row: {
+          granted_at: string
+          granted_by: string | null
+          permission_key: string
+          user_id: string
+        }
+        Insert: {
+          granted_at?: string
+          granted_by?: string | null
+          permission_key: string
+          user_id: string
+        }
+        Update: {
+          granted_at?: string
+          granted_by?: string | null
+          permission_key?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       staff_position_permissions: {
         Row: {
           granted_at: string
@@ -12430,6 +12451,10 @@ export type Database = {
       staff_add_level: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_level: string; p_target_user_id: string }
         Returns: boolean
+      }
+      staff_set_user_extras: {
+        Args: { p_actor_id: string; p_keys: string[]; p_user_id: string }
+        Returns: undefined
       }
       staff_assign_position: {
         Args: { p_actor_id: string; p_position_id: string | null; p_user_id: string }
