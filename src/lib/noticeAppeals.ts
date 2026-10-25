@@ -10,6 +10,9 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { ASSIST_REFUSALS } from '@/lib/noticeAi';
+import { appealDocState, appealPhase, type AppealPhase } from '../../supabase/functions/_shared/appealStage.ts';
+
+export { appealDocState, appealPhase, type AppealPhase };
 
 export type AppealDocType = 'facts' | 'grounds' | 'submission';
 export type AppealDraft = Database['public']['Tables']['notice_appeal_drafts']['Row'];
@@ -108,6 +111,7 @@ const APPEAL_REFUSALS: Record<string, string> = {
   not_found: 'This appeal is no longer on record for the case.',
   no_text: 'There is no text to improve yet: draft it first, or type it and save.',
   gone: 'This appeal is no longer on record.',
+  doc_closed: 'This document is no longer drafted at this stage of the appeal.',
 };
 export const appealRefusal = (code: string | null | undefined) => (code ? APPEAL_REFUSALS[code] ?? `The assistant could not start (${code}).` : null);
 

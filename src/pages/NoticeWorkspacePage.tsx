@@ -14,6 +14,10 @@
 // stage and owner once; the work is the tabs, the three that build a reply
 // numbered as steps, Payments, Hearings and Deadlines only once they hold
 // something; beside them the figures and what the notice says, in one rail.
+// Drafting is offered by the notice's stage (src/lib/noticeDrafting.ts): an
+// order gets its letters and a way to the case's Appeal view, a reply filed or
+// overtaken by an order keeps its drafts to read, the AI assistant only while
+// a reply is being prepared.
 import { NoticeExcludeDialog } from '@/components/notices/NoticeExcludeDialog';
 import { canManageNoticeTypes } from '@/lib/noticeTypes';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -66,6 +70,8 @@ import { CaseLinkSuggest } from '@/components/notices/cases/CaseLinkSuggest';
 import { caseHref, caseKeyOf, loadCase, tabsFor, trackDef, trackOfCategory, useCaseOverview, type Track } from '@/lib/noticeCases';
 import { cn } from '@/lib/utils';
 import { useCaseDocuments } from '@/lib/caseDocuments';
+import { assistantOffered, draftEditable, draftingPhase } from '@/lib/noticeDrafting';
+import { appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
 
 const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: 'issues', label: 'Issues' },
@@ -138,6 +144,23 @@ function DueChip({ ws }: { ws: Workspace }) {
   );
 }
 
+/** Why the page offers the drafting it does, once a reply is no longer what is being prepared. */
+function DraftingNote({ phase, replyDate, appealHref, underAppeal }: { phase: ReturnType<typeof draftingPhase>; replyDate: string | null; appealHref: string | null; underAppeal: boolean }) {
+  const appeal = appealHref && (
+    <Button size="sm" variant="outline" className={cn(WS_BTN, 'ml-2')} asChild><Link to={appealHref}><Scale className="h-3.5 w-3.5" /> {underAppeal ? 'Open the appeal' : 'Prepare the appeal'}</Link></Button>
+  );
+  if (phase === 'order') {
+    return <Note tone="info">This is an order, so it is not replied to. It is appealed, rectified or paid: the statement of facts, grounds of appeal and written submission are drafted on the case's Appeal view, and the letters (rectification, stay of recovery, payment) on the Letters tab.{appeal}</Note>;
+  }
+  if (phase === 'moved_on') {
+    return <Note tone="info">The proceedings on this notice have moved on to the order{underAppeal ? ' and its appeal' : ''}, so no reply is drafted for it now; its drafts stay here to read.{appeal}</Note>;
+  }
+  if (phase === 'replied') {
+    return <Note tone="info">The reply was filed{replyDate ? ` on ${fmtDate(replyDate)}` : ''}, so its draft stays here as it was. Drafting opens again for a written submission once a hearing is fixed.</Note>;
+  }
+  return null;
+}
+
 const NoticeWorkspacePage: React.FC = () => {
   const { id = '' } = useParams();
   const [sp, setSp] = useSearchParams();
@@ -169,7 +192,11 @@ const NoticeWorkspacePage: React.FC = () => {
   // registration or record-only notice gets the facts and tabs of its kind.
   const track: Track = trackOfCategory(ws?.fact.category);
   const caseKey = ws ? caseKeyOf(ws.notice.case_id, ws.fact.category, ws.notice.id) : null;
+  const phase = ws ? draftingPhase(ws.fact) : 'reply';
   const caseOv = useCaseOverview(clientId, caseKey, ws?.notice.id ?? null);
+  // The case's Appeal view, where an order's appeal is drafted, when it has an appeal to offer.
+  const caseAppeals = useCaseAppeals(clientId ?? '', phase === 'order' || phase === 'moved_on' ? caseKey : null);
+  const appealHref = clientId && caseKey && appealsShown(caseAppeals.data).length > 0 ? `${caseHref(clientId, caseKey)}?side=appeal` : null;
   const caseRow = useQuery({ queryKey: ['notice-case', clientId, caseKey], queryFn: () => loadCase(clientId as string, caseKey as string), enabled: !!clientId && !!caseKey, staleTime: 60_000 });
   const needsReply = ws?.fact.response_need === 'critical';
   const wantTab = sp.get('tab');
@@ -180,8 +207,11 @@ const NoticeWorkspacePage: React.FC = () => {
       hearings: !!ws && (!!ws.notice.hearing_date || ws.hearings.length > 0),
       deadlines: !!ws && ws.deadlines.length > 0,
     };
-    return TABS.filter((t) => keys.includes(t.key) && (!OPTIONAL_TABS.includes(t.key) || has[t.key] || wantTab === t.key));
-  }, [track, needsReply, ws, wantTab]);
+    // Drafting only where it still makes sense: the assistant while a reply is prepared, a closed draft tab only to read what it holds.
+    const drafting = (k: WorkspaceTab) => (k === 'assistant' ? assistantOffered(phase)
+      : k === 'draft' ? draftEditable(phase) || (ws?.drafts.length ?? 0) > 0 : true);
+    return TABS.filter((t) => keys.includes(t.key) && drafting(t.key) && (!OPTIONAL_TABS.includes(t.key) || has[t.key] || wantTab === t.key));
+  }, [track, needsReply, ws, wantTab, phase]);
   const hasEvidenceTab = shownTabs.some((t) => t.key === 'evidence');
   // The documents organised (named, by stage, evidence apart), for the tab counts; the tabs read the same queries.
   const caseDocs = useCaseDocuments(ws);
@@ -268,6 +298,10 @@ const NoticeWorkspacePage: React.FC = () => {
   const primary = (() => {
     if (!canEdit) return null;
     if (closed) return <Button size="sm" className={WS_BTN} onClick={() => changeStage('triaged')}>Reopen</Button>;
+    // An order is answered by an appeal, drafted on the case's Appeal view.
+    if (phase === 'order' && appealHref && f.next_action !== 'assign') {
+      return <Button size="sm" className={WS_BTN} asChild><Link to={appealHref}><Scale className="h-3.5 w-3.5" /> {f.stage === 'appeal' ? 'Open the appeal' : 'Prepare the appeal'}</Link></Button>;
+    }
     // A refund, registration or record-only notice: reply when it asks for one, else read and close.
     if (!lit) {
       if (!n.assign_to_user_id && needsReply) {
@@ -310,7 +344,7 @@ const NoticeWorkspacePage: React.FC = () => {
     : k === 'evidence' ? (caseDocs.model?.evidence.length ?? 0) > 0
     : k === 'draft' ? latestDraft?.status === 'approved' || !!f.reply_date : false);
   // Where the reply stands, in one line under the steps (was two badges in the header).
-  const stepLine = lit && !closed ? [
+  const stepLine = lit && phase === 'reply' ? [
     ws.issues.length ? `${plural(ws.issues.length, 'issue')} listed · ${fmtInrShort(issuesTotal)}` : 'No issues listed yet',
     latestDraft ? `Draft v${latestDraft.version} ${DRAFT_STATUS[latestDraft.status] ?? latestDraft.status.replace('_', ' ')}` : null,
     f.reply_date ? `Replied ${fmtDate(f.reply_date)}` : null,
@@ -378,11 +412,11 @@ const NoticeWorkspacePage: React.FC = () => {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canEdit && !closed && track !== 'other' && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('docs')}><Mail className="h-3.5 w-3.5" /> Ask client</Button>}
-          {canEdit && !closed && !f.reply_date && (lit || needsReply) && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('extension')}><Hourglass className="h-3.5 w-3.5" /> Extension</Button>}
+          {canEdit && phase === 'reply' && !f.reply_date && (lit || needsReply) && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('extension')}><Hourglass className="h-3.5 w-3.5" /> Extension</Button>}
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button size="sm" variant="outline" className={WS_BTN} aria-label="More actions"><MoreHorizontal className="h-3.5 w-3.5" /> More</Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {canEdit && !closed && (lit || needsReply) && <DropdownMenuItem onSelect={() => setDialog('reply')}><FileText className="mr-2 h-4 w-4" /> Log reply</DropdownMenuItem>}
+              {canEdit && !closed && phase !== 'order' && (lit || needsReply) && <DropdownMenuItem onSelect={() => setDialog('reply')}><FileText className="mr-2 h-4 w-4" /> Log reply</DropdownMenuItem>}
               {canEdit && !closed && (lit || needsReply) && <DropdownMenuItem onSelect={() => setDialog('order')}><Gavel className="mr-2 h-4 w-4" /> Log order</DropdownMenuItem>}
               {canEdit && !closed && lit && <DropdownMenuItem onSelect={() => setDialog('hearing')}><CalendarClock className="mr-2 h-4 w-4" /> {n.hearing_date ? 'Change hearing' : 'Fix a hearing'}</DropdownMenuItem>}
               {canEdit && !closed && !lit && <DropdownMenuItem onSelect={() => setDialog('close')}><FileText className="mr-2 h-4 w-4" /> Read and close</DropdownMenuItem>}
@@ -405,6 +439,8 @@ const NoticeWorkspacePage: React.FC = () => {
       <CaseLinkSuggest noticeId={n.id} clientId={n.client_id} caseId={n.case_id} canEdit={canEdit}
         onLinked={() => { reload(); qc.invalidateQueries({ queryKey: ['notice-case'] }); qc.invalidateQueries({ queryKey: ['notice-case-overview'] }); }} />
 
+      <DraftingNote phase={phase} replyDate={f.reply_date} appealHref={appealHref} underAppeal={f.stage === 'appeal'} />
+
       {!canEdit && <Note tone="info">You can read this notice. Changing it needs the "Edit notice status" permission — ask a GST manager.</Note>}
 
       <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1fr)_21rem]">
@@ -414,9 +450,10 @@ const NoticeWorkspacePage: React.FC = () => {
               const count = t.key === 'documents' ? (caseDocs.model ? caseDocs.model.documents.length + (caseDocs.model.noticePdf ? 1 : 0) + (hasEvidenceTab ? 0 : caseDocs.model.evidence.length) : ws.documents.length + ws.folder.length)
                 : t.key === 'evidence' ? caseDocs.model?.evidence.length ?? 0
                 : t.key === 'issues' ? ws.issues.length : t.key === 'deadlines' ? ws.deadlines.filter((d) => !d.is_met).length : 0;
-              const step = lit ? STEP_NO[t.key] : undefined;
+              const steps = lit && phase === 'reply';
+              const step = steps ? STEP_NO[t.key] : undefined;
               const done = step ? stepDone(t.key) : false;
-              const afterSteps = !step && i > 0 && lit && !!STEP_NO[shownTabs[i - 1].key];
+              const afterSteps = !step && i > 0 && steps && !!STEP_NO[shownTabs[i - 1].key];
               return (
                 <React.Fragment key={t.key}>
                   {afterSteps && <span aria-hidden className="mx-1 h-5 w-px self-center bg-border" />}
@@ -428,7 +465,7 @@ const NoticeWorkspacePage: React.FC = () => {
                         {done ? <Check className="h-3 w-3" /> : step}
                       </span>
                     )}
-                    {t.label}{count > 0 && <span className="rounded-full bg-card/30 px-1.5 text-[10px] font-semibold tabular-nums">{count}</span>}
+                    {t.key === 'draft' && phase === 'order' ? 'Letters' : t.label}{count > 0 && <span className="rounded-full bg-card/30 px-1.5 text-[10px] font-semibold tabular-nums">{count}</span>}
                     {step && done && <span className="sr-only"> (done)</span>}
                   </TabsTrigger>
                 </React.Fragment>
@@ -440,7 +477,7 @@ const NoticeWorkspacePage: React.FC = () => {
             <TabsContent value="issues" className="mt-0"><IssuesTab noticeId={n.id} issues={ws.issues} canEdit={canEdit} onChanged={reload} /></TabsContent>
             <TabsContent value="evidence" className="mt-0"><EvidenceTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
             <TabsContent value="assistant" className="mt-0"><AssistantTab ws={ws} canEdit={canEdit} onChanged={reload} onOpenDraft={() => setTab('draft')} /></TabsContent>
-            <TabsContent value="draft" className="mt-0"><DraftTab ws={ws} canEdit={canEdit} canApprove={canApproveNoticeReplies()} onChanged={reload} /></TabsContent>
+            <TabsContent value="draft" className="mt-0"><DraftTab ws={ws} canEdit={canEdit && draftEditable(phase)} canApprove={canApproveNoticeReplies()} onChanged={reload} /></TabsContent>
             <TabsContent value="documents" className="mt-0"><DocumentsTab ws={ws} canEdit={canEdit} onChanged={reload} onAskClient={() => setDialog('docs')} onOpenEvidence={hasEvidenceTab ? () => setTab('evidence') : undefined} /></TabsContent>
             <TabsContent value="activity" className="mt-0"><ActivityTab notice={n} events={ws.events} canEdit={canEdit} onChanged={reload} /></TabsContent>
             <TabsContent value="payments" className="mt-0"><PaymentsTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
