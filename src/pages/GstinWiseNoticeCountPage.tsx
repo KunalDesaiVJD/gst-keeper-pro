@@ -12,7 +12,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { FileSpreadsheet, Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -135,7 +134,9 @@ const GstinWiseNoticeCountPage: React.FC = () => {
   const loading = !notices.data || !context.data;
   const error = notices.error ?? context.error;
 
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+    // The spreadsheet library loads only when someone exports (it is ~420 KB).
+    const XLSX = await import('xlsx');
     const data = visible.map((r) => ({
       GSTIN: r.gstin, Client: r.name, Open: r.counts.open, Overdue: r.counts.overdue, 'Due in 7 days': r.counts.due7,
       Unassigned: r.counts.unassigned, 'Exposure (₹)': Math.round(r.counts.exposure), 'Next reply due': fmtDate(r.counts.nextDue),

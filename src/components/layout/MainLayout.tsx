@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { Outlet, Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar, { SidebarContents } from './Sidebar';
@@ -9,6 +9,7 @@ import { Loader2, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
+import { PageLoading } from './PageLoading';
 import logo from '@/assets/logo.png';
 
 const MainLayout: React.FC = () => {
@@ -73,7 +74,8 @@ const MainLayout: React.FC = () => {
         <main className="min-h-screen px-4 pb-24 pt-4 md:px-6 md:pb-24 md:pt-6">
           {/* CAPTCHAs waiting for a person (portal autopilot), on every staff page. */}
           {isStaffRole() && <AutopilotBadge />}
-          <Outlet />
+          {/* The sidebar stays while the next page's code loads. */}
+          <Suspense fallback={<PageLoading />}><Outlet /></Suspense>
         </main>
       </div>
 
