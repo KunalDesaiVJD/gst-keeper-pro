@@ -14,13 +14,14 @@ import { caseHref } from '@/lib/noticeCases';
 const TONE = (s: string): 'destructive' | 'warning' | 'info' | 'secondary' =>
   /overdue|outstanding/i.test(s) ? 'destructive' : /awaited|hearing/i.test(s) ? 'warning' : /closed|paid/i.test(s) ? 'secondary' : 'info';
 
-export const ClientCases: React.FC<{ clientId: string; folders: FolderItem[]; notices: NoticeFact[]; today: string }> = ({ clientId, folders, notices, today }) => {
+/** exclude: portal cases shown elsewhere (a refund's case is on the Refunds page, the firm, 25 October 2026). */
+export const ClientCases: React.FC<{ clientId: string; folders: FolderItem[]; notices: NoticeFact[]; today: string; exclude?: Set<string> }> = ({ clientId, folders, notices, today, exclude }) => {
   const [all, setAll] = useState(false);
   const cases = useMemo(() => {
     const byCase = new Map<string, FolderItem[]>();
     folders.forEach((f) => byCase.set(f.case_id, [...(byCase.get(f.case_id) ?? []), f]));
     notices.forEach((n) => { if (n.case_id && !byCase.has(n.case_id)) byCase.set(n.case_id, []); });
-    return [...byCase.entries()].map(([caseId, items]) => {
+    return [...byCase.entries()].filter(([caseId]) => !exclude?.has(caseId)).map(([caseId, items]) => {
       const ns = notices.filter((n) => n.case_id === caseId);
       const caseRow = ns.find((n) => !/^(notice|order)s?$/i.test((n.notice_type ?? '').trim())) ?? ns[0];
       const s = summarizeCase(items, {
@@ -29,11 +30,12 @@ export const ClientCases: React.FC<{ clientId: string; folders: FolderItem[]; no
       });
       return { caseId, s, open: ns.some((n) => n.is_open), last: s.last?.date ?? caseRow?.issue_date ?? null };
     }).sort((a, b) => Number(b.open) - Number(a.open) || (b.last ?? '').localeCompare(a.last ?? ''));
-  }, [folders, notices, today]);
-  const shown = all ? cases : cases.slice(0, 8);
+  }, [folders, notices, today, exclude]);
+  const shown = all ? cases : cases.slice(0, 5);
 
   return (
-    <SectionCard title={`Case folders · ${cases.length}`} description="Each portal case with its items, replies, orders and documents">
+    <SectionCard title={`Case folders · ${cases.length}`}
+      description={exclude?.size ? 'Notices, demands, appeals and registration; refunds are under Refunds' : 'Each portal case with its items, replies, orders and documents'}>
       {cases.length === 0 ? <p className="text-xs text-muted-foreground">No case folder on record for this client.</p> : (
         <>
           <ul className="divide-y">

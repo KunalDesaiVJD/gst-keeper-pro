@@ -244,8 +244,15 @@ export async function loadRefundLedger(clientId?: string): Promise<RefundRow[]> 
     return {
       key: `${f.origin}-${f.id ?? i}`,
       fact: f,
-      // The sanction read from the order counts, so a part rejected gets its appeal clock.
-      state: refundState({ ...f, claimed_amount: claimed, sanctioned_amount: sanctioned }, signals, caseLink ?? undefined, today),
+      // The sanction read from the order counts, so a part rejected gets its appeal clock;
+      // once an appeal against it is linked, the decision is made and it waits on the appeal.
+      state: (() => {
+        const st = refundState({ ...f, claimed_amount: claimed, sanctioned_amount: sanctioned }, signals, caseLink ?? undefined, today);
+        const appealed = refundLinks.some((l) => l.kind === 'appeal' && l.dir === 'child');
+        return appealed && st.group === 'action' && /appeal/i.test(st.next ?? '')
+          ? { ...st, group: 'process' as const, tone: 'info' as const, next: 'Appeal filed: await the appellate authority', due: null, basis: null }
+          : st;
+      })(),
       caseLink,
       hasFolder: !!signals && signals.items > 0,
       docs: refundDocs(f, caseLink),
