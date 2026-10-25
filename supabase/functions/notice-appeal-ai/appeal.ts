@@ -1,7 +1,7 @@
 // notice-appeal-ai: the Appeal workspace's drafts (the firm's request of 25 October 2026): the
 // statement of facts, the grounds of appeal and the detailed written
 // submission for an appeal, drafted or improved from what the database hands
-// it (notice_appeal_ai_begin, migration 20261025170000): the case, the appeal
+// it (notice_appeal_ai_begin, migration 20261025180000): the case, the appeal
 // and the order appealed as read, every document of the case as read with the
 // evidence labels staff gave them, the firm's replies and positions in the
 // case, the appeal's other drafts, and precedents (the firm's appeals and

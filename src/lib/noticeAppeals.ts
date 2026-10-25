@@ -1,5 +1,5 @@
 // The Appeal workspace of a case (the firm's request of 25 October 2026): the
-// case's appeals (notice_case_appeals, migration 20261025170000), each keyed
+// case's appeals (notice_case_appeals, migration 20261025180000), each keyed
 // by the order it is against, and for each its three documents (statement of
 // facts, grounds of appeal, detailed written submission) kept in versions
 // (notice_appeal_drafts). The notice assistant drafts or improves a document

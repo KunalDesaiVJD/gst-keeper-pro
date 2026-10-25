@@ -119,7 +119,7 @@ const NoticeCasePage: React.FC = () => {
     if (v === 'portal') n.set('view', v); else n.delete('view');
     setSp(n, { replace: true });
   };
-  // 20261025170000: a case under appeal has two views, the case and its appeal (?side=appeal).
+  // 20261025180000: a case under appeal has two views, the case and its appeal (?side=appeal).
   const appealsAll = useCaseAppeals(clientId, c.data?.case_key ?? null);
   const appeals = useMemo(() => appealsShown(appealsAll.data), [appealsAll.data]);
   const side: 'case' | 'appeal' = sp.get('side') === 'appeal' && appeals.length > 0 ? 'appeal' : 'case';

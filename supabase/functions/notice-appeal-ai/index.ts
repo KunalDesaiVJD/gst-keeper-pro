@@ -1,5 +1,5 @@
 // notice-appeal-ai: the Appeal workspace's drafts (Notices §33, migration
-// 20261025170000). Drafts or improves an appeal's statement of facts, grounds
+// 20261025180000). Drafts or improves an appeal's statement of facts, grounds
 // of appeal or written submission (appeal.ts), reaching Claude the way
 // notice-ai does (the Claude CLI gateway when CLAUDE_CLI_GATEWAY_URL and
 // CLAUDE_CLI_GATEWAY_SECRET are set, else ANTHROPIC_API_KEY; NOTICE_AI_BACKEND=api
