@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { BuilderSectionHeader } from '@/components/builder/BuilderSectionHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/gstr9/badge';
@@ -198,7 +198,7 @@ const BuilderSettingsPage: React.FC = () => {
 
   return (
     <div className={WS_PAGE}>
-      <PageHeader
+      <BuilderSectionHeader
         compact
         embedded={embedded}
         title="Builder Setup"

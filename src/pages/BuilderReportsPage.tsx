@@ -1,3 +1,16 @@
+/**
+ * Builder Reports: the builder working papers as an audit file.
+ *
+ * Every paper is one ReportTable, built once and used twice: the preview on
+ * this page renders it, and the Excel / PDF exports lay out the very same
+ * object through the firm's Big-4 house style (src/lib/reportExport). So what
+ * staff check on screen is exactly what is filed, figure for figure.
+ *
+ * Papers are grouped as an audit file is: the return and its lead schedules,
+ * the unit and event workings behind them, and the client-facing statement.
+ * Each carries a W/P reference, its preparer and a sign-off sheet.
+ */
+
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
@@ -7,9 +20,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/gstr9/badge';
 import { KpiTile, Note, SectionCard } from '@/components/gstr9/ui';
-import {
-  WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TAB, WS_TAB_ACTIVE, WS_TABLE_WRAP, WS_TABS_LIST,
-} from '@/components/workspace/theme';
+import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE, WS_TABLE_WRAP, WS_TR_TOTAL } from '@/components/workspace/theme';
 import { B_TABLE, B_TD, B_TD_NUM, B_TH, B_TH_NUM, B_TR, B_TR_HEAD } from '@/components/builder/theme';
 import { cn } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/searchable-select';
@@ -19,66 +30,111 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { FolderDown, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
+import {
+  BookOpen, Building2, CalendarCheck, FileSpreadsheet, FileText, FolderDown, Landmark, Layers, Loader2,
+  RefreshCcw, RotateCcw, ScrollText, UserRound, Wallet, type LucideIcon,
+} from 'lucide-react';
 import { formatINR } from '@/utils/builderRates';
 import { prettyPeriodLabel } from '@/utils/builderLedger';
 import {
-  REPORT_DESCRIPTION, REPORT_LABEL, fetchBuWorking, fetchBuilderClients,
-  fetchPeriodReport, fetchPostedBuEvents, fetchProjectUnits, fetchProjects,
-  fetchFsiWorking, fetchUnitLedger,
+  REPORT_DESCRIPTION, REPORT_LABEL, fetchAdvanceRollforward, fetchBuWorking, fetchBuilderClients,
+  fetchDrc03Register, fetchFsiWorking, fetchItcReversalEvents, fetchItcReversalReport, fetchPeriodReport,
+  fetchPostedBuEvents, fetchProjectUnits, fetchProjects, fetchUnitLedger, fetchUnitRegister,
   type ReportContext, type ReportKind,
 } from '@/lib/builderReportData';
 import {
-  buWorkingTable, fsiWorkingTable, memberStatementTable, projectLiabilityTable,
-  returnWorkpaperTable, unitLedgerTable,
+  WP_REF, advanceRollforwardTable, buWorkingTable, drc03RegisterTable, fsiWorkingTable, itcReversalTable,
+  memberStatementTable, projectLiabilityTable, returnWorkpaperTable, unitLedgerTable, unitRegisterTable,
+  withWorkingPaperFrame,
 } from '@/utils/builderReportTables';
+import type { ReportTable } from '@/utils/allClientsReports';
 import { downloadReportXlsx } from '@/lib/reportExport/excel';
 import { downloadReportPdf } from '@/lib/reportExport/pdf';
 
 type Client = { id: string; name: string; gstin: string | null };
 type Project = { id: string; name: string; rera_number: string | null };
-type BuEvent = { id: string; bu_date: string; bu_ref_no: string | null; posting_period: string };
+type BuEvent = { id: string; label: string };
 type Unit = { id: string; unit_no: string; unit_type: string };
 
-const REPORTS: ReportKind[] = [
-  'RETURN_WORKPAPER', 'PROJECT_LIABILITY', 'BU_WORKING', 'FSI_WORKPAPER', 'UNIT_LEDGER', 'MEMBER_STATEMENT',
-];
+interface Need { project?: boolean; period?: boolean; event?: boolean; itcEvent?: boolean; unit?: boolean; fy?: boolean }
 
-/** What each report needs before it can be produced. */
-const NEEDS: Record<ReportKind, { project?: boolean; period?: boolean; event?: boolean; unit?: boolean }> = {
+/** What each paper needs before it can be produced. */
+const NEEDS: Record<ReportKind, Need> = {
   RETURN_WORKPAPER: { period: true },
   PROJECT_LIABILITY: { project: true, period: true },
+  UNIT_REGISTER: { project: true },
+  ADVANCE_ROLLFORWARD: { fy: true },
+  UNIT_LEDGER: { project: true, unit: true },
   BU_WORKING: { project: true, event: true },
   FSI_WORKPAPER: { project: true },
-  UNIT_LEDGER: { project: true, unit: true },
+  ITC_REVERSAL: { project: true, itcEvent: true },
+  DRC03_REGISTER: { project: true },
   MEMBER_STATEMENT: { project: true, unit: true },
 };
 
-interface Preview {
-  tiles: { label: string; value: string }[];
-  rows: string[][];
-  columns: string[];
-  truncated: number;
-}
+const ICON: Record<ReportKind, LucideIcon> = {
+  RETURN_WORKPAPER: FileText,
+  PROJECT_LIABILITY: Building2,
+  UNIT_REGISTER: Layers,
+  ADVANCE_ROLLFORWARD: Wallet,
+  UNIT_LEDGER: BookOpen,
+  BU_WORKING: CalendarCheck,
+  FSI_WORKPAPER: Landmark,
+  ITC_REVERSAL: RotateCcw,
+  DRC03_REGISTER: RefreshCcw,
+  MEMBER_STATEMENT: UserRound,
+};
+
+const GROUPS: { title: string; hint: string; kinds: ReportKind[] }[] = [
+  { title: 'Return & lead schedules', hint: 'What the period files and the schedules that support it', kinds: ['RETURN_WORKPAPER', 'PROJECT_LIABILITY', 'UNIT_REGISTER', 'ADVANCE_ROLLFORWARD'] },
+  { title: 'Workings', hint: 'Unit, completion and correction workings behind the figures', kinds: ['UNIT_LEDGER', 'BU_WORKING', 'FSI_WORKPAPER', 'ITC_REVERSAL', 'DRC03_REGISTER'] },
+  { title: 'Client-facing', hint: 'Statements to send to the member', kinds: ['MEMBER_STATEMENT'] },
+];
+
+const PREVIEW_ROWS = 200;
+
+/** The current financial year and the five before it, 'YYYY-YY'. */
+const fyOptions = (): string[] => {
+  const d = new Date();
+  const start = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
+  return Array.from({ length: 6 }, (_, i) => {
+    const y = start - i;
+    return `${y}-${String((y + 1) % 100).padStart(2, '0')}`;
+  });
+};
+
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const PLAIN = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
+/** Rates, areas, days and counts are not money: no forced paise. */
+const NOT_MONEY = /%|rate|carpet|sq m|days|units|documents|count|booked|key/i;
+const cellText = (v: string | number, header = ''): string => (
+  isNum(v) ? (NOT_MONEY.test(header) ? PLAIN.format(v) : formatINR(v)) : String(v ?? ''));
+/** A stat-band figure: money unless it is a whole count or its label says otherwise. */
+const kpiText = (label: string, v: string | number): string => (
+  isNum(v) ? (NOT_MONEY.test(label) || (Number.isInteger(v) && Math.abs(v) < 10000) ? PLAIN.format(v) : formatINR(v)) : v);
 
 const BuilderReportsPage: React.FC = () => {
-  const { canViewBuilderReports } = useAuth();
+  const { canViewBuilderReports, user } = useAuth();
   const { selectedClientId, setSelectedClientId } = useClient();
   const { selectedMonth, setSelectedMonth } = useMonth();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [events, setEvents] = useState<BuEvent[]>([]);
+  const [itcEvents, setItcEvents] = useState<BuEvent[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
 
   const [kind, setKind] = useState<ReportKind>('RETURN_WORKPAPER');
   const [projectId, setProjectId] = useState('');
   const [eventId, setEventId] = useState('');
+  const [itcEventId, setItcEventId] = useState('');
   const [unitId, setUnitId] = useState('');
+  const fys = useMemo(fyOptions, []);
+  const [fy, setFy] = useState(fys[0]);
 
-  const [preview, setPreview] = useState<Preview | null>(null);
+  const [table, setTable] = useState<ReportTable | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
+  const [isExporting, setIsExporting] = useState<'' | 'pdf' | 'xlsx'>('');
 
   const needs = NEEDS[kind];
 
@@ -93,9 +149,14 @@ const BuilderReportsPage: React.FC = () => {
   }, [selectedClientId]);
 
   useEffect(() => {
-    if (!projectId) { setEvents([]); setUnits([]); setEventId(''); setUnitId(''); return; }
-    void Promise.all([fetchPostedBuEvents(projectId), fetchProjectUnits(projectId)])
-      .then(([e, u]) => { setEvents(e); setUnits(u); setEventId(''); setUnitId(''); });
+    setEventId(''); setItcEventId(''); setUnitId('');
+    if (!projectId) { setEvents([]); setItcEvents([]); setUnits([]); return; }
+    void Promise.all([fetchPostedBuEvents(projectId), fetchProjectUnits(projectId), fetchItcReversalEvents(projectId)])
+      .then(([e, u, w]) => {
+        setEvents(e.map((x) => ({ id: x.id, label: `${x.bu_date}${x.bu_ref_no ? ` · ${x.bu_ref_no}` : ''}` })));
+        setUnits(u);
+        setItcEvents(w.map((x) => ({ id: x.bu_event_id, label: `Completion ${x.completion_date} · ${x.status.toLowerCase()}` })));
+      });
   }, [projectId]);
 
   const client = useMemo(() => clients.find((c) => c.id === selectedClientId), [clients, selectedClientId]);
@@ -104,142 +165,73 @@ const BuilderReportsPage: React.FC = () => {
   const ctx: ReportContext | null = useMemo(() => (client ? {
     clientName: client.name,
     clientGstin: client.gstin || '',
-    projectName: project?.name,
-    reraNumber: project?.rera_number || undefined,
-    periodMonth: selectedMonth,
-  } : null), [client, project, selectedMonth]);
+    projectName: needs.project || kind === 'ADVANCE_ROLLFORWARD' ? project?.name : undefined,
+    reraNumber: needs.project ? project?.rera_number || undefined : undefined,
+    periodMonth: needs.period ? selectedMonth : undefined,
+    financialYear: needs.fy ? fy : undefined,
+    preparedBy: user?.firstName || user?.email || undefined,
+  } : null), [client, project, selectedMonth, fy, needs, kind, user]);
 
-  /** Everything the selected report requires is chosen. */
-  const ready = !!client
-    && (!needs.project || !!projectId)
-    && (!needs.period || !!selectedMonth)
-    && (!needs.event || !!eventId)
-    && (!needs.unit || !!unitId);
+  const missing = !client ? 'Choose a builder client'
+    : needs.project && !projectId ? 'Choose a project'
+      : needs.event && !eventId ? 'Choose a posted BU event'
+        : needs.itcEvent && !itcEventId ? 'Choose an ITC reversal working'
+          : needs.unit && !unitId ? 'Choose a unit'
+            : needs.period && !selectedMonth ? 'Choose a period' : '';
+  const ready = !missing;
 
-  const missing = !client ? 'Select a client'
-    : needs.project && !projectId ? 'Select a project'
-      : needs.event && !eventId ? 'Select a posted BU event'
-        : needs.unit && !unitId ? 'Select a unit'
-          : needs.period && !selectedMonth ? 'Select a period' : '';
-
-  const load = useCallback(async () => {
-    if (!ready || !ctx) { setPreview(null); return; }
-    setIsLoading(true);
-    try {
-      if (kind === 'BU_WORKING') {
+  /** Build the paper — the same object the preview shows and the exports lay out. */
+  const build = useCallback(async (): Promise<ReportTable | null> => {
+    if (!ready || !ctx || !selectedClientId) return null;
+    let t: ReportTable | null = null;
+    switch (kind) {
+      case 'BU_WORKING': {
         const r = await fetchBuWorking(eventId);
-        if (!r) { setPreview(null); return; }
-        setPreview({
-          tiles: [
-            { label: 'Units in the event', value: String(r.rows.length) },
-            { label: 'Taxable at cut-off', value: String(r.taxable.length) },
-            { label: 'Unbooked at cut-off', value: String(r.unbooked.length) },
-            { label: 'Differential value', value: formatINR(r.totals.differentialValue) },
-            { label: 'Tax on differential', value: formatINR(r.totals.cgst + r.totals.sgst) },
-          ],
-          columns: ['Unit', 'Cut-off', 'Status', 'Agreement', 'Taxed to opening', 'Differential', 'Tax'],
-          rows: r.rows.slice(0, 12).map((u) => [
-            u.unitNo, u.cutOffDate, u.bookedAtCutOff ? 'Booked' : 'Unbooked — Sch. III',
-            formatINR(u.agreementValue), formatINR(u.valueTaxedUptoOpening),
-            u.bookedAtCutOff ? formatINR(u.differentialValue) : '—',
-            u.bookedAtCutOff ? formatINR(u.differentialCgst + u.differentialSgst) : '—',
-          ]),
-          truncated: Math.max(0, r.rows.length - 12),
-        });
-      } else if (kind === 'FSI_WORKPAPER') {
-        const r = await fetchFsiWorking(projectId);
-        setPreview({
-          tiles: [
-            { label: 'BU events with a working', value: String(r.lines.length) },
-            { label: 'FSI allocated', value: formatINR(r.totals.allocatedValue) },
-            { label: 'Residential RCM', value: formatINR(r.totals.residentialRcm) },
-            { label: 'Commercial RCM', value: formatINR(r.totals.commercialRcm) },
-            { label: 'Total → 3.1(d)', value: formatINR(r.totals.totalRcm) },
-          ],
-          columns: ['BU date', 'Posts to', 'Status', 'Allocated', 'Residential RCM', 'Commercial RCM', 'Total RCM'],
-          rows: r.lines.slice(0, 12).map((l) => [
-            l.buDate, prettyPeriodLabel(l.periodMonth), l.status,
-            formatINR(l.allocatedValue), formatINR(l.residentialRcm), formatINR(l.commercialRcm), formatINR(l.totalRcm),
-          ]),
-          truncated: Math.max(0, r.lines.length - 12),
-        });
-      } else if (kind === 'PROJECT_LIABILITY' || kind === 'RETURN_WORKPAPER') {
-        const r = await fetchPeriodReport({
-          clientId: selectedClientId,
-          periodMonth: selectedMonth,
-          projectId: kind === 'PROJECT_LIABILITY' ? projectId : undefined,
-        });
-        const t = r.summary.totals;
-        setPreview({
-          tiles: [
-            { label: 'Outward taxable value', value: formatINR(t.taxableValue) },
-            { label: 'Outward tax', value: formatINR(t.totalTax) },
-            { label: 'Reverse charge on FSI', value: formatINR(r.fsiTotal) },
-            { label: 'Documents', value: String(r.documents.length) },
-          ],
-          columns: ['Rate', 'Documents', 'Taxable value', 'CGST', 'SGST', 'Total tax'],
-          rows: r.summary.outward.map((b) => [
-            `${b.ratePct}% (eff. ${b.effectiveRatePct}%)`, String(b.count),
-            formatINR(b.taxableValue), formatINR(b.cgst), formatINR(b.sgst), formatINR(b.totalTax),
-          ]),
-          truncated: 0,
-        });
-      } else {
-        const r = await fetchUnitLedger(unitId);
-        if (!r) { setPreview(null); return; }
-        setPreview({
-          tiles: [
-            { label: 'Agreement value', value: formatINR(r.agreementValue) },
-            { label: 'Value taxed', value: formatINR(r.totals.valueTaxed) },
-            { label: 'Balance to tax', value: formatINR(r.balanceToTax) },
-            { label: 'Received', value: formatINR(r.totals.received) },
-            { label: 'Tax discharged', value: formatINR(r.totals.cgst + r.totals.sgst) },
-          ],
-          columns: ['Date', 'Entry', 'Reference', 'Consideration', 'Tax', 'Value taxed to date'],
-          rows: r.entries.slice(0, 12).map((e) => [
-            e.date, e.kind, e.status || e.reference,
-            formatINR(e.consideration), formatINR(e.cgst + e.sgst),
-            formatINR(e.runningValueTaxed),
-          ]),
-          truncated: Math.max(0, r.entries.length - 12),
-        });
+        t = r ? buWorkingTable(ctx, r) : null; break;
       }
-    } catch (e) {
-      toast.error(`Could not build the report: ${(e as Error).message}`);
-      setPreview(null);
-    } finally {
-      setIsLoading(false);
+      case 'FSI_WORKPAPER': t = fsiWorkingTable(ctx, await fetchFsiWorking(projectId)); break;
+      case 'PROJECT_LIABILITY':
+        t = projectLiabilityTable(ctx, await fetchPeriodReport({ clientId: selectedClientId, periodMonth: selectedMonth, projectId })); break;
+      case 'RETURN_WORKPAPER':
+        t = returnWorkpaperTable(ctx, await fetchPeriodReport({ clientId: selectedClientId, periodMonth: selectedMonth })); break;
+      case 'UNIT_REGISTER': t = unitRegisterTable(ctx, await fetchUnitRegister(selectedClientId, projectId)); break;
+      case 'ADVANCE_ROLLFORWARD':
+        t = advanceRollforwardTable(ctx, await fetchAdvanceRollforward({ clientId: selectedClientId, fy, projectId: projectId || undefined })); break;
+      case 'ITC_REVERSAL': {
+        const r = await fetchItcReversalReport(projectId, itcEventId);
+        t = r ? itcReversalTable(ctx, r) : null; break;
+      }
+      case 'DRC03_REGISTER': t = drc03RegisterTable(ctx, await fetchDrc03Register(projectId)); break;
+      case 'UNIT_LEDGER':
+      case 'MEMBER_STATEMENT': {
+        const r = await fetchUnitLedger(unitId);
+        t = r ? (kind === 'UNIT_LEDGER' ? unitLedgerTable(ctx, r) : memberStatementTable(ctx, r)) : null; break;
+      }
     }
-  }, [ready, ctx, kind, eventId, unitId, projectId, selectedClientId, selectedMonth]);
+    return t ? withWorkingPaperFrame(t, kind, ctx) : null;
+  }, [ready, ctx, kind, eventId, itcEventId, unitId, projectId, selectedClientId, selectedMonth, fy]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    let live = true;
+    if (!ready) { setTable(null); return; }
+    setIsLoading(true);
+    build()
+      .then((t) => { if (live) setTable(t); })
+      .catch((e) => { if (live) { toast.error(`Could not build the paper: ${(e as Error).message}`); setTable(null); } })
+      .finally(() => { if (live) setIsLoading(false); });
+    return () => { live = false; };
+  }, [build, ready]);
 
   const exportAs = async (format: 'pdf' | 'xlsx') => {
-    if (!ready || !ctx) return;
-    setIsExporting(true);
+    if (!table) return;
+    setIsExporting(format);
     try {
-      let table;
-      if (kind === 'BU_WORKING') {
-        const r = await fetchBuWorking(eventId);
-        if (!r) throw new Error('BU event not found');
-        table = buWorkingTable(ctx, r);
-      } else if (kind === 'FSI_WORKPAPER') {
-        table = fsiWorkingTable(ctx, await fetchFsiWorking(projectId));
-      } else if (kind === 'PROJECT_LIABILITY') {
-        table = projectLiabilityTable(ctx, await fetchPeriodReport({ clientId: selectedClientId, periodMonth: selectedMonth, projectId }));
-      } else if (kind === 'RETURN_WORKPAPER') {
-        table = returnWorkpaperTable(ctx, await fetchPeriodReport({ clientId: selectedClientId, periodMonth: selectedMonth }));
-      } else {
-        const r = await fetchUnitLedger(unitId);
-        if (!r) throw new Error('Unit not found');
-        table = kind === 'UNIT_LEDGER' ? unitLedgerTable(ctx, r) : memberStatementTable(ctx, r);
-      }
       await (format === 'pdf' ? downloadReportPdf : downloadReportXlsx)(table);
       toast.success(`${REPORT_LABEL[kind]} exported`);
     } catch (e) {
       toast.error(`Export failed: ${(e as Error).message}`);
     } finally {
-      setIsExporting(false);
+      setIsExporting('');
     }
   };
 
@@ -264,202 +256,295 @@ const BuilderReportsPage: React.FC = () => {
     );
   }
 
+  const numericCols = table
+    ? table.headers.map((_, ci) => table.rows.some((r) => isNum(r[ci])))
+    : [];
+  const shownRows = table ? table.rows.slice(0, PREVIEW_ROWS) : [];
+  const isTotalRow = (row: (string | number)[], ri: number) =>
+    table?.rowKinds?.[ri] === 'total' || String(row[0]).toLowerCase() === 'total';
+
   return (
     <div className={WS_PAGE}>
       <PageHeader
         compact
         title="Builder Reports"
-        subtitle="Working papers and client statements, in Excel and PDF"
+        subtitle="Audit-style working papers and client statements"
         icon={<FolderDown />}
-        actions={
+        actions={(
           <>
-            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => exportAs('xlsx')} disabled={!ready || isExporting}>
-              {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => exportAs('xlsx')} disabled={!table || !!isExporting}>
+              {isExporting === 'xlsx' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
               Excel
             </Button>
-            <Button size="sm" className={WS_BTN} onClick={() => exportAs('pdf')} disabled={!ready || isExporting}>
-              {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+            <Button size="sm" className={WS_BTN} onClick={() => exportAs('pdf')} disabled={!table || !!isExporting}>
+              {isExporting === 'pdf' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
               PDF
             </Button>
           </>
-        }
+        )}
       />
 
-      <div className="space-y-1">
-        <div className={WS_TABS_LIST} role="tablist" aria-label="Report">
-          {REPORTS.map((k) => (
-            <button
-              key={k}
-              type="button"
-              role="tab"
-              aria-selected={kind === k}
-              className={cn(WS_TAB, kind === k && WS_TAB_ACTIVE)}
-              onClick={() => setKind(k)}
-            >
-              {REPORT_LABEL[k]}
-            </button>
+      <div className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
+        {/* ── The file index ───────────────────────────────────────────── */}
+        <nav aria-label="Working papers" className="space-y-3">
+          {GROUPS.map((g) => (
+            <div key={g.title} className="space-y-1">
+              <div className="px-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{g.title}</p>
+                <p className="text-[11px] text-muted-foreground/80">{g.hint}</p>
+              </div>
+              <div className="space-y-1" role="tablist">
+                {g.kinds.map((k) => {
+                  const Icon = ICON[k];
+                  const on = kind === k;
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      role="tab"
+                      aria-selected={on}
+                      onClick={() => setKind(k)}
+                      className={cn(
+                        'flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        on ? 'border-primary bg-primary text-primary-foreground shadow-sm' : 'bg-card hover:bg-muted/60',
+                      )}
+                    >
+                      <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', on ? 'text-primary-foreground' : 'text-primary')} />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5 text-sm font-medium leading-tight">
+                          {REPORT_LABEL[k]}
+                        </span>
+                      </span>
+                      <span
+                        className={cn(
+                          'shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px]',
+                          on ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground',
+                        )}
+                      >
+                        {WP_REF[k]}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ))}
-        </div>
-        <p className="text-xs text-muted-foreground">{REPORT_DESCRIPTION[kind]}</p>
-      </div>
+        </nav>
 
-      <Card>
-        <CardContent className="px-3 py-2">
-          <div className="flex flex-wrap items-start gap-2">
-            <label className="min-w-[220px] max-w-xs flex-1 space-y-0.5">
-              <span className={WS_FILTER_LABEL}>Builder client</span>
-              <SearchableSelect
-                options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
-                value={selectedClientId || ''}
-                onValueChange={setSelectedClientId}
-                placeholder="Search builder client..."
-                searchPlaceholder="Type to search..."
-                emptyText="No builder clients found."
-                className={WS_CONTROL}
-              />
-            </label>
+        <div className="min-w-0 space-y-3">
+          <Card>
+            <CardContent className="space-y-2 px-3 py-2.5">
+              <div className="flex items-start gap-2">
+                <ScrollText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold leading-tight">
+                    {REPORT_LABEL[kind]} <span className="font-mono text-xs font-normal text-muted-foreground">W/P {WP_REF[kind]}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">{REPORT_DESCRIPTION[kind]}</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="min-w-[220px] max-w-xs flex-1 space-y-0.5">
+                  <span className={WS_FILTER_LABEL}>Builder client</span>
+                  <SearchableSelect
+                    options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
+                    value={selectedClientId || ''}
+                    onValueChange={setSelectedClientId}
+                    placeholder="Search builder client..."
+                    searchPlaceholder="Type to search..."
+                    emptyText="No builder clients found."
+                    className={WS_CONTROL}
+                  />
+                </label>
 
-            {needs.project && (
-              <label className="w-56 space-y-0.5">
-                <span className={WS_FILTER_LABEL}>Project</span>
-                <Select value={projectId} onValueChange={setProjectId}>
-                  <SelectTrigger className={WS_CONTROL} aria-label="Project"><SelectValue placeholder="Select project" /></SelectTrigger>
-                  <SelectContent>
-                    {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </label>
-            )}
+                {(needs.project || kind === 'ADVANCE_ROLLFORWARD') && (
+                  <label className="w-56 space-y-0.5">
+                    <span className={WS_FILTER_LABEL}>Project{kind === 'ADVANCE_ROLLFORWARD' ? ' (optional)' : ''}</span>
+                    <Select
+                      value={projectId || (kind === 'ADVANCE_ROLLFORWARD' ? 'ALL' : '')}
+                      onValueChange={(v) => setProjectId(v === 'ALL' ? '' : v)}
+                    >
+                      <SelectTrigger className={WS_CONTROL} aria-label="Project"><SelectValue placeholder="Select project" /></SelectTrigger>
+                      <SelectContent>
+                        {kind === 'ADVANCE_ROLLFORWARD' && <SelectItem value="ALL">All projects</SelectItem>}
+                        {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                )}
 
-            {needs.period && (
-              <label className="w-48 space-y-0.5">
-                <span className={WS_FILTER_LABEL}>Period</span>
-                <SearchableMonthSelect
-                  options={monthOptions}
-                  value={selectedMonth}
-                  onValueChange={setSelectedMonth}
-                  placeholder="Select period"
-                  className={WS_CONTROL}
-                />
-              </label>
-            )}
+                {needs.period && (
+                  <label className="w-48 space-y-0.5">
+                    <span className={WS_FILTER_LABEL}>Period</span>
+                    <SearchableMonthSelect
+                      options={monthOptions}
+                      value={selectedMonth}
+                      onValueChange={setSelectedMonth}
+                      placeholder="Select period"
+                      className={WS_CONTROL}
+                    />
+                  </label>
+                )}
 
-            {needs.event && (
-              <label className="w-64 space-y-0.5">
-                <span className={WS_FILTER_LABEL}>BU event</span>
-                <Select value={eventId} onValueChange={setEventId}>
-                  <SelectTrigger className={WS_CONTROL} aria-label="BU event"><SelectValue placeholder="Select a posted BU event" /></SelectTrigger>
-                  <SelectContent>
-                    {events.map((e) => (
-                      <SelectItem key={e.id} value={e.id}>
-                        {e.bu_date}{e.bu_ref_no ? ` · ${e.bu_ref_no}` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {projectId && events.length === 0 && (
-                  <span className="block text-[11px] text-muted-foreground">
-                    No posted BU events in this project.
+                {needs.fy && (
+                  <label className="w-36 space-y-0.5">
+                    <span className={WS_FILTER_LABEL}>Financial year</span>
+                    <Select value={fy} onValueChange={setFy}>
+                      <SelectTrigger className={WS_CONTROL} aria-label="Financial year"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {fys.map((f) => <SelectItem key={f} value={f}>FY {f}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                )}
+
+                {needs.event && (
+                  <EventPicker label="BU event" value={eventId} onChange={setEventId} options={events}
+                    empty={projectId ? 'No posted BU events in this project.' : ''} />
+                )}
+                {needs.itcEvent && (
+                  <EventPicker label="ITC reversal working" value={itcEventId} onChange={setItcEventId} options={itcEvents}
+                    empty={projectId ? 'No ITC reversal working in this project yet.' : ''} />
+                )}
+
+                {needs.unit && (
+                  <label className="w-48 space-y-0.5">
+                    <span className={WS_FILTER_LABEL}>Unit</span>
+                    <SearchableSelect
+                      options={units.map((u) => ({ value: u.id, label: u.unit_no, sublabel: u.unit_type }))}
+                      value={unitId}
+                      onValueChange={setUnitId}
+                      placeholder="Select unit"
+                      searchPlaceholder="Type a unit number..."
+                      emptyText="No units."
+                      className={WS_CONTROL}
+                    />
+                  </label>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {!ready && (
+            <Card>
+              <CardContent className="px-4 py-10 text-center text-sm text-muted-foreground">
+                <FolderDown className="mx-auto mb-2 h-6 w-6 opacity-40" />
+                {missing} to build this paper.
+              </CardContent>
+            </Card>
+          )}
+
+          {ready && isLoading && (
+            <Card>
+              <CardContent className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Building the paper…
+              </CardContent>
+            </Card>
+          )}
+
+          {ready && !isLoading && !table && (
+            <Card>
+              <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
+                Nothing found for this selection.
+              </CardContent>
+            </Card>
+          )}
+
+          {ready && !isLoading && table && (
+            <>
+              {/* Identification strip, as the exported paper prints it. */}
+              {table.meta && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-md border bg-muted/40 px-3 py-1.5 text-xs">
+                  {table.meta.map((m) => (
+                    <span key={m.label}><span className="text-muted-foreground">{m.label}:</span> <span className="font-medium">{m.value}</span></span>
+                  ))}
+                </div>
+              )}
+
+              {table.kpis && table.kpis.length > 0 && (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                  {table.kpis.map((k) => (
+                    <KpiTile
+                      key={k.label}
+                      label={k.label}
+                      value={kpiText(k.label, k.value)}
+                      hint={k.note}
+                      tone={k.tone === 'bad' ? 'error' : k.tone === 'warn' ? 'warn' : k.tone === 'good' ? 'ok' : 'neutral'}
+                    />
+                  ))}
+                </div>
+              )}
+
+              <SectionCard
+                title={(
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    {table.title}
+                    <Badge variant="outline" className="text-[10px] font-medium">Preview</Badge>
                   </span>
                 )}
-              </label>
-            )}
-
-            {needs.unit && (
-              <label className="w-48 space-y-0.5">
-                <span className={WS_FILTER_LABEL}>Unit</span>
-                <Select value={unitId} onValueChange={setUnitId}>
-                  <SelectTrigger className={WS_CONTROL} aria-label="Unit"><SelectValue placeholder="Select unit" /></SelectTrigger>
-                  <SelectContent>
-                    {units.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>{u.unit_no}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {!ready && (
-        <Card>
-          <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
-            <FolderDown className="mx-auto mb-2 h-6 w-6 opacity-40" />
-            {missing} to build this report.
-          </CardContent>
-        </Card>
-      )}
-
-      {isLoading && (
-        <Card>
-          <CardContent className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Building…
-          </CardContent>
-        </Card>
-      )}
-
-      {ready && !isLoading && preview && (
-        <>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-            {preview.tiles.map((t) => (
-              <KpiTile key={t.label} label={t.label} value={t.value} />
-            ))}
-          </div>
-
-          <SectionCard
-            title={(
-              <span className="flex items-center gap-1.5">
-                {REPORT_LABEL[kind]}
-                <Badge variant="outline" className="text-[10px] font-medium">Preview</Badge>
-              </span>
-            )}
-            description="The exported file carries the full detail; this is the first slice of it."
-          >
-            {preview.rows.length === 0 ? (
-              <p className="py-4 text-center text-sm text-muted-foreground">
-                Nothing to report for this selection.
-              </p>
-            ) : (
-              <>
-                <Table className={B_TABLE} containerClassName={cn(WS_TABLE_WRAP, 'max-h-[70vh]')}>
-                  <TableHeader>
-                    <TableRow className={B_TR_HEAD}>
-                      {preview.columns.map((c, i) => (
-                        <TableHead key={c} className={i >= 3 ? B_TH_NUM : B_TH}>{c}</TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {preview.rows.map((row, ri) => (
-                      <TableRow key={ri} className={B_TR}>
-                        {row.map((cell, ci) => (
-                          <TableCell key={ci} className={ci >= 3 ? B_TD_NUM : B_TD}>
-                            {cell}
-                          </TableCell>
+                description={table.rows.length > PREVIEW_ROWS
+                  ? `First ${PREVIEW_ROWS} of ${table.rows.length} rows. The export carries every row and column.`
+                  : 'Exactly the figures the export carries. The Excel copy keeps numbers as numbers, so it foots and pivots.'}
+              >
+                {shownRows.length === 0 ? (
+                  <p className="py-4 text-center text-sm text-muted-foreground">Nothing to report for this selection.</p>
+                ) : (
+                  <Table className={B_TABLE} containerClassName={cn(WS_TABLE_WRAP, 'max-h-[65vh]')}>
+                    <TableHeader>
+                      <TableRow className={B_TR_HEAD}>
+                        {table.headers.map((h, ci) => (
+                          <TableHead key={h} className={numericCols[ci] ? B_TH_NUM : B_TH}>{h}</TableHead>
                         ))}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {preview.truncated > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    {preview.truncated} more row{preview.truncated > 1 ? 's' : ''} in the export.
-                  </p>
+                    </TableHeader>
+                    <TableBody>
+                      {shownRows.map((row, ri) => (
+                        <TableRow key={ri} className={cn(B_TR, isTotalRow(row, ri) && WS_TR_TOTAL)}>
+                          {row.map((cell, ci) => (
+                            <TableCell key={ci} className={cn(numericCols[ci] ? B_TD_NUM : B_TD, 'whitespace-nowrap')}>
+                              {cellText(cell, table.headers[ci])}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 )}
-              </>
-            )}
-          </SectionCard>
+              </SectionCard>
 
-          <Note>
-            Every figure is read back from what the engines already computed and stored, so a working
-            paper cannot disagree with the return it supports. In the Excel copy the numbers are real
-            numbers, not formatted text — they can be footed and pivoted directly.
-          </Note>
-        </>
-      )}
+              {(table.extraSheets || []).filter((x) => x.name !== 'Sign-off').length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Also in the export:{' '}
+                  {(table.extraSheets || []).map((x) => x.title).join(' · ')}.
+                </p>
+              )}
+
+              <Note>
+                Every figure is read back from what the engines already computed and stored, so a working paper cannot
+                disagree with the return it supports. Each export carries its W/P reference, preparer and a sign-off
+                sheet for the reviewer and partner.
+              </Note>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
+
+const EventPicker: React.FC<{
+  label: string; value: string; onChange: (v: string) => void; options: BuEvent[]; empty: string;
+}> = ({ label, value, onChange, options, empty }) => (
+  <label className="w-64 space-y-0.5">
+    <span className={WS_FILTER_LABEL}>{label}</span>
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className={WS_CONTROL} aria-label={label}><SelectValue placeholder={`Select ${label.toLowerCase()}`} /></SelectTrigger>
+      <SelectContent>
+        {options.map((e) => <SelectItem key={e.id} value={e.id}>{e.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
+    {options.length === 0 && empty && <span className="block text-[11px] text-muted-foreground">{empty}</span>}
+  </label>
+);
 
 export default BuilderReportsPage;

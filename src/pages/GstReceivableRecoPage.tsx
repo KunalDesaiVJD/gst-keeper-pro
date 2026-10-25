@@ -29,6 +29,7 @@ import {
 } from '@/utils/parseElectronicCreditLedgerCsv';
 import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
 import { fetchFiledFigures } from '@/lib/itcAutoLink';
+import { fetchFsiCredit } from '@/lib/builderFsiCredit';
 import { utilisedFromLedger } from '@/lib/gstReceivableRecoCalc';
 import ManualSourceAllowanceControl from '@/components/manualSource/ManualSourceAllowanceControl';
 import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
@@ -526,9 +527,14 @@ const GstReceivableRecoPage: React.FC = () => {
               { cgst: 0, sgst: 0, igst: 0 }
             );
         }
-        // Net ITC Available (4C) = 4A − 4B
-        setAvailedCgst(total4A.cgst - total4B.cgst);
-        setAvailedSgst(total4A.sgst - total4B.sgst);
+        // Net ITC Available (4C) = 4A − 4B, plus the FSI reverse charge's
+        // commercial-leg credit, claimed in 4A(3) and never carpet-apportioned
+        // (builderFsiCredit.ts), as computeGstReceivableRecoDiff and the DB do.
+        const fsiCredit = prevMonth
+          ? await fetchFsiCredit(selectedClientId, prevMonth).catch(() => ({ igst: 0, cgst: 0, sgst: 0 }))
+          : { igst: 0, cgst: 0, sgst: 0 };
+        setAvailedCgst(total4A.cgst - total4B.cgst + fsiCredit.cgst);
+        setAvailedSgst(total4A.sgst - total4B.sgst + fsiCredit.sgst);
         setAvailedIgst(total4A.igst - total4B.igst);
       } else {
         setHasItcSummary(!!itcData?.data);

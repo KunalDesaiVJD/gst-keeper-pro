@@ -74,3 +74,7 @@
 20261014110000_sync_scope_notice_exclude.sql
 20261014120000_not_important_and_paper_dates.sql
 20261024100000_notice_case_chains.sql
+20261024110000_notice_case_links_owned.sql
+20261024120000_notice_case_applications.sql
+20261025100000_notice_case_link_review.sql
+20261025140000_notice_case_timeline.sql

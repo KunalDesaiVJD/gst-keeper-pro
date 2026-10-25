@@ -24,10 +24,11 @@ interface UnitRow {
   id: string; project_id: string; unit_no: string; unit_type: UnitType;
   carpet_area_sqm: number; base_consideration: number; status: string;
   group_id: string | null; bu_event_id: string | null;
+  onboarding_status?: 'LIVE' | 'CLOSED_PRE_ONBOARDING' | null;
 }
 interface GroupRow { id: string; project_id: string; name: string; sort_order: number }
 interface ChargeRow { unit_id: string; charge_head: string; amount: number; include_override: boolean | null }
-interface BookingRow { id: string; unit_id: string; status: string; total_consideration: number }
+interface BookingRow { id: string; unit_id: string; status: string; total_consideration: number; booking_date?: string | null }
 interface MemberRow { booking_id: string; name: string; ownership_ratio: number; sort_order: number }
 interface ReceiptRow {
   id: string; unit_id: string; consideration: number; cgst: number; sgst: number;
@@ -266,4 +267,80 @@ export async function fetchClientBulkOpeningUnits(clientId: string): Promise<Bul
       } : undefined,
     };
   });
+}
+
+/** One unit's position for the unit register (lead schedule) working paper. */
+export interface UnitPosition {
+  unitId: string;
+  projectId: string;
+  projectName: string;
+  groupLabel: string | null;
+  unitNo: string;
+  unitType: UnitType;
+  carpetAreaSqM: number;
+  rateCode: string;
+  ratePct: number;
+  effectiveRatePct: number;
+  isAffordable: boolean;
+  valueHeadroom: number;
+  impliedByReceipts: boolean;
+  status: string;
+  bookingDate: string | null;
+  primaryMember: string | null;
+  agreementValue: number;
+  valueTaxed: number;
+  openAdvance: number;
+  totalReceived: number;
+  tds: number;
+  balanceToTax: number;
+  closedAtBu: boolean;
+  closedPreOnboarding: boolean;
+}
+
+/**
+ * Every unit of a client (or one project) with the same classification and
+ * ledger the Ledger tab shows, for the unit register working paper. Read with
+ * the bulk runs' loader, so the register can never disagree with them.
+ */
+export async function fetchClientUnitPositions(clientId: string, projectId?: string): Promise<UnitPosition[]> {
+  const ctx = await loadClientBulkContext(clientId);
+  if (!ctx) return [];
+  const projName = new Map(ctx.projects.map((p) => [p.id, p.name]));
+  const groupName = (u: UnitRow) => ctx.groups.find((g) => g.id === u.group_id)?.name || null;
+  return sortUnits(ctx)
+    .filter((u) => !projectId || u.project_id === projectId)
+    .map((u) => {
+      const bookings = ctx.bookingsByUnit[u.id] || [];
+      const booking = bookings.find((b) => b.status === 'Active') || null;
+      const cls = classifyOne(ctx, u);
+      const agreement = ctx.openingsByUnit[u.id]?.agreement_value || cls.gross.gross;
+      const led = ledgerOne(ctx, u, agreement);
+      const member = booking ? (ctx.membersByBooking[booking.id] || [])[0] : undefined;
+      return {
+        unitId: u.id,
+        projectId: u.project_id,
+        projectName: projName.get(u.project_id) || '',
+        groupLabel: groupName(u),
+        unitNo: u.unit_no,
+        unitType: u.unit_type,
+        carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
+        rateCode: cls.rateCode,
+        ratePct: cls.ratePct,
+        effectiveRatePct: cls.effectiveRatePct,
+        isAffordable: cls.affordable.isAffordable,
+        valueHeadroom: cls.affordable.valueHeadroom,
+        impliedByReceipts: cls.gross.impliedByReceipts,
+        status: u.status,
+        bookingDate: booking?.booking_date || null,
+        primaryMember: member?.name || null,
+        agreementValue: agreement,
+        valueTaxed: led.valueTaxed,
+        openAdvance: led.openAdvance,
+        totalReceived: led.totalReceived,
+        tds: led.totalTds194ia,
+        balanceToTax: led.balanceToTax,
+        closedAtBu: !!u.bu_event_id,
+        closedPreOnboarding: u.onboarding_status === 'CLOSED_PRE_ONBOARDING',
+      };
+    });
 }

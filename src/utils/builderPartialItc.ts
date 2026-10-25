@@ -93,12 +93,19 @@ export const computePartialItcSplit = (params: {
   section4B: (ItcRowLike & { particular: string })[];
   commercialArea: number;
   residentialArea: number;
+  /**
+   * Credit in Total 4A attributable wholly to the commercial units (the FSI
+   * reverse charge's commercial leg, builderFsiCredit.ts): not common credit,
+   * so left out of the base the residential share is taken from.
+   */
+  exclusiveItc?: ItcTotals | null;
 }): PartialItcSplit | null => {
   const totalArea = params.commercialArea + params.residentialArea;
   if (totalArea === 0) return null;
   const residentialRatio = params.residentialArea / totalArea;
 
-  const total4AValues = computeTotal4A(params.section4A);
+  const ex = params.exclusiveItc || ZERO;
+  const total4AValues = sum4(computeTotal4A(params.section4A), ex, -1);
   const onITCAsPerA: ItcTotals = {
     igst: round2(total4AValues.igst * residentialRatio),
     cgst: round2(total4AValues.cgst * residentialRatio),

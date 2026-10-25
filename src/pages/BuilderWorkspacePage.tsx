@@ -28,6 +28,7 @@ import { useMonth } from '@/contexts/MonthContext';
 import { BuilderWorkspaceProvider } from '@/contexts/BuilderWorkspaceContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/gstr9/badge';
+import { KpiTile } from '@/components/gstr9/ui';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { WS_BTN, WS_CONTROL, WS_FILTER_LABEL, WS_PAGE } from '@/components/workspace/theme';
@@ -39,13 +40,15 @@ import {
 } from '@/components/ui/select';
 import {
   Building, Layers, CalendarCheck, FileSpreadsheet, AlertTriangle, Settings2, Landmark,
-  Wallet, Loader2, ChevronLeft, ChevronRight, RotateCcw,
+  Wallet, Loader2, ChevronLeft, ChevronRight, RotateCcw, MapPin,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { formatINR } from '@/utils/builderRates';
 import { isFsiConsentBlocked } from '@/lib/builderFsiData';
-import { fetchClientBulkOpeningUnits, fetchClientBulkReceiptUnits } from '@/lib/builderClientBulkData';
+import {
+  fetchClientBulkOpeningUnits, fetchClientBulkReceiptUnits, fetchClientUnitPositions,
+} from '@/lib/builderClientBulkData';
 
 import BuilderSettingsPage from './BuilderSettingsPage';
 import BuilderProjectsPage from './BuilderProjectsPage';
@@ -61,14 +64,26 @@ import BulkReceiptsDialog, { type BulkReceiptUnit } from '@/components/builder/B
 import BulkOpeningBalancesDialog, { type BulkOpeningUnit } from '@/components/builder/BulkOpeningBalancesDialog';
 
 const TABS = [
-  { key: 'ledger', label: 'Ledger', icon: <Layers className="h-3.5 w-3.5" /> },
-  { key: 'bu', label: 'BU Working', icon: <CalendarCheck className="h-3.5 w-3.5" /> },
-  { key: 'fsi', label: 'TDR / FSI', icon: <Landmark className="h-3.5 w-3.5" /> },
-  { key: 'itc', label: 'ITC Reversal', icon: <RotateCcw className="h-3.5 w-3.5" /> },
-  { key: 'returns', label: 'Returns', icon: <FileSpreadsheet className="h-3.5 w-3.5" /> },
+  { key: 'ledger', label: 'Ledger', caption: 'Units, receipts, invoices', icon: <Layers className="h-3.5 w-3.5" /> },
+  { key: 'bu', label: 'BU Working', caption: 'Completion & differential', icon: <CalendarCheck className="h-3.5 w-3.5" /> },
+  { key: 'fsi', label: 'TDR / FSI', caption: 'Reverse charge, 3.1(d)', icon: <Landmark className="h-3.5 w-3.5" /> },
+  { key: 'itc', label: 'ITC Reversal', caption: 'Rules 42 / 43 at BU', icon: <RotateCcw className="h-3.5 w-3.5" /> },
+  { key: 'returns', label: 'Returns', caption: 'GSTR-1 & 3B for the month', icon: <FileSpreadsheet className="h-3.5 w-3.5" /> },
 ];
 
-interface ClientRow { id: string; name: string; gstin: string | null }
+/** How the client's credit is treated, in the words staff use (positions §7). */
+const ITC_TYPE: Record<string, { label: string; hint: string }> = {
+  NO_ITC: { label: 'No ITC', hint: 'Every month\'s credit is reversed in full (1% / 5% scheme)' },
+  PARTIAL_ITC: { label: 'Partial ITC', hint: 'Credit apportioned by carpet area, commercial share kept' },
+  CLAIM_ITC: { label: 'Claims ITC', hint: 'Credit claimed in full' },
+};
+
+interface ClientRow { id: string; name: string; gstin: string | null; builder_itc_type: string | null }
+
+interface Snapshot {
+  units: number; booked: number; closed: number;
+  agreement: number; valueTaxed: number; openAdvance: number; balanceToTax: number; overTaxed: number;
+}
 type ProjectRow = BuilderProjectFormRow;
 
 const BuilderWorkspacePage: React.FC = () => {
@@ -83,6 +98,7 @@ const BuilderWorkspacePage: React.FC = () => {
   const [postingCount, setPostingCount] = useState(0);
   const [periodTax, setPeriodTax] = useState(0);
   const [showSetup, setShowSetup] = useState(false);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
 
   // Client-wide bulk runs — every project the client has, in one grid.
@@ -143,7 +159,7 @@ const BuilderWorkspacePage: React.FC = () => {
   useEffect(() => {
     (async () => {
       const { data } = await supabase
-        .from('clients').select('id, name, gstin')
+        .from('clients').select('id, name, gstin, builder_itc_type')
         .eq('regular_sub_type', 'Builder').order('name');
       setClients((data || []) as ClientRow[]);
     })();
@@ -186,6 +202,52 @@ const BuilderWorkspacePage: React.FC = () => {
     })();
   }, [selectedClientId, selectedMonth, tab]);
 
+  // The project's position at a glance, read through the same loader the bulk
+  // runs use, so it agrees with the Ledger to the rupee. Refreshed whenever the
+  // Ledger reloads (every save there ends in one) or a bulk run writes.
+  const loadSnapshot = useCallback(async () => {
+    if (!selectedClientId || !projectId) { setSnapshot(null); return; }
+    try {
+      const units = await fetchClientUnitPositions(selectedClientId, projectId);
+      const sum = (f: (u: typeof units[number]) => number) => units.reduce((a, u) => a + f(u), 0);
+      setSnapshot({
+        units: units.length,
+        booked: units.filter((u) => !!u.bookingDate && u.status !== 'Cancelled').length,
+        closed: units.filter((u) => u.closedAtBu || u.closedPreOnboarding).length,
+        agreement: sum((u) => u.agreementValue),
+        valueTaxed: sum((u) => u.valueTaxed),
+        openAdvance: sum((u) => u.openAdvance),
+        balanceToTax: sum((u) => Math.max(0, u.balanceToTax)),
+        overTaxed: units.filter((u) => u.balanceToTax < -1).length,
+      });
+    } catch {
+      setSnapshot(null);
+    }
+  }, [selectedClientId, projectId]);
+
+  useEffect(() => { void loadSnapshot(); }, [loadSnapshot, tab]);
+  useEffect(() => {
+    const again = () => { void loadSnapshot(); };
+    window.addEventListener('builder:ledger-loaded', again);
+    window.addEventListener('builder:data-changed', again);
+    return () => {
+      window.removeEventListener('builder:ledger-loaded', again);
+      window.removeEventListener('builder:data-changed', again);
+    };
+  }, [loadSnapshot]);
+
+  // The getting-started steps open the panels this page owns.
+  useEffect(() => {
+    const setup = () => setShowSetup(true);
+    const settings = () => setProjectSettingsOpen(true);
+    window.addEventListener('builder:open-setup', setup);
+    window.addEventListener('builder:open-project-settings', settings);
+    return () => {
+      window.removeEventListener('builder:open-setup', setup);
+      window.removeEventListener('builder:open-project-settings', settings);
+    };
+  }, []);
+
   const monthOptions = useMemo(() => {
     const out: { value: string; label: string }[] = [];
     const now = new Date();
@@ -207,16 +269,31 @@ const BuilderWorkspacePage: React.FC = () => {
     );
   }
 
+  // A step that works on one project offers the client's projects right here,
+  // rather than sending the eye back up to the selector.
   const needsProject = (
     <Card>
-      <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
-        This works on one project. Choose one above.
+      <CardContent className="px-4 py-8 text-center">
+        <p className="text-sm text-muted-foreground">This step works on one project. Which one?</p>
+        {projects.length > 0 ? (
+          <div className="mt-3 flex flex-wrap justify-center gap-2">
+            {projects.map((p) => (
+              <Button key={p.id} variant="outline" size="sm" className={WS_BTN} onClick={() => patch({ project: p.id })}>
+                <Building className="h-3.5 w-3.5" /> {p.name}
+              </Button>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-1 text-xs text-muted-foreground">This client has no projects yet: add one on the Ledger step.</p>
+        )}
       </CardContent>
     </Card>
   );
 
   const tabIdx = Math.max(0, TABS.findIndex((t) => t.key === tab));
   const activeProject = projects.find((p) => p.id === projectId);
+  const activeClient = clients.find((c) => c.id === selectedClientId);
+  const itcType = activeClient?.builder_itc_type ? ITC_TYPE[activeClient.builder_itc_type] : null;
 
   return (
     <BuilderWorkspaceProvider projectId={projectId || undefined} selectProject={selectProject}>
@@ -225,6 +302,7 @@ const BuilderWorkspacePage: React.FC = () => {
         <PageHeader
           compact
           title="Builder"
+          subtitle="GST on real estate projects"
           icon={<Building />}
           actions={(
             <>
@@ -313,8 +391,59 @@ const BuilderWorkspacePage: React.FC = () => {
                 />
               </label>
             </div>
+            {activeClient && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t pt-2 text-[11px]">
+                {activeClient.gstin && (
+                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-muted-foreground">{activeClient.gstin}</span>
+                )}
+                {itcType ? (
+                  <Badge variant="outline" className="text-[11px] font-medium" title={itcType.hint}>{itcType.label}</Badge>
+                ) : (
+                  <Badge variant="warning" className="text-[11px] font-medium" title="Set it on the client master: it decides GSTR-3B Table 4">
+                    ITC treatment not set
+                  </Badge>
+                )}
+                <span className="text-muted-foreground">
+                  {projects.length} project{projects.length === 1 ? '' : 's'}
+                </span>
+                {activeProject && (
+                  <>
+                    <span className="text-muted-foreground/50">·</span>
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      <MapPin className="h-3 w-3" />
+                      {activeProject.is_metro ? 'Metro (60 sq m limit)' : 'Non-metro (90 sq m limit)'}
+                    </span>
+                    {activeProject.rera_number && (
+                      <span className="text-muted-foreground">RERA {activeProject.rera_number}</span>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
+
+        {/* The project at a glance: the figures every step works from. The
+            Ledger shows its own, as of the chosen period, so not twice there. */}
+        {selectedClientId && projectId && tab !== 'ledger' && snapshot && snapshot.units > 0 && (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+            <KpiTile
+              label="Units"
+              value={snapshot.units}
+              hint={`${snapshot.booked} booked · ${snapshot.units - snapshot.booked} unbooked`}
+            />
+            <KpiTile label="Agreement value" value={formatINR(snapshot.agreement)} />
+            <KpiTile label="Value taxed to date" value={formatINR(snapshot.valueTaxed)} />
+            <KpiTile label="Open advance" value={formatINR(snapshot.openAdvance)} hint="Taxed, not yet invoiced" />
+            <KpiTile label="Balance to tax" value={formatINR(snapshot.balanceToTax)} hint="Falls due at BU" />
+            <KpiTile
+              label="Closed / flags"
+              value={`${snapshot.closed} closed`}
+              hint={snapshot.overTaxed ? `${snapshot.overTaxed} taxed above agreement` : 'No unit taxed above agreement'}
+              tone={snapshot.overTaxed ? 'error' : 'neutral'}
+            />
+          </div>
+        )}
 
         {/* Setup is a panel, not a step — opened when something changes, which
             for most clients is once, at onboarding. */}
@@ -373,8 +502,8 @@ const BuilderWorkspacePage: React.FC = () => {
           </Card>
         ) : (
           <>
-            {/* Step bar: pinned while scrolling, so every tab is one click away. */}
-            <div className="sticky top-0 z-30 -mx-4 border-b bg-background px-4 md:-mx-6 md:px-6">
+            {/* Step bar: pinned while scrolling, so every step is one click away. */}
+            <div className="sticky top-0 z-30 -mx-4 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:-mx-6 md:px-6">
               <div className="flex items-center gap-1.5 py-1.5 md:pr-12">
                 <Button
                   variant="ghost" size="icon" className="h-9 w-9 shrink-0"
@@ -384,38 +513,49 @@ const BuilderWorkspacePage: React.FC = () => {
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
-                <nav aria-label="Builder" className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-1 gap-y-1" role="tablist">
+                <nav aria-label="Builder" className="min-w-0 flex-1 overflow-x-auto">
+                  <ol className="flex min-w-max items-center gap-1" role="tablist">
                     {TABS.map((t, i) => {
                       const on = t.key === tab;
+                      const done = i < tabIdx;
                       return (
-                        <button
-                          key={t.key} type="button" role="tab" aria-selected={on}
-                          onClick={() => patch({ tab: t.key })}
-                          className={cn(
-                            'flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                            on ? 'bg-primary font-medium text-primary-foreground' : 'text-foreground hover:bg-muted',
-                          )}
-                        >
-                          <span
+                        <li key={t.key} className="flex items-center gap-1">
+                          {i > 0 && <span aria-hidden className={cn('h-px w-3 lg:w-6', done || on ? 'bg-primary/60' : 'bg-border')} />}
+                          <button
+                            type="button" role="tab" aria-selected={on}
+                            onClick={() => patch({ tab: t.key })}
                             className={cn(
-                              'flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold',
-                              on ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground',
+                              'flex items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                              on ? 'bg-primary text-primary-foreground shadow-sm' : 'text-foreground hover:bg-muted',
                             )}
                           >
-                            {i + 1}
-                          </span>
-                          {t.icon}{t.label}
-                          {t.key === 'returns' && postingCount > 0 && (
-                            <Badge variant="secondary" className="ml-0.5 h-4 px-1.5 text-[10px] font-medium leading-none">{formatINR(periodTax)}</Badge>
-                          )}
-                          {(t.key === 'returns' || t.key === 'fsi') && fsiBlocked && (
-                            <AlertTriangle className={cn('h-3.5 w-3.5', on ? 'text-primary-foreground' : 'text-warning')} aria-label="FSI consent pending" />
-                          )}
-                        </button>
+                            <span
+                              className={cn(
+                                'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold',
+                                on ? 'bg-primary-foreground/20' : done ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground',
+                              )}
+                            >
+                              {i + 1}
+                            </span>
+                            <span className="flex flex-col leading-tight">
+                              <span className="flex items-center gap-1.5 text-sm font-medium">
+                                {t.icon}{t.label}
+                                {t.key === 'returns' && postingCount > 0 && (
+                                  <Badge variant="secondary" className="ml-0.5 h-4 px-1.5 text-[10px] font-medium leading-none">{formatINR(periodTax)}</Badge>
+                                )}
+                                {(t.key === 'returns' || t.key === 'fsi') && fsiBlocked && (
+                                  <AlertTriangle className={cn('h-3.5 w-3.5', on ? 'text-primary-foreground' : 'text-warning')} aria-label="FSI consent pending" />
+                                )}
+                              </span>
+                              <span className={cn('hidden text-[10.5px] xl:block', on ? 'text-primary-foreground/80' : 'text-muted-foreground')}>
+                                {t.caption}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
                       );
                     })}
-                  </div>
+                  </ol>
                 </nav>
                 <Button
                   variant="ghost" size="icon" className="h-9 w-9 shrink-0"

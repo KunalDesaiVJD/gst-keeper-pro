@@ -60,6 +60,7 @@ import { KindFacts } from '@/components/notices/cases/KindFacts';
 import { CaseLinkSuggest } from '@/components/notices/cases/CaseLinkSuggest';
 import { caseHref, caseKeyOf, loadCase, tabsFor, trackOfCategory, useCaseOverview, type Track } from '@/lib/noticeCases';
 import { cn } from '@/lib/utils';
+import { useCaseDocuments } from '@/lib/caseDocuments';
 
 const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: 'issues', label: 'Issues' },
@@ -180,6 +181,9 @@ const NoticeWorkspacePage: React.FC = () => {
     const keys = tabsFor(track, needsReply);
     return TABS.filter((t) => keys.includes(t.key));
   }, [track, needsReply]);
+  const hasEvidenceTab = shownTabs.some((t) => t.key === 'evidence');
+  // The documents organised (named, by stage, evidence apart), for the tab counts; the tabs read the same queries.
+  const caseDocs = useCaseDocuments(ws);
   const tab = (shownTabs.some((t) => t.key === sp.get('tab')) ? sp.get('tab') : shownTabs[0]?.key ?? 'documents') as WorkspaceTab;
   const setTab = (t: string) => { const next = new URLSearchParams(sp); next.set('tab', t); setSp(next, { replace: true }); };
   const ref = useMemo(() => (ws ? toRef(ws) : null), [ws]);
@@ -409,7 +413,8 @@ const NoticeWorkspacePage: React.FC = () => {
           <Tabs value={tab} onValueChange={setTab} className="min-w-0 space-y-2">
             <TabsList className={cn(TAB_LIST_CLASS, 'w-full sm:w-auto')}>
               {shownTabs.map((t) => {
-                const count = t.key === 'documents' ? ws.documents.length + ws.folder.length + (n.pdf_url ? 1 : 0)
+                const count = t.key === 'documents' ? (caseDocs.model ? caseDocs.model.documents.length + (caseDocs.model.noticePdf ? 1 : 0) + (hasEvidenceTab ? 0 : caseDocs.model.evidence.length) : ws.documents.length + ws.folder.length)
+                  : t.key === 'evidence' ? caseDocs.model?.evidence.length ?? 0
                   : t.key === 'issues' ? ws.issues.length : t.key === 'deadlines' ? ws.deadlines.filter((d) => !d.is_met).length : 0;
                 return (
                   <TabsTrigger key={t.key} value={t.key} className={cn(TAB_TRIGGER_CLASS, 'h-8 px-3')}>
@@ -423,7 +428,7 @@ const NoticeWorkspacePage: React.FC = () => {
               <TabsContent value="evidence" className="mt-0"><EvidenceTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
               <TabsContent value="assistant" className="mt-0"><AssistantTab ws={ws} canEdit={canEdit} onChanged={reload} onOpenDraft={() => setTab('draft')} /></TabsContent>
               <TabsContent value="draft" className="mt-0"><DraftTab ws={ws} canEdit={canEdit} canApprove={canApproveNoticeReplies()} onChanged={reload} /></TabsContent>
-              <TabsContent value="documents" className="mt-0"><DocumentsTab ws={ws} canEdit={canEdit} onChanged={reload} onAskClient={() => setDialog('docs')} /></TabsContent>
+              <TabsContent value="documents" className="mt-0"><DocumentsTab ws={ws} canEdit={canEdit} onChanged={reload} onAskClient={() => setDialog('docs')} onOpenEvidence={hasEvidenceTab ? () => setTab('evidence') : undefined} /></TabsContent>
               <TabsContent value="activity" className="mt-0"><ActivityTab notice={n} events={ws.events} canEdit={canEdit} onChanged={reload} /></TabsContent>
               <TabsContent value="payments" className="mt-0"><PaymentsTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
               <TabsContent value="hearings" className="mt-0"><HearingsTab ws={ws} canEdit={canEdit} onFix={() => setDialog('hearing')} /></TabsContent>

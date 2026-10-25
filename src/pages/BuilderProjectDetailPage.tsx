@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { BuilderSectionHeader } from '@/components/builder/BuilderSectionHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/gstr9/badge';
@@ -604,7 +604,7 @@ const BuilderProjectDetailPage: React.FC<Props> = ({ focusUnitId, focusAction })
 
   return (
     <div className={WS_PAGE}>
-      <PageHeader
+      <BuilderSectionHeader
         compact
         embedded={embedded}
         title={project.name}

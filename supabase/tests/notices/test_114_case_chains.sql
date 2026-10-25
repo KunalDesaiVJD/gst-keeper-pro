@@ -89,6 +89,103 @@ SELECT t_eq((SELECT stage FROM gst_notices WHERE id = '11400000-0000-0000-0000-0
 SELECT notice_case_link_set('11400000-0000-0000-0000-000000000002', 'AD2401010000RAP', NULL, NULL, 'Partner');
 SELECT t_eq((SELECT stage FROM gst_notices WHERE id = '11400000-0000-0000-0000-0000000000b1'), 'order', 'unlinked, the order is an order again');
 
+-- 6. Not certain, not linked (20261024110000): a refund naming its LUT, and two
+--    refunds whose replies both quote a third case's number.
+INSERT INTO clients (id, name, gstin, gst_user_id, gst_password, inactive_at_hand) VALUES
+ ('11400000-0000-0000-0000-000000000003', 'Export Works', '24EXPRT0000E1Z5', 'exprtw', 'p3', false);
+INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, case_id) VALUES
+ ('11400000-0000-0000-0000-0000000000c1', '11400000-0000-0000-0000-000000000003', 'notices', 'e1', 'LUT',
+  'LUT approved', ist_today() - 200, 'ZD2403260168695', 'AD240326001378C'),
+ ('11400000-0000-0000-0000-0000000000c2', '11400000-0000-0000-0000-000000000003', 'notices', 'e2', 'Refunds',
+  'Refund Sanction/Rejection Order (RFD-06)', ist_today() - 50, 'ZD2408260582420', 'AA2407261761073'),
+ ('11400000-0000-0000-0000-0000000000c3', '11400000-0000-0000-0000-000000000003', 'notices', 'e3', 'Refunds',
+  'Refund Sanction/Rejection Order (RFD-06)', ist_today() - 40, 'ZD2408260582421', 'AA2407261761074');
+INSERT INTO gst_case_folder_items (client_id, case_id, portal_key, reference_number, folder_section, raw_json) VALUES
+ ('11400000-0000-0000-0000-000000000003', 'AA2407261761073', 'e1a', 'AA2407261761073', 'APLCN', '{"formNo": "GST RFD-01", "lutArn": "AD240326001378C"}'),
+ ('11400000-0000-0000-0000-000000000003', 'AA2407261761073', 'e1r', NULL, 'REPLY', '{"note": "see AD240226002368E"}'),
+ ('11400000-0000-0000-0000-000000000003', 'AA2407261761074', 'e2r', NULL, 'REPLY', '{"note": "see AD240226002368E"}');
+SELECT notice_case_links_refresh('11400000-0000-0000-0000-000000000003');
+SELECT t_eq((SELECT count(*) FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000003'), 0::bigint,
+            'a refund is not linked into its LUT, nor two refunds through a third case''s number');
+
+-- 7. An appeal only submitted (20261024120000): no folder or notice yet, only the
+--    application, whose refId is the refund order of another case.
+INSERT INTO clients (id, name, gstin, gst_user_id, gst_password, inactive_at_hand) VALUES
+ ('11400000-0000-0000-0000-000000000004', 'Surgical Works', '24SURGI0000E1Z5', 'surgw', 'p4', false);
+INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, case_id) VALUES
+ ('11400000-0000-0000-0000-0000000000d1', '11400000-0000-0000-0000-000000000004', 'notices', 's1', 'Refunds',
+  'Refund Sanction/Rejection Order (RFD-06)', ist_today() - 300, 'ZD240925036738Y', 'AA240725124515C');
+INSERT INTO gst_portal_applications (id, client_id, case_type_cd, portal_key, arn, case_id, form_number, status, filed_date, raw_json) VALUES
+ ('11400000-0000-0000-0000-0000000000d2', '11400000-0000-0000-0000-000000000004', 'APPEL', 'ap1', 'AD241225010791I', '14356779',
+  'GST APL-01', 'Appeal Submitted', ist_today() - 100, '{"appItem": {"refId": "ZD240925036738Y"}}');
+SELECT t_eq((SELECT parent_key || '/' || kind || '/' || source FROM notice_case_links
+              WHERE client_id = '11400000-0000-0000-0000-000000000004' AND child_key = 'AD241225010791I'),
+            'AA240725124515C/appeal/auto', 'an appeal only submitted is linked under the order it is against, at once');
+SELECT t_eq((SELECT label || '/' || from_party || '/' || own_key FROM notice_case_correspondence
+              WHERE client_id = '11400000-0000-0000-0000-000000000004' AND case_key = 'AA240725124515C' AND kind = 'application'),
+            'APL-01 · Appeal Submitted/taxpayer/AD241225010791I', 'and is listed in that case''s correspondence');
+SELECT t_eq((SELECT m ->> 'marker' || '/' || (m ->> 'is_open') || '/' || (m -> 'application' ->> 'against')
+               FROM jsonb_array_elements(notice_case_chain('11400000-0000-0000-0000-000000000004', 'AA240725124515C') -> 'members') m
+              WHERE m ->> 'case_key' = 'AD241225010791I'),
+            'appeal/true/ZD240925036738Y', 'the chain shows the appeal, open, against the refund order');
+-- A s.128A waiver whose case is of the kind other (its order, as on live) still
+-- links under the order it is against.
+INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, case_id) VALUES
+ ('11400000-0000-0000-0000-0000000000d3', '11400000-0000-0000-0000-000000000004', 'notices', 's2', 'Demand',
+  'Order DRC-07', ist_today() - 400, 'ZD241223056296J', 'AD240923018008A'),
+ ('11400000-0000-0000-0000-0000000000d4', '11400000-0000-0000-0000-000000000004', 'notices', 's3', 'LUT',
+  'Order for waiver issued', ist_today() - 150, 'ZD2504250000001', 'AD2403250367264');
+INSERT INTO gst_case_folder_items (client_id, case_id, portal_key, reference_number, folder_section, raw_json) VALUES
+ ('11400000-0000-0000-0000-000000000004', 'AD2403250367264', 'w1', 'AD2403250367264', 'APLCN', '{"formNo": "SPL-02", "orddtl": {"ordnum": "ZD241223056296J"}}');
+SELECT notice_case_links_refresh('11400000-0000-0000-0000-000000000004');
+SELECT t_eq((SELECT p.track || '/' || p.marker FROM notice_case_parts('11400000-0000-0000-0000-000000000004') p WHERE p.own_key = 'AD2403250367264'),
+            'litigation/waiver', 'the waiver case counts as litigation for linking');
+SELECT t_eq((SELECT parent_key || '/' || kind FROM notice_case_links
+              WHERE client_id = '11400000-0000-0000-0000-000000000004' AND child_key = 'AD2403250367264'),
+            'AD240923018008A/waiver', 'and is still linked under the order it is against');
+UPDATE gst_portal_applications SET deleted_at = now() WHERE id = '11400000-0000-0000-0000-0000000000d2';
+SELECT t_eq((SELECT count(*) FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000004' AND child_key = 'AD241225010791I'), 0::bigint,
+            'an application gone from the portal is unlinked');
+
+-- 8. Not sure enough, a person decides (20261025100000).
+SELECT t_eq((SELECT confidence FROM notice_case_link_confidence('11400000-0000-0000-0000-000000000001', 'AD2401010000APL', 'AD2401010000ORG', 'appeal')),
+            98, 'an appeal naming the other case''s order: 98% sure');
+INSERT INTO clients (id, name, gstin, gst_user_id, gst_password, inactive_at_hand) VALUES
+ ('11400000-0000-0000-0000-000000000005', 'Review Works', '24REVIW0000E1Z5', 'reviw', 'p5', false);
+INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, case_id, financial_year, amount_of_demand) VALUES
+ ('11400000-0000-0000-0000-0000000000e1', '11400000-0000-0000-0000-000000000005', 'notices', 'r1', 'Scrutiny Of Returns',
+  'Intimation of discrepancies', ist_today() - 300, 'ZD2401010000R01', 'AD2401010000RA1', '2020-21', NULL),
+ ('11400000-0000-0000-0000-0000000000e2', '11400000-0000-0000-0000-000000000005', 'notices', 'r2', 'Determination Of Tax',
+  'Show cause notice', ist_today() - 200, 'ZD2401010000R02', 'AD2401010000RB1', '2021-22', NULL),
+ ('11400000-0000-0000-0000-0000000000e3', '11400000-0000-0000-0000-000000000005', 'notices', 'r3', 'Appeal',
+  'Hearing notice issued', ist_today() - 10, 'ZD2401010000R03', 'AD2401010000RAP', NULL, NULL),
+ ('11400000-0000-0000-0000-0000000000e4', '11400000-0000-0000-0000-000000000005', 'notices', 'r4', 'Determination Of Tax',
+  'Summary of the demand order (DRC-07)', ist_today() - 100, 'ZD2401010000R04', 'AD2401010000RD1', '2019-20', 250000),
+ ('11400000-0000-0000-0000-0000000000e5', '11400000-0000-0000-0000-000000000005', 'notices', 'r5', 'Determination Of Tax',
+  'Summary of the demand order (DRC-07)', ist_today() - 90, 'ZD2401010000R05', 'AD2401010000RD2', '2019-20', 250000);
+INSERT INTO gst_case_folder_items (client_id, case_id, portal_key, reference_number, folder_section, raw_json) VALUES
+ ('11400000-0000-0000-0000-000000000005', 'AD2401010000RB1', 'rb', 'ZD2401010000R09', 'NOTCE', '{"note": "see ZD2401010000R01"}');
+SELECT notice_case_links_refresh('11400000-0000-0000-0000-000000000005');
+SELECT t_eq((SELECT count(*) FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000005'), 0::bigint,
+            'a related link only through a notice number (75% sure) is not made by itself');
+SELECT t_eq((SELECT status || '/' || confidence FROM notice_case_link_reviews
+              WHERE client_id = '11400000-0000-0000-0000-000000000005' AND issue = 'low_confidence'),
+            'open/75', 'it waits for a person, with how sure the system was');
+SELECT t_eq((SELECT string_agg(x ->> 'issue' || ':' || (x ->> 'child_key'), ' ' ORDER BY x ->> 'issue', x ->> 'child_key')
+               FROM jsonb_array_elements(notice_case_review_queue('11400000-0000-0000-0000-000000000005')) x),
+            'duplicate:AD2401010000RD2 low_confidence:AD2401010000RB1 unlinked:AD2401010000RAP',
+            'the queue: the unsure link, the appeal linked to nothing, two cases that look like one');
+SELECT notice_case_review_decide('11400000-0000-0000-0000-000000000005', 'low_confidence', 'AD2401010000RB1', 'AD2401010000RA1', 'link', 'related', 'Partner');
+SELECT t_eq((SELECT parent_key || '/' || source FROM notice_case_links WHERE client_id = '11400000-0000-0000-0000-000000000005' AND child_key = 'AD2401010000RB1'),
+            'AD2401010000RA1/manual', 'a person links it');
+SELECT notice_case_review_decide('11400000-0000-0000-0000-000000000005', 'unlinked', 'AD2401010000RAP', NULL, 'dismissed', NULL, 'Partner');
+SELECT notice_case_review_decide('11400000-0000-0000-0000-000000000005', 'duplicate', 'AD2401010000RD2', 'AD2401010000RD1', 'dismissed', NULL, 'Partner');
+SELECT notice_case_links_refresh('11400000-0000-0000-0000-000000000005');
+SELECT t_eq(jsonb_array_length(notice_case_review_queue('11400000-0000-0000-0000-000000000005')), 0,
+            'decided, nothing waits; the decisions stand through a refresh');
+SELECT t_eq((SELECT count(*) FROM notice_case_link_reviews WHERE client_id = '11400000-0000-0000-0000-000000000005' AND decided_by_name = 'Partner'), 3::bigint,
+            'every decision is kept with who made it');
+
 -- 5. The two views stay in step: the apart view is the linked one plus the chain.
 SELECT t_eq((SELECT string_agg(column_name::text, ',' ORDER BY ordinal_position) FROM information_schema.columns
               WHERE table_schema = 'public' AND table_name = 'notice_cases'),

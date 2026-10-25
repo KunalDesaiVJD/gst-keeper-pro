@@ -11,6 +11,7 @@ import { Badge } from '@/components/gstr9/badge';
 import type { Drc03Fact, RefundFact } from '@/lib/noticeFacts';
 import { fmtDate, fmtInrShort, plural, sentenceCase } from '@/lib/noticeFormat';
 import { refundNeedsReply } from './profileData';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 const firstDoc = (docs: unknown): string | null => {
   const d = Array.isArray(docs) ? (docs[0] as { url?: unknown } | undefined) : undefined;
@@ -59,7 +60,7 @@ export const RefundList: React.FC<{ clientId: string; rows: RefundFact[]; caseId
                   )}
                   {r.arn && caseIds.has(r.arn) && <FolderLink clientId={clientId} caseId={r.arn} label={label} />}
                   {doc && <PdfLink url={doc} label={label} />}
-                  {r.notice_id && <Link to={`/notices/${r.notice_id}`} className="text-xs font-medium text-primary underline-offset-2 hover:underline">Notice<span className="sr-only"> for {label}</span></Link>}
+                  {r.notice_id && <Link to={noticeCaseHref({ id: r.notice_id as string })} className="text-xs font-medium text-primary underline-offset-2 hover:underline">Notice<span className="sr-only"> for {label}</span></Link>}
                 </div>
               </li>
             );

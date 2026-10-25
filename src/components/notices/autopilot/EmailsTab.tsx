@@ -16,6 +16,7 @@ import { EMAIL_STATUS, fmtMinutes, fmtWhen, istDayStart, type AutopilotStatus, t
 import { fmtAgo, plural } from '@/lib/noticeFormat';
 import { EmptyBox, INLINE_LINK, LoadError, ToneBadge } from './parts';
 import { cn } from '@/lib/utils';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 type EmailRow = Pick<PortalEmail, 'id' | 'received_at' | 'from_addr' | 'subject' | 'gstins' | 'form_code' | 'reference_number' | 'client_id' |
   'status' | 'job_id' | 'notice_id' | 'notice_seen_at'> & { clients: { name: string; gstin: string | null } | null };
@@ -148,7 +149,7 @@ export const EmailsTab: React.FC<{ status: AutopilotStatus | undefined; canManag
                         <td className={cn(WS_TD, 'font-mono text-xs')}>{e.reference_number ?? '—'}</td>
                         <td className={WS_TD}><ToneBadge tone={st.tone}>{st.label}</ToneBadge></td>
                         <td className={cn(WS_TD, 'text-xs')}>
-                          {e.notice_id ? <Link to={`/notices/${e.notice_id}`} className={INLINE_LINK}>Open notice</Link>
+                          {e.notice_id ? <Link to={noticeCaseHref({ id: e.notice_id as string })} className={INLINE_LINK}>Open notice</Link>
                             : e.client_id && e.status !== 'ignored' ? <span className="text-muted-foreground">not in the app yet</span> : '—'}
                         </td>
                         <td className={cn(WS_TD, 'whitespace-nowrap text-right text-xs tabular-nums')}>
@@ -191,7 +192,7 @@ const EmailCard: React.FC<{ e: EmailRow; short: boolean }> = ({ e, short }) => {
       <div className="text-xs">{e.form_code ?? 'Form not read'}{short ? ' · short clock' : ''} · <span className="font-mono">{e.reference_number ?? 'no reference'}</span></div>
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
         <span>Received {fmtWhen(e.received_at)}{min !== null ? ` · in the app ${fmtMinutes(min)} later` : ''}</span>
-        {e.notice_id && <Link to={`/notices/${e.notice_id}`} className={INLINE_LINK}>Open notice</Link>}
+        {e.notice_id && <Link to={noticeCaseHref({ id: e.notice_id as string })} className={INLINE_LINK}>Open notice</Link>}
       </div>
     </li>
   );

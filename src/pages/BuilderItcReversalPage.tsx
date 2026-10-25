@@ -7,7 +7,7 @@ import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorks
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { BuilderSectionHeader } from '@/components/builder/BuilderSectionHeader';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -302,7 +302,7 @@ const BuilderItcReversalPage: React.FC = () => {
 
   return (
     <div className={WS_PAGE}>
-      <PageHeader
+      <BuilderSectionHeader
         compact
         embedded={embedded}
         title="ITC reversal at completion"

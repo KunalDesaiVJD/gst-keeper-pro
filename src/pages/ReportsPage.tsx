@@ -85,10 +85,12 @@ const ReportsPage: React.FC = () => {
         setExtReady(true);
         if (typeof d.version === 'string') setExtVersion(d.version);
       }
-      if (d.__gstkPullSectionResult) {
+      // An all-clients report's Pull (several clients in one run) answers with its own result message.
+      const result = d.__gstkPullSectionResult || d.__gstkPullSectionAllClientsResult;
+      if (result) {
         setPullingKey(null);
-        if (d.__gstkPullSectionResult.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there. Once it finishes, come back and reopen this report\'s Preview (it checks for new data automatically for a few minutes if the preview is already open).');
-        else toast.error('Could not start the pull: ' + d.__gstkPullSectionResult.error);
+        if (result.ok) toast.success('Portal opening in a new tab — type the CAPTCHA there. Once it finishes, come back and reopen this report\'s Preview (it checks for new data automatically for a few minutes if the preview is already open).');
+        else toast.error('Could not start the pull: ' + result.error);
       }
     };
     window.addEventListener('message', onMsg);
@@ -108,7 +110,7 @@ const ReportsPage: React.FC = () => {
   // every queued period still happens asynchronously in that tab afterward.
   const handlePullSection = useCallback(async (report: ReportDefinition) => {
     if (!report.pull) return;
-    if (!selectedClientId) { toast.error('Select a client first'); return; }
+    if (!selectedClientId && !report.pull.allClients) { toast.error('Select a client first'); return; }
     // How long the open preview is re-checked: ~6 minutes, or 70 for the Table 8A
     // pull, which waits for the portal to prepare its file (extension 0.18.1 on).
     let pollAttempts = 36;
@@ -121,7 +123,7 @@ const ReportsPage: React.FC = () => {
       setPullingKey(report.key);
       let plan;
       try {
-        plan = await report.pull.plan({ clientId: selectedClientId, periods: selectedPeriods, extVersion });
+        plan = await report.pull.plan({ clientId: selectedClientId ?? '', periods: selectedPeriods, extVersion });
       } catch (err) {
         setPullingKey(null);
         toast.error('Could not work out what to pull: ' + (err instanceof Error ? err.message : 'unknown error'));
@@ -133,16 +135,28 @@ const ReportsPage: React.FC = () => {
       toast.info(`Pulling ${describeJob(job)} in one portal tab: type the CAPTCHA once at login.`);
       if (rest.length) toast.info(`After this finishes, click Pull again to fetch ${rest.map(describeJob).join('; ')}.`);
       if (job.mode === 'gstr9_8a_pull') pollAttempts = 420;
-      window.postMessage({
-        __gstkPullSection: {
-          clientId: selectedClientId,
-          mode: job.mode,
-          period_month: job.periods[0],
-          period_months: job.periods,
-          ...(job.want ? { want: job.want } : {}),
-          actorId: user?.id ?? null,
-        },
-      }, '*');
+      if (job.clientIds) {
+        // Several clients, one period: the extension's all-clients pull logs each in turn.
+        window.postMessage({
+          __gstkPullSectionAllClients: {
+            mode: job.mode,
+            period_month: job.periods[0],
+            clientIds: job.clientIds,
+            actorId: user?.id ?? null,
+          },
+        }, '*');
+      } else {
+        window.postMessage({
+          __gstkPullSection: {
+            clientId: job.clientId ?? selectedClientId,
+            mode: job.mode,
+            period_month: job.periods[0],
+            period_months: job.periods,
+            ...(job.want ? { want: job.want } : {}),
+            actorId: user?.id ?? null,
+          },
+        }, '*');
+      }
     } else {
       if (report.pull.needsMonth && selectedPeriods.length > 1) {
         toast.info(`Pulling all ${selectedPeriods.length} selected periods in one portal tab — type the CAPTCHA once at login.`);

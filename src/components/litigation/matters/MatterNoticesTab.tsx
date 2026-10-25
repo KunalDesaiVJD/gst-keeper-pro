@@ -18,6 +18,7 @@ import { fmtDate, fmtInr, fmtInrShort, noticeTitle } from '@/lib/noticeFormat';
 import { linkNoticesToMatter, unlinkNotice, type MatterWorkspace } from '@/lib/litigationData';
 import { clockWords } from './ClockCell';
 import { cn } from '@/lib/utils';
+import { noticeCaseHref } from '@/lib/noticeCases';
 
 export const noticeLabel = (n: Pick<NoticeFact, 'form_code' | 'reference_number' | 'case_id'>) =>
   [n.form_code, n.reference_number || n.case_id].filter(Boolean).join(' ') || 'notice';
@@ -112,7 +113,7 @@ export const MatterNoticesTab: React.FC<{ ws: MatterWorkspace; canEdit: boolean;
       <ul className="space-y-2 md:hidden">
         {ws.notices.map((n) => (
           <li key={n.id} className="rounded-lg border p-3">
-            <Link to={`/notices/${n.id}`} className="block text-sm font-semibold hover:underline">{noticeTitle(n)}</Link>
+            <Link to={noticeCaseHref({ id: n.id as string })} className="block text-sm font-semibold hover:underline">{noticeTitle(n)}</Link>
             <div className="truncate font-mono text-[11px] text-muted-foreground">{n.reference_number || n.case_id}</div>
             <div className="mt-2 flex flex-wrap items-center gap-2"><DueText n={n} /><StageBadge stage={n.stage} />
               {Number(n.amount_of_demand) > 0 && <span className="ml-auto text-xs tabular-nums">{fmtInrShort(n.amount_of_demand)}</span>}</div>
@@ -129,7 +130,7 @@ export const MatterNoticesTab: React.FC<{ ws: MatterWorkspace; canEdit: boolean;
             {ws.notices.map((n) => (
               <tr key={n.id} className={WS_TR}>
                 <td className={cn(WS_TD, 'min-w-[16rem]')}>
-                  <Link to={`/notices/${n.id}`} className="font-medium hover:underline">{noticeTitle(n)}</Link>
+                  <Link to={noticeCaseHref({ id: n.id as string })} className="font-medium hover:underline">{noticeTitle(n)}</Link>
                   <div className="text-xs text-muted-foreground">
                     <span className="font-mono">{n.reference_number || n.case_id || 'no reference'}</span>
                     {n.issue_date ? ` · issued ${fmtDate(n.issue_date)}` : ''}{n.order_date ? ` · order ${fmtDate(n.order_date)}` : ''}

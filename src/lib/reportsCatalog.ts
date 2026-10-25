@@ -47,6 +47,7 @@ import {
   buildGstr2aPyInCyReport,
 } from '@/utils/gstr2aReports';
 import { buildGstr2aVs2bRecoReport, planGstr2a2bPull } from '@/utils/gstr2aVs2bReports';
+import { SRC, fyMonthsUpTo, panSiblings, planAllClientsGstr3b, planLedgerMonths, planOncePerFy, planReturns } from '@/lib/reportPullPlans';
 import { buildGstr2aVs8aReport, buildGstr2bVs8aReport, buildGstr8aThreeWayReport, planGstr8aPull, uploadGstr8a } from '@/utils/gstr8aReports';
 import {
   buildPanOutputLiabilityReport,
@@ -267,7 +268,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     viewKind: 'variance-comparison',
-    pull: { mode: 'gstr3b_pull', needsMonth: true },
+    pull: { mode: 'gstr3b_pull', needsMonth: true, plan: ({ clientId, periods }) => planReturns({ selectedClientId: clientId, periods, sources: [SRC.gstr3b, SRC.gstr1], refresh: periods }) },
     build: ({ clientId, month }) => buildGstr3bVsGstr1TaxReport(clientId!, month),
   },
   {
@@ -279,7 +280,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     viewKind: 'variance-comparison',
-    pull: { mode: 'gstr3b_pull', needsMonth: true },
+    pull: { mode: 'gstr3b_pull', needsMonth: true, plan: ({ clientId, periods }) => planReturns({ selectedClientId: clientId, periods, sources: [SRC.gstr3b, SRC.gstr1], refresh: periods }) },
     build: ({ clientId, month }) => buildGstr3bVsGstr1ComparisonReport(clientId!, month),
   },
   {
@@ -291,7 +292,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     viewKind: 'variance-comparison',
-    pull: { mode: 'gstr3b_pull', needsMonth: true },
+    pull: { mode: 'gstr3b_pull', needsMonth: true, plan: ({ clientId, periods }) => planReturns({ selectedClientId: clientId, periods, sources: [SRC.gstr3b, SRC.gstr2b], refresh: periods }) },
     build: ({ clientId, month }) => buildGstr3bVsGstr2bItcReport(clientId!, month),
   },
   {
@@ -303,7 +304,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     viewKind: 'variance-comparison',
-    pull: { mode: 'gstr3b_pull', needsMonth: true },
+    pull: { mode: 'gstr3b_pull', needsMonth: true, plan: ({ clientId, periods }) => planReturns({ selectedClientId: clientId, periods, sources: [SRC.gstr3b, SRC.gstr2a], refresh: periods }) },
     build: ({ clientId, month }) => buildGstr3bVsGstr2aItcReport(clientId!, month),
   },
   {
@@ -316,7 +317,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     needs: 'client+month',
     viewKind: 'annual-trend',
     periodScope: 'fy',
-    pull: { mode: 'gstr3b_pull', needsMonth: true },
+    pull: { mode: 'gstr3b_pull', needsMonth: true, plan: ({ clientId, periods }) => planReturns({ selectedClientId: clientId, periods: fyMonthsUpTo(periods, 'last-month'), sources: [SRC.gstr3b], refresh: periods }) },
     build: ({ clientId, month }) => buildGstr3bAnnualSummaryReport(clientId!, month),
   },
   {
@@ -520,7 +521,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     needs: 'client+month',
     viewKind: 'ledger-register',
     periodScope: 'fy',
-    pull: { mode: 'revrclm_pull', needsMonth: true },
+    pull: { mode: 'revrclm_pull', needsMonth: true, plan: planOncePerFy('revrclm_pull', 'Credit Reversal and Re-claimed Statement') },
     build: ({ clientId, month }) => buildCreditReversalReclaimStatement(clientId!, month),
   },
   {
@@ -533,7 +534,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     needs: 'client+month',
     viewKind: 'ledger-register',
     periodScope: 'fy',
-    pull: { mode: 'rcmliab_pull', needsMonth: true },
+    pull: { mode: 'rcmliab_pull', needsMonth: true, plan: planOncePerFy('rcmliab_pull', 'RCM Liability/ITC Statement') },
     build: ({ clientId, month }) => buildRcmLedgerPerClient(clientId!, month),
   },
   {
@@ -556,6 +557,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'month',
     viewKind: 'all-clients-snapshot',
+    pull: { mode: 'gstr3b_pull', needsMonth: true, allClients: true, plan: ({ periods }) => planAllClientsGstr3b({ periods }) },
     build: ({ month }) => buildRcmTaxPaidVsItcClaimedAllClients(month),
   },
   {
@@ -567,6 +569,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'month',
     viewKind: 'all-clients-snapshot',
+    pull: { mode: 'gstr3b_pull', needsMonth: true, allClients: true, plan: ({ periods }) => planAllClientsGstr3b({ periods }) },
     build: ({ month }) => buildItcClaimedVsUtilizedAllClients(month),
   },
   {
@@ -681,7 +684,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     viewKind: 'variance-comparison',
-    pull: { mode: 'gstr2b_pull', needsMonth: true },
+    pull: { mode: 'gstr2b_pull', needsMonth: true, plan: async ({ clientId, periods }) => planReturns({ selectedClientId: clientId, clientIds: await panSiblings(clientId), periods, sources: [SRC.gstr2a, SRC.gstr2b], refresh: periods }) },
     build: ({ clientId, month }) => buildPanMultipleCompany2A2BReport(clientId!, month),
   },
   {
@@ -705,6 +708,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client',
     viewKind: 'evidence-event-list',
+    pull: { mode: 'notices' },
     build: ({ clientId }) => buildAdditionalNoticesAndOrdersReport(clientId!),
   },
   {
@@ -801,7 +805,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     needs: 'client+month',
     viewKind: 'ledger-register',
     periodScope: 'fy',
-    pull: { mode: 'creditledgertxn', needsMonth: true },
+    pull: { mode: 'creditledgertxn', needsMonth: true, plan: ({ clientId, periods }) => planLedgerMonths({ clientId, periods, mode: 'creditledgertxn', table: 'gst_credit_ledger_transactions', label: 'Credit Ledger' }) },
     build: ({ clientId, month }) => buildCreditLedgerTransactionsReport(clientId!, month),
   },
   {
@@ -814,7 +818,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     needs: 'client+month',
     viewKind: 'ledger-register',
     periodScope: 'fy',
-    pull: { mode: 'liabilityledger', needsMonth: true },
+    pull: { mode: 'liabilityledger', needsMonth: true, plan: ({ clientId, periods }) => planLedgerMonths({ clientId, periods, mode: 'liabilityledger', table: 'gst_liability_ledger_entries', label: 'Liability Ledger' }) },
     build: ({ clientId, month }) => buildLiabilityLedgerReport(clientId!, month),
   },
   {
@@ -827,7 +831,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     needs: 'client+month',
     viewKind: 'ledger-register',
     periodScope: 'fy',
-    pull: { mode: 'cashledger', needsMonth: true },
+    pull: { mode: 'cashledger', needsMonth: true, plan: ({ clientId, periods }) => planLedgerMonths({ clientId, periods, mode: 'cashledger', table: 'gst_cash_ledger_entries', label: 'Cash Ledger' }) },
     build: ({ clientId, month }) => buildCashLedgerReport(clientId!, month),
   },
   {
@@ -840,7 +844,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     needs: 'client+month',
     viewKind: 'annual-trend',
     periodScope: 'fy',
-    pull: { mode: 'gstr3b_pull', needsMonth: true },
+    pull: { mode: 'gstr3b_pull', needsMonth: true, plan: ({ clientId, periods }) => planReturns({ selectedClientId: clientId, periods: fyMonthsUpTo(periods, 'last-month'), sources: [SRC.gstr3b], refresh: periods }) },
     build: ({ clientId, month }) => buildCreditAndLiabilityStatementReport(clientId!, month),
   },
   {
@@ -888,7 +892,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     viewKind: 'variance-comparison',
-    pull: { mode: 'gstr3b_pull', needsMonth: true },
+    pull: { mode: 'gstr3b_pull', needsMonth: true, plan: async ({ clientId, periods }) => planReturns({ selectedClientId: clientId, clientIds: await panSiblings(clientId), periods, sources: [SRC.gstr1, SRC.gstr3b], refresh: periods }) },
     build: ({ clientId, month }) => buildPanOutputLiabilityReport(clientId!, month),
   },
   {
@@ -900,7 +904,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     viewKind: 'variance-comparison',
-    pull: { mode: 'gstr3b_pull', needsMonth: true },
+    pull: { mode: 'gstr3b_pull', needsMonth: true, plan: async ({ clientId, periods }) => planReturns({ selectedClientId: clientId, clientIds: await panSiblings(clientId), periods, sources: [SRC.gstr1, SRC.gstr3b], refresh: periods }) },
     build: ({ clientId, month }) => buildPanLiabilityVsItcClaimedReport(clientId!, month),
   },
   {
@@ -912,7 +916,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'client+month',
     viewKind: 'variance-comparison',
-    pull: { mode: 'gstr3b_pull', needsMonth: true },
+    pull: { mode: 'gstr3b_pull', needsMonth: true, plan: async ({ clientId, periods }) => planReturns({ selectedClientId: clientId, clientIds: await panSiblings(clientId), periods, sources: [SRC.gstr3b], refresh: periods }) },
     build: ({ clientId, month }) => buildPanNetOutputLiabilityReport(clientId!, month),
   },
   {
@@ -936,6 +940,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'month',
     viewKind: 'all-clients-snapshot',
+    pull: { mode: 'gstr3b_pull', needsMonth: true, allClients: true, plan: ({ periods }) => planAllClientsGstr3b({ periods }) },
     build: ({ month }) => buildInterestLateFeeAllClientsReport(month),
   },
   {
@@ -947,6 +952,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'month',
     viewKind: 'exceptions-list',
+    pull: { mode: 'gstr3b_pull', needsMonth: true, allClients: true, plan: ({ periods }) => planAllClientsGstr3b({ periods }) },
     build: ({ month }) => buildInterestScrutinyReport(month),
   },
   {
@@ -970,6 +976,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     status: 'extends-login',
     needs: 'month',
     viewKind: 'exceptions-list',
+    pull: { mode: 'gstr3b_pull', needsMonth: true, allClients: true, plan: ({ periods }) => planAllClientsGstr3b({ periods }) },
     build: ({ month }) => buildRule42ShortReversalAllClientsReport(month),
   },
 ];

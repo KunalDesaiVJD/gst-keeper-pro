@@ -86,9 +86,9 @@ const ReminderSettingsCard: React.FC<Props> = ({ clientId }) => {
           plus a confirmation once the return is filed. Set per client.
         </CardDescription>
         <CardDescription className="pt-1">
-          The on/off switch below applies to every return type. For GSTR-1, GSTR-3B, GSTR-6 and GSTR-7 the reminder
-          days follow the firm-wide schedule (Settings → GST Reminders → Return reminder schedule), not the interval
-          setting here — the interval and escalation settings below only apply to other return types (ITC-04, CMP-08, …).
+          The on/off switch below applies to every return. For GSTR-1, GSTR-3B (and their quarterly forms), GSTR-6 and
+          GSTR-7 the reminders go out on the firm's dates for each period (Settings → GST Reminders → Reminder dates),
+          not on the interval here. The interval and escalation below apply only to other returns (ITC-04, CMP-08, …).
         </CardDescription>
       </CardHeader>
       <CardContent>

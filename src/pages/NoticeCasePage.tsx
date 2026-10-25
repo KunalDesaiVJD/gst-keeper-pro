@@ -25,7 +25,7 @@ import { WaitingChip } from '@/components/notices/cases/WaitingChip';
 import { OfficerContact } from '@/components/notices/OfficerContact';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  caseLabel, loadCase, loadCaseItems, markCaseSeen, trackDef, useCaseChain, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
+  caseLabel, loadCase, loadCaseItems, loadKeyDates, markCaseSeen, trackDef, useCaseChain, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
 } from '@/lib/noticeCases';
 import { fmtDate, fmtFy, fmtInr, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
@@ -71,6 +71,7 @@ const NoticeCasePage: React.FC = () => {
   const qc = useQueryClient();
   const c = useQuery({ queryKey: ['notice-case', clientId, caseKey], queryFn: () => loadCase(clientId, caseKey), enabled: !!clientId && !!caseKey });
   const items = useQuery({ queryKey: ['notice-case-items', clientId, caseKey], queryFn: () => loadCaseItems(clientId, caseKey), enabled: !!clientId && !!caseKey });
+  const keyDates = useQuery({ queryKey: ['notice-case-key-dates', clientId, caseKey], queryFn: () => loadKeyDates(clientId, caseKey), enabled: !!clientId && !!caseKey });
   const ov = useCaseOverview(clientId, caseKey);
   const chain = useCaseChain(clientId, c.data?.case_key ?? null);
   const marked = useRef(false);
@@ -83,6 +84,15 @@ const NoticeCasePage: React.FC = () => {
     if (k) n.set('part', k); else n.delete('part');
     setSp(n, { replace: true });
   };
+  // The timeline reads oldest first, the story of the case (?order=newest turns it).
+  const order: 'oldest' | 'newest' = sp.get('order') === 'newest' ? 'newest' : 'oldest';
+  const setOrder = (o: 'oldest' | 'newest') => {
+    const n = new URLSearchParams(sp);
+    if (o === 'newest') n.set('order', o); else n.delete('order');
+    setSp(n, { replace: true });
+  };
+  // The notice the case was opened from (a list's row), marked on the timeline.
+  const focusId = sp.get('notice');
   const partOf = useMemo(() => {
     if (members.length < 2) return undefined;
     const names = new Map(members.map((m) => [m.case_key, caseLabel(m).split(' · ')[0] + (m.case_id ? ` ${m.case_id}` : '')]));
@@ -118,6 +128,8 @@ const NoticeCasePage: React.FC = () => {
   const forms = r.forms ?? [];
   const newCount = (items.data ?? []).filter((i) => i.is_new).length;
   const shownItems = part ? (items.data ?? []).filter((i) => i.own_key === part) : items.data ?? [];
+  const shownDates = part ? (keyDates.data ?? []).filter((k) => k.own_key === part) : keyDates.data ?? [];
+  const upcoming = shownDates.filter((k) => k.upcoming).length;
   const partMember = part ? members.find((m) => m.case_key === part) : undefined;
 
   return (
@@ -154,6 +166,11 @@ const NoticeCasePage: React.FC = () => {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <CaseAdminActions clientId={clientId} caseKey={r.case_key as string} open={!!r.is_open} />
+          {track === 'refund' && r.case_id && (
+            <Button size="sm" variant="outline" className={WS_BTN} asChild>
+              <Link to={`/refunds/${clientId}/${encodeURIComponent(r.case_id)}`}>Refund page</Link>
+            </Button>
+          )}
           {r.case_id && (
             <Button size="sm" variant="outline" className={WS_BTN} asChild>
               <Link to={`/notices-case-folder/${clientId}/${encodeURIComponent(r.case_id)}`}><FolderOpen className="h-3.5 w-3.5" aria-hidden /> Portal case folder</Link>
@@ -182,11 +199,19 @@ const NoticeCasePage: React.FC = () => {
           notice={{ form_label: r.form_label, issue_date: r.last_issue_date, reference_number: r.reference_number, financial_year: r.financial_year }} />
       )}
 
-      <CaseChainPanel clientId={clientId} caseKey={r.case_key as string} part={part} onPart={setPart} />
-
-      <SectionCard title="Correspondence"
-        description={items.data ? `${shownItems.length} items, newest first${part ? ` · ${partMember ? caseLabel(partMember) : 'one case'} only` : members.length > 1 ? ` · all ${members.length} linked cases` : ''}${newCount ? ` · ${newCount} new` : ''}` : undefined}
-        actions={members.length > 1 && (
+      <SectionCard title="Timeline"
+        info="Every notice, reply, application and order of the case, and the dates the law attaches to them: the time to appeal, the pre-deposit, hearings and adjournments, replies due, and the windows to pay and close with a reduced penalty. Work on a notice with its Work on it link."
+        description={items.data ? `${shownItems.length} papers, ${plural(shownDates.length, 'key date')}${upcoming ? ` (${upcoming} upcoming)` : ''}, ${order === 'oldest' ? 'oldest first' : 'newest first'}${part ? ` · ${partMember ? caseLabel(partMember) : 'one case'} only` : members.length > 1 ? ` · all ${members.length} linked cases` : ''}${newCount ? ` · ${newCount} new` : ''}` : undefined}
+        actions={<div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-md border bg-card p-0.5" role="group" aria-label="Order of the timeline">
+            {(['oldest', 'newest'] as const).map((o) => (
+              <button key={o} type="button" aria-pressed={order === o} onClick={() => setOrder(o)}
+                className={cn('rounded px-2 py-0.5 text-[11px] font-medium', order === o ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
+                {o === 'oldest' ? 'Oldest first' : 'Newest first'}
+              </button>
+            ))}
+          </div>
+          {members.length > 1 && (
           <div className="flex flex-wrap gap-1" role="group" aria-label="Whose correspondence">
             <button type="button" onClick={() => setPart(null)} aria-pressed={!part}
               className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-medium', !part ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted')}>
@@ -199,11 +224,15 @@ const NoticeCasePage: React.FC = () => {
               </button>
             ))}
           </div>
-        )}>
+          )}
+        </div>}>
         {items.error ? <Note tone="warn">Couldn't load the correspondence: {items.error instanceof Error ? items.error.message : String(items.error)}</Note>
           : items.isLoading ? <Skeleton className="h-64 w-full" />
-          : <CaseTimeline items={shownItems} partOf={part ? undefined : partOf} />}
+          : <CaseTimeline items={shownItems} keyDates={shownDates} partOf={part ? undefined : partOf} order={order} focusId={focusId} />}
       </SectionCard>
+
+      <CaseChainPanel clientId={clientId} caseKey={r.case_key as string} part={part} onPart={setPart} />
+
     </div>
   );
 };

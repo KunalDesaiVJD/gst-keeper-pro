@@ -416,7 +416,10 @@ export interface PeriodSummary {
 const emptyBucket = (rateCode: BuilderRateCode, ratePct: number): RateBucket => ({
   rateCode,
   ratePct,
-  effectiveRatePct: EFFECTIVE_RATE_PCT[rateCode],
+  // Delay interest posts with rate_code DELAY_INTEREST_18, which has no land
+  // deduction, so its notified rate is its effective rate. Without the
+  // fallback its bucket printed "18% (eff. undefined%)" in every working paper.
+  effectiveRatePct: EFFECTIVE_RATE_PCT[rateCode] ?? ratePct,
   consideration: 0, taxableValue: 0, cgst: 0, sgst: 0, totalTax: 0, count: 0, landDeduction: 0,
 });
 
