@@ -22,11 +22,13 @@ import { StageBadge } from '@/components/notices/StageBadge';
 import { sectionLabel, toEvent, type CaseEvent, type FolderItem } from '@/components/notices/clients/caseFolder';
 import { useRefundLedger, type ReadAmount, type RefundRow } from '@/components/notices/reports/ledgerData';
 import { daysTo } from '@/components/notices/reports/ledgerStatus';
-import { MoneyBar, StepRoad, TonePill } from '@/components/notices/reports/RefundBits';
+import { MoneyBar, RefundWhenChip, StepRoad, TonePill } from '@/components/notices/reports/RefundBits';
 import {
   fyLabel, linkWord, moneyOf, placeOf, refundHref, refundPeriod, refundSteps, toneOf, typeCode, typeLong,
 } from '@/components/notices/reports/refundModel';
 import { downloadZip } from '@/components/notices/reports/zip';
+import { AppealFacts } from '@/components/notices/autopilot/PortalAppeal';
+import { usePortalApps } from '@/lib/portalAppeal';
 import { caseHref } from '@/lib/noticeCases';
 import { istToday } from '@/lib/noticeFacts';
 import { dueWords, fmtDate, fmtInr, plural } from '@/lib/noticeFormat';
@@ -88,6 +90,9 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
       return ((data ?? []) as FolderItem[]).map(toEvent).sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
     },
   });
+  // An appeal against this refund's order, from the portal's own record of it (no notice or case folder needed).
+  const apps = usePortalApps(clientId);
+  const appeals = (apps.data ?? []).filter((x) => x.appeal && x.target?.kind === 'refund' && x.target.key === arn);
   const docGroups = useMemo(() => {
     const g = new Map<string, { label: string; url: string }[]>();
     r.docs.forEach((d) => { const k = d.tab ?? 'Other'; g.set(k, [...(g.get(k) ?? []), d]); });
@@ -131,6 +136,7 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
             {r.period?.source === 'ai' ? ' · period read by the AI' : ''}
           </p>
           <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            <RefundWhenChip r={r} />
             <TonePill tone={tone} />
             <span className="text-xs text-muted-foreground">Portal: {r.fact.status ?? 'status not captured'}</span>
             {r.caseLink && <StageBadge stage={r.caseLink.stage} since={r.caseLink.stage_changed_at} by={r.caseLink.stage_changed_by} />}
@@ -164,8 +170,17 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
             {s.due && s.basis ? ' · ' : ''}{s.basis}
           </div>
         )}
-        {tone === 'part' && r.links.some((l) => l.kind === 'appeal') && <div className="mt-0.5 text-xs">An appeal against it is linked below.</div>}
+        {appeals.length > 0
+          ? <div className="mt-0.5 text-xs">Appeal {appeals.map((x) => x.row.arn).join(', ')} filed on {fmtDate(appeals[0].row.filed_date)}: {appeals[0].row.status ?? 'status not read'}. Its details are below.</div>
+          : tone === 'part' && r.links.some((l) => l.kind === 'appeal') && <div className="mt-0.5 text-xs">An appeal against it is linked below.</div>}
       </section>
+
+      {appeals.map(({ row, appeal }) => appeal && (
+        <div key={row.id} id={`appeal-${row.arn}`} className="scroll-mt-4"><SectionCard title={<span className="inline-flex items-center gap-1.5"><GitBranch className="h-4 w-4" aria-hidden /> Appeal {row.arn}</span>}
+          description="From the portal's record of the appeal; it has no notice or case folder in the app until the appellate authority takes it up">
+          <AppealFacts a={appeal} />
+        </SectionCard></div>
+      ))}
 
       <SectionCard title="Steps"><StepRoad steps={refundSteps(r)} /></SectionCard>
 
@@ -199,6 +214,8 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
                   <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs"><Link to={refundHref(clientId, l.key)}>Open <ArrowRight className="h-3 w-3" aria-hidden /></Link></Button>
                 ) : l.hasPage ? (
                   <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs"><Link to={caseHref(clientId, l.key)}>Open <ArrowRight className="h-3 w-3" aria-hidden /></Link></Button>
+                ) : appeals.some((x) => x.row.arn === l.key) ? (
+                  <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs"><a href={`#appeal-${l.key}`}>Details above</a></Button>
                 ) : null}
               </li>
             ))}

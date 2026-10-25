@@ -60,6 +60,21 @@ export function placeOf(r: RefundRow): (FyQuarter & { byFiling: boolean }) | nul
 }
 
 // ── One word for where a refund stands (the grid's and the register's colours) ─
+/** A refund's financial year and period, the same words on every page that shows it. */
+export interface RefundWhen { fy: string; period: string | null; byFiling: boolean; fromAi: boolean }
+export function refundWhen(r: RefundRow): RefundWhen | null {
+  const p = placeOf(r);
+  if (!p) return null;
+  const end = r.period?.to ? quarterOf(r.period.to).fy : p.fy;
+  const fy = end > p.fy ? `FY ${p.fy}-${String(p.fy + 1).slice(2)} to ${end}-${String(end + 1).slice(2)}` : fyLabel(p.fy);
+  return { fy, period: refundPeriod(r), byFiling: p.byFiling, fromAi: r.period?.source === 'ai' };
+}
+/** "FY 2024-25 · Apr–Jun 2024", for a title or an export. */
+export function refundWhenText(r: RefundRow): string | null {
+  const w = refundWhen(r);
+  return w ? `${w.fy} · ${w.period ?? 'period not captured'}` : null;
+}
+
 export type Tone = 'action' | 'open' | 'full' | 'part' | 'rejected' | 'withdrawn' | 'closed';
 export const TONE_LABEL: Record<Tone, string> = {
   action: 'Needs action', open: 'With the officer', full: 'Sanctioned', part: 'Part rejected',

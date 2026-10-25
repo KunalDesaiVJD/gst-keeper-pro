@@ -417,11 +417,17 @@ const p8a = R.planFyPullJobs({ fys: [FY], rows: rowsOf({ with8A: false }), calcP
 check('pull plan 8A', 'everything else pulled, no 8A: the 8A first, then the GSTR-9 system figures', p8a.jobs.map((j) => j.mode).join() === 'gstr9_8a_pull,gstr9_pull' && p8a.jobs[0].periods.join() === '03/2026', JSON.stringify(p8a));
 check('pull plan 8A', 'describeJob names the 8A job', /Table 8A document details of the year ending Mar 2026/.test(R.describeJob(p8a.jobs[0])), R.describeJob(p8a.jobs[0]));
 const p8b = R.planFyPullJobs({ fys: [FY], rows: rowsOf({ with8A: false, drop2B: ['02/2026'] }), calcPulled: new Set(), eightAHave: new Set(), today: TODAY, extVersion: '0.18.0' });
-check('pull plan 8A', 'a 2B missing: that first, the 8A after', p8b.jobs.map((j) => j.mode).join() === 'gstr2a2b_pull,gstr9_8a_pull' && p8b.jobs[0].periods.join() === '02/2026', JSON.stringify(p8b));
+check('pull plan 8A', 'a 2B missing too: the 8A first (straight from GSTR-9), that 2B after', p8b.jobs.map((j) => j.mode).join() === 'gstr9_8a_pull,gstr2a2b_pull,gstr9_pull' && p8b.jobs[1].periods.join() === '02/2026', JSON.stringify(p8b));
 const p8c = R.planFyPullJobs({ fys: [FY], rows: rowsOf({ with8A: false }), calcPulled: new Set(), eightAHave: new Set(), today: TODAY, extVersion: '0.17.0' });
 check('pull plan 8A', 'extension 0.17.0: the plan as before, with a note to update or upload', JSON.stringify(p8c.jobs) === JSON.stringify(plan2.jobs) && /Extension 0\.18\.0 pulls the 8A/.test(p8c.note), JSON.stringify(p8c));
 const p8d = R.planFyPullJobs({ fys: [FY], rows: rowsOf(), calcPulled: new Set(), eightAHave: new Set([FY]), today: TODAY, extVersion: '0.18.0' });
-check('pull plan 8A', 'the 8A saved: the plan as before', JSON.stringify(p8d) === JSON.stringify(plan2), JSON.stringify(p8d));
+check('pull plan 8A', 'the 8A saved, nothing else missing: the GSTR-9 system figures', JSON.stringify(p8d.jobs) === JSON.stringify(plan2.jobs), JSON.stringify(p8d));
+const p8f = R.planFyPullJobs({ fys: [FY], rows: rowsOf({ drop2B: ['02/2026'] }), calcPulled: new Set([FY]), eightAHave: new Set([FY]), today: TODAY, extVersion: '0.18.0' });
+check('pull plan 8A', 'the 8A saved, a 2B missing: only that 2B', p8f.jobs.map((j) => j.mode).join() === 'gstr2a2b_pull' && p8f.jobs[0].periods.join() === '02/2026', JSON.stringify(p8f));
+const p8g = R.planFyPullJobs({ fys: [FY], rows: rowsOf(), calcPulled: new Set([FY]), eightAHave: new Set([FY]), today: TODAY, extVersion: '0.18.4' });
+check('pull plan 8A', 'everything saved: the 8A again, never the last six months of 2A and 2B', p8g.jobs.map((j) => j.mode).join() === 'gstr9_8a_pull' && p8g.jobs[0].periods.join() === '03/2026', JSON.stringify(p8g));
+const p8h = R.planFyPullJobs({ fys: [FY], rows: rowsOf(), calcPulled: new Set([FY]), eightAHave: new Set([FY]), today: TODAY, extVersion: '0.17.0' });
+check('pull plan 8A', 'everything saved, extension 0.17.0: 2A and 2B of the last six months as before', p8h.jobs[0]?.mode === 'gstr2a2b_pull' && p8h.jobs[0].periods.length === 6, JSON.stringify(p8h));
 const p8e = R.planFyPullJobs({ fys: [FY], rows: rowsOf({ with8A: false }), calcPulled: new Set(), eightAHave: new Set(), today: '2026-03-20', extVersion: '0.18.0' });
 check('pull plan 8A', 'the year not ended: no 8A asked', !p8e.jobs.some((j) => j.mode === 'gstr9_8a_pull'), JSON.stringify(p8e));
 

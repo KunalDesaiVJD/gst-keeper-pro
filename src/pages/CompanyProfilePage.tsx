@@ -27,7 +27,8 @@ import { ClientProfileCard } from '@/components/notices/clients/ClientProfileCar
 import { ReturnStrip } from '@/components/notices/clients/ReturnStrip';
 import { PortalApplicationsCard } from '@/components/notices/autopilot/PortalApplicationsCard';
 import { ClientCases } from '@/components/notices/clients/ClientCases';
-import { Drc03List, RefundList } from '@/components/notices/clients/ClientLedgers';
+import { Drc03List } from '@/components/notices/clients/ClientLedgers';
+import { ClientRefunds } from '@/components/notices/clients/ClientRefunds';
 import { useClientSync } from '@/components/notices/clients/useClientSync';
 import { loadClientProfile, matterOutstanding, refundNeedsReply, type ClientProfileData } from '@/components/notices/clients/profileData';
 import { OFF_LABEL, reasonDef, type ClientHealth, type FailureRun } from '@/components/notices/clients/syncHealth';
@@ -173,6 +174,8 @@ const CompanyProfilePage: React.FC = () => {
     return sortRows((d?.notices ?? []).filter((n) => matchesFilter(n, show, issuedFrom) && (!cat || n.category === cat)), sort, dir);
   }, [d, show, cat, sort, dir]);
   const caseIds = useMemo(() => new Set((d?.folders ?? []).map((f) => f.case_id)), [d]);
+  // A refund's portal case is shown under Refunds, not again among the case folders.
+  const refundArns = useMemo(() => new Set((d?.refunds ?? []).map((r) => r.arn).filter((a): a is string => !!a)), [d]);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
   if (!clientId) return <Navigate to="/notices-company-list" replace />;
@@ -296,11 +299,11 @@ const CompanyProfilePage: React.FC = () => {
             )}
           </SectionCard>
 
-          {hasCases && <ClientCases clientId={clientId} folders={d.folders} notices={d.notices} today={today} />}
+          {hasCases && <ClientCases clientId={clientId} folders={d.folders} notices={d.notices} today={today} exclude={refundArns} />}
           {d.refunds.length > 0 || d.drc03.length > 0 ? (
             <div className={cn('grid grid-cols-1 items-stretch gap-3', d.refunds.length > 0 && d.drc03.length > 0 && '2xl:grid-cols-2')}>
-              {d.refunds.length > 0 && <div id="client-refunds" className="scroll-mt-4"><RefundList clientId={clientId} rows={d.refunds} caseIds={caseIds} /></div>}
-              {d.drc03.length > 0 && <Drc03List clientId={clientId} rows={d.drc03} caseIds={caseIds} />}
+              {d.refunds.length > 0 && <div id="client-refunds" className="scroll-mt-4"><ClientRefunds clientId={clientId} /></div>}
+              {d.drc03.length > 0 && <Drc03List clientId={clientId} rows={d.drc03} caseIds={caseIds} limit={5} />}
             </div>
           ) : null}
           {nothing.length > 0 && (

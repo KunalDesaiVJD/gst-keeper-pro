@@ -32,6 +32,8 @@ import { AssignPopover } from './AssignPopover';
 import { OwnerChip } from './OwnerChip';
 import { ResponseNeedChip } from './types/ResponseNeedChip';
 import { noticeCaseHref } from '@/lib/noticeCases';
+import { fmtDisputeYears, useNoticeDisputeYears } from '@/lib/noticeDisputeYears';
+import { DisputeYearCell } from './DisputeYearCell';
 import { cn } from '@/lib/utils';
 
 export function DueCell({ r }: { r: NoticeFact }) {
@@ -97,6 +99,7 @@ export const NoticeTable: React.FC<{
   const [closeOpen, setCloseOpen] = useState(false);
   const all = useQuery({ queryKey: ['notice-list-all', filterKey], queryFn: () => loadAll!(), enabled: !!loadAll && menuOpen, staleTime: 30_000 });
   const ids = rows.map((r) => r.id as string);
+  const years = useNoticeDisputeYears(ids);
   const allOn = ids.length > 0 && ids.every((id) => selected.has(id));
   const visibleSelected = ids.filter((id) => selected.has(id));
   const targets = scope === 'filter' ? [...selected] : visibleSelected;
@@ -201,9 +204,12 @@ export const NoticeTable: React.FC<{
             <div className="flex items-start gap-2">
               {canEdit && <Checkbox checked={selected.has(r.id as string)} onCheckedChange={(v) => toggle(r.id as string, !!v)} aria-label={`Select ${r.client_name} ${r.reference_number ?? ''}`} className="mt-0.5" />}
               <div className="min-w-0 flex-1">
-                <Link to={noticeCaseHref({ id: r.id as string, client_id: r.client_id, case_id: r.case_id, category: r.category })} className="block text-sm font-semibold hover:underline" title="Open its case and timeline">{noticeTitle(r)}</Link>
+                <Link to={noticeCaseHref({ id: r.id as string, client_id: r.client_id, case_id: r.case_id, category: r.category })} className="block text-sm font-semibold hover:underline" title="Open its case and timeline">{noticeTitle(r, { fy: false })}</Link>
                 {showClient && <div className="truncate text-xs text-muted-foreground">{r.client_name} · <span className="font-mono">{r.client_gstin}</span></div>}
                 <div className="truncate font-mono text-[11px] text-muted-foreground">{r.reference_number || r.case_id}</div>
+                {years.data?.get(r.id as string)?.years.length ? (
+                  <div className="text-xs font-semibold">Dispute year FY {fmtDisputeYears(years.data.get(r.id as string)?.years)}</div>
+                ) : null}
               </div>
               <div className="shrink-0 text-right"><DueCell r={r} /></div>
             </div>
@@ -230,6 +236,7 @@ export const NoticeTable: React.FC<{
               {showClient && <SortHead label="Client" k="client" sort={sort} dir={dir} onSort={onSort} />}
               {/* The lists open newest first by issue date; this header turns it to oldest first and back. */}
               <SortHead label="Notice · issued" k="issued" sort={sort} dir={dir} onSort={onSort} />
+              <th scope="col" className={WS_TH}>Dispute year</th>
               <SortHead label="Due" k="due" sort={sort} dir={dir} onSort={onSort} />
               <SortHead label="Stage" k="stage" sort={sort} dir={dir} onSort={onSort} />
               <SortHead label="Demand" k="demand" sort={sort} dir={dir} onSort={onSort} className="text-right" />
@@ -254,7 +261,7 @@ export const NoticeTable: React.FC<{
                     </td>
                   )}
                   <td className={cn(WS_TD, 'min-w-[18rem]')}>
-                    <Link to={noticeCaseHref({ id: r.id as string, client_id: r.client_id, case_id: r.case_id, category: r.category })} title="Open its case and timeline" className="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{noticeTitle(r)}</Link>
+                    <Link to={noticeCaseHref({ id: r.id as string, client_id: r.client_id, case_id: r.case_id, category: r.category })} title="Open its case and timeline" className="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{noticeTitle(r, { fy: false })}</Link>
                     <ResponseNeedChip need={r.response_need} className="ml-1.5 align-middle" />
                     <div className="line-clamp-1 text-xs text-muted-foreground" title={r.description ?? ''}>
                       {(r.reference_number || r.case_id) && <span className="font-mono">{r.reference_number || r.case_id}</span>}
@@ -263,6 +270,7 @@ export const NoticeTable: React.FC<{
                     </div>
                     {!r.is_open && r.close_reason && <div className="text-[11px] text-muted-foreground">{closeReasonText(r.close_reason)}</div>}
                   </td>
+                  <td className={WS_TD}><DisputeYearCell d={years.data?.get(id)} loading={years.isLoading} /></td>
                   <td className={cn(WS_TD, 'whitespace-nowrap')}><DueCell r={r} /></td>
                   <td className={cn(WS_TD, 'whitespace-nowrap')}>
                     <StagePicker value={r.stage} since={r.stage_changed_at} by={r.stage_changed_by} disabled={!canEdit} onChange={setStageFor([id])} />
@@ -296,7 +304,7 @@ export const NoticeTable: React.FC<{
           {footerTotal && rows.length > 0 && (
             <tfoot>
               <tr className="sticky bottom-0 bg-muted font-semibold">
-                <td className={WS_TD} colSpan={(canEdit ? 1 : 0) + (showClient ? 1 : 0) + 3}>{footerTotal.label}</td>
+                <td className={WS_TD} colSpan={(canEdit ? 1 : 0) + (showClient ? 1 : 0) + 4}>{footerTotal.label}</td>
                 <td className={WS_TD_NUM}>{fmtInrShort(footerTotal.amount)}</td>
                 <td className={WS_TD} colSpan={2} />
               </tr>
