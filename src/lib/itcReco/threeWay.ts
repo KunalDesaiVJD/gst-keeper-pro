@@ -273,8 +273,11 @@ function explainThree(st: FyStatements, rows: ThreeRow[]): string[] {
 
 export interface JudgementLine { key: string; label: string; docs: number | ''; amounts: Amounts | null; note: string; kind: RowKind; tone: RowTone | null }
 
+/** The GSTR-9 system figure of Table 8A (GSTR9_CALC), and what to say beside it. */
+export interface Portal8ATotal { igst: number; cgst: number; sgst: number; cess: number; note?: string }
+
 /** The year's final available ITC and how it is reached, line by line. `portal8A` is the GSTR-9 system figure, when pulled. */
-export function judgement(res: ThreeWayResult, st: FyStatements, portal8A: { igst: number; cgst: number; sgst: number; cess: number } | null): JudgementLine[] {
+export function judgement(res: ThreeWayResult, st: FyStatements, portal8A: Portal8ATotal | null): JudgementLine[] {
   const sum = (pick: (r: ThreeRow) => RecoDoc | Amounts | undefined | null, where: (r: ThreeRow) => boolean) => {
     let t = ZERO;
     let n = 0;
@@ -300,7 +303,7 @@ export function judgement(res: ThreeWayResult, st: FyStatements, portal8A: { igs
     sum((r) => r.e, (r) => !!r.e), 'B2B invoices and notes only.');
   if (portal8A) {
     const t = { taxable: 0, igst: r2(portal8A.igst), cgst: r2(portal8A.cgst), sgst: r2(portal8A.sgst), cess: r2(portal8A.cess), tax: r2(portal8A.igst + portal8A.cgst + portal8A.sgst + portal8A.cess) };
-    lines.push({ key: '8a_portal', label: 'GSTR-9 Table 8A as the portal computed it', docs: '', amounts: t, note: 'From the GSTR-9 system-computed figures (GSTR-9 pull).', kind: 'data', tone: null });
+    lines.push({ key: '8a_portal', label: 'GSTR-9 Table 8A as the portal computed it', docs: '', amounts: t, note: portal8A.note ?? 'From the GSTR-9 system-computed figures (GSTR-9 pull).', kind: 'data', tone: null });
   }
   line('h2', 'Final judgment', null, '', 'section');
   const by = (v: Verdict) => sum((r) => r.basis, (r) => r.verdict === v);
@@ -332,7 +335,7 @@ export function judgement(res: ThreeWayResult, st: FyStatements, portal8A: { igs
 export interface ThreeWayInfo {
   client: { name: string; gstin: string | null };
   /** GSTR-9 Table 8A as the portal computed it (GSTR9_CALC), when pulled. */
-  portal8A: { igst: number; cgst: number; sgst: number; cess: number } | null;
+  portal8A: Portal8ATotal | null;
 }
 
 const itcIn2B = (b?: RecoDoc): string => {

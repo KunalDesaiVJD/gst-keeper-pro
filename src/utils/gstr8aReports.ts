@@ -22,7 +22,7 @@ import { assembleFy, eightAPeriod, fyLoadMonths, fyWindow, isDue, type FyStateme
 import { fyPairTable } from '@/lib/itcReco/fyView';
 import { reconcileFyPair } from '@/lib/itcReco/reasons8A';
 import { findRow, isStored8A, statementFromRow } from '@/lib/itcReco/sources';
-import { reconcileThreeWay, threeWayReportTable } from '@/lib/itcReco/threeWay';
+import { reconcileThreeWay, threeWayReportTable, type Portal8ATotal } from '@/lib/itcReco/threeWay';
 import type { SourceKey, StatementRow } from '@/lib/itcReco/types';
 import type { PullJob, PullPlan } from '@/lib/reportRegistry';
 import type { ReportTable } from './allClientsReports';
@@ -35,7 +35,15 @@ export const GSTR9_8A = 'GSTR9_8A';
 export const EIGHT_A_PULL_VERSION = '0.18.0';
 const SOURCE_OF: Record<string, SourceKey> = { GSTR2A: '2A', GSTR2B: '2B', [GSTR9_8A]: '8A' };
 
-interface YearRows { rows: StatementRow[]; calc: unknown | null }
+interface YearRows {
+  rows: StatementRow[];
+  calc: unknown | null;
+  /** When the GSTR-9 system figures were pulled. */
+  calcAt: string | null;
+  /** They were pulled before the 8A now saved (seen live 25 Oct 2026: the portal
+   * updates Table 8A until the next October, so figures pulled earlier fall short). */
+  calcStale: boolean;
+}
 
 /** The year's 2A and 2B (April to December of the next year), its 8A and its GSTR-9 system figures. */
 async function loadYear(clientId: string, fy: string): Promise<YearRows> {
@@ -60,8 +68,12 @@ async function loadYear(clientId: string, fy: string): Promise<YearRows> {
   const rows: StatementRow[] = all
     .filter((r) => SOURCE_OF[r.return_type])
     .map((r) => ({ source: SOURCE_OF[r.return_type], period: r.period_month, status: r.status, summary: r.summary, updatedAt: r.updated_at }));
-  const calc = all.find((r) => r.return_type === 'GSTR9_CALC')?.summary ?? null;
-  return { rows, calc };
+  const calcRow = all.find((r) => r.return_type === 'GSTR9_CALC');
+  const eightRow = all.find((r) => r.return_type === GSTR9_8A);
+  const calcAt = calcRow?.updated_at ?? null;
+  const calcStale = !!calcAt && !!eightRow?.updated_at && has8A({ source: '8A', period: eightRow.period_month, status: eightRow.status, summary: eightRow.summary, updatedAt: eightRow.updated_at })
+    && Date.parse(eightRow.updated_at) > Date.parse(calcAt);
+  return { rows, calc: calcRow?.summary ?? null, calcAt, calcStale };
 }
 
 const fyOf = (month: string): string => {
@@ -70,11 +82,14 @@ const fyOf = (month: string): string => {
 };
 
 /** GSTR-9 Table 8A as the portal computed it, from a pulled GSTR9_CALC; null when not pulled or unreadable. */
-const portal8AOf = (calc: unknown, fy: string): { igst: number; cgst: number; sgst: number; cess: number } | null => {
+const portal8AOf = (calc: unknown, fy: string, at: string | null = null, stale = false): Portal8ATotal | null => {
   if (!calc) return null;
   try {
     const p = parseGstr9Calc(calc, fy);
-    return p.found.t8A ? { igst: p.gstr9.t8A.i, cgst: p.gstr9.t8A.c, sgst: p.gstr9.t8A.s, cess: p.gstr9.t8A.x } : null;
+    const on = at ? new Date(at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }) : null;
+    const note = `From the GSTR-9 system-computed figures (GSTR-9 pull${on ? `, ${on}` : ''}).`
+      + (stale ? ' Pulled before the 8A file above, so it may not hold the 8A as it is now: Pull refreshes it.' : '');
+    return p.found.t8A ? { igst: p.gstr9.t8A.i, cgst: p.gstr9.t8A.c, sgst: p.gstr9.t8A.s, cess: p.gstr9.t8A.x, note } : null;
   } catch {
     return null;
   }
@@ -95,12 +110,12 @@ async function readPulled8A(rows: StatementRow[], gstin: string | null, fy: stri
   }));
 }
 
-async function yearOf(clientId: string, month: string): Promise<{ st: FyStatements; client: { name: string; gstin: string | null }; calc: unknown | null; fy: string }> {
+async function yearOf(clientId: string, month: string): Promise<{ st: FyStatements; client: { name: string; gstin: string | null }; calc: unknown | null; calcAt: string | null; calcStale: boolean; fy: string }> {
   const fy = fyOf(month);
   const [client, year] = await Promise.all([fetchClient(clientId), loadYear(clientId, fy)]);
   const rows = await readPulled8A(year.rows, client.gstin || null, fy);
   const st = assembleFy({ fy, rows, today: istToday() });
-  return { st, client: { name: client.name, gstin: client.gstin || null }, calc: year.calc, fy };
+  return { st, client: { name: client.name, gstin: client.gstin || null }, calc: year.calc, calcAt: year.calcAt, calcStale: year.calcStale, fy };
 }
 
 export const buildGstr2aVs8aReport = async (clientId: string, month: string): Promise<ReportTable> => {
@@ -114,12 +129,12 @@ export const buildGstr2bVs8aReport = async (clientId: string, month: string): Pr
 };
 
 export const buildGstr8aThreeWayReport = async (clientId: string, month: string): Promise<ReportTable> => {
-  const { st, client, calc, fy } = await yearOf(clientId, month);
+  const { st, client, calc, calcAt, calcStale, fy } = await yearOf(clientId, month);
   const anyReady = (side: FyStatements['twoA']) => [...side.metas.entries()].some(([p, m]) => st.window.includes(p) && m.state === 'ready');
   if (!anyReady(st.twoA) && !anyReady(st.twoB)) {
     throw new Error(`No GSTR-2A or GSTR-2B of FY ${fy} is pulled for ${client.name}. Use Pull on this report: it fetches the year's 2A and 2B.`);
   }
-  return threeWayReportTable(reconcileThreeWay(st), st, { client, portal8A: portal8AOf(calc, fy) });
+  return threeWayReportTable(reconcileThreeWay(st), st, { client, portal8A: portal8AOf(calc, fy, calcAt, calcStale) });
 };
 
 // ── Pull: the year's 2A and 2B that are missing, then GSTR-9 ────────────────
@@ -127,7 +142,7 @@ export const buildGstr8aThreeWayReport = async (clientId: string, month: string)
 export interface FyPlanInput {
   fys: string[];
   rows: StatementRow[];
-  /** FYs whose GSTR-9 system figures are already pulled. */
+  /** FYs whose GSTR-9 system figures are already pulled (and not older than the 8A saved). */
   calcPulled: Set<string>;
   /** FYs whose 8A document details are saved (uploaded, or pulled with a file or as empty); absent = none known. */
   eightAHave?: Set<string>;
@@ -227,7 +242,7 @@ export const has8A = (row: StatementRow | undefined): boolean => {
 export const planGstr8aPull = async ({ clientId, periods, extVersion }: { clientId: string; periods: string[]; extVersion: string | null }): Promise<PullPlan> => {
   const fys = [...new Set(periods.filter((p) => /^\d{2}\/\d{4}$/.test(p)).map(fyOfPeriod))];
   const loaded = await Promise.all(fys.map((fy) => loadYear(clientId, fy)));
-  const calcPulled = new Set(fys.filter((_, i) => !!loaded[i].calc));
+  const calcPulled = new Set(fys.filter((_, i) => !!loaded[i].calc && !loaded[i].calcStale));
   const eightAHave = new Set(fys.filter((fy, i) => has8A(loaded[i].rows.find((r) => r.source === '8A' && r.period === eightAPeriod(fy)))));
   return planFyPullJobs({ fys, rows: loaded.flatMap((y) => y.rows), calcPulled, eightAHave, today: istToday(), extVersion });
 };

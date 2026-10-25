@@ -50,9 +50,16 @@ available, not reverse charge. Imports (Table 6E) and ISD (6G) are never in it.
    the page loads), as `GSTR9_8A`, summary `format 'gstk-8a-pull-v1'`, status
    `Pulled`. The app reads it on every build with the Upload reader
    (`src/lib/itcReco/eightAPull.ts`; a ZIP's parts put together, a document
-   in two parts once; a file of another GSTIN refused). When the portal
-   answers in words instead, the status says so: `REQUESTED: …` (prepared
-   later, Pull again), `NO DATA: …` (saved as an empty 8A), `PULL FAILED: …`
+   in two parts once; a file of another GSTIN refused). The portal
+   prepares the file in the background (seen live 25 Oct 2026): from 0.18.1
+   the job stays on that client and year, waits, and opens the GSTR-9 and
+   presses the button again every minute (0.18.2; every 4 minutes in 0.18.1) until the file comes, for up to
+   an hour. Seen live the same day, the press hands the portal's ZIP
+   (`<GSTIN>_R9_8A_1.zip`) straight to the browser: from 0.18.3 the
+   extension records that download and, once Chrome has saved it, reads it
+   back from the disk (an offscreen page; "Allow access to file URLs" must be
+   on), waiting for it rather than pressing again. When the portal answers in words instead, the status says so:
+   `REQUESTED: …` (still not ready after an hour, Pull again), `NO DATA: …` (saved as an empty 8A), `PULL FAILED: …`
    (with what the page showed); a failed pull writes the status only, so an
    8A saved earlier still counts. A pull replaces an upload of the same year,
    and an upload replaces a pull.
@@ -61,7 +68,20 @@ available, not reverse charge. Imports (Table 6E) and ISD (6G) are never in it.
    documents dated in the FY, in the statements of the window (§3). Always
    labelled "the 8A rebuilt from the year's 2B", never as the portal's 8A.
 4. The GSTR-9 system total of 8A (`GSTR9_CALC`, pulled by `gstr9_pull`) is
-   shown next to the document 8A when it is there, as a check.
+   shown next to the document 8A when it is there, as a check, with the date
+   it was pulled. The portal keeps updating Table 8A until the October after
+   the year, so a total pulled before the 8A now saved is marked as older,
+   and Pull fetches it again (seen live 25 Oct 2026: a total of 22 Oct fell
+   short of the 8A file of 25 Oct by ₹2.9 lakh a head).
+
+**The portal's 8A Excel as seen live (25 Oct 2026, `R9_8A_<GSTIN>_1.xlsx`
+inside `<GSTIN>_R9_8A_1.zip`):** sheets Notes, Read me, B2B, B2BA, B2B-CDNR,
+B2B-CDNRA, ECO, ECOA; a title band of four rows, then two header rows
+("Tax amount" and, after the 2B period and ITC availability, "Actual ITC
+amount considered for 8A Summary computation"). Its sheets keep their
+template's dimension (`A1:V6`) however many rows they hold, so the reader sets
+each sheet's range from the cells it really has (`fitRange` in `eightA.ts`);
+read without that, every document was dropped. Tax is read from "Tax amount".
 
 **Unverified:** the portal's 8A Excel layout and the way the dashboard's
 button hands the file over (straight away, a ZIP, or prepared later) have not
