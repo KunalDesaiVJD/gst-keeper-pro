@@ -156,7 +156,7 @@ const NoticeCasePage: React.FC = () => {
           <CaseAdminActions clientId={clientId} caseKey={r.case_key as string} open={!!r.is_open} />
           {track === 'refund' && r.case_id && (
             <Button size="sm" variant="outline" className={WS_BTN} asChild>
-              <Link to={`/refunds-all?client=${clientId}&refund=${encodeURIComponent(r.case_id)}`}>On the Refunds page</Link>
+              <Link to={`/refunds/${clientId}/${encodeURIComponent(r.case_id)}`}>Refund page</Link>
             </Button>
           )}
           {r.case_id && (

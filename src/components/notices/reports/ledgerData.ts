@@ -101,6 +101,28 @@ export interface RefundRow {
   sanctioned: number | null;
   /** Rejected: read from the order, else claimed less sanctioned once a sanction is known. */
   rejected: number | null;
+  /** The tax period claimed, as YYYY-MM: the application's own (case folder), else what the AI read. */
+  period: { from: string; to: string; source: 'portal' | 'ai' } | null;
+}
+
+/** The portal's return period (YYYYMM or MMYYYY) as YYYY-MM. */
+export function portalPeriod(v: unknown): string | null {
+  const s = typeof v === 'string' ? v.trim() : '';
+  let m = /^(20\d{2})(0[1-9]|1[0-2])$/.exec(s);
+  if (m) return `${m[1]}-${m[2]}`;
+  m = /^(0[1-9]|1[0-2])(20\d{2})$/.exec(s);
+  return m ? `${m[2]}-${m[1]}` : null;
+}
+
+/** The period on the refund application in its case folder (fromRetPrd / toRetPrd of the RFD-01 item). */
+function applicationPeriod(items: FolderItemLite[] | undefined): { from: string; to: string } | null {
+  for (const it of items ?? []) {
+    if ((it.folder_section ?? '').toUpperCase() !== 'APLCN') continue;
+    const j = (it.raw_json && typeof it.raw_json === 'object' && !Array.isArray(it.raw_json) ? it.raw_json : {}) as Record<string, unknown>;
+    const from = portalPeriod(j.fromRetPrd);
+    if (from) return { from, to: portalPeriod(j.toRetPrd) ?? from };
+  }
+  return null;
 }
 
 function refundDocs(f: RefundFact, c: CaseLink | null): RefundDoc[] {
@@ -155,7 +177,7 @@ export function readRefund(docs: AiRefundDoc[], portalClaimed: number | null): R
   let rejected = largest(orders, (d) => d.rejected, cap);
   // Live, 24 October 2026: the AI often reads the amount claimed as the amount rejected.
   if (rejected && sanctioned && cap !== null && rejected.value + sanctioned.value > cap + 10) rejected = null;
-  const paid = largest(orders, (d) => d.paid ?? d.net, cap);
+  const paid = largest(orders, (d) => (amountOf(d.paid) !== null ? d.paid : d.net), cap);
   const provisional = largest(orders, (d) => d.provisional, cap);
   // The period most of the documents name.
   const periods = new Map<string, number>();
@@ -229,6 +251,12 @@ export async function loadRefundLedger(clientId?: string): Promise<RefundRow[]> 
       signals, read, links: refundLinks,
       hasCasePage: !!f.arn && caseByKey.has(k),
       claimed, sanctioned, rejected,
+      period: (() => {
+        const own = applicationPeriod(folder.get(k));
+        if (own) return { ...own, source: 'portal' as const };
+        const a = read?.periodFrom?.slice(0, 7);
+        return a ? { from: a, to: read?.periodTo?.slice(0, 7) ?? a, source: 'ai' as const } : null;
+      })(),
     };
   });
 }

@@ -329,9 +329,9 @@ const AdditionalNoticeFolderPage: React.FC = () => {
       </header>
 
       {refund?.arn && (
-        <Link to={`/refunds-all?client=${clientId}&refund=${encodeURIComponent(refund.arn)}`}
+        <Link to={`/refunds/${clientId}/${encodeURIComponent(refund.arn)}`}
           className="flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm hover:bg-primary/10">
-          <span><span className="font-semibold">This is a refund.</span> Its steps, amounts read from the orders, linked appeals and documents are on the Refunds page.</span>
+          <span><span className="font-semibold">This is a refund.</span> Its steps, amounts, linked appeals and documents are on its refund page.</span>
           <span className="shrink-0 font-medium text-primary">Open the refund →</span>
         </Link>
       )}
