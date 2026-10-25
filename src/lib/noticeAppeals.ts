@@ -3,7 +3,7 @@
 // by the order it is against, and for each its three documents (statement of
 // facts, grounds of appeal, detailed written submission) kept in versions
 // (notice_appeal_drafts). The notice assistant drafts or improves a document
-// in the Edge Function notice-ai (action appeal) and keeps its answer as a new
+// in the Edge Function notice-appeal-ai and keeps its answer as a new
 // version; staff edit, save and mark a version final. Nothing is filed by the
 // app. Read §33 of docs/NOTICES_LITIGATION_POSITIONS.md first.
 import { useQuery } from '@tanstack/react-query';
@@ -116,13 +116,13 @@ export async function startAppealDraft(v: {
   clientId: string; caseKey: string; appealKey: string; docType: AppealDocType; mode: 'draft' | 'improve';
   text?: string | null; instructions?: string | null; actor: string | null;
 }): Promise<{ runId: string | null; error: string | null }> {
-  const { data, error } = await supabase.functions.invoke('notice-ai', {
+  const { data, error } = await supabase.functions.invoke('notice-appeal-ai', {
     body: {
-      action: 'appeal', client_id: v.clientId, case_key: v.caseKey, appeal_key: v.appealKey, doc_type: v.docType, mode: v.mode,
+      client_id: v.clientId, case_key: v.caseKey, appeal_key: v.appealKey, doc_type: v.docType, mode: v.mode,
       text: v.text ?? null, instructions: v.instructions ?? null, actor: v.actor,
     },
   });
-  if (error) return { runId: null, error: 'The notice-ai Edge Function could not be reached. Try again in a minute.' };
+  if (error) return { runId: null, error: 'The notice-appeal-ai Edge Function could not be reached. Try again in a minute.' };
   const d = (data ?? {}) as { run_id?: string; error?: string; id?: string; status?: string };
   if (d.error) return { runId: null, error: appealRefusal(d.error) };
   return { runId: d.run_id ?? d.id ?? null, error: d.status === 'failed' ? 'The assistant could not draft this time.' : null };

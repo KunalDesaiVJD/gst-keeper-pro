@@ -1,4 +1,4 @@
-// The Appeal workspace's drafts (the firm's request of 25 October 2026): the
+// notice-appeal-ai: the Appeal workspace's drafts (the firm's request of 25 October 2026): the
 // statement of facts, the grounds of appeal and the detailed written
 // submission for an appeal, drafted or improved from what the database hands
 // it (notice_appeal_ai_begin, migration 20261025170000): the case, the appeal
@@ -9,8 +9,13 @@
 // notice_appeal_ai_finish as a new version of the document, without a hyphen
 // or dash. A partner reviews every word before anything is filed.
 
-import { scrub, type CallUsage } from './claude.ts';
-import type { Deps } from './runner.ts';
+import { scrub, type CallUsage, type Caller } from '../notice-ai/claude.ts';
+
+/** What a run needs: the database's functions and a way to reach Claude (notice-ai's Deps fits). */
+export interface AppealDeps {
+  db: { rpc<T>(fn: string, args?: Record<string, unknown>): Promise<T> };
+  claude: Caller | null;
+}
 
 export type AppealDocType = 'facts' | 'grounds' | 'submission';
 
@@ -227,7 +232,7 @@ const BUDGETS: Record<AppealDocType, readonly number[]> = {
 };
 
 /** Starts a run; returns the run id at once and the answer as a promise (kept by the database when done). */
-export async function beginAppeal(deps: Deps, input: AppealInput): Promise<{ error?: string; run_id?: string; done?: Promise<Record<string, unknown>> }> {
+export async function beginAppeal(deps: AppealDeps, input: AppealInput): Promise<{ error?: string; run_id?: string; done?: Promise<Record<string, unknown>> }> {
   if (!input.client_id || !/^[0-9a-f-]{36}$/i.test(input.client_id) || !input.case_key || !input.appeal_key) return { error: 'bad_request' };
   const doc = (['facts', 'grounds', 'submission'].includes(input.doc_type ?? '') ? input.doc_type : '') as AppealDocType;
   if (!doc) return { error: 'bad_request' };

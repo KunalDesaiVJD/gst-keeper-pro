@@ -15,7 +15,7 @@
 -- Three documents per appeal, each kept in versions (notice_appeal_drafts):
 -- facts (statement of facts), grounds (grounds of appeal), submission (the
 -- detailed written submission for the hearing). The notice assistant drafts or
--- improves one (Edge Function notice-ai, action appeal; notice_appeal_ai_begin /
+-- improves one (Edge Function notice-appeal-ai; notice_appeal_ai_begin /
 -- _finish, runs in notice_appeal_ai_runs) from: the order appealed as read,
 -- every document of the case as read with its evidence labels
 -- (case_document_labels), the firm's replies in the case, the issues and the
