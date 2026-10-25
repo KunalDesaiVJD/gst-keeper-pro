@@ -4,7 +4,7 @@
 // date and time in IST, mode, venue, officer and who attends, what the hearing
 // is for, the client opening its matters, "—" where no amount was typed, and
 // day chips in IST calendar days. The firm-wide list of notice and matter
-// hearings is the module's Hearings page; this is the matters' share.
+// hearings is the module's Calendar; this is the matters' share.
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { CalendarPlus } from 'lucide-react';
@@ -124,7 +124,7 @@ export const MisHearings: React.FC<{ next14: HearingItem[]; later: HearingItem[]
       title={<>Next 14 days <span className="font-normal text-muted-foreground">· {plural(next14.length, 'hearing')}</span></>}
       description="Hearings on open matters from today, in IST"
       actions={<>
-        <Link to="/notices-hearings" className="text-xs font-medium text-primary underline underline-offset-2">
+        <Link to="/notices-calendar?view=agenda" className="text-xs font-medium text-primary underline underline-offset-2">
           All hearings on notices and matters ({allHearings.toLocaleString('en-IN')})
         </Link>
         {next14.length + later.length > 0 && (

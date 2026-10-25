@@ -1,78 +1,66 @@
-// Notices & Litigation · Command centre (roadmap Phase 2 task 2; mock §7,
-// docs/notices-mission-audit/mocks/target-dashboard.png). A partner sees in
-// ten seconds what needs action today, who owns it and what money is at stake.
-// Every figure comes from one RPC (public.notices_command_centre) defined over
-// the same views the lists read, so each number opens a list with the same
-// count; the ranked plan is public.notice_plan. The dashboard counts only the
-// notice types shown on it (contract §A): a superadmin or GST manager chooses
-// them under "Notice types" (?types=1 opens the dialog), and a quiet line says
-// what is left out. Rebalanced on 7 October 2026 (the firm's request): six tiles,
-// then two rows of panels that end level, and the master filters under the tabs
-// (client, FY, owner, form, priority), which every figure and link here keeps.
+// Notices & Litigation · Home. A partner sees in ten seconds what is late, what
+// is due and what is theirs. Laid out by the UX audit of 25 October 2026, which
+// found the same four numbers three times over (kind cards, six figures, the
+// work list's pills) and "my work" only under More: now four figures, each a
+// filter on My work beneath them (one row per case over notices and demands,
+// refunds and registration; Mine, Team, Unassigned, Review), and beside it the
+// next 14 days, overdue by age and what came in this week. Other (LUT,
+// approvals), which needs no action, is a line under the work and a kind on
+// Cases. Every figure is read with the master filters under the tabs. A
+// superadmin or GST manager chooses the notice types the figures count under
+// Reply Factory → Notice types (?types=1 still opens it from an old link).
 import React from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommandCentre } from '@/lib/noticeCommandCentre';
-import { canManageNoticeTypes } from '@/lib/noticeTypes';
 import { Note } from '@/components/gstr9/ui';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { WS_BTN } from '@/components/workspace/theme';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { SyncNowButton } from '@/components/notices/SyncNowButton';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
-import { KindCards, KpiCards, NewFromPortal, OverdueByAge, Upcoming, WorkList } from '@/components/notices/cases/HomeParts';
-import { isTrack, useCaseCounts, type Track } from '@/lib/noticeCases';
-import { NoticeTypesSettings } from '@/components/notices/types/NoticeTypesSettings';
+import { NewFromPortal, OverdueByAge, Upcoming } from '@/components/notices/cases/HomeParts';
+import { AttentionTiles, HomeFooter, MyWork, isWhen, isWho, sumCounts, useWhoCounts, type When, type Who } from '@/components/notices/cases/HomeWork';
+import { useCaseCounts } from '@/lib/noticeCases';
 import { AutopilotLine } from '@/components/notices/command/CommandCards';
 import { masterForRpc, useMaster } from '@/lib/masterFilters';
-
-const TYPE_PARAMS = ['types', 'tq', 'tneed', 'tdash'];
 
 const NoticesDashboardPage: React.FC = () => {
   const { isStaffRole, user, canEditNoticeStatus } = useAuth();
   const qc = useQueryClient();
   const [sp, setSp] = useSearchParams();
   const { m } = useMaster();
-  const cc = useCommandCentre(user?.id ?? null, masterForRpc(m, user?.id ?? null));
-  const counts = useCaseCounts(masterForRpc(m, user?.id ?? null));
-  const kindParam = sp.get('kind');
-  const kind: Track = isTrack(kindParam) ? kindParam : 'litigation';
-  const setKind = (t: Track) => setSp((prev) => {
+  const meId = user?.id ?? null;
+  const cc = useCommandCentre(meId, masterForRpc(m, meId));
+  const counts = useCaseCounts(masterForRpc(m, meId));
+  const who$ = useWhoCounts(m, meId);
+  const total = sumCounts(counts.data);
+  // Whose work and how urgent live in the URL (?work=mine|team|unassigned|review, ?when=overdue|due7).
+  const workParam = sp.get('work');
+  const who: Who = isWho(workParam) ? workParam : (who$.data?.mine ?? 0) > 0 ? 'mine' : 'team';
+  const whenParam = sp.get('when');
+  const when: When = isWhen(whenParam) ? whenParam : 'all';
+  const pick = (w: Who, t: When) => setSp((prev) => {
     const next = new URLSearchParams(prev);
-    if (t === 'litigation') next.delete('kind'); else next.set('kind', t);
+    next.set('work', w);
+    if (t === 'all') next.delete('when'); else next.set('when', t);
     return next;
   }, { replace: true });
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
+  // The notice types dialog moved to Reply Factory → Notice types.
+  if (sp.get('types') === '1') return <Navigate to="/notices-reply-factory?tab=types" replace />;
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['notices-command-centre'] });
-    qc.invalidateQueries({ queryKey: ['notice-plan-top'] });
     qc.invalidateQueries({ queryKey: ['notice-cases'] });
     qc.invalidateQueries({ queryKey: ['notice-case-counts'] });
+    qc.invalidateQueries({ queryKey: ['notice-home-who'] });
   };
   const canEdit = canEditNoticeStatus();
-  const canTypes = canManageNoticeTypes(user?.role);
   const data = cc.data;
-
-  // The dialog and its filters live in the URL, so a link opens it as it was.
-  const typesOpen = sp.get('types') === '1';
-  // 'listed': the types off the dashboard that are still in the lists (HiddenTypesLine counts those).
-  const openTypes = (dash?: 'listed') => setSp((prev) => {
-    const next = new URLSearchParams(prev);
-    next.set('types', '1');
-    if (dash) next.set('tdash', dash);
-    return next;
-  }, { replace: true });
-  const closeTypes = () => setSp((prev) => {
-    const next = new URLSearchParams(prev);
-    TYPE_PARAMS.forEach((k) => next.delete(k));
-    return next;
-  }, { replace: true });
+  const loadError = cc.error ?? counts.error;
 
   return (
     <NoticesShell
@@ -80,42 +68,28 @@ const NoticesDashboardPage: React.FC = () => {
       status={data ? <AutopilotLine cc={data} /> : null}
       master
       actions={<>
-        {canTypes && (
-          <Button size="sm" variant="outline" className={WS_BTN} onClick={() => openTypes()}>
-            <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden /> Notice types
-          </Button>
-        )}
         {canEdit && <AddNoticeDialog onSuccess={refresh} />}
         {canEdit && <SyncNowButton onStarted={refresh} />}
       </>}
     >
-      {cc.error && (
+      {loadError && (
         <Note tone="warn">
-          Couldn't load the command centre: {cc.error instanceof Error ? cc.error.message : String(cc.error)}{' '}
-          <Button variant="link" className="h-auto p-0 text-xs" onClick={() => cc.refetch()}><RefreshCw className="mr-1 h-3 w-3" /> Retry</Button>
+          Couldn't load the figures: {loadError instanceof Error ? loadError.message : String(loadError)}{' '}
+          <Button variant="link" className="h-auto p-0 text-xs" onClick={() => { cc.refetch(); counts.refetch(); }}><RefreshCw className="mr-1 h-3 w-3" /> Retry</Button>
         </Note>
       )}
 
-      <KindCards value={kind} counts={counts.data} onChange={setKind} />
-      <KpiCards track={kind} c={counts.data?.[kind]} master={m} />
+      <AttentionTiles c={total} mine={who$.data?.mine} who={who} when={when} onPick={pick} />
       <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <div><WorkList track={kind} master={m} counts={counts.data?.[kind]} /></div>
+        <MyWork who={who} when={when} master={m} meId={meId} onPick={pick}
+          counts={{ mine: who$.data?.mine, review: who$.data?.review, team: total?.open, unassigned: total?.unassigned }} />
         <div className="space-y-3">
-          {kind !== 'other' && <OverdueByAge c={counts.data?.[kind]} track={kind} master={m} />}
-          {kind === 'litigation' && <Upcoming cc={data} master={m} />}
-          {kind !== 'other' && <NewFromPortal track={kind} />}
+          <Upcoming cc={data} master={m} />
+          <OverdueByAge c={total} track="work" master={m} />
+          <NewFromPortal track="work" days={7} title="Just in" />
         </div>
       </div>
-
-      <Dialog open={typesOpen} onOpenChange={(o) => { if (!o) closeTypes(); }}>
-        <DialogContent className="max-h-[90vh] gap-3 overflow-y-auto p-4 sm:max-w-5xl sm:p-6">
-          <DialogHeader>
-            <DialogTitle>Notice types</DialogTitle>
-            <DialogDescription>Which kinds of notice need a reply, and which count on this dashboard.</DialogDescription>
-          </DialogHeader>
-          <NoticeTypesSettings urlState />
-        </DialogContent>
-      </Dialog>
+      <HomeFooter counts={counts.data} master={m} />
     </NoticesShell>
   );
 };

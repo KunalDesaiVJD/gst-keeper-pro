@@ -72,12 +72,14 @@ export const WAITING: Record<WaitingOn, { label: string; short: string; tone: 'w
 };
 export const waitingOf = (r: { waiting_on?: string | null; is_open?: boolean | null }): WaitingOn =>
   r.waiting_on === 'department' || r.waiting_on === 'closed' || r.waiting_on === 'us' ? r.waiting_on : r.is_open === false ? 'closed' : 'us';
-export interface CaseQuery { track: Track | 'all'; show: CaseShow; q: string; master: Master; meId: string | null }
+/** track 'work': every kind the firm acts on (all but Other, which is kept for the record). */
+export interface CaseQuery { track: Track | 'all' | 'work'; show: CaseShow; q: string; master: Master; meId: string | null }
 
 export async function loadCases(c: CaseQuery, page: number, pageSize: number, view: CaseView = 'linked'): Promise<{ rows: FlatCaseRow[]; total: number }> {
   // Both views have the same columns (the apart one four more), so one query serves.
   let q = supabase.from((view === 'apart' ? 'notice_cases_flat' : 'notice_cases') as 'notice_cases').select('*', { count: 'exact' });
-  if (c.track !== 'all') q = q.eq('track', c.track);
+  if (c.track === 'work') q = q.neq('track', 'other');
+  else if (c.track !== 'all') q = q.eq('track', c.track);
   if (c.show === 'open') q = q.eq('is_open', true);
   if (c.show === 'new') q = q.gt('new_items', 0);
   if (c.show === 'overdue') q = q.eq('is_overdue', true);

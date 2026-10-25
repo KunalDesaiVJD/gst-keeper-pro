@@ -25,8 +25,9 @@ import { caseHref, loadCases, TRACKS, type CaseRow, type CaseShow, type Track, t
 import { fmtAgo, fmtDate, fmtDay, fmtInrShort, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 
-const casesHref = (track: Track, show: string, m: Master) =>
-  hrefWithMaster(`/notices-cases?${new URLSearchParams({ ...(track === 'litigation' ? {} : { kind: track }), ...(show ? { show } : {}) })}`, m);
+// Cases opens on every kind the firm acts on ('work'); a kind is named in the link.
+const casesHref = (track: Track | 'work', show: string, m: Master) =>
+  hrefWithMaster(`/notices-cases?${new URLSearchParams({ ...(track === 'work' ? {} : { kind: track }), ...(show ? { show } : {}) })}`, m);
 
 const KIND_ICON: Record<Track, LucideIcon> = { litigation: Gavel, refund: ReceiptIndianRupee, registration: Building2, other: Archive };
 
@@ -199,7 +200,7 @@ export const WorkList: React.FC<{ track: Track; master: Master; counts: TrackCou
 };
 
 // ── Overdue by age (one series: a bar per age band, labelled) ──────────────
-export const OverdueByAge: React.FC<{ c: TrackCounts | undefined; track: Track; master: Master }> = ({ c, track, master }) => {
+export const OverdueByAge: React.FC<{ c: TrackCounts | undefined; track: Track | 'work'; master: Master }> = ({ c, track, master }) => {
   if (!c || !c.overdue) return null;
   const bands = [
     { label: 'Up to 30 days', n: c.overdue_age.d30 },
@@ -229,28 +230,32 @@ export const OverdueByAge: React.FC<{ c: TrackCounts | undefined; track: Track; 
 // ── What came in from the portal ───────────────────────────────────────────
 interface NewItem { client_id: string; case_key: string; kind: string; label: string; from_party: string; first_seen_at: string }
 
-export const NewFromPortal: React.FC<{ track: Track; limit?: number }> = ({ track, limit = 6 }) => {
+/** What came in: track 'work' is every kind the firm acts on; days limits it to what arrived lately. */
+export const NewFromPortal: React.FC<{ track: Track | 'work'; limit?: number; days?: number; title?: string }> = ({ track, limit = 6, days, title = 'New from the portal' }) => {
   const q = useQuery({
-    queryKey: ['notice-new-items', track, limit],
+    queryKey: ['notice-new-items', track, limit, days],
     staleTime: 60_000,
     queryFn: async () => {
-      const cases = await supabase.from('notice_cases').select('client_id, case_key, client_name').eq('track', track).gt('new_items', 0).limit(500);
+      let cq = supabase.from('notice_cases').select('client_id, case_key, client_name').gt('new_items', 0);
+      cq = track === 'work' ? cq.neq('track', 'other') : cq.eq('track', track);
+      const cases = await cq.limit(500);
       if (cases.error) throw cases.error;
       const names = new Map((cases.data ?? []).map((c) => [`${c.client_id}:${c.case_key}`, c.client_name as string]));
       if (!names.size) return [] as (NewItem & { client_name: string })[];
-      const items = await supabase.from('notice_case_correspondence').select('client_id, case_key, kind, label, from_party, first_seen_at')
-        .eq('is_new', true).in('client_id', [...new Set((cases.data ?? []).map((c) => c.client_id as string))])
-        .order('first_seen_at', { ascending: false }).limit(200);
+      let iq = supabase.from('notice_case_correspondence').select('client_id, case_key, kind, label, from_party, first_seen_at')
+        .eq('is_new', true).in('client_id', [...new Set((cases.data ?? []).map((c) => c.client_id as string))]);
+      if (days) iq = iq.gte('first_seen_at', new Date(Date.now() - days * 86_400_000).toISOString());
+      const items = await iq.order('first_seen_at', { ascending: false }).limit(200);
       if (items.error) throw items.error;
       return ((items.data ?? []) as NewItem[]).filter((i) => names.has(`${i.client_id}:${i.case_key}`)).slice(0, limit)
         .map((i) => ({ ...i, client_name: names.get(`${i.client_id}:${i.case_key}`) ?? '' }));
     },
   });
   return (
-    <Panel title="New from the portal">
+    <Panel title={title}>
       {q.error ? <LoadError what="what came in" error={q.error} onRetry={() => q.refetch()} />
         : q.isLoading ? <Skeleton className="h-40 w-full" />
-        : !q.data?.length ? <p className="text-xs text-muted-foreground">Nothing new since the cases were last opened.</p>
+        : !q.data?.length ? <p className="text-xs text-muted-foreground">{days ? `Nothing new in the last ${days} days.` : 'Nothing new since the cases were last opened.'}</p>
         : (
           <ul className="space-y-1">
             {q.data.map((i, k) => (
