@@ -151,32 +151,45 @@ export interface FyPlanInput {
 }
 
 /**
- * For each year: the 2A and 2B of every window month that is due and not
- * usable (a 2B the portal did not generate is asked again only when nothing
- * else is missing). Nothing missing: the GSTR-9 system figures (8A as the
- * portal computed it), once the year has ended and they are not pulled; else
- * the 2A and 2B of the window's last six due months again (2A changes whenever
- * a supplier files). The 8A document details (extension 0.18.0, mode
- * gstr9_8a_pull) once the year has ended and none is saved: after the missing
- * 2A and 2B, else first; an older extension gets a note to update or upload.
+ * For each year, from extension 0.18.0 on (the firm, 25 Oct 2026: "fetch the
+ * 8A straight from GSTR-9"):
+ * - no 8A saved for a year that has ended: the 8A document details first,
+ *   then the window's missing 2A and 2B, then GSTR-9's system figures;
+ * - the 8A saved: the missing 2A and 2B, then the system figures when not
+ *   pulled or pulled before the 8A;
+ * - nothing missing: the 8A again (the portal updates it until the October
+ *   after the year), then the system figures; never the last six months of
+ *   2A and 2B again.
+ * An older extension, or a year not ended: the 2A and 2B of every window month
+ * that is due and not usable, then the system figures, then the last six
+ * months again (planFy2a2bJobs), with a note to update or upload.
  */
 export function planFyPullJobs(input: FyPlanInput): PullPlan {
   const { fys, today, extVersion, eightAHave } = input;
   const ended = (fy: string) => today >= `${fyStartYear(fy) + 1}-04-01`;
-  const need8A = eightAHave ? fys.filter((fy) => ended(fy) && !eightAHave.has(fy)) : [];
-  if (!need8A.length) return planFy2a2bJobs(input);
+  const endedFys = fys.filter(ended);
+  if (!eightAHave || !endedFys.length) return planFy2a2bJobs(input);
+  const need8A = endedFys.filter((fy) => !eightAHave.has(fy));
   if (!extVersion || compareVersions(extVersion, EIGHT_A_PULL_VERSION) < 0) {
     const base = planFy2a2bJobs(input);
+    if (!need8A.length) return base;
     const tip = `Extension ${EIGHT_A_PULL_VERSION} pulls the 8A document details by itself; until then the 8A is rebuilt from the 2B (or use Upload 8A).`;
     return { ...base, note: base.note ? `${base.note} ${tip}` : tip };
   }
-  const job8A: PullJob = { mode: 'gstr9_8a_pull', periods: need8A.map(eightAPeriod) };
   const missing = planFy2a2bJobs({ ...input, missingOnly: true });
-  if (missing.jobs.length) return { jobs: [...missing.jobs, job8A], note: missing.note };
-  const calc = input.fys.filter((fy) => !input.calcPulled.has(fy) && ended(fy));
+  const calc = endedFys.filter((fy) => !input.calcPulled.has(fy));
+  const calcJob: PullJob[] = calc.length ? [{ mode: 'gstr9_pull', periods: calc.map(eightAPeriod) }] : [];
+  if (need8A.length) {
+    return {
+      jobs: [{ mode: 'gstr9_8a_pull', periods: need8A.map(eightAPeriod) }, ...missing.jobs, ...calcJob],
+      note: "Pulling the portal's Table 8A document details from GSTR-9 first.",
+    };
+  }
+  if (missing.jobs.length) return { jobs: [...missing.jobs, ...calcJob], note: missing.note };
+  if (calcJob.length) return { jobs: calcJob, note: "The 8A, 2A and 2B of the year are saved; pulling GSTR-9's system figures (Table 8A as the portal computed it)." };
   return {
-    jobs: [job8A, ...(calc.length ? [{ mode: 'gstr9_pull', periods: calc.map(eightAPeriod) }] : [])],
-    note: "Every 2A and 2B of the year is pulled; pulling the portal's Table 8A document details.",
+    jobs: [{ mode: 'gstr9_8a_pull', periods: endedFys.map(eightAPeriod) }],
+    note: "Everything of the year is saved; fetching the portal's Table 8A document details again (the portal updates them until the October after the year).",
   };
 }
 
