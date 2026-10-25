@@ -48,6 +48,17 @@ export function caseKeyOf(caseId: string | null | undefined, category: string | 
 
 export const caseHref = (clientId: string, caseKey: string) => `/notices-case/${clientId}/${encodeURIComponent(caseKey)}`;
 
+/**
+ * Where a notice opens from a list (the firm, 25 October 2026): its case, with
+ * the case's timeline, the notice marked on it. Only "Work on it" opens the
+ * notice's own workspace (/notices/:id). Pass the case when the row has it;
+ * with an id alone the page /notices-open/:id finds the case first.
+ */
+export function noticeCaseHref(n: { id: string; client_id?: string | null; case_id?: string | null; category?: string | null }): string {
+  if (!n.client_id) return `/notices-open/${n.id}`;
+  return `${caseHref(n.client_id, caseKeyOf(n.case_id, n.category, n.id))}?notice=${n.id}`;
+}
+
 // ── Lists and counts ───────────────────────────────────────────────────────
 export type CaseShow = 'open' | 'new' | 'all' | 'overdue' | 'due7' | 'with_us' | 'with_dept' | 'closed';
 export const CASE_SHOWS: readonly CaseShow[] = ['open', 'new', 'all', 'overdue', 'due7', 'with_us', 'with_dept', 'closed'];
@@ -157,6 +168,37 @@ export interface CaseItem {
   attachments: { label?: string; url?: string }[] | null;
   ai: { title: string | null; summary: string | null; doc_kind: string | null; outcome: string | null; doc_date: string | null; status: string; reason_class: string | null; usage?: unknown; model?: string | null } | null;
   notice_read: { status: string; outcome: string | null; summary: string | null; usage?: unknown; model?: string | null } | null;
+  /** What the portal's own record of the item says (20261025140000). */
+  facts?: CaseItemFacts | null;
+}
+
+export interface CaseItemFacts {
+  hearing?: { date: string; time?: string; venue?: string };
+  due?: string; section_of_law?: string; fy?: string; type?: string;
+  /** An appeal's application (APL-01). */
+  form?: string; order_ref?: string; order_date?: string; order_comm_date?: string;
+  disputed_tax?: number; disputed_total?: number; predeposit?: number; predeposit_pct?: number;
+  filed_on?: string; second_appeal?: boolean; issues?: string[]; portal_status?: string;
+  /** Every document the record lists, downloaded or not. */
+  portal_docs?: { id: string; name?: string; file?: string }[];
+}
+
+/** A date the law attaches to the case's papers (notice_case_key_dates, 20261025140000). */
+export type KeyDateKind = 'hearing' | 'adjournment' | 'reply_due' | 'pay_to_close' | 'appeal_window' | 'appeal_filed' | 'predeposit' | 'payment_due';
+export interface KeyDate {
+  date: string; kind: KeyDateKind; title: string; detail?: string | null;
+  tone: 'ok' | 'warn' | 'danger' | 'info' | 'muted'; law?: string | null;
+  own_key?: string | null; item_id?: string | null; upcoming: boolean;
+}
+
+export async function loadKeyDates(clientId: string, caseKey: string): Promise<KeyDate[]> {
+  const { data, error } = await supabase.rpc('notice_case_key_dates', { p_client_id: clientId, p_case_key: caseKey });
+  if (error) {
+    // Before 20261025140000 the timeline has no key dates; it still shows the papers.
+    if (/notice_case_key_dates/.test(error.message)) return [];
+    throw error;
+  }
+  return (Array.isArray(data) ? data : []) as unknown as KeyDate[];
 }
 
 export async function loadCaseItems(clientId: string, caseKey: string): Promise<CaseItem[]> {
