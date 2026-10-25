@@ -11503,6 +11503,40 @@ export type Database = {
         }
         Relationships: []
       }
+      notice_dispute_year_sources: {
+        Row: {
+          notice_id: string | null
+          client_id: string | null
+          case_key: string | null
+          rank: number | null
+          basis: string | null
+          fy: string | null
+        }
+        Relationships: []
+      }
+      notice_case_dispute_years: {
+        Row: {
+          scope: string | null
+          client_id: string | null
+          case_key: string | null
+          applies: boolean | null
+          dispute_years: string[] | null
+          basis: string | null
+        }
+        Relationships: []
+      }
+      notice_dispute_years: {
+        Row: {
+          id: string | null
+          client_id: string | null
+          case_key: string | null
+          root_key: string | null
+          applies: boolean | null
+          dispute_years: string[] | null
+          basis: string | null
+        }
+        Relationships: []
+      }
       ai_learning_clients: {
         Row: {
           client_id: string | null
