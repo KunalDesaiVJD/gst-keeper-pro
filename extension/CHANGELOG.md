@@ -2,6 +2,13 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-10-25 — An appeal with no notice gets its files (v0.18.5)
+
+- An appeal filed on the portal (GST APL-01) that the appellate authority has not yet taken up has no notice and no task, so the notices step never opened its case folder and its APL-01, grounds and annexures were never downloaded (M J Surgical's appeal AD241225010791I against refund order ZD2409250165765). The applications step now opens the case folder of each appeal it lists (`case/folder` with `caseTypeCd: APPEL`, then `case/folder/items`) and downloads its files the same way as the notices step (`getEncrypDocIds`, `downloadhb`, `notices/<client>/case-folder/<arn>/<docid>.pdf`), ingested as `case_folder` items scoped to the appeal's ARN.
+- Only what is due: an appeal with no stored folder items, whose status changed, or not checked for 7 days (the open-case recheck); a file already stored is not downloaded again. The last check per appeal is kept in `gstk_appeal_checked_<client>`.
+- Runs only where the applications step runs (the notices bundle). Nothing else changes; carries 0.18.4 unchanged.
+- `test/17-actor-headers.test.mjs` now expects 0.18.5.
+
 ## 2026-10-25 — An appeal's own files (v0.18.4)
 
 - The case folder's appeal application (section APLCN, the APL-01) lists its files as `docappeal`, `docannexure` and `docothers[]` with the name spelt `docname`, not `docName`. The document finder took only `docName`, so the APL-01 form, its grounds and its exhibits were saved in the folder item's JSON but never downloaded. It now takes `docname` too, labelled with the portal's name for the file (`EXHIBIT A · Binder1.pdf`).

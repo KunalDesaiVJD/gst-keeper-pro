@@ -108,7 +108,8 @@ type AppRow = Pick<PortalApplication, 'id' | 'case_type_cd' | 'arn' | 'form_numb
 
 /** Where an application belongs: the refund it is against, or the case of the order. */
 export interface AppealTarget { kind: 'refund' | 'case'; key: string; href: string }
-export interface PortalApp { row: AppRow; appeal: PortalAppeal | null; target: AppealTarget | null }
+/** files: the appeal's own files downloaded from its case folder (extension 0.18.5), by the portal's name. */
+export interface PortalApp { row: AppRow; appeal: PortalAppeal | null; target: AppealTarget | null; files: { label: string; url: string }[] }
 
 async function loadPortalApps(clientId: string): Promise<PortalApp[]> {
   const { data, error } = await supabase.from('gst_portal_applications')
@@ -120,13 +121,21 @@ async function loadPortalApps(clientId: string): Promise<PortalApp[]> {
   const appeals = rows.map((r) => (r.case_type_cd === 'APPEL' ? parsePortalAppeal(r) : null));
   const arns = rows.map((r) => r.arn).filter((a): a is string => !!a);
   const refs = appeals.map((a) => a?.order.ref).filter((x): x is string => !!x);
-  const [links, refunds, cases, notices] = await Promise.all([
+  const [links, refunds, cases, notices, folder] = await Promise.all([
     supabase.from('notice_case_links').select('child_key, parent_key').eq('client_id', clientId).in('child_key', arns.length ? arns : ['-']),
     supabase.from('gst_refund_applications').select('arn, documents').eq('client_id', clientId).is('deleted_at', null),
     supabase.from('notice_cases_flat').select('case_key').eq('client_id', clientId),
     supabase.from('notice_facts').select('id, client_id, case_id, category, reference_number').eq('client_id', clientId)
       .in('reference_number', refs.length ? refs : ['-']),
+    supabase.from('gst_case_folder_items').select('case_id, attachments').eq('client_id', clientId).is('deleted_at', null)
+      .in('case_id', arns.length ? arns : ['-']),
   ]);
+  const filesOf = new Map<string, { label: string; url: string }[]>();
+  for (const it of (folder.data ?? []) as { case_id: string; attachments: unknown }[]) {
+    const list = Array.isArray(it.attachments) ? (it.attachments as { label?: string; url?: string }[]) : [];
+    const ok = list.filter((x) => typeof x?.url === 'string').map((x) => ({ label: x.label || 'Document', url: x.url as string }));
+    if (ok.length) filesOf.set(it.case_id, [...(filesOf.get(it.case_id) ?? []), ...ok]);
+  }
   const parentOf = new Map(((links.data ?? []) as { child_key: string; parent_key: string }[]).map((l) => [l.child_key, l.parent_key]));
   const refundRows = (refunds.data ?? []) as { arn: string | null; documents: unknown }[];
   const refundArns = new Set(refundRows.map((r) => r.arn).filter(Boolean) as string[]);
@@ -150,7 +159,8 @@ async function loadPortalApps(clientId: string): Promise<PortalApp[]> {
       const n = noticeByRef.get(ref)!;
       target = { kind: 'case', key: n.case_id ?? ref, href: noticeCaseHref(n) };
     }
-    return { row, appeal, target };
+    const files = [...new Map((row.arn ? filesOf.get(row.arn) ?? [] : []).map((f) => [f.url, f])).values()];
+    return { row, appeal, target, files };
   });
 }
 

@@ -119,6 +119,7 @@ const GAINS: [string, string][] = [
   ['0.18.2', "asks the portal for the Table 8A file again every minute while it is being prepared"],
   ['0.18.3', "saves the Table 8A file the portal downloads, by reading it back once Chrome has saved it"],
   ['0.18.4', "downloads an appeal's own files from the case folder (the APL-01, its grounds and exhibits)"],
+  ['0.18.5', "downloads the files of an appeal that has no notice yet, from its own case folder"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {
