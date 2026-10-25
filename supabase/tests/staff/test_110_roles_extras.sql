@@ -42,8 +42,10 @@ BEGIN
   ASSERT pg_temp.role_of('30000000-0000-0000-0000-000000000001') = 'GST Executive', 'Tara on GST Executive';
   ASSERT pg_temp.role_of('30000000-0000-0000-0000-000000000002') = 'GST Assistant', 'Uday on GST Assistant';
   ASSERT (SELECT string_agg(permission_key, ',') FROM staff_user_extra_permissions
-           WHERE user_id = '30000000-0000-0000-0000-000000000001') = 'unlock_sheets', 'Tara keeps unlock_sheets as an extra';
+           WHERE user_id = '30000000-0000-0000-0000-000000000001' AND revoked_at IS NULL) = 'unlock_sheets', 'Tara keeps unlock_sheets as an extra';
   ASSERT NOT EXISTS (SELECT 1 FROM staff_user_extra_permissions WHERE user_id = '30000000-0000-0000-0000-000000000002'), 'Uday has no extras';
+  ASSERT EXISTS (SELECT 1 FROM staff_position_log WHERE action = 'grant extra' AND user_id = '30000000-0000-0000-0000-000000000001'
+                  AND permission_key = 'unlock_sheets'), 'carried extra logged';
   ASSERT pg_temp.keys('30000000-0000-0000-0000-000000000001')
          = 'add_edit_clients,edit_filing_status,export_data,send_client_emails,unlock_sheets,work_2b_import', 'Tara same access';
   ASSERT pg_temp.keys('30000000-0000-0000-0000-000000000002') = 'send_client_emails,work_2b_import', 'Uday same access';
@@ -100,4 +102,29 @@ SELECT staff_assign_position('30000000-0000-0000-0000-000000000002',
 DO $$
 BEGIN
   ASSERT pg_temp.keys('30000000-0000-0000-0000-000000000002') = 'send_client_emails,work_2b_import', 'back to the role alone';
+END $$;
+
+-- A role losing a key keeps it for a holder who has it as an extra (the
+-- existing sync drops it, the COMMIT-time trigger puts it back); retiring the
+-- role leaves the person their extras alone.
+RESET ROLE;
+SELECT staff_set_user_extras('30000000-0000-0000-0000-000000000009', '30000000-0000-0000-0000-000000000001',
+  ARRAY['unlock_sheets', 'export_data']);
+DELETE FROM staff_position_permissions
+ WHERE position_id = (SELECT id FROM staff_positions WHERE name = 'GST Executive') AND permission_key = 'export_data';
+DO $$
+BEGIN
+  ASSERT pg_temp.keys('30000000-0000-0000-0000-000000000001')
+         = 'add_edit_clients,edit_filing_status,export_data,send_client_emails,unlock_sheets,work_2b_import', 'extra survives role revoke';
+END $$;
+UPDATE staff_positions SET is_active = false WHERE name = 'GST Executive';
+DO $$
+BEGIN
+  ASSERT pg_temp.keys('30000000-0000-0000-0000-000000000001') = 'export_data,unlock_sheets', 'retired role: extras only';
+END $$;
+UPDATE staff_positions SET is_active = true WHERE name = 'GST Executive';
+DO $$
+BEGIN
+  ASSERT pg_temp.keys('30000000-0000-0000-0000-000000000001')
+         = 'add_edit_clients,edit_filing_status,export_data,send_client_emails,unlock_sheets,work_2b_import', 'reactivated';
 END $$;

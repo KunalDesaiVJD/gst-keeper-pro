@@ -9958,19 +9958,28 @@ export type Database = {
         Row: {
           granted_at: string
           granted_by: string | null
+          id: number
           permission_key: string
+          revoked_at: string | null
+          revoked_by: string | null
           user_id: string
         }
         Insert: {
           granted_at?: string
           granted_by?: string | null
+          id?: number
           permission_key: string
+          revoked_at?: string | null
+          revoked_by?: string | null
           user_id: string
         }
         Update: {
           granted_at?: string
           granted_by?: string | null
+          id?: number
           permission_key?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
           user_id?: string
         }
         Relationships: []

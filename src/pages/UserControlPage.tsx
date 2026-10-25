@@ -34,7 +34,8 @@ import { setStaffLevel, STAFF_LEVEL_LABEL, type StaffLevel } from '@/lib/staffLe
  *
  * An employee holds ONE role (staff_positions, its keys in
  * staff_position_permissions) and may be given EXTRA permissions on top of it
- * (staff_user_extra_permissions, set through staff_set_user_extras). The
+ * (staff_user_extra_permissions, active while revoked_at is null, set only
+ * through staff_set_user_extras). The
  * database derives each user's user_permissions = role keys ∪ extras
  * (migrations 20261014120000, 20261025100000) and refuses direct grants, so
  * every existing check keeps reading the same table.
@@ -134,7 +135,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
         supabase.from('user_roles').select('user_id, role').in('role', ['gst_manager', 'employee']),
         supabase.from('profiles').select('user_id, first_name, email, position_id'),
         supabase.from('staff_position_log').select('*').order('at', { ascending: false }).limit(200),
-        supabase.from('staff_user_extra_permissions').select('user_id, permission_key'),
+        supabase.from('staff_user_extra_permissions').select('user_id, permission_key').is('revoked_at', null),
       ]);
       for (const r of [pos, perms, roles, profiles]) if (r.error) throw r.error;
 
