@@ -29,6 +29,8 @@ import {
 } from '@/lib/noticeCases';
 import { fmtDate, fmtFy, fmtInr, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
+import { refundIndexKey, useRefundIndex } from '@/components/notices/reports/ledgerData';
+import { RefundWhenChip } from '@/components/notices/reports/RefundBits';
 
 const LIT_FIELDS: { key: OverviewKey; label: string; fmt?: (v: string) => string; mono?: boolean }[] = [
   { key: 'section_of_law', label: 'Section' },
@@ -73,6 +75,7 @@ const NoticeCasePage: React.FC = () => {
   const items = useQuery({ queryKey: ['notice-case-items', clientId, caseKey], queryFn: () => loadCaseItems(clientId, caseKey), enabled: !!clientId && !!caseKey });
   const keyDates = useQuery({ queryKey: ['notice-case-key-dates', clientId, caseKey], queryFn: () => loadKeyDates(clientId, caseKey), enabled: !!clientId && !!caseKey });
   const ov = useCaseOverview(clientId, caseKey);
+  const refunds = useRefundIndex(clientId, c.data?.track === 'refund');
   const chain = useCaseChain(clientId, c.data?.case_key ?? null);
   const marked = useRef(false);
   // A chain of linked cases is seen whole, or one case alone (?part=<its case>).
@@ -151,6 +154,7 @@ const NoticeCasePage: React.FC = () => {
           </p>
           <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
             <Badge variant="secondary" className="text-[11px]">{def.label}</Badge>
+            {track === 'refund' && <RefundWhenChip r={refunds.get(refundIndexKey(clientId, r.case_id))} />}
             <WaitingChip r={r} long />
             {r.is_open && <StageBadge stage={r.stage} />}
             {r.is_open && r.next_due && (

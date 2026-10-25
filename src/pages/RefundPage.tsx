@@ -22,7 +22,7 @@ import { StageBadge } from '@/components/notices/StageBadge';
 import { sectionLabel, toEvent, type CaseEvent, type FolderItem } from '@/components/notices/clients/caseFolder';
 import { useRefundLedger, type ReadAmount, type RefundRow } from '@/components/notices/reports/ledgerData';
 import { daysTo } from '@/components/notices/reports/ledgerStatus';
-import { MoneyBar, StepRoad, TonePill } from '@/components/notices/reports/RefundBits';
+import { MoneyBar, RefundWhenChip, StepRoad, TonePill } from '@/components/notices/reports/RefundBits';
 import {
   fyLabel, linkWord, moneyOf, placeOf, refundHref, refundPeriod, refundSteps, toneOf, typeCode, typeLong,
 } from '@/components/notices/reports/refundModel';
@@ -131,6 +131,7 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
             {r.period?.source === 'ai' ? ' · period read by the AI' : ''}
           </p>
           <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            <RefundWhenChip r={r} />
             <TonePill tone={tone} />
             <span className="text-xs text-muted-foreground">Portal: {r.fact.status ?? 'status not captured'}</span>
             {r.caseLink && <StageBadge stage={r.caseLink.stage} since={r.caseLink.stage_changed_at} by={r.caseLink.stage_changed_by} />}
