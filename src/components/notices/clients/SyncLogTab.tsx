@@ -7,7 +7,6 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { FileSpreadsheet, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -131,6 +130,7 @@ export const SyncLogTab: React.FC<{ runs: SyncRun[]; runsLoading: boolean; names
     try {
       const rows = await fetchAllRows<SyncItem>('sync_run_items', '*', (q) => filter(q).order('created_at', { ascending: false }).order('id'));
       const runStart = new Map(runs.map((r) => [r.id, r.started_at]));
+      const XLSX = await import('xlsx');
       const ws = XLSX.utils.json_to_sheet(rows.map((r) => ({
         Client: names.get(r.client_id)?.name ?? r.client_id, GSTIN: names.get(r.client_id)?.gstin ?? '', 'Time (IST)': fmtDateTime(r.created_at),
         Step: STEP_LABEL[r.step] ?? r.step, Result: RESULT_LABEL[r.status] ?? r.status, Reason: r.reason_class ? reasonDef(r.reason_class).long : '',

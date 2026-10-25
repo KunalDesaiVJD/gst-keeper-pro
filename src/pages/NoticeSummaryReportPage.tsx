@@ -12,7 +12,6 @@
 import React, { useMemo } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { FileDown, FileSpreadsheet } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -101,7 +100,9 @@ const NoticeSummaryReportPage: React.FC = () => {
   const headers = (rupee: string) => ['Open', 'Overdue', 'Due in 7 days', 'Unassigned', `Exposure (${rupee})`, 'Oldest open (days)', 'Replied', 'Closed', 'Total'];
   const firstHead = (t: SummaryTab) => (t === 'stage' ? 'Stage' : 'Category');
 
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+    // The spreadsheet library loads only when someone exports (it is ~420 KB).
+    const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
     TABS.forEach((t) => {
       const ws = XLSX.utils.aoa_to_sheet([[t.title], [`As of ${asOf} · ${filtersText}`], [], [firstHead(t.key), ...headers('₹')], ...tableFor(t.key)]);

@@ -8,7 +8,6 @@ import React, { useMemo, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FileDown, FileSpreadsheet, Plus, RefreshCw } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -96,7 +95,9 @@ const LitigationMattersPage: React.FC = () => {
   const clientRows = client ? all.filter((r) => r.client_id === client.id) : [];
   const anyFilter = !!(params.stage || params.client || params.owner || params.lifecycle || params.priority || params.fy || params.form || params.age || params.clock || params.q);
 
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+    // The spreadsheet library loads only when someone exports (it is ~420 KB).
+    const XLSX = await import('xlsx');
     const data = sorted.map((r) => ({
       Matter: r.matter_no, Title: r.title ?? '', Client: r.client_name, GSTIN: r.client_gstin ?? '', Type: lifecycleLabel(r.lifecycle),
       Forum: forumLabel(r), Stage: stageLabel(r.stage), 'Next clock': r.next?.label ?? '', 'Clock date': r.next ? clockWhen(r.next) : '',

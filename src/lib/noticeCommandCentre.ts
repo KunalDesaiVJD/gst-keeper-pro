@@ -81,10 +81,23 @@ export function useCommandCentre(userId: string | null, filters: Record<string, 
   });
 }
 
-/** Counts for the module's tab bar, shared by every Notices page (one call a minute). */
-export function useNoticesNavCounts(userId: string | null) {
-  const q = useCommandCentre(userId);
-  return q.data?.nav ?? null;
+/**
+ * Counts for the module's tab bar, shared by every Notices page. Only the open
+ * matters are read, with one head count: running the whole command centre for
+ * this one number cost every Notices page about 300 ms of database time.
+ * userId stays in the signature (and the key) for the callers.
+ */
+export function useNoticesNavCounts(userId: string | null): { matters: number } | null {
+  const q = useQuery({
+    queryKey: ['notices-nav-counts', userId],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { count, error } = await supabase.from('litigation_matters').select('id', { count: 'exact', head: true }).neq('status', 'Closed');
+      if (error) throw error;
+      return { matters: count ?? 0 };
+    },
+  });
+  return q.data ?? null;
 }
 
 export interface HearingItem {

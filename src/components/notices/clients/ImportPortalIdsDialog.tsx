@@ -6,7 +6,6 @@ import React, { useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, Loader2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -57,7 +56,8 @@ export const ImportPortalIdsDialog: React.FC<{ clients: ClientBase[]; onDone: ()
 
   const reset = (o: boolean) => { setOpen(o); if (!o) { setPreview(null); setFileName(''); } };
 
-  const download = () => {
+  const download = async () => {
+    const XLSX = await import('xlsx');
     const rows = [...clients].sort((a, b) => a.name.localeCompare(b.name))
       .map((c) => ({ GSTIN: c.gstin, Client: c.name, 'Portal user ID': c.gst_user_id ?? '', Owner: c.assigned_accountant ?? '' }));
     const ws = XLSX.utils.json_to_sheet(rows, { header: ['GSTIN', 'Client', 'Portal user ID', 'Owner'] });
@@ -70,6 +70,7 @@ export const ImportPortalIdsDialog: React.FC<{ clients: ClientBase[]; onDone: ()
   const read = async (file: File | undefined) => {
     if (!file) return;
     try {
+      const XLSX = await import('xlsx');
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });

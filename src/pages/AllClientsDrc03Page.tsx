@@ -12,7 +12,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { FileSpreadsheet, FolderDown, Loader2, RefreshCw, Search, Wallet } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -157,7 +156,9 @@ const AllClientsDrc03Page: React.FC = () => {
       else toast.success(`Saved ${plural(res.ok, 'PDF')} in one .zip${res.failed ? `; ${res.failed} could not be fetched` : ''}.`);
     } finally { setZipping(false); toast.dismiss(t); }
   };
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
+    // The spreadsheet library loads only when someone exports (it is ~420 KB).
+    const XLSX = await import('xlsx');
     const data = rows.map((r) => ({
       Client: r.fact.client_name, GSTIN: r.fact.client_gstin, ARN: r.fact.arn ?? '', 'Paid on': fmtDate(r.fact.filed_date),
       Cause: r.fact.cause_of_payment ?? '', Section: r.section ?? '', FY: fmtFy(r.fy), Period: periodText(r) ?? '',

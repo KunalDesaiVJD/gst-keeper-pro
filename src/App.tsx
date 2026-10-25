@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
@@ -7,68 +8,71 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { MonthProvider } from "@/contexts/MonthContext";
 import { ClientProvider } from "@/contexts/ClientContext";
 import MainLayout from "@/components/layout/MainLayout";
+import { PageLoading } from "@/components/layout/PageLoading";
 import { StaffGuard } from "@/components/guards/StaffGuard";
 import LoginPage from "@/pages/LoginPage";
-import AgreementConfirmPage from "@/pages/AgreementConfirmPage";
-import ResetPasswordPage from "@/pages/ResetPasswordPage";
-import DashboardPage from "@/pages/DashboardPage";
-import AddClientPage from "@/pages/AddClientPage";
-import EditClientPage from "@/pages/EditClientPage";
-import ClientsPage from "@/pages/ClientsPage";
-import TwoBReconciliationPage from "@/pages/TwoBReconciliationPage";
-import TwoBAndRCMPage from "@/pages/TwoBAndRCMPage";
-import SuspendedRecoPage from "@/pages/SuspendedRecoPage";
-import ITCAndReceivablePage from "@/pages/ITCAndReceivablePage";
-import RCMSummaryPage from "@/pages/RCMSummaryPage";
-import ManageMastersPage from "@/pages/ManageMastersPage";
-import FilingStatusPage from "@/pages/FilingStatusPage";
-import GSTRunningUpdatePage from "@/pages/GSTRunningUpdatePage";
-import GSTR1DataPage from "@/pages/GSTR1DataPage";
-import Gstr3bPage from "@/pages/Gstr3bPage";
-import Gstr3bAdjustmentsPage from "@/pages/Gstr3bAdjustmentsPage";
-import AdvancesPage from "@/pages/AdvancesPage";
-import AnnualReturnPage from "@/pages/AnnualReturnPage";
-import ReportsPage from "@/pages/ReportsPage";
-import NoticesDashboardPage from "@/pages/NoticesDashboardPage";
-import CompanyListPage from "@/pages/CompanyListPage";
-import CompanyProfilePage from "@/pages/CompanyProfilePage";
-import NoticeSummaryReportPage from "@/pages/NoticeSummaryReportPage";
-import GstinWiseNoticeCountPage from "@/pages/GstinWiseNoticeCountPage";
-import CaseFolderRedirect from "@/pages/CaseFolderRedirect";
-import { ClientCountRedirect, HearingsRedirect, QueueRedirect } from "@/pages/NoticesRedirects";
-import AllClientsNoticesPage from "@/pages/AllClientsNoticesPage";
-import NoticeWorkspacePage from "@/pages/NoticeWorkspacePage";
-import NoticesCalendarPage from "@/pages/NoticesCalendarPage";
-import NoticesAutopilotPage from "@/pages/NoticesAutopilotPage";
-import NoticesReplyFactoryPage from "@/pages/NoticesReplyFactoryPage";
-import NoticesSettingsPage from "@/pages/NoticesSettingsPage";
-import NoticeCasesPage from "@/pages/NoticeCasesPage";
-import NoticeCasePage from "@/pages/NoticeCasePage";
-import NoticeOpenPage from "@/pages/NoticeOpenPage";
-import ClientDocumentsPage from "@/pages/ClientDocumentsPage";
-import AllClientsRefundsPage from "@/pages/AllClientsRefundsPage";
-import RefundPage from "@/pages/RefundPage";
-import AllClientsDrc03Page from "@/pages/AllClientsDrc03Page";
-import BuilderWorkspacePage from "@/pages/BuilderWorkspacePage";
-import BuilderSettingsPage from "@/pages/BuilderSettingsPage";
-import BuilderProjectsPage from "@/pages/BuilderProjectsPage";
-import BuilderProjectDetailPage from "@/pages/BuilderProjectDetailPage";
-import BuilderBookingsPage from "@/pages/BuilderBookingsPage";
-import BuilderReturnsPage from "@/pages/BuilderReturnsPage";
-import BuilderBuEventsPage from "@/pages/BuilderBuEventsPage";
-import BuilderDastavejPage from "@/pages/BuilderDastavejPage";
-import BuilderAdjustmentsPage from "@/pages/BuilderAdjustmentsPage";
-import BuilderFsiPage from "@/pages/BuilderFsiPage";
-import BuilderReportsPage from "@/pages/BuilderReportsPage";
-import ManageEmployeesPage from "@/pages/ManageEmployeesPage";
-import UserControlPage from "@/pages/UserControlPage";
-import SettingsPage from "@/pages/SettingsPage";
-import RemindersPage from "@/pages/RemindersPage";
-import LitigationMattersPage from "@/pages/LitigationMattersPage";
-import LitigationMatterDetailPage from "@/pages/LitigationMatterDetailPage";
-import LitigationMISPage from "@/pages/LitigationMISPage";
-import ChangeHistoryPage from "@/pages/ChangeHistoryPage";
-import NotFound from "./pages/NotFound";
+const AgreementConfirmPage = lazy(() => import("@/pages/AgreementConfirmPage"));
+const ResetPasswordPage = lazy(() => import("@/pages/ResetPasswordPage"));
+const DashboardPage = lazy(() => import("@/pages/DashboardPage"));
+const AddClientPage = lazy(() => import("@/pages/AddClientPage"));
+const EditClientPage = lazy(() => import("@/pages/EditClientPage"));
+const ClientsPage = lazy(() => import("@/pages/ClientsPage"));
+const TwoBReconciliationPage = lazy(() => import("@/pages/TwoBReconciliationPage"));
+const TwoBAndRCMPage = lazy(() => import("@/pages/TwoBAndRCMPage"));
+const SuspendedRecoPage = lazy(() => import("@/pages/SuspendedRecoPage"));
+const ITCAndReceivablePage = lazy(() => import("@/pages/ITCAndReceivablePage"));
+const RCMSummaryPage = lazy(() => import("@/pages/RCMSummaryPage"));
+const ManageMastersPage = lazy(() => import("@/pages/ManageMastersPage"));
+const FilingStatusPage = lazy(() => import("@/pages/FilingStatusPage"));
+const GSTRunningUpdatePage = lazy(() => import("@/pages/GSTRunningUpdatePage"));
+const GSTR1DataPage = lazy(() => import("@/pages/GSTR1DataPage"));
+const Gstr3bPage = lazy(() => import("@/pages/Gstr3bPage"));
+const Gstr3bAdjustmentsPage = lazy(() => import("@/pages/Gstr3bAdjustmentsPage"));
+const AdvancesPage = lazy(() => import("@/pages/AdvancesPage"));
+const AnnualReturnPage = lazy(() => import("@/pages/AnnualReturnPage"));
+const ReportsPage = lazy(() => import("@/pages/ReportsPage"));
+const NoticesDashboardPage = lazy(() => import("@/pages/NoticesDashboardPage"));
+const CompanyListPage = lazy(() => import("@/pages/CompanyListPage"));
+const CompanyProfilePage = lazy(() => import("@/pages/CompanyProfilePage"));
+const NoticeSummaryReportPage = lazy(() => import("@/pages/NoticeSummaryReportPage"));
+const GstinWiseNoticeCountPage = lazy(() => import("@/pages/GstinWiseNoticeCountPage"));
+const CaseFolderRedirect = lazy(() => import("@/pages/CaseFolderRedirect"));
+const ClientCountRedirect = lazy(() => import("@/pages/NoticesRedirects").then((m) => ({ default: m.ClientCountRedirect })));
+const HearingsRedirect = lazy(() => import("@/pages/NoticesRedirects").then((m) => ({ default: m.HearingsRedirect })));
+const QueueRedirect = lazy(() => import("@/pages/NoticesRedirects").then((m) => ({ default: m.QueueRedirect })));
+const AllClientsNoticesPage = lazy(() => import("@/pages/AllClientsNoticesPage"));
+const NoticeWorkspacePage = lazy(() => import("@/pages/NoticeWorkspacePage"));
+const NoticesCalendarPage = lazy(() => import("@/pages/NoticesCalendarPage"));
+const NoticesAutopilotPage = lazy(() => import("@/pages/NoticesAutopilotPage"));
+const NoticesReplyFactoryPage = lazy(() => import("@/pages/NoticesReplyFactoryPage"));
+const NoticesSettingsPage = lazy(() => import("@/pages/NoticesSettingsPage"));
+const NoticeCasesPage = lazy(() => import("@/pages/NoticeCasesPage"));
+const NoticeCasePage = lazy(() => import("@/pages/NoticeCasePage"));
+const NoticeOpenPage = lazy(() => import("@/pages/NoticeOpenPage"));
+const ClientDocumentsPage = lazy(() => import("@/pages/ClientDocumentsPage"));
+const AllClientsRefundsPage = lazy(() => import("@/pages/AllClientsRefundsPage"));
+const RefundPage = lazy(() => import("@/pages/RefundPage"));
+const AllClientsDrc03Page = lazy(() => import("@/pages/AllClientsDrc03Page"));
+const BuilderWorkspacePage = lazy(() => import("@/pages/BuilderWorkspacePage"));
+const BuilderSettingsPage = lazy(() => import("@/pages/BuilderSettingsPage"));
+const BuilderProjectsPage = lazy(() => import("@/pages/BuilderProjectsPage"));
+const BuilderProjectDetailPage = lazy(() => import("@/pages/BuilderProjectDetailPage"));
+const BuilderBookingsPage = lazy(() => import("@/pages/BuilderBookingsPage"));
+const BuilderReturnsPage = lazy(() => import("@/pages/BuilderReturnsPage"));
+const BuilderBuEventsPage = lazy(() => import("@/pages/BuilderBuEventsPage"));
+const BuilderDastavejPage = lazy(() => import("@/pages/BuilderDastavejPage"));
+const BuilderAdjustmentsPage = lazy(() => import("@/pages/BuilderAdjustmentsPage"));
+const BuilderFsiPage = lazy(() => import("@/pages/BuilderFsiPage"));
+const BuilderReportsPage = lazy(() => import("@/pages/BuilderReportsPage"));
+const ManageEmployeesPage = lazy(() => import("@/pages/ManageEmployeesPage"));
+const UserControlPage = lazy(() => import("@/pages/UserControlPage"));
+const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
+const RemindersPage = lazy(() => import("@/pages/RemindersPage"));
+const LitigationMattersPage = lazy(() => import("@/pages/LitigationMattersPage"));
+const LitigationMatterDetailPage = lazy(() => import("@/pages/LitigationMatterDetailPage"));
+const LitigationMISPage = lazy(() => import("@/pages/LitigationMISPage"));
+const ChangeHistoryPage = lazy(() => import("@/pages/ChangeHistoryPage"));
+const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
 
@@ -81,6 +85,7 @@ const App = () => (
         <AuthProvider>
           <MonthProvider>
             <ClientProvider>
+              <Suspense fallback={<PageLoading />}>
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/agreement-confirm/:token" element={<AgreementConfirmPage />} />
@@ -154,6 +159,7 @@ const App = () => (
                 
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </Suspense>
             </ClientProvider>
           </MonthProvider>
         </AuthProvider>

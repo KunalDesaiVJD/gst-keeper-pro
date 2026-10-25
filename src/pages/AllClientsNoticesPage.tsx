@@ -10,7 +10,6 @@ import React, { useMemo, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FileSpreadsheet, Loader2, RefreshCw } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -91,6 +90,7 @@ const AllClientsNoticesPage: React.FC = () => {
         'Replied on': fmtDate(r.reply_date), 'Order on': fmtDate(r.order_date), Category: r.category ?? '', 'FY on the notice': fmtFy(r.financial_year),
         'Close reason': closeReasonText(r.close_reason), Description: r.description ?? '',
       }));
+      const XLSX = await import('xlsx');
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Notices');
