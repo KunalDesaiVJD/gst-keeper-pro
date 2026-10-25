@@ -134,7 +134,9 @@ export const buildGstr8aThreeWayReport = async (clientId: string, month: string)
   if (!anyReady(st.twoA) && !anyReady(st.twoB)) {
     throw new Error(`No GSTR-2A or GSTR-2B of FY ${fy} is pulled for ${client.name}. Use Pull on this report: it fetches the year's 2A and 2B.`);
   }
-  return threeWayReportTable(reconcileThreeWay(st), st, { client, portal8A: portal8AOf(calc, fy, calcAt, calcStale) });
+  const portal8A = portal8AOf(calc, fy, calcAt, calcStale);
+  // A calculation older than the 8A file is shown, never held to.
+  return threeWayReportTable(reconcileThreeWay(st, calcStale ? null : portal8A), st, { client, portal8A });
 };
 
 // ── Pull: the year's 2A and 2B that are missing, then GSTR-9 ────────────────
