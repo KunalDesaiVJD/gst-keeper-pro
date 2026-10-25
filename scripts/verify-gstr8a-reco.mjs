@@ -228,6 +228,28 @@ check('final ITC', 'not available lines: rejected 540, ITC NA 360, time-barred 1
 check('final ITC', '8A (portal file) = 3546; A minus 8A = -90', near(L('8a').amounts.tax, 3546) && near(L('A_minus_8a').amounts.tax, -90), `${L('8a').amounts.tax} / ${L('A_minus_8a').amounts.tax}`);
 check('final ITC', "the portal's computed 8A line is shown when pulled", near(L('8a_portal').amounts.tax, 3546));
 
+// GSTR-9's own Table 8A below the 8A file by exactly one 2B month: those documents leave the final ITC (§5a).
+{
+  const fileE = L('8a').amounts;
+  const m = t3.get('INV-1').b.statementPeriod;
+  const month = three.rows.filter((r) => r.e && r.b && r.b.statementPeriod === m).reduce((t, r) => { const v = R.amountsOf(r.e); return { igst: t.igst + v.igst, cgst: t.cgst + v.cgst, sgst: t.sgst + v.sgst, cess: t.cess + v.cess }; }, { igst: 0, cgst: 0, sgst: 0, cess: 0 });
+  const g9 = { igst: fileE.igst - month.igst, cgst: fileE.cgst - month.cgst, sgst: fileE.sgst - month.sgst, cess: fileE.cess - month.cess };
+  const held = R.reconcileThreeWay(st, g9);
+  const out = held.rows.filter((r) => r.verdict === 'not_in_gstr9_8a');
+  const fit = R.gstr9GapMonths(held.rows, g9);
+  check('GSTR-9 8A', `the gap is found as the 2B of ${m}`, fit && fit.months.length === 1 && fit.months[0] === m, JSON.stringify(fit?.months));
+  check('GSTR-9 8A', "that month's eligible documents are Not in GSTR-9's Table 8A, final ITC zero", out.length > 0 && out.every((r) => r.b.statementPeriod === m && r.final.tax === 0), out.length);
+  const hl = R.judgement(held, st, g9);
+  const H = (k) => hl.find((l) => l.key === k);
+  check('GSTR-9 8A', "A minus GSTR-9's Table 8A = A minus the file before (-90, INV-10 only in 8A)", near(H('A_minus_8a_portal').amounts.tax, L('A_minus_8a').amounts.tax), H('A_minus_8a_portal').amounts.tax);
+  check('GSTR-9 8A', 'their own line under Not in the final ITC', H('not_in_gstr9_8a')?.docs === out.length);
+  check('GSTR-9 8A', 'the notes say so', held.notes.some((n) => n.includes("GSTR-9's Table 8A") && n.includes('exactly')));
+  const same = R.reconcileThreeWay(st, { igst: fileE.igst, cgst: fileE.cgst, sgst: fileE.sgst, cess: fileE.cess });
+  check('GSTR-9 8A', 'GSTR-9 8A equal to the file: nothing changes', same.rows.every((r, i) => r.verdict === three.rows[i].verdict) && same.notes.length === three.notes.length);
+  const odd = R.reconcileThreeWay(st, { igst: fileE.igst - 7.77, cgst: fileE.cgst, sgst: fileE.sgst, cess: fileE.cess });
+  check('GSTR-9 8A', 'a gap no whole month explains changes no verdict, and says so', odd.rows.every((r, i) => r.verdict === three.rows[i].verdict) && odd.notes.some((n) => n.includes('no whole 2B month')));
+}
+
 const t3Table = R.threeWayReportTable(three, st, { client, portal8A: null });
 const finalCol = t3Table.headers.indexOf('Final Total ITC');
 const totalRow = t3Table.rows[t3Table.rows.length - 1];

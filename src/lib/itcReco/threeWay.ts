@@ -54,7 +54,7 @@ export const THREE_STATUS_LABEL: Record<ThreeStatus, string> = {
 const STATUS_ORDER: ThreeStatus[] = ['only_2a', 'only_2b', 'only_8a', 'not_in_8a', 'not_in_2b', 'not_in_2a', 'in_all_differs', 'outside_8a', 'in_all'];
 
 /** The final judgment on a document's ITC for the year. */
-export type Verdict = 'eligible' | 'eligible_outside_8a' | 'reverse_37a' | 'rcm' | 'to_confirm' | 'rejected' | 'itc_na' | 'time_barred' | 'not_in_2b' | 'not_filed';
+export type Verdict = 'eligible' | 'eligible_outside_8a' | 'reverse_37a' | 'rcm' | 'to_confirm' | 'not_in_gstr9_8a' | 'rejected' | 'itc_na' | 'time_barred' | 'not_in_2b' | 'not_filed';
 
 export const VERDICTS: Record<Verdict, { label: string; tone: RowTone; counts: boolean }> = {
   eligible: { label: 'Eligible', tone: 'good', counts: true },
@@ -62,13 +62,14 @@ export const VERDICTS: Record<Verdict, { label: string; tone: RowTone; counts: b
   reverse_37a: { label: 'Reverse (Rule 37A)', tone: 'warn', counts: true },
   rcm: { label: 'Reverse charge: on payment', tone: 'info', counts: false },
   to_confirm: { label: 'To confirm', tone: 'warn', counts: false },
+  not_in_gstr9_8a: { label: "Not in GSTR-9's Table 8A", tone: 'warn', counts: false },
   rejected: { label: 'Not available: rejected in IMS', tone: 'bad', counts: false },
   itc_na: { label: 'Not available: 2B says no ITC', tone: 'bad', counts: false },
   time_barred: { label: 'Not available: time-barred u/s 16(4)', tone: 'bad', counts: false },
   not_in_2b: { label: 'Not available: not in any 2B', tone: 'bad', counts: false },
   not_filed: { label: 'Not available: supplier did not file GSTR-1', tone: 'bad', counts: false },
 };
-const VERDICT_ORDER: Verdict[] = ['eligible', 'eligible_outside_8a', 'reverse_37a', 'rcm', 'to_confirm', 'rejected', 'itc_na', 'time_barred', 'not_in_2b', 'not_filed'];
+const VERDICT_ORDER: Verdict[] = ['eligible', 'eligible_outside_8a', 'reverse_37a', 'rcm', 'to_confirm', 'not_in_gstr9_8a', 'rejected', 'itc_na', 'time_barred', 'not_in_2b', 'not_filed'];
 
 export interface Amounts { taxable: number; igst: number; cgst: number; sgst: number; cess: number; tax: number }
 const ZERO: Amounts = { taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0, tax: 0 };
@@ -233,8 +234,13 @@ export interface ThreeWayResult {
   notes: string[];
 }
 
-/** Every document of the year in 2A, 2B or 8A, judged. */
-export function reconcileThreeWay(st: FyStatements): ThreeWayResult {
+/**
+ * Every document of the year in 2A, 2B or 8A, judged. With `portal8A` (GSTR-9's
+ * system-computed Table 8A), the year is held to it: when GSTR-9's 8A is below
+ * the 8A file by exactly the documents of whole 2B months, those documents are
+ * out of the final ITC (positions doc §5a).
+ */
+export function reconcileThreeWay(st: FyStatements, portal8A: Portal8ATotal | null = null): ThreeWayResult {
   const sets = sourceSets(st);
   // 2B first (the basis), then 8A (built from it), then 2A: each group's representative is its 2B copy.
   const groups = matchSources([sets['2B'], sets['8A'], sets['2A']]);
@@ -249,7 +255,66 @@ export function reconcileThreeWay(st: FyStatements): ThreeWayResult {
     return { a, b, e, status: statusOf(a, b, e, outside, same && !g.dateDiffers), ...j, notes: notesOf(st, a, b, e) };
   });
   rows.sort((x, y) => STATUS_ORDER.indexOf(x.status) - STATUS_ORDER.indexOf(y.status) || Math.abs(y.basis.tax) - Math.abs(x.basis.tax));
-  return { fy: st.fy, rows, notes: explainThree(st, rows) };
+  const gstr9 = portal8A && st.eightA.origin === 'portal' ? holdToGstr9(rows, portal8A) : null;
+  return { fy: st.fy, rows, notes: [...explainThree(st, rows), ...(gstr9 ? [gstr9] : [])] };
+}
+
+const HEADS = ['igst', 'cgst', 'sgst', 'cess'] as const;
+
+/**
+ * The 2B months whose 8A documents make up the gap between the 8A file and
+ * GSTR-9's Table 8A, head by head to the rupee: the fewest months that do, and
+ * only when no other set of as many months does too. null when none or two do.
+ */
+export function gstr9GapMonths(rows: ThreeRow[], portal8A: Portal8ATotal): { months: string[]; gap: Amounts } | null {
+  let file = ZERO;
+  const byMonth = new Map<string, Amounts>();
+  for (const r of rows) {
+    if (!r.e) continue;
+    const v = amountsOf(r.e);
+    file = add(file, v);
+    if (r.b) byMonth.set(r.b.statementPeriod, add(byMonth.get(r.b.statementPeriod) ?? ZERO, v));
+  }
+  const gap: Amounts = { taxable: 0, igst: r2(file.igst - portal8A.igst), cgst: r2(file.cgst - portal8A.cgst), sgst: r2(file.sgst - portal8A.sgst), cess: r2(file.cess - portal8A.cess), tax: 0 };
+  gap.tax = r2(gap.igst + gap.cgst + gap.sgst + gap.cess);
+  if (HEADS.every((h) => Math.abs(gap[h]) <= 1)) return { months: [], gap };
+  const months = [...byMonth.keys()].sort((a, b) => periodIndex(a) - periodIndex(b));
+  if (months.length > 16) return null;
+  let best: string[][] = [];
+  for (let mask = 1; mask < 1 << months.length; mask++) {
+    const pick = months.filter((_, i) => mask & (1 << i));
+    if (best.length && pick.length > best[0].length) continue;
+    const t = pick.reduce((s, m) => add(s, byMonth.get(m) as Amounts), ZERO);
+    if (!HEADS.every((h) => Math.abs(t[h] - gap[h]) <= 1)) continue;
+    best = best.length && pick.length < best[0].length ? [pick] : [...best, pick];
+  }
+  return best.length === 1 ? { months: best[0], gap } : null;
+}
+
+/** Takes out of the final ITC the documents GSTR-9's Table 8A leaves out; returns the note that says so. */
+function holdToGstr9(rows: ThreeRow[], portal8A: Portal8ATotal): string | null {
+  const fit = gstr9GapMonths(rows, portal8A);
+  const heads = (a: Amounts) => `IGST ${fmt(a.igst)}, CGST ${fmt(a.cgst)}, SGST ${fmt(a.sgst)}${a.cess ? `, cess ${fmt(a.cess)}` : ''}`;
+  if (!fit) {
+    return "GSTR-9's Table 8A and the 8A file differ, and no whole 2B month accounts for it: the final ITC follows the documents; compare the 8A lines on the Final ITC sheet.";
+  }
+  if (!fit.months.length) return null;
+  const words = monthsWords(fit.months, monthLabel);
+  const out = new Set(fit.months);
+  let n = 0;
+  for (const r of rows) {
+    if (!r.e || !r.b || !out.has(r.b.statementPeriod)) continue;
+    n += 1;
+    if (r.verdict !== 'eligible') continue;
+    const where = `2B of ${monthLabel(r.b.statementPeriod)}`;
+    r.verdict = 'not_in_gstr9_8a';
+    r.head = `In the 8A file, but GSTR-9's Table 8A leaves out the 2B of ${words}`;
+    r.reason = `${r.head}: ${where}`;
+    r.action = "Out of the final ITC, as GSTR-9's Table 8A stands. If it was claimed in GSTR-3B it shows in Table 8D: ask the GST helpdesk why the 8A leaves the month out, and Pull again once the portal corrects it.";
+    r.evidence = `GSTR-9 Table 8A is below the 8A file by ${heads(fit.gap)}: the 2B of ${words} to the rupee`;
+    r.final = ZERO;
+  }
+  return `GSTR-9's Table 8A (the portal's own computed figure) is below the portal's 8A file by ${heads(fit.gap)}, which is exactly the ${plural(n, 'document')} of the 2B of ${words}. The final ITC follows GSTR-9's 8A, so ${n === 1 ? 'it is' : 'they are'} listed as "Not in GSTR-9's Table 8A" and left out of it.`;
 }
 
 function explainThree(st: FyStatements, rows: ThreeRow[]): string[] {
@@ -318,6 +383,8 @@ export function judgement(res: ThreeWayResult, st: FyStatements, portal8A: Porta
   line('h3', 'Not in the final ITC', null, '', 'section');
   line('rcm', 'Reverse charge: ITC once the tax is paid', by('rcm'), 'GSTR-9 Table 6C / 6D; not from 2B or 8A.', 'data', 'info');
   line('to_confirm', 'To confirm: no 2B pulled shows it yet', by('to_confirm'), 'Pull the 2Bs named on each document; until a 2B shows it, it is not counted.', 'data', 'warn');
+  const g9 = by('not_in_gstr9_8a');
+  if (g9.n) line('not_in_gstr9_8a', "In the 8A file, not in GSTR-9's Table 8A", g9, "The 2B months GSTR-9's system-computed Table 8A leaves out; in Table 8D if claimed.", 'data', 'warn');
   for (const v of ['rejected', 'itc_na', 'time_barred', 'not_in_2b', 'not_filed'] as Verdict[]) {
     line(v, VERDICTS[v].label, by(v), '', 'data', 'bad');
   }
@@ -327,6 +394,15 @@ export function judgement(res: ThreeWayResult, st: FyStatements, portal8A: Porta
     key: 'A_minus_8a', label: 'A minus GSTR-8A', docs: '', amounts: { taxable: r2(A.t.taxable - e.taxable), igst: r2(A.t.igst - e.igst), cgst: r2(A.t.cgst - e.cgst), sgst: r2(A.t.sgst - e.sgst), cess: r2(A.t.cess - e.cess), tax: r2(A.t.tax - e.tax) },
     note: 'Eligible B2B ITC against the 8A: each difference is a document listed as Only in 2B / Not in 8A or Only in 8A / To confirm.', kind: 'data', tone: Math.abs(A.t.tax - e.tax) > 1 ? 'warn' : 'good',
   });
+  const p = lines.find((l) => l.key === '8a_portal')?.amounts;
+  if (p) {
+    const d = { taxable: 0, igst: r2(A.t.igst - p.igst), cgst: r2(A.t.cgst - p.cgst), sgst: r2(A.t.sgst - p.sgst), cess: r2(A.t.cess - p.cess), tax: r2(A.t.tax - p.tax) };
+    lines.push({
+      key: 'A_minus_8a_portal', label: "A minus GSTR-9's Table 8A", docs: '', amounts: d,
+      note: Math.abs(d.tax) > 1 ? 'Eligible B2B ITC against the figure GSTR-9 shows: the difference is the documents listed against the 8A above.' : 'Eligible B2B ITC agrees with the figure GSTR-9 shows.',
+      kind: 'data', tone: Math.abs(d.tax) > 1 ? 'warn' : 'good',
+    });
+  }
   return lines;
 }
 

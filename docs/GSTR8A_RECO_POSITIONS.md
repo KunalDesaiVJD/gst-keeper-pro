@@ -133,6 +133,31 @@ The sheet also prints the totals of each statement, the lines left out, and
 only in 8A. The judgment is as the statements stand; it is not a reading of
 the client's books.
 
+### 5a. Held to GSTR-9's own Table 8A (25 Oct 2026)
+
+The portal's two 8A products can disagree. For TAMNNA-GJ FY 2025-26 the 8A
+file (document details) held CGST and SGST ₹22,14,937.94 each, while GSTR-9's
+system-computed Table 8A (the GSTR-9 pull, and the Annual Return module) held
+₹19,15,164.63. The gap of ₹2,99,773.31 a head was, to the paisa, the 16
+documents of the 2B of Oct 2025. The file itself says each of them was
+"considered for 8A Summary computation". The firm (Meet, 25 Oct 2026) takes
+GSTR-9's figure as the right one.
+
+So when a GSTR-9 calculation newer than the 8A file is pulled, the three-way
+report is held to it (`gstr9GapMonths`, `holdToGstr9` in `threeWay.ts`). If
+the 8A file is above GSTR-9's 8A by exactly the 8A documents of the fewest
+whole 2B months (head by head, within ₹1, one such set only), each eligible
+document of those months gets the verdict **Not in GSTR-9's Table 8A**. That
+verdict is out of the final ITC and has its own line under "Not in the final
+ITC". The Final ITC sheet adds "A minus GSTR-9's Table 8A". If no whole month
+explains the gap, no verdict changes and the notes say so. A calculation older
+than the 8A file is shown, but the report is never held to it.
+
+The ITC itself is not lost in law, since those documents are in a 2B of the
+window with ITC available. If it was claimed in GSTR-3B, it shows in Table 8D.
+The action says to ask the helpdesk why the month is left out, and to Pull
+again once the portal corrects it.
+
 ## 6. Pull
 
 With extension 0.18.0 or later, for a year that has ended (the firm, 25 Oct
