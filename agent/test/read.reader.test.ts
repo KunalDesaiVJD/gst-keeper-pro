@@ -25,7 +25,10 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gstk-reader-'));
 before(async () => {
   const pdf = Buffer.from(await noticePdf(SPEC));
   storage = http.createServer((req, res) => {
-    if (req.url === '/storage/v1/object/public/return-pdfs/notices/n1.pdf') { res.writeHead(200, { 'content-type': 'application/pdf' }); res.end(pdf); return; }
+    // Read keyed through the authenticated endpoint (a private bucket reads too).
+    if (req.url === '/storage/v1/object/authenticated/return-pdfs/notices/n1.pdf' && req.headers.authorization === 'Bearer anon') {
+      res.writeHead(200, { 'content-type': 'application/pdf' }); res.end(pdf); return;
+    }
     res.writeHead(404); res.end();
   });
   await new Promise<void>((r) => storage.listen(0, '127.0.0.1', () => r()));

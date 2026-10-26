@@ -62,6 +62,7 @@ function deps(): Deps {
     db: supabaseDb(url, key),
     claude: caller(),
     supabaseUrl: url,
+    storageKey: key,
     agentId: `edge:${crypto.randomUUID().slice(0, 8)}`,
     version: VERSION,
   };

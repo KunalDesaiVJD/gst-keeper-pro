@@ -39,21 +39,25 @@ What `doc-open` trusts: the app has no server-checked session (custom sign-in,
 see CLAUDE.md), so like `gst-push` it trusts the actor id the page sends and
 checks it against the database. That id is never shown in the app.
 
-## Making the buckets private (not done yet)
+## Making the buckets private
 
-The buckets are still public, and the anon key (which is in the website's
-code) may read and list `return-pdfs` through the storage API
-(`Anyone can view return PDFs`). In order:
+`return-pdfs` is private since 26 Oct 2026 (`20261026080000`): its public
+address answers "Bucket not found". The anon key (which is in the website's
+code) may still read and list it through the storage API's authenticated
+endpoint (`Anyone can view return PDFs`) until step 3. The other two buckets
+are still public. In order:
 
 1. **Done (this change):** nobody sees a storage address in the app, an export
    or an alert e-mail.
-2. **Bucket private** (`update storage.buckets set public = false where id =
+2. **Done 26 Oct 2026 for `return-pdfs`: bucket private** (`update storage.buckets set public = false where id =
    'return-pdfs'`; reversible). Only once this app is live, since a link not
-   yet short would stop. Before it, two readers that fetch the public address
-   without a key must read with a key: `notice-ai`'s `downloadPdf`
-   (`supabase/functions/notice-ai/pdf.ts`, service role on
-   `/storage/v1/object/authenticated/…`) and the office agent's
-   `agent/src/read/pdf.ts` (off by default). The extension is not affected: it
+   yet short would stop. The two readers that fetched the public address
+   without a key now read with one (`storageReadUrl`, the public address read
+   on `/storage/v1/object/authenticated/…`): `notice-ai`'s `downloadPdf`
+   (`supabase/functions/notice-ai/pdf.ts`, the service role; deployed) and the
+   office agent's `agent/src/read/pdf.ts` (the anon key, which reads while the
+   anon SELECT policy stands; off by default, and takes effect when the office
+   PC's agent is updated). The extension is not affected: it
    uploads with `POST /storage/v1/object/return-pdfs/<path>` (INSERT policy)
    and only *returns* the public address as a string, which the app still
    turns into a short link.

@@ -31,6 +31,20 @@ export function documentUrlAllowed(url: string, supabaseUrl: string): boolean {
   }
 }
 
+// The storage address the file is read from. With a key a public address is
+// read through the authenticated endpoint, which also works once the bucket is
+// private (docs/DOCUMENT_LINKS.md); without one, as it is.
+export function storageReadUrl(url: string, keyed: boolean): string {
+  if (!keyed) return url;
+  try {
+    const u = new URL(url);
+    u.pathname = u.pathname.replace(/^\/storage\/v1\/object\/public\//, '/storage/v1/object/authenticated/');
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 export interface Downloaded {
   bytes: Uint8Array;
   sha256: string;
@@ -43,6 +57,8 @@ export interface DownloadOptions {
   fetchImpl?: typeof fetch;
   // Where the document (and any redirect) may come from.
   allow?: (url: string) => boolean;
+  // The database key, sent only to an address `allow` passes.
+  storageKey?: string;
 }
 
 export async function downloadPdf(url: string, opts: DownloadOptions = {}): Promise<Downloaded> {
@@ -58,7 +74,11 @@ export async function downloadPdf(url: string, opts: DownloadOptions = {}): Prom
     let at = url;
     for (let hop = 0; ; hop++) {
       try {
-        r = await (opts.fetchImpl ?? fetch)(at, { signal: ctl.signal, redirect: 'manual' });
+        const key = opts.storageKey;
+        r = await (opts.fetchImpl ?? fetch)(storageReadUrl(at, !!key), {
+          signal: ctl.signal, redirect: 'manual',
+          ...(key ? { headers: { Authorization: `Bearer ${key}`, apikey: key } } : {}),
+        });
       } catch (e) {
         if (opts.signal?.aborted) throw new DocumentError('stopped while downloading the PDF', 'agent_stopped', true);
         throw new DocumentError(ctl.signal.aborted ? 'the PDF did not download within 60 seconds' : `the PDF could not be downloaded (${(e as Error).message})`, 'download', true);
