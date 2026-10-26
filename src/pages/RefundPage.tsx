@@ -25,7 +25,7 @@ import { useRefundLedger, type ReadAmount, type RefundRow } from '@/components/n
 import { daysTo } from '@/components/notices/reports/ledgerStatus';
 import { MoneyBar, RefundWhenChip, StepRoad, TonePill } from '@/components/notices/reports/RefundBits';
 import {
-  fyLabel, linkWord, moneyOf, placeOf, refundHref, refundPeriod, refundSteps, toneOf, typeCode, typeLong,
+  fyLabel, linkWord, moneyOf, placeOf, refundClocks, refundHref, refundPeriod, refundSteps, toneOf, typeCode, typeLong,
 } from '@/components/notices/reports/refundModel';
 import { downloadZip } from '@/components/notices/reports/zip';
 import { AppealFacts } from '@/components/notices/autopilot/PortalAppeal';
@@ -75,6 +75,29 @@ const HistoryItem: React.FC<{ e: CaseEvent }> = ({ e }) => (
     {e.attachments.length > 0 && <div className="mt-1.5 flex flex-wrap gap-1">{e.attachments.map((a, i) => <DocChip key={`${a.url}-${i}`} label={a.label} url={a.url} />)}</div>}
   </li>
 );
+
+/** The time limits of a refund (s.54(1), rule 90(3), s.54(7), s.56), estimated from its type and period. */
+const RefundTimeLimits: React.FC<{ r: RefundRow; today: string }> = ({ r, today }) => {
+  const c = refundClocks(r, today);
+  if (!c.lines.length && !c.relevantBasis) return null;
+  const TONE = { ok: 'text-success', warn: 'text-warning', danger: 'text-destructive', muted: 'text-muted-foreground' } as const;
+  return (
+    <SectionCard title="Time limits" description={c.relevantDate ? `Relevant date about ${fmtDate(c.relevantDate)}` : undefined}
+      info="Estimated from the refund's type and period. Confirm the relevant date on the papers before relying on it.">
+      <ul className="space-y-1.5">
+        {c.lines.map((l) => (
+          <li key={l.label} className="text-sm">
+            <span className="font-semibold">{l.label}</span>
+            {l.date && <span className={cn('ml-1.5 font-semibold', TONE[l.tone])}>{fmtDate(l.date)}</span>}
+            <span className="block text-xs text-muted-foreground">{l.note}</span>
+          </li>
+        ))}
+      </ul>
+      {c.interest > 0 && <p className="text-xs">Interest due to the client so far, at 6%: <span className="font-semibold">{fmtInr(c.interest)}</span></p>}
+      <p className="text-[11px] text-muted-foreground">{c.relevantBasis}</p>
+    </SectionCard>
+  );
+};
 
 const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> = ({ r, today, canExport }) => {
   const [allDocs, setAllDocs] = useState(false);
@@ -182,6 +205,8 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
       ))}
 
       <SectionCard title="Steps"><StepRoad steps={refundSteps(r)} /></SectionCard>
+
+      <RefundTimeLimits r={r} today={today} />
 
       <SectionCard title="Amounts" description={r.read ? `read from ${plural(r.read.documents, 'document')} of the refund where the portal has none` : undefined}>
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-5">

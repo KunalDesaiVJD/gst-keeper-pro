@@ -192,14 +192,22 @@ export interface CaseItemFacts {
   filed_on?: string; second_appeal?: boolean; issues?: string[]; portal_status?: string;
   /** Every document the record lists, downloaded or not. */
   portal_docs?: { id: string; name?: string; file?: string }[];
+  /** The APL-01's amounts per Act (demand, disputed, paid), 20261026110000. */
+  amounts?: Record<'demand' | 'disputed' | 'paid', Partial<Record<'cgst' | 'sgst' | 'igst' | 'cess', { tx?: number; pen?: number; tot?: number }>>>;
 }
 
 /** A date the law attaches to the case's papers (notice_case_key_dates, 20261025140000). */
-export type KeyDateKind = 'hearing' | 'adjournment' | 'reply_due' | 'pay_to_close' | 'appeal_window' | 'appeal_filed' | 'predeposit' | 'payment_due';
+export type KeyDateKind = 'hearing' | 'adjournment' | 'reply_due' | 'pay_to_close' | 'appeal_window' | 'appeal_filed' | 'predeposit' | 'payment_due'
+  // 20261026120000 (the law audit): limitation, s.62(2), revocation, s.161 and the order's own checks.
+  | 'limitation' | 'withdrawal' | 'revocation' | 'rectification' | 'order_check';
 export interface KeyDate {
   date: string; kind: KeyDateKind; title: string; detail?: string | null;
   tone: 'ok' | 'warn' | 'danger' | 'info' | 'muted'; law?: string | null;
   own_key?: string | null; item_id?: string | null; upcoming: boolean;
+  /** A ground of appeal or reply (limitation, s.75(4), s.75(7)). */
+  ground?: boolean;
+  /** No order on record and the time for one is over. */
+  time_barred?: boolean;
 }
 
 export async function loadKeyDates(clientId: string, caseKey: string): Promise<KeyDate[]> {

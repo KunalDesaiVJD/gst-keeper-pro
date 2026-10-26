@@ -48,6 +48,7 @@ const GROUP_LABEL: Record<Entry['group'], string> = { reply: 'reply due', hearin
 const CASE_DATE_LABEL: Record<string, string> = {
   appeal_window: 'Time to appeal', predeposit: 'Pre-deposit', pay_to_close: 'Pay to close', payment_due: 'Payment due',
   adjournment: 'Adjourned to', appeal_filed: 'Appeal filed',
+  limitation: 'Limitation', withdrawal: 'Deemed withdrawal', revocation: 'Revocation', rectification: 'Rectification', order_check: 'Order check',
 };
 
 function fromCalendar(it: CalendarItem): Entry {

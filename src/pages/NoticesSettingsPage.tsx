@@ -13,6 +13,7 @@ import { KeyRound, Search } from 'lucide-react';
 import { excludeCase, loadExcludedCases, TRACKS, trackDef, type ExcludedCase, type Track } from '@/lib/noticeCases';
 import { canManageNoticeTypes } from '@/lib/noticeTypes';
 import { OfficersPanel } from '@/components/notices/OfficersPanel';
+import { HolidaysPanel, LawRulesPanel } from '@/components/notices/LawRulesPanels';
 import { supabase } from '@/integrations/supabase/client';
 import { NoticesShell } from '@/components/notices/NoticesShell';
 import { Panel } from '@/components/notices/ui/Panel';
@@ -252,6 +253,9 @@ const NoticesSettingsPage: React.FC = () => {
         </Panel>
 
         <OfficersPanel canEdit={canEdit || canManageNoticeTypes(user?.role)} />
+
+        <LawRulesPanel />
+        <HolidaysPanel />
 
         <Panel title={`Hidden cases and notices · ${excluded.data?.length ?? 0}`}
           info="Cases a superadmin or GST manager marked as handled elsewhere (case page), and single notices marked Not required (notice page, More). They are in no list, count or e-mail; a hidden case also hides notices that arrive in it later.">

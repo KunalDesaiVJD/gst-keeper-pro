@@ -206,3 +206,108 @@ const LINK_WORDS: Record<string, { child: string; parent: string }> = {
 };
 /** What the linked case is to this refund: "Appeal", "Fresh application", "Re-filed after". */
 export const linkWord = (kind: string, dir: 'child' | 'parent') => (LINK_WORDS[kind] ?? LINK_WORDS.related)[dir];
+
+// ── Time limits (L12 of the law audit, 26 Oct 2026) ────────────────────────
+// s.54(1): a claim within 2 years of the relevant date (Explanation 2 to
+// s.54); rule 90(3): after a deficiency memo a fresh claim, the time from
+// filing to the memo left out of the 2 years (from 26 Dec 2022); s.54(7): the
+// order within 60 days of a complete application; s.56: 6% interest after
+// that (9% where an appeal or court orders the refund, not tracked here). The
+// relevant date is estimated from the type and period, never read: a person
+// confirms it on the papers.
+
+/** The day n days on. */
+const plusDays = (iso: string, n: number) => {
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+/** The same day n years on (29 Feb → 28 Feb). */
+const plusYears = (iso: string, n: number) => {
+  const y = Number(iso.slice(0, 4)) + n;
+  const md = iso.slice(5, 10);
+  return md === '02-29' && !(y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)) ? `${y}-02-28` : `${y}-${md}`;
+};
+const monthEnd = (ym: string) => {
+  const [y, m] = ym.slice(0, 7).split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+};
+const days = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+
+export interface RefundClocks {
+  /** The relevant date as estimated, and how. Null when the type has none (cash ledger) or the period is unknown. */
+  relevantDate: string | null;
+  relevantBasis: string;
+  /** The last day to file the claim (2 years). */
+  limitBy: string | null;
+  /** After a deficiency memo: the last day for a fresh claim, with the time the first claim was pending left out. */
+  refileBy: string | null;
+  /** s.54(7): the order is due 60 days after the application. */
+  orderDue: string | null;
+  /** s.56: interest at 6% a year on the claim from the 61st day while no order is on record. */
+  interestDays: number;
+  interest: number;
+  /** One line per clock, for the page. */
+  lines: { label: string; date: string | null; tone: 'ok' | 'warn' | 'danger' | 'muted'; note: string }[];
+}
+
+const NO_LIMIT = new Set(['EXBCL']);
+
+export function refundClocks(r: RefundRow, today: string): RefundClocks {
+  const code = typeCode(r);
+  const filed = dateOf(r.fact.filed_date);
+  const st = `${r.fact.status ?? ''}`.toLowerCase();
+  const memo = dateOf(r.signals?.deficiency) ?? null;
+  const decided = /sanction|reject|disburs|paid|withdraw|re-?credit|processed/.test(st) || !!r.signals?.order;
+  let relevantDate: string | null = null;
+  let relevantBasis = 'Period not captured: the relevant date cannot be estimated.';
+  if (NO_LIMIT.has(code)) {
+    relevantBasis = 'Refund of the cash ledger balance: no time limit applies.';
+  } else if (code === 'ASSESS') {
+    relevantBasis = 'After an order or appeal: 2 years from the communication of that order. Check its date on the papers.';
+  } else if (r.period?.to) {
+    const end = monthEnd(r.period.to);
+    if (code === 'INVITC') {
+      relevantDate = plusDays(end, 20);
+      relevantBasis = 'Inverted duty: the due date of the return for the period (Explanation 2(e) to s.54), taken as the 20th of the next month.';
+    } else {
+      relevantDate = end;
+      relevantBasis = 'Estimated as the end of the period claimed; for exports it is the date of shipment or of payment, which can be earlier.';
+    }
+  }
+  const limitBy = relevantDate ? plusYears(relevantDate, 2) : null;
+  const refileBy = limitBy && memo && filed && memo !== UNKNOWN && memo >= '2022-12-26' && memo >= filed
+    ? plusDays(limitBy, days(filed, memo)) : null;
+  const orderDue = filed ? plusDays(filed, 60) : null;
+  const pending = !decided && !memo && !/withdraw/.test(st);
+  const interestDays = pending && orderDue && today > orderDue ? days(orderDue, today) : 0;
+  const interest = interestDays > 0 && r.claimed ? Math.round((r.claimed * 6 * interestDays) / 36500) : 0;
+
+  const lines: RefundClocks['lines'] = [];
+  if (limitBy) {
+    lines.push({
+      label: 'Time to claim (2 years)', date: limitBy,
+      tone: filed && filed <= limitBy ? 'ok' : filed ? 'danger' : today > limitBy ? 'danger' : 'warn',
+      note: filed ? (filed <= limitBy ? 'Filed within the time.' : 'Filed after the 2 years on this estimate: check the relevant date on the papers.') : 'Not filed yet.',
+    });
+  }
+  if (memo) {
+    lines.push({
+      label: 'Fresh claim after the deficiency memo', date: refileBy,
+      tone: !refileBy ? 'muted' : today > refileBy ? 'danger' : 'warn',
+      note: !refileBy ? 'The memo is before 26 Dec 2022 or the period is unknown: the fresh claim runs from the relevant date with no time left out.'
+        : today > refileBy ? 'The time for a fresh claim is over: close the memo with a note, unless a fresh claim was filed.'
+        : `The ${days(filed as string, memo)} days the first claim was pending are left out of the 2 years (rule 90(3)).`,
+    });
+  }
+  if (orderDue && !memo && !/withdraw/.test(st)) {
+    lines.push({
+      label: 'Order due (60 days)', date: orderDue,
+      tone: decided ? 'muted' : today > orderDue ? 'danger' : 'warn',
+      note: decided ? 'An order is on record.'
+        : interestDays > 0 ? `No order yet: interest at 6% a year runs from the 61st day, about ${interestDays} days so far (s.56).`
+        : 'The officer must order within 60 days of a complete application (s.54(7)).',
+    });
+  }
+  return { relevantDate, relevantBasis, limitBy, refileBy, orderDue, interestDays, interest, lines };
+}

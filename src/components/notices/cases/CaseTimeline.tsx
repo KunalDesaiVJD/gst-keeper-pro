@@ -126,12 +126,14 @@ const TONE: Record<KeyDate['tone'], { dot: string; text: string; border: string 
 
 function KeyDateRow({ k, partName }: { k: KeyDate; partName: string | null }) {
   const t = TONE[k.tone] ?? TONE.muted;
-  const Icon = ['appeal_filed', 'predeposit', 'appeal_window', 'adjournment'].includes(k.kind) ? Scale : CalendarClock;
+  const Icon = ['appeal_filed', 'predeposit', 'appeal_window', 'adjournment', 'limitation', 'order_check', 'rectification'].includes(k.kind) ? Scale : CalendarClock;
   return (
     <div className={cn('mb-3 min-w-0 flex-1 rounded-lg border border-dashed px-3 py-2', t.border, k.tone === 'muted' && 'opacity-80')}>
       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
         <span className={cn('inline-flex items-center gap-1 font-semibold', t.text)}><Icon className="h-3.5 w-3.5" aria-hidden /> Key date</span>
         {k.upcoming && <Badge variant="warning" className="text-[10px]">Upcoming</Badge>}
+        {k.ground && <Badge variant="destructive" className="text-[10px]" title="Raise it in the reply or the appeal">Ground</Badge>}
+        {k.time_barred && <Badge variant="success" className="text-[10px]">Time-barred</Badge>}
         {partName && <Badge variant="secondary" className="text-[10px]">{partName}</Badge>}
         {k.law && <span className="ml-auto font-mono text-[10px] text-muted-foreground" title="The provision of the CGST Act">{k.law}</span>}
       </div>
