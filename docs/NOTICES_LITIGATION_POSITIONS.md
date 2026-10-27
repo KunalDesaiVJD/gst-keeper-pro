@@ -760,11 +760,7 @@ Migrations `20261026100000` (limitation, holidays), `20261026110000` (forms, the
 
 - **Limitation (L1).** `gst_limitation_years` holds, per FY, the annual return due date and the last dates for an order under s.73(10) (the s.168A dates of N. 9/2023 and 56/2023 for FY 2017-18 to 2019-20, whose validity is before the courts) and s.74(10), and for an SCN under s.74A(2) from FY 2024-25. `notice_limitation(fy, section)` reads it. The case timeline shows the last date for an order while none is on record, a time-barred case when that date passed with no order, an SCN issued after the last date (s.73(2): 3 months before the order date; s.74(2): 6 months), and an order passed after its time limit, each marked as a ground. A section the notice does not state is read as s.73, with the s.74 date named.
 - **Pre-deposit (L2, L3).** `notice_predeposit_required(amounts, kind, filed)` works it per Act from the APL-01's own heads (`orddtl.initamt`, `dispamt`, `paidamt` / `predepositamt`, read into `notice_folder_facts.amounts`): the admitted amount (demand less disputed) in full plus 10% of the tax in dispute, capped at ₹20 crore CGST or SGST and ₹40 crore IGST from 1 Nov 2024 (25 / 50 before); before the Tribunal a further 10% (20% before 1 Nov 2024), capped at 20 crore (50 before); a penalty-only order 10% of the penalty for appeals filed from 1 Oct 2025, nothing before; a s.129 order (MOV-09) 25% of the penalty. A record with no heads falls back to the total, and says so. The 20% the timeline used for every Tribunal appeal is gone.
-<<<<<<< HEAD
 - **s.74A and DRC-01A (L4, L5).** For FY 2024-25 on, pay-to-close within 60 days of the SCN with no penalty or 25% where fraud is alleged, and 50% within 60 days of an order holding fraud (s.74A(8), (10), (11)). A DRC-01A's window is worded as lasting until a DRC-01 is issued (s.73(5), s.74(5)); the date shown is the intimation's reply date.
-=======
-- **s.74A and DRC-01A (L4, L5).** For FY 2024-25 on, pay-to-close within 60 days of the SCN with no penalty or 25% where fraud is alleged, and 50% within 60 days of an order holding fraud (s.74A(8), (9)). A DRC-01A's window is worded as lasting until a DRC-01 is issued (s.73(5), s.74(5)); the date shown is the intimation's reply date.
->>>>>>> origin/claude/project-thread-xim5g3
 - **Forms (L6).** New rules: ADJOURNMENT (no reply of its own), DRC-08, ASMT-13, ASMT-15, ASMT-16, RFD-07, MOV-01/02/04/05 (informational), MOV-06, MOV-10, MOV-11, SPL-07, RVN-01. `notice_appealable_forms()` is now exactly the active rules with an appeal section (DRC-07A, ASMT-16, MOV-11 and SPL-07 added); `ORDER_FORMS` in `src/lib/noticeDrafting.ts` matches. An ASMT-13 shows the s.62(2) deemed-withdrawal date (60 days, a further 60 with extra late fee).
 - **Revocation and rectification (L7, L8).** A REG-19 shows the last day for REG-21 (90 days, extendable by 180) and says a cancellation the client asked for needs nothing; an open order shows the s.161 rectification date (3 months), noting the appeal clock keeps running.
 - **Appeal clocks met (L9).** A trigger on `matter_deadlines` marks an `appeal_%` clock met once an APL-01, an APPEL application or a recorded Tribunal appeal names the order (`notice_order_appeal`); arrivals touch the client's open clocks.
@@ -787,7 +783,6 @@ Migration `20261027100000` (plus the parts of `20261026110000` / `120000` named 
 - **P5.** `notice_case_appeals.pending_days`, shown on the Appeal view. The timeline flags an appeal pending 12 months or more (s.107(13)), and any DRC-13, DRC-16 or DRC-22 after an appeal was filed (s.107(7), s.112(9)).
 - **P6.** On a DRC-07, a DRC-03 linked to the case, or one whose cause names the SCN, order or demand paid since the case began, is flagged to be adjusted in DRC-03A (rule 142(2B)). The liability register is not read: that needs the extension.
 - **P7** (open cases' folders read daily) and **P8**'s private-bucket item need the Chrome extension, so they are left to their own change. P8's matters (none exist) wait on the firm: retire them, or create them from appealed orders. The 399 reply clocks of hidden GSTR-3A notices are left as they are.
-<<<<<<< HEAD
 
 ## 36. What the law audit automates (section C, "start with section C", 27 October 2026)
 
@@ -801,5 +796,3 @@ All in the app, with no database change: the connector cannot replace functions,
 - **Refund grid**. A quarter missing between a lane's claims shows the last day to file for it, two years from the relevant date as `refundClocks` estimates it, or that the time is over.
 - **REG-19 the client asked for** (`VoluntaryCancelNote`). The portal's REG-19 does not say whether the client applied (REG-16) or the officer cancelled (REG-17, REG-31). With a REG-16 among the portal applications, or no REG-17 / REG-31 in the 18 months before, the page offers "Close as information" (GSTR-10 due within three months, s.45). Closing stays a person's click: the data cannot tell the two apart with certainty, and a suo motu order closed by mistake would lose its revocation and appeal time.
 - Left: a matter per appealed order waits on the firm (P8).
-=======
->>>>>>> origin/claude/project-thread-xim5g3
