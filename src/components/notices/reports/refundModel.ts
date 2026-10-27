@@ -75,24 +75,27 @@ export function refundWhenText(r: RefundRow): string | null {
   return w ? `${w.fy} · ${w.period ?? 'period not captured'}` : null;
 }
 
-export type Tone = 'action' | 'open' | 'full' | 'part' | 'rejected' | 'withdrawn' | 'closed';
+export type Tone = 'action' | 'open' | 'full' | 'part' | 'rejected' | 'withdrawn' | 'refiled' | 'nil' | 'closed';
 export const TONE_LABEL: Record<Tone, string> = {
   action: 'Needs action', open: 'With the officer', full: 'Sanctioned', part: 'Part rejected',
-  rejected: 'Rejected', withdrawn: 'Withdrawn', closed: 'Closed',
+  rejected: 'Rejected', withdrawn: 'Withdrawn', refiled: 'Re-filed', nil: 'Nil application', closed: 'Closed',
 };
 /** Fill of a grid cell, by where the refund stands. */
 export const TONE_CELL: Record<Tone, string> = {
   action: 'border-destructive bg-destructive/10', open: 'border-info/40 bg-info/10', full: 'border-success/40 bg-success/10',
-  part: 'border-warning/60 bg-warning/15', rejected: 'border-destructive/40 bg-destructive/[0.06]', withdrawn: 'border-border bg-muted/60', closed: 'border-border bg-muted/40',
+  part: 'border-warning/60 bg-warning/15', rejected: 'border-destructive/40 bg-destructive/[0.06]', withdrawn: 'border-border bg-muted/60',
+  refiled: 'border-border bg-muted/60', nil: 'border-border bg-muted/40', closed: 'border-border bg-muted/40',
 };
 /** Text colour of a tone's word. */
 export const TONE_TEXT: Record<Tone, string> = {
   action: 'text-destructive-strong', open: 'text-info', full: 'text-success-strong', part: 'text-amber-700 dark:text-amber-400',
-  rejected: 'text-destructive-strong', withdrawn: 'text-muted-foreground', closed: 'text-muted-foreground',
+  rejected: 'text-destructive-strong', withdrawn: 'text-muted-foreground', refiled: 'text-muted-foreground', nil: 'text-muted-foreground', closed: 'text-muted-foreground',
 };
 
 export function toneOf(r: RefundRow): Tone {
   if (/withdraw/i.test(r.fact.status ?? '')) return 'withdrawn';
+  if (r.state.refiledAs) return 'refiled';
+  if (r.state.group === 'nil') return 'nil';
   if (r.state.group === 'action') return 'action';
   if (r.state.open) return 'open';
   if ((r.sanctioned ?? 0) > 0) return (r.rejected ?? 0) > 0 ? 'part' : 'full';
@@ -130,8 +133,12 @@ export function refundSteps(r: RefundRow): RefundStep[] {
   const rejected = /reject/.test(st) && !/partial/.test(st) && !(r.sanctioned && r.sanctioned > 0);
   const steps: RefundStep[] = [
     { key: 'filed', label: 'Applied (RFD-01)', short: 'Applied', done: true, date: r.fact.filed_date },
-    { key: 'ack', label: 'Acknowledged (RFD-02)', short: 'Acknowledged', done: !!f?.ack || /acknowledg|rfd-?02/.test(st) || ordered || scn || replied, date: dateOf(f?.ack) },
   ];
+  // A NIL application claims nothing, so nothing follows it.
+  if (r.state.group === 'nil' && !r.state.refiledAs) return steps;
+  steps.push(
+    { key: 'ack', label: 'Acknowledged (RFD-02)', short: 'Acknowledged', done: !!f?.ack || /acknowledg|rfd-?02/.test(st) || ordered || scn || replied, date: dateOf(f?.ack) },
+  );
   if (memo || scn) {
     steps.push({
       key: 'query', label: memo && !scn ? 'Deficiency memo (RFD-03)' : 'Show cause (RFD-08)', short: memo && !scn ? 'Memo' : 'Show cause',
@@ -168,7 +175,9 @@ export const NO_MONEY: Money = { claimed: 0, sanctioned: 0, rejected: 0, awaitin
 export function moneyOf(r: RefundRow): Money {
   const c = r.claimed ?? 0;
   const st = (r.fact.status ?? '').toLowerCase();
-  if (/withdraw/.test(st)) return { ...NO_MONEY, claimed: c, withdrawn: c };
+  // Withdrawn, or replaced by a fresh application after a memo: the claim is counted once, on the fresh one.
+  if (/withdraw/.test(st) || r.state.refiledAs) return { ...NO_MONEY, claimed: c, withdrawn: c };
+  if (r.state.group === 'nil') return { ...NO_MONEY, claimed: c };
   const s = Math.min(r.sanctioned ?? 0, c);
   if (r.state.open && s === 0 && !r.rejected) return { ...NO_MONEY, claimed: c, awaiting: c };
   let rj = Math.min(r.rejected ?? 0, c - s);

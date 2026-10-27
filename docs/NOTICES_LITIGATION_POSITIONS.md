@@ -80,7 +80,7 @@ Folder items are joined to notices on `(client_id, case_id)`. Rules, first match
 | Rule | Trigger | `close_reason` |
 |---|---|---|
 | **Closure folder** | any item in section CLSR / CLOSR / CLOSURE | `auto:closure` |
-| **Refund paid** | `notice_type` matches /refund/ AND an ORDRS item carries a payment order (`sdtls.payadviceordervo`, RFD-05) AND no order is a rejection (`sdtls.sancordervo.ordertype` matches /reject/) | `auto:refund_paid` |
+| **Refund paid** | `notice_type` matches /refund/ AND an ORDRS item carries a payment order (`sdtls.payadviceordervo`, RFD-05) AND no order is a rejection (`refund_order_rejects`: by the order's figures, an amount held inadmissible in `sdtls.sancordervo.sancamtdtl.*.inadmamt` or nothing sanctioned of a claim; only an order with no figures is read by its title, /reject/) | `auto:refund_paid` |
 | **LUT approved** | `notice_type` matches /letter of undertaking/ or the word LUT AND an ORDRS item exists | `auto:lut_approval` |
 | **DRC-03 acknowledged** | `notice_type` matches /voluntary payment/ AND a live `gst_drc03_filings` row of the same client has `arn` = the notice's `case_id` or reference AND a status matching /acknowledg/ | `auto:drc03_acknowledged` |
 
@@ -88,6 +88,17 @@ Folder items are joined to notices on `(client_id, case_id)`. Rules, first match
 sanction/rejection order (RFD-06) can be a rejection that starts an appeal clock;
 closing on it hid that clock. Refunds now close only on a payment order with no
 rejection on file; everything else stays open for staff.
+
+**Fix (27 Oct 2026, `20261027110000`):** the portal titles every RFD-06 "Refund
+Sanction/Rejection Order", so reading the title made every sanction a rejection
+and no refund ever closed as paid. The rule now reads the order's figures; it
+runs as `notices_close_paid_refunds`, from triggers on new folder items and
+notices (the sweep itself is unchanged and still holds the old test, which
+can only keep a notice open, never close one wrongly). The Refunds page reads
+the same figures (`orderFigures` in `ledgerStatus.ts`) for the sanctioned and
+rejected amounts before the AI's reading, shows a NIL refund application as
+closed ("Nil or re-filed"), and takes a deficiency-memo application out of
+Needs action once its fresh RFD-01 for the same period is on record.
 
 **Position:** Only notices with `staff_status IS NULL` are candidates. If a staff
 member has set any status (even "Open"), the sweep does not touch that notice.

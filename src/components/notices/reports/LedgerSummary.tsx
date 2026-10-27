@@ -43,7 +43,7 @@ export const LedgerSummary: React.FC<{ filtered: boolean }> = ({ filtered }) => 
               <span className="font-normal text-muted-foreground"> · {rf.length.toLocaleString('en-IN')}</span>
             </h3>
             <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {REFUND_GROUPS.filter((g) => g.key !== 'unknown' || rf.some((r) => r.state.group === 'unknown')).map((g) => (
+              {REFUND_GROUPS.filter((g) => !['unknown', 'nil'].includes(g.key) || rf.some((r) => r.state.group === g.key)).map((g) => (
                 <Stat key={g.key} label={g.label}>
                   <CountLink n={rf.filter((r) => r.state.group === g.key).length} to={`/refunds-all?status=${g.key}`} label={`Refunds, ${g.label.toLowerCase()}`} alarm={g.key === 'action'} />
                 </Stat>
