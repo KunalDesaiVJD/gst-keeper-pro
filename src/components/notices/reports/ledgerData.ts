@@ -220,15 +220,17 @@ export async function loadRefundLedger(clientId?: string): Promise<RefundRow[]> 
   items.forEach((it) => { const k = `${it.client_id}|${it.case_id}`; folder.set(k, [...(folder.get(k) ?? []), it]); });
   const caseById = new Map(cases.map((c) => [c.id, c]));
   const caseByArn = new Map(cases.filter((c) => c.case_id).map((c) => [`${c.client_id}|${c.case_id}`, c]));
-  return facts.map((f, i) => {
+  return markRefiled(facts.map((f, i) => {
     const k = `${f.client_id}|${f.arn}`;
     const signals: FolderSignals | undefined = f.arn && folder.has(k) ? folderSignals(folder.get(k) as FolderItemLite[]) : undefined;
     const caseLink = (f.origin === 'case' && f.notice_id ? caseById.get(f.notice_id) : caseByArn.get(k)) ?? null;
     const portalClaimed = f.claimed_amount === null ? null : Number(f.claimed_amount);
     const read = f.arn ? readRefund(aiByArn.get(k) ?? [], portalClaimed) : null;
-    const claimed = portalClaimed ?? read?.claimed?.value ?? null;
-    const sanctioned = f.sanctioned_amount !== null ? Number(f.sanctioned_amount) : read?.sanctioned?.value ?? null;
-    const rejected = read?.rejected?.value
+    // The RFD-06's own figures (case folder) before what the AI read: they are the portal's.
+    const fig = signals?.order?.figures && signals.order.figures.claimed > 0 ? signals.order.figures : null;
+    const claimed = portalClaimed ?? fig?.claimed ?? read?.claimed?.value ?? null;
+    const sanctioned = f.sanctioned_amount !== null ? Number(f.sanctioned_amount) : fig ? fig.sanctioned : read?.sanctioned?.value ?? null;
+    const rejected = fig ? (fig.rejected > 0 ? fig.rejected : null) : read?.rejected?.value
       ?? (claimed !== null && sanctioned !== null && sanctioned > 0 && claimed - sanctioned > 10 ? claimed - sanctioned : null);
     const refundLinks: RefundLink[] = !f.arn ? [] : mine.filter((l) => l.client_id === f.client_id && (l.parent_key === f.arn || l.child_key === f.arn))
       .map((l) => {
@@ -265,6 +267,34 @@ export async function loadRefundLedger(clientId?: string): Promise<RefundRow[]> 
         const a = read?.periodFrom?.slice(0, 7);
         return a ? { from: a, to: read?.periodTo?.slice(0, 7) ?? a, source: 'ai' as const } : null;
       })(),
+    };
+  }));
+}
+
+/**
+ * A deficiency memo (RFD-03) closes its application (rule 90(3)); the firm files
+ * a fresh RFD-01. Once that fresh application is on record (same client, same
+ * type, filed later, for the same period, or with the same claim when a period
+ * is not known), the memo's application needs nothing more and leaves "Needs
+ * action" (Crownglobe, 27 Oct 2026: AA240425075630E re-filed as AA2405250095693).
+ */
+export function markRefiled(rows: RefundRow[]): RefundRow[] {
+  const samePeriod = (a: RefundRow, b: RefundRow) => (a.period && b.period
+    ? a.period.from === b.period.from && a.period.to === b.period.to
+    : a.claimed !== null && a.claimed > 0 && a.claimed === b.claimed);
+  return rows.map((r) => {
+    if (r.state.group !== 'action' || !/deficien|rfd-?03/i.test(`${r.fact.status ?? ''} ${r.state.label}`)) return r;
+    const fresh = rows.find((o) => o !== r && o.fact.client_id === r.fact.client_id && !!o.fact.arn
+      && (o.fact.refund_type ?? '').toUpperCase() === (r.fact.refund_type ?? '').toUpperCase()
+      && (o.fact.filed_date ?? '') > (r.fact.filed_date ?? '') && !/withdraw/i.test(o.fact.status ?? '')
+      && o.state.group !== 'nil' && samePeriod(r, o));
+    if (!fresh) return r;
+    return {
+      ...r,
+      state: {
+        ...r.state, group: 'nil', open: false, tone: 'secondary', next: null, due: null, basis: null,
+        label: `Deficiency memo (RFD-03) · re-filed as ${fresh.fact.arn}`, refiledAs: fresh.fact.arn,
+      },
     };
   });
 }

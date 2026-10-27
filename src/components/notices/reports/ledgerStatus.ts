@@ -37,10 +37,19 @@ export interface FolderSignals {
   scn: { date: string | null; due: string | null } | null;
   replied: string | null;
   provisional: string | null;
-  /** The latest RFD-06; "ambiguous" when its title names both sanction and rejection. */
-  order: { date: string | null; rejected: boolean; ambiguous: boolean } | null;
+  /**
+   * The latest RFD-06; "ambiguous" when its title names both sanction and
+   * rejection (every RFD-06 is titled "Refund Sanction/Rejection Order") and it
+   * carries no figures to tell which.
+   */
+  order: { date: string | null; rejected: boolean; ambiguous: boolean; figures: OrderFigures | null } | null;
   paid: string | null;
+  /** The application is a NIL refund application (nothing claimed; no order follows). */
+  nil: boolean;
 }
+
+/** An RFD-06's own figures (sdtls.sancordervo.sancamtdtl), all heads together. */
+export interface OrderFigures { claimed: number; provisional: number; sanctioned: number; rejected: number }
 
 /** "28/09/2026", "28-09-2026 11:05:12" or "2026-09-28" → "2026-09-28". */
 export function portalDate(v: unknown): string | null {
@@ -66,8 +75,28 @@ function detail(j: Obj): Obj | null {
 const UNKNOWN = '0000-00-00';
 const later = (a: string | null, b: string | null) => (!a ? b : !b ? a : a > b ? a : b);
 
+const amount = (v: unknown): number => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && /^\s*-?\d+(\.\d+)?\s*$/.test(v) ? Number(v) : 0;
+  return Number.isFinite(n) ? n : 0;
+};
+
+/**
+ * The figures of a sanction order, summed over IGST, CGST, SGST and cess and
+ * over tax, interest, penalty, fee and other: clmamt claimed, provamt sanctioned
+ * provisionally (RFD-04), grsamt sanctioned by this order, inadmamt held
+ * inadmissible (rejected). As the database reads it (refund_order_amount,
+ * migration 20261027110000). Null when the order carries no figures.
+ */
+export function orderFigures(sanc: Obj | null): OrderFigures | null {
+  const dtl = obj(sanc?.sancamtdtl);
+  if (!dtl) return null;
+  const part = (k: string) => Object.values(dtl).reduce<number>((t, h) => t + Object.values(obj(obj(h)?.[k]) ?? {}).reduce<number>((a, v) => a + amount(v), 0), 0);
+  const provisional = part('provamt');
+  return { claimed: part('clmamt'), provisional, sanctioned: provisional + part('grsamt'), rejected: part('inadmamt') };
+}
+
 export function folderSignals(items: FolderItemLite[]): FolderSignals {
-  const out: FolderSignals = { items: items.length, ack: null, deficiency: null, scn: null, replied: null, provisional: null, order: null, paid: null };
+  const out: FolderSignals = { items: items.length, ack: null, deficiency: null, scn: null, replied: null, provisional: null, order: null, paid: null, nil: false };
   items.forEach((it) => {
     const j = obj(it.raw_json) ?? {};
     const sec = (it.folder_section || '').toUpperCase().trim();
@@ -75,7 +104,10 @@ export function folderSignals(items: FolderItemLite[]): FolderSignals {
     const sdtls = obj(j.sdtls);
     const date = portalDate(j.refdt) ?? portalDate(j.rfdSubDt) ?? portalDate(d?.refdt) ?? portalDate(obj(obj(j.reply)?.decdtls)?.dt);
     const due = portalDate(j.duedt) ?? portalDate(d?.replyDuedt) ?? portalDate(d?.duedt) ?? portalDate(sdtls?.duedate);
-    if (sec === 'APLCN' || sec === 'APPLICATIONS') return;
+    if (sec === 'APLCN' || sec === 'APPLICATIONS') {
+      if (j.nilFile === true || /\bNIL\b/i.test(String(j.formDesc ?? ''))) out.nil = true;
+      return;
+    }
     if (sec.startsWith('REPL')) { out.replied = later(out.replied, date ?? UNKNOWN); return; }
     const pay = obj(sdtls?.payadviceordervo);
     const sanc = obj(sdtls?.sancordervo);
@@ -85,10 +117,13 @@ export function folderSignals(items: FolderItemLite[]): FolderSignals {
     if (pay || /PMT-?03|RFD-?05/.test(kind)) { out.paid = later(out.paid, date ?? UNKNOWN); return; }
     if (/RFD-?04|PROVISIONAL/.test(kind)) { out.provisional = later(out.provisional, date ?? UNKNOWN); return; }
     if (sanc || sec.startsWith('ORD') || /RFD-?06/.test(kind)) {
-      // As the closing sweep reads it (has_rejection); a combined "Sanction/Rejection" title says neither.
-      const ambiguous = /SANCTION\s*\/\s*REJECT/.test(kind);
-      const rejected = /REJECT/.test(kind) && !ambiguous;
-      if (!out.order || (date && (!out.order.date || date > out.order.date))) out.order = { date, rejected, ambiguous };
+      // By its figures when it carries them (an amount held inadmissible, or nothing sanctioned of a
+      // claim), as the closing sweep reads it (refund_order_rejects); else by its title, where a
+      // combined "Sanction/Rejection" title says neither.
+      const figures = orderFigures(sanc);
+      const ambiguous = !figures && /SANCTION\s*\/\s*REJECT/.test(kind);
+      const rejected = figures ? figures.rejected > 0 || (figures.claimed > 0 && figures.sanctioned <= 0) : /REJECT/.test(kind) && !ambiguous;
+      if (!out.order || (date && (!out.order.date || date > out.order.date))) out.order = { date, rejected, ambiguous, figures };
       return;
     }
     if (/RFD-?08|SHOW CAUSE|REJECTION OF APPLICATION/.test(kind)) {
@@ -104,13 +139,14 @@ export function folderSignals(items: FolderItemLite[]): FolderSignals {
 const known = (d: string | null | undefined): string | null => (d && d !== UNKNOWN ? d : null);
 
 // ── Refunds ─────────────────────────────────────────────────────────────────
-export type RefundGroup = 'action' | 'process' | 'paid' | 'rejected' | 'unknown';
+export type RefundGroup = 'action' | 'process' | 'paid' | 'rejected' | 'nil' | 'unknown';
 
 export const REFUND_GROUPS: { key: RefundGroup; label: string; hint: string; tone: Tone }[] = [
   { key: 'action', label: 'Needs action', hint: 'reply, re-file or decide on an appeal', tone: 'destructive' },
   { key: 'process', label: 'In process', hint: 'with the officer', tone: 'info' },
   { key: 'paid', label: 'Sanctioned or paid', hint: 'sanctioned, paid or re-credited', tone: 'success' },
   { key: 'rejected', label: 'Rejected or withdrawn', hint: 'no appeal pending', tone: 'secondary' },
+  { key: 'nil', label: 'Nil or re-filed', hint: 'nothing claimed, or replaced by a fresh application', tone: 'secondary' },
   { key: 'unknown', label: 'Closed, no details', hint: 'case closed; application not captured', tone: 'secondary' },
 ];
 
@@ -155,6 +191,8 @@ export interface RefundState {
   rejectedAmount: number | null;
   /** A case with neither an application record nor folder items. */
   noDetails: boolean;
+  /** The fresh application (ARN) that took the place of this one after a deficiency memo. */
+  refiledAs?: string | null;
 }
 
 const addMonths = (iso: string, n: number): string => {
@@ -235,6 +273,12 @@ export function refundState(r: RefundInput, f: FolderSignals | undefined, linked
     }
     return { ...none, group: 'process', open: true, label, tone: 'info', next: 'Await RFD-02 or a deficiency memo', due: ackBy, basis: 'acknowledgement or memo within 15 days, rule 90' };
   };
+
+  // A NIL refund application ("NIL Refund Application", nilFile on the RFD-01) claims nothing
+  // and covers a period with nothing to claim: no acknowledgement or order follows.
+  if ((f?.nil || claimed === 0) && !f?.order && !f?.paid && !/withdraw|reject|sanction|disburs|deficien|rfd-?0[3-9]/i.test(r.status || '')) {
+    return { ...none, group: 'nil', open: false, label: 'Nil refund application', tone: 'secondary', next: null, due: null, basis: null };
+  }
 
   if (r.origin !== 'case') return fromStatus((r.status || '').toLowerCase(), r.status || 'Status not captured');
 
