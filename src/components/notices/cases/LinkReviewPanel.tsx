@@ -6,7 +6,10 @@
 // to no order, and two cases that look like the same case. Each item says how
 // sure the system was and why, and a person links it, keeps it apart, or
 // marks it as nothing to do. Every decision is kept with who made it.
-import React, { useState } from 'react';
+// Each pair also carries the law check (20261027140000): what GST law does not
+// allow (two show cause proceedings in one case) or what is unusual, and Link
+// warns first (LinkWarnDialog).
+import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Check, ShieldQuestion, X } from 'lucide-react';
@@ -23,6 +26,8 @@ import {
   type LinkKind, type ReviewCase, type ReviewDecision, type ReviewItem,
 } from '@/lib/noticeCases';
 import { fmtDate, fmtFy, fmtInrShort } from '@/lib/noticeFormat';
+import { LinkCheckChip, LinkProblems, useGuardedLink } from '@/components/notices/cases/LinkWarnDialog';
+import { decideReviewChecked, pairKey, useLinkChecks, type LinkCheck, type LinkPair } from '@/lib/noticeCaseLinkLaw';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const itemKey = (i: ReviewItem) => `${i.client_id}:${i.issue}:${i.child_key}:${i.parent_key ?? ''}`;
@@ -53,8 +58,8 @@ function Sure({ n }: { n: number | null }) {
   );
 }
 
-const ReviewRow: React.FC<{ item: ReviewItem; showClient: boolean; canEdit: boolean; busy: boolean;
-  onDecide: (i: ReviewItem, parent: string | null, d: ReviewDecision, kind: LinkKind | null) => void }> = ({ item, showClient, canEdit, busy, onDecide }) => {
+const ReviewRow: React.FC<{ item: ReviewItem; showClient: boolean; canEdit: boolean; busy: boolean; check?: LinkCheck;
+  onDecide: (i: ReviewItem, parent: string | null, d: ReviewDecision, kind: LinkKind | null) => void }> = ({ item, showClient, canEdit, busy, check, onDecide }) => {
   const [kind, setKind] = useState<LinkKind>((item.kind as LinkKind) ?? 'related');
   const def = REVIEW_ISSUES[item.issue];
   const canLink = !!item.parent_key;
@@ -66,6 +71,7 @@ const ReviewRow: React.FC<{ item: ReviewItem; showClient: boolean; canEdit: bool
       <div className="flex flex-wrap items-center gap-1.5 text-xs">
         <Badge variant={item.issue === 'duplicate' ? 'destructive' : 'warning'} className="text-[10px]">{def.label}</Badge>
         <Sure n={item.confidence} />
+        <LinkCheckChip check={check} />
         {showClient && <span className="font-medium">{item.client_name}</span>}
       </div>
       <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -82,6 +88,7 @@ const ReviewRow: React.FC<{ item: ReviewItem; showClient: boolean; canEdit: bool
         )}
       </div>
       {item.reasons.length > 0 && <div className="text-[11px] text-muted-foreground">Why: {item.reasons.join(' · ')}</div>}
+      {check?.against_law && <LinkProblems compact problems={check.problems.filter((p) => p.level === 'law')} />}
       {canEdit && (
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
           {canLink && item.issue !== 'duplicate' && (
@@ -122,11 +129,18 @@ export const LinkReviewPanel: React.FC<{
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const by = user?.firstName ?? null;
+  const guard = useGuardedLink(by);
 
   const decide = async (i: ReviewItem, parent: string | null, d: ReviewDecision, kind: LinkKind | null) => {
     setBusy(true);
     try {
-      await decideReview(i, parent, d, kind, by);
+      if (d === 'link' && parent) {
+        // Through the law check: the person is warned first when anything is wrong or unusual.
+        const pair: LinkPair = { clientId: i.client_id, childKey: i.child_key, parentKey: parent, kind };
+        if (!(await guard.attempt(pair, (confirm) => decideReviewChecked(i, parent, kind, by, confirm)))) return;
+      } else {
+        await decideReview(i, parent, d, kind, by);
+      }
       toast.success(d === 'link' ? 'Linked by you. The system will keep it.' : d === 'not_linked'
         ? 'Kept apart. The system will not propose this pair again.' : 'Noted. It leaves the list.');
       for (const k of ['notice-case-review', 'notice-cases', 'notice-case-counts', 'notice-chain-links', 'notice-case-chain', 'notice-case']) {
@@ -135,7 +149,12 @@ export const LinkReviewPanel: React.FC<{
     } catch (e) { toast.error(errText(e)); } finally { setBusy(false); }
   };
 
-  const list = items ?? [];
+  const list = useMemo(() => items ?? [], [items]);
+  const pairs = useMemo<LinkPair[]>(() => list.filter((i) => i.parent_key && i.issue !== 'duplicate').slice(0, 40)
+    .map((i) => ({ clientId: i.client_id, childKey: i.child_key, parentKey: i.parent_key as string, kind: i.kind })), [list]);
+  const checks = useLinkChecks(pairs);
+  const checkOf = (i: ReviewItem) => (i.parent_key
+    ? checks.data?.get(pairKey({ clientId: i.client_id, childKey: i.child_key, parentKey: i.parent_key, kind: i.kind })) : undefined);
   return (
     <SectionCard
       title={<span className="inline-flex items-center gap-1.5"><ShieldQuestion className="h-4 w-4 text-primary" aria-hidden /> Links to check</span>}
@@ -145,7 +164,8 @@ export const LinkReviewPanel: React.FC<{
       {error ? <LoadError what="the review list" error={error} onRetry={onRetry} />
         : loading ? <Skeleton className="h-24 w-full" />
         : !list.length ? <p className="text-xs text-muted-foreground">Nothing to review.</p>
-        : <ul className="divide-y">{list.map((i) => <ReviewRow key={itemKey(i)} item={i} showClient={showClient} canEdit={canEdit} busy={busy} onDecide={decide} />)}</ul>}
+        : <ul className="divide-y">{list.map((i) => <ReviewRow key={itemKey(i)} item={i} showClient={showClient} canEdit={canEdit} busy={busy} check={checkOf(i)} onDecide={decide} />)}</ul>}
+      {guard.dialog}
     </SectionCard>
   );
 };

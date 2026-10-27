@@ -1,13 +1,16 @@
 // An appeal (or similar) in a case of its own whose order the portal does not name:
 // the orders it may be against, best first, linked in one click (the firm's rule of
-// 9 October 2026: link by itself when certain, otherwise suggest).
+// 9 October 2026: link by itself when certain, otherwise suggest). Linked
+// through the law check (20261027140000): anything unusual is warned first.
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
-import { setCaseLink, useLinkSuggestions } from '@/lib/noticeCases';
+import { useLinkSuggestions } from '@/lib/noticeCases';
+import { useGuardedLink } from '@/components/notices/cases/LinkWarnDialog';
+import { setCaseLinkChecked, type LinkPair } from '@/lib/noticeCaseLinkLaw';
 import { fmtDate, fmtInrShort } from '@/lib/noticeFormat';
 import { noticeCaseHref } from '@/lib/noticeCases';
 
@@ -15,12 +18,15 @@ export const CaseLinkSuggest: React.FC<{ noticeId: string; clientId: string; cas
   const { user } = useAuth();
   const sug = useLinkSuggestions(noticeId);
   const [busy, setBusy] = useState(false);
+  const by = user?.firstName ?? null;
+  const guard = useGuardedLink(by);
   const list = (sug.data?.cases ?? []).slice(0, 3);
   if (!canEdit || !caseId || !list.length) return null;
   const link = async (parentCase: string) => {
     setBusy(true);
     try {
-      await setCaseLink(clientId, caseId, parentCase, 'appeal', user?.firstName ?? null);
+      const pair: LinkPair = { clientId, childKey: caseId, parentKey: parentCase, kind: 'appeal' };
+      if (!(await guard.attempt(pair, (confirm) => setCaseLinkChecked(pair, by, confirm)))) return;
       toast.success('Linked: the appeal is now part of the order\'s case.');
       await sug.refetch();
       onLinked();
@@ -41,6 +47,7 @@ export const CaseLinkSuggest: React.FC<{ noticeId: string; clientId: string; cas
           </li>
         ))}
       </ul>
+      {guard.dialog}
     </div>
   );
 };
