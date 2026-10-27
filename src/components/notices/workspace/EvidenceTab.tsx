@@ -112,7 +112,7 @@ const EvidenceWorkings: React.FC<{ ws: Workspace; canEdit: boolean; onChanged: (
         <p className="flex flex-wrap items-center gap-1.5 text-xs">
           <span>{plural(b.cards.length, 'working')}:</span>
           {(Object.keys(STATUS_LOOK) as AnnexureStatus[]).filter((k) => counts[k]).map((k) => (
-            <Badge key={k} variant={STATUS_LOOK[k].tone} className="text-[11px]">{counts[k]} {STATUS_LOOK[k].label.toLowerCase()}</Badge>
+            <Badge key={k} variant={STATUS_LOOK[k].tone} className="text-xs">{counts[k]} {STATUS_LOOK[k].label.toLowerCase()}</Badge>
           ))}
           {toPay > 0 && <span className="font-medium">· {fmtInr(toPay)} left to pay or reverse</span>}
         </p>

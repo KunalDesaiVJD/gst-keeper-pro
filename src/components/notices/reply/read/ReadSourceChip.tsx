@@ -24,7 +24,7 @@ export const ReadSourceChip: React.FC<{ p: Provenance; className?: string }> = (
   if (p.kind === 'empty') return null;
   const c = SOURCE_CHIP[p.kind];
   return (
-    <Badge variant={c.tone} className={cn('whitespace-nowrap px-1.5 py-0 text-[10px] font-normal', className)} title={chipTitle(p)}>
+    <Badge variant={c.tone} className={cn('whitespace-nowrap px-1.5 py-0 text-xs font-normal', className)} title={chipTitle(p)}>
       {c.label}
     </Badge>
   );
@@ -38,11 +38,11 @@ export const VerifyButtons: React.FC<{
   onClear?: () => void;
 }> = ({ what, busy, onConfirm, onClear }) => (
   <span className="inline-flex items-center gap-1">
-    <Button type="button" size="sm" variant="outline" className="h-6 gap-1 px-2 text-[11px]" disabled={busy} onClick={onConfirm}>
+    <Button type="button" size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" disabled={busy} onClick={onConfirm}>
       {busy && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}Confirm<span className="sr-only"> {what}</span>
     </Button>
     {onClear && (
-      <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px]" disabled={busy} onClick={onClear}>
+      <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={busy} onClick={onClear}>
         Clear<span className="sr-only"> {what}</span>
       </Button>
     )}

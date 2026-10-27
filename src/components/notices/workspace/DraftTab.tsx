@@ -187,7 +187,7 @@ export const DraftTab: React.FC<{ ws: Workspace; canEdit: boolean; canApprove: b
               </SelectContent>
             </Select>
           )}
-          {shown && <Badge variant={STATUS[shown.status]?.tone ?? 'secondary'} className="text-[11px]">{STATUS[shown.status]?.label ?? shown.status}</Badge>}
+          {shown && <Badge variant={STATUS[shown.status]?.tone ?? 'secondary'} className="text-xs">{STATUS[shown.status]?.label ?? shown.status}</Badge>}
           {shown && <span className="text-xs text-muted-foreground">{shown.author_name ? `by ${shown.author_name} · ` : ''}{fmtDateTime(shown.updated_at)}{fromOption ? ` · from the reply option "${fromOption.title}"` : ''}</span>}
           <div className="ml-auto flex flex-wrap gap-1.5">
             {previous && <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setCompare((c) => !c)}>{compare ? 'Hide' : 'Compare with'} v{previous.version}</Button>}
@@ -275,7 +275,7 @@ export const DraftTab: React.FC<{ ws: Workspace; canEdit: boolean; canApprove: b
             </>
           )}
           {latest?.status === 'in_review' && !canApprove && <span className="text-xs text-muted-foreground">Waiting for a partner (GST manager) to approve.</span>}
-          <span className="ml-auto text-[11px] text-muted-foreground">{editable ? 'Ctrl S saves.' : ''}</span>
+          <span className="ml-auto text-xs text-muted-foreground">{editable ? 'Ctrl S saves.' : ''}</span>
         </div>
       </section>
     </div>

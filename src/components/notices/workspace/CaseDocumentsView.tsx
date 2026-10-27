@@ -5,6 +5,9 @@
 // has no Evidence tab). Every file keeps its original filename as a second
 // line; a person can rename it, give its evidence type or move it between the
 // two lists (case_document_labels), never changing the portal's file.
+// Type set again on 27 October 2026 (the firm: small fonts put people off
+// reading): each stage leads with its number and name, each item with its
+// title, and nothing is smaller than 12px.
 import React, { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -125,31 +128,31 @@ export const DocRow: React.FC<{
   const dl = downloadHref(doc);
   const detail = doc.summary || (doc.description && doc.description !== doc.name ? doc.description : null);
   return (
-    <li className="flex items-start gap-2.5 py-2">
-      <span className={cn('mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
+    <li className="flex items-start gap-3 py-2.5">
+      <span className={cn('mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md',
         doc.isEvidence ? 'bg-success/15 text-success' : doc.category === 'order' ? 'bg-destructive/10 text-destructive'
           : doc.category === 'notice' ? 'bg-warning/20 text-amber-700 dark:text-amber-300' : 'bg-info/10 text-info')}>
         <Icon className="h-4 w-4" aria-hidden />
       </span>
       <div className="min-w-0 flex-1 space-y-0.5">
         <div className="flex flex-wrap items-center gap-1.5">
-          {doc.exhibit > 0 && <span className="rounded bg-primary px-1.5 py-px text-[10px] font-semibold tabular-nums text-primary-foreground" title="Evidence number">E-{doc.exhibit}</span>}
-          <span className="break-words text-sm font-medium leading-snug" title={NAME_FROM[doc.nameFrom]}>{doc.name}</span>
-          {!doc.isEvidence && <Badge variant={look.tone} className="px-1.5 py-0 text-[10px] font-normal">{look.label}</Badge>}
-          {doc.url && doc.url === ws.notice.pdf_url && <Badge variant="info" className="px-1.5 py-0 text-[10px]">This notice</Badge>}
-          {doc.slot === 'form' && !doc.isEvidence && <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal" title="The form the portal generated">Portal form</Badge>}
+          {doc.exhibit > 0 && <span className="rounded bg-primary px-1.5 py-px text-xs font-semibold tabular-nums text-primary-foreground" title="Evidence number">E-{doc.exhibit}</span>}
+          <span className="break-words text-[15px] font-medium leading-snug" title={NAME_FROM[doc.nameFrom]}>{doc.name}</span>
+          {!doc.isEvidence && <Badge variant={look.tone} className="px-1.5 py-0 text-xs font-normal">{look.label}</Badge>}
+          {doc.url && doc.url === ws.notice.pdf_url && <Badge variant="info" className="px-1.5 py-0 text-xs">This notice</Badge>}
+          {doc.slot === 'form' && !doc.isEvidence && <Badge variant="secondary" className="px-1.5 py-0 text-xs font-normal" title="The form the portal generated">Portal form</Badge>}
         </div>
-        {doc.isEvidence && doc.description && doc.description !== doc.name && <p className="break-words text-xs">{doc.description}</p>}
-        <p className="break-words text-xs text-muted-foreground">{meta ?? (doc.date ? fmtDate(doc.date) : 'no date on the file')}</p>
-        <p className="truncate font-mono text-[11px] text-muted-foreground/80" title={`Original filename: ${doc.original}`}>
+        {doc.isEvidence && doc.description && doc.description !== doc.name && <p className="break-words text-[13px]">{doc.description}</p>}
+        <p className="break-words text-[13px] text-muted-foreground">{meta ?? (doc.date ? fmtDate(doc.date) : 'no date on the file')}</p>
+        <p className="truncate font-mono text-xs text-muted-foreground/80" title={`Original filename: ${doc.original}`}>
           <span className="sr-only">Original filename: </span>{doc.original}
         </p>
         {detail && (
-          <div className="text-xs">
+          <div className="text-[13px]">
             <button type="button" className="inline-flex items-center gap-0.5 font-medium text-primary" aria-expanded={more} onClick={() => setMore((m) => !m)}>
-              <ChevronDown className={cn('h-3 w-3 transition-transform', more && 'rotate-180')} aria-hidden /> {more ? 'Hide what it says' : 'What it says'}
+              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', more && 'rotate-180')} aria-hidden /> {more ? 'Hide what it says' : 'What it says'}
             </button>
-            {more && <p className="mt-0.5 whitespace-pre-line break-words rounded-md bg-muted/50 px-2 py-1 text-muted-foreground">{detail}</p>}
+            {more && <p className="mt-0.5 whitespace-pre-line break-words rounded-md bg-muted/50 px-2.5 py-1.5 leading-relaxed text-foreground/80">{detail}</p>}
           </div>
         )}
       </div>
@@ -179,27 +182,31 @@ const eventMeta = (e: StageGroup['events'][number]['event']) => [
 /** One stage of the case, with its items and their files. */
 const StageSection: React.FC<{ ws: Workspace; g: StageGroup; anchor?: string; canEdit: boolean; onSaved: () => void }> = ({ ws, g, anchor, canEdit, onSaved }) => (
   <section id={anchor} className="scroll-mt-20 rounded-md border">
-    <header className="flex flex-wrap items-baseline gap-x-2 border-b bg-muted/40 px-2.5 py-1.5">
-      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Stage {g.n}</span>
-      <h3 className="text-sm font-semibold">{g.label}</h3>
-      {g.date && <span className="text-xs text-muted-foreground">{fmtDate(g.date)}</span>}
-      <span className="text-xs text-muted-foreground">{g.hint}</span>
+    <header className="flex items-start gap-2.5 border-b bg-muted/40 px-3 py-2">
+      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground" aria-label={`Stage ${g.n}`}>{g.n}</span>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <h3 className="text-base font-semibold">{g.label}</h3>
+          {g.date && <span className="text-sm text-muted-foreground">{fmtDate(g.date)}</span>}
+        </div>
+        <p className="text-[13px] text-muted-foreground">{g.hint}</p>
+      </div>
     </header>
     <div className="divide-y">
       {g.events.map(({ event: e, docs, evidence }) => (
-        <div key={e.id} className="px-2.5 py-2">
+        <div key={e.id} className="px-3 py-2.5">
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <h4 className="text-sm font-medium">{e.title}</h4>
-            <span className="text-xs text-muted-foreground">{eventMeta(e)}</span>
+            <h4 className="text-[15px] font-semibold">{e.title}</h4>
+            <span className="text-[13px] text-muted-foreground">{eventMeta(e)}</span>
           </div>
           {docs.length > 0 ? (
-            <ul className="divide-y pl-1">
+            <ul className="divide-y pl-2">
               {docs.map((d) => <DocRow key={d.key} ws={ws} doc={d} canEdit={canEdit} onSaved={onSaved} />)}
             </ul>
-          ) : !evidence.length && <p className="py-1 text-xs text-muted-foreground">No file on the portal for this item.</p>}
+          ) : !evidence.length && <p className="py-1 text-[13px] text-muted-foreground">No file on the portal for this item.</p>}
           {evidence.length > 0 && (
-            <p className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-              <ShieldCheck className="h-3.5 w-3.5 text-success" aria-hidden />
+            <p className="mt-1 flex flex-wrap items-center gap-1 rounded-md bg-success/5 px-2 py-1 text-[13px] text-muted-foreground">
+              <ShieldCheck className="h-4 w-4 text-success" aria-hidden />
               Filed with it, {plural(evidence.length, 'evidence file')} (on the Evidence list): {evidence.map((d) => `E-${d.exhibit} ${d.name}`).join('; ')}.
             </p>
           )}
@@ -257,7 +264,7 @@ export const CaseFileCard: React.FC<{
           <div className="flex rounded-md border p-0.5 text-xs" role="group" aria-label="Show the case file">
             {(['side', 'stage'] as const).map((v) => (
               <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
-                className={cn('rounded px-2 py-0.5', view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
+                className={cn('rounded px-2.5 py-1', view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
                 {v === 'side' ? 'By side' : 'Stage-wise'}
               </button>
             ))}
@@ -277,17 +284,17 @@ export const CaseFileCard: React.FC<{
       {!model && <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Organising the documents…</p>}
 
       {model && model.stages.length > 1 && (
-        <ol className="flex flex-wrap items-center gap-1 text-xs" aria-label="Stages of the case">
+        <ol className="flex flex-wrap items-center gap-1.5 text-sm" aria-label="Stages of the case">
           {model.stages.map((g, i) => (
             <li key={g.id} className="flex items-center gap-1">
               {i > 0 && <span className="text-muted-foreground" aria-hidden>→</span>}
-              <a href={`#${anchorOf(g)}`} className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 hover:border-primary">
-                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground">{g.n}</span>
+              <a href={`#${anchorOf(g)}`} className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 hover:border-primary">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">{g.n}</span>
                 <span className="font-medium">{g.label}</span>
-                {g.date && <span className="text-muted-foreground">{fmtDate(g.date)}</span>}
+                {g.date && <span className="text-xs text-muted-foreground">{fmtDate(g.date)}</span>}
                 {sidesOf(g).map((s) => {
                   const Icon = SIDE_ICON[s];
-                  return <Icon key={s} className={cn('h-3 w-3', s === 'department' ? 'text-amber-700 dark:text-amber-300' : 'text-info')} aria-label={SIDES[s].label} />;
+                  return <Icon key={s} className={cn('h-3.5 w-3.5', s === 'department' ? 'text-amber-700 dark:text-amber-300' : 'text-info')} aria-label={SIDES[s].label} />;
                 })}
               </a>
             </li>
@@ -296,8 +303,8 @@ export const CaseFileCard: React.FC<{
       )}
 
       {model && moved > 0 && (
-        <p className="flex flex-wrap items-center gap-1 rounded-md border border-success/40 bg-success/5 px-2.5 py-1.5 text-xs">
-          <ShieldCheck className="h-3.5 w-3.5 text-success" aria-hidden />
+        <p className="flex flex-wrap items-center gap-1 rounded-md border border-success/40 bg-success/5 px-3 py-2 text-sm">
+          <ShieldCheck className="h-4 w-4 text-success" aria-hidden />
           {plural(moved, 'evidence file')} filed on the portal {moved === 1 ? 'is' : 'are'} kept {onOpenEvidence ? 'on the Evidence tab' : 'in Evidence below'}, named by what {moved === 1 ? 'it proves' : 'they prove'}.
           {onOpenEvidence && <button type="button" className="font-medium text-primary underline underline-offset-2" onClick={onOpenEvidence}>Open Evidence</button>}
         </p>
@@ -311,15 +318,19 @@ export const CaseFileCard: React.FC<{
         const Icon = SIDE_ICON[side];
         return (
           <section key={side} aria-labelledby={`side-${side}`} className="space-y-2">
-            <header className={cn('flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border px-2.5 py-1.5', SIDE_LOOK[side])}>
-              <Icon className="h-4 w-4" aria-hidden />
-              <h3 id={`side-${side}`} className="text-sm font-semibold">{SIDES[side].label}</h3>
-              <span className="text-xs opacity-80">{plural(count, 'document')}{stages.length ? ` · ${plural(stages.length, 'stage')}` : ''}</span>
-              <span className="basis-full text-xs opacity-80 sm:basis-auto">{SIDES[side].hint}</span>
+            <header className={cn('flex items-start gap-2.5 rounded-md border px-3 py-2', SIDE_LOOK[side])}>
+              <Icon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <h3 id={`side-${side}`} className="text-base font-semibold">{SIDES[side].label}</h3>
+                  <span className="text-sm opacity-80">{plural(count, 'document')}{stages.length ? ` · ${plural(stages.length, 'stage')}` : ''}</span>
+                </div>
+                <p className="text-[13px] opacity-80">{SIDES[side].hint}</p>
+              </div>
             </header>
             {stages.length
               ? stages.map((g) => <StageSection key={g.id} ws={ws} g={g} anchor={`stage-${side}-${g.id}`} canEdit={canEdit} onSaved={onSaved} />)
-              : <p className="rounded-md border border-dashed px-2.5 py-2 text-xs text-muted-foreground">{side === 'department' ? 'No document from the department in the case folder.' : 'Nothing filed by the assessee in the case folder yet.'}</p>}
+              : <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">{side === 'department' ? 'No document from the department in the case folder.' : 'Nothing filed by the assessee in the case folder yet.'}</p>}
           </section>
         );
       })}
@@ -389,7 +400,7 @@ export const EvidenceDocumentsCard: React.FC<{ ws: Workspace; model: CaseDocumen
           <div className="flex rounded-md border p-0.5 text-xs" role="group" aria-label="Group the evidence">
             {(['type', 'date'] as const).map((v) => (
               <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
-                className={cn('rounded px-2 py-0.5', view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
+                className={cn('rounded px-2.5 py-1', view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
                 {v === 'type' ? 'By type' : 'By date'}
               </button>
             ))}
@@ -406,11 +417,11 @@ export const EvidenceDocumentsCard: React.FC<{ ws: Workspace; model: CaseDocumen
       {model && ev.length > 0 && view === 'date' && <ul className="divide-y">{ev.map(row)}</ul>}
       {model && ev.length > 0 && view === 'type' && ordered.map((g) => (
         <section key={g.key} className="rounded-md border">
-          <header className="flex items-baseline gap-2 border-b bg-success/5 px-2.5 py-1.5">
-            <h3 className="text-sm font-semibold">{g.label}</h3>
-            <span className="text-xs text-muted-foreground">{plural(g.docs.length, 'file')} · {g.docs.map((d) => `E-${d.exhibit}`).join(', ')}</span>
+          <header className="flex flex-wrap items-baseline gap-x-2 border-b bg-success/5 px-3 py-2">
+            <h3 className="text-base font-semibold">{g.label}</h3>
+            <span className="text-[13px] text-muted-foreground">{plural(g.docs.length, 'file')} · {g.docs.map((d) => `E-${d.exhibit}`).join(', ')}</span>
           </header>
-          <ul className="divide-y px-2.5">{g.docs.map(row)}</ul>
+          <ul className="divide-y px-3">{g.docs.map(row)}</ul>
         </section>
       ))}
     </SectionCard>

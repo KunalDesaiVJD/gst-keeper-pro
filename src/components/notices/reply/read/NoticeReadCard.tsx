@@ -192,20 +192,20 @@ export const NoticeReadCard: React.FC<{
         </div>
       )}
 
-      {!readingOnly && <dl className={rail ? 'grid grid-cols-1 gap-y-2.5' : 'grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-4'}>
+      {!readingOnly && <dl className={rail ? 'grid grid-cols-1 divide-y [&>div:first-child]:pt-0 [&>div]:py-2.5' : 'grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-4'}>
         {facts.filter((x) => !rail || (x.key === 'due' ? verifying(x.fields).length > 0
           : x.value !== '—' || verifying(x.fields).length > 0 || (canEdit && x.key === 'period'))).map((x) => {
           const pending = verifying(x.fields);
           const empty = x.value === '—';
           return (
             <div key={x.key} className="min-w-0 space-y-0.5">
-              <dt className="text-[11px] font-medium text-muted-foreground">{x.label}</dt>
-              <dd className={cn('break-words text-sm font-semibold', x.mono && 'break-all font-mono text-[13px]', empty && 'font-normal text-muted-foreground')}>
+              <dt className="text-xs font-medium text-muted-foreground">{x.label}</dt>
+              <dd className={cn('break-words text-[15px] font-semibold', x.mono && 'break-all font-mono text-[13px]', empty && 'font-normal text-muted-foreground')}>
                 {x.value}
               </dd>
               {x.sub && <dd className="break-words text-xs text-muted-foreground">{x.sub}</dd>}
               {x.key === 'officer' && !empty && <dd><OfficerContact name={x.value} canEdit={canEdit} /></dd>}
-              {x.fromCase && <dd className="truncate text-[11px] text-muted-foreground" title={x.fromCase}>{x.fromCase}</dd>}
+              {x.fromCase && <dd className="text-xs text-muted-foreground" title={x.fromCase}>{x.fromCase}</dd>}
               {x.key === 'period' && missingPeriod && <dd className="text-xs font-medium text-destructive-strong">Tax period not on record. The Evidence tab needs it.</dd>}
               {(x.prov.kind !== 'empty' || (canEdit && x.key === 'period')) && (
                 <dd className="flex flex-wrap items-center gap-1 pt-0.5">

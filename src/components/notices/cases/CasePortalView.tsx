@@ -112,8 +112,8 @@ const EventItem: React.FC<{ e: CaseEvent; events: CaseEvent[]; noticeId?: string
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className="text-xs font-semibold tabular-nums">{e.date ? fmtDate(e.date) : 'date not shown'}</span>
         <span className="min-w-0 break-words text-sm font-medium">{e.title}</span>
-        <Badge variant="secondary" className="text-[10px]">{sectionLabel(e.code)}</Badge>
-        {e.outstanding && <Badge variant="destructive" className="text-[10px]">Outstanding</Badge>}
+        <Badge variant="secondary" className="text-xs">{sectionLabel(e.code)}</Badge>
+        {e.outstanding && <Badge variant="destructive" className="text-xs">Outstanding</Badge>}
       </div>
       {e.subject && <p className="mt-0.5 break-words text-sm">{e.subject}</p>}
       <p className="mt-0.5 break-words text-xs text-muted-foreground">
@@ -242,10 +242,10 @@ export const CasePortalView: React.FC<{ clientId: string; caseId: string }> = ({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-1.5">
         {refund?.arn && <RefundWhenChip r={refunds.get(refundIndexKey(clientId, refund.arn))} />}
-        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">Portal status <Badge variant={PORTAL_TONE(s.portalStatus)} className="text-[11px]">{s.portalStatus}</Badge></span>
-        {s.alerts.map((a) => <Badge key={a.text} variant={a.tone} className="text-[11px]">{a.text}</Badge>)}
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">Portal status <Badge variant={PORTAL_TONE(s.portalStatus)} className="text-xs">{s.portalStatus}</Badge></span>
+        {s.alerts.map((a) => <Badge key={a.text} variant={a.tone} className="text-xs">{a.text}</Badge>)}
         {data.deadlines.filter((d) => d.deadline_type !== 'reply_due').map((d) => (
-          <Badge key={d.id} variant={daysBetween(today, d.deadline_date) <= 7 ? 'warning' : 'secondary'} className="text-[11px]">
+          <Badge key={d.id} variant={daysBetween(today, d.deadline_date) <= 7 ? 'warning' : 'secondary'} className="text-xs">
             {DEADLINE_LABELS[d.deadline_type] ?? d.deadline_type}: {fmtDate(d.deadline_date)} ({dueWords(daysBetween(today, d.deadline_date)).replace('due ', '')})
           </Badge>
         ))}

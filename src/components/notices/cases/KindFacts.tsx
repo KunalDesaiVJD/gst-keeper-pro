@@ -23,9 +23,9 @@ function FactGrid({ facts, rail }: { facts: Fact[]; rail?: boolean }) {
     <dl className={rail ? 'grid grid-cols-1 gap-y-2.5' : 'grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-4'}>
       {shown.map((f) => (
         <div key={f.label} className="min-w-0 space-y-0.5">
-          <dt className="text-[11px] font-medium text-muted-foreground">{f.label}</dt>
+          <dt className="text-xs font-medium text-muted-foreground">{f.label}</dt>
           <dd className={cn('break-words text-sm font-semibold', f.mono && 'break-all font-mono text-[13px]', !f.value && 'font-normal text-muted-foreground')}>{f.value || '—'}</dd>
-          {f.sub && <dd className="break-words text-[11px] text-muted-foreground">{f.sub}</dd>}
+          {f.sub && <dd className="break-words text-xs text-muted-foreground">{f.sub}</dd>}
         </div>
       ))}
     </dl>
@@ -48,7 +48,7 @@ export const KindSteps: React.FC<{ track: Track; forms: string[]; hasApplication
         return (
           <li key={s.key} className="flex items-center gap-1.5">
             {i > 0 && <span className="h-px w-4 bg-border" aria-hidden />}
-            <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]', done ? 'border-success/50 bg-success/10 font-medium text-foreground' : 'text-muted-foreground')}>
+            <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs', done ? 'border-success/50 bg-success/10 font-medium text-foreground' : 'text-muted-foreground')}>
               {done && <Check className="h-3 w-3 text-success" aria-hidden />}{s.label}
             </span>
           </li>

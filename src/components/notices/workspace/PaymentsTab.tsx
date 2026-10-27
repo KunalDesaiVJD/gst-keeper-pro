@@ -102,7 +102,7 @@ export const PaymentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged:
                   <li key={x.arn} className="flex items-center gap-2 py-1.5">
                     <div className="min-w-0 flex-1">
                       <div className="text-xs"><span className="font-mono">{x.arn}</span> · {fmtInr(x.amount)}{x.filed_date ? ` · ${fmtDate(x.filed_date)}` : ''}</div>
-                      <div className="truncate text-[11px] text-muted-foreground" title={x.cause ?? undefined}>{x.reasons.join(' · ')}{x.cause ? ` — ${x.cause}` : ''}</div>
+                      <div className="truncate text-xs text-muted-foreground" title={x.cause ?? undefined}>{x.reasons.join(' · ')}{x.cause ? ` — ${x.cause}` : ''}</div>
                     </div>
                     <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => linkSuggested(x)}>Link</Button>
                   </li>

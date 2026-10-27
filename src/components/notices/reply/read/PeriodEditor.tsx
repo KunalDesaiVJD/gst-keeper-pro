@@ -47,7 +47,7 @@ export const PeriodEditor: React.FC<{
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button type="button" size="sm" variant={prominent ? 'default' : 'ghost'} className="h-6 px-2 text-[11px]">
+        <Button type="button" size="sm" variant={prominent ? 'default' : 'ghost'} className="h-7 px-2 text-xs">
           {label}<span className="sr-only"> (tax period)</span>
         </Button>
       </PopoverTrigger>
@@ -63,7 +63,7 @@ export const PeriodEditor: React.FC<{
             <Input id={`${id}-to`} type="month" value={b} min={a || undefined} onChange={(e) => setB(e.target.value)} className="h-8 text-xs" />
           </div>
         </div>
-        <p className="text-[11px] text-muted-foreground">Saved as typed by you. The Evidence tab compares the returns for these months.</p>
+        <p className="text-xs text-muted-foreground">Saved as typed by you. The Evidence tab compares the returns for these months.</p>
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setOpen(false)}>Cancel</Button>
           <Button type="button" size="sm" className="h-8 gap-1 text-xs" disabled={busy} onClick={save}>

@@ -105,7 +105,7 @@ export const OrderCheckPanel: React.FC<{ clientId: string; caseKey: string; orde
               <li key={c.key} className="flex items-start gap-2 py-1.5">
                 <span className="mt-0.5 shrink-0">{ICON[c.status]}</span>
                 <div className="min-w-0 flex-1">
-                  <div className={cn('text-sm', c.status === 'issue' && 'font-medium')}>{c.title} <span className="text-[11px] text-muted-foreground">{c.law}</span></div>
+                  <div className={cn('text-sm', c.status === 'issue' && 'font-medium')}>{c.title} <span className="text-xs text-muted-foreground">{c.law}</span></div>
                   {c.detail && <div className="text-xs text-muted-foreground">{c.detail}</div>}
                 </div>
               </li>
