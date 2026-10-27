@@ -150,6 +150,13 @@ const NoticeCasePage: React.FC = () => {
   }, [items.data, c.data, clientId, caseKey, user, qc]);
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
+  // A refund is not a case (the firm, 27 October 2026): a chain of refunds alone
+  // opens the refund page of the one asked for. A chain holding an appeal is
+  // litigation and stays a case; ?part= still shows one refund inside it.
+  if (c.data?.track === 'refund' && !sp.get('part')) {
+    const arn = caseKey.startsWith('N:') ? c.data.case_id : caseKey;
+    if (arn) return <Navigate to={`/refunds/${clientId}/${encodeURIComponent(arn)}`} replace />;
+  }
 
   const r = c.data;
   const crumbsFor = (track: Track, title?: React.ReactNode) => [

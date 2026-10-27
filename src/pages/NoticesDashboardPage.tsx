@@ -2,8 +2,8 @@
 // is due and what is theirs. Laid out by the UX audit of 25 October 2026, which
 // found the same four numbers three times over (kind cards, six figures, the
 // work list's pills) and "my work" only under More: now four figures, each a
-// filter on My work beneath them (one row per case over notices and demands,
-// refunds and registration; Mine, Team, Unassigned, Review), and beside it the
+// filter on My work beneath them (one row per case over notices and demands
+// and registration, refunds being on the Refunds tab; Mine, Team, Unassigned, Review), and beside it the
 // next 14 days, overdue by age and what came in this week. Other (LUT,
 // approvals), which needs no action, is a line under the work and a kind on
 // Cases. Every figure is read with the master filters under the tabs. A

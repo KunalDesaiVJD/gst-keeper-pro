@@ -27,7 +27,8 @@ import { fmtDate, fmtInrShort, noticeTitle, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 
 /** The kinds the firm acts on; Other (LUT, approvals) is kept for the record only. */
-export const WORK_TRACKS: Track[] = ['litigation', 'refund', 'registration'];
+/** Refunds are not cases (27 October 2026): they are counted on the Refunds tab. */
+export const WORK_TRACKS: Track[] = ['litigation', 'registration'];
 
 export type Who = 'mine' | 'team' | 'unassigned' | 'review';
 export type When = 'all' | 'overdue' | 'due7';
@@ -192,7 +193,7 @@ export const MyWork: React.FC<{
   const label = WHO.find((w) => w.key === who);
   return (
     <Panel title="My work" bodyClassName="px-0 pb-0"
-      info="One row per case over notices and demands, refunds and registration (Other, which needs no action, stays on Cases), newest notice first. The figures above filter this list."
+      info="One row per case over notices and demands and registration (Other, which needs no action, stays on Cases; refunds are on the Refunds tab), newest notice first. The figures above filter this list."
       actions={who !== 'review' && total > limit && <Link to={allHref} className="text-xs font-medium text-primary hover:underline">All {total} on Cases →</Link>}>
       <div className="flex flex-wrap items-center gap-1 border-b px-3.5 pb-2">
         {WHO.map((w) => (
