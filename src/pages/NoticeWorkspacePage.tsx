@@ -74,6 +74,8 @@ import { cn } from '@/lib/utils';
 import { useCaseDocuments } from '@/lib/caseDocuments';
 import { assistantOffered, draftEditable, draftingPhase } from '@/lib/noticeDrafting';
 import { appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
+import { useRefundLedger } from '@/components/notices/reports/ledgerData';
+import { refundHref } from '@/components/notices/reports/refundModel';
 
 const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: 'issues', label: 'Issues' },
@@ -152,7 +154,19 @@ function DraftingNote({ phase, replyDate, appealHref, underAppeal }: { phase: Re
     <Button size="sm" variant="outline" className={cn(WS_BTN, 'ml-2')} asChild><Link to={appealHref}><Scale className="h-3.5 w-3.5" /> {underAppeal ? 'Open the appeal' : 'Prepare the appeal'}</Link></Button>
   );
   if (phase === 'order') {
-    return <Note tone="info">This is an order, so it is not replied to. It is appealed, rectified or paid: the statement of facts, grounds of appeal and written submission are drafted on the case's Appeal view, and the letters (rectification, stay of recovery, payment) on the Letters tab.{appeal}</Note>;
+    return (
+      <section aria-label="What to do with an order" className="rounded-xl border border-info/40 bg-info/[0.05] px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-[15px] font-semibold">This is an order, so it is not replied to</h2>
+          {appeal}
+        </div>
+        <p className="mt-0.5 text-sm text-muted-foreground">It is appealed, rectified or paid:</p>
+        <ul className="mt-1.5 grid gap-2 text-sm sm:grid-cols-2">
+          <li className="rounded-lg border bg-card px-3 py-2"><span className="font-semibold">Appeal</span><span className="block text-muted-foreground">The statement of facts, grounds of appeal and written submission are drafted on the case's Appeal view.</span></li>
+          <li className="rounded-lg border bg-card px-3 py-2"><span className="font-semibold">Rectify, stay or pay</span><span className="block text-muted-foreground">The letters (rectification, stay of recovery, payment) are on the Letters tab.</span></li>
+        </ul>
+      </section>
+    );
   }
   if (phase === 'moved_on') {
     return <Note tone="info">The proceedings on this notice have moved on to the order{underAppeal ? ' and its appeal' : ''}, so no reply is drafted for it now; its drafts stay here to read.{appeal}</Note>;
@@ -196,6 +210,11 @@ const NoticeWorkspacePage: React.FC = () => {
   const caseKey = ws ? caseKeyOf(ws.notice.case_id, ws.fact.category, ws.notice.id) : null;
   const phase = ws ? draftingPhase(ws.fact) : 'reply';
   const caseOv = useCaseOverview(clientId, caseKey, ws?.notice.id ?? null);
+  // A refund's notice: the refund it belongs to, with the figures its own page gives (refunds are not cases, 27 Oct 2026).
+  const refundLedger = useRefundLedger(clientId, !!clientId && track === 'refund');
+  const refundArn = track === 'refund' ? (ws?.notice.case_id ?? null) : null;
+  const refundRow = useMemo(() => (refundArn ? (refundLedger.data ?? []).find((r) => (r.fact.arn ?? '').toUpperCase() === refundArn.toUpperCase()) ?? null : null), [refundLedger.data, refundArn]);
+  const refundLink = clientId && refundArn && refundRow ? refundHref(clientId, refundRow.fact.arn as string) : null;
   // The case's Appeal view, where an order's appeal is drafted, when it has an appeal to offer.
   const caseAppeals = useCaseAppeals(clientId ?? '', phase === 'order' || phase === 'moved_on' ? caseKey : null);
   const appealHref = clientId && caseKey && appealsShown(caseAppeals.data).length > 0 ? `${caseHref(clientId, caseKey)}?side=appeal` : null;
@@ -352,8 +371,14 @@ const NoticeWorkspacePage: React.FC = () => {
     f.reply_date ? `Replied ${fmtDate(f.reply_date)}` : null,
   ].filter(Boolean).join(' · ') : null;
 
-  // Cases › client › the notice's case › the notice (the UX audit of 25 October 2026: a notice is reached through its case).
-  const crumbs = [
+  // Cases › client › the notice's case › the notice (the UX audit of 25 October 2026: a notice is reached through its case);
+  // a refund's notice is reached through its refund: Refunds › client › the refund › the notice.
+  const crumbs = refundLink ? [
+    { label: 'Refunds', to: '/refunds-all' },
+    { label: ws.client?.name ?? f.client_name ?? 'Client', to: `/refunds-all?client=${n.client_id}` },
+    { label: <>Refund <span className="font-mono">{refundRow?.fact.arn}</span></>, to: refundLink },
+    { label: f.form_code || sentenceCase(n.notice_type) || 'Notice' },
+  ] : [
     { label: `Cases · ${trackDef(track).label}`, to: `/notices-cases?kind=${track}` },
     { label: ws.client?.name ?? f.client_name ?? 'Client', to: `/notices-company/${n.client_id}` },
     ...(caseKey && caseRow.data ? [{ label: n.case_id ? <>Case <span className="font-mono">{n.case_id}</span></> : 'Case', to: `${caseHref(n.client_id, caseRow.data.case_key as string)}?notice=${n.id}` }] : []),
@@ -404,7 +429,11 @@ const NoticeWorkspacePage: React.FC = () => {
             <StagePicker value={f.stage} since={f.stage_changed_at} by={f.stage_changed_by} disabled={!canEdit} onChange={changeStage} />
           </div>
           <KeyFactsLine ws={ws}>
-            {caseKey && caseRow.data && ((caseRow.data.notices ?? 0) > 1 || (caseRow.data.documents ?? 0) > 0) && (
+            {refundLink ? (
+              <Link to={refundLink} className="font-medium text-primary hover:underline">
+                Refund page{caseRow.data ? `: ${caseRow.data.notices} notice${caseRow.data.notices === 1 ? '' : 's'}${caseRow.data.documents ? `, ${caseRow.data.documents} document${caseRow.data.documents === 1 ? '' : 's'}` : ''}` : ''} →
+              </Link>
+            ) : caseKey && caseRow.data && ((caseRow.data.notices ?? 0) > 1 || (caseRow.data.documents ?? 0) > 0) && (
               <Link to={caseHref(n.client_id, caseKey)} className="font-medium text-primary hover:underline">
                 Case: {caseRow.data.notices} notice{caseRow.data.notices === 1 ? '' : 's'}{caseRow.data.documents ? `, ${caseRow.data.documents} document${caseRow.data.documents === 1 ? '' : 's'}` : ''}
                 {(caseRow.data.new_items ?? 0) > 0 ? ` · ${caseRow.data.new_items} new` : ''} →
@@ -491,7 +520,7 @@ const NoticeWorkspacePage: React.FC = () => {
 
         <aside className="min-w-0 space-y-3 xl:sticky xl:top-3" aria-label="The notice's facts">
           {lit ? <FactTiles ws={ws} rail onAskClient={canEdit && !closed ? () => setDialog('docs') : undefined} />
-            : <KindFacts track={track} overview={caseOv.data} loading={caseOv.isLoading} forms={caseRow.data?.forms ?? (f.form_code ? [f.form_code] : [])} rail
+            : <KindFacts track={track} overview={caseOv.data} row={refundRow} refundLink={refundLink} loading={caseOv.isLoading} forms={caseRow.data?.forms ?? (f.form_code ? [f.form_code] : [])} rail
                 notice={{ form_label: f.form_label, issue_date: n.issue_date, reference_number: n.reference_number, financial_year: n.financial_year, description: n.description }} />}
           <NoticeReadCard ws={ws} reading={rq.data} loading={rq.isLoading} error={rq.error} canEdit={canEdit} onChanged={reload}
             caseOverview={caseOv.data} readingOnly={!lit} rail />

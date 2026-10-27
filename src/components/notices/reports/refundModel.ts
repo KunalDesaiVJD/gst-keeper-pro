@@ -104,6 +104,19 @@ export function toneOf(r: RefundRow): Tone {
   return 'closed';
 }
 
+/**
+ * What the refund came to, for its pill: an order's outcome (part rejected,
+ * sanctioned) where one is known, else the tone. "Needs action" beside a
+ * part-sanctioned refund read as if nothing was decided (27 Oct 2026); the
+ * action itself is the page's next step.
+ */
+export function outcomeOf(r: RefundRow): Tone {
+  const tone = toneOf(r);
+  if (tone !== 'action') return tone;
+  if ((r.sanctioned ?? 0) > 0) return (r.rejected ?? 0) > 0 ? 'part' : 'full';
+  return tone;
+}
+
 // ── Steps ───────────────────────────────────────────────────────────────────
 export interface RefundStep {
   key: 'filed' | 'ack' | 'query' | 'reply' | 'provisional' | 'order' | 'paid';
