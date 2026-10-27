@@ -311,6 +311,7 @@ export function refundClocks(r: RefundRow, today: string): RefundClocks {
   }
   return { relevantDate, relevantBasis, limitBy, refileBy, orderDue, interestDays, interest, lines };
 }
+<<<<<<< HEAD
 
 /**
  * A quarter with no claim on the grid (section C of the law audit of 26 Oct
@@ -325,3 +326,5 @@ export function quarterLimit(fy: number, q: FyQuarter['q'], code: string): strin
   const end = monthEnd(lastMonth);
   return plusYears(code === 'INVITC' ? plusDays(end, 20) : end, 2);
 }
+=======
+>>>>>>> origin/claude/project-thread-xim5g3

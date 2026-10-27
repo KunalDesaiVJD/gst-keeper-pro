@@ -74,11 +74,15 @@ export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appe
       {(appeal.forum === 'tribunal' || appeal.order_form === 'APL-04') && (
         <TribunalAppealRecord key={`t-${appeal.appeal_key}`} clientId={clientId} caseKey={caseKey} appeal={appeal} />
       )}
+<<<<<<< HEAD
       {appeal.order_notice_id && (appeal.order_form ?? 'DRC-07') === 'DRC-07' && (
         <OrderCheckPanel key={`c-${appeal.appeal_key}`} clientId={clientId} caseKey={caseKey} orderNoticeId={appeal.order_notice_id}
           onUseGrounds={appealDocState('grounds', phase).open ? (text) => setSeed((p) => ({ text, n: (p?.n ?? 0) + 1 })) : undefined} />
       )}
       <AppealDocuments key={appeal.appeal_key} clientId={clientId} caseKey={caseKey} appeal={appeal} phase={phase} clientName={clientName} groundsSeed={seed} />
+=======
+      <AppealDocuments key={appeal.appeal_key} clientId={clientId} caseKey={caseKey} appeal={appeal} phase={phase} clientName={clientName} />
+>>>>>>> origin/claude/project-thread-xim5g3
     </div>
   );
 };
