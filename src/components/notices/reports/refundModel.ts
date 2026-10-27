@@ -311,3 +311,17 @@ export function refundClocks(r: RefundRow, today: string): RefundClocks {
   }
   return { relevantDate, relevantBasis, limitBy, refileBy, orderDue, interestDays, interest, lines };
 }
+
+/**
+ * A quarter with no claim on the grid (section C of the law audit of 26 Oct
+ * 2026): the last day a claim for it can still be filed, two years from its
+ * relevant date as refundClocks estimates it (the quarter's end; for inverted
+ * duty the 20th of the month after). Null for a type with no time limit or one
+ * whose relevant date is an order's.
+ */
+export function quarterLimit(fy: number, q: FyQuarter['q'], code: string): string | null {
+  if (NO_LIMIT.has(code) || code === 'ASSESS') return null;
+  const lastMonth = q === 4 ? `${fy + 1}-03` : `${fy}-${String(q * 3 + 3).padStart(2, '0')}`;
+  const end = monthEnd(lastMonth);
+  return plusYears(code === 'INVITC' ? plusDays(end, 20) : end, 2);
+}

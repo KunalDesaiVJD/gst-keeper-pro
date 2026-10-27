@@ -313,7 +313,7 @@ BEGIN
   --   s.73(5): tax and interest before a notice, no penalty; s.74(5): with 15%;
   --   s.73(8): within 30 days of the notice, no penalty; s.74(8): with 25%;
   --   s.74A (FY 2024-25 on): within 60 days of the notice, no penalty, or 25%
-  --   where fraud or suppression is alleged (s.74A(8), (9)).
+  --   where fraud or suppression is alleged (s.74A(8), (10)).
   FOR h IN
     SELECT x ->> 'form' AS form, coalesce((x ->> 'issue_date')::date, (x ->> 'date')::date) AS d, x ->> 'own_key' AS own_key, x ->> 'id' AS id,
            coalesce(x #>> '{facts,section_of_law}', x ->> 'sec') AS sec, coalesce(x #>> '{facts,fy}', x ->> 'fy') AS fy,
@@ -330,13 +330,13 @@ BEGIN
         v_ev := v_ev || jsonb_build_object('date', coalesce(h.due, h.d + 30), 'kind', 'pay_to_close', 'own_key', h.own_key, 'item_id', h.id,
           'title', 'Pay before a show cause notice to close',
           'detail', 'Tax and interest paid by DRC-03 before a DRC-01 is issued end the matter with no penalty, or with 15% where fraud or suppression is alleged. The window lasts until the DRC-01; the date shown is the intimation''s reply date.',
-          'tone', CASE WHEN coalesce(h.due, h.d + 30) >= v_today THEN 'warn' ELSE 'muted' END, 'law', 's.74A(8), (9)');
+          'tone', CASE WHEN coalesce(h.due, h.d + 30) >= v_today THEN 'warn' ELSE 'muted' END, 'law', 's.74A(8), (10)');
       ELSE
         v_ev := v_ev || jsonb_build_object('date', h.d + coalesce(public.litigation_rule_value('reduced_penalty_days.s74a'), 60)::int,
           'kind', 'pay_to_close', 'own_key', h.own_key, 'item_id', h.id,
           'title', 'Last day to pay and close: no penalty, or 25% where fraud is alleged',
-          'detail', 'Tax and interest paid within 60 days of the show cause notice conclude the proceedings (s.74A(8)); where fraud or suppression is alleged, with 25% of the tax as penalty (s.74A(9)).',
-          'tone', CASE WHEN h.d + 60 >= v_today THEN 'warn' ELSE 'muted' END, 'law', 's.74A(8), (9)');
+          'detail', 'Tax and interest paid within 60 days of the show cause notice conclude the proceedings (s.74A(8)); where fraud or suppression is alleged, with 25% of the tax as penalty (s.74A(10)).',
+          'tone', CASE WHEN h.d + 60 >= v_today THEN 'warn' ELSE 'muted' END, 'law', 's.74A(8), (10)');
       END IF;
       CONTINUE;
     END IF;
@@ -615,7 +615,7 @@ BEGIN
         v_ev := v_ev || jsonb_build_object('date', v_comm + 60, 'kind', 'pay_to_close', 'own_key', o.own_key, 'item_id', o.id,
           'title', 'Last day to pay with a 50% penalty and close (where fraud is held)',
           'detail', 'Where the order holds fraud or suppression, tax, interest and 50% of the tax as penalty paid within 60 days of the order end the proceedings.',
-          'tone', CASE WHEN v_comm + 60 >= v_today THEN 'warn' ELSE 'muted' END, 'law', 's.74A(9)');
+          'tone', CASE WHEN v_comm + 60 >= v_today THEN 'warn' ELSE 'muted' END, 'law', 's.74A(11)');
       END IF;
 
       -- L1. An order passed after its time limit is a ground of appeal.

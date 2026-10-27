@@ -62,6 +62,8 @@ import { AssistantTab } from '@/components/notices/workspace/AssistantTab';
 import { DocumentsTab, portalReplyFrom } from '@/components/notices/workspace/DocumentsTab';
 import { ActivityTab } from '@/components/notices/workspace/ActivityTab';
 import { PaymentsTab } from '@/components/notices/workspace/PaymentsTab';
+import { VoluntaryCancelNote } from '@/components/notices/workspace/VoluntaryCancelNote';
+import { payToCloseQuote } from '@/lib/noticePayToClose';
 import { HearingsTab } from '@/components/notices/workspace/HearingsTab';
 import { DeadlinesTab } from '@/components/notices/workspace/DeadlinesTab';
 import { KeyFactsLine } from '@/components/notices/workspace/SidePanel';
@@ -203,7 +205,7 @@ const NoticeWorkspacePage: React.FC = () => {
   const shownTabs = useMemo(() => {
     const keys = tabsFor(track, needsReply);
     const has: Partial<Record<WorkspaceTab, boolean>> = {
-      payments: !!ws && (ws.payments.length > 0 || ws.drc03.length > 0),
+      payments: !!ws && (ws.payments.length > 0 || ws.drc03.length > 0 || !!payToCloseQuote(ws.notice)),
       hearings: !!ws && (!!ws.notice.hearing_date || ws.hearings.length > 0),
       deadlines: !!ws && ws.deadlines.length > 0,
     };
@@ -440,6 +442,7 @@ const NoticeWorkspacePage: React.FC = () => {
         onLinked={() => { reload(); qc.invalidateQueries({ queryKey: ['notice-case'] }); qc.invalidateQueries({ queryKey: ['notice-case-overview'] }); }} />
 
       <DraftingNote phase={phase} replyDate={f.reply_date} appealHref={appealHref} underAppeal={f.stage === 'appeal'} />
+      <VoluntaryCancelNote ws={ws} canClose={canEdit && !closed} onClose={(reason) => changeStage('closed', reason)} />
 
       {!canEdit && <Note tone="info">You can read this notice. Changing it needs the "Edit notice status" permission — ask a GST manager.</Note>}
 
