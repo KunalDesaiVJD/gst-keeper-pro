@@ -16,6 +16,7 @@ import { linkPayment, unlinkPayment, type Workspace } from '@/lib/noticeWorkspac
 import { istToday } from '@/lib/noticeFacts';
 import { fmtDate, fmtInr } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
+import { PayToCloseCard } from '@/components/notices/workspace/PayToCloseCard';
 
 const KIND_LABEL: Record<string, string> = { drc03: 'DRC-03', pre_deposit: 'Pre-deposit', other: 'Other' };
 
@@ -60,6 +61,7 @@ export const PaymentsTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged:
 
   return (
     <div className="space-y-3">
+      <PayToCloseCard notice={ws.notice} />
       {ws.payments.length === 0 ? (
         <p className="text-sm text-muted-foreground">No payment recorded against this notice.</p>
       ) : (

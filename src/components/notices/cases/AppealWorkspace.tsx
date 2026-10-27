@@ -25,6 +25,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { Note } from '@/components/gstr9/ui';
 import { WS_BTN } from '@/components/workspace/theme';
 import { SectionCard } from '@/components/notices/ui/Panel';
+import { OrderCheckPanel } from '@/components/notices/cases/OrderCheckPanel';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   APPEAL_DOCS, appealDocLabel, appealDocState, appealPhase, type AppealPhase, appealDraftsKey, appealRunsKey, caseAppealsKey, downloadAppealDocx, loadAppealDrafts, runNotes,
@@ -51,6 +52,8 @@ const PHASE_LINE: Record<AppealPhase, string> = {
 
 export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appeals: CaseAppeal[]; all?: CaseAppeal[]; clientName?: string | null }> = ({ clientId, caseKey, appeals, all, clientName }) => {
   const [picked, setPicked] = useState<string | null>(null);
+  // Grounds the order check found, handed to the grounds' AI guidance.
+  const [seed, setSeed] = useState<{ text: string; n: number } | null>(null);
   const appeal = appeals.find((a) => a.appeal_key === picked) ?? appeals[0];
   const phase = appeal ? appealPhase(appeal, all ?? appeals) : 'preparing';
   if (!appeal) return <Note tone="info">No appeal is on record for this case, and no order of it can still be appealed.</Note>;
@@ -59,7 +62,7 @@ export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appe
       {appeals.length > 1 && (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Appeals of the case">
           {appeals.map((a) => (
-            <button key={a.appeal_key} type="button" aria-pressed={a.appeal_key === appeal.appeal_key} onClick={() => setPicked(a.appeal_key)}
+            <button key={a.appeal_key} type="button" aria-pressed={a.appeal_key === appeal.appeal_key} onClick={() => { setPicked(a.appeal_key); setSeed(null); }}
               className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-medium',
                 a.appeal_key === appeal.appeal_key ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground')}>
               {appealTitle(a)}
@@ -71,7 +74,11 @@ export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appe
       {(appeal.forum === 'tribunal' || appeal.order_form === 'APL-04') && (
         <TribunalAppealRecord key={`t-${appeal.appeal_key}`} clientId={clientId} caseKey={caseKey} appeal={appeal} />
       )}
-      <AppealDocuments key={appeal.appeal_key} clientId={clientId} caseKey={caseKey} appeal={appeal} phase={phase} clientName={clientName} />
+      {appeal.order_notice_id && (appeal.order_form ?? 'DRC-07') === 'DRC-07' && (
+        <OrderCheckPanel key={`c-${appeal.appeal_key}`} clientId={clientId} caseKey={caseKey} orderNoticeId={appeal.order_notice_id}
+          onUseGrounds={appealDocState('grounds', phase).open ? (text) => setSeed((p) => ({ text, n: (p?.n ?? 0) + 1 })) : undefined} />
+      )}
+      <AppealDocuments key={appeal.appeal_key} clientId={clientId} caseKey={caseKey} appeal={appeal} phase={phase} clientName={clientName} groundsSeed={seed} />
     </div>
   );
 };
@@ -181,11 +188,12 @@ const TribunalAppealRecord: React.FC<{ clientId: string; caseKey: string; appeal
 };
 
 /** The three documents: a tab each, the editor, the assistant. */
-const AppealDocuments: React.FC<{ clientId: string; caseKey: string; appeal: CaseAppeal; phase: AppealPhase; clientName?: string | null }> = ({ clientId, caseKey, appeal, phase, clientName }) => {
+const AppealDocuments: React.FC<{ clientId: string; caseKey: string; appeal: CaseAppeal; phase: AppealPhase; clientName?: string | null; groundsSeed?: { text: string; n: number } | null }> = ({ clientId, caseKey, appeal, phase, clientName, groundsSeed }) => {
   const { user } = useAuth();
   const actor = user?.firstName ?? null;
   const qc = useQueryClient();
   const [pickedDoc, setDoc] = useState<AppealDocType | null>(null);
+  useEffect(() => { if (groundsSeed) setDoc('grounds'); }, [groundsSeed]);
   const drafts = useQuery({ queryKey: appealDraftsKey(clientId, appeal.appeal_key), queryFn: () => loadAppealDrafts(clientId, appeal.appeal_key) });
   const runs = useAppealRuns(clientId, appeal.appeal_key);
   const byDoc = useMemo(() => {
@@ -238,6 +246,7 @@ const AppealDocuments: React.FC<{ clientId: string; caseKey: string; appeal: Cas
           <div key={d.key} role="tabpanel" hidden={doc !== d.key}>
             <DocEditor clientId={clientId} caseKey={caseKey} appeal={appeal} doc={d.key} versions={byDoc.get(d.key) ?? []} closedWhy={d.state.why}
               runs={(runs.data ?? []).filter((r) => r.doc_type === d.key)} actor={actor} clientName={clientName}
+              seed={d.key === 'grounds' ? groundsSeed : null}
               onSaved={() => {
                 qc.invalidateQueries({ queryKey: appealDraftsKey(clientId, appeal.appeal_key) });
                 qc.invalidateQueries({ queryKey: caseAppealsKey(clientId, caseKey) });
@@ -254,8 +263,10 @@ const DocEditor: React.FC<{
   runs: ReturnType<typeof useAppealRuns>['data']; actor: string | null; clientName?: string | null;
   /** Set when the document is no longer drafted at this stage: its versions are shown to read. */
   closedWhy?: string | null;
+  /** Grounds from the order check, added to the guidance for the AI. */
+  seed?: { text: string; n: number } | null;
   onSaved: () => void; onStarted: () => void;
-}> = ({ clientId, caseKey, appeal, doc, versions, runs, actor, clientName, closedWhy, onSaved, onStarted }) => {
+}> = ({ clientId, caseKey, appeal, doc, versions, runs, actor, clientName, closedWhy, seed, onSaved, onStarted }) => {
   const readOnly = !!closedWhy;
   const latest = versions[0];
   const [shown, setShown] = useState<number | null>(null); // a version picked to read, else the latest
@@ -263,6 +274,11 @@ const DocEditor: React.FC<{
   const [text, setText] = useState(base?.body ?? '');
   const [loadedVersion, setLoadedVersion] = useState<number>(base?.version ?? 0);
   const [guide, setGuide] = useState('');
+  useEffect(() => {
+    if (!seed?.text) return;
+    setGuide((g) => (g.includes(seed.text) ? g : `${g.trim() ? `${g.trim()}\n\n` : ''}Take these grounds from the order check, each with its law:\n${seed.text}`));
+    toast.success('The order check\'s grounds are in the guidance for the AI. Draft the grounds to use them.');
+  }, [seed]);
   const [busy, setBusy] = useState<null | 'draft' | 'improve' | 'save' | 'final'>(null);
   const dirty = text !== (base?.body ?? '');
   const running = (runs ?? []).find((r) => r.status === 'running');

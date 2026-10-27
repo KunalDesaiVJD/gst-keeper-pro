@@ -7,12 +7,13 @@
 // the one the AI read, else, marked, the month it was filed).
 import React, { useMemo } from 'react';
 import { WS_TABLE, WS_TABLE_WRAP, WS_TH } from '@/components/workspace/theme';
-import { fmtInrShort } from '@/lib/noticeFormat';
+import { fmtDate, fmtInrShort } from '@/lib/noticeFormat';
+import { istToday } from '@/lib/noticeFacts';
 import { cn } from '@/lib/utils';
 import type { RefundRow } from './ledgerData';
 import { MoneyBar } from './RefundBits';
 import {
-  QUARTERS, TONE_CELL, TONE_TEXT, TONE_LABEL, fyLabel, moneyOf, placeOf, quarterSpan, sumMoney, toneOf, typeCode, typeLong, typeShort,
+  QUARTERS, quarterLimit, TONE_CELL, TONE_TEXT, TONE_LABEL, fyLabel, moneyOf, placeOf, quarterSpan, sumMoney, toneOf, typeCode, typeLong, typeShort,
 } from './refundModel';
 
 const idx = (fy: number, q: number) => fy * 4 + q;
@@ -72,6 +73,7 @@ export const RefundGrid: React.FC<{ rows: RefundRow[]; onOpen: (r: RefundRow) =>
     return { lanes, span, cells, covered, fys, placed };
   }, [rows]);
 
+  const today = istToday();
   if (!model.placed.length) return <p className="py-6 text-center text-sm text-muted-foreground">No refund to place on the grid.</p>;
 
   return (
@@ -118,9 +120,19 @@ export const RefundGrid: React.FC<{ rows: RefundRow[]; onOpen: (r: RefundRow) =>
                           </div>
                         ) : model.covered.has(`${fy}|${q}|${code}`) ? (
                           <div className="flex h-full min-h-[3.25rem] items-center justify-center rounded-md border border-dashed border-border/70 text-[11px] text-muted-foreground">in the claim before</div>
-                        ) : inRange ? (
-                          <div className="flex h-full min-h-[3.25rem] items-center justify-center rounded-md border border-dashed border-warning/60 text-[11px] font-medium text-amber-700 dark:text-amber-400">not filed</div>
-                        ) : <div className="min-h-[3.25rem]" />}
+                        ) : inRange ? (() => {
+                          // The last day a claim for the quarter can still be filed (s.54(1)), as estimated.
+                          const by = quarterLimit(fy, q, code);
+                          const over = !!by && by < today;
+                          return (
+                            <div title={by ? `Two years from the relevant date, estimated as ${code === 'INVITC' ? 'the 20th after the quarter' : 'the quarter\'s end'}; check it on the papers.` : undefined}
+                              className={cn('flex h-full min-h-[3.25rem] flex-col items-center justify-center rounded-md border border-dashed text-center text-[11px] font-medium',
+                                over ? 'border-border/70 text-muted-foreground' : 'border-warning/60 text-amber-700 dark:text-amber-400')}>
+                              not filed
+                              {by && <span className="font-normal">{over ? 'time over' : `file by ${fmtDate(by)}`}</span>}
+                            </div>
+                          );
+                        })() : <div className="min-h-[3.25rem]" />}
                       </td>
                     );
                   })}

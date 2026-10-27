@@ -19,6 +19,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { loadReplyOptions, replyOptionsKey, saveDraft, setDraftStatus, type NoticeDraft, type Workspace } from '@/lib/noticeWorkspace';
 import { fmtDateTime } from '@/lib/noticeFormat';
 import { ReplyOptions } from './ReplyOptions';
+import { supabase } from '@/integrations/supabase/client';
+import { fillPartB, hasPartBPlaceholders } from '@/lib/reply/partB';
+import type { AnnexureSummary } from '@/lib/reply/types';
+
+// DRC-01B and DRC-01C: the annexure whose reconciling items fill Part B (section C of the law audit).
+const PART_B_RECIPE: Record<string, string> = { 'DRC-01B': 'gstr1_vs_3b', 'DRC-01C': 'gstr3b_vs_2b' };
 
 const STATUS: Record<string, { label: string; tone: 'secondary' | 'info' | 'warning' | 'success' | 'destructive' }> = {
   draft: { label: 'Draft', tone: 'info' },
@@ -103,6 +109,17 @@ export const DraftTab: React.FC<{ ws: Workspace; canEdit: boolean; canApprove: b
   const editor = useRef<HTMLTextAreaElement | null>(null);
   const options = useQuery({ queryKey: replyOptionsKey(ws.notice.id), queryFn: () => loadReplyOptions(ws.notice.id) });
   const fromOption = shown?.source_option_id ? options.data?.find((o) => o.id === shown.source_option_id) : undefined;
+  const partBRecipe = PART_B_RECIPE[ws.notice.form_code ?? ''];
+  const annexure = useQuery({
+    queryKey: ['notice-partb-annexure', ws.notice.id, partBRecipe],
+    enabled: !!partBRecipe,
+    queryFn: async () => {
+      const { data, error } = await supabase.from('reply_annexures').select('summary, title, version').eq('notice_id', ws.notice.id)
+        .eq('recipe_key', partBRecipe).eq('is_current', true).order('generated_at', { ascending: false }).limit(1);
+      if (error) throw error;
+      return data?.[0] ?? null;
+    },
+  });
 
   useEffect(() => { setVersion(latest?.version ?? null); }, [latest?.id, latest?.version]);
   useEffect(() => { setBody(shown?.body ?? ''); }, [shown?.id, shown?.body]);
@@ -185,6 +202,23 @@ export const DraftTab: React.FC<{ ws: Workspace; canEdit: boolean; canApprove: b
         )}
         {shown?.status === 'approved' && (
           <Note tone="info" open>Approved by {shown.reviewed_by_name ?? 'a partner'}{shown.reviewed_at ? ` on ${fmtDateTime(shown.reviewed_at)}` : ''}. File it on the portal, then log the reply; the notice moves to Filed.</Note>
+        )}
+
+        {editable && partBRecipe && hasPartBPlaceholders(body) && (
+          annexure.data?.summary && fillPartB(body, annexure.data.summary as unknown as AnnexureSummary, ws.notice.form_code ?? '') ? (
+            <Note tone="info" open>
+              <span className="inline-flex flex-wrap items-center gap-2">The reasons for the difference in paragraph 3 can be filled from the annexure "{annexure.data.title ?? 'Evidence'}" (version {annexure.data.version}), item by item with its amount.
+                <Button size="sm" variant="outline" className="h-8 text-xs"
+                  onClick={() => { const next = fillPartB(body, annexure.data!.summary as unknown as AnnexureSummary, ws.notice.form_code ?? ''); if (next) { setBody(next); toast.success('Part B reasons filled. Read them, then save.'); } }}>
+                  Fill Part B from the annexure
+                </Button>
+              </span>
+            </Note>
+          ) : annexure.data ? (
+            <Note tone="info">The annexure "{annexure.data.title ?? 'Evidence'}" shows no timing or DRC-03 item that explains the difference: what it shows is to pay. Use the payment option, or type the reasons.</Note>
+          ) : annexure.isFetched ? (
+            <Note tone="info">Build the annexure on the Evidence tab to fill the reasons in Part B with its figures; until then they are left for you to type.</Note>
+          ) : null
         )}
 
         <div className={compare && previous ? 'grid gap-2 lg:grid-cols-2' : ''}>
