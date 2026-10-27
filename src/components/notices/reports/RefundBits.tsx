@@ -11,8 +11,8 @@ import { MONEY_PARTS, TONE_CELL, TONE_LABEL, TONE_TEXT, refundWhen, type Money, 
 // ── Steps ───────────────────────────────────────────────────────────────────
 const stepTone = (s: RefundStep) => (!s.done ? 'pending' : s.bad ? 'bad' : 'done');
 
-/** The full road, each step with its date (the side panel). */
-export const StepRoad: React.FC<{ steps: RefundStep[] }> = ({ steps }) => (
+/** The full road, each step with its date (the side panel; large on the refund's own page). */
+export const StepRoad: React.FC<{ steps: RefundStep[]; large?: boolean }> = ({ steps, large }) => (
   <ol className="grid gap-0 sm:flex sm:flex-wrap sm:items-start" aria-label="Steps">
     {steps.map((s, i) => {
       const t = stepTone(s);
@@ -20,16 +20,16 @@ export const StepRoad: React.FC<{ steps: RefundStep[] }> = ({ steps }) => (
         <li key={s.key} className="flex items-start gap-2 sm:min-w-[6.5rem] sm:flex-1 sm:flex-col sm:items-center sm:gap-1 sm:text-center">
           <div className="flex items-center sm:w-full">
             <span aria-hidden className={cn('hidden h-0.5 flex-1 sm:block', i === 0 ? 'bg-transparent' : s.done ? (t === 'bad' ? 'bg-destructive/50' : 'bg-success/50') : 'bg-border')} />
-            <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2',
+            <span className={cn('flex shrink-0 items-center justify-center rounded-full border-2', large ? 'h-8 w-8' : 'h-6 w-6',
               t === 'done' && 'border-success bg-success text-success-foreground', t === 'bad' && 'border-destructive bg-destructive text-destructive-foreground',
               t === 'pending' && 'border-muted-foreground/30 bg-card text-muted-foreground')}>
-              {t === 'done' ? <Check className="h-3.5 w-3.5" aria-hidden /> : t === 'bad' ? <X className="h-3.5 w-3.5" aria-hidden /> : <span className="text-[10px] font-semibold">{i + 1}</span>}
+              {t === 'done' ? <Check className={large ? 'h-4 w-4' : 'h-3.5 w-3.5'} aria-hidden /> : t === 'bad' ? <X className={large ? 'h-4 w-4' : 'h-3.5 w-3.5'} aria-hidden /> : <span className={cn('font-semibold', large ? 'text-xs' : 'text-[10px]')}>{i + 1}</span>}
             </span>
             <span aria-hidden className={cn('hidden h-0.5 flex-1 sm:block', i === steps.length - 1 ? 'bg-transparent' : steps[i + 1]?.done ? 'bg-success/50' : 'bg-border')} />
           </div>
           <div className="pb-2 sm:pb-0">
-            <div className={cn('text-xs font-medium leading-tight', !s.done && 'text-muted-foreground')}>{s.label}</div>
-            <div className="text-[11px] tabular-nums text-muted-foreground">{s.done ? (s.date ? fmtDate(s.date) : 'date not captured') : 'to come'}</div>
+            <div className={cn('font-medium leading-tight', large ? 'text-sm' : 'text-xs', !s.done && 'text-muted-foreground')}>{s.label}</div>
+            <div className={cn('tabular-nums text-muted-foreground', large ? 'mt-0.5 text-[13px]' : 'text-[11px]')}>{s.done ? (s.date ? fmtDate(s.date) : 'date not captured') : 'to come'}</div>
           </div>
         </li>
       );
