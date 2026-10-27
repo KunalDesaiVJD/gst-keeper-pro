@@ -8571,6 +8571,75 @@ export type Database = {
         }
         Relationships: []
       }
+      gst_holidays: {
+        Row: {
+          day: string
+          name: string
+          scope: string
+          is_active: boolean
+          added_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          day: string
+          name: string
+          scope?: string
+          is_active?: boolean
+          added_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          day?: string
+          name?: string
+          scope?: string
+          is_active?: boolean
+          added_by?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      gst_limitation_years: {
+        Row: {
+          fy: string
+          fy_start: number
+          annual_return_due: string
+          annual_return_note: string | null
+          s73_order_by: string | null
+          s73_basis: string | null
+          s74_order_by: string | null
+          s74a_scn_by: string | null
+          confirmed_at: string | null
+          confirmed_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          fy: string
+          fy_start: number
+          annual_return_due: string
+          annual_return_note?: string | null
+          s73_order_by?: string | null
+          s73_basis?: string | null
+          s74_order_by?: string | null
+          s74a_scn_by?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          fy?: string
+          fy_start?: number
+          annual_return_due?: string
+          annual_return_note?: string | null
+          s73_order_by?: string | null
+          s73_basis?: string | null
+          s74_order_by?: string | null
+          s74a_scn_by?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       litigation_rules: {
         Row: {
           key: string
@@ -8601,6 +8670,48 @@ export type Database = {
           created_at?: string
           confirmed_at?: string | null
           confirmed_by?: string | null
+        }
+        Relationships: []
+      }
+      notice_tribunal_appeals: {
+        Row: {
+          id: string
+          client_id: string
+          order_ref: string
+          arn: string | null
+          filed_on: string
+          predeposit: number | null
+          status: string
+          note: string | null
+          recorded_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          client_id: string
+          order_ref: string
+          arn?: string | null
+          filed_on: string
+          predeposit?: number | null
+          status?: string
+          note?: string | null
+          recorded_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          client_id?: string
+          order_ref?: string
+          arn?: string | null
+          filed_on?: string
+          predeposit?: number | null
+          status?: string
+          note?: string | null
+          recorded_by?: string | null
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -11460,6 +11571,7 @@ export type Database = {
           is_new: boolean | null
           is_open: boolean | null
           is_overdue: boolean | null
+          is_payment_overdue: boolean | null
           is_refund_case: boolean | null
           is_replied: boolean | null
           is_unassigned: boolean | null
@@ -12038,6 +12150,42 @@ export type Database = {
       }
       notice_officer_save: {
         Args: { p_name: string; p_mobile: string; p_email?: string | null; p_office?: string | null; p_notes?: string | null; p_actor?: string | null }
+        Returns: Json
+      }
+      notice_tribunal_appeal_save: {
+        Args: { p_client_id: string; p_order_ref: string; p_arn: string | null; p_filed_on: string; p_predeposit: number | null; p_status: string | null; p_note: string | null; p_actor: string | null }
+        Returns: Json
+      }
+      gst_holiday_set: {
+        Args: { p_day: string; p_name: string; p_active: boolean; p_actor: string | null }
+        Returns: Json
+      }
+      litigation_rule_confirm: {
+        Args: { p_key: string; p_value: number; p_note: string | null; p_actor_id: string; p_actor_name: string | null }
+        Returns: Json
+      }
+      notice_form_rule_confirm: {
+        Args: { p_form_code: string; p_reply_days: number | null; p_reply_day_kind: string | null; p_appeal_section: string | null; p_actor_id: string; p_actor_name: string | null }
+        Returns: Json
+      }
+      gst_limitation_year_confirm: {
+        Args: { p_fy: string; p_annual_return_due: string; p_s73_order_by: string | null; p_s74_order_by: string | null; p_s74a_scn_by: string | null; p_actor_id: string; p_actor_name: string | null }
+        Returns: Json
+      }
+      notice_limitation: {
+        Args: { p_fy: string; p_section?: string | null }
+        Returns: Json
+      }
+      notice_predeposit_required: {
+        Args: { p_amounts: Json; p_kind: string; p_filed: string | null }
+        Returns: Json
+      }
+      notice_stale_demands: {
+        Args: never
+        Returns: { id: string; client_id: string; client_name: string | null; form_code: string | null; reference_number: string | null; case_id: string | null; financial_year: string | null; amount_of_demand: number | null; effective_due: string | null; days_overdue: number | null; due_basis: string | null; due_basis_note: string | null }[]
+      }
+      notice_case_unread_papers: {
+        Args: { p_client_id: string; p_case_key: string }
         Returns: Json
       }
       notice_case_close: {

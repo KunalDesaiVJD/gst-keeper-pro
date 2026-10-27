@@ -10,9 +10,9 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { ASSIST_REFUSALS } from '@/lib/noticeAi';
-import { appealDocState, appealPhase, type AppealPhase } from '../../supabase/functions/_shared/appealStage.ts';
+import { addMonths, appealDocState, appealPhase, condonationMonths, type AppealPhase } from '../../supabase/functions/_shared/appealStage.ts';
 
-export { appealDocState, appealPhase, type AppealPhase };
+export { appealDocState, appealPhase, condonationMonths, type AppealPhase };
 
 export type AppealDocType = 'facts' | 'grounds' | 'submission';
 export type AppealDraft = Database['public']['Tables']['notice_appeal_drafts']['Row'];
@@ -38,6 +38,12 @@ export interface CaseAppeal {
   order_form?: string;
   order_notice_id?: string;
   last_day?: string;
+  /** 'tribunal' against an APL-04 (20261026120000), else 'appellate authority'. */
+  forum?: string;
+  /** The months of delay the forum may condone (1 under s.107(4), 3 under s.112(6)). */
+  condonation_months?: number;
+  /** Days a filed appeal has been pending (20261026120000, P5). */
+  pending_days?: number;
   disputed_tax?: number;
   disputed_total?: number;
   predeposit?: number;
@@ -62,21 +68,34 @@ export function useCaseAppeals(clientId: string, caseKey: string | null | undefi
   });
 }
 
-const addMonths = (iso: string, n: number) => {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() + n);
-  return d.toISOString().slice(0, 10);
-};
-
 /**
  * Which appeals the Appeal view offers: every appeal filed, and an order not
- * yet appealed while it can still be (three months and the one of
- * condonation, s.107(1) and (4)) or once a draft for it exists.
+ * yet appealed while it can still be (three months and the delay the forum
+ * may condone, s.107(4) or s.112(6)) or once a draft for it exists.
  */
 export function appealsShown(all: CaseAppeal[] | undefined, today = new Date().toISOString().slice(0, 10)): CaseAppeal[] {
   return (all ?? []).filter((a) => a.status === 'filed'
     || Object.keys(a.drafts ?? {}).length > 0
-    || (a.last_day ? addMonths(a.last_day, 1) >= today : false));
+    || (a.last_day ? addMonths(a.last_day, condonationMonths(a)) >= today : false));
+}
+
+/**
+ * A Tribunal appeal, recorded by hand: GSTAT appeals are filed on the
+ * Tribunal's own portal, which the extension does not read (L10 of the law
+ * audit, 20261026120000). Recording it counts the appeal as filed on the
+ * timeline and meets the order's appeal clock.
+ */
+export async function saveTribunalAppeal(v: {
+  clientId: string; orderRef: string; filedOn: string; arn?: string | null; predeposit?: number | null;
+  status?: 'filed' | 'withdrawn' | 'decided'; note?: string | null; actor?: string | null;
+}): Promise<void> {
+  const { data, error } = await supabase.rpc('notice_tribunal_appeal_save', {
+    p_client_id: v.clientId, p_order_ref: v.orderRef, p_arn: v.arn ?? null, p_filed_on: v.filedOn,
+    p_predeposit: v.predeposit ?? null, p_status: v.status ?? 'filed', p_note: v.note ?? null, p_actor: v.actor ?? null,
+  });
+  if (error) throw error;
+  const res = data as { error?: string } | null;
+  if (res?.error) throw new Error(res.error);
 }
 
 export const appealDraftsKey = (clientId: string, appealKey: string) => ['notice-appeal-drafts', clientId, appealKey] as const;

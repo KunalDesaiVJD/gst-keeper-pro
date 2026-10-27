@@ -50,6 +50,7 @@ SELECT r.form_code, row_number() OVER (ORDER BY r.form_code) AS n,
          WHEN 'REG-CANCEL-REJ' THEN 'Cancellation rejection order' WHEN 'SUMMONS' THEN 'Notice to summon'
          WHEN 'APL-HEARING' THEN 'Hearing notice issued' WHEN 'RECT-ORDER' THEN 'Rectification of orders: order rectified'
          WHEN 'SPL-APPROVED' THEN 'Approval of waiver' WHEN 'ADT-CLOSURE' THEN 'Audit closure report'
+         WHEN 'ADJOURNMENT' THEN 'Adjournment granted'
          WHEN 'PMT-03' THEN 'Re-credit of the amount to cash or credit ledger'
          ELSE 'Notice (' || r.form_code || ')' END AS description
   FROM notice_form_rules r

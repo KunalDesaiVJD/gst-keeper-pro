@@ -10,7 +10,9 @@
 // docs/NOTICES_LITIGATION_POSITIONS.md.
 
 /** The forms that are orders an appeal lies against (public.notice_appealable_forms(), 20261025140000). */
-export const ORDER_FORMS = ['DRC-07', 'DRC-08', 'ASMT-13', 'ASMT-15', 'RFD-06', 'RFD-07', 'REG-05', 'REG-19', 'REG-CANCEL-REJ', 'MOV-09', 'RECT-ORDER', 'APL-04'];
+// notice_appealable_forms() (20261026110000); test_117 holds the database's list to the form rules.
+export const ORDER_FORMS = ['DRC-07', 'DRC-07A', 'DRC-08', 'ASMT-13', 'ASMT-15', 'ASMT-16', 'RFD-06', 'RFD-07', 'REG-05', 'REG-19', 'REG-CANCEL-REJ',
+  'MOV-09', 'MOV-11', 'SPL-07', 'RECT-ORDER', 'APL-04'];
 
 export const isOrderForm = (form: string | null | undefined) => !!form && ORDER_FORMS.includes(form.toUpperCase());
 

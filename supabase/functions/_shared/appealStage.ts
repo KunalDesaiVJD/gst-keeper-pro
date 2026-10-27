@@ -17,12 +17,17 @@ export interface AppealStageInput {
   last_day?: string | null;
   order_form?: string | null;
   order_date?: string | null;
+  /** 'tribunal' for an appeal against an order in appeal (APL 04), 20261026120000. */
+  forum?: string | null;
+  /** The months of delay the forum may condone: 1 under s.107(4), 3 under s.112(6). */
+  condonation_months?: number | null;
 }
 
 /**
  * Where the appeal stands:
  * - preparing: not filed, within the three months to appeal;
- * - late: not filed, the three months over but the one month of condonation open (s.107(4));
+ * - late: not filed, the three months over but the delay still condonable (one month, s.107(4); three before
+ *   the Tribunal, s.112(6));
  * - time_over: not filed and both over;
  * - filed: filed and pending (submitted, admitted, a hearing fixed, a reply submitted);
  * - withdrawn: the portal says the appeal was withdrawn;
@@ -30,11 +35,18 @@ export interface AppealStageInput {
  */
 export type AppealPhase = 'preparing' | 'late' | 'time_over' | 'filed' | 'withdrawn' | 'decided';
 
-const addMonths = (iso: string, n: number) => {
-  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() + n);
-  return d.toISOString().slice(0, 10);
+/** The same day n months on, or the month's last day when it has none (31 Jan + 1 month = 28 Feb), as Postgres. */
+export const addMonths = (iso: string, n: number) => {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  const first = new Date(Date.UTC(y, m - 1 + n, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  first.setUTCDate(Math.min(d, last));
+  return first.toISOString().slice(0, 10);
 };
+
+/** The months of delay the forum may condone. */
+export const condonationMonths = (a: AppealStageInput) =>
+  a.condonation_months ?? (a.forum === 'tribunal' || (a.order_form ?? '').toUpperCase() === 'APL-04' ? 3 : 1);
 
 export function appealPhase(a: AppealStageInput, all: AppealStageInput[] = [], today = new Date().toISOString().slice(0, 10)): AppealPhase {
   if (a.status === 'filed') {
@@ -46,7 +58,7 @@ export function appealPhase(a: AppealStageInput, all: AppealStageInput[] = [], t
     return decidedBy ? 'decided' : 'filed';
   }
   if (!a.last_day || today <= a.last_day) return 'preparing';
-  return today <= addMonths(a.last_day, 1) ? 'late' : 'time_over';
+  return today <= addMonths(a.last_day, condonationMonths(a)) ? 'late' : 'time_over';
 }
 
 export interface AppealDocState {
@@ -59,7 +71,7 @@ export interface AppealDocState {
 export function appealDocState(doc: AppealDocKey, phase: AppealPhase): AppealDocState {
   switch (phase) {
     case 'preparing': case 'late': return { open: true, why: null };
-    case 'time_over': return { open: false, why: 'The time to appeal and the month of condonation are both over, so no appeal can be filed against this order now.' };
+    case 'time_over': return { open: false, why: 'The time to appeal and the time the authority may condone are both over, so no appeal can be filed against this order now.' };
     case 'withdrawn': return { open: false, why: 'The appeal was withdrawn, so nothing more is drafted for it.' };
     case 'decided': return { open: false, why: 'The appeal has been decided, so nothing more is drafted for it. A further appeal is prepared against the order in appeal.' };
     case 'filed':

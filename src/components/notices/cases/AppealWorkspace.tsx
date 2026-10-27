@@ -18,6 +18,7 @@ import { Check, Copy, Download, FileText, Loader2, RotateCcw, Save, Sparkles, Wa
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/gstr9/badge';
@@ -27,16 +28,21 @@ import { SectionCard } from '@/components/notices/ui/Panel';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   APPEAL_DOCS, appealDocLabel, appealDocState, appealPhase, type AppealPhase, appealDraftsKey, appealRunsKey, caseAppealsKey, downloadAppealDocx, loadAppealDrafts, runNotes,
-  saveAppealDraft, startAppealDraft, useAppealRuns, type AppealDocType, type AppealDraft, type CaseAppeal,
+  saveAppealDraft, saveTribunalAppeal, startAppealDraft, useAppealRuns, type AppealDocType, type AppealDraft, type CaseAppeal,
 } from '@/lib/noticeAppeals';
 import { fmtDate, fmtDateTime, fmtInr } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 
 const appealTitle = (a: CaseAppeal) => `${a.second_appeal ? 'Second appeal' : 'Appeal'} against ${a.order_form ? `${a.order_form} ` : ''}${a.order_ref ?? a.appeal_key}`;
 
+const pendingText = (days: number) => {
+  const m = Math.floor(days / 30.44);
+  return m >= 1 ? `${m} month${m === 1 ? '' : 's'}${m >= 12 ? ' (decision due within a year, s.107(13))' : ''}` : `${days} day${days === 1 ? '' : 's'}`;
+};
+
 const PHASE_LINE: Record<AppealPhase, string> = {
   preparing: 'Not filed yet',
-  late: 'Not filed yet; the three months are over, the month of condonation is still open',
+  late: 'Not filed yet; the three months are over, a delay can still be condoned',
   time_over: 'Not filed; the time to appeal is over',
   filed: 'Filed',
   withdrawn: 'Withdrawn',
@@ -62,6 +68,9 @@ export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appe
         </div>
       )}
       <AppealFacts appeal={appeal} phase={phase} />
+      {(appeal.forum === 'tribunal' || appeal.order_form === 'APL-04') && (
+        <TribunalAppealRecord key={`t-${appeal.appeal_key}`} clientId={clientId} caseKey={caseKey} appeal={appeal} />
+      )}
       <AppealDocuments key={appeal.appeal_key} clientId={clientId} caseKey={caseKey} appeal={appeal} phase={phase} clientName={clientName} />
     </div>
   );
@@ -75,6 +84,9 @@ const AppealFacts: React.FC<{ appeal: CaseAppeal; phase: AppealPhase }> = ({ app
     [a.status === 'filed' ? 'Three months ran to' : 'Last day to appeal', a.last_day ? fmtDate(a.last_day) : null],
     ['Appeal', a.arn ? <span className="font-mono text-[13px]">{a.arn}</span> : null],
     ['Filed on', a.filed_on ? fmtDate(a.filed_on) : null],
+    // P5: s.107(13) asks for a decision within a year where possible.
+    ['Pending for', phase === 'filed' && a.pending_days != null
+      ? <span className={a.pending_days >= 365 ? 'text-warning' : undefined}>{pendingText(a.pending_days)}</span> : null],
     ['Tax in dispute', a.disputed_tax ? fmtInr(a.disputed_tax) : null],
     ['Total in dispute', a.disputed_total ? fmtInr(a.disputed_total) : a.demand ? fmtInr(a.demand) : null],
     ['Pre-deposit', a.predeposit ? `${fmtInr(a.predeposit)}${a.predeposit_pct ? ` (${a.predeposit_pct}%)` : ''}` : null],
@@ -100,6 +112,70 @@ const AppealFacts: React.FC<{ appeal: CaseAppeal; phase: AppealPhase }> = ({ app
         ))}
       </dl>
       {!!a.issues?.length && <p className="text-xs text-muted-foreground">Issue on the portal: {a.issues.join('; ')}</p>}
+    </SectionCard>
+  );
+};
+
+/**
+ * A Tribunal appeal is filed on the GSTAT portal, which is not synced: staff
+ * record it here once filed, so the timeline and the appeal clock know.
+ */
+const TribunalAppealRecord: React.FC<{ clientId: string; caseKey: string; appeal: CaseAppeal }> = ({ clientId, caseKey, appeal }) => {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [filedOn, setFiledOn] = useState(appeal.filed_on ?? '');
+  const [arn, setArn] = useState(appeal.arn && !appeal.arn.startsWith('GSTAT:') ? appeal.arn : '');
+  const [deposit, setDeposit] = useState(appeal.predeposit ? String(appeal.predeposit) : '');
+  const [busy, setBusy] = useState(false);
+  const recorded = appeal.status === 'filed';
+  const save = async () => {
+    setBusy(true);
+    try {
+      await saveTribunalAppeal({
+        clientId, orderRef: appeal.order_ref ?? appeal.appeal_key, filedOn, arn: arn.trim() || null,
+        predeposit: deposit.trim() ? Number(deposit.replace(/[^\d.]/g, '')) : null, actor: user?.firstName ?? null,
+      });
+      toast.success('Tribunal appeal recorded');
+      setOpen(false);
+      qc.invalidateQueries({ queryKey: caseAppealsKey(clientId, caseKey) });
+      qc.invalidateQueries({ queryKey: ['notice-case-key-dates'] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not record the appeal');
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!open) {
+    return (
+      <Note tone="info">
+        {recorded ? 'Tribunal appeal on record. ' : 'A Tribunal appeal is filed on the GSTAT portal, which is not synced. '}
+        <button type="button" className="font-semibold underline underline-offset-2" onClick={() => setOpen(true)}>
+          {recorded ? 'Change it' : 'Record it once filed'}
+        </button>
+      </Note>
+    );
+  }
+  return (
+    <SectionCard title="Record the Tribunal appeal" description={`Against ${appeal.order_ref ?? appeal.appeal_key}`}
+      info="The appeal then counts as filed on the case's timeline, its pre-deposit is checked, and the order's appeal clock is met.">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <label className="text-[11px] font-medium text-muted-foreground">Filed on
+          <Input type="date" value={filedOn} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setFiledOn(e.target.value)} />
+        </label>
+        <label className="text-[11px] font-medium text-muted-foreground">Appeal number (optional)
+          <Input value={arn} onChange={(e) => setArn(e.target.value)} />
+        </label>
+        <label className="text-[11px] font-medium text-muted-foreground">Pre-deposit paid, ₹ (optional)
+          <Input inputMode="decimal" value={deposit} onChange={(e) => setDeposit(e.target.value)} />
+        </label>
+      </div>
+      <div className="mt-2 flex gap-2">
+        <Button size="sm" className={WS_BTN} disabled={!filedOn || busy} onClick={save}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+        </Button>
+        <Button size="sm" variant="ghost" className={WS_BTN} onClick={() => setOpen(false)}>Cancel</Button>
+      </div>
     </SectionCard>
   );
 };

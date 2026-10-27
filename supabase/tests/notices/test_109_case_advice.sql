@@ -1,11 +1,12 @@
 -- What to do now on a case: claimed in order, kept, asked again when the case
+-- 20261026110000: an order (RFD-06) is never "overdue", so the overdue refund case is a deficiency memo.
 -- changes or someone asks (migration 20261013100000).
 BEGIN;
 INSERT INTO clients (id, name, gstin, gst_user_id, gst_password, inactive_at_hand) VALUES
  ('10900000-0000-0000-0000-000000000001', 'Advice Co', '24ADVIC0000A1Z5', 'advic', 'p1', false);
 INSERT INTO gst_notices (id, client_id, source, portal_key, notice_type, description, issue_date, reference_number, case_id, due_date, first_seen_at) VALUES
  ('10900000-0000-0000-0000-0000000000a1', '10900000-0000-0000-0000-000000000001', 'notices', 'v1', 'Refunds',
-  'Refund Sanction/Rejection Order (RFD-06)', ist_today() - 400, 'ZV-1', 'AV-R1', ist_today() - 300, now() - interval '200 days'),
+  'Deficiency Memo (RFD-03)', ist_today() - 400, 'ZV-1', 'AV-R1', ist_today() - 300, now() - interval '200 days'),
  ('10900000-0000-0000-0000-0000000000a2', '10900000-0000-0000-0000-000000000001', 'notices', 'v2', 'Determination Of Tax',
   'Show Cause Notice (DRC-01)', ist_today() - 5, 'ZV-2', 'AV-D1', ist_today() + 25, now() - interval '5 days');
 
