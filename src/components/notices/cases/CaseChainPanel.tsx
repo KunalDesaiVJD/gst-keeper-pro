@@ -171,11 +171,14 @@ export const CaseChainPanel: React.FC<{
         </Button>
       )}>
       {isRefund && (
-        <p className="text-xs text-muted-foreground">
-          A refund is linked to two things only: an <span className="font-medium text-foreground">appeal</span> (APL-01) against its order
-          (RFD-06), and the <span className="font-medium text-foreground">same refund filed again</span> after a deficiency memo, a rejection
-          or a withdrawal (the same type of refund for the same period). Refunds of other quarters or types are separate refunds; they are on the Refunds page.
-        </p>
+        <div className="rounded-lg border bg-muted/30 px-3.5 py-2.5 text-sm">
+          <p className="font-medium">A refund is linked to two things only:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
+            <li>an <span className="font-medium text-foreground">appeal</span> (APL-01) against its order (RFD-06);</li>
+            <li>the <span className="font-medium text-foreground">same refund filed again</span> after a deficiency memo, a rejection or a withdrawal (the same type of refund for the same period).</li>
+          </ul>
+          <p className="mt-1 text-muted-foreground">Refunds of other quarters or types are separate refunds; they are on the Refunds page.</p>
+        </div>
       )}
       {chain.error ? <Note tone="warn">Couldn't load the linked cases: {errText(chain.error)}</Note>
         : chain.isLoading ? <Skeleton className="h-16 w-full" />
