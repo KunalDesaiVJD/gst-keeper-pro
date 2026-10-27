@@ -87,3 +87,4 @@
 20261026110000_notice_forms_and_predeposit.sql
 20261026120000_notice_key_dates_law.sql
 20261026130000_notice_law_signoff.sql
+20261027100000_notice_loopholes.sql

@@ -21,6 +21,8 @@ import { NoticesShell } from '@/components/notices/NoticesShell';
 import { SyncNowButton } from '@/components/notices/SyncNowButton';
 import { AddNoticeDialog } from '@/components/notices/AddNoticeDialog';
 import { Upcoming } from '@/components/notices/cases/HomeParts';
+import { StaleDemands } from '@/components/notices/cases/StaleDemands';
+import { canManageNoticeTypes } from '@/lib/noticeTypes';
 import { AttentionTiles, HomeFooter, MyWork, isWhen, isWho, sumCounts, useWhoCounts, type When, type Who } from '@/components/notices/cases/HomeWork';
 import { useCaseCounts } from '@/lib/noticeCases';
 import { AutopilotLine } from '@/components/notices/command/CommandCards';
@@ -79,6 +81,7 @@ const NoticesDashboardPage: React.FC = () => {
         </Note>
       )}
 
+      {canManageNoticeTypes(user?.role) && <StaleDemands />}
       <AttentionTiles c={total} mine={who$.data?.mine} who={who} when={when} onPick={pick} />
       <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1fr)_17rem]">
         <MyWork who={who} when={when} master={m} meId={meId} onPick={pick}

@@ -12180,6 +12180,14 @@ export type Database = {
         Args: { p_amounts: Json; p_kind: string; p_filed: string | null }
         Returns: Json
       }
+      notice_stale_demands: {
+        Args: never
+        Returns: { id: string; client_id: string; client_name: string | null; form_code: string | null; reference_number: string | null; case_id: string | null; financial_year: string | null; amount_of_demand: number | null; effective_due: string | null; days_overdue: number | null; due_basis: string | null; due_basis_note: string | null }[]
+      }
+      notice_case_unread_papers: {
+        Args: { p_client_id: string; p_case_key: string }
+        Returns: Json
+      }
       notice_case_close: {
         Args: { p_client_id: string; p_case_key: string; p_reason: string; p_actor_id: string; p_actor_name: string | null }
         Returns: Json

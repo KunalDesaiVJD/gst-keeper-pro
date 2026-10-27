@@ -42,6 +42,8 @@ export interface CaseAppeal {
   forum?: string;
   /** The months of delay the forum may condone (1 under s.107(4), 3 under s.112(6)). */
   condonation_months?: number;
+  /** Days a filed appeal has been pending (20261026120000, P5). */
+  pending_days?: number;
   disputed_tax?: number;
   disputed_total?: number;
   predeposit?: number;

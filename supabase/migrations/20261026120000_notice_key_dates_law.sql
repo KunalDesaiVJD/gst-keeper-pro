@@ -176,6 +176,8 @@ BEGIN
   SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
            'appeal_key', a.appeal_key, 'status', a.status, 'arn', a.arn, 'filed_on', a.filed_on, 'portal_status', a.portal_status,
            'order_ref', a.f ->> 'order_ref',
+           -- P5: how long a filed appeal has been pending.
+           'pending_days', CASE WHEN a.status = 'filed' AND a.filed_on IS NOT NULL THEN public.ist_today() - a.filed_on END,
            'order_date', coalesce((a.f ->> 'order_date')::date, o.issue_date),
            'order_comm_date', (a.f ->> 'order_comm_date')::date,
            'order_form', o.form_code, 'order_notice_id', o.id,
@@ -240,6 +242,8 @@ DECLARE
   v_d date;
   v_case_fy text;
   v_case_sec text;
+  v_months int;
+  v_status text;
 BEGIN
   IF v_root IS NULL THEN RETURN '[]'::jsonb; END IF;
   SELECT coalesce(jsonb_agg(jsonb_build_object(
@@ -549,6 +553,31 @@ BEGIN
         'tone', CASE WHEN o.is_open THEN 'danger' ELSE 'muted' END, 'law', v_cond_law);
     END IF;
 
+    -- P5. An appeal pending: how long, and any recovery step after it (s.107(7), s.112(9)).
+    IF v_filed IS NOT NULL THEN
+      v_status := lower(coalesce(v_ap ->> 'portal_status', ''));
+      v_months := (extract(year FROM age(v_today, v_filed)) * 12 + extract(month FROM age(v_today, v_filed)))::int;
+      IF v_status !~ 'withdraw|dispos|order issued|decided|rejected|dismiss|allowed|closed'
+         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_items) y
+                          WHERE y ->> 'kind' = 'notice' AND y ->> 'form' = 'APL-04' AND (y ->> 'date')::date >= v_filed)
+         AND v_months >= 12 THEN
+        v_ev := v_ev || jsonb_build_object('date', v_today, 'kind', 'order_check', 'own_key', o.own_key, 'item_id', o.id,
+          'title', 'Appeal pending for ' || v_months || ' months',
+          'detail', 'Filed on ' || to_char(v_filed, 'DD Mon YYYY') || '; the authority should decide within a year where it can (s.107(13)). Ask for a hearing date, and keep the stay of recovery on record.',
+          'tone', 'warn', 'law', 's.107(13)');
+      END IF;
+      FOR h IN
+        SELECT (y ->> 'date')::date AS d, y ->> 'form' AS form, y ->> 'reference' AS ref, y ->> 'id' AS id
+          FROM jsonb_array_elements(v_items) y
+         WHERE y ->> 'kind' = 'notice' AND y ->> 'form' IN ('DRC-13', 'DRC-16', 'DRC-22') AND (y ->> 'date')::date > v_filed
+      LOOP
+        v_ev := v_ev || jsonb_build_object('date', h.d, 'kind', 'order_check', 'own_key', o.own_key, 'item_id', h.id,
+          'title', 'Recovery step after the appeal: ' || h.form || coalesce(' ' || h.ref, ''),
+          'detail', 'Once the pre-deposit is paid, recovery of the rest is deemed stayed while the appeal is pending. Write to the officer with the APL-01 and the pre-deposit, and ask for the ' || h.form || ' to be withdrawn.',
+          'tone', 'danger', 'law', CASE WHEN v_tribunal THEN 's.112(9)' ELSE 's.107(7)' END);
+      END LOOP;
+    END IF;
+
     IF o.form = 'DRC-07' THEN
       IF (o.facts ->> 'due') IS NOT NULL THEN
         v_ev := v_ev || jsonb_build_object('date', (o.facts ->> 'due')::date, 'kind', 'payment_due', 'own_key', o.own_key, 'item_id', o.id,
@@ -560,6 +589,23 @@ BEGIN
       END IF;
       v_sec := replace(upper(substring(coalesce(o.sec, '') FROM '^\s*(74\s*A|73|74)')), ' ', '');
       v_fy_start := public.notice_fy_start(o.fy);
+      -- P6. A DRC-03 paid in the matter settles a confirmed demand only once it is
+      -- adjusted against it in DRC-03A (rule 142(2B)); the liability register is not read.
+      FOR h IN
+        SELECT df.arn, df.filed_date AS d, df.cause_of_payment AS cause
+          FROM public.drc03_facts df
+         WHERE df.client_id = p_client_id AND df.filed_date IS NOT NULL
+           AND (df.notice_id IN (SELECT (y ->> 'id')::uuid FROM jsonb_array_elements(v_items) y WHERE y ->> 'kind' = 'notice')
+                OR (df.cause_of_payment ~* '(scn|show cause|order|demand|drc[ -]?0?1|drc[ -]?0?7)'
+                    AND df.filed_date >= coalesce((SELECT min(coalesce((y ->> 'issue_date')::date, (y ->> 'date')::date)) FROM jsonb_array_elements(v_items) y
+                                                    WHERE y ->> 'kind' = 'notice' AND y ->> 'own_key' = o.own_key), o.d)))
+      LOOP
+        v_ev := v_ev || jsonb_build_object('date', h.d, 'kind', 'order_check', 'own_key', o.own_key, 'item_id', o.id,
+          'title', 'DRC-03 ' || coalesce(h.arn, '') || ' paid: adjust it against the demand in DRC-03A',
+          'detail', 'A payment by DRC-03 towards a demand confirmed by an order must be adjusted against it in FORM DRC-03A, or the demand stays in the electronic liability register and can be recovered again.'
+                    || coalesce(' Cause given: ' || left(h.cause, 120) || '.', '') || ' Check the liability register on the portal.',
+          'tone', 'warn', 'law', 'rule 142(2B)');
+      END LOOP;
       IF v_sec = '74' AND (v_fy_start IS NULL OR v_fy_start < 2024) THEN
         v_ev := v_ev || jsonb_build_object('date', v_comm + 30, 'kind', 'pay_to_close', 'own_key', o.own_key, 'item_id', o.id,
           'title', 'Last day to pay with a 50% penalty and close',

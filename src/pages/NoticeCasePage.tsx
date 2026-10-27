@@ -31,6 +31,7 @@ import { CaseChainPanel } from '@/components/notices/cases/CaseChainPanel';
 import { WaitingChip } from '@/components/notices/cases/WaitingChip';
 import { OfficerContact } from '@/components/notices/OfficerContact';
 import { AppealWorkspace } from '@/components/notices/cases/AppealWorkspace';
+import { UnreadPapersNote } from '@/components/notices/cases/UnreadPapers';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   caseLabel, loadCase, loadCaseItems, loadKeyDates, markCaseSeen, trackDef, useCaseChain, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
@@ -229,6 +230,9 @@ const NoticeCasePage: React.FC = () => {
           )}
         </div>
       </header>
+
+      <UnreadPapersNote clientId={clientId} caseKey={r.case_key as string}
+        what={side === 'appeal' ? 'The appeal drafts' : 'The overview, the advice and the drafts'} />
 
       {side === 'appeal' && <AppealWorkspace clientId={clientId} caseKey={r.case_key as string} appeals={appeals} all={appealsAll.data} clientName={r.client_name} />}
 

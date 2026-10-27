@@ -306,7 +306,10 @@ WITH base AS (
   SELECT b.*,
          NOT public.notice_is_closed(b.staff_status) AS open_flag,
          (b.reply_date IS NOT NULL) AS replied_flag,
-         coalesce(b.extended_due_date, b.due_date, b.computed_due) AS eff_due,
+         -- 20261027100000 (P3): a portal due date before the issue date is a portal error; the rule's period stands.
+         coalesce(b.extended_due_date, CASE WHEN b.due_date < b.issue_date THEN NULL ELSE b.due_date END, b.computed_due,
+                  CASE WHEN b.due_date < b.issue_date THEN b.issue_date + 30 END, b.due_date) AS eff_due,
+         (b.extended_due_date IS NULL AND b.due_date < b.issue_date) AS due_before_issue,
          coalesce(nullif(b.case_id, ''), nullif(b.reference_number, ''), b.id::text) AS dispute,
          (NOT public.notice_is_closed(b.staff_status) AND b.matter_id IS NULL
           AND coalesce(b.amount_of_demand, 0) > 0) AS exposure_candidate
@@ -332,9 +335,14 @@ SELECT
   d.replied_flag AS is_replied,
   d.eff_due AS effective_due,
   CASE WHEN d.extended_due_date IS NOT NULL THEN 'extended'
+       WHEN d.due_before_issue THEN 'computed'
        WHEN d.due_date IS NOT NULL THEN 'portal'
        WHEN d.computed_due IS NOT NULL THEN 'computed' END AS due_basis,
-  CASE WHEN d.extended_due_date IS NULL AND d.due_date IS NULL AND d.computed_due IS NOT NULL
+  CASE WHEN d.due_before_issue
+       THEN 'The portal''s due date (' || to_char(d.due_date, 'DD Mon YYYY') || ') is before the issue date'
+            || CASE WHEN d.computed_due IS NOT NULL THEN '; the rule''s period is used. Confirm the date on the notice.'
+                    ELSE '; 30 days from the issue date are used. Confirm the date on the notice.' END
+       WHEN d.extended_due_date IS NULL AND d.due_date IS NULL AND d.computed_due IS NOT NULL
        THEN d.clock_basis END AS due_basis_note,
   (d.eff_due - d.today_ist) AS days_to_due,
   -- 20261012100000: an order under appeal has met its clock (the appeal is the task now).

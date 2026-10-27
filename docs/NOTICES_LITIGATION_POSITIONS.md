@@ -772,3 +772,14 @@ Migrations `20261026100000` (limitation, holidays), `20261026110000` (forms, the
 - **Holidays (L15).** `add_working_days` skips the active `gst_holidays` besides Sundays; the national fixed holidays are seeded, the firm adds the rest in Notices · Settings.
 - **Sign-off (L16).** `litigation_rule_confirm`, `notice_form_rule_confirm`, `gst_limitation_year_confirm`, for a GST Manager or the superadmin, set `confirmed_at` / `confirmed_by` and may correct the figure.
 
+
+## 35. The loopholes of the law audit (P2 to P8, "then start p2-p8")
+
+Migration `20261027100000` (plus the parts of `20261026110000` / `120000` named below), test `test_118_loopholes.sql`.
+
+- **P2.** `gst_notices` is open to the public key (no Supabase session), so any write could hide a case. A trigger (`gst_notices_exclusion_guard`) now refuses any change to `excluded_at` / `excluded_reason` / `excluded_scope` / `excluded_by_name` unless it comes through `notice_case_exclude` or `notice_exclude`, which set a transaction flag after checking the level. Closing stays open to staff, as every page closes notices. The person is still named by the browser (`p_actor_id`): the lasting fix is a signed session, an Edge Function issuing a JWT at login so the database knows who acts. That is the firm's decision to make.
+- **P3.** A portal due date before the issue date is taken as a portal error: the rule's period is used, else 30 days from the issue date, and `due_basis_note` says so (`notice_facts`, `20261026110000`). `notice_stale_demands()` lists open demands at New past their date of at least `escalate_demand_rs` (₹5 lakh, a Law rule), on Notices Home for GST Managers and the superadmin. Nothing is e-mailed: the alert engine stays off until the firm turns it on (P1).
+- **P4.** `notice_case_unread_papers()` names a case's papers the assistant could not read (scans needing vision, files that are not PDFs, documents too long), on the case page and the Appeal view. They are not yet named inside the AI's own context, which needs a redeploy of the Edge Functions.
+- **P5.** `notice_case_appeals.pending_days`, shown on the Appeal view. The timeline flags an appeal pending 12 months or more (s.107(13)), and any DRC-13, DRC-16 or DRC-22 after an appeal was filed (s.107(7), s.112(9)).
+- **P6.** On a DRC-07, a DRC-03 linked to the case, or one whose cause names the SCN, order or demand paid since the case began, is flagged to be adjusted in DRC-03A (rule 142(2B)). The liability register is not read: that needs the extension.
+- **P7** (open cases' folders read daily) and **P8**'s private-bucket item need the Chrome extension, so they are left to their own change. P8's matters (none exist) wait on the firm: retire them, or create them from appealed orders. The 399 reply clocks of hidden GSTR-3A notices are left as they are.

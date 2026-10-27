@@ -35,6 +35,11 @@ import { cn } from '@/lib/utils';
 
 const appealTitle = (a: CaseAppeal) => `${a.second_appeal ? 'Second appeal' : 'Appeal'} against ${a.order_form ? `${a.order_form} ` : ''}${a.order_ref ?? a.appeal_key}`;
 
+const pendingText = (days: number) => {
+  const m = Math.floor(days / 30.44);
+  return m >= 1 ? `${m} month${m === 1 ? '' : 's'}${m >= 12 ? ' (decision due within a year, s.107(13))' : ''}` : `${days} day${days === 1 ? '' : 's'}`;
+};
+
 const PHASE_LINE: Record<AppealPhase, string> = {
   preparing: 'Not filed yet',
   late: 'Not filed yet; the three months are over, a delay can still be condoned',
@@ -79,6 +84,9 @@ const AppealFacts: React.FC<{ appeal: CaseAppeal; phase: AppealPhase }> = ({ app
     [a.status === 'filed' ? 'Three months ran to' : 'Last day to appeal', a.last_day ? fmtDate(a.last_day) : null],
     ['Appeal', a.arn ? <span className="font-mono text-[13px]">{a.arn}</span> : null],
     ['Filed on', a.filed_on ? fmtDate(a.filed_on) : null],
+    // P5: s.107(13) asks for a decision within a year where possible.
+    ['Pending for', phase === 'filed' && a.pending_days != null
+      ? <span className={a.pending_days >= 365 ? 'text-warning' : undefined}>{pendingText(a.pending_days)}</span> : null],
     ['Tax in dispute', a.disputed_tax ? fmtInr(a.disputed_tax) : null],
     ['Total in dispute', a.disputed_total ? fmtInr(a.disputed_total) : a.demand ? fmtInr(a.demand) : null],
     ['Pre-deposit', a.predeposit ? `${fmtInr(a.predeposit)}${a.predeposit_pct ? ` (${a.predeposit_pct}%)` : ''}` : null],
