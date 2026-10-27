@@ -24,7 +24,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  CalendarClock, Check, ChevronDown, ExternalLink, EyeOff, FileText, Gavel, Hourglass, Loader2, Mail, MoreHorizontal, RefreshCw, Scale, UserPlus,
+  CalendarClock, Check, ChevronDown, ExternalLink, EyeOff, FileText, Gavel, Hourglass, Info, Loader2, Mail, MoreHorizontal, RefreshCw, Scale, UserPlus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -44,6 +44,7 @@ import { closeReasonText, fmtDate, fmtDateTime, fmtInrShort, noticeTitle, plural
 import { AssignPopover } from '@/components/notices/AssignPopover';
 import { StagePicker } from '@/components/notices/StagePicker';
 import { OwnerChip } from '@/components/notices/OwnerChip';
+import { StatusStrip } from '@/components/notices/cases/StatusStrip';
 import { LogReplyDialog } from '@/components/notices/actions/LogReplyDialog';
 import { LogOrderDialog } from '@/components/notices/actions/LogOrderDialog';
 import { HearingDialog } from '@/components/notices/actions/HearingDialog';
@@ -112,7 +113,7 @@ const NEED: Record<string, { label: string; title: string; tone: 'destructive' |
 function ResponseNeedChip({ need }: { need: string | null | undefined }) {
   const d = need ? NEED[need] : undefined;
   if (!d) return null;
-  return <Badge variant={d.tone} className="text-[11px]" title={d.title}>{d.label}<span className="sr-only">: {d.title.toLowerCase()}</span></Badge>;
+  return <Badge variant={d.tone} className="text-xs" title={d.title}>{d.label}<span className="sr-only">: {d.title.toLowerCase()}</span></Badge>;
 }
 
 function toRef(ws: Workspace): NoticeRef {
@@ -133,25 +134,39 @@ const DRAFT_STATUS: Record<string, string> = {
 /** The header's due chip: overdue / due soon / replied / none (U-42-4: said once, here). */
 function DueChip({ ws }: { ws: Workspace }) {
   const f = ws.fact;
-  if (f.stage === 'closed') return <Badge variant="secondary" className="text-[11px]">Closed{ws.notice.close_reason ? ` · ${closeReasonText(ws.notice.close_reason).replace('Closed automatically: ', 'auto: ')}` : ''}</Badge>;
-  if (f.reply_date) return <Badge variant="success" className="text-[11px]">Replied {fmtDate(f.reply_date)}</Badge>;
+  if (f.stage === 'closed') return <Badge variant="secondary" className="text-xs">Closed{ws.notice.close_reason ? ` · ${closeReasonText(ws.notice.close_reason).replace('Closed automatically: ', 'auto: ')}` : ''}</Badge>;
+  if (f.reply_date) return <Badge variant="success" className="text-xs">Replied {fmtDate(f.reply_date)}</Badge>;
   // An order under appeal has met its clock (20261012100000): the appeal is the task now.
-  if (f.stage === 'appeal') return <Badge variant="info" className="text-[11px]">In appeal</Badge>;
+  if (f.stage === 'appeal') return <Badge variant="info" className="text-xs">In appeal</Badge>;
   // A type that needs no reply runs on no reply clock (contract A): no due chip.
   if (f.response_need === 'none') return null;
-  if (!f.effective_due) return <Badge variant="secondary" className="text-[11px]">No due date</Badge>;
+  if (!f.effective_due) return <Badge variant="secondary" className="text-xs">No due date</Badge>;
   const d = f.days_to_due ?? 0;
   return (
-    <Badge variant={d < 0 ? 'destructive' : d <= 7 ? 'warning' : 'secondary'} className="text-[11px]">
+    <Badge variant={d < 0 ? 'destructive' : d <= 7 ? 'warning' : 'secondary'} className="text-xs">
       {d < 0 ? `Overdue ${-d} d` : d === 0 ? 'Due today' : `Due in ${d} d`} · {fmtDate(f.effective_due)}{f.due_basis === 'computed' ? ' (computed)' : f.due_basis === 'extended' ? ' (extended)' : ''}
     </Badge>
+  );
+}
+
+/** A note with a heading that says it in a line and the reason under it (27 October 2026: no truncated one-line walls). */
+function Callout({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <section className="flex flex-wrap items-start gap-3 rounded-lg border border-info/40 bg-info/5 px-4 py-3">
+      <Info className="mt-0.5 h-5 w-5 shrink-0 text-info" aria-hidden />
+      <div className="min-w-0 flex-1 basis-80">
+        <h2 className="text-[15px] font-semibold leading-snug">{title}</h2>
+        <p className="mt-0.5 text-sm leading-relaxed text-foreground/80">{children}</p>
+      </div>
+      {action && <div className="shrink-0 self-center">{action}</div>}
+    </section>
   );
 }
 
 /** Why the page offers the drafting it does, once a reply is no longer what is being prepared. */
 function DraftingNote({ phase, replyDate, appealHref, underAppeal }: { phase: ReturnType<typeof draftingPhase>; replyDate: string | null; appealHref: string | null; underAppeal: boolean }) {
   const appeal = appealHref && (
-    <Button size="sm" variant="outline" className={cn(WS_BTN, 'ml-2')} asChild><Link to={appealHref}><Scale className="h-3.5 w-3.5" /> {underAppeal ? 'Open the appeal' : 'Prepare the appeal'}</Link></Button>
+    <Button size="sm" variant="outline" className={WS_BTN} asChild><Link to={appealHref}><Scale className="h-3.5 w-3.5" /> {underAppeal ? 'Open the appeal' : 'Prepare the appeal'}</Link></Button>
   );
   if (phase === 'order') {
     return (
@@ -169,10 +184,18 @@ function DraftingNote({ phase, replyDate, appealHref, underAppeal }: { phase: Re
     );
   }
   if (phase === 'moved_on') {
-    return <Note tone="info">The proceedings on this notice have moved on to the order{underAppeal ? ' and its appeal' : ''}, so no reply is drafted for it now; its drafts stay here to read.{appeal}</Note>;
+    return (
+      <Callout title={`The proceedings have moved on to the order${underAppeal ? ' and its appeal' : ''}`} action={appeal}>
+        No reply is drafted for this notice now; its drafts stay here to read.
+      </Callout>
+    );
   }
   if (phase === 'replied') {
-    return <Note tone="info">The reply was filed{replyDate ? ` on ${fmtDate(replyDate)}` : ''}, so its draft stays here as it was. Drafting opens again for a written submission once a hearing is fixed.</Note>;
+    return (
+      <Callout title={`The reply was filed${replyDate ? ` on ${fmtDate(replyDate)}` : ''}`}>
+        Its draft stays here as it was. Drafting opens again for a written submission once a hearing is fixed.
+      </Callout>
+    );
   }
   return null;
 }
@@ -388,58 +411,17 @@ const NoticeWorkspacePage: React.FC = () => {
   return (
     <NoticesShell section="Notice" record crumbs={crumbs}>
       <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-1">
-          <h1 className="font-heading text-lg font-bold leading-tight sm:text-xl">{title}</h1>
-          <p className="text-xs text-muted-foreground">
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <h1 className="font-heading text-xl font-bold leading-tight sm:text-2xl">{title}</h1>
+          <p className="text-sm text-muted-foreground">
             {n.reference_number && <>Ref <span className="font-mono">{n.reference_number}</span> · </>}
             {n.case_id && <>Case <span className="font-mono">{n.case_id}</span> · </>}
             {n.din && <>DIN <span className="font-mono">{n.din}</span> · </>}
             {n.issue_date ? `issued ${fmtDate(n.issue_date)}` : 'issue date not known'}{n.issued_by ? ` by ${n.issued_by}` : ''}
             {n.portal_key?.startsWith('manual:') ? ' · typed in' : ''}
-            {n.pdf_url && <> · <a href={n.pdf_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-primary hover:underline">PDF <ExternalLink className="h-3 w-3" /></a></>}
+            {n.pdf_url && <> · <a href={n.pdf_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 font-medium text-primary hover:underline">PDF <ExternalLink className="h-3.5 w-3.5" /></a></>}
           </p>
-          {n.description && <p className="line-clamp-2 text-sm" title={n.description}>{sentenceCase(n.description)}</p>}
-          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-            <DueChip ws={ws} />
-            <ResponseNeedChip need={f.response_need} />
-            {canEdit ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button type="button" className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    <Badge variant={f.effective_priority === 'High' ? 'destructive' : f.effective_priority === 'Medium' ? 'warning' : 'secondary'} className="gap-1 text-[11px]">
-                      Priority: {f.effective_priority ?? 'not set'}{!n.priority && f.default_priority ? ' (form default)' : ''} <ChevronDown className="h-3 w-3" />
-                    </Badge>
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  {(['High', 'Medium', 'Low'] as const).map((p) => (
-                    <DropdownMenuItem key={p} onSelect={async () => { if (user) { await setPriority(n.id, p, user).catch((e) => toast.error(String(e))); reload(); } }}>{p}</DropdownMenuItem>
-                  ))}
-                  {n.priority && <DropdownMenuItem onSelect={async () => { if (user) { await setPriority(n.id, null, user).catch((e) => toast.error(String(e))); reload(); } }}>Use the form's default</DropdownMenuItem>}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : f.effective_priority && <Badge variant="secondary" className="text-[11px]">Priority: {f.effective_priority}</Badge>}
-            {canEdit ? (
-              <AssignPopover currentOwnerId={n.assign_to_user_id} suggestedName={ws.client?.assigned_accountant} onAssign={assign} align="start">
-                <button type="button" className="rounded-md border px-1.5 py-0.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  <span className="sr-only">Owner: </span><OwnerChip name={n.assign_to} showName /><span className="sr-only">. Change owner</span>
-                </button>
-              </AssignPopover>
-            ) : <OwnerChip name={n.assign_to} showName />}
-            <StagePicker value={f.stage} since={f.stage_changed_at} by={f.stage_changed_by} disabled={!canEdit} onChange={changeStage} />
-          </div>
-          <KeyFactsLine ws={ws}>
-            {refundLink ? (
-              <Link to={refundLink} className="font-medium text-primary hover:underline">
-                Refund page{caseRow.data ? `: ${caseRow.data.notices} notice${caseRow.data.notices === 1 ? '' : 's'}${caseRow.data.documents ? `, ${caseRow.data.documents} document${caseRow.data.documents === 1 ? '' : 's'}` : ''}` : ''} →
-              </Link>
-            ) : caseKey && caseRow.data && ((caseRow.data.notices ?? 0) > 1 || (caseRow.data.documents ?? 0) > 0) && (
-              <Link to={caseHref(n.client_id, caseKey)} className="font-medium text-primary hover:underline">
-                Case: {caseRow.data.notices} notice{caseRow.data.notices === 1 ? '' : 's'}{caseRow.data.documents ? `, ${caseRow.data.documents} document${caseRow.data.documents === 1 ? '' : 's'}` : ''}
-                {(caseRow.data.new_items ?? 0) > 0 ? ` · ${caseRow.data.new_items} new` : ''} →
-              </Link>
-            )}
-          </KeyFactsLine>
+          {n.description && <p className="line-clamp-2 text-[15px]" title={n.description}>{sentenceCase(n.description)}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canEdit && !closed && track !== 'other' && <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setDialog('docs')}><Mail className="h-3.5 w-3.5" /> Ask client</Button>}
@@ -463,6 +445,49 @@ const NoticeWorkspacePage: React.FC = () => {
           {primary}
         </div>
       </header>
+
+      <StatusStrip cells={[
+        { label: 'Reply', children: <><DueChip ws={ws} /><ResponseNeedChip need={f.response_need} /></> },
+        { label: 'Stage', children: <StagePicker value={f.stage} since={f.stage_changed_at} by={f.stage_changed_by} disabled={!canEdit} onChange={changeStage} /> },
+        { label: 'Priority', children: canEdit ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <Badge variant={f.effective_priority === 'High' ? 'destructive' : f.effective_priority === 'Medium' ? 'warning' : 'secondary'} className="gap-1 text-xs">
+                  {f.effective_priority ?? 'not set'}{!n.priority && f.default_priority ? ' (form default)' : ''} <ChevronDown className="h-3.5 w-3.5" />
+                </Badge>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {(['High', 'Medium', 'Low'] as const).map((p) => (
+                <DropdownMenuItem key={p} onSelect={async () => { if (user) { await setPriority(n.id, p, user).catch((e) => toast.error(String(e))); reload(); } }}>{p}</DropdownMenuItem>
+              ))}
+              {n.priority && <DropdownMenuItem onSelect={async () => { if (user) { await setPriority(n.id, null, user).catch((e) => toast.error(String(e))); reload(); } }}>Use the form's default</DropdownMenuItem>}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : <Badge variant="secondary" className="text-xs">{f.effective_priority ?? 'not set'}</Badge> },
+        { label: 'Owner', children: canEdit ? (
+          <AssignPopover currentOwnerId={n.assign_to_user_id} suggestedName={ws.client?.assigned_accountant} onAssign={assign} align="start">
+            <button type="button" className="rounded-md border px-1.5 py-0.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <span className="sr-only">Owner: </span><OwnerChip name={n.assign_to} showName className="[&>span:last-child]:text-sm" /><span className="sr-only">. Change owner</span>
+            </button>
+          </AssignPopover>
+        ) : <OwnerChip name={n.assign_to} showName className="[&>span:last-child]:text-sm" /> },
+      ]} />
+      <div className="text-sm [&_p]:text-sm">
+        <KeyFactsLine ws={ws}>
+          {refundLink ? (
+            <Link to={refundLink} className="font-medium text-primary hover:underline">
+              Refund page{caseRow.data ? `: ${caseRow.data.notices} notice${caseRow.data.notices === 1 ? '' : 's'}${caseRow.data.documents ? `, ${caseRow.data.documents} document${caseRow.data.documents === 1 ? '' : 's'}` : ''}` : ''} →
+            </Link>
+          ) : caseKey && caseRow.data && ((caseRow.data.notices ?? 0) > 1 || (caseRow.data.documents ?? 0) > 0) && (
+            <Link to={caseHref(n.client_id, caseKey)} className="font-medium text-primary hover:underline">
+              Case: {caseRow.data.notices} notice{caseRow.data.notices === 1 ? '' : 's'}{caseRow.data.documents ? `, ${caseRow.data.documents} document${caseRow.data.documents === 1 ? '' : 's'}` : ''}
+              {(caseRow.data.new_items ?? 0) > 0 ? ` · ${caseRow.data.new_items} new` : ''} →
+            </Link>
+          )}
+        </KeyFactsLine>
+      </div>
 
       <NoticeExcludeDialog noticeId={n.id} open={hiding} onOpenChange={setHiding}
         onDone={() => { qc.invalidateQueries(); navigate('/notices-all'); }} />
@@ -492,19 +517,19 @@ const NoticeWorkspacePage: React.FC = () => {
                   <TabsTrigger value={t.key} className={cn(TAB_TRIGGER_CLASS, 'h-8 gap-1.5 px-3')}
                     title={step ? STEP_HINT[t.key] : undefined}>
                     {step && (
-                      <span className={cn('flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold',
+                      <span className={cn('flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold',
                         done ? 'bg-success text-success-foreground' : 'bg-card/40')} aria-hidden>
                         {done ? <Check className="h-3 w-3" /> : step}
                       </span>
                     )}
-                    {t.key === 'draft' && phase === 'order' ? 'Letters' : t.label}{count > 0 && <span className="rounded-full bg-card/30 px-1.5 text-[10px] font-semibold tabular-nums">{count}</span>}
+                    {t.key === 'draft' && phase === 'order' ? 'Letters' : t.label}{count > 0 && <span className="rounded-full bg-card/30 px-1.5 text-xs font-semibold tabular-nums">{count}</span>}
                     {step && done && <span className="sr-only"> (done)</span>}
                   </TabsTrigger>
                 </React.Fragment>
               );
             })}
           </TabsList>
-          {stepLine && <p className="text-xs text-muted-foreground">{stepLine}</p>}
+          {stepLine && <p className="text-sm text-muted-foreground">{stepLine}</p>}
           <div className="rounded-lg border bg-card p-3">
             <TabsContent value="issues" className="mt-0"><IssuesTab noticeId={n.id} issues={ws.issues} canEdit={canEdit} onChanged={reload} /></TabsContent>
             <TabsContent value="evidence" className="mt-0"><EvidenceTab ws={ws} canEdit={canEdit} onChanged={reload} /></TabsContent>
@@ -525,7 +550,7 @@ const NoticeWorkspacePage: React.FC = () => {
           <NoticeReadCard ws={ws} reading={rq.data} loading={rq.isLoading} error={rq.error} canEdit={canEdit} onChanged={reload}
             caseOverview={caseOv.data} readingOnly={!lit} rail />
           {(['payments', 'hearings', 'deadlines'] as const).some((k) => !shownTabs.some((t) => t.key === k) && tabsFor(track, needsReply).includes(k)) && (
-            <p className="px-1 text-[11px] text-muted-foreground">
+            <p className="px-1 text-xs text-muted-foreground">
               {(['payments', 'hearings', 'deadlines'] as const).filter((k) => !shownTabs.some((t) => t.key === k) && tabsFor(track, needsReply).includes(k))
                 .map((k) => TABS.find((t) => t.key === k)?.label.toLowerCase()).join(', ')} appear as tabs once there is something to show.{' '}
               {canEdit && !closed && lit && <button type="button" className="text-primary hover:underline" onClick={() => setDialog('hearing')}>Fix a hearing</button>}

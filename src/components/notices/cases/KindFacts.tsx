@@ -55,7 +55,7 @@ export const KindSteps: React.FC<{ track: Track; forms: string[]; hasApplication
         return (
           <li key={s.key} className="flex items-center gap-1.5">
             {i > 0 && <span className="h-px w-4 bg-border" aria-hidden />}
-            <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]', done ? 'border-success/50 bg-success/10 font-medium text-foreground' : 'text-muted-foreground')}>
+            <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs', done ? 'border-success/50 bg-success/10 font-medium text-foreground' : 'text-muted-foreground')}>
               {done && <Check className="h-3 w-3 text-success" aria-hidden />}{s.label}
             </span>
           </li>

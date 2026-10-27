@@ -73,15 +73,15 @@ const IssueFacts: React.FC<{ i: NoticeIssue; n: number; type: IssueType | undefi
       {!i.issue_code && ['open', 'contest'].includes(i.status) && <div className="text-xs text-muted-foreground">No issue type yet — set one to get its evidence and documents</div>}
       {(period || i.detail) && <div className="break-words text-xs text-muted-foreground">{[period, i.detail].filter(Boolean).join(' · ')}</div>}
       <div className="flex flex-wrap items-center gap-1 pt-0.5">
-        <Badge variant={src.tone} className="whitespace-nowrap px-1.5 py-0 text-[10px] font-normal" title={src.title}>{src.label}</Badge>
+        <Badge variant={src.tone} className="whitespace-nowrap px-1.5 py-0 text-xs font-normal" title={src.title}>{src.label}</Badge>
         {canEdit && i.source === 'extracted' && !i.verified && (
-          <Button type="button" size="sm" variant="outline" className="h-6 gap-1 px-2 text-[11px]" disabled={busy} onClick={onConfirm}>
+          <Button type="button" size="sm" variant="outline" className="h-6 gap-1 px-2 text-xs" disabled={busy} onClick={onConfirm}>
             {busy && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}Confirm<span className="sr-only"> issue {n}</span>
           </Button>
         )}
       </div>
       {i.quote && (
-        <p className="line-clamp-3 break-words text-[11px] italic text-muted-foreground" title={i.quote}>
+        <p className="line-clamp-3 break-words text-xs italic text-muted-foreground" title={i.quote}>
           {i.page ? `Page ${i.page}: ` : ''}“{i.quote}”
         </p>
       )}
@@ -91,7 +91,7 @@ const IssueFacts: React.FC<{ i: NoticeIssue; n: number; type: IssueType | undefi
 
 const ByHead: React.FC<{ i: NoticeIssue; n: number; open: boolean; onToggle: () => void }> = ({ i, n, open, onToggle }) =>
   demandRows(i.demand).length ? (
-    <button type="button" className="text-[11px] font-medium text-primary underline underline-offset-2" aria-expanded={open}
+    <button type="button" className="text-xs font-medium text-primary underline underline-offset-2" aria-expanded={open}
       aria-controls={`issue-demand-${i.id}`} onClick={onToggle}>
       {open ? 'Hide' : 'By head'}<span className="sr-only"> for issue {n}</span>
     </button>
@@ -175,7 +175,7 @@ export const IssuesTab: React.FC<{ noticeId: string; issues: NoticeIssue[]; canE
                   <div className="break-words font-medium">{n + 1}. {i.title}</div>
                   <IssueFacts i={i} n={n + 1} type={typeOf(i.issue_code)} canEdit={canEdit} busy={busy === i.id} onConfirm={() => confirmIssue(i)} />
                 </div>
-                <Badge variant={STATUS[i.status]?.tone ?? 'secondary'} className="shrink-0 text-[11px]">{STATUS[i.status]?.label ?? i.status}</Badge>
+                <Badge variant={STATUS[i.status]?.tone ?? 'secondary'} className="shrink-0 text-xs">{STATUS[i.status]?.label ?? i.status}</Badge>
               </div>
               <dl className="mt-1.5 grid grid-cols-2 gap-x-3 text-xs">
                 <dt className="text-muted-foreground">Per notice</dt><dd className="text-right tabular-nums">{fmtInr(i.amount)}</dd>
@@ -185,7 +185,7 @@ export const IssuesTab: React.FC<{ noticeId: string; issues: NoticeIssue[]; canE
               <div className="mt-1"><ByHead i={i} n={n + 1} open={shown.has(i.id)} onToggle={() => toggle(i.id)} /></div>
               {shown.has(i.id) && <div id={`issue-demand-${i.id}`} className="mt-1"><DemandTable demand={i.demand} caption={`Demand by head for issue ${n + 1}`} /></div>}
               {i.position && <p className="mt-1.5 break-words text-xs">{i.position}</p>}
-              {i.annexure && <div className="mt-1 flex flex-wrap gap-1">{i.annexure.split(/[,;]\s*/).map((a) => <Badge key={a} variant="secondary" className="text-[10px]">{a}</Badge>)}</div>}
+              {i.annexure && <div className="mt-1 flex flex-wrap gap-1">{i.annexure.split(/[,;]\s*/).map((a) => <Badge key={a} variant="secondary" className="text-xs">{a}</Badge>)}</div>}
               {canEdit && (
                 <div className="mt-1.5 flex justify-end gap-1">
                   <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setEditing(toEditing(i))}><Pencil className="mr-1 h-3.5 w-3.5" /> Edit<span className="sr-only"> issue {n + 1}</span></Button>
@@ -226,13 +226,13 @@ export const IssuesTab: React.FC<{ noticeId: string; issues: NoticeIssue[]; canE
                     </td>
                     <td className={cn(WS_TD, 'min-w-[14rem] align-top text-xs')}>
                       {i.position || <span className="text-muted-foreground">—</span>}
-                      {i.annexure && <div className="mt-0.5 flex flex-wrap gap-1">{i.annexure.split(/[,;]\s*/).map((a) => <Badge key={a} variant="secondary" className="text-[10px]">{a}</Badge>)}</div>}
+                      {i.annexure && <div className="mt-0.5 flex flex-wrap gap-1">{i.annexure.split(/[,;]\s*/).map((a) => <Badge key={a} variant="secondary" className="text-xs">{a}</Badge>)}</div>}
                     </td>
                     <td className={cn(WS_TD_NUM, 'align-top', Number(i.explained_amount) > 0 && 'font-semibold text-success-strong')}>
                       <div>{fmtInr(i.explained_amount)}</div>
-                      {i.explained_by && <div className="text-[11px] font-normal text-muted-foreground" title="Set by an annexure on the Evidence tab; a figure typed here replaces it">from evidence</div>}
+                      {i.explained_by && <div className="text-xs font-normal text-muted-foreground" title="Set by an annexure on the Evidence tab; a figure typed here replaces it">from evidence</div>}
                     </td>
-                    <td className={cn(WS_TD, 'align-top')}><Badge variant={STATUS[i.status]?.tone ?? 'secondary'} className="text-[11px]">{STATUS[i.status]?.label ?? i.status}</Badge></td>
+                    <td className={cn(WS_TD, 'align-top')}><Badge variant={STATUS[i.status]?.tone ?? 'secondary'} className="text-xs">{STATUS[i.status]?.label ?? i.status}</Badge></td>
                     {canEdit && (
                       <td className={cn(WS_TD, 'whitespace-nowrap align-top')}>
                         <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit issue ${n + 1}`} onClick={() => setEditing(toEditing(i))}><Pencil className="h-3.5 w-3.5" /></Button>
@@ -294,7 +294,7 @@ export const IssuesTab: React.FC<{ noticeId: string; issues: NoticeIssue[]; canE
                     })}
                   </SelectContent>
                 </Select>
-                <p className="text-[11px] text-muted-foreground">The type decides the evidence the Evidence tab builds and the documents asked of the client.</p>
+                <p className="text-xs text-muted-foreground">The type decides the evidence the Evidence tab builds and the documents asked of the client.</p>
               </div>
               <div className="space-y-1 sm:col-span-2">
                 <Label htmlFor="issue-title" className="text-xs">Issue <span className="text-destructive">*</span></Label>

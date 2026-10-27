@@ -41,7 +41,7 @@ export const CaseLinkSuggest: React.FC<{ noticeId: string; clientId: string; cas
             <div className="min-w-0 flex-1 text-xs">
               <Link to={noticeCaseHref({ id: o.notice_id as string })} className="font-medium text-primary hover:underline">{o.form_code} · {o.reference}</Link>
               <span className="text-muted-foreground">{o.issue_date ? ` · ${fmtDate(o.issue_date)}` : ''}{o.financial_year ? ` · FY ${o.financial_year}` : ''}{o.amount ? ` · ${fmtInrShort(o.amount)}` : ''}</span>
-              <div className="truncate text-[11px] text-muted-foreground">{o.reasons.join(' · ')}</div>
+              <div className="truncate text-xs text-muted-foreground">{o.reasons.join(' · ')}</div>
             </div>
             <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => link(o.case_id)}>Link</Button>
           </li>

@@ -63,7 +63,7 @@ export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appe
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Appeals of the case">
           {appeals.map((a) => (
             <button key={a.appeal_key} type="button" aria-pressed={a.appeal_key === appeal.appeal_key} onClick={() => { setPicked(a.appeal_key); setSeed(null); }}
-              className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-medium',
+              className={cn('rounded-full border px-2.5 py-0.5 text-xs font-medium',
                 a.appeal_key === appeal.appeal_key ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground')}>
               {appealTitle(a)}
             </button>
@@ -103,7 +103,7 @@ const AppealFacts: React.FC<{ appeal: CaseAppeal; phase: AppealPhase }> = ({ app
       description={a.status === 'filed' ? (a.portal_status ?? PHASE_LINE[phase]) : PHASE_LINE[phase]}
       info="What the portal records for the appeal and the order it is against. The documents below are drafted against this order, and stay with it once the appeal is filed."
       actions={<>
-        <Badge variant={phase === 'filed' ? 'info' : phase === 'preparing' || phase === 'late' ? 'warning' : 'secondary'} className="text-[11px]">
+        <Badge variant={phase === 'filed' ? 'info' : phase === 'preparing' || phase === 'late' ? 'warning' : 'secondary'} className="text-xs">
           {phase === 'filed' ? 'Appeal filed' : phase === 'withdrawn' ? 'Appeal withdrawn' : phase === 'decided' ? 'Appeal decided' : phase === 'time_over' ? 'Time over' : 'To file'}
         </Badge>
         {a.order_notice_id && (
@@ -113,7 +113,7 @@ const AppealFacts: React.FC<{ appeal: CaseAppeal; phase: AppealPhase }> = ({ app
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
         {facts.filter(([, v]) => v).map(([k, v]) => (
           <div key={k} className="min-w-0">
-            <dt className="text-[11px] font-medium text-muted-foreground">{k}</dt>
+            <dt className="text-xs font-medium text-muted-foreground">{k}</dt>
             <dd className="break-words text-sm font-semibold">{v}</dd>
           </div>
         ))}
@@ -167,13 +167,13 @@ const TribunalAppealRecord: React.FC<{ clientId: string; caseKey: string; appeal
     <SectionCard title="Record the Tribunal appeal" description={`Against ${appeal.order_ref ?? appeal.appeal_key}`}
       info="The appeal then counts as filed on the case's timeline, its pre-deposit is checked, and the order's appeal clock is met.">
       <div className="grid gap-2 sm:grid-cols-3">
-        <label className="text-[11px] font-medium text-muted-foreground">Filed on
+        <label className="text-xs font-medium text-muted-foreground">Filed on
           <Input type="date" value={filedOn} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setFiledOn(e.target.value)} />
         </label>
-        <label className="text-[11px] font-medium text-muted-foreground">Appeal number (optional)
+        <label className="text-xs font-medium text-muted-foreground">Appeal number (optional)
           <Input value={arn} onChange={(e) => setArn(e.target.value)} />
         </label>
-        <label className="text-[11px] font-medium text-muted-foreground">Pre-deposit paid, ₹ (optional)
+        <label className="text-xs font-medium text-muted-foreground">Pre-deposit paid, ₹ (optional)
           <Input inputMode="decimal" value={deposit} onChange={(e) => setDeposit(e.target.value)} />
         </label>
       </div>
@@ -229,7 +229,7 @@ const AppealDocuments: React.FC<{ clientId: string; caseKey: string; appeal: Cas
             const head = appeal.drafts?.[d.key] ?? (byDoc.get(d.key)?.[0] ? { status: byDoc.get(d.key)?.[0]?.status } : undefined);
             return (
               <button key={d.key} type="button" role="tab" aria-selected={doc === d.key} onClick={() => setDoc(d.key)} title={d.hint}
-                className={cn('inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium',
+                className={cn('inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium',
                   doc === d.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
                 {d.label}{!d.state.open && <span className="sr-only"> (to read only)</span>}
                 {head?.status === 'final' ? <Check className="h-3 w-3" aria-label="final" /> : head ? <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-label="drafted" /> : null}
@@ -402,7 +402,7 @@ const DocEditor: React.FC<{
           <Textarea value={text} onChange={(e) => setText(e.target.value)} aria-label={label} readOnly={readOnly}
             className="min-h-[28rem] font-serif text-[14px] leading-relaxed" spellCheck />
         )}
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {latest ? <>Version {latest.version}{latest.status === 'final' ? ' (final)' : ''}, {latest.source === 'ai' ? `drafted by the AI for ${latest.author_name ?? 'staff'}` : `saved by ${latest.author_name ?? 'staff'}`}, {fmtDateTime(latest.created_at)}. </> : null}
           {!readOnly && 'Hyphens and dashes are taken out on saving, the firm\'s rule for what is filed.'}
         </p>
@@ -410,25 +410,25 @@ const DocEditor: React.FC<{
 
       {!readOnly && <aside className="min-w-0 space-y-3" aria-label="For the AI">
         <div className="space-y-1">
-          <label htmlFor={`guide-${doc}`} className="text-[11px] font-medium text-muted-foreground">Guidance for the AI (optional)</label>
+          <label htmlFor={`guide-${doc}`} className="text-xs font-medium text-muted-foreground">Guidance for the AI (optional)</label>
           <Textarea id={`guide-${doc}`} value={guide} onChange={(e) => setGuide(e.target.value)} rows={4} className="text-xs"
             placeholder={doc === 'grounds' ? 'e.g. Lead with limitation; add a ground on the supplier\'s cancellation.' : doc === 'submission' ? 'e.g. Rely on the purchase invoices and the bank statement; keep it to 8 pages.' : 'e.g. Mention that no personal hearing was given.'} />
         </div>
         {notes.cautions.length > 0 && (
           <div className="space-y-1">
-            <div className="text-[11px] font-medium text-muted-foreground">Cautions from the AI</div>
+            <div className="text-xs font-medium text-muted-foreground">Cautions from the AI</div>
             <ul className="list-disc space-y-1 pl-4 text-xs">{notes.cautions.map((c) => <li key={c}>{c}</li>)}</ul>
           </div>
         )}
         {notes.questions.length > 0 && (
           <div className="space-y-1">
-            <div className="text-[11px] font-medium text-muted-foreground">To ask the client</div>
+            <div className="text-xs font-medium text-muted-foreground">To ask the client</div>
             <ul className="list-disc space-y-1 pl-4 text-xs">{notes.questions.map((c) => <li key={c}>{c}</li>)}</ul>
           </div>
         )}
         {notes.precedents.length > 0 && (
           <div className="space-y-1">
-            <div className="text-[11px] font-medium text-muted-foreground">Earlier work it drew on</div>
+            <div className="text-xs font-medium text-muted-foreground">Earlier work it drew on</div>
             <ul className="space-y-1 text-xs">
               {notes.precedents.map((p) => (
                 <li key={p.id}>{p.title || 'Untitled'} <span className="text-muted-foreground">({p.kind === 'filed_appeal' ? 'appeal filed' : p.kind === 'reply' ? 'reply filed' : 'final draft'}, {p.same_client ? 'this client' : 'another client'})</span></li>

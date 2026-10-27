@@ -29,6 +29,7 @@ import { NextStepCard } from '@/components/notices/cases/NextStepCard';
 import { CaseAdminActions } from '@/components/notices/cases/CaseAdminActions';
 import { CaseChainPanel } from '@/components/notices/cases/CaseChainPanel';
 import { WaitingChip } from '@/components/notices/cases/WaitingChip';
+import { StatusStrip } from '@/components/notices/cases/StatusStrip';
 import { OfficerContact } from '@/components/notices/OfficerContact';
 import { AppealWorkspace } from '@/components/notices/cases/AppealWorkspace';
 import { UnreadPapersNote } from '@/components/notices/cases/UnreadPapers';
@@ -42,46 +43,68 @@ import { refundIndexKey, useRefundIndex } from '@/components/notices/reports/led
 import { RefundWhenChip } from '@/components/notices/reports/RefundBits';
 import { appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
 
-const LIT_FIELDS: { key: OverviewKey; label: string; fmt?: (v: string) => string; mono?: boolean }[] = [
-  { key: 'section_of_law', label: 'Section' },
-  { key: 'financial_year', label: 'Financial year', fmt: fmtFy },
-  { key: 'period_from', label: 'Tax period from', fmt: fmtDate },
-  { key: 'period_to', label: 'Tax period to', fmt: fmtDate },
-  { key: 'din', label: 'DIN', mono: true },
-  { key: 'reply_due', label: 'Reply due', fmt: fmtDate },
-  { key: 'hearing_date', label: 'Hearing', fmt: fmtDate },
-  { key: 'officer', label: 'Officer' },
-  { key: 'amount_of_demand', label: 'Amount of demand', fmt: (v) => fmtInr(Number(v)) },
+type LitField = { key: OverviewKey; label: string; fmt?: (v: string) => string; mono?: boolean; big?: boolean };
+/** The facts in three groups (27 October 2026): what is disputed, the money, who is dealing with it. */
+const LIT_GROUPS: { title: string; fields: LitField[] }[] = [
+  { title: 'The dispute', fields: [
+    { key: 'section_of_law', label: 'Section' },
+    { key: 'financial_year', label: 'Financial year', fmt: fmtFy },
+    { key: 'period_from', label: 'Tax period from', fmt: fmtDate },
+    { key: 'period_to', label: 'Tax period to', fmt: fmtDate },
+  ] },
+  { title: 'The money', fields: [
+    { key: 'amount_of_demand', label: 'Amount of demand', fmt: (v) => fmtInr(Number(v)), big: true },
+  ] },
+  { title: 'The department', fields: [
+    { key: 'officer', label: 'Officer' },
+    { key: 'din', label: 'DIN', mono: true },
+  ] },
 ];
 
-/** A notice or demand's facts, each from the case's notices or what the AI read in its documents. */
+const FactRow: React.FC<{ f: LitField; ov: CaseOverview | undefined }> = ({ f, ov }) => {
+  const v = ov?.fields[f.key];
+  if (!v) return null;
+  const value = f.fmt ? f.fmt(v.value) : v.value;
+  return (
+    <div className="min-w-0 space-y-0.5">
+      <dt className="text-xs text-muted-foreground">{f.label}</dt>
+      <dd className={cn('break-words font-semibold', f.big ? 'text-lg tabular-nums' : 'text-[15px]', f.mono && 'break-all font-mono text-sm')}
+        title={`${v.source === 'ai' ? 'Read by the AI from ' : 'From '}${v.label || 'the case'}`}>
+        {value}
+        {v.source === 'ai' && <Sparkles className="ml-1 inline h-3.5 w-3.5 align-baseline text-primary/60" aria-label="read by the AI" />}
+      </dd>
+      {f.key === 'officer' && <dd><OfficerContact name={v.value} /></dd>}
+    </div>
+  );
+};
+
 /**
  * A notice or demand's facts, each from the case's notices or what the AI read
- * in its documents, one column in the page's side rail. The reply due date and
+ * in its documents, grouped in the page's side rail. The reply due date and
  * the hearing are said once, in the header, so they are not repeated here, and
  * a fact we do not hold is left out rather than shown as a dash.
  */
-export const CaseFactsGrid: React.FC<{ ov: CaseOverview | undefined }> = ({ ov }) => {
-  const shown = LIT_FIELDS.filter((f) => f.key !== 'reply_due' && f.key !== 'hearing_date' && ov?.fields[f.key]);
-  if (!shown.length) return <p className="text-xs text-muted-foreground">Nothing read yet: the facts fill in as the AI reads the case's documents.</p>;
+export const CaseFactsGrid: React.FC<{ ov: CaseOverview | undefined; exposure?: number | null }> = ({ ov, exposure }) => {
+  const groups = LIT_GROUPS.map((g) => ({ ...g, fields: g.fields.filter((f) => ov?.fields[f.key]) }));
+  const hasExposure = Number(exposure) > 0;
+  if (!groups.some((g) => g.fields.length) && !hasExposure) return <p className="text-sm text-muted-foreground">Nothing read yet: the facts fill in as the AI reads the case's documents.</p>;
   return (
-    <dl className="grid grid-cols-1 gap-y-2.5">
-      {shown.map((f) => {
-        const v = ov?.fields[f.key];
-        const value = v ? (f.fmt ? f.fmt(v.value) : v.value) : '';
-        return (
-          <div key={f.key} className="min-w-0 space-y-0.5">
-            <dt className="text-[11px] font-medium text-muted-foreground">{f.label}</dt>
-            <dd className={cn('break-words text-sm font-semibold', f.mono && 'break-all font-mono text-[13px]')}
-              title={v ? `${v.source === 'ai' ? 'Read by the AI from ' : 'From '}${v.label || 'the case'}` : undefined}>
-              {value}
-              {v?.source === 'ai' && <Sparkles className="ml-1 inline h-3 w-3 align-baseline text-primary/60" aria-label="read by the AI" />}
-            </dd>
-            {f.key === 'officer' && v && <dd><OfficerContact name={v.value} /></dd>}
-          </div>
-        );
-      })}
-    </dl>
+    <div className="divide-y">
+      {groups.map((g) => (g.fields.length || (g.title === 'The money' && hasExposure)) ? (
+        <div key={g.title} className="py-2.5 first:pt-0 last:pb-0">
+          <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{g.title}</div>
+          <dl className="grid grid-cols-1 gap-y-2.5">
+            {g.fields.map((f) => <FactRow key={f.key} f={f} ov={ov} />)}
+            {g.title === 'The money' && hasExposure && (
+              <div className="min-w-0 space-y-0.5">
+                <dt className="text-xs text-muted-foreground">Open exposure</dt>
+                <dd className="text-lg font-semibold tabular-nums text-destructive-strong">{fmtInr(Number(exposure))}</dd>
+              </div>
+            )}
+          </dl>
+        </div>
+      ) : null)}
+    </div>
   );
 };
 
@@ -196,27 +219,14 @@ const NoticeCasePage: React.FC = () => {
   return (
     <NoticesShell section="Case" record crumbs={crumbsFor(track, r.form_code ?? (r.case_key === 'REG' ? 'Registration' : 'Case'))}>
       <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-1">
-          <h1 className="font-heading text-lg font-bold leading-tight sm:text-xl">{r.form_code ? `${r.form_code} · ` : ''}{r.title}</h1>
-          <p className="text-xs text-muted-foreground">
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <h1 className="font-heading text-xl font-bold leading-tight sm:text-2xl">{r.form_code ? `${r.form_code} · ` : ''}{r.title}</h1>
+          <p className="text-sm text-muted-foreground">
             {r.case_id ? <>Case <span className="font-mono">{r.case_id}</span> · </> : r.case_key === 'REG' ? 'All registration correspondence · ' : null}
             {track === 'litigation' && fys ? `FY ${fys} · ` : ''}
             {plural(r.notices ?? 0, 'notice')}{r.documents ? `, ${plural(r.documents, 'document')}` : ''}
             {r.first_issue_date ? ` · since ${fmtDate(r.first_issue_date)}` : ''}
           </p>
-          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-            {track === 'refund' && <RefundWhenChip r={refunds.get(refundIndexKey(clientId, r.case_id))} />}
-            <WaitingChip r={r} long />
-            {r.is_open && <StageBadge stage={r.stage} />}
-            {r.is_open && r.next_due && (
-              <Badge variant={r.is_overdue ? 'destructive' : r.is_due_in_7 ? 'warning' : 'secondary'} className="text-[11px]">
-                {r.is_overdue ? 'Overdue' : 'Due'} {fmtDate(r.next_due)}
-              </Badge>
-            )}
-            {r.next_hearing && <Badge variant="warning" className="text-[11px]">Hearing {fmtDate(r.next_hearing)}</Badge>}
-            {newCount > 0 && <Badge variant="info" className="text-[11px]">{newCount} new since last opened</Badge>}
-            {r.is_open && <OwnerChip name={r.assign_to} showName />}
-          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {appeals.length > 0 && (
@@ -237,6 +247,24 @@ const NoticeCasePage: React.FC = () => {
           )}
         </div>
       </header>
+
+      <StatusStrip cells={[
+        { label: 'Where it stands', children: <>
+          {track === 'refund' && <RefundWhenChip r={refunds.get(refundIndexKey(clientId, r.case_id))} />}
+          <WaitingChip r={r} long className="text-xs" />
+          {r.is_open && <StageBadge stage={r.stage} className="text-xs" />}
+        </> },
+        { label: 'Next date', show: !!(r.is_open && r.next_due) || !!r.next_hearing, children: <>
+          {r.is_open && r.next_due && (
+            <Badge variant={r.is_overdue ? 'destructive' : r.is_due_in_7 ? 'warning' : 'secondary'} className="text-xs">
+              {r.is_overdue ? 'Overdue' : 'Due'} {fmtDate(r.next_due)}
+            </Badge>
+          )}
+          {r.next_hearing && <Badge variant="warning" className="text-xs">Hearing {fmtDate(r.next_hearing)}</Badge>}
+        </> },
+        { label: 'Owner', show: !!r.is_open, children: <OwnerChip name={r.assign_to} showName className="[&>span:last-child]:text-sm" /> },
+        { label: 'Since you last opened it', show: newCount > 0, children: <Badge variant="info" className="text-xs">{newCount} new</Badge> },
+      ]} />
 
       <UnreadPapersNote clientId={clientId} caseKey={r.case_key as string}
         what={side === 'appeal' ? 'The appeal drafts' : 'The overview, the advice and the drafts'} />
@@ -259,7 +287,7 @@ const NoticeCasePage: React.FC = () => {
               : items.data ? `${shownItems.length} papers, ${plural(shownDates.length, 'key date')}${upcoming ? ` (${upcoming} upcoming)` : ''}${newCount ? ` · ${newCount} new` : ''}` : undefined}
             actions={<div className="flex flex-wrap items-center gap-2">
               {part && (
-                <button type="button" onClick={() => setPart(null)} className="rounded-full border border-primary bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/20">
+                <button type="button" onClick={() => setPart(null)} className="rounded-full border border-primary bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20">
                   {partMember ? caseLabel(partMember).split(' · ')[0] : 'One case'} only · show all {members.length}
                 </button>
               )}
@@ -287,13 +315,7 @@ const NoticeCasePage: React.FC = () => {
               description={(ov.data?.reading?.queued ?? 0) > 0
                 ? <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" aria-hidden /> AI reading {ov.data?.reading?.queued} documents</span>
                 : ov.data?.reading?.documents ? `AI read ${ov.data.reading.done} of ${ov.data.reading.documents} documents` : undefined}>
-              {ov.isLoading ? <Skeleton className="h-40 w-full" /> : <CaseFactsGrid ov={ov.data} />}
-              {Number(r.exposure) > 0 && (
-                <div className="mt-3 border-t pt-2.5">
-                  <div className="text-[11px] font-medium text-muted-foreground">Open exposure</div>
-                  <div className="text-lg font-semibold tabular-nums">{fmtInr(r.exposure)}</div>
-                </div>
-              )}
+              {ov.isLoading ? <Skeleton className="h-40 w-full" /> : <CaseFactsGrid ov={ov.data} exposure={Number(r.exposure) || null} />}
             </SectionCard>
           ) : (
             <KindFacts track={track} overview={ov.data} loading={ov.isLoading} forms={forms} rail
@@ -311,7 +333,7 @@ function Toggle<T extends string>({ label, value, onChange, options }: { label: 
     <div className="inline-flex rounded-md border bg-card p-0.5" role="group" aria-label={label}>
       {options.map(([k, text]) => (
         <button key={k} type="button" aria-pressed={value === k} onClick={() => onChange(k)}
-          className={cn('rounded px-2 py-0.5 text-[11px] font-medium', value === k ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
+          className={cn('rounded px-2.5 py-1 text-xs font-medium', value === k ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
           {text}
         </button>
       ))}

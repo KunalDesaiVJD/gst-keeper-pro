@@ -28,7 +28,7 @@ export const PayToCloseCard: React.FC<{ notice: QuoteNotice & { reference_number
     <SectionCard title="Pay to close" description={`${q.title} (${q.law})`}
       info="Worked out from the demand the portal records on the notice, head by head. Interest keeps running at 18% a year on the tax from the notice's date to the day of payment. The reduced penalty holds only while its window is open, and only if the tax and interest are paid in full. Check the figures against the portal before paying."
       actions={<>
-        {q.payBy && <Badge variant={q.payBy >= today ? 'warning' : 'secondary'} className="text-[11px]">Pay by {fmtDate(q.payBy)}</Badge>}
+        {q.payBy && <Badge variant={q.payBy >= today ? 'warning' : 'secondary'} className="text-xs">Pay by {fmtDate(q.payBy)}</Badge>}
         <Button size="sm" variant="ghost" className={WS_BTN}
           onClick={() => navigator.clipboard.writeText(quoteText(q, label)).then(() => toast.success('Copied.'), () => toast.error('Could not copy.'))}>
           <Copy className="h-3.5 w-3.5" aria-hidden /> Copy

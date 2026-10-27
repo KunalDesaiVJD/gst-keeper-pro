@@ -42,15 +42,15 @@ const usd = (n: number | null | undefined) => (n ? `$${Number(n).toFixed(2)}` : 
 const ExampleChip: React.FC<{ n: number; ex: AssistExample | undefined }> = ({ n, ex }) => (
   <Popover>
     <PopoverTrigger asChild>
-      <button type="button" className="rounded border border-primary/30 bg-primary/5 px-1.5 text-[11px] font-medium text-primary hover:bg-primary/10">E{n}</button>
+      <button type="button" className="rounded border border-primary/30 bg-primary/5 px-1.5 text-xs font-medium text-primary hover:bg-primary/10">E{n}</button>
     </PopoverTrigger>
     <PopoverContent className="w-[26rem] max-w-[90vw] space-y-2 text-xs" align="start">
       {ex ? (
         <>
           <div className="flex flex-wrap gap-1">
-            <Badge variant="secondary" className="text-[10px]">{PAIR_ORIGIN[ex.origin] ?? ex.origin}</Badge>
-            {ex.form_code && <Badge variant="secondary" className="text-[10px]">{ex.form_code}</Badge>}
-            {ex.issue_code && ex.issue_code !== 'OTHER' && <Badge variant="secondary" className="text-[10px]">{ex.issue_code}</Badge>}
+            <Badge variant="secondary" className="text-xs">{PAIR_ORIGIN[ex.origin] ?? ex.origin}</Badge>
+            {ex.form_code && <Badge variant="secondary" className="text-xs">{ex.form_code}</Badge>}
+            {ex.issue_code && ex.issue_code !== 'OTHER' && <Badge variant="secondary" className="text-xs">{ex.issue_code}</Badge>}
           </div>
           <p className="line-clamp-4 text-muted-foreground">{ex.allegation}</p>
           <p className="line-clamp-[8] whitespace-pre-wrap">{ex.response}</p>
@@ -171,7 +171,7 @@ export const AssistantTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
           {mode === 'draft' ? 'Draft' : mode === 'improve' ? 'Improve' : 'Ask'}
         </Button>
-        <span className="ml-auto text-[11px] text-muted-foreground">
+        <span className="ml-auto text-xs text-muted-foreground">
           Case documents read {docsRead}/{docsAll}{docsWaiting ? ` · ${docsWaiting} waiting` : ''}
           {canEdit && docsWaiting > 0 && <button type="button" onClick={readNow} className="ml-1 font-medium text-primary hover:underline">Read now</button>}
         </span>
@@ -190,12 +190,12 @@ export const AssistantTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged
 
       {!busy && run && run.status === 'done' && (
         <div className="space-y-3 rounded-md border p-3">
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">{MODES.find((m) => m.key === runMode)?.label ?? runMode}</span>
             <span>{fmtAgo(run.created_at)}{run.requested_by_name ? ` by ${run.requested_by_name}` : ''}</span>
             {usd(run.cost_usd) && <span>{usd(run.cost_usd)}</span>}
             {examples.length > 0 ? <span>{examples.length} example{examples.length === 1 ? '' : 's'} given</span> : <span>no examples kept yet</span>}
-            {run.feedback && <Badge variant={run.feedback === 'used' ? 'success' : 'secondary'} className="text-[10px]">{run.feedback === 'used' ? 'Used' : 'Discarded'}</Badge>}
+            {run.feedback && <Badge variant={run.feedback === 'used' ? 'success' : 'secondary'} className="text-xs">{run.feedback === 'used' ? 'Used' : 'Discarded'}</Badge>}
           </div>
 
           {runMode === 'ask' ? (
@@ -236,7 +236,7 @@ export const AssistantTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged
                 )}
                 <Button size="sm" variant="outline" className={WS_BTN} disabled={!chosen.length} onClick={() => copy(block)}><Copy className="h-3.5 w-3.5" /> Copy</Button>
                 {!run.feedback && <Button size="sm" variant="ghost" className={WS_BTN} onClick={discard}><X className="h-3.5 w-3.5" /> Discard</Button>}
-                <span className="text-[11px] text-muted-foreground">Edit before use: what you use, as edited, teaches the assistant.</span>
+                <span className="text-xs text-muted-foreground">Edit before use: what you use, as edited, teaches the assistant.</span>
               </div>
             </>
           )}

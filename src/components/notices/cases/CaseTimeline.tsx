@@ -8,9 +8,15 @@
 // record says (an appeal's order, amounts, pre-deposit and documents; a hearing's
 // date and place), its files as chips, and whether it is new since the case was
 // last opened. Only "Work on it" leaves for the notice's workspace.
-import React, { useEffect, useRef, useState } from 'react';
+// Laid out again on 27 October 2026 (the firm: design improvement "extremely
+// needed", nothing taken away): the papers fall into the phases of the
+// proceeding (scrutiny, intimation, show cause, order, appeal, recovery), each
+// under its own heading, with a journey strip above that jumps to a phase; a
+// paper's title leads and its sender, kind and reference follow on one line;
+// no text is smaller than 12px.
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowDownLeft, ArrowRight, ArrowUpRight, CalendarClock, FileText, Loader2, Paperclip, Scale, Sparkles } from 'lucide-react';
+import { ArrowDownLeft, ArrowRight, ArrowUpRight, CalendarClock, ChevronDown, ChevronUp, FileText, Loader2, Paperclip, Scale, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/gstr9/badge';
 import { EmptyBox } from '@/components/notices/autopilot/parts';
 import { StageBadge } from '@/components/notices/StageBadge';
@@ -29,13 +35,100 @@ function kindOf(it: CaseItem): string {
   return (it.section && SECTION_KIND[it.section.toUpperCase()]) || 'Document';
 }
 
+/** The form code a paper carries: the portal's record, else the "DRC-07 · ..." label's lead. */
+function formOf(it: CaseItem): string | null {
+  if (it.facts?.form) return it.facts.form.toUpperCase();
+  const m = /^([A-Z]{2,6}(?:-[A-Z0-9]+)*)\s·/.exec(it.label ?? '');
+  return m ? m[1].toUpperCase() : null;
+}
+
+/** The phases of a proceeding, in the order the law runs them. */
+type Phase = 'scrutiny' | 'intimation' | 'show_cause' | 'order' | 'appeal' | 'appeal_order' | 'recovery' | 'registration' | 'correspondence';
+const PHASE_LABEL: Record<Phase, string> = {
+  scrutiny: 'Scrutiny or audit',
+  intimation: 'Intimation',
+  show_cause: 'Show cause notice',
+  order: 'Order',
+  appeal: 'Appeal',
+  appeal_order: 'Appeal order',
+  recovery: 'Recovery',
+  registration: 'Registration',
+  correspondence: 'Correspondence',
+};
+
+/**
+ * The phase a department paper (or our appeal) opens, or null when the paper
+ * belongs to the phase already running (a reply, a hearing notice, a letter).
+ */
+function phaseOpenedBy(it: CaseItem): Phase | null {
+  const form = formOf(it);
+  if (form) {
+    if (form === 'APL-04' || form === 'APL-05') return 'appeal_order';
+    if (form.startsWith('APL')) return form === 'APL-01' || form === 'APL-02' ? 'appeal' : null;
+    if (/^(ASMT|ADT)/.test(form)) return form === 'ASMT-11' ? null : 'scrutiny';
+    if (form === 'DRC-01A') return 'intimation';
+    if (form === 'DRC-01' || form === 'DRC-01B' || form === 'DRC-01C') return it.from === 'department' ? 'show_cause' : null;
+    if (/^DRC-0[78]/.test(form) || form === 'RECT-ORDER' || form === 'ASMT-13' || form === 'ASMT-15') return 'order';
+    if (/^DRC-(09|1[0-6])/.test(form)) return 'recovery';
+    if (form.startsWith('REG')) return 'registration';
+  }
+  if (it.from === 'department' && it.ai?.doc_kind === 'order') return 'order';
+  return null;
+}
+
+type Entry = { type: 'item'; date: string | null; it: CaseItem } | { type: 'key'; date: string; k: KeyDate };
+type Section = { key: string; phase: Phase; no: number; entries: Entry[]; from: string | null; to: string | null };
+
+function byDate(dir: 1 | -1) {
+  return (a: Entry, b: Entry) => {
+    if (!a.date || !b.date) return a.date ? -1 : b.date ? 1 : 0;
+    const c = a.date.slice(0, 10).localeCompare(b.date.slice(0, 10));
+    if (c) return c * dir;
+    // On one day the paper comes before what the law makes of it.
+    return (a.type === b.type ? 0 : a.type === 'item' ? -1 : 1) * dir;
+  };
+}
+
+/**
+ * The entries cut into phases. Phases are found reading oldest first (a reply
+ * belongs to the notice before it, a key date to the paper it follows), then
+ * the phases and their entries are laid out in the order asked for.
+ */
+function sectionsOf(entries: Entry[], order: 'oldest' | 'newest'): Section[] {
+  const chrono = [...entries].sort(byDate(1));
+  const out: Section[] = [];
+  let cur: Section | null = null;
+  for (const e of chrono) {
+    const opened = e.type === 'item' ? phaseOpenedBy(e.it) : null;
+    if (!cur || (opened && opened !== cur.phase)) {
+      cur = { key: `${out.length}`, phase: opened ?? 'correspondence', no: out.length + 1, entries: [], from: null, to: null };
+      out.push(cur);
+    } else if (cur.phase === 'correspondence' && opened) {
+      cur.phase = opened;
+    }
+    cur.entries.push(e);
+    if (e.date) { cur.from = cur.from ?? e.date; cur.to = e.date; }
+  }
+  if (order === 'newest') {
+    out.reverse();
+    for (const s of out) s.entries.sort(byDate(-1));
+  }
+  return out;
+}
+
+const monthYear = (d: string | null) => (d ? `${MONTHS[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}` : '');
+const span = (s: Section) => {
+  const a = monthYear(s.from), b = monthYear(s.to);
+  return a && b && a !== b ? `${a} to ${b}` : a || b || 'undated';
+};
+
 function DateTile({ date }: { date: string | null }) {
-  if (!date) return <div className="w-14 shrink-0 pt-1 text-center text-[11px] text-muted-foreground">undated</div>;
+  if (!date) return <div className="w-16 shrink-0 pt-1 text-center text-xs text-muted-foreground">undated</div>;
   const [y, m, d] = date.slice(0, 10).split('-');
   return (
-    <div className="w-14 shrink-0 pt-0.5 text-center leading-tight">
-      <div className="text-lg font-bold tabular-nums">{Number(d)}</div>
-      <div className="text-[11px] text-muted-foreground">{MONTHS[Number(m) - 1]} {y}</div>
+    <div className="w-16 shrink-0 pt-0.5 text-center leading-tight">
+      <div className="text-xl font-bold tabular-nums">{Number(d)}</div>
+      <div className="text-xs text-muted-foreground">{MONTHS[Number(m) - 1]} {y}</div>
     </div>
   );
 }
@@ -48,28 +141,31 @@ function Reading({ it }: { it: CaseItem }) {
     const long = text.length > 220;
     const tokens = it.notice_read?.summary ? fmtAiTokens(it.notice_read.usage, it.notice_read.model) : fmtAiTokens(it.ai?.usage, it.ai?.model);
     return (
-      <div className="flex gap-1.5 rounded-md bg-muted/40 px-2.5 py-1.5">
-        <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/70" aria-label="Read by the AI" />
-        <p className={cn('text-[13px] leading-relaxed text-foreground/85', !more && 'line-clamp-2')}>
-          {text}
-          {long && more && <button type="button" onClick={() => setMore(false)} className="ml-1 text-xs font-medium text-primary hover:underline">Less</button>}
-        </p>
-        {long && !more && <button type="button" onClick={() => setMore(true)} className="shrink-0 self-end text-xs font-medium text-primary hover:underline">More</button>}
-        {tokens && <span className="shrink-0 self-end whitespace-nowrap text-[10px] tabular-nums text-muted-foreground" title="Tokens the AI used to read it">{tokens}</span>}
+      <div className="rounded-md border-l-2 border-primary/30 bg-muted/40 px-3 py-2">
+        <div className="mb-0.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary/70" aria-hidden /> What it says
+          {tokens && <span className="ml-auto whitespace-nowrap font-normal tabular-nums" title="Tokens the AI used to read it">{tokens}</span>}
+        </div>
+        <p className={cn('text-sm leading-relaxed text-foreground/90', !more && 'line-clamp-2')}>{text}</p>
+        {long && (
+          <button type="button" onClick={() => setMore((v) => !v)} className="mt-0.5 inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline">
+            {more ? <>Show less <ChevronUp className="h-3.5 w-3.5" aria-hidden /></> : <>Read all <ChevronDown className="h-3.5 w-3.5" aria-hidden /></>}
+          </button>
+        )}
       </div>
     );
   }
-  if (reading) return <p className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" aria-hidden /> The AI is reading it</p>;
-  if (it.ai?.status === 'failed' && it.ai.reason_class === 'needs_vision') return <p className="text-[11px] text-muted-foreground">A scan: the AI could not read its text.</p>;
+  if (reading) return <p className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> The AI is reading it</p>;
+  if (it.ai?.status === 'failed' && it.ai.reason_class === 'needs_vision') return <p className="text-xs text-muted-foreground">A scan: the AI could not read its text.</p>;
   return null;
 }
 
 function FileChip({ href, label, primary }: { href: string; label: string; primary?: boolean }) {
   return (
     <a href={href} target="_blank" rel="noreferrer" title={label}
-      className={cn('inline-flex max-w-[15rem] items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors hover:border-primary/50 hover:bg-primary/5',
-        primary ? 'border-primary/30 font-medium text-primary' : 'text-foreground/80')}>
-      {primary ? <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden /> : <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />}
+      className={cn('inline-flex h-7 max-w-[16rem] items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors hover:border-primary/50 hover:bg-primary/5',
+        primary ? 'border-primary/30 bg-primary/5 font-medium text-primary' : 'text-foreground/80')}>
+      {primary ? <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden /> : <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />}
       <span className="truncate">{label}</span>
     </a>
   );
@@ -78,8 +174,8 @@ function FileChip({ href, label, primary }: { href: string; label: string; prima
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className="text-xs font-medium">{children}</dd>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="text-sm font-semibold">{children}</dd>
     </div>
   );
 }
@@ -91,24 +187,33 @@ function PortalFacts({ f, files }: { f: CaseItemFacts; files: { url?: string }[]
   return (
     <>
       {appeal && (
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-md border border-dashed px-2.5 py-2 sm:grid-cols-4">
-          {f.order_ref && <Fact label="Against order"><span className="font-mono text-[11px]">{f.order_ref}</span>{f.order_date ? ` of ${fmtDate(f.order_date)}` : ''}</Fact>}
-          {f.order_comm_date && f.order_comm_date !== f.order_date && <Fact label="Order communicated">{fmtDate(f.order_comm_date)}</Fact>}
-          {f.disputed_tax !== undefined && <Fact label="Tax in dispute">{fmtInr(f.disputed_tax)}</Fact>}
-          {f.disputed_total !== undefined && <Fact label="Total in dispute">{fmtInr(f.disputed_total)}</Fact>}
-          {f.predeposit !== undefined && <Fact label={`Pre-deposit paid${f.predeposit_pct ? ` (${f.predeposit_pct}%)` : ''}`}>{fmtInr(f.predeposit)}{f.predeposit_prn && <span className="block font-mono text-[11px] text-muted-foreground">PRN {f.predeposit_prn}</span>}</Fact>}
-          {f.filed_on && <Fact label="Filed on">{fmtDate(f.filed_on)}</Fact>}
-          {f.portal_status && <Fact label="Status on the portal">{f.portal_status}</Fact>}
-          {f.issues && f.issues.length > 0 && <div className="col-span-2 sm:col-span-4"><Fact label="Issues appealed">{f.issues.join('; ')}</Fact></div>}
-        </dl>
+        <div className="rounded-md border bg-muted/20">
+          <div className="border-b px-3 py-1.5 text-xs font-semibold text-muted-foreground">The appeal as the portal records it</div>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 px-3 py-2.5 sm:grid-cols-4">
+            {f.order_ref && <Fact label="Against order"><span className="font-mono text-[13px]">{f.order_ref}</span>{f.order_date ? <span className="block text-xs font-normal text-muted-foreground">of {fmtDate(f.order_date)}</span> : null}</Fact>}
+            {f.order_comm_date && f.order_comm_date !== f.order_date && <Fact label="Order communicated">{fmtDate(f.order_comm_date)}</Fact>}
+            {f.disputed_tax !== undefined && <Fact label="Tax in dispute">{fmtInr(f.disputed_tax)}</Fact>}
+            {f.disputed_total !== undefined && <Fact label="Total in dispute">{fmtInr(f.disputed_total)}</Fact>}
+            {f.predeposit !== undefined && <Fact label={`Pre-deposit paid${f.predeposit_pct ? ` (${f.predeposit_pct}%)` : ''}`}>{fmtInr(f.predeposit)}{f.predeposit_prn && <span className="block font-mono text-xs font-normal text-muted-foreground">PRN {f.predeposit_prn}</span>}</Fact>}
+            {f.filed_on && <Fact label="Filed on">{fmtDate(f.filed_on)}</Fact>}
+            {f.portal_status && <Fact label="Status on the portal">{f.portal_status}</Fact>}
+          </dl>
+          {f.issues && f.issues.length > 0 && (
+            <div className="border-t px-3 py-2">
+              <div className="text-xs text-muted-foreground">Issues appealed</div>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm">{f.issues.map((x, i) => <li key={i}>{x}</li>)}</ul>
+            </div>
+          )}
+        </div>
       )}
       {f.hearing && (
-        <p className="text-xs"><CalendarClock className="mr-1 inline h-3.5 w-3.5 text-warning" aria-hidden />
-          Personal hearing on <span className="font-medium">{fmtDate(f.hearing.date)}</span>{f.hearing.time ? ` at ${f.hearing.time}` : ''}{f.hearing.venue ? `, ${f.hearing.venue}` : ''}
+        <p className="flex items-center gap-1.5 rounded-md bg-warning/10 px-3 py-1.5 text-sm">
+          <CalendarClock className="h-4 w-4 shrink-0 text-warning" aria-hidden />
+          <span>Personal hearing on <span className="font-semibold">{fmtDate(f.hearing.date)}</span>{f.hearing.time ? ` at ${f.hearing.time}` : ''}{f.hearing.venue ? `, ${f.hearing.venue}` : ''}</span>
         </p>
       )}
       {missing.length > 0 && (
-        <p className="text-[11px] text-muted-foreground" title="The portal lists these with the item; the extension has not downloaded them yet">
+        <p className="text-xs text-muted-foreground" title="The portal lists these with the item; the extension has not downloaded them yet">
           On the portal, not downloaded yet: {missing.map((d) => d.name && d.file && d.name !== d.file ? `${d.name} (${d.file})` : d.name || d.file || d.id).join(', ')}
         </p>
       )}
@@ -116,34 +221,49 @@ function PortalFacts({ f, files }: { f: CaseItemFacts; files: { url?: string }[]
   );
 }
 
-const TONE: Record<KeyDate['tone'], { dot: string; text: string; border: string }> = {
-  ok: { dot: 'bg-success/20 text-success', text: 'text-success', border: 'border-success/30' },
-  warn: { dot: 'bg-warning/20 text-warning', text: 'text-warning', border: 'border-warning/40' },
-  danger: { dot: 'bg-destructive/15 text-destructive', text: 'text-destructive', border: 'border-destructive/40' },
-  info: { dot: 'bg-info/15 text-info', text: 'text-info', border: 'border-info/30' },
-  muted: { dot: 'bg-muted text-muted-foreground', text: 'text-foreground/80', border: 'border-border' },
+const TONE: Record<KeyDate['tone'], { dot: string; text: string; border: string; bg: string }> = {
+  ok: { dot: 'bg-success/20 text-success', text: 'text-success-strong', border: 'border-success/40', bg: 'bg-success/5' },
+  warn: { dot: 'bg-warning/20 text-warning', text: 'text-warning', border: 'border-warning/50', bg: 'bg-warning/5' },
+  danger: { dot: 'bg-destructive/15 text-destructive', text: 'text-destructive-strong', border: 'border-destructive/50', bg: 'bg-destructive/5' },
+  info: { dot: 'bg-info/15 text-info', text: 'text-info', border: 'border-info/40', bg: 'bg-info/5' },
+  muted: { dot: 'bg-muted text-muted-foreground', text: 'text-foreground/85', border: 'border-border', bg: 'bg-muted/20' },
 };
 
 function KeyDateRow({ k, partName }: { k: KeyDate; partName: string | null }) {
   const t = TONE[k.tone] ?? TONE.muted;
   const Icon = ['appeal_filed', 'predeposit', 'appeal_window', 'adjournment', 'limitation', 'order_check', 'rectification'].includes(k.kind) ? Scale : CalendarClock;
   return (
-    <div className={cn('mb-3 min-w-0 flex-1 rounded-lg border border-dashed px-3 py-2', t.border, k.tone === 'muted' && 'opacity-80')}>
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span className={cn('inline-flex items-center gap-1 font-semibold', t.text)}><Icon className="h-3.5 w-3.5" aria-hidden /> Key date</span>
-        {k.upcoming && <Badge variant="warning" className="text-[10px]">Upcoming</Badge>}
-        {k.ground && <Badge variant="destructive" className="text-[10px]" title="Raise it in the reply or the appeal">Ground</Badge>}
-        {k.time_barred && <Badge variant="success" className="text-[10px]">Time-barred</Badge>}
-        {partName && <Badge variant="secondary" className="text-[10px]">{partName}</Badge>}
-        {k.law && <span className="ml-auto font-mono text-[10px] text-muted-foreground" title="The provision of the CGST Act">{k.law}</span>}
+    <div className={cn('mb-3 min-w-0 flex-1 rounded-lg border border-l-4 px-3 py-2', t.border, t.bg)}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Icon className={cn('h-4 w-4 shrink-0', t.text)} aria-hidden />
+        <span className={cn('text-sm font-semibold leading-snug', t.text)}>{k.title}</span>
+        {k.upcoming && <Badge variant="warning" className="text-xs">Upcoming</Badge>}
+        {k.ground && <Badge variant="destructive" className="text-xs" title="Raise it in the reply or the appeal">Ground</Badge>}
+        {k.time_barred && <Badge variant="success" className="text-xs">Time-barred</Badge>}
+        {partName && <Badge variant="secondary" className="text-xs">{partName}</Badge>}
+        {k.law && <span className="ml-auto rounded bg-card px-1.5 py-0.5 font-mono text-xs text-muted-foreground" title="The provision of the CGST Act">{k.law}</span>}
       </div>
-      <div className={cn('text-sm font-semibold leading-snug', t.text)}>{k.title}</div>
-      {k.detail && <p className="text-xs text-muted-foreground">{k.detail}</p>}
+      {k.detail && <p className="mt-0.5 pl-6 text-[13px] leading-relaxed text-muted-foreground">{k.detail}</p>}
     </div>
   );
 }
 
-type Entry = { type: 'item'; date: string | null; it: CaseItem } | { type: 'key'; date: string; k: KeyDate };
+/** The phases of the case, in a row, each a jump to its part of the timeline. */
+const Journey: React.FC<{ sections: Section[]; onJump: (key: string) => void }> = ({ sections, onJump }) => (
+  <nav aria-label="Phases of the case" className="-mx-1 flex flex-wrap items-center gap-1 px-1 pb-1">
+    {sections.map((s, i) => (
+      <React.Fragment key={s.key}>
+        {i > 0 && <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden />}
+        <button type="button" onClick={() => onJump(s.key)}
+          className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-left transition-colors hover:border-primary/50 hover:bg-primary/5">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">{s.no}</span>
+          <span className="text-sm font-medium">{PHASE_LABEL[s.phase]}</span>
+          <span className="text-xs text-muted-foreground">{monthYear(s.from) || 'undated'}</span>
+        </button>
+      </React.Fragment>
+    ))}
+  </nav>
+);
 
 export const CaseTimeline: React.FC<{
   items: CaseItem[];
@@ -157,89 +277,110 @@ export const CaseTimeline: React.FC<{
   focusId?: string | null;
 }> = ({ items, keyDates, partOf, order = 'oldest', focusId }) => {
   const focusRef = useRef<HTMLLIElement | null>(null);
+  const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
   useEffect(() => {
     if (focusId && focusRef.current) focusRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [focusId, items.length]);
-  if (!items.length && !keyDates?.length) return <EmptyBox className="p-4">Nothing in this case yet.</EmptyBox>;
-  const entries: Entry[] = [
+  const sections = useMemo(() => sectionsOf([
     ...items.map((it) => ({ type: 'item' as const, date: it.date, it })),
     ...(keyDates ?? []).map((k) => ({ type: 'key' as const, date: k.date, k })),
-  ];
-  const dir = order === 'oldest' ? 1 : -1;
-  entries.sort((a, b) => {
-    if (!a.date || !b.date) return a.date ? -1 : b.date ? 1 : 0;
-    const c = a.date.slice(0, 10).localeCompare(b.date.slice(0, 10));
-    if (c) return c * dir;
-    // On one day the paper comes before what the law makes of it.
-    return (a.type === b.type ? 0 : a.type === 'item' ? -1 : 1) * dir;
-  });
-  return (
-    <ol className="relative">
-      {entries.map((e, idx) => {
-        const last = idx === entries.length - 1;
-        if (e.type === 'key') {
-          const t = TONE[e.k.tone] ?? TONE.muted;
-          return (
-            <li key={`key:${e.k.kind}:${e.k.date}:${idx}`} className="flex gap-3">
-              <DateTile date={e.k.date} />
-              <div className="relative flex w-5 shrink-0 justify-center">
-                {!last && <span className="absolute bottom-0 top-6 w-px bg-border" aria-hidden />}
-                <span className={cn('relative mt-1.5 flex h-5 w-5 items-center justify-center rounded-full ring-4 ring-card', t.dot)} title="A date the law attaches">
-                  <CalendarClock className="h-3 w-3" aria-hidden />
-                </span>
-              </div>
-              <KeyDateRow k={e.k} partName={partOf?.(e.k.own_key) ?? null} />
-            </li>
-          );
-        }
-        const it = e.it;
-        const dept = it.from === 'department';
-        const files = (it.attachments ?? []).filter((a) => a?.url);
-        const title = it.kind === 'notice' ? it.label : it.facts?.form === 'APL-01' ? it.label : it.ai?.title || it.label;
-        const focused = !!focusId && it.id === focusId;
-        return (
-          <li key={`${it.kind}:${it.id}`} ref={focused ? focusRef : undefined} className="flex gap-3">
-            <DateTile date={it.date} />
-            <div className="relative flex w-5 shrink-0 justify-center">
-              {!last && <span className="absolute bottom-0 top-6 w-px bg-border" aria-hidden />}
-              <span className={cn('relative mt-1.5 flex h-5 w-5 items-center justify-center rounded-full ring-4 ring-card',
-                dept ? 'bg-warning/20 text-warning' : 'bg-success/20 text-success')} title={dept ? 'From the department' : 'From us'}>
-                {dept ? <ArrowDownLeft className="h-3 w-3" aria-hidden /> : <ArrowUpRight className="h-3 w-3" aria-hidden />}
-              </span>
+  ], order), [items, keyDates, order]);
+  if (!items.length && !keyDates?.length) return <EmptyBox className="p-4">Nothing in this case yet.</EmptyBox>;
+  const jump = (key: string) => sectionRefs.current[key]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const renderEntry = (e: Entry, last: boolean) => {
+    if (e.type === 'key') {
+      const t = TONE[e.k.tone] ?? TONE.muted;
+      return (
+        <li key={`key:${e.k.kind}:${e.k.date}:${e.k.title}`} className="flex gap-3">
+          <DateTile date={e.k.date} />
+          <div className="relative flex w-6 shrink-0 justify-center">
+            {!last && <span className="absolute bottom-0 top-7 w-px bg-border" aria-hidden />}
+            <span className={cn('relative mt-1.5 flex h-6 w-6 items-center justify-center rounded-full ring-4 ring-card', t.dot)} title="A date the law attaches">
+              <CalendarClock className="h-3.5 w-3.5" aria-hidden />
+            </span>
+          </div>
+          <KeyDateRow k={e.k} partName={partOf?.(e.k.own_key) ?? null} />
+        </li>
+      );
+    }
+    const it = e.it;
+    const dept = it.from === 'department';
+    const files = (it.attachments ?? []).filter((a) => a?.url);
+    const title = it.kind === 'notice' ? it.label : it.facts?.form === 'APL-01' ? it.label : it.ai?.title || it.label;
+    const focused = !!focusId && it.id === focusId;
+    const part = partOf?.(it.own_key);
+    return (
+      <li key={`${it.kind}:${it.id}`} ref={focused ? focusRef : undefined} className="flex gap-3">
+        <DateTile date={it.date} />
+        <div className="relative flex w-6 shrink-0 justify-center">
+          {!last && <span className="absolute bottom-0 top-7 w-px bg-border" aria-hidden />}
+          <span className={cn('relative mt-1.5 flex h-6 w-6 items-center justify-center rounded-full ring-4 ring-card',
+            dept ? 'bg-warning/20 text-warning' : 'bg-success/20 text-success')} title={dept ? 'From the department' : 'From us'}>
+            {dept ? <ArrowDownLeft className="h-3.5 w-3.5" aria-hidden /> : <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />}
+          </span>
+        </div>
+        <div className={cn('mb-3 min-w-0 flex-1 space-y-2 rounded-lg border border-l-4 p-3.5 shadow-sm',
+          dept ? 'border-l-warning/60' : 'border-l-success/60',
+          focused ? 'border-primary ring-2 ring-primary/30' : it.is_new ? 'border-info/50 bg-info/5' : 'bg-card')}>
+          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+            <h4 className="min-w-0 flex-1 text-[15px] font-semibold leading-snug">{title}</h4>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {it.is_new && <Badge variant="info" className="text-xs">New</Badge>}
+              {focused && <Badge variant="info" className="text-xs">Opened from here</Badge>}
+              {it.kind === 'notice' && it.is_open && <StageBadge stage={it.stage} className="text-xs" />}
             </div>
-            <div className={cn('mb-3 min-w-0 flex-1 space-y-1.5 rounded-lg border p-3',
-              focused ? 'border-primary ring-2 ring-primary/30' : it.is_new ? 'border-info/50 bg-info/5' : 'bg-card')}>
-              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                <span className={cn('rounded px-1.5 py-0.5 font-semibold', dept ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success')}>
-                  {dept ? 'Department' : 'Us'} · {kindOf(it)}
-                </span>
-                {partOf?.(it.own_key) && <Badge variant="secondary" className="text-[10px]" title={it.own_key ?? undefined}>{partOf(it.own_key)}</Badge>}
-                {it.is_new && <Badge variant="info" className="text-[10px]">New</Badge>}
-                {focused && <Badge variant="info" className="text-[10px]">Opened from here</Badge>}
-                {it.kind === 'notice' && it.is_open && <StageBadge stage={it.stage} />}
-                {it.ai?.outcome && !/^(other|none|unknown|n\/?a|pending)$/i.test(it.ai.outcome.trim()) && <Badge variant="secondary" className="text-[10px]">Outcome: {it.ai.outcome}</Badge>}
-                {it.reference && <span className="ml-auto font-mono text-[10px] text-muted-foreground" title={it.arrived_at ? `Seen on the portal ${fmtDateTime(it.arrived_at)}` : undefined}>{it.reference}</span>}
-              </div>
-              <div className="text-sm font-semibold leading-snug">{title}</div>
-              <Reading it={it} />
-              {it.facts && <PortalFacts f={it.facts} files={files} />}
-              {(it.pdf_url || files.length > 0 || it.kind === 'notice') && (
-                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                  {it.pdf_url && <FileChip href={it.pdf_url} label="Notice PDF" primary />}
-                  {files.slice(0, 8).map((a, i) => <FileChip key={i} href={a.url as string} label={a.label || `File ${i + 1}`} />)}
-                  {files.length > 8 && <span className="self-center text-[11px] text-muted-foreground">+{files.length - 8} more</span>}
-                  {it.kind === 'notice' && (
-                    <Link to={`/notices/${it.id}`} className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-                      Work on it <ArrowRight className="h-3 w-3" aria-hidden />
-                    </Link>
-                  )}
-                </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span className={cn('font-semibold', dept ? 'text-warning' : 'text-success-strong')}>
+              {dept ? 'From the department' : 'From us'} · {kindOf(it)}
+            </span>
+            {it.reference && <><span aria-hidden>·</span><span className="font-mono" title={it.arrived_at ? `Seen on the portal ${fmtDateTime(it.arrived_at)}` : undefined}>{it.reference}</span></>}
+            {part && <Badge variant="secondary" className="text-xs" title={it.own_key ?? undefined}>{part}</Badge>}
+            {it.ai?.outcome && !/^(other|none|unknown|n\/?a|pending)$/i.test(it.ai.outcome.trim()) && <Badge variant="secondary" className="text-xs">Outcome: {it.ai.outcome}</Badge>}
+          </div>
+          <Reading it={it} />
+          {it.facts && <PortalFacts f={it.facts} files={files} />}
+          {(it.pdf_url || files.length > 0 || it.kind === 'notice') && (
+            <div className="flex flex-wrap items-center gap-1.5 border-t pt-2">
+              {it.pdf_url && <FileChip href={it.pdf_url} label="Notice PDF" primary />}
+              {files.slice(0, 8).map((a, i) => <FileChip key={i} href={a.url as string} label={a.label || `File ${i + 1}`} />)}
+              {files.length > 8 && <span className="self-center text-xs text-muted-foreground">+{files.length - 8} more</span>}
+              {it.kind === 'notice' && (
+                <Link to={`/notices/${it.id}`} className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-primary/30 px-2.5 text-xs font-semibold text-primary hover:bg-primary/5">
+                  Work on it <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+                </Link>
               )}
             </div>
-          </li>
+          )}
+        </div>
+      </li>
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      {sections.length > 1 && <Journey sections={sections} onJump={jump} />}
+      {sections.map((s) => {
+        const papers = s.entries.filter((e) => e.type === 'item').length;
+        const dates = s.entries.length - papers;
+        return (
+          <section key={s.key} ref={(el) => { sectionRefs.current[s.key] = el; }} className="scroll-mt-4" aria-label={PHASE_LABEL[s.phase]}>
+            <header className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b pb-2">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center self-center rounded-full bg-primary text-xs font-bold text-primary-foreground">{s.no}</span>
+              <h3 className="text-base font-semibold">{PHASE_LABEL[s.phase]}</h3>
+              <span className="text-sm text-muted-foreground">{span(s)}</span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {papers} paper{papers === 1 ? '' : 's'}{dates ? ` · ${dates} key date${dates === 1 ? '' : 's'}` : ''}
+              </span>
+            </header>
+            <ol className="relative">
+              {s.entries.map((e, idx) => renderEntry(e, idx === s.entries.length - 1))}
+            </ol>
+          </section>
         );
       })}
-    </ol>
+    </div>
   );
 };
 

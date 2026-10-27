@@ -96,20 +96,20 @@ export const DeadlinesTab: React.FC<{ ws: Workspace; canEdit: boolean; onChanged
                   <td className={cn(WS_TD, 'font-medium')}>{DEADLINE_LABELS[d.deadline_type] ?? d.deadline_type}</td>
                   <td className={cn(WS_TD, 'whitespace-nowrap')}>
                     <div className={cn('font-semibold', !d.is_met && days < 0 && 'text-destructive-strong')}>{fmtDate(d.deadline_date)}</div>
-                    <div className="text-[11px] text-muted-foreground">{d.is_met ? `met${d.met_by ? ` · ${d.met_by}` : ''}` : dueWords(days)}</div>
+                    <div className="text-xs text-muted-foreground">{d.is_met ? `met${d.met_by ? ` · ${d.met_by}` : ''}` : dueWords(days)}</div>
                     {overridden && d.computed_date && d.computed_date !== d.deadline_date && (
-                      <div className="text-[11px] text-muted-foreground">rule says {fmtDate(d.computed_date)}</div>
+                      <div className="text-xs text-muted-foreground">rule says {fmtDate(d.computed_date)}</div>
                     )}
                   </td>
                   <td className={cn(WS_TD, 'text-xs')}>
                     {d.statutory_basis || '—'}
-                    {d.base_date && <div className="text-[11px] text-muted-foreground">runs from {fmtDate(d.base_date)}</div>}
-                    {d.notes && <div className="text-[11px] text-muted-foreground">{d.notes}</div>}
+                    {d.base_date && <div className="text-xs text-muted-foreground">runs from {fmtDate(d.base_date)}</div>}
+                    {d.notes && <div className="text-xs text-muted-foreground">{d.notes}</div>}
                   </td>
                   <td className={WS_TD}>
                     <div className="flex flex-wrap gap-1">
-                      <Badge variant={overridden ? 'info' : 'secondary'} className="text-[10px]">{overridden ? 'Your date' : 'Computed'}</Badge>
-                      {d.period_confirmed === false && <Badge variant="warning" className="text-[10px]">period unconfirmed</Badge>}
+                      <Badge variant={overridden ? 'info' : 'secondary'} className="text-xs">{overridden ? 'Your date' : 'Computed'}</Badge>
+                      {d.period_confirmed === false && <Badge variant="warning" className="text-xs">period unconfirmed</Badge>}
                     </div>
                   </td>
                   {canEdit && (

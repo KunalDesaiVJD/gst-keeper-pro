@@ -45,7 +45,7 @@ export const ActivityTab: React.FC<{ notice: NoticeRow; events: NoticeEvent[]; c
         <ol className="space-y-3">
           {[...days.entries()].map(([day, list]) => (
             <li key={day}>
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{fmtDate(day)}</div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{fmtDate(day)}</div>
               <ul className="space-y-1.5 border-l pl-3">
                 {list.map((e) => {
                   const d = describeEvent(e);
@@ -55,7 +55,7 @@ export const ActivityTab: React.FC<{ notice: NoticeRow; events: NoticeEvent[]; c
                         e.source === 'staff' ? 'bg-primary' : e.source === 'sync' ? 'bg-info' : 'bg-muted-foreground/50')} />
                       <span className={cn(e.event_type === 'comment' && 'font-medium')}>{d.title}</span>
                       {d.detail && <span className={cn('block text-xs', e.event_type === 'comment' ? 'whitespace-pre-wrap text-foreground' : 'text-muted-foreground')}>{d.detail}</span>}
-                      <span className="block text-[11px] text-muted-foreground">{fmtDateTime(e.created_at).split(', ')[1]}{e.source && e.source !== 'staff' ? ` · ${e.source}` : ''}</span>
+                      <span className="block text-xs text-muted-foreground">{fmtDateTime(e.created_at).split(', ')[1]}{e.source && e.source !== 'staff' ? ` · ${e.source}` : ''}</span>
                     </li>
                   );
                 })}

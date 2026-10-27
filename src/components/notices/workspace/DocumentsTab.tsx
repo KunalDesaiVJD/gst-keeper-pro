@@ -97,7 +97,7 @@ const RequestRow: React.FC<{
       <div className="min-w-0 flex-[1_1_14rem] space-y-0.5">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="break-words font-medium">{r.item}</span>
-          <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal" title={r.source === 'catalogue' ? 'From the issue type\'s list of documents' : 'Typed or picked by staff'}>
+          <Badge variant="secondary" className="px-1.5 py-0 text-xs font-normal" title={r.source === 'catalogue' ? 'From the issue type\'s list of documents' : 'Typed or picked by staff'}>
             {r.source === 'catalogue' ? 'Catalogue' : 'Typed'}
           </Badge>
         </div>
@@ -105,14 +105,14 @@ const RequestRow: React.FC<{
         <p className="break-words text-xs text-muted-foreground">{meta}</p>
         {r.client_uploaded_at && (
           <div className="flex flex-wrap items-center gap-1 text-xs">
-            <Badge variant="success" className="px-1.5 py-0 text-[10px]">Uploaded by the client</Badge>
+            <Badge variant="success" className="px-1.5 py-0 text-xs">Uploaded by the client</Badge>
             <span>{fmtDateTime(r.client_uploaded_at)}</span>
             {r.client_note && <span className="break-words">· “{r.client_note}”</span>}
           </div>
         )}
         {url && <a href={url} target="_blank" rel="noreferrer" className={`${LINK} text-xs`}>{doc?.title ?? 'Open the file'} <ExternalLink className="h-3 w-3" aria-hidden /></a>}
       </div>
-      <Badge variant={r.status === 'received' ? 'success' : r.status === 'waived' ? 'secondary' : 'warning'} className="text-[11px]">
+      <Badge variant={r.status === 'received' ? 'success' : r.status === 'waived' ? 'secondary' : 'warning'} className="text-xs">
         {r.status === 'received' ? 'Received' : r.status === 'waived' ? 'Waived' : 'Pending'}
       </Badge>
       {canEdit && (open ? (
