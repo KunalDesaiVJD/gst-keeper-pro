@@ -47,11 +47,11 @@ const SETUP: NavItem[] = [
   { label: 'Settings', icon: Settings, to: '/notices-settings', match: (p) => p === '/notices-settings' },
 ];
 
-/** Open cases the firm acts on (notices and demands, refunds, registration): the number Home counts. */
+/** Open cases the firm acts on (notices and demands, registration; refunds are on Refunds): the number Home counts. */
 function useOpenCases(): number | null {
   const counts = useCaseCounts(null);
   if (!counts.data) return null;
-  return (['litigation', 'refund', 'registration'] as const).reduce((s, t) => s + (counts.data?.[t]?.open ?? 0), 0);
+  return (['litigation', 'registration'] as const).reduce((s, t) => s + (counts.data?.[t]?.open ?? 0), 0);
 }
 
 export const NoticesTopNav: React.FC = () => {

@@ -2,13 +2,14 @@
 // per issue instead of one per notice, and what came in since anyone last
 // opened the case. Every figure comes from the view notice_cases (migration
 // 20261011100000). One control row (the UX audit of 25 October 2026): the kind
-// (All is notices and demands, refunds and registration; Other, the papers kept
-// for the record, sits last), which cases, linked or apart, and search; links
+// (All is notices and demands and registration; Other, the papers kept for the
+// record, sits last; refunds are not cases, 27 October 2026, and an old
+// ?kind=refund link lands on the Refunds tab), which cases, linked or apart, and search; links
 // the system was unsure of show as a banner only while there are any.
 import React, { useMemo, useState } from 'react';
-import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, Search, ShieldQuestion } from 'lucide-react';
+import { Search, ShieldQuestion } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -22,7 +23,7 @@ import { sumCounts } from '@/components/notices/cases/HomeWork';
 import { useAuth } from '@/contexts/AuthContext';
 import { masterForRpc, useMaster } from '@/lib/masterFilters';
 import {
-  CASE_SHOWS, TRACKS, chainsOf, isCaseView, isTrack, loadCases, loadChainLinks, useCaseCounts, useReviewQueue, type CaseShow, type CaseView, type Track,
+  CASE_SHOWS, CASE_TRACKS, chainsOf, isCaseView, isTrack, loadCases, loadChainLinks, useCaseCounts, useReviewQueue, type CaseShow, type CaseView, type Track,
 } from '@/lib/noticeCases';
 
 const PAGE = 50;
@@ -37,7 +38,7 @@ const NoticeCasesPage: React.FC = () => {
   const [sp, setSp] = useSearchParams();
   const { m } = useMaster();
   const kindParam = sp.get('kind');
-  const kind: Kind = isTrack(kindParam) ? kindParam : 'work';
+  const kind: Kind = isTrack(kindParam) && kindParam !== 'refund' ? kindParam : 'work';
   const other = kind === 'other';
   const showParam = sp.get('show');
   const show: CaseShow = (CASE_SHOWS as readonly string[]).includes(showParam ?? '') && showParam !== 'open'
@@ -62,6 +63,7 @@ const NoticeCasesPage: React.FC = () => {
   const reviewOpen = sp.get('review') === '1';
 
   if (!isStaffRole()) return <Navigate to="/dashboard" replace />;
+  if (kindParam === 'refund') return <Navigate to={m.client ? `/refunds-all?client=${m.client}` : '/refunds-all'} replace />;
 
   const set = (patch: Record<string, string | null>) => {
     const n = new URLSearchParams(sp);
@@ -72,7 +74,7 @@ const NoticeCasesPage: React.FC = () => {
   const c = kind === 'work' ? sumCounts(counts.data) : counts.data?.[kind];
   const kinds: { key: Kind; label: string; n?: number }[] = [
     { key: 'work', label: 'All', n: sumCounts(counts.data)?.open },
-    ...TRACKS.map((t) => ({ key: t.key as Kind, label: t.short, n: t.key === 'other' ? counts.data?.other?.cases : counts.data?.[t.key]?.open })),
+    ...CASE_TRACKS.map((t) => ({ key: t.key as Kind, label: t.short, n: t.key === 'other' ? counts.data?.other?.cases : counts.data?.[t.key]?.open })),
   ];
   const shows: { key: CaseShow; label: string; n?: number }[] = other
     ? [{ key: 'all', label: 'All on record', n: c?.cases }, { key: 'new', label: 'New correspondence', n: c?.new }]
@@ -95,7 +97,7 @@ const NoticeCasesPage: React.FC = () => {
         <div className={SEG} role="group" aria-label="Kind of case">
           {kinds.map((k) => (
             <button key={k.key} type="button" aria-pressed={kind === k.key} onClick={() => set({ kind: k.key === 'work' ? null : k.key, show: null })}
-              title={k.key === 'other' ? 'LUT, voluntary payments and approvals: for the record, no action' : k.key === 'work' ? 'Notices and demands, refunds and registration' : undefined}
+              title={k.key === 'other' ? 'LUT, voluntary payments and approvals: for the record, no action' : k.key === 'work' ? 'Notices and demands, and registration (refunds are on the Refunds tab)' : undefined}
               className={cn(segBtn(kind === k.key), k.key === 'other' && kind !== k.key && 'opacity-70')}>
               {k.label}
               {k.n !== undefined && <span className={cn('rounded-full px-1.5 text-[10px] tabular-nums', kind === k.key ? 'bg-primary-foreground/20' : 'bg-muted')}>{k.n}</span>}
@@ -109,7 +111,7 @@ const NoticeCasesPage: React.FC = () => {
           </SelectContent>
         </Select>
         <div className={SEG} role="group" aria-label="Linked or apart">
-          {([['linked', 'Linked', 'An order and its appeal (or a refund and its appeal) show as one case'], ['apart', 'Apart', 'Every portal case on its own row, each saying what it is linked to']] as const).map(([k, label, hint]) => (
+          {([['linked', 'Linked', 'An order and its appeal show as one case'], ['apart', 'Apart', 'Every portal case on its own row, each saying what it is linked to']] as const).map(([k, label, hint]) => (
             <button key={k} type="button" title={hint} aria-pressed={view === k} onClick={() => set({ view: k === 'linked' ? null : k })} className={segBtn(view === k)}>
               {label}
             </button>
@@ -134,11 +136,6 @@ const NoticeCasesPage: React.FC = () => {
       )}
       {reviewOpen && (
         <LinkReviewPanel items={review.data} loading={review.isLoading} error={review.error} onRetry={() => review.refetch()} showClient={!m.client} />
-      )}
-      {kind === 'refund' && (
-        <Link to="/refunds-all" className="inline-flex items-center gap-1 self-start text-xs font-medium text-primary hover:underline">
-          Every refund with its amounts, steps and appeals is on the Refunds tab <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-        </Link>
       )}
       {list.error ? <LoadError what="the cases" error={list.error} onRetry={() => list.refetch()} />
         : list.isLoading ? <Skeleton className="h-96 w-full" />

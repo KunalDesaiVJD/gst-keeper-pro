@@ -29,6 +29,13 @@ export const TRACKS: TrackDef[] = [
   { key: 'other', label: 'Other', short: 'Other', blurb: 'LUT, voluntary payments and approvals: for the record, no action' },
 ];
 export const trackDef = (t: string | null | undefined): TrackDef => TRACKS.find((x) => x.key === t) ?? TRACKS[0];
+/**
+ * The kinds Cases lists (the firm, 27 October 2026: "cases & refunds are 2
+ * different things"): a refund is not a case. Its notices, deficiency memos and
+ * orders live on the Refunds tab (/refunds-all, a page per refund); an appeal
+ * against a refund order is litigation and stays a case.
+ */
+export const CASE_TRACKS: TrackDef[] = TRACKS.filter((t) => t.key !== 'refund');
 export const isTrack = (v: string | null | undefined): v is Track => TRACKS.some((t) => t.key === v);
 
 /** public.notice_track, for a notice already on screen (its category from notice_facts). */
@@ -56,6 +63,11 @@ export const caseHref = (clientId: string, caseKey: string) => `/notices-case/${
  */
 export function noticeCaseHref(n: { id: string; client_id?: string | null; case_id?: string | null; category?: string | null }): string {
   if (!n.client_id) return `/notices-open/${n.id}`;
+  // A refund's papers open its refund page, never a case (27 October 2026).
+  if (n.category === 'Refunds') {
+    const arn = (n.case_id ?? '').trim();
+    return arn ? `/refunds/${n.client_id}/${encodeURIComponent(arn)}` : `/refunds-all?client=${n.client_id}`;
+  }
   return `${caseHref(n.client_id, caseKeyOf(n.case_id, n.category, n.id))}?notice=${n.id}`;
 }
 
@@ -72,7 +84,7 @@ export const WAITING: Record<WaitingOn, { label: string; short: string; tone: 'w
 };
 export const waitingOf = (r: { waiting_on?: string | null; is_open?: boolean | null }): WaitingOn =>
   r.waiting_on === 'department' || r.waiting_on === 'closed' || r.waiting_on === 'us' ? r.waiting_on : r.is_open === false ? 'closed' : 'us';
-/** track 'work': every kind the firm acts on (all but Other, which is kept for the record). */
+/** track 'work': every kind of case the firm acts on (all but Other, kept for the record, and refunds, which are on Refunds). */
 export interface CaseQuery {
   track: Track | 'all' | 'work'; show: CaseShow; q: string; master: Master; meId: string | null;
   /** 'newest': by the latest notice's date, newest first (Home's My work); else new, overdue, due first. */
@@ -82,8 +94,9 @@ export interface CaseQuery {
 export async function loadCases(c: CaseQuery, page: number, pageSize: number, view: CaseView = 'linked'): Promise<{ rows: FlatCaseRow[]; total: number }> {
   // Both views have the same columns (the apart one four more), so one query serves.
   let q = supabase.from((view === 'apart' ? 'notice_cases_flat' : 'notice_cases') as 'notice_cases').select('*', { count: 'exact' });
-  if (c.track === 'work') q = q.neq('track', 'other');
-  else if (c.track !== 'all') q = q.eq('track', c.track);
+  if (c.track === 'work') q = q.not('track', 'in', '(other,refund)');
+  else if (c.track === 'all') q = q.neq('track', 'refund');
+  else q = q.eq('track', c.track);
   if (c.show === 'open') q = q.eq('is_open', true);
   if (c.show === 'new') q = q.gt('new_items', 0);
   if (c.show === 'overdue') q = q.eq('is_overdue', true);

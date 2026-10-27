@@ -5,9 +5,10 @@
 // cases linked to it, and its history on the portal with each paper's
 // documents; the application's own documents fold away under it. The Refunds
 // page's grid and register open it; the case page and the case folder of a
-// refund point to it.
+// refund point to it. A refund is not a case (the firm, 27 October 2026): a
+// refund's case page lands here, and its links are made here.
 import React, { useMemo, useState } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, ChevronDown, FileText, FolderDown, GitBranch, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -29,6 +30,7 @@ import {
 } from '@/components/notices/reports/refundModel';
 import { downloadZip } from '@/components/notices/reports/zip';
 import { AppealFacts } from '@/components/notices/autopilot/PortalAppeal';
+import { CaseChainPanel } from '@/components/notices/cases/CaseChainPanel';
 import { usePortalApps } from '@/lib/portalAppeal';
 import { caseHref } from '@/lib/noticeCases';
 import { istToday } from '@/lib/noticeFacts';
@@ -104,6 +106,7 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
   const [zipping, setZipping] = useState(false);
   const clientId = r.fact.client_id as string;
   const arn = r.fact.arn as string;
+  const navigate = useNavigate();
   const history = useQuery({
     queryKey: ['refund-folder', clientId, arn],
     enabled: r.hasFolder,
@@ -170,9 +173,6 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
               {zipping ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <FolderDown className="h-3.5 w-3.5" aria-hidden />} All {plural(r.docs.length, 'PDF')} (.zip)
             </Button>
           )}
-          {r.hasCasePage && (
-            <Button size="sm" variant="outline" className={WS_BTN} asChild><Link to={caseHref(clientId, arn)}>Case page</Link></Button>
-          )}
           {r.caseLink && (
             <Button size="sm" className={WS_BTN} asChild><Link to={`/notices/${r.caseLink.id}`}>{r.caseLink.is_open ? 'Work on it' : 'Open the notice'} <ArrowRight className="h-3.5 w-3.5" aria-hidden /></Link></Button>
           )}
@@ -219,33 +219,41 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
         <MoneyBar m={moneyOf(r)} className="h-2" />
       </SectionCard>
 
-      <SectionCard title={<span className="inline-flex items-center gap-1.5"><GitBranch className="h-4 w-4" aria-hidden /> Linked cases</span>}
-        description={r.links.length ? plural(r.links.length, 'case') : 'none'}>
-        {r.links.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No appeal, fresh application or other case is linked to this refund.{r.hasCasePage ? ' Cases are linked on the case page.' : ''}</p>
-        ) : (
-          <ul className="divide-y rounded-md border">
-            {r.links.map((l) => (
-              <li key={l.key} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2">
-                <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', l.kind === 'appeal' ? 'bg-warning/20' : 'bg-muted')}>{linkWord(l.kind, l.dir)}</span>
-                <span className="font-mono text-xs">{l.key}</span>
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                  {l.refund ? `refund${l.refund.status ? ` · ${l.refund.status}` : ''}${l.refund.filed ? ` · filed ${fmtDate(l.refund.filed)}` : ''}` : l.title ?? ''}
-                  {l.isOpen !== null && <> · {l.isOpen ? 'open' : 'closed'}</>}
-                  {l.source === 'manual' ? ' · linked by staff' : ''}
-                </span>
-                {l.refund ? (
-                  <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs"><Link to={refundHref(clientId, l.key)}>Open <ArrowRight className="h-3 w-3" aria-hidden /></Link></Button>
-                ) : l.hasPage ? (
-                  <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs"><Link to={caseHref(clientId, l.key)}>Open <ArrowRight className="h-3 w-3" aria-hidden /></Link></Button>
-                ) : appeals.some((x) => x.row.arn === l.key) ? (
-                  <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs"><a href={`#appeal-${l.key}`}>Details above</a></Button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </SectionCard>
+      {/* A refund is not a case (27 October 2026), so its links are kept here: with
+          a notice on record the refund has a portal case, and the chain panel links,
+          unlinks and suggests as the case page did. */}
+      {r.hasCasePage ? (
+        <CaseChainPanel clientId={clientId} caseKey={arn} part={null} track="refund"
+          onPart={(k) => { if (k && k !== arn) navigate(caseHref(clientId, k)); }} />
+      ) : (
+        <SectionCard title={<span className="inline-flex items-center gap-1.5"><GitBranch className="h-4 w-4" aria-hidden /> Linked cases</span>}
+          description={r.links.length ? plural(r.links.length, 'case') : 'none'}>
+          {r.links.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No appeal, fresh application or other case is linked to this refund.</p>
+          ) : (
+            <ul className="divide-y rounded-md border">
+              {r.links.map((l) => (
+                <li key={l.key} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2">
+                  <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', l.kind === 'appeal' ? 'bg-warning/20' : 'bg-muted')}>{linkWord(l.kind, l.dir)}</span>
+                  <span className="font-mono text-xs">{l.key}</span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    {l.refund ? `refund${l.refund.status ? ` · ${l.refund.status}` : ''}${l.refund.filed ? ` · filed ${fmtDate(l.refund.filed)}` : ''}` : l.title ?? ''}
+                    {l.isOpen !== null && <> · {l.isOpen ? 'open' : 'closed'}</>}
+                    {l.source === 'manual' ? ' · linked by staff' : ''}
+                  </span>
+                  {l.refund ? (
+                    <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs"><Link to={refundHref(clientId, l.key)}>Open <ArrowRight className="h-3 w-3" aria-hidden /></Link></Button>
+                  ) : l.hasPage ? (
+                    <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs"><Link to={caseHref(clientId, l.key)}>Open <ArrowRight className="h-3 w-3" aria-hidden /></Link></Button>
+                  ) : appeals.some((x) => x.row.arn === l.key) ? (
+                    <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs"><a href={`#appeal-${l.key}`}>Details above</a></Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+      )}
 
       <SectionCard title="History on the portal" description={events.length ? `${plural(events.length, 'paper')}, oldest first, each with its documents` : undefined}>
         {!r.hasFolder ? (
