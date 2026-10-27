@@ -12136,6 +12136,22 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: number
       }
+      notice_case_link_check: {
+        Args: { p_client_id: string; p_child_key: string; p_parent_key: string; p_kind?: string | null }
+        Returns: Json
+      }
+      notice_case_link_checks: {
+        Args: { p_items: Json }
+        Returns: Json
+      }
+      notice_case_link_set_checked: {
+        Args: { p_client_id: string; p_child_key: string; p_parent_key: string | null; p_kind: string | null; p_by?: string | null; p_confirm?: string | null }
+        Returns: Json
+      }
+      notice_case_review_decide_checked: {
+        Args: { p_client_id: string; p_issue: string; p_child_key: string; p_parent_key?: string | null; p_decision: string; p_kind?: string | null; p_by?: string | null; p_confirm?: string | null }
+        Returns: Json
+      }
       notice_case_mark_seen: {
         Args: { p_client_id: string; p_case_key: string; p_by_name?: string | null }
         Returns: string

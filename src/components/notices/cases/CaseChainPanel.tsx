@@ -10,6 +10,11 @@
 // says in words what a refund is linked to, an appeal against its order or the
 // same refund filed again (same type and period, 20261025150000), shows each
 // refund's year and period, and offers nothing else.
+// Every link goes through the law check (the firm, 27 October 2026, after two
+// DRC-01s were linked into one case for Unity; 20261027140000): suggestions
+// against GST law are not offered, the rest carry their warnings, a link a
+// person makes is warned first (LinkWarnDialog), and a link already in the
+// chain that the check finds wrong says so.
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -32,6 +37,8 @@ import { cn } from '@/lib/utils';
 import { refundIndexKey, useRefundIndex, type RefundRow } from '@/components/notices/reports/ledgerData';
 import { RefundWhenChip } from '@/components/notices/reports/RefundBits';
 import { periodText, typeShort } from '@/components/notices/reports/refundModel';
+import { LinkCheckChip, LinkProblems, useGuardedLink } from '@/components/notices/cases/LinkWarnDialog';
+import { pairKey, setCaseLinkChecked, useLinkChecks, type LinkCheck, type LinkPair } from '@/lib/noticeCaseLinkLaw';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -81,6 +88,7 @@ export const CaseChainPanel: React.FC<{
   const [flip, setFlip] = useState(false);
   const [busy, setBusy] = useState(false);
   const by = user?.firstName ?? null;
+  const guard = useGuardedLink(by);
 
   const members = useMemo(() => chain.data?.members ?? [], [chain.data]);
   const byKey = useMemo(() => new Map(members.map((m) => [m.case_key, m])), [members]);
@@ -101,8 +109,19 @@ export const CaseChainPanel: React.FC<{
       refresh();
     } catch (e) { toast.error(errText(e)); } finally { setBusy(false); }
   };
-  const link = (child: string, parent: string, kind: LinkKind) =>
-    run(() => setCaseLink(clientId, child, parent, kind, by), 'Linked. The cases now show as one chain; each can still be seen on its own.');
+  // Through the law check: linked at once when nothing is wrong, else the person is warned first.
+  const link = async (child: string, parent: string, kind: LinkKind): Promise<boolean> => {
+    const pair: LinkPair = { clientId, childKey: child, parentKey: parent, kind };
+    setBusy(true);
+    try {
+      const ok = await guard.attempt(pair, (confirm) => setCaseLinkChecked(pair, by, confirm));
+      if (ok) {
+        toast.success('Linked. The cases now show as one chain; each can still be seen on its own.');
+        refresh();
+      }
+      return ok;
+    } catch (e) { toast.error(errText(e)); return false; } finally { setBusy(false); }
+  };
   const unlink = (m: ChainMember) =>
     run(() => setCaseLink(clientId, m.case_key, null, null, by).then(() => { if (part === m.case_key) onPart(null); }),
       'Unlinked. The system will not link these two again unless someone links them.');
@@ -114,8 +133,22 @@ export const CaseChainPanel: React.FC<{
     // The scorer knows which way round it belongs; "the other way round" swaps it.
     const child = flip ? chosen.parent_key : chosen.child_key;
     const parent = flip ? chosen.child_key : chosen.parent_key;
-    link(child, parent, pickKind).then(() => { setPicking(false); setPick(''); setFlip(false); });
+    link(child, parent, pickKind).then((ok) => { if (ok) { setPicking(false); setPick(''); setFlip(false); } });
   };
+  const pickPair: LinkPair[] = chosen
+    ? [{ clientId, childKey: flip ? chosen.parent_key : chosen.child_key, parentKey: flip ? chosen.child_key : chosen.parent_key, kind: pickKind }]
+    : [];
+  const pickCheck = useLinkChecks(pickPair, picking);
+
+  // The checks of the suggestions and of the links already in the chain, in one call.
+  const sugPairs = useMemo<LinkPair[]>(() => (sug.data ?? []).slice(0, 8)
+    .map((c) => ({ clientId, childKey: c.child_key, parentKey: c.parent_key, kind: c.kind })), [sug.data, clientId]);
+  const memberPairs = useMemo<LinkPair[]>(() => members.filter((m) => m.parent_key)
+    .map((m) => ({ clientId, childKey: m.case_key, parentKey: m.parent_key as string, kind: m.kind })), [members, clientId]);
+  const checks = useLinkChecks([...sugPairs, ...memberPairs]);
+  const checkOf = (p: LinkPair): LinkCheck | undefined => checks.data?.get(pairKey(p));
+  // On a link already made, only what the law does not allow is flagged (every manual link would otherwise say "no number in common").
+  const lawOf = (p: LinkPair): LinkCheck | null => { const c = checkOf(p); return c?.against_law ? { ...c, problems: c.problems.filter((x) => x.level === 'law') } : null; };
 
   // Until the migration is on the database the panel stays out of the way.
   if (chain.error && /20261024100000/.test(errText(chain.error))) return null;
@@ -123,7 +156,9 @@ export const CaseChainPanel: React.FC<{
   const description = linked
     ? `${plural(members.length, 'case')} in one chain`
     : isRefund ? 'No appeal and no re-filed application is linked to this refund' : 'This case is not linked to any other';
-  const suggestions = sug.data ?? [];
+  // Never suggested: a link GST law does not allow (a person can still make it from Link a case, warned).
+  const suggestions = (sug.data ?? []).filter((c) =>
+    !checkOf({ clientId, childKey: c.child_key, parentKey: c.parent_key, kind: c.kind })?.against_law);
 
   return (
     <SectionCard
@@ -181,6 +216,7 @@ export const CaseChainPanel: React.FC<{
                               {m.source === 'auto'
                                 ? <span>Linked by itself: {m.reason ?? (m.via_ref ? `${m.via_ref} is on the papers of both cases` : 'the papers of both cases carry the same number')}</span>
                                 : <span>Linked by {m.linked_by || 'a person'}{m.linked_at ? ` on ${fmtDate(m.linked_at)}` : ''}</span>}
+                              <LinkCheckChip check={lawOf({ clientId, childKey: m.case_key, parentKey: m.parent_key, kind: m.kind })} />
                             </div>
                           )}
                         </div>
@@ -240,7 +276,8 @@ export const CaseChainPanel: React.FC<{
                 <ul className="mt-1 divide-y">
                   {suggestions.slice(0, 4).map((c) => (
                     <Suggestion key={c.other_key} c={c} canEdit={canEdit} busy={busy} onLink={link}
-                      refund={refunds.get(refundIndexKey(clientId, c.other.case_id))} />
+                      refund={refunds.get(refundIndexKey(clientId, c.other.case_id))}
+                      check={checkOf({ clientId, childKey: c.child_key, parentKey: c.parent_key, kind: c.kind })} />
                   ))}
                 </ul>
               </div>
@@ -285,17 +322,20 @@ export const CaseChainPanel: React.FC<{
                     <button type="button" className="font-medium text-primary hover:underline" onClick={() => setFlip((v) => !v)}>The other way round</button>
                   </p>
                 )}
+                {chosen && pickPair[0] && <LinkProblems compact problems={pickCheck.data?.get(pairKey(pickPair[0]))?.problems ?? []} />}
               </div>
             )}
           </>
         )}
+      {guard.dialog}
     </SectionCard>
   );
 };
 
 const Suggestion: React.FC<{
   c: LinkCandidate; canEdit: boolean; busy: boolean; onLink: (child: string, parent: string, kind: LinkKind) => void; refund?: RefundRow;
-}> = ({ c, canEdit, busy, onLink, refund }) => {
+  check?: LinkCheck;
+}> = ({ c, canEdit, busy, onLink, refund, check }) => {
   const o = c.other;
   const out = o.track === 'refund' ? refundOutcome(o.refund) : null;
   const def = linkKindDef(c.kind);
@@ -311,6 +351,7 @@ const Suggestion: React.FC<{
           <Badge variant="secondary" className="text-[10px]" title="How sure: 100 is certain">{c.score}</Badge>
           {out && <Badge variant={out === 'sanctioned' ? 'success' : 'destructive'} className="text-[10px]">Refund {out}</Badge>}
           <RefundWhenChip r={refund} />
+          <LinkCheckChip check={check} />
           {o.refund_type && <span className="text-[11px] text-muted-foreground">{typeShort(o.refund_type)}</span>}
         </div>
         <div className="text-[11px] text-foreground/80">
