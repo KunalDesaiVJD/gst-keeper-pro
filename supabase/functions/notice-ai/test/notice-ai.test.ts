@@ -556,3 +556,25 @@ Deno.test('CLI: a later try of a document reads fewer pages instead of none', as
   assertEquals(f.status, 'done');
   assertStringIncludes(net.cli[0].body.parts[0].text, 'only pages 1 to 6 and 29 to 30 are given here');
 });
+
+Deno.test('a notice PDF read before, back at a new address after a refresh, is not read again', async () => {
+  const notice = await buildPdf(replyPages);
+  const net = new FakeNet({ 'notice.pdf': notice }, () => jsonReply(replyReading));
+  const db = new FakeDb({
+    ai_runner_begin: () => ({ lease: true, read_enabled: true, runner: 'edge', seconds: 400, sync_due: false }),
+    ai_claim_next: (_a, n) => n === 1
+      ? {
+        kind: 'notice', extraction_id: 'x2', notice_id: 'n1', client_id: 'c1', document_url: storageUrl('notice.pdf'), document_label: 'Notice PDF',
+        form_code: 'ASMT-10', reference_number: 'ZD-ASMT-1', issue_date: '2025-04-01', client_gstin: '24AAAAA0000A1Z5', attempt: 1,
+        model: 'm', effort: 'medium', max_pages: 60, price_in_per_mtok: 4, price_out_per_mtok: 20, issue_codes: ISSUE_CODES,
+      }
+      : null,
+    notice_read_hash: () => ({ duplicate: true, of: 'x1' }),
+    ai_runner_end: () => null,
+  });
+  const report = await runTick({ db, claude: net.client(), supabaseUrl: SUPA, agentId: 'edge:t', version: 't', fetchImpl: net.fetch, now: () => 0 });
+  assertEquals(report.jobs.map((j) => `${j.kind}:${j.status}:${j.reason}`), ['notice:skipped:same_file']);
+  assertEquals(net.claude.length, 0, 'no tokens spent');
+  assertEquals(db.called('notice_read_finish').length, 0, 'the earlier reading stands');
+  assertEquals(db.called('notice_read_hash')[0].args.p_sha256.length, 64);
+});

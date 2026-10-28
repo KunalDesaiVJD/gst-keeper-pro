@@ -105,6 +105,12 @@ export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: Abor
   } catch (e) {
     return fromDocumentError(e, null, 'The notice PDF');
   }
+  // The same PDF read before for this notice (back at a new address after a
+  // portal refresh) is not read again: the earlier reading stands.
+  const seen = await deps.db.rpc<{ duplicate?: boolean; error?: string }>('notice_read_hash', {
+    p_extraction_id: claim.extraction_id, p_agent: deps.agentId, p_sha256: doc.sha256,
+  });
+  if (seen?.duplicate || seen?.error) return { status: 'skipped', reason: 'same_file' };
   const base = { document_sha256: doc.sha256 };
   let text: PdfText;
   try {
@@ -243,6 +249,11 @@ export async function runTick(deps: Deps, opts: { seconds?: number } = {}): Prom
             await deps.db.rpc('ai_job_release', { p_agent: deps.agentId, p_kind: 'notice', p_id: c.extraction_id });
             report.jobs.push({ kind: 'notice', id: c.extraction_id, label: c.reference_number, status: 'released', reason: f.reason });
             break;
+          }
+          // Read before (notice_read_hash dropped the queued reading): nothing to finish.
+          if (f.status === 'skipped' && f.reason === 'same_file') {
+            report.jobs.push({ kind: 'notice', id: c.extraction_id, label: c.reference_number, status: 'skipped', reason: 'same_file' });
+            continue;
           }
           const r = await deps.db.rpc<{ status?: string; outcome?: string; error?: string }>('notice_read_finish', {
             p_extraction_id: c.extraction_id, p_agent: deps.agentId, p_status: f.status === 'skipped' ? 'failed' : f.status,
