@@ -69,7 +69,7 @@ export const EngagementLetterCard: React.FC<{ clients: ConsentClient[]; canEdit:
   const awaiting = states.filter((s) => ['sent', 'opened', 'read', 'changes'].includes(s)).length;
   return (
     <SectionCard title="Engagement letter"
-      info="The engagement letter is e-mailed to the client as a one page summary, each line opening its clause of the full letter on our page. The client reads it in full, says yes or no to AI tools, and e-signs with a code e-mailed to them. The signature records the AI consent on this page by itself, and every step is kept with its time, network address and browser. The letter covers the GST services, fees, confidentiality and the Digital Personal Data Protection Act, 2023 (roles, notice, consent, safeguards, retention, rights, grievances, breaches)."
+      info="The client gets a short e-mail with the link to the letter: it opens the one page summary, each line opening its clause of the full letter. The client reads it in full and e-signs with a code e-mailed to them; signing is the consent to the whole letter, its personal data and technology clauses included, and records the AI consent on this page by itself. Every step is kept with its time, network address and browser. The letter covers the GST services, confidentiality and the Digital Personal Data Protection Act, 2023 (roles, consent, safeguards, retention, rights, grievances, breaches)."
       description={published ? `Version ${published.version} published ${fmtDate(published.published_at)}${published.published_by ? ` by ${published.published_by}` : ''}` : 'Not published yet'}
       actions={<div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" className={WS_BTN} onClick={onEditTemplate}><FilePenLine className="h-3.5 w-3.5" /> {canEdit ? 'Read and edit the letter' : 'Read the letter'}</Button>
@@ -219,6 +219,10 @@ export const SendLetterDialog: React.FC<{ open: boolean; onOpenChange: (o: boole
   const [services, setServices] = useState<string[]>(SERVICE_OPTIONS.slice(0, 3));
   const [extra, setExtra] = useState('');
   const [fees, setFees] = useState('');
+  // The fees only where the published letter quotes them (version 2 has no fees clause).
+  const templates = useLetterTemplates();
+  const published = (templates.data ?? []).find((t) => t.status === 'published') ?? null;
+  const needsFees = !!published && JSON.stringify([published.intro, published.clauses]).includes('{{fees}}');
   const [start, setStart] = useState(istToday());
   const [days, setDays] = useState(30);
   const [message, setMessage] = useState('');
@@ -232,7 +236,7 @@ export const SendLetterDialog: React.FC<{ open: boolean; onOpenChange: (o: boole
     if (!actor) return;
     setBusy(true);
     try {
-      const r = await sendLetters({ clientIds: clients.map((c) => c.id), to: single ? to : null, cc, services: allServices, fees, startDate: start, validDays: days, message, replace }, actor);
+      const r = await sendLetters({ clientIds: clients.map((c) => c.id), to: single ? to : null, cc, services: allServices, fees: needsFees ? fees : '', startDate: start, validDays: days, message, replace }, actor);
       if (r.sent.length) toast.success(`Engagement letter e-mailed to ${plural(r.sent.length, 'client')}.`);
       if (r.failed.length) toast.error(`The e-mail failed for ${r.failed.map((x) => x.name).join(', ')}. Resend it from its record.`);
       if (r.skipped.length) toast.warning(`Not sent: ${r.skipped.map((x) => `${x.name} (${x.why})`).join('; ')}`, { duration: 10_000 });
@@ -246,7 +250,7 @@ export const SendLetterDialog: React.FC<{ open: boolean; onOpenChange: (o: boole
       <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Send the engagement letter to {single ? single.name : plural(clients.length, 'client')}</DialogTitle>
-          <DialogDescription>Each client gets its own letter and link. The e-mail is the one page summary; its links open the full letter, where the client e-signs.</DialogDescription>
+          <DialogDescription>Each client gets its own letter and link. The e-mail carries only the link: it opens the letter's one page summary, whose lines open the full letter, where the client e-signs.</DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); void send(); }}>
           {single ? (
@@ -273,10 +277,12 @@ export const SendLetterDialog: React.FC<{ open: boolean; onOpenChange: (o: boole
               <Textarea value={extra} onChange={(e) => setExtra(e.target.value)} rows={2} className="text-sm" placeholder="Any other service, one a line" />
             </div>
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Fees (clause 7)</Label>
-            <Textarea value={fees} onChange={(e) => setFees(e.target.value)} rows={2} className="text-sm" required placeholder="e.g. Rs. 6,000 a month for returns and reconciliation; Rs. 15,000 for the annual return; appeals as agreed for each" />
-          </div>
+          {needsFees && (
+            <div className="space-y-1">
+              <Label className="text-xs">Fees</Label>
+              <Textarea value={fees} onChange={(e) => setFees(e.target.value)} rows={2} className="text-sm" required placeholder="e.g. Rs. 6,000 a month for returns and reconciliation; Rs. 15,000 for the annual return; appeals as agreed for each" />
+            </div>
+          )}
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="space-y-1"><Label className="text-xs">Engagement starts on</Label><Input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="h-9" /></div>
             <div className="space-y-1"><Label className="text-xs">Link valid for (days)</Label><Input type="number" min={3} max={90} value={days} onChange={(e) => setDays(Number(e.target.value) || 30)} className="h-9" /></div>
@@ -293,7 +299,7 @@ export const SendLetterDialog: React.FC<{ open: boolean; onOpenChange: (o: boole
           )}
           <DialogFooter className="gap-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={busy || !fees.trim() || allServices.length === 0 || (!!single && !to.trim())}>
+            <Button type="submit" disabled={busy || (needsFees && !fees.trim()) || allServices.length === 0 || (!!single && !to.trim())}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />} Send {clients.length > 1 ? `${clients.length} letters` : 'the letter'}
             </Button>
           </DialogFooter>
@@ -349,7 +355,7 @@ export const LetterDialog: React.FC<{ letter: EngagementLetter | null; onOpenCha
     ['Summary opened', istDateTime(letter.first_opened_at) || 'Not yet'],
     ['Full letter opened', istDateTime(letter.full_opened_at) || 'Not yet'],
     ['Signed', letter.signed_at ? `${letter.signer_name} (${letter.signer_capacity}) at ${letter.signer_email}, ${istDateTime(letter.signed_at)}` : 'Not yet'],
-    ['Consents', letter.signed_at ? `Terms: yes · Personal data: yes · AI tools: ${c.ai_processing ? 'yes' : 'no'}${letter.ai_withdrawn_at ? ` (withdrawn ${istDateTime(letter.ai_withdrawn_at)})` : ''}` : null],
+    ['Consents', letter.signed_at ? `The whole letter, its personal data and technology clauses included${c.ai_processing === false || letter.ai_withdrawn_at ? ` · AI tools withdrawn${letter.ai_withdrawn_at ? ` ${istDateTime(letter.ai_withdrawn_at)}` : ''}` : ''}` : null],
     ['Changes asked', letter.decline_reason ? `${letter.decline_reason} (${istDateTime(letter.declined_at)})` : null],
     ['Signed copy', letter.copy_sent_at ? (letter.copy_error ? `Failed: ${letter.copy_error}` : `E-mailed ${istDateTime(letter.copy_sent_at)}`) : null],
     ['Withdrawn', letter.revoked_at ? `${istDateTime(letter.revoked_at)} by ${letter.revoked_by ?? 'staff'}${letter.revoke_reason ? `: ${letter.revoke_reason}` : ''}` : null],

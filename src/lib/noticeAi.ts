@@ -144,6 +144,34 @@ export async function loadCaseDocuments(clientId: string, caseId: string | null,
   return data ?? [];
 }
 
+/** What the AI read in a document, as a case's or refund's papers show it. */
+export type DocReading = Pick<AiDocument, 'url' | 'status' | 'reason_class' | 'summary' | 'title' | 'pages' | 'usage' | 'model'>;
+
+/** The readings of a case's documents (a refund's: its ARN), by the file's address. */
+export async function loadCaseReadings(clientId: string, caseId: string): Promise<Map<string, DocReading>> {
+  const { data, error } = await supabase.from('ai_documents').select('url, status, reason_class, summary, title, pages, usage, model')
+    .eq('client_id', clientId).eq('case_id', caseId).neq('source', 'workspace').limit(500);
+  if (error) throw error;
+  const out = new Map<string, DocReading>();
+  for (const d of (data ?? []) as DocReading[]) {
+    if (!d.url) continue;
+    const had = out.get(d.url);
+    if (!had || (d.status === 'done' && had.status !== 'done')) out.set(d.url, d);
+  }
+  return out;
+}
+
+/** Why a document has no reading to show, in a line; null when it has one or none is owed (the notice's own PDF). */
+export function readingNote(r: Pick<DocReading, 'status' | 'reason_class' | 'pages'> | null | undefined): string | null {
+  if (!r) return null;
+  if (r.status === 'queued' || r.status === 'running') return 'The AI is reading it.';
+  if (r.status === 'done' || r.reason_class === 'same_as_notice') return null;
+  if (r.reason_class === 'needs_vision') return 'A scan: the AI cannot read its text yet.';
+  if (r.reason_class === 'too_long') return `A scan${r.pages ? ` of ${r.pages} pages` : ''}: too long for the AI to read.`;
+  if (r.status === 'cancelled') return null;
+  return 'The AI could not read it.';
+}
+
 export async function requestCaseDocuments(noticeId: string): Promise<number> {
   const { data, error } = await supabase.rpc('ai_documents_request', { p_notice_id: noticeId });
   if (error) throw error;

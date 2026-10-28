@@ -1,6 +1,8 @@
-// The e-mails of an engagement letter (migration 20261028110000, docs/ENGAGEMENT_LETTERS.md):
-// the letter itself (its one page summary, each line linking to that clause of the
-// full letter on the firm's page), the code that signs it, and the signed copy.
+// The e-mails of an engagement letter (migrations 20261028110000 and 130000,
+// docs/ENGAGEMENT_LETTERS.md): the link to the letter (the page opens on its one
+// page summary, each line opening that clause of the full letter), the code that
+// signs it, and the signed letter to download. Short on purpose (the firm, 28
+// October 2026).
 // Fixed in code on purpose: email_templates can be edited by anyone holding the
 // anon key, and these messages carry the link and the code that sign for a client.
 import { buildEmailHtml } from '../_shared/email.ts';
@@ -11,7 +13,6 @@ export const esc = (v: unknown) =>
 
 /** The page of a letter's link: always the firm's own address, never one read from a setting. */
 export const letterLink = (token: string) => `${DOC_LINK_ORIGIN}/engagement/${encodeURIComponent(token)}`;
-export const clauseLink = (token: string, n: number) => `${letterLink(token)}?clause=${n}`;
 
 /** One address, as the database checked it (no list, no display name). */
 export function checkedAddress(to: unknown): string {
@@ -44,50 +45,24 @@ export interface IssuedLetter {
 const firmVars = (f: Firm) => ({
   firm_name: esc(f.name || 'V. J. Desai & Co. LLP'),
   firm_email: esc(f.email || 'gst@vjdesai.com'),
-  staff_name: esc(f.partner_name ? `${f.partner_name}, for ${f.name || 'V. J. Desai & Co. LLP'}` : ''),
+  // The firm's name is the line under it.
+  staff_name: esc(f.partner_name ?? ''),
 });
 
-/** The one page summary: each term in a line, each opening its clause in the full letter. */
-export function summaryHtml(token: string, lines: SummaryLine[]): string {
-  const rows = lines.map((l) => `<tr>
-<td style="padding:9px 0 9px 14px;border-top:1px solid #e2e8f0;vertical-align:top;width:22px;color:#64748b;font-weight:600;">${l.n}</td>
-<td style="padding:9px 14px 9px 6px;border-top:1px solid #e2e8f0;">
-<a href="${clauseLink(token, l.n)}" style="font-weight:600;color:#0f2b46;text-decoration:none;">${esc(l.heading)}</a>
-<div style="color:#475569;margin-top:2px;">${esc(l.summary)}</div>
-<a href="${clauseLink(token, l.n)}" style="display:inline-block;margin-top:3px;font-size:12px;color:#1d4ed8;">Read clause ${l.n} in full</a>
-</td></tr>`).join('');
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:6px;margin:4px 0 18px;font-size:13px;line-height:1.5;">
-<tr><td colspan="2" style="padding:10px 14px;background:#f8fafc;font-weight:700;color:#0f2b46;">The letter on one page</td></tr>
-${rows}
-<tr><td colspan="2" style="padding:10px 14px;border-top:1px solid #e2e8f0;background:#f8fafc;"><a href="${letterLink(token)}?part=full" style="font-weight:600;color:#1d4ed8;">Read the full engagement letter</a></td></tr>
-</table>`;
-}
-
 export function letterEmail(l: IssuedLetter, token: string): { subject: string; html: string } {
-  const f = l.firm ?? {};
+  // Only the link (the firm, 28 October 2026: "Email is too long"): the page opens on the letter's one page summary.
   const message = [
-    `We are pleased to set out the terms on which ${esc(f.name || 'we')} will act for ${esc(l.client_name)} on its affairs under the GST laws. The summary below gives each term in a line; each line opens that clause of the full letter on our page.`,
+    `Please find our engagement letter for ${esc(l.client_name)}, for your review and e-signature.`,
     l.message ? esc(l.message) : '',
-    'To accept it, open the letter with the button, read it in full, type your name and capacity, say whether we may use AI tools on your notices, and confirm with the 6 digit code we then e-mail to this address. A signed copy comes to you by e-mail.',
-    'The letter also tells you how we protect personal data under the Digital Personal Data Protection Act, 2023 (clauses 9 to 14), what your rights are, and how to reach our grievance officer.',
-    `If this e-mail is not meant for you, please ignore it and tell us at ${esc(f.email || 'gst@vjdesai.com')}.`,
+    `The button opens the letter. Read it and sign it there with a code we e-mail to you. The link works until ${esc(istDate(l.expires_at))}.`,
   ].filter(Boolean).join('\n\n');
   const html = buildEmailHtml({
     key: 'engagement_letter',
     kind: 'engagement_letter',
     message,
-    vars: {
-      ...firmVars(f),
-      client_name: esc(l.client_name),
-      gstin: esc(l.gstin ?? ''),
-      letter: esc(`${l.title} (version ${l.version})`),
-      valid_until: esc(istDate(l.expires_at)),
-      cta_url: letterLink(token),
-      cta_label: 'Review and e-sign the letter',
-      summary_html: summaryHtml(token, l.summary ?? []),
-    },
+    vars: { ...firmVars(l.firm ?? {}), client_name: esc(l.client_name), cta_url: letterLink(token), cta_label: 'Review and sign the engagement letter' },
   });
-  return { subject: `${l.resend ? 'Reminder: ' : ''}Engagement letter for ${l.client_name}: please review and e-sign`, html };
+  return { subject: `${l.resend ? 'Reminder: ' : ''}Engagement letter for ${l.client_name}: please review and sign`, html };
 }
 
 /** What engagement_letter_code_claim hands over. */
@@ -123,40 +98,28 @@ export interface SignedLetter {
 }
 
 export function copyEmail(s: SignedLetter, token: string): { subject: string; html: string } {
-  const f = s.firm ?? {};
-  const ai = s.consents?.ai_processing === true;
-  const message = [
-    `Thank you. Your e-signature on our engagement letter for ${esc(s.client_name)} is recorded.`,
-    `You agreed to the terms of the letter and to the processing of personal data it describes (clause 9). AI tools (clause 11): you ${ai ? '<strong>allowed</strong>' : '<strong>did not allow</strong>'} us to use them on your notices.`,
-    `The fingerprint of the text you signed (SHA-256) is <span style="font-family:Consolas,monospace;font-size:12px;word-break:break-all;">${esc(s.doc_sha256)}</span>. It identifies that exact text.`,
-    `The button opens the signed letter, which you can print or save as a PDF.${ai ? ' From that page you can also withdraw your consent to AI tools at any time.' : ''} For any question about your personal data, write to ${esc(f.grievance_email || f.email || 'gst@vjdesai.com')}.`,
-  ].join('\n\n');
+  // Short (the firm, 28 October 2026): the signed letter to download, nothing else.
+  const message = `Thank you. The engagement letter for ${esc(s.client_name)} is signed. Download the signed letter with the button.`;
   const html = buildEmailHtml({
     key: 'engagement_letter_signed',
     kind: 'engagement_letter_signed',
     message,
     vars: {
-      ...firmVars(f),
+      ...firmVars(s.firm ?? {}),
       contact_person: esc(s.signer_name),
       client_name: esc(s.client_name),
-      gstin: esc(s.gstin ?? ''),
-      letter: esc(`${s.title} (version ${s.version})`),
-      signed_by: esc(`${s.signer_name}, ${s.signer_capacity}`),
-      signed_on: esc(istDateTime(s.signed_at)),
-      letter_ref: esc(s.ref),
-      cta_url: letterLink(token),
-      cta_label: 'Open the signed letter',
+      cta_url: `${letterLink(token)}?download=1`,
+      cta_label: 'Download the signed letter',
     },
   });
-  return { subject: `Signed: engagement letter for ${s.client_name} (ref ${s.ref})`, html };
+  return { subject: `Signed: engagement letter for ${s.client_name}`, html };
 }
 
 /** The firm's own note of a signature: the facts and where the record is kept, without the client's link. */
 export function firmCopyEmail(s: SignedLetter): { subject: string; html: string } {
-  const ai = s.consents?.ai_processing === true;
   const message = [
     `${esc(s.client_name)} e-signed the engagement letter (version ${s.version}).`,
-    `Signed by ${esc(s.signer_name)} (${esc(s.signer_capacity)}) at ${esc(s.to)} on ${esc(istDateTime(s.signed_at))}. AI tools: ${ai ? 'allowed' : 'not allowed'}; the client's consent is recorded on Client consent.`,
+    `Signed by ${esc(s.signer_name)} (${esc(s.signer_capacity)}) at ${esc(s.to)} on ${esc(istDateTime(s.signed_at))}; the client's consent is recorded on Client consent.`,
     `Document fingerprint (SHA-256): <span style="font-family:Consolas,monospace;font-size:12px;word-break:break-all;">${esc(s.doc_sha256)}</span>.`,
     'The full record (every step, with its time, network address and browser) and the signed PDF are under Reply Factory, Client consent, on the client\'s letter.',
   ].join('\n\n');

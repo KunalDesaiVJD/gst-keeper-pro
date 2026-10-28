@@ -8,9 +8,22 @@ opens a one page summary; only a link inside it opens the entire letter. Once th
 client e-signs, the portal records everything."
 
 Implemented by engineering judgement. **The letter's text is a draft for a
-partner's review, not legal advice the firm has signed off**: version 1 is seeded
-as a draft and nothing can be sent until a GST Manager or the superadmin reads it,
-fills the firm's details and publishes it.
+partner's review, not legal advice the firm has signed off**: version 1 was seeded
+as a draft, filled and published by the firm. The same day the firm asked for
+version 2 (migration `20261028130000`): "default permission is Yes only … if the
+client does not want then will not sign it", "Email is too long so only signing
+link", "PDF … properly structured … justify view", the signed e-mail "very short
+… only … download the signed letter", "design letter only in 3 pages - keep AI
+paragraph only in 1/2 liners … no need to name any AI tool", "delete fees
+clause". Version 2 is published with the firm's details, version 1 retired (the
+letter signed on it keeps its text).
+
+The firm's details are kept once (the firm: "save everything our firm details …
+permanently"): the table `firm_profile` (one row, open to read, written only by a
+migration) and `REPORT_FIRM` in `src/utils/reportTheme.ts`: V. J. Desai & Co. LLP,
+FRN 113541W/W101248, B-901/902, Ratnaakar Nine Square, Opp ITC Narmada,
+Satellite, Ahmedabad-380015, engagement partner CA Kunal Desai (Membership No.
+153784), grievance officer Mukesh Baldha (info@vjdesai.com).
 
 ## The flow
 
@@ -25,7 +38,8 @@ fills the firm's details and publishes it.
    (`engagement_letter_template_publish`, which refuses while a required firm
    detail is empty).
 2. **Send** (tick clients → *Send engagement letter*, or *Send* on a row): the
-   services (ticked from a list, others typed), the fees, the start date, how many
+   services (ticked from a list, others typed), the fees only when the published
+   letter quotes `{{fees}}` (version 2 does not), the start date, how many
    days the link lasts (3 to 90, default 30), an optional line for the e-mail,
    and, for one client, the To and CC addresses (many clients each get their own
    e-mail on file). `engagement_letter_create` makes one letter per client: the
@@ -33,18 +47,19 @@ fills the firm's details and publishes it.
    with a letter still open is left out unless *withdraw and send the new one* is
    ticked. Then the Edge Function `engagement-letter` (`send`) mints the link's
    token, stores only its hash, and e-mails the letter through Microsoft Graph.
-3. **The e-mail is the one page summary**: the letter's facts, a *Review and
-   e-sign* button, and every clause in a line with *Read clause n in full*,
-   which opens `https://gst.vjdesai.com/engagement/<token>?clause=n`.
-4. **The page** `/engagement/<token>` (public, no login) opens on the summary;
-   a clause link or *Read the full engagement letter* opens the full text (and
+3. **The e-mail carries only the link** (two short lines and a *Review and sign*
+   button to `https://gst.vjdesai.com/engagement/<token>`).
+4. **The page** `/engagement/<token>` (public, no login) opens on the one page
+   summary, each clause in a line; a clause (`?clause=n`) or *Read the full
+   engagement letter* opens the full text, justified (and
    records that it was opened). The fingerprint of the text is recomputed in the
    browser and shown as matching.
 5. **E-signature**, open only once the full letter was opened (the database
    refuses before): full name; capacity (proprietor, partner, director,
-   authorised signatory and others); two required boxes (the terms, and the
-   processing of personal data in clause 9); an explicit **yes or no to AI
-   tools** (clause 11, optional, no default); the typed name as the signature and
+   authorised signatory and others); **one box**: the whole letter agreed, its
+   personal data and technology clauses included (the signature is the AI
+   consent too: no separate question, the firm's choice of 28 October 2026; the
+   page sends `ai_processing: true`); the typed name as the signature and
    an optional drawn one; then a 6 digit code e-mailed to the letter's address
    (marked with a 4 letter reference, valid 30 minutes, 5 tries, 5 codes an hour
    and 10 a day per letter). `engagement_letter_sign` checks it all.
@@ -54,17 +69,24 @@ fills the firm's details and publishes it.
    (made, e-mailed, summary opened, full letter opened, code asked and e-mailed,
    a refused signature, signed, changes asked, AI consent withdrawn, signed copy
    e-mailed, withdrawn by the firm), each with its time, network address and
-   browser. **The AI consent goes onto the client by itself**: yes sets
-   `ai_consent_at` (the day signed) with the letter in `ai_consent_note`; no sets
-   `ai_opt_out`.
+   browser. **The AI consent goes onto the client by itself**: `ai_consent_at`
+   (the day signed) with the letter in `ai_consent_note` (a withdrawal sets
+   `ai_opt_out`).
 7. **Signed copy**: the Edge Function (`copy`, once) e-mails the signer (and the
-   CC) a confirmation with the consents, the fingerprint and its own link to the
-   signed letter (which keeps working), and the firm's mailbox a note with a link
-   to the record. The page offers the signed letter as a PDF with a certificate of
-   signing; staff get the same PDF with every step, network address, browser and
-   the drawn signature.
+   CC) one line and a *Download the signed letter* button (its own link with
+   `?download=1`, which downloads the PDF at once and keeps working), and the
+   firm's mailbox a note with a link to the record. **The PDF**: the letterhead
+   (logo, address, e-mail and phone), the reference and date, the addressee, the
+   subject, the clauses numbered with their text justified (jsPDF's own word
+   spacing, so it copies with its spaces), then the firm's signature (partner and
+   membership number) beside the client's acceptance (the typed and any drawn
+   signature, name, capacity, time), a line on how it was signed with the
+   fingerprint, and every page footed with the reference and its number: three
+   pages for version 2. Staff get the same PDF with a page more: every step,
+   network address and browser.
 8. **Later**: from the signed letter's page the client can withdraw the AI
-   consent with a code (DPDP s.6(4): as easy as giving it), which sets
+   consent with a code (DPDP s.6(4): a consent can be withdrawn as easily as it
+   was given; kept though the page no longer asks the question), which sets
    `ai_opt_out` on the client. Before signing, the client can send *something to
    change* (recorded; the letter stays signable). Staff can e-mail a new link (the
    earlier one stops working once the new e-mail is out; if it fails, the earlier
@@ -91,13 +113,13 @@ fills the firm's details and publishes it.
   setting. The network address comes from the request (`cf-connecting-ip`,
   `x-real-ip`, else the first `x-forwarded-for`), checked on live.
 
-## What the letter covers (version 1)
+## What the letter covers (version 2, 17 clauses)
 
 Who the parties are; the services; the client's responsibilities (records,
 information on time, approval of each return, payment, self assessment under
 s.59 and rule 83); the firm's (ICAI standards, due care); the portal and the
 authority to act (GST Practitioner, s.116 representation); notices, replies and
-appeals; fees; confidentiality (Chartered Accountants Act, 1949, ICAI Code of
+appeals; confidentiality (Chartered Accountants Act, 1949, ICAI Code of
 Ethics); and, for the **Digital Personal Data Protection Act, 2023** and the
 **DPDP Rules, 2025** (notified 13 November 2025; Rule 4 from 13 November 2026,
 Rule 3 and Rules 5 to 16 from 13 May 2027):
@@ -108,14 +130,16 @@ Rule 3 and Rules 5 to 16 from 13 May 2027):
   employees), on the client's instructions in the letter.
 - **The notice** (s.5, Rule 3): the data itemised, the purposes, how to withdraw
   consent and exercise rights, and the complaint to the Board.
-- **Consent** (s.6): for the processing the services need, with AI tools as a
-  separate, optional consent; withdrawal as easy as giving it.
+- **Consent** (s.6): the signature, for the processing the services need;
+  withdrawal by writing to the grievance officer.
+- **Technology tools** (clause 10): two lines, naming no tool: secure AI tools
+  may help read documents and prepare drafts; a member of the firm reviews all
+  such work before anything is filed or sent.
 - **Safeguards and sharing** (s.8(5), Rule 6): access limited to the staff on the
   client's matters, encrypted connections, records of access and changes,
-  backups, contracts binding the service providers; the service providers named
-  (cloud database and hosting, Microsoft 365, the GST portal and GSTN, the AI
-  service only with consent); transfer outside India as s.16 permits; no sale or
-  advertising use.
+  backups, contracts binding the service providers; the kinds of service
+  provider (hosting, e-mail, the GST portal and GSTN, the tools of clause 10);
+  transfer outside India as s.16 permits; no sale or advertising use.
 - **Retention and erasure** (s.8(7)): at least 72 months from the annual return's
   due date (s.36, CGST Act), longer while a proceeding is pending; the letter and
   its record for eight years after the engagement.
@@ -129,25 +153,23 @@ Then the limit of liability, ending the engagement and the handover,
 communication and the electronic signature (s.10A, Information Technology Act,
 2000), and general terms (Indian law, arbitration at the firm's city).
 
-## Before publishing: for the partner to confirm
+## For the partner to confirm
 
-- Every clause, and the firm's details (FRN, address, partner, membership number,
-  grievance officer and e-mail).
-- **Clause 11**: that the AI service is used "only on terms that require the
-  provider to keep your data confidential and to use it only to provide the
-  service to us". The firm reaches Claude through its own CLI gateway on the
-  firm's Claude subscription (CLAUDE.md); confirm that the plan's terms say so
-  (including whether inputs may be used to train models), or change the clause.
-- **Clause 10**: where the cloud database is hosted, and whether to name the
-  providers in full.
-- **Clause 12**: the eight years for the letter and its record.
-- **Clause 15**: the limit of liability (12 months' fees for the service).
+- Every clause of version 2. Clause 10 now says only that secure AI tools may help
+  and that a member of the firm reviews all such work; confirm that the terms of
+  the firm's AI service keep its data confidential (and whether inputs may be used
+  to train models), as the firm's own obligation under clause 9.
+- Clause 11: the eight years for the letter and its record. Clause 14: the limit
+  of liability (12 months' fees for the service).
+- The signature as the AI consent: a client who will not consent does not sign
+  (the firm's choice); a signed client may still withdraw it (DPDP s.6(4)).
 - The e-signature is a click-to-accept signature confirmed by a code e-mailed to
   the client (s.10A); it is not an Aadhaar eSign or a DSC under s.3A.
 
 ## Files
 
-- Migration `supabase/migrations/20261028110000_engagement_letters.sql`.
+- Migrations `supabase/migrations/20261028110000_engagement_letters.sql` and
+  `20261028130000_engagement_letter_v2.sql` (firm_profile, fees only when quoted, version 2).
 - Edge Function `supabase/functions/engagement-letter/` (`handler.ts`,
   `message.ts`; tests `deno test --allow-read supabase/functions/engagement-letter/test/`).
   It reaches the database with plain PostgREST calls (no supabase-js).

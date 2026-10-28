@@ -16,10 +16,18 @@ import firmLogo from '@/assets/logo-small.png';
 //   the summary band are standalone and set normally. Forcing column alignment
 //   onto a large standalone number just makes it look loose.
 
+// The firm's details, kept once for the app's papers (the firm, 28 October 2026);
+// the database holds the same in firm_profile (migration 20261028130000).
 export const REPORT_FIRM = {
   name: 'V. J. Desai & Co. LLP',
   designation: 'Chartered Accountants',
   email: 'gst@vjdesai.com',
+  frn: '113541W/W101248',
+  address: 'B-901/902, Ratnaakar Nine Square, Opp ITC Narmada, Satellite, Ahmedabad-380015',
+  city: 'Ahmedabad',
+  phone: '9426662515',
+  partner: 'CA Kunal Desai',
+  membershipNo: '153784',
 };
 
 /**

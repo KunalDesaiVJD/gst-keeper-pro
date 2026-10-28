@@ -2,7 +2,7 @@
 //   deno test --allow-read supabase/functions/engagement-letter/test/
 import { assert, assertEquals, assertStringIncludes } from '@std/assert';
 import { makeHandler, mintToken, tokenHash, type Deps } from '../handler.ts';
-import { letterEmail, summaryHtml } from '../message.ts';
+import { letterEmail } from '../message.ts';
 
 const LETTER = '11111111-2222-4333-8444-555555555555';
 const CODE = '66666666-7777-4888-8999-000000000000';
@@ -39,7 +39,7 @@ function fake(replies: Record<string, unknown>, failSend = false) {
 }
 const post = (body: unknown) => new Request('http://x/', { method: 'POST', body: JSON.stringify(body) });
 
-Deno.test('send: only the hash goes to the database; the e-mail carries the summary, each line opening its clause', async () => {
+Deno.test('send: only the hash goes to the database; the e-mail carries only the signing link', async () => {
   const f = fake({ engagement_letter_issue: issued });
   const r = await makeHandler(f.deps)(post({ action: 'send', letter_id: LETTER }));
   assertEquals(await r.json(), { ok: true, status: 'sent' });
@@ -50,11 +50,11 @@ Deno.test('send: only the hash goes to the database; the e-mail carries the summ
   const m = f.sent[0];
   assertEquals([m.to, m.cc], ['owner@client.example', 'accounts@client.example']);
   assertStringIncludes(m.subject, 'Engagement letter for M J SURGICAL');
-  assertStringIncludes(m.html, `https://gst.vjdesai.com/engagement/${TOKEN}?clause=9`);
-  assertStringIncludes(m.html, 'Read clause 9 in full');
-  assertStringIncludes(m.html, 'Review and e-sign the letter');
+  assertStringIncludes(m.html, `https://gst.vjdesai.com/engagement/${TOKEN}"`);
+  assertStringIncludes(m.html, 'Review and sign the engagement letter');
   assertStringIncludes(m.html, 'Please sign &lt;soon&gt;');
-  assertStringIncludes(m.html, 'Digital Personal Data Protection Act, 2023');
+  assert(!m.html.includes('?clause='), 'only the signing link: the clauses are on the page');
+  assert(m.html.length < 6000, `a short e-mail (${m.html.length})`);
   assert(!f.logs.join('\n').includes(TOKEN), 'the token is never logged');
 });
 
@@ -82,25 +82,25 @@ Deno.test('code: the code goes to the one address, never in the subject', async 
   assertEquals(f.calls[1].fn, 'engagement_letter_code_mark');
 });
 
-Deno.test('copy: the signer gets the signed copy with its own link; the firm a note with the record\'s address', async () => {
+Deno.test('copy: the signer gets a short note to download the signed letter; the firm a note with the record\'s address', async () => {
   const f = fake({ engagement_letter_copy_claim: signed });
   const r = await (await makeHandler(f.deps)(post({ action: 'copy', letter_id: LETTER }))).json();
   assertEquals(r, { ok: true, status: 'sent' });
   assertEquals(f.calls[0].args.p_view_hash, await tokenHash(TOKEN));
   const [client, firm] = f.sent;
   assertEquals(client.to, 'owner@client.example');
-  assertStringIncludes(client.html, `https://gst.vjdesai.com/engagement/${TOKEN}`);
-  assertStringIncludes(client.html, 'withdraw your consent to AI tools');
-  assertStringIncludes(client.html, 'a'.repeat(64));
+  assertStringIncludes(client.html, `https://gst.vjdesai.com/engagement/${TOKEN}?download=1`);
+  assertStringIncludes(client.html, 'Download the signed letter');
+  assert(!client.html.includes('a'.repeat(64)) && !client.html.includes('AI tools'), 'short: only the signed letter to download');
   assertEquals(firm.to, 'gst@vjdesai.com');
   assert(!firm.html.includes(TOKEN), 'the firm\'s note has no client link');
   assertStringIncludes(firm.html, `/notices-reply-factory?tab=consent&amp;letter=${LETTER}`.replace('&amp;', '&'));
 });
 
-Deno.test('tokens are long and random; the summary escapes what it shows', async () => {
+Deno.test('tokens are long and random; the e-mail escapes what it shows', async () => {
   const a = mintToken(), b = mintToken();
   assert(a !== b && a.length >= 43 && /^[A-Za-z0-9_-]+$/.test(a));
   assertEquals((await tokenHash('x')).length, 64);
-  assertStringIncludes(summaryHtml('t', [{ n: 1, key: 'k', heading: '<b>', summary: 'a & b' }]), '&lt;b&gt;');
+  assertStringIncludes(letterEmail({ ...issued, client_name: '<b>' }, 't').html, '&lt;b&gt;');
   assertStringIncludes(letterEmail({ ...issued, resend: true }, 't').subject, 'Reminder: ');
 });

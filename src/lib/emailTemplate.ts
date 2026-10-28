@@ -41,7 +41,7 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
   const internal = kind === 'notice_alert' && g('_audience') === 'internal';
   // A client's password reset link (client-password-reset) gets the button too.
   const resetLink = kind === 'client_password_reset';
-  // An engagement letter's e-mails: a button to its page, the letter's facts, and the one page summary (summary_html).
+  // An engagement letter's e-mails: a button to its page and the letter's facts.
   const letter = kind === 'engagement_letter' || kind === 'engagement_letter_code' || kind === 'engagement_letter_signed';
   const tone = g('_tone');
   const toneColor = tone === 'urgent' ? '#b91c1c' : tone === 'soon' ? '#b45309' : '#0f2b46';
@@ -160,7 +160,6 @@ ${detailRows ? `<table role="presentation" width="100%" cellpadding="0" cellspac
 </table>` : ''}
 ${paras}
 ${kind === 'bills_not_in_books' && vars.table_html ? String(vars.table_html) : ''}
-${letter && vars.summary_html ? String(vars.summary_html) : ''}
 ${signature}
 </td></tr>
 <tr><td style="background:#f1f5f9;padding:15px 28px;border-top:1px solid #e2e8f0;">

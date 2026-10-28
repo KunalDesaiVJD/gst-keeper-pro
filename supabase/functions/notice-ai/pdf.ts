@@ -7,6 +7,9 @@
 // its text (its readings then stay unchecked, as for a scan).
 
 import { getDocumentProxy } from 'unpdf';
+import { pagesToRead } from './pages.ts';
+
+export { pagesAsText, pagesToRead } from './pages.ts';
 
 export const MAX_PDF_BYTES = 32 * 1024 * 1024;
 export const DOWNLOAD_TIMEOUT_MS = 60_000;
@@ -157,10 +160,13 @@ export function itemsToText(items: unknown[]): string {
 
 export interface PdfText {
   pageCount: number | null;
+  // One entry per page of the file ('' for a page not read).
   pages: string[];
   textLayer: boolean;
   // Why the text layer was not read (size, retry, unreadable), if it was not.
   skipped?: string;
+  // The pages read when the document was read in part (too long to read whole).
+  read?: number[];
 }
 
 export function hasTextLayer(pages: string[]): boolean {
@@ -170,7 +176,8 @@ export function hasTextLayer(pages: string[]): boolean {
 }
 
 // Page count and text. withText false: the page count only (still a parse).
-export async function readPdfText(bytes: Uint8Array, opts: { maxPages: number; withText: boolean }): Promise<PdfText> {
+// partial: a document longer than maxPages is read by pagesToRead instead of not at all.
+export async function readPdfText(bytes: Uint8Array, opts: { maxPages: number; withText: boolean; partial?: boolean }): Promise<PdfText> {
   if (bytes.byteLength > TEXT_MAX_BYTES) return { pageCount: null, pages: [], textLayer: false, skipped: 'size' };
   let doc: Awaited<ReturnType<typeof getDocumentProxy>>;
   try {
@@ -183,17 +190,20 @@ export async function readPdfText(bytes: Uint8Array, opts: { maxPages: number; w
   }
   try {
     const pageCount = doc.numPages;
-    if (!opts.withText || pageCount > Math.min(opts.maxPages, TEXT_MAX_PAGES)) {
+    const cap = Math.min(opts.maxPages, TEXT_MAX_PAGES);
+    if (!opts.withText || (pageCount > cap && !opts.partial)) {
       return { pageCount, pages: [], textLayer: false, skipped: opts.withText ? 'pages' : 'retry' };
     }
-    const pages: string[] = [];
-    for (let i = 1; i <= pageCount; i++) {
+    const read = pagesToRead(pageCount, cap);
+    const pages: string[] = new Array(pageCount).fill('');
+    for (const i of read) {
       const page = await doc.getPage(i);
       const content = await page.getTextContent();
-      pages.push(itemsToText(content.items as unknown[]));
+      pages[i - 1] = itemsToText(content.items as unknown[]);
       page.cleanup();
     }
-    return { pageCount, pages, textLayer: hasTextLayer(pages) };
+    const textLayer = hasTextLayer(read.map((i) => pages[i - 1]));
+    return read.length < pageCount ? { pageCount, pages, textLayer, read } : { pageCount, pages, textLayer };
   } catch {
     return { pageCount: doc.numPages ?? null, pages: [], textLayer: false, skipped: 'unreadable' };
   } finally {

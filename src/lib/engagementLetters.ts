@@ -32,7 +32,7 @@ export const FIRM_FIELDS: { key: FirmField; label: string; required: boolean; hi
 /** The placeholders a clause may use; each letter fills them when it is made. */
 export const PLACEHOLDERS: { key: string; meaning: string }[] = [
   { key: 'client_name', meaning: 'the client\'s name' }, { key: 'gstin', meaning: 'the client\'s GSTIN' }, { key: 'pan', meaning: 'the PAN in the GSTIN' },
-  { key: 'services', meaning: 'the services chosen when sending, one line each' }, { key: 'fees', meaning: 'the fees typed when sending' },
+  { key: 'services', meaning: 'the services chosen when sending, one line each' }, { key: 'fees', meaning: 'the fees typed when sending (asked only when a clause quotes it)' },
   { key: 'start_date', meaning: 'the date the engagement starts' }, { key: 'letter_date', meaning: 'the date the letter is made' },
   { key: 'firm_name', meaning: 'Firm name' }, { key: 'firm_frn', meaning: 'FRN' }, { key: 'firm_address', meaning: 'Office address' },
   { key: 'firm_email', meaning: 'Firm e-mail' }, { key: 'partner_name', meaning: 'Engagement partner' },
@@ -266,6 +266,14 @@ export interface LetterPdfInput {
 
 const plain = (s: string | null | undefined) => (s ?? '').replace(/₹/g, 'Rs. ').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, ', ');
 
+/**
+ * The letter as a PDF (the firm, 28 October 2026: "properly structured, justified"):
+ * the letterhead, the reference and date, the addressee, the subject, the
+ * clauses numbered with their text justified, and the signatures (the firm's
+ * and the client's e-signature with its record), every page footed with the
+ * reference and its number. The firm's copy adds a page with every step of the
+ * signing, its network address and browser.
+ */
 export async function downloadLetterPdf(v: LetterPdfInput): Promise<void> {
   const [{ default: jsPDF }, { default: autoTable }, { drawFirmLogo }] = await Promise.all([
     import('jspdf'), import('jspdf-autotable'), import('@/utils/reportTheme'),
@@ -274,78 +282,167 @@ export async function downloadLetterPdf(v: LetterPdfInput): Promise<void> {
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
   const M = 18;
-  let y = 10;
-  drawFirmLogo(doc, { width: 62, y, align: 'center' });
-  y = 32;
-  const room = (h: number) => { if (y + h > H - 16) { doc.addPage(); y = 16; } };
-  const para = (text: string, o: { size?: number; bold?: boolean; indent?: number; gap?: number } = {}) => {
-    doc.setFont('helvetica', o.bold ? 'bold' : 'normal');
-    doc.setFontSize(o.size ?? 10);
-    const lines = doc.splitTextToSize(plain(text), W - 2 * M - (o.indent ?? 0)) as string[];
-    for (const line of lines) { room(5); doc.text(line, M + (o.indent ?? 0), y); y += (o.size ?? 10) * 0.45; }
-    y += o.gap ?? 2;
+  const TW = W - 2 * M;
+  const BODY = 9.5;
+  const LH = 4.25;
+  const INK: [number, number, number] = [17, 24, 39];
+  const MUTED: [number, number, number] = [100, 116, 139];
+  const NAVY: [number, number, number] = [15, 43, 70];
+  const f = v.firm ?? {};
+  let y = 0;
+  const room = (h: number) => { if (y + h > H - 18) { doc.addPage(); y = 18; } };
+  const font = (size: number, style: 'normal' | 'bold' | 'italic' = 'normal', color = INK, face = 'helvetica') => {
+    doc.setFont(face, style); doc.setFontSize(size); doc.setTextColor(...color);
+  };
+  // One line spread to the full width by jsPDF's own word spacing, so the text
+  // copies with its spaces (a line justifies when it is not its block's last:
+  // hence the empty line after it). A short line, with too few words to spread, stays left.
+  const justified = (line: string, x: number, at: number, width: number) => {
+    const words = line.trim().split(/\s+/);
+    const gap = words.length > 1 ? (width - doc.getTextWidth(line.trim())) / (words.length - 1) : Infinity;
+    if (gap > doc.getTextWidth(' ') * 4) { doc.text(line, x, at); return; }
+    doc.text([line.trim(), ''], x, at, { maxWidth: width, align: 'justify' });
+  };
+  const para = (text: string, o: { indent?: number; bullet?: boolean; gap?: number } = {}) => {
+    font(BODY);
+    const x = M + (o.indent ?? 0);
+    const width = TW - (o.indent ?? 0);
+    const lines = doc.splitTextToSize(plain(text), width) as string[];
+    lines.forEach((line, i) => {
+      room(LH);
+      if (o.bullet && i === 0) doc.text('\u2022', x - 3.5, y);
+      if (i < lines.length - 1) justified(line, x, y, width); else doc.text(line, x, y);
+      y += LH;
+    });
+    y += o.gap ?? 1.4;
   };
   const block = (text: string) => {
     for (const p of text.split(/\n{2,}/)) {
-      for (const line of p.split('\n')) {
-        if (line.startsWith('• ')) para(`•  ${line.slice(2)}`, { indent: 4, gap: 0.6 });
-        else para(line, { gap: 0.6 });
-      }
-      y += 1.6;
+      const lines = p.split('\n').filter((l) => l.trim());
+      lines.forEach((line, i) => {
+        const bullet = /^\s*[•*-]\s+/.test(line);
+        para(bullet ? line.replace(/^\s*[•*-]\s+/, '') : line, { indent: bullet ? 5 : 0, bullet, gap: i < lines.length - 1 ? 0.5 : 1.4 });
+      });
     }
   };
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
-  doc.text(plain(v.title), W / 2, y, { align: 'center' }); y += 6;
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-  doc.text(plain(`${v.client_name}${v.gstin ? `, GSTIN ${v.gstin}` : ''} · version ${v.version} · ref ${v.ref}`), W / 2, y, { align: 'center' }); y += 8;
-  block(v.intro);
-  v.clauses.forEach((c, i) => {
-    room(14);
-    para(`${i + 1}. ${c.heading}`, { bold: true, size: 11, gap: 1.5 });
-    block(c.text);
-  });
-  const f = v.firm ?? {};
-  room(20);
-  para(`For ${f.name ?? ''}, Chartered Accountants (FRN ${f.frn ?? ''})`, { bold: true });
-  para(`${f.partner_name ?? ''}, Partner${f.partner_membership_no ? `, membership no. ${f.partner_membership_no}` : ''}`);
-  if (f.address) para(f.address);
 
-  // The certificate of signing.
-  doc.addPage(); y = 16;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-  doc.text('Certificate of electronic signature', M, y); y += 4;
-  const c = v.consents ?? {};
-  const rows: [string, string | null | undefined][] = [
-    ['Letter', `${v.title}, version ${v.version}`], ['Reference', v.ref], ['Client', `${v.client_name}${v.gstin ? ` (GSTIN ${v.gstin})` : ''}`],
-    ['Sent to', v.to], ['Sent on', istDateTime(v.sent_at)],
-    ['Signed by', v.signer_name ? `${v.signer_name}${v.signer_capacity ? `, ${v.signer_capacity}` : ''}` : 'Not signed'],
-    ['Signed on', istDateTime(v.signed_at)],
-    ['How it was signed', v.signed_at ? 'On the firm\'s portal, after the full letter was opened, with a one time code e-mailed to the address above (section 10A, Information Technology Act, 2000)' : null],
-    ['Consents', v.signed_at ? `Terms of the letter: yes. Personal data processing (clause 9): yes. AI tools (clause 11): ${c.ai_processing ? 'yes' : 'no'}${v.ai_withdrawn_at ? `, withdrawn on ${istDateTime(v.ai_withdrawn_at)}` : ''}.` : null],
-    ['Document fingerprint (SHA-256)', v.doc_sha256],
-    ['Signed from', v.audit?.signature ? `${v.audit.signature.ip ?? 'address not recorded'} · ${v.audit.signature.user_agent ?? ''}` : null],
-  ];
-  autoTable(doc, {
-    startY: y + 2, theme: 'grid', body: rows.filter(([, x]) => x).map(([k, x]) => [k, plain(x as string)]),
-    bodyStyles: { fontSize: 9, valign: 'top' }, columnStyles: { 0: { cellWidth: 52, fontStyle: 'bold' } }, margin: { left: M, right: M },
+  // The letterhead.
+  y = drawFirmLogo(doc, { width: 54, y: 10, align: 'center' }) + 4;
+  font(7.8, 'normal', MUTED);
+  const head = [f.address, [f.email, f.phone].filter(Boolean).join('  |  ')].filter(Boolean) as string[];
+  head.forEach((l) => { doc.text(plain(l), W / 2, y, { align: 'center', maxWidth: TW }); y += 3.4; });
+  doc.setDrawColor(...NAVY); doc.setLineWidth(0.5); doc.line(M, y, W - M, y);
+  doc.setLineWidth(0.15); doc.line(M, y + 0.9, W - M, y + 0.9);
+  y += 7;
+
+  // Reference and date, the addressee, the subject.
+  const dated = v.sent_at ?? v.signed_at;
+  font(9, 'normal', MUTED);
+  doc.text(plain(`Ref: ${v.ref}`), M, y);
+  if (dated) doc.text(plain(`${f.city ? `${f.city}, ` : ''}${new Date(dated).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long', year: 'numeric' })}`), W - M, y, { align: 'right' });
+  y += 7;
+  font(BODY); doc.text('To,', M, y); y += LH;
+  font(BODY, 'bold'); doc.text(plain(v.client_name), M, y); y += LH;
+  if (v.gstin) { font(BODY); doc.text(plain(`GSTIN: ${v.gstin}`), M, y); y += LH; }
+  y += 3;
+  font(BODY, 'bold', NAVY);
+  doc.text(plain(`Subject: ${v.title}`), M, y); y += 2;
+  doc.setDrawColor(...NAVY); doc.setLineWidth(0.2); doc.line(M, y, M + Math.min(TW, doc.getTextWidth(plain(`Subject: ${v.title}`))), y);
+  y += 5.5;
+  block(v.intro);
+  y += 1;
+
+  // The clauses.
+  v.clauses.forEach((c, i) => {
+    room(LH * 3);
+    font(10, 'bold', NAVY);
+    doc.text(plain(`${i + 1}.  ${c.heading}`), M, y);
+    y += LH + 0.4;
+    block(c.text);
+    y += 0.6;
   });
-  y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+
+  // The signatures: the firm's, and the client's acceptance by e-signature.
+  room(56);
+  y += 3;
+  const col = (W - 2 * M - 10) / 2;
+  const R = M + col + 10;
+  const top = y;
+  font(BODY, 'bold'); doc.text(plain(`For ${f.name ?? ''}`), M, y);
+  doc.text(plain(`Accepted for ${v.client_name}`), R, y, { maxWidth: col });
+  y += LH;
+  font(8.5, 'normal', MUTED);
+  doc.text(plain(`Chartered Accountants${f.frn ? `, FRN ${f.frn}` : ''}`), M, y);
+  y = top + 22;
+  font(BODY, 'bold'); doc.text(plain(f.partner_name ?? ''), M, y); y += LH;
+  font(8.5, 'normal', MUTED);
+  doc.text(plain(`Partner${f.partner_membership_no ? `, Membership No. ${f.partner_membership_no}` : ''}`), M, y); y += 3.8;
+  if (f.city) doc.text(plain(f.city), M, y);
+  // The client's side.
+  let ry = top + LH + 1;
   if (v.signer_name) {
-    room(26);
-    doc.setFont('times', 'italic'); doc.setFontSize(20); doc.text(plain(v.signer_name), M, y + 8);
     const png = v.audit?.signature?.drawn_png;
-    if (png) { try { doc.addImage(png, 'PNG', W - M - 60, y - 2, 60, 22); } catch { /* the typed name stands */ } }
-    y += 14;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-    doc.text('Typed name (and the drawn signature, where one was given), as signed on the portal.', M, y); y += 6;
+    if (png) { try { doc.addImage(png, 'PNG', R, ry - 1, 42, 15); } catch { /* the typed name stands */ } }
+    font(17, 'italic', NAVY, 'times');
+    doc.text(plain(v.signer_name), png ? R + 44 : R, ry + 9, { maxWidth: png ? col - 44 : col });
+    ry = top + 22;
+    font(BODY, 'bold'); doc.text(plain(v.signer_name), R, ry, { maxWidth: col }); ry += LH;
+    font(8.5, 'normal', MUTED);
+    if (v.signer_capacity) { doc.text(plain(v.signer_capacity), R, ry); ry += 3.8; }
+    if (v.signed_at) { doc.text(plain(`E-signed on ${istDateTime(v.signed_at)}`), R, ry, { maxWidth: col }); ry += 3.8; }
+  } else {
+    font(8.5, 'normal', MUTED);
+    ry = top + 22;
+    ['Name', 'Capacity', 'Date'].forEach((l) => { doc.text(`${l}:`, R, ry); doc.setDrawColor(...MUTED); doc.line(R + 16, ry + 0.6, R + col, ry + 0.6); ry += 5; });
   }
-  if (v.audit?.events.length) {
+  y = Math.max(y, ry) + 6;
+  if (v.signed_at) {
+    room(14);
+    doc.setDrawColor(...MUTED); doc.setLineWidth(0.1); doc.line(M, y - 3, W - M, y - 3);
+    font(7.4, 'normal', MUTED);
+    const note = `Signed electronically on the firm's portal after the full letter was opened, confirmed by a one time code e-mailed to ${v.to ?? 'the client'} `
+      + `(section 10A, Information Technology Act, 2000). Fingerprint of the text signed (SHA-256): ${v.doc_sha256}.`;
+    const lines = doc.splitTextToSize(plain(note), TW) as string[];
+    lines.forEach((l) => { doc.text(l, M, y); y += 3.2; });
+  }
+
+  // The firm's copy: the record of the signing.
+  if (v.audit) {
+    doc.addPage(); y = 18;
+    font(12, 'bold', NAVY); doc.text('Record of the electronic signature', M, y); y += 3;
+    const c = v.consents ?? {};
+    const rows: [string, string | null | undefined][] = [
+      ['Letter', `${v.title}, version ${v.version}`], ['Reference', v.ref], ['Client', `${v.client_name}${v.gstin ? ` (GSTIN ${v.gstin})` : ''}`],
+      ['Sent to', v.to], ['Sent on', istDateTime(v.sent_at)],
+      ['Signed by', v.signer_name ? `${v.signer_name}${v.signer_capacity ? `, ${v.signer_capacity}` : ''}` : 'Not signed'],
+      ['Signed on', istDateTime(v.signed_at)],
+      ['Consents', v.signed_at ? `The terms of the letter, with the processing of personal data and the use of AI tools it describes${c.ai_processing === false || v.ai_withdrawn_at ? ` (AI tools withdrawn${v.ai_withdrawn_at ? ` on ${istDateTime(v.ai_withdrawn_at)}` : ''})` : ''}.` : null],
+      ['Document fingerprint (SHA-256)', v.doc_sha256],
+      ['Signed from', v.audit.signature ? `${v.audit.signature.ip ?? 'address not recorded'} · ${v.audit.signature.user_agent ?? ''}` : null],
+    ];
     autoTable(doc, {
-      startY: y, head: [['When (IST)', 'Step', 'By', 'Network address and browser']],
-      body: v.audit.events.map((e) => [istDateTime(e.at).replace(' IST', ''), EVENT_LABEL[e.kind] ?? e.kind, plain(e.actor ?? ''), plain(`${e.ip ?? ''} ${e.user_agent ?? ''}`.trim())]),
-      headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 8 }, bodyStyles: { fontSize: 7, valign: 'top' },
-      columnStyles: { 0: { cellWidth: 36 }, 1: { cellWidth: 34 }, 2: { cellWidth: 28 } }, margin: { left: M, right: M },
+      startY: y + 2, theme: 'grid', body: rows.filter(([, x]) => x).map(([k, x]) => [k, plain(x as string)]),
+      bodyStyles: { fontSize: 8.5, valign: 'top' }, columnStyles: { 0: { cellWidth: 50, fontStyle: 'bold' } }, margin: { left: M, right: M },
     });
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+    if (v.audit.events.length) {
+      autoTable(doc, {
+        startY: y, head: [['When (IST)', 'Step', 'By', 'Network address and browser']],
+        body: v.audit.events.map((e) => [istDateTime(e.at).replace(' IST', ''), EVENT_LABEL[e.kind] ?? e.kind, plain(e.actor ?? ''), plain(`${e.ip ?? ''} ${e.user_agent ?? ''}`.trim())]),
+        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 8 }, bodyStyles: { fontSize: 7, valign: 'top' },
+        columnStyles: { 0: { cellWidth: 36 }, 1: { cellWidth: 34 }, 2: { cellWidth: 28 } }, margin: { left: M, right: M },
+      });
+    }
+  }
+
+  // Every page footed: the firm, the client, the reference and the page.
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.2); doc.line(M, H - 12, W - M, H - 12);
+    font(7.4, 'normal', MUTED);
+    doc.text(plain(`${f.name ?? ''}  |  Engagement letter for ${v.client_name}  |  Ref ${v.ref}`), M, H - 8, { maxWidth: TW - 30 });
+    doc.text(`Page ${i} of ${pages}`, W - M, H - 8, { align: 'right' });
   }
   doc.save(`${plain(v.client_name).replace(/[\\/:*?"<>|]+/g, ' ').trim()} engagement letter ${v.ref}.pdf`);
 }

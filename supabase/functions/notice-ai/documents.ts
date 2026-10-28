@@ -54,7 +54,7 @@ export interface DocumentClaim {
   client_id: string;
   notice_id: string | null;
   case_id: string | null;
-  source: 'folder' | 'draft' | 'workspace';
+  source: 'folder' | 'draft' | 'workspace' | 'refund';
   role: string;
   folder_section: string | null;
   document_url: string | null;
@@ -77,9 +77,12 @@ export function docUserText(claim: DocumentClaim): string {
   const lines: string[] = [];
   const codes = claim.issue_codes?.length ? claim.issue_codes.map((c) => `${c.code} — ${c.title}`).join('\n') : 'OTHER — Other issue';
   lines.push(`Issue codes (use only these; anything else is OTHER):\n${codes}`);
+  const tab = typeof claim.context?.refund_tab === 'string' ? claim.context.refund_tab : null;
   const what = claim.source === 'draft'
     ? 'The document is the firm\'s reply to a notice, as approved in the firm\'s own system (text above). Read every response and say which notice paragraph each one answers.'
-    : ROLE_HINTS[claim.role] ?? ROLE_HINTS.other;
+    : claim.source === 'refund'
+      ? `It is one of a refund application's documents on the GST portal${tab ? ` (its ${tab} tab)` : ''}, for the refund ${claim.case_id ?? ''}. Read the amounts claimed, sanctioned, rejected and paid, and the period, where it states them.`
+      : ROLE_HINTS[claim.role] ?? ROLE_HINTS.other;
   lines.push(`About the document: ${what}${claim.form_code ? ` The case's notice is a ${claim.form_code}${claim.financial_year ? ` for ${claim.financial_year}` : ''}.` : ''}`);
   const ctx = claim.context ?? {};
   const typed = [ctx.reply_reason, ctx.reply_text].filter((x) => typeof x === 'string' && x.trim()).join(' | ');

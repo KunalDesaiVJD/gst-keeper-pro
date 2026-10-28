@@ -17,7 +17,7 @@
 import React, { useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, ChevronDown, FileText, FolderDown, GitBranch, Info, Loader2, Scale } from 'lucide-react';
+import { ArrowRight, ChevronDown, FileText, FolderDown, GitBranch, Info, Loader2, Scale, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -41,9 +41,10 @@ import { CaseChainPanel } from '@/components/notices/cases/CaseChainPanel';
 import { AppealWorkspace } from '@/components/notices/cases/AppealWorkspace';
 import { usePortalApps } from '@/lib/portalAppeal';
 import { caseHref, loadCaseItems, loadKeyDates } from '@/lib/noticeCases';
+import { loadCaseReadings, readingNote, type DocReading } from '@/lib/noticeAi';
 import { appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
 import { istToday } from '@/lib/noticeFacts';
-import { dueWords, fmtDate, fmtInr, plural } from '@/lib/noticeFormat';
+import { dueWords, fmtAiTokens, fmtDate, fmtInr, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 
 const TAB_LABEL: Record<string, string> = {
@@ -98,7 +99,56 @@ const Figure: React.FC<{ label: string; value: number | null | undefined; read?:
   </div>
 );
 
-const HistoryItem: React.FC<{ e: CaseEvent; last: boolean }> = ({ e, last }) => (
+type Readings = Map<string, DocReading> | undefined;
+
+/**
+ * What the AI read in a paper's documents (28 October 2026: "system is not
+ * showing properly anything related to refunds"): each one's summary, or why
+ * it has none (being read, a scan).
+ */
+const PaperReadings: React.FC<{ files: { label: string; url: string }[]; readings: Readings }> = ({ files, readings }) => {
+  const [more, setMore] = useState(false);
+  if (!readings) return null;
+  const rows = files.map((f) => ({ f, r: readings.get(f.url) })).filter((x) => x.r);
+  const read = rows.filter((x) => x.r!.status === 'done' && x.r!.summary);
+  const notes = rows.filter((x) => !(x.r!.status === 'done' && x.r!.summary)).map((x) => ({ f: x.f, note: readingNote(x.r) })).filter((x) => x.note);
+  if (!read.length && !notes.length) return null;
+  const long = read.length > 1 || read.some((x) => (x.r!.summary ?? '').length > 220);
+  return (
+    <div className="mt-2 rounded-md border-l-2 border-primary/30 bg-muted/40 px-3 py-2">
+      {read.length > 0 && (
+        <>
+          <div className="mb-0.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary/70" aria-hidden /> What it says
+          </div>
+          <ul className={cn('space-y-1 text-sm leading-relaxed text-foreground/90', !more && 'line-clamp-3')}>
+            {read.map(({ f, r }) => {
+              const tokens = fmtAiTokens(r!.usage, r!.model);
+              return (
+                <li key={f.url}>
+                  {files.length > 1 && <span className="font-medium">{f.label}: </span>}{r!.summary}
+                  {tokens && <span className="ml-1.5 whitespace-nowrap text-xs tabular-nums text-muted-foreground" title="Tokens the AI used to read it">{tokens}</span>}
+                </li>
+              );
+            })}
+          </ul>
+          {long && (
+            <button type="button" onClick={() => setMore((v) => !v)} className="mt-0.5 text-xs font-medium text-primary hover:underline">
+              {more ? 'Show less' : 'Read all'}
+            </button>
+          )}
+        </>
+      )}
+      {notes.length > 0 && (
+        <ul className={cn('text-xs text-muted-foreground', read.length > 0 && 'mt-1')}>
+          {notes.map(({ f, note }) => <li key={f.url}>{files.length > 1 ? `${f.label}: ` : ''}{note}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+const HistoryItem: React.FC<{ e: CaseEvent; last: boolean; readings: Readings }> = ({ e, last, readings }) => (
   <li className="relative grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-4 sm:grid-cols-[8rem_minmax(0,1fr)]">
     <div className="pt-0.5 text-right">
       <div className="text-sm font-semibold tabular-nums">{e.date ? fmtDate(e.date) : 'date not shown'}</div>
@@ -115,6 +165,7 @@ const HistoryItem: React.FC<{ e: CaseEvent; last: boolean }> = ({ e, last }) => 
         </dl>
       )}
       {e.attachments.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{e.attachments.map((a, i) => <DocChip key={`${a.url}-${i}`} label={a.label} url={a.url} />)}</div>}
+      <PaperReadings files={e.attachments} readings={readings} />
     </div>
   </li>
 );
@@ -192,6 +243,12 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
       if (error) throw error;
       return ((data ?? []) as FolderItem[]).map(toEvent).sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
     },
+  });
+  const readings = useQuery({
+    queryKey: ['refund-readings', clientId, arn],
+    staleTime: 60_000,
+    refetchInterval: (q) => ([...(q.state.data?.values() ?? [])].some((d) => d.status === 'queued' || d.status === 'running') ? 30_000 : false),
+    queryFn: () => loadCaseReadings(clientId, arn),
   });
   // An appeal against this refund's order, from the portal's own record of it (no notice or case folder needed).
   const apps = usePortalApps(clientId);
@@ -402,7 +459,7 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
           <p className="text-sm text-muted-foreground">The portal case folder has not been fetched for this refund yet; it fills in at the client's next refund fetch.</p>
         ) : history.isLoading ? <Skeleton className="h-32 w-full" />
           : history.error ? <Note tone="warn">Couldn't load the history: {history.error instanceof Error ? history.error.message : String(history.error)}</Note>
-          : <ol className="pt-1">{events.map((e, i) => <HistoryItem key={e.id} e={e} last={i === events.length - 1} />)}</ol>}
+          : <ol className="pt-1">{events.map((e, i) => <HistoryItem key={e.id} e={e} last={i === events.length - 1} readings={readings.data} />)}</ol>}
       </Part>
 
       {r.docs.length > 0 && (
@@ -418,6 +475,7 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
                 <div key={tab} className="rounded-lg border bg-background p-3">
                   <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{TAB_LABEL[tab] ?? tab} · {list.length}</div>
                   <div className="flex flex-wrap gap-1.5">{list.map((x, i) => <DocChip key={`${x.url}-${i}`} label={x.label} url={x.url} />)}</div>
+                  <PaperReadings files={list} readings={readings.data} />
                 </div>
               ))}
             </div>

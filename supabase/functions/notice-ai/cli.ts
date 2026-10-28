@@ -9,12 +9,14 @@
 // CLAUDE_CLI_GATEWAY_SECRET (the values the other project already has).
 //
 // The gateway takes text only here: a PDF goes as its own text layer, page by
-// page, so the quotes are checked against the same text. A scanned PDF (no text
-// layer) is read by the Claude API when ANTHROPIC_API_KEY is also set, else it
-// is left with the reason needs_vision.
+// page, so the quotes are checked against the same text (a long document, or
+// the typed pages of a partly scanned one, the runner sends as text itself). A
+// scanned PDF (no text layer) is read by the Claude API when ANTHROPIC_API_KEY
+// is also set, else it is left with the reason needs_vision.
 
 import { AI_CLI_MODEL, AI_EFFORT } from '../_shared/aiModel.ts';
 import { scrub, type CallOutcome, type CallRequest, type CallUsage, type Caller } from './claude.ts';
+import { pagesAsText } from './pages.ts';
 
 /** The answer stopped before its JSON object closed: it was cut off, not malformed. */
 export class JsonCutOff extends Error {}
@@ -126,13 +128,9 @@ export function cliParts(req: CallRequest): { kind: 'text'; text: string }[] | n
   for (const b of req.content) {
     if (b.type === 'text') parts.push({ kind: 'text', text: b.text });
     else if (b.type === 'document') {
-      const pages = req.pdfText?.pages ?? [];
-      if (!req.pdfText?.textLayer || !pages.some((p) => p.trim())) return null;
-      parts.push({
-        kind: 'text',
-        text: 'The PDF document, as its text layer, page by page (quote it exactly as written here):\n\n'
-          + pages.map((p, i) => `--- Page ${i + 1} ---\n${p}`).join('\n\n'),
-      });
+      const text = req.pdfText?.textLayer ? pagesAsText(req.pdfText) : null;
+      if (!text) return null;
+      parts.push({ kind: 'text', text });
     }
   }
   return parts;
