@@ -8,10 +8,10 @@
 // letter (its personal data and AI clauses included: the firm, 28 October 2026,
 // "if the client does not want then will not sign it"), a drawn signature if
 // they wish, and a 6 digit code e-mailed to the letter's address. Signed, the
-// page shows the signature, a PDF to keep (?download=1 from the signed e-mail
-// downloads it at once), and the way to withdraw the AI consent (as easy as
-// giving it, DPDP s.6(4)). The token scopes every call; the page never sees the
-// code or another letter.
+// page shows the signature and a PDF to keep (?download=1 from the signed
+// e-mail downloads it at once); a client withdraws the AI consent by e-mail to
+// the grievance officer (clause 8). The token scopes every call; the page never
+// sees the code or another letter.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, ChevronLeft, Download, FileText, Loader2, Mail, PenLine, ShieldCheck, XCircle } from 'lucide-react';
@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 import logo from '@/assets/logo.png';
 import {
   askLetterCode, CAPACITIES, declineLetter, downloadLetterPdf, fingerprintMatches, istDateTime, letterError, LETTER_ERRORS, signLetter, viewLetter,
-  withdrawLetterAi, type LetterClause, type LetterView,
+  type LetterClause, type LetterView,
 } from '@/lib/engagementLetters';
 
 const longDate = (iso: string | null | undefined) => (iso
@@ -97,7 +97,7 @@ const SignaturePad: React.FC<{ onChange: (png: string | null) => void }> = ({ on
 
 type CodeStep = { codeId: string; ref: string; toMasked: string; sent: boolean };
 
-/** Ask for a code, type it: shared by signing and by withdrawing the AI consent. */
+/** Ask for a code, type it, to sign. */
 const CodeBox: React.FC<{
   token: string; purpose: 'sign' | 'withdraw'; disabled?: boolean; busy: boolean; actionLabel: string;
   onSubmit: (step: CodeStep, code: string) => void;
@@ -299,7 +299,7 @@ const EngagementLetterPage: React.FC = () => {
         </article>
       )}
 
-      {signed ? <SignedPanel token={token} letter={letter} onChanged={() => void load(view)} autoDownload={sp.get('download') === '1'}
+      {signed ? <SignedPanel letter={letter} autoDownload={sp.get('download') === '1'}
           onDownloaded={() => { const n = new URLSearchParams(sp); n.delete('download'); setSp(n, { replace: true }); }} />
         : <SignPanel token={token} letter={letter} onRead={() => openFull()} onSigned={() => void load(view)} />}
     </>,
@@ -405,21 +405,17 @@ const SignPanel: React.FC<{ token: string; letter: LetterView; onRead: () => voi
   );
 };
 
-/** Signed: keep a PDF, and withdraw the AI consent if it was given. */
-const SignedPanel: React.FC<{ token: string; letter: LetterView; onChanged: () => void; autoDownload?: boolean; onDownloaded?: () => void }> = ({ token, letter, onChanged, autoDownload, onDownloaded }) => {
-  const [withdrawing, setWithdrawing] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const ai = letter.consents?.ai_processing === true;
+/**
+ * Signed: the PDF to keep. No withdrawal of the AI consent here (the firm, 28
+ * October 2026): a client who wants to withdraws it by e-mail to the grievance
+ * officer (clause 8), and staff record it.
+ */
+const SignedPanel: React.FC<{ letter: LetterView; autoDownload?: boolean; onDownloaded?: () => void }> = ({ letter, autoDownload, onDownloaded }) => {
   const pdf = () => downloadLetterPdf({
     ref: letter.ref, title: letter.title, intro: letter.intro, clauses: letter.clauses, firm: letter.firm, version: letter.version, doc_sha256: letter.doc_sha256,
     client_name: letter.client_name, gstin: letter.gstin, to: letter.to_masked, sent_at: letter.sent_at, signed_at: letter.signed_at,
     signer_name: letter.signer_name, signer_capacity: letter.signer_capacity, consents: letter.consents, ai_withdrawn_at: letter.ai_withdrawn_at,
   });
-  const withdraw = async (s: CodeStep, code: string) => {
-    setBusy(true); setMsg(null);
-    try { await withdrawLetterAi(token, s.codeId, code); setWithdrawing(false); onChanged(); } catch (e) { setMsg(letterError(e)); } finally { setBusy(false); }
-  };
   // The signed e-mail's button (?download=1): the PDF at once.
   const downloaded = useRef(false);
   useEffect(() => {
@@ -441,17 +437,6 @@ const SignedPanel: React.FC<{ token: string; letter: LetterView; onChanged: () =
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => void pdf()}><Download className="h-4 w-4" /> Download the signed letter (PDF)</Button>
       </div>
-      {ai && (
-        <div className="space-y-2 border-t pt-3">
-          {withdrawing ? (
-            <>
-              <p className="text-sm">To withdraw your consent to AI tools, confirm with a code e-mailed to {letter.to_masked}. No new document of yours goes to the AI tool after that; the rest of the engagement stays as it is.</p>
-              <CodeBox token={token} purpose="withdraw" busy={busy} actionLabel="Withdraw my consent" onSubmit={(s, c) => void withdraw(s, c)} />
-              {msg && <p className="text-sm text-destructive">{msg}</p>}
-            </>
-          ) : <button type="button" className="text-sm text-muted-foreground underline hover:text-foreground" onClick={() => setWithdrawing(true)}>Withdraw my consent to AI tools</button>}
-        </div>
-      )}
     </section>
   );
 };
