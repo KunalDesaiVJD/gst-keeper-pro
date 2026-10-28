@@ -31,6 +31,10 @@ const SHELL: Record<string, ShellMeta> = {
   bills_not_in_books: { accent: '#d97706', pill: { text: 'Action needed &middot; Books update', bg: '#fef3c7', fg: '#92400e' }, box: { bg: '#fffbeb', border: '#fde68a', label: '#78716c' } },
   notice_alert_critical: { accent: '#dc2626', pill: { text: 'Urgent &middot; Notice Alert', bg: '#fee2e2', fg: '#b91c1c' }, box: { bg: '#fef2f2', border: '#fecaca', label: '#7f1d1d' } },
   client_password_reset: { accent: '#0f2b46', pill: { text: 'Password reset', bg: '#e0e7ff', fg: '#1e3a8a' }, box: { bg: '#f8fafc', border: '#e2e8f0', label: '#64748b' } },
+  // The engagement letter for e-signature, its code and its signed copy (Edge Function engagement-letter).
+  engagement_letter: { accent: '#c9a227', pill: { text: 'Engagement letter &middot; for your e-signature', bg: '#e0e7ff', fg: '#1e3a8a' }, box: { bg: '#f8fafc', border: '#e2e8f0', label: '#64748b' } },
+  engagement_letter_code: { accent: '#0f2b46', pill: { text: 'Signing code', bg: '#e0e7ff', fg: '#1e3a8a' }, box: { bg: '#f8fafc', border: '#e2e8f0', label: '#64748b' } },
+  engagement_letter_signed: { accent: '#16a34a', pill: { text: '&#10003; Engagement letter signed', bg: '#dcfce7', fg: '#166534' }, box: { bg: '#f0fdf4', border: '#bbf7d0', label: '#15803d' } },
 };
 
 export function buildEmailHtml(opts: { key: string; kind: string; message: string; vars: EmailVars }): string {
@@ -46,6 +50,8 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
   const internal = kind === 'notice_alert' && g('_audience') === 'internal';
   // A client's password reset link (client-password-reset) gets the button too.
   const resetLink = kind === 'client_password_reset';
+  // An engagement letter's e-mails: a button to its page, the letter's facts, and the one page summary (summary_html).
+  const letter = kind === 'engagement_letter' || kind === 'engagement_letter_code' || kind === 'engagement_letter_signed';
   const tone = g('_tone');
   const toneColor = tone === 'urgent' ? '#b91c1c' : tone === 'soon' ? '#b45309' : '#0f2b46';
 
@@ -69,6 +75,12 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
     if (resetLink) {
       rows.push(['User ID', g('user_id')]);
       rows.push(['Link valid for', g('valid_for')]);
+    } else if (letter) {
+      rows.push(['Letter', g('letter')]);
+      rows.push(['Signed by', g('signed_by')]);
+      rows.push(['Signed on', g('signed_on')]);
+      rows.push(['Reference', g('letter_ref')]);
+      rows.push(['Valid until', g('valid_until')]);
     } else if (kind === 'notice_alert') {
       rows.push(['Type', g('notice_type')]);
       rows.push(['Reference', g('reference_number')]);
@@ -119,7 +131,7 @@ export function buildEmailHtml(opts: { key: string; kind: string; message: strin
   const headline = internal && g('headline')
     ? `<p style="margin:0 0 12px;font-size:16px;font-weight:700;color:${toneColor};">${g('headline')}</p>`
     : '';
-  const cta = (internal || resetLink) && g('cta_url')
+  const cta = (internal || resetLink || letter) && g('cta_url')
     ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px;"><tr>
 <td style="background:#0f2b46;border-radius:6px;"><a href="${g('cta_url')}" style="display:inline-block;padding:10px 18px;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;">${g('cta_label') || 'Open in GST Keeper'}</a></td>
 ${g('pdf_url') ? `<td style="padding-left:16px;"><a href="${docLink(g('pdf_url'))}" style="color:#0f2b46;font-size:13px;">Notice PDF</a></td>` : ''}
@@ -157,6 +169,7 @@ ${detailRows ? `<table role="presentation" width="100%" cellpadding="0" cellspac
 </table>` : ''}
 ${paras}
 ${kind === 'bills_not_in_books' && vars.table_html ? String(vars.table_html) : ''}
+${letter && vars.summary_html ? String(vars.summary_html) : ''}
 ${signature}
 </td></tr>
 <tr><td style="background:#f1f5f9;padding:15px 28px;border-top:1px solid #e2e8f0;">

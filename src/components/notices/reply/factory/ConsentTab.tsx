@@ -3,10 +3,13 @@
 // Claude API, and who opted out. Nothing of a client without consent is ever
 // sent. A GST manager marks consent (date and note), withdraws it or records
 // an opt-out for many clients at once; everyone else reads the list.
-import React, { useId, useMemo, useState } from 'react';
+// Since 28 October 2026 the engagement letter itself is sent from here and
+// e-signed by the client (EngagementLetters.tsx, docs/ENGAGEMENT_LETTERS.md):
+// its signature records the AI consent (yes or no) on this list by itself.
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Ban, Check, Loader2, Search, Undo2, X } from 'lucide-react';
+import { Ban, Check, Loader2, Search, Send, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -23,6 +26,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { istToday } from '@/lib/noticeFacts';
 import { fmtDate, plural } from '@/lib/noticeFormat';
 import { consentState, factoryHref, setConsent, useConsentClients, type ConsentClient, type ConsentState } from '@/lib/replyFactory';
+import { latestByClient, useEngagementLetters, useLetterTemplates, type EngagementLetter } from '@/lib/engagementLetters';
+import { EngagementLetterCard, LetterChip, LetterDialog, SendLetterDialog, TemplateDialog } from '@/components/notices/reply/factory/EngagementLetters';
 import { cn } from '@/lib/utils';
 
 const FILTERS: { key: ConsentState; label: string }[] = [
@@ -51,6 +56,30 @@ export const ConsentTab: React.FC = () => {
   const [note, setNote] = useState('Engagement letter clause');
   const [busy, setBusy] = useState(false);
   const canEdit = canManageNoticeAlerts();
+  // Engagement letters: the template, sending, each client's latest letter and its record.
+  const letters = useEngagementLetters();
+  const latest = useMemo(() => latestByClient(letters.data), [letters.data]);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [sendTo, setSendTo] = useState<ConsentClient[] | null>(null);
+  const [openLetter, setOpenLetter] = useState<EngagementLetter | null>(null);
+  // ?letter=<id> (the firm's note of a signature links here) opens that letter's record.
+  const wantLetter = sp.get('letter');
+  useEffect(() => {
+    if (!wantLetter || !letters.data) return;
+    const l = letters.data.find((x) => x.id === wantLetter);
+    if (l) setOpenLetter(l);
+  }, [wantLetter, letters.data]);
+  const closeLetter = () => {
+    setOpenLetter(null);
+    if (wantLetter) { const next = new URLSearchParams(sp); next.delete('letter'); setSp(next, { replace: true }); }
+  };
+  const templates = useLetterTemplates();
+  const published = (templates.data ?? []).some((t) => t.status === 'published');
+  const sendFor = (list: ConsentClient[]) => {
+    if (!published) toast.info('Publish the engagement letter first: open "Read and edit the letter", fill the firm\'s details and publish it.');
+    else if (list.length) setSendTo(list);
+    else toast.info('Tick the clients to send the letter to in the list below.');
+  };
 
   const filter = (FILTERS.find((f) => f.key === sp.get('consent'))?.key ?? 'all') as ConsentState | 'all';
   const search = (sp.get('q') ?? '').trim().toLowerCase();
@@ -107,6 +136,9 @@ export const ConsentTab: React.FC = () => {
       </Note>
       {!canEdit && <Note tone="info">Only a GST manager can record or withdraw consent. You can read the list.</Note>}
 
+      <EngagementLetterCard clients={q.data ?? []} canEdit={canEdit} onEditTemplate={() => setTemplateOpen(true)}
+        onSend={() => sendFor((q.data ?? []).filter((c) => picked.has(c.id)))} />
+
       {q.data && (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
           <Link to={factoryHref('consent', { q: sp.get('q') })} className={INLINE_LINK}>{plural(total, 'active client')}</Link>
@@ -159,6 +191,8 @@ export const ConsentTab: React.FC = () => {
                     </div>
                     <div className="font-mono text-[11px] text-muted-foreground">{c.gstin}</div>
                     {c.ai_consent_note && <div className="break-words text-xs text-foreground/80">{c.ai_consent_note}</div>}
+                    <div className="flex items-center gap-1.5 text-xs"><span className="text-muted-foreground">Engagement letter:</span>
+                      <LetterChip letter={latest.get(c.id)} onClick={() => setOpenLetter(latest.get(c.id) ?? null)} /></div>
                   </div>
                 </li>
               ))}
@@ -178,6 +212,7 @@ export const ConsentTab: React.FC = () => {
                     <th scope="col" className={WS_TH}>Consent</th>
                     <th scope="col" className={WS_TH}>Note</th>
                     <th scope="col" className={WS_TH}>Opted out</th>
+                    <th scope="col" className={WS_TH}>Engagement letter</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -191,6 +226,11 @@ export const ConsentTab: React.FC = () => {
                       <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>{c.ai_consent_at ? fmtDate(c.ai_consent_at) : '—'}</td>
                       <td className={cn(WS_TD, 'max-w-[20rem] break-words text-xs')}>{c.ai_consent_note ?? '—'}</td>
                       <td className={cn(WS_TD, 'text-xs')}>{c.ai_opt_out ? <span className="font-medium text-destructive-strong">Yes</span> : '—'}</td>
+                      <td className={cn(WS_TD, 'whitespace-nowrap text-xs')}>
+                        {latest.get(c.id) ? <LetterChip letter={latest.get(c.id)} onClick={() => setOpenLetter(latest.get(c.id) ?? null)} />
+                          : canEdit ? <button type="button" className="text-primary hover:underline" onClick={() => sendFor([c])}>Send</button>
+                          : <span className="text-muted-foreground">Not sent</span>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -205,9 +245,18 @@ export const ConsentTab: React.FC = () => {
           <Button size="sm" className={WS_BTN} disabled={busy} onClick={() => setMarking(true)}><Check className="h-3.5 w-3.5" aria-hidden /> Mark consent</Button>
           <Button size="sm" variant="outline" className={WS_BTN} disabled={busy} onClick={() => run('withdraw')}><Undo2 className="h-3.5 w-3.5" aria-hidden /> Withdraw</Button>
           <Button size="sm" variant="outline" className={WS_BTN} disabled={busy} onClick={() => run('opt_out')}><Ban className="h-3.5 w-3.5" aria-hidden /> Opt out</Button>
+          <Button size="sm" variant="outline" className={WS_BTN} disabled={busy} onClick={() => sendFor((q.data ?? []).filter((c) => picked.has(c.id)))}>
+            <Send className="h-3.5 w-3.5" aria-hidden /> Send engagement letter
+          </Button>
           <Button size="sm" variant="ghost" className={cn(WS_BTN, 'ml-auto')} disabled={busy} onClick={() => setPicked(new Set())}>Clear the selection</Button>
         </div>
       )}
+
+      <TemplateDialog open={templateOpen} onOpenChange={setTemplateOpen} />
+      <SendLetterDialog open={!!sendTo} onOpenChange={(o) => { if (!o) setSendTo(null); }} clients={sendTo ?? []} onDone={() => setPicked(new Set())} />
+      <LetterDialog letter={openLetter ? (letters.data ?? []).find((l) => l.id === openLetter.id) ?? openLetter : null}
+        onOpenChange={(o) => { if (!o) closeLetter(); }}
+        onSendNew={(id) => { closeLetter(); sendFor((q.data ?? []).filter((c) => c.id === id)); }} />
 
       <Dialog open={marking} onOpenChange={(o) => { if (!o) setMarking(false); }}>
         <DialogContent className="sm:max-w-md">
