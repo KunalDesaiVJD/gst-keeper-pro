@@ -16,6 +16,7 @@ link", "PDF … properly structured … justify view", the signed e-mail "very s
 … only … download the signed letter", "design letter only in 3 pages - keep AI
 paragraph only in 1/2 liners … no need to name any AI tool", "delete fees
 clause". Version 2 is published with the firm's details, version 1 retired (the
+<<<<<<< HEAD
 letter signed on it keeps its text). Version 3 (`20261028150000`, the firm: "no
 need of mentioning anything related to fees"; "no need of withdraw my consent
 link as if they want to then they will send us an email") names no fee of any
@@ -24,6 +25,9 @@ negligence or wilful default (no cap by the fees), clauses 3, 6 and 14 name tax,
 interest and penalties; clauses 10 (AI, two lines) and 11 (records, eight years
 for the letter) stay as in version 2. The signed page no longer offers to
 withdraw the AI consent.
+=======
+letter signed on it keeps its text).
+>>>>>>> origin/main
 
 The firm's details are kept once (the firm: "save everything our firm details …
 permanently"): the table `firm_profile` (one row, open to read, written only by a
@@ -91,11 +95,18 @@ Satellite, Ahmedabad-380015, engagement partner CA Kunal Desai (Membership No.
    fingerprint, and every page footed with the reference and its number: three
    pages for version 2. Staff get the same PDF with a page more: every step,
    network address and browser.
+<<<<<<< HEAD
 8. **Later**: a client who wants to withdraw the AI consent writes to the
    grievance officer (clause 8; the firm's choice of 28 October 2026, the page
    offers no withdrawal since version 3), and staff record it on the client
    (`ai_opt_out`); the database door `engagement_letter_withdraw_ai` (a code to
    the letter's address, setting `ai_opt_out`) stays, unused by the page. Before signing, the client can send *something to
+=======
+8. **Later**: from the signed letter's page the client can withdraw the AI
+   consent with a code (DPDP s.6(4): a consent can be withdrawn as easily as it
+   was given; kept though the page no longer asks the question), which sets
+   `ai_opt_out` on the client. Before signing, the client can send *something to
+>>>>>>> origin/main
    change* (recorded; the letter stays signable). Staff can e-mail a new link (the
    earlier one stops working once the new e-mail is out; if it fails, the earlier
    one keeps working) or withdraw a letter, and send a new one after a signature.
@@ -121,7 +132,11 @@ Satellite, Ahmedabad-380015, engagement partner CA Kunal Desai (Membership No.
   setting. The network address comes from the request (`cf-connecting-ip`,
   `x-real-ip`, else the first `x-forwarded-for`), checked on live.
 
+<<<<<<< HEAD
 ## What the letter covers (version 3, 17 clauses)
+=======
+## What the letter covers (version 2, 17 clauses)
+>>>>>>> origin/main
 
 Who the parties are; the services; the client's responsibilities (records,
 information on time, approval of each return, payment, self assessment under
@@ -167,20 +182,31 @@ communication and the electronic signature (s.10A, Information Technology Act,
   and that a member of the firm reviews all such work; confirm that the terms of
   the firm's AI service keep its data confidential (and whether inputs may be used
   to train models), as the firm's own obligation under clause 9.
+<<<<<<< HEAD
 - Clause 11: the eight years for the letter and its record (kept, the firm's
   choice). Clause 14: liability to direct loss from the firm's own negligence or
   wilful default, with no cap by the fees (version 3).
 - The signature as the AI consent: a client who will not consent does not sign
   (the firm's choice); a signed client withdraws it by e-mail to the grievance
   officer (DPDP s.6(4)), which staff record.
+=======
+- Clause 11: the eight years for the letter and its record. Clause 14: the limit
+  of liability (12 months' fees for the service).
+- The signature as the AI consent: a client who will not consent does not sign
+  (the firm's choice); a signed client may still withdraw it (DPDP s.6(4)).
+>>>>>>> origin/main
 - The e-signature is a click-to-accept signature confirmed by a code e-mailed to
   the client (s.10A); it is not an Aadhaar eSign or a DSC under s.3A.
 
 ## Files
 
 - Migrations `supabase/migrations/20261028110000_engagement_letters.sql` and
+<<<<<<< HEAD
   `20261028130000_engagement_letter_v2.sql` (firm_profile, fees only when quoted, version 2) and
   `20261028150000_engagement_letter_v3.sql` (version 3).
+=======
+  `20261028130000_engagement_letter_v2.sql` (firm_profile, fees only when quoted, version 2).
+>>>>>>> origin/main
 - Edge Function `supabase/functions/engagement-letter/` (`handler.ts`,
   `message.ts`; tests `deno test --allow-read supabase/functions/engagement-letter/test/`).
   It reaches the database with plain PostgREST calls (no supabase-js).
