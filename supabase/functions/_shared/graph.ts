@@ -1,7 +1,7 @@
 // Microsoft Graph mail, as send-gst-email does it: application permission
 // Mail.Send, client-credentials flow, from GRAPH_SENDER (gst@vjdesai.com).
-// Used by client-password-reset and bu-confirm-code; send-gst-email still
-// carries its own copy.
+// Used by client-password-reset, bu-confirm-code and engagement-letter;
+// send-gst-email still carries its own copy.
 //
 // Secrets (function env, never in the repo):
 //   GRAPH_TENANT_ID, GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET, GRAPH_SENDER
@@ -30,8 +30,8 @@ export const recipients = (list: string | null | undefined) =>
   String(list ?? '').split(/[,;]+/).map((a) => a.trim()).filter(Boolean)
     .map((address) => ({ emailAddress: { address } }));
 
-/** Sends one HTML message; throws unless Graph accepts it (202). */
-export async function sendMail(token: string, to: string, subject: string, html: string): Promise<void> {
+/** Sends one HTML message (to, and cc when given); throws unless Graph accepts it (202). */
+export async function sendMail(token: string, to: string, subject: string, html: string, cc?: string | null): Promise<void> {
   const sender = env('GRAPH_SENDER') || 'gst@vjdesai.com';
   const r = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`, {
     method: 'POST',
@@ -41,6 +41,7 @@ export async function sendMail(token: string, to: string, subject: string, html:
         subject: subject || '(no subject)',
         body: { contentType: 'HTML', content: html },
         toRecipients: recipients(to),
+        ...(cc ? { ccRecipients: recipients(cc) } : {}),
       },
       // A reset link or a confirmation code is not kept in the shared
       // mailbox's Sent Items.

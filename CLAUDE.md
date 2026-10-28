@@ -298,6 +298,7 @@ Reply options are rendered by DB triggers from `reply_templates` when a notice a
 or changes, with no hyphen or dash anywhere (CHECK constraints), and start drafts. Notices
 & Litigation is one sidebar entry, last; its pages are reached from `NoticesTopNav`.
 Read `docs/REPLY_FACTORY_POSITIONS.md` and `docs/REPLY_TEMPLATES.md` first.
+Engagement letters (Reply Factory → Client consent, 28 Oct 2026, `20261028110000`): a versioned template (published only by a GST Manager / superadmin with the firm's details; a published version never changes), sent per client by the Edge Function `engagement-letter` (the e-mail is the one page summary, each clause linking to `/engagement/<token>?clause=n`), e-signed on that public page only after the full letter was opened, with an e-mailed code and an explicit yes or no to AI tools, which the signature writes onto the client (`ai_consent_at` / `ai_opt_out`); the token and codes never touch `email_outbox` (hashes only, private tables), every step is an event with its IP and browser (`engagement_letter_audit`), the text is fingerprinted (`doc_sha256`, checked in the browser); read `docs/ENGAGEMENT_LETTERS.md` first.
 
 **Phase 7 (AI assistant, master filters):** the Edge Function `notice-ai`
 (`supabase/functions/notice-ai/`, Deno; tests `deno test test/`) reads notices and every

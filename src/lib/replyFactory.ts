@@ -898,13 +898,15 @@ export interface ConsentClient {
   ai_consent_at: string | null;
   ai_consent_note: string | null;
   ai_opt_out: boolean;
+  /** Where an engagement letter goes (src/lib/engagementLetters.ts). */
+  email: string | null;
 }
 /** Active clients (as ai_read_status counts them). */
 export function useConsentClients() {
   return useQuery({
     queryKey: ['reply-factory', 'consent-clients'],
     staleTime: 30_000,
-    queryFn: () => fetchAllRows<ConsentClient>('clients', 'id, name, gstin, ai_consent_at, ai_consent_note, ai_opt_out',
+    queryFn: () => fetchAllRows<ConsentClient>('clients', 'id, name, gstin, ai_consent_at, ai_consent_note, ai_opt_out, email',
       (q) => q.eq('inactive_at_hand', false).order('name').order('id')),
   });
 }

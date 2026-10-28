@@ -75,6 +75,7 @@ const LitigationMISPage = lazy(() => import("@/pages/LitigationMISPage"));
 const ChangeHistoryPage = lazy(() => import("@/pages/ChangeHistoryPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const DocumentOpenPage = lazy(() => import("@/pages/DocumentOpenPage"));
+const EngagementLetterPage = lazy(() => import("@/pages/EngagementLetterPage"));
 
 // Every stored file is linked as /d/<id>, never by its storage address.
 installDocLinkRewriter();
@@ -96,6 +97,8 @@ const App = () => (
                 <Route path="/agreement-confirm/:token" element={<AgreementConfirmPage />} />
                 <Route path="/reset-password" element={<ResetPasswordPage />} />
                 <Route path="/d/:id" element={<DocumentOpenPage />} />
+                {/* The client's engagement letter, public by its link's token (20261028110000). */}
+                <Route path="/engagement/:token" element={<EngagementLetterPage />} />
                 <Route path="/" element={<Navigate to="/login" replace />} />
                 
                 {/* Protected Routes */}
