@@ -7,7 +7,7 @@
 import { AI_EFFORT, AI_MODEL } from '../_shared/aiModel.ts';
 import { scrub, type CallRequest, type CallUsage, type Caller } from './claude.ts';
 import { buildDocResult, DOC_OUTPUT_SCHEMA, DOC_SYSTEM_PROMPT, docUserText, type DocumentClaim } from './documents.ts';
-import { DocumentError, documentUrlAllowed, downloadPdf, readPdfText, toBase64, type PdfText } from './pdf.ts';
+import { DocumentError, documentUrlAllowed, downloadPdf, pagesAsText, readPdfText, toBase64, type PdfText } from './pdf.ts';
 import { SYSTEM_PROMPT, userText } from './reader/prompt.ts';
 import { buildResult, type ReaderClaim } from './reader/result.ts';
 import { coerceReading, OUTPUT_SCHEMA } from './reader/schema.ts';
@@ -81,12 +81,16 @@ function fromDocumentError(e: unknown, result: Record<string, unknown> | null, w
   return { status: 'retry', reason: 'document', error: `${what}: ${scrub((e as Error).message || String(e)).slice(0, 300)}`, result };
 }
 
-async function textOf(bytes: Uint8Array, attempt: number, maxPages: number, needText = false): Promise<PdfText> {
+async function textOf(bytes: Uint8Array, attempt: number, maxPages: number, needText = false, partial = false): Promise<PdfText> {
   // A second try reads no text (the first may have been stopped by the CPU
   // limit); a third does not even count the pages. The Claude CLI reads the
-  // text instead of the PDF, so with it the second try still reads the text.
+  // text instead of the PDF, so with it the second try still reads the text,
+  // and a document's later tries read fewer of its pages instead of none.
+  if (needText && partial) {
+    return await readPdfText(bytes, { maxPages: attempt <= 1 ? maxPages : Math.min(maxPages, attempt === 2 ? 20 : 8), withText: true, partial });
+  }
   if (attempt >= 3) return { pageCount: null, pages: [], textLayer: false, skipped: 'retry' };
-  return await readPdfText(bytes, { maxPages, withText: attempt <= 1 || needText });
+  return await readPdfText(bytes, { maxPages, withText: attempt <= 1 || needText, partial });
 }
 const needsText = (deps: Deps) => !!deps.claude?.backend && deps.claude.backend !== 'api';
 
@@ -165,21 +169,26 @@ export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: 
     if (seen?.duplicate || seen?.error) return { status: 'skipped', reason: 'duplicate' };
     let text: PdfText;
     try {
-      text = await textOf(doc.bytes, attempt, claim.max_pages, needsText(deps));
+      text = await textOf(doc.bytes, attempt, claim.max_pages, needsText(deps), true);
     } catch (e) {
       return fromDocumentError(e, { document_sha256: doc.sha256 }, 'The document');
     }
-    if (text.pageCount && text.pageCount > claim.max_pages) {
+    // A long document is read in part, a partly scanned one through the CLI by
+    // its typed pages: both go as text, and their quotes are checked against it.
+    const asText = text.read || (deps.claude?.backend === 'cli' && !text.textLayer) ? pagesAsText(text) : null;
+    if (text.pageCount && text.pageCount > claim.max_pages && !asText) {
       return {
         status: 'skipped', reason: 'too_long', result: { document_sha256: doc.sha256, pages: text.pageCount },
-        error: `The PDF has ${text.pageCount} pages; documents are read up to ${claim.max_pages} pages (Settings).`,
+        error: `The PDF has ${text.pageCount} pages and no text layer to read in part; a scan is read up to ${claim.max_pages} pages (Settings).`,
       };
     }
     content = [
-      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: toBase64(doc.bytes) } },
+      asText
+        ? { type: 'text', text: asText }
+        : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: toBase64(doc.bytes) } },
       { type: 'text', text: docUserText(claim) },
     ];
-    info = { pages: text.pages, pageCount: text.pageCount, textLayer: text.textLayer, sha256: doc.sha256 };
+    info = { pages: text.pages, pageCount: text.pageCount, textLayer: text.textLayer || !!asText, sha256: doc.sha256 };
   }
   const out = await deps.claude!({
     model: AI_MODEL,

@@ -8,6 +8,7 @@ import { assistUserText, mapAssistOutput, runAssist } from '../assist.ts';
 import { readDocumentJob, runTick, type Deps } from '../runner.ts';
 import { cliWithApiForScans, jsonFromText, JsonCutOff, rawSample, repairJson } from '../cli.ts';
 import { documentUrlAllowed, downloadPdf, storageReadUrl } from '../pdf.ts';
+import { pageRanges, pagesAsText, pagesToRead } from '../pages.ts';
 import {
   buildPdf, FakeDb, FakeNet, GATEWAY, ISSUE_CODES, jsonReply, replyPages, replyReading, storageUrl, SUPA, type J,
 } from './fake.ts';
@@ -468,4 +469,90 @@ Deno.test('advice: the scheduled run takes the next cases until none is left', a
   const { deps } = adviceDeps([claim('A'), claim('B'), null], { headline: 'x', steps: [], cautions: [] });
   const r = await runAdviseNext(deps, { seconds: 120 });
   assertEquals((r.advised as unknown[]).length, 2);
+});
+
+// ── Long and partly scanned documents (28 October 2026: refund applications of
+// 60 to 200 pages and typed forms among scanned annexures were left unread) ──
+const typedPage = (n: number) => [
+  `Page ${n} of the order in original under section 54 of the CGST Act, 2017 for the refund of accumulated input tax credit.`,
+  `Paragraph ${n}. The claim of Rs. ${n},000 is examined against the statement of invoices and the returns filed for the period.`,
+];
+
+Deno.test('pages of a long document: its first pages and its last few, named as a reader writes them', () => {
+  assertEquals(pagesToRead(10, 40).length, 10);
+  const r = pagesToRead(85, 40);
+  assertEquals([r.length, r[0], r[34], r[35], r[39]], [40, 1, 35, 81, 85]);
+  assertEquals(pageRanges(r), '1 to 35 and 81 to 85');
+  assertEquals(pageRanges([2, 3, 5]), '2 to 3 and 5');
+  assertEquals(pageRanges([4]), '4');
+  // A scan with one typed page: that page goes, the others are named.
+  const t = pagesAsText({ pages: ['x'.repeat(200), '', ' ', 'Page 4'], textLayer: false })!;
+  assertStringIncludes(t, '--- Page 1 ---');
+  assertStringIncludes(t, 'Pages 2 to 4 are scanned images without a text layer, not given here.');
+  assert(!t.includes('--- Page 2 ---'));
+  assertEquals(pagesAsText({ pages: ['', 'stamp'], textLayer: false }), null, 'a scan has nothing to send');
+});
+
+Deno.test('CLI: a document longer than the reader takes is read in part, by its own page numbers', async () => {
+  const pages = Array.from({ length: 50 }, (_, i) => typedPage(i + 1));
+  const pdf = await buildPdf(pages);
+  const reading = { ...replyReading, doc_kind: 'order', paragraphs: [{ kind: 'finding', para: '48', heading: 'Refund', issue_code: 'OTHER',
+    text: 'Paragraph 48. The claim of Rs. 48,000 is examined', page: 48, quote: 'Paragraph 48. The claim of Rs. 48,000 is examined', answers: '', allegation: '' }] };
+  const net = new FakeNet({ 'order.pdf': pdf }, () => jsonReply(reading));
+  net.gateway = () => ({ body: { text: JSON.stringify(reading), model: 'sonnet' } });
+  const deps: Deps = { db: new FakeDb({ ai_document_hash: () => ({ duplicate: false }) }), claude: net.cliClient(), supabaseUrl: SUPA, agentId: 'edge:t', version: 't', fetchImpl: net.fetch };
+  const f = await readDocumentJob(deps, docClaim({ role: 'order', folder_section: 'ORDRS', document_url: storageUrl('order.pdf') }), new AbortController().signal);
+  assertEquals(f.status, 'done', 'not skipped as too long');
+  const sent = net.cli[0].body.parts[0].text as string;
+  assertStringIncludes(sent, 'The PDF has 50 pages and is too long to read whole: only pages 1 to 35 and 46 to 50 are given here');
+  assertStringIncludes(sent, '--- Page 35 ---');
+  assertStringIncludes(sent, '--- Page 46 ---');
+  assert(!sent.includes('--- Page 36 ---'), 'the pages between are left out');
+  const r = f.result as J;
+  assertEquals([r.pages, r.text_layer, r.paragraphs[0].quote_ok, r.paragraphs[0].page], [50, true, true, 48]);
+});
+
+Deno.test('API: a long document goes as the text of the pages read, never as a PDF the API cannot take', async () => {
+  const pdf = await buildPdf(Array.from({ length: 45 }, (_, i) => typedPage(i + 1)));
+  const net = new FakeNet({ 'order.pdf': pdf }, () => jsonReply(replyReading));
+  const deps: Deps = { db: new FakeDb({ ai_document_hash: () => ({ duplicate: false }) }), claude: net.client(), supabaseUrl: SUPA, agentId: 'edge:t', version: 't', fetchImpl: net.fetch };
+  const f = await readDocumentJob(deps, docClaim({ role: 'order', document_url: storageUrl('order.pdf') }), new AbortController().signal);
+  assertEquals(f.status, 'done');
+  const first = net.claude[0].body.messages[0].content[0];
+  assertEquals(first.type, 'text');
+  assertStringIncludes(first.text, 'only pages 1 to 35 and 41 to 45');
+});
+
+Deno.test('CLI: a scan with typed pages is read by them; a whole scan still waits for vision; a long scan is too long', async () => {
+  const mixed = await buildPdf([typedPage(1), [], [], [], [], [], []]);
+  const scan = await buildPdf([[], [], []]);
+  const longScan = await buildPdf(Array.from({ length: 45 }, () => []));
+  const net = new FakeNet({ 'mixed.pdf': mixed, 'scan.pdf': scan, 'long.pdf': longScan }, () => jsonReply(replyReading));
+  net.gateway = () => ({ body: { text: JSON.stringify({ ...replyReading, paragraphs: [] }) } });
+  const deps: Deps = { db: new FakeDb({ ai_document_hash: () => ({ duplicate: false }) }), claude: net.cliClient(), supabaseUrl: SUPA, agentId: 'edge:t', version: 't', fetchImpl: net.fetch };
+  const sig = new AbortController().signal;
+  const m = await readDocumentJob(deps, docClaim({ role: 'application', document_url: storageUrl('mixed.pdf') }), sig);
+  assertEquals(m.status, 'done');
+  assertStringIncludes(net.cli[0].body.parts[0].text, 'Pages 2 to 7 are scanned images without a text layer, not given here.');
+  assertEquals((m.result as J).text_layer, true, 'its quotes are checked against the typed pages');
+  const s = await readDocumentJob(deps, docClaim({ role: 'application', document_url: storageUrl('scan.pdf') }), sig);
+  assertEquals([s.status, s.reason], ['failed', 'needs_vision']);
+  assertEquals(net.cli.length, 1, 'nothing sent for the whole scan');
+  const l = await readDocumentJob(deps, docClaim({ role: 'application', document_url: storageUrl('long.pdf') }), sig);
+  assertEquals([l.status, l.reason], ['skipped', 'too_long']);
+  // With the API there, the partly scanned file goes to it whole (it reads the scanned pages too).
+  const both: Deps = { ...deps, claude: cliWithApiForScans(net.cliClient(), net.client()) };
+  const viaApi = await readDocumentJob(both, docClaim({ role: 'application', document_url: storageUrl('mixed.pdf') }), sig);
+  assertEquals(viaApi.status, 'done');
+  assertEquals(net.claude.at(-1)!.body.messages[0].content[0].type, 'document');
+});
+
+Deno.test('CLI: a later try of a document reads fewer pages instead of none', async () => {
+  const pdf = await buildPdf(Array.from({ length: 30 }, (_, i) => typedPage(i + 1)));
+  const net = new FakeNet({ 'order.pdf': pdf }, () => jsonReply(replyReading));
+  net.gateway = () => ({ body: { text: JSON.stringify({ ...replyReading, paragraphs: [] }) } });
+  const deps: Deps = { db: new FakeDb({ ai_document_hash: () => ({ duplicate: false }) }), claude: net.cliClient(), supabaseUrl: SUPA, agentId: 'edge:t', version: 't', fetchImpl: net.fetch };
+  const f = await readDocumentJob(deps, docClaim({ attempt: 3, document_url: storageUrl('order.pdf') }), new AbortController().signal);
+  assertEquals(f.status, 'done');
+  assertStringIncludes(net.cli[0].body.parts[0].text, 'only pages 1 to 6 and 29 to 30 are given here');
 });

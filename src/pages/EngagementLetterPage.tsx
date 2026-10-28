@@ -4,13 +4,15 @@
 // summary: each term in a line, each line opening its clause of the full
 // letter (?clause=<n> from the e-mail lands there; ?part=full on the whole
 // letter). Signing opens once the full letter has been opened (the database
-// refuses before): the signer's name and capacity, the two required consents,
-// an explicit yes or no to AI tools (optional, DPDP s.6), a drawn signature if
+// refuses before): the signer's name and capacity, one consent to the whole
+// letter (its personal data and AI clauses included: the firm, 28 October 2026,
+// "if the client does not want then will not sign it"), a drawn signature if
 // they wish, and a 6 digit code e-mailed to the letter's address. Signed, the
-// page shows the signature, the fingerprint of the text signed, a PDF to keep,
-// and the way to withdraw the AI consent (as easy as giving it, s.6(4)). The
-// token scopes every call; the page never sees the code or another letter.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// page shows the signature, a PDF to keep (?download=1 from the signed e-mail
+// downloads it at once), and the way to withdraw the AI consent (as easy as
+// giving it, DPDP s.6(4)). The token scopes every call; the page never sees the
+// code or another letter.
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, ChevronLeft, Download, FileText, Loader2, Mail, PenLine, ShieldCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -31,7 +33,7 @@ const longDate = (iso: string | null | undefined) => (iso
 
 /** A clause's text: paragraphs, and lines starting "• " as a list. */
 const ClauseText: React.FC<{ text: string }> = ({ text }) => (
-  <div className="space-y-2.5 text-[15px] leading-relaxed text-foreground/90">
+  <div className="space-y-2.5 text-justify text-[15px] leading-relaxed text-foreground/90">
     {text.split(/\n{2,}/).map((p, i) => {
       const lines = p.split('\n');
       const bullets = lines.filter((l) => l.startsWith('• '));
@@ -285,7 +287,7 @@ const EngagementLetterPage: React.FC = () => {
           ))}
           <div className="space-y-0.5 border-t pt-4 text-sm">
             <div className="font-semibold">For {firm.name}, Chartered Accountants (FRN {firm.frn})</div>
-            <div>{firm.partner_name}, Partner{firm.partner_membership_no ? `, membership no. ${firm.partner_membership_no}` : ''}</div>
+            <div>{firm.partner_name}, Partner{firm.partner_membership_no ? `, Membership No. ${firm.partner_membership_no}` : ''}</div>
             {firm.address && <div className="text-muted-foreground">{firm.address}</div>}
           </div>
           <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
@@ -297,20 +299,19 @@ const EngagementLetterPage: React.FC = () => {
         </article>
       )}
 
-      {signed ? <SignedPanel token={token} letter={letter} onChanged={() => void load(view)} />
+      {signed ? <SignedPanel token={token} letter={letter} onChanged={() => void load(view)} autoDownload={sp.get('download') === '1'}
+          onDownloaded={() => { const n = new URLSearchParams(sp); n.delete('download'); setSp(n, { replace: true }); }} />
         : <SignPanel token={token} letter={letter} onRead={() => openFull()} onSigned={() => void load(view)} />}
     </>,
   );
 };
 
-/** The e-signature: name, capacity, consents, the AI choice, an optional drawing, the code. */
+/** The e-signature: name, capacity, the consent to the letter, an optional drawing, the code. */
 const SignPanel: React.FC<{ token: string; letter: LetterView; onRead: () => void; onSigned: () => void }> = ({ token, letter, onRead, onSigned }) => {
   const [name, setName] = useState('');
   const [capacity, setCapacity] = useState('');
   const [otherCapacity, setOtherCapacity] = useState('');
   const [agree, setAgree] = useState(false);
-  const [data, setData] = useState(false);
-  const [ai, setAi] = useState<'yes' | 'no' | null>(null);
   const [png, setPng] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -318,14 +319,12 @@ const SignPanel: React.FC<{ token: string; letter: LetterView; onRead: () => voi
   const [reason, setReason] = useState('');
   const [askedChanges, setAskedChanges] = useState(!!letter.declined_at);
   const cap = capacity === 'Other' ? otherCapacity.trim() : capacity;
-  const ready = letter.full_opened && name.trim().length >= 3 && !!cap && agree && data && ai !== null;
-  const aiClause = useMemo(() => letter.clauses.findIndex((c) => c.key === 'ai') + 1 || 11, [letter.clauses]);
-  const dataClause = useMemo(() => letter.clauses.findIndex((c) => c.key === 'personal_data') + 1 || 9, [letter.clauses]);
+  const ready = letter.full_opened && name.trim().length >= 3 && !!cap && agree;
 
   const sign = async (step: CodeStep, code: string) => {
     setBusy(true); setMsg(null);
     try {
-      await signLetter({ token, codeId: step.codeId, code, name: name.trim(), capacity: cap, consents: { engagement: true, data_processing: true, ai_processing: ai === 'yes' }, signature: png });
+      await signLetter({ token, codeId: step.codeId, code, name: name.trim(), capacity: cap, consents: { engagement: true, data_processing: true, ai_processing: true }, signature: png });
       onSigned();
     } catch (e) { setMsg(letterError(e)); } finally { setBusy(false); }
   };
@@ -362,28 +361,10 @@ const SignPanel: React.FC<{ token: string; letter: LetterView; onRead: () => voi
           </div>
         </div>
 
-        <div className="space-y-3">
-          <label className="flex items-start gap-2.5 text-[15px]">
-            <Checkbox checked={agree} onCheckedChange={(v) => setAgree(!!v)} className="mt-1" />
-            <span>I have read the full engagement letter and agree to its terms on behalf of {letter.client_name}.</span>
-          </label>
-          <label className="flex items-start gap-2.5 text-[15px]">
-            <Checkbox checked={data} onCheckedChange={(v) => setData(!!v)} className="mt-1" />
-            <span>I consent to {letter.firm.name || 'the firm'} processing the personal data described in clause {dataClause}, for the services in this letter and as the law requires.</span>
-          </label>
-          <div className="rounded-lg border bg-muted/30 px-4 py-3">
-            <div className="text-[15px] font-medium">May we use AI tools on your notices and documents (clause {aiClause})? This is optional.</div>
-            <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="AI tools">
-              {([['yes', 'Yes, as clause ' + aiClause + ' describes'], ['no', 'No, do not use AI tools']] as const).map(([k, t]) => (
-                <button key={k} type="button" role="radio" aria-checked={ai === k} onClick={() => setAi(k)}
-                  className={cn('rounded-md border px-3 py-2 text-sm font-medium', ai === k ? 'border-primary bg-primary text-primary-foreground' : 'bg-card hover:border-primary/50')}>
-                  {t}
-                </button>
-              ))}
-            </div>
-            <p className="mt-1.5 text-xs text-muted-foreground">Either answer keeps the engagement as it is. You can withdraw a yes at any time.</p>
-          </div>
-        </div>
+        <label className="flex items-start gap-2.5 text-[15px]">
+          <Checkbox checked={agree} onCheckedChange={(v) => setAgree(!!v)} className="mt-1" />
+          <span>I have read the full engagement letter and agree to all its terms on behalf of {letter.client_name}, including the processing of personal data and the use of technology tools it describes.</span>
+        </label>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
@@ -402,7 +383,7 @@ const SignPanel: React.FC<{ token: string; letter: LetterView; onRead: () => voi
           <div className="text-sm font-medium">Confirm with a code</div>
           <p className="text-sm text-muted-foreground">We e-mail a 6 digit code to the address this letter was sent to ({letter.to_masked}). Typing it signs the letter.</p>
           <CodeBox token={token} purpose="sign" disabled={!ready} busy={busy} actionLabel="Sign the engagement letter" onSubmit={(s, c) => void sign(s, c)} />
-          {!ready && letter.full_opened && <p className="text-xs text-muted-foreground">Fill your name and capacity, tick both boxes and answer the AI question to sign.</p>}
+          {!ready && letter.full_opened && <p className="text-xs text-muted-foreground">Fill your name and capacity and tick the box to sign.</p>}
           {msg && <p className="text-sm text-destructive">{msg}</p>}
         </div>
       </fieldset>
@@ -425,7 +406,7 @@ const SignPanel: React.FC<{ token: string; letter: LetterView; onRead: () => voi
 };
 
 /** Signed: keep a PDF, and withdraw the AI consent if it was given. */
-const SignedPanel: React.FC<{ token: string; letter: LetterView; onChanged: () => void }> = ({ token, letter, onChanged }) => {
+const SignedPanel: React.FC<{ token: string; letter: LetterView; onChanged: () => void; autoDownload?: boolean; onDownloaded?: () => void }> = ({ token, letter, onChanged, autoDownload, onDownloaded }) => {
   const [withdrawing, setWithdrawing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -439,14 +420,22 @@ const SignedPanel: React.FC<{ token: string; letter: LetterView; onChanged: () =
     setBusy(true); setMsg(null);
     try { await withdrawLetterAi(token, s.codeId, code); setWithdrawing(false); onChanged(); } catch (e) { setMsg(letterError(e)); } finally { setBusy(false); }
   };
+  // The signed e-mail's button (?download=1): the PDF at once.
+  const downloaded = useRef(false);
+  useEffect(() => {
+    if (!autoDownload || downloaded.current) return;
+    downloaded.current = true;
+    void pdf().finally(() => onDownloaded?.());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoDownload]);
   return (
     <section className="space-y-4 rounded-xl border-2 border-success/40 bg-card p-5 shadow-sm sm:p-7" aria-label="The signed letter">
       <div className="space-y-1">
         <h2 className="flex items-center gap-2 text-lg font-semibold"><CheckCircle2 className="h-5 w-5 text-success" /> Signed</h2>
         <p className="text-[15px]">By {letter.signer_name} ({letter.signer_capacity}) on {istDateTime(letter.signed_at)} · ref {letter.ref}</p>
         <p className="text-sm text-muted-foreground">
-          Terms of the letter and personal data processing: agreed. AI tools: {ai ? 'allowed' : 'not allowed'}
-          {letter.ai_withdrawn_at ? ` (consent withdrawn on ${istDateTime(letter.ai_withdrawn_at)})` : ''}.
+          All the terms of the letter agreed, with its personal data and technology clauses
+          {letter.ai_withdrawn_at ? ` (the consent to AI tools withdrawn on ${istDateTime(letter.ai_withdrawn_at)})` : ''}.
         </p>
       </div>
       <div className="flex flex-wrap gap-2">

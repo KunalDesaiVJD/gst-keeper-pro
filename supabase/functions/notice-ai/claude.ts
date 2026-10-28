@@ -78,7 +78,7 @@ export interface CallRequest {
   what?: string;
   // The PDF's own text, page by page, when the request carries a PDF: what the
   // Claude CLI gateway reads instead of the PDF (it takes text only).
-  pdfText?: { pages: string[]; textLayer: boolean };
+  pdfText?: { pages: string[]; textLayer: boolean; read?: number[]; pageCount?: number | null };
 }
 
 /** One way of asking Claude: the Claude API (callClaude) or the Claude CLI gateway (cli.ts). */

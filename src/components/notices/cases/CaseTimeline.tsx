@@ -22,6 +22,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { EmptyBox } from '@/components/notices/autopilot/parts';
 import { StageBadge } from '@/components/notices/StageBadge';
 import type { CaseItem, CaseItemFacts, KeyDate } from '@/lib/noticeCases';
+import { readingNote } from '@/lib/noticeAi';
 import { fmtAiTokens, fmtDate, fmtDateTime, fmtInr } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 
@@ -157,7 +158,8 @@ function Reading({ it }: { it: CaseItem }) {
     );
   }
   if (reading) return <p className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> The AI is reading it</p>;
-  if (it.ai?.status === 'failed' && it.ai.reason_class === 'needs_vision') return <p className="text-xs text-muted-foreground">A scan: the AI could not read its text.</p>;
+  const note = it.ai && !it.notice_read?.summary ? readingNote({ status: it.ai.status, reason_class: it.ai.reason_class ?? null, pages: null }) : null;
+  if (note) return <p className="text-xs text-muted-foreground">{note}</p>;
   return null;
 }
 
