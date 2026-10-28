@@ -1,12 +1,12 @@
 // notice-ai without the real API or database:
 //   deno test --allow-read --allow-env supabase/functions/notice-ai/test/
-import { assert, assertEquals, assertStringIncludes } from '@std/assert';
+import { assert, assertEquals, assertStringIncludes, assertThrows } from '@std/assert';
 import { AI_EFFORT, AI_MODEL } from '../../_shared/aiModel.ts';
 import { buildParams, callClaude, FALLBACK_BETA } from '../claude.ts';
 import { buildDocResult, type DocumentClaim } from '../documents.ts';
 import { assistUserText, mapAssistOutput, runAssist } from '../assist.ts';
 import { readDocumentJob, runTick, type Deps } from '../runner.ts';
-import { cliWithApiForScans, jsonFromText } from '../cli.ts';
+import { cliWithApiForScans, jsonFromText, JsonCutOff, rawSample, repairJson } from '../cli.ts';
 import { documentUrlAllowed, downloadPdf, storageReadUrl } from '../pdf.ts';
 import {
   buildPdf, FakeDb, FakeNet, GATEWAY, ISSUE_CODES, jsonReply, replyPages, replyReading, storageUrl, SUPA, type J,
@@ -372,6 +372,38 @@ Deno.test('CLI: the assistant drafts through the gateway', async () => {
 Deno.test('CLI helpers: JSON out of words', () => {
   assertEquals(jsonFromText('Here it is:\n{"a": [1, {"b": 2}]}\nDone.'), { a: [1, { b: 2 }] });
   assertEquals(GATEWAY.startsWith('https://'), true);
+});
+
+Deno.test('CLI helpers: a long answer\'s slips are mended, a cut off one is said to be', () => {
+  // A real line break, a quoted provision and a backslash inside strings, a trailing comma, words after the object.
+  const slipped = 'Here is the submission:\n```json\n{"title": "Written submission", "sections": [{"heading": "Grounds", '
+    + '"text": "The term "aggrieved person" in section 107\nis wide.\tSee rule 108\\(1).", "precedents_used": ["P1",],},],'
+    + ' "prayer": "Set aside the order, "in full", and refund the pre deposit.", "client_questions": ["Ask for the "invoice", then the bank statement"],'
+    + ' "cautions": [], "precedents_used": []}\n```\nI have kept {placeholders} in square brackets.';
+  const j = jsonFromText(slipped) as J;
+  assertEquals(j.sections[0].text, 'The term "aggrieved person" in section 107\nis wide.\tSee rule 108\\(1).');
+  assertEquals(j.sections[0].precedents_used, ['P1']);
+  assertEquals(j.prayer, 'Set aside the order, "in full", and refund the pre deposit.');
+  assertEquals(j.client_questions, ['Ask for the "invoice", then the bank statement']);
+  assertEquals(j.cautions, []);
+  // An object that never closes was cut off, not malformed.
+  assertThrows(() => jsonFromText('{"title": "Written submission", "sections": [{"heading": "Grounds", "text": "The appellant'), JsonCutOff);
+  assertThrows(() => jsonFromText('Sorry, I cannot.'));
+  assertEquals(repairJson('{"a": "x"} {"b": 1}'), '{"a": "x"}');
+  assertStringIncludes(rawSample('a'.repeat(400) + 'b'.repeat(400)), ' … ');
+});
+
+Deno.test('CLI: an answer that cannot be read keeps its start and end on the run; a cut off one says so', async () => {
+  const net = new FakeNet({}, () => jsonReply({}));
+  const req = { model: AI_MODEL, effort: 'medium', system: 'S', schema: {}, what: 'the appeal', content: [{ type: 'text' as const, text: 'x' }] };
+  net.gateway = () => ({ body: { text: '{"title": "Grounds of appeal", "sections": [{"heading": "One", "text": "That the' } });
+  const cut = await net.cliClient()(req);
+  assert(!cut.ok && cut.reason === 'max_tokens' && /stopped before its end/.test(cut.error));
+  assertStringIncludes(cut.usage?.raw_sample ?? '', 'Grounds of appeal');
+  net.gateway = () => ({ body: { text: 'I have written the submission to submission.md.' } });
+  const words = await net.cliClient()(req);
+  assert(!words.ok && words.reason === 'bad_output' && /in words/.test(words.error));
+  assertStringIncludes(net.cli[0].body.system, 'typographic quotes');
 });
 
 // ── What to do now on a case (advise.ts) ─────────────────────────────────────

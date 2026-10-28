@@ -38,7 +38,8 @@ export function makeClaudeClient(opts: {
     baseURL: opts.baseUrl || API_BASE_URL,
     maxRetries: opts.maxRetries ?? 2,
     timeout: opts.timeoutMs ?? 6 * 60_000,
-    ...(opts.fetch ? { fetch: opts.fetch } : {}),
+    // Cast: supabase-js from npm brings Node's global types, whose RequestInit differs from Deno's.
+    ...(opts.fetch ? { fetch: opts.fetch as unknown as NonNullable<ConstructorParameters<typeof Anthropic>[0]>['fetch'] } : {}),
   });
 }
 
@@ -57,6 +58,8 @@ export interface CallUsage {
   tokens_in?: number;
   tokens_out?: number;
   estimated?: boolean;
+  // The start and end of an answer that could not be read (cli.ts), to see why.
+  raw_sample?: string;
 }
 
 export type CallOutcome =

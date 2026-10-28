@@ -7,7 +7,12 @@
 // case, the appeal's other drafts, and precedents (the firm's appeals and
 // replies on other cases, P1, P2, …). The answer is kept by
 // notice_appeal_ai_finish as a new version of the document, without a hyphen
-// or dash. A partner reviews every word before anything is filed.
+// or dash. A partner reviews every word before anything is filed. Since 28
+// October 2026 an appeal against a refund order is briefed as one (the refund
+// claimed and rejected, the RFD 08 and its reply), and the material carries the
+// appeal's hearings and the order's own checks from the case's key dates.
+// The Claude CLI's answer is read by notice-ai/cli.ts, which mends a long
+// answer's slips (a real line break or a quoted provision inside a string).
 
 import { AI_EFFORT, AI_MODEL } from '../_shared/aiModel.ts';
 import { scrub, type CallUsage, type Caller } from '../notice-ai/claude.ts';
@@ -27,7 +32,14 @@ const DOC_BRIEF: Record<AppealDocType, string> = {
   submission: `Detailed written submission for the hearing before the appellate authority: a full argument, in sections. Start with a short introduction (the appeal, the order, the amount in dispute), then a brief summary of the facts, then one section for each ground with the facts it rests on, the evidence (cite each document by its name and date as given), the provisions of law (sections and rules, quoted exactly), the reasoning and why the finding of the order cannot stand, and judicial support where you are certain of it, else [citation to confirm]. Answer each finding of the order by its paragraph where the order as read gives one. Include a section on interest and penalty, and on the pre deposit where relevant. prayer: the relief sought, as in the grounds.`,
 };
 
-export const APPEAL_SYSTEM_PROMPT = `You draft appeal documents for a firm of chartered accountants in India that files appeals under GST law (section 107 of the CGST Act, 2017 before the Appellate Authority, and section 112 before the Appellate Tribunal; the CGST Rules, 2017, rules 108 and 109; the State and Union Territory GST Acts and the IGST Act). Staff of the firm ask you, and a partner reviews every word before anything is filed.
+// An appeal against a refund order (RFD 06, RFD 07; 20261028100000) argues the refund, not a demand.
+const REFUND_BRIEF: Record<AppealDocType, string> = {
+  facts: `Statement of facts (filed with APL 01) for an appeal against a refund order: the facts in the order they happened, in numbered paragraphs, written for the appellant ("the appellant"). Cover who the appellant is and its business (as far as given), the refund application (RFD 01: its ARN, date, the category of refund, the period and the amount claimed), any acknowledgement or deficiency memo (RFD 02, RFD 03), the notice proposing to reject it (RFD 08: reference, date and each reason given), the reply filed and what it said, any personal hearing, the order appealed (RFD 06: reference, date, the authority, the amount sanctioned and the amount rejected, with the reasons), any re credit of the rejected amount to the ledger (PMT 03), and that the appellant is aggrieved by the rejection and files this appeal within time. Facts only: no argument, no law beyond what the papers say. Sections: one for each stage (for example "Background", "The refund application", "The notice for rejection", "The reply", "The order", "Re credit"). prayer: "".`,
+  grounds: `Grounds of appeal against the rejection of a refund (filed with APL 01): numbered, each a self contained ground stated as "That the learned proper officer erred in ..." or a similar formal opening. Each ground: a short heading and a paragraph or two. Cover, where the papers support them: each reason of rejection answered on its merits (section 54 of the CGST Act, 2017, rules 89 to 97A of the CGST Rules, 2017, and for a zero rated supply section 16 of the IGST Act, 2017), a rejection on a ground the RFD 08 notice did not raise, a reply not considered or a non speaking order, no opportunity of being heard (rule 92(3)), the time limit of section 54(1) and the relevant date, the formula of rule 89(4) or 89(5) as applied, unjust enrichment where it is raised, and interest on the delayed refund under section 56. End with the usual reservation of the right to add, alter or amend any ground. prayer: set aside the order to the extent it rejects the refund, sanction the amount rejected with interest under section 56, and any other relief.`,
+  submission: `Detailed written submission for the hearing of an appeal against a refund order: a full argument, in sections. Start with a short introduction (the appeal, the order, the amount claimed and the amount rejected), then a brief summary of the facts, then one section for each ground with the facts it rests on, the evidence (cite each document by its name and date as given), the provisions of law (sections and rules, quoted exactly), the reasoning and why each reason of rejection cannot stand, and judicial support where you are certain of it, else [citation to confirm]. Answer each reason of the order by its paragraph where the order as read gives one. End with a section on interest on the delayed refund under section 56. prayer: the relief sought, as in the grounds.`,
+};
+
+export const APPEAL_SYSTEM_PROMPT =`You draft appeal documents for a firm of chartered accountants in India that files appeals under GST law (section 107 of the CGST Act, 2017 before the Appellate Authority, and section 112 before the Appellate Tribunal; the CGST Rules, 2017, rules 108 and 109; the State and Union Territory GST Acts and the IGST Act). Staff of the firm ask you, and a partner reviews every word before anything is filed.
 
 How you write:
 - Formal, respectful and exact, as filed before the appellate authority. Write for the appellant ("the appellant respectfully submits"), unless the firm's precedents show another voice; then follow them.
@@ -103,8 +115,9 @@ export function appealUserText(ctx: J): { text: string; labels: Map<string, stri
   const labels = new Map<string, string>();
   const out: string[] = [];
   const doc = (ctx?.doc_type ?? 'facts') as AppealDocType;
+  const refund = ctx?.appeal?.subject === 'refund';
   out.push(`Mode: ${ctx?.mode ?? 'draft'}. The document: ${DOC_NAMES[doc] ?? doc}.`);
-  out.push(`What this document is: ${DOC_BRIEF[doc] ?? ''}`);
+  out.push(`What this document is: ${(refund ? REFUND_BRIEF : DOC_BRIEF)[doc] ?? ''}`);
   const c = ctx?.case ?? {};
   out.push(`The case: ${[
     c.client && `appellant ${one(c.client, 200)}`, c.gstin && `GSTIN ${c.gstin}`, c.title && `"${one(c.title, 200)}"`,
@@ -121,7 +134,23 @@ export function appealUserText(ctx: J): { text: string; labels: Map<string, stri
     rs(a.disputed_tax) && `tax in dispute ${rs(a.disputed_tax)}`, rs(a.disputed_total) && `total in dispute ${rs(a.disputed_total)}`,
     rs(a.predeposit) && `pre deposit ${rs(a.predeposit)}${a.predeposit_pct ? ` (${a.predeposit_pct}%)` : ''}`,
     arr(a.issues).length && `issue category on the portal: ${arr(a.issues).map((x) => one(x, 120)).join('; ')}`,
+    refund && 'an appeal against a refund order',
+    rs(a.refund_claimed) && `refund claimed ${rs(a.refund_claimed)}`, rs(a.refund_rejected) && `refund rejected by the order ${rs(a.refund_rejected)}`,
   ].filter(Boolean).join(', ')}.`);
+  if (refund) {
+    out.push('Pre deposit: section 107(6) computes it on the tax in dispute arising from the order. An order that only rejects a refund confirms no demand: say in cautions whether any pre deposit arises here.');
+  }
+  // The appeal's hearings and adjournments, and what the order's own checks found (notice_case_key_dates).
+  const hearings = arr(ctx?.hearings);
+  if (hearings.length) {
+    out.push(`The appeal's hearings and adjournments, oldest first:\n${hearings.map((h) => `- ${h.date}: ${one(h.title, 160)}${h.detail ? ` (${one(h.detail, 200)})` : ''}${h.upcoming ? ', still to come' : ''}`).join('\n')}`);
+    const next = hearings.find((h) => h.upcoming && h.kind === 'hearing');
+    if (doc === 'submission' && next) out.push(`The written submission is for the hearing on ${next.date}: say so in the introduction.`);
+  }
+  const checks = arr(ctx?.order_checks);
+  if (checks.length && doc !== 'facts') {
+    out.push(`Checks of the order against the papers (each to be verified; a ground only where the papers bear it out):\n${checks.map((k) => `- ${k.law ? `${k.law}: ` : ''}${one(k.title, 200)}. ${one(k.detail, 400)}`).join('\n')}`);
+  }
   const o = ctx?.order ?? {};
   out.push(`The order appealed: ${[
     o.form_code && `Form ${o.form_code}`, o.reference && `reference ${o.reference}`, o.issue_date && `dated ${o.issue_date}`,
@@ -236,6 +265,29 @@ const BUDGETS: Record<AppealDocType, readonly number[]> = {
   submission: [48_000, 96_000],
 };
 
+/**
+ * The appeal's own dates from the case's key dates (20261026120000): its
+ * hearings and adjournments (in the appeal's portal case), and the checks of
+ * the order appealed that point to a ground (s.75(4), s.75(7), limitation).
+ * The drafts do without them when the dates cannot be read.
+ */
+export async function appealDates(deps: AppealDeps, clientId: string, caseKey: string, appeal: AppealStageInput | undefined): Promise<{ hearings: J[]; order_checks: J[] }> {
+  if (!appeal) return { hearings: [], order_checks: [] };
+  let dates: J[] = [];
+  try {
+    dates = arr(await deps.db.rpc<J>('notice_case_key_dates', { p_client_id: clientId, p_case_key: caseKey }));
+  } catch {
+    return { hearings: [], order_checks: [] };
+  }
+  const arn = String((appeal as J).arn ?? '').toUpperCase();
+  const orderId = (appeal as J).order_notice_id;
+  const byDate = (x: J, y: J) => String(x.date ?? '').localeCompare(String(y.date ?? ''));
+  return {
+    hearings: arn ? dates.filter((k) => (k?.kind === 'hearing' || k?.kind === 'adjournment') && String(k.own_key ?? '').toUpperCase() === arn).sort(byDate) : [],
+    order_checks: orderId ? dates.filter((k) => k?.ground === true && k.item_id === orderId).sort(byDate) : [],
+  };
+}
+
 /** Starts a run; returns the run id at once and the answer as a promise (kept by the database when done). */
 export async function beginAppeal(deps: AppealDeps, input: AppealInput): Promise<{ error?: string; run_id?: string; done?: Promise<Record<string, unknown>> }> {
   if (!input.client_id || !/^[0-9a-f-]{36}$/i.test(input.client_id) || !input.case_key || !input.appeal_key) return { error: 'bad_request' };
@@ -261,7 +313,8 @@ export async function beginAppeal(deps: AppealDeps, input: AppealInput): Promise
       return { ...(await finish('failed', null, null, 'Neither the Claude CLI gateway (CLAUDE_CLI_GATEWAY_URL and CLAUDE_CLI_GATEWAY_SECRET) nor ANTHROPIC_API_KEY is set for the Edge Functions.', 'no_key')), error: 'no_key' };
     }
     try {
-      const { text, labels } = appealUserText(begin.context ?? {});
+      const material = { ...(begin.context ?? {}), ...(await appealDates(deps, input.client_id as string, input.case_key as string, appeal)) };
+      const { text, labels } = appealUserText(material);
       const out = await deps.claude({
         model: AI_MODEL,
         effort: AI_EFFORT,

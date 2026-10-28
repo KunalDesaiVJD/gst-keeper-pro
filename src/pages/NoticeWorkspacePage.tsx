@@ -17,7 +17,10 @@
 // Drafting is offered by the notice's stage (src/lib/noticeDrafting.ts): an
 // order gets its letters and a way to the case's Appeal view, a reply filed or
 // overtaken by an order keeps its drafts to read, the AI assistant only while
-// a reply is being prepared.
+// a reply is being prepared. A paper of an appeal (APL-01, APL-02, a hearing
+// notice, an adjournment) is worked on the case's Appeal view, which its
+// primary button opens; the reply's steps are not offered for it (28 October
+// 2026). A refund order's appeal opens on the refund page.
 import { NoticeExcludeDialog } from '@/components/notices/NoticeExcludeDialog';
 import { canManageNoticeTypes } from '@/lib/noticeTypes';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -74,7 +77,7 @@ import { caseHref, caseKeyOf, loadCase, tabsFor, trackDef, trackOfCategory, useC
 import { cn } from '@/lib/utils';
 import { useCaseDocuments } from '@/lib/caseDocuments';
 import { assistantOffered, draftEditable, draftingPhase } from '@/lib/noticeDrafting';
-import { appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
+import { appealOfPaper, appealViewHref, appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
 import { useRefundLedger } from '@/components/notices/reports/ledgerData';
 import { refundHref } from '@/components/notices/reports/refundModel';
 
@@ -164,7 +167,11 @@ function Callout({ title, children, action }: { title: string; children: React.R
 }
 
 /** Why the page offers the drafting it does, once a reply is no longer what is being prepared. */
-function DraftingNote({ phase, replyDate, appealHref, underAppeal }: { phase: ReturnType<typeof draftingPhase>; replyDate: string | null; appealHref: string | null; underAppeal: boolean }) {
+function DraftingNote({ phase, replyDate, appealHref, underAppeal, letters = true }: {
+  phase: ReturnType<typeof draftingPhase>; replyDate: string | null; appealHref: string | null; underAppeal: boolean;
+  /** The page has the Letters tab (a refund's order page has none). */
+  letters?: boolean;
+}) {
   const appeal = appealHref && (
     <Button size="sm" variant="outline" className={WS_BTN} asChild><Link to={appealHref}><Scale className="h-3.5 w-3.5" /> {underAppeal ? 'Open the appeal' : 'Prepare the appeal'}</Link></Button>
   );
@@ -177,10 +184,19 @@ function DraftingNote({ phase, replyDate, appealHref, underAppeal }: { phase: Re
         </div>
         <p className="mt-0.5 text-sm text-muted-foreground">It is appealed, rectified or paid:</p>
         <ul className="mt-1.5 grid gap-2 text-sm sm:grid-cols-2">
-          <li className="rounded-lg border bg-card px-3 py-2"><span className="font-semibold">Appeal</span><span className="block text-muted-foreground">The statement of facts, grounds of appeal and written submission are drafted on the case's Appeal view.</span></li>
-          <li className="rounded-lg border bg-card px-3 py-2"><span className="font-semibold">Rectify, stay or pay</span><span className="block text-muted-foreground">The letters (rectification, stay of recovery, payment) are on the Letters tab.</span></li>
+          <li className="rounded-lg border bg-card px-3 py-2"><span className="font-semibold">Appeal</span><span className="block text-muted-foreground">The statement of facts, grounds of appeal and written submission are drafted on {letters ? 'the case\'s' : 'the refund page\'s'} Appeal view, with the appeal's papers and dates.</span></li>
+          {letters
+            ? <li className="rounded-lg border bg-card px-3 py-2"><span className="font-semibold">Rectify, stay or pay</span><span className="block text-muted-foreground">The letters (rectification, stay of recovery, payment) are on the Letters tab.</span></li>
+            : <li className="rounded-lg border bg-card px-3 py-2"><span className="font-semibold">Rectify</span><span className="block text-muted-foreground">A rectification of an apparent error (s.161) is asked for on the portal within three months of the order.</span></li>}
         </ul>
       </section>
+    );
+  }
+  if (phase === 'appeal') {
+    return (
+      <Callout title="This paper is part of an appeal" action={appeal}>
+        The appeal's papers, its hearings and adjournments, where it stands and the written submission for the hearing are all on its Appeal view, so nothing is drafted here.
+      </Callout>
     );
   }
   if (phase === 'moved_on') {
@@ -231,16 +247,24 @@ const NoticeWorkspacePage: React.FC = () => {
   // registration or record-only notice gets the facts and tabs of its kind.
   const track: Track = trackOfCategory(ws?.fact.category);
   const caseKey = ws ? caseKeyOf(ws.notice.case_id, ws.fact.category, ws.notice.id) : null;
-  const phase = ws ? draftingPhase(ws.fact) : 'reply';
+  const stagePhase = ws ? draftingPhase(ws.fact) : 'reply';
   const caseOv = useCaseOverview(clientId, caseKey, ws?.notice.id ?? null);
   // A refund's notice: the refund it belongs to, with the figures its own page gives (refunds are not cases, 27 Oct 2026).
   const refundLedger = useRefundLedger(clientId, !!clientId && track === 'refund');
   const refundArn = track === 'refund' ? (ws?.notice.case_id ?? null) : null;
   const refundRow = useMemo(() => (refundArn ? (refundLedger.data ?? []).find((r) => (r.fact.arn ?? '').toUpperCase() === refundArn.toUpperCase()) ?? null : null), [refundLedger.data, refundArn]);
   const refundLink = clientId && refundArn && refundRow ? refundHref(clientId, refundRow.fact.arn as string) : null;
-  // The case's Appeal view, where an order's appeal is drafted, when it has an appeal to offer.
-  const caseAppeals = useCaseAppeals(clientId ?? '', phase === 'order' || phase === 'moved_on' ? caseKey : null);
-  const appealHref = clientId && caseKey && appealsShown(caseAppeals.data).length > 0 ? `${caseHref(clientId, caseKey)}?side=appeal` : null;
+  // The case's Appeal view (the refund page's, for a refund), where an order's appeal is drafted and an
+  // appeal's paper is worked, when it has an appeal to offer; opened on this notice's appeal.
+  const caseAppeals = useCaseAppeals(clientId ?? '', stagePhase === 'order' || stagePhase === 'moved_on' || stagePhase === 'appeal' ? caseKey : null);
+  const shownAppeals = useMemo(() => appealsShown(caseAppeals.data), [caseAppeals.data]);
+  const ownAppeal = stagePhase === 'appeal' ? appealOfPaper(shownAppeals, ws?.notice.case_id)
+    : stagePhase === 'order' ? shownAppeals.find((a) => a.order_notice_id === ws?.notice.id) : undefined;
+  const appealBase = refundLink ?? (clientId && caseKey ? caseHref(clientId, caseKey) : null);
+  const appealHref = appealBase && shownAppeals.length > 0 ? appealViewHref(appealBase, ownAppeal?.appeal_key) : null;
+  // An appeal's paper whose case shows no appeal (none on record to open) is worked as any other notice.
+  const phase = stagePhase === 'appeal' && caseAppeals.isFetched && !appealHref && ws
+    ? draftingPhase({ ...ws.fact, category: null, form_code: null }) : stagePhase;
   const caseRow = useQuery({ queryKey: ['notice-case', clientId, caseKey], queryFn: () => loadCase(clientId as string, caseKey as string), enabled: !!clientId && !!caseKey, staleTime: 60_000 });
   const needsReply = ws?.fact.response_need === 'critical';
   const wantTab = sp.get('tab');
@@ -252,8 +276,10 @@ const NoticeWorkspacePage: React.FC = () => {
       deadlines: !!ws && ws.deadlines.length > 0,
     };
     // Drafting only where it still makes sense: the assistant while a reply is prepared, a closed draft tab only to read what it holds.
+    // An appeal's paper builds no reply: its issues, evidence and submission are the Appeal view's.
     const drafting = (k: WorkspaceTab) => (k === 'assistant' ? assistantOffered(phase)
-      : k === 'draft' ? draftEditable(phase) || (ws?.drafts.length ?? 0) > 0 : true);
+      : k === 'draft' ? draftEditable(phase) || (ws?.drafts.length ?? 0) > 0
+      : k === 'issues' || k === 'evidence' ? phase !== 'appeal' || (k === 'issues' && (ws?.issues.length ?? 0) > 0) : true);
     return TABS.filter((t) => keys.includes(t.key) && drafting(t.key) && (!OPTIONAL_TABS.includes(t.key) || has[t.key] || wantTab === t.key));
   }, [track, needsReply, ws, wantTab, phase]);
   const hasEvidenceTab = shownTabs.some((t) => t.key === 'evidence');
@@ -340,10 +366,15 @@ const NoticeWorkspacePage: React.FC = () => {
 
   // The one primary action, chosen by what is next for this notice.
   const primary = (() => {
+    // An appeal's paper is worked on the Appeal view, open or closed (reopening it is under More).
+    if (phase === 'appeal' && appealHref) {
+      return <Button size="sm" className={WS_BTN} asChild><Link to={appealHref}><Scale className="h-3.5 w-3.5" /> Open the appeal</Link></Button>;
+    }
     if (!canEdit) return null;
     if (closed) return <Button size="sm" className={WS_BTN} onClick={() => changeStage('triaged')}>Reopen</Button>;
     // An order is answered by an appeal, drafted on the case's Appeal view.
-    if (phase === 'order' && appealHref && f.next_action !== 'assign') {
+    // (A refund order has no owner step: its appeal leads even while unassigned.)
+    if (phase === 'order' && appealHref && (f.next_action !== 'assign' || !lit)) {
       return <Button size="sm" className={WS_BTN} asChild><Link to={appealHref}><Scale className="h-3.5 w-3.5" /> {f.stage === 'appeal' ? 'Open the appeal' : 'Prepare the appeal'}</Link></Button>;
     }
     // A refund, registration or record-only notice: reply when it asks for one, else read and close.
@@ -435,6 +466,7 @@ const NoticeWorkspacePage: React.FC = () => {
               {canEdit && !closed && !lit && <DropdownMenuItem onSelect={() => setDialog('close')}><FileText className="mr-2 h-4 w-4" /> Read and close</DropdownMenuItem>}
               {/* A closed notice offers no matter or appeal (the firm's request of 12 October 2026). */}
               {canEdit && lit && !closed && <DropdownMenuItem onSelect={() => setDialog('matter')}><Scale className="mr-2 h-4 w-4" /> {n.matter_id ? 'Move to another matter' : 'Create or link a matter'}</DropdownMenuItem>}
+              {canEdit && closed && phase === 'appeal' && appealHref && <DropdownMenuItem onSelect={() => changeStage('triaged')}><RefreshCw className="mr-2 h-4 w-4" /> Reopen</DropdownMenuItem>}
               {canManageNoticeTypes(user?.role) && <DropdownMenuItem onSelect={() => setHiding(true)}><EyeOff className="mr-2 h-4 w-4" /> Not required (hide)</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={openPortal} disabled={!bridge.ready}><ExternalLink className="mr-2 h-4 w-4" /> Open on the portal{!bridge.ready ? ' (needs the extension)' : ''}</DropdownMenuItem>
@@ -495,7 +527,8 @@ const NoticeWorkspacePage: React.FC = () => {
       <CaseLinkSuggest noticeId={n.id} clientId={n.client_id} caseId={n.case_id} canEdit={canEdit}
         onLinked={() => { reload(); qc.invalidateQueries({ queryKey: ['notice-case'] }); qc.invalidateQueries({ queryKey: ['notice-case-overview'] }); }} />
 
-      <DraftingNote phase={phase} replyDate={f.reply_date} appealHref={appealHref} underAppeal={f.stage === 'appeal'} />
+      <DraftingNote phase={phase} replyDate={f.reply_date} appealHref={appealHref} underAppeal={f.stage === 'appeal' || phase === 'appeal'}
+        letters={shownTabs.some((t) => t.key === 'draft')} />
       <VoluntaryCancelNote ws={ws} canClose={canEdit && !closed} onClose={(reason) => changeStage('closed', reason)} />
 
       {!canEdit && <Note tone="info">You can read this notice. Changing it needs the "Edit notice status" permission — ask a GST manager.</Note>}
@@ -544,7 +577,8 @@ const NoticeWorkspacePage: React.FC = () => {
         </Tabs>
 
         <aside className="min-w-0 space-y-3 xl:sticky xl:top-3" aria-label="The notice's facts">
-          {lit ? <FactTiles ws={ws} rail onAskClient={canEdit && !closed ? () => setDialog('docs') : undefined} />
+          {lit && phase === 'appeal' ? null
+            : lit ? <FactTiles ws={ws} rail onAskClient={canEdit && !closed ? () => setDialog('docs') : undefined} />
             : <KindFacts track={track} overview={caseOv.data} row={refundRow} refundLink={refundLink} loading={caseOv.isLoading} forms={caseRow.data?.forms ?? (f.form_code ? [f.form_code] : [])} rail
                 notice={{ form_label: f.form_label, issue_date: n.issue_date, reference_number: n.reference_number, financial_year: n.financial_year, description: n.description }} />}
           <NoticeReadCard ws={ws} reading={rq.data} loading={rq.isLoading} error={rq.error} canEdit={canEdit} onChanged={reload}

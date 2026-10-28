@@ -15,6 +15,8 @@
 // against GST law are not offered, the rest carry their warnings, a link a
 // person makes is warned first (LinkWarnDialog), and a link already in the
 // chain that the check finds wrong says so.
+// An appeal in the chain is worked on the page's Appeal view (28 October 2026),
+// so its Work on it opens that view on its appeal, not the APL-02's notice page.
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -28,6 +30,7 @@ import { Note } from '@/components/gstr9/ui';
 import { WS_BTN } from '@/components/workspace/theme';
 import { SectionCard } from '@/components/notices/ui/Panel';
 import { useAuth } from '@/contexts/AuthContext';
+import { appealOfPaper, appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
 import {
   LINK_KINDS, caseLabel, describeLink, linkKindDef, noticeCaseHref, refundOutcome, resetCaseLink, setCaseLink, useCaseChain, useLinkCandidates,
   type ChainMember, type LinkCandidate, type LinkKind,
@@ -90,6 +93,8 @@ export const CaseChainPanel: React.FC<{
   const by = user?.firstName ?? null;
   const guard = useGuardedLink(by);
 
+  const appealsAll = useCaseAppeals(clientId, caseKey);
+  const appeals = useMemo(() => appealsShown(appealsAll.data), [appealsAll.data]);
   const members = useMemo(() => chain.data?.members ?? [], [chain.data]);
   const byKey = useMemo(() => new Map(members.map((m) => [m.case_key, m])), [members]);
   const tree = useMemo(() => treeOrder(members, chain.data?.root_key ?? caseKey), [members, chain.data, caseKey]);
@@ -228,7 +233,12 @@ export const CaseChainPanel: React.FC<{
                             aria-pressed={shown} title="Show only this case's correspondence">
                             <Eye className="h-3.5 w-3.5" aria-hidden /> {shown ? 'Shown alone' : 'Show alone'}
                           </Button>
-                          {m.lead_notice_id && (
+                          {appealOfPaper(appeals, m.case_key) ? (
+                            <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" asChild>
+                              <Link to={{ search: `?side=appeal&appeal=${encodeURIComponent(appealOfPaper(appeals, m.case_key)?.appeal_key ?? '')}` }}
+                                title="The appeal's papers, dates, road and documents, on this page's Appeal view">Work on the appeal <ArrowRight className="h-3 w-3" aria-hidden /></Link>
+                            </Button>
+                          ) : m.lead_notice_id && (
                             <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" asChild>
                               <Link to={`/notices/${m.lead_notice_id}`} title="Open this case's latest notice to work on it">Work on it <ArrowRight className="h-3 w-3" aria-hidden /></Link>
                             </Button>

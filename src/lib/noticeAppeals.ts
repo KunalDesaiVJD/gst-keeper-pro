@@ -51,7 +51,28 @@ export interface CaseAppeal {
   second_appeal?: boolean;
   issues?: string[];
   demand?: number;
+  /** 'refund' for an appeal against a refund order (RFD-06, RFD-07), with what the order rejected (20261028100000). */
+  subject?: 'refund';
+  refund_claimed?: number;
+  refund_rejected?: number;
   drafts?: Partial<Record<AppealDocType, AppealDraftHead>>;
+}
+
+/**
+ * Where the Appeal view of a case is: on the case page, or on the refund page
+ * for a refund (a refund is not a case, 27 October 2026), with one appeal
+ * picked when the case has more than one.
+ */
+export function appealViewHref(caseOrRefundHref: string, appealKey?: string | null): string {
+  const q = new URLSearchParams({ side: 'appeal' });
+  if (appealKey) q.set('appeal', appealKey);
+  return `${caseOrRefundHref}${caseOrRefundHref.includes('?') ? '&' : '?'}${q.toString()}`;
+}
+
+/** The appeal a paper of an appeal's own portal case (its APL-01, APL-02, hearing notices) belongs to. */
+export function appealOfPaper(appeals: CaseAppeal[] | undefined, ownKey: string | null | undefined): CaseAppeal | undefined {
+  const k = (ownKey ?? '').trim().toUpperCase();
+  return k ? (appeals ?? []).find((a) => (a.arn ?? '').toUpperCase() === k) : undefined;
 }
 
 export const caseAppealsKey = (clientId: string, caseKey: string) => ['notice-case-appeals', clientId, caseKey] as const;

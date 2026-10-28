@@ -7,7 +7,8 @@
 // what the AI read in it in two lines (more on a click), what the portal's own
 // record says (an appeal's order, amounts, pre-deposit and documents; a hearing's
 // date and place), its files as chips, and whether it is new since the case was
-// last opened. Only "Work on it" leaves for the notice's workspace.
+// last opened. Only "Work on it" leaves for the notice's workspace; an appeal's
+// own papers open the case's Appeal view instead (28 October 2026).
 // Laid out again on 27 October 2026 (the firm: design improvement "extremely
 // needed", nothing taken away): the papers fall into the phases of the
 // proceeding (scrutiny, intimation, show cause, order, appeal, recovery), each
@@ -275,7 +276,13 @@ export const CaseTimeline: React.FC<{
   order?: 'oldest' | 'newest';
   /** A notice to mark and scroll to (the one the case was opened from). */
   focusId?: string | null;
-}> = ({ items, keyDates, partOf, order = 'oldest', focusId }) => {
+  /**
+   * Where a notice's button goes (28 October 2026): an appeal's paper opens the
+   * case's Appeal view, where its work is; null leaves the button out. Without
+   * it every notice has Work on it, to its own page.
+   */
+  workLink?: (it: CaseItem) => { to: string; label: string } | null;
+}> = ({ items, keyDates, partOf, order = 'oldest', focusId, workLink }) => {
   const focusRef = useRef<HTMLLIElement | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
   useEffect(() => {
@@ -310,6 +317,7 @@ export const CaseTimeline: React.FC<{
     const title = it.kind === 'notice' ? it.label : it.facts?.form === 'APL-01' ? it.label : it.ai?.title || it.label;
     const focused = !!focusId && it.id === focusId;
     const part = partOf?.(it.own_key);
+    const work = it.kind !== 'notice' ? null : workLink ? workLink(it) : { to: `/notices/${it.id}`, label: 'Work on it' };
     return (
       <li key={`${it.kind}:${it.id}`} ref={focused ? focusRef : undefined} className="flex gap-3">
         <DateTile date={it.date} />
@@ -341,14 +349,14 @@ export const CaseTimeline: React.FC<{
           </div>
           <Reading it={it} />
           {it.facts && <PortalFacts f={it.facts} files={files} />}
-          {(it.pdf_url || files.length > 0 || it.kind === 'notice') && (
+          {(it.pdf_url || files.length > 0 || work) && (
             <div className="flex flex-wrap items-center gap-1.5 border-t pt-2">
               {it.pdf_url && <FileChip href={it.pdf_url} label="Notice PDF" primary />}
               {files.slice(0, 8).map((a, i) => <FileChip key={i} href={a.url as string} label={a.label || `File ${i + 1}`} />)}
               {files.length > 8 && <span className="self-center text-xs text-muted-foreground">+{files.length - 8} more</span>}
-              {it.kind === 'notice' && (
-                <Link to={`/notices/${it.id}`} className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-primary/30 px-2.5 text-xs font-semibold text-primary hover:bg-primary/5">
-                  Work on it <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+              {work && (
+                <Link to={work.to} className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-primary/30 px-2.5 text-xs font-semibold text-primary hover:bg-primary/5">
+                  {work.label} <ArrowRight className="h-3.5 w-3.5" aria-hidden />
                 </Link>
               )}
             </div>

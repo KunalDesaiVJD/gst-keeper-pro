@@ -11,10 +11,17 @@
 // the appeal is filed its statement of facts and grounds stand as filed with
 // the APL 01 and only the written submission is drafted; a withdrawn or
 // decided appeal, or an order past the time to appeal, keeps its drafts to read.
+// Since 28 October 2026 the view is the one place for the appeal (the firm:
+// "the user need not go anywhere"): where it stands and the next thing to do
+// with its date, its road from the order to the order in appeal
+// (src/lib/appealProgress.ts), and its own papers and dates (the order, APL 01,
+// APL 02, hearing notices, adjournments, the pre deposit) with what the AI read
+// in each and their PDFs. The refund page carries the same view for an appeal
+// against a refund order.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Download, FileText, Loader2, RotateCcw, Save, Sparkles, Wand2 } from 'lucide-react';
+import { Check, Copy, Download, FileText, Loader2, RotateCcw, Save, Sparkles, Wand2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -26,12 +33,17 @@ import { Note } from '@/components/gstr9/ui';
 import { WS_BTN } from '@/components/workspace/theme';
 import { SectionCard } from '@/components/notices/ui/Panel';
 import { OrderCheckPanel } from '@/components/notices/cases/OrderCheckPanel';
+import { CaseTimeline } from '@/components/notices/cases/CaseTimeline';
+import { daysTo } from '@/components/notices/reports/ledgerStatus';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   APPEAL_DOCS, appealDocLabel, appealDocState, appealPhase, type AppealPhase, appealDraftsKey, appealRunsKey, caseAppealsKey, downloadAppealDocx, loadAppealDrafts, runNotes,
   saveAppealDraft, saveTribunalAppeal, startAppealDraft, useAppealRuns, type AppealDocType, type AppealDraft, type CaseAppeal,
 } from '@/lib/noticeAppeals';
-import { fmtDate, fmtDateTime, fmtInr } from '@/lib/noticeFormat';
+import { appealKeyDates, appealNext, appealPapers, appealSteps, type AppealStep } from '@/lib/appealProgress';
+import type { CaseItem, KeyDate } from '@/lib/noticeCases';
+import { istToday } from '@/lib/noticeFacts';
+import { dueWords, fmtDate, fmtDateTime, fmtInr } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 
 const appealTitle = (a: CaseAppeal) => `${a.second_appeal ? 'Second appeal' : 'Appeal'} against ${a.order_form ? `${a.order_form} ` : ''}${a.order_ref ?? a.appeal_key}`;
@@ -50,19 +62,29 @@ const PHASE_LINE: Record<AppealPhase, string> = {
   decided: 'Decided',
 };
 
-export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appeals: CaseAppeal[]; all?: CaseAppeal[]; clientName?: string | null }> = ({ clientId, caseKey, appeals, all, clientName }) => {
-  const [picked, setPicked] = useState<string | null>(null);
+export const AppealWorkspace: React.FC<{
+  clientId: string; caseKey: string; appeals: CaseAppeal[]; all?: CaseAppeal[]; clientName?: string | null;
+  /** The case's papers and key dates, for the appeal's own (left out while they load). */
+  items?: CaseItem[]; keyDates?: KeyDate[];
+  /** The appeal picked (?appeal=<order reference>), and a pick reported back to the page's address. */
+  selected?: string | null; onSelect?: (appealKey: string) => void;
+}> = ({ clientId, caseKey, appeals, all, clientName, items, keyDates, selected, onSelect }) => {
+  const [picked, setPicked] = useState<string | null>(selected ?? null);
   // Grounds the order check found, handed to the grounds' AI guidance.
   const [seed, setSeed] = useState<{ text: string; n: number } | null>(null);
-  const appeal = appeals.find((a) => a.appeal_key === picked) ?? appeals[0];
+  const key = (selected ?? picked ?? '').toUpperCase();
+  const appeal = appeals.find((a) => a.appeal_key.toUpperCase() === key) ?? appeals[0];
   const phase = appeal ? appealPhase(appeal, all ?? appeals) : 'preparing';
+  const papers = useMemo(() => (appeal && items ? appealPapers(appeal, items) : null), [appeal, items]);
+  const dates = useMemo(() => (appeal && keyDates ? appealKeyDates(appeal, keyDates) : []), [appeal, keyDates]);
   if (!appeal) return <Note tone="info">No appeal is on record for this case, and no order of it can still be appealed.</Note>;
+  const pick = (k: string) => { setPicked(k); setSeed(null); onSelect?.(k); };
   return (
     <div className="space-y-3">
       {appeals.length > 1 && (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Appeals of the case">
           {appeals.map((a) => (
-            <button key={a.appeal_key} type="button" aria-pressed={a.appeal_key === appeal.appeal_key} onClick={() => { setPicked(a.appeal_key); setSeed(null); }}
+            <button key={a.appeal_key} type="button" aria-pressed={a.appeal_key === appeal.appeal_key} onClick={() => pick(a.appeal_key)}
               className={cn('rounded-full border px-2.5 py-0.5 text-xs font-medium',
                 a.appeal_key === appeal.appeal_key ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground')}>
               {appealTitle(a)}
@@ -71,6 +93,7 @@ export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appe
         </div>
       )}
       <AppealFacts appeal={appeal} phase={phase} />
+      <AppealStatus key={`s-${appeal.appeal_key}`} appeal={appeal} phase={phase} papers={papers ?? []} dates={dates} all={all ?? appeals} />
       {(appeal.forum === 'tribunal' || appeal.order_form === 'APL-04') && (
         <TribunalAppealRecord key={`t-${appeal.appeal_key}`} clientId={clientId} caseKey={caseKey} appeal={appeal} />
       )}
@@ -79,7 +102,71 @@ export const AppealWorkspace: React.FC<{ clientId: string; caseKey: string; appe
           onUseGrounds={appealDocState('grounds', phase).open ? (text) => setSeed((p) => ({ text, n: (p?.n ?? 0) + 1 })) : undefined} />
       )}
       <AppealDocuments key={appeal.appeal_key} clientId={clientId} caseKey={caseKey} appeal={appeal} phase={phase} clientName={clientName} groundsSeed={seed} />
+      {papers && (
+        <SectionCard title="Papers and dates of the appeal"
+          description={`${papers.length} paper${papers.length === 1 ? '' : 's'}, ${dates.length} date${dates.length === 1 ? '' : 's'}${dates.some((k) => k.upcoming) ? ` (${dates.filter((k) => k.upcoming).length} upcoming)` : ''}`}
+          info="The order appealed and every paper of the appeal's own portal case (the APL 01 as filed, the APL 02, hearing notices, adjournments, the order in appeal), each with what the AI read in it and its PDFs, and the dates the law attaches to them: the time to appeal, the pre deposit, hearings and adjournments. The rest of the case is on the Case view's timeline.">
+          {/* The work on these papers is this view: no button leaves for a notice page. */}
+          <CaseTimeline items={papers} keyDates={dates} order="oldest" workLink={() => null} />
+        </SectionCard>
+      )}
     </div>
+  );
+};
+
+const STEP_STYLE: Record<AppealStep['state'], { dot: string; text: string; line: string }> = {
+  done: { dot: 'border-success bg-success text-success-foreground', text: '', line: 'bg-success/50' },
+  now: { dot: 'border-primary bg-primary/10 text-primary ring-4 ring-primary/15', text: 'text-primary', line: 'bg-border' },
+  later: { dot: 'border-muted-foreground/30 bg-card text-muted-foreground', text: 'text-muted-foreground', line: 'bg-border' },
+  missed: { dot: 'border-destructive bg-destructive text-destructive-foreground', text: 'text-destructive-strong', line: 'bg-destructive/40' },
+};
+
+/** Where the appeal stands: the next thing to do with its date, and its road from the order to the order in appeal. */
+const AppealStatus: React.FC<{ appeal: CaseAppeal; phase: AppealPhase; papers: CaseItem[]; dates: KeyDate[]; all: CaseAppeal[] }> = ({ appeal, phase, papers, dates, all }) => {
+  const today = istToday();
+  const next = appealNext(appeal, phase, dates, today);
+  const steps = appealSteps(appeal, phase, papers, dates, all, today);
+  const d = daysTo(next.due, today);
+  const late = d !== null && d < 0;
+  return (
+    <section aria-label="Where the appeal stands" className={cn('space-y-4 rounded-xl border-2 px-4 py-4 sm:px-5',
+      next.tone === 'action' ? 'border-warning/50 bg-warning/[0.05]' : next.tone === 'wait' ? 'border-info/40 bg-info/[0.05]' : 'border-border bg-muted/30')}>
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="min-w-0 space-y-1">
+          <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{next.tone === 'done' ? 'Where it stands' : 'Next step'}</div>
+          <div className="text-lg font-bold leading-snug sm:text-xl">{next.text}</div>
+          {next.why && <p className="text-sm text-muted-foreground">{next.why}</p>}
+        </div>
+        {next.due && (
+          <div className={cn('flex shrink-0 flex-col items-start rounded-lg border bg-card px-4 py-2.5 lg:items-end lg:text-right', late ? 'border-destructive/60' : 'border-border')}>
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">By</div>
+            <div className={cn('text-xl font-bold tabular-nums leading-tight', late && 'text-destructive-strong')}>{fmtDate(next.due)}</div>
+            <div className={cn('text-sm font-medium', late ? 'text-destructive-strong' : d !== null && d <= 7 ? 'text-warning' : 'text-muted-foreground')}>{dueWords(d).replace('due ', '')}</div>
+          </div>
+        )}
+      </div>
+      <ol className="grid gap-0 sm:flex sm:flex-wrap sm:items-start" aria-label="The appeal's steps">
+        {steps.map((st, i) => {
+          const t = STEP_STYLE[st.state];
+          return (
+            <li key={st.key} className="flex items-start gap-2 sm:min-w-[7rem] sm:flex-1 sm:flex-col sm:items-center sm:gap-1 sm:text-center">
+              <div className="flex items-center sm:w-full">
+                <span aria-hidden className={cn('hidden h-0.5 flex-1 sm:block', i === 0 ? 'bg-transparent' : t.line)} />
+                <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2', t.dot)}>
+                  {st.state === 'done' ? <Check className="h-3.5 w-3.5" aria-hidden /> : st.state === 'missed' ? <X className="h-3.5 w-3.5" aria-hidden /> : <span className="text-xs font-semibold">{i + 1}</span>}
+                </span>
+                <span aria-hidden className={cn('hidden h-0.5 flex-1 sm:block', i === steps.length - 1 ? 'bg-transparent' : steps[i + 1]?.state === 'done' ? STEP_STYLE.done.line : 'bg-border')} />
+              </div>
+              <div className="pb-2 sm:pb-0">
+                <div className={cn('text-sm font-medium leading-tight', t.text)}>{st.label}<span className="sr-only"> ({st.state === 'now' ? 'now' : st.state})</span></div>
+                {st.date && <div className="mt-0.5 text-[13px] tabular-nums text-muted-foreground">{fmtDate(st.date)}</div>}
+                {st.note && <div className="mt-0.5 text-xs leading-snug text-muted-foreground">{st.note}</div>}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 };
 
@@ -94,8 +181,10 @@ const AppealFacts: React.FC<{ appeal: CaseAppeal; phase: AppealPhase }> = ({ app
     // P5: s.107(13) asks for a decision within a year where possible.
     ['Pending for', phase === 'filed' && a.pending_days != null
       ? <span className={a.pending_days >= 365 ? 'text-warning' : undefined}>{pendingText(a.pending_days)}</span> : null],
+    ['Refund claimed', a.refund_claimed ? fmtInr(a.refund_claimed) : null],
+    ['Refund rejected', a.refund_rejected ? <span className="text-destructive-strong">{fmtInr(a.refund_rejected)}</span> : null],
     ['Tax in dispute', a.disputed_tax ? fmtInr(a.disputed_tax) : null],
-    ['Total in dispute', a.disputed_total ? fmtInr(a.disputed_total) : a.demand ? fmtInr(a.demand) : null],
+    ['Total in dispute', a.disputed_total ? fmtInr(a.disputed_total) : a.demand && a.subject !== 'refund' ? fmtInr(a.demand) : null],
     ['Pre-deposit', a.predeposit ? `${fmtInr(a.predeposit)}${a.predeposit_pct ? ` (${a.predeposit_pct}%)` : ''}` : null],
   ];
   return (
@@ -258,6 +347,12 @@ const AppealDocuments: React.FC<{ clientId: string; caseKey: string; appeal: Cas
   );
 };
 
+/** A failed run's reason as one sentence, with what to do (an older run's message ends with its own full stop). */
+const failedLine = (error: string | null | undefined) => {
+  const text = (error ?? 'no answer').trim().replace(/\.+$/, '');
+  return `${text}.${/draft again/i.test(text) ? '' : ' Draft again to try once more.'}`;
+};
+
 const DocEditor: React.FC<{
   clientId: string; caseKey: string; appeal: CaseAppeal; doc: AppealDocType; versions: AppealDraft[];
   runs: ReturnType<typeof useAppealRuns>['data']; actor: string | null; clientName?: string | null;
@@ -380,7 +475,7 @@ const DocEditor: React.FC<{
             The AI is {running.mode === 'improve' ? 'improving' : 'drafting'} the {label.toLowerCase()} (asked by {running.requested_by_name ?? 'staff'} at {fmtDateTime(running.created_at)}). The new version opens here when it is done.</span></Note>
         )}
         {!readOnly && !running && lastRun?.status === 'failed' && lastRun.created_at > (latest?.created_at ?? '') && (
-          <Note tone="warn">The AI could not finish the last request: {lastRun.error ?? 'no answer'}.</Note>
+          <Note tone="warn">The AI could not finish the last request: {failedLine(lastRun.error)}</Note>
         )}
         {newer && (
           <Note tone="warn">
