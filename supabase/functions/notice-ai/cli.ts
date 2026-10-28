@@ -16,18 +16,107 @@
 import { AI_CLI_MODEL, AI_EFFORT } from '../_shared/aiModel.ts';
 import { scrub, type CallOutcome, type CallRequest, type CallUsage, type Caller } from './claude.ts';
 
-/** The JSON object in a text answer: fences and any words around it are dropped. */
+/** The answer stopped before its JSON object closed: it was cut off, not malformed. */
+export class JsonCutOff extends Error {}
+
+/**
+ * The first JSON object in a text, made strict the way a model's long answer
+ * needs (the written submission of 28 October 2026 failed on it): a line break
+ * or tab inside a string escaped, a double quote inside a string that does not
+ * end it (a quoted provision, "the supply") escaped, a backslash that starts no
+ * escape kept as text, and a comma before a closing bracket dropped. Whether a
+ * quote ends its string is read from what follows it: a key's quote is followed
+ * by a colon, a value's by the end of its object or array, or by a comma and
+ * then the next key or value. Anything after the object is left out.
+ */
+export function repairJson(s: string): string {
+  const a = s.indexOf('{');
+  if (a < 0) throw new Error('no JSON object');
+  const ws = (i: number) => { while (i < s.length && /\s/.test(s[i])) i++; return i; };
+  // Containers open at this point; an object notes whether its next string is a key.
+  const stack: { t: '{' | '['; key: boolean }[] = [];
+  let out = '';
+  let inStr = false;
+  let isKey = false;
+  const ends = (j: number): boolean => {
+    const k = ws(j);
+    const c = s[k];
+    if (c === undefined) return true;
+    if (isKey) return c === ':';
+    const top = stack[stack.length - 1];
+    if (!top) return true;
+    if (c === (top.t === '{' ? '}' : ']')) return true;
+    if (c !== ',') return false;
+    const n = ws(k + 1);
+    const d = s[n];
+    if (top.t === '[') return d !== undefined && (/["{[\]\-0-9]/.test(d) || /^(?:true|false|null)\b/.test(s.slice(n, n + 6)));
+    // In an object, a value's comma is followed by the next key and its colon.
+    return d === '}' || (d === '"' && /^"(?:[^"\\]|\\.)*"\s*:/.test(s.slice(n, n + 300)));
+  };
+  for (let i = a; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (ch === '\\') {
+        const nx = s[i + 1];
+        if (nx === 'u' && /^[0-9a-fA-F]{4}$/.test(s.slice(i + 2, i + 6))) { out += s.slice(i, i + 6); i += 5; }
+        else if (nx !== undefined && '"\\/bfnrt'.includes(nx)) { out += ch + nx; i++; }
+        else out += '\\\\';
+      } else if (ch === '"') {
+        if (ends(i + 1)) { inStr = false; out += ch; } else out += '\\"';
+      } else if (ch === '\n') out += '\\n';
+      else if (ch === '\r') out += '\\r';
+      else if (ch === '\t') out += '\\t';
+      else if (ch < ' ') out += `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`;
+      else out += ch;
+      continue;
+    }
+    const top = stack[stack.length - 1];
+    if (ch === '"') {
+      inStr = true;
+      isKey = top?.t === '{' && top.key;
+      out += ch;
+    } else if (ch === '{' || ch === '[') {
+      stack.push({ t: ch, key: ch === '{' });
+      out += ch;
+    } else if (ch === '}' || ch === ']') {
+      stack.pop();
+      out += ch;
+      if (!stack.length) return out;
+    } else if (ch === ':') {
+      if (top) top.key = false;
+      out += ch;
+    } else if (ch === ',') {
+      const c = s[ws(i + 1)];
+      if (c === '}' || c === ']') continue;
+      if (top?.t === '{') top.key = true;
+      out += ch;
+    } else out += ch;
+  }
+  throw new JsonCutOff('the JSON object does not close');
+}
+
+/** The JSON object in a text answer: fences and any words around it are dropped, and a long answer's slips mended. */
 export function jsonFromText(text: string): unknown {
-  const t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const t = text.replace(/^﻿/, '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
   try { return JSON.parse(t); } catch { /* look inside */ }
   const a = t.indexOf('{');
   const b = t.lastIndexOf('}');
-  if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1));
-  throw new Error('no JSON object');
+  if (a >= 0 && b > a) {
+    try { return JSON.parse(t.slice(a, b + 1)); } catch { /* mend it */ }
+  }
+  return JSON.parse(repairJson(t));
+}
+
+/** The start and end of an answer that could not be read, kept on the run to see why. */
+export function rawSample(text: string, n = 300): string {
+  const t = text.trim();
+  return t.length <= 2 * n ? t : `${t.slice(0, n)} … ${t.slice(-n)}`;
 }
 
 export function cliSystem(req: CallRequest): string {
   return `${req.system}\n\nAnswer with one JSON object only: no markdown fences, no words before or after it. `
+    + 'Inside a JSON string, write a line break as \\n (never a real line break) and put a quotation in the typographic quotes “ and ” '
+    + '(or escape a double quote as \\"), so the object parses. '
     + `It must match this JSON Schema:\n${JSON.stringify(req.schema)}`;
 }
 
@@ -109,9 +198,15 @@ export function cliCaller(opts: { url: string; secret: string; fetch?: typeof fe
     }
     try {
       return { ok: true, json: jsonFromText(body.text), model: usage.model, usage };
-    } catch {
+    } catch (e) {
       usage.status = 'error';
-      return { ok: false, status: 'failed', reason: 'bad_output', error: 'The Claude CLI\'s answer was not the expected JSON.', usage };
+      usage.raw_sample = rawSample(body.text);
+      if (e instanceof JsonCutOff) {
+        return { ok: false, status: 'failed', reason: 'max_tokens', error: 'The answer from the Claude CLI stopped before its end. Draft again, or ask for a shorter document in the guidance.', usage };
+      }
+      return { ok: false, status: 'failed', reason: 'bad_output', error: body.text.includes('{')
+        ? 'The Claude CLI\'s answer could not be read as the expected JSON, even after mending it. Draft again.'
+        : 'The Claude CLI answered in words, without the document. Draft again.', usage };
     }
   };
   c.backend = 'cli';

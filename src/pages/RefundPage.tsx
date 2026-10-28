@@ -9,11 +9,15 @@
 // refund's case page lands here, and its links are made here. Laid out on 27
 // October 2026 (the firm: "not structured, not in order, fonts too small"):
 // every fact kept, in numbered parts with a jump bar, the next step and its
-// date in a banner, the amounts and the clocks as large tiles.
+// date in a banner, the amounts and the clocks as large tiles. An order of the
+// refund that rejects any part is appealed from here (28 October 2026: "there is
+// no work on it in appeal in refunds"): a Refund | Appeal switch (?side=appeal)
+// opens the case's Appeal view, the same one the case page has, with the
+// refund's rejection on it, the drafts, the road and the appeal's papers.
 import React, { useMemo, useState } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, ChevronDown, FileText, FolderDown, GitBranch, Info, Loader2 } from 'lucide-react';
+import { ArrowRight, ChevronDown, FileText, FolderDown, GitBranch, Info, Loader2, Scale } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -34,8 +38,10 @@ import {
 import { downloadZip } from '@/components/notices/reports/zip';
 import { AppealFacts } from '@/components/notices/autopilot/PortalAppeal';
 import { CaseChainPanel } from '@/components/notices/cases/CaseChainPanel';
+import { AppealWorkspace } from '@/components/notices/cases/AppealWorkspace';
 import { usePortalApps } from '@/lib/portalAppeal';
-import { caseHref } from '@/lib/noticeCases';
+import { caseHref, loadCaseItems, loadKeyDates } from '@/lib/noticeCases';
+import { appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
 import { istToday } from '@/lib/noticeFacts';
 import { dueWords, fmtDate, fmtInr, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
@@ -143,12 +149,40 @@ const RefundTimeLimits: React.FC<{ r: RefundRow; today: string; no: number }> = 
   );
 };
 
+/** A two-way switch in the header (as the case page's). */
+function Toggle<T extends string>({ label, value, onChange, options }: { label: string; value: T; onChange: (v: T) => void; options: [T, string][] }) {
+  return (
+    <div className="inline-flex rounded-md border bg-card p-0.5" role="group" aria-label={label}>
+      {options.map(([k, text]) => (
+        <button key={k} type="button" aria-pressed={value === k} onClick={() => onChange(k)}
+          className={cn('rounded px-2.5 py-1 text-xs font-medium', value === k ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> = ({ r, today, canExport }) => {
   const [allDocs, setAllDocs] = useState(false);
   const [zipping, setZipping] = useState(false);
   const clientId = r.fact.client_id as string;
   const arn = r.fact.arn as string;
   const navigate = useNavigate();
+  // The appeal against the refund's order (notice_case_appeals reads the refund's case; 20261028100000 keeps a full sanction out).
+  const [sp, setSp] = useSearchParams();
+  const caseAppeals = useCaseAppeals(clientId, arn);
+  const appealList = useMemo(() => appealsShown(caseAppeals.data), [caseAppeals.data]);
+  const side: 'refund' | 'appeal' = sp.get('side') === 'appeal' && appealList.length > 0 ? 'appeal' : 'refund';
+  const setSide = (v: 'refund' | 'appeal') => {
+    const n = new URLSearchParams(sp);
+    if (v === 'appeal') n.set('side', v); else { n.delete('side'); n.delete('appeal'); }
+    setSp(n, { replace: true });
+  };
+  const setAppeal = (k: string) => { const n = new URLSearchParams(sp); n.set('appeal', k); setSp(n, { replace: true }); };
+  const appealFiled = appealList.some((a) => a.status === 'filed');
+  const appealItems = useQuery({ queryKey: ['notice-case-items', clientId, arn], queryFn: () => loadCaseItems(clientId, arn), enabled: side === 'appeal' });
+  const appealDates = useQuery({ queryKey: ['notice-case-key-dates', clientId, arn], queryFn: () => loadKeyDates(clientId, arn), enabled: side === 'appeal' });
   const history = useQuery({
     queryKey: ['refund-folder', clientId, arn],
     enabled: r.hasFolder,
@@ -239,11 +273,29 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
               {zipping ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <FolderDown className="h-3.5 w-3.5" aria-hidden />} All {plural(r.docs.length, 'PDF')} (.zip)
             </Button>
           )}
-          {r.caseLink && (
-            <Button size="sm" className={WS_BTN} asChild><Link to={`/notices/${r.caseLink.id}`}>{r.caseLink.is_open ? 'Work on it' : 'Open the notice'} <ArrowRight className="h-3.5 w-3.5" aria-hidden /></Link></Button>
+          {appealList.length > 0 && (
+            <Toggle label="The refund or the appeal against its order" value={side} onChange={setSide}
+              options={[['refund', 'Refund'], ['appeal', appealFiled ? 'Appeal' : 'Prepare appeal']]} />
+          )}
+          {r.caseLink && (side === 'refund' || appealList.length === 0) && (
+            <Button size="sm" variant={appealList.length > 0 ? 'outline' : 'default'} className={WS_BTN} asChild>
+              <Link to={`/notices/${r.caseLink.id}`}>{appealList.length > 0 || !r.caseLink.is_open ? 'Open the notice' : 'Work on it'}{appealList.length > 0 ? null : <ArrowRight className="h-3.5 w-3.5" aria-hidden />}</Link>
+            </Button>
+          )}
+          {appealList.length > 0 && side === 'refund' && (
+            <Button size="sm" className={WS_BTN} onClick={() => setSide('appeal')}>
+              <Scale className="h-3.5 w-3.5" aria-hidden /> {appealFiled ? 'Work on the appeal' : 'Prepare the appeal'}
+            </Button>
           )}
         </div>
       </header>
+
+      {side === 'appeal' && (
+        <AppealWorkspace clientId={clientId} caseKey={arn} appeals={appealList} all={caseAppeals.data} clientName={r.fact.client_name}
+          items={appealItems.data} keyDates={appealDates.data} selected={sp.get('appeal')} onSelect={setAppeal} />
+      )}
+
+      {side === 'refund' && <>
 
       {/* 2. Where it stands and what to do, with the money at a glance */}
       <section aria-label={s.open ? 'Next step' : 'Where it stands'}
@@ -256,6 +308,13 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
           {appeals.length > 0
             ? <div className="text-sm">Appeal {appeals.map((x) => x.row.arn).join(', ')} filed on {fmtDate(appeals[0].row.filed_date)}: {appeals[0].row.status ?? 'status not read'}. Its details are below.</div>
             : tone === 'part' && r.links.some((l) => l.kind === 'appeal') && <div className="text-sm">An appeal against it is linked below.</div>}
+          {appealList.length > 0 && (
+            <div className="pt-1">
+              <Button size="sm" variant="outline" className={WS_BTN} onClick={() => setSide('appeal')}>
+                <Scale className="h-3.5 w-3.5" aria-hidden /> {appealFiled ? 'Work on the appeal' : 'Prepare the appeal: statement of facts, grounds, written submission'}
+              </Button>
+            </div>
+          )}
         </div>
         {s.due && (
           <div className={cn('flex shrink-0 flex-col items-start rounded-lg border bg-card px-4 py-3 lg:items-end lg:text-right', d !== null && d < 0 ? 'border-destructive/60' : 'border-border')}>
@@ -365,6 +424,7 @@ const RefundBody: React.FC<{ r: RefundRow; today: string; canExport: boolean }> 
           ) : <p className="text-sm text-muted-foreground">The application's documents by portal tab. The papers in the history above carry their own.</p>}
         </Part>
       )}
+      </>}
     </NoticesShell>
   );
 };

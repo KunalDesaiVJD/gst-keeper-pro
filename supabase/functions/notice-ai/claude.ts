@@ -57,6 +57,8 @@ export interface CallUsage {
   tokens_in?: number;
   tokens_out?: number;
   estimated?: boolean;
+  // The start and end of an answer that could not be read (cli.ts), to see why.
+  raw_sample?: string;
 }
 
 export type CallOutcome =

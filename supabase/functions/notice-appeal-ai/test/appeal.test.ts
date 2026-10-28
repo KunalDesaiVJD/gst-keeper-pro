@@ -1,6 +1,6 @@
 // notice-appeal-ai: the material as the model reads it, and one run begun and finished.
 import { assertEquals, assertStringIncludes } from '@std/assert';
-import { appealUserText, beginAppeal, mapAppealOutput, type AppealDeps } from '../appeal.ts';
+import { appealDates, appealUserText, beginAppeal, mapAppealOutput, type AppealDeps } from '../appeal.ts';
 import { FakeDb, FakeNet, jsonReply, type J } from '../../notice-ai/test/fake.ts';
 
 // ── The Appeal workspace (statement of facts, grounds, written submission) ──
@@ -92,4 +92,36 @@ Deno.test('appeal: only what can still be drafted at the appeal\'s stage', async
   assertEquals(ok.run_id, 'ar2');
   await ok.done;
   assertStringIncludes(appealUserText({ ...appealContext, doc_type: 'submission' }).text, 'Argue those grounds');
+});
+
+Deno.test('appeal: a refund order is argued as a refund; the hearings and the order\'s checks are carried', async () => {
+  const refund = {
+    ...appealContext, doc_type: 'submission',
+    appeal: { status: 'filed', arn: 'AD2409260000001', subject: 'refund', order_ref: 'ZD240826058242D', order_form: 'RFD-06', order_date: '2026-08-13', refund_claimed: 3255100, refund_rejected: 83673 },
+  };
+  const deps: AppealDeps = {
+    claude: null,
+    db: new FakeDb({
+      notice_case_key_dates: () => [
+        { date: '2026-11-20', kind: 'hearing', title: 'Personal hearing at 11:15 AM', detail: 'AHMEDABAD', own_key: 'AD2409260000001', upcoming: true },
+        { date: '2026-11-05', kind: 'adjournment', title: 'Adjournment 1 of the 3 the law allows', own_key: 'AD2409260000001', upcoming: false },
+        { date: '2026-09-01', kind: 'hearing', title: 'Personal hearing in another case', own_key: 'AD999', upcoming: false },
+        { date: '2026-08-13', kind: 'order_check', ground: true, law: 's.75(4)', title: 'No personal hearing on record before this order', detail: 'Check the papers.', item_id: 'o-1' },
+      ],
+    }),
+  };
+  const dates = await appealDates(deps, 'c1', 'AA2407261761073', { appeal_key: 'ZD240826058242D', status: 'filed', arn: 'AD2409260000001', order_notice_id: 'o-1' } as never);
+  assertEquals(dates.hearings.map((h) => h.date), ['2026-11-05', '2026-11-20'], 'the appeal\'s own, oldest first');
+  assertEquals(dates.order_checks.length, 1);
+  const { text } = appealUserText({ ...refund, ...dates });
+  assertStringIncludes(text, 'appeal against a refund order');
+  assertStringIncludes(text, 'refund rejected by the order Rs. 83,673');
+  assertStringIncludes(text, 'each reason of rejection cannot stand');
+  assertStringIncludes(text, 'section 107(6)');
+  assertStringIncludes(text, 'The written submission is for the hearing on 2026-11-20');
+  assertStringIncludes(text, 's.75(4): No personal hearing on record before this order');
+  // A demand keeps its own brief, and a failed read of the dates leaves the drafts without them.
+  assertStringIncludes(appealUserText(appealContext).text, 'natural justice');
+  const broken: AppealDeps = { claude: null, db: { rpc: () => Promise.reject(new Error('down')) } };
+  assertEquals(await appealDates(broken, 'c1', 'AA1', { appeal_key: 'ZD1', status: 'filed' }), { hearings: [], order_checks: [] });
 });

@@ -9,6 +9,10 @@
 // chain (when there is one, since it changes how the timeline reads), the
 // timeline or the portal's own folder (the old case folder page), and beside
 // them the facts the header does not already carry.
+// 28 October 2026 (the firm: "why 2 separate windows"): a case with an appeal is
+// worked on its Appeal view, which carries the appeal's papers, dates, road and
+// documents; "Work on the appeal" leads the header, and an appeal's own papers on the
+// timeline open there instead of their notice pages.
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -35,13 +39,13 @@ import { AppealWorkspace } from '@/components/notices/cases/AppealWorkspace';
 import { UnreadPapersNote } from '@/components/notices/cases/UnreadPapers';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  caseLabel, loadCase, loadCaseItems, loadKeyDates, markCaseSeen, trackDef, useCaseChain, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
+  caseHref, caseLabel, loadCase, loadCaseItems, loadKeyDates, markCaseSeen, trackDef, useCaseChain, useCaseOverview, type CaseOverview, type OverviewKey, type Track,
 } from '@/lib/noticeCases';
 import { fmtDate, fmtFy, fmtInr, plural } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 import { refundIndexKey, useRefundIndex } from '@/components/notices/reports/ledgerData';
 import { RefundWhenChip } from '@/components/notices/reports/RefundBits';
-import { appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
+import { appealOfPaper, appealViewHref, appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
 
 type LitField = { key: OverviewKey; label: string; fmt?: (v: string) => string; mono?: boolean; big?: boolean };
 /** The facts in three groups (27 October 2026): what is disputed, the money, who is dealing with it. */
@@ -147,9 +151,16 @@ const NoticeCasePage: React.FC = () => {
   const appealsAll = useCaseAppeals(clientId, c.data?.case_key ?? null);
   const appeals = useMemo(() => appealsShown(appealsAll.data), [appealsAll.data]);
   const side: 'case' | 'appeal' = sp.get('side') === 'appeal' && appeals.length > 0 ? 'appeal' : 'case';
-  const setSide = (v: 'case' | 'appeal') => {
+  const setSide = (v: 'case' | 'appeal', appealKey?: string) => {
     const n = new URLSearchParams(sp);
     if (v === 'appeal') n.set('side', v); else n.delete('side');
+    if (appealKey) n.set('appeal', appealKey);
+    setSp(n, { replace: true });
+  };
+  // The appeal picked when the case has more than one (?appeal=<the order's reference>).
+  const setAppeal = (k: string) => {
+    const n = new URLSearchParams(sp);
+    n.set('appeal', k);
     setSp(n, { replace: true });
   };
   // The notice the case was opened from (a list's row), marked on the timeline.
@@ -178,7 +189,9 @@ const NoticeCasePage: React.FC = () => {
   // litigation and stays a case; ?part= still shows one refund inside it.
   if (c.data?.track === 'refund' && !sp.get('part')) {
     const arn = caseKey.startsWith('N:') ? c.data.case_id : caseKey;
-    if (arn) return <Navigate to={`/refunds/${clientId}/${encodeURIComponent(arn)}`} replace />;
+    // The refund page carries the appeal against its order (28 October 2026): ?side=appeal goes with it.
+    const refund = arn ? `/refunds/${clientId}/${encodeURIComponent(arn)}` : null;
+    if (refund) return <Navigate to={sp.get('side') === 'appeal' ? appealViewHref(refund, sp.get('appeal')) : refund} replace />;
   }
 
   const r = c.data;
@@ -214,6 +227,11 @@ const NoticeCasePage: React.FC = () => {
   // The portal view reads one portal case folder: the case shown alone, else the case itself.
   const portalCaseId = (partMember ? partMember.case_id : r.case_id) ?? null;
   const fys = r.financial_years ? r.financial_years.split(', ').map(fmtFy).filter(Boolean).join(', ') : '';
+  // An appeal's own papers (its APL-01, APL-02, hearing notices) are worked on the Appeal view, not their notice pages.
+  const workLink = (it: { id: string; own_key?: string | null }) => {
+    const a = appealOfPaper(appeals, it.own_key);
+    return a ? { to: appealViewHref(caseHref(clientId, r.case_key as string), a.appeal_key), label: 'Open in the appeal' } : { to: `/notices/${it.id}`, label: 'Work on it' };
+  };
   const chainPanel = <CaseChainPanel clientId={clientId} caseKey={r.case_key as string} part={part} onPart={setPart} track={track} />;
 
   return (
@@ -239,10 +257,16 @@ const NoticeCasePage: React.FC = () => {
               <Link to={`/refunds/${clientId}/${encodeURIComponent(r.case_id)}`}>Refund page</Link>
             </Button>
           )}
-          {/* The Appeal view is the work itself; Work on it opens the order's notice page. */}
+          {/* A case with an appeal is worked on its Appeal view (28 October 2026: one place, not the order's or the
+              APL-02's notice page); the latest notice stays a click away. Without one, Work on it opens the notice. */}
           {r.lead_notice_id && side === 'case' && (
-            <Button size="sm" className={WS_BTN} asChild>
-              <Link to={`/notices/${r.lead_notice_id}`}>{r.is_open ? 'Work on it' : 'Open the latest notice'} <ArrowRight className="h-3.5 w-3.5" aria-hidden /></Link>
+            <Button size="sm" variant={appeals.length > 0 ? 'outline' : 'default'} className={WS_BTN} asChild>
+              <Link to={`/notices/${r.lead_notice_id}`}>{appeals.length > 0 ? 'Open the latest notice' : r.is_open ? 'Work on it' : 'Open the latest notice'}{appeals.length > 0 ? null : <ArrowRight className="h-3.5 w-3.5" aria-hidden />}</Link>
+            </Button>
+          )}
+          {appeals.length > 0 && side === 'case' && (
+            <Button size="sm" className={WS_BTN} onClick={() => setSide('appeal')}>
+              {appeals.some((a) => a.status === 'filed') ? 'Work on the appeal' : 'Prepare the appeal'} <ArrowRight className="h-3.5 w-3.5" aria-hidden />
             </Button>
           )}
         </div>
@@ -269,7 +293,8 @@ const NoticeCasePage: React.FC = () => {
       <UnreadPapersNote clientId={clientId} caseKey={r.case_key as string}
         what={side === 'appeal' ? 'The appeal drafts' : 'The overview, the advice and the drafts'} />
 
-      {side === 'appeal' && <AppealWorkspace clientId={clientId} caseKey={r.case_key as string} appeals={appeals} all={appealsAll.data} clientName={r.client_name} />}
+      {side === 'appeal' && <AppealWorkspace clientId={clientId} caseKey={r.case_key as string} appeals={appeals} all={appealsAll.data} clientName={r.client_name}
+        items={items.data} keyDates={keyDates.data} selected={sp.get('appeal')} onSelect={setAppeal} />}
 
       {side === 'case' && <NextStepCard clientId={clientId} caseKey={r.case_key as string} track={track} form={r.form_code ?? null}
         overdue={!!r.is_overdue} open={!!r.is_open} />}
@@ -303,7 +328,7 @@ const NoticeCasePage: React.FC = () => {
             {view === 'portal' && portalCaseId ? <CasePortalView clientId={clientId} caseId={portalCaseId} />
               : items.error ? <Note tone="warn">Couldn't load the correspondence: {items.error instanceof Error ? items.error.message : String(items.error)}</Note>
               : items.isLoading ? <Skeleton className="h-64 w-full" />
-              : <CaseTimeline items={shownItems} keyDates={shownDates} partOf={part ? undefined : partOf} order={order} focusId={focusId} />}
+              : <CaseTimeline items={shownItems} keyDates={shownDates} partOf={part ? undefined : partOf} order={order} focusId={focusId} workLink={workLink} />}
           </SectionCard>
 
           {!linked && chainPanel}
