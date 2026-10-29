@@ -197,6 +197,28 @@ const hasData = (v: unknown): boolean => (Array.isArray(v) ? v.length > 0 : isOb
 /** False for a file the portal rejects as "No section data" (the empty-return rule below). */
 export const gstr1HasSectionData = (json: unknown): boolean => isObj(json) && DATA_SECTIONS.some((k) => hasData(json[k]));
 
+const GSTR1_TABLE_KEYS = ['b2b', 'b2ba', 'b2cl', 'b2cla', 'b2cs', 'b2csa', 'exp', 'expa', 'cdnr', 'cdnra', 'cdnur', 'cdnura', 'nil', 'at', 'ata', 'txpd', 'txpda', 'hsn', 'doc_issue'];
+
+/**
+ * Why a parsed file is not a GSTR-1 JSON at all, or null when it is one.
+ * A file the app cannot read as GSTR-1 (a Tally "GSTR-1 return view"
+ * export, `gstr1returnviewdtls`, carries only section totals) used to import
+ * and give a nil summary and a nil GSTR-3B 3.1 with no reason; it is now
+ * refused on the way in.
+ */
+export function notGstr1Reason(json: unknown): string | null {
+  if (!json || typeof json !== 'object' || Array.isArray(json)) return 'The file is not a GSTR-1 JSON (no return found in it).';
+  const j = json as Record<string, unknown>;
+  if ('gstr1returnviewdtls' in j) {
+    return 'This is a Tally "GSTR-1 return view" export, which holds only section totals, not the invoices. '
+      + 'Export the GSTR-1 JSON (offline tool / portal format) from Tally, or download it from the GST portal, and import that.';
+  }
+  if (!GSTR1_TABLE_KEYS.some((k) => k in j) && !('gstin' in j && 'fp' in j)) {
+    return 'The file is not a GSTR-1 JSON: it has none of the GSTR-1 tables (b2b, b2cs, exp, cdnr, hsn …) and no gstin / fp.';
+  }
+  return null;
+}
+
 /**
  * Checks a GSTR-1 JSON against the portal's rules. `period` is MM/YYYY; the
  * file's own fp stands in when it is not given. `nil`, when the caller knows

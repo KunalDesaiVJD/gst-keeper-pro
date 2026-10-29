@@ -1,3 +1,4 @@
+import { loadGstr1History } from '@/lib/gstr1/loadGstr1History';
 import { supabase } from '@/integrations/supabase/client';
 import { previousPeriodMonthKey } from '@/utils/parseElectronicCreditLedgerCsv';
 import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
@@ -247,7 +248,8 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
       : null;
     if (gstr1Data?.raw_json) {
       // GSTR-3B 3.1(a) + 3.1(b) tax (zero rated IGST included), as the page.
-      const out = computeGstr1OutputTax(gstr1Data.raw_json, prevMonth || '');
+      const history = await loadGstr1History(clientId, gstr1Data.raw_json).catch(() => ({}));
+      const out = computeGstr1OutputTax(gstr1Data.raw_json, prevMonth || '', history);
       utilizedCgst = out.cgst;
       utilizedSgst = out.sgst;
       utilizedIgst = out.igst;

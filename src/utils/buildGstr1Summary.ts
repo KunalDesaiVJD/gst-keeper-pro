@@ -5,7 +5,8 @@
 // checked against the portal's system-generated GSTR-1 PDF.
 
 import { noteSign as sharedNoteSign } from '@/lib/gstr1/supplyKind';
-import { gstr1AmendmentsLeftOut, gstr1OutwardTotal } from './buildGstr3bJson';
+import { gstr1AmendmentDifferences, gstr1AmendmentsLeftOut, gstr1OutwardTotal, type Gstr1AmendmentDifference } from './buildGstr3bJson';
+import type { Gstr1History } from '@/lib/gstr1/amendments';
 
 const num = (v: unknown): number => {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
@@ -47,6 +48,8 @@ export interface Gstr1Summary {
    * the page can say why a month whose supplies sit only there shows nil.
    */
   amendmentsLeftOut: { label: string; docs: number; value: number; tax: number; periods: string[] }[];
+  /** Every amendment (9A, 9C, 10, 11(2)), counted in the total at its difference (revised less earlier). */
+  amendmentDifferences: Gstr1AmendmentDifference[];
   /**
    * Table 11(2) — amendments restating an EARLIER period's Table 11A / 11B.
    * Deliberately kept out of `totals`: an amendment states the revised figure
@@ -145,7 +148,7 @@ export const gstr1TotalLabel = (basis: Gstr1Summary['totalBasis']): string =>
  * pre-29 Oct 2026 sum of sections, so nothing about a filed return moves
  * (the firm, 29 Oct 2026); every other month gets the GSTR-3B figure.
  */
-export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gstr1Summary {
+export function buildGstr1Summary(json: any, opts: { filed?: boolean; gstr1History?: Gstr1History } = {}): Gstr1Summary {
   const j = json || {};
 
   const s4A = acc(), s4B = acc(), s5 = acc(), s6A = acc(), s6B = acc(), s6C = acc();
@@ -379,8 +382,10 @@ export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gs
   // the 3B draft's own code (gstr1OutwardTotal), so the two always agree.
   // Table 4B counts at value only (the tax is the recipient's, and so for
   // notes on reverse charge invoices); 11B is deducted, not ignored; a Table
-  // 10 re-rating difference is in; amendments restating an earlier month (9A,
-  // 9C, 11(2), a restated Table 10) are not. Table 8 is 3.1(c) / (e), and HSN
+  // 10 re-rating difference is in, and every amendment (9A, 9C, 10, 11(2))
+  // counts at its difference from what was last reported for the same
+  // document or line (opts.gstr1History, the client's other GSTR-1s; not
+  // found, nil). Table 8 is 3.1(c) / (e), and HSN
   // and documents are memos, so none of them is in it.
   // Before 29 Oct 2026 this added the tax of every section including 4B and
   // left 11B out, which overstated the liability against the 3B draft.
@@ -393,7 +398,7 @@ export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gs
         (t, a) => ({ value: t.value + a.value, igst: t.igst + a.igst, cgst: t.cgst + a.cgst, sgst: t.sgst + a.sgst, cess: t.cess + a.cess }),
         { value: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 },
       )
-    : gstr1OutwardTotal(j);
+    : gstr1OutwardTotal(j, opts.gstr1History || {});
 
   const b2bAll = acc();
   [s4A, s4B, s6B, s6C].forEach((a) => { b2bAll.count += a.count; b2bAll.value += a.value; });
@@ -447,5 +452,9 @@ export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gs
       if (a.count) amendmentsLeftOut.push({ label, docs: a.count, value: a.value, tax: a.igst + a.cgst + a.sgst + a.cess, periods: omons(rows as any[]) });
     });
 
-  return { sections, tiles, totals, totalBasis, amendmentsLeftOut, amendmentTotals };
+  // A filed GSTR-1 keeps its old total, which counted no amendment, and its
+  // warning listing them; any other month counts each at its difference.
+  const amendmentDifferences = opts.filed ? [] : gstr1AmendmentDifferences(j, opts.gstr1History || {});
+
+  return { sections, tiles, totals, totalBasis, amendmentsLeftOut: opts.filed ? amendmentsLeftOut : [], amendmentDifferences, amendmentTotals };
 }

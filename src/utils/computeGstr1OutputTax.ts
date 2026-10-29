@@ -23,6 +23,7 @@
 //     (the Builder's) adds its tax difference.
 
 import { gstr1OutputTax } from './buildGstr3bJson';
+import type { Gstr1History } from '@/lib/gstr1/amendments';
 
 export interface Gstr1OutputTotals {
   igst: number;
@@ -30,9 +31,11 @@ export interface Gstr1OutputTotals {
   sgst: number;
 }
 
-export const computeGstr1OutputTax = (rawJson: unknown, periodMonth: string): Gstr1OutputTotals => {
+// history: the client's other GSTR-1s (loadGstr1History), so amendments
+// count at their difference; left out, what they amend counts as nil.
+export const computeGstr1OutputTax = (rawJson: unknown, periodMonth: string, history?: Gstr1History): Gstr1OutputTotals => {
   if (!rawJson || typeof rawJson !== 'object') return { igst: 0, cgst: 0, sgst: 0 };
   // alreadyFiled: true keeps the reverse-charge exclusion on its date-only
   // gate (Aug-2026 onward), as this figure always has.
-  return gstr1OutputTax(rawJson, periodMonth, true);
+  return gstr1OutputTax(rawJson, periodMonth, true, history);
 };
