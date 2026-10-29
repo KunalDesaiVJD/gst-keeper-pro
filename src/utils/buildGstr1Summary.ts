@@ -5,7 +5,7 @@
 // checked against the portal's system-generated GSTR-1 PDF.
 
 import { noteSign as sharedNoteSign } from '@/lib/gstr1/supplyKind';
-import { gstr1OutwardTotal } from './buildGstr3bJson';
+import { gstr1AmendmentsLeftOut, gstr1OutwardTotal } from './buildGstr3bJson';
 
 const num = (v: unknown): number => {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
@@ -41,6 +41,12 @@ export interface Gstr1Summary {
    * kept for a filed GSTR-1 so a filed month shows what it always showed.
    */
   totalBasis: 'gstr3b' | 'legacy';
+  /**
+   * Amendments present in this GSTR-1 that are NOT in `totals` (9A, 9C, a
+   * restated Table 10, 11(2)), each with the earlier months it restates, so
+   * the page can say why a month whose supplies sit only there shows nil.
+   */
+  amendmentsLeftOut: { label: string; docs: number; value: number; tax: number; periods: string[] }[];
   /**
    * Table 11(2) — amendments restating an EARLIER period's Table 11A / 11B.
    * Deliberately kept out of `totals`: an amendment states the revised figure
@@ -415,5 +421,31 @@ export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gs
     originalPeriods: Array.from(amendedPeriods).sort(),
   };
 
-  return { sections, tiles, totals, totalBasis, amendmentTotals };
+  // omon (MMYYYY) of each amendment table's rows, for the warning.
+  const omons = (rows: any[], inner?: 'inv' | 'nt'): string[] => {
+    const set = new Set<string>();
+    (rows || []).forEach((r: any) => {
+      const add = (v: unknown) => { const o = String(v || '').trim(); if (o) set.add(o); };
+      add(r?.omon);
+      if (inner) (r?.[inner] || []).forEach((d: any) => add(d?.omon));
+    });
+    return Array.from(set).sort();
+  };
+  const tableOmons: Record<string, string[]> = {
+    b2ba: omons(j.b2ba, 'inv'), b2cla: omons(j.b2cla, 'inv'), expa: omons(j.expa, 'inv'),
+    cdnra: omons(j.cdnra, 'nt'), cdnura: omons(j.cdnura), b2csa: omons(j.b2csa),
+  };
+  const amendmentsLeftOut: Gstr1Summary['amendmentsLeftOut'] = gstr1AmendmentsLeftOut(j).map((a) => ({
+    label: a.label,
+    docs: a.docs,
+    value: a.a.txval + a.b.txval,
+    tax: a.a.iamt + a.a.camt + a.a.samt + a.a.csamt + a.b.iamt + a.b.csamt,
+    periods: tableOmons[a.table] || [],
+  }));
+  ([['Table 11(2) advances received, amended (ata)', s11A2, j.ata], ['Table 11(2) advances adjusted, amended (txpda)', s11B2, j.txpda]] as const)
+    .forEach(([label, a, rows]) => {
+      if (a.count) amendmentsLeftOut.push({ label, docs: a.count, value: a.value, tax: a.igst + a.cgst + a.sgst + a.cess, periods: omons(rows as any[]) });
+    });
+
+  return { sections, tiles, totals, totalBasis, amendmentsLeftOut, amendmentTotals };
 }

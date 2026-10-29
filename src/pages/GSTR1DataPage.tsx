@@ -4250,6 +4250,22 @@ const GSTR1DataPage: React.FC = () => {
               </tfoot>
             </table>
           </div>
+          {summary.amendmentsLeftOut.length > 0 && (
+            <Note tone="warn" open>
+              <span className="font-medium">Amendments are not in the total liability, nor in GSTR-3B 3.1:</span>
+              {summary.amendmentsLeftOut.map((a) => (
+                <span key={a.label} className="block">
+                  {a.label}: {a.docs.toLocaleString('en-IN')} record{a.docs === 1 ? '' : 's'}, value ₹{fmt2(a.value)}, tax ₹{fmt2(a.tax)}
+                  {a.periods.length > 0 && <>, restating {a.periods.map((p) => `${p.slice(0, 2)}/${p.slice(2)}`).join(', ')}</>}
+                </span>
+              ))}
+              <span className="block mt-1">
+                An amendment restates an earlier month, so only its difference from what that month reported is this month's
+                liability: enter it in GSTR-3B Adjustments (source &apos;Prior Period&apos;). If the supply is really this month&apos;s,
+                it belongs in its own table (e.g. Table 7, not Table 10): correct it on the portal and import again.
+              </span>
+            </Note>
+          )}
           <Note open>
             "No. of records" counts documents (invoices / notes) like the GST portal, so it can be lower
             than a detail tab's row count when one document has multiple tax rates. 9B notes are shown net
