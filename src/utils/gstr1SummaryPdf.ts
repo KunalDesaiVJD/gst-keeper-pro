@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { drawFirmLogo } from '@/utils/reportTheme';
-import type { Gstr1Summary } from './buildGstr1Summary';
+import { gstr1TotalLabel, type Gstr1Summary } from './buildGstr1Summary';
 
 interface Params {
   summary: Gstr1Summary;
@@ -43,7 +43,7 @@ export const exportGstr1SummaryToPDF = ({ summary, clientName, gstin, monthLabel
   ]);
 
   body.push([
-    'Total liability (to GSTR-3B 3.1(a) + 3.1(b))',
+    gstr1TotalLabel(summary.totalBasis),
     '',
     '',
     fmt2(summary.totals.value),

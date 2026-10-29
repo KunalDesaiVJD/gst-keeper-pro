@@ -21,7 +21,7 @@ import {
   gstinHomeState, recomputeRowTax, assembleGstr1Json, hydrateManualEntriesFromJson, hasMissingHsnSummary,
   findInvalidGstinRows, findInvoiceValueMismatchRows, findInvalidAmendmentPeriodRows, gstr1PosCodes, periodShortToFp,
 } from '@/utils/gstr1ManualBuild';
-import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
+import { buildGstr1Summary, gstr1TotalLabel } from '@/utils/buildGstr1Summary';
 import { isBuilderGenerated } from '@/utils/builderGstr1';
 import { describeHsnProblems, editableUqc, isServiceHsn, normaliseGstr1Hsn } from '@/lib/gstr1/uqc';
 import { describeGstr1Issues, tidyGstr1Json, validateGstr1Json } from '@/lib/gstr1/validate';
@@ -87,7 +87,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
     () => assembleGstr1Json({ gstin: clientGstin, periodShort, rowsBySection, nilRows, docRows, hsnRows }),
     [clientGstin, periodShort, rowsBySection, nilRows, docRows, hsnRows],
   );
-  const liveSummary = useMemo(() => buildGstr1Summary(liveJson), [liveJson]);
+  const liveSummary = useMemo(() => buildGstr1Summary(liveJson, { filed: isFiled }), [liveJson, isFiled]);
   const tileFor = (key: Gstr1Section) => liveSummary.tiles.find((t) => t.key === key);
   const fmt2 = (n: number | undefined | null) => (n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -797,7 +797,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
               </tbody>
               <tfoot className="sticky bottom-0 z-10">
                 <tr className={WS_TR_TOTAL}>
-                  <td className={`${WS_TD} text-right`} colSpan={3}>Total liability (to GSTR-3B 3.1(a) + 3.1(b))</td>
+                  <td className={`${WS_TD} text-right`} colSpan={3}>{gstr1TotalLabel(liveSummary.totalBasis)}</td>
                   <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.value)}</td>
                   <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.igst)}</td>
                   <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.cgst)}</td>

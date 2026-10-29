@@ -36,6 +36,12 @@ export interface Gstr1Summary {
   tiles: Gstr1Tile[];
   totals: { value: number; igst: number; cgst: number; sgst: number; cess: number };
   /**
+   * How `totals` was worked out. 'gstr3b': GSTR-3B's 3.1(a) + 3.1(b) (every
+   * unfiled month). 'legacy': the sum of the sections as before 29 Oct 2026,
+   * kept for a filed GSTR-1 so a filed month shows what it always showed.
+   */
+  totalBasis: 'gstr3b' | 'legacy';
+  /**
    * Table 11(2) — amendments restating an EARLIER period's Table 11A / 11B.
    * Deliberately kept out of `totals`: an amendment states the revised figure
    * for the month it corrects, not additional liability for this one, so
@@ -124,7 +130,16 @@ export function extractGstr1HsnRows(json: any): Gstr1HsnRow[] {
     .filter((r) => r.hsn_sc);
 }
 
-export function buildGstr1Summary(json: any): Gstr1Summary {
+/** Label of the summary's total line, by how it was worked out. */
+export const gstr1TotalLabel = (basis: Gstr1Summary['totalBasis']): string =>
+  basis === 'legacy' ? 'Total liability (excl. HSN & Docs)' : 'Total liability (to GSTR-3B 3.1(a) + 3.1(b))';
+
+/**
+ * `filed`: the month's GSTR-1 (or IFF) is Filed. Its total is then the
+ * pre-29 Oct 2026 sum of sections, so nothing about a filed return moves
+ * (the firm, 29 Oct 2026); every other month gets the GSTR-3B figure.
+ */
+export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gstr1Summary {
   const j = json || {};
 
   const s4A = acc(), s4B = acc(), s5 = acc(), s6A = acc(), s6B = acc(), s6C = acc();
@@ -363,7 +378,16 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   // and documents are memos, so none of them is in it.
   // Before 29 Oct 2026 this added the tax of every section including 4B and
   // left 11B out, which overstated the liability against the 3B draft.
-  const totals = gstr1OutwardTotal(j);
+  //
+  // A filed GSTR-1 keeps the old sum (4A … 9B with 4B's tax, plus 11A; 11B
+  // not deducted; Table 10 and 11(2) out), so a filed month is unchanged.
+  const totalBasis: Gstr1Summary['totalBasis'] = opts.filed ? 'legacy' : 'gstr3b';
+  const totals = opts.filed
+    ? [s4A, s4B, s5, s6A, s6B, s6C, s7, s9BR, s9BUR, s11A].reduce(
+        (t, a) => ({ value: t.value + a.value, igst: t.igst + a.igst, cgst: t.cgst + a.cgst, sgst: t.sgst + a.sgst, cess: t.cess + a.cess }),
+        { value: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 },
+      )
+    : gstr1OutwardTotal(j);
 
   const b2bAll = acc();
   [s4A, s4B, s6B, s6C].forEach((a) => { b2bAll.count += a.count; b2bAll.value += a.value; });
@@ -391,5 +415,5 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     originalPeriods: Array.from(amendedPeriods).sort(),
   };
 
-  return { sections, tiles, totals, amendmentTotals };
+  return { sections, tiles, totals, totalBasis, amendmentTotals };
 }

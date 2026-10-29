@@ -92,6 +92,11 @@ Form GSTR-3B, s.16 IGST Act:
     left 11B (advances adjusted) out: on live data 9 of 141 months differed
     from the 3B draft (GTA reverse charge clients; builders with 11B). The
     section rows are unchanged; only the total line moved.
+    A filed GSTR-1 (Filing Status Filed for GSTR-1 / GSTR-1 (IFF), or the
+    Reports Hub reading the pulled filed return) keeps the old sum and its old
+    label (`buildGstr1Summary(json, { filed })`, `totalBasis: 'legacy'`), so
+    nothing about a filed month moves (the firm, 29 Oct 2026). The GSTR-3B
+    draft itself was not changed by this, filed or not.
 
 ## 3. No cut-over date
 
