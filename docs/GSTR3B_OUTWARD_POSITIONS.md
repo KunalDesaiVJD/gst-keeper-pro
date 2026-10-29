@@ -98,21 +98,32 @@ Form GSTR-3B, s.16 IGST Act:
     nothing about a filed month moves (the firm, 29 Oct 2026). The GSTR-3B
     draft itself was not changed by this, filed or not.
 
-12. **A Table 10 restatement counts at its difference** (29 Oct 2026, the
-    firm). A b2csa entry amending an earlier month's Table 7 adds to this
-    month's 3.1(a) (and 3.2 when inter-state) the revised figure less what
-    that month last reported at the same place of supply and rate: the latest
-    Table 10 restatement of it in a GSTR-1 between the two months, else that
-    month's own Table 7 (`src/lib/gstr1/b2csaBaseline.ts`, read by
-    `loadB2csaBaselines.ts` from `gst_filed_returns` GSTR1 first, else
-    `gstr1_data`). A month whose GSTR-1 is not in the app counts as nil, and
-    the draft and the GSTR-1 summary say so, naming the month. This replaces
-    position 5 for Table 10 only; 9A, 9C and 11(2) are still flagged. Live
-    case: a royalty of ₹34,835.59 amending Mar-26 in a Sep-26 GSTR-1, which
-    had shown a nil total and a nil 3.1(a). Only that GSTR-1 of the 141 stored
-    carries a b2csa block, so no filed month moves; a filed GSTR-1's summary
-    keeps its old total in any case (position 11). The GST receivable reco's
-    "ITC utilised" reads the same baselines, so it equals the draft.
+12. **Every amendment counts at its difference** (29 Oct 2026, the firm).
+    9A (b2ba, b2cla, expa), 9C (cdnra, cdnura), a restated Table 10 (b2csa)
+    and 11(2) (ata, txpda) each add to this month's 3.1 the revised document or
+    line less what was last reported for it: the latest earlier amendment of
+    it, else the original where it was first reported. Documents are matched
+    by the original number and date the amendment names (`oinum` / `oidt`,
+    `ont_num` / `ont_dt`); Table 10 and 11(2) lines by the amended month, place
+    of supply and rate. Revised and earlier are sorted and signed like any
+    other document (3.1(a) / (b), notes, reverse charge value only), and reach
+    Table 3.2 the same way. Code: `src/lib/gstr1/amendments.ts` (pure),
+    `loadGstr1History.ts` (the client's other GSTR-1s, the filed return
+    pulled before the imported one). What was reported but is not in the app
+    counts as nil, and the draft's flag and the GSTR-1 summary say so. The
+    GST receivable reco and credit closing read the same figure.
+    **Filed months stay as they were**: the rule applies from 09/2026 or to
+    any month whose GSTR-3B is not filed (`AMENDMENT_FOLD_FROM`); an earlier
+    filed month keeps position 5 (flagged, not folded), and a filed GSTR-1's
+    summary keeps its old total (position 11). On live data (29 Oct 2026) two
+    returns carry amendments: ATC LOGISTICS Jul-26 (b2ba, filed, unchanged)
+    and a Sep-26 royalty amending Mar-26 in Table 10 (unfiled, now ₹34,835.59
+    with CGST / SGST ₹3,135.20 each, which had shown nil). This replaces
+    position 5 for every month the rule covers.
+13. **A file that is not a GSTR-1 JSON is refused on import**
+    (`notGstr1Reason`, `src/lib/gstr1/validate.ts`). A Tally "GSTR-1 return
+    view" export (`gstr1returnviewdtls`, section totals only) had imported and
+    given a nil summary and 3.1 (ACCURATE PMS Jan-26, filed, left as it is).
 
 ## 3. No cut-over date
 

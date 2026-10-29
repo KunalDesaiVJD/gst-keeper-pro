@@ -12,9 +12,8 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { buildGstr1Summary, gstr1TotalLabel } from '@/utils/buildGstr1Summary';
-import { isB2csaDifference } from '@/utils/buildGstr3bJson';
-import type { B2csaBaselines } from '@/lib/gstr1/b2csaBaseline';
-import { loadB2csaBaselines } from '@/lib/gstr1/loadB2csaBaselines';
+import type { Gstr1History } from '@/lib/gstr1/amendments';
+import { loadGstr1History } from '@/lib/gstr1/loadGstr1History';
 import { exportGstr1SummaryToPDF } from '@/utils/gstr1SummaryPdf';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
@@ -67,7 +66,7 @@ import AdvanceSetoffGateDialog from '@/components/advances/AdvanceSetoffGateDial
 import { useAdvanceSetoffGate } from '@/hooks/useAdvanceSetoffGate';
 import { compareVersions, isExtensionUpdateRecommended, updateRecommendedMessage } from '@/lib/extensionVersion';
 import { describeHsnFixes, describeHsnProblems, editableUqc, isServiceHsn, normaliseGstr1Hsn, normaliseUqc } from '@/lib/gstr1/uqc';
-import { describeGstr1Issues, gstr1HasSectionData, tidyGstr1Json, validateGstr1Json } from '@/lib/gstr1/validate';
+import { describeGstr1Issues, gstr1HasSectionData, notGstr1Reason, tidyGstr1Json, validateGstr1Json } from '@/lib/gstr1/validate';
 import { UqcSelect, UqcText } from '@/components/gstr1/UqcSelect';
 
 /** First extension version that pushes a NIL GSTR-1. */
@@ -1309,6 +1308,8 @@ const GSTR1DataPage: React.FC = () => {
       } catch {
         throw new Error('Selected file is not valid JSON.');
       }
+      const notGstr1 = notGstr1Reason(json);
+      if (notGstr1) throw new Error(notGstr1);
 
       // Refuse an import whose GSTIN doesn't match the selected client. Loading
       // client A's file into client B's slot is almost always an operator slip
@@ -2171,20 +2172,20 @@ const GSTR1DataPage: React.FC = () => {
   // Consolidated summary + section tile counts, derived entirely from the
   // imported JSON (see buildGstr1Summary). Drives both the tile grid and the
   // "Generate Summary" dialog.
-  // Table 10 amendments count at their difference from what the amended month
-  // last reported (loadB2csaBaselines); loaded only when the JSON has one.
-  const [b2csaBaselines, setB2csaBaselines] = useState<B2csaBaselines>({});
+  // Amendments (9A, 9C, 10, 11(2)) count at their difference from what was
+  // last reported (loadGstr1History); read only when the JSON has one.
+  const [gstr1History, setGstr1History] = useState<Gstr1History>({});
   useEffect(() => {
     let live = true;
-    setB2csaBaselines({});
+    setGstr1History({});
     if (selectedClient) {
-      loadB2csaBaselines(selectedClient, gstr1Data?.raw_json, (a) => !isB2csaDifference(a))
-        .then((b) => { if (live) setB2csaBaselines(b); })
+      loadGstr1History(selectedClient, gstr1Data?.raw_json)
+        .then((h) => { if (live) setGstr1History(h); })
         .catch(() => { /* none loaded: the earlier figure counts as nil and the summary says so */ });
     }
     return () => { live = false; };
   }, [selectedClient, gstr1Data?.raw_json]);
-  const summary = useMemo(() => buildGstr1Summary(json, { filed: isFiled, b2csaBaselines }), [json, isFiled, b2csaBaselines]);
+  const summary = useMemo(() => buildGstr1Summary(json, { filed: isFiled, gstr1History }), [json, isFiled, gstr1History]);
 
   // Portal-style document counts keyed by tab id, so the tab badges show the
   // same figure as the tiles and the summary (documents/invoices/notes) instead
@@ -4266,19 +4267,19 @@ const GSTR1DataPage: React.FC = () => {
               </tfoot>
             </table>
           </div>
-          {summary.b2csaDifferences.length > 0 && (
+          {summary.amendmentDifferences.length > 0 && (
             <Note tone="info" open>
-              <span className="font-medium">Table 10 amendments are in the total liability (and GSTR-3B 3.1(a)) at their difference:</span>
-              {summary.b2csaDifferences.map((d) => {
-                const m = `${d.omon.slice(0, 2)}/${d.omon.slice(2)}`;
-                const tax = (h: typeof d.diff) => h.iamt + h.camt + h.samt + h.csamt;
+              <span className="font-medium">Amendments are in the total liability (and GSTR-3B 3.1) at their difference:</span>
+              {summary.amendmentDifferences.map((d, i) => {
+                const one = (x: typeof d.diff) => ({ value: x.a.txval + x.b.txval, tax: x.a.iamt + x.a.camt + x.a.samt + x.a.csamt + x.b.iamt + x.b.csamt });
+                const rev = one(d.revised), ear = one(d.earlier), dif = one(d.diff);
                 return (
-                  <span key={`${d.omon}-${d.pos}-${d.rt}`} className="block">
-                    {m}, POS {d.pos}, {d.rt}%: revised value ₹{fmt2(d.revised.txval)}, tax ₹{fmt2(tax(d.revised))} less{' '}
+                  <span key={`${d.table}-${d.ref}-${i}`} className="block">
+                    {d.label}, {d.ref}: revised value ₹{fmt2(rev.value)}, tax ₹{fmt2(rev.tax)} less{' '}
                     {d.known
-                      ? <>earlier value ₹{fmt2(d.earlier.txval)}, tax ₹{fmt2(tax(d.earlier))} ({d.source})</>
-                      : <>nil ({m}&apos;s GSTR-1 is not in the app; pull or import it if it reported a figure here)</>}
-                    {' '}= value ₹{fmt2(d.diff.txval)}, tax ₹{fmt2(tax(d.diff))}
+                      ? <>₹{fmt2(ear.value)}, tax ₹{fmt2(ear.tax)} last reported ({d.source})</>
+                      : <>nil (what was reported for it is not in the app; pull or import that GSTR-1 if it reported a figure)</>}
+                    {' '}= value ₹{fmt2(dif.value)}, tax ₹{fmt2(dif.tax)}
                   </span>
                 );
               })}
@@ -4304,8 +4305,8 @@ const GSTR1DataPage: React.FC = () => {
             than a detail tab's row count when one document has multiple tax rates. 9B notes are shown net
             (Debit − Credit), so credit notes reduce the value. Total liability is what flows to GSTR-3B
             3.1(a) + 3.1(b): reverse charge supplies (4B) count at value only (the tax is the recipient's),
-            11B adjustment of advances is deducted, Table 10 amendments count at their difference, and 9A, 9C and 11(2) amendments are not added; Table 8
-            goes to 3.1(c) / (e).{summary.totalBasis === 'legacy' && ' This GSTR-1 is Filed, so its total is shown as it always was (sum of the sections).'}
+            11B adjustment of advances is deducted, and amendments (9A, 9C, 10, 11(2)) count at their difference from what was last reported; Table 8
+            goes to 3.1(c) / (e).{summary.totalBasis === 'legacy' && ' This GSTR-1 is Filed, so its total is shown as it always was (sum of the sections, no amendment counted).'}
           </Note>
         </DialogContent>
       </Dialog>

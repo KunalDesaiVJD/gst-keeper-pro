@@ -1,25 +1,21 @@
-// Reads what the months a GSTR-1's Table 10 entries amend last reported
-// (buildB2csaBaselines in b2csaBaseline.ts, which is pure).
+// Reads the client's other GSTR-1s, for amendments counted at their
+// difference (amendments.ts, which is pure). The filed return pulled from
+// the portal is taken before the imported one of the same month.
 import { supabase } from '@/integrations/supabase/client';
-import { buildB2csaBaselines, type B2csaBaselines } from './b2csaBaseline';
+import { hasAmendments, type Gstr1History } from './amendments';
 
 type Gj = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-const list = (v: unknown): Gj[] => (Array.isArray(v) ? v : []);
+const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/**
- * Loads the client's other GSTR-1s (the filed return pulled from the portal
- * first, else the imported one) and builds the baselines for `raw`.
- * Nothing to amend: an empty map, and no read.
- */
-export async function loadB2csaBaselines(clientId: string, raw: unknown, isRestated: (a: Gj) => boolean): Promise<B2csaBaselines> {
+/** Nothing amended: an empty history, and no read. */
+export async function loadGstr1History(clientId: string, raw: unknown): Promise<Gstr1History> {
   const g = raw && typeof raw === 'object' ? (raw as Gj) : null;
-  if (!clientId || !g || !list(g.b2csa).some(isRestated)) return {};
-  const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  if (!clientId || !hasAmendments(g)) return {};
   const [imported, filed] = await Promise.all([
     supabase.from('gstr1_data').select('period_month, raw_json').eq('client_id', clientId),
     supabase.from('gst_filed_returns').select('period_month, full_json').eq('client_id', clientId).eq('return_type', 'GSTR1'),
   ]);
-  const months: Record<string, Gj> = {};
+  const months: Gstr1History = {};
   ((imported.data as { period_month: string; raw_json: Gj | null }[] | null) || []).forEach((r) => {
     const [mon, yy] = String(r.period_month || '').split('-');
     const mi = SHORT.indexOf(mon);
@@ -30,5 +26,5 @@ export async function loadB2csaBaselines(clientId: string, raw: unknown, isResta
     const [mm, yyyy] = String(r.period_month || '').split('/');
     if (r.full_json && Object.keys(r.full_json).length && mm && yyyy) months[`${mm}${yyyy}`] = r.full_json;
   });
-  return buildB2csaBaselines(g, months, isRestated);
+  return months;
 }

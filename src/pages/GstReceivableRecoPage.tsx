@@ -1,5 +1,4 @@
-import { loadB2csaBaselines } from '@/lib/gstr1/loadB2csaBaselines';
-import { isB2csaDifference } from '@/utils/buildGstr3bJson';
+import { loadGstr1History } from '@/lib/gstr1/loadGstr1History';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -567,8 +566,8 @@ const GstReceivableRecoPage: React.FC = () => {
           // computeGstr1OutputTax keeps the pre-existing date-only RCM gate
           // (unaffected by the unfiled-period widening in buildGstr3bJson.ts)
           // so historical closing figures don't shift.
-          const baselines = await loadB2csaBaselines(selectedClientId, gstr1Data.raw_json, (a) => !isB2csaDifference(a)).catch(() => ({}));
-          const out = computeGstr1OutputTax(gstr1Data.raw_json, prevMonth || '', baselines);
+          const history = await loadGstr1History(selectedClientId, gstr1Data.raw_json).catch(() => ({}));
+          const out = computeGstr1OutputTax(gstr1Data.raw_json, prevMonth || '', history);
           setUtilizedCgst(out.cgst);
           setUtilizedSgst(out.sgst);
           setUtilizedIgst(out.igst);
