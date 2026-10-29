@@ -344,6 +344,17 @@ export function gstr1OutwardTotal(gstr1Raw: unknown): { value: number; igst: num
 }
 
 /**
+ * The GSTR-1 amendment tables that restate an earlier month (9A, 9C, a
+ * restated Table 10) and so are in neither 3.1 nor the summary's total, each
+ * with what it restates. A Table 10 re-rating difference is folded, so it is
+ * not here.
+ */
+export function gstr1AmendmentsLeftOut(gstr1Raw: unknown): Gstr1AmendmentSum[] {
+  const g = gstr1Raw && typeof gstr1Raw === 'object' ? (gstr1Raw as Gj) : null;
+  return computeOutward(g, '', false).amendments;
+}
+
+/**
  * Output tax of a month's GSTR-1: the tax of Table 3.1(a) and 3.1(b), which
  * GSTR-3B sets off against ITC or cash. 3.1(b) holds the IGST on exports and
  * SEZ supplies with payment. Cess is left out. Reverse charge as in
