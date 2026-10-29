@@ -324,6 +324,26 @@ function computeOutward(g: Gj | null, periodMonth: string, alreadyFiled: boolean
 }
 
 /**
+ * The total liability of a month's GSTR-1, as GSTR-3B takes it: Table 3.1(a)
+ * plus 3.1(b), value and tax. Reverse charge supplies (4B) count at value only,
+ * advances adjusted (11B) come off, a Table 10 re-rating difference is in, and
+ * amendments that restate an earlier month are not. buildGstr1Summary's
+ * "Total liability" is this figure, so the summary and the 3B draft cannot
+ * differ (they did: the summary added 4B tax and never deducted 11B).
+ */
+export function gstr1OutwardTotal(gstr1Raw: unknown): { value: number; igst: number; cgst: number; sgst: number; cess: number } {
+  const g = gstr1Raw && typeof gstr1Raw === 'object' ? (gstr1Raw as Gj) : null;
+  const out = computeOutward(g, '', false);
+  return {
+    value: r2(out.det.txval + out.zero.txval),
+    igst: r2(out.det.iamt + out.zero.iamt),
+    cgst: r2(out.det.camt),
+    sgst: r2(out.det.samt),
+    cess: r2(out.det.csamt + out.zero.csamt),
+  };
+}
+
+/**
  * Output tax of a month's GSTR-1: the tax of Table 3.1(a) and 3.1(b), which
  * GSTR-3B sets off against ITC or cash. 3.1(b) holds the IGST on exports and
  * SEZ supplies with payment. Cess is left out. Reverse charge as in

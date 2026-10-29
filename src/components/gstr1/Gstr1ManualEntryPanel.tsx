@@ -797,7 +797,7 @@ const Gstr1ManualEntryPanel: React.FC<Props> = ({
               </tbody>
               <tfoot className="sticky bottom-0 z-10">
                 <tr className={WS_TR_TOTAL}>
-                  <td className={`${WS_TD} text-right`} colSpan={3}>Total liability (excl. HSN &amp; Docs)</td>
+                  <td className={`${WS_TD} text-right`} colSpan={3}>Total liability (to GSTR-3B 3.1(a) + 3.1(b))</td>
                   <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.value)}</td>
                   <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.igst)}</td>
                   <td className={WS_TD_NUM}>{fmt2(liveSummary.totals.cgst)}</td>

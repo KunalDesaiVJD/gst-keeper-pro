@@ -43,7 +43,7 @@ export const exportGstr1SummaryToPDF = ({ summary, clientName, gstin, monthLabel
   ]);
 
   body.push([
-    'Total liability (excl. HSN & Documents)',
+    'Total liability (to GSTR-3B 3.1(a) + 3.1(b))',
     '',
     '',
     fmt2(summary.totals.value),

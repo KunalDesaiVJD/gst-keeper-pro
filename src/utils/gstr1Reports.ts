@@ -129,7 +129,7 @@ export const buildGstr1SummaryReport = async (clientId: string, month: string): 
     s.code, s.title, s.docType, s.count, s.value, s.igst, s.cgst, s.sgst, s.cess, s.igst + s.cgst + s.sgst + s.cess,
   ]);
   rows.push([
-    '', 'TOTAL (liability-bearing tables only — HSN and Documents Issued are memo rows above, excluded here)', '', '',
+    '', 'TOTAL LIABILITY (as GSTR-3B 3.1(a) + 3.1(b): 4B at value only, 11B deducted, amendments and Table 8 out; HSN and Documents are memo rows)', '', '',
     summary.totals.value, summary.totals.igst, summary.totals.cgst, summary.totals.sgst, summary.totals.cess,
     summary.totals.igst + summary.totals.cgst + summary.totals.sgst + summary.totals.cess,
   ]);
