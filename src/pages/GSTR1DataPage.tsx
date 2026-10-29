@@ -11,7 +11,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { buildGstr1Summary } from '@/utils/buildGstr1Summary';
+import { buildGstr1Summary, gstr1TotalLabel } from '@/utils/buildGstr1Summary';
 import { exportGstr1SummaryToPDF } from '@/utils/gstr1SummaryPdf';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
@@ -2168,7 +2168,7 @@ const GSTR1DataPage: React.FC = () => {
   // Consolidated summary + section tile counts, derived entirely from the
   // imported JSON (see buildGstr1Summary). Drives both the tile grid and the
   // "Generate Summary" dialog.
-  const summary = useMemo(() => buildGstr1Summary(json), [json]);
+  const summary = useMemo(() => buildGstr1Summary(json, { filed: isFiled }), [json, isFiled]);
 
   // Portal-style document counts keyed by tab id, so the tab badges show the
   // same figure as the tiles and the summary (documents/invoices/notes) instead
@@ -4240,7 +4240,7 @@ const GSTR1DataPage: React.FC = () => {
               </tbody>
               <tfoot className="sticky bottom-0 z-10">
                 <tr className={WS_TR_TOTAL}>
-                  <td className={`${WS_TD} text-right`} colSpan={3}>Total liability (excl. HSN &amp; Docs)</td>
+                  <td className={`${WS_TD} text-right`} colSpan={3}>{gstr1TotalLabel(summary.totalBasis)}</td>
                   <td className={WS_TD_NUM}>{fmt2(summary.totals.value)}</td>
                   <td className={WS_TD_NUM}>{fmt2(summary.totals.igst)}</td>
                   <td className={WS_TD_NUM}>{fmt2(summary.totals.cgst)}</td>
@@ -4253,7 +4253,10 @@ const GSTR1DataPage: React.FC = () => {
           <Note open>
             "No. of records" counts documents (invoices / notes) like the GST portal, so it can be lower
             than a detail tab's row count when one document has multiple tax rates. 9B notes are shown net
-            (Debit − Credit), so credit notes reduce the value.
+            (Debit − Credit), so credit notes reduce the value. Total liability is what flows to GSTR-3B
+            3.1(a) + 3.1(b): reverse charge supplies (4B) count at value only (the tax is the recipient's),
+            11B adjustment of advances is deducted, and amendments (9A, 9C, 10, 11(2)) are not added; Table 8
+            goes to 3.1(c) / (e).{summary.totalBasis === 'legacy' && ' This GSTR-1 is Filed, so its total is shown as it always was (sum of the sections).'}
           </Note>
         </DialogContent>
       </Dialog>

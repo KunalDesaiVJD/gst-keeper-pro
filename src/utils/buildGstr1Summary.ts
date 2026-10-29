@@ -4,6 +4,9 @@
 // "Generate Summary" dialog render from a single source of truth and it can be
 // checked against the portal's system-generated GSTR-1 PDF.
 
+import { noteSign as sharedNoteSign } from '@/lib/gstr1/supplyKind';
+import { gstr1OutwardTotal } from './buildGstr3bJson';
+
 const num = (v: unknown): number => {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
   return Number.isFinite(n) ? n : 0;
@@ -32,6 +35,12 @@ export interface Gstr1Summary {
   sections: Gstr1SummaryRow[];
   tiles: Gstr1Tile[];
   totals: { value: number; igst: number; cgst: number; sgst: number; cess: number };
+  /**
+   * How `totals` was worked out. 'gstr3b': GSTR-3B's 3.1(a) + 3.1(b) (every
+   * unfiled month). 'legacy': the sum of the sections as before 29 Oct 2026,
+   * kept for a filed GSTR-1 so a filed month shows what it always showed.
+   */
+  totalBasis: 'gstr3b' | 'legacy';
   /**
    * Table 11(2) — amendments restating an EARLIER period's Table 11A / 11B.
    * Deliberately kept out of `totals`: an amendment states the revised figure
@@ -121,7 +130,16 @@ export function extractGstr1HsnRows(json: any): Gstr1HsnRow[] {
     .filter((r) => r.hsn_sc);
 }
 
-export function buildGstr1Summary(json: any): Gstr1Summary {
+/** Label of the summary's total line, by how it was worked out. */
+export const gstr1TotalLabel = (basis: Gstr1Summary['totalBasis']): string =>
+  basis === 'legacy' ? 'Total liability (excl. HSN & Docs)' : 'Total liability (to GSTR-3B 3.1(a) + 3.1(b))';
+
+/**
+ * `filed`: the month's GSTR-1 (or IFF) is Filed. Its total is then the
+ * pre-29 Oct 2026 sum of sections, so nothing about a filed return moves
+ * (the firm, 29 Oct 2026); every other month gets the GSTR-3B figure.
+ */
+export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gstr1Summary {
   const j = json || {};
 
   const s4A = acc(), s4B = acc(), s5 = acc(), s6A = acc(), s6B = acc(), s6C = acc();
@@ -202,13 +220,13 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   // Value is the note's TAXABLE value (sum of itm_det.txval), like every
   // other table here — not `nt.val`, the note value including GST, which
   // overstated Table 9B by the tax on every note.
-  const noteSign = (nt: any): 1 | -1 =>
-    String(nt?.ntty ?? nt?.typ ?? 'C').toUpperCase().startsWith('D') ? 1 : -1;
+  // One reading of the note type for the summary and GSTR-3B (supplyKind.ts).
+  const noteSign = (nt: any, section: 'cdnr' | 'cdnur'): 1 | -1 => sharedNoteSign(nt, section);
 
   (j.cdnr || []).forEach((party: any) => {
     (party.nt || []).forEach((nt: any) => {
       s9BR.count += 1;
-      const sign = noteSign(nt);
+      const sign = noteSign(nt, 'cdnr');
       s9BR.value += sign * sumTaxable(nt.itms);
       (nt.itms || []).forEach((it: any) => {
         const d = it?.itm_det || it || {};
@@ -223,7 +241,7 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   // 9B — Credit / Debit notes (unregistered). Same netting rule.
   (j.cdnur || []).forEach((nt: any) => {
     s9BUR.count += 1;
-    const sign = noteSign(nt);
+    const sign = noteSign(nt, 'cdnur');
     s9BUR.value += sign * sumTaxable(nt.itms);
     (nt.itms || []).forEach((it: any) => {
       const d = it?.itm_det || it || {};
@@ -234,10 +252,13 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     });
   });
 
+  // A POS group carries its rate lines under itms[]; an older file may be flat.
+  const advanceLines = (r: any): any[] => (Array.isArray(r?.itms) && r.itms.length ? r.itms : [r]);
+
   // 11A — Advances received (tax liability).
   (j.at || []).forEach((r: any) => {
     s11A.count += 1;
-    (r.itms || []).forEach((it: any) => {
+    advanceLines(r).forEach((it: any) => {
       s11A.value += num(it.ad_amt);
       s11A.igst += num(it.iamt);
       s11A.cgst += num(it.camt);
@@ -249,7 +270,7 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   // 11B — Adjustment of advances.
   (j.txpd || []).forEach((r: any) => {
     s11B.count += 1;
-    (r.itms || []).forEach((it: any) => {
+    advanceLines(r).forEach((it: any) => {
       s11B.value += num(it.ad_amt);
       s11B.igst += num(it.iamt);
       s11B.cgst += num(it.camt);
@@ -263,13 +284,13 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
   // the whole point of the table and the reason these are accumulated
   // separately rather than folded into s11A/s11B. An amendment carries the
   // REVISED figure for that earlier month, not a differential and not this
-  // month's liability, so it never reaches `forTotal` below.
+  // month's liability, so it never reaches the total below.
   const addAdvanceAmendment = (rows: any[], a: Acc) => {
     (rows || []).forEach((r: any) => {
       a.count += 1;
       const omon = String(r.omon || '').trim();
       if (omon) amendedPeriods.add(omon);
-      (r.itms || []).forEach((it: any) => {
+      advanceLines(r).forEach((it: any) => {
         a.value += num(it.ad_amt);
         a.igst += num(it.iamt);
         a.cgst += num(it.camt);
@@ -348,31 +369,25 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     row('13', 'Documents issued', s13, '-'),
   ];
 
-  // Liability-bearing sections only, for the grand total (HSN is a memo of the
-  // above, Documents carries no value, so both are excluded to avoid double
-  // counting).
+  // Total liability: what GSTR-3B takes into 3.1(a) + 3.1(b), computed by
+  // the 3B draft's own code (gstr1OutwardTotal), so the two always agree.
+  // Table 4B counts at value only (the tax is the recipient's, and so for
+  // notes on reverse charge invoices); 11B is deducted, not ignored; a Table
+  // 10 re-rating difference is in; amendments restating an earlier month (9A,
+  // 9C, 11(2), a restated Table 10) are not. Table 8 is 3.1(c) / (e), and HSN
+  // and documents are memos, so none of them is in it.
+  // Before 29 Oct 2026 this added the tax of every section including 4B and
+  // left 11B out, which overstated the liability against the 3B draft.
   //
-  // AMENDMENT tables are excluded too — Table 10 (b2csa) alongside Table 11(2)
-  // (ata/txpda). An amendment states the revised figure for the period it
-  // corrects, not additional liability for this one, so adding it here
-  // double-counts against the month it restates.
-  //
-  // s10 used to sit inside this total, which made the two amendment families
-  // behave differently for no stated reason. Changed Sept 2026 once it was
-  // confirmed that no stored return has ever carried a b2csa block, so no
-  // previously-produced summary moves. See docs/ADVANCE_SETOFF_POSITIONS.md
-  // §7.1 and §10.
-  const forTotal = [s4A, s4B, s5, s6A, s6B, s6C, s7, s9BR, s9BUR, s11A];
-  const totals = forTotal.reduce(
-    (t, a) => ({
-      value: t.value + a.value,
-      igst: t.igst + a.igst,
-      cgst: t.cgst + a.cgst,
-      sgst: t.sgst + a.sgst,
-      cess: t.cess + a.cess,
-    }),
-    { value: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 },
-  );
+  // A filed GSTR-1 keeps the old sum (4A … 9B with 4B's tax, plus 11A; 11B
+  // not deducted; Table 10 and 11(2) out), so a filed month is unchanged.
+  const totalBasis: Gstr1Summary['totalBasis'] = opts.filed ? 'legacy' : 'gstr3b';
+  const totals = opts.filed
+    ? [s4A, s4B, s5, s6A, s6B, s6C, s7, s9BR, s9BUR, s11A].reduce(
+        (t, a) => ({ value: t.value + a.value, igst: t.igst + a.igst, cgst: t.cgst + a.cgst, sgst: t.sgst + a.sgst, cess: t.cess + a.cess }),
+        { value: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 },
+      )
+    : gstr1OutwardTotal(j);
 
   const b2bAll = acc();
   [s4A, s4B, s6B, s6C].forEach((a) => { b2bAll.count += a.count; b2bAll.value += a.value; });
@@ -400,5 +415,5 @@ export function buildGstr1Summary(json: any): Gstr1Summary {
     originalPeriods: Array.from(amendedPeriods).sort(),
   };
 
-  return { sections, tiles, totals, amendmentTotals };
+  return { sections, tiles, totals, totalBasis, amendmentTotals };
 }

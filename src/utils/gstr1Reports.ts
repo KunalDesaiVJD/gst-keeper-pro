@@ -123,13 +123,19 @@ export const buildGstr1RateWiseReport = async (clientId: string, month: string):
 
 export const buildGstr1SummaryReport = async (clientId: string, month: string): Promise<ReportTable> => {
   const { client, gstr1, source } = await fetchGstr1Row(clientId, month);
-  const summary = buildGstr1Summary(gstr1.raw_json);
+  // A filed GSTR-1 (pulled as filed, or Filed on Filing Status) keeps the
+  // total it always showed; see buildGstr1Summary's `filed`.
+  const { data: fs } = await supabase.from('filing_status').select('status')
+    .eq('client_id', clientId).eq('period_month', month).in('return_type', ['GSTR-1', 'GSTR-1 (IFF)']).eq('status', 'Filed').limit(1);
+  const summary = buildGstr1Summary(gstr1.raw_json, { filed: source === 'filed' || (fs?.length ?? 0) > 0 });
 
   const rows: (string | number)[][] = summary.sections.map((s) => [
     s.code, s.title, s.docType, s.count, s.value, s.igst, s.cgst, s.sgst, s.cess, s.igst + s.cgst + s.sgst + s.cess,
   ]);
   rows.push([
-    '', 'TOTAL (liability-bearing tables only — HSN and Documents Issued are memo rows above, excluded here)', '', '',
+    '', summary.totalBasis === 'legacy'
+      ? 'TOTAL (liability-bearing tables only — HSN and Documents Issued are memo rows above, excluded here)'
+      : 'TOTAL LIABILITY (as GSTR-3B 3.1(a) + 3.1(b): 4B at value only, 11B deducted, amendments and Table 8 out; HSN and Documents are memo rows)', '', '',
     summary.totals.value, summary.totals.igst, summary.totals.cgst, summary.totals.sgst, summary.totals.cess,
     summary.totals.igst + summary.totals.cgst + summary.totals.sgst + summary.totals.cess,
   ]);
