@@ -6,7 +6,10 @@
 //   2. no source file names a Claude model id, or the model itself, other than
 //      through those constants (a test may, to prove a request is pinned);
 //   3. only the known callers talk to Claude (the SDK or the CLI gateway), and
-//      each sends the constants, never a request's own model or effort;
+//      each sends the constants, never a request's own model or effort; the
+//      gateway itself (api/claude-cli.ts, on Vercel) runs the CLI with its own
+//      copy of the two constants, checked against the definition, never a
+//      request's;
 //   4. no effort other than medium is written in the AI code;
 //   5. the database refuses any other model or effort (20261025190000), and no
 //      later migration names another model.
@@ -49,7 +52,7 @@ function walk(dir, out = []) {
   }
   return out;
 }
-const files = [...walk('src'), ...walk('supabase/functions'), ...walk('agent/src')];
+const files = [...walk('src'), ...walk('supabase/functions'), ...walk('agent/src'), ...walk('api')];
 
 // 2. Model ids and CLI model names.
 const MODEL_ID = /\bclaude-(?:opus|sonnet|haiku|fable|instant|\d)[\w.-]*/gi;
@@ -75,6 +78,16 @@ for (const f of files) {
   const sdkValue = TALKS.some((re) => re.test(s)) && !/^import type Anthropic from '@anthropic-ai\/sdk';$/m.test(s);
   if (sdkValue && !CALLERS[f]) fail.push(`${f}: talks to the Claude API outside the pinned callers (${Object.keys(CALLERS).join(', ')})`);
   if (/CLAUDE_CLI_GATEWAY/.test(s) && /\bfetch\(/.test(s) && !CALLERS[f]) fail.push(`${f}: calls the Claude CLI gateway outside notice-ai/cli.ts`);
+}
+// The gateway: its two constants are the definition's, and the CLI runs with them only.
+const GATEWAY = 'api/claude-cli.ts';
+if (fs.existsSync(path.join(ROOT, GATEWAY))) {
+  const g = read(GATEWAY);
+  const cliModel = g.match(/^const CLI_MODEL = "([^"]*)";$/m)?.[1];
+  const cliEffort = g.match(/^const CLI_EFFORT = "([^"]*)";$/m)?.[1];
+  if (cliModel !== CLI_MODEL || cliEffort !== EFFORT) fail.push(`${GATEWAY}: must pin CLI_MODEL "${CLI_MODEL}" and CLI_EFFORT "${EFFORT}" (found ${cliModel}, ${cliEffort})`);
+  if (!/GSTK_CLAUDE_MODEL: CLI_MODEL,/.test(g) || !/GSTK_CLAUDE_EFFORT: CLI_EFFORT,/.test(g)) fail.push(`${GATEWAY}: must run the CLI with CLI_MODEL and CLI_EFFORT`);
+  if (/body\.(?:model|effort)/.test(g)) fail.push(`${GATEWAY}: reads a request's own model or effort`);
 }
 for (const [f, needs] of Object.entries(CALLERS)) {
   const s = read(f);

@@ -161,6 +161,17 @@ export async function loadCaseReadings(clientId: string, caseId: string): Promis
   return out;
 }
 
+/**
+ * A reading made from a scan or a photo (the gateway read the pages as they
+ * look, notice-ai 1.7.0): its quotes are not checked against a text layer, and
+ * any GSTIN in it that fails its check character is listed to confirm on the paper.
+ */
+export function scanReading(usage: unknown): { doubts: string[] } | null {
+  const u = usage && typeof usage === 'object' ? usage as Record<string, unknown> : null;
+  if (u?.read_from !== 'scan') return null;
+  return { doubts: Array.isArray(u.doubts) ? u.doubts.filter((d): d is string => typeof d === 'string') : [] };
+}
+
 /** Why a document has no reading to show, in a line; null when it has one or none is owed (the notice's own PDF). */
 export function readingNote(r: Pick<DocReading, 'status' | 'reason_class' | 'pages'> | null | undefined): string | null {
   if (!r) return null;

@@ -22,7 +22,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { EmptyBox } from '@/components/notices/autopilot/parts';
 import { StageBadge } from '@/components/notices/StageBadge';
 import type { CaseItem, CaseItemFacts, KeyDate } from '@/lib/noticeCases';
-import { readingNote } from '@/lib/noticeAi';
+import { readingNote, scanReading } from '@/lib/noticeAi';
 import { fmtAiTokens, fmtDate, fmtDateTime, fmtInr } from '@/lib/noticeFormat';
 import { cn } from '@/lib/utils';
 
@@ -142,13 +142,16 @@ function Reading({ it }: { it: CaseItem }) {
   if (text) {
     const long = text.length > 220;
     const tokens = it.notice_read?.summary ? fmtAiTokens(it.notice_read.usage, it.notice_read.model) : fmtAiTokens(it.ai?.usage, it.ai?.model);
+    const scan = scanReading(it.notice_read?.summary ? it.notice_read.usage : it.ai?.usage);
     return (
       <div className="rounded-md border-l-2 border-primary/30 bg-muted/40 px-3 py-2">
         <div className="mb-0.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary/70" aria-hidden /> What it says
+          {scan && <span className="font-normal" title="Read as the pages look: check figures and numbers against the paper">· read from a scan</span>}
           {tokens && <span className="ml-auto whitespace-nowrap font-normal tabular-nums" title="Tokens the AI used to read it">{tokens}</span>}
         </div>
         <p className={cn('text-sm leading-relaxed text-foreground/90', !more && 'line-clamp-2')}>{text}</p>
+        {scan?.doubts.map((d) => <p key={d} className="mt-0.5 text-xs text-warning">{d}</p>)}
         {long && (
           <button type="button" onClick={() => setMore((v) => !v)} className="mt-0.5 inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline">
             {more ? <>Show less <ChevronUp className="h-3.5 w-3.5" aria-hidden /></> : <>Read all <ChevronDown className="h-3.5 w-3.5" aria-hidden /></>}

@@ -54,6 +54,22 @@ export function storageReadUrl(url: string, keyed: boolean): string {
 export interface Downloaded {
   bytes: Uint8Array<ArrayBuffer>;
   sha256: string;
+  // A PDF, or a photo of a page (a JPG or PNG the portal stores under a .pdf name).
+  mediaType: 'application/pdf' | 'image/jpeg' | 'image/png';
+}
+
+/** A JPG or PNG by its first bytes, else null. */
+export function imageType(bytes: Uint8Array): 'image/jpeg' | 'image/png' | null {
+  if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  return null;
+}
+
+/** Where a file of this project's storage is: its bucket and path (null for any other address). */
+export function storageLocation(url: string, supabaseUrl: string): { bucket: string; path: string } | null {
+  if (!documentUrlAllowed(url, supabaseUrl)) return null;
+  const m = /^\/storage\/v1\/object\/(?:public\/|authenticated\/|sign\/)?([^/]+)\/(.+)$/.exec(new URL(url).pathname);
+  return m ? { bucket: decodeURIComponent(m[1]), path: decodeURIComponent(m[2]) } : null;
 }
 
 export async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
@@ -75,6 +91,8 @@ export async function downloadPdf(url: string, opts: {
   maxBytes?: number;
   /** The service role key: sent only to an address `allow` passes. */
   storageKey?: string;
+  /** A photo of a page is taken too (read through the gateway as an image). */
+  allowImages?: boolean;
 }): Promise<Downloaded> {
   const maxBytes = opts.maxBytes ?? MAX_PDF_BYTES;
   if (!opts.allow(url)) throw new DocumentError('the document is not in the app\'s storage', 'document_url', false);
@@ -116,8 +134,9 @@ export async function downloadPdf(url: string, opts: {
       throw new DocumentError('the PDF download was cut off', 'download', true);
     }));
     if (buf.byteLength > maxBytes) throw new DocumentError(`the PDF is larger than ${Math.round(maxBytes / 1048576)} MB`, 'too_large', false);
-    if (!isPdf(buf)) throw new DocumentError('the document is not a PDF', 'not_pdf', false);
-    return { bytes: buf, sha256: await sha256Hex(buf) };
+    const image = opts.allowImages ? imageType(buf) : null;
+    if (!image && !isPdf(buf)) throw new DocumentError('the document is not a PDF', 'not_pdf', false);
+    return { bytes: buf, sha256: await sha256Hex(buf), mediaType: image ?? 'application/pdf' };
   } finally {
     clearTimeout(timer);
     opts.signal?.removeEventListener('abort', onAbort);

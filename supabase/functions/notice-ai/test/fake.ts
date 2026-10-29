@@ -78,6 +78,9 @@ export class FakeNet {
   claude: Seen[] = [];
   cli: (Seen & { auth: string | null })[] = [];
   downloads: string[] = [];
+  /** The reader's staging bucket (ai-cli-temp): parts put there and removals asked. */
+  staged: { path: string; bytes: Uint8Array }[] = [];
+  unstaged: string[][] = [];
   /** The Claude CLI gateway's answer: {status?, body}. */
   gateway: (req: Seen, n: number) => { status?: number; body: J } = () => ({ status: 500, body: { error: 'no gateway' } });
   constructor(public files: Record<string, Uint8Array>, public reply: (req: Seen, n: number) => FakeReply) {}
@@ -97,6 +100,17 @@ export class FakeNet {
       this.claude.push(seen);
       return sse(this.reply(seen, this.claude.length), this.claude.length);
     }
+    if (url.includes('/storage/v1/object/') && url.includes('ai-cli-temp')) {
+      if (init?.method === 'POST' && url.includes('/object/list/')) return new Response('[]', { status: 200 });
+      if (init?.method === 'POST') {
+        this.staged.push({ path: url.split('/ai-cli-temp/')[1], bytes: new Uint8Array(init.body as Uint8Array) });
+        return new Response('{"Key":"ok"}', { status: 200 });
+      }
+      if (init?.method === 'DELETE') {
+        this.unstaged.push(JSON.parse(String(init.body)).prefixes);
+        return new Response('[]', { status: 200 });
+      }
+    }
     this.downloads.push(url);
     const name = url.split('/').pop() ?? '';
     const f = this.files[name];
@@ -112,6 +126,10 @@ export class FakeNet {
   }
   cliClient() {
     return cliCaller({ url: GATEWAY, secret: 'gw-secret', fetch: this.fetch });
+  }
+  /** GST Keeper's own gateway, which opens files from this project's storage. */
+  cliFilesClient() {
+    return cliCaller({ url: GATEWAY, secret: 'gw-secret', fetch: this.fetch, files: true });
   }
 }
 

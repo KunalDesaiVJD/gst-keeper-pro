@@ -578,3 +578,115 @@ Deno.test('a notice PDF read before, back at a new address after a refresh, is n
   assertEquals(db.called('notice_read_finish').length, 0, 'the earlier reading stands');
   assertEquals(db.called('notice_read_hash')[0].args.p_sha256.length, 64);
 });
+
+// ── Scans through GST Keeper's own gateway (29 October 2026: 206 scanned
+// papers and 4 scanned notices waited for a reader of images) ──────────────
+Deno.test('own gateway: a scan goes as where it is stored, never its bytes, and the reading says it was read from a scan', async () => {
+  const scan = await buildPdf([[], [], []]);
+  const net = new FakeNet({ 'scan.pdf': scan }, () => jsonReply(replyReading));
+  net.gateway = () => ({ body: { text: JSON.stringify({ ...replyReading, paragraphs: [] }), model: 'sonnet' } });
+  const deps: Deps = {
+    db: new FakeDb({ ai_document_hash: () => ({ duplicate: false }) }), claude: net.cliFilesClient(), supabaseUrl: SUPA,
+    agentId: 'edge:t', version: 't', fetchImpl: net.fetch, timeLeft: () => 130_000,
+  };
+  const f = await readDocumentJob(deps, docClaim({ role: 'application', document_url: storageUrl('scan.pdf') }), new AbortController().signal);
+  assertEquals(f.status, 'done');
+  const body = net.cli[0].body;
+  const file = body.parts.find((p: J) => p.kind === 'storage');
+  assertEquals([file.bucket, file.path, file.filename, file.mediaType], ['return-pdfs', 'scan.pdf', 'document.pdf', 'application/pdf']);
+  assert(!JSON.stringify(body).includes('JVBER'), 'no base64 of the PDF');
+  assertStringIncludes(JSON.stringify(body.parts), 'a scan of 3 pages');
+  assert(body.timeoutMs >= 30_000 && body.timeoutMs <= 130_000, 'the gateway is given what is left of the run');
+  assertEquals(f.usage?.read_from, 'scan');
+  assertEquals(net.staged.length, 0, 'a short scan is read where it is stored');
+  // The same scan with a gateway that reads text only still waits (needs_vision).
+  const off = await readDocumentJob({ ...deps, claude: net.cliClient() }, docClaim({ role: 'application', document_url: storageUrl('scan.pdf') }), new AbortController().signal);
+  assertEquals([off.status, off.reason], ['failed', 'needs_vision']);
+  assertEquals(net.cli.length, 1);
+});
+
+Deno.test('own gateway: a long scan is read by its first and last pages, staged in ai-cli-temp and removed', async () => {
+  const longScan = await buildPdf(Array.from({ length: 45 }, () => []));
+  const net = new FakeNet({ 'long.pdf': longScan }, () => jsonReply(replyReading));
+  net.gateway = () => ({ body: { text: JSON.stringify({ ...replyReading, paragraphs: [] }) } });
+  const deps: Deps = {
+    db: new FakeDb({ ai_document_hash: () => ({ duplicate: false }) }), claude: net.cliFilesClient(), supabaseUrl: SUPA,
+    agentId: 'edge:t', version: 't', fetchImpl: net.fetch, timeLeft: () => 130_000,
+  };
+  const f = await readDocumentJob(deps, docClaim({ role: 'application', document_url: storageUrl('long.pdf') }), new AbortController().signal);
+  assertEquals(f.status, 'done', 'not skipped as too long');
+  assertEquals(net.staged.length, 1);
+  const { PDFDocument } = await import('pdf-lib');
+  assertEquals((await PDFDocument.load(net.staged[0].bytes)).getPageCount(), 12);
+  const file = net.cli[0].body.parts.find((p: J) => p.kind === 'storage');
+  assertEquals([file.bucket, file.path], ['ai-cli-temp', net.staged[0].path]);
+  assertStringIncludes(JSON.stringify(net.cli[0].body.parts), 'pages 1 to 9 and 43 to 45');
+  assertStringIncludes(JSON.stringify(net.cli[0].body.parts), "the attached file's page 10 is the original's page 43");
+  assertEquals(net.unstaged, [[net.staged[0].path]], 'the staged part is removed after the read');
+  assertEquals((f.result as J).pages, 45);
+});
+
+Deno.test('own gateway: a photo saved as .pdf is read as an image', async () => {
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xd9]);
+  const net = new FakeNet({ 'photo.pdf': jpeg }, () => jsonReply(replyReading));
+  net.gateway = () => ({ body: { text: JSON.stringify({ ...replyReading, paragraphs: [] }) } });
+  const deps: Deps = {
+    db: new FakeDb({ ai_document_hash: () => ({ duplicate: false }) }), claude: net.cliFilesClient(), supabaseUrl: SUPA,
+    agentId: 'edge:t', version: 't', fetchImpl: net.fetch, timeLeft: () => 130_000,
+  };
+  const f = await readDocumentJob(deps, docClaim({ role: 'application', document_url: storageUrl('photo.pdf') }), new AbortController().signal);
+  assertEquals(f.status, 'done');
+  const file = net.cli[0].body.parts.find((p: J) => p.kind === 'storage');
+  assertEquals([file.path, file.filename, file.mediaType], ['photo.pdf', 'page.jpg', 'image/jpeg']);
+  // Without the own gateway the photo is still not a PDF.
+  const off = await readDocumentJob({ ...deps, claude: net.cliClient() }, docClaim({ role: 'application', document_url: storageUrl('photo.pdf') }), new AbortController().signal);
+  assertEquals(off.reason, 'not_pdf');
+});
+
+Deno.test('own gateway: a typed document still goes as its text; a scan with too little of the run left goes back to the queue', async () => {
+  const typed = await buildPdf(replyPages);
+  const scan = await buildPdf([[], []]);
+  const net = new FakeNet({ 'reply.pdf': typed, 'scan.pdf': scan }, () => jsonReply(replyReading));
+  net.gateway = () => ({ body: { text: JSON.stringify(replyReading) } });
+  const deps: Deps = {
+    db: new FakeDb({ ai_document_hash: () => ({ duplicate: false }) }), claude: net.cliFilesClient(), supabaseUrl: SUPA,
+    agentId: 'edge:t', version: 't', fetchImpl: net.fetch, timeLeft: () => 50_000,
+  };
+  const t = await readDocumentJob(deps, docClaim(), new AbortController().signal);
+  assertEquals(t.status, 'done');
+  assert(!net.cli[0].body.parts.some((p: J) => p.kind === 'storage'), 'typed text, no file');
+  assertEquals(t.usage?.read_from, undefined);
+  const s = await readDocumentJob(deps, docClaim({ document_url: storageUrl('scan.pdf') }), new AbortController().signal);
+  assertEquals([s.status, s.reason], ['release', 'needs_time']);
+  assertEquals(net.cli.length, 1, 'nothing sent');
+  // In a run: handed back, its try not counted, and the run stops.
+  const db = new FakeDb({
+    ai_runner_begin: () => ({ lease: true, read_enabled: true, runner: 'edge', seconds: 100, sync_due: false }),
+    ai_claim_next: (_a, n) => n === 1 ? docClaim({ document_url: storageUrl('scan.pdf') }) : null,
+    ai_document_hash: () => ({ duplicate: false }),
+    ai_job_release: () => true,
+    ai_runner_end: () => null,
+  });
+  const report = await runTick({ db, claude: net.cliFilesClient(), supabaseUrl: SUPA, agentId: 'edge:t', version: 't', fetchImpl: net.fetch, now: () => 0 });
+  assertEquals(report.jobs.map((j) => `${j.status}:${j.reason}`), ['released:needs_time']);
+  assertEquals(report.stopped, 'time');
+  assertEquals(db.called('ai_job_release')[0].args.p_kind, 'document');
+  assertEquals(db.called('ai_document_finish').length, 0);
+});
+
+Deno.test('GSTIN check characters: a misread GSTIN in a scan\'s reading is a doubt', async () => {
+  const { gstinDoubts, gstinValid } = await import('../gstin.ts');
+  assert(gstinValid('24AAQCA6090D1ZO'));
+  assert(!gstinValid('24AAQCA6090D1Z0'), 'O read as 0');
+  assertEquals(gstinDoubts(['GSTIN 24AAQCA6090D1ZO', 'ARN AA240524004808C', '24AAQCA6090D1Z0 and again 24AAQCA6090D1Z0']),
+    ['GSTIN 24AAQCA6090D1Z0 as read from the scan fails its check character: confirm it on the paper.']);
+  const scan = await buildPdf([[]]);
+  const net = new FakeNet({ 'scan.pdf': scan }, () => jsonReply(replyReading));
+  net.gateway = () => ({ body: { text: JSON.stringify({ ...replyReading, paragraphs: [], summary: 'Refund order for 24AAQCA6090D1Z0.' }) } });
+  const deps: Deps = {
+    db: new FakeDb({ ai_document_hash: () => ({ duplicate: false }) }), claude: net.cliFilesClient(), supabaseUrl: SUPA,
+    agentId: 'edge:t', version: 't', fetchImpl: net.fetch, timeLeft: () => 130_000,
+  };
+  const f = await readDocumentJob(deps, docClaim({ role: 'order', document_url: storageUrl('scan.pdf') }), new AbortController().signal);
+  assertEquals(f.usage?.doubts, ['GSTIN 24AAQCA6090D1Z0 as read from the scan fails its check character: confirm it on the paper.']);
+});

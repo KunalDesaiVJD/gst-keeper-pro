@@ -411,7 +411,11 @@ app: Reply Factory → AI and Learning, the notice page's AI assistant tab)
   `CLAUDE_CLI_GATEWAY_SECRET`). The gateway takes text, so a PDF goes as its own
   text layer page by page and quotes are checked against that same text. A scanned
   PDF with no text layer is read by the Claude API when `ANTHROPIC_API_KEY` is also
-  set, and otherwise left with the reason `needs_vision`. Without the gateway
+  set, and otherwise left with the reason `needs_vision`. Since 29 October 2026
+  the gateway can be GST Keeper's own (`api/claude-cli.ts` on Vercel,
+  `docs/CLAUDE_CLI_GATEWAY.md`), which opens files from this project's storage:
+  with `CLAUDE_CLI_GATEWAY_FILES=1` a scan or a photo goes as where it is stored
+  and is read as the pages look (§38 of the notices positions). Without the gateway
   secrets the API key is used for everything (`NOTICE_AI_BACKEND=api` forces it).
   Calls through the gateway bill no tokens, so the dollar caps only bind API calls.
   pg_cron (`notice-ai-tick`, every 2 minutes) wakes it; one run at a time holds a
