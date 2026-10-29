@@ -104,8 +104,10 @@ export * as TL from './src/utils/taxLiabilityReports';
 export * as PAN from './src/utils/panReports';
 export * as X from './src/utils/extraPortalReports';
 export * as INT from './src/utils/interestScrutinyReports';
+export * as B from './src/lib/gstr1/b2csaBaseline';
+export * as SUM from './src/utils/buildGstr1Summary';
 `);
-const { G, O, A, R, S, D, G3, TL, PAN, X, INT } = M;
+const { G, O, A, R, S, D, G3, TL, PAN, X, INT, B, SUM } = M;
 
 const ZERO_RCM = { taxable: 0, igst: 0, cgst: 0, sgst: 0 };
 const draft = (gstr1Raw, extra = {}) => G.buildGstr3bJson({
@@ -300,7 +302,7 @@ await run('amendments', async () => {
     b2cla: [{ pos: '29', inv: [{ oinum: 'L-0', oidt: '01-08-2026', inum: 'L-0', idt: '01-08-2026', val: 236000, itms: [itm({ txval: 200000, iamt: 36000 })] }] }],
     cdnura: [{ typ: 'EXPWP', ntty: 'C', ont_num: 'CN-E9', ont_dt: '01-08-2026', nt_num: 'CN-E9', nt_dt: '01-08-2026', val: 118, pos: '96', itms: [itm({ txval: 100, iamt: 18 })] }],
     b2csa: [
-      // A restated month: flagged, not folded.
+      // A restated month: counted at its difference (earlier month not in the app: nil).
       { omon: '082026', sply_ty: 'INTRA', typ: 'OE', pos: '24', itms: [{ rt: 18, txval: 9000, camt: 810, samt: 810 }] },
       // The Builder's re-rating: old rate reversed, the same value at the new rate. Folded.
       { omon: '072026', sply_ty: 'INTRA', typ: 'OE', pos: '24', itms: [{ rt: 1, txval: -50000, camt: -250, samt: -250 }, { rt: 5, txval: 50000, camt: 1250, samt: 1250 }] },
@@ -309,18 +311,41 @@ await run('amendments', async () => {
   };
   const res = draft(AMD);
   const sd = res.json.sup_details;
-  check(g, 'no amendment folded into 3.1(a) except the Table 10 re-rating difference (CGST, SGST +1,000 each)',
-    sameHeads(sd.osup_det, { txval: 100000, iamt: 18000, camt: 1000, samt: 1000 }), J(sd.osup_det));
+  check(g, 'no 9A / 9C amendment folded into 3.1(a); Table 10 in: the re-rating difference (+1,000) and the restatement against a nil month (+9,000, 810)',
+    sameHeads(sd.osup_det, { txval: 109000, iamt: 18000, camt: 1810, samt: 1810 }), J(sd.osup_det));
   check(g, 'nothing folded into 3.1(b)', sameHeads(sd.osup_zero, { txval: 0, iamt: 0 }), J(sd.osup_zero));
   const f = res.flags.find((x) => /amendments present/.test(x)) || '';
-  check(g, 'one flag names b2ba, b2cla, expa, cdnra, cdnura and the restated b2csa', ['b2ba', 'b2cla', 'expa', 'cdnra', 'cdnura', 'b2csa'].every((t) => f.includes(`(${t})`)), f || J(res.flags));
+  check(g, 'one flag names b2ba, b2cla, expa, cdnra, cdnura, and not b2csa', ['b2ba', 'b2cla', 'expa', 'cdnra', 'cdnura'].every((t) => f.includes(`(${t})`)) && !f.includes('(b2csa)'), f || J(res.flags));
+  const f10 = res.flags.find((x) => /Table 10 amendment counted/.test(x)) || '';
+  check(g, 'a Table 10 flag gives the difference and says the earlier month is not in the app',
+    /08\/2026 POS 24 at 18%: revised value ₹9000\.00, tax ₹1620\.00; 08\/2026's GSTR-1 is not in the app/.test(f10) && /difference value ₹9000\.00, tax ₹1620\.00/.test(f10), f10 || J(res.flags));
   check(g, '… each against its own row: b2ba value only (RCM) in 3.1(a); expa, cdnra (SEZ), cdnura (export) in 3.1(b)',
     /\(b2ba\): 1 document\(s\), 3\.1\(a\) value ₹136260\.00, tax ₹0\.00/.test(f) && /\(expa\): 1 document\(s\), 3\.1\(b\) value ₹1000\.00/.test(f)
     && /\(cdnra\): 1 document\(s\), 3\.1\(b\) value ₹-2000\.00/.test(f) && /\(cdnura\): 1 document\(s\), 3\.1\(b\) value ₹-100\.00/.test(f)
-    && /\(b2csa\): 1 document\(s\), 3\.1\(a\) value ₹9000\.00/.test(f), f);
+    , f);
   check(g, 'the Table 11(2) flag stays as it was', res.flags.some((x) => /Table 11\(2\) advance amendment present/.test(x)), J(res.flags));
   const out = typeof O.computeGstr1OutputTax === 'function' ? O.computeGstr1OutputTax(AMD, '09/2026') : null;
-  check(g, 'output tax: amendments add nothing, the re-rating difference adds its tax', out && near(out.igst, 18000) && near(out.cgst, 1000) && near(out.sgst, 1000), J(out));
+  check(g, 'output tax: 9A / 9C add nothing, Table 10 adds its differences', out && near(out.igst, 18000) && near(out.cgst, 1810) && near(out.sgst, 1810), J(out));
+
+  // The amended month known: only the difference counts; a later restatement is the earlier figure.
+  const T10 = { fp: '092026', b2csa: [{ omon: '032026', sply_ty: 'INTER', typ: 'OE', pos: '27', itms: [{ rt: 18, txval: 10000, iamt: 1800 }] },
+    { omon: '032026', sply_ty: 'INTRA', typ: 'OE', pos: '24', itms: [{ rt: 18, txval: 34835.59, camt: 3135.2, samt: 3135.2 }] }] };
+  const restated = (a) => !G.isB2csaDifference(a);
+  const known = B.buildB2csaBaselines(T10, {
+    '032026': { b2cs: [{ pos: '27', rt: 18, sply_ty: 'INTER', txval: 6000, iamt: 1080 }, { pos: '24', rt: 5, txval: 500, camt: 12.5, samt: 12.5 }] },
+    '062026': { b2csa: [{ omon: '032026', pos: '27', sply_ty: 'INTER', itms: [{ rt: 18, txval: 8000, iamt: 1440 }] }] },
+    '102026': { b2csa: [{ omon: '032026', pos: '27', sply_ty: 'INTER', itms: [{ rt: 18, txval: 1, iamt: 1 }] }] },
+  }, restated);
+  const k = draft(T10, { b2csaBaselines: known });
+  check(g, 'Table 10, month known: POS 27 counts revised 10,000 less the Jun-26 restatement 8,000 (not Mar-26 6,000, not a later month); POS 24 at 18% had nothing, so in full',
+    sameHeads(k.json.sup_details.osup_det, { txval: 2000 + 34835.59, iamt: 360, camt: 3135.2, samt: 3135.2 }), J(k.json.sup_details.osup_det));
+  check(g, '… an inter-state Table 10 difference reaches 3.2 unregistered (POS 27, 2,000 / 360)',
+    k.json.inter_sup.unreg_details.length === 1 && k.json.inter_sup.unreg_details[0].pos === '27' && sameHeads(k.json.inter_sup.unreg_details[0], { txval: 2000, iamt: 360 }), J(k.json.inter_sup.unreg_details));
+  check(g, '… the flag names the source of the earlier figure', (k.flags.find((x) => /Table 10 amendment counted/.test(x)) || '').includes('Table 10 in GSTR-1 06/2026'), J(k.flags));
+  const sum = SUM.buildGstr1Summary(T10, { b2csaBaselines: known });
+  check(g, 'GSTR-1 summary total = the draft 3.1(a) with Table 10 at its difference', near(sum.totals.value, 36835.59) && near(sum.totals.igst, 360) && near(sum.totals.cgst, 3135.2) && sum.b2csaDifferences.length === 2 && !sum.amendmentsLeftOut.length, J([sum.totals, sum.b2csaDifferences.length]));
+  const filedSum = SUM.buildGstr1Summary(T10, { filed: true, b2csaBaselines: known });
+  check(g, '… a filed GSTR-1 keeps its old total, without Table 10', near(filedSum.totals.value, 0) && near(filedSum.totals.cgst, 0) && !filedSum.b2csaDifferences.length, J(filedSum.totals));
 });
 
 // ── 5. Output tax: computeGstr1OutputTax, credit closing, GST receivable reco ──

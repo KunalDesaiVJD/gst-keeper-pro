@@ -4,7 +4,8 @@
 // dialog so both compute the return the exact same way.
 
 import { supabase } from '@/integrations/supabase/client';
-import { buildGstr3bJson, type Gstr3bAdjustment, type Gstr3bItcTyped, type Gstr3bResult, type ItcData, type ItcRow, type RcmTotals } from './buildGstr3bJson';
+import { loadB2csaBaselines } from '@/lib/gstr1/loadB2csaBaselines';
+import { buildGstr3bJson, isB2csaDifference, type Gstr3bAdjustment, type Gstr3bItcTyped, type Gstr3bResult, type ItcData, type ItcRow, type RcmTotals } from './buildGstr3bJson';
 import { fetchItcAutoLinkTotals } from '@/lib/itcAutoLink';
 import { with4D1Total } from '@/lib/itc4D';
 import { headsTyped } from '@/lib/itcHeads';
@@ -171,8 +172,13 @@ export async function fetchGstr3b(
 
   const clientRow = clientRes.data as { builder_itc_type: string | null; commercial_area: number | null; residential_area: number | null } | null;
 
+  // Table 10 amendments count at their difference from what the amended
+  // month last reported (docs/GSTR3B_OUTWARD_POSITIONS.md, position 12).
+  const gstr1Raw = (g.data as any)?.raw_json ?? null;
+  const b2csaBaselines = await loadB2csaBaselines(clientId, gstr1Raw, (a) => !isB2csaDifference(a)).catch(() => ({}));
+
   const built = buildGstr3bJson({
-    gstin, periodMonth, gstr1Raw: (g.data as any)?.raw_json ?? null, itc, rcm, adjustments, alreadyFiled,
+    gstin, periodMonth, gstr1Raw, itc, rcm, adjustments, alreadyFiled, b2csaBaselines,
     builderItcType: clientRow?.builder_itc_type ?? null,
     commercialArea: clientRow?.commercial_area ?? null,
     residentialArea: clientRow?.residential_area ?? null,

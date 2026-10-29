@@ -12,6 +12,9 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { buildGstr1Summary, gstr1TotalLabel } from '@/utils/buildGstr1Summary';
+import { isB2csaDifference } from '@/utils/buildGstr3bJson';
+import type { B2csaBaselines } from '@/lib/gstr1/b2csaBaseline';
+import { loadB2csaBaselines } from '@/lib/gstr1/loadB2csaBaselines';
 import { exportGstr1SummaryToPDF } from '@/utils/gstr1SummaryPdf';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { ChangeHistoryButton } from '@/components/history/ChangeHistoryButton';
@@ -2168,7 +2171,20 @@ const GSTR1DataPage: React.FC = () => {
   // Consolidated summary + section tile counts, derived entirely from the
   // imported JSON (see buildGstr1Summary). Drives both the tile grid and the
   // "Generate Summary" dialog.
-  const summary = useMemo(() => buildGstr1Summary(json, { filed: isFiled }), [json, isFiled]);
+  // Table 10 amendments count at their difference from what the amended month
+  // last reported (loadB2csaBaselines); loaded only when the JSON has one.
+  const [b2csaBaselines, setB2csaBaselines] = useState<B2csaBaselines>({});
+  useEffect(() => {
+    let live = true;
+    setB2csaBaselines({});
+    if (selectedClient) {
+      loadB2csaBaselines(selectedClient, gstr1Data?.raw_json, (a) => !isB2csaDifference(a))
+        .then((b) => { if (live) setB2csaBaselines(b); })
+        .catch(() => { /* none loaded: the earlier figure counts as nil and the summary says so */ });
+    }
+    return () => { live = false; };
+  }, [selectedClient, gstr1Data?.raw_json]);
+  const summary = useMemo(() => buildGstr1Summary(json, { filed: isFiled, b2csaBaselines }), [json, isFiled, b2csaBaselines]);
 
   // Portal-style document counts keyed by tab id, so the tab badges show the
   // same figure as the tiles and the summary (documents/invoices/notes) instead
@@ -4250,6 +4266,24 @@ const GSTR1DataPage: React.FC = () => {
               </tfoot>
             </table>
           </div>
+          {summary.b2csaDifferences.length > 0 && (
+            <Note tone="info" open>
+              <span className="font-medium">Table 10 amendments are in the total liability (and GSTR-3B 3.1(a)) at their difference:</span>
+              {summary.b2csaDifferences.map((d) => {
+                const m = `${d.omon.slice(0, 2)}/${d.omon.slice(2)}`;
+                const tax = (h: typeof d.diff) => h.iamt + h.camt + h.samt + h.csamt;
+                return (
+                  <span key={`${d.omon}-${d.pos}-${d.rt}`} className="block">
+                    {m}, POS {d.pos}, {d.rt}%: revised value ₹{fmt2(d.revised.txval)}, tax ₹{fmt2(tax(d.revised))} less{' '}
+                    {d.known
+                      ? <>earlier value ₹{fmt2(d.earlier.txval)}, tax ₹{fmt2(tax(d.earlier))} ({d.source})</>
+                      : <>nil ({m}&apos;s GSTR-1 is not in the app; pull or import it if it reported a figure here)</>}
+                    {' '}= value ₹{fmt2(d.diff.txval)}, tax ₹{fmt2(tax(d.diff))}
+                  </span>
+                );
+              })}
+            </Note>
+          )}
           {summary.amendmentsLeftOut.length > 0 && (
             <Note tone="warn" open>
               <span className="font-medium">Amendments are not in the total liability, nor in GSTR-3B 3.1:</span>
@@ -4261,8 +4295,7 @@ const GSTR1DataPage: React.FC = () => {
               ))}
               <span className="block mt-1">
                 An amendment restates an earlier month, so only its difference from what that month reported is this month's
-                liability: enter it in GSTR-3B Adjustments (source &apos;Prior Period&apos;). If the supply is really this month&apos;s,
-                it belongs in its own table (e.g. Table 7, not Table 10): correct it on the portal and import again.
+                liability: enter it in GSTR-3B Adjustments (source &apos;Prior Period&apos;).
               </span>
             </Note>
           )}
@@ -4271,7 +4304,7 @@ const GSTR1DataPage: React.FC = () => {
             than a detail tab's row count when one document has multiple tax rates. 9B notes are shown net
             (Debit − Credit), so credit notes reduce the value. Total liability is what flows to GSTR-3B
             3.1(a) + 3.1(b): reverse charge supplies (4B) count at value only (the tax is the recipient's),
-            11B adjustment of advances is deducted, and amendments (9A, 9C, 10, 11(2)) are not added; Table 8
+            11B adjustment of advances is deducted, Table 10 amendments count at their difference, and 9A, 9C and 11(2) amendments are not added; Table 8
             goes to 3.1(c) / (e).{summary.totalBasis === 'legacy' && ' This GSTR-1 is Filed, so its total is shown as it always was (sum of the sections).'}
           </Note>
         </DialogContent>

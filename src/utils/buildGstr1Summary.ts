@@ -5,7 +5,8 @@
 // checked against the portal's system-generated GSTR-1 PDF.
 
 import { noteSign as sharedNoteSign } from '@/lib/gstr1/supplyKind';
-import { gstr1AmendmentsLeftOut, gstr1OutwardTotal } from './buildGstr3bJson';
+import { gstr1AmendmentsLeftOut, gstr1B2csaDifferences, gstr1OutwardTotal, type B2csaDifference } from './buildGstr3bJson';
+import type { B2csaBaselines } from '@/lib/gstr1/b2csaBaseline';
 
 const num = (v: unknown): number => {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
@@ -47,6 +48,8 @@ export interface Gstr1Summary {
    * the page can say why a month whose supplies sit only there shows nil.
    */
   amendmentsLeftOut: { label: string; docs: number; value: number; tax: number; periods: string[] }[];
+  /** Table 10 restatements, each counted in the total at its difference (revised less earlier). */
+  b2csaDifferences: B2csaDifference[];
   /**
    * Table 11(2) — amendments restating an EARLIER period's Table 11A / 11B.
    * Deliberately kept out of `totals`: an amendment states the revised figure
@@ -145,7 +148,7 @@ export const gstr1TotalLabel = (basis: Gstr1Summary['totalBasis']): string =>
  * pre-29 Oct 2026 sum of sections, so nothing about a filed return moves
  * (the firm, 29 Oct 2026); every other month gets the GSTR-3B figure.
  */
-export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gstr1Summary {
+export function buildGstr1Summary(json: any, opts: { filed?: boolean; b2csaBaselines?: B2csaBaselines } = {}): Gstr1Summary {
   const j = json || {};
 
   const s4A = acc(), s4B = acc(), s5 = acc(), s6A = acc(), s6B = acc(), s6C = acc();
@@ -379,8 +382,9 @@ export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gs
   // the 3B draft's own code (gstr1OutwardTotal), so the two always agree.
   // Table 4B counts at value only (the tax is the recipient's, and so for
   // notes on reverse charge invoices); 11B is deducted, not ignored; a Table
-  // 10 re-rating difference is in; amendments restating an earlier month (9A,
-  // 9C, 11(2), a restated Table 10) are not. Table 8 is 3.1(c) / (e), and HSN
+  // 10 entry counts at its difference, revised less what the amended month
+  // last reported at that POS and rate (opts.b2csaBaselines; a month not in
+  // the app as nil); amendments of 9A, 9C and 11(2) are not in it. Table 8 is 3.1(c) / (e), and HSN
   // and documents are memos, so none of them is in it.
   // Before 29 Oct 2026 this added the tax of every section including 4B and
   // left 11B out, which overstated the liability against the 3B draft.
@@ -393,7 +397,7 @@ export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gs
         (t, a) => ({ value: t.value + a.value, igst: t.igst + a.igst, cgst: t.cgst + a.cgst, sgst: t.sgst + a.sgst, cess: t.cess + a.cess }),
         { value: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 },
       )
-    : gstr1OutwardTotal(j);
+    : gstr1OutwardTotal(j, opts.b2csaBaselines || {});
 
   const b2bAll = acc();
   [s4A, s4B, s6B, s6C].forEach((a) => { b2bAll.count += a.count; b2bAll.value += a.value; });
@@ -433,7 +437,7 @@ export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gs
   };
   const tableOmons: Record<string, string[]> = {
     b2ba: omons(j.b2ba, 'inv'), b2cla: omons(j.b2cla, 'inv'), expa: omons(j.expa, 'inv'),
-    cdnra: omons(j.cdnra, 'nt'), cdnura: omons(j.cdnura), b2csa: omons(j.b2csa),
+    cdnra: omons(j.cdnra, 'nt'), cdnura: omons(j.cdnura),
   };
   const amendmentsLeftOut: Gstr1Summary['amendmentsLeftOut'] = gstr1AmendmentsLeftOut(j).map((a) => ({
     label: a.label,
@@ -447,5 +451,8 @@ export function buildGstr1Summary(json: any, opts: { filed?: boolean } = {}): Gs
       if (a.count) amendmentsLeftOut.push({ label, docs: a.count, value: a.value, tax: a.igst + a.cgst + a.sgst + a.cess, periods: omons(rows as any[]) });
     });
 
-  return { sections, tiles, totals, totalBasis, amendmentsLeftOut, amendmentTotals };
+  // A filed GSTR-1 keeps its old total, which never counted Table 10.
+  const b2csaDifferences = opts.filed ? [] : gstr1B2csaDifferences(j, opts.b2csaBaselines || {});
+
+  return { sections, tiles, totals, totalBasis, amendmentsLeftOut, b2csaDifferences, amendmentTotals };
 }

@@ -53,7 +53,7 @@ Form GSTR-3B, s.16 IGST Act:
    3.1(b) has no such columns.
 5. **Amendments restate, they are not a difference.** 9A (b2ba, b2cla, expa),
    9C (cdnra, cdnura), 11(2) (ata, txpda) and a restated Table 10 (b2csa) are
-   never folded into 3.1. Each raises a flag naming the table, the count and
+   never folded into 3.1 (Table 10: see position 12). Each raises a flag naming the table, the count and
    what it restates, against its own row (SEZ and export amendments 3.1(b), the
    rest 3.1(a)). The difference is entered in GSTR-3B Adjustments (source
    'Prior Period'), as in `docs/ADVANCE_SETOFF_POSITIONS.md` §7.2. The live
@@ -97,6 +97,22 @@ Form GSTR-3B, s.16 IGST Act:
     label (`buildGstr1Summary(json, { filed })`, `totalBasis: 'legacy'`), so
     nothing about a filed month moves (the firm, 29 Oct 2026). The GSTR-3B
     draft itself was not changed by this, filed or not.
+
+12. **A Table 10 restatement counts at its difference** (29 Oct 2026, the
+    firm). A b2csa entry amending an earlier month's Table 7 adds to this
+    month's 3.1(a) (and 3.2 when inter-state) the revised figure less what
+    that month last reported at the same place of supply and rate: the latest
+    Table 10 restatement of it in a GSTR-1 between the two months, else that
+    month's own Table 7 (`src/lib/gstr1/b2csaBaseline.ts`, read by
+    `loadB2csaBaselines.ts` from `gst_filed_returns` GSTR1 first, else
+    `gstr1_data`). A month whose GSTR-1 is not in the app counts as nil, and
+    the draft and the GSTR-1 summary say so, naming the month. This replaces
+    position 5 for Table 10 only; 9A, 9C and 11(2) are still flagged. Live
+    case: a royalty of ₹34,835.59 amending Mar-26 in a Sep-26 GSTR-1, which
+    had shown a nil total and a nil 3.1(a). Only that GSTR-1 of the 141 stored
+    carries a b2csa block, so no filed month moves; a filed GSTR-1's summary
+    keeps its old total in any case (position 11). The GST receivable reco's
+    "ITC utilised" reads the same baselines, so it equals the draft.
 
 ## 3. No cut-over date
 

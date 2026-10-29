@@ -18,6 +18,7 @@
 import { computePartialItcSplit } from './builderPartialItc';
 import { reclaimed4D1 } from '@/lib/itc4D';
 import { b2bRow, cdnurRow, isUin, noteSign, type Outward31Row } from '@/lib/gstr1/supplyKind';
+import { b2csKey, b2csaLines, type B2csaBaselines } from '@/lib/gstr1/b2csaBaseline';
 
 export interface ItcRow { srNo: string; igst: number; cgst: number; sgst: number; particular?: string }
 export interface ItcData { section4A: ItcRow[]; section4B: ItcRow[]; section4D: ItcRow[] }
@@ -46,6 +47,9 @@ export interface Gstr3bInput {
   itc: ItcData | null;    // itc_summaries.data
   rcm: RcmTotals;         // RCM liability/ITC totals for the period
   adjustments?: Gstr3bAdjustment[]; // GSTR-3B Adjustments module rows for this period
+  // What the months that this GSTR-1's Table 10 entries amend last reported
+  // (loadB2csaBaselines). Missing month: taken as nil, and flagged.
+  b2csaBaselines?: B2csaBaselines;
   // Whether this client's GSTR-3B (or GSTR-3B (Q)) for periodMonth is already
   // Filed. Required (not defaulted) so every caller makes an explicit choice —
   // see RCM_RCHRG_FIX_FROM below for why this matters.
@@ -203,7 +207,6 @@ const addExp = (rows: unknown, pick: Pick31) => list(rows).forEach((e) => list(e
 
 // Table 10 (b2csa) rate lines: under itms[] in the portal's shape
 // (Builder's), flat in older files.
-const b2csaLines = (a: Gj): Gj[] => (Array.isArray(a.itms) && a.itms.length ? a.itms : [a]);
 // A Table 10 entry that reverses a rate and re-reports the same value at
 // another (a line below zero, the lines netting to nil value) states the
 // DIFFERENCE, not the revised month: the Builder's re-rating
@@ -212,7 +215,7 @@ const b2csaLines = (a: Gj): Gj[] => (Array.isArray(a.itms) && a.itms.length ? a.
 // Any other entry restates the earlier month in full, like every other
 // amendment, and is flagged, never folded (docs/ADVANCE_SETOFF_POSITIONS.md
 // §7.2): adding a restated figure would overstate 3.1(a).
-const isB2csaDifference = (a: Gj): boolean => {
+export const isB2csaDifference = (a: Gj): boolean => {
   const lines = b2csaLines(a);
   const net = lines.reduce((t, l) => t + num(l.txval), 0);
   return lines.some((l) => num(l.txval) < 0) && Math.abs(net) < 0.005;
@@ -226,15 +229,53 @@ const AMENDMENT_TABLES: { table: string; label: string }[] = [
   { table: 'expa', label: 'Table 9A exports (expa)' },
   { table: 'cdnra', label: 'Table 9C registered credit / debit notes (cdnra)' },
   { table: 'cdnura', label: 'Table 9C unregistered credit / debit notes (cdnura)' },
-  { table: 'b2csa', label: 'Table 10 B2C small, restated (b2csa)' },
 ];
 
-function computeOutward(g: Gj | null, periodMonth: string, alreadyFiled: boolean) {
+/**
+ * A Table 10 entry restating an earlier month, counted at its difference:
+ * revised less what that month last reported at the same place of supply and
+ * rate (position 12). `known` false: the earlier month's GSTR-1 is not in the
+ * app, so its figure was taken as nil.
+ */
+export interface B2csaDifference {
+  omon: string; pos: string; rt: number; splyTy: string;
+  revised: Heads; earlier: Heads; diff: Heads;
+  known: boolean; source: string;
+}
+
+/** The difference of every restated Table 10 line, by (amended month, POS, rate). */
+function b2csaDifferences(g: Gj | null, baselines: B2csaBaselines): B2csaDifference[] {
+  const by = new Map<string, B2csaDifference>();
+  list(g?.b2csa).filter((a) => !isB2csaDifference(a)).forEach((a) => {
+    const omon = String(a.omon || '').trim();
+    b2csaLines(a).forEach((l) => {
+      const k = `${omon}#${b2csKey(a.pos, l.rt)}`;
+      let d = by.get(k);
+      if (!d) {
+        const base = baselines[omon] ?? null;
+        const e = base?.byKey[b2csKey(a.pos, l.rt)];
+        d = {
+          omon, pos: String(a.pos ?? '').trim(), rt: num(l.rt), splyTy: String(a.sply_ty || '').toUpperCase(),
+          revised: heads(), earlier: { txval: num(e?.txval), iamt: num(e?.iamt), camt: num(e?.camt), samt: num(e?.samt), csamt: num(e?.csamt) },
+          diff: heads(), known: !!base, source: base?.source || '',
+        };
+        by.set(k, d);
+      }
+      addLine(d.revised, l, 1, false);
+    });
+  });
+  const out = [...by.values()];
+  out.forEach((d) => (Object.keys(d.diff) as (keyof Heads)[]).forEach((h) => { d.diff[h] = r2(d.revised[h] - d.earlier[h]); }));
+  return out;
+}
+
+function computeOutward(g: Gj | null, periodMonth: string, alreadyFiled: boolean, baselines: B2csaBaselines = {}) {
   const det = heads();  // 3.1(a)
   const zero = heads(); // 3.1(b)
   let nilExempt = 0;    // 3.1(c) txval
   let nonGst = 0;       // 3.1(e) txval
   const amendments: Gstr1AmendmentSum[] = [];
+  const b2csaDiffs = b2csaDifferences(g, baselines);
 
   const rcmFix = periodSortKey(periodMonth) >= RCM_RCHRG_FIX_FROM || !alreadyFiled;
   const into: Pick31 = (r) => (r === '3.1(b)' ? zero : det);
@@ -248,6 +289,10 @@ function computeOutward(g: Gj | null, periodMonth: string, alreadyFiled: boolean
     // Table 10: a re-rating difference is folded; a restated month is
     // flagged with the other amendments below.
     list(g.b2csa).filter(isB2csaDifference).forEach((a) => b2csaLines(a).forEach((i) => addLine(det, i, 1, false)));
+    // A restated month counts at its difference, revised less what that month
+    // last reported (position 12): the tax a Table 10 amendment adds is due
+    // in this month's 3B, and leaving it out left 3.1(a) short.
+    b2csaDiffs.forEach((d) => addLine(det, d.diff, 1, false));
     // Advances. The advance amount IS the value being offered to tax when the
     // supply is a service — construction is, so Notification 66/2017 does not
     // apply and tax falls due on receipt. Carrying only the tax and not the
@@ -296,11 +341,6 @@ function computeOutward(g: Gj | null, periodMonth: string, alreadyFiled: boolean
       if (table === 'expa') { addExp(rows, pick); s.docs = rows.reduce((n, p) => n + list(p.inv).length, 0); }
       if (table === 'cdnra') { addCdnr(rows, pick, rcmFix); s.docs = rows.reduce((n, p) => n + list(p.nt).length, 0); }
       if (table === 'cdnura') { addCdnur(rows, pick, rcmFix); s.docs = rows.length; }
-      if (table === 'b2csa') {
-        const restated = rows.filter((a) => !isB2csaDifference(a));
-        restated.forEach((a) => b2csaLines(a).forEach((i) => addLine(s.a, i, 1, false)));
-        s.docs = restated.length;
-      }
       if (s.docs) amendments.push(s);
     });
     // Nil / exempt / non-GST.
@@ -320,6 +360,7 @@ function computeOutward(g: Gj | null, periodMonth: string, alreadyFiled: boolean
     nilExempt: r2(nilExempt),
     nonGst: r2(nonGst),
     amendments,
+    b2csaDiffs,
   };
 }
 
@@ -331,9 +372,9 @@ function computeOutward(g: Gj | null, periodMonth: string, alreadyFiled: boolean
  * "Total liability" is this figure, so the summary and the 3B draft cannot
  * differ (they did: the summary added 4B tax and never deducted 11B).
  */
-export function gstr1OutwardTotal(gstr1Raw: unknown): { value: number; igst: number; cgst: number; sgst: number; cess: number } {
+export function gstr1OutwardTotal(gstr1Raw: unknown, baselines: B2csaBaselines = {}): { value: number; igst: number; cgst: number; sgst: number; cess: number } {
   const g = gstr1Raw && typeof gstr1Raw === 'object' ? (gstr1Raw as Gj) : null;
-  const out = computeOutward(g, '', false);
+  const out = computeOutward(g, '', false, baselines);
   return {
     value: r2(out.det.txval + out.zero.txval),
     igst: r2(out.det.iamt + out.zero.iamt),
@@ -354,6 +395,12 @@ export function gstr1AmendmentsLeftOut(gstr1Raw: unknown): Gstr1AmendmentSum[] {
   return computeOutward(g, '', false).amendments;
 }
 
+/** The Table 10 restatements counted at their difference (position 12). */
+export function gstr1B2csaDifferences(gstr1Raw: unknown, baselines: B2csaBaselines = {}): B2csaDifference[] {
+  const g = gstr1Raw && typeof gstr1Raw === 'object' ? (gstr1Raw as Gj) : null;
+  return b2csaDifferences(g, baselines);
+}
+
 /**
  * Output tax of a month's GSTR-1: the tax of Table 3.1(a) and 3.1(b), which
  * GSTR-3B sets off against ITC or cash. 3.1(b) holds the IGST on exports and
@@ -362,9 +409,9 @@ export function gstr1AmendmentsLeftOut(gstr1Raw: unknown): Gstr1AmendmentSum[] {
  * Shared by the GST receivable reco and the credit closing report
  * (computeGstr1OutputTax), so their "ITC utilised" is the draft's own figure.
  */
-export function gstr1OutputTax(gstr1Raw: unknown, periodMonth: string, alreadyFiled: boolean): TaxHead {
+export function gstr1OutputTax(gstr1Raw: unknown, periodMonth: string, alreadyFiled: boolean, baselines: B2csaBaselines = {}): TaxHead {
   const g = gstr1Raw && typeof gstr1Raw === 'object' ? (gstr1Raw as Gj) : null;
-  const out = computeOutward(g, periodMonth, alreadyFiled);
+  const out = computeOutward(g, periodMonth, alreadyFiled, baselines);
   return round3({ igst: out.det.iamt + out.zero.iamt, cgst: out.det.camt, sgst: out.det.samt });
 }
 
@@ -378,7 +425,7 @@ export function gstr1OutputTax(gstr1Raw: unknown, periodMonth: string, alreadyFi
 //     empty. The portal fills that row itself from GSTR-1 (TISHA 10/2025
 //     filed comp_details it computed), so no flag is raised for it.
 interface PosRow { pos: string; txval: number; iamt: number }
-function computeInterSup(g: Gj | null, homeState: string) {
+function computeInterSup(g: Gj | null, homeState: string, b2csaDiffs: B2csaDifference[] = []) {
   const make = () => {
     const byPos: Record<string, { txval: number; iamt: number }> = {};
     const bump = (pos: unknown, d: Gj, sign = 1) => {
@@ -407,6 +454,7 @@ function computeInterSup(g: Gj | null, homeState: string) {
     list(g.b2csa).filter(isB2csaDifference).forEach((a) => {
       if (String(a.sply_ty || '').toUpperCase() === 'INTER') b2csaLines(a).forEach((i) => unreg.bump(a.pos, i));
     });
+    b2csaDiffs.forEach((d) => { if (d.splyTy === 'INTER') unreg.bump(d.pos, d.diff); });
     list(g.b2b).forEach((p) => list(p.inv).forEach((inv) => {
       if (b2bRow(inv) !== '3.1(a)') return; // SEZ: zero rated
       const lines = list(inv.itms).map((i) => i.itm_det || {});
@@ -433,7 +481,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   if (!g) flags.push('No GSTR-1 data — outward (Table 3.1 a/b/c/e, 3.2) is all zero.');
   if (!itc) flags.push('No ITC Summary — Table 4 (ITC) is all zero.');
 
-  const out = computeOutward(g, input.periodMonth, input.alreadyFiled);
+  const out = computeOutward(g, input.periodMonth, input.alreadyFiled, input.b2csaBaselines || {});
 
   // Table 11(2) advance amendments restate an earlier period and are never
   // auto-included in 3.1(a) (see computeOutward). Surface them loudly so the
@@ -489,6 +537,21 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
       'An amended B2C large or small supply that is inter-state also changes Table 3.2 on the portal.'
     );
   }
+  if (out.b2csaDiffs.length) {
+    const money = (n: number) => `₹${n.toFixed(2)}`;
+    const tax = (h: Heads) => r2(h.iamt + h.camt + h.samt + h.csamt);
+    const parts = out.b2csaDiffs.map((d) => {
+      const m = `${d.omon.slice(0, 2)}/${d.omon.slice(2)}`;
+      const earlier = d.known
+        ? `${m} last reported value ${money(d.earlier.txval)}, tax ${money(tax(d.earlier))} (${d.source})`
+        : `${m}'s GSTR-1 is not in the app, so its figure is taken as nil`;
+      return `${m} POS ${d.pos} at ${d.rt}%: revised value ${money(d.revised.txval)}, tax ${money(tax(d.revised))}; ${earlier}; difference value ${money(d.diff.txval)}, tax ${money(tax(d.diff))}`;
+    });
+    flags.push(
+      `GSTR-1 Table 10 amendment counted in Table 3.1(a) at its difference: ${parts.join('. ')}.` +
+      (out.b2csaDiffs.some((d) => !d.known) ? ' If that month did report a figure at this place of supply and rate, pull or import its GSTR-1 so it is taken off.' : '')
+    );
+  }
   if (out.zeroLocalTax) {
     flags.push(
       `A zero rated document (export or SEZ) carries CGST / SGST of ₹${out.zeroLocalTax.toFixed(2)}. ` +
@@ -499,7 +562,7 @@ export function buildGstr3bJson(input: Gstr3bInput): Gstr3bResult {
   // Table 3.2, by place of supply (computeInterSup). The supplier's state is
   // the first two digits of its GSTIN.
   const homeState = /^\d{2}/.test(input.gstin || '') ? input.gstin.slice(0, 2) : '';
-  const inter = computeInterSup(g, homeState);
+  const inter = computeInterSup(g, homeState, out.b2csaDiffs);
 
   // ---- GSTR-3B Adjustments module — fold mapped rows into the relevant
   // Table 3.1 / Table 4 bucket before anything downstream (totalLiability,
