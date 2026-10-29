@@ -16,7 +16,7 @@ import { apiCaller, makeClaudeClient, scrub, type Caller } from '../notice-ai/cl
 import { cliCaller, cliWithApiForScans } from '../notice-ai/cli.ts';
 import { beginAppeal, type AppealDeps } from './appeal.ts';
 
-export const VERSION = 'notice-appeal-ai 1.2.0';
+export const VERSION = 'notice-appeal-ai 1.3.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -32,7 +32,7 @@ function caller(env: (k: string) => string | undefined = (k) => Deno.env.get(k))
   const url = (env('CLAUDE_CLI_GATEWAY_URL') ?? '').trim();
   const secret = env('CLAUDE_CLI_GATEWAY_SECRET') ?? '';
   if ((env('NOTICE_AI_BACKEND') ?? '').trim().toLowerCase() === 'api' || !url || !secret) return api;
-  return cliWithApiForScans(cliCaller({ url, secret }), api);
+  return cliWithApiForScans(cliCaller({ url, secret, files: (env('CLAUDE_CLI_GATEWAY_FILES') ?? '').trim() === '1' }), api);
 }
 
 function deps(): AppealDeps {

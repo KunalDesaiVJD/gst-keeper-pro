@@ -7,7 +7,9 @@
 import { AI_EFFORT, AI_MODEL } from '../_shared/aiModel.ts';
 import { scrub, type CallRequest, type CallUsage, type Caller } from './claude.ts';
 import { buildDocResult, DOC_OUTPUT_SCHEMA, DOC_SYSTEM_PROMPT, docUserText, type DocumentClaim } from './documents.ts';
-import { DocumentError, documentUrlAllowed, downloadPdf, pagesAsText, readPdfText, toBase64, type PdfText } from './pdf.ts';
+import { gstinDoubts } from './gstin.ts';
+import { DocumentError, documentUrlAllowed, downloadPdf, pagesAsText, readPdfText, toBase64, type Downloaded, type PdfText } from './pdf.ts';
+import { prepareScan, sweepStaging, type PreparedScan } from './scan.ts';
 import { SYSTEM_PROMPT, userText } from './reader/prompt.ts';
 import { buildResult, type ReaderClaim } from './reader/result.ts';
 import { coerceReading, OUTPUT_SCHEMA } from './reader/schema.ts';
@@ -26,7 +28,18 @@ export interface Deps {
   version: string;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  /** What is left of the run, in milliseconds (set by runTick). */
+  timeLeft?: () => number;
 }
+
+// A scan is read by the gateway opening the file (scan.ts), which takes 30 to
+// 90 seconds: it is started only with this much of the run left, else handed
+// back (its try not counted) for the next run to start with.
+export const SCAN_MIN_MS = 100_000;
+const scanTimeout = (deps: Deps) => Math.max(30_000, (deps.timeLeft?.() ?? 300_000) - 5_000);
+const hasTime = (deps: Deps) => (deps.timeLeft?.() ?? Infinity) >= SCAN_MIN_MS;
+/** A photo of a page has no pages to count and no text. */
+const imageText = (): PdfText => ({ pageCount: 1, pages: [], textLayer: false });
 
 // A job is started only with this much of the run left; the call is stopped when
 // the run is (and tried again in the next). Through the Claude CLI gateway a
@@ -40,7 +53,8 @@ export interface NoticeClaim extends ReaderClaim {
 }
 
 interface Finish {
-  status: 'done' | 'failed' | 'retry' | 'cancelled' | 'skipped';
+  // release: handed back to the queue, its try not counted (too little of the run left for a scan).
+  status: 'done' | 'failed' | 'retry' | 'cancelled' | 'skipped' | 'release';
   result?: Record<string, unknown> | null;
   usage?: CallUsage | null;
   error?: string | null;
@@ -97,10 +111,11 @@ const needsText = (deps: Deps) => !!deps.claude?.backend && deps.claude.backend 
 // ── A notice's own PDF: typed facts and issues (notice_read_finish) ────────
 export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: AbortSignal): Promise<Finish> {
   if (!claim.document_url) return { status: 'failed', reason: 'no_document', error: 'The notice has no PDF to read.' };
-  let doc: { bytes: Uint8Array; sha256: string };
+  const files = !!deps.claude?.files;
+  let doc: Downloaded;
   try {
     doc = await downloadPdf(claim.document_url, {
-      allow: (u) => documentUrlAllowed(u, deps.supabaseUrl), fetchImpl: deps.fetchImpl, signal, storageKey: deps.storageKey,
+      allow: (u) => documentUrlAllowed(u, deps.supabaseUrl), fetchImpl: deps.fetchImpl, signal, storageKey: deps.storageKey, allowImages: files,
     });
   } catch (e) {
     return fromDocumentError(e, null, 'The notice PDF');
@@ -114,40 +129,59 @@ export async function readNoticeJob(deps: Deps, claim: NoticeClaim, signal: Abor
   const base = { document_sha256: doc.sha256 };
   let text: PdfText;
   try {
-    text = await textOf(doc.bytes, claim.attempt ?? 1, claim.max_pages, needsText(deps));
+    text = doc.mediaType === 'application/pdf' ? await textOf(doc.bytes, claim.attempt ?? 1, claim.max_pages, needsText(deps)) : imageText();
   } catch (e) {
     return fromDocumentError(e, base, 'The notice PDF');
   }
-  if (text.pageCount && text.pageCount > claim.max_pages) {
+  // A scan or a photo goes to the gateway as where it is stored (scan.ts), a long one by its first and last pages.
+  const scan = files && !text.textLayer;
+  if (!scan && text.pageCount && text.pageCount > claim.max_pages) {
     return {
       status: 'failed', reason: 'too_long', result: { ...base, pages: text.pageCount },
       error: `The PDF has ${text.pageCount} pages; the reader reads at most ${claim.max_pages} (Settings).`,
     };
   }
-  const out = await deps.claude!({
-    model: AI_MODEL,
-    effort: AI_EFFORT,
-    system: SYSTEM_PROMPT,
-    content: [
-      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: toBase64(doc.bytes) } },
-      { type: 'text', text: userText(claim.issue_codes ?? []) },
-    ],
-    schema: OUTPUT_SCHEMA,
-    signal,
-    what: 'the notice',
-    pdfText: { pages: text.pages, textLayer: text.textLayer },
-  });
-  const meta = { ...base, pages: text.pageCount, text_layer: text.textLayer };
-  if (!out.ok) return { status: out.status, reason: out.reason, error: out.error, usage: out.usage, result: { ...meta, model: out.usage?.model ?? AI_MODEL }, pause: out.pause };
-  const result = buildResult(coerceReading(out.json), {
-    pages: text.pages, pageCount: text.pageCount ?? 0, textLayer: text.textLayer, sha256: doc.sha256,
-  }, claim, out.model);
-  return { status: 'done', result: result as unknown as Record<string, unknown>, usage: out.usage };
+  let prepared: PreparedScan | null = null;
+  if (scan) {
+    if (!hasTime(deps)) return { status: 'release', reason: 'needs_time' };
+    try {
+      prepared = await prepareScan(deps, claim.document_url, doc, text.pageCount);
+    } catch (e) {
+      return fromDocumentError(e, base, 'The notice PDF');
+    }
+  }
+  try {
+    const out = await deps.claude!({
+      model: AI_MODEL,
+      effort: AI_EFFORT,
+      system: SYSTEM_PROMPT,
+      content: [
+        ...(prepared ? [] : [{ type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data: toBase64(doc.bytes) } }]),
+        { type: 'text', text: userText(claim.issue_codes ?? []) },
+      ],
+      schema: OUTPUT_SCHEMA,
+      signal,
+      what: 'the notice',
+      pdfText: { pages: text.pages, textLayer: text.textLayer },
+      ...(prepared ? { file: prepared.file, timeoutMs: scanTimeout(deps) } : {}),
+    });
+    const meta = { ...base, pages: text.pageCount, text_layer: text.textLayer };
+    if (!out.ok) return { status: out.status, reason: out.reason, error: out.error, usage: out.usage, result: { ...meta, model: out.usage?.model ?? AI_MODEL }, pause: out.pause };
+    const result = buildResult(coerceReading(out.json), {
+      pages: text.pages, pageCount: text.pageCount ?? 0, textLayer: text.textLayer, sha256: doc.sha256,
+    }, claim, out.model);
+    const doubts = prepared ? gstinDoubts([JSON.stringify(result)]) : [];
+    return { status: 'done', result: result as unknown as Record<string, unknown>, usage: doubts.length ? { ...out.usage, doubts } : out.usage };
+  } finally {
+    await prepared?.cleanup();
+  }
 }
 
 // ── Any other document of a case (ai_document_finish) ──────────────────────
 export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: AbortSignal): Promise<Finish> {
   const attempt = claim.attempt ?? 1;
+  const files = !!deps.claude?.files;
+  let prepared: PreparedScan | null = null;
   type Block = CallRequest['content'][number];
   let content: Block[];
   let info: { pages: string[]; pageCount: number | null; textLayer: boolean; sha256: string | null };
@@ -160,10 +194,10 @@ export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: 
     ];
     info = { pages: [], pageCount: null, textLayer: false, sha256: null };
   } else {
-    let doc: { bytes: Uint8Array; sha256: string };
+    let doc: Downloaded;
     try {
       doc = await downloadPdf(claim.document_url, {
-        allow: (u) => documentUrlAllowed(u, deps.supabaseUrl), fetchImpl: deps.fetchImpl, signal, storageKey: deps.storageKey,
+        allow: (u) => documentUrlAllowed(u, deps.supabaseUrl), fetchImpl: deps.fetchImpl, signal, storageKey: deps.storageKey, allowImages: files,
       });
     } catch (e) {
       return fromDocumentError(e, null, 'The document');
@@ -175,37 +209,57 @@ export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: 
     if (seen?.duplicate || seen?.error) return { status: 'skipped', reason: 'duplicate' };
     let text: PdfText;
     try {
-      text = await textOf(doc.bytes, attempt, claim.max_pages, needsText(deps), true);
+      text = doc.mediaType === 'application/pdf' ? await textOf(doc.bytes, attempt, claim.max_pages, needsText(deps), true) : imageText();
     } catch (e) {
       return fromDocumentError(e, { document_sha256: doc.sha256 }, 'The document');
     }
-    // A long document is read in part, a partly scanned one through the CLI by
-    // its typed pages: both go as text, and their quotes are checked against it.
-    const asText = text.read || (deps.claude?.backend === 'cli' && !text.textLayer) ? pagesAsText(text) : null;
-    if (text.pageCount && text.pageCount > claim.max_pages && !asText) {
+    // A long typed document is read in part, as text. A scan, or a partly
+    // scanned one, goes to the gateway as where it is stored when it opens
+    // files (scan.ts, read as the pages look); without that, a partly scanned
+    // one goes through the CLI by its typed pages, as text. Text is checked
+    // against the quotes; a scan's reading is not.
+    let asText: string | null = null;
+    if (text.textLayer) asText = text.read ? pagesAsText(text) : null;
+    else if (!files && (text.read || deps.claude?.backend === 'cli')) asText = pagesAsText(text);
+    const scan = files && !text.textLayer;
+    if (!scan && text.pageCount && text.pageCount > claim.max_pages && !asText) {
       return {
         status: 'skipped', reason: 'too_long', result: { document_sha256: doc.sha256, pages: text.pageCount },
         error: `The PDF has ${text.pageCount} pages and no text layer to read in part; a scan is read up to ${claim.max_pages} pages (Settings).`,
       };
     }
+    if (scan) {
+      if (!hasTime(deps)) return { status: 'release', reason: 'needs_time' };
+      try {
+        prepared = await prepareScan(deps, claim.document_url, doc, text.pageCount);
+      } catch (e) {
+        return fromDocumentError(e, { document_sha256: doc.sha256 }, 'The document');
+      }
+    }
     content = [
-      asText
-        ? { type: 'text', text: asText }
-        : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: toBase64(doc.bytes) } },
+      ...(prepared ? [] : [asText
+        ? { type: 'text' as const, text: asText }
+        : { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data: toBase64(doc.bytes) } }]),
       { type: 'text', text: docUserText(claim) },
     ];
     info = { pages: text.pages, pageCount: text.pageCount, textLayer: text.textLayer || !!asText, sha256: doc.sha256 };
   }
-  const out = await deps.claude!({
-    model: AI_MODEL,
-    effort: AI_EFFORT,
-    system: DOC_SYSTEM_PROMPT,
-    content,
-    schema: DOC_OUTPUT_SCHEMA,
-    signal,
-    what: 'the document',
-    pdfText: { pages: info.pages, textLayer: info.textLayer },
-  });
+  let out: Awaited<ReturnType<Caller>>;
+  try {
+    out = await deps.claude!({
+      model: AI_MODEL,
+      effort: AI_EFFORT,
+      system: DOC_SYSTEM_PROMPT,
+      content,
+      schema: DOC_OUTPUT_SCHEMA,
+      signal,
+      what: 'the document',
+      pdfText: { pages: info.pages, textLayer: info.textLayer },
+      ...(prepared ? { file: prepared.file, timeoutMs: scanTimeout(deps) } : {}),
+    });
+  } finally {
+    await prepared?.cleanup();
+  }
   if (!out.ok) {
     return {
       status: out.status, reason: out.reason, error: out.error, usage: out.usage, pause: out.pause,
@@ -213,7 +267,8 @@ export async function readDocumentJob(deps: Deps, claim: DocumentClaim, signal: 
     };
   }
   const result = buildDocResult(out.json, info, claim, out.model);
-  return { status: 'done', result: result as unknown as Record<string, unknown>, usage: out.usage };
+  const doubts = prepared ? gstinDoubts([JSON.stringify(result)]) : [];
+  return { status: 'done', result: result as unknown as Record<string, unknown>, usage: doubts.length ? { ...out.usage, doubts } : out.usage };
 }
 
 // ── One run ────────────────────────────────────────────────────────────────
@@ -229,10 +284,12 @@ export async function runTick(deps: Deps, opts: { seconds?: number } = {}): Prom
   const seconds = opts.seconds ?? begin.seconds ?? 140;
   const deadline = started + seconds * 1000 - END_MARGIN_MS;
   const report: TickReport = { ran: true, jobs: [] };
+  deps = { ...deps, timeLeft: () => deadline - now() };
   let pause: string | undefined;
   let error: string | null = null;
   try {
     if (begin.sync_due) report.synced = await deps.db.rpc('ai_sync');
+    if (deps.claude?.files) await sweepStaging(deps);
     for (;;) {
       if (deadline - now() < MIN_JOB_MS) { report.stopped = 'time'; break; }
       const claim = await deps.db.rpc<Record<string, unknown> | null>('ai_claim_next', { p_agent: deps.agentId });
@@ -244,6 +301,13 @@ export async function runTick(deps: Deps, opts: { seconds?: number } = {}): Prom
         if (claim.kind === 'notice') {
           const c = claim as unknown as NoticeClaim;
           const f = await readNoticeJob(deps, c, ctl.signal);
+          // A scan with too little of the run left goes to the next run, which starts with it.
+          if (f.status === 'release') {
+            await deps.db.rpc('ai_job_release', { p_agent: deps.agentId, p_kind: 'notice', p_id: c.extraction_id });
+            report.jobs.push({ kind: 'notice', id: c.extraction_id, label: c.reference_number, status: 'released', reason: f.reason });
+            report.stopped = 'time';
+            break;
+          }
           if (f.pause) {
             pause = f.pause;
             await deps.db.rpc('ai_job_release', { p_agent: deps.agentId, p_kind: 'notice', p_id: c.extraction_id });
@@ -268,6 +332,12 @@ export async function runTick(deps: Deps, opts: { seconds?: number } = {}): Prom
         } else {
           const c = claim as unknown as DocumentClaim;
           const f = await readDocumentJob(deps, c, ctl.signal);
+          if (f.status === 'release') {
+            await deps.db.rpc('ai_job_release', { p_agent: deps.agentId, p_kind: 'document', p_id: c.document_id });
+            report.jobs.push({ kind: 'document', id: c.document_id, label: c.document_label, status: 'released', reason: f.reason });
+            report.stopped = 'time';
+            break;
+          }
           if (f.pause) {
             pause = f.pause;
             await deps.db.rpc('ai_job_release', { p_agent: deps.agentId, p_kind: 'document', p_id: c.document_id });

@@ -25,7 +25,7 @@ import { runAssist } from './assist.ts';
 import { runAdvise, runAdviseNext } from './advise.ts';
 import { runTick, type Db, type Deps } from './runner.ts';
 
-export const VERSION = 'notice-ai 1.6.0';
+export const VERSION = 'notice-ai 1.7.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -52,7 +52,7 @@ export function caller(env: (k: string) => string | undefined = (k) => Deno.env.
   const url = (env('CLAUDE_CLI_GATEWAY_URL') ?? '').trim();
   const secret = env('CLAUDE_CLI_GATEWAY_SECRET') ?? '';
   if ((env('NOTICE_AI_BACKEND') ?? '').trim().toLowerCase() === 'api' || !url || !secret) return api;
-  return cliWithApiForScans(cliCaller({ url, secret }), api);
+  return cliWithApiForScans(cliCaller({ url, secret, files: (env('CLAUDE_CLI_GATEWAY_FILES') ?? '').trim() === '1' }), api);
 }
 
 function deps(): Deps {
@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
   try {
     if (action === 'status') {
       const c = caller();
-      return json({ version: VERSION, key: !!c, backend: c?.backend ?? null });
+      return json({ version: VERSION, key: !!c, backend: c?.backend ?? null, files: !!c?.files });
     }
     if (action === 'tick') {
       const d = deps();

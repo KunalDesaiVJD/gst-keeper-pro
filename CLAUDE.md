@@ -305,7 +305,7 @@ Engagement letters (Reply Factory → Client consent, 28 Oct 2026, `202610281100
 case folder document (`ai_documents`, pg_cron `notice-ai-tick`), keeps reply ↔ paragraph
 pairs (`ai_learning_pairs`) that an admin chooses to learn from (Reply Factory → Learning),
 and drafts or improves replies on the notice page; off until `ai_settings.read_enabled`,
-reaches Claude through the firm's Claude CLI gateway (`CLAUDE_CLI_GATEWAY_URL` / `CLAUDE_CLI_GATEWAY_SECRET`, `cli.ts`), the API key only for scans or as fallback (§13 of the Reply Factory positions). Master filters
+reaches Claude through a Claude CLI gateway (`CLAUDE_CLI_GATEWAY_URL` / `CLAUDE_CLI_GATEWAY_SECRET`, `cli.ts`), the API key only for scans or as fallback (§13 of the Reply Factory positions); GST Keeper's own gateway is `api/claude-cli.ts` (Vercel Sandbox, files only from this project's `return-pdfs` / `ai-cli-temp`), and with `CLAUDE_CLI_GATEWAY_FILES=1` scans and photos go to it as storage references, a long scan staged in `ai-cli-temp` (notice-ai 1.7.0, `scan.ts`, `20261029100000`; read `docs/CLAUDE_CLI_GATEWAY.md` first). Master filters
 (client, FY, owner, form, priority) run on every list page via `src/lib/masterFilters.ts`
 and in `notices_command_centre(p_user_id, p_filters)`. Module pages use the panels in
 `src/components/notices/ui/Panel.tsx` (pairs of equal height, explanations behind (i)).

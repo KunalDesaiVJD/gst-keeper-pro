@@ -60,6 +60,11 @@ export interface CallUsage {
   estimated?: boolean;
   // The start and end of an answer that could not be read (cli.ts), to see why.
   raw_sample?: string;
+  // Read from a scan or a photo (the gateway opened the file itself): its
+  // quotes could not be checked against a text layer.
+  read_from?: 'scan';
+  // What a reading from a scan leaves for staff to confirm (a GSTIN whose check character fails).
+  doubts?: string[];
 }
 
 export type CallOutcome =
@@ -79,10 +84,27 @@ export interface CallRequest {
   // The PDF's own text, page by page, when the request carries a PDF: what the
   // Claude CLI gateway reads instead of the PDF (it takes text only).
   pdfText?: { pages: string[]; textLayer: boolean; read?: number[]; pageCount?: number | null };
+  // A scan or photo the gateway opens itself from this project's storage (scan.ts).
+  file?: FileRef;
+  // How long the call may take (a scan's read is given what is left of the run).
+  timeoutMs?: number;
+}
+
+/** A file of this project's storage for the gateway to open, and what to tell the model about it. */
+export interface FileRef {
+  bucket: string;
+  path: string;
+  filename: string;
+  mediaType: string;
+  note: string;
 }
 
 /** One way of asking Claude: the Claude API (callClaude) or the Claude CLI gateway (cli.ts). */
-export type Caller = ((req: CallRequest) => Promise<CallOutcome>) & { backend?: 'api' | 'cli' | 'cli+api' };
+export type Caller = ((req: CallRequest) => Promise<CallOutcome>) & {
+  backend?: 'api' | 'cli' | 'cli+api';
+  // The gateway opens files of this project's storage (GST Keeper's own, api/claude-cli.ts).
+  files?: boolean;
+};
 
 export function apiCaller(client: Anthropic): Caller {
   const c: Caller = (req) => callClaude(client, req);

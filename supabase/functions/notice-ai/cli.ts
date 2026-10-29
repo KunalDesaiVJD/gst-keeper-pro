@@ -1,18 +1,22 @@
-// The Claude CLI gateway: the firm's own server that runs the Claude command
-// line on the firm's Claude subscription, the same gateway the firm's other
-// Supabase project calls (its _shared/aiProvider.ts callClaudeCli). One POST
-// with a bearer secret:
-//   {system, parts: [{kind: "text", text}], model: "sonnet", effort: "medium", timeoutMs}
-// (always Sonnet at medium effort, ../_shared/aiModel.ts, whatever a request names)
-// answered {text, truncated?, model?} or {error}. No tokens are billed per call,
-// so the usage carries none. Secrets: CLAUDE_CLI_GATEWAY_URL and
-// CLAUDE_CLI_GATEWAY_SECRET (the values the other project already has).
+// The Claude CLI gateway: a Vercel function that runs the Claude command line
+// on the firm's Claude subscription in a sandbox, GST Keeper's own since 29
+// October 2026 (api/claude-cli.ts, the design of the firm's caflow gateway).
+// One POST with a bearer secret:
+//   {system, parts: [{kind: "text", text} | {kind: "storage", bucket, path, filename, mediaType}],
+//    model: "sonnet", effort: "medium", timeoutMs}
+// (always Sonnet at medium effort, ../_shared/aiModel.ts, whatever a request names;
+// the gateway pins both too) answered {text, truncated?, model?} or {error}. No
+// tokens are billed per call, so the usage carries none. Secrets:
+// CLAUDE_CLI_GATEWAY_URL, CLAUDE_CLI_GATEWAY_SECRET, and CLAUDE_CLI_GATEWAY_FILES=1
+// once the gateway is GST Keeper's own (it opens files of this project only).
 //
-// The gateway takes text only here: a PDF goes as its own text layer, page by
-// page, so the quotes are checked against the same text (a long document, or
-// the typed pages of a partly scanned one, the runner sends as text itself). A
-// scanned PDF (no text layer) is read by the Claude API when ANTHROPIC_API_KEY
-// is also set, else it is left with the reason needs_vision.
+// A typed PDF goes as its own text layer, page by page, so the quotes are
+// checked against the same text (a long document, or the typed pages of a
+// partly scanned one, the runner sends as text itself). A scan or a photo goes
+// as where it is stored (a storage part, scan.ts) when the gateway opens files:
+// GST Keeper's own gateway (api/claude-cli.ts) does, said by the secret
+// CLAUDE_CLI_GATEWAY_FILES=1; otherwise it is read by the Claude API when
+// ANTHROPIC_API_KEY is also set, else left with the reason needs_vision.
 
 import { AI_CLI_MODEL, AI_EFFORT } from '../_shared/aiModel.ts';
 import { scrub, type CallOutcome, type CallRequest, type CallUsage, type Caller } from './claude.ts';
@@ -122,12 +126,25 @@ export function cliSystem(req: CallRequest): string {
     + `It must match this JSON Schema:\n${JSON.stringify(req.schema)}`;
 }
 
-/** The request's content as the gateway's text parts; null when a PDF has no text to send. */
-export function cliParts(req: CallRequest): { kind: 'text'; text: string }[] | null {
-  const parts: { kind: 'text'; text: string }[] = [];
+type GatewayPart = { kind: 'text'; text: string } | { kind: 'storage'; bucket: string; path: string; filename: string; mediaType: string };
+
+/**
+ * The request's content as the gateway's parts: text, and a scan or photo as
+ * where it is stored when the gateway opens files (GST Keeper's own gateway);
+ * null when there is nothing the gateway can read (a scan, files off).
+ */
+export function cliParts(req: CallRequest, files = false): GatewayPart[] | null {
+  const parts: GatewayPart[] = [];
+  if (req.file) {
+    if (!files) return null;
+    const { bucket, path, filename, mediaType, note } = req.file;
+    parts.push({ kind: 'storage', bucket, path, filename, mediaType }, { kind: 'text', text: note });
+  }
   for (const b of req.content) {
     if (b.type === 'text') parts.push({ kind: 'text', text: b.text });
     else if (b.type === 'document') {
+      // The file itself goes as where it is stored.
+      if (req.file) continue;
       const text = req.pdfText?.textLayer ? pagesAsText(req.pdfText) : null;
       if (!text) return null;
       parts.push({ kind: 'text', text });
@@ -136,19 +153,20 @@ export function cliParts(req: CallRequest): { kind: 'text'; text: string }[] | n
   return parts;
 }
 
-export function cliCaller(opts: { url: string; secret: string; fetch?: typeof fetch; timeoutMs?: number }): Caller {
+export function cliCaller(opts: { url: string; secret: string; fetch?: typeof fetch; timeoutMs?: number; files?: boolean }): Caller {
   const f = opts.fetch ?? fetch;
   const c: Caller = async (req: CallRequest): Promise<CallOutcome> => {
     const what = req.what ?? 'the document';
     const model = AI_CLI_MODEL;
     const usage: CallUsage = { input_tokens: 0, output_tokens: 0, duration_ms: 0, request_id: null, status: 'ok', model: `claude-cli:${model}`, calls: 1 };
-    const parts = cliParts(req);
+    const parts = cliParts(req, !!opts.files);
     if (!parts) {
       usage.calls = 0;
-      return { ok: false, status: 'failed', reason: 'needs_vision', error: `${what[0].toUpperCase()}${what.slice(1)} is a scan with no text layer; the Claude CLI gateway reads text only (set ANTHROPIC_API_KEY too to read scans).`, usage };
+      return { ok: false, status: 'failed', reason: 'needs_vision', error: `${what[0].toUpperCase()}${what.slice(1)} is a scan with no text layer; the Claude CLI gateway in use reads text only (GST Keeper's own gateway, CLAUDE_CLI_GATEWAY_FILES, reads scans).`, usage };
     }
+    if (parts.some((p) => p.kind === 'storage')) usage.read_from = 'scan';
     const started = Date.now();
-    const timeoutMs = Math.max(30_000, Math.min(opts.timeoutMs ?? 300_000, 300_000));
+    const timeoutMs = Math.max(30_000, Math.min(req.timeoutMs ?? opts.timeoutMs ?? 300_000, 300_000));
     let res: Response;
     try {
       res = await f(opts.url, {
@@ -208,6 +226,7 @@ export function cliCaller(opts: { url: string; secret: string; fetch?: typeof fe
     }
   };
   c.backend = 'cli';
+  c.files = !!opts.files;
   return c;
 }
 
@@ -219,5 +238,6 @@ export function cliWithApiForScans(cli: Caller, api: Caller | null): Caller {
     return !out.ok && out.reason === 'needs_vision' ? api(req) : out;
   };
   c.backend = 'cli+api';
+  c.files = cli.files;
   return c;
 }

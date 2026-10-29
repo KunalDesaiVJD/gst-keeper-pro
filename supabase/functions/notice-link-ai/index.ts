@@ -13,7 +13,7 @@ import { apiCaller, makeClaudeClient, scrub, type Caller } from '../notice-ai/cl
 import { cliCaller, cliWithApiForScans } from '../notice-ai/cli.ts';
 import { judgeLink, type LinkDeps } from './link.ts';
 
-export const VERSION = 'notice-link-ai 1.0.0';
+export const VERSION = 'notice-link-ai 1.1.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -27,7 +27,7 @@ function caller(env: (k: string) => string | undefined = (k) => Deno.env.get(k))
   const url = (env('CLAUDE_CLI_GATEWAY_URL') ?? '').trim();
   const secret = env('CLAUDE_CLI_GATEWAY_SECRET') ?? '';
   if ((env('NOTICE_AI_BACKEND') ?? '').trim().toLowerCase() === 'api' || !url || !secret) return api;
-  return cliWithApiForScans(cliCaller({ url, secret }), api);
+  return cliWithApiForScans(cliCaller({ url, secret, files: (env('CLAUDE_CLI_GATEWAY_FILES') ?? '').trim() === '1' }), api);
 }
 
 function deps(): LinkDeps {

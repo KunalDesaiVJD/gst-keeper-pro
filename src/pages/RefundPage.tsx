@@ -41,7 +41,7 @@ import { CaseChainPanel } from '@/components/notices/cases/CaseChainPanel';
 import { AppealWorkspace } from '@/components/notices/cases/AppealWorkspace';
 import { usePortalApps } from '@/lib/portalAppeal';
 import { caseHref, loadCaseItems, loadKeyDates } from '@/lib/noticeCases';
-import { loadCaseReadings, readingNote, type DocReading } from '@/lib/noticeAi';
+import { loadCaseReadings, readingNote, scanReading, type DocReading } from '@/lib/noticeAi';
 import { appealsShown, useCaseAppeals } from '@/lib/noticeAppeals';
 import { istToday } from '@/lib/noticeFacts';
 import { dueWords, fmtAiTokens, fmtDate, fmtInr, plural } from '@/lib/noticeFormat';
@@ -124,10 +124,13 @@ const PaperReadings: React.FC<{ files: { label: string; url: string }[]; reading
           <ul className={cn('space-y-1 text-sm leading-relaxed text-foreground/90', !more && 'line-clamp-3')}>
             {read.map(({ f, r }) => {
               const tokens = fmtAiTokens(r!.usage, r!.model);
+              const scan = scanReading(r!.usage);
               return (
                 <li key={f.url}>
                   {files.length > 1 && <span className="font-medium">{f.label}: </span>}{r!.summary}
+                  {scan && <span className="ml-1.5 whitespace-nowrap text-xs text-muted-foreground" title="Read as the pages look: check figures and numbers against the paper">read from a scan</span>}
                   {tokens && <span className="ml-1.5 whitespace-nowrap text-xs tabular-nums text-muted-foreground" title="Tokens the AI used to read it">{tokens}</span>}
+                  {scan?.doubts.map((d) => <span key={d} className="block text-xs text-warning">{d}</span>)}
                 </li>
               );
             })}
