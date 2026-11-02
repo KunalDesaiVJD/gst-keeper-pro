@@ -60,6 +60,12 @@
   // not the Nil Rated / exempt supplies table, and whether a toggle is on.
   const NIL_LOOSE = /^(?![\s\S]*(rated|exempt))[\s\S]*\bnil\b/i;
   const nilToggleOn = (el) => !!(el && (el.checked || el.getAttribute('aria-checked') === 'true'));
+  // 0.18.6: how long a GSTR-1 upload waits for the portal's status after its
+  // JSON was attached (GSTN: up to 15 minutes, plus a login if the portal
+  // logs the tab out), and how long one look at the Upload History lasts
+  // before the upload page is opened again to refresh it.
+  const GSTR1_WATCH_MS = 20 * 60 * 1000;
+  const GSTR1_LOOK_MS = 2 * 60 * 1000;
   // 0.8.0: the officer, the DIN and the reply date a notice row takes from its
   // case-folder item (noticeFieldsFromItem, further down). Declared up here
   // with every other constant a step handler reads, for the same reason: the
@@ -318,6 +324,31 @@
   // times, then give up on this client — never loop forever.
   const bounced = /services\/error|accessdenied/.test(url) || /services\/login/.test(url);
   const uploadSteps = ['gstr1_dash', 'gstr1_upload', 'gstr1_nil', 'gstr3b_dash', 'gstr3b_fill31', 'gstr3b_fill4', 'einvoice_dash', 'einvoice_excel', 'einvoice_pull'];
+  // 0.18.6: a GSTR-1 upload whose JSON is already attached (gstr1Attached)
+  // and that the portal sends to its login or error page is never uploaded
+  // again. Before, the bounce below logged in again and the dashboard step
+  // attached the same JSON a second time, the portal logged the tab out
+  // again, and the push went round the login page until the tab was closed
+  // (every push from 30 Oct to 2 Nov 2026 ended "Portal tab closed during the
+  // upload"). Now the tab logs in again only to read the upload's status
+  // from the Upload History, twice at most: a login resets job.retries, so
+  // the count is kept on the upload itself (gstr1.relogins).
+  if (bounced && uploadSteps.includes(job.step) && gstr1Attached(job)) {
+    const g = job.gstr1;
+    g.relogins = (g.relogins || 0) + 1;
+    if (g.relogins > 2 || Date.now() > g.attached.at + GSTR1_WATCH_MS) {
+      await failUpload(job, g.relogins > 2
+        ? 'the portal logged the tab out ' + (g.relogins - 1) + ' times after the upload'
+        : 'the portal logged the tab out after the upload, ' + Math.round(GSTR1_WATCH_MS / 60000) + ' minutes after it was sent');
+      return;
+    }
+    job.step = 'login';
+    delete job.captchaWaitSince;
+    await setJob(job);
+    banner('The portal logged out after the JSON was uploaded (' + istTime(g.attached.at) + '). Logging in again only to read the upload\'s status; the JSON is not sent again…', '#f59e0b');
+    location.href = 'https://services.gst.gov.in/services/login';
+    return;
+  }
   if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'applications' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr9_8a_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
@@ -842,7 +873,9 @@
         try { await GSTKdb.backgroundTab(); } catch (e) { /* non-fatal */ }
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'gstr1_upload') {
-        banner('Logged in — opening the returns dashboard for the GSTR-1 upload…' + progress);
+        banner((gstr1Attached(job)
+          ? 'Logged in — opening the GSTR-1 upload page to read the status of the upload (the JSON is not sent again)…'
+          : 'Logged in — opening the returns dashboard for the GSTR-1 upload…') + progress);
         job.step = 'gstr1_dash';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
@@ -1009,7 +1042,8 @@
     // Every other job mode's tab was already foreground from creation, so
     // this is a no-op for them either way.
     if (job.mode === 'filing') { try { await GSTKdb.focusTab(); } catch (e) { /* non-fatal */ } }
-    banner('Logging in ' + cur.creds.name + '…' + progress);
+    banner('Logging in ' + cur.creds.name + '…' + progress
+      + (gstr1Attached(job) ? ' The GSTR-1 JSON was already uploaded (' + istTime(job.gstr1.attached.at) + '): this login only reads its status; the JSON is not sent again.' : ''));
     if (!(await waitFor('#username'))) {
       banner('Login form did not load — reload the page.', '#dc2626');
       if (job.runner) await runnerEnd(job, 'retry', 'portal_error', 'The portal login page did not load.');
@@ -2627,6 +2661,11 @@
     // which is what was actually causing "kept landing on the wrong page"
     // even when the live URL shown in that same failure message was right.
     if (!(await onOfflineUploadPageOrRetry(job, progress))) return;
+    // 0.18.6: the JSON goes up once per push. Back on this page after the
+    // attach (the page reloaded, the portal logged the tab out and it logged
+    // in again, or the watch below opened the page again to refresh the
+    // Upload History), the upload's status is read, never the file sent again.
+    if (gstr1Attached(job)) { await watchGstr1Upload(job, cur, progress); return; }
     banner('Looking for the JSON upload control…' + progress);
 
     // The Prepare Offline page has tabs like "Upload" / "Initiate Filing" /
@@ -2662,18 +2701,6 @@
     }
     if (!fileInput) { await failUpload(job, 'JSON upload input not found on the GSTR-1 offline page. If you see an "Upload" tab, click it once and re-run.'); return; }
 
-    // Normalize whitespace — portal often wraps "Error Occurred" onto two
-    // lines inside a narrow Status column, which comes back with a newline.
-    const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
-    // Angular Material often renders the same message twice in one cell (a
-    // visible label plus a hidden tooltip/ARIA-live copy) — .textContent
-    // picks up both, giving "message message" (or x3). Collapse an exact
-    // whitespace-separated repeat back to a single copy.
-    const dedupeRepeated = (s) => {
-      const t = norm(s);
-      const m = t.match(/^(.{6,}?)(?: \1)+$/);
-      return m ? m[1] : t;
-    };
     const rowKey = uploadRowKey;
     // Snapshot the Upload History table's current top row BEFORE this file is
     // attached. The poll loop below waits for that key to change — otherwise,
@@ -2685,10 +2712,16 @@
     // 0.8.6: and keep it for Refresh errors (pretopKey), from just before the
     // file can reach the portal until this upload's outcome is recorded.
     const rowId = job.gstr1.rowId;
-    if (rowId) { try { await store.set({ [pretopKey(rowId)]: { key: prevTopRowKey, at: Date.now() } }); } catch (e) { /* Refresh then records nothing */ } }
+    const attachAt = Date.now();
+    if (rowId) { try { await store.set({ [pretopKey(rowId)]: { key: prevTopRowKey, at: attachAt } }); } catch (e) { /* Refresh then records nothing */ } }
+    // 0.18.6: and on the job, saved before the file can reach the portal, so
+    // whatever page this tab lands on next reads the status instead of
+    // uploading again (gstr1Attached, watchGstr1Upload).
+    job.gstr1.attached = { at: attachAt, key: prevTopRowKey };
+    await setJob(job);
 
     const file = buildGstr1File(job);
-    if (!setFileOn(fileInput, file)) { await clearPretop(rowId); await failUpload(job, 'Could not attach the JSON to the portal file input'); return; }
+    if (!setFileOn(fileInput, file)) { delete job.gstr1.attached; await setJob(job); await clearPretop(rowId); await failUpload(job, 'Could not attach the JSON to the portal file input'); return; }
     banner('Uploading the GSTR-1 JSON…', '#2563eb');
 
     // Some portal pages want an explicit "Upload" / "Proceed" click AFTER the
@@ -2703,11 +2736,63 @@
       .map((el) => (el.textContent || '').trim()).filter(Boolean)[0];
     if (errBanner && /invalid|reject|error/i.test(errBanner)) {
       await clearPretop(rowId); // the portal's answer: nothing left to refresh
+      delete job.gstr1.attached; // refused outright: a plain failure, not an unknown outcome
       await failUpload(job, errBanner);
       return;
     }
 
-    banner('Waiting for the portal to process the upload…');
+    await watchGstr1Upload(job, cur, progress);
+  }
+
+  // 0.18.6: is this GSTR-1 upload's JSON already on its way to the portal?
+  function gstr1Attached(j) {
+    return !!(j && j.mode === 'gstr1_upload' && j.gstr1 && !j.gstr1.nil && j.gstr1.attached && j.gstr1.attached.at);
+  }
+  // 0.18.6: a time as the portal shows it (IST), for the banner and messages.
+  function istTime(ms) {
+    const d = new Date(Number(ms) + 330 * 60 * 1000);
+    return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0') + ' IST';
+  }
+
+  // The upload's status, once its JSON is attached (0.18.6: its own step, so
+  // every way back to the upload page lands here, never on a second attach).
+  // It reads the Upload History's top row until the portal gives this
+  // upload's final status, for up to GSTR1_WATCH_MS from the attach. The
+  // portal does not always update the history in place, so after
+  // GSTR1_LOOK_MS with no final status the upload page is opened again from
+  // the dashboard (the same way the push reached it) and read afresh.
+  async function watchGstr1Upload(job, cur, progress) {
+    const att = job.gstr1.attached;
+    const rowId = job.gstr1.rowId;
+    const prevTopRowKey = att.key;
+    const watchEnd = att.at + GSTR1_WATCH_MS;
+    const stopHeartbeat = startHeartbeat(); // a long wait is not an idle tab
+    try {
+      await watchGstr1UploadInner(job, cur, progress, att, rowId, prevTopRowKey, watchEnd);
+    } finally {
+      stopHeartbeat();
+    }
+  }
+  async function watchGstr1UploadInner(job, cur, progress, att, rowId, prevTopRowKey, watchEnd) {
+    // Normalize whitespace — portal often wraps "Error Occurred" onto two
+    // lines inside a narrow Status column, which comes back with a newline.
+    const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    // Angular Material often renders the same message twice in one cell (a
+    // visible label plus a hidden tooltip/ARIA-live copy) — .textContent
+    // picks up both, giving "message message" (or x3). Collapse an exact
+    // whitespace-separated repeat back to a single copy.
+    const dedupeRepeated = (s) => {
+      const t = norm(s);
+      const m = t.match(/^(.{6,}?)(?: \1)+$/);
+      return m ? m[1] : t;
+    };
+    const rowKey = uploadRowKey;
+    // The Upload tab holds the history (a reopened page may show another tab).
+    const uploadTab = $$('a, button, li, span').find((el) => /^upload$/i.test((el.textContent || '').trim()) && el.offsetParent !== null);
+    const firstLook = !job.gstr1.looks;
+    if (uploadTab && !firstLook) { try { uploadTab.click(); } catch (e) { /* read whatever shows */ } }
+    job.gstr1.looks = (job.gstr1.looks || 0) + 1;
+    banner('JSON uploaded at ' + istTime(att.at) + '. Waiting for the portal to process it (the status is read from the Upload History; the JSON is not sent again)…' + progress);
     // Poll for one of the terminal states in the Upload History table on the
     // Offline Upload page. Each attempt appears as a row with a Status column
     // — "Error Occurred", "Processed", "Processed with Error", or "In
@@ -2724,7 +2809,10 @@
     // spurious timeouts on moderate files without holding the tab the full
     // 15 — a return that's still slower than that falls back to "Refresh
     // errors" (fetched later, doesn't need the tab held open at all).
-    const pollDeadline = Date.now() + 6 * 60 * 1000;
+    // 0.18.6: the first look, on the page that took the file, waits as long
+    // as two later ones (the history usually updates in place); then the
+    // page is opened again until GSTR1_WATCH_MS from the attach.
+    const pollDeadline = Math.min(Date.now() + (firstLook ? 2 : 1) * GSTR1_LOOK_MS, watchEnd);
     let terminal = null;
     let portalReason = '';
     const classifyStatus = classifyUploadStatus;
@@ -2741,8 +2829,11 @@
       const rows = $$('table tr').filter((r) => r.querySelector('td'));
       const topRow = rows[0];
       const topKey = rowKey(topRow);
-      if (topRow && topKey !== prevTopRowKey) {
-        const cells = [...topRow.querySelectorAll('td')].map((td) => norm(td.textContent));
+      const topCells = topRow ? [...topRow.querySelectorAll('td')].map((td) => norm(td.textContent)) : [];
+      // 0.18.6: and, when the row shows its date, not one uploaded before
+      // the attach (a reopened page may list an older row whose text changed).
+      if (topRow && uploadRowIsNew({ key: topKey, at: uploadRowTime(topCells) }, { key: prevTopRowKey, at: att.at })) {
+        const cells = topCells;
         const statusCell = cells.find((c) => /error\s*occurred|processed|failed|in[\s-]*progress|pending|received/i.test(c));
         if (statusCell) {
           const t = classifyStatus(statusCell);
@@ -2764,7 +2855,9 @@
       // matching on stale historical text and declaring "partial" on the
       // very first poll tick, before the real new row (which turned out to
       // be plain "Processed" — fully accepted) had even rendered yet.
-      if (!terminal && rows.length === 0) {
+      // 0.18.6: only on the page that took the file; a reopened page is read
+      // from its history table alone.
+      if (!terminal && rows.length === 0 && firstLook) {
         const text = norm(document.body.innerText);
         if (/processed\s+with\s+error/i.test(text)) terminal = 'partial';
         else if (/\berror\s*occurred\b/i.test(text)) terminal = 'failed';
@@ -2777,7 +2870,17 @@
     // 0.8.6: the page offers "Refresh errors" for a timed-out upload, and
     // Refresh now records a file the portal Processed as accepted (Pushed):
     // the snapshot stays, so Refresh can tell this upload's row.
-    if (!terminal) { await failUpload(job, 'Timed out waiting for the portal to finish processing (6 min). The portal may still take the file: click "Refresh errors" on the GSTR-1 page in a few minutes. A file the portal shows as Processed is then recorded as accepted; otherwise its error report is fetched.'); return; }
+    if (!terminal && Date.now() < watchEnd) {
+      // 0.18.6: no final status yet: open the upload page again (dashboard,
+      // period, Prepare Offline), which lands back here with a fresh history.
+      job.step = 'gstr1_dash';
+      delete job.wrongPageRetries;
+      await setJob(job);
+      banner('The portal is still processing the JSON uploaded at ' + istTime(att.at) + '. Opening the upload page again to read its status; the JSON is not sent again…' + progress, '#2563eb');
+      location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      return;
+    }
+    if (!terminal) { await failUpload(job, 'Timed out waiting for the portal to finish processing (' + Math.round(GSTR1_WATCH_MS / 60000) + ' min). The portal may still take the file: click "Refresh errors" on the GSTR-1 page in a few minutes. A file the portal shows as Processed is then recorded as accepted; otherwise its error report is fetched.'); return; }
 
     // Try to lift a summary count out of the page ("Total records: X | Errored: Y").
     const bodyText = document.body.innerText || '';
@@ -2941,7 +3044,16 @@
   // Common failure exit: broadcast a structured error back to the app so the
   // UI doesn't sit spinning forever, then clear the job.
   async function failUpload(job, error) {
-    banner('Upload failed: ' + error, '#dc2626');
+    // 0.18.6: once the JSON is attached, a push that cannot read the portal's
+    // answer did upload, and must not read as a failed upload: it says so,
+    // keeps the Upload History snapshot, and the GSTR-1 page offers Refresh
+    // errors for it (its summary starts "The JSON was uploaded to the portal at").
+    if (gstr1Attached(job) && !/^Timed out waiting for the portal/.test(String(error || ''))) {
+      error = 'The JSON was uploaded to the portal at ' + istTime(job.gstr1.attached.at) + ', but its status could not be read: '
+        + String(error || 'no answer from the portal').replace(/[.\s]+$/, '')
+        + '. Click "Refresh errors" on the GSTR-1 page to read the status from the portal. Do not upload again until then.';
+    }
+    banner((gstr1Attached(job) ? '' : 'Upload failed: ') + error, '#dc2626');
     try {
       // 0.8.6: a Refresh errors that could not reach the portal says nothing
       // about the upload, so the upload's own status is left as it was.
