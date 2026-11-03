@@ -102,6 +102,14 @@ Under **s.12(3)(a) IGST Act** the place of supply for a service in relation to
 immovable property is the location of the property. With a Gujarat GSTIN and
 Gujarat property, every supply is intra-state: **CGST + SGST, never IGST**.
 
+CGST and SGST are **always equal** (the firm, 3 Nov 2026): each head is half the
+tax rounded half up to the paisa, and the tax is the two heads added
+(`splitCgstSgst` in `src/utils/builderRates.ts`, used by receipts, invoices,
+delay interest, rate-change differentials and FSI reverse charge). On 6,710.25
+both heads are 3,355.13 and the tax is 6,710.26; the old split made SGST the
+remainder (3,355.12). Six receipts saved before this, all in filed months, keep
+the uneven paisa they were filed with.
+
 Consequently **Table 5 (B2CL), CDNUR and 3B Table 3.2 cannot arise** and are
 deliberately not built. Buyers are unregistered individuals, so there is no
 Table 4A either. Intra-state B2C credit and debit notes net **inside Table 7**.

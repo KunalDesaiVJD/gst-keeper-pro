@@ -371,6 +371,17 @@ export interface TaxBreakup {
 }
 
 /**
+ * CGST and SGST are always equal. Each head is half the tax, rounded half up
+ * to the paisa, and the total is the two heads added: on 6,710.25 both heads
+ * are 3,355.13 and the tax is 6,710.26. Never take one head as the remainder
+ * of the other (that gave 3,355.13 and 3,355.12).
+ */
+export const splitCgstSgst = (totalTax: number): { cgst: number; sgst: number; totalTax: number } => {
+  const half = round2((Number(totalTax) || 0) / 2);
+  return { cgst: half, sgst: half, totalTax: round2(half * 2) };
+};
+
+/**
  * Tax on a GST-exclusive consideration.
  * Always CGST + SGST in equal halves — see the note on s.12(3)(a) above.
  */
@@ -382,8 +393,7 @@ export const computeTax = (consideration: number, rateCode: BuilderRateCode): Ta
   // re-adds to the consideration exactly, with no rounding drift.
   const taxableValue = round2(amt - landDeduction);
   const totalTax = round2((taxableValue * ratePct) / 100);
-  const cgst = round2(totalTax / 2);
-  const sgst = round2(totalTax - cgst);
+  const { cgst, sgst } = splitCgstSgst(totalTax);
   return {
     consideration: round2(amt),
     landDeduction,
@@ -410,8 +420,7 @@ export const computeFlatTax = (amount: number, ratePct: number): TaxBreakup => {
   const amt = round2(Number(amount) || 0);
   const rate = Number(ratePct) || 0;
   const totalTax = round2((amt * rate) / 100);
-  const cgst = round2(totalTax / 2);
-  const sgst = round2(totalTax - cgst);
+  const { cgst, sgst } = splitCgstSgst(totalTax);
   return {
     consideration: amt,
     landDeduction: 0,
