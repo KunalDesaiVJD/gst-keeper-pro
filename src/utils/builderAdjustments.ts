@@ -8,7 +8,7 @@
 
 import {
   EFFECTIVE_RATE_PCT, NOTIFIED_RATE_PCT, backCalculateFromInclusive, computeFlatTax,
-  computeTax, type BuilderRateCode, type InvoiceRateCode,
+  computeTax, splitCgstSgst, type BuilderRateCode, type InvoiceRateCode,
 } from '@/utils/builderRates';
 import { SECTION_50_RATE_PCT, gstr3bDueDate, periodKey } from '@/utils/builderBuEvent';
 
@@ -69,8 +69,11 @@ export const buildReclassSchedule = (params: {
     .sort((a, b) => periodKey(a.periodMonth).localeCompare(periodKey(b.periodMonth)))
     .map((p) => {
       const tv = round2(Number(p.taxableValue) || 0);
-      const oldTax = round2((tv * oldRate) / 100);
-      const newTax = round2((tv * newRate) / 100);
+      // CGST and SGST equal halves of each tax; each total is its two heads.
+      const oldSplit = splitCgstSgst(round2((tv * oldRate) / 100));
+      const newSplit = splitCgstSgst(round2((tv * newRate) / 100));
+      const oldTax = oldSplit.totalTax;
+      const newTax = newSplit.totalTax;
       const diff = round2(newTax - oldTax);
 
       const from = gstr3bDueDate(p.periodMonth);
@@ -82,10 +85,10 @@ export const buildReclassSchedule = (params: {
       return {
         periodMonth: p.periodMonth,
         taxableValue: tv,
-        oldCgst: round2(oldTax / 2),
-        oldSgst: round2(oldTax - round2(oldTax / 2)),
-        newCgst: round2(newTax / 2),
-        newSgst: round2(newTax - round2(newTax / 2)),
+        oldCgst: oldSplit.cgst,
+        oldSgst: oldSplit.sgst,
+        newCgst: newSplit.cgst,
+        newSgst: newSplit.sgst,
         differentialTax: diff,
         dueDate: from ? from.toISOString().slice(0, 10) : '',
         interestDays: days,

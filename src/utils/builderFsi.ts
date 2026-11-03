@@ -22,7 +22,7 @@
 // forgone — so it is paid in cash through 3B Table 3.1(d) and never reaches
 // GSTR-1.
 
-import { EFFECTIVE_RATE_PCT, type BuilderRateCode } from '@/utils/builderRates';
+import { EFFECTIVE_RATE_PCT, splitCgstSgst, type BuilderRateCode } from '@/utils/builderRates';
 
 const round2 = (n: number): number => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -148,8 +148,8 @@ export const computeFsiWorking = (input: FsiInput): FsiWorking => {
   // No exemption and no cap on the commercial leg.
   const commercialRcm = round2((commercialPortion * FSI_RCM_RATE_PCT) / 100);
 
-  const totalRcm = round2(residentialRcm + commercialRcm);
-  const cgst = round2(totalRcm / 2);
+  // CGST and SGST equal halves; the total is the two heads added.
+  const { cgst, sgst, totalTax: totalRcm } = splitCgstSgst(round2(residentialRcm + commercialRcm));
 
   return {
     eventCarpetSqM: eventCarpet,
@@ -168,7 +168,7 @@ export const computeFsiWorking = (input: FsiInput): FsiWorking => {
     commercialRcm,
     totalRcm,
     cgst,
-    sgst: round2(totalRcm - cgst),
+    sgst,
   };
 };
 
