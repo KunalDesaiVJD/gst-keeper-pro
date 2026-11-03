@@ -512,7 +512,9 @@ export function validateGstr1Json(
       // Rule 46(b): a document number is at most 16 characters of letters,
       // digits, "/" and "-". The portal rejects the whole file otherwise, with
       // its generic "Download the latest version of Offline tool" message.
-      for (const n of [from, to].filter(Boolean)) {
+      // Tested as stored, not trimmed: " 07/2026-27" (Vijayan Keshavlal
+      // Pandya, Oct-26) passed a trimmed check and the portal refused the file.
+      for (const n of [str(d.from), str(d.to)].filter((v) => v.trim())) {
         if (!/^[A-Za-z0-9/-]{1,16}$/.test(n)) {
           problem('doc_issue', ref, 'doc-format', `document number "${n}" may have only letters, digits, / and - (at most 16 characters); correct it at its source`);
         }
@@ -549,6 +551,10 @@ export function validateGstr1Json(
 
 /**
  * Corrects what has exactly one right answer, before a check or a push:
+ *  - spaces before or after any text value are taken off (GSTN's schema
+ *    patterns allow none in a document number, and the portal refuses the
+ *    whole file: " 07/2026-27" in Table 13, Vijayan Keshavlal Pandya Oct-26,
+ *    four rejections on 3 Nov 2026);
  *  - old Offline Tool header fields (version, hash, gt, cur_gt) are left out;
  *  - blank sbpcode / sbnum / sbdt on export invoices are left out (the portal
  *    validates them when present, and an offline-tool export omits them);
@@ -561,11 +567,38 @@ export function validateGstr1Json(
  * Never touches Table 12 units (normaliseGstr1Hsn does) or any figure. Pure:
  * returns the same object when nothing changed.
  */
-export function tidyGstr1Json<T>(json: T, opts: { builder?: boolean } = {}): { json: T; changed: boolean; notes: string[] } {
-  if (!isObj(json)) return { json, changed: false, notes: [] };
+export function tidyGstr1Json<T>(input: T, opts: { builder?: boolean } = {}): { json: T; changed: boolean; notes: string[] } {
+  if (!isObj(input)) return { json: input, changed: false, notes: [] };
   const notes: string[] = [];
-  const out: Obj = { ...json };
   let changed = false;
+
+  // Spaces around text values, anywhere in the file.
+  let trimmed = 0;
+  const trimDeep = (v: unknown): unknown => {
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if (t !== v) trimmed += 1;
+      return t !== v ? t : v;
+    }
+    if (Array.isArray(v)) {
+      let any = false;
+      const next = v.map((x) => { const y = trimDeep(x); if (y !== x) any = true; return y; });
+      return any ? next : v;
+    }
+    if (isObj(v)) {
+      let any = false;
+      const next: Obj = {};
+      for (const [k, x] of Object.entries(v)) { const y = trimDeep(x); if (y !== x) any = true; next[k] = y; }
+      return any ? next : v;
+    }
+    return v;
+  };
+  const json = trimDeep(input) as T & Obj;
+  if (trimmed) {
+    changed = true;
+    notes.push(`Spaces before or after ${trimmed} text value${trimmed === 1 ? '' : 's'} taken off (e.g. a document number typed as " 07/2026-27"); the portal refuses the whole file for them.`);
+  }
+  const out: Obj = { ...json };
 
   // Header fields from an old Offline Tool. The portal reads "version" as the
   // tool that made the file and rejects one from an outdated tool ("File could

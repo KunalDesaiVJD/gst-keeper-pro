@@ -22,7 +22,7 @@
 //    own small fixed-shape table.
 
 import { editableUqc, normaliseGstr1Hsn } from '@/lib/gstr1/uqc';
-import { checkRecipientGstin } from '@/lib/gstr1/validate';
+import { checkRecipientGstin, tidyGstr1Json } from '@/lib/gstr1/validate';
 
 // 'ata' / 'txpda' are Table 11(2) — amendments to a PRIOR period's Table 11A /
 // 11B. They carry an `omon` (original month, MMYYYY) and restate that month's
@@ -568,7 +568,9 @@ export function assembleGstr1Json(params: {
       const group = docGroups.get(docNum)!;
       const totnum = num(r.totnum);
       const cancel = num(r.cancel);
-      group.docs.push({ num: group.docs.length + 1, from: r.from || '', to: r.to || '', totnum, cancel, net_issue: totnum - cancel });
+      // Trimmed: " 07/2026-27" (a space typed before the number) cost
+      // Vijayan Keshavlal Pandya Oct-26 four whole-file rejections.
+      group.docs.push({ num: group.docs.length + 1, from: String(r.from ?? '').trim(), to: String(r.to ?? '').trim(), totnum, cancel, net_issue: totnum - cancel });
     });
   const docDet = Array.from(docGroups.values());
 
@@ -597,7 +599,8 @@ export function assembleGstr1Json(params: {
   if (docDet.length) out.doc_issue = { doc_det: docDet };
   // Table 12 units as GSTN codes, NA and qty 0 on services, one row per
   // HSN + rate + unit: the same rules the push applies (src/lib/gstr1/uqc.ts).
-  return normaliseGstr1Hsn(out).json;
+  // No string may start or end with a space (tidyGstr1Json), whatever box it was typed in.
+  return normaliseGstr1Hsn(tidyGstr1Json(out).json).json;
 }
 
 /**
