@@ -177,7 +177,7 @@ export async function runAssist(deps: Deps, input: AssistInput): Promise<Record<
       p_run_id: begin.run_id, p_status: status, p_output: output, p_usage: usage, p_error: error, p_reason_class: reason,
     });
   if (!deps.claude) {
-    return { ...(await finish('failed', null, null, 'Neither the Claude CLI gateway (CLAUDE_CLI_GATEWAY_URL and CLAUDE_CLI_GATEWAY_SECRET) nor ANTHROPIC_API_KEY is set for the Edge Functions.', 'no_key')), error: 'no_key' };
+    return { ...(await finish('failed', null, null, 'No Claude API key is set: save one under Reply Factory, AI, Claude API key (or set ANTHROPIC_API_KEY for the Edge Functions).', 'no_key')), error: 'no_key' };
   }
   const { text, labels } = assistUserText(begin.context ?? {});
   const out = await deps.claude({

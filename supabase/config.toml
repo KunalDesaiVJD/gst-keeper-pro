@@ -10,3 +10,7 @@ verify_jwt = false
 # doc-open checks the signed-in person against the database itself.
 [functions.doc-open]
 verify_jwt = false
+# The Claude API key set from the app: no Supabase JWT (custom sign-in); ai-key
+# checks the signed-in person, and their password for a save or a removal.
+[functions.ai-key]
+verify_jwt = false

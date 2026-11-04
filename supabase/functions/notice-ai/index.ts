@@ -12,20 +12,20 @@
 // "client_id", "case_key", "actor"?} (what to do now on a case, answered when
 // done), {"action": "advise_next"} (pg_cron notice-ai-advise: the next cases
 // that need it, in the background), {"action": "status"}.
-// How it reaches Claude: the Claude CLI gateway when CLAUDE_CLI_GATEWAY_URL and
-// CLAUDE_CLI_GATEWAY_SECRET are set (the firm's choice, on its Claude
-// subscription; cli.ts), else the Claude API with ANTHROPIC_API_KEY. With both,
-// the CLI reads and the API reads only scans; NOTICE_AI_BACKEND=api forces the
-// API. With neither, nothing is read and the assistant says so.
+// How it reaches Claude (backend.ts, 4 November 2026): the Claude API directly,
+// with the key saved from the app (Supabase Vault) or else the ANTHROPIC_API_KEY
+// secret; the Claude CLI gateway (CLAUDE_CLI_GATEWAY_URL and
+// CLAUDE_CLI_GATEWAY_SECRET) only when there is no key. With neither, nothing
+// is read and the assistant says so.
 // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY come with every function.
 import { createClient } from '@supabase/supabase-js';
-import { apiCaller, makeClaudeClient, scrub, type Caller } from './claude.ts';
-import { cliCaller, cliWithApiForScans } from './cli.ts';
+import { scrub } from './claude.ts';
+import { resolveCaller, rpcKeyReader } from './backend.ts';
 import { runAssist } from './assist.ts';
 import { runAdvise, runAdviseNext } from './advise.ts';
 import { runTick, type Db, type Deps } from './runner.ts';
 
-export const VERSION = 'notice-ai 1.7.0';
+export const VERSION = 'notice-ai 1.8.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -46,21 +46,14 @@ function supabaseDb(url: string, key: string): Db {
   };
 }
 
-export function caller(env: (k: string) => string | undefined = (k) => Deno.env.get(k)): Caller | null {
-  const apiKey = (env('ANTHROPIC_API_KEY') ?? '').trim();
-  const api = apiKey ? apiCaller(makeClaudeClient({ apiKey })) : null;
-  const url = (env('CLAUDE_CLI_GATEWAY_URL') ?? '').trim();
-  const secret = env('CLAUDE_CLI_GATEWAY_SECRET') ?? '';
-  if ((env('NOTICE_AI_BACKEND') ?? '').trim().toLowerCase() === 'api' || !url || !secret) return api;
-  return cliWithApiForScans(cliCaller({ url, secret, files: (env('CLAUDE_CLI_GATEWAY_FILES') ?? '').trim() === '1' }), api);
-}
-
-function deps(): Deps {
+async function deps(): Promise<Deps> {
   const url = Deno.env.get('SUPABASE_URL') ?? '';
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  const db = supabaseDb(url, key);
+  const { caller } = await resolveCaller(rpcKeyReader((fn) => db.rpc(fn)));
   return {
-    db: supabaseDb(url, key),
-    claude: caller(),
+    db,
+    claude: caller,
     supabaseUrl: url,
     storageKey: key,
     agentId: `edge:${crypto.randomUUID().slice(0, 8)}`,
@@ -78,11 +71,12 @@ Deno.serve(async (req) => {
   const action = typeof body.action === 'string' ? body.action : 'tick';
   try {
     if (action === 'status') {
-      const c = caller();
-      return json({ version: VERSION, key: !!c, backend: c?.backend ?? null, files: !!c?.files });
+      const db = supabaseDb(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
+      const { caller: c, keySource } = await resolveCaller(rpcKeyReader((fn) => db.rpc(fn)));
+      return json({ version: VERSION, key: !!c, backend: c?.backend ?? null, key_source: keySource, files: !!c?.files });
     }
     if (action === 'tick') {
-      const d = deps();
+      const d = await deps();
       const run = runTick(d).catch((e) => ({ ran: false, error: scrub(String((e as Error)?.message ?? e)) }));
       if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime?.waitUntil) {
         EdgeRuntime.waitUntil(run.then((r) => console.log(JSON.stringify({ tick: r }))));
@@ -91,7 +85,7 @@ Deno.serve(async (req) => {
       return json(await run);
     }
     if (action === 'assist') {
-      const r = await runAssist(deps(), {
+      const r = await runAssist(await deps(), {
         notice_id: typeof body.notice_id === 'string' ? body.notice_id : undefined,
         mode: typeof body.mode === 'string' ? body.mode : undefined,
         issue_id: typeof body.issue_id === 'string' ? body.issue_id : null,
@@ -102,7 +96,7 @@ Deno.serve(async (req) => {
       return json(r, r.error === 'bad_request' ? 400 : 200);
     }
     if (action === 'advise') {
-      const r = await runAdvise(deps(), {
+      const r = await runAdvise(await deps(), {
         client_id: typeof body.client_id === 'string' ? body.client_id : undefined,
         case_key: typeof body.case_key === 'string' ? body.case_key : undefined,
         actor: typeof body.actor === 'string' ? body.actor : null,
@@ -110,7 +104,7 @@ Deno.serve(async (req) => {
       return json(r, r.error === 'bad_request' ? 400 : 200);
     }
     if (action === 'advise_next') {
-      const run = runAdviseNext(deps()).catch((e) => ({ error: scrub(String((e as Error)?.message ?? e)) }));
+      const run = runAdviseNext(await deps()).catch((e) => ({ error: scrub(String((e as Error)?.message ?? e)) }));
       if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime?.waitUntil) {
         EdgeRuntime.waitUntil(run.then((r) => console.log(JSON.stringify({ advise: r }))));
         return json({ started: true }, 202);

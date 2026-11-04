@@ -23,6 +23,7 @@ import {
   factoryHref, fmtCount, fmtUsdInr, readerWords, saveAiSettings, useAgentHeartbeats, type Actor, type ReplyFactoryStatus,
 } from '@/lib/replyFactory';
 import { AiSettingsCard } from './AiSettingsCard';
+import { ClaudeKeyCard } from './ClaudeKeyCard';
 import { AiReadingsCard } from './AiReadingsCard';
 import { AiDocumentsCard } from './AiDocumentsCard';
 import { AuditLogCard } from './AuditLogCard';
@@ -159,6 +160,8 @@ export const AiReadingTab: React.FC<{ s: ReplyFactoryStatus | undefined; loading
         </Panel>
         <AiSettingsCard settings={settings} canEdit={canEdit} actor={actor} />
       </PanelRow>
+
+      {canEdit && edge && <ClaudeKeyCard />}
 
       {!edge && <AgentCard agentOnline={ai.agent_online} />}
 

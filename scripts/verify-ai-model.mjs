@@ -6,10 +6,9 @@
 //   2. no source file names a Claude model id, or the model itself, other than
 //      through those constants (a test may, to prove a request is pinned);
 //   3. only the known callers talk to Claude (the SDK or the CLI gateway), and
-//      each sends the constants, never a request's own model or effort; the
-//      gateway itself (api/claude-cli.ts, on Vercel) runs the CLI with its own
-//      copy of the two constants, checked against the definition, never a
-//      request's;
+//      each sends the constants, never a request's own model or effort (a
+//      gateway in api/claude-cli.ts, retired 4 Nov 2026, would be held to the
+//      same two constants if it ever came back);
 //   4. no effort other than medium is written in the AI code;
 //   5. the database refuses any other model or effort (20261025190000), and no
 //      later migration names another model.
