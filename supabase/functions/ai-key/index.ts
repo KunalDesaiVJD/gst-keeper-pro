@@ -23,7 +23,7 @@
 // own password, checked by the database function itself. The key goes to the
 // database once and never comes back: no answer, log line or error carries it.
 import { createClient } from '@supabase/supabase-js';
-import { callClaude, checkClaudeKey, KEY_CHECK_WORDS, listClaudeModels, makeClaudeClient, scrub } from '../notice-ai/claude.ts';
+import { callClaude, checkClaudeKey, KEY_CHECK_WORDS, listClaudeModels, makeClaudeClient, NO_CREDIT, scrub } from '../notice-ai/claude.ts';
 import { AI_EFFORT, AI_MODEL, isClaudeModelId } from '../_shared/aiModel.ts';
 import { clearClaudeKeyCache, looksLikeClaudeKey, resolveClaudeKey } from '../_shared/claudeKey.ts';
 
@@ -170,7 +170,7 @@ Deno.serve(async (req) => {
       if (action === 'set_model' && !isClaudeModelId(wanted)) return answer(400, { error: 'That is not a Claude model.' });
       const live = await listClaudeModels(k.key, { log });
       if (live.check !== 'ok') {
-        const why = live.check === 'unavailable' ? 'Anthropic could not be reached to list the models. Try again in a minute.' : live.check === 'no_credit' ? KEY_CHECK_WORDS.no_credit.replace(', so it was not saved', '') : KEY_CHECK_WORDS.refused;
+        const why = live.check === 'unavailable' ? 'Anthropic could not be reached to list the models. Try again in a minute.' : live.check === 'no_credit' ? NO_CREDIT : KEY_CHECK_WORDS.refused;
         return answer(live.check === 'unavailable' ? 503 : 400, { error: why, check: live.check });
       }
       if (action === 'models') return answer(200, { models: live.value, model_in_use: k.model, default_model: AI_MODEL, effort: AI_EFFORT });
