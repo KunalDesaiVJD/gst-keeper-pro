@@ -110,7 +110,7 @@ export const AiSettingsCard: React.FC<{ settings: AiSettings; canEdit: boolean; 
             <Row id={id('daily_cap_usd')} label="Cap per day (USD)" info={`Reading stops for the day (India time) at this estimated spend: about ${fmtInr(draft.daily_cap_usd * rate)}.`}>{num('daily_cap_usd', 0.5)}</Row>
           </Group>
           <Group title="Care and assistant">
-            <Row id={id('model')} label="Model and effort" info="Every AI call (notices, documents, the assistant, advice and appeal drafts) uses Sonnet at medium effort. The firm fixed this; it is not a setting.">{fixed('model', model.label)}</Row>
+            <Row id={id('model')} label="Model and effort" info="Every AI call (notices, documents, the assistant, advice and appeal drafts) uses the model chosen under Claude API key (Sonnet 5.5 unless another is chosen), always at medium effort. The office agent stays on Sonnet.">{fixed('model', model.label)}</Row>
             <Row id={id('assist_daily_cap_usd')} label="Assistant cap (USD)" info="The assistant's own spend per day, apart from reading.">{num('assist_daily_cap_usd', 0.5)}</Row>
             <Row id={id('learning_auto_include')} label="Replies teach by themselves" info="Off: an admin picks which replies the assistant learns from (Learning tab). On: every new reply does.">{sw('learning_auto_include')}</Row>
             <Row id={id('edge_seconds')} label="Seconds per run" info="How long one run of the Edge Function may take: 150 on Supabase's free plan, up to 400 on a paid plan.">{num('edge_seconds', 10)}</Row>
@@ -123,7 +123,7 @@ export const AiSettingsCard: React.FC<{ settings: AiSettings; canEdit: boolean; 
           <CollapsibleContent>
             <div className="grid gap-x-6 md:grid-cols-2">
               <Group title="Model">
-                <Row id={id('model_id')} label="Model">{fixed('model_id', model.id)}</Row>
+                <Row id={id('model_id')} label="Default model" info="Used unless another is chosen under Claude API key; choosing one there also sets the prices below where Anthropic's list price is known.">{fixed('model_id', model.id)}</Row>
                 <Row id={id('max_pages')} label="Pages per notice">{num('max_pages')}</Row>
                 <Row id={id('doc_max_pages')} label="Pages per document">{num('doc_max_pages')}</Row>
               </Group>

@@ -1,17 +1,24 @@
 #!/usr/bin/env node
-// Every AI call in GST Keeper is Claude Sonnet at medium effort (the firm's rule,
-// 25 Oct 2026). This check fails when code could ask for anything else:
+// Every AI call in GST Keeper is at medium effort (the firm's rule, 25 Oct
+// 2026), with Claude Sonnet 5.5 unless a GST Manager or the superadmin chose
+// another model under Claude API key from Anthropic's live list (4 Nov 2026,
+// Meet: "provide model selection as well"; 20261104120000). This check fails
+// when code could ask for anything else:
 //   1. the one definition (supabase/functions/_shared/aiModel.ts) and the office
 //      agent's copy (agent/src/read/aiModel.ts) say Sonnet, "sonnet", medium;
 //   2. no source file names a Claude model id, or the model itself, other than
 //      through those constants (a test may, to prove a request is pinned);
 //   3. only the known callers talk to Claude (the SDK or the CLI gateway), and
-//      each sends the constants, never a request's own model or effort (a
-//      gateway in api/claude-cli.ts, retired 4 Nov 2026, would be held to the
-//      same two constants if it ever came back);
+//      each sends the constants, never a request's own model or effort; the
+//      Claude API caller's model is only the one it was made with, which comes
+//      only from the saved choice (read with the key, shape-checked) and is set
+//      only by ai-key against Anthropic's live list (a gateway in
+//      api/claude-cli.ts, retired 4 Nov 2026, would be held to the same two
+//      constants if it ever came back);
 //   4. no effort other than medium is written in the AI code;
-//   5. the database refuses any other model or effort (20261025190000), and no
-//      later migration names another model.
+//   5. the database refuses any other model or effort in ai_settings
+//      (20261025190000), and no later migration names another model but the
+//      model choice's price list (20261104120000).
 // Run by `npm run typecheck`; on its own: node scripts/verify-ai-model.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -67,7 +74,7 @@ for (const f of files) {
 
 // 3. Who talks to Claude, and how.
 const CALLERS = {
-  'supabase/functions/notice-ai/claude.ts': [/model: AI_MODEL,/, /effort: AI_EFFORT,/, /const req = pinned\(asked\);/],
+  'supabase/functions/notice-ai/claude.ts': [/return \{ \.\.\.req, model, effort: AI_EFFORT \};/, /output_config: \{ effort: AI_EFFORT,/, /const req = pinned\(asked, model\);/, /buildParams\(req, budget, model\)/],
   'supabase/functions/notice-ai/cli.ts': [/const model = AI_CLI_MODEL;/, /model, effort: AI_EFFORT, timeoutMs/],
   'agent/src/read/claude.ts': [/model: AI_MODEL,/, /effort: AI_EFFORT,/, /model: AI_MODEL, effort: AI_EFFORT \}/],
 };
@@ -87,6 +94,21 @@ if (fs.existsSync(path.join(ROOT, GATEWAY))) {
   if (cliModel !== CLI_MODEL || cliEffort !== EFFORT) fail.push(`${GATEWAY}: must pin CLI_MODEL "${CLI_MODEL}" and CLI_EFFORT "${EFFORT}" (found ${cliModel}, ${cliEffort})`);
   if (!/GSTK_CLAUDE_MODEL: CLI_MODEL,/.test(g) || !/GSTK_CLAUDE_EFFORT: CLI_EFFORT,/.test(g)) fail.push(`${GATEWAY}: must run the CLI with CLI_MODEL and CLI_EFFORT`);
   if (/body\.(?:model|effort)/.test(g)) fail.push(`${GATEWAY}: reads a request's own model or effort`);
+}
+// Where the Claude API caller's model comes from: the saved choice, read with the
+// key and shape-checked, and set only by ai-key from Anthropic's live list.
+const MODEL_SOURCES = {
+  'supabase/functions/_shared/claudeKey.ts': [/if \(isClaudeModelId\(r\?\.model\)\) model = r\.model;/],
+  'supabase/functions/notice-ai/backend.ts': [/pickCaller\(k\.key, env, k\.model\)/, /apiCaller\(makeClaudeClient\(\{ apiKey \}\), model\)/],
+  'supabase/functions/ai-key/index.ts': [/const pick = live\.value\.find\(\(m\) => m\.id === wanted\);/, /p_model: pick\.id/],
+};
+for (const [f, needs] of Object.entries(MODEL_SOURCES)) {
+  const s = read(f);
+  for (const re of needs) if (!re.test(s)) fail.push(`${f}: the model no longer comes only from the saved choice (${re})`);
+}
+for (const f of files) {
+  if (f === 'supabase/functions/notice-ai/backend.ts' || f === 'supabase/functions/notice-ai/claude.ts') continue;
+  if (/\bapiCaller\([^)]*,/.test(read(f))) fail.push(`${f}: makes a Claude API caller with its own model; use resolveCaller (notice-ai/backend.ts)`);
 }
 for (const [f, needs] of Object.entries(CALLERS)) {
   const s = read(f);
@@ -115,16 +137,17 @@ else {
     fail.push(`${MIG_DIR}/${GUARD_MIG}: the CHECK must hold every model and effort column to Sonnet, medium`);
   }
 }
+const PRICE_MIG = '20261104120000_ai_api_model.sql';
 for (const f of migs.filter((m) => m > GUARD_MIG)) {
   const s = read(`${MIG_DIR}/${f}`);
-  for (const m of s.match(MODEL_ID) ?? []) if (m !== MODEL) fail.push(`${MIG_DIR}/${f}: names the model "${m}"`);
+  if (f !== PRICE_MIG) for (const m of s.match(MODEL_ID) ?? []) if (m !== MODEL) fail.push(`${MIG_DIR}/${f}: names the model "${m}"`);
   if (/ai_settings_sonnet_medium_only/.test(s) && /DROP CONSTRAINT/i.test(s)) fail.push(`${MIG_DIR}/${f}: drops the Sonnet medium constraint`);
   if (/ALTER TABLE\s+(?:public\.)?ai_settings[\s\S]*?ADD COLUMN[^;]*(?:model|effort)/i.test(s)) fail.push(`${MIG_DIR}/${f}: adds a model or effort column to ai_settings; add it to ai_settings_sonnet_medium_only too and to this check`);
 }
 
 if (fail.length) {
   console.error(fail.map((l) => `  ${l}`).join('\n'));
-  console.error(`\nverify-ai-model: FAILED, ${fail.length} problem(s). Every AI call is Claude Sonnet at medium effort (${SHARED}).`);
+  console.error(`\nverify-ai-model: FAILED, ${fail.length} problem(s). Every AI call is at medium effort, with Sonnet 5.5 or the model chosen under Claude API key (${SHARED}).`);
   process.exit(1);
 }
-console.log(`verify-ai-model: ok, every AI call is ${MODEL} at ${EFFORT} effort (${files.length} files checked).`);
+console.log(`verify-ai-model: ok, every AI call is at ${EFFORT} effort, ${MODEL} unless chosen under Claude API key (${files.length} files checked).`);
