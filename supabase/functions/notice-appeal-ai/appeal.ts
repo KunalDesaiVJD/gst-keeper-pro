@@ -310,7 +310,7 @@ export async function beginAppeal(deps: AppealDeps, input: AppealInput): Promise
     });
   const run = async (): Promise<Record<string, unknown>> => {
     if (!deps.claude) {
-      return { ...(await finish('failed', null, null, 'Neither the Claude CLI gateway (CLAUDE_CLI_GATEWAY_URL and CLAUDE_CLI_GATEWAY_SECRET) nor ANTHROPIC_API_KEY is set for the Edge Functions.', 'no_key')), error: 'no_key' };
+      return { ...(await finish('failed', null, null, 'No Claude API key is set: save one under Reply Factory, AI, Claude API key (or set ANTHROPIC_API_KEY for the Edge Functions).', 'no_key')), error: 'no_key' };
     }
     try {
       const material = { ...(begin.context ?? {}), ...(await appealDates(deps, input.client_id as string, input.case_key as string, appeal)) };

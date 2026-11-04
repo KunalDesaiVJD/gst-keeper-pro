@@ -112,7 +112,7 @@ const KEY = /^[A-Za-z0-9:_-]{1,80}$/;
 export async function judgeLink(deps: LinkDeps, input: LinkInput): Promise<{ error?: string; opinion?: LinkOpinion }> {
   if (!input.client_id || !/^[0-9a-f-]{36}$/i.test(input.client_id) || !input.child_key || !input.parent_key
       || !KEY.test(input.child_key) || !KEY.test(input.parent_key)) return { error: 'bad_request' };
-  if (!deps.claude) return { error: 'Neither the Claude CLI gateway (CLAUDE_CLI_GATEWAY_URL and CLAUDE_CLI_GATEWAY_SECRET) nor ANTHROPIC_API_KEY is set for the Edge Functions.' };
+  if (!deps.claude) return { error: 'No Claude API key is set: save one under Reply Factory, AI, Claude API key (or set ANTHROPIC_API_KEY for the Edge Functions).' };
   const kind = input.kind || 'related';
   const ctx = await deps.db.rpc<J>('notice_case_link_ai_context', {
     p_client_id: input.client_id, p_child_key: input.child_key, p_parent_key: input.parent_key, p_kind: kind,

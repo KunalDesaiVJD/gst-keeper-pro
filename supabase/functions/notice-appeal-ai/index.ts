@@ -1,9 +1,8 @@
 // notice-appeal-ai: the Appeal workspace's drafts (Notices §33, migration
 // 20261025180000). Drafts or improves an appeal's statement of facts, grounds
 // of appeal or written submission (appeal.ts), reaching Claude the way
-// notice-ai does (the Claude CLI gateway when CLAUDE_CLI_GATEWAY_URL and
-// CLAUDE_CLI_GATEWAY_SECRET are set, else ANTHROPIC_API_KEY; NOTICE_AI_BACKEND=api
-// forces the API). Its own function, so notice-ai's reader and assistant are
+// notice-ai does (notice-ai/backend.ts: the Claude API with the key saved from the app or the
+// ANTHROPIC_API_KEY secret; the Claude CLI gateway only when there is no key). Its own function, so notice-ai's reader and assistant are
 // never redeployed for it.
 //
 // Body: {"client_id", "case_key", "appeal_key", "doc_type": "facts" | "grounds" |
@@ -12,11 +11,11 @@
 // the background; the page watches notice_appeal_ai_runs. {"action": "status"}
 // says whether a way to Claude is set.
 import { createClient } from '@supabase/supabase-js';
-import { apiCaller, makeClaudeClient, scrub, type Caller } from '../notice-ai/claude.ts';
-import { cliCaller, cliWithApiForScans } from '../notice-ai/cli.ts';
+import { scrub } from '../notice-ai/claude.ts';
+import { resolveCaller, rpcKeyReader } from '../notice-ai/backend.ts';
 import { beginAppeal, type AppealDeps } from './appeal.ts';
 
-export const VERSION = 'notice-appeal-ai 1.3.0';
+export const VERSION = 'notice-appeal-ai 1.4.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -26,28 +25,18 @@ const CORS: Record<string, string> = {
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
-function caller(env: (k: string) => string | undefined = (k) => Deno.env.get(k)): Caller | null {
-  const apiKey = (env('ANTHROPIC_API_KEY') ?? '').trim();
-  const api = apiKey ? apiCaller(makeClaudeClient({ apiKey })) : null;
-  const url = (env('CLAUDE_CLI_GATEWAY_URL') ?? '').trim();
-  const secret = env('CLAUDE_CLI_GATEWAY_SECRET') ?? '';
-  if ((env('NOTICE_AI_BACKEND') ?? '').trim().toLowerCase() === 'api' || !url || !secret) return api;
-  return cliWithApiForScans(cliCaller({ url, secret, files: (env('CLAUDE_CLI_GATEWAY_FILES') ?? '').trim() === '1' }), api);
-}
-
-function deps(): AppealDeps {
+async function deps(): Promise<AppealDeps> {
   const sb = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     { auth: { persistSession: false, autoRefreshToken: false } });
-  return {
-    db: {
-      async rpc<T>(fn: string, args?: Record<string, unknown>): Promise<T> {
-        const { data, error } = await sb.rpc(fn, args ?? {});
-        if (error) throw new Error(`${fn}: ${error.message}`);
-        return data as T;
-      },
+  const db = {
+    async rpc<T>(fn: string, args?: Record<string, unknown>): Promise<T> {
+      const { data, error } = await sb.rpc(fn, args ?? {});
+      if (error) throw new Error(`${fn}: ${error.message}`);
+      return data as T;
     },
-    claude: caller(),
   };
+  const { caller } = await resolveCaller(rpcKeyReader((fn) => db.rpc(fn)));
+  return { db, claude: caller };
 }
 
 Deno.serve(async (req) => {
@@ -60,10 +49,10 @@ Deno.serve(async (req) => {
   const str = (k: string) => (typeof body[k] === 'string' ? body[k] as string : undefined);
   try {
     if (str('action') === 'status') {
-      const c = caller();
+      const c = (await deps()).claude;
       return json({ version: VERSION, key: !!c, backend: c?.backend ?? null });
     }
-    const r = await beginAppeal(deps(), {
+    const r = await beginAppeal(await deps(), {
       client_id: str('client_id'), case_key: str('case_key'), appeal_key: str('appeal_key'), doc_type: str('doc_type'),
       mode: str('mode'), text: str('text') ?? null, instructions: str('instructions') ?? null, actor: str('actor') ?? null,
     });

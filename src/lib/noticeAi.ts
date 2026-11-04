@@ -77,7 +77,7 @@ export const ASSIST_REFUSALS: Record<string, string> = {
   no_consent: 'This client has no AI consent on file (Reply Factory, Client consent).',
   opted_out: 'This client asked that nothing of theirs be processed by AI.',
   capped: "Today's assistant spending cap is reached. Try tomorrow, or raise the cap under Reply Factory, AI.",
-  no_key: 'Supabase has no way to reach Claude yet: set CLAUDE_CLI_GATEWAY_URL and CLAUDE_CLI_GATEWAY_SECRET (or ANTHROPIC_API_KEY) in Edge Functions, Secrets.',
+  no_key: 'Supabase has no way to reach Claude yet: a GST Manager saves the Claude API key under Reply Factory, AI (or sets ANTHROPIC_API_KEY in Edge Functions, Secrets).',
   gone: 'This notice is no longer on record.',
   no_question: 'Type a question first.',
   no_text: 'Paste the text to improve first.',
