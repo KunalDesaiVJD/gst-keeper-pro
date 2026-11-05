@@ -48,7 +48,8 @@ export type AdvanceFindingCode =
   | 'STALE_ADVANCE'           // rule 6
   | 'RECEIPT_NOT_IN_REGISTER' // rule 7 — register-backed clients only
   | 'REGISTER_DIVERGED'       // rule 8 — register-backed clients only
-  | 'REFUND_NEEDS_11A_OFFSET';// rule 9 — register-backed clients only
+  | 'REFUND_NEEDS_11A_OFFSET' // rule 9 — register-backed clients only
+  | 'ADJUSTED_EXCEEDS_RECEIVED'; // rule 10
 
 export type AdvanceSeverity = 'hard' | 'soft';
 
@@ -276,7 +277,14 @@ export async function runAdvanceSetoffCheck(input: AdvanceCheckInput): Promise<A
     // `available` to zero, so a guard-first ordering let a reversal of tax
     // that was never paid through as clean. That is a short payment, the more
     // dangerous direction, and it must not depend on a balance being present.
-    if (reported - openTaxable > threshold) {
+    //
+    // Judged on THIS return's own 11B against what is open, floored at zero.
+    // A balance that is already negative was made by an earlier month (or by
+    // an advance received before the first imported return with no opening
+    // balance); blocking a return that adjusts nothing for it blamed the
+    // wrong return and could not be fixed from it — rule 10 reports it.
+    const overBy = reported - Math.max(openTaxable, 0);
+    if (reported > threshold && overBy > threshold) {
       findings.push({
         code: 'OVER_ADJUSTED',
         severity: 'hard',
@@ -284,9 +292,26 @@ export async function runAdvanceSetoffCheck(input: AdvanceCheckInput): Promise<A
         title: 'Table 11B adjusts more advance than is open',
         detail:
           `${label}: this return adjusts ${inr(reported)} against an open advance of only ` +
-          `${inr(openTaxable)}. Over-adjusting reverses tax that was never paid — this is a short ` +
+          `${inr(Math.max(openTaxable, 0))}. Over-adjusting reverses tax that was never paid — this is a short ` +
           'payment, not an overpayment.',
-        amountAtRisk: reported - openTaxable,
+        amountAtRisk: overBy,
+      });
+      return;
+    }
+
+    // Rule 10 — earlier returns adjusted more than they received. Advisory:
+    // it is a gap in the history, not an error in this return.
+    if (openTaxable < -threshold) {
+      findings.push({
+        code: 'ADJUSTED_EXCEEDS_RECEIVED',
+        severity: 'soft',
+        key, keyLabel: label,
+        title: 'Earlier returns adjusted more advance than was received',
+        detail:
+          `${label}: the returns on record adjust ${inr(-openTaxable)} more in Table 11B than they report ` +
+          'received in Table 11A. Usually the advance was received before the first imported return: record ' +
+          'it as an advance opening balance (or import the return that reported it) so the ledger is right.',
+        amountAtRisk: -openTaxable,
       });
       return;
     }

@@ -201,13 +201,14 @@ overridden by reflex.
 |---|---|---|---|
 | 1 | Open balance > 0, draft `txpd` empty, invoices present at the same POS + rate totalling ≥ the open balance | **HARD** | Generate 11B rows, or override |
 | 2 | `txpd` present but short of the matched suggestion by more than the materiality threshold **and** more than 10% | **HARD** | Adjust to suggested, or override |
-| 3 | `txpd` > open balance (over-adjustment — a short payment, not an overpayment) | **HARD** | Fix |
+| 3 | This return's `txpd` > open balance floored at zero (over-adjustment — a short payment, not an overpayment). A return with no `txpd` never fires it | **HARD** | Fix |
 | 4 | `ata` / `txpda` present whose `omon` period is already `Filed`, with no matching GSTR-3B Adjustment row | **HARD** | Review restatement |
 | 5 | Open balance > 0, no matching invoice this month | Soft | Acknowledge |
 | 6 | Advance open longer than 6 months | Soft (dashboard, digest) | Review |
 | 7 | Draft has `at` but no corresponding receipt in the register (register clients only) | Soft | Add receipt |
 | 8 | Register closing ≠ JSON-derived closing | Soft | Reconcile |
 | 9 | Refund / write-back leg recorded this period (register clients only) | Soft | Net against Table 11A per §11 |
+| 10 | Balance already negative before this return's own 11B (earlier 11B exceeds recorded 11A, usually a pre-app advance with no opening balance) | Soft | Add opening balance |
 
 **Position — an advisory finding still has to reach a person.** A soft-only
 result never blocks, and the blocking dialog only opens on a block — so
