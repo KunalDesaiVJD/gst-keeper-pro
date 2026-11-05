@@ -51,6 +51,33 @@ export async function fetchBuilderPostings(
   return (data || []) as unknown as Gstr1PostingRow[];
 }
 
+/**
+ * The own Table 7 / 11B postings of every month this period's late-recorded
+ * deeds amend, so their Table 10 / 11B(2) rows can restate it in full.
+ */
+export async function fetchAmendedBase(
+  clientId: string,
+  postings: Gstr1PostingRow[],
+): Promise<Record<string, Gstr1PostingRow[]>> {
+  const months = [...new Set(postings
+    .filter((r) => (r.gstr1_table === 'Table 10' && r.source_type === 'INVOICE_B2CS') || r.gstr1_table === 'Table 11B(2)')
+    .map((r) => r.original_period || '')
+    .filter(Boolean))];
+  if (!months.length) return {};
+  const { data, error } = await supabase
+    .from('builder_period_postings')
+    .select('period_month, source_type, gstr1_table, rate_code, rate_pct, taxable_value, cgst, sgst, original_period, doc_no, land_deduction')
+    .eq('client_id', clientId)
+    .in('period_month', months)
+    .in('gstr1_table', ['Table 7', 'Table 11B']);
+  if (error) throw error;
+  const out: Record<string, Gstr1PostingRow[]> = {};
+  ((data || []) as unknown as (Gstr1PostingRow & { period_month: string })[]).forEach((r) => {
+    (out[r.period_month] ||= []).push(r);
+  });
+  return out;
+}
+
 /** What is already stored in GSTR-1 for this client-period, if anything. */
 export async function fetchGstr1Status(
   clientId: string,
@@ -83,7 +110,8 @@ export async function previewBuilderGstr1(params: {
   projectId?: string;
 }): Promise<BuilderGstr1Result & { postings: Gstr1PostingRow[] }> {
   const postings = await fetchBuilderPostings(params.clientId, params.period, params.projectId);
-  const built = buildBuilderGstr1({ gstin: params.gstin, period: params.period, postings });
+  const amendedBase = await fetchAmendedBase(params.clientId, postings);
+  const built = buildBuilderGstr1({ gstin: params.gstin, period: params.period, postings, amendedBase });
   return { ...built, postings };
 }
 
@@ -102,8 +130,9 @@ export async function saveBuilderGstr1(params: {
   userId: string | null;
 }): Promise<{ result: BuilderGstr1Result; blocked: Gstr1Warning[] }> {
   const postings = await fetchBuilderPostings(params.clientId, params.period);
+  const amendedBase = await fetchAmendedBase(params.clientId, postings);
   const result = buildBuilderGstr1({
-    gstin: params.gstin, period: params.period, postings,
+    gstin: params.gstin, period: params.period, postings, amendedBase,
   });
 
   const blocked = result.warnings.filter((w) => w.severity === 'BLOCK');

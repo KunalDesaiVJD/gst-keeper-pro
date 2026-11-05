@@ -133,9 +133,16 @@ earlier of that completion date and its dastavej date.
 **A deed recorded after its month is filed (5/11/2026).** The dastavej
 auto-post (`autoPostDastavejDifferential`) keeps the deed date as the cut-off
 (so the differential is worked as at the deed) but, when that month's GSTR-1 is
-already Filed, posts the invoice (Table 7) and its advance adjustment (Table
-11B) in the first month whose GSTR-1 is not Filed, dated the 1st of that month
-(`firstUnfiledGstr1Period`); a filed month is locked
+already Filed, posts the invoice and its advance adjustment in the first month
+whose GSTR-1 is not Filed (`firstUnfiledGstr1Period`), as an **amendment of the
+deed's month**: the invoice is dated the deed and goes to Table 10 (b2csa), the
+adjustment to Table 11B(2) (txpda), both with omon = the deed's month
+(`amends_period` on the invoice and its legs, migration `20261105120000`; the
+firm, 5/11/2026). Each restates that month in full: its own Table 7 / 11B per
+rate plus the amendment (`fetchAmendedBase`). The rows keep their source type,
+so the ledger and the posting month's 3B tax read them as before; the land
+third stays in the posting month's Table 8, which has no amendment table. A
+filed month is locked
 (`builder_invoices_period_lock`) and the post used to fail there and leave
 nothing in any return. Basis is "month of discovery", no s.50 interest worked;
 interest on a late-reported deed, if the firm wants it, is the Late-discovery

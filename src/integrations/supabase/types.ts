@@ -1936,6 +1936,7 @@ export type Database = {
       }
       builder_advance_adjustments: {
         Row: {
+          amends_period: string | null
           cgst: number
           consideration_adjusted: number
           created_at: string
@@ -1950,6 +1951,7 @@ export type Database = {
           taxable_value_adjusted: number
         }
         Insert: {
+          amends_period?: string | null
           cgst?: number
           consideration_adjusted?: number
           created_at?: string
@@ -1964,6 +1966,7 @@ export type Database = {
           taxable_value_adjusted?: number
         }
         Update: {
+          amends_period?: string | null
           cgst?: number
           consideration_adjusted?: number
           created_at?: string
@@ -3740,6 +3743,7 @@ export type Database = {
       }
       builder_invoices: {
         Row: {
+          amends_period: string | null
           booking_id: string
           cgst: number
           consideration: number
@@ -3762,6 +3766,7 @@ export type Database = {
           updated_by: string | null
         }
         Insert: {
+          amends_period?: string | null
           booking_id: string
           cgst?: number
           consideration?: number
@@ -3784,6 +3789,7 @@ export type Database = {
           updated_by?: string | null
         }
         Update: {
+          amends_period?: string | null
           booking_id?: string
           cgst?: number
           consideration?: number
@@ -3838,6 +3844,7 @@ export type Database = {
       }
       builder_opening_balance_adjustments: {
         Row: {
+          amends_period: string | null
           cgst: number
           consideration_adjusted: number
           created_at: string
@@ -3852,6 +3859,7 @@ export type Database = {
           unit_id: string
         }
         Insert: {
+          amends_period?: string | null
           cgst?: number
           consideration_adjusted?: number
           created_at?: string
@@ -3866,6 +3874,7 @@ export type Database = {
           unit_id: string
         }
         Update: {
+          amends_period?: string | null
           cgst?: number
           consideration_adjusted?: number
           created_at?: string

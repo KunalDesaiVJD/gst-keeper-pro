@@ -310,6 +310,13 @@ async function postBuEventRows(params: {
   postingDate: string;
   docSeries: string | null;
   userId: string | null;
+  /**
+   * The filed month this posting is reported as an amendment of (GSTR-1
+   * Table 10 and 11B(2)), when its own month was filed before it was
+   * recorded. The invoice then keeps that month's date (`amendsDate`).
+   */
+  amendsPeriod?: string | null;
+  amendsDate?: string | null;
 }): Promise<{
   invoicesCreated: number; adjustmentsCreated: number; receiptsSubsumed: number; openingAdjustmentsCreated: number;
 }> {
@@ -322,7 +329,7 @@ async function postBuEventRows(params: {
     const { data: inv, error } = await supabase.from('builder_invoices').insert({
       booking_id: wu.bookingId,
       unit_id: wu.unitId,
-      invoice_date: params.postingDate,
+      invoice_date: params.amendsPeriod && params.amendsDate ? params.amendsDate : params.postingDate,
       invoice_type: 'BU_DIFFERENTIAL',
       milestone_label: `${wu.cutOffSource === 'DASTAVEJ' ? 'Dastavej' : 'BU'} differential — cut-off ${wu.cutOffDate}`,
       consideration: tax.consideration,
@@ -332,6 +339,7 @@ async function postBuEventRows(params: {
       cgst: tax.cgst,
       sgst: tax.sgst,
       period_month: params.postingPeriod,
+      amends_period: params.amendsPeriod || null,
       doc_series: params.docSeries,
       // A document number, so the invoice counts in Table 13 (documents issued).
       doc_no: buInvoiceNo(params.docSeries, wu.unitNo),
@@ -352,7 +360,7 @@ async function postBuEventRows(params: {
     const rows: {
       invoice_id: string; receipt_id: string; consideration_adjusted: number;
       taxable_value_adjusted: number; cgst: number; sgst: number;
-      rate_code: string; rate_pct: number; period_month: string; created_by: string | null;
+      rate_code: string; rate_pct: number; period_month: string; amends_period: string | null; created_by: string | null;
     }[] = [];
     for (const a of advances) {
       if (toAdjust <= 0.005) break;
@@ -369,6 +377,7 @@ async function postBuEventRows(params: {
         rate_code: a.rateCode,
         rate_pct: t.ratePct,
         period_month: params.postingPeriod,
+        amends_period: params.amendsPeriod || null,
         created_by: params.userId,
       });
       toAdjust = Math.round((toAdjust - take + Number.EPSILON) * 100) / 100;
@@ -397,6 +406,7 @@ async function postBuEventRows(params: {
         rate_code: wu.rateCode,
         rate_pct: t.ratePct,
         period_month: params.postingPeriod,
+        amends_period: params.amendsPeriod || null,
         created_by: params.userId,
       });
       if (obErr) throw obErr;
@@ -642,6 +652,8 @@ async function insertAndPostDastavejEvent(params: {
   prepared: PreparedEvent;
   wu: PreparedEvent['working']['units'][number];
   userId: string | null;
+  /** The deed's own month, when filed: the posting amends it. */
+  amendsPeriod: string | null;
 }): Promise<void> {
   const { unit, dastavejDate, postingPeriod, prepared, wu, userId } = params;
   // An earlier failed auto-post (before this cleanup existed) may have left a
@@ -666,6 +678,7 @@ async function insertAndPostDastavejEvent(params: {
     await postBuEvent({
       eventId: ev.id, projectId: unit.project_id, prepared, postingPeriod,
       postingDate: dastavejDate, docSeries: null, userId,
+      amendsPeriod: params.amendsPeriod, amendsDate: params.amendsPeriod ? dastavejDate : null,
     });
   } catch (e) {
     // postBuEvent has already undone any rows it wrote; drop the event too,
@@ -758,6 +771,7 @@ export async function autoPostDastavejDifferential(params: {
     // project-wide sweep to happen to notice this unit.
     await insertAndPostDastavejEvent({
       unit, dastavejDate: params.dastavejDate, postingPeriod, prepared, wu, userId: params.userId,
+      amendsPeriod: deedPeriodFiled,
     });
     return { action: 'SCHEDULE_III' };
   }
@@ -779,6 +793,7 @@ export async function autoPostDastavejDifferential(params: {
 
   await insertAndPostDastavejEvent({
     unit, dastavejDate: params.dastavejDate, postingPeriod, prepared, wu, userId: params.userId,
+    amendsPeriod: deedPeriodFiled,
   });
 
   return {

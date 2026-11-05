@@ -493,6 +493,7 @@ const BuilderReturnsPage: React.FC = () => {
                 { label: 'Table 11A — advances', n: preview.counts.at },
                 { label: 'Table 11B — adjusted', n: preview.counts.txpd },
                 { label: 'Table 10 — amendments', n: preview.counts.b2csa },
+                { label: 'Table 11B(2) — adjusted, amended', n: preview.counts.txpda },
               ].map((t) => (
                 <KpiTile key={t.label} label={t.label} value={t.n} hint={t.n === 1 ? 'rate line' : 'rate lines'} />
               ))}
