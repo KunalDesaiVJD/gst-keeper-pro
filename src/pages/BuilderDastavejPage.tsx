@@ -287,8 +287,9 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
               + `(CGST ${formatINR(result.cgst)}, SGST ${formatINR(result.sgst)}), since it wasn't `
               + 'fully covered by advances yet.'
               + (result.deedPeriodFiled
-                ? ` GSTR-1 for ${result.deedPeriodFiled} is already filed, so it is reported in `
-                  + `${result.postingPeriod} (Table 7 and 11B) as that month's late-reported supply.`
+                ? ` GSTR-1 for ${result.deedPeriodFiled} is already filed, so it is reported in the `
+                  + `${result.postingPeriod} GSTR-1 as an amendment of ${result.deedPeriodFiled} `
+                  + '(Table 10 and Table 11B(2)), dated the deed.'
                 : ''),
             );
           } else if (result.action === 'SCHEDULE_III') {

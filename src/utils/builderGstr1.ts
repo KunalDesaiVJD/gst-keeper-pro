@@ -42,7 +42,7 @@ export interface Gstr1PostingRow {
   taxable_value: number;
   cgst: number;
   sgst: number;
-  /** Only set on Table 10 legs: the month being amended. */
+  /** Set on Table 10 and Table 11B(2) legs: the month being amended. */
   original_period?: string | null;
   /** Only set on legs that issue their own document — drives Table 13. */
   doc_no?: string | null;
@@ -89,7 +89,7 @@ export interface BuilderGstr1Result {
   json: Record<string, unknown>;
   warnings: Gstr1Warning[];
   /** Per-section row counts, for the confirmation screen (b2csa: rate lines across its months). */
-  counts: { b2cs: number; at: number; txpd: number; b2csa: number; nil: number };
+  counts: { b2cs: number; at: number; txpd: number; b2csa: number; txpda: number; nil: number };
   /** Total tax the return carries, for tying back to the workpaper. */
   totalTax: number;
   /** Table 8 non-GST total (the period's land deduction), for the workpaper. */
@@ -178,10 +178,18 @@ export function buildBuilderGstr1(params: {
   gstin: string | null | undefined;
   period: string;
   postings: Gstr1PostingRow[];
+  /**
+   * The amended months' own postings (keyed MM/YYYY), as their returns were
+   * generated. A late-recorded deed's Table 10 / 11B(2) row restates the month
+   * in full, so its revised figure is that month's own Table 7 / 11B plus the
+   * amendment.
+   */
+  amendedBase?: Record<string, Gstr1PostingRow[]>;
   /** Cumulative turnover, if the firm tracks it. Left at 0 when unknown. */
   grossTurnover?: number;
 }): BuilderGstr1Result {
   const { gstin, period, postings } = params;
+  const amendedBase = params.amendedBase || {};
   const warnings: Gstr1Warning[] = [];
 
   const pos = posFromGstin(gstin);
@@ -232,7 +240,22 @@ export function buildBuilderGstr1(params: {
   }));
 
   // ── Table 10 → b2csa. Amendments, grouped by the month they amend. ───────
+  // Two kinds share the table. A re-rating (RECLASS_10_*) states the
+  // DIFFERENCE: the old rate reversed, the new re-reported. A late-recorded
+  // deed (an INVOICE_B2CS whose month was filed, amends_period set) RESTATES
+  // the month: its revised figure per rate is that month's own Table 7 plus
+  // the amendment, the way the portal and the 3B fold read a b2csa.
+  const isReRating = (r: Gstr1PostingRow) => r.source_type === 'RECLASS_10_OLD' || r.source_type === 'RECLASS_10_NEW';
   const t10 = of('Table 10');
+  const deedMonths = new Set(t10.filter((r) => !isReRating(r)).map((r) => r.original_period || ''));
+  const clash = [...deedMonths].filter((m) => m && t10.some((r) => isReRating(r) && r.original_period === m));
+  if (clash.length) {
+    warnings.push({
+      severity: 'BLOCK',
+      message: `Table 10 for ${clash.join(', ')} holds both a re-rating difference and a late-recorded deed. `
+        + 'The portal takes one revised figure per month and rate; settle the re-rating by DRC-03 or post the deed separately.',
+    });
+  }
   const missingOmon = t10.filter((r) => !r.original_period).length;
   if (missingOmon > 0) {
     warnings.push({
@@ -250,6 +273,11 @@ export function buildBuilderGstr1(params: {
   // The portal's shape: one entry per amended month and POS, its rates as
   // lines under itms[] (the offline tool keys b2csa on omon + POS). Flat
   // b2cs-style rows are not a b2csa the portal recognises.
+  const withBase = (omon: string, rows: Gstr1PostingRow[], table: string) => (
+    rows.some((r) => !isReRating(r))
+      ? [...rows, ...(amendedBase[omon] || []).filter((r) => r.gstr1_table === table)]
+      : rows
+  );
   const b2csa = [...byMonth.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([omon, rows]) => ({
@@ -257,7 +285,7 @@ export function buildBuilderGstr1(params: {
       sply_ty: 'INTRA',
       typ: 'OE',
       pos: posCode,
-      itms: bucketByRate(rows).map((b) => ({
+      itms: bucketByRate(withBase(omon, rows, 'Table 7')).map((b) => ({
         rt: b.rt,
         txval: b.txval,
         iamt: 0,
@@ -267,6 +295,39 @@ export function buildBuilderGstr1(params: {
       })),
     }));
   const b2csaLines = b2csa.reduce((n, a) => n + a.itms.length, 0);
+
+  // ── Table 11B(2) → txpda. The advance adjustment of a late-recorded deed,
+  // restating the month it belongs to: that month's own 11B plus this one.
+  const t11b2 = of('Table 11B(2)');
+  const missing11b2 = t11b2.filter((r) => !r.original_period).length;
+  if (missing11b2 > 0) {
+    warnings.push({
+      severity: 'BLOCK',
+      message: `${missing11b2} Table 11B(2) row(s) carry no original period, so the amendment cannot say which month it corrects.`,
+    });
+  }
+  const adjByMonth = new Map<string, Gstr1PostingRow[]>();
+  for (const r of t11b2) {
+    const m = r.original_period || '';
+    if (!m) continue;
+    adjByMonth.set(m, [...(adjByMonth.get(m) || []), r]);
+  }
+  const txpda = [...adjByMonth.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([omon, rows]) => ({
+      omon: periodToFp(omon),
+      pos: posCode,
+      sply_ty: 'INTRA',
+      itms: bucketByRate([...rows, ...(amendedBase[omon] || []).filter((r) => r.gstr1_table === 'Table 11B')]).map((b) => ({
+        rt: b.rt,
+        ad_amt: money(-b.txval),
+        iamt: 0,
+        camt: money(-b.camt),
+        samt: money(-b.samt),
+        csamt: 0,
+      })),
+    }));
+  const txpdaLines = txpda.reduce((n, a) => n + a.itms.length, 0);
 
   // ── HSN summary. One SAC for the whole module. ───────────────────────────
   // Built off Table 7 only: the HSN summary covers supplies invoiced in the
@@ -311,7 +372,7 @@ export function buildBuilderGstr1(params: {
       });
     }
   }
-  if (!b2cs.length && !at.length && !txpd.length && !b2csa.length) {
+  if (!b2cs.length && !at.length && !txpd.length && !b2csa.length && !txpda.length) {
     warnings.push({
       severity: 'WARN',
       message: 'Nothing posted for this period — the return would be nil.',
@@ -348,6 +409,7 @@ export function buildBuilderGstr1(params: {
   if (at.length) json.at = at;
   if (txpd.length) json.txpd = txpd;
   if (b2csa.length) json.b2csa = b2csa;
+  if (txpda.length) json.txpda = txpda;
   if (hsnB2c.length) json.hsn = { hsn_b2c: hsnB2c };
   const nilInv = landTotal !== 0
     ? [{ sply_ty: 'INTRAB2C', nil_amt: 0, expt_amt: 0, ngsup_amt: landTotal }]
@@ -383,7 +445,7 @@ export function buildBuilderGstr1(params: {
   return {
     json,
     warnings,
-    counts: { b2cs: b2cs.length, at: at.length, txpd: txpd.length, b2csa: b2csaLines, nil: nilInv.length },
+    counts: { b2cs: b2cs.length, at: at.length, txpd: txpd.length, b2csa: b2csaLines, txpda: txpdaLines, nil: nilInv.length },
     totalTax,
     nonGstTotal: landTotal,
     docSeries,
