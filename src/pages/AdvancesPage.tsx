@@ -30,7 +30,7 @@ import {
 } from '@/lib/advanceBalance';
 import {
   fetchRegister, receiptPositions, registerClosingByKey, reconcileRegister,
-  suggestAllocation, buildTxpdFromLegs, saveReceipt, deleteReceipt, saveAdjustments,
+  suggestAllocation, buildTxpdFromLegs, buildAtFromReceipts, saveReceipt, deleteReceipt, saveAdjustments,
   receiptKey, taxForRate, effectiveLegs,
   type AdvanceReceipt, type ReceiptPosition, type RegisterData,
 } from '@/lib/advanceRegister';
@@ -371,6 +371,36 @@ const AdvancesPage: React.FC = () => {
     refreshDraft11B();
   };
 
+  /** Write this period's register receipts into the GSTR-1 draft as Table 11A. */
+  const writeAtToGstr1 = async () => {
+    if (!selectedClient || !selectedMonth) return;
+    const at = buildAtFromReceipts(register.receipts, register.adjustments, selectedMonth);
+    if (at.length === 0) { toast.error(`No service advance receipts recorded for ${selectedMonth}.`); return; }
+    const shortMonth = mmYyyyToShort(selectedMonth);
+    const { data } = await supabase.from('gstr1_data').select('raw_json')
+      .eq('client_id', selectedClient).eq('period_month', shortMonth).maybeSingle();
+    if (!data) {
+      toast.error(`No GSTR-1 draft exists for ${selectedMonth}. Import or build it first.`);
+      return;
+    }
+    const ok = await confirm({
+      title: 'Write Table 11A into the GSTR-1 draft?',
+      description:
+        `Table 11A for ${selectedMonth} will be replaced with the ${at.length} group(s) built from the receipts `
+        + `recorded for ${selectedMonth}, less any refund recorded in it. Anything already in Table 11A for this `
+        + 'period is overwritten. Nothing is filed by this.',
+      confirmText: 'Write Table 11A',
+    });
+    if (!ok) return;
+    const next = { ...((data as { raw_json?: Record<string, unknown> }).raw_json || {}), at };
+    const { error } = await supabase.from('gstr1_data')
+      .update({ raw_json: next as never, updated_at: new Date().toISOString() })
+      .eq('client_id', selectedClient).eq('period_month', shortMonth);
+    if (error) { toast.error(`Could not write to the draft: ${error.message}`); return; }
+    toast.success('Table 11A written to the GSTR-1 draft.');
+    load();
+  };
+
   // ── Working papers (docs/ADVANCE_SETOFF_POSITIONS.md §8) ────────────────
   // Each one refetches rather than printing whatever the screen happens to be
   // showing: a working paper that quietly disagrees with the ledger it was
@@ -645,6 +675,11 @@ const AdvancesPage: React.FC = () => {
               actions={
                 <>
                   <ExportButton id="register" label="Set-off register" onClick={exportRegister} disabled={!selectedClient} />
+                  {canEdit && selectedClient && (
+                    <Button variant="outline" size="sm" className={WS_BTN} onClick={writeAtToGstr1}>
+                      Write Table 11A to GSTR-1 draft
+                    </Button>
+                  )}
                   {canEdit && selectedClient && (
                     <Button size="sm" className={WS_BTN} onClick={() => { setEditing(null); setReceiptDialogOpen(true); }}>
                       <Plus className="h-3.5 w-3.5" /> Add receipt

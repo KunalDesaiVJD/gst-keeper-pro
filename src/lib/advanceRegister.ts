@@ -395,6 +395,58 @@ export function buildTxpdFromLegs(
   return Array.from(groups.values());
 }
 
+/**
+ * Table 11A groups for a period, built from the register's receipts of that
+ * period (services only; a goods advance bears no tax on receipt, §4), less
+ * the refunds and write-backs recorded in the period, which net against this
+ * period's Table 11A up to its pool (§11, `planRefundOffsets`). Same shape as
+ * buildTxpdFromLegs, so it can be written straight into a GSTR-1 draft.
+ */
+export function buildAtFromReceipts(
+  receipts: AdvanceReceipt[],
+  adjustments: AdvanceAdjustment[],
+  periodMonth: string,
+): unknown[] {
+  const perKey = new Map<string, { pos: string; splyTy: string; ratePct: number; tax: TaxAmount }>();
+  receipts.forEach((r) => {
+    if (r.period_month !== periodMonth || r.supply_nature === 'GOODS') return;
+    const k = keyOf(receiptKey(r));
+    const cur = perKey.get(k) || { pos: r.pos, splyTy: r.sply_ty, ratePct: num(r.rate_pct), tax: zeroTax() };
+    cur.tax = addTax(cur.tax, {
+      taxable: num(r.taxable_value), igst: num(r.igst), cgst: num(r.cgst), sgst: num(r.sgst), cess: num(r.cess),
+    });
+    perKey.set(k, cur);
+  });
+
+  const pool = new Map(Array.from(perKey.entries()).map(([k, v]) => [k, v.tax.taxable]));
+  planRefundOffsets(receipts, adjustments, periodMonth, pool).forEach((plan) => {
+    const cur = perKey.get(plan.key);
+    if (!cur || plan.offsetAmount <= 0 || cur.tax.taxable <= 0) return;
+    const f = plan.offsetAmount / cur.tax.taxable;
+    cur.tax = {
+      taxable: cur.tax.taxable - plan.offsetAmount,
+      igst: cur.tax.igst * (1 - f), cgst: cur.tax.cgst * (1 - f),
+      sgst: cur.tax.sgst * (1 - f), cess: cur.tax.cess * (1 - f),
+    };
+  });
+
+  const groups = new Map<string, { pos: string; sply_ty: string; itms: unknown[] }>();
+  perKey.forEach((v) => {
+    if (r2(v.tax.taxable) <= 0) return;
+    const gk = `${v.pos}__${v.splyTy}`;
+    if (!groups.has(gk)) groups.set(gk, { pos: v.pos, sply_ty: v.splyTy, itms: [] });
+    groups.get(gk)!.itms.push({
+      rt: v.ratePct,
+      ad_amt: r2(v.tax.taxable),
+      iamt: r2(v.tax.igst),
+      camt: r2(v.tax.cgst),
+      samt: r2(v.tax.sgst),
+      csamt: r2(v.tax.cess),
+    });
+  });
+  return Array.from(groups.values());
+}
+
 // ---------------------------------------------------------------------------
 // Data access
 // ---------------------------------------------------------------------------
