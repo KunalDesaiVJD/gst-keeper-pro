@@ -130,6 +130,18 @@ year run from it) and the permission's own date is kept in
 `bu_permission_date` (migration `20261025100000`). A unit's cut-off is then the
 earlier of that completion date and its dastavej date.
 
+**A deed recorded after its month is filed (5/11/2026).** The dastavej
+auto-post (`autoPostDastavejDifferential`) keeps the deed date as the cut-off
+(so the differential is worked as at the deed) but, when that month's GSTR-1 is
+already Filed, posts the invoice (Table 7) and its advance adjustment (Table
+11B) in the first month whose GSTR-1 is not Filed, dated the 1st of that month
+(`firstUnfiledGstr1Period`); a filed month is locked
+(`builder_invoices_period_lock`) and the post used to fail there and leave
+nothing in any return. Basis is "month of discovery", no s.50 interest worked;
+interest on a late-reported deed, if the firm wants it, is the Late-discovery
+interest on the Dastavej page. A failed auto-post leaves no PREPARED event
+behind. *Elected position, not confirmed in a firm sign-off.*
+
 **The firm's practice.** For every unit booked before its cut-off, the entire
 balance consideration becomes taxable in the BU month, received or not.
 Anchored in **s.31(5)(c) r/w s.13(2)(a)**: where payment is linked to the

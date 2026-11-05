@@ -285,7 +285,11 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
             toast.success(
               `Dastavej saved — ${formatINR(result.differentialValue)} taxed at registration `
               + `(CGST ${formatINR(result.cgst)}, SGST ${formatINR(result.sgst)}), since it wasn't `
-              + 'fully covered by advances yet.',
+              + 'fully covered by advances yet.'
+              + (result.deedPeriodFiled
+                ? ` GSTR-1 for ${result.deedPeriodFiled} is already filed, so it is reported in `
+                  + `${result.postingPeriod} (Table 7 and 11B) as that month's late-reported supply.`
+                : ''),
             );
           } else if (result.action === 'SCHEDULE_III') {
             toast.info('Dastavej saved — this unit was unbooked at that date, recorded under Schedule III.');
