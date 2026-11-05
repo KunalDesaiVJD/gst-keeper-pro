@@ -605,8 +605,75 @@ export type DastavejAutoPostResult =
   | { action: 'ALREADY_DONE' }
   | { action: 'ALREADY_TAXED' }
   | { action: 'SCHEDULE_III' }
-  | { action: 'POSTED'; differentialValue: number; cgst: number; sgst: number }
+  | {
+    action: 'POSTED'; differentialValue: number; cgst: number; sgst: number;
+    /** The month the invoice and 11B landed in. */
+    postingPeriod: string;
+    /** Set when the deed's own month was already filed, so the posting moved to the first open month. */
+    deedPeriodFiled: string | null;
+  }
   | { action: 'EXCLUDED' };
+
+const nextPeriod = (period: string): string => {
+  const [mm, yyyy] = period.split('/').map(Number);
+  return mm === 12 ? `01/${yyyy + 1}` : `${String(mm + 1).padStart(2, '0')}/${yyyy}`;
+};
+
+/**
+ * The first month from `period` on whose GSTR-1 is not Filed. A deed dated in
+ * a month already filed cannot post there (`builder_invoices_period_lock`), so
+ * its differential is reported in the month it is recorded in, the first open
+ * one, as a supply of the earlier month reported late.
+ */
+async function firstUnfiledGstr1Period(clientId: string, period: string): Promise<string> {
+  const { data } = await supabase.from('filing_status').select('period_month')
+    .eq('client_id', clientId).eq('return_type', 'GSTR-1').eq('status', 'Filed');
+  const filed = new Set(((data || []) as { period_month: string }[]).map((r) => r.period_month));
+  let p = period;
+  for (let i = 0; i < 36 && filed.has(p); i += 1) p = nextPeriod(p);
+  return p;
+}
+
+/** Insert the auto event and post it; a failed post leaves no PREPARED event behind. */
+async function insertAndPostDastavejEvent(params: {
+  unit: { id: string; project_id: string };
+  dastavejDate: string;
+  postingPeriod: string;
+  prepared: PreparedEvent;
+  wu: PreparedEvent['working']['units'][number];
+  userId: string | null;
+}): Promise<void> {
+  const { unit, dastavejDate, postingPeriod, prepared, wu, userId } = params;
+  // An earlier failed auto-post (before this cleanup existed) may have left a
+  // PREPARED event for this unit; clear it so the unit carries one event.
+  const { data: stale } = await supabase.from('builder_bu_event_units')
+    .select('bu_event_id, builder_bu_events!inner(status, notes)')
+    .eq('unit_id', unit.id)
+    .eq('builder_bu_events.status', 'PREPARED')
+    .eq('builder_bu_events.notes', 'Auto-posted at dastavej registration');
+  const staleIds = [...new Set(((stale || []) as { bu_event_id: string }[]).map((r) => r.bu_event_id))];
+  if (staleIds.length) {
+    await supabase.from('builder_bu_events').delete().in('id', staleIds).eq('status', 'PREPARED');
+  }
+  const { data: ev, error: evErr } = await supabase.from('builder_bu_events').insert({
+    project_id: unit.project_id, bu_date: dastavejDate, scope: 'UNITS',
+    posting_basis: 'DISCOVERY', posting_period: postingPeriod, status: 'PREPARED',
+    notes: 'Auto-posted at dastavej registration', created_by: userId,
+  }).select('id').single();
+  if (evErr || !ev) throw new Error(evErr?.message || 'Could not record the event');
+  try {
+    await insertEventUnitRow(ev.id, wu);
+    await postBuEvent({
+      eventId: ev.id, projectId: unit.project_id, prepared, postingPeriod,
+      postingDate: dastavejDate, docSeries: null, userId,
+    });
+  } catch (e) {
+    // postBuEvent has already undone any rows it wrote; drop the event too,
+    // so a retry starts clean instead of beside an orphan PREPARED event.
+    await supabase.from('builder_bu_events').delete().eq('id', ev.id).eq('status', 'PREPARED');
+    throw e;
+  }
+}
 
 export async function autoPostDastavejDifferential(params: {
   unitId: string;
@@ -668,7 +735,11 @@ export async function autoPostDastavejDifferential(params: {
     settings: settings || DEFAULT_CHARGE_INCLUSIONS,
   });
 
-  const postingPeriod = periodOfDate(params.dastavejDate);
+  // The cut-off stays the deed date; only where it is REPORTED moves, when
+  // the deed's month is already filed (Sep deed recorded while doing Oct).
+  const deedPeriod = periodOfDate(params.dastavejDate);
+  const postingPeriod = await firstUnfiledGstr1Period(project.client_id, deedPeriod);
+  const deedPeriodFiled = postingPeriod === deedPeriod ? null : deedPeriod;
   const prepared = await prepareBuEvent({
     buDate: params.dastavejDate,
     postingPeriod,
@@ -685,16 +756,8 @@ export async function autoPostDastavejDifferential(params: {
     // Still worth recording: sets bu_event_id so the Dastavej page's
     // Schedule III detection fires now rather than waiting on a future
     // project-wide sweep to happen to notice this unit.
-    const { data: ev, error: evErr } = await supabase.from('builder_bu_events').insert({
-      project_id: unit.project_id, bu_date: params.dastavejDate, scope: 'UNITS',
-      posting_basis: 'DISCOVERY', posting_period: postingPeriod, status: 'PREPARED',
-      notes: 'Auto-posted at dastavej registration', created_by: params.userId,
-    }).select('id').single();
-    if (evErr || !ev) throw new Error(evErr?.message || 'Could not record the event');
-    await insertEventUnitRow(ev.id, wu);
-    await postBuEvent({
-      eventId: ev.id, projectId: unit.project_id, prepared, postingPeriod,
-      postingDate: params.dastavejDate, docSeries: null, userId: params.userId,
+    await insertAndPostDastavejEvent({
+      unit, dastavejDate: params.dastavejDate, postingPeriod, prepared, wu, userId: params.userId,
     });
     return { action: 'SCHEDULE_III' };
   }
@@ -714,19 +777,14 @@ export async function autoPostDastavejDifferential(params: {
     return { action: 'ALREADY_TAXED' };
   }
 
-  const { data: ev, error: evErr } = await supabase.from('builder_bu_events').insert({
-    project_id: unit.project_id, bu_date: params.dastavejDate, scope: 'UNITS',
-    posting_basis: 'DISCOVERY', posting_period: postingPeriod, status: 'PREPARED',
-    notes: 'Auto-posted at dastavej registration', created_by: params.userId,
-  }).select('id').single();
-  if (evErr || !ev) throw new Error(evErr?.message || 'Could not record the event');
-  await insertEventUnitRow(ev.id, wu);
-  await postBuEvent({
-    eventId: ev.id, projectId: unit.project_id, prepared, postingPeriod,
-    postingDate: params.dastavejDate, docSeries: null, userId: params.userId,
+  await insertAndPostDastavejEvent({
+    unit, dastavejDate: params.dastavejDate, postingPeriod, prepared, wu, userId: params.userId,
   });
 
-  return { action: 'POSTED', differentialValue: wu.differentialValue, cgst: wu.differentialCgst, sgst: wu.differentialSgst };
+  return {
+    action: 'POSTED', differentialValue: wu.differentialValue, cgst: wu.differentialCgst, sgst: wu.differentialSgst,
+    postingPeriod, deedPeriodFiled,
+  };
 }
 
 // ─── Late-discovery interest preview ───────────────────────────────────────
