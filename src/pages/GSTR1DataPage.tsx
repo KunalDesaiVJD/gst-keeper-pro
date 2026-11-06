@@ -85,8 +85,12 @@ const REFRESH_HISTORY_MIN_EXTENSION = '0.8.6';
  * this push's.
  */
 const OUTCOME_UNKNOWN_SUMMARIES = [
-  'Timed out waiting for the portal to finish processing (6 min).',
+  // 6 minutes before extension 0.18.6, 20 from it.
+  'Timed out waiting for the portal to finish processing (',
   'Portal tab closed during the upload',
+  // 0.18.6: the JSON was attached, then the portal logged the tab out (or
+  // another step broke) before its status could be read.
+  'The JSON was uploaded to the portal at ',
 ];
 const isOutcomeUnknownFailure = (summary?: string | null) =>
   OUTCOME_UNKNOWN_SUMMARIES.some((p) => (summary || '').startsWith(p));
@@ -97,8 +101,8 @@ const isOutcomeUnknownFailure = (summary?: string | null) =>
  */
 const jsonUnchangedSinceUpload = (r: { updated_at?: string | null; last_uploaded_at?: string | null }) =>
   !r.updated_at || !r.last_uploaded_at || Date.parse(r.updated_at) <= Date.parse(r.last_uploaded_at);
-/** An upload or NIL push left without a result this long is given up on (the extension's own idle limit is 10 minutes). */
-const UPLOAD_WATCHDOG_MS = 20 * 60 * 1000;
+/** An upload or NIL push left without a result this long is given up on. From 0.18.6 the extension itself waits up to 20 minutes after the attach for the portal's status, plus a login if the portal logs the tab out. */
+const UPLOAD_WATCHDOG_MS = 35 * 60 * 1000;
 
 // What the push gate for an e-invoice client says (docs/GSTR1_EINVOICE_POSITIONS.md §4).
 const fmtEinvWhen = (iso: string) =>
@@ -975,7 +979,7 @@ const GSTR1DataPage: React.FC = () => {
       const ov = einvOverrideRef.current;
       einvOverrideRef.current = null;
       if (ov) void noteOnUploadVersion(ov, 1);
-      toast.warning('No result from the browser extension after 20 minutes. Check the GST portal tab and Version History before uploading again.', { duration: 20000 });
+      toast.warning('No result from the browser extension after 35 minutes. Check the GST portal tab and Version History before uploading again.', { duration: 20000 });
     }, UPLOAD_WATCHDOG_MS);
     return () => clearTimeout(t);
   }, [isUploading]);
